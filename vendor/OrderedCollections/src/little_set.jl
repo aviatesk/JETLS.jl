@@ -111,7 +111,7 @@ function Base.copymutable(s::LittleSet{T}) where {T}
     LittleSet{T}(new_data)
 end
 
-function Base.sizehint!(s::UnfrozenLittleSet, sz)
+function Base.sizehint!(s::UnfrozenLittleSet, sz::Integer)
     sizehint!(getfield(s, :data), sz)
     return s
 end

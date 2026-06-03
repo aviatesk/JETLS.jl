@@ -14,7 +14,7 @@ function siginfos(context_module::Module, code::AbstractString; kwargs...)
     position = only(positions)
     fi = JETLS.FileInfo(0, clean_code, @__FILE__)
     b = JETLS.xy_to_offset(fi, position)
-    return JETLS.cursor_siginfos(context_module, fi, b)
+    return JETLS.cursor_siginfos(fi, b, context_module)
 end
 
 n_si(args...) = length(siginfos(args...))

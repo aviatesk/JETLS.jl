@@ -19,7 +19,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## Unreleased
 
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
-- Diff: [`72cc49c...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/72cc49c...HEAD)
+- Diff: [`0b038c7...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/0b038c7...HEAD)
 
 ### Announcement
 
@@ -44,14 +44,36 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > This disables analysis for matched files. Basic features like completion still might work, but most LSP features will be unfunctional.
 > Note that `analysis_overrides` is provided as a temporary workaround and may be removed or changed at any time. A proper fix is being worked on.
 
-> [!warning]
-> The `inlay_hint` configuration was reorganized into nested sub-tables so each hint kind has its own `enabled` toggle alongside its options.
-> The new shape adds [`inlay_hint.block_end.enabled`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/inlay_hint/block_end/enabled) for toggling block-end hints independently, and renames `inlay_hint.block_end_min_lines` to [`inlay_hint.block_end.min_lines`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/inlay_hint/block_end/min_lines).
-> Existing configs keep working for now: the legacy key is still accepted at load time and mapped onto the new key in memory (your config file is not modified automatically), with a one-shot deprecation warning. The legacy alias will be removed in releases after **June 2026**, so if you are still using `inlay_hint.block_end_min_lines`, please update your config.
+### Removed
 
-> [!warning]
-> The `completion.method_signature.prepend_inference_result` configuration option was removed. Inferred return types are now always shown both as `CompletionItem.detail` (` -> T` typically shown next to the candidate label) and as a leading `signature -> T` code fence at the top of the method signature completion documentation, so the previous client-specific opt-in is no longer needed.
-> Existing configs keep working for now: the removed key is still accepted at load time and silently dropped, with a one-shot deprecation warning. The legacy key will be rejected outright in releases after **June 2026**, so if you are still setting `completion.method_signature.prepend_inference_result`, please remove it from your config.
+- Removed the legacy `inlay_hint.block_end_min_lines` configuration alias. Use `inlay_hint.block_end.min_lines` instead.
+
+- Removed support for the legacy `completion.method_signature.prepend_inference_result` configuration key.
+  Inferred return types are now always shown in completion details and method signature documentation.
+
+### Changed
+
+- Updated JuliaSyntax.jl and JuliaLowering.jl dependency versions to latest.
+
+- Improved responsiveness for repeated requests against the same document version. After an edit, follow-up features such as diagnostics, document links, document highlights, semantic tokens, code actions, hover, definition, and document symbols now reuse the current file's prepared syntax tree instead of rebuilding it for each request.
+
+- Improved performance of type-aware features on open files. Repeated hover, definition, type definition, signature help, and completion requests in the same top-level expression can now reuse prior analysis results instead of rerunning inference each time.
+
+- Improved unused-variable diagnostic message for assignments returned from tail position.
+  For both `lowering/unused-local` and `lowering/unused-assignment`, JETLS now explains when Julia is implicitly returning the assignment expression's value, suggests `return name` when the binding itself should be returned, and offers an "Insert explicit return" quick fix for simple tail assignments. (Closed https://github.com/aviatesk/JETLS.jl/issues/723)
+
+### Fixed
+
+- Fixed false `lowering/unused-argument` reports — and missed argument occurrences for find-references / document-highlight / rename — on `@generated` functions nested inside another construct (e.g. as an inner constructor in a `struct` body). (Closed https://github.com/aviatesk/JETLS.jl/issues/722)
+
+## 2026-05-27
+
+- Commit: [`0b038c7`](https://github.com/aviatesk/JETLS.jl/commit/0b038c7)
+- Diff: [`72cc49c...0b038c7`](https://github.com/aviatesk/JETLS.jl/compare/72cc49c...0b038c7)
+- Installation:
+  ```bash
+  julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="2026-05-27")'
+  ```
 
 ### Added
 

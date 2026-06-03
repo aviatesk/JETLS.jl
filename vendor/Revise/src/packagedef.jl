@@ -79,12 +79,21 @@ function wait_changed(file)
     try
         polling_files[] ? poll_file(file) : watch_file(file)
     catch err
-        if Sys.islinux() && err isa Base.IOError && err.code == -28  # ENOSPC
-            @warn """Your operating system has run out of inotify capacity.
-            Check the current value with `cat /proc/sys/fs/inotify/max_user_watches`.
-            Set it to a higher level with, e.g., `echo 65536 | sudo tee -a /proc/sys/fs/inotify/max_user_watches`.
-            This requires having administrative privileges on your machine (or talk to your sysadmin).
-            See https://github.com/timholy/Revise.jl/issues/26 for more information."""
+        if Sys.islinux() && err isa Base.IOError && err.code == -28  # ENOSPC; issue #1010
+            @warn """Revise was unable to watch files for changes via inotify (ENOSPC).
+            This can happen because:
+            - the filesystem does not support inotify (e.g., a WSL `/mnt/...` drive or
+              some network mounts);
+            - a per-user-namespace limit is in effect (common inside containers,
+              snaps, or Flatpaks), in which case `cat /proc/sys/fs/inotify/max_user_watches`
+              may report a large value that is not the limit actually enforced;
+            - the per-user `max_user_watches` limit is genuinely exhausted.
+            As a workaround, set the environment variable `JULIA_REVISE_POLL=1` before
+            `using Revise` to poll the filesystem instead of using inotify.
+            If `max_user_watches` is genuinely the cause, raise it with, e.g.,
+            `echo 65536 | sudo tee /proc/sys/fs/inotify/max_user_watches` (administrative
+            privileges required).
+            See https://github.com/timholy/Revise.jl/issues/26 for more information.""" maxlog=1
         end
         rethrow(err)
     end
@@ -209,9 +218,14 @@ global basesrccache::String
 Julia's top-level directory when Julia was built, as recorded by the entries in
 `Base._included_files`.
 """
-const basebuilddir = begin
-    sysimg = filter(x->endswith(x[2], "sysimg.jl"), Base._included_files)[1][2]
-    dirname(dirname(sysimg))
+global basebuilddir::String
+
+# issue #835: compute at run time so this reflects the running Julia, not the Julia
+# that precompiled Revise (the two can differ for relocated/cache-compatible installs)
+function find_basebuilddir()
+    # issue #1045: non-incremental PackageCompiler sysimages have no sysimg.jl entry
+    idx = findfirst(x -> endswith(x[2], "sysimg.jl"), Base._included_files)
+    idx === nothing ? expected_juliadir() : dirname(dirname(Base._included_files[idx][2]))
 end
 
 function fallback_juliadir(candidate = expected_juliadir())
@@ -1400,7 +1414,8 @@ end
 function add_definitions_from_repl(filename::String)
     hist_idx = parse(Int, filename[6:end-1])
     hp = (Base.active_repl::REPL.LineEditREPL).interface.modes[1].hist::REPL.REPLHistoryProvider
-    src = hp.history[hp.start_idx+hist_idx]
+    entry = hp.history[hp.start_idx+hist_idx]
+    src = entry isa AbstractString ? entry : entry.content
     id = PkgId(nothing, "@REPL")
     pkgdata = pkgdatas[id]
     mod_exs_infos = ModuleExprsInfos(Main::Module)
@@ -1465,21 +1480,27 @@ end
 # Set the prompt color to indicate the presence of unhandled revision errors
 const original_repl_prefix = Ref{Union{String,Function,Nothing}}(nothing)
 function maybe_set_prompt_color(color)
-    if isdefined(Base, :active_repl)
-        repl = Base.active_repl
-        if isa(repl, REPL.LineEditREPL)
-            if color === :warn
-                # First save the original setting
-                if original_repl_prefix[] === nothing
-                    original_repl_prefix[] = repl.mistate.current_mode.prompt_prefix
-                end
-                repl.mistate.current_mode.prompt_prefix = "\e[33m"  # yellow
-            else
-                color = original_repl_prefix[]
-                color === nothing && return nothing
-                repl.mistate.current_mode.prompt_prefix = color
-                original_repl_prefix[] = nothing
+    isdefined(Base, :active_repl) || return nothing
+    return set_prompt_color!(color, Base.active_repl)
+end
+
+function set_prompt_color!(color, repl)
+    if isa(repl, REPL.LineEditREPL) && isdefined(repl, :interface)
+        # Always recolor the `julia>` prompt, never whatever mode happens to
+        # be active, so a revision error raised while in shell/help/pkg mode
+        # does not leak that mode's color onto `julia>` (issue #755).
+        julia_prompt = repl.interface.modes[1]
+        if color === :warn
+            # First save the original setting
+            if original_repl_prefix[] === nothing
+                original_repl_prefix[] = julia_prompt.prompt_prefix
             end
+            julia_prompt.prompt_prefix = "\e[33m"  # yellow
+        else
+            color = original_repl_prefix[]
+            color === nothing && return nothing
+            julia_prompt.prompt_prefix = color
+            original_repl_prefix[] = nothing
         end
     end
     return nothing
@@ -1578,6 +1599,7 @@ function __init__()
 
     # Setting up the paths relative to package module location
 
+    global basebuilddir = find_basebuilddir()
     global juliadir = find_juliadir()
     global basesrccache = normpath(joinpath(expected_juliadir(), "base.cache"))
 

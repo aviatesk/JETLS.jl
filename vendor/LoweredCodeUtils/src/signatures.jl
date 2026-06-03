@@ -242,7 +242,9 @@ end
 # try to normalize `def` to `GlobalRef` representation
 function normalize_defsig(@nospecialize(def), mod::Module)
     if def isa QuoteNode
-        def = nameof(def.value)
+        # A quoted Symbol (e.g. the callee of `:foo(x)`) is already a name; only
+        # other wrapped values (functions, types, modules) need `nameof`.
+        def = def.value isa Symbol ? def.value : nameof(def.value)
     end
     if def isa Symbol
         def = GlobalRef(mod, def)
@@ -585,14 +587,26 @@ function methoddef!(interp::Interpreter, signatures::Vector{MethodInfoKey}, fram
         Base.invokelatest(error, "given invalid definition: ", stmt)
     end
     name = name::GlobalRef
-    # Is there any 3-arg method definition with the same name? If not, avoid risk of executing code that
-    # we shouldn't (fixes https://github.com/timholy/Revise.jl/issues/758)
+    # Is there a 3-arg method definition that completes this opening? If not, avoid the
+    # risk of executing code that we shouldn't (fixes https://github.com/timholy/Revise.jl/issues/758).
+    # A bare `function foo end` only forward-declares `foo`; its real definition (if any)
+    # may be separated by unrelated top-level code. Marching to a far-away method via the
+    # loop below would execute that intervening code, which is wrong when we are only
+    # extracting signatures (https://github.com/timholy/Revise.jl/issues/706). So accept
+    # the opening only when its matching `:method` is reached before any unrelated
+    # top-level definition. Anonymous and gensymmed (`#…`) methods are the helper/inner
+    # methods of this definition (closures, keyword bodies, generator stubs); a method
+    # with an ordinary user-level name marks the start of an unrelated definition.
     found = false
     for i = pc+1:length(framecode.src.code)
         newstmt = framecode.src.code[i]
         if ismethod3(newstmt)
             if ismethod_with_name(framecode.src, newstmt, string(name.name))
                 found = true
+                break
+            end
+            othername = normalize_defsig(newstmt.args[1], frame)
+            if isa(othername, GlobalRef) && !startswith(String(othername.name), '#')
                 break
             end
         end

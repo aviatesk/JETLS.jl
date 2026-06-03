@@ -1,6 +1,6 @@
 name = "OrderedCollections"
 uuid = "64c61135-0f01-5c34-beb9-07fc02084e85"
-version = "1.8.1"
+version = "1.8.2"
 
 [extras]
 Serialization = "9e88b42a-f829-5b0c-bbe9-9e923198166b"

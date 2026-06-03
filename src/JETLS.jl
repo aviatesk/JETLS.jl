@@ -11,11 +11,7 @@ end
 # `old_path => nothing` to deprecate a key without a replacement.
 # Each path is a list of nested keys; `migrate_deprecated_config_keys!` consults this
 # table and rewrites raw user config dicts before parsing.
-const deprecated_configurations = Pair{Vector{String},Union{Nothing,Vector{String}}}[
-    # 2026 June
-    ["inlay_hint", "block_end_min_lines"] => ["inlay_hint", "block_end", "min_lines"],
-    ["completion", "method_signature", "prepend_inference_result"] => nothing,
-]
+const deprecated_configurations = Pair{Vector{String},Union{Nothing,Vector{String}}}[]
 
 const __init__hooks__ = Any[]
 push_init_hook!(hook) = push!(__init__hooks__, hook)

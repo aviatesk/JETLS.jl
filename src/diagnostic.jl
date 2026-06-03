@@ -676,6 +676,88 @@ function has_matching_argument_binding(
     return false
 end
 
+function is_assignment_expression(st::SyntaxTreeC)
+    k = JS.kind(st)
+    k === JS.K"=" && return true
+    if k === JS.K"unknown_head" && hasproperty(st, :name_val)
+        name = st.name_val
+        return name isa AbstractString && endswith(name, "=")
+    end
+    return false
+end
+
+same_syntax_range(a::SyntaxTreeC, b::SyntaxTreeC) =
+    JS.kind(a) === JS.kind(b) && JS.byte_range(a) == JS.byte_range(b)
+
+function is_last_child(parent::SyntaxTreeC, child::SyntaxTreeC)
+    n = JS.numchildren(parent)
+    n == 0 && return false
+    return same_syntax_range(parent[n], child)
+end
+
+function is_tail_branch_child(parent::SyntaxTreeC, child::SyntaxTreeC)
+    for i in 2:JS.numchildren(parent)
+        same_syntax_range(parent[i], child) && return true
+    end
+    return false
+end
+
+function assignment_expression_for_prov(st0::SyntaxTreeC, prov::SyntaxTreeC)
+    assignments = byte_ancestors(is_assignment_expression, st0, JS.byte_range(prov))
+    isempty(assignments) && return nothing
+    return first(assignments)
+end
+
+function tail_returned_assignment_kind(
+        st0::SyntaxTreeC, assignment::Union{Nothing,SyntaxTreeC}
+    )
+    isnothing(assignment) && return :none
+    ancestors = byte_ancestors(st0, JS.byte_range(assignment))
+    simple = true
+    for i in 1:length(ancestors)-1
+        child = ancestors[i]
+        parent = ancestors[i+1]
+        pk = JS.kind(parent)
+        if pk === JS.K"return"
+            return :tail
+        elseif pk === JS.K"block"
+            is_last_child(parent, child) || return :none
+        elseif pk === JS.K"function"
+            is_last_child(parent, child) || return :none
+            return simple ? :simple : :tail
+        elseif pk === JS.K"if" || pk === JS.K"elseif" || pk === JS.K"?"
+            is_tail_branch_child(parent, child) || return :none
+            simple = false
+        else
+            return :none
+        end
+    end
+    return :none
+end
+
+function unused_local_binding_message(bn::String, tail_kind::Symbol)
+    if tail_kind !== :none
+        return "Local binding `$bn` is not read; consider `return $bn` to return it explicitly"
+    end
+    return "Unused local binding `$bn`"
+end
+
+function unused_assignment_message(bn::String, tail_kind::Symbol)
+    if tail_kind !== :none
+        return "Value assigned to `$bn` is returned implicitly; consider `return $bn` to return the binding explicitly"
+    end
+    return "Value assigned to `$bn` is never used"
+end
+
+function return_insert_data(
+        assignment::SyntaxTreeC, fi::FileInfo, bn::String, tail_kind::Symbol
+    )
+    tail_kind === :simple || return nothing, nothing
+    range = jsobj_to_range(assignment, fi)
+    indent = get_line_indent(fi, range.start.line)
+    return range.var"end", "\n$(indent)return $bn"
+end
+
 function analyze_unused_bindings!(
         diagnostics::Vector{Diagnostic}, fi::FileInfo, st0::SyntaxTreeC, ctx3::JL.VariableAnalysisContext,
         binding_occurrences::Dict{JL.BindingInfo,Set{BindingOccurrence}},
@@ -721,9 +803,12 @@ function analyze_unused_bindings!(
             code = LOWERING_UNUSED_ARGUMENT_CODE
             data = UnusedArgumentData(prov_loc in kwarg_locations)
         else
-            message = "Unused local binding `$bn`"
+            assignment = assignment_expression_for_prov(st0, prov)
+            tail_kind = tail_returned_assignment_kind(st0, assignment)
+            message = unused_local_binding_message(bn, tail_kind)
             code = LOWERING_UNUSED_LOCAL_CODE
-            data = compute_unused_variable_data(st0, prov, fi)
+            data = assignment === nothing ? nothing :
+                compute_unused_variable_data(assignment, fi, bn, tail_kind)
         end
         push!(diagnostics, Diagnostic(;
             range,
@@ -758,25 +843,23 @@ function analyze_unused_assignments!(
             range = jsobj_to_range(prov, fi)
             key = LoweringDiagnosticKey(range, binfo.kind, bn)
             key in reported ? continue : push!(reported, key)
+            assignment = assignment_expression_for_prov(st0, prov)
+            tail_kind = tail_returned_assignment_kind(st0, assignment)
             push!(diagnostics, Diagnostic(;
                 range,
                 severity = DiagnosticSeverity.Information,
-                message = "Value assigned to `$bn` is never used",
+                message = unused_assignment_message(bn, tail_kind),
                 source = DIAGNOSTIC_SOURCE_LIVE,
                 code = LOWERING_UNUSED_ASSIGNMENT_CODE,
                 codeDescription = diagnostic_code_description(
                     LOWERING_UNUSED_ASSIGNMENT_CODE),
                 tags = DiagnosticTag.Ty[DiagnosticTag.Unnecessary],
-                data = compute_unused_variable_data(st0, prov, fi)))
+                data = assignment === nothing ? nothing :
+                    compute_unused_variable_data(assignment, fi, bn, tail_kind)))
         end
     end
 end
 
-struct DefUsedNames
-    def::Set{String}
-    used::Set{String}
-    DefUsedNames() = new(Set{String}(), Set{String}())
-end
 const DefUsedNamesCacheData = Base.PersistentDict{UInt,Dict{Module,DefUsedNames}}
 const DefUsedNamesCache = LWContainer{DefUsedNamesCacheData, LWStats}
 
@@ -900,12 +983,9 @@ function analyze_undefined_local_bindings!(
     end
 end
 
-function compute_unused_variable_data(st0::SyntaxTreeC, prov::SyntaxTreeC, fi::FileInfo)
-    # Find parent K"=" node using byte_ancestors
-    ancestors = byte_ancestors(st::SyntaxTreeC->JS.kind(st)===JS.K"=", st0, JS.byte_range(prov))
-    isempty(ancestors) && return nothing
-
-    assignment = first(ancestors)
+function compute_unused_variable_data(
+        assignment::SyntaxTreeC, fi::FileInfo, bn::String, tail_kind::Symbol
+    )
     JS.numchildren(assignment) ≥ 2 || return nothing
 
     lhs = assignment[1]
@@ -913,7 +993,7 @@ function compute_unused_variable_data(st0::SyntaxTreeC, prov::SyntaxTreeC, fi::F
     # Check for destructuring patterns (tuple unpacking)
     is_tuple = JS.kind(lhs) === JS.K"tuple"
     if is_tuple
-        return UnusedVariableData(true, nothing, nothing)
+        return UnusedVariableData(true, nothing, nothing, nothing, nothing)
     end
 
     # lhs_eq_range: from LHS start to actual RHS start in source (exclusive).
@@ -922,16 +1002,23 @@ function compute_unused_variable_data(st0::SyntaxTreeC, prov::SyntaxTreeC, fi::F
     # K"String") have a byte range that excludes delimiters, so
     # `first_byte(rhs)` may point past the opening delimiter.
     assignment_range = jsobj_to_range(assignment, fi)
-    lhs_start = offset_to_xy(fi, JS.first_byte(lhs))
-    textbuf = fi.parsed_stream.textbuf
-    eq_byte = @something findnext(==(UInt8('=')), textbuf, JS.last_byte(lhs) + 1) return nothing
-    rhs_byte = eq_byte + 1
-    while rhs_byte ≤ length(textbuf) && textbuf[rhs_byte] in (UInt8(' '), UInt8('\t'))
-        rhs_byte += 1
+    lhs_eq_range = if JS.kind(assignment) === JS.K"="
+        lhs_start = offset_to_xy(fi, JS.first_byte(lhs))
+        textbuf = fi.parsed_stream.textbuf
+        eq_byte = @something findnext(==(UInt8('=')), textbuf, JS.last_byte(lhs) + 1) return nothing
+        rhs_byte = eq_byte + 1
+        while rhs_byte ≤ length(textbuf) && textbuf[rhs_byte] in (UInt8(' '), UInt8('\t'))
+            rhs_byte += 1
+        end
+        rhs_start = offset_to_xy(fi, rhs_byte)
+        Range(; start=lhs_start, var"end"=rhs_start)
+    else
+        nothing
     end
-    rhs_start = offset_to_xy(fi, rhs_byte)
-    lhs_eq_range = Range(; start=lhs_start, var"end"=rhs_start)
-    return UnusedVariableData(false, assignment_range, lhs_eq_range)
+    return_insert_position, return_insert_text = return_insert_data(
+        assignment, fi, bn, tail_kind)
+    return UnusedVariableData(
+        false, assignment_range, lhs_eq_range, return_insert_position, return_insert_text)
 end
 
 function analyze_captured_boxes!(
@@ -1295,7 +1382,7 @@ function analyze_lowered_code!(
         allow_noreturn_optimization::Vector{Symbol} = Symbol[]
     )
     (; ctx3, ctx4, st0, st3) = res
-    binding_occurrences = compute_binding_occurrences(ctx3, st3, is_generated0(st0);
+    binding_occurrences = compute_binding_occurrences(ctx3, st3;
         include_global_bindings=true)
 
     reported = Set{LoweringDiagnosticKey}() # to prevent duplicate reports for unused default or keyword arguments
@@ -1425,12 +1512,6 @@ function per_stmt_diagnostics!(
         skip_analysis_requiring_context, allow_unused_underscore, allow_noreturn_optimization)
 end
 
-struct ImportInfo
-    uri::URI
-    name_range::Range
-    delete_range::Range
-end
-
 function compute_unit_def_used_names(
         server::Server, search_uris::Set{URI};
         skip_context_check::Bool = false # used by tests only
@@ -1444,22 +1525,47 @@ function compute_unit_def_used_names(
         end begin
             get_unsynced_file_info!(state, search_uri)
         end continue
+        cached = get(load(state.per_file_diagnostics_cache),
+            canonical_cache_uri(state, search_uri), nothing)
+        if cached !== nothing
+            merge_def_used_names!(mod_def_used_names, cached.def_used_names)
+            continue
+        end
         search_st0_top = build_syntax_tree(search_fi)
 
         iterate_toplevel_tree(search_st0_top) do st0::SyntaxTreeC
             binding_occurrences = @something get_binding_occurrences!(
                 state, search_uri, search_fi, st0) return
             context_module = get_context_module(state, search_uri, offset_to_xy(search_fi, JS.first_byte(st0)))
-            for (binfo_key, occurrences) in binding_occurrences
-                binfo_key.kind === :global || continue
-                if any(o -> o.kind === :use, occurrences)
-                    def_used_names = get!(DefUsedNames, mod_def_used_names, context_module)
-                    push!(def_used_names.used, binfo_key.name)
-                elseif any(o -> o.kind === :def, occurrences)
-                    def_used_names = get!(DefUsedNames, mod_def_used_names, context_module)
-                    push!(def_used_names.def, binfo_key.name)
-                end
-            end
+            update_def_used_names!(mod_def_used_names, context_module, binding_occurrences)
+        end
+    end
+    return mod_def_used_names
+end
+
+function merge_def_used_names!(
+        dst::Dict{Module,DefUsedNames}, src::Dict{Module,DefUsedNames}
+    )
+    for (context_module, names) in src
+        dst_names = get!(DefUsedNames, dst, context_module)
+        union!(dst_names.def, names.def)
+        union!(dst_names.used, names.used)
+    end
+    return dst
+end
+
+function update_def_used_names!(
+        mod_def_used_names::Dict{Module,DefUsedNames}, context_module::Module,
+        binding_occurrences::BindingOccurrencesResult
+    )
+    for (binfo_key, occurrences) in binding_occurrences
+        binfo_key.kind === :global || continue
+        if any(o -> o.kind === :use, occurrences)
+            def_used_names = get!(DefUsedNames, mod_def_used_names, context_module)
+            push!(def_used_names.used, binfo_key.name)
+        elseif any(o -> o.kind === :def, occurrences)
+            def_used_names = get!(DefUsedNames, mod_def_used_names, context_module)
+            push!(def_used_names.def, binfo_key.name)
         end
     end
     return mod_def_used_names
@@ -1488,7 +1594,7 @@ end
 # Detects unused imports by scanning all workspace files for usages of imported names.
 # This analysis can be slow if implemented naively, but achieves practical performance through:
 # - Early return for files without import/using statements (~1ms depending on file size)
-# - Syntax tree caching for unsynced files (see `FileInfo.syntax_tree0`)
+# - Per-file diagnostic summaries for cached files
 # - Binding occurrences caching (see `BindingOccurrencesCache`)
 # - Per-unit used-name memoization via `used_names_cache`, which lets a single
 #   `workspace/diagnostic` pull reuse the expensive `mod_used_names` aggregation
@@ -1496,20 +1602,10 @@ end
 # - Unchanged file skipping in workspace/diagnostic
 function analyze_unused_imports!(
         diagnostics::Vector{Diagnostic}, def_used_names_cache::DefUsedNamesCache,
-        server::Server, uri::URI, fi::FileInfo, st0_top::SyntaxTreeC;
+        server::Server, uri::URI,
+        mod_imported_names::Dict{Module,Dict{String,Vector{ImportInfo}}};
         skip_context_check::Bool = false # used by tests only
     )
-    state = server.state
-    mod_imported_names = Dict{Module,Dict{String,Vector{ImportInfo}}}()
-    traverse(st0_top) do st0::SyntaxTreeC
-        JS.kind(st0) ∈ JS.KSet"import using" || return nothing
-        context_module = get_context_module(state, uri, offset_to_xy(fi, JS.first_byte(st0)))
-        for (name, name_range, delete_range) in collect_explicit_import_names(st0, fi)
-            imported_names = get!(Dict{String,Vector{ImportInfo}}, mod_imported_names, context_module)
-            push!(get!(Vector{ImportInfo}, imported_names, name), ImportInfo(uri, name_range, delete_range))
-        end
-        return TraversalNoRecurse()
-    end
     isempty(mod_imported_names) && return diagnostics
 
     search_uris = collect_search_uris(server, uri)
@@ -1534,6 +1630,35 @@ function analyze_unused_imports!(
     end
 
     return diagnostics
+end
+
+function analyze_unused_imports!(
+        diagnostics::Vector{Diagnostic}, def_used_names_cache::DefUsedNamesCache,
+        server::Server, uri::URI, fi::FileInfo, st0_top::SyntaxTreeC;
+        skip_context_check::Bool = false # used by tests only
+    )
+    mod_imported_names = collect_explicit_imports_by_module(server.state, uri, fi, st0_top)
+    return analyze_unused_imports!(
+        diagnostics, def_used_names_cache, server, uri, mod_imported_names;
+        skip_context_check)
+end
+
+function collect_explicit_imports_by_module(
+        state::ServerState, uri::URI, fi::FileInfo, st0_top::SyntaxTreeC
+    )
+    mod_imported_names = Dict{Module,Dict{String,Vector{ImportInfo}}}()
+    traverse(st0_top) do st0::SyntaxTreeC
+        JS.kind(st0) ∈ JS.KSet"import using" || return nothing
+        context_module = get_context_module(state, uri, offset_to_xy(fi, JS.first_byte(st0)))
+        for (name, name_range, delete_range) in collect_explicit_import_names(st0, fi)
+            imported_names =
+                get!(Dict{String,Vector{ImportInfo}}, mod_imported_names, context_module)
+            push!(get!(Vector{ImportInfo}, imported_names, name),
+                ImportInfo(uri, name_range, delete_range))
+        end
+        return TraversalNoRecurse()
+    end
+    return mod_imported_names
 end
 
 # Returns tuples of (name, name_range, delete_range).
@@ -1611,6 +1736,10 @@ function compute_per_file_diagnostics(
     diagnostics = Diagnostic[]
     candidates = UndefGlobalCandidate[]
     skip_analysis_requiring_context = !has_analyzed_context(server.state, uri; lookup_func)
+    def_used_names = Dict{Module,DefUsedNames}()
+    explicit_imports = skip_analysis_requiring_context ?
+        Dict{Module,Dict{String,Vector{ImportInfo}}}() :
+        collect_explicit_imports_by_module(server.state, uri, file_info, st0_top)
     allow_unused_underscore = get_config(server, :diagnostic, :allow_unused_underscore)
     soft_scope = is_notebook_cell_uri(server.state, uri)
     iterate_toplevel_tree(st0_top) do st0::SyntaxTreeC
@@ -1621,8 +1750,17 @@ function compute_per_file_diagnostics(
         per_stmt_diagnostics!(diagnostics, candidates, uri, file_info, st0,
             context_module, world, analyzer, postprocessor;
             skip_analysis_requiring_context, allow_unused_underscore, soft_scope)
+        if !skip_analysis_requiring_context
+            binding_occurrences = if lookup_func === nothing
+                get_binding_occurrences!(server.state, uri, file_info, st0)
+            else
+                get_binding_occurrences!(server.state, uri, file_info, st0; lookup_func)
+            end
+            binding_occurrences !== nothing &&
+                update_def_used_names!(def_used_names, context_module, binding_occurrences)
+        end
     end
-    return PerFileDiagnosticsResult(diagnostics, candidates)
+    return PerFileDiagnosticsResult(diagnostics, candidates, def_used_names, explicit_imports)
 end
 
 # Cached accessor for the per-file `PerFileDiagnosticsResult`. The cached `diagnostics`
@@ -1631,6 +1769,25 @@ end
 # the lowering-time world + analyzer state, so the cross-file phase only needs to filter
 # them against the unit's `DefUsedNames` set. Cache misses and cancelled computations
 # both return without caching; only a fully computed result is stored.
+function get_per_file_diagnostics!(
+        server::Server, uri::URI, file_info::FileInfo, cancel_flag::CancelFlag;
+        lookup_func = nothing
+    )
+    cache_uri = canonical_cache_uri(server.state, uri)
+    return store!(server.state.per_file_diagnostics_cache) do cache::PerFileDiagnosticsCacheData
+        if haskey(cache, cache_uri)
+            return cache, cache[cache_uri]
+        end
+        st0_top = build_syntax_tree(file_info)
+        result = compute_per_file_diagnostics(
+            server, uri, file_info, st0_top, cancel_flag; lookup_func)
+        if is_cancelled(cancel_flag)
+            return cache, result
+        end
+        return PerFileDiagnosticsCacheData(cache, cache_uri => result), result
+    end
+end
+
 function get_per_file_diagnostics!(
         server::Server, uri::URI, file_info::FileInfo, st0_top::SyntaxTreeC,
         cancel_flag::CancelFlag;
@@ -1673,14 +1830,15 @@ end
 # which is memoized per-unit on `def_used_names_cache`.
 function cross_file_diagnostics!(
         diagnostics::Vector{Diagnostic}, def_used_names_cache::DefUsedNamesCache,
-        server::Server, uri::URI, file_info::FileInfo, st0_top::SyntaxTreeC,
-        per_file::PerFileDiagnosticsResult;
+        server::Server, uri::URI, per_file::PerFileDiagnosticsResult;
         skip_context_check::Bool = false # used by tests only
     )
     search_uris = collect_search_uris(server, uri)
     mod_def_used_names = compute_def_used_names!(def_used_names_cache, server, search_uris; skip_context_check)
     emit_undef_global_diagnostics!(diagnostics, per_file.undef_global_candidates, mod_def_used_names)
-    analyze_unused_imports!(diagnostics, def_used_names_cache, server, uri, file_info, st0_top; skip_context_check)
+    analyze_unused_imports!(
+        diagnostics, def_used_names_cache, server, uri, per_file.explicit_imports;
+        skip_context_check)
     return diagnostics
 end
 
@@ -1689,12 +1847,11 @@ function toplevel_lowering_diagnostics!(
         file_info::FileInfo, cancel_flag::CancelFlag=DUMMY_CANCEL_FLAG;
         lookup_func = nothing
     )
-    st0_top = build_syntax_tree(file_info)
-    cached = get_per_file_diagnostics!(server, uri, file_info, st0_top, cancel_flag; lookup_func)
+    cached = get_per_file_diagnostics!(server, uri, file_info, cancel_flag; lookup_func)
     is_cancelled(cancel_flag) && return cached.diagnostics
     diagnostics = copy(cached.diagnostics)
     if has_analyzed_context(server.state, uri; lookup_func)
-        cross_file_diagnostics!(diagnostics, def_used_names_cache, server, uri, file_info, st0_top, cached)
+        cross_file_diagnostics!(diagnostics, def_used_names_cache, server, uri, cached)
     end
     return diagnostics
 end

@@ -275,7 +275,7 @@ function _store_unsynced_file_info!(state::ServerState, uri::URI; force::Bool=fa
             JETLS_DEV_MODE && Base.showerror(stderr, e, catch_backtrace())
             return cache, nothing
         end
-        fi = FileInfo(version, parsed_stream, filename, state.encoding; cache_tree=true)
+        fi = FileInfo(version, parsed_stream, filename, state.encoding)
         return UnsyncedFileCacheData(cache, uri => fi), fi
     end
 end

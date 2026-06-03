@@ -63,42 +63,42 @@ TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
 
 [sources.JuliaSyntax]
 subdir = "vendor/JuliaSyntax"
-rev = "e2106c0ecd50136784f603123e1ca7bc0cc4c477"
+rev = "bce1aa2e7d5e99c46fd0865122aa2febb98d30e7"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.Compiler]
 subdir = "vendor/Compiler"
-rev = "e2106c0ecd50136784f603123e1ca7bc0cc4c477"
+rev = "bce1aa2e7d5e99c46fd0865122aa2febb98d30e7"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.PrecompileTools]
 subdir = "vendor/PrecompileTools"
-rev = "e2106c0ecd50136784f603123e1ca7bc0cc4c477"
+rev = "bce1aa2e7d5e99c46fd0865122aa2febb98d30e7"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.MacroTools]
 subdir = "vendor/MacroTools"
-rev = "e2106c0ecd50136784f603123e1ca7bc0cc4c477"
+rev = "bce1aa2e7d5e99c46fd0865122aa2febb98d30e7"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.LoweredCodeUtils]
 subdir = "vendor/LoweredCodeUtils"
-rev = "e2106c0ecd50136784f603123e1ca7bc0cc4c477"
+rev = "bce1aa2e7d5e99c46fd0865122aa2febb98d30e7"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.JuliaInterpreter]
 subdir = "vendor/JuliaInterpreter"
-rev = "e2106c0ecd50136784f603123e1ca7bc0cc4c477"
+rev = "bce1aa2e7d5e99c46fd0865122aa2febb98d30e7"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.Preferences]
 subdir = "vendor/Preferences"
-rev = "e2106c0ecd50136784f603123e1ca7bc0cc4c477"
+rev = "bce1aa2e7d5e99c46fd0865122aa2febb98d30e7"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.CodeTracking]
 subdir = "vendor/CodeTracking"
-rev = "e2106c0ecd50136784f603123e1ca7bc0cc4c477"
+rev = "bce1aa2e7d5e99c46fd0865122aa2febb98d30e7"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [extensions]

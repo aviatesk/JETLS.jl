@@ -1,6 +1,6 @@
 """
     compute_binding_occurrences(
-            ctx3::JL.VariableAnalysisContext, st3::SyntaxTreeC, is_generated::Bool;
+            ctx3::JL.VariableAnalysisContext, st3::SyntaxTreeC;
             include_global_bindings::Bool = false
         ) -> binding_occurrences::Dict{JL.BindingInfo,Set{BindingOccurrence}}
 
@@ -31,7 +31,7 @@ a set of `BindingOccurrence` objects that record where and how the binding appea
     variable diagnostics or comprehensive binding analysis.
 """
 function compute_binding_occurrences(
-        ctx3::JL.VariableAnalysisContext, st3::SyntaxTreeC, is_generated::Bool;
+        ctx3::JL.VariableAnalysisContext, st3::SyntaxTreeC;
         include_global_bindings::Bool = false
     )
     occurrences = Dict{JL.BindingInfo,Set{BindingOccurrence}}()
@@ -63,23 +63,7 @@ function compute_binding_occurrences(
 
     compute_binding_occurrences!(occurrences, ctx3, st3; include_global_bindings)
 
-    # In `@generated` functions, arguments are typically used only inside returned
-    # quoted expressions (`:(...)`) which appear as `inert` nodes after lowering.
-    # Scope resolution doesn't look inside `inert` nodes, so these arguments appear
-    # unused. We scan `inert` nodes for identifiers matching argument names and
-    # record them as `:use` occurrences.
-    if is_generated
-        inert_ids = collect_inert_identifiers(st3)
-        for (binfo, _) in occurrences
-            binfo.kind === :argument || continue
-            id_nodes = get(inert_ids, binfo.name, nothing)
-            if id_nodes !== nothing
-                for id_node in id_nodes
-                    push!(occurrences[binfo], BindingOccurrence(id_node, :use))
-                end
-            end
-        end
-    end
+    record_generated_inert_argument_uses!(occurrences, ctx3, st3)
 
     # Aggregate occurrences for bindings that have the same name and location.
     # JL sometimes represents bindings that are considered "identical" at the source level
@@ -131,6 +115,39 @@ function collect_inert_identifiers(st3::SyntaxTreeC)
         return true
     end
     return result
+end
+
+function enclosing_generated_range(node::SyntaxTreeC)
+    s = node
+    while true
+        ms = JS.macro_prov(s)
+        isnothing(ms) && return nothing
+        is_generated0(ms) && return JS.byte_range(ms)
+        s = ms
+    end
+end
+
+function record_generated_inert_argument_uses!(
+        occurrences::Dict{JL.BindingInfo,Set{BindingOccurrence}},
+        ctx3::JL.VariableAnalysisContext, st3::SyntaxTreeC
+    )
+    inert_ids = nothing
+    for (binfo, _) in occurrences
+        binfo.kind === :argument || continue
+        binding_ex = JL.binding_ex(ctx3, binfo.id)
+        generated_range = @something enclosing_generated_range(binding_ex) continue
+        ids = if inert_ids === nothing
+            inert_ids = collect_inert_identifiers(st3)
+        else
+            inert_ids
+        end
+        id_nodes = @something get(ids, binfo.name, nothing) continue
+        for id_node in id_nodes
+            enclosing_generated_range(id_node) == generated_range || continue
+            push!(occurrences[binfo], BindingOccurrence(id_node, :use))
+        end
+    end
+    return occurrences
 end
 
 """
@@ -319,22 +336,73 @@ function is_matching_global_binding(
 end
 
 function find_global_binding_occurrences!(
+        state::ServerState, uri::URI, fi::FileInfo, binfo::JL.BindingInfo;
+        lookup_func = gen_lookup_out_of_scope!(state, uri),
+    )
+    cached = get_cached_global_binding_occurrences(state, uri, binfo)
+    cached === nothing || return cached
+    st0_top = build_syntax_tree(fi)
+    return find_global_binding_occurrences_from_tree!(
+        state, uri, fi, st0_top, binfo; lookup_func)
+end
+
+function get_cached_global_binding_occurrences(
+        state::ServerState, uri::URI, binfo::JL.BindingInfo
+    )
+    cache_uri = canonical_cache_uri(state, uri)
+    file_cache = get(load(state.binding_occurrences_cache), cache_uri, nothing)
+    file_cache === nothing && return nothing
+    globals = @something file_cache.globals return nothing
+    return lookup_global_binding_occurrences(globals, binfo)
+end
+
+function find_global_binding_occurrences_from_tree!(
         state::ServerState, uri::URI, fi::FileInfo, st0_top::SyntaxTreeC, binfo::JL.BindingInfo;
         lookup_func = gen_lookup_out_of_scope!(state, uri),
     )
-    ret = Set{CachedBindingOccurrence}()
+    cached = get_cached_global_binding_occurrences(state, uri, binfo)
+    cached === nothing || return cached
+    globals = BindingOccurrencesResult()
     iterate_toplevel_tree(st0_top) do st0::SyntaxTreeC
         binding_occurrences = @something get_binding_occurrences!(
             state, uri, fi, st0; lookup_func) return
-        for (binfo′, occurrences) in binding_occurrences
-            if is_matching_global_binding(binfo′, binfo)
-                for occurrence in occurrences
-                    push!(ret, occurrence)
-                end
-            end
-        end
+        add_global_binding_occurrences!(globals, binding_occurrences)
+    end
+    store_global_binding_occurrences!(state, uri, globals)
+    return lookup_global_binding_occurrences(globals, binfo)
+end
+
+function lookup_global_binding_occurrences(
+        globals::BindingOccurrencesResult, binfo::JL.BindingInfo
+    )
+    ret = Set{CachedBindingOccurrence}()
+    for (binfo′, occurrences) in globals
+        is_matching_global_binding(binfo′, binfo) || continue
+        union!(ret, occurrences)
     end
     return ret
+end
+
+function add_global_binding_occurrences!(
+        globals::BindingOccurrencesResult, result::BindingOccurrencesResult
+    )
+    for (binfo, occurrences) in result
+        binfo.kind === :global || continue
+        union!(get!(Set{CachedBindingOccurrence}, globals, binfo), occurrences)
+    end
+    return globals
+end
+
+function store_global_binding_occurrences!(
+        state::ServerState, uri::URI, globals::BindingOccurrencesResult
+    )
+    cache_uri = canonical_cache_uri(state, uri)
+    store!(state.binding_occurrences_cache) do cache::BindingOccurrencesCacheData
+        file_cache = get(cache, cache_uri, nothing)
+        by_range = file_cache === nothing ? BindingOccurrencesRangeCache() : file_cache.by_range
+        new_file_cache = BindingOccurrencesCacheEntry(by_range, globals)
+        return BindingOccurrencesCacheData(cache, cache_uri => new_file_cache), nothing
+    end
 end
 
 # Cached entry point. The cache key is only the byte range — `lookup_func`
@@ -350,8 +418,8 @@ function get_binding_occurrences!(
     range_key = JS.byte_range(st0)
     return store!(state.binding_occurrences_cache) do cache::BindingOccurrencesCacheData
         file_cache = get(cache, cache_uri, nothing)
-        if file_cache !== nothing && haskey(file_cache, range_key)
-            return cache, file_cache[range_key]
+        if file_cache !== nothing && haskey(file_cache.by_range, range_key)
+            return cache, file_cache.by_range[range_key]
         end
         # Cache lowering failures as empty results so repeated calls for the same statement
         cache_result = BindingOccurrencesResult()
@@ -364,11 +432,10 @@ function get_binding_occurrences!(
                 end
             end
         end
-        if file_cache === nothing
-            file_cache = BindingOccurrencesCacheEntry(range_key => cache_result)
-        else
-            file_cache = BindingOccurrencesCacheEntry(file_cache, range_key => cache_result)
-        end
+        by_range = file_cache === nothing ?
+            BindingOccurrencesRangeCache(range_key => cache_result) :
+            BindingOccurrencesRangeCache(file_cache.by_range, range_key => cache_result)
+        file_cache = BindingOccurrencesCacheEntry(by_range, nothing)
         return BindingOccurrencesCacheData(cache, cache_uri => file_cache), cache_result
     end
 end
@@ -411,9 +478,7 @@ function compute_full_binding_occurrences(
     catch
         return nothing
     end
-    is_generated = is_generated0(st0)
-    binding_occurrences = compute_binding_occurrences(ctx3, st3, is_generated;
-        include_global_bindings = true)
+    binding_occurrences = compute_binding_occurrences(ctx3, st3; include_global_bindings=true)
 
     collect_macrocall_occurrences!(binding_occurrences, context_module, st0; soft_scope)
     # Global bindings used inside inert nodes (quoted expressions) are not

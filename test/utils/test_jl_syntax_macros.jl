@@ -36,7 +36,7 @@ children_kinds(st::JS.SyntaxTree) = JS.Kind[JS.kind(c) for c in JS.children(st)]
 # provenance" testset.
 function assert_binding_provenance(res, kind::Symbol, name::AbstractString)
     binding_occurrences = JETLS.compute_binding_occurrences(
-        res.ctx3, res.st3, false; include_global_bindings=true)
+        res.ctx3, res.st3; include_global_bindings=true)
     binfo = nothing
     for (b, _) in binding_occurrences
         if b.kind === kind && b.name == name
@@ -57,7 +57,7 @@ end
 # metadata symbols and not user references).
 function assert_no_binding(res, kind::Symbol, name::AbstractString)
     binding_occurrences = JETLS.compute_binding_occurrences(
-        res.ctx3, res.st3, false; include_global_bindings=true)
+        res.ctx3, res.st3; include_global_bindings=true)
     found = any(binding_occurrences) do (b, _)
         b.kind === kind && b.name == name
     end

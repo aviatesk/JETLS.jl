@@ -25,17 +25,23 @@ function get_lowering_diagnostics(
     st0_top = JETLS.build_syntax_tree(fi)
     diagnostics = LSP.Diagnostic[]
     candidates = JETLS.UndefGlobalCandidate[]
+    def_used_names = Dict{Module,JETLS.DefUsedNames}()
     JETLS.iterate_toplevel_tree(st0_top) do st0::JS.SyntaxTree
         JETLS.per_stmt_diagnostics!(diagnostics, candidates, uri, fi,
             st0, context_module, world, #=analyzer=#nothing, JETLS.LSPostProcessor();
             kwargs...)
+        binding_occurrences = JETLS.get_binding_occurrences!(server.state, uri, fi, st0)
+        binding_occurrences !== nothing &&
+            JETLS.update_def_used_names!(def_used_names, context_module, binding_occurrences)
     end
+    explicit_imports = JETLS.collect_explicit_imports_by_module(server.state, uri, fi, st0_top)
     # Mirror the cross-file phase. `skip_context_check=true` because the test server
     # has no populated `analysis_manager` — we want this single file to count as
     # part of its own unit anyway.
-    per_file = JETLS.PerFileDiagnosticsResult(diagnostics, candidates)
+    per_file = JETLS.PerFileDiagnosticsResult(
+        diagnostics, candidates, def_used_names, explicit_imports)
     JETLS.cross_file_diagnostics!(diagnostics, JETLS.DefUsedNamesCache(),
-        server, uri, fi, st0_top, per_file; skip_context_check=true)
+        server, uri, per_file; skip_context_check=true)
     if code !== nothing
         filter!(d -> d.code == code, diagnostics)
     end
@@ -86,16 +92,39 @@ end
         end
         """)
         @test length(code_actions) == 3
-        @test code_actions[1].title == "Prefix with '_' to indicate intentionally unused"
+        rename_actions = filter(a -> contains(a.title, "Prefix"), code_actions)
+        @test length(rename_actions) == 1
+        @test only(rename_actions).isPreferred == true
+        delete_actions = filter(a -> contains(a.title, "Delete"), code_actions)
+        @test length(delete_actions) == 2
+        @test delete_actions[1].title == "Delete assignment"
+        @test delete_actions[1].edit.changes[uri][1].newText == ""
+        @test delete_actions[1].edit.changes[uri][1].range.start == positions[1]
+        @test delete_actions[1].edit.changes[uri][1].range.var"end" == positions[2]
+        @test delete_actions[2].title == "Delete statement"
+        @test delete_actions[2].edit.changes[uri][1].newText == ""
+        @test delete_actions[2].edit.changes[uri][1].range.start == positions[1]
+        @test delete_actions[2].edit.changes[uri][1].range.var"end" == positions[3]
+    end
+
+    let (code_actions, uri, positions) = get_unused_var_code_actions("""
+        function f()
+            │y = │1│
+        end
+        """)
+        @test length(code_actions) == 3
+        @test code_actions[1].title == "Insert explicit return"
         @test code_actions[1].isPreferred == true
-        @test code_actions[2].title == "Delete assignment"
-        @test code_actions[2].edit.changes[uri][1].newText == ""
-        @test code_actions[2].edit.changes[uri][1].range.start == positions[1]
-        @test code_actions[2].edit.changes[uri][1].range.var"end" == positions[2]
-        @test code_actions[3].title == "Delete statement"
-        @test code_actions[3].edit.changes[uri][1].newText == ""
+        edit = only(code_actions[1].edit.changes[uri])
+        @test edit.range.start == positions[3]
+        @test edit.range.var"end" == positions[3]
+        @test edit.newText == "\n    return y"
+        @test code_actions[2].title == "Prefix with '_' to indicate intentionally unused"
+        @test code_actions[2].isPreferred == true
+        @test code_actions[3].title == "Delete assignment"
         @test code_actions[3].edit.changes[uri][1].range.start == positions[1]
-        @test code_actions[3].edit.changes[uri][1].range.var"end" == positions[3]
+        @test code_actions[3].edit.changes[uri][1].range.var"end" == positions[2]
+        @test !any(a -> a.title == "Delete statement", code_actions)
     end
 
     # Tuple unpacking: only rename, no delete
@@ -155,7 +184,33 @@ end
         @test delete_actions[2].edit.changes[uri][1].range.start == positions[1]
         @test delete_actions[2].edit.changes[uri][1].range.var"end" == positions[3]
         # No rename action for unused assignments
-        rename_actions = filter(a -> contains(a.title, "Prefix") || contains(a.title, "Replace"), code_actions)
+        rename_actions = filter(code_actions) do action
+            contains(action.title, "Prefix") || contains(action.title, "Replace")
+        end
+        @test isempty(rename_actions)
+    end
+
+    let (code_actions, uri, positions) = get_unused_var_code_actions("""
+        function f()
+            x = 1
+            println(x)
+            │x = │2│
+        end
+        """)
+        @test length(code_actions) == 2
+        @test code_actions[1].title == "Insert explicit return"
+        @test code_actions[1].isPreferred == true
+        edit = only(code_actions[1].edit.changes[uri])
+        @test edit.range.start == positions[3]
+        @test edit.range.var"end" == positions[3]
+        @test edit.newText == "\n    return x"
+        @test code_actions[2].title == "Delete assignment"
+        @test code_actions[2].edit.changes[uri][1].range.start == positions[1]
+        @test code_actions[2].edit.changes[uri][1].range.var"end" == positions[2]
+        @test !any(a -> a.title == "Delete statement", code_actions)
+        rename_actions = filter(code_actions) do action
+            contains(action.title, "Prefix") || contains(action.title, "Replace")
+        end
         @test isempty(rename_actions)
     end
 end

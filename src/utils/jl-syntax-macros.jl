@@ -47,6 +47,12 @@ back to re-lowering the enclosing form with macrocalls stripped — a much coars
 than the sink path.
 """
 
+struct MacroDiagnostic
+    node::SyntaxTreeC
+    msg::String
+    severity::DiagnosticSeverity.Ty
+end
+
 """
     MACRO_DIAGNOSTIC_SINK :: ScopedValue{Union{Nothing,Vector{MacroDiagnostic}}}
 
@@ -68,12 +74,6 @@ workspace diagnostic each get their own sink without cross-talk or locking.
 
 See also: [`push_macro_error!`](@ref), [`push_macro_warning!`](@ref)
 """
-struct MacroDiagnostic
-    node::SyntaxTreeC
-    msg::String
-    severity::DiagnosticSeverity.Ty
-end
-
 const MACRO_DIAGNOSTIC_SINK =
     Base.ScopedValues.ScopedValue{Union{Nothing,Vector{MacroDiagnostic}}}(nothing)
 

@@ -12,14 +12,13 @@ function copy_syntax_tree(st::SyntaxTreeC)
 end
 
 function build_syntax_tree(fi::FileInfo)
-    cached = fi.syntax_tree0
-    if isnothing(cached)
-        return JS.build_tree(JS.SyntaxTree, fi.parsed_stream; filename = fi.filename)
-    else
-        # The lowering pipeline modifies the internal state of `st0`,
-        # so we need to create a copy for each read to avoid race conditions
-        return copy_syntax_tree(cached)
+    if fi.syntax_tree0 === nothing
+        st0 = JS.build_tree(JS.SyntaxTree, fi.parsed_stream; filename=fi.filename)
+        return JS.prune(st0)
     end
+    # The lowering pipeline modifies the internal state of `st0`,
+    # so we need to create a copy for each read to avoid race conditions.
+    return copy_syntax_tree(fi.syntax_tree0)
 end
 
 @static if JL.DEBUG
@@ -190,16 +189,21 @@ function is_macrocall_st0(st0::SyntaxTreeC, names::AbstractString...; from::Unio
     JS.kind(st0) === JS.K"macrocall" || return false
     JS.numchildren(st0) >= 1 || return false
     macro_name = st0[1]
-    JS.kind(macro_name) === JS.K"Identifier" || return false
-    hasproperty(macro_name, :name_val) || return false
-    name_val = macro_name.name_val
-    name_val isa String || return false
+    name_val = if hasproperty(macro_name, :name_val)
+        macro_name.name_val
+    else
+        JS.sourcetext(macro_name)
+    end
+    name_val isa AbstractString || return false
     return name_val in names && (isnothing(from) || (JS.hasattr(macro_name, :mod) && macro_name.mod === from))
 end
 
 is_mainfunc0(st0::SyntaxTreeC) = is_macrocall_st0(st0, "@main")
 
 is_generated0(st0::SyntaxTreeC) = is_macrocall_st0(st0, "@generated")
+
+is_nospecialize_or_specialize_macrocall0(st0::SyntaxTreeC) =
+    is_macrocall_st0(st0, "@nospecialize", "@specialize")
 
 is_macro0(st0::SyntaxTreeC) = JS.kind(st0) === JS.K"macro"
 
@@ -361,19 +365,24 @@ function foreach_inert_identifier(@specialize(callback), node::SyntaxTreeC)
     return res !== false
 end
 
-function find_inert_identifier_name(st::SyntaxTreeC, offset::Integer)
-    name = Ref{Union{Nothing,String}}(nothing)
+function find_inert_identifier(st::SyntaxTreeC, offset::Integer)
+    found = Ref{Union{Nothing,SyntaxTreeC}}(nothing)
     foreach_inert_identifier(st) do id_node::SyntaxTreeC
         if offset in JS.byte_range(id_node)
-            JS.hasattr(id_node, :name_val) || return true
-            name_val = id_node.name_val
-            name_val isa AbstractString || return true
-            name[] = name_val
+            found[] = id_node
             return false
         end
         return true
     end
-    return name[]
+    return found[]
+end
+
+function find_inert_identifier_name(st::SyntaxTreeC, offset::Integer)
+    id_node = @something find_inert_identifier(st, offset) return nothing
+    JS.hasattr(id_node, :name_val) || return nothing
+    name_val = id_node.name_val
+    name_val isa AbstractString || return nothing
+    return name_val
 end
 
 function is_nospecialize_or_specialize_macrocall3(st3::SyntaxTreeC)

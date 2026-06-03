@@ -56,18 +56,27 @@ function unused_variable_code_actions!(
     for diagnostic in diagnostics
         code = diagnostic.code
         if code == LOWERING_UNUSED_ARGUMENT_CODE || code == LOWERING_UNUSED_LOCAL_CODE
+            has_return_insert = false
+            if code == LOWERING_UNUSED_LOCAL_CODE
+                has_return_insert = add_explicit_return_unused_var_code_action!(
+                    code_actions, uri, diagnostic)
+            end
             is_kwarg = let data = diagnostic.data
                 data isa UnusedArgumentData && data.is_kwarg
             end
             if !is_kwarg
-                add_rename_unused_var_code_actions!(code_actions, uri, diagnostic;
+                add_rename_unused_var_code_action!(code_actions, uri, diagnostic;
                     allow_unused_underscore)
             end
             if code == LOWERING_UNUSED_LOCAL_CODE
-                add_delete_unused_var_code_actions!(code_actions, uri, diagnostic)
+                add_delete_unused_var_code_action!(code_actions, uri, diagnostic;
+                    allow_delete_statement = !has_return_insert)
             end
         elseif code == LOWERING_UNUSED_ASSIGNMENT_CODE
-            add_delete_unused_var_code_actions!(code_actions, uri, diagnostic)
+            has_return_insert = add_explicit_return_unused_var_code_action!(
+                code_actions, uri, diagnostic)
+            add_delete_unused_var_code_action!(code_actions, uri, diagnostic;
+                allow_delete_statement = !has_return_insert)
         end
     end
     return code_actions
@@ -103,7 +112,7 @@ function delete_range_code_actions!(
 end
 
 # Add rename actions for unused bindings (both local and arguments)
-function add_rename_unused_var_code_actions!(
+function add_rename_unused_var_code_action!(
         code_actions::Vector{Union{CodeAction,Command}}, uri::URI, diagnostic::Diagnostic;
         allow_unused_underscore::Bool = true
     )
@@ -130,9 +139,31 @@ function add_rename_unused_var_code_actions!(
         edit))
 end
 
-# Add delete actions for unused local bindings (not arguments)
-function add_delete_unused_var_code_actions!(
+function add_explicit_return_unused_var_code_action!(
         code_actions::Vector{Union{CodeAction,Command}}, uri::URI, diagnostic::Diagnostic
+    )
+    data = diagnostic.data
+    if data isa UnusedVariableData && !data.is_tuple_unpacking &&
+            data.return_insert_position !== nothing && data.return_insert_text !== nothing
+        position = data.return_insert_position
+        push!(code_actions, CodeAction(;
+            title = "Insert explicit return",
+            kind = CodeActionKind.QuickFix,
+            diagnostics = Diagnostic[diagnostic],
+            isPreferred = true,
+            edit = WorkspaceEdit(;
+                changes = Dict{URI,Vector{TextEdit}}(
+                    uri => TextEdit[TextEdit(;
+                        range = Range(; start=position, var"end"=position),
+                        newText = data.return_insert_text)]))))
+        return true
+    end
+    return false
+end
+
+function add_delete_unused_var_code_action!(
+        code_actions::Vector{Union{CodeAction,Command}}, uri::URI, diagnostic::Diagnostic;
+        allow_delete_statement::Bool = true
     )
     data = diagnostic.data
     if data isa UnusedVariableData && !data.is_tuple_unpacking
@@ -147,7 +178,7 @@ function add_delete_unused_var_code_actions!(
                             range = data.lhs_eq_range,
                             newText = "")]))))
         end
-        if data.assignment_range !== nothing
+        if data.assignment_range !== nothing && allow_delete_statement
             push!(code_actions, CodeAction(;
                 title = "Delete statement",
                 kind = CodeActionKind.QuickFix,

@@ -7,7 +7,7 @@ using Test
 
 @test isempty(detect_ambiguities(Revise))
 
-using Pkg, Unicode, Distributed, InteractiveUtils, REPL, UUIDs
+using Pkg, Unicode, Distributed, InteractiveUtils, REPL, UUIDs, Dates
 import LibGit2
 using Revise.OrderedCollections: OrderedSet
 using Test: collect_test_logs
@@ -751,6 +751,41 @@ end
         rm_precompile("Issue758")
 
         pop!(LOAD_PATH)
+    end
+
+    # https://github.com/timholy/Revise.jl/issues/1033
+    do_test("Source from cache") && @testset "Source from cache" begin
+        testdir = newtestdir()
+        dn = joinpath(testdir, "CacheLookup1033", "src")
+        mkpath(dn)
+        write(joinpath(dn, "CacheLookup1033.jl"), """
+            module CacheLookup1033
+            include("sub.jl")
+            end
+            """)
+        write(joinpath(dn, "sub.jl"), "f1033() = 1")
+        sleep(mtimedelay)
+        @eval using CacheLookup1033
+        sleep(mtimedelay)
+        pkgdata = Revise.pkgdatas[Base.PkgId(CacheLookup1033)]
+        # Baseline: the source of a precompiled package is read back from its `.ji` cache.
+        for file in Revise.srcfiles(pkgdata)
+            @test occursin("1033", Revise.read_from_cache(pkgdata, file))
+        end
+        # The cache is indexed by the path recorded at precompile time. Reading it must
+        # not depend on reconstructing that path from `basedir`, which can take a
+        # different form than the cache's (e.g. across symlinks). Simulate the
+        # divergence by pointing `basedir` elsewhere; the source should still be found.
+        saved = pkgdata.info.basedir
+        pkgdata.info.basedir = joinpath(saved, "does", "not", "match")
+        try
+            for file in Revise.srcfiles(pkgdata)
+                @test occursin("1033", Revise.read_from_cache(pkgdata, file))
+            end
+        finally
+            pkgdata.info.basedir = saved
+        end
+        rm_precompile("CacheLookup1033")
     end
 
     # issue #131
@@ -2428,6 +2463,92 @@ end
         sleep(mtimedelay)
         yry()
         @test !isempty(methods(f877))
+
+        # Issue #954: methods in a statically-untaken branch must not have their
+        # signatures resolved, because the names they reference may not exist (e.g.
+        # a type behind a `VERSION`/`Sys` check). The signature walk follows control
+        # flow, so the dead branch is never visited.
+        function includet_quiet(file)
+            logfile = joinpath(tempdir(), randtmp()*".log")
+            open(logfile, "w") do io
+                redirect_stderr(io) do
+                    includet(file)
+                end
+            end
+            return read(logfile, String)
+        end
+
+        # Literal `if true`: live `then`, dead `else` references an undefined name.
+        file = joinpath(testdir, "deadbranch954.jl")
+        write(file, """
+            if true
+                f954(::Int) = 1
+            else
+                f954(::UNDEFINED_954) = 2
+            end
+            """)
+        log = includet_quiet(file)
+        @test f954(1) == 1
+        @test !any(m -> occursin("UNDEFINED_954", string(m.sig)), methods(f954))
+        @test !occursin("UNDEFINED_954", log)
+
+        # `if false`: the dead branch is now the `then` branch, live is `else`.
+        file = joinpath(testdir, "deadbranch954b.jl")
+        write(file, """
+            if false
+                g954(::UNDEFINED_954B) = 1
+            else
+                g954(::Int) = 2
+            end
+            """)
+        log = includet_quiet(file)
+        @test g954(1) == 2
+        @test !any(m -> occursin("UNDEFINED_954B", string(m.sig)), methods(g954))
+        @test !occursin("UNDEFINED_954B", log)
+
+        # Non-literal condition: the condition is evaluated and the dead branch
+        # skipped. This is the case a literal-only reachability fold cannot handle.
+        file = joinpath(testdir, "deadbranch954c.jl")
+        write(file, """
+            if Sys.WORD_SIZE == $(Sys.WORD_SIZE)
+                h954(::Int) = 1
+            else
+                h954(::UNDEFINED_954C) = 2
+            end
+            """)
+        log = includet_quiet(file)
+        @test h954(1) == 1
+        @test !any(m -> occursin("UNDEFINED_954C", string(m.sig)), methods(h954))
+        @test !occursin("UNDEFINED_954C", log)
+
+        # Code after the `if` must still be tracked (the live branch's jump to the
+        # merge point is followed).
+        file = joinpath(testdir, "deadbranch954d.jl")
+        write(file, """
+            if true
+                p954(::Int) = 1
+            else
+                p954(::UNDEFINED_954D) = 2
+            end
+            q954(::Float64) = 3
+            """)
+        log = includet_quiet(file)
+        @test p954(1) == 1
+        @test q954(1.0) == 3
+        @test !occursin("UNDEFINED_954D", log)
+
+        # A toplevel loop with no tracked body must not hang (we do not follow
+        # unconditional backedges), and methods after it are still tracked.
+        file = joinpath(testdir, "deadbranch954e.jl")
+        write(file, """
+            loop954 = Int[]
+            for i in 1:3
+                push!(loop954, i)
+            end
+            r954(::Int) = 1
+            """)
+        includet_quiet(file)
+        @test r954(1) == 1
     end
 
     do_test("Retry on InterruptException") && @testset "Retry on InterruptException" begin
@@ -2919,21 +3040,37 @@ end
     end
 
     do_test("Pkg exclusion") && @testset "Pkg exclusion" begin
-        Revise.dont_watch(:Example)
-        Revise.silence(:Example)
-        @eval import Example
-        id = Base.PkgId(Example)
-        @test !haskey(Revise.pkgdatas, id)
-        # Ensure that dont_watch/allow_watch works
-        Revise.dont_watch(:GSL)
-        @test :GSL in Revise.dont_watch_pkgs
-        Revise.allow_watch(:GSL)
-        @test !(:GSL in Revise.dont_watch_pkgs)
-        # Ensure that silencing works
-        Revise.silence(:GSL)
-        @test "GSL" in Revise.silence_pkgs
-        Revise.unsilence(:GSL)
-        @test !("GSL" in Revise.silence_pkgs)
+        # `dont_watch`/`silence` mutate global state and persist to LocalPreferences.toml;
+        # snapshot both so the testset leaves nothing behind.
+        prefs_file = joinpath(dirname(Base.active_project()), "LocalPreferences.toml")
+        prefs_backup = isfile(prefs_file) ? read(prefs_file, String) : nothing
+        dont_watch_backup = copy(Revise.dont_watch_pkgs)
+        silence_backup = copy(Revise.silence_pkgs)
+        try
+            Revise.dont_watch(:Example)
+            Revise.silence(:Example)
+            @eval import Example
+            id = Base.PkgId(Example)
+            @test !haskey(Revise.pkgdatas, id)
+            # Ensure that dont_watch/allow_watch works
+            Revise.dont_watch(:GSL)
+            @test :GSL in Revise.dont_watch_pkgs
+            Revise.allow_watch(:GSL)
+            @test !(:GSL in Revise.dont_watch_pkgs)
+            # Ensure that silencing works
+            Revise.silence(:GSL)
+            @test "GSL" in Revise.silence_pkgs
+            Revise.unsilence(:GSL)
+            @test !("GSL" in Revise.silence_pkgs)
+        finally
+            empty!(Revise.dont_watch_pkgs); union!(Revise.dont_watch_pkgs, dont_watch_backup)
+            empty!(Revise.silence_pkgs); union!(Revise.silence_pkgs, silence_backup)
+            if prefs_backup === nothing
+                rm(prefs_file; force=true)
+            else
+                write(prefs_file, prefs_backup)
+            end
+        end
         pop!(LOAD_PATH)
     end
 
@@ -3473,9 +3610,44 @@ end
         @test endswith(file, "reducedim.jl") && line > 1
     end
 
+    do_test("Prompt color #755") && @testset "Prompt color #755" begin
+        # A revision error raised while the REPL is in a non-Julia mode (e.g.
+        # shell mode) must recolor only the `julia>` prompt, and must restore it
+        # to its own original color, rather than leaking the active mode's color
+        # onto `julia>` (issue #755).
+        green = Base.text_colors[:green]
+        red = Base.text_colors[:red]
+        julia_prompt = REPL.LineEdit.Prompt("julia> "; prompt_prefix=green)
+        shell_prompt = REPL.LineEdit.Prompt("shell> "; prompt_prefix=red)
+        term = REPL.Terminals.TTYTerminal("dumb", stdin, stdout, stderr)
+        repl = REPL.LineEditREPL(term, true)
+        repl.interface = REPL.LineEdit.ModalInterface(
+            REPL.LineEdit.TextInterface[julia_prompt, shell_prompt])
+        old_prefix = Revise.original_repl_prefix[]
+        try
+            Revise.original_repl_prefix[] = nothing
+            Revise.set_prompt_color!(:warn, repl)
+            @test julia_prompt.prompt_prefix == "\e[33m"   # yellow
+            @test shell_prompt.prompt_prefix == red        # left untouched
+            Revise.set_prompt_color!(:ok, repl)
+            @test julia_prompt.prompt_prefix == green       # restored, not red
+            @test shell_prompt.prompt_prefix == red
+        finally
+            Revise.original_repl_prefix[] = old_prefix
+        end
+    end
+
     do_test("Methods at REPL") && @testset "Methods at REPL" begin
         if isdefined(Base, :active_repl) && !isnothing(Base.active_repl)
             hp = Base.active_repl.interface.modes[1].hist
+            # The element type of `hp.history` changed from `String` to
+            # `REPL.History.HistEntry` in Julia 1.14; wrap accordingly.
+            push_hist! = if isdefined(REPL, :History) && isdefined(REPL.History, :HistEntry)
+                (h, s) -> push!(h.history, REPL.History.HistEntry(
+                    :julia, Dates.now(), s, UInt32(length(h.history) + 1)))
+            else
+                (h, s) -> push!(h.history, s)
+            end
             fstr = "__fREPL__(x::Int16) = 0"
             histidx = length(hp.history) + 1 - hp.start_idx
             ex = Base.parse_input_line(fstr; filename="REPL[$histidx]")
@@ -3483,7 +3655,7 @@ end
             if ex.head === :toplevel
                 ex = ex.args[end]
             end
-            push!(hp.history, fstr)
+            push_hist!(hp, fstr)
             m = first(methods(f))
             @test !isempty(signatures_at(String(m.file), m.line))
             @test isequal(Revise.RelocatableExpr(definition(m)), Revise.RelocatableExpr(ex))
@@ -3497,7 +3669,7 @@ end
             if ex.head === :toplevel
                 ex = ex.args[end]
             end
-            push!(hp.history, fstr)
+            push_hist!(hp, fstr)
             m = first(methods(f))
             @test isequal(Revise.RelocatableExpr(definition(m)), Revise.RelocatableExpr(ex))
             @test definition(String, m)[1] == fstr
@@ -4114,7 +4286,38 @@ do_test("New files & Requires.jl") && @testset "New files & Requires.jl" begin
     pop!(LOAD_PATH)
 end
 
+do_test("revision_event autoreset") && @testset "revision_event autoreset (issue #837)" begin
+    # `revision_event` must be an autoreset `Base.Event`, so that `wait`
+    # clears the bit. Without autoreset, a `notify` fired between the time
+    # `entr`'s loop returns from `wait` and the time it would call
+    # `reset(revision_event)` is silently dropped, and the corresponding
+    # file change is not serviced until another notify happens.
+    ev = Revise.revision_event
+    @test ev isa Base.Event
+    # Drain any stale state left by earlier testsets.
+    notify(ev); wait(ev)
+    # After `wait`, the bit must be cleared: a second wait with no
+    # intervening `notify` must block. Without autoreset it would return
+    # immediately because the bit set by the previous `notify` would still
+    # be latched.
+    t = @async wait(ev)
+    @test timedwait(() -> istaskdone(t), 0.2; pollint=0.02) === :timed_out
+    notify(ev)
+    wait(t)
+end
+
 do_test("entr") && @testset "entr" begin
+    # `entr` debounces file changes: a change schedules the callback to run
+    # `pause` seconds later, and any further change before then pushes that
+    # deadline out, so a burst of changes less than `pause` apart triggers the
+    # callback exactly once. Poll for the expected state with `timedwait`
+    # rather than fixed `sleep`s, which flake on slow CI runners (#1039-#1042).
+    waitfor(pred) = timedwait(pred, event_timeout; pollint=0.02)
+
+    # A generous `pause` keeps a burst coalesced despite variable
+    # filesystem-event detection latency; a tight value flaked on Windows (#1040).
+    pause = 2.0
+
     srcfile1 = joinpath(tempdir(), randtmp()*".jl"); push!(to_remove, srcfile1)
     srcfile2 = joinpath(tempdir(), randtmp()*".jl"); push!(to_remove, srcfile2)
     revise(throw=true)   # force compilation
@@ -4127,28 +4330,40 @@ do_test("entr") && @testset "entr" begin
             @test Main.__entr__ == 0
 
             @async begin
-                entr([srcfile1, srcfile2]; pause=0.5) do
+                entr([srcfile1, srcfile2]; pause) do
                     include(srcfile1)
                 end
             end
-            sleep(1)
+            # `postpone=false` runs the callback synchronously, before `entr`
+            # arms its watch.
+            waitfor(() -> Main.__entr__ >= 1)
             @test Main.__entr__ == 1  # callback should have been run (postpone=false)
 
-            # File modification
-            write(srcfile1, "Core.eval(Main, :(__entr__ = 2))")
-            sleep(1)
+            # Drive a single modification through the watch. The watch may not
+            # be armed the instant `entr` starts (#1040, #1041), so retry the
+            # write — but space the retries more than `pause` apart so each is
+            # its own burst and the debounce is allowed to fire between them.
+            probed = timedwait(event_timeout; pollint=pause+1) do
+                Main.__entr__ >= 2 || (write(srcfile1, "Core.eval(Main, :(__entr__ = 2))"); false)
+            end
+            @test probed === :ok
+            sleep(2*pause)            # let the debounce settle
             @test Main.__entr__ == 2  # callback should have been called
 
-            # Two events in quick succession (w.r.t. the `pause` argument)
+            # A burst of changes less than `pause` apart must coalesce into a
+            # single callback. Switch `srcfile1` to an increment so a surplus
+            # callback would be visible, hammer both files, then stop and let
+            # the debounce fire.
             write(srcfile1, "Core.eval(Main, :(__entr__ += 1))")
-            sleep(0.1)
-            touch(srcfile2)
-            sleep(1)
-            @test Main.__entr__ == 3  # callback should have been called only once
-
+            for _ in 1:8
+                touch(srcfile2)
+                sleep(pause/4)
+            end
+            waitfor(() -> Main.__entr__ >= 3)
+            sleep(2*pause)            # a surplus callback would fire within ~pause
+            @test Main.__entr__ == 3  # the whole burst triggered the callback once
 
             write(srcfile1, "error(\"stop\")")
-            sleep(mtimedelay)
         end
         @test false
     catch err
@@ -4169,69 +4384,81 @@ do_test("entr") && @testset "entr" begin
     @test isempty(Revise.user_callbacks_by_file[srcfile1])
 
 
-    # Watch directories (#470)
-    try
-        @sync let
-            srcdir = joinpath(tempdir(), randtmp())
-            mkdir(srcdir)
+    # Watch directories (#470). Skipped under polling: poll mode watches a
+    # directory through its own `stat`, which does not change when a file
+    # inside it is modified in place, so the checks below cannot be detected.
+    if !Revise.polling_files[]
+        try
+            @sync let
+                srcdir = joinpath(tempdir(), randtmp())
+                mkdir(srcdir)
 
-            trigger = joinpath(srcdir, "trigger.txt")
+                trigger = joinpath(srcdir, "trigger.txt")
 
-            counter = Ref(0)
-            stop = Ref(false)
+                counter = Ref(0)
+                stop = Ref(false)
 
-            @async begin
-                entr([srcdir]; pause=0.5) do
-                    counter[] += 1
-                    stop[] && error("stop watching directory")
+                @async begin
+                    entr([srcdir]; pause) do
+                        counter[] += 1
+                        stop[] && error("stop watching directory")
+                    end
+                end
+                waitfor(() -> counter[] >= 1)
+                @test counter[] == 1               # postpone=false
+                @test length(readdir(srcdir)) == 0 # directory should still be empty
+
+                # Drive a detected change to confirm the watch is live, retrying
+                # more than `pause` apart so the debounce can fire between attempts.
+                probed = timedwait(event_timeout; pollint=pause+1) do
+                    counter[] >= 2 || (touch(trigger); false)
+                end
+                @test probed === :ok
+                sleep(2*pause)                     # let the debounce settle
+                counter[] = 0                      # watch is live now; count from a clean slate
+
+                # File modification
+                touch(trigger)
+                waitfor(() -> counter[] >= 1)
+                @test counter[] == 1
+
+                # File deletion -> the directory should be empty again
+                rm(trigger)
+                waitfor(() -> counter[] >= 2)
+                @test length(readdir(srcdir)) == 0
+                @test counter[] == 2
+
+                # A burst of changes less than `pause` apart must coalesce into a
+                # single callback.
+                for _ in 1:8
+                    touch(trigger)
+                    rm(trigger)
+                    sleep(pause/4)
+                end
+                waitfor(() -> counter[] >= 3)
+                sleep(2*pause)       # a surplus callback would fire within ~pause
+                @test counter[] == 3 # the whole burst triggered the callback once
+
+                # Stop
+                stop[] = true
+                touch(trigger)
+            end
+
+            # `entr` should have errored by now
+            @test false
+        catch err
+            while err isa CompositeException
+                err = err.exceptions[1]
+                if err isa TaskFailedException
+                    err = err.task.exception
+                end
+                if err isa CapturedException
+                    err = err.ex
                 end
             end
-            sleep(1)
-            @test length(readdir(srcdir)) == 0 # directory should still be empty
-            @test counter[] == 1               # postpone=false
-
-            # File creation
-            touch(trigger)
-            sleep(1)
-            @test counter[] == 2
-
-            # File modification
-            touch(trigger)
-            sleep(1)
-            @test counter[] == 3
-
-            # File deletion -> the directory should be empty again
-            rm(trigger)
-            sleep(1)
-            @test length(readdir(srcdir)) == 0
-            @test counter[] == 4
-
-            # Two events in quick succession (w.r.t. the `pause` argument)
-            touch(trigger)       # creation
-            sleep(0.1)
-            touch(trigger)       # modification
-            sleep(1)
-            @test counter[] == 5 # Callback should have been called only once
-
-            # Stop
-            stop[] = true
-            touch(trigger)
+            @test isa(err, ErrorException)
+            @test err.msg == "stop watching directory"
         end
-
-        # `entr` should have errored by now
-        @test false
-    catch err
-        while err isa CompositeException
-            err = err.exceptions[1]
-            if err isa TaskFailedException
-                err = err.task.exception
-            end
-            if err isa CapturedException
-                err = err.ex
-            end
-        end
-        @test isa(err, ErrorException)
-        @test err.msg == "stop watching directory"
     end
 end
 
@@ -4552,6 +4779,73 @@ end
 
 do_test("Import in empty environment (issue #532)") && @testset "Import in empty environment (issue #532)" begin
     load_in_empty_project_test();
+end
+
+# Issue #961: when an indirect dep has no precompile cache and Julia is started
+# with `--compiled-modules=existing`, the dep is loaded via
+# `include(Base.__toplevel__, path)`. Revise's `queue_includes!` must not rewrite
+# `__toplevel__` to `Main`, or `ExprSplitter` synthesizes an empty `Main.<PkgName>`
+# stub instead of resolving to the real loaded module.
+function empty_main_stub_test_961()
+    foo_uuid = "11111111-2222-3333-4444-555555555555"
+    bar_uuid = "66666666-7777-8888-9999-aaaaaaaaaaaa"
+    sandbox = mktempdir()
+    push!(to_remove, sandbox)
+    foo = joinpath(sandbox, "Foo961")
+    bar = joinpath(sandbox, "Bar961")
+    proj = joinpath(sandbox, "active"); mkpath(proj)
+    mkpath(joinpath(foo, "src")); mkpath(joinpath(bar, "src"))
+    write(joinpath(foo, "Project.toml"),
+        "name = \"Foo961\"\nuuid = \"$foo_uuid\"\nversion = \"0.1.0\"\n")
+    write(joinpath(foo, "src", "Foo961.jl"),
+        "module Foo961\ngreet() = \"hi\"\nend\n")
+    write(joinpath(bar, "Project.toml"),
+        "name = \"Bar961\"\nuuid = \"$bar_uuid\"\nversion = \"0.1.0\"\n[deps]\nFoo961 = \"$foo_uuid\"\n")
+    write(joinpath(bar, "src", "Bar961.jl"),
+        "module Bar961\nusing Foo961\nend\n")
+
+    julia = Base.julia_cmd()
+    # The Revise being tested must be the one at this checkout, not whatever
+    # version `@v#.#` happens to have installed.
+    revise_dir = normpath(joinpath(dirname(pathof(Revise)), ".."))
+
+    # Set up `proj` with Bar961 as a *direct* dep and Foo961 only as a
+    # transitive dep (so Main's environment cannot see Foo961 by name).
+    # Loading Bar961 here precompiles both packages.
+    setup = """
+        import Pkg
+        Pkg.activate($(repr(proj)))
+        Pkg.develop([Pkg.PackageSpec(path=$(repr(bar))),
+                     Pkg.PackageSpec(path=$(repr(foo))),
+                     Pkg.PackageSpec(path=$(repr(revise_dir)))])
+        Pkg.rm("Foo961")
+        using Bar961
+    """
+    @test success(pipeline(`$julia --project=$proj -e $setup`, stderr=stderr))
+
+    # Force Foo961 to load from source on the next launch.
+    vdir = "v" * string(VERSION.major) * "." * string(VERSION.minor)
+    for depot in DEPOT_PATH
+        d = joinpath(depot, "compiled", vdir, "Foo961")
+        isdir(d) && rm(d; recursive=true, force=true)
+    end
+
+    # With the bug, `Main.Foo961` is created as an empty stub during Revise's
+    # parsing pass over the non-precompiled Foo961 source.
+    check = """
+        import Revise
+        import Bar961
+        print(isdefined(Main, :Foo961))
+    """
+    out = read(`$julia --project=$proj --compiled-modules=existing -e $check`, String)
+    @test out == "false"
+end
+
+do_test("Empty Main.<Pkg> stub (issue #961)") && if VERSION >= v"1.11"
+    # `--compiled-modules=existing` was added in Julia 1.11.
+    @testset "Empty Main.<Pkg> stub (issue #961)" begin
+        empty_main_stub_test_961()
+    end
 end
 
 include("backedges.jl")

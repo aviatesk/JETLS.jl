@@ -1,5 +1,5 @@
 # Sort for dicts
-import Base: sort, sort!
+import Base: sort, sort!, issorted
 
 function sort!(d::OrderedDict; byvalue::Bool=false, args...)
     if d.ndel > 0
@@ -55,3 +55,10 @@ function sort(d::LittleDict; byvalue::Bool=false, args...)
     return LittleDict(d.keys[p], d.vals[p])
 end
 
+function issorted(d::LittleDict; byvalue::Bool=false, args...)
+    if byvalue
+        return issorted(d.vals; args...)
+    else
+        return issorted(d.keys; args...)
+    end
+end

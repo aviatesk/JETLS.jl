@@ -26,17 +26,23 @@ function get_lowering_diagnostics(
     @assert JS.kind(st0_top) === JS.K"toplevel"
     diagnostics = LSP.Diagnostic[]
     candidates = JETLS.UndefGlobalCandidate[]
+    def_used_names = Dict{Module,JETLS.DefUsedNames}()
     JETLS.iterate_toplevel_tree(st0_top) do st0::JS.SyntaxTree
         JETLS.per_stmt_diagnostics!(diagnostics, candidates, uri, fi,
             st0, context_module, world, #=analyzer=#nothing, JETLS.LSPostProcessor();
             kwargs...)
+        binding_occurrences = JETLS.get_binding_occurrences!(server.state, uri, fi, st0)
+        binding_occurrences !== nothing &&
+            JETLS.update_def_used_names!(def_used_names, context_module, binding_occurrences)
     end
+    explicit_imports = JETLS.collect_explicit_imports_by_module(server.state, uri, fi, st0_top)
     # Mirror the cross-file phase. `skip_context_check=true` because the test server
     # has no populated `analysis_manager` — we want this single file to count as
     # part of its own unit anyway.
-    per_file = JETLS.PerFileDiagnosticsResult(diagnostics, candidates)
+    per_file = JETLS.PerFileDiagnosticsResult(
+        diagnostics, candidates, def_used_names, explicit_imports)
     JETLS.cross_file_diagnostics!(diagnostics, JETLS.DefUsedNamesCache(),
-        server, uri, fi, st0_top, per_file; skip_context_check=true)
+        server, uri, per_file; skip_context_check=true)
     if code !== nothing
         filter!(d -> d.code == code, diagnostics)
     end
@@ -96,6 +102,19 @@ module EmptyModule end
         @test diagnostic.message == "Unused local binding `y`"
         @test diagnostic.range.start.line == 1
         @test diagnostic.range.var"end".line == 1
+    end
+
+    let diagnostics = get_lowering_diagnostics("""
+        function foo(x)
+            str = "(\$x)"
+        end
+        """)
+        @test length(diagnostics) == 1
+        diagnostic = only(diagnostics)
+        @test diagnostic.code == JETLS.LOWERING_UNUSED_LOCAL_CODE
+        @test diagnostic.message ==
+            "Local binding `str` is not read; consider `return str` to return it explicitly"
+        @test diagnostic.severity == DiagnosticSeverity.Information
     end
 
     let diagnostics = get_lowering_diagnostics("""
@@ -398,6 +417,16 @@ module EmptyModule end
             diagnostic = only(diagnostics)
             @test diagnostic.message == "Unused argument `override`"
             @test diagnostic.range.start.line == 2
+        end
+        let diagnostics = get_lowering_diagnostics("""
+            struct Test722
+                x::Int
+                @generated function Test722(x)
+                    return Expr(:new, :(Test722), :x)
+                end
+            end
+            """)
+            @test isempty(diagnostics)
         end
     end
 
@@ -956,7 +985,8 @@ end
                 d -> d.code == JETLS.LOWERING_UNUSED_ASSIGNMENT_CODE,
                 diagnostics)]
             @test dead_store_diag.severity == DiagnosticSeverity.Information
-            @test dead_store_diag.message == "Value assigned to `y` is never used"
+            @test dead_store_diag.message ==
+                "Value assigned to `y` is returned implicitly; consider `return y` to return the binding explicitly"
             @test dead_store_diag.range.start.line == 2
         end
     end
@@ -1167,7 +1197,8 @@ end
             diagnostic = only(diagnostics)
             @test diagnostic.code == JETLS.LOWERING_UNUSED_ASSIGNMENT_CODE
             @test diagnostic.severity == DiagnosticSeverity.Information
-            @test diagnostic.message == "Value assigned to `z` is never used"
+            @test diagnostic.message ==
+                "Value assigned to `z` is returned implicitly; consider `return z` to return the binding explicitly"
             @test diagnostic.range.start.line == 6
         end
     end
@@ -1232,6 +1263,26 @@ end
             diagnostic = only(diagnostics)
             @test diagnostic.message == "Value assigned to `z` is never used"
             @test diagnostic.range.start.line == 3
+        end
+    end
+
+    @testset "tail assignment value returned" begin
+        let diagnostics = get_lowering_diagnostics("""
+            function f(xs)
+                str = "("
+                for x in xs
+                    str *= x
+                    str *= ","
+                end
+                str *= ")"
+            end
+            """; code=JETLS.LOWERING_UNUSED_ASSIGNMENT_CODE)
+            @test length(diagnostics) == 1
+            diagnostic = only(diagnostics)
+            @test diagnostic.message ==
+                "Value assigned to `str` is returned implicitly; consider `return str` to return the binding explicitly"
+            @test diagnostic.severity == DiagnosticSeverity.Information
+            @test diagnostic.range.start.line == 6
         end
     end
 
