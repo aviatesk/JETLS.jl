@@ -59,6 +59,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Improved performance of type-aware features on open files. Repeated hover, definition, type definition, signature help, and completion requests in the same top-level expression can now reuse prior analysis results instead of rerunning inference each time.
 
+- Improved unused-variable diagnostic message for assignments returned from tail position.
+  For both `lowering/unused-local` and `lowering/unused-assignment`, JETLS now explains when Julia is implicitly returning the assignment expression's value, suggests `return name` when the binding itself should be returned, and offers an "Insert explicit return" quick fix for simple tail assignments. (Closed https://github.com/aviatesk/JETLS.jl/issues/723)
+
 ### Fixed
 
 - Fixed false `lowering/unused-argument` reports — and missed argument occurrences for find-references / document-highlight / rename — on `@generated` functions nested inside another construct (e.g. as an inner constructor in a `struct` body). (Closed https://github.com/aviatesk/JETLS.jl/issues/722)
