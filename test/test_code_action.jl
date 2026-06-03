@@ -155,8 +155,27 @@ end
         @test delete_actions[2].edit.changes[uri][1].range.start == positions[1]
         @test delete_actions[2].edit.changes[uri][1].range.var"end" == positions[3]
         # No rename action for unused assignments
-        rename_actions = filter(a -> contains(a.title, "Prefix") || contains(a.title, "Replace"), code_actions)
+        rename_actions = filter(code_actions) do action
+            contains(action.title, "Prefix") || contains(action.title, "Replace")
+        end
         @test isempty(rename_actions)
+    end
+
+    let (code_actions, uri, positions) = get_unused_var_code_actions("""
+        function f()
+            x = 1
+            println(x)
+            x = 2│
+        end
+        """)
+        return_actions = filter(a -> a.title == "Insert explicit return", code_actions)
+        @test length(return_actions) == 1
+        action = only(return_actions)
+        @test action.isPreferred == true
+        edit = only(action.edit.changes[uri])
+        @test edit.range.start == positions[1]
+        @test edit.range.var"end" == positions[1]
+        @test edit.newText == "\n    return x"
     end
 end
 

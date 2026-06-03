@@ -136,6 +136,19 @@ function add_delete_unused_var_code_actions!(
     )
     data = diagnostic.data
     if data isa UnusedVariableData && !data.is_tuple_unpacking
+        if data.return_insert_position !== nothing && data.return_insert_text !== nothing
+            position = data.return_insert_position
+            push!(code_actions, CodeAction(;
+                title = "Insert explicit return",
+                kind = CodeActionKind.QuickFix,
+                diagnostics = Diagnostic[diagnostic],
+                isPreferred = true,
+                edit = WorkspaceEdit(;
+                    changes = Dict{URI,Vector{TextEdit}}(
+                        uri => TextEdit[TextEdit(;
+                            range = Range(; start=position, var"end"=position),
+                            newText = data.return_insert_text)]))))
+        end
         if data.lhs_eq_range !== nothing
             push!(code_actions, CodeAction(;
                 title = "Delete assignment",
