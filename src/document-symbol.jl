@@ -1270,7 +1270,7 @@ function extract_local_variable_detail(
         if !isnothing(grandparent) && JS.kind(grandparent) === JS.K"for"
             detail = "for " * lstrip(JS.sourcetext(parent))
         else
-            detail = strip(first(split(JS.sourcetext(parent), '\n')))
+            detail = first(split(strip(JS.sourcetext(parent)), '\n'))
         end
         parent = grandparent
     end

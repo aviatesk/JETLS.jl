@@ -145,6 +145,9 @@ function flatten_document_symbols!(
     flatten_document_symbols!(workspace_symbols, doc_symbols, uri, notebook_info)
 end
 
+workspace_symbol_container_name(container_name::Union{Nothing,String}) =
+    isempty(@something container_name return nothing) ? nothing : container_name
+
 function flatten_document_symbols!(
         workspace_symbols::Vector{WorkspaceSymbol}, doc_symbols::Vector{DocumentSymbol},
         uri::URI, notebook_info::Union{Nothing,NotebookInfo};
@@ -164,7 +167,7 @@ function flatten_document_symbols!(
                 name = doc_sym.name,
                 kind = doc_sym.kind,
                 location,
-                containerName = parent_detail))
+                containerName = workspace_symbol_container_name(parent_detail)))
         elseif doc_sym.kind == SymbolKind.Namespace
             # Namespace symbols (if/let/for/while/@static if blocks) are introduced for
             # hierarchical structure in document outline, not representing actual definitions.
@@ -176,7 +179,7 @@ function flatten_document_symbols!(
                 name = doc_sym.name,
                 kind = doc_sym.kind,
                 location,
-                containerName = doc_sym.detail))
+                containerName = workspace_symbol_container_name(doc_sym.detail)))
         end
         children = doc_sym.children
         if children !== nothing
