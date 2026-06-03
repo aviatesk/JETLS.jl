@@ -40,6 +40,12 @@ function minimal_evaluation(predicate, src::Core.CodeInfo, edges::CodeEdges; kwa
     return isrequired
 end
 
+# Recognize the default-constructor call emitted when lowering a struct definition.
+# `_defaultctors` lived in `Core` through 1.12 but moved to `Base` (JuliaLang/julia, see
+# base/essentials.jl), so accept either home.
+is_defaultctors_call(@nospecialize stmt) = Meta.isexpr(stmt, :call) &&
+    (is_global_ref(stmt.args[1], Base, :_defaultctors) || is_global_ref(stmt.args[1], Core, :_defaultctors))
+
 function allmissing(mod::Module, names)
     for name in names
         isdefined(mod, name) && return false
@@ -245,7 +251,7 @@ module ModSelective end
     isrequired = minimal_evaluation(src, edges) do @nospecialize stmt
         # initially mark only the constructor
         @static if VERSION ≥ v"1.12-"
-            return (Meta.isexpr(stmt, :call) && stmt.args[1] == GlobalRef(Core, :_defaultctors), false)
+            return (is_defaultctors_call(stmt), false)
         else
             return (LoweredCodeUtils.ismethod_with_name(src, stmt, "NoParam"), false)
         end
@@ -267,7 +273,7 @@ module ModSelective end
     isrequired = minimal_evaluation(src, edges) do @nospecialize stmt
         # initially mark only the constructor
         @static if VERSION ≥ v"1.12-"
-            return (Meta.isexpr(stmt, :call) && stmt.args[1] == GlobalRef(Core, :_defaultctors), false)
+            return (is_defaultctors_call(stmt), false)
         else
             return (LoweredCodeUtils.ismethod_with_name(src, stmt, "Struct"), false)
         end

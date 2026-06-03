@@ -196,7 +196,7 @@ end
 
 ######## Methods that all mutable AbstractDict's should implement
 
-function Base.sizehint!(dd::UnfrozenLittleDict, sz)
+function Base.sizehint!(dd::UnfrozenLittleDict, sz::Integer)
     sizehint!(dd.keys, sz)
     sizehint!(dd.vals,sz)
     return dd

@@ -212,7 +212,7 @@ function rehash!(h::OrderedDict{K,V}, newsz::Integer = length(h.slots)) where {K
     return h
 end
 
-function sizehint!(d::OrderedDict, newsz)
+function sizehint!(d::OrderedDict, newsz::Integer)
     slotsz = (newsz*3)>>1
     oldsz = length(d.slots)
     if slotsz <= oldsz
@@ -451,28 +451,28 @@ function delete!(h::OrderedDict, key)
     return h
 end
 
-function iterate(t::OrderedDict)
+function iterate(t::OrderedDict{K,V}) where {K,V}
     t.ndel > 0 && rehash!(t)
     length(t.keys) < 1 && return nothing
-    return (Pair(t.keys[1], t.vals[1]), 2)
+    @inbounds return (Pair{K,V}(t.keys[1], t.vals[1]), 2)
 end
-function iterate(t::OrderedDict, i)
+function iterate(t::OrderedDict{K,V}, i) where {K,V}
     length(t.keys) < i && return nothing
-    return (Pair(t.keys[i], t.vals[i]), i+1)
+    @inbounds return (Pair{K,V}(t.keys[i], t.vals[i]), i+1)
 end
 
 # lazy reverse iteration
-function iterate(rt::Iterators.Reverse{<:OrderedDict})
+function iterate(rt::Iterators.Reverse{<:OrderedDict{K,V}}) where {K,V}
     t = rt.itr
     t.ndel > 0 && rehash!(t)
     n = length(t.keys)
     n < 1 && return nothing
-    return (Pair(t.keys[n], t.vals[n]), n - 1)
+    @inbounds return (Pair{K,V}(t.keys[n], t.vals[n]), n - 1)
 end
-function iterate(rt::Iterators.Reverse{<:OrderedDict}, i)
+function iterate(rt::Iterators.Reverse{<:OrderedDict{K,V}}, i) where {K,V}
     t = rt.itr
     i < 1 && return nothing
-    return (Pair(t.keys[i], t.vals[i]), i - 1)
+    @inbounds return (Pair{K,V}(t.keys[i], t.vals[i]), i - 1)
 end
 
 

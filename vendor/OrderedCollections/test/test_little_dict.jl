@@ -508,7 +508,9 @@ using OrderedCollections: FrozenLittleDict, UnfrozenLittleDict
         @test collect(values(sd)) == collect('z':-1:'q')
         @test sort(sd) == sd
 
+        @test !issorted(d; byvalue=true)
         sdv = sort(d; byvalue=true)
+        @test issorted(sdv; byvalue=true)
         @test collect(keys(d)) == ks    # verify d is not changed by sort()
         @test collect(keys(sdv)) == 10:-1:1
         @test collect(values(sdv)) == collect('q':'z')
