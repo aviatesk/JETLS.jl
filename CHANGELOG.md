@@ -64,9 +64,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Updated JuliaSyntax.jl and JuliaLowering.jl dependency versions to latest.
 
-- Improved responsiveness for repeated requests against the same document version. After an edit, follow-up features such as diagnostics, document links, document highlights, semantic tokens, code actions, hover, definition, and document symbols now reuse the current file's prepared syntax tree instead of rebuilding it for each request.
+- Improved responsiveness for repeated requests against the same document version. After an edit, follow-up LSP features such as diagnostics, document highlights, code actions, hover, definition etc. now reuse the current file's prepared syntax tree instead of rebuilding it for each request.
 
-- Improved performance of type-aware features on open files. Repeated hover, definition, type definition, signature help, and completion requests in the same top-level expression can now reuse prior analysis results instead of rerunning inference each time.
+- Improved performance of type-aware features on open files. Repeated hover, definition, declaration and type definition requests in the same top-level expression can now reuse prior analysis results instead of rerunning inference each time.
 
 - Improved unused-variable diagnostic message for assignments returned from tail position.
   For both `lowering/unused-local` and `lowering/unused-assignment`, JETLS now explains when Julia is implicitly returning the assignment expression's value, suggests `return name` when the binding itself should be returned, and offers an "Insert explicit return" quick fix for simple tail assignments. (Closed https://github.com/aviatesk/JETLS.jl/issues/723)
