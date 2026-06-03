@@ -744,7 +744,7 @@ end
 
 function unused_assignment_message(bn::String, tail_kind::Symbol)
     if tail_kind !== :none
-        return "Value assigned to `$bn` is returned directly; consider `return $bn` to return the binding explicitly"
+        return "Value assigned to `$bn` is returned implicitly; consider `return $bn` to return the binding explicitly"
     end
     return "Value assigned to `$bn` is never used"
 end

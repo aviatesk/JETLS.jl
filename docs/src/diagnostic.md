@@ -612,7 +612,7 @@ end
 ```
 
 When the unused assignment expression is returned from tail position, the
-diagnostic explains that the value is returned directly. For example, the
+diagnostic explains that the value is returned implicitly. For example, the
 final assignment below returns the assignment expression's value, but the
 binding `s` itself is not read after that assignment:
 

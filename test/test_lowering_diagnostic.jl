@@ -980,7 +980,7 @@ end
                 diagnostics)]
             @test dead_store_diag.severity == DiagnosticSeverity.Information
             @test dead_store_diag.message ==
-                "Value assigned to `y` is returned directly; consider `return y` to return the binding explicitly"
+                "Value assigned to `y` is returned implicitly; consider `return y` to return the binding explicitly"
             @test dead_store_diag.range.start.line == 2
         end
     end
@@ -1192,7 +1192,7 @@ end
             @test diagnostic.code == JETLS.LOWERING_UNUSED_ASSIGNMENT_CODE
             @test diagnostic.severity == DiagnosticSeverity.Information
             @test diagnostic.message ==
-                "Value assigned to `z` is returned directly; consider `return z` to return the binding explicitly"
+                "Value assigned to `z` is returned implicitly; consider `return z` to return the binding explicitly"
             @test diagnostic.range.start.line == 6
         end
     end
@@ -1274,7 +1274,7 @@ end
             @test length(diagnostics) == 1
             diagnostic = only(diagnostics)
             @test diagnostic.message ==
-                "Value assigned to `str` is returned directly; consider `return str` to return the binding explicitly"
+                "Value assigned to `str` is returned implicitly; consider `return str` to return the binding explicitly"
             @test diagnostic.severity == DiagnosticSeverity.Information
             @test diagnostic.range.start.line == 6
         end
