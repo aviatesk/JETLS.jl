@@ -860,11 +860,6 @@ function analyze_unused_assignments!(
     end
 end
 
-struct DefUsedNames
-    def::Set{String}
-    used::Set{String}
-    DefUsedNames() = new(Set{String}(), Set{String}())
-end
 const DefUsedNamesCacheData = Base.PersistentDict{UInt,Dict{Module,DefUsedNames}}
 const DefUsedNamesCache = LWContainer{DefUsedNamesCacheData, LWStats}
 
@@ -1517,12 +1512,6 @@ function per_stmt_diagnostics!(
         skip_analysis_requiring_context, allow_unused_underscore, allow_noreturn_optimization)
 end
 
-struct ImportInfo
-    uri::URI
-    name_range::Range
-    delete_range::Range
-end
-
 function compute_unit_def_used_names(
         server::Server, search_uris::Set{URI};
         skip_context_check::Bool = false # used by tests only
@@ -1536,22 +1525,47 @@ function compute_unit_def_used_names(
         end begin
             get_unsynced_file_info!(state, search_uri)
         end continue
+        cached = get(load(state.per_file_diagnostics_cache),
+            canonical_cache_uri(state, search_uri), nothing)
+        if cached !== nothing
+            merge_def_used_names!(mod_def_used_names, cached.def_used_names)
+            continue
+        end
         search_st0_top = build_syntax_tree(search_fi)
 
         iterate_toplevel_tree(search_st0_top) do st0::SyntaxTreeC
             binding_occurrences = @something get_binding_occurrences!(
                 state, search_uri, search_fi, st0) return
             context_module = get_context_module(state, search_uri, offset_to_xy(search_fi, JS.first_byte(st0)))
-            for (binfo_key, occurrences) in binding_occurrences
-                binfo_key.kind === :global || continue
-                if any(o -> o.kind === :use, occurrences)
-                    def_used_names = get!(DefUsedNames, mod_def_used_names, context_module)
-                    push!(def_used_names.used, binfo_key.name)
-                elseif any(o -> o.kind === :def, occurrences)
-                    def_used_names = get!(DefUsedNames, mod_def_used_names, context_module)
-                    push!(def_used_names.def, binfo_key.name)
-                end
-            end
+            update_def_used_names!(mod_def_used_names, context_module, binding_occurrences)
+        end
+    end
+    return mod_def_used_names
+end
+
+function merge_def_used_names!(
+        dst::Dict{Module,DefUsedNames}, src::Dict{Module,DefUsedNames}
+    )
+    for (context_module, names) in src
+        dst_names = get!(DefUsedNames, dst, context_module)
+        union!(dst_names.def, names.def)
+        union!(dst_names.used, names.used)
+    end
+    return dst
+end
+
+function update_def_used_names!(
+        mod_def_used_names::Dict{Module,DefUsedNames}, context_module::Module,
+        binding_occurrences::BindingOccurrencesResult
+    )
+    for (binfo_key, occurrences) in binding_occurrences
+        binfo_key.kind === :global || continue
+        if any(o -> o.kind === :use, occurrences)
+            def_used_names = get!(DefUsedNames, mod_def_used_names, context_module)
+            push!(def_used_names.used, binfo_key.name)
+        elseif any(o -> o.kind === :def, occurrences)
+            def_used_names = get!(DefUsedNames, mod_def_used_names, context_module)
+            push!(def_used_names.def, binfo_key.name)
         end
     end
     return mod_def_used_names
@@ -1580,7 +1594,7 @@ end
 # Detects unused imports by scanning all workspace files for usages of imported names.
 # This analysis can be slow if implemented naively, but achieves practical performance through:
 # - Early return for files without import/using statements (~1ms depending on file size)
-# - Syntax tree caching for unsynced files (see `FileInfo.syntax_tree0`)
+# - Per-file diagnostic summaries for cached files
 # - Binding occurrences caching (see `BindingOccurrencesCache`)
 # - Per-unit used-name memoization via `used_names_cache`, which lets a single
 #   `workspace/diagnostic` pull reuse the expensive `mod_used_names` aggregation
@@ -1588,20 +1602,10 @@ end
 # - Unchanged file skipping in workspace/diagnostic
 function analyze_unused_imports!(
         diagnostics::Vector{Diagnostic}, def_used_names_cache::DefUsedNamesCache,
-        server::Server, uri::URI, fi::FileInfo, st0_top::SyntaxTreeC;
+        server::Server, uri::URI,
+        mod_imported_names::Dict{Module,Dict{String,Vector{ImportInfo}}};
         skip_context_check::Bool = false # used by tests only
     )
-    state = server.state
-    mod_imported_names = Dict{Module,Dict{String,Vector{ImportInfo}}}()
-    traverse(st0_top) do st0::SyntaxTreeC
-        JS.kind(st0) ∈ JS.KSet"import using" || return nothing
-        context_module = get_context_module(state, uri, offset_to_xy(fi, JS.first_byte(st0)))
-        for (name, name_range, delete_range) in collect_explicit_import_names(st0, fi)
-            imported_names = get!(Dict{String,Vector{ImportInfo}}, mod_imported_names, context_module)
-            push!(get!(Vector{ImportInfo}, imported_names, name), ImportInfo(uri, name_range, delete_range))
-        end
-        return TraversalNoRecurse()
-    end
     isempty(mod_imported_names) && return diagnostics
 
     search_uris = collect_search_uris(server, uri)
@@ -1626,6 +1630,35 @@ function analyze_unused_imports!(
     end
 
     return diagnostics
+end
+
+function analyze_unused_imports!(
+        diagnostics::Vector{Diagnostic}, def_used_names_cache::DefUsedNamesCache,
+        server::Server, uri::URI, fi::FileInfo, st0_top::SyntaxTreeC;
+        skip_context_check::Bool = false # used by tests only
+    )
+    mod_imported_names = collect_explicit_imports_by_module(server.state, uri, fi, st0_top)
+    return analyze_unused_imports!(
+        diagnostics, def_used_names_cache, server, uri, mod_imported_names;
+        skip_context_check)
+end
+
+function collect_explicit_imports_by_module(
+        state::ServerState, uri::URI, fi::FileInfo, st0_top::SyntaxTreeC
+    )
+    mod_imported_names = Dict{Module,Dict{String,Vector{ImportInfo}}}()
+    traverse(st0_top) do st0::SyntaxTreeC
+        JS.kind(st0) ∈ JS.KSet"import using" || return nothing
+        context_module = get_context_module(state, uri, offset_to_xy(fi, JS.first_byte(st0)))
+        for (name, name_range, delete_range) in collect_explicit_import_names(st0, fi)
+            imported_names =
+                get!(Dict{String,Vector{ImportInfo}}, mod_imported_names, context_module)
+            push!(get!(Vector{ImportInfo}, imported_names, name),
+                ImportInfo(uri, name_range, delete_range))
+        end
+        return TraversalNoRecurse()
+    end
+    return mod_imported_names
 end
 
 # Returns tuples of (name, name_range, delete_range).
@@ -1703,6 +1736,10 @@ function compute_per_file_diagnostics(
     diagnostics = Diagnostic[]
     candidates = UndefGlobalCandidate[]
     skip_analysis_requiring_context = !has_analyzed_context(server.state, uri; lookup_func)
+    def_used_names = Dict{Module,DefUsedNames}()
+    explicit_imports = skip_analysis_requiring_context ?
+        Dict{Module,Dict{String,Vector{ImportInfo}}}() :
+        collect_explicit_imports_by_module(server.state, uri, file_info, st0_top)
     allow_unused_underscore = get_config(server, :diagnostic, :allow_unused_underscore)
     soft_scope = is_notebook_cell_uri(server.state, uri)
     iterate_toplevel_tree(st0_top) do st0::SyntaxTreeC
@@ -1713,8 +1750,17 @@ function compute_per_file_diagnostics(
         per_stmt_diagnostics!(diagnostics, candidates, uri, file_info, st0,
             context_module, world, analyzer, postprocessor;
             skip_analysis_requiring_context, allow_unused_underscore, soft_scope)
+        if !skip_analysis_requiring_context
+            binding_occurrences = if lookup_func === nothing
+                get_binding_occurrences!(server.state, uri, file_info, st0)
+            else
+                get_binding_occurrences!(server.state, uri, file_info, st0; lookup_func)
+            end
+            binding_occurrences !== nothing &&
+                update_def_used_names!(def_used_names, context_module, binding_occurrences)
+        end
     end
-    return PerFileDiagnosticsResult(diagnostics, candidates)
+    return PerFileDiagnosticsResult(diagnostics, candidates, def_used_names, explicit_imports)
 end
 
 # Cached accessor for the per-file `PerFileDiagnosticsResult`. The cached `diagnostics`
@@ -1723,6 +1769,25 @@ end
 # the lowering-time world + analyzer state, so the cross-file phase only needs to filter
 # them against the unit's `DefUsedNames` set. Cache misses and cancelled computations
 # both return without caching; only a fully computed result is stored.
+function get_per_file_diagnostics!(
+        server::Server, uri::URI, file_info::FileInfo, cancel_flag::CancelFlag;
+        lookup_func = nothing
+    )
+    cache_uri = canonical_cache_uri(server.state, uri)
+    return store!(server.state.per_file_diagnostics_cache) do cache::PerFileDiagnosticsCacheData
+        if haskey(cache, cache_uri)
+            return cache, cache[cache_uri]
+        end
+        st0_top = build_syntax_tree(file_info)
+        result = compute_per_file_diagnostics(
+            server, uri, file_info, st0_top, cancel_flag; lookup_func)
+        if is_cancelled(cancel_flag)
+            return cache, result
+        end
+        return PerFileDiagnosticsCacheData(cache, cache_uri => result), result
+    end
+end
+
 function get_per_file_diagnostics!(
         server::Server, uri::URI, file_info::FileInfo, st0_top::SyntaxTreeC,
         cancel_flag::CancelFlag;
@@ -1765,14 +1830,15 @@ end
 # which is memoized per-unit on `def_used_names_cache`.
 function cross_file_diagnostics!(
         diagnostics::Vector{Diagnostic}, def_used_names_cache::DefUsedNamesCache,
-        server::Server, uri::URI, file_info::FileInfo, st0_top::SyntaxTreeC,
-        per_file::PerFileDiagnosticsResult;
+        server::Server, uri::URI, per_file::PerFileDiagnosticsResult;
         skip_context_check::Bool = false # used by tests only
     )
     search_uris = collect_search_uris(server, uri)
     mod_def_used_names = compute_def_used_names!(def_used_names_cache, server, search_uris; skip_context_check)
     emit_undef_global_diagnostics!(diagnostics, per_file.undef_global_candidates, mod_def_used_names)
-    analyze_unused_imports!(diagnostics, def_used_names_cache, server, uri, file_info, st0_top; skip_context_check)
+    analyze_unused_imports!(
+        diagnostics, def_used_names_cache, server, uri, per_file.explicit_imports;
+        skip_context_check)
     return diagnostics
 end
 
@@ -1781,12 +1847,11 @@ function toplevel_lowering_diagnostics!(
         file_info::FileInfo, cancel_flag::CancelFlag=DUMMY_CANCEL_FLAG;
         lookup_func = nothing
     )
-    st0_top = build_syntax_tree(file_info)
-    cached = get_per_file_diagnostics!(server, uri, file_info, st0_top, cancel_flag; lookup_func)
+    cached = get_per_file_diagnostics!(server, uri, file_info, cancel_flag; lookup_func)
     is_cancelled(cancel_flag) && return cached.diagnostics
     diagnostics = copy(cached.diagnostics)
     if has_analyzed_context(server.state, uri; lookup_func)
-        cross_file_diagnostics!(diagnostics, def_used_names_cache, server, uri, file_info, st0_top, cached)
+        cross_file_diagnostics!(diagnostics, def_used_names_cache, server, uri, cached)
     end
     return diagnostics
 end

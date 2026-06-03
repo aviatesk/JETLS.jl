@@ -98,9 +98,11 @@ struct FileInfo
     filename::String
     encoding::LSP.PositionEncodingKind.Ty
     testsetinfos::Vector{TestsetInfo}
-    # Pruned `st0` cache. Access through `build_syntax_tree`, which returns a copy
-    # safe for lowering.
-    syntax_tree0::SyntaxTreeC
+    # Pruned `st0` cache for synchronized documents. Access through
+    # `build_syntax_tree`, which returns a copy safe for lowering. Unsynced files
+    # keep this `nothing`; workspace-wide hot paths should rely on summary caches
+    # instead of retaining `st0` for every file.
+    syntax_tree0::Union{Nothing,SyntaxTreeC}
     # Intentionally unbounded within a `FileInfo`: synced documents usually receive
     # repeated type queries for the same top-level tree. Content updates replace the
     # whole `FileInfo`, and full-analysis updates clear this cache so old analysis
@@ -122,12 +124,7 @@ struct FileInfo
             syntax_tree0::Union{Nothing,SyntaxTreeC} = nothing,
             inferred_context_cache::Union{Nothing,InferredContextCache} = nothing
         )
-        syntax_tree0 = if syntax_tree0 === nothing
-            JS.build_tree(JS.SyntaxTree, parsed_stream; filename)
-        else
-            syntax_tree0
-        end
-        syntax_tree0 = JS.prune(syntax_tree0)
+        syntax_tree0 = syntax_tree0 === nothing ? nothing : JS.prune(syntax_tree0)
         line_starts = build_line_starts(parsed_stream.textbuf)
         new(version, parsed_stream, filename, encoding, testsetinfos, syntax_tree0,
             inferred_context_cache, line_starts)
@@ -722,7 +719,14 @@ struct CachedBindingOccurrence
 end
 
 const BindingOccurrencesResult = Dict{BindingInfoKey,Set{CachedBindingOccurrence}}
-const BindingOccurrencesCacheEntry = Base.PersistentDict{UnitRange{Int},BindingOccurrencesResult}
+const BindingOccurrencesRangeCache = Base.PersistentDict{UnitRange{Int},BindingOccurrencesResult}
+struct BindingOccurrencesCacheEntry
+    by_range::BindingOccurrencesRangeCache
+    # Complete file-level global summary; `nothing` means it has not been built
+    # for this file version. Range-cache misses currently discard it defensively,
+    # although same-version top-level ranges should normally be stable.
+    globals::Union{Nothing,BindingOccurrencesResult}
+end
 
 const AnyBindingOccurrence = Union{BindingOccurrence,CachedBindingOccurrence}
 
@@ -774,6 +778,16 @@ struct LoweringDiagnosticKey
     kind::Symbol
     name::String
 end
+struct DefUsedNames
+    def::Set{String}
+    used::Set{String}
+    DefUsedNames() = new(Set{String}(), Set{String}())
+end
+struct ImportInfo
+    uri::URI
+    name_range::Range
+    delete_range::Range
+end
 # Undef-global candidate emitted by the per-file phase (with fresh `ctx3`),
 # consumed by the cross-file phase (which only does a cheap def-name lookup).
 # Everything needed for the final `Diagnostic` is pre-computed so the cache
@@ -787,6 +801,8 @@ end
 struct PerFileDiagnosticsResult
     diagnostics::Vector{Diagnostic}
     undef_global_candidates::Vector{UndefGlobalCandidate}
+    def_used_names::Dict{Module,DefUsedNames}
+    explicit_imports::Dict{Module,Dict{String,Vector{ImportInfo}}}
 end
 const PerFileDiagnosticsCacheData = Base.PersistentDict{URI,PerFileDiagnosticsResult}
 const PerFileDiagnosticsCache = LWContainer{PerFileDiagnosticsCacheData, LWStats}

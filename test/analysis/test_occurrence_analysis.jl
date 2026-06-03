@@ -712,7 +712,7 @@ function with_global_binding_occurrences(
     @test target_binfo.kind === :global
     @test target_binfo.name == target_name
 
-    occurrences = JETLS.find_global_binding_occurrences!(
+    occurrences = JETLS.find_global_binding_occurrences_from_tree!(
         state, furi, fi, st0_top, target_binfo;
         lookup_func = Returns(JETLS.OutOfScope(lowering_module)))
 

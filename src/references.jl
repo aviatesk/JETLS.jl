@@ -169,9 +169,8 @@ function collect_global_references!(
         end begin
             get_unsynced_file_info!(server.state, uri)
         end continue
-        search_st0_top = build_syntax_tree(fi)
         global_find_references_in_file!(
-            seen_locations, state, uri, fi, search_st0_top, binfo;
+            seen_locations, state, uri, fi, binfo;
             include_declaration)
     end
     return true
@@ -179,10 +178,10 @@ end
 
 function global_find_references_in_file!(
         seen_locations::Set{Tuple{URI,Range}}, state::ServerState, uri::URI, fi::FileInfo,
-        st0_top::SyntaxTreeC, binfo::JL.BindingInfo;
+        binfo::JL.BindingInfo;
         include_declaration::Bool = true,
     )
-    for occurrence in find_global_binding_occurrences!(state, uri, fi, st0_top, binfo)
+    for occurrence in find_global_binding_occurrences!(state, uri, fi, binfo)
         if include_declaration || occurrence.kind === :use
             range, adjusted_uri = unadjust_range(state, uri, jsobj_to_range(occurrence.tree, fi))
             push!(seen_locations, (adjusted_uri, range))

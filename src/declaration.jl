@@ -103,8 +103,7 @@ function find_global_binding_declarations(
         end begin
             get_unsynced_file_info!(state, search_uri)
         end continue
-        search_st0_top = build_syntax_tree(fi)
-        for occurrence in find_global_binding_occurrences!(state, search_uri, fi, search_st0_top, binfo)
+        for occurrence in find_global_binding_occurrences!(state, search_uri, fi, binfo)
             occurrence.kind === :decl || continue
             range, adjusted_uri =
                 unadjust_range(state, search_uri, jsobj_to_range(occurrence.tree, fi))
