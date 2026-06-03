@@ -18,7 +18,7 @@ module type_annotate_module end
 function type_annotate(code::AbstractString, context_module::Module = type_annotate_module)
     fi = JETLS.FileInfo(1, code, @__FILE__)
     st0_top = JETLS.build_syntax_tree(fi)
-    ctx = build_inferred_context_at(st0_top, context_module, 1:1)
+    ctx = build_inferred_context_for_range(st0_top, context_module, 1:1)
     @test ctx !== nothing
     return fi, ctx
 end
@@ -62,17 +62,40 @@ function query_all_types(fi::JETLS.FileInfo, ctx::InferredTreeContext, text::Abs
     return types
 end
 
-# Smoke-test for the single-shot driver — the rest of the file exercises the
-# composed `build_inferred_context_at` + `get_type_for_range` form via
-# `type_annotate`, so this just verifies the convenience wrapper composes the
-# same answer for one query.
-@testset "infer_type_at_range" begin
-    let code = "sin(1.0)"
-        fi = JETLS.FileInfo(1, code, @__FILE__)
-        st0_top = JETLS.build_syntax_tree(fi)
-        typ = infer_type_at_range(st0_top, Main, range_of(code, "sin(1.0)"))
-        @test typ === Core.Const(sin(1.0))
+@testset "build_inferred_context_for_range cache" begin
+    code = """
+    function add_one(x::Int)
+        y = x + 1
+        y
     end
+    function add_two(z::Int)
+        z + 2
+    end
+    """
+    cache = JETLS.InferredContextCache()
+    fi = JETLS.FileInfo(1, code, @__FILE__; inferred_context_cache=cache)
+    st0_top = JETLS.build_syntax_tree(fi)
+    rng1 = range_of(code, "x + 1")
+    rng2 = range_of(code, "y")
+    ctx1 = build_inferred_context_for_range(st0_top, type_annotate_module, rng1; cache)
+    ctx2 = build_inferred_context_for_range(st0_top, type_annotate_module, rng2; cache)
+    @test ctx1 !== nothing
+    @test get_type_for_range(ctx1, rng1) === Int
+    @test ctx1 === ctx2
+    @test get_type_for_range(ctx2, rng2) === Int
+    @test length(JETLS.load(cache)) == 1
+    rng4 = rng3 = range_of(code, "z + 2")
+    ctx3 = build_inferred_context_for_range(st0_top, type_annotate_module, rng3; cache)
+    @test ctx3 !== nothing
+    @test get_type_for_range(ctx3, rng3) === Int
+    @test ctx3 !== ctx1
+    @test length(JETLS.load(cache)) == 2
+    # Without `cache`, the same range is rebuilt instead of reusing `ctx3`.
+    ctx4 = build_inferred_context_for_range(st0_top, type_annotate_module, rng4)
+    @test ctx4 !== nothing
+    @test get_type_for_range(ctx4, rng4) === Int
+    @test ctx4 !== ctx3
+    @test length(JETLS.load(cache)) == 2
 end
 
 @testset HierarchicalTestSet "get_inferrable_tree" begin

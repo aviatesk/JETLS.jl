@@ -86,13 +86,13 @@ Computes once and caches:
 Two heavier pieces are built lazily on first request:
 - `InferredTreeContext` — shared between any routines that actually need
   type info at the cursor (always `call_completions!`, optionally
-  `global_completions!` for dot-prefix). `build_inferred_context_at` keys
+  `global_completions!` for dot-prefix). `build_inferred_context_for_range` keys
   off the toplevel statement containing the cursor, so a single context
   serves every routine here.
 - `cursor_bindings` result — shared between `local_completions!` and the
   kwarg branch of `call_completions!`.
 
-A future refactor that unifies `cursor_bindings` and `build_inferred_context_at`
+A future refactor that unifies `cursor_bindings` and `build_inferred_context_for_range`
 at the `jl_lower_for_scope_resolution` level can replace the lazy accessors
 without disturbing call sites.
 """
@@ -133,7 +133,7 @@ function CompletionCtx(
         Base.RefValue{Union{Nothing,Vector{Tuple{JL.BindingInfo,SyntaxTreeC,Int}}}}())
 end
 
-# Why not `build_inferred_context_at(..., offset:offset; ...)` directly:
+# Why not query the inferred-context cache with `offset:offset` directly:
 # It filters toplevel subtrees by `rng ⊆ JS.byte_range(toplevel)`, and the
 # cursor can sit past the toplevel's `last_byte` in incomplete code (e.g.
 # `sin(42,│\n` — parser ends the `K"call"` at byte 7, cursor at byte 8 is
@@ -142,9 +142,13 @@ end
 function get_inferred_ctx!(comp_ctx::CompletionCtx; caller::AbstractString)
     isassigned(comp_ctx.inferred_ctx) && return comp_ctx.inferred_ctx[]
     toplevel = lowerable_toplevel_at(comp_ctx.st0_top, comp_ctx.offset)
-    ctx = toplevel === nothing ? nothing : build_inferred_context_at(
-        comp_ctx.st0_top, comp_ctx.context_module, JS.byte_range(toplevel);
-        world=comp_ctx.world, caller)
+    ctx = if toplevel === nothing
+        nothing
+    else
+        build_inferred_context_for_range(
+            comp_ctx.st0_top, comp_ctx.context_module, JS.byte_range(toplevel);
+            world=comp_ctx.world, caller, cache=comp_ctx.fi.inferred_context_cache)
+    end
     return comp_ctx.inferred_ctx[] = ctx
 end
 

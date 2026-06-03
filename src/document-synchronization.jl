@@ -5,14 +5,23 @@ function ParseStream!(s::Union{AbstractString,Vector{UInt8}})
 end
 
 # Drop every per-file cache entry for `uri`. Called whenever a file's content
-# changes (didChange/didOpen, notebook cell edits, watched-file events) or its
-# module context changes (full-analysis updates). `clear_*_cache!` (e.g. for
-# diagnostic config changes) is separate because not all caches share that
-# invalidation trigger.
+# changes (didChange/didOpen, notebook cell edits, watched-file events).
+# Full-analysis updates invalidate semantic caches separately because not all
+# per-file caches depend on module context.
 function invalidate_per_file_caches!(state::ServerState, uri::URI)
     invalidate_document_symbol_cache!(state, uri)
     invalidate_binding_occurrences_cache!(state, uri)
     invalidate_per_file_diagnostics_cache!(state, uri)
+end
+
+function clear_inferred_context_cache!(state::ServerState, uri::URI)
+    uri = canonical_cache_uri(state, uri)
+    store!(state.file_cache) do cache
+        fi = @something get(cache, uri, nothing) return cache, nothing
+        fi.inferred_context_cache === nothing && return cache, nothing
+        new_fi = FileInfo(fi; inferred_context_cache=InferredContextCache())
+        return Base.PersistentDict(cache, uri => new_fi), nothing
+    end
 end
 
 """
@@ -36,7 +45,8 @@ function cache_file_info!(
     st0 = JS.build_tree(JS.SyntaxTree, parsed_stream; filename)
     testsetinfos, any_deleted = compute_testsetinfos!(server, st0, prev_testsetinfos)
 
-    fi = FileInfo(version, parsed_stream, filename, state.encoding, testsetinfos)
+    fi = FileInfo(version, parsed_stream, filename, state.encoding, testsetinfos;
+        syntax_tree0=st0, inferred_context_cache=InferredContextCache())
     store!(state.file_cache) do cache
         Base.PersistentDict(cache, uri => fi), nothing
     end

@@ -53,16 +53,64 @@ function build_line_starts(textbuf::Vector{UInt8})
     return starts
 end
 
-# Primary file cache for document synchronization.
-# Created on `textDocument/didOpen` and updated on `textDocument/didChange`.
-# Contains the current editor state, including unsaved edits.
+struct InferredTreeContext
+    inferred_tree::SyntaxTreeC
+    # `byte_range => kind` for the surface node each lowered node was lowered
+    # from (first element of `JS.flattened_provenance`). First-write-wins,
+    # mirroring a `traverse`-then-pick-first lookup.
+    surface_kind_index::Dict{UnitRange{Int}, JS.Kind}
+    # Every lowered node keyed by its own `byte_range`, in preorder. The
+    # preorder property is load-bearing for the "last `K"call"` wins"
+    # semantics in `type_for_call`.
+    by_byte_range::Dict{UnitRange{Int}, Vector{SyntaxTreeC}}
+    # Result types from typed `K"call"` nodes whose first provenance is a
+    # `K"macrocall"`, keyed by the macrocall's `byte_range`.
+    macrocall_types::Dict{UnitRange{Int}, Vector{Any}}
+    # Every `K"return"` node, in two parallel `Vector`s sorted by
+    # `JS.first_byte` (so `searchsortedfirst` is valid on `return_first_bytes`).
+    # User-vs-synthetic classification is derived per-query from
+    # `user_return_form_ranges` below — @mlechu's idea.
+    return_first_bytes::Vector{Int}
+    return_nodes::Vector{SyntaxTreeC}
+    # Byte ranges of every user-written `K"return"` surface form in `st3`
+    # (`st3` not `st0` so macro-expansion-introduced `K"return"`s are included).
+    # Consumed by `type_for_branching`.
+    user_return_form_ranges::Vector{UnitRange{Int}}
+    # For each lowered node inside the body of some OC, the byte range of that OC's
+    # `K"opaque_closure_method"`. Used by `tmerge_at_range` to filter OC construction
+    # scaffolding sharing a byte range with the user's yield expression: a node is kept
+    # only when the OC whose body it's in has the queried byte range — so inner-OC noise
+    # inside an outer OC body (e.g. multi-`for` comprehension, closure-of-closure) is
+    # filtered when querying at the inner OC's range.
+    oc_body_scope::Dict{Int,UnitRange{Int}}
+end
+
+const InferredContextCacheKey = Tuple{Module,UInt,UnitRange{Int}}
+const InferredContextCacheData = Base.PersistentDict{
+    InferredContextCacheKey,Union{Nothing,InferredTreeContext}}
+const InferredContextCache = LWContainer{InferredContextCacheData,LWStats}
+
+# Current text snapshot for both synchronized documents and on-demand unsynced workspace
+# files, plus per-version caches derived from the parsed stream.
 struct FileInfo
     version::Int
     parsed_stream::JS.ParseStream
     filename::String
     encoding::LSP.PositionEncodingKind.Ty
     testsetinfos::Vector{TestsetInfo}
+    # Pruned `st0` cache for synchronized documents. Access through
+    # `build_syntax_tree`, which returns a copy safe for lowering. Unsynced files
+    # keep this `nothing`; workspace-wide hot paths should rely on summary caches
+    # instead of retaining `st0` for every file.
     syntax_tree0::Union{Nothing,SyntaxTreeC}
+    # Intentionally unbounded within a `FileInfo`: synced documents usually receive
+    # repeated type queries for the same top-level tree. Content updates replace the
+    # whole `FileInfo`, and full-analysis updates clear this cache so old analysis
+    # worlds can be released. Unlike the pruned `syntax_tree0` cache, inferred
+    # contexts are several times heavier; e.g. caching them for unsynced workspace
+    # files would retain roughly 140 MiB for JETLS' own `src/`, so keep this `nothing`
+    # outside synchronized documents.
+    inferred_context_cache::Union{Nothing,InferredContextCache}
     # Cached line-starts index for the current `parsed_stream.textbuf`. `offset_to_xy`
     # / `xy_to_offset` are called heavily by every LSP feature, so amortizing the
     # O(N) line scan once per FileInfo (constructed on didOpen / didChange) is a
@@ -73,18 +121,13 @@ struct FileInfo
             version::Int, parsed_stream::JS.ParseStream, filename::AbstractString,
             encoding::LSP.PositionEncodingKind.Ty = LSP.PositionEncodingKind.UTF16,
             testsetinfos::Vector{TestsetInfo} = EMPTY_TESTSETINFOS;
-            cache_tree::Union{Nothing,Bool} = nothing
+            syntax_tree0::Union{Nothing,SyntaxTreeC} = nothing,
+            inferred_context_cache::Union{Nothing,InferredContextCache} = nothing
         )
-        if cache_tree isa Bool
-            syntax_tree0 = JS.build_tree(JS.SyntaxTree, parsed_stream; filename)
-            if cache_tree
-                syntax_tree0 = JS.prune(syntax_tree0)
-            end
-        else
-            syntax_tree0 = nothing
-        end
+        syntax_tree0 = syntax_tree0 === nothing ? nothing : JS.prune(syntax_tree0)
         line_starts = build_line_starts(parsed_stream.textbuf)
-        new(version, parsed_stream, filename, encoding, testsetinfos, syntax_tree0, line_starts)
+        new(version, parsed_stream, filename, encoding, testsetinfos, syntax_tree0,
+            inferred_context_cache, line_starts)
     end
 end
 @define_override_constructor FileInfo # For testsetinfos update
@@ -676,7 +719,14 @@ struct CachedBindingOccurrence
 end
 
 const BindingOccurrencesResult = Dict{BindingInfoKey,Set{CachedBindingOccurrence}}
-const BindingOccurrencesCacheEntry = Base.PersistentDict{UnitRange{Int},BindingOccurrencesResult}
+const BindingOccurrencesRangeCache = Base.PersistentDict{UnitRange{Int},BindingOccurrencesResult}
+struct BindingOccurrencesCacheEntry
+    by_range::BindingOccurrencesRangeCache
+    # Complete file-level global summary; `nothing` means it has not been built
+    # for this file version. Range-cache misses currently discard it defensively,
+    # although same-version top-level ranges should normally be stable.
+    globals::Union{Nothing,BindingOccurrencesResult}
+end
 
 const AnyBindingOccurrence = Union{BindingOccurrence,CachedBindingOccurrence}
 
@@ -728,6 +778,16 @@ struct LoweringDiagnosticKey
     kind::Symbol
     name::String
 end
+struct DefUsedNames
+    def::Set{String}
+    used::Set{String}
+    DefUsedNames() = new(Set{String}(), Set{String}())
+end
+struct ImportInfo
+    uri::URI
+    name_range::Range
+    delete_range::Range
+end
 # Undef-global candidate emitted by the per-file phase (with fresh `ctx3`),
 # consumed by the cross-file phase (which only does a cheap def-name lookup).
 # Everything needed for the final `Diagnostic` is pre-computed so the cache
@@ -741,6 +801,8 @@ end
 struct PerFileDiagnosticsResult
     diagnostics::Vector{Diagnostic}
     undef_global_candidates::Vector{UndefGlobalCandidate}
+    def_used_names::Dict{Module,DefUsedNames}
+    explicit_imports::Dict{Module,Dict{String,Vector{ImportInfo}}}
 end
 const PerFileDiagnosticsCacheData = Base.PersistentDict{URI,PerFileDiagnosticsResult}
 const PerFileDiagnosticsCache = LWContainer{PerFileDiagnosticsCacheData, LWStats}

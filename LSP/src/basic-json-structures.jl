@@ -623,6 +623,8 @@ struct UnusedVariableData
     is_tuple_unpacking::Bool
     assignment_range::Union{Nothing,Range}
     lhs_eq_range::Union{Nothing,Range}
+    return_insert_position::Union{Nothing,Position}
+    return_insert_text::Union{Nothing,String}
 end
 export UnusedVariableData
 
