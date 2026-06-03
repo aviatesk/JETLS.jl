@@ -988,6 +988,32 @@ end
             @test x_sym.detail == "x = i * 2"
         end
 
+        # Later iterators in a multiline for header should keep their binding detail.
+        let code = """
+            function foo(pkgdata)
+                for (file, fi) in zip(srcfiles, fileinfos),
+                    (mod, exs_infos) in fi.mod_exs_infos,
+                    (rex, exinfos) in exs_infos
+                    exinfos
+                end
+            end
+            """
+            symbols = get_document_symbols(code)
+            @test length(symbols) == 1
+            children = symbols[1].children
+            @test children !== nothing
+            for_sym = only(filter(c -> c.kind == SymbolKind.Namespace, children))
+            @test for_sym.children !== nothing
+            mod_sym = only(filter(c -> c.name == "mod", for_sym.children))
+            exs_infos_sym = only(filter(c -> c.name == "exs_infos", for_sym.children))
+            rex_sym = only(filter(c -> c.name == "rex", for_sym.children))
+            exinfos_sym = only(filter(c -> c.name == "exinfos", for_sym.children))
+            @test mod_sym.detail == "(mod, exs_infos) in fi.mod_exs_infos"
+            @test exs_infos_sym.detail == "(mod, exs_infos) in fi.mod_exs_infos"
+            @test rex_sym.detail == "(rex, exinfos) in exs_infos"
+            @test exinfos_sym.detail == "(rex, exinfos) in exs_infos"
+        end
+
         # nested for loops
         let code = """
             function foo()
@@ -1088,6 +1114,25 @@ end
             @test a_sym.detail == "a = 1"
             b_sym = only(filter(c -> c.name == "b", let_sym.children))
             @test b_sym.detail == "b = a + 1"
+        end
+
+        # Later bindings in a multiline let header should keep their binding detail.
+        let code = """
+            function foo(st0, b)
+                let bas = byte_ancestors(st0, b),
+                    i = findfirst(is_relevant_call, bas)
+                    return i
+                end
+            end
+            """
+            symbols = get_document_symbols(code)
+            @test length(symbols) == 1
+            children = symbols[1].children
+            @test children !== nothing
+            let_sym = only(filter(c -> c.kind == SymbolKind.Namespace, children))
+            @test let_sym.children !== nothing
+            i_sym = only(filter(c -> c.name == "i", let_sym.children))
+            @test i_sym.detail == "i = findfirst(is_relevant_call, bas)"
         end
     end
 
