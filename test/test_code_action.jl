@@ -86,16 +86,39 @@ end
         end
         """)
         @test length(code_actions) == 3
-        @test code_actions[1].title == "Prefix with '_' to indicate intentionally unused"
+        rename_actions = filter(a -> contains(a.title, "Prefix"), code_actions)
+        @test length(rename_actions) == 1
+        @test only(rename_actions).isPreferred == true
+        delete_actions = filter(a -> contains(a.title, "Delete"), code_actions)
+        @test length(delete_actions) == 2
+        @test delete_actions[1].title == "Delete assignment"
+        @test delete_actions[1].edit.changes[uri][1].newText == ""
+        @test delete_actions[1].edit.changes[uri][1].range.start == positions[1]
+        @test delete_actions[1].edit.changes[uri][1].range.var"end" == positions[2]
+        @test delete_actions[2].title == "Delete statement"
+        @test delete_actions[2].edit.changes[uri][1].newText == ""
+        @test delete_actions[2].edit.changes[uri][1].range.start == positions[1]
+        @test delete_actions[2].edit.changes[uri][1].range.var"end" == positions[3]
+    end
+
+    let (code_actions, uri, positions) = get_unused_var_code_actions("""
+        function f()
+            │y = │1│
+        end
+        """)
+        @test length(code_actions) == 3
+        @test code_actions[1].title == "Insert explicit return"
         @test code_actions[1].isPreferred == true
-        @test code_actions[2].title == "Delete assignment"
-        @test code_actions[2].edit.changes[uri][1].newText == ""
-        @test code_actions[2].edit.changes[uri][1].range.start == positions[1]
-        @test code_actions[2].edit.changes[uri][1].range.var"end" == positions[2]
-        @test code_actions[3].title == "Delete statement"
-        @test code_actions[3].edit.changes[uri][1].newText == ""
+        edit = only(code_actions[1].edit.changes[uri])
+        @test edit.range.start == positions[3]
+        @test edit.range.var"end" == positions[3]
+        @test edit.newText == "\n    return y"
+        @test code_actions[2].title == "Prefix with '_' to indicate intentionally unused"
+        @test code_actions[2].isPreferred == true
+        @test code_actions[3].title == "Delete assignment"
         @test code_actions[3].edit.changes[uri][1].range.start == positions[1]
-        @test code_actions[3].edit.changes[uri][1].range.var"end" == positions[3]
+        @test code_actions[3].edit.changes[uri][1].range.var"end" == positions[2]
+        @test !any(a -> a.title == "Delete statement", code_actions)
     end
 
     # Tuple unpacking: only rename, no delete
@@ -165,17 +188,24 @@ end
         function f()
             x = 1
             println(x)
-            x = 2│
+            │x = │2│
         end
         """)
-        return_actions = filter(a -> a.title == "Insert explicit return", code_actions)
-        @test length(return_actions) == 1
-        action = only(return_actions)
-        @test action.isPreferred == true
-        edit = only(action.edit.changes[uri])
-        @test edit.range.start == positions[1]
-        @test edit.range.var"end" == positions[1]
+        @test length(code_actions) == 2
+        @test code_actions[1].title == "Insert explicit return"
+        @test code_actions[1].isPreferred == true
+        edit = only(code_actions[1].edit.changes[uri])
+        @test edit.range.start == positions[3]
+        @test edit.range.var"end" == positions[3]
         @test edit.newText == "\n    return x"
+        @test code_actions[2].title == "Delete assignment"
+        @test code_actions[2].edit.changes[uri][1].range.start == positions[1]
+        @test code_actions[2].edit.changes[uri][1].range.var"end" == positions[2]
+        @test !any(a -> a.title == "Delete statement", code_actions)
+        rename_actions = filter(code_actions) do action
+            contains(action.title, "Prefix") || contains(action.title, "Replace")
+        end
+        @test isempty(rename_actions)
     end
 end
 
