@@ -538,7 +538,7 @@ end
 # lowering diagnostic
 # ===================
 
-const JL_MACRO_FILE = only(methods(JL.expand_macro, (JL.MacroExpansionContext,SyntaxTreeC))).file
+const JL_MACRO_FILE = only(methods(JL.expand_macro, (JL.MacroExpansionContext,SyntaxTreeC,SyntaxListC))).file
 function scrub_expand_macro_stacktrace(stacktrace::Vector{Base.StackTraces.StackFrame})
     idx = @something findfirst(stacktrace) do stackframe::Base.StackTraces.StackFrame
         stackframe.func === :expand_macro && stackframe.file === JL_MACRO_FILE
