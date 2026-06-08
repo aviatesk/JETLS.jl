@@ -50,10 +50,10 @@ function _without_kinds(st::SyntaxTreeC, kinds::Tuple{Vararg{JS.Kind}})
     end
     new_children = JS.SyntaxList(JS.syntax_graph(st))
     changed = false
-    for c in JS.children(st)
-        nc, cc = _without_kinds(c, kinds)
-        changed |= cc
-        isnothing(nc) || push!(new_children, nc)
+    for child in JS.children(st)
+        new_child, child_changed = _without_kinds(child, kinds)
+        changed |= child_changed
+        isnothing(new_child) || push!(new_children, new_child)
     end
     # `mknode` copies all attrs (kind, syntax_flags, value, ...) from `st`, so
     # we don't lose the parser's infix/prefix tagging that downstream repair
@@ -112,10 +112,10 @@ function _repair_after_trim(st0::SyntaxTreeC)
     JS.is_leaf(st0) && return st0
     new_children = JS.SyntaxList(JS.syntax_graph(st0))
     changed = false
-    for c in JS.children(st0)
-        nc = _repair_after_trim(c)
-        push!(new_children, nc)
-        changed |= nc !== c
+    for child in JS.children(st0)
+        new_child = _repair_after_trim(child)
+        push!(new_children, new_child)
+        changed |= new_child !== child
     end
     repaired = _repair_node(st0, new_children)
     repaired !== nothing && return repaired
@@ -152,8 +152,8 @@ so that parent nodes (e.g. dot expressions like `x.\$name`) remain well-formed.
 function _unwrap_interpolations(st::SyntaxTreeC)
     if JS.kind(st) === JS.K"$"
         if JS.numchildren(st) >= 1
-            nc, _ = _unwrap_interpolations(st[1])
-            return (nc, true)
+            new_child, _ = _unwrap_interpolations(st[1])
+            return (new_child, true)
         end
         return (st, false)
     elseif JS.is_leaf(st)
@@ -161,10 +161,10 @@ function _unwrap_interpolations(st::SyntaxTreeC)
     end
     new_children = JS.SyntaxList(JS.syntax_graph(st))
     changed = false
-    for c in JS.children(st)
-        nc, cc = _unwrap_interpolations(c)
-        changed |= cc
-        push!(new_children, nc)
+    for child in JS.children(st)
+        new_child, child_changed = _unwrap_interpolations(child)
+        changed |= child_changed
+        push!(new_children, new_child)
     end
     k = JS.kind(st)
     # Preserve `name_val` when reconstructing: kinds like `K"unknown_head"`
