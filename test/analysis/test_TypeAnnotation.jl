@@ -5,6 +5,7 @@ using JETLS
 using JETLS: CC, JL, JS
 using JETLS.TypeAnnotation
 using JETLS.TypeAnnotation: get_inferrable_tree, infer_toplevel_tree
+using LinearAlgebra: LinearAlgebra
 
 include("../HierarchicalTestSet.jl")
 
@@ -737,6 +738,14 @@ end
             _, ctx = type_annotate(code)
             @test widenconst(get_type_for_range(ctx, range_of(code, "sum(v)"))) ===
                 Float64
+        end
+    end
+
+    @testset "postfix `'` returns the call result, not Union with the callee" begin
+        let code = "let M = rand(2, 2); M'; end"
+            _, ctx = type_annotate(code)
+            typ = widenconst(get_type_for_range(ctx, range_of(code, "M'")))
+            @test typ === LinearAlgebra.Adjoint{Float64, Matrix{Float64}}
         end
     end
 

@@ -1057,7 +1057,7 @@ nodes appropriately; see the source of each helper for the rationale behind its 
 
 | surface kind                                           | strategy                     |
 |:-------------------------------------------------------|:-----------------------------|
-| `K"call"` / `K"dotcall"` / `K"tuple"`                  | `type_for_call`              |
+| `K"call"` / `K"dotcall"` / `K"tuple"` / `K"'"`         | `type_for_call`              |
 | `K"macrocall"`                                         | `type_for_macroexpansion`    |
 | `K"typed_comprehension"`                               | `type_for_array_construct`   |
 | `K"function"` / `K"macro"`                             | `type_for_funcdef`           |
@@ -1069,7 +1069,7 @@ function get_type_for_range(ctx::InferredTreeContext, rng::UnitRange{<:Integer})
     surface_kind = surface_kind_at_range(ctx, rng)
     if surface_kind === JS.K"macrocall"
         return type_for_macroexpansion(ctx, rng)
-    elseif surface_kind in JS.KSet"call dotcall tuple"
+    elseif surface_kind in JS.KSet"call dotcall tuple '"
         return type_for_call(ctx, rng)
     elseif surface_kind === JS.K"typed_comprehension"
         return type_for_typed_comprehension(ctx, rng)
