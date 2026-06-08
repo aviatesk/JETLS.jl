@@ -479,6 +479,8 @@ function handle_request_message(server::Server, @nospecialize(msg), cancel_flag:
         handle_CodeActionRequest(server, msg, cancel_flag)
     elseif msg isa InlayHintRequest
         handle_InlayHintRequest(server, msg, cancel_flag)
+    elseif msg isa InlayHintResolveRequest
+        handle_InlayHintResolveRequest(server, msg, cancel_flag)
     elseif msg isa SemanticTokensFullRequest
         handle_SemanticTokensFullRequest(server, msg, cancel_flag)
     elseif msg isa SemanticTokensRangeRequest
