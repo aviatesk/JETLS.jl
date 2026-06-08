@@ -1,6 +1,7 @@
 # Formatting
 
 ## Code formatting
+
 - When writing Julia code, use _4 whitespaces_ for indentation and try to keep
   the maximum line length under _92 characters_.
 - AI agents must not run automated formatters unless explicitly requested by a
@@ -11,52 +12,50 @@
   local edits. If formatting seems necessary, ask before applying it.
 
 ## Markdown formatting
-- When writing Markdown text, use _2 whitespaces_ for indentation and try to
-  keep the maximum line length under _80 characters_.
-  - Exception: `CHANGELOG.md` is exempt from line length rules since it is
-    used for GitHub release notes, where hard line breaks disrupt rendering.
-  - Additionally, prioritize simple text style and limit unnecessary decorations
-    (e.g. `**`) to only truly necessary locations. This is a style that should
-    generally be aimed for, but pay particular attention when writing Markdown.
-  - Headers should use sentence case (only the first word capitalized), not
-    title case. For example:
-    - Good: `## Conclusion and alternative approaches`
-    - Bad: `## Conclusion And Alternative Approaches`
+
+When writing Markdown text, use _2 whitespaces_ for indentation and try to
+keep the maximum line length under _80 characters_.
+- Exception: `CHANGELOG.md` is exempt from line length rules since it is
+  used for GitHub release notes, where hard line breaks disrupt rendering.
+- Additionally, prioritize simple text style and limit unnecessary decorations
+  (e.g. `**`) to only truly necessary locations. This is a style that should
+  generally be aimed for, but pay particular attention when writing Markdown.
+- Headers should use sentence case (only the first word capitalized), not
+  title case. For example:
+  - Good: `## Conclusion and alternative approaches`
+  - Bad: `## Conclusion And Alternative Approaches`
 
 ## Commit message formatting
-- When writing commit messages, follow the format "component: Brief summary" for
-  the title. In the body of the commit message, provide a brief prose summary of
-  the purpose of the changes made.
-  Use backticks for code elements (function names, variables, file paths, etc.)
-  to improve readability.
-  Also, ensure that the maximum line length never exceeds 72 characters.
-  When referencing external GitHub PRs or issues, use proper GitHub interlinking
-  format (e.g., "owner/repo#123" for PRs/issues).
-  Finally, if you write code yourself, include a co-author trailer at the end
-  of the commit message, e.g.:
-  `Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>`
-  (adjust the model name as appropriate). However, when simply asked to write
-  a commit message, there's no need to add that trailer.
+
+When writing commit messages, follow the format "component: Brief summary" for
+the title. In the body of the commit message, provide a brief prose summary of
+the purpose of the changes made.
+Use backticks for code elements (function names, variables, file paths, etc.)
+to improve readability.
+Also, ensure that the maximum line length never exceeds 72 characters.
+When referencing external GitHub PRs or issues, use proper GitHub interlinking
+format (e.g., "owner/repo#123" for PRs/issues).
+Finally, if you write code yourself, include a co-author trailer at the end
+of the commit message, e.g.:
+`Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>`
+(adjust the model name as appropriate). However, when simply asked to write
+a commit message, there's no need to add that trailer.
 
 # File names
-- For file names, use `-` (hyphen) as the word separator by default.
-  However, if the file name corresponds directly to Julia code (e.g., a module
-  name), use `_` (underscore) instead, since Julia identifiers cannot contain
-  hyphens (unless we use `var"..."`). For example, test files like
-  `test_completions.jl` define a module `module test_completions`,
-  so they use underscores.
+
+For file names, use `-` (hyphen) as the word separator by default.
+However, if the file name corresponds directly to Julia code (e.g., a module
+name), use `_` (underscore) instead, since Julia identifiers cannot contain
+hyphens (unless we use `var"..."`). For example, test files like
+`test_completions.jl` define a module `module test_completions`,
+so they use underscores.
 
 # Coding rules
-- When writing functions, use the most restrictive signature type possible.
-  This allows JET to easily catch unintended errors.
-  Of course, when prototyping, it's perfectly fine to start with loose type
-  declarations, but for the functions you ultimately commit, it's desirable to
-  use type declarations as much as possible.
-  Especially when AI agents suggest code, please make sure to clearly specify
-  the argument types that functions expect.
-  In situations where there's no particular need to make a function generic, or
-  if you're unsure what to do, submit the function with the most restrictive
-  signature type you can think of.
+
+- When writing functions, use the most restrictive signature type practical so
+  JET can catch unintended errors. Loose signatures are fine while prototyping,
+  but committed code should specify expected argument types unless generic
+  behavior is intentional. When unsure, prefer the more restrictive signature.
 
 - For function calls with keyword arguments, use an explicit `;` for clarity.
   For example, code like this:
@@ -86,30 +85,16 @@
   ```
 
 ## Comments guideline
-Default to writing no comments. The general rule is
-**ONLY INCLUDE COMMENTS WHERE TRULY NECESSARY**: when the function name
-or implementation already makes the intent clear, comments are noise.
 
-When a comment is warranted:
-- Focus on what/why — the behavior contract, hidden constraints,
-  non-obvious invariants, or rationale.
-- Do not merely restate what the code does or walk the reader through
-  the implementation flow; a reader can derive that from the code itself.
+Default to no comments. Add comments only when they explain non-obvious
+behavior, constraints, invariants, rationale, or genuine hacks. Do not restate
+implementation flow.
 
-Exception: if the code is a genuine hack or encodes a surprising
-invariant, keep the detail and flag the hack explicitly — a future
-reader needs that context.
+Docstrings are fine for general utilities when they clarify behavior.
 
-For general utilities used across the language server, docstrings are
-fine when they clarify behavior. Even here, if the function name and
-behavior are self-explanatory, no docstring is needed.
-
-### Comments in test code
-The same principles apply to tests. In particular, don't explain the
-implementation flow of the code under test in order to justify the
-expected value — keep the comment at the behavior level
-(e.g. "cursor on X should resolve to Y"). If the test setup itself is
-a genuine hack, flag that explicitly.
+The same applies to tests: concise `@testset` descriptions and behavior-level
+comments are fine when they clarify what is being tested. Explain test setup
+only when it encodes a non-obvious constraint or hack.
 
 # Running `jetls check` for self diagnostics
 
@@ -156,19 +141,17 @@ fixes yourself. If the problem remains, inform the human engineer and ask for
 instructions.
 
 # About modifications to code you've written
-If you, as an AI agent, add or modify code, and the user appears to have made
-further manual changes to that code after your response, please respect those
-modifications as much as possible.
-For example, if the user has deleted a function you wrote, do not reintroduce
-that function in subsequent code generation.
-If you believe that changes made by the user are potentially problematic,
-please clearly explain your concerns and ask the user for clarification.
+
+If the user manually changes work you previously produced, respect those
+changes. Do not reintroduce deleted code or revert user edits without explicit
+permission. If you think a user edit is problematic, explain your concern and
+ask for clarification.
 
 # Git operations
-Only perform Git operations when the user explicitly requests them.
-After completing a Git operation, do not perform additional operations based on
-conversational context alone. Wait for explicit instructions.
 
-When the user provides feedback or points out issues with a commit:
-- Do NOT automatically amend the commit or create a fixup commit
-- Explain what could be changed, then wait for explicit instruction
+Only perform Git operations when the user explicitly requests them. After any
+Git operation, wait for explicit follow-up instructions before doing more.
+
+If the user provides feedback on a commit, do not automatically amend it or
+create a fixup commit. Explain what could change and wait for explicit
+instruction.
