@@ -1057,7 +1057,7 @@ nodes appropriately; see the source of each helper for the rationale behind its 
 
 | surface kind                                           | strategy                     |
 |:-------------------------------------------------------|:-----------------------------|
-| `K"call"` / `K"dotcall"` / `K"tuple"` / `K"'"`         | `type_for_call`              |
+| `K"call"` / `K"dotcall"` / `K"tuple"` / `K"'"` / `K"do"` | `type_for_call`              |
 | `K"macrocall"`                                         | `type_for_macroexpansion`    |
 | `K"typed_comprehension"`                               | `type_for_array_construct`   |
 | `K"function"` / `K"macro"`                             | `type_for_funcdef`           |
@@ -1069,7 +1069,7 @@ function get_type_for_range(ctx::InferredTreeContext, rng::UnitRange{<:Integer})
     surface_kind = surface_kind_at_range(ctx, rng)
     if surface_kind === JS.K"macrocall"
         return type_for_macroexpansion(ctx, rng)
-    elseif surface_kind in JS.KSet"call dotcall tuple '"
+    elseif surface_kind in JS.KSet"call dotcall tuple ' do"
         return type_for_call(ctx, rng)
     elseif surface_kind === JS.K"typed_comprehension"
         return type_for_typed_comprehension(ctx, rng)
@@ -1109,9 +1109,9 @@ function type_for_macroexpansion(ctx::InferredTreeContext, rng::UnitRange{<:Inte
     return typ
 end
 
-# Last-K"call"-wins selector used by `K"call"` / `K"dotcall"` / `K"tuple"`
-# surface kinds. The "last in preorder" K"call" is the outermost lowered
-# call, i.e. the one that produces the user-visible value:
+# Last-K"call"-wins selector used by call-like surface kinds. The "last in
+# preorder" K"call" is the outermost lowered call, i.e. the one that produces
+# the user-visible value:
 # - kwcall `f(; kw=v)`: `Core.tuple` (kw names) and `NamedTuple{…}` (kwargs
 #   bundling) appear before `Core.kwcall(…)` in `src.code`, so the user call
 #   wins.
