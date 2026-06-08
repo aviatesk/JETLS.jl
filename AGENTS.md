@@ -111,29 +111,6 @@ expected value — keep the comment at the behavior level
 (e.g. "cursor on X should resolve to Y"). If the test setup itself is
 a genuine hack, flag that explicitly.
 
-# Running test code
-Please make sure to test new code when you wrote.
-
-When working on a specific component (e.g., completions, diagnostics),
-run the component-specific test instead of the full test suite:
-```bash
-julia --startup-file=no --project=test -e 'using Test; @testset "test_XXX" include("test/test_XXX.jl")'
-```
-Note:
-- `--startup-file=no` avoids loading unnecessary startup utilities
-- `--project=test` enables `JETLS_TEST_MODE` for proper test execution
-
-For even faster iteration on a specific `@testset`, use
-[TestRunner.jl](#using-testrunnerjl):
-```bash
-testrunner --project=test test/test_XXX.jl "testset_name"
-```
-
-Running `Pkg.test()` takes about 8 minutes (as of December 2025), so avoid it unless:
-- Changes affect multiple components
-- The user explicitly requests the full test suite
-- You're unsure which tests are relevant
-
 # Running `jetls check` for self diagnostics
 
 Please make sure to check self diagnostics after writing or modifying code.
@@ -146,107 +123,37 @@ The standard command is:
 
 This is run in CI and will cause failures if new warnings are introduced.
 
-# Test code structure
-Testing language server functionality is challenging.
-To fully test such functionality, you need to start a server loop,
-and send several requests to that server that mimic realistic user interactions.
-To write such tests, we've provided `withserver` implemented in
-[`test/setup.jl`](./test/setup.jl), and you can refer to
-[`test/test_full_lifecycle.jl`](./test/test_full_lifecycle.jl)
-as an example of its use.
+# Running test
 
-However, writing such tests is still somewhat tricky.
-Therefore, unless explicitly requested by the core developers, you don't need
-to write test code to fully test newly implemented language server features.
-It's generally sufficient to test important subroutines that are easy to test
-in the implementation of that language server feature.
+Please make sure to test new code when you wrote.
 
-Test code for new language server features should be written in files that
-define independent module spaces with a `test_` prefix.
-Then include these files from [`test/runtests.jl`](./test/runtests.jl).
-This ensures that these files can be run independently from the REPL.
-For example, test code for the "completion" feature would be in a file like
-this:
-> test/test_completions.jl
-```julia
-module test_completions
-using Test # Each module space needs to explicitly declare the code needed for execution
-...
-end # module test_completions
-```
-And `test/test_completions.jl` is included from `test/runtests.jl` like this:
-> test/runtests.jl
-```julia
-@testset "JETLS.jl" begin
-    ...
-    @testset "completions" include("test_completions.jl")
-    ...
-end
-```
+Run the most specific relevant tests when practical. Prefer component-specific
+tests over the full test suite. Avoid `Pkg.test()` unless changes affect
+multiple components, the user explicitly requests the full test suite,
+or no narrower validation is appropriate.
 
-In each test file, you are encouraged to use `@testset "testset name"` to
-organize our tests cleanly. For code clarity, unless specifically necessary,
-avoid using `using`, `import`, and `struct` definitions  inside `@testset`
-blocks, and instead place them at the top level.
+For detailed test-running workflows,
+use the [`run-test`](./.agents/skills/run-test/SKILL.md) skill.
 
-Also, you are encouraged to use `let`-blocks to ensure that names aren't
-unintentionally reused between multiple test cases.
-For example, here is what good test code looks like:
-> test/test_completions.jl
-```julia
-module test_completions
+# Writing test
 
-using Test # Each module space needs to explicitly declare the code needed for execution
-using JETLS: some_completion_func
+When adding or modifying tests, keep test files independently runnable and
+follow the project's test file structure. For new language server features,
+prefer focused subroutine tests unless the core developers explicitly request
+full language-server interaction coverage.
 
-function testcase_util(s::AbstractString)
-    ...
-end
-function with_testcase(s::AbstractString)
-    ...
-end
-
-@testset "some_completion_func" begin
-    let s = "..."
-        ret = some_completion_func(testcase_util(s))
-        @test test_with(ret)
-    end
-    let s = "..."
-        ret = some_completion_func(testcase_util(s))
-        @test test_with(ret)
-    end
-
-    # or `let` is unnecessary when testing with function scope
-    with_testcase(s) do case
-        ret = some_completion_func(case)
-        @test test_with(ret)
-    end
-end
-
-end # module test_completions
-```
-
-## Using TestRunner.jl
-Additionally, by using `@testset` as shown above, not only are tests hierarchized,
-but through integration with [TestRunner.jl](https://github.com/aviatesk/TestRunner.jl),
-you can also selectively execute specific `@testset`s, without executing the
-entire test file or test suite.
-If you're using this language server for development as well, you can run tests
-from code lenses or code actions within test files. If you need to run them from
-the command line, you can use commands like the following
-(assuming the `testrunner` executable is installed):
-```bash
-testrunner --project=test --verbose test/test_completions "some_completion_func"
-```
-Note that TestRunner.jl is still experimental.
-The most reliable way to run tests is still to execute test files standalone.
+For detailed test-writing workflows,
+use the [`write-test`](./.agents/skills/write-test/SKILL.md) skill.
 
 # Environment-related issues
-For AI agents: **NEVER MODIFY [Project.toml](./Project.toml) OR  [test/Project.toml](./test/Project.toml) BY YOURSELF**.
-If you encounter errors that seem to be environment-related when running tests,
-in most cases this is due to working directory issues, so first `cd` to the root directory of this project
-and re-run the tests. Never attempt to fix environment-related issues yourself.
-If you cannot resolve the problem, inform the human engineer and ask for instructions.
+
+For AI agents: never modify [`Project.toml`](./Project.toml) or
+[`test/Project.toml`](./test/Project.toml) by yourself.
+
+If test failures look environment-related, first ensure the test was run from
+the root directory of this project. Never attempt dependency or project-file
+fixes yourself. If the problem remains, inform the human engineer and ask for
+instructions.
 
 # About modifications to code you've written
 If you, as an AI agent, add or modify code, and the user appears to have made
