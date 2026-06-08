@@ -176,16 +176,16 @@ function _apply_diagnostic_config(
     code = diagnostic.code
     if !(code isa String)
         if JETLS_DEV_MODE
-            @warn "Unexpected diagnostic code type" code
+            @warn "Diagnostic code must be a string" code code_type = typeof(code)
         elseif JETLS_TEST_MODE
-            error(lazy"Unexpected diagnostic code type: $code")
+            error(lazy"Diagnostic code must be a string, got $(typeof(code)): $code")
         end
         return diagnostic
     elseif code ∉ ALL_DIAGNOSTIC_CODES
         if JETLS_DEV_MODE
-            @warn "Unknown diagnostic code" code
+            @warn "Diagnostic code is not registered" code
         elseif JETLS_TEST_MODE
-            error(lazy"Unknown diagnostic code: $code")
+            error(lazy"Diagnostic code is not registered: $code")
         end
         return diagnostic
     end
@@ -440,7 +440,7 @@ function inference_error_report_code(@nospecialize report::JET.InferenceErrorRep
     elseif report isa NonBooleanCondErrorReport
         return INFERENCE_NON_BOOLEAN_COND_CODE
     end
-    error(lazy"Diagnostic code is not defined for this report: $report")
+    error(lazy"No diagnostic code is defined for report: $report")
 end
 
 # toplevel warning diagnostic
