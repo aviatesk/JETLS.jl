@@ -134,8 +134,12 @@ Running `Pkg.test()` takes about 8 minutes (as of December 2025), so avoid it un
 - The user explicitly requests the full test suite
 - You're unsure which tests are relevant
 
-# **Running `jetls check` for self diagnostics**
-**Please make sure to run `jetls check` after writing or modifying code**:
+# Running `jetls check` for self diagnostics
+
+Please make sure to check self diagnostics after writing or modifying code.
+
+The standard command is:
+
 ```bash
 ./scripts/selfcheck.sh
 ```
