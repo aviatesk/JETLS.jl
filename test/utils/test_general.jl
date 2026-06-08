@@ -69,6 +69,14 @@ end
         let s = "Tuple{Float64, Float64, Float64, Float64, Float64, Float64, Float64}"
             @test JETLS.truncate_typstr(s, typemax(Int), typemax(Int)) == s
         end
+        let s = "Vector{Int64}"
+            @test JETLS.truncate_typstr(s, 3, 20) == s
+        end
+    end
+
+    @testset "short strings still respect maxdepth" begin
+        @test JETLS.truncate_typstr("Vector{Int64}", 1, 20) == "Vector{…}"
+        @test JETLS.truncate_typstr("A{B{C{D}}}", 3, 20) == "A{B{C{…}}}"
     end
 end
 

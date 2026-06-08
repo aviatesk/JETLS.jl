@@ -287,10 +287,28 @@ end
 # is too wide for inline hints — call `type_depth_limit` directly. Two passes:
 # `maxdepth` first to cap structural depth, then `maxwidth` to cap textual
 # width. Passing `typemax(Int)` for either is the canonical "no limit".
+# `type_depth_limit` allocates even when it returns an unchanged string, so
+# guard each pass with the cheap condition that proves that pass unnecessary.
 function truncate_typstr(str::String, maxdepth::Int, maxwidth::Int)
-    str = Base.type_depth_limit(str, 0; maxdepth)
-    str = Base.type_depth_limit(str, maxwidth)
-    return str
+    if !typstr_within_depth_limit(str, maxdepth)
+        str = Base.type_depth_limit(str, 0; maxdepth)
+    end
+    lastindex(str) <= maxwidth && return str
+    return Base.type_depth_limit(str, maxwidth)
+end
+
+function typstr_within_depth_limit(str::String, maxdepth::Int)
+    maxdepth == typemax(Int) && return true
+    depth = 0
+    for c in str
+        if c == '{'
+            depth += 1
+            depth < maxdepth || return false
+        elseif c == '}'
+            depth -= 1
+        end
+    end
+    return true
 end
 
 rlstrip(s::AbstractString, args...) = lstrip(rstrip(s, args...), args...)
