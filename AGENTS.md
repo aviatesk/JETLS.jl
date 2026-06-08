@@ -1,6 +1,16 @@
 # Formatting
+
+## Code formatting
 - When writing Julia code, use _4 whitespaces_ for indentation and try to keep
   the maximum line length under _92 characters_.
+- AI agents must not run automated formatters unless explicitly requested by a
+  human in the current conversation.
+  This includes file-wide or project-wide formatting commands and
+  editor-integrated formatting tools.
+  When editing code, preserve the surrounding formatting and make only minimal
+  local edits. If formatting seems necessary, ask before applying it.
+
+## Markdown formatting
 - When writing Markdown text, use _2 whitespaces_ for indentation and try to
   keep the maximum line length under _80 characters_.
   - Exception: `CHANGELOG.md` is exempt from line length rules since it is
@@ -12,6 +22,8 @@
     title case. For example:
     - Good: `## Conclusion and alternative approaches`
     - Bad: `## Conclusion And Alternative Approaches`
+
+## Commit message formatting
 - When writing commit messages, follow the format "component: Brief summary" for
   the title. In the body of the commit message, provide a brief prose summary of
   the purpose of the changes made.
@@ -25,6 +37,8 @@
   `Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>`
   (adjust the model name as appropriate). However, when simply asked to write
   a commit message, there's no need to add that trailer.
+
+# File names
 - For file names, use `-` (hyphen) as the word separator by default.
   However, if the file name corresponds directly to Julia code (e.g., a module
   name), use `_` (underscore) instead, since Julia identifiers cannot contain
