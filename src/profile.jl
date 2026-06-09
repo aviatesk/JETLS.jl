@@ -4,7 +4,7 @@ struct ProfileProgressCaller <: RequestCaller
     trigger_path::String
     token::ProgressToken
 end
-cancellable_token(caller::ProfileProgressCaller) = caller.token
+cancellable_token_impl(caller::ProfileProgressCaller) = caller.token
 
 function trigger_profile!(server::Server, trigger_path::String)
     if supports(server, :window, :workDoneProgress)

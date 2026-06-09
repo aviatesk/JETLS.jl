@@ -12,7 +12,7 @@ struct FormattingProgressCaller <: RequestCaller
     token::ProgressToken
     cancel_flag::CancelFlag
 end
-cancellable_token(caller::FormattingProgressCaller) = caller.token
+cancellable_token_impl(caller::FormattingProgressCaller) = caller.token
 
 struct RangeFormattingProgressCaller <: RequestCaller
     uri::URI
@@ -22,7 +22,7 @@ struct RangeFormattingProgressCaller <: RequestCaller
     token::ProgressToken
     cancel_flag::CancelFlag
 end
-cancellable_token(caller::RangeFormattingProgressCaller) = caller.token
+cancellable_token_impl(caller::RangeFormattingProgressCaller) = caller.token
 
 function formatting_options(server::Server)
     return DocumentFormattingOptions(;

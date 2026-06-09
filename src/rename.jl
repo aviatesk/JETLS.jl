@@ -15,7 +15,7 @@ struct RenameProgressCaller <: RequestCaller
     token::ProgressToken
     cancel_flag::CancelFlag
 end
-cancellable_token(caller::RenameProgressCaller) = caller.token
+cancellable_token_impl(caller::RenameProgressCaller) = caller.token
 
 function rename_options(server::Server)
     return RenameOptions(;

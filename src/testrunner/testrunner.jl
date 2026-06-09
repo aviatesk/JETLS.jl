@@ -779,7 +779,7 @@ struct TestRunnerTestsetProgressCaller <: RequestCaller
     filepath::String
     token::ProgressToken
 end
-cancellable_token(rc::TestRunnerTestsetProgressCaller) = rc.token
+cancellable_token_impl(rc::TestRunnerTestsetProgressCaller) = rc.token
 
 """
     testrunner_run_testset_from_uri(server::Server, uri::URI, idx::Int) -> Union{Nothing, String}
@@ -826,7 +826,7 @@ struct TestRunnerTestcaseProgressCaller <: RequestCaller
     source::String
     token::ProgressToken
 end
-cancellable_token(rc::TestRunnerTestcaseProgressCaller) = rc.token
+cancellable_token_impl(rc::TestRunnerTestcaseProgressCaller) = rc.token
 
 function testrunner_run_testcase_from_uri(server::Server, uri::URI, tcl::Int, tct::String)
     fi = @something get_file_info(server.state, uri) begin
