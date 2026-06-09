@@ -107,6 +107,15 @@ of inlay hints.
     command::Union{Nothing, Command} = nothing
 end
 
+# JETLS specific data structures for `data` field of `InlayHint`
+struct TypeInlayHintData
+    uri::URI
+    version::Int
+    firstByte::Int
+    lastByte::Int
+end
+export TypeInlayHintData
+
 """
 Inlay hint information.
 
@@ -178,7 +187,7 @@ Inlay hint information.
     A data entry field that is preserved on an inlay hint between
     a `textDocument/inlayHint` and a `inlayHint/resolve` request.
     """
-    data::Union{Nothing, LSPAny} = nothing
+    data::Union{Nothing, TypeInlayHintData} = nothing
 end
 
 """
@@ -241,7 +250,7 @@ then an inlay hint with a label part without a location needs to be resolved usi
 end
 
 @interface InlayHintResolveResponse @extends ResponseMessage begin
-    result::Union{InlayHint, Nothing}
+    result::Union{InlayHint, Null, Nothing}
 end
 
 """

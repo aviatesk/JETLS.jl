@@ -99,6 +99,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
   https://github.com/user-attachments/assets/3f2887b4-4c1c-41f9-b091-4eea2b6128bc
 
+- Added type inlay hints showing inferred types next to expressions (bindings, calls, function return types, branch results, etc.) so types are visible inline without hovering.
+  Method bodies are inferred against their declared signature, and top-level chunks (e.g. standalone `let` blocks) are inferred independently.
+  Hints are enabled by default; [`[inlay_hint.types] enabled`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/inlay_hint/types/enabled) toggles them.
+  See the [Type hints](https://aviatesk.github.io/JETLS.jl/release/features/#features/inlay-hint/types) page for examples.
+
+  <img width="976" height="637" alt="Inlay type hint demo" src="https://github.com/user-attachments/assets/baa2ff1b-df38-4304-a479-f2a2b4ba3e7b" />
+
 ### Changed
 
 - `textDocument/hover` now surfaces inferred types alongside documentation.
