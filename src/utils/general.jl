@@ -339,20 +339,18 @@ end
 app_notfound_message(app::AbstractString) = "`$app` executable is not found on the `PATH`."
 
 function is_abstract_fieldtype(@nospecialize typ)
-    if typ isa Type
-        if typ isa UnionAll
-            # If field type is `UnionAll`, then it's always an abstract field type, e.g.
-            # `struct A; xs::Vector{<:Integer}; end`
-            return true
-        end
-        if isabstracttype(typ)
-            return true
-        end
-        if typ isa DataType
-            for i = 1:length(typ.parameters)
-                if is_abstract_fieldtype(typ.parameters[i])
-                    return true
-                end
+    if typ isa UnionAll
+        # If field type is `UnionAll`, then it's always an abstract field type, e.g.
+        # `struct A; xs::Vector{<:Integer}; end`
+        return true
+    end
+    if isabstracttype(typ)
+        return true
+    end
+    if typ isa DataType
+        for i = 1:length(typ.parameters)
+            if is_abstract_fieldtype(typ.parameters[i])
+                return true
             end
         end
     end
