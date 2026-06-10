@@ -758,6 +758,101 @@ function return_insert_data(
     return range.var"end", "\n$(indent)return $bn"
 end
 
+# `JL.method_def_expr` packages each lowered method's signature metadata as
+# `svec(svec(arg_types...), svec(static_parameters...), source_location)`, where the
+# static parameters are the locals `JL.assign_sparams` binds via `core.TypeVar` calls.
+# Matching that shape covers every method definition form — named, anonymous, callable
+# struct, macro-generated — while quoted code stays inert and never produces it.
+function method_signature_metadata(node::SyntaxTreeC)
+    JS.numchildren(node) == 4 && is_core_svec_call(node) || return nothing
+    arg_types = node[2]
+    sparams = node[3]
+    JS.kind(arg_types) === JS.K"call" && is_core_svec_call(arg_types) || return nothing
+    JS.kind(sparams) === JS.K"call" && is_core_svec_call(sparams) || return nothing
+    JS.kind(node[4]) === JS.K"SourceLocation" || return nothing
+    return arg_types, sparams
+end
+
+function collect_binding_ids!(ids::Set{JL.IdTag}, st::SyntaxTreeC)
+    traverse(st) do node::SyntaxTreeC
+        JS.kind(node) === JS.K"BindingId" && push!(ids, JL._binding_id(node))
+        return nothing
+    end
+    return ids
+end
+
+function analyze_unconstrained_static_parameters!(
+        diagnostics::Vector{Diagnostic}, fi::FileInfo, ctx3::JL.VariableAnalysisContext,
+        st3::SyntaxTreeC, reported::Set{LoweringDiagnosticKey}
+    )
+    typevar_assignments = Dict{JL.IdTag,SyntaxTreeC}()
+    signature_metadatas = Tuple{SyntaxTreeC,SyntaxTreeC}[]
+    traverse(st3) do node::SyntaxTreeC
+        k = JS.kind(node)
+        if k === JS.K"=" && JS.numchildren(node) == 2 &&
+                JS.kind(node[1]) === JS.K"BindingId"
+            rhs = node[2]
+            if JS.kind(rhs) === JS.K"call" && JS.numchildren(rhs) >= 2 &&
+                    is_core_ref(rhs[1], "TypeVar")
+                typevar_assignments[JL._binding_id(node[1])] = rhs
+            end
+        elseif k === JS.K"call"
+            metadata = method_signature_metadata(node)
+            metadata === nothing || push!(signature_metadatas, metadata)
+        end
+        return nothing
+    end
+    for (arg_types, sparams) in signature_metadatas
+        sparam_ids = JL.IdTag[]
+        for i = 2:JS.numchildren(sparams)
+            sparam = sparams[i]
+            # non-`BindingId` entries are e.g. the placeholder in `where {T,_}`
+            JS.kind(sparam) === JS.K"BindingId" || continue
+            id = JL._binding_id(sparam)
+            haskey(typevar_assignments, id) && push!(sparam_ids, id)
+        end
+        isempty(sparam_ids) && continue
+        arg_type_ids = collect_binding_ids!(Set{JL.IdTag}(), arg_types)
+        constrained = Bool[id in arg_type_ids for id in sparam_ids]
+        # A constrained type variable's bounds also constrain the type variables they
+        # reference, but only those declared earlier: in `f(::T) where {T<:S, S}` the
+        # `S` bound of `T` resolves to the later declaration without constraining it
+        # (mirroring `JL.select_used_typevars`)
+        todo = findall(constrained)
+        while !isempty(todo)
+            i = pop!(todo)
+            bound_ids = collect_binding_ids!(Set{JL.IdTag}(), typevar_assignments[sparam_ids[i]])
+            for j = 1:i-1
+                constrained[j] && continue
+                sparam_ids[j] in bound_ids || continue
+                constrained[j] = true
+                push!(todo, j)
+            end
+        end
+        for i = eachindex(sparam_ids)
+            constrained[i] && continue
+            binfo = JL.get_binding(ctx3, sparam_ids[i])
+            binfo.is_internal && continue
+            bn = binfo.name
+            startswith(bn, "#") && continue
+            provs = JS.flattened_provenance(JL.binding_ex(ctx3, binfo.id))
+            is_from_user_ast(provs) || continue
+            range = jsobj_to_range(last(provs), fi)
+            key = LoweringDiagnosticKey(range, :static_parameter, bn)
+            key in reported ? continue : push!(reported, key)
+            push!(diagnostics, Diagnostic(;
+                range,
+                severity = DiagnosticSeverity.Warning,
+                message = "Method definition declares type variable `$bn` but does not use it in the type of any function parameter",
+                source = DIAGNOSTIC_SOURCE_LIVE,
+                code = LOWERING_UNCONSTRAINED_STATIC_PARAMETER_CODE,
+                codeDescription = diagnostic_code_description(
+                    LOWERING_UNCONSTRAINED_STATIC_PARAMETER_CODE)))
+        end
+    end
+    return diagnostics
+end
+
 function analyze_unused_bindings!(
         diagnostics::Vector{Diagnostic}, fi::FileInfo, st0::SyntaxTreeC, ctx3::JL.VariableAnalysisContext,
         binding_occurrences::Dict{JL.BindingInfo,Set{BindingOccurrence}},
@@ -1387,6 +1482,8 @@ function analyze_lowered_code!(
 
     reported = Set{LoweringDiagnosticKey}() # to prevent duplicate reports for unused default or keyword arguments
     (kwarg_type_names, kwarg_locations) = compute_kwarg_type_annotation_names(st0)
+
+    analyze_unconstrained_static_parameters!(diagnostics, fi, ctx3, st3, reported)
 
     has_implicit_args = is_macro0(st0) || is_generated0(st0)
     analyze_unused_bindings!(

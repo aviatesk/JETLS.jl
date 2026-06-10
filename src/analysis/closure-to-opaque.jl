@@ -1,6 +1,6 @@
 module Closure2Opaque
 
-using ..JETLS: JL, JS, SyntaxTreeC, TraversalReturn, traverse
+using ..JETLS: JL, JS, SyntaxTreeC, TraversalReturn, is_core_svec_call, traverse
 
 export rewrite_local_closures_to_opaque
 
@@ -273,13 +273,6 @@ function find_sig_call_for(root::SyntaxTreeC, sig_var_id::Int)
         end
         nothing
     end
-end
-
-function is_core_svec_call(call_node::SyntaxTreeC)
-    JS.numchildren(call_node) >= 1 || return false
-    callee = call_node[1]
-    return JS.kind(callee) === JS.K"core" && JS.hasattr(callee, :name_val) &&
-        callee.name_val == "svec"
 end
 
 # Detect a vararg-typed entry in the user-argtypes svec. JL lowers both `(xs...)`

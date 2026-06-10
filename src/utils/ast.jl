@@ -592,6 +592,18 @@ function collect_identifier_names!(names::Set{String}, st::SyntaxTreeC)
     return names
 end
 
+# `K"core"` leaves can't appear in user-written source (`Core.x` lowers through
+# `K"globalref"`), so these match only lowering-generated references.
+function is_core_ref(node::SyntaxTreeC, name::String)
+    return JS.kind(node) === JS.K"core" && JS.hasattr(node, :name_val) &&
+        node.name_val == name
+end
+
+function is_core_svec_call(call_node::SyntaxTreeC)
+    JS.numchildren(call_node) >= 1 || return false
+    return is_core_ref(call_node[1], "svec")
+end
+
 """
 Like `Base.unique`, but over node ids, and with this comment promising that the
 lowest-index copy of each node is kept.
