@@ -54,6 +54,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
                           # (JETLS lowering/unconstrained-static-parameter)
   ```
 
+### Fixed
+
+- Fixed type information collapsing to `Any` inside closures defined in functions that have default positional arguments or keyword arguments. Hover, inlay hints and other type-aware features now show precise types for such closure bodies and their captured variables.
+
 ## 2026-06-03
 
 - Commit: [`a42a435`](https://github.com/aviatesk/JETLS.jl/commit/a42a435)

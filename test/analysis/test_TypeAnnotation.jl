@@ -467,6 +467,29 @@ end
                 @test_broken widenconst(get_type_for_range(ctx, map_call)) === Vector{Int}
             end
         end
+
+        # Regression: a multi-method *global* outer function (default positional
+        # args here; kwargs likewise) must not poison single-method closures in
+        # its body — `collect_multi_method_bindings` seeds its reachability
+        # propagation only from closure bindings, so the do-closure still gets
+        # the OC rewrite and the captured `y` resolves precisely.
+        @testset "closure inside function with default positional args" begin
+            let code = """
+                function withcls(x::Float64, b::Bool=false)
+                    y = rand()
+                    r = callback(x) do z::Float64
+                        z + y
+                    end
+                    r
+                end
+                """
+                fi, ctx = type_annotate(code)
+                @test widenconst(get_type_for_range(ctx, range_of(code, "z + y"))) === Float64
+                types = query_all_types(fi, ctx, "y")
+                @test length(types) == 2 # `y = rand()` and the captured use
+                @test all(t -> widenconst(t) === Float64, types)
+            end
+        end
     end
 
     # `MustAliasesLattice` / `InterMustAliasesLattice` overrides on

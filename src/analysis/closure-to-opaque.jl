@@ -36,7 +36,7 @@ The rewrite is non-destructive: nodes that don't match are returned unchanged, s
 pipeline downstream sees an equivalent tree with only the eligible closures swapped.
 """
 function rewrite_local_closures_to_opaque(ctx::JL.VariableAnalysisContext, ex::SyntaxTreeC)
-    multis = collect_multi_method_bindings(ex)
+    multis = collect_multi_method_bindings(ctx, ex)
     return _rewrite_local_closures_to_opaque(ctx, ex, multis)
 end
 
@@ -76,7 +76,7 @@ function rewrite_closure_block(
 end
 
 # Collect `var_id`s that resolve to more than one method, plus any helper closure
-# bindings reachable from those multi-method wrappers.
+# bindings reachable from multi-method *closure* wrappers.
 #
 # Multi-method detection counts `K"method"` nodes per `var_id` across the whole
 # tree. JL has two ways to express multi-method bindings — multiple sibling
@@ -93,7 +93,12 @@ end
 # OC breaks the wrapper's later synthetic-struct lowering (the wrapper's `function_type`
 # reference can no longer find the helper). Tagging any closure binding called from a
 # multi-method wrapper's bodies forces the helper through the same path as its wrapper.
-function collect_multi_method_bindings(ex::SyntaxTreeC)
+#
+# Propagation seeds are restricted to closure bindings: a multi-method *global* (e.g. a
+# top-level function with default positional args or kwargs) never goes through
+# synthetic-struct closure conversion, so single-method closures inside its bodies are
+# still safely rewritable to OCs and must not be tagged.
+function collect_multi_method_bindings(ctx::JL.VariableAnalysisContext, ex::SyntaxTreeC)
     method_defs_by_vid = Dict{Int,Vector{SyntaxTreeC}}()
     methods_per_vid = Dict{Int,Int}()
     multis = Set{Int}()
@@ -117,7 +122,7 @@ function collect_multi_method_bindings(ex::SyntaxTreeC)
             end
         end
     end
-    worklist = collect(multis)
+    worklist = Int[vid for vid in multis if haskey(ctx.closure_bindings, vid)]
     while !isempty(worklist)
         vid = pop!(worklist)
         for md in method_defs_by_vid[vid]
