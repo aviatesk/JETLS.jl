@@ -163,7 +163,7 @@ function is_local_closure_decl(ctx::JL.VariableAnalysisContext, fd::SyntaxTreeC)
 end
 
 function find_matching_method_defs(
-        children_old, fd_idx::Int, target_var_id::Int, consumed::BitVector
+        children_old::JL.SyntaxList, fd_idx::Int, target_var_id::Int, consumed::BitVector
     )
     # Search both directions; method_defs may appear before or after function_decl.
     for j = fd_idx+1:length(children_old)
@@ -183,7 +183,7 @@ end
 
 function is_method_defs_for(c::SyntaxTreeC, target_var_id::Int)
     return JS.kind(c) === JS.K"method_defs" && JS.numchildren(c) >= 2 &&
-        JS.kind(c[1]) === JS.K"BindingId" && c[1].var_id == target_var_id
+        JS.kind(c[1]) === JS.K"BindingId" && c[1].var_id::JL.IdTag == target_var_id
 end
 
 # `method_defs[2]` is shaped like
