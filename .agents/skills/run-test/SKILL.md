@@ -43,7 +43,7 @@ to TestRunner.jl, fall back to running the test file standalone.
 
 ## Avoid the full suite by default
 
-`Pkg.test()` takes about 4.5 minutes as of June 2026. Avoid it unless:
+`Pkg.test()` takes about 3.5 minutes as of June 2026. Avoid it unless:
 
 - Changes affect multiple components.
 - The user explicitly requests the full test suite.
