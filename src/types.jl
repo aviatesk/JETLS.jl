@@ -318,7 +318,7 @@ struct AnalysisManager
 end
 
 abstract type RequestCaller end
-cancellable_token(caller::RequestCaller) = cancellable_token_impl(caller)::Union{Nothing,CancellableToken}
+cancellable_token(caller::RequestCaller) = cancellable_token_impl(caller)::Union{Nothing,ProgressToken}
 cancellable_token_impl(::RequestCaller) = nothing
 
 struct Registered
