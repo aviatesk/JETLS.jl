@@ -44,6 +44,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > This disables analysis for matched files. Basic features like completion still might work, but most LSP features will be unfunctional.
 > Note that `analysis_overrides` is provided as a temporary workaround and may be removed or changed at any time. A proper fix is being worked on.
 
+### Added
+
+- Added [`lowering/unconstrained-static-parameter`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/unconstrained-static-parameter) diagnostic that warns when a method declares a static parameter that does not appear in the type of any function parameter, so its value cannot be deduced when the method is called.
+  This matches the warning Julia itself emits when evaluating such a method definition.
+  For example:
+  ```julia
+  f(::T) where {T,S} = S  # Method definition declares type variable `S` but does not use it in the type of any function parameter
+                          # (JETLS lowering/unconstrained-static-parameter)
+  ```
+
 ## 2026-06-03
 
 - Commit: [`a42a435`](https://github.com/aviatesk/JETLS.jl/commit/a42a435)

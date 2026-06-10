@@ -505,6 +505,154 @@ module EmptyModule end
         end
     end
 
+    @testset "unconstrained static parameter" begin
+        expected_message(n) = "Method definition declares type variable `$n` but does not use it in the type of any function parameter"
+        let diagnostics = get_lowering_diagnostics("""
+            f(::T) where {T,S} = S
+            """; code = JETLS.LOWERING_UNCONSTRAINED_STATIC_PARAMETER_CODE)
+            @test length(diagnostics) == 1
+            diagnostic = only(diagnostics)
+            @test diagnostic.severity == DiagnosticSeverity.Warning
+            @test diagnostic.message == expected_message("S")
+            # anchored at the `S` declaration in the `where` clause
+            @test diagnostic.range.start.line == 0
+            @test diagnostic.range.start.character == 16
+        end
+        let diagnostics = get_lowering_diagnostics("""
+            f(::T, ::S) where {T,S} = S
+            """; code = JETLS.LOWERING_UNCONSTRAINED_STATIC_PARAMETER_CODE)
+            @test isempty(diagnostics)
+        end
+        let diagnostics = get_lowering_diagnostics("""
+            f(::T) where {S,T<:S} = S
+            """; code = JETLS.LOWERING_UNCONSTRAINED_STATIC_PARAMETER_CODE)
+            @test isempty(diagnostics)
+        end
+        let diagnostics = get_lowering_diagnostics("""
+            f(::T) where {T,S<:T} = S
+            """; code = JETLS.LOWERING_UNCONSTRAINED_STATIC_PARAMETER_CODE)
+            @test length(diagnostics) == 1
+            @test only(diagnostics).message == expected_message("S")
+        end
+        # bounds constrain transitively
+        let diagnostics = get_lowering_diagnostics("""
+            f(::T) where {R,S<:R,T<:S} = R
+            """; code = JETLS.LOWERING_UNCONSTRAINED_STATIC_PARAMETER_CODE)
+            @test isempty(diagnostics)
+        end
+        # a bound reference does not constrain a later declaration
+        # (Julia itself warns on this definition)
+        let diagnostics = get_lowering_diagnostics("""
+            f(::T) where {T<:S,S} = S
+            """; code = JETLS.LOWERING_UNCONSTRAINED_STATIC_PARAMETER_CODE)
+            @test length(diagnostics) == 1
+            @test only(diagnostics).message == expected_message("S")
+        end
+        # a type variable referenced only as a lower bound is treated as constrained,
+        # mirroring `JL.select_used_typevars` (and Julia's warning behavior)
+        let diagnostics = get_lowering_diagnostics("""
+            f(::T) where {S,T>:S} = S
+            """; code = JETLS.LOWERING_UNCONSTRAINED_STATIC_PARAMETER_CODE)
+            @test isempty(diagnostics)
+        end
+        let diagnostics = get_lowering_diagnostics("""
+            function f(x::T)::S where {T,S}
+                return x
+            end
+            """; code = JETLS.LOWERING_UNCONSTRAINED_STATIC_PARAMETER_CODE)
+            @test length(diagnostics) == 1
+            @test only(diagnostics).message == expected_message("S")
+        end
+        let diagnostics = get_lowering_diagnostics("""
+            struct Box{T}
+                Box{T}() where T = new{T}()
+            end
+            """; code = JETLS.LOWERING_UNCONSTRAINED_STATIC_PARAMETER_CODE)
+            @test isempty(diagnostics)
+        end
+        let diagnostics = get_lowering_diagnostics("""
+            struct Callable{T} end
+            function (::Callable{T})(x) where {T,S}
+                S
+            end
+            """; code = JETLS.LOWERING_UNCONSTRAINED_STATIC_PARAMETER_CODE)
+            @test length(diagnostics) == 1
+            @test only(diagnostics).message == expected_message("S")
+        end
+        # anonymous functions define methods too
+        let diagnostics = get_lowering_diagnostics("""
+            function (x::T) where {T,S}
+                S
+            end
+            """; code = JETLS.LOWERING_UNCONSTRAINED_STATIC_PARAMETER_CODE)
+            @test length(diagnostics) == 1
+            @test only(diagnostics).message == expected_message("S")
+        end
+        # the analysis runs post-macro-expansion
+        let diagnostics = get_lowering_diagnostics("""
+            f(@nospecialize(x::T)) where T = x
+            """; code = JETLS.LOWERING_UNCONSTRAINED_STATIC_PARAMETER_CODE)
+            @test isempty(diagnostics)
+        end
+        let diagnostics = get_lowering_diagnostics("""
+            @inline f(::T) where {T,S} = S
+            """; code = JETLS.LOWERING_UNCONSTRAINED_STATIC_PARAMETER_CODE)
+            @test length(diagnostics) == 1
+            @test only(diagnostics).message == expected_message("S")
+        end
+        # a qualified name does not constrain a same-named type variable
+        let diagnostics = get_lowering_diagnostics("""
+            f(x::Base.RefValue) where {RefValue} = RefValue
+            """; code = JETLS.LOWERING_UNCONSTRAINED_STATIC_PARAMETER_CODE)
+            @test length(diagnostics) == 1
+            @test only(diagnostics).message == expected_message("RefValue")
+        end
+        # quoted method definitions are data, not methods
+        let diagnostics = get_lowering_diagnostics("""
+            ex = :(f(::T) where {T,S} = S)
+            """; code = JETLS.LOWERING_UNCONSTRAINED_STATIC_PARAMETER_CODE)
+            @test isempty(diagnostics)
+        end
+        let diagnostics = get_lowering_diagnostics("""
+            @eval f(::T) where {T,S} = S
+            """; code = JETLS.LOWERING_UNCONSTRAINED_STATIC_PARAMETER_CODE)
+            @test isempty(diagnostics)
+        end
+        # a keyword argument type constrains the static parameter (via the body method)
+        let diagnostics = get_lowering_diagnostics("""
+            f(; x::T) where T = x
+            """; code = JETLS.LOWERING_UNCONSTRAINED_STATIC_PARAMETER_CODE)
+            @test isempty(diagnostics)
+        end
+        # lowering generates multiple methods here; the report is deduplicated
+        let diagnostics = get_lowering_diagnostics("""
+            f(::T; kw=1) where {T,S} = S
+            """; code = JETLS.LOWERING_UNCONSTRAINED_STATIC_PARAMETER_CODE)
+            @test length(diagnostics) == 1
+            @test only(diagnostics).message == expected_message("S")
+        end
+        let diagnostics = get_lowering_diagnostics("""
+            f(x::T, y=1) where {T,S} = S
+            """; code = JETLS.LOWERING_UNCONSTRAINED_STATIC_PARAMETER_CODE)
+            @test length(diagnostics) == 1
+            @test only(diagnostics).message == expected_message("S")
+        end
+        let diagnostics = get_lowering_diagnostics("""
+            f(::T) where {T,_} = T
+            """; code = JETLS.LOWERING_UNCONSTRAINED_STATIC_PARAMETER_CODE)
+            @test isempty(diagnostics)
+        end
+        # the inner `where`'s `T` is a different type variable from the outer one
+        let diagnostics = get_lowering_diagnostics("""
+            function f(x::(Vector{T} where T)) where T
+                T
+            end
+            """; code = JETLS.LOWERING_UNCONSTRAINED_STATIC_PARAMETER_CODE)
+            @test length(diagnostics) == 1
+            @test only(diagnostics).message == expected_message("T")
+        end
+    end
+
     @testset "module splitter" begin
         script = """
         module TestModuleSplit
