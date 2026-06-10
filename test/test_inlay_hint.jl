@@ -916,7 +916,9 @@ end
         end
     end
 
-    # Untyped iter vars reflect the current precision of TypeAnnotation.
+    # Untyped iter vars resolve precisely via TypeAnnotation's closure
+    # argument-type refinement (the generator body is a lowered closure whose
+    # argtypes are observed at its `iterate`-driven call sites).
     @testset "comprehension expressions" begin
         @testset "untyped iter var" begin
             let code = """
@@ -938,7 +940,7 @@ end
                     """
                 @test apply_inlay_hints(code, get_type_inlay_hints(code)) == """
                     let xs = rand(3)::Vector{Float64}
-                        [2x::Any for x in xs::Vector{Float64}]::Vector
+                        [2x::Float64 for x in xs::Vector{Float64}]::Vector{Float64}
                     end
                     """
             end
@@ -963,12 +965,16 @@ end
                     """
                 @test apply_inlay_hints(code, get_type_inlay_hints(code)) == """
                     let xs = [1, 2, 3]::Vector{$Int}
-                        [x for x in xs::Vector{$Int} if (x::Any > 0)::Any]::Vector
+                        [x for x in xs::Vector{$Int} if (x::$Int > 0)::Bool]::Vector{$Int}
                     end
                     """
             end
 
-            # Multi-`for` (cartesian) lowers to nested OCs.
+            # Multi-`for` (cartesian) lowers to nested OCs. The outer iteration variable
+            # refines from its observed call sites; the inner lambda is only ever called
+            # at the type level inside `Iterators.flatten`'s machinery, so `y` honestly
+            # stays `Any` (cross-applying the outer's observation to it is prevented by
+            # the argname component of the refinement key).
             let code = """
                     let xs = [1, 2, 3], ys = [1.0]
                         [x + y for x in xs for y in ys]
@@ -976,7 +982,7 @@ end
                     """
                 @test apply_inlay_hints(code, get_type_inlay_hints(code)) == """
                     let xs = [1, 2, 3]::Vector{$Int}, ys = [1.0]::Vector{Float64}
-                        [(x::$Int + y::Any)::Any for x::Any in xs::Vector{$Int} for y in ys::Vector{Float64}]::Vector
+                        [(x::$Int + y::Any)::Any for x::$Int in xs::Vector{$Int} for y in ys::Vector{Float64}]::Vector
                     end
                     """
             end
@@ -1023,8 +1029,8 @@ end
                 @test apply_inlay_hints(code, get_type_inlay_hints(code)) == expected
             end
 
-            # Multi-`for` (cartesian). Body types resolve precisely; the result widens to
-            # bare `Vector` with the current TypeAnnotation precision.
+            # Multi-`for` (cartesian) lowers to nested OCs; both the body types and
+            # the result element type resolve precisely.
             let code = """
                     let xs = [1, 2, 3], ys = [1.0]
                         [x + y for x::$Int in xs for y::Float64 in ys]
@@ -1032,7 +1038,7 @@ end
                     """
                 @test apply_inlay_hints(code, get_type_inlay_hints(code)) == """
                     let xs = [1, 2, 3]::Vector{$Int}, ys = [1.0]::Vector{Float64}
-                        [(x::$Int + y::Float64)::Float64 for x::$Int in xs::Vector{$Int} for y::Float64 in ys::Vector{Float64}]::Vector
+                        [(x::$Int + y::Float64)::Float64 for x::$Int in xs::Vector{$Int} for y::Float64 in ys::Vector{Float64}]::Vector{Float64}
                     end
                     """
             end
@@ -1463,7 +1469,7 @@ end
                 """
             expected = """
                 function with_rt(xs::Vector{Float64})::Float64
-                    f(y)::Float64 = ((xs::Vector{Float64})[1]::Float64 + y::Any)::Any
+                    f(y)::Float64 = ((xs::Vector{Float64})[1]::Float64 + y::Float64)::Float64
                     f(2.0)::Float64
                 end
                 """
@@ -1529,7 +1535,7 @@ end
                 end
                 """
             expected = """
-                let g = x -> 2x::Any
+                let g = x -> 2x::Float64
                     g(1.0)
                 end
                 """
@@ -1575,8 +1581,8 @@ end
             @test apply_inlay_hints(code, get_type_inlay_hints(code)) == expected
         end
 
-        # `map`'s result widens to `Vector` (not `Vector{$Int}`) with the
-        # current TypeAnnotation precision.
+        # Untyped `do x` resolves precisely via closure argument-type refinement,
+        # including `map`'s result element type.
         @testset "untyped do-block" begin
             code = """
                 let xs = [1, 2, 3]
@@ -1588,8 +1594,8 @@ end
             @test apply_inlay_hints(code, get_type_inlay_hints(code)) == """
                 let xs = [1, 2, 3]::Vector{$Int}
                     map(xs::Vector{$Int}) do x
-                        (x::Any * 2)::Any
-                    end::Vector
+                        (x::$Int * 2)::$Int
+                    end::Vector{$Int}
                 end
                 """
         end
