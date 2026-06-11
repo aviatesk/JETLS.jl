@@ -46,6 +46,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- Added type inlay hints showing inferred types next to expressions (bindings, calls, function return types, branch results, etc.) so types are visible inline without hovering.
+  Method bodies are inferred against their declared signature, and top-level chunks (e.g. standalone `let` blocks) are inferred independently.
+  Hints are enabled by default; [`[inlay_hint.types] enabled`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/inlay_hint/types/enabled) toggles them.
+  See the [Type hints](https://aviatesk.github.io/JETLS.jl/release/features/#features/inlay-hint/types) page for examples.
+
+  <img width="976" height="637" alt="Inlay type hint demo" src="https://github.com/user-attachments/assets/baa2ff1b-df38-4304-a479-f2a2b4ba3e7b" />
+
 - Added [`lowering/unconstrained-static-parameter`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/unconstrained-static-parameter) diagnostic that warns when a method declares a static parameter that does not appear in the type of any function parameter, so its value cannot be deduced when the method is called.
   This matches the warning Julia itself emits when evaluating such a method definition.
   For example:
@@ -112,13 +119,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   For union-typed prefixes the offered names are the union of each component's `propertynames`, so the common `Union{T, Nothing}` pattern still surfaces `T`'s properties even though `propertynames(::Nothing) == ()`; type details merge each component's per-property type at resolve time.
 
   https://github.com/user-attachments/assets/3f2887b4-4c1c-41f9-b091-4eea2b6128bc
-
-- Added type inlay hints showing inferred types next to expressions (bindings, calls, function return types, branch results, etc.) so types are visible inline without hovering.
-  Method bodies are inferred against their declared signature, and top-level chunks (e.g. standalone `let` blocks) are inferred independently.
-  Hints are enabled by default; [`[inlay_hint.types] enabled`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/inlay_hint/types/enabled) toggles them.
-  See the [Type hints](https://aviatesk.github.io/JETLS.jl/release/features/#features/inlay-hint/types) page for examples.
-
-  <img width="976" height="637" alt="Inlay type hint demo" src="https://github.com/user-attachments/assets/baa2ff1b-df38-4304-a479-f2a2b4ba3e7b" />
 
 ### Changed
 
