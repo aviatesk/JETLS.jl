@@ -35,6 +35,13 @@ match_type = "regex"
 severity = "off"
 path = "src/testrunner/testrunner-types.jl"
 
+[[diagnostic.patterns]]
+pattern = "lowering/inactive-code"
+match_by = "code"
+match_type = "literal" # Outrank the code-regex catch-all diagnostic rules below
+severity = "hint"
+path = "**/*.jl"
+
 # Treat all other diagnostics as warnings (for early detection via jetls check)
 [[diagnostic.patterns]]
 pattern = ".*"

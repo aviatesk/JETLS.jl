@@ -116,6 +116,7 @@ Here is a summary table of the diagnostics explained in this section:
 | [`lowering/unused-assignment`](@ref diagnostic/reference/lowering/unused-assignment)                           | `Information`         | `JETLS/live`  | Assignments whose values are never read                |
 | [`lowering/unused-import`](@ref diagnostic/reference/lowering/unused-import)                                   | `Information`         | `JETLS/live`  | Imported names that are never used                     |
 | [`lowering/unreachable-code`](@ref diagnostic/reference/lowering/unreachable-code)                             | `Information`         | `JETLS/live`  | Code after a block terminator that is never reached    |
+| [`lowering/inactive-code`](@ref diagnostic/reference/lowering/inactive-code)                                   | `Hint`                | `JETLS/live`  | Code excluded by `@static` in the current environment  |
 | [`lowering/unsorted-import-names`](@ref diagnostic/reference/lowering/unsorted-import-names)                   | `Hint`                | `JETLS/live`  | Import/export names not sorted alphabetically          |
 | [`toplevel/error`](@ref diagnostic/reference/toplevel/error)                                                   | `Error`               | `JETLS/save`  | Errors during code loading                             |
 | [`toplevel/method-overwrite`](@ref diagnostic/reference/toplevel/method-overwrite)                             | `Warning`             | `JETLS/save`  | Method definitions that overwrite previous ones        |
@@ -828,6 +829,34 @@ end
     produce incorrect results.
     Such overloading is extremely unlikely in practice, and this possibility is
     accepted as a trade-off for better diagnostics.
+
+#### [Inactive code (`lowering/inactive-code`)](@id diagnostic/reference/lowering/inactive-code)
+
+**Default severity**: `Hint`
+
+Reported on `@static` branches that are not taken in the current environment.
+JETLS evaluates `@static` conditions during analysis, so only the branch taken
+on the analyzing machine (its OS, Julia version, etc.) is analyzed; the other
+branches are excluded entirely, meaning LSP features such as diagnostics, hover,
+and inlay hints are unavailable inside them. The inactive region is marked with
+the `Unnecessary` tag,[^unnecessary_tag] so editors render it grayed out.
+
+Example (analyzed on a non-Windows machine):
+
+```julia
+function home_dir()
+    @static if Sys.iswindows()
+        ENV["USERPROFILE"]  # Inactive `@static` branch (condition evaluated to `false`)
+                            # (JETLS lowering/inactive-code)
+    else
+        ENV["HOME"]
+    end
+end
+```
+
+Unlike [`lowering/unreachable-code`](@ref diagnostic/reference/lowering/unreachable-code),
+this does not indicate a problem: the branch is intentionally inactive here
+and may be active in other environments, so no removal action is offered.
 
 #### [Unsorted import names (`lowering/unsorted-import-names`)](@id diagnostic/reference/lowering/unsorted-import-names)
 

@@ -576,8 +576,10 @@ function emit_macro_diagnostics!(
             severity = d.severity,
             message = d.msg,
             source = DIAGNOSTIC_SOURCE_LIVE,
-            code = LOWERING_MACRO_EXPANSION_ERROR_CODE,
-            codeDescription = diagnostic_code_description(LOWERING_MACRO_EXPANSION_ERROR_CODE)))
+            code = d.code,
+            codeDescription = diagnostic_code_description(d.code),
+            tags = d.code == LOWERING_INACTIVE_CODE ?
+                DiagnosticTag.Ty[DiagnosticTag.Unnecessary] : nothing))
     end
     return diagnostics
 end

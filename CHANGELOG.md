@@ -53,6 +53,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
   <img width="976" height="637" alt="Inlay type hint demo" src="https://github.com/user-attachments/assets/baa2ff1b-df38-4304-a479-f2a2b4ba3e7b" />
 
+- Added [`lowering/inactive-code`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/inactive-code) diagnostic that marks `@static` branches not taken in the current environment (e.g. a Windows-only branch when analyzing on macOS) at `Hint` severity with the `Unnecessary` tag, so editors gray out code that is excluded from analysis.
+
 - Added [`lowering/unconstrained-static-parameter`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/unconstrained-static-parameter) diagnostic that warns when a method declares a static parameter that does not appear in the type of any function parameter, so its value cannot be deduced when the method is called.
   This matches the warning Julia itself emits when evaluating such a method definition.
   For example:
@@ -60,6 +62,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   f(::T) where {T,S} = S  # Method definition declares type variable `S` but does not use it in the type of any function parameter
                           # (JETLS lowering/unconstrained-static-parameter)
   ```
+
+### Changed
+
+- JETLS now performs correct scope resolution on identifiers used inside `@static` macrocalls, which previously could yield incorrect results in edge cases.
+  Invalid `@static` usage (an unsupported expression shape, or a condition that fails to evaluate to a `Bool`) is now reported in place as `lowering/macro-expansion-error` while the code still flows through to analysis.
 
 ### Fixed
 
