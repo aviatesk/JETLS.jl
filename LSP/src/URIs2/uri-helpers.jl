@@ -28,7 +28,7 @@ function uri2filepath(uri::URI)
         value = path
     end
 
-    if Sys.iswindows()
+    @static if Sys.iswindows()
         value = replace(value, '/' => '\\')
     end
 
