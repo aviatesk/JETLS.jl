@@ -4,7 +4,7 @@
 [![](https://codecov.io/gh/aviatesk/JETLS.jl/branch/master/graph/badge.svg?flag=LSP.jl)](https://codecov.io/gh/aviatesk/JETLS.jl&flags[0]=LSP.jl)
 
 In this directory, the Julia version of the
-[LSP specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification)
+[LSP specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.18/specification)
 is defined.
 
 The Julia implementation leverages custom `@interface` and `@namespace` macros
@@ -37,11 +37,24 @@ making the implementation both accurate and performant.
   type aliases within modules cannot be accessed without explicit qualification.
 
 ## Original specification
+
 The original LSP specification is managed in [specification.md](./specification.md),
 which is just Markdown file.
 By passing the Markdown text of the LSP specification you want to convert
 to an LLM model along with this documentation, you can request automatic
 conversion to Julia LSP definitions.
+
+To regenerate `specification.md` from the upstream LSP sources, run this
+from the repository root:
+
+```sh
+python3 scripts/update-lsp-specification.py \
+  --version 3.18 \
+  --output LSP/specification.md
+```
+
+The script expands Jekyll includes from the upstream `gh-pages` branch and
+normalizes the result into a standalone Markdown file.
 
 ## Example conversion
 
