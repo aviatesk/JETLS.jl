@@ -111,8 +111,8 @@ the server has the freedom to compute them at a server preferred point in
 time. On the other hand the approach has the disadvantage that the server
 can't prioritize the computation for the file in which the user types or
 which are visible in the editor. Inferring the client's UI state from the
-[`textDocument/didOpen`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#textDocument_didOpen)
-and [`textDocument/didChange`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#textDocument_didChange)
+[`textDocument/didOpen`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.18/specification/#textDocument_didOpen)
+and [`textDocument/didChange`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.18/specification/#textDocument_didChange)
 notifications might lead to false positives since these notifications are
 ownership transfer notifications.
 
