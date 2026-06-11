@@ -896,6 +896,14 @@ function InferredTreeContext(
         user_return_form_ranges, oc_body_scope)
 end
 
+# The surface kinds `get_type_for_range` selects a lookup strategy for. When several
+# surface forms share one byte range, these take precedence in `surface_kind_index`
+# over generic wrappers: a lambda body `K"block"` (or a short-form funcdef body)
+# collapses onto the very expression it wraps, and letting the wrapper claim the range
+# would drop the query into `tmerge_at_range`, merging loop/closure scaffolding types
+# into the user-visible result.
+const DISPATCH_SURFACE_KINDS = JS.KSet"macrocall call dotcall tuple ' do typed_comprehension for while function macro = comparison && || if ?"
+
 function collect_provenance_indexes(inferred_tree::SyntaxTreeC)
     surface_kind_index = Dict{UnitRange{Int},JS.Kind}()
     macrocall_types = Dict{UnitRange{Int},Vector{Any}}()
@@ -905,11 +913,16 @@ function collect_provenance_indexes(inferred_tree::SyntaxTreeC)
             # Register *every* provenance entry, not just `first(provs)`. For
             # macro-wrapped surface forms — `@inline f(x) = body` whose chain is
             # `[macrocall, function]` — this makes the inner funcdef's span queryable
-            # in addition to the macrocall's outer span.
+            # in addition to the macrocall's outer span. Within one range, dispatch
+            # kinds win over generic wrappers; otherwise first-wins.
             for prov in provs
                 prov_rng = JS.byte_range(prov)
-                haskey(surface_kind_index, prov_rng) ||
-                    (surface_kind_index[prov_rng] = JS.kind(prov))
+                pk = JS.kind(prov)
+                existing = get(surface_kind_index, prov_rng, nothing)
+                if (existing === nothing ||
+                    (!(existing in DISPATCH_SURFACE_KINDS) && pk in DISPATCH_SURFACE_KINDS))
+                    surface_kind_index[prov_rng] = pk
+                end
             end
         end
         if JS.kind(st) === JS.K"call" && hasproperty(st, :type) &&

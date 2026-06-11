@@ -672,6 +672,24 @@ end
         end
     end
 
+    # A lambda body that consists of exactly one expression makes the body `K"block"`
+    # share that expression's byte range. The dispatch-relevant surface kind must win
+    # the `surface_kind_index` slot (see `DISPATCH_SURFACE_KINDS`) — otherwise the query
+    # falls into `tmerge_at_range` and merges the comprehension's loop scaffolding
+    # (`iterate` state tuples, `LinearIndices`, …) into the user-visible result.
+    @testset "dispatch kind wins over coinciding wrapper block" begin
+        let code = """
+            function makevec(n::Int)
+                f = () -> Any[Any for _ in 1:n]
+                f()
+            end
+            """
+            _, ctx = type_annotate(code)
+            rng = range_of(code, "Any[Any for _ in 1:n]")
+            @test widenconst(get_type_for_range(ctx, rng)) === Vector{Any}
+        end
+    end
+
     # OC construction scaffolding shares its byte range with the user's yield expression
     # for comprehension/`map` lambdas; queries at that range should surface only the body's
     # value type. See `tmerge_at_range`.
