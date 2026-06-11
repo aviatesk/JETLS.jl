@@ -8,8 +8,13 @@ executables.
 ## [Features](@id formatting/features)
 
 - **Document formatting**: Format entire Julia files
-- **Range formatting**: Format selected code regions (Runic and custom
-  formatters only)
+  (`textDocument/formatting`)
+- **Range formatting**: Format one selected region
+  (`textDocument/rangeFormatting`; Runic and custom formatters only)
+- **Multiple range formatting**: Format multiple selected regions in one
+  LSP 3.18 request (`textDocument/rangesFormatting`). This is advertised only
+  when the client supports `textDocument.rangeFormatting.rangesSupport`, and is
+  available for Runic and custom formatters only.
 - **Progress notifications**: Visual feedback during formatting operations
   for clients that support work done progress
 
@@ -54,7 +59,8 @@ In this case, JETLS will look for the `runic` executable and use it to perform
 formatting.
 
 This is the default setting and doesn't require explicit configuration.
-Runic supports both document and range formatting.
+Runic supports document formatting, single range formatting, and multiple
+range formatting via repeated `--lines=START:END` arguments.
 
 ### [Preset `"JuliaFormatter"`](@id formatting/configuration/juliaformatter)
 
@@ -72,7 +78,7 @@ editor client (such as tab size) when available.
 
 !!! warning
     Note that JuliaFormatter currently, as of v2.2.0, only supports full
-    document formatting, not range formatting.
+    document formatting, not range formatting or multiple range formatting.
 
 ### [Custom formatter](@id formatting/configuration/custom)
 
@@ -89,9 +95,9 @@ code to stdout, following the same interface as `runic`:
   read the entire Julia source code from stdin, format it completely, and
   write the formatted result to stdout. The exit code should be 0 on success.
 - `executable_range`: Command for range formatting. The formatter should
-  accept a `--lines=START:END` argument to format only the specified line
-  range. It should read the entire document code from stdin and write the
-  _entire document code_ to stdout with only the specified region formatted.
+  accept one or more `--lines=START:END` arguments to format only the specified
+  line ranges. It should read the entire document code from stdin and write the
+  _entire document code_ to stdout with only the specified regions formatted.
   The rest of the document must remain unchanged.
 
 ## [Troubleshooting](@id formatting/troubleshooting)
