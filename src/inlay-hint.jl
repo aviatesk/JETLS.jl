@@ -245,8 +245,10 @@ function collect_type_inlay_hints!(
             sig_rng !== nothing && push!(verbatim_ranges, sig_rng)
         end
         if JS.kind(node) === JS.K"->" && JS.numchildren(node) >= 1
-            # Lambda parameters are signature syntax; suppress the misleading
-            # OC slot hint for no-paren single-Identifier forms too.
+            # Lambda/`do` parameters are signature syntax, and the OC binding's slot
+            # shares their byte range, so the generic path would emit a misleading
+            # `OpaqueClosure{…}` hint. Suppress it here; dedicated parameter hints
+            # are emitted by the `K"->"` branch of the postorder pass.
             params = node[1]
             if JS.kind(params) in JS.KSet"tuple Identifier"
                 push!(verbatim_ranges, JS.byte_range(params))
@@ -325,6 +327,17 @@ function collect_type_inlay_hints!(
 
         byterng = JS.byte_range(node)
 
+        # Dedicated hints for unannotated local-closure parameters — arrow / `do`
+        # lambdas, anonymous `function (…) … end`, and named local closures. Emitted
+        # before the funcdef return-type path's early return so a named local closure
+        # gets both its parameter and return-type hints. `emit_lambda_param_hints!`
+        # is a no-op for non-closures (it gates on `get_oc_argtypes_for_range`).
+        if k in JS.KSet"-> function ="
+            emit_lambda_param_hints!(
+                inlay_hints, node, ctx, fi, uri, range, nontrivia_index,
+                postprocessor, label_cache, maxdepth, maxwidth, lazy_tooltips)
+        end
+
         # Emit function return hints on the signature, not the full definition.
         if k in JS.KSet"function macro =" && (call_node = funcdef_call_node(node)) !== nothing
             endpos = offset_to_xy(fi, JS.last_byte(call_node) + 1)
@@ -348,7 +361,7 @@ function collect_type_inlay_hints!(
         if k === JS.K"for" && JS.numchildren(node) >= 1
             spec = node[1]
             if JS.kind(spec) === JS.K"=" && JS.numchildren(spec) >= 1
-                emit_for_loop_var_hints!(
+                emit_destructure_var_hints!(
                     inlay_hints, spec[1], ctx, fi, uri, range, nontrivia_index,
                     postprocessor, label_cache, maxdepth, maxwidth, lazy_tooltips)
             end
@@ -357,7 +370,7 @@ function collect_type_inlay_hints!(
         if k in JS.KSet"generator filter"
             spec = comprehension_iter_spec(node)
             if spec !== nothing && JS.numchildren(spec) >= 1
-                emit_for_loop_var_hints!(
+                emit_destructure_var_hints!(
                     inlay_hints, spec[1], ctx, fi, uri, range, nontrivia_index,
                     postprocessor, label_cache, maxdepth, maxwidth, lazy_tooltips)
             end
@@ -491,8 +504,93 @@ function register_for_loop_vars!(callee_ranges::Set{UnitRange{Int}}, lhs::Syntax
     return nothing
 end
 
-# Emit one hint per variable in an iteration LHS, including destructuring forms.
-function emit_for_loop_var_hints!(
+# Emit one hint per unannotated local-closure parameter, for every definition form:
+# `K"->"` (arrow / `do`, bare `K"Identifier"` or `K"tuple"` params), anonymous
+# `function (…) … end` (`K"tuple"` signature), and named local closures /
+# short-form `f(…) = …` (`K"call"` signature, after stripping `where` / return-type
+# wrappers — its head child is the function name and is skipped). Each positional
+# parameter consumes one entry of the constructed `OpaqueClosure`'s argt (from
+# `get_oc_argtypes_for_range`, carrying the call-site argtype refinement):
+# - a simple `K"Identifier"` parameter gets that entry's type directly;
+# - a destructuring pattern (`(a, b)`, `(; a, b)`, …) is one parameter whose argt
+#   entry is the aggregate, so per-component hints come from each leaf's own range
+#   instead (`emit_destructure_var_hints!`, shared with for-loop iteration vars).
+# `Any` entries on simple parameters are skipped (an unrefined slot adds no information
+# over the bare name); user-annotated (`K"::"`) parameters are left untouched. A no-op
+# when no OC was constructed at the range (top-level methods, plain assignments), since
+# `get_oc_argtypes_for_range` returns `nothing` there.
+function emit_lambda_param_hints!(
+        inlay_hints::Vector{InlayHint}, lambda::SyntaxTreeC,
+        ctx::InferredTreeContext, fi::FileInfo, uri::URI, range::Range,
+        nontrivia_index::Vector{Int}, postprocessor::LSPostProcessor,
+        label_cache::IdDict{Any,String}, maxdepth::Int, maxwidth::Int, lazy_tooltips::Bool
+    )
+    argtypes = @something get_oc_argtypes_for_range(ctx, JS.byte_range(lambda)) return nothing
+    JS.numchildren(lambda) >= 1 || return nothing
+    sig = lambda[1]
+    # `params`: the node whose children (from `start` on) are the positional params.
+    if JS.kind(lambda) === JS.K"->"
+        if JS.kind(sig) === JS.K"Identifier" # no-paren single-parameter form
+            isempty(argtypes) || emit_lambda_param_hint!(
+                inlay_hints, sig, argtypes[1], fi, uri, range, nontrivia_index,
+                postprocessor, label_cache, maxdepth, maxwidth, lazy_tooltips)
+            return nothing
+        end
+        JS.kind(sig) === JS.K"tuple" || return nothing
+        params, start = sig, 1
+    else # `K"function"` / `K"="`
+        sig = unwrap_funcdef_sig(sig)
+        sk = JS.kind(sig)
+        if sk === JS.K"tuple"
+            params, start = sig, 1
+        elseif sk === JS.K"call"
+            params, start = sig, 2 # skip the function name
+        else
+            return nothing
+        end
+    end
+    argi = 0
+    for ci = start:JS.numchildren(params)
+        p = params[ci]
+        pk = JS.kind(p)
+        pk === JS.K"parameters" && break # keyword parameters aren't positional
+        argi += 1
+        argi <= length(argtypes) || break
+        if pk === JS.K"Identifier"
+            emit_lambda_param_hint!(
+                inlay_hints, p, argtypes[argi], fi, uri, range, nontrivia_index,
+                postprocessor, label_cache, maxdepth, maxwidth, lazy_tooltips)
+        elseif pk === JS.K"tuple" # destructuring pattern — annotate each component
+            emit_destructure_var_hints!(
+                inlay_hints, p, ctx, fi, uri, range, nontrivia_index,
+                postprocessor, label_cache, maxdepth, maxwidth, lazy_tooltips)
+        end
+    end
+    return nothing
+end
+
+function emit_lambda_param_hint!(
+        inlay_hints::Vector{InlayHint}, p::SyntaxTreeC, @nospecialize(typ),
+        fi::FileInfo, uri::URI, range::Range, nontrivia_index::Vector{Int},
+        postprocessor::LSPostProcessor, label_cache::IdDict{Any,String},
+        maxdepth::Int, maxwidth::Int, lazy_tooltips::Bool
+    )
+    typ === Any && return nothing # an unrefined slot adds nothing over the bare name
+    should_annotate_type(typ) || return nothing
+    endpos = offset_to_xy(fi, JS.last_byte(p) + 1)
+    endpos ∈ range || return nothing
+    emit_type_hint!(
+        inlay_hints, p, typ, fi, uri, nontrivia_index, endpos, postprocessor,
+        label_cache, maxdepth, maxwidth, lazy_tooltips, JS.byte_range(p))
+    return nothing
+end
+
+# Emit one hint per variable in a binding pattern, recursing through destructuring
+# forms (`(a, b)`, nested `(a, (b, c))`, property `(; a, b)`). Each leaf's type is
+# queried at its own byte range. Shared by for-loop / comprehension iteration variables
+# and by destructured closure parameters. `K"..."` (slurp) and `K"::"` (user-annotated)
+# components are left untouched.
+function emit_destructure_var_hints!(
         inlay_hints::Vector{InlayHint}, lhs::SyntaxTreeC,
         ctx::InferredTreeContext, fi::FileInfo, uri::URI, range::Range,
         nontrivia_index::Vector{Int}, postprocessor::LSPostProcessor,
@@ -500,12 +598,12 @@ function emit_for_loop_var_hints!(
     )
     k = JS.kind(lhs)
     if k === JS.K"Identifier"
-        emit_loop_var_hint!(
+        emit_destructure_var_hint!(
             inlay_hints, lhs, ctx, fi, uri, range, nontrivia_index, postprocessor,
             label_cache, maxdepth, maxwidth, lazy_tooltips)
     elseif k in JS.KSet"tuple parameters"
         for child in JS.children(lhs)
-            emit_for_loop_var_hints!(
+            emit_destructure_var_hints!(
                 inlay_hints, child, ctx, fi, uri, range, nontrivia_index, postprocessor,
                 label_cache, maxdepth, maxwidth, lazy_tooltips)
         end
@@ -513,7 +611,7 @@ function emit_for_loop_var_hints!(
     return nothing
 end
 
-function emit_loop_var_hint!(
+function emit_destructure_var_hint!(
         inlay_hints::Vector{InlayHint}, lvar::SyntaxTreeC,
         ctx::InferredTreeContext, fi::FileInfo, uri::URI, range::Range,
         nontrivia_index::Vector{Int}, postprocessor::LSPostProcessor,
@@ -574,7 +672,7 @@ end
 
 # Whether a byte range is contained in user-written syntax that should not get hints.
 in_verbatim_range(byterng::UnitRange{Int}, verbatim_ranges::Set{UnitRange{Int}}) =
-    any(rng::UnitRange{Int} -> byterng ⊆ rng, verbatim_ranges)
+    any(rng -> byterng ⊆ rng, verbatim_ranges)
 
 function emit_type_hint!(
         inlay_hints::Vector{InlayHint}, node::SyntaxTreeC, @nospecialize(typ), fi::FileInfo,

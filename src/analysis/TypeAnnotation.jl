@@ -152,7 +152,7 @@ using ..JETLS: InferredContextCache, InferredContextCacheData, JETLS_DEBUG_LOWER
 import ..JETLS: InferredTreeContext
 
 export InferredTreeContext, build_inferred_context_for_range, get_matches_for_range,
-    get_type_for_range
+    get_oc_argtypes_for_range, get_type_for_range
 
 # ASTTypeAnnotator
 # ================
@@ -1581,6 +1581,12 @@ function tmerge_at_range(ctx::InferredTreeContext, rng::UnitRange{<:Integer})
     # `Union{T, Method, OpaqueClosure, Type}`. Keep only nodes attributed to the body of
     # the OC at `rng`; outside that scope is scaffolding.
     is_oc_site = any(s -> JS.kind(s) === JS.K"new_opaque_closure", nodes)
+    # Property destructuring in parameter position (`do (; a, b)`) emits a
+    # `getproperty(obj, :a)` whose field-name `K"Symbol"` leaf lands on the binding's
+    # byte range, polluting it to `Union{T, Symbol}`. (Assignment-position `(; a, b) =`
+    # is already handled by `is_synthetic_destructure_stmt` at annotation time.)
+    # Skip the symbol when a binding slot shares the range.
+    has_binding_slot = any(s -> JS.kind(s) === JS.K"slot", nodes)
     typ = nothing
     for st in nodes
         # `K"core"` leaves are lowering-introduced `Core.X` references (e.g. the
@@ -1588,6 +1594,7 @@ function tmerge_at_range(ctx::InferredTreeContext, rng::UnitRange{<:Integer})
         # the parameter's surface position); users can't write them, so their types
         # (`Const(Any)` etc.) must not leak into surface queries.
         JS.kind(st) === JS.K"core" && continue
+        has_binding_slot && JS.kind(st) === JS.K"Symbol" && continue
         hasproperty(st, :type) || continue
         if is_oc_site && get(ctx.oc_body_scope, st._id, nothing) !== rng
             continue
@@ -1641,6 +1648,39 @@ function get_matches_for_range(ctx::InferredTreeContext, rng::UnitRange{<:Intege
     last_call === nothing && return nothing
     hasproperty(last_call, :matches) || return nothing
     return last_call.matches::Vector{Core.MethodMatch}
+end
+
+"""
+    get_oc_argtypes_for_range(
+            ctx::InferredTreeContext, rng::UnitRange{<:Integer}
+        ) -> Union{Nothing,Vector{Any}}
+
+Look up the `Core.OpaqueClosure` constructed at surface byte range `rng` — a lambda or
+`do`-block closure routed through [`Closure2Opaque.rewrite_local_closures_to_opaque`](@ref)
+— and return its argument types: one entry per user-visible parameter, with any
+call-site argtype refinement applied (see "Closure argument-type refinement" in the
+[`TypeAnnotation`](@ref) module docstring). Returns `nothing` when no annotated OC
+construction lies at `rng` or its argt isn't a plain `Vararg`-free `Tuple`.
+
+Feature code uses this for parameter-position queries (e.g. inlay hints on unannotated
+lambda parameters), where the value-type query [`get_type_for_range`](@ref) would
+surface the closure's own `OpaqueClosure{…}` type instead.
+"""
+function get_oc_argtypes_for_range(ctx::InferredTreeContext, rng::UnitRange{<:Integer})
+    for st in get(ctx.by_byte_range, rng, ())
+        JS.kind(st) === JS.K"new_opaque_closure" || continue
+        hasproperty(st, :type) || continue
+        oc = Base.unwrap_unionall(CC.widenconst(st.type))
+        oc isa DataType || continue
+        oc.name === Base.typename(Core.OpaqueClosure) || continue
+        argt = oc.parameters[1]
+        argt isa DataType || continue
+        argt <: Tuple || continue
+        params = argt.parameters
+        any(CC.isvarargtype, params) && continue
+        return Any[params...]
+    end
+    return nothing
 end
 
 end # module TypeAnnotation

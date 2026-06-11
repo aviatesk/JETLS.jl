@@ -886,6 +886,30 @@ end
     # OC construction scaffolding shares its byte range with the user's yield expression
     # for comprehension/`map` lambdas; queries at that range should surface only the body's
     # value type. See `tmerge_at_range`.
+    # Property destructuring in parameter position (`do (; a, b)`) lowers each name to a
+    # `getproperty(obj, :a)` whose field-name `K"Symbol"` leaf lands on the binding's
+    # byte range. `tmerge_at_range` must skip it so the query yields the binding's type,
+    # not `Union{T, Symbol}`. (Assignment-position `(; a, b) = rhs` is already clean via
+    # `is_synthetic_destructure_stmt`.)
+    @testset "property-destructure parameter field-name symbol is not merged" begin
+        let code = """
+            function f(nts::Vector{@NamedTuple{a::Int, b::String}})
+                foreach(nts) do (; a, b)
+                    a, b
+                end
+            end
+            """
+            fi, ctx = type_annotate(code)
+            # Every resolved `a` / `b` (the destructured parameter and its body uses)
+            # must be the clean field type, never `Union{Int, Symbol}`. The signature
+            # annotation occurrences resolve to `nothing` and are filtered out.
+            atypes = filter(!isnothing, query_all_types(fi, ctx, "a"))
+            btypes = filter(!isnothing, query_all_types(fi, ctx, "b"))
+            @test !isempty(atypes) && all(t -> widenconst(t) === Int, atypes)
+            @test !isempty(btypes) && all(t -> widenconst(t) === String, btypes)
+        end
+    end
+
     @testset "OC construction noise at user expression byte range" begin
         @testset "comprehension with typed iterator yield" begin
             let code = "let xs = rand(3); [yld for yld::Float64 in xs]; end"

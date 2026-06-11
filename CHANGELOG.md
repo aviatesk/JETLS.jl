@@ -69,6 +69,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Improved type precision for local closures with untyped parameters (`do x`, `x -> ...`): their parameter types are now inferred from the argument types observed at the closure's call sites instead of degrading to `Any`, so hover, inlay hints and other type-aware features show precise types in closure bodies, in comprehensions, and for results of higher-order calls like `map`. Parameter annotations other than `::Any` are always respected as-is.
 
+- Added inlay type hints for unannotated parameters of local closures, showing the parameter types inferred from the closure's call sites (e.g. `map(xs) do x::Int` for `xs::Vector{Int}`, or `f = x::Union{Float64, Int} -> 2x` when `f` is called with both `Float64` and `Int`).
+  This covers all local-closure forms — arrow and `do`-block lambdas, anonymous and named local closures.
+  Destructuring parameters are annotated per component (e.g. `do (key::String, val::Int)`), consistent with for-loop iteration variables.
+  Parameters whose type cannot be narrowed beyond `Any` are left without a hint.
+
 - JETLS now performs correct scope resolution on identifiers used inside `@static` macrocalls, which previously could yield incorrect results in edge cases.
   Invalid `@static` usage (an unsupported expression shape, or a condition that fails to evaluate to a `Bool`) is now reported in place as `lowering/macro-expansion-error` while the code still flows through to analysis.
 
