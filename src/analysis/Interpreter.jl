@@ -4,9 +4,8 @@ export LSInterpreter
 
 using JuliaSyntax: JuliaSyntax as JS
 using JET: CC, JET, JuliaInterpreter
-using ..JETLS:
-    AnalysisRequest, JETLS, JETLS_DEV_MODE, Server,
-    is_cancelled, send_progress, yield_to_endpoint
+using ..JETLS: AnalysisRequest, JETLS, JETLS_DEV_MODE, Server,
+    get_source_text, is_cancelled, send_progress, yield_to_endpoint
 using ..JETLS.URIs2
 using ..JETLS.LSP
 using ..JETLS.Analyzer
@@ -266,7 +265,7 @@ function JET.try_read_file(interp::LSInterpreter, _include_context::Module, file
         if isempty(parsed_stream.diagnostics)
             return fi.syntax_node
         else
-            return String(JS.sourcetext(parsed_stream))
+            return String(get_source_text(parsed_stream))
         end
     end
     # fallback to the default file-system-based include

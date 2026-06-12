@@ -271,8 +271,8 @@ function collect_type_inlay_hints!(
             end
         end
         if JS.kind(node) === JS.K"unknown_head" && JS.numchildren(node) >= 1
-            # Compound assignment (`op=`) lowering introduces operator
-            # references that pollute the LHS byte range.
+            # Compound assignments parse as `K"unknown_head"` with the operator in
+            # `name_val`; lowering introduces references that pollute the LHS range.
             push!(callee_ranges, JS.byte_range(node[1]))
         end
         # Postfix `'` (adjoint): the operand's hint at end-of-operand would

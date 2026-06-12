@@ -744,7 +744,7 @@ function should_insert_spaces_around_equal(fi::FileInfo, ca::CallArgs)
         tok = @something next_tok(tok) continue
         JS.is_whitespace(this(tok)) || continue
         tok = @something next_tok(tok) continue
-        JS.is_plain_equals(this(tok)) || continue
+        JS.kind(this(tok)) === JS.K"=" || continue
         tok = @something next_tok(tok) continue
         JS.is_whitespace(this(tok)) || continue
         has_whitespaces += 1

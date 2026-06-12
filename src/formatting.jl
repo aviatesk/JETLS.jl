@@ -78,9 +78,6 @@ end
 #     method = RANGE_FORMATTING_REGISTRATION_METHOD))
 # register(currently_running, range_formatting_registration(currently_running))
 
-document_text(fi::FileInfo) = JS.sourcetext(fi.parsed_stream)
-document_range(fi::FileInfo) = jsobj_to_range(fi.parsed_stream, fi)
-
 function get_cell_text(state::ServerState, cell_uri::URI)
     notebook_uri = @something get_notebook_uri_for_cell(state, cell_uri) return nothing
     notebook_info = @something get_notebook_info(state, notebook_uri) return nothing
