@@ -1,3 +1,54 @@
+"""
+Options for notifications/requests for user operations on files.
+
+- `@since` 3.16.0
+"""
+@interface FileOperationOptions begin
+    "The server is interested in receiving didCreateFiles notifications."
+    didCreate::Union{Nothing, FileOperationRegistrationOptions} = nothing
+
+    "The server is interested in receiving willCreateFiles requests."
+    willCreate::Union{Nothing, FileOperationRegistrationOptions} = nothing
+
+    "The server is interested in receiving didRenameFiles notifications."
+    didRename::Union{Nothing, FileOperationRegistrationOptions} = nothing
+
+    "The server is interested in receiving willRenameFiles requests."
+    willRename::Union{Nothing, FileOperationRegistrationOptions} = nothing
+
+    "The server is interested in receiving didDeleteFiles file notifications."
+    didDelete::Union{Nothing, FileOperationRegistrationOptions} = nothing
+
+    "The server is interested in receiving willDeleteFiles file requests."
+    willDelete::Union{Nothing, FileOperationRegistrationOptions} = nothing
+end
+
+"""
+Defines workspace specific capabilities of the server.
+"""
+@interface WorkspaceOptions begin
+    """
+    The server supports workspace folder.
+
+    - `@since` 3.6.0
+    """
+    workspaceFolders::Union{Nothing, WorkspaceFoldersServerCapabilities} = nothing
+
+    """
+    The server is interested in notifications/requests for operations on files.
+
+    - `@since` 3.16.0
+    """
+    fileOperations::Union{Nothing, FileOperationOptions} = nothing
+
+    """
+    The server supports the `workspace/textDocumentContent` request.
+
+    - `@since` 3.18.0
+    """
+    textDocumentContent::Union{Nothing, TextDocumentContentOptions, TextDocumentContentRegistrationOptions} = nothing
+end
+
 @interface ServerCapabilities begin
     """
     The position encoding the server picked from the encodings offered
@@ -212,55 +263,7 @@
     """
     Workspace specific server capabilities
     """
-    workspace::Union{Nothing, @interface begin
-        """
-        The server supports workspace folder.
-
-        - `@since` 3.6.0
-        """
-        workspaceFolders::Union{Nothing, WorkspaceFoldersServerCapabilities} = nothing
-
-        """
-        The server is interested in file notifications/requests.
-
-        - `@since` 3.16.0
-        """
-        fileOperations::Union{Nothing, @interface begin
-            """
-            The server is interested in receiving didCreateFiles
-            notifications.
-            """
-            didCreate::Union{Nothing, FileOperationRegistrationOptions} = nothing
-
-            """
-            The server is interested in receiving willCreateFiles requests.
-            """
-            willCreate::Union{Nothing, FileOperationRegistrationOptions} = nothing
-
-            """
-            The server is interested in receiving didRenameFiles
-            notifications.
-            """
-            didRename::Union{Nothing, FileOperationRegistrationOptions} = nothing
-
-            """
-            The server is interested in receiving willRenameFiles requests.
-            """
-            willRename::Union{Nothing, FileOperationRegistrationOptions} = nothing
-
-            """
-            The server is interested in receiving didDeleteFiles file
-            notifications.
-            """
-            didDelete::Union{Nothing, FileOperationRegistrationOptions} = nothing
-
-            """
-            The server is interested in receiving willDeleteFiles file
-            requests.
-            """
-            willDelete::Union{Nothing, FileOperationRegistrationOptions} = nothing
-        end} = nothing
-    end} = nothing
+    workspace::Union{Nothing, WorkspaceOptions} = nothing
 
     """
     Experimental server capabilities.
@@ -520,6 +523,13 @@ provides text document synchronization (e.g. open, changed and close notificatio
         notification.
         """
         didChangeWatchedFiles::Union{DidChangeWatchedFilesClientCapabilities, Nothing} = nothing
+
+        """
+        Capabilities specific to the `workspace/textDocumentContent` request.
+
+        - `@since` 3.18.0
+        """
+        textDocumentContent::Union{TextDocumentContentClientCapabilities, Nothing} = nothing
 
         """
         Capabilities specific to the `workspace/symbol` request.

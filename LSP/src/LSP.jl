@@ -44,6 +44,7 @@ include("workspace-features/files.jl")
 include("workspace-features/did-change-watched-files.jl")
 include("workspace-features/execute-command.jl")
 include("workspace-features/apply-edit.jl")
+include("workspace-features/text-document-content.jl")
 include("window-features.jl")
 include("lifecycle-messages/initialize.jl")
 
