@@ -10,10 +10,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
 - Diff: [`916a7a84...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/916a7a84...HEAD)
 
+### Changed
+
+- `vscode-languageclient` dependency has been updated from the `10.0.0-next` prerelease line to the stable `10.0.0` release, keeping Jupyter notebook pull diagnostics support on the official LSP 3.18 client release.
+
 ### Removed
 
-- The `completion.method_signature.prepend_inference_result` setting was removed. Inferred return types are now always shown both as `CompletionItem.detail` (` -> T` next to the candidate label) and as a leading `signature -> T` code fence at the top of the method signature completion documentation, so the previous client-specific opt-in is no longer needed.
-  Existing configs keep working for now: the removed key is still accepted at load time and silently dropped, with a one-shot deprecation warning. The legacy key will be rejected outright in releases after June 2026, so if you are still setting `completion.method_signature.prepend_inference_result`, please remove it from your config.
+- Removed support for the legacy `completion.method_signature.prepend_inference_result` configuration key.
+  Inferred return types are now always shown in completion details and method signature documentation.
 
 ## v0.4.0
 
