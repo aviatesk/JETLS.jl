@@ -51,13 +51,15 @@ struct MacroDiagnostic
     node::SyntaxTreeC
     msg::String
     severity::DiagnosticSeverity.Ty
+    code::String
 end
 
 """
     MACRO_DIAGNOSTIC_SINK :: ScopedValue{Union{Nothing,Vector{MacroDiagnostic}}}
 
-Side channel that lets macro stubs surface issues as LSP diagnostics without
-aborting expansion — the producer/consumer contract for [`push_macro_error!`](@ref)
+Side channel that lets macro stubs surface issues — and purely informational
+notes like [`push_inactive_code!`](@ref) — as LSP diagnostics without aborting
+expansion; the producer/consumer contract for [`push_macro_error!`](@ref)
 and [`push_macro_warning!`](@ref).
 
 Consumers bind this to a vector via `Base.ScopedValues.@with` around their lowering
@@ -78,11 +80,12 @@ const MACRO_DIAGNOSTIC_SINK =
     Base.ScopedValues.ScopedValue{Union{Nothing,Vector{MacroDiagnostic}}}(nothing)
 
 @noinline function push_macro_diagnostic!(
-        node::SyntaxTreeC, msg::AbstractString, severity::DiagnosticSeverity.Ty
+        node::SyntaxTreeC, msg::AbstractString, severity::DiagnosticSeverity.Ty,
+        code::String = LOWERING_MACRO_EXPANSION_ERROR_CODE
     )
     sink = MACRO_DIAGNOSTIC_SINK[]
     sink === nothing && return
-    push!(sink, MacroDiagnostic(node, String(msg), severity))
+    push!(sink, MacroDiagnostic(node, String(msg), severity, code))
     return
 end
 
@@ -107,6 +110,22 @@ $macro_issue_contract
 """
 push_macro_error!(node::SyntaxTreeC, msg::AbstractString) =
     push_macro_diagnostic!(node, msg, DiagnosticSeverity.Error)
+
+"""
+    push_inactive_code!(node::SyntaxTreeC, condval::Bool)
+
+Report `node` — a branch dropped at macro expansion time, e.g. the not-taken
+side of an `@static` conditional — as `lowering/inactive-code` at Hint severity
+into [`MACRO_DIAGNOSTIC_SINK`](@ref) (no-op if the sink is unbound). The
+consumer tags these `DiagnosticTag.Unnecessary` so clients render the region
+grayed out. Unlike the issue helpers above this is purely informational: the
+code is intentionally inactive in the current environment, not a problem.
+`condval` is the value the governing condition evaluated to.
+"""
+push_inactive_code!(node::SyntaxTreeC, condval::Bool) =
+    push_macro_diagnostic!(node,
+        "Inactive `@static` branch (condition evaluated to `$condval`)",
+        DiagnosticSeverity.Hint, LOWERING_INACTIVE_CODE)
 
 # Simple (non-qualified) macro names whose new-style implementations in this file and
 # `JuliaLowering/src/syntax_macros.jl` preserve fine-grained source provenance during
@@ -145,6 +164,7 @@ const NEW_STYLE_MACROCALL_NAMES = (
     "@something",
     "@spawn",
     "@specialize",
+    "@static",
     "@test",
     "@test_broken",
     "@test_deprecated",
@@ -1149,5 +1169,81 @@ function _extract_assume_effect_setting_name(setting::SyntaxTreeC)
             return name isa AbstractString ? name : nothing
         end
     end
+    return nothing
+end
+
+# New-style implementation of `Base.@static`. Like the real macro, the condition is
+# evaluated at expansion time and only the taken branch survives — but as a new-style
+# macro that branch keeps its fine-grained provenance. The condition is `JL.eval`'d in
+# `__context__.scope_layer.mod`, the module JuliaLowering hands to old-style macros as
+# `__module__`. A condition that fails to evaluate (or doesn't produce a `Bool`) is
+# reported via the sink and recovered by returning the whole conditional unchanged, so
+# every branch and the condition itself still reach scope analysis as a runtime
+# conditional.
+#
+# Each dropped branch is reported via `push_inactive_code!` so editors can gray out
+# code that is excluded in the current environment (and won't get completion, hover,
+# diagnostics, etc.). When a branch chains further conditionals (`elseif`, right-nested
+# `&&`/`||`), dropping it covers the whole remaining chain — including conditions that
+# were consequently never evaluated — in one contiguous range.
+#
+# In EST a ternary stays `K"?"` (Expr conversion is what folds it into `:if`), so the
+# if-like kinds form one equivalence class when deciding whether to keep folding a
+# selected branch, mirroring Base's `x.head === :elseif || x.head === hd` loop.
+const _STATIC_IF_KINDS = JS.KSet"if elseif ?"
+const _STATIC_COND_KINDS = JS.KSet"if elseif ? && ||"
+
+function Base.var"@static"(__context__::JL.MacroContext, ex::SyntaxTreeC)
+    mc = __context__.macrocall::SyntaxTreeC
+    if JS.kind(ex) ∉ _STATIC_COND_KINDS
+        push_macro_error!(ex, "invalid @static macro")
+        return JL.@ast(__context__, mc, ex)
+    end
+    x = ex
+    while true
+        k = JS.kind(x)
+        cond = _static_eval_cond(__context__, x[1])
+        cond === nothing && return JL.@ast(__context__, mc, ex)
+        i = xor(cond, k === JS.K"||") ? 2 : 3
+        if i == 2
+            JS.numchildren(x) ≥ 3 && push_inactive_code!(x[3], cond)
+        else
+            push_inactive_code!(x[2], cond)
+            JS.numchildren(x) < 3 && return JL.@ast(__context__, mc, nothing::JS.K"Value")
+        end
+        x = x[i]
+        xk = JS.kind(x)
+        if xk === k || (xk in _STATIC_IF_KINDS && k in _STATIC_IF_KINDS)
+            continue # `elseif` chain, right-nested `&&`/`||`, or nested ternary
+        end
+        return JL.@ast(__context__, mc, x)
+    end
+end
+
+function Base.var"@static"(__context__::JL.MacroContext, args::SyntaxTreeC...)
+    mc = __context__.macrocall::SyntaxTreeC
+    push_macro_error!(mc, "invalid @static macro")
+    isempty(args) && return JL.@ast(__context__, mc, nothing::JS.K"Value")
+    return JL.@ast(__context__, mc, [JS.K"block" args...])
+end
+
+# Returns the condition's value as a `Bool`, or `nothing` (with the issue reported via
+# the sink) when it cannot be statically evaluated. `JL.eval` runs the condition through
+# JuliaLowering's own pipeline, which understands the hygiene (`scope_layer`) annotations
+# macro arguments carry: identifiers a user wrote directly at the macrocall site carry
+# the base layer and resolve in the module given here. (Identifiers spliced in from an
+# outer macro expansion carry layers a fresh lowering context doesn't know — those fail
+# to evaluate and take the recovery path below.) Base lets evaluation errors propagate
+# out of expansion; we recover per the macro issue contract.
+function _static_eval_cond(ctx::JL.MacroContext, cond::SyntaxTreeC)
+    val = try
+        JL.eval(ctx.scope_layer.mod, cond)
+    catch err
+        msg = first(split(sprint(showerror, err), '\n'))
+        push_macro_error!(cond, "@static: failed to evaluate condition: $msg")
+        return nothing
+    end
+    val isa Bool && return val
+    push_macro_error!(cond, "@static: condition did not evaluate to a Bool")
     return nothing
 end

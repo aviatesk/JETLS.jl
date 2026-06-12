@@ -2414,6 +2414,25 @@ end
     end
 end
 
+@testset HierarchicalTestSet "inactive code detection" begin
+    # A dropped `@static` branch surfaces as `lowering/inactive-code` at Hint
+    # severity with the `Unnecessary` tag so editors gray out the region.
+    diagnostics = get_lowering_diagnostics("""
+    function f()
+        @static if false
+            inactive_call()
+        else
+            active_call()
+        end
+    end
+    """; code = JETLS.LOWERING_INACTIVE_CODE)
+    d = only(diagnostics)
+    @test d.severity == DiagnosticSeverity.Hint
+    @test d.tags == [DiagnosticTag.Unnecessary]
+    @test d.range.start.line ≤ 2 ≤ d.range.var"end".line # covers `inactive_call()`
+    @test d.range.var"end".line < 4                      # excludes `active_call()`
+end
+
 module soft_scope_module
     global x = 1
 end

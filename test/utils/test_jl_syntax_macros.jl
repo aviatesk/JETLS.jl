@@ -1243,4 +1243,205 @@ end
     end
 end
 
+module static_eval_module
+const STATIC_COND_FLAG = true
+end
+
+@testset "@static" begin
+    @testset "macro expansion" begin
+        # Taken `if` branch survives as its source block; the dropped branch and the
+        # condition disappear at expansion time.
+        let st1 = jlexpand("@static if true; sin(xxx); end")
+            @test JS.kind(st1) === JS.K"block"
+            @test JS.sourcetext(st1[1]) == "sin(xxx)"
+        end
+
+        # No `else` and a false condition: expands to `nothing`, like Base.
+        let st1 = jlexpand("@static if false; aaa; end")
+            @test JS.kind(st1) === JS.K"Value"
+        end
+
+        # `elseif` chains keep folding until a branch is taken.
+        let st1 = jlexpand("@static if false; aaa; elseif true; bbb; else; ccc; end")
+            @test JS.kind(st1) === JS.K"block"
+            @test JS.sourcetext(st1[1]) == "bbb"
+        end
+        let st1 = jlexpand("@static if false; aaa; elseif false; bbb; else; ccc; end")
+            @test JS.kind(st1) === JS.K"block"
+            @test JS.sourcetext(st1[1]) == "ccc"
+        end
+
+        # Ternary forms, including right-nested chains.
+        let st1 = jlexpand("@static true ? aaa : bbb")
+            @test JS.sourcetext(st1) == "aaa"
+        end
+        let st1 = jlexpand("@static false ? aaa : true ? bbb : ccc")
+            @test JS.sourcetext(st1) == "bbb"
+        end
+
+        # `&&` / `||` short-circuit forms, including right-nested chains.
+        let st1 = jlexpand("@static true && sin(xxx)")
+            @test JS.kind(st1) === JS.K"call"
+            @test JS.sourcetext(st1) == "sin(xxx)"
+        end
+        @test JS.kind(jlexpand("@static false && sin(xxx)")) === JS.K"Value"
+        @test JS.kind(jlexpand("@static true || sin(xxx)")) === JS.K"Value"
+        let st1 = jlexpand("@static false || false || sin(xxx)")
+            @test JS.kind(st1) === JS.K"call"
+            @test JS.sourcetext(st1) == "sin(xxx)"
+        end
+
+        # The condition is evaluated in the macro expansion context module.
+        let st1 = jlexpand(static_eval_module, "@static STATIC_COND_FLAG ? aaa : bbb")
+            @test JS.sourcetext(st1) == "aaa"
+        end
+    end
+
+    @testset "inactive branch hints" begin
+        # Each dropped branch is reported as `lowering/inactive-code` at Hint
+        # severity so clients can gray it out.
+        let diags = collect_macro_diagnostics() do
+                jlexpand("@static if false; aaa; else; bbb; end")
+            end
+            d = only(diags)
+            @test d.severity == JETLS.LSP.DiagnosticSeverity.Hint
+            @test d.code == JETLS.LOWERING_INACTIVE_CODE
+            @test occursin("Inactive `@static` branch", d.msg)
+            @test occursin("`false`", d.msg)
+            @test occursin("aaa", JS.sourcetext(d.node))
+            @test !occursin("bbb", JS.sourcetext(d.node))
+        end
+        let diags = collect_macro_diagnostics() do
+                jlexpand("@static if true; aaa; else; bbb; end")
+            end
+            d = only(diags)
+            @test d.code == JETLS.LOWERING_INACTIVE_CODE
+            @test occursin("`true`", d.msg)
+            @test !occursin("aaa", JS.sourcetext(d.node))
+            @test occursin("bbb", JS.sourcetext(d.node))
+        end
+
+        # No `else` and a false condition: the then-block is still inactive.
+        let diags = collect_macro_diagnostics() do
+                jlexpand("@static if false; aaa; end")
+            end
+            @test occursin("aaa", JS.sourcetext(only(diags).node))
+        end
+
+        # Fully taken conditional: nothing is dropped, nothing is reported.
+        for code in ("@static if true; aaa; end", "@static true && sin(xxx)")
+            @test isempty(collect_macro_diagnostics() do
+                jlexpand(code)
+            end)
+        end
+
+        # `elseif` chains report once per dropped segment.
+        let diags = collect_macro_diagnostics() do
+                jlexpand("@static if false; aaa; elseif true; bbb; else; ccc; end")
+            end
+            @test length(diags) == 2
+            @test occursin("aaa", JS.sourcetext(diags[1].node))
+            @test occursin("ccc", JS.sourcetext(diags[2].node))
+        end
+
+        # Taking an early branch drops the whole remaining chain — including
+        # conditions that were consequently never evaluated — as one range.
+        let diags = collect_macro_diagnostics() do
+                jlexpand("@static if true; aaa; elseif undefined_var_xyz; bbb; end")
+            end
+            d = only(diags)
+            @test d.code == JETLS.LOWERING_INACTIVE_CODE
+            @test occursin("undefined_var_xyz", JS.sourcetext(d.node))
+            @test occursin("bbb", JS.sourcetext(d.node))
+        end
+
+        # Short-circuit and ternary forms.
+        let diags = collect_macro_diagnostics() do
+                jlexpand("@static false && sin(xxx)")
+            end
+            @test occursin("sin(xxx)", JS.sourcetext(only(diags).node))
+        end
+        let diags = collect_macro_diagnostics() do
+                jlexpand("@static true || sin(xxx)")
+            end
+            @test occursin("sin(xxx)", JS.sourcetext(only(diags).node))
+        end
+        let diags = collect_macro_diagnostics() do
+                jlexpand("@static true ? aaa : bbb")
+            end
+            @test occursin("bbb", JS.sourcetext(only(diags).node))
+        end
+    end
+
+    @testset "validation" begin
+        # Non-conditional argument: Base throws `ArgumentError("invalid @static
+        # macro")`; report via sink and flow the argument through.
+        let diags = collect_macro_diagnostics() do
+                @test JS.kind(jlexpand("@static foo(xxx)")) === JS.K"call"
+            end
+            @test length(diags) == 1
+            d = only(diags)
+            @test d.severity == JETLS.LSP.DiagnosticSeverity.Error
+            @test occursin("invalid @static macro", d.msg)
+        end
+
+        # Zero arguments and 2+ arguments fall through to the variadic fallback.
+        for code in ("@static", "@static true extra")
+            let diags = collect_macro_diagnostics() do
+                    jlexpand(code)
+                end
+                @test length(diags) == 1
+                d = only(diags)
+                @test d.severity == JETLS.LSP.DiagnosticSeverity.Error
+                @test occursin("invalid @static macro", d.msg)
+            end
+        end
+
+        # Unevaluable condition: report via sink and recover with the runtime
+        # conditional so the condition and both branches reach scope analysis.
+        let diags = collect_macro_diagnostics() do
+                st1 = jlexpand("@static if undefined_var_xyz; aaa; else; bbb; end")
+                @test JS.kind(st1) === JS.K"if"
+            end
+            @test length(diags) == 1
+            d = only(diags)
+            @test d.severity == JETLS.LSP.DiagnosticSeverity.Error
+            @test occursin("failed to evaluate condition", d.msg)
+        end
+
+        # Non-`Bool` condition: same recovery shape.
+        let diags = collect_macro_diagnostics() do
+                @test JS.kind(jlexpand("@static if 1; aaa; end")) === JS.K"if"
+            end
+            @test length(diags) == 1
+            d = only(diags)
+            @test d.severity == JETLS.LSP.DiagnosticSeverity.Error
+            @test occursin("did not evaluate to a Bool", d.msg)
+        end
+    end
+
+    @testset "binding resolution preserves provenance" begin
+        # The taken branch keeps byte-accurate provenance; identifiers in the
+        # dropped branch vanish from the analysis entirely.
+        let res = jlresolve(
+                "staticfunc() = @static VERSION ≥ v\"1.0\" ? sin(xxx) : cos(yyy)")
+            assert_binding_provenance(res, :global, "xxx")
+            assert_no_binding(res, :global, "yyy")
+        end
+    end
+
+    @testset "runtime semantics" begin
+        @test jleval("@static true ? 1 : 2") === 1
+        @test jleval("@static false ? 1 : 2") === 2
+        @test jleval("@static true && 3") === 3
+        @test jleval("@static false && 3") === nothing
+        @test jleval("@static true || 3") === nothing
+        @test jleval("@static false || 3") === 3
+        @test jleval("@static if false; 1; elseif true; 2; else; 3; end") === 2
+        # The dropped branch must never reach lowering: `break` outside a loop
+        # would fail to lower if it survived expansion.
+        @test jleval("@static if true; :taken; else; break; end") === :taken
+    end
+end
+
 end # module test_jl_syntax_macros
