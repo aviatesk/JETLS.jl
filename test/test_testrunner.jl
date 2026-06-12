@@ -95,6 +95,38 @@ end
     end
 end
 
+@testset "testsetinfo_logs_filename" begin
+    let filename = JETLS.testsetinfo_logs_filename("simple")
+        @test filename == "TestRunner_simple.log"
+    end
+
+    let filename = JETLS.testsetinfo_logs_filename("macro expansion content")
+        @test startswith(filename, "TestRunner_")
+        @test endswith(filename, ".log")
+        @test !occursin('%', filename)
+    end
+
+    let filename = JETLS.testsetinfo_logs_filename("a/b ?#%\n")
+        @test startswith(filename, "TestRunner_")
+        @test endswith(filename, ".log")
+        @test filename != "TestRunner_.log"
+        @test !any(c -> occursin(c, filename), ('/', '\\', '%', '?', '#', '\n'))
+    end
+
+    let filename = JETLS.testsetinfo_logs_filename("日本語")
+        @test startswith(filename, "TestRunner_")
+        @test endswith(filename, ".log")
+        @test occursin("日本語", filename)
+        @test !occursin('%', filename)
+    end
+
+    let filename = JETLS.testsetinfo_logs_filename(repeat("a", 100))
+        @test startswith(filename, "TestRunner_")
+        @test endswith(filename, ".log")
+        @test length(filename) <= length("TestRunner_") + 80 + length(".log")
+    end
+end
+
 @testset "testrunner_code_lenses" begin
     let server = JETLS.Server()
         test_code = """
@@ -318,7 +350,6 @@ end
 
         uri = URI("file://runtests.jl")
         fi = JETLS.cache_file_info!(server, uri, 1, test_code)
-        testsetinfos = fi.testsetinfos
 
         # Test action on standalone @test (outside any testset)
         standalone_range = LSP.Range(;
