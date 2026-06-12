@@ -418,6 +418,8 @@ function handle_response_message(
         handle_formatting_progress_response(server, msg, request_caller, cancel_flag)
     elseif request_caller isa RangeFormattingProgressCaller
         handle_range_formatting_progress_response(server, msg, request_caller, cancel_flag)
+    elseif request_caller isa RangesFormattingProgressCaller
+        handle_ranges_formatting_progress_response(server, msg, request_caller, cancel_flag)
     elseif request_caller isa ReferencesProgressCaller
         handle_references_progress_response(server, msg, request_caller, cancel_flag)
     elseif request_caller isa RenameProgressCaller
@@ -489,6 +491,8 @@ function handle_request_message(server::Server, @nospecialize(msg), cancel_flag:
         handle_DocumentFormattingRequest(server, msg, cancel_flag)
     elseif msg isa DocumentRangeFormattingRequest
         handle_DocumentRangeFormattingRequest(server, msg, cancel_flag)
+    elseif msg isa DocumentRangesFormattingRequest
+        handle_DocumentRangesFormattingRequest(server, msg, cancel_flag)
     elseif msg isa RenameRequest
         handle_RenameRequest(server, msg, cancel_flag)
     elseif msg isa PrepareRenameRequest
