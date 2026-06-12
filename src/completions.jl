@@ -16,7 +16,7 @@ const COMPLETION_TRIGGER_CHARACTERS = [
 completion_options() = CompletionOptions(;
     triggerCharacters = COMPLETION_TRIGGER_CHARACTERS,
     resolveProvider = true,
-    completionItem = (;
+    completionItem = ServerCompletionItemOptions(;
         labelDetailsSupport = true))
 
 const COMPLETION_REGISTRATION_ID = "jetls-completion"

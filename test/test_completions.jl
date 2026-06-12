@@ -365,8 +365,8 @@ function with_completion_items(
         capabilities = ClientCapabilities(;
             textDocument = TextDocumentClientCapabilities(;
                 completion = CompletionClientCapabilities(;
-                    completionItem = (;
-                        resolveSupport = (;
+                    completionItem = ClientCompletionItemOptions(;
+                        resolveSupport = ClientCompletionItemResolveOptions(;
                             properties = ["documentation", "detail", "kind", "labelDetails"])
                     )))))
     fi = JETLS.FileInfo(#=version=#0, clean_code, @__FILE__)

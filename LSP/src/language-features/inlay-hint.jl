@@ -1,3 +1,8 @@
+@interface ClientInlayHintResolveOptions begin
+    "The properties that a client can resolve lazily."
+    properties::Vector{String}
+end
+
 """
 Inlay hint client capabilities.
 
@@ -13,12 +18,7 @@ Inlay hint client capabilities.
     Indicates which properties a client can resolve lazily on an inlay
     hint.
     """
-    resolveSupport::Union{Nothing, @interface begin
-        """
-        The properties that a client can resolve lazily.
-        """
-        properties::Vector{String}
-    end} = nothing
+    resolveSupport::Union{Nothing, ClientInlayHintResolveOptions} = nothing
 end
 
 """

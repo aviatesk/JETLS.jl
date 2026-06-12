@@ -10,7 +10,7 @@ let capabilities = ClientCapabilities(;
         textDocument = TextDocumentClientCapabilities(;
             completion = CompletionClientCapabilities(;
                 dynamicRegistration = true)))
-    withserver(; capabilities) do (; server, readmsg, id_counter)
+    withserver(; capabilities) do (; server, readmsg)
         state = server.state
         reg = Registered(JETLS.COMPLETION_REGISTRATION_ID, JETLS.COMPLETION_REGISTRATION_METHOD)
 

@@ -49,6 +49,13 @@ to the server during initialization.
     RefactorInline = "refactor.inline"
 
     """
+    Base kind for refactoring move actions: 'refactor.move'
+
+    - `@since` 3.18.0
+    """
+    RefactorMove = "refactor.move"
+
+    """
     Base kind for refactoring rewrite actions: 'refactor.rewrite'.
 
     Example rewrite actions:
@@ -85,6 +92,13 @@ to the server during initialization.
     - `@since` 3.17.0
     """
     SourceFixAll = "source.fixAll"
+
+    """
+    Base kind for all code actions applying to the entire notebook's scope.
+
+    - `@since` 3.18.0
+    """
+    Notebook = "notebook"
 end
 
 """
@@ -107,6 +121,44 @@ The reason why code actions were requested.
     Automatic = 2
 end
 
+"""
+Code action tags are extra annotations that tweak the behavior of a code action.
+
+- `@since` 3.18.0
+"""
+@namespace CodeActionTag::Int begin
+    "Marks the code action as LLM-generated."
+    LLMGenerated = 1
+end
+
+@interface ClientCodeActionKindOptions begin
+    """
+    The code action kind values the client supports. When this
+    property exists the client also guarantees that it will
+    handle values outside its set gracefully and falls back
+    to a default value when unknown.
+    """
+    valueSet::Vector{CodeActionKind.Ty}
+end
+
+@interface ClientCodeActionLiteralOptions begin
+    """
+    The code action kind is supported with the following value
+    set.
+    """
+    codeActionKind::ClientCodeActionKindOptions
+end
+
+@interface ClientCodeActionResolveOptions begin
+    "The properties that a client can resolve lazily."
+    properties::Vector{String}
+end
+
+@interface CodeActionTagOptions begin
+    "The tags supported by the client."
+    valueSet::Vector{CodeActionTag.Ty}
+end
+
 @interface CodeActionClientCapabilities begin
     """
     Whether code action supports dynamic registration.
@@ -119,21 +171,7 @@ end
 
     - `@since` 3.8.0
     """
-    codeActionLiteralSupport::Union{Nothing, @interface begin
-        """
-        The code action kind is supported with the following value
-        set.
-        """
-        codeActionKind::(@interface begin
-            """
-            The code action kind values the client supports. When this
-            property exists the client also guarantees that it will
-            handle values outside its set gracefully and falls back
-            to a default value when unknown.
-            """
-            valueSet::Vector{CodeActionKind.Ty}
-        end)
-    end} = nothing
+    codeActionLiteralSupport::Union{Nothing, ClientCodeActionLiteralOptions} = nothing
 
     """
     Whether code action supports the `isPreferred` property.
@@ -164,12 +202,7 @@ end
 
     - `@since` 3.16.0
     """
-    resolveSupport::Union{Nothing, @interface begin
-        """
-        The properties that a client can resolve lazily.
-        """
-        properties::Vector{String}
-    end} = nothing
+    resolveSupport::Union{Nothing, ClientCodeActionResolveOptions} = nothing
 
     """
     Whether the client honors the change annotations in
@@ -181,6 +214,34 @@ end
     - `@since` 3.16.0
     """
     honorsChangeAnnotations::Union{Nothing, Bool} = nothing
+
+    """
+    Whether the client supports documentation for a class of code actions.
+
+    - `@since` 3.18.0
+    """
+    documentationSupport::Union{Nothing, Bool} = nothing
+
+    """
+    Client supports the tag property on a code action. Clients supporting tags
+    have to handle unknown tags gracefully.
+
+    - `@since` 3.18.0
+    """
+    tagSupport::Union{Nothing, CodeActionTagOptions} = nothing
+end
+
+"""
+Documentation for a class of code actions.
+
+- `@since` 3.18.0
+"""
+@interface CodeActionKindDocumentation begin
+    "The kind of the code action being documented."
+    kind::CodeActionKind.Ty
+
+    "Command that is used to display the documentation to the user."
+    command::Command
 end
 
 @interface CodeActionOptions @extends WorkDoneProgressOptions begin
@@ -191,6 +252,13 @@ end
     or the server may list out every specific kind they provide.
     """
     codeActionKinds::Union{Nothing, Vector{CodeActionKind.Ty}} = nothing
+
+    """
+    Static documentation for a class of code actions.
+
+    - `@since` 3.18.0
+    """
+    documentation::Union{Nothing, Vector{CodeActionKindDocumentation}} = nothing
 
     """
     The server provides support to resolve additional
@@ -233,6 +301,20 @@ a code action is run.
     - `@since` 3.17.0
     """
     triggerKind::Union{Nothing, CodeActionTriggerKind.Ty} = nothing
+end
+
+"""
+Captures why the code action is currently disabled.
+
+- `@since` 3.18.0
+"""
+@interface CodeActionDisabled begin
+    """
+    Human readable description of why the code action is currently disabled.
+
+    This is displayed in the code actions UI.
+    """
+    reason::String
 end
 
 """
@@ -291,15 +373,7 @@ the `edit` is applied first, then the `command` is executed.
 
     - `@since` 3.16.0
     """
-    disabled::Union{Nothing, @interface begin
-        """
-        Human readable description of why the code action is currently
-        disabled.
-
-        This is displayed in the code actions UI.
-        """
-        reason::String
-    end} = nothing
+    disabled::Union{Nothing, CodeActionDisabled} = nothing
 
     """
     The workspace edit this code action performs.
@@ -320,6 +394,13 @@ the `edit` is applied first, then the `command` is executed.
     - `@since` 3.16.0
     """
     data::Union{Nothing, LSPAny} = nothing
+
+    """
+    Tags for this code action.
+
+    - `@since` 3.18.0
+    """
+    tags::Union{Nothing, Vector{CodeActionTag.Ty}} = nothing
 end
 
 """

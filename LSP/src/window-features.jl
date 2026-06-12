@@ -47,6 +47,14 @@ end
 # ShowMessage Request
 # ===================
 
+@interface ClientShowMessageActionItemOptions begin
+    """
+    Whether the client supports additional attributes which are preserved and
+    sent back to the server in the request's response.
+    """
+    additionalPropertiesSupport::Union{Nothing, Bool} = nothing
+end
+
 """
 Show message request client capabilities.
 """
@@ -54,14 +62,7 @@ Show message request client capabilities.
     """
     Capabilities specific to the MessageActionItem type.
     """
-    messageActionItem::Union{Nothing, @interface begin
-        """
-        Whether the client supports additional attributes which
-        are preserved and sent back to the server in the
-        request's response.
-        """
-        additionalPropertiesSupport::Union{Nothing, Bool} = nothing
-    end} = nothing
+    messageActionItem::Union{Nothing, ClientShowMessageActionItemOptions} = nothing
 end
 
 @interface MessageActionItem begin
