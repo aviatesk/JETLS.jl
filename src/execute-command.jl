@@ -99,10 +99,7 @@ function execute_testrunner_run_testset_command(server::Server, msg::ExecuteComm
                 result = nothing,
                 error = request_failed_error(error_msg)))
     end
-    return send(server,
-        ExecuteCommandResponse(;
-            id = msg.id,
-            result = null))
+    return send(server, ExecuteCommandResponse(; id = msg.id, result = null))
 end
 
 function execute_testrunner_run_testcase_command(server::Server, msg::ExecuteCommandRequest)
@@ -118,20 +115,16 @@ function execute_testrunner_run_testcase_command(server::Server, msg::ExecuteCom
                 result = nothing,
                 error = request_failed_error(error_msg)))
     end
-    return send(server,
-        ExecuteCommandResponse(;
-            id = msg.id,
-            result = null))
+    return send(server, ExecuteCommandResponse(; id = msg.id, result = null))
 end
 
 function execute_testrunner_open_logs_command(server::Server, msg::ExecuteCommandRequest)
-    tsn = @tryparsearg server msg[1]::String
-    logs = @tryparsearg server msg[2]::String
-    open_testsetinfo_logs!(server, tsn, logs)
-    return send(server,
-        ExecuteCommandResponse(;
-            id = msg.id,
-            result = null))
+    source_uri = URI(@tryparsearg server msg[1]::String)
+    idx = @tryparsearg server msg[2]::Int
+    tsn = @tryparsearg server msg[3]::String
+    logs = @tryparsearg server msg[4]::String
+    open_testsetinfo_logs!(server, tsn, logs; source_uri, testset_index=idx)
+    return send(server, ExecuteCommandResponse(; id = msg.id, result = null))
 end
 
 function execute_testrunner_clear_result_command(server::Server, msg::ExecuteCommandRequest)
@@ -139,10 +132,7 @@ function execute_testrunner_clear_result_command(server::Server, msg::ExecuteCom
     idx = @tryparsearg server msg[2]::Int
     tsn = @tryparsearg server msg[3]::String
     try_clear_testrunner_result!(server, uri, idx, tsn)
-    return send(server,
-        ExecuteCommandResponse(;
-            id = msg.id,
-            result = null))
+    return send(server, ExecuteCommandResponse(; id = msg.id, result = null))
 end
 
 function execute_show_message_command(server::Server, msg::ExecuteCommandRequest)
@@ -161,8 +151,5 @@ function execute_show_message_command(server::Server, msg::ExecuteCommandRequest
     end
     send(server, ShowMessageNotification(;
         params = ShowMessageParams(; type, message)))
-    return send(server,
-        ExecuteCommandResponse(;
-            id = msg.id,
-            result = null))
+    return send(server, ExecuteCommandResponse(; id = msg.id, result = null))
 end

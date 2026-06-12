@@ -2,7 +2,7 @@ module test_testrunner
 
 using Test
 using JETLS
-using JETLS: JS, JL
+using JETLS: JL, JS
 using JETLS.LSP
 using JETLS.LSP.URIs2
 
@@ -127,6 +127,25 @@ end
     end
 end
 
+@testset "testsetinfo_logs_content" begin
+    let uri = URI("file:///runtests.jl"), testset_name = "日本語"
+        log_uri = JETLS.testsetinfo_logs_content_uri(uri, 1, testset_name)
+        @test log_uri == JETLS.testsetinfo_logs_content_uri(uri, 1, testset_name)
+        @test log_uri != JETLS.testsetinfo_logs_content_uri(uri, 2, testset_name)
+        @test log_uri.scheme == JETLS.TEXT_DOCUMENT_CONTENT_SCHEME
+        @test log_uri.path == "/testrunner/logs"
+    end
+
+    let server = JETLS.Server(), uri = URI(; scheme="jetls", path="/test")
+        JETLS.update_text_document_content!(server, uri, "old logs")
+        @test JETLS.get_text_document_content(server.state, uri) == "old logs"
+        JETLS.mark_text_document_content_opened!(server, uri)
+        JETLS.update_text_document_content!(server, uri, "new logs")
+        @test JETLS.get_text_document_content(server.state, uri) == "new logs"
+        @test JETLS.load(server.state.text_document_content_cache)[uri].opened
+    end
+end
+
 @testset "testrunner_code_lenses" begin
     let server = JETLS.Server()
         test_code = """
@@ -183,8 +202,7 @@ end
         logs_lens = code_lenses[2]
         @test logs_lens.command.title == JETLS.TESTRUNNER_OPEN_LOGS_TITLE
         @test logs_lens.command.command == JETLS.COMMAND_TESTRUNNER_OPEN_LOGS
-        @test length(logs_lens.command.arguments) == 2
-        @test logs_lens.command.arguments[1] == tsn1
+        @test logs_lens.command.arguments == [uri, 1, tsn1, result.logs]
 
         clear_lens = code_lenses[3]
         @test clear_lens.command.title == JETLS.TESTRUNNER_CLEAR_RESULT_TITLE
@@ -319,8 +337,7 @@ end
 
         @test code_actions[2].title == JETLS.TESTRUNNER_OPEN_LOGS_TITLE
         @test code_actions[2].command.command == JETLS.COMMAND_TESTRUNNER_OPEN_LOGS
-        @test length(code_actions[2].command.arguments) == 2
-        @test code_actions[2].command.arguments[1] == tsn
+        @test code_actions[2].command.arguments == [uri, 1, tsn, result.logs]
 
         @test code_actions[3].title == JETLS.TESTRUNNER_CLEAR_RESULT_TITLE
         @test code_actions[3].command.command == JETLS.COMMAND_TESTRUNNER_CLEAR_RESULT

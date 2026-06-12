@@ -82,7 +82,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Fixed type information collapsing to `Any` inside closures defined in functions that have default positional arguments or keyword arguments. Hover, inlay hints and other type-aware features now show precise types for such closure bodies and their captured variables.
 
-- Fixed TestRunner log viewing to open saved temporary log files instead of relying on `untitled:` buffers, avoiding empty log tabs and mismatched log file paths.
+- Fixed TestRunner log viewing to use readonly virtual documents when supported, and cleanup-enabled temporary files otherwise, avoiding empty `untitled:` log tabs and mismatched log file paths.
 
 - Fixed renaming symbols inside Jupyter notebook cells on VS Code, which previously failed with a "The rename edit returned from the server is not valid anymore and cannot be applied." error.
 

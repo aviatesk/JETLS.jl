@@ -162,35 +162,27 @@ function testrunner_code_lenses!(
                 title = "$TESTRUNNER_RERUN_TITLE $tsn $summary",
                 command = COMMAND_TESTRUNNER_RUN_TESTSET,
                 arguments = run_arguments)
-            push!(code_lenses, CodeLens(;
-                range,
-                command))
+            push!(code_lenses, CodeLens(; range, command))
         end
-        logs_arguments = Any[tsn, prev_result.logs]
+        logs_arguments = Any[uri, idx, tsn, prev_result.logs]
         let command = Command(;
                 title = TESTRUNNER_OPEN_LOGS_TITLE,
                 command = COMMAND_TESTRUNNER_OPEN_LOGS,
                 arguments = logs_arguments)
-            push!(code_lenses, CodeLens(;
-                range,
-                command))
+            push!(code_lenses, CodeLens(; range, command))
         end
         let command = Command(;
                 title = TESTRUNNER_CLEAR_RESULT_TITLE,
                 command = COMMAND_TESTRUNNER_CLEAR_RESULT,
                 arguments = clear_arguments)
-            push!(code_lenses, CodeLens(;
-                range,
-                command))
+            push!(code_lenses, CodeLens(; range, command))
         end
     else
         command = Command(;
             title = "$TESTRUNNER_RUN_TITLE $tsn",
             command = COMMAND_TESTRUNNER_RUN_TESTSET,
             arguments = run_arguments)
-        push!(code_lenses, CodeLens(;
-            range,
-            command))
+        push!(code_lenses, CodeLens(; range, command))
     end
     return code_lenses
 end
@@ -236,7 +228,7 @@ function testrunner_testset_code_actions!(
                 arguments = run_arguments)
             push!(code_actions, CodeAction(; title, command))
         end
-        logs_arguments = Any[tsn, prev_result.logs]
+        logs_arguments = Any[uri, idx, tsn, prev_result.logs]
         let title = TESTRUNNER_OPEN_LOGS_TITLE
             command = Command(;
                 title,
@@ -447,7 +439,7 @@ function handle_test_runner_message_response4(
                 show_error_message(server, error_msg)
             end
         elseif title == TESTRUNNER_OPEN_LOGS_TITLE
-            open_testsetinfo_logs!(server, testset_name, logs)
+            open_testsetinfo_logs!(server, testset_name, logs; source_uri=uri, testset_index=idx)
         elseif title == TESTRUNNER_CLEAR_RESULT_TITLE
             try_clear_testrunner_result!(server, uri, idx, testset_name)
         else
@@ -578,6 +570,11 @@ function _testrunner_run_testset(
         # Simply show only the option to open logs
         show_testrunner_result_in_message(server, result, #=title=#tsn)
         return ret
+    end
+
+    if supports_text_document_content(server)
+        log_uri = testsetinfo_logs_content_uri(uri, idx, String(rlstrip(tsn, '"')))
+        update_text_document_content!(server, log_uri, result.logs)
     end
 
     if !isempty(result.diagnostics)
@@ -711,8 +708,9 @@ end
 
 struct ShowDocumentRequestCaller <: RequestCaller
     testset_name::String
-    temp_path::String
     uri::URI
+    temp_path::Union{Nothing,String}
+    logs::Union{Nothing,String}
 end
 
 is_testsetinfo_logs_filename_unsafe(c::Char) =
@@ -742,6 +740,11 @@ function testsetinfo_logs_filename(tsn::AbstractString)
     return "TestRunner_$name.log"
 end
 
+function testsetinfo_logs_content_uri(source_uri::URI, idx::Int, tsn::AbstractString)
+    query = LSP.URIs2.escapeuri((source=string(source_uri), index=idx, name=tsn))
+    return URI(; scheme = TEXT_DOCUMENT_CONTENT_SCHEME, path = "/testrunner/logs", query)
+end
+
 function show_testsetinfo_logs_path_message(
         server::Server, tsn::String, temp_path::String, uri::URI
     )
@@ -754,44 +757,81 @@ function show_testsetinfo_logs_path_message(
     """)
 end
 
-function open_testsetinfo_logs!(server::Server, tsn::String, logs::String)
+function open_testsetinfo_logs!(
+        server::Server, tsn::String, logs::String;
+        source_uri::Union{Nothing,URI} = nothing,
+        testset_index::Union{Nothing,Int} = nothing
+    )
     testset_name = String(rlstrip(tsn, '"'))
-    temp_filename = testsetinfo_logs_filename(testset_name)
-    temp_path = joinpath(mktempdir(; cleanup=true), temp_filename)
-    try
-        write(temp_path, logs)
-    catch err
-        return show_error_message(server, "Failed to save test logs: $(sprint(showerror, err))")
-    end
-    uri = filepath2uri(temp_path)
-    if supports(server, :window, :showDocument, :support)
+    if (source_uri !== nothing && testset_index !== nothing &&
+        supports_text_document_content(server) &&
+        supports(server, :window, :showDocument, :support))
+        uri = testsetinfo_logs_content_uri(source_uri, testset_index, testset_name)
+        update_text_document_content!(server, uri, logs)
         id = String(gensym(:ShowDocumentRequest))
-        addrequest!(server, id=>ShowDocumentRequestCaller(testset_name, temp_path, uri))
+        addrequest!(server, id=>ShowDocumentRequestCaller(testset_name, uri, nothing, logs))
         return send(server, ShowDocumentRequest(;
             id,
             params = ShowDocumentParams(;
                 uri,
                 takeFocus = true)))
     else
-        return show_testsetinfo_logs_path_message(server, testset_name, temp_path, uri)
+        return open_testsetinfo_logs_tempfile!(server, testset_name, logs)
     end
+end
+
+function open_testsetinfo_logs_tempfile!(server::Server, tsn::String, logs::String)
+    saved = @something save_testsetinfo_logs_tempfile(server, tsn, logs) return nothing
+    (; temp_path, uri) = saved
+    if supports(server, :window, :showDocument, :support)
+        id = String(gensym(:ShowDocumentRequest))
+        addrequest!(server, id=>ShowDocumentRequestCaller(tsn, uri, temp_path, nothing))
+        return send(server, ShowDocumentRequest(;
+            id,
+            params = ShowDocumentParams(;
+                uri,
+                takeFocus = true)))
+    else
+        return show_testsetinfo_logs_path_message(server, tsn, temp_path, uri)
+    end
+end
+
+function save_testsetinfo_logs_tempfile(server::Server, tsn::String, logs::String)
+    temp_filename = testsetinfo_logs_filename(tsn)
+    temp_path = joinpath(mktempdir(; cleanup=true), temp_filename)
+    try
+        write(temp_path, logs)
+    catch err
+        show_error_message(server, "Failed to save test logs: $(sprint(showerror, err))")
+        return nothing
+    end
+    return (; temp_path, uri = filepath2uri(temp_path))
 end
 
 function handle_show_document_response(
         server::Server, msg::Dict{Symbol,Any}, request_caller::ShowDocumentRequestCaller
     )
-    (; testset_name, temp_path, uri) = request_caller
+    (; testset_name, uri, temp_path, logs) = request_caller
     if handle_response_error(server, msg, "show document")
-        return show_testsetinfo_logs_path_message(server, testset_name, temp_path, uri)
+        temp_path !== nothing &&
+            return show_testsetinfo_logs_path_message(server, testset_name, temp_path, uri)
+        logs !== nothing && return open_testsetinfo_logs_tempfile!(server, testset_name, logs)
     elseif haskey(msg, :result)
         result = msg[:result] # ::ShowDocumentResult
-        if !(haskey(result, "success") && result["success"] === true)
+        if haskey(result, "success") && result["success"] === true
+            uri.scheme == TEXT_DOCUMENT_CONTENT_SCHEME &&
+                return mark_text_document_content_opened!(server, uri)
+        else
             show_error_message(server, "Failed to open document for viewing test logs")
-            return show_testsetinfo_logs_path_message(server, testset_name, temp_path, uri)
+            temp_path !== nothing &&
+                return show_testsetinfo_logs_path_message(server, testset_name, temp_path, uri)
+            logs !== nothing && return open_testsetinfo_logs_tempfile!(server, testset_name, logs)
         end
     else
         show_error_message(server, "Unexpected response from show document request")
-        return show_testsetinfo_logs_path_message(server, testset_name, temp_path, uri)
+        temp_path !== nothing &&
+            return show_testsetinfo_logs_path_message(server, testset_name, temp_path, uri)
+        logs !== nothing && return open_testsetinfo_logs_tempfile!(server, testset_name, logs)
     end
 end
 

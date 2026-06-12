@@ -829,6 +829,13 @@ const ConfigManager = LWContainer{ConfigManagerData, LWStats}
 const UnsyncedFileCacheData = Base.PersistentDict{URI,FileInfo}
 const UnsyncedFileCache = LWContainer{UnsyncedFileCacheData, LWStats}
 
+struct TextDocumentContentEntry
+    text::String
+    opened::Bool
+end
+const TextDocumentContentCacheData = Base.PersistentDict{URI,TextDocumentContentEntry}
+const TextDocumentContentCache = LWContainer{TextDocumentContentCacheData, LWStats}
+
 const CurrentlyHandled = Dict{MessageId, CancelFlag}
 const HandledHistory = FixedSizeQueue{MessageId}
 
@@ -854,6 +861,7 @@ mutable struct ServerState
     const document_symbol_cache::DocumentSymbolCache
     const binding_occurrences_cache::BindingOccurrencesCache
     const per_file_diagnostics_cache::PerFileDiagnosticsCache
+    const text_document_content_cache::TextDocumentContentCache
     const analysis_manager::AnalysisManager
     const extra_diagnostics::ExtraDiagnostics
     const currently_handled::CurrentlyHandled
@@ -886,6 +894,7 @@ mutable struct ServerState
             #=document_symbol_cache=# DocumentSymbolCache(),
             #=binding_occurrences_cache=# BindingOccurrencesCache(),
             #=per_file_diagnostics_cache=# PerFileDiagnosticsCache(),
+            #=text_document_content_cache=# TextDocumentContentCache(),
             #=analysis_manager=# AnalysisManager(),
             #=extra_diagnostics=# ExtraDiagnostics(),
             #=currently_handled=# CurrentlyHandled(),
