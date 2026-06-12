@@ -242,18 +242,14 @@ function testrunner_testset_code_actions!(
                 title,
                 command = COMMAND_TESTRUNNER_OPEN_LOGS,
                 arguments = logs_arguments)
-            push!(code_actions, CodeAction(;
-                title,
-                command))
+            push!(code_actions, CodeAction(; title, command))
         end
         let title = TESTRUNNER_CLEAR_RESULT_TITLE
             command = Command(;
                 title,
                 command = COMMAND_TESTRUNNER_CLEAR_RESULT,
                 arguments = clear_arguments)
-            push!(code_actions, CodeAction(;
-                title,
-                command))
+            push!(code_actions, CodeAction(; title, command))
         end
     else
         title = "$TESTRUNNER_RUN_TITLE $tsn"
@@ -261,9 +257,7 @@ function testrunner_testset_code_actions!(
             title,
             command = COMMAND_TESTRUNNER_RUN_TESTSET,
             arguments = run_arguments)
-        push!(code_actions, CodeAction(;
-            title,
-            command))
+        push!(code_actions, CodeAction(; title, command))
     end
     return code_actions
 end
@@ -285,12 +279,11 @@ function testrunner_testcase_code_actions!(
                 tct = backtick(JS.sourcetext(st0))
                 run_arguments = Any[uri, tcl, tct]
                 title = "$TESTRUNNER_RUN_TITLE $tct"
-                push!(code_actions, CodeAction(;
+                command = Command(;
                     title,
-                    command = Command(;
-                        title,
-                        command = COMMAND_TESTRUNNER_RUN_TESTCASE,
-                        arguments = run_arguments)))
+                    command = COMMAND_TESTRUNNER_RUN_TESTCASE,
+                    arguments = run_arguments)
+                push!(code_actions, CodeAction(; title, command))
             end
         end
     end
