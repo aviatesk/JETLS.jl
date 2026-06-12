@@ -710,57 +710,88 @@ function _testrunner_run_testcase(
 end
 
 struct ShowDocumentRequestCaller <: RequestCaller
+    testset_name::String
+    temp_path::String
     uri::URI
-    logs::String
-    context::String
+end
+
+is_testsetinfo_logs_filename_unsafe(c::Char) =
+    isspace(c) || iscntrl(c) ||
+    c in ('%', '/', '\\', '?', '#', '<', '>', ':', '"', '|', '*')
+
+# This builds a filesystem name, not a URI component. Keep Unicode names as-is
+# and let `filepath2uri` percent-encode the final path; putting literal `%XX`
+# escapes in the filename would show up as `%25XX` in `file:` links.
+function testsetinfo_logs_filename(tsn::AbstractString)
+    io = IOBuffer()
+    last_replaced = false
+    for c in tsn
+        if is_testsetinfo_logs_filename_unsafe(c)
+            if !last_replaced
+                print(io, '_')
+                last_replaced = true
+            end
+        else
+            print(io, c)
+            last_replaced = false
+        end
+    end
+    name = strip(String(take!(io)), '_')
+    isempty(name) && (name = "testset")
+    length(name) > 80 && (name = first(name, 80))
+    return "TestRunner_$name.log"
+end
+
+function show_testsetinfo_logs_path_message(
+        server::Server, tsn::String, temp_path::String, uri::URI
+    )
+    return show_info_message(server, """
+    Test logs for $tsn saved temporarily to:
+
+    [$temp_path]($uri)
+
+    This file will be removed when JETLS exits.
+    """)
 end
 
 function open_testsetinfo_logs!(server::Server, tsn::String, logs::String)
-    tsn = rlstrip(tsn, '"')
+    testset_name = String(rlstrip(tsn, '"'))
+    temp_filename = testsetinfo_logs_filename(testset_name)
+    temp_path = joinpath(mktempdir(; cleanup=true), temp_filename)
+    try
+        write(temp_path, logs)
+    catch err
+        return show_error_message(server, "Failed to save test logs: $(sprint(showerror, err))")
+    end
+    uri = filepath2uri(temp_path)
     if supports(server, :window, :showDocument, :support)
-        # Use `window/showDocument` to show logs in untitled editor if supported
-        untitled_name = "TestRunner_$tsn.log"
-        uri = URI(; scheme="untitled", path=untitled_name)
         id = String(gensym(:ShowDocumentRequest))
-        context = "showing test logs"
-        addrequest!(server, id=>ShowDocumentRequestCaller(uri, logs, context))
-        send(server, ShowDocumentRequest(;
+        addrequest!(server, id=>ShowDocumentRequestCaller(testset_name, temp_path, uri))
+        return send(server, ShowDocumentRequest(;
             id,
             params = ShowDocumentParams(;
                 uri,
                 takeFocus = true)))
     else
-        # Fallback: save to temp file
-        temp_filename = "TestRunner_$(tsn)_$(getpid()).log"
-        temp_path = joinpath(mktempdir(; cleanup=false), temp_filename)
-        try
-            write(temp_path, logs)
-        catch err
-            return show_error_message(server, "Failed to save test logs: $(sprint(showerror, err))")
-        end
-        uri = filepath2uri(temp_path)
-        show_info_message(server, """
-        Test logs for $tsn saved to:
-
-        [$temp_path]($uri)
-        """)
+        return show_testsetinfo_logs_path_message(server, testset_name, temp_path, uri)
     end
 end
 
 function handle_show_document_response(
         server::Server, msg::Dict{Symbol,Any}, request_caller::ShowDocumentRequestCaller
     )
+    (; testset_name, temp_path, uri) = request_caller
     if handle_response_error(server, msg, "show document")
+        return show_testsetinfo_logs_path_message(server, testset_name, temp_path, uri)
     elseif haskey(msg, :result)
         result = msg[:result] # ::ShowDocumentResult
-        if haskey(result, "success") && result["success"] === true
-            (; uri, logs, context) = request_caller
-            return set_document_content(server, uri, logs; context)
-        else
+        if !(haskey(result, "success") && result["success"] === true)
             show_error_message(server, "Failed to open document for viewing test logs")
+            return show_testsetinfo_logs_path_message(server, testset_name, temp_path, uri)
         end
     else
         show_error_message(server, "Unexpected response from show document request")
+        return show_testsetinfo_logs_path_message(server, testset_name, temp_path, uri)
     end
 end
 
