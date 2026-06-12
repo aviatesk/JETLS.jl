@@ -317,7 +317,7 @@ function handle_InitializeRequest(
             renameProvider,
             workspaceSymbolProvider,
         ),
-        serverInfo = (;
+        serverInfo = ServerInfo(;
             name = "JETLS",
             version = JETLS_VERSION))
 

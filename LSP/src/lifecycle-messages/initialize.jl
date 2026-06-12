@@ -481,6 +481,242 @@ end
 end
 
 """
+Capabilities relating to events from file operations by the user in the client.
+These events do not come from the file system, they come from user operations
+like renaming a file in the UI.
+
+- `@since` 3.16.0
+"""
+@interface FileOperationClientCapabilities begin
+    """
+    Whether the client supports dynamic registration for file
+    requests/notifications.
+    """
+    dynamicRegistration::Union{Bool, Nothing} = nothing
+
+    "The client has support for sending didCreateFiles notifications."
+    didCreate::Union{Bool, Nothing} = nothing
+
+    "The client has support for sending willCreateFiles requests."
+    willCreate::Union{Bool, Nothing} = nothing
+
+    "The client has support for sending didRenameFiles notifications."
+    didRename::Union{Bool, Nothing} = nothing
+
+    "The client has support for sending willRenameFiles requests."
+    willRename::Union{Bool, Nothing} = nothing
+
+    "The client has support for sending didDeleteFiles notifications."
+    didDelete::Union{Bool, Nothing} = nothing
+
+    "The client has support for sending willDeleteFiles requests."
+    willDelete::Union{Bool, Nothing} = nothing
+end
+
+@interface WorkspaceClientCapabilities begin
+    """
+    The client supports applying batch edits
+    to the workspace by supporting the request
+    'workspace/applyEdit'
+    """
+    applyEdit::Union{Bool, Nothing} = nothing
+
+    """
+    Capabilities specific to `WorkspaceEdit`s
+    """
+    workspaceEdit::Union{WorkspaceEditClientCapabilities, Nothing} = nothing
+
+    """
+    Capabilities specific to the `workspace/didChangeConfiguration`
+    notification.
+    """
+    didChangeConfiguration::Union{DidChangeConfigurationClientCapabilities, Nothing} = nothing
+
+    """
+    Capabilities specific to the `workspace/didChangeWatchedFiles`
+    notification.
+    """
+    didChangeWatchedFiles::Union{DidChangeWatchedFilesClientCapabilities, Nothing} = nothing
+
+    """
+    Capabilities specific to the `workspace/symbol` request.
+    """
+    symbol::Union{WorkspaceSymbolClientCapabilities, Nothing} = nothing
+
+    """
+    Capabilities specific to the `workspace/executeCommand` request.
+    """
+    executeCommand::Union{ExecuteCommandClientCapabilities, Nothing} = nothing
+
+    """
+    The client has support for workspace folders.
+
+    - `@since` 3.6.0
+    """
+    workspaceFolders::Union{Bool, Nothing} = nothing
+
+    """
+    The client supports `workspace/configuration` requests.
+
+    - `@since` 3.6.0
+    """
+    configuration::Union{Bool, Nothing} = nothing
+
+    """
+    Capabilities specific to the semantic token requests scoped to the
+    workspace.
+
+    - `@since` 3.16.0
+    """
+    semanticTokens::Union{SemanticTokensWorkspaceClientCapabilities, Nothing} = nothing
+
+    """
+    Capabilities specific to the code lens requests scoped to the
+    workspace.
+
+    - `@since` 3.16.0
+    """
+    codeLens::Union{CodeLensWorkspaceClientCapabilities, Nothing} = nothing
+
+    """
+    The client has support for file requests/notifications.
+
+    - `@since` 3.16.0
+    """
+    fileOperations::Union{Nothing, FileOperationClientCapabilities} = nothing
+
+    # """
+    # Client workspace capabilities specific to inline values.
+
+    # - `@since` 3.17.0
+    # """
+    # inlineValue::Union{InlineValueWorkspaceClientCapabilities, Nothing} = nothing
+
+    """
+    Client workspace capabilities specific to inlay hints.
+
+    - `@since` 3.17.0
+    """
+    inlayHint::Union{InlayHintWorkspaceClientCapabilities, Nothing} = nothing
+
+    """
+    Client workspace capabilities specific to diagnostics.
+
+    - `@since` 3.17.0.
+    """
+    diagnostics::Union{DiagnosticWorkspaceClientCapabilities, Nothing} = nothing
+
+    """
+    Capabilities specific to the folding range requests scoped to the
+    workspace.
+
+    - `@since` 3.18.0
+    """
+    foldingRange::Union{FoldingRangeWorkspaceClientCapabilities, Nothing} = nothing
+
+    """
+    Capabilities specific to the `workspace/textDocumentContent` request.
+
+    - `@since` 3.18.0
+    """
+    textDocumentContent::Union{TextDocumentContentClientCapabilities, Nothing} = nothing
+end
+
+@interface WindowClientCapabilities begin
+    """
+    It indicates whether the client supports server initiated
+    progress using the `window/workDoneProgress/create` request.
+
+    The capability also controls Whether client supports handling
+    of progress notifications. If set servers are allowed to report a
+    `workDoneProgress` property in the request specific server
+    capabilities.
+
+    - `@since` 3.15.0
+    """
+    workDoneProgress::Union{Bool, Nothing} = nothing
+
+    """
+    Capabilities specific to the showMessage request
+
+    - `@since` 3.16.0
+    """
+    showMessage::Union{ShowMessageRequestClientCapabilities, Nothing} = nothing
+
+    """
+    Client capabilities for the show document request.
+
+    - `@since` 3.16.0
+    """
+    showDocument::Union{ShowDocumentClientCapabilities, Nothing} = nothing
+end
+
+@interface StaleRequestSupportOptions begin
+    "The client will actively cancel the request."
+    cancel::Bool
+
+    """
+    The list of requests for which the client
+    will retry the request if it receives a
+    response with error code `ContentModified`
+    """
+    retryOnContentModified::Vector{String}
+end
+
+"""
+General client capabilities.
+
+- `@since` 3.16.0
+"""
+@interface GeneralClientCapabilities begin
+    """
+    Client capability that signals how the client
+    handles stale requests (e.g. a request
+    for which the client will not process the response
+    anymore since the information is outdated).
+
+    - `@since` 3.17.0
+    """
+    staleRequestSupport::Union{Nothing, StaleRequestSupportOptions} = nothing
+
+    """
+    Client capabilities specific to regular expressions.
+
+    - `@since` 3.16.0
+    """
+    regularExpressions::Union{RegularExpressionsClientCapabilities, Nothing} = nothing
+
+    """
+    Client capabilities specific to the client's markdown parser.
+
+    - `@since` 3.16.0
+    """
+    markdown::Union{MarkdownClientCapabilities, Nothing} = nothing
+
+    """
+    The position encodings supported by the client. Client and server
+    have to agree on the same position encoding to ensure that offsets
+    (e.g. character position in a line) are interpreted the same on both
+    side.
+
+    To keep the protocol backwards compatible the following applies: if
+    the value 'utf-16' is missing from the array of position encodings
+    servers can assume that the client supports UTF-16. UTF-16 is
+    therefore a mandatory encoding.
+
+    If omitted it defaults to ['utf-16'].
+
+    Implementation considerations: since the conversion from one encoding
+    into another requires the content of the file / line the conversion
+    is best done where the file is read which is usually on the server
+    side.
+
+    - `@since` 3.17.0
+    """
+    positionEncodings::Union{Vector{PositionEncodingKind.Ty}, Nothing} = nothing
+end
+
+"""
 `ClientCapabilities` define capabilities for dynamic registration, workspace and text
 document features the client supports. The `experimental` can be used to pass
 experimental capabilities under development. For future compatibility a
@@ -499,130 +735,7 @@ provides text document synchronization (e.g. open, changed and close notificatio
 """
 @interface ClientCapabilities begin
     "Workspace specific client capabilities."
-    workspace::Union{Nothing, @interface begin
-        """
-        The client supports applying batch edits
-        to the workspace by supporting the request
-        'workspace/applyEdit'
-        """
-        applyEdit::Union{Bool, Nothing} = nothing
-
-        """
-        Capabilities specific to `WorkspaceEdit`s
-        """
-        workspaceEdit::Union{WorkspaceEditClientCapabilities, Nothing} = nothing
-
-        """
-        Capabilities specific to the `workspace/didChangeConfiguration`
-        notification.
-        """
-        didChangeConfiguration::Union{DidChangeConfigurationClientCapabilities, Nothing} = nothing
-
-        """
-        Capabilities specific to the `workspace/didChangeWatchedFiles`
-        notification.
-        """
-        didChangeWatchedFiles::Union{DidChangeWatchedFilesClientCapabilities, Nothing} = nothing
-
-        """
-        Capabilities specific to the `workspace/textDocumentContent` request.
-
-        - `@since` 3.18.0
-        """
-        textDocumentContent::Union{TextDocumentContentClientCapabilities, Nothing} = nothing
-
-        """
-        Capabilities specific to the `workspace/symbol` request.
-        """
-        symbol::Union{WorkspaceSymbolClientCapabilities, Nothing} = nothing
-
-        """
-        Capabilities specific to the `workspace/executeCommand` request.
-        """
-        executeCommand::Union{ExecuteCommandClientCapabilities, Nothing} = nothing
-
-        """
-        The client has support for workspace folders.
-
-        - `@since` 3.6.0
-        """
-        workspaceFolders::Union{Bool, Nothing} = nothing
-
-        """
-        The client supports `workspace/configuration` requests.
-
-        - `@since` 3.6.0
-        """
-        configuration::Union{Bool, Nothing} = nothing
-
-        """
-        Capabilities specific to the semantic token requests scoped to the
-        workspace.
-
-        - `@since` 3.16.0
-        """
-        semanticTokens::Union{SemanticTokensWorkspaceClientCapabilities, Nothing} = nothing
-
-        """
-        Capabilities specific to the code lens requests scoped to the
-        workspace.
-
-        - `@since` 3.16.0
-        """
-        codeLens::Union{CodeLensWorkspaceClientCapabilities, Nothing} = nothing
-
-        """
-        # The client has support for file requests/notifications.
-
-        - `@since` 3.16.0
-        """
-        fileOperations::Union{Nothing, @interface begin
-            """
-            Whether the client supports dynamic registration for file
-            requests/notifications.
-            """
-            dynamicRegistration::Union{Bool, Nothing} = nothing
-
-            "The client has support for sending didCreateFiles notifications."
-            didCreate::Union{Bool, Nothing} = nothing
-
-            "The client has support for sending willCreateFiles requests."
-            willCreate::Union{Bool, Nothing} = nothing
-
-            "The client has support for sending didRenameFiles notifications."
-            didRename::Union{Bool, Nothing} = nothing
-
-            "The client has support for sending willRenameFiles requests."
-            willRename::Union{Bool, Nothing} = nothing
-
-            "The client has support for sending didDeleteFiles notifications."
-            didDelete::Union{Bool, Nothing} = nothing
-
-            "The client has support for sending willDeleteFiles requests."
-            willDelete::Union{Bool, Nothing} = nothing
-            end} = nothing
-
-        # """
-        # Client workspace capabilities specific to inline values.
-
-        # - `@since` 3.17.0
-        # """
-        # inlineValue::Union{InlineValueWorkspaceClientCapabilities, Nothing} = nothing
-
-        """
-        Client workspace capabilities specific to inlay hints.
-
-        - `@since` 3.17.0
-        """
-        inlayHint::Union{InlayHintWorkspaceClientCapabilities, Nothing} = nothing
-
-        """
-        Client workspace capabilities specific to diagnostics.
-
-        - `@since` 3.17.0.
-        """
-        diagnostics::Union{DiagnosticWorkspaceClientCapabilities, Nothing} = nothing
-    end} = nothing
+    workspace::Union{WorkspaceClientCapabilities, Nothing} = nothing
 
     "Text document specific client capabilities."
     textDocument::Union{TextDocumentClientCapabilities, Nothing} = nothing
@@ -635,100 +748,30 @@ provides text document synchronization (e.g. open, changed and close notificatio
     notebookDocument::Union{NotebookDocumentClientCapabilities, Nothing} = nothing
 
     "Window specific client capabilities."
-    window::Union{Nothing, @interface begin
-        """
-        It indicates whether the client supports server initiated
-        progress using the `window/workDoneProgress/create` request.
-
-        The capability also controls Whether client supports handling
-        of progress notifications. If set servers are allowed to report a
-        `workDoneProgress` property in the request specific server
-        capabilities.
-
-        - `@since` 3.15.0
-        """
-        workDoneProgress::Union{Bool, Nothing} = nothing
-
-        """
-        Capabilities specific to the showMessage request
-
-        - `@since` 3.16.0
-        """
-        showMessage::Union{ShowMessageRequestClientCapabilities, Nothing} = nothing
-
-        """
-        Client capabilities for the show document request.
-
-        - `@since` 3.16.0
-        """
-        showDocument::Union{ShowDocumentClientCapabilities, Nothing} = nothing
-    end} = nothing
+    window::Union{WindowClientCapabilities, Nothing} = nothing
 
     """
     General client capabilities.
 
     - `@since` 3.16.0
     """
-    general::Union{Nothing, @interface begin
-        """
-        Client capability that signals how the client
-        handles stale requests (e.g. a request
-        for which the client will not process the response
-        anymore since the information is outdated).
-
-        - `@since` 3.17.0
-        """
-        staleRequestSupport::Union{Nothing, @interface begin
-            "The client will actively cancel the request."
-            cancel::Bool
-
-            """
-            The list of requests for which the client
-            will retry the request if it receives a
-            response with error code `ContentModified`
-            """
-            retryOnContentModified::Vector{String}
-        end} = nothing
-
-        """
-        Client capabilities specific to regular expressions.
-
-        - `@since` 3.16.0
-        """
-        regularExpressions::Union{RegularExpressionsClientCapabilities, Nothing} = nothing
-
-        """
-        Client capabilities specific to the client's markdown parser.
-
-        - `@since` 3.16.0
-        """
-        markdown::Union{MarkdownClientCapabilities, Nothing} = nothing
-
-        """
-        The position encodings supported by the client. Client and server
-        have to agree on the same position encoding to ensure that offsets
-        (e.g. character position in a line) are interpreted the same on both
-        side.
-
-        To keep the protocol backwards compatible the following applies: if
-        the value 'utf-16' is missing from the array of position encodings
-        servers can assume that the client supports UTF-16. UTF-16 is
-        therefore a mandatory encoding.
-
-        If omitted it defaults to ['utf-16'].
-
-        Implementation considerations: since the conversion from one encoding
-        into another requires the content of the file / line the conversion
-        is best done where the file is read which is usually on the server
-        side.
-
-        - `@since` 3.17.0
-        """
-        positionEncodings::Union{Vector{PositionEncodingKind.Ty}, Nothing} = nothing
-    end} = nothing
+    general::Union{GeneralClientCapabilities, Nothing} = nothing
 
     "Experimental client capabilities."
     experimental::Union{Any, Nothing} = nothing
+end
+
+"""
+Information about the client
+
+- `@since` 3.15.0
+"""
+@interface ClientInfo begin
+    "The name of the client as defined by the client."
+    name::String
+
+    "The client's version as defined by the client."
+    version::Union{String, Nothing} = nothing
 end
 
 @interface InitializeParams @extends WorkDoneProgressParams begin
@@ -744,13 +787,7 @@ end
 
     - `@since` 3.15.0
     """
-    clientInfo::Union{Nothing, @interface begin
-        "The name of the client as defined by the client."
-        name::String
-
-        "The client's version as defined by the client."
-        version::Union{String, Nothing} = nothing
-    end} = nothing
+    clientInfo::Union{Nothing, ClientInfo} = nothing
 
     """
     The locale the client is currently showing the user interface in.
@@ -823,6 +860,19 @@ The initialize request may only be sent once.
     params::InitializeParams
 end
 
+"""
+Information about the server
+
+- `@since` 3.15.0
+"""
+@interface ServerInfo begin
+    "The name of the server as defined by the server."
+    name::String
+
+    "The server's version as defined by the server."
+    version::Union{String, Nothing} = nothing
+end
+
 @interface InitializeResult begin
     "The capabilities the language server provides."
     capabilities::ServerCapabilities
@@ -832,13 +882,7 @@ end
 
     - `@since` 3.15.0
     """
-    serverInfo::Union{Nothing, @interface begin
-        "The name of the server as defined by the server."
-        name::String
-
-        "The server's version as defined by the server."
-        version::Union{String, Nothing} = nothing
-    end} = nothing
+    serverInfo::Union{Nothing, ServerInfo} = nothing
 end
 
 "Known error codes for an `InitializeErrorCodes`."

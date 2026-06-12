@@ -400,6 +400,10 @@ Represents a location inside a resource, such as a line inside a text file.
     range::Range
 end
 
+@interface LocationUriOnly begin
+    uri::DocumentUri
+end
+
 """
 Represents a link between a source and a target location.
 
@@ -937,6 +941,15 @@ the failure is described by the client capability:
     changeAnnotations::Union{Nothing, Dict{ChangeAnnotationIdentifier, ChangeAnnotation}} = nothing
 end
 
+@interface ChangeAnnotationsSupportOptions begin
+    """
+    Whether the client groups edits with equal labels into tree nodes,
+    for instance all edits labelled with "Changes in Strings" would
+    be a tree node.
+    """
+    groupsOnLabel::Union{Nothing, Bool} = nothing
+end
+
 """
 New in version 3.13: [`ResourceOperationKind`](@ref) and [`FailureHandlingKind`](@ref)
 and the client capability `workspace.workspaceEdit.resourceOperations` as well as
@@ -983,14 +996,7 @@ their support using the following client capability:
 
     - `@since` 3.16.0
     """
-    changeAnnotationSupport::Union{Nothing, @interface begin
-        """
-        Whether the client groups edits with equal labels into tree nodes,
-        for instance all edits labelled with "Changes in Strings" would
-        be a tree node.
-        """
-        groupsOnLabel::Union{Nothing, Bool} = nothing
-    end} = nothing
+    changeAnnotationSupport::Union{Nothing, ChangeAnnotationsSupportOptions} = nothing
 end
 
 # Work Done Progress

@@ -7,13 +7,10 @@ include(normpath(pkgdir(JETLS), "test", "setup.jl"))
 
 # `workspace/didChangeWatchedFiles` does not support static registration,
 # so we need to allow dynamic registration here to test it
-const CLIENT_CAPABILITIES = ClientCapabilities(
-    workspace = (;
-        didChangeWatchedFiles = DidChangeWatchedFilesClientCapabilities(
-            dynamicRegistration = true
-        )
-    )
-)
+const CLIENT_CAPABILITIES = ClientCapabilities(;
+    workspace = WorkspaceClientCapabilities(;
+        didChangeWatchedFiles = DidChangeWatchedFilesClientCapabilities(;
+            dynamicRegistration = true)))
 
 const DEBOUNCE_DEFAULT = JETLS.get_config(JETLS.ConfigManager(JETLS.ConfigManagerData()), :full_analysis, :debounce)
 const TESTRUNNER_DEFAULT = JETLS.get_config(JETLS.ConfigManager(JETLS.ConfigManagerData()), :testrunner, :executable)

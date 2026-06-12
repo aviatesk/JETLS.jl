@@ -75,6 +75,28 @@ end
     tokenModifiers::Vector{String}
 end
 
+@interface ClientSemanticTokensRequestFullDelta begin
+    """
+    The client will send the `textDocument/semanticTokens/full/delta` request
+    if the server provides a corresponding handler.
+    """
+    delta::Union{Nothing, Bool} = nothing
+end
+
+@interface ClientSemanticTokensRequestOptions begin
+    """
+    The client will send the `textDocument/semanticTokens/range` request
+    if the server provides a corresponding handler.
+    """
+    range::Union{Nothing, Bool, @interface begin end} = nothing
+
+    """
+    The client will send the `textDocument/semanticTokens/full` request
+    if the server provides a corresponding handler.
+    """
+    full::Union{Nothing, Bool, ClientSemanticTokensRequestFullDelta} = nothing
+end
+
 @interface SemanticTokensClientCapabilities begin
     """
     Whether implementation supports dynamic registration. If this is set to
@@ -88,25 +110,7 @@ end
     Which requests the client supports and might send to the server
     depending on the server's capability.
     """
-    requests::@interface begin
-        """
-        The client will send the `textDocument/semanticTokens/range` request
-        if the server provides a corresponding handler.
-        """
-        range::Union{Nothing, Bool, @interface begin end} = nothing
-
-        """
-        The client will send the `textDocument/semanticTokens/full` request
-        if the server provides a corresponding handler.
-        """
-        full::Union{Nothing, Bool, @interface begin
-            """
-            The client will send the `textDocument/semanticTokens/full/delta`
-            request if the server provides a corresponding handler.
-            """
-            delta::Union{Nothing, Bool} = nothing
-        end} = nothing
-    end
+    requests::ClientSemanticTokensRequestOptions
 
     """
     The token types that the client supports.
@@ -158,6 +162,14 @@ end
     augmentsSyntaxTokens::Union{Nothing, Bool} = nothing
 end
 
+"""
+Semantic tokens options to support deltas for full documents.
+"""
+@interface SemanticTokensFullDelta begin
+    "The server supports deltas for full documents."
+    delta::Union{Nothing, Bool} = nothing
+end
+
 @interface SemanticTokensOptions @extends WorkDoneProgressOptions begin
     """
     The legend used by the server.
@@ -173,12 +185,7 @@ end
     """
     Server supports providing semantic tokens for a full document.
     """
-    full::Union{Nothing, Bool, @interface begin
-        """
-        The server supports deltas for full documents.
-        """
-        delta::Union{Nothing, Bool} = nothing
-    end} = nothing
+    full::Union{Nothing, Bool, SemanticTokensFullDelta} = nothing
 end
 
 @interface SemanticTokensRegistrationOptions @extends TextDocumentRegistrationOptions, SemanticTokensOptions, StaticRegistrationOptions begin

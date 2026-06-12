@@ -1,3 +1,11 @@
+@interface ClientSymbolResolveOptions begin
+    """
+    The properties that a client can resolve lazily. Usually
+    `location.range`.
+    """
+    properties::Vector{String}
+end
+
 @interface WorkspaceSymbolClientCapabilities begin
     """
     Symbol request supports dynamic registration.
@@ -8,19 +16,7 @@
     Specific capabilities for the `SymbolKind` in the `workspace/symbol`
     request.
     """
-    symbolKind::Union{Nothing, @interface begin
-        """
-        The symbol kind values the client supports. When this
-        property exists the client also guarantees that it will
-        handle values outside its set gracefully and falls back
-        to a default value when unknown.
-
-        If this property is not present the client only supports
-        the symbol kinds from `File` to `Array` as defined in
-        the initial version of the protocol.
-        """
-        valueSet::Union{Nothing, Vector{SymbolKind.Ty}} = nothing
-    end} = nothing
+    symbolKind::Union{Nothing, ClientSymbolKindOptions} = nothing
 
     """
     The client supports tags on `SymbolInformation` and `WorkspaceSymbol`.
@@ -28,12 +24,7 @@
 
     - `@since` 3.16.0
     """
-    tagSupport::Union{Nothing, @interface begin
-        """
-        The tags supported by the client.
-        """
-        valueSet::Vector{SymbolTag.Ty}
-    end} = nothing
+    tagSupport::Union{Nothing, ClientSymbolTagOptions} = nothing
 
     """
     The client support partial workspace symbols. The client will send the
@@ -42,13 +33,7 @@
 
     - `@since` 3.17.0 - proposedState
     """
-    resolveSupport::Union{Nothing, @interface begin
-        """
-        The properties that a client can resolve lazily. Usually
-        `location.range`
-        """
-        properties::Vector{String}
-    end} = nothing
+    resolveSupport::Union{Nothing, ClientSymbolResolveOptions} = nothing
 end
 
 @interface WorkspaceSymbolOptions @extends WorkDoneProgressOptions begin
@@ -111,9 +96,7 @@ A special workspace symbol that supports locations without a range.
 
     See also `SymbolInformation.location`.
     """
-    location::Union{Location, @interface begin
-        uri::DocumentUri
-    end}
+    location::Union{Location, LocationUriOnly}
 
     """
     A data entry field that is preserved on a workspace symbol between a
