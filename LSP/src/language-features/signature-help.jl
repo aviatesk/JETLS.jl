@@ -1,3 +1,46 @@
+@interface ClientSignatureParameterInformationOptions begin
+    """
+    The client supports processing label offsets instead of a
+    simple label string.
+
+    # Tags
+    - since - 3.14.0
+    """
+    labelOffsetSupport::Union{Nothing, Bool} = nothing
+end
+
+@interface ClientSignatureInformationOptions begin
+    """
+    Client supports the following content formats for the documentation
+    property. The order describes the preferred format of the client.
+    """
+    documentationFormat::Union{Nothing, Vector{MarkupKind.Ty}} = nothing
+
+    """
+    Client capabilities specific to parameter information.
+    """
+    parameterInformation::Union{Nothing, ClientSignatureParameterInformationOptions} = nothing
+
+    """
+    The client supports the `activeParameter` property on
+    `SignatureInformation` literal.
+
+    # Tags
+    - since - 3.16.0
+    """
+    activeParameterSupport::Union{Nothing, Bool} = nothing
+
+    """
+    The client supports the `activeParameter` property on
+    `SignatureHelp`/`SignatureInformation` being set to `null` to
+    indicate that no parameter should be active.
+
+    # Tags
+    - since - 3.18.0
+    """
+    noActiveParameterSupport::Union{Nothing, Bool} = nothing
+end
+
 @interface SignatureHelpClientCapabilities begin
     """
     Whether signature help supports dynamic registration.
@@ -8,39 +51,10 @@
     The client supports the following `SignatureInformation`
     specific properties.
     """
-    signatureInformation::Union{Nothing, @interface begin
-        """
-        Client supports the follow content formats for the documentation
-        property. The order describes the preferred format of the client.
-        """
-        documentationFormat::Union{Nothing, Vector{MarkupKind.Ty}} = nothing
-
-        """
-        Client capabilities specific to parameter information.
-        """
-        parameterInformation::Union{Nothing, @interface begin
-            """
-            The client supports processing label offsets instead of a
-            simple label string.
-
-            # Tags
-            - since - 3.14.0
-            """
-            labelOffsetSupport::Union{Nothing, Bool} = nothing
-        end} = nothing
-
-        """
-        The client supports the `activeParameter` property on
-        `SignatureInformation` literal.
-
-        # Tags
-        - since - 3.16.0
-        """
-        activeParameterSupport::Union{Nothing, Bool} = nothing
-    end} = nothing
+    signatureInformation::Union{Nothing, ClientSignatureInformationOptions} = nothing
 
     """
-    The client supports to send additional context information for a
+    The client supports sending additional context information for a
     `textDocument/signatureHelp` request. A client that opts into
     contextSupport will also support the `retriggerCharacters` on
     `SignatureHelpOptions`.
@@ -105,10 +119,14 @@ have a label and a doc-comment.
     """
     The label of this parameter information.
 
-    Either a string or an inclusive start and exclusive end offsets within
-    its containing signature label. (see SignatureInformation.label). The
-    offsets are based on a UTF-16 string representation as `Position` and
-    `Range` does.
+    Either a string or an inclusive start and exclusive end offset within
+    its containing signature label (see SignatureInformation.label). The
+    offsets are based on a UTF-16 string representation, as `Position` and
+    `Range` do.
+
+    To avoid ambiguities, a server should use the [start, end] offset value
+    instead of using a substring. Whether a client support this is
+    controlled via `labelOffsetSupport` client capability.
 
     *Note*: a label of type string should be a substring of its containing
     signature label. Its intended use case is to highlight the parameter
@@ -130,14 +148,13 @@ a set of parameters.
 """
 @interface SignatureInformation begin
     """
-    The label of this signature. Will be shown in
-    the UI.
+    The label of this signature. Will be shown in the UI.
     """
     label::String
 
     """
-    The human-readable doc-comment of this signature. Will be shown
-    in the UI but can be omitted.
+    The human-readable doc-comment of this signature.
+    Will be shown in the UI but can be omitted.
     """
     documentation::Union{Nothing, String, MarkupContent} = nothing
 
@@ -149,49 +166,62 @@ a set of parameters.
     """
     The index of the active parameter.
 
-    If provided, this is used in place of `SignatureHelp.activeParameter`.
+    If `null`, no parameter of the signature is active (for example, a named
+    argument that does not match any declared parameters). This is only valid
+    since 3.18.0 and if the client specifies the client capability
+    `textDocument.signatureHelp.noActiveParameterSupport === true`.
 
-     # Tags
+    If provided (or `null`), this is used in place of `SignatureHelp.activeParameter`.
+
+    # Tags
     - since - 3.16.0
     """
-    activeParameter::Union{Nothing, UInt} = nothing
+    activeParameter::Union{Nothing, UInt, Null} = nothing
 end
 
 """
 Signature help represents the signature of something
-callable. There can be multiple signature but only one
-active and only one active parameter.
+callable. There can be multiple signatures,
+but only one active one and only one active parameter.
 """
 @interface SignatureHelp begin
     """
-    One or more signatures. If no signatures are available the signature help
-    request should return `null`.
+    One or more signatures. If no signatures are available,
+    the signature help request should return `null`.
     """
     signatures::Vector{SignatureInformation}
 
     """
     The active signature. If omitted or the value lies outside the
-    range of `signatures` the value defaults to zero or is ignore if
-    the `SignatureHelp` as no signatures.
+    range of `signatures`, the value defaults to zero or is ignored if
+    the `SignatureHelp` has no signatures.
 
-    Whenever possible implementors should make an active decision about
+    Whenever possible, implementers should make an active decision about
     the active signature and shouldn't rely on a default value.
 
-    In future version of the protocol this property might become
+    In future versions of the protocol, this property might become
     mandatory to better express this.
     """
     activeSignature::Union{Nothing, UInt} = nothing
 
     """
-    The active parameter of the active signature. If omitted or the value
-    lies outside the range of `signatures[activeSignature].parameters`
-    defaults to 0 if the active signature has parameters. If
-    the active signature has no parameters it is ignored.
-    In future version of the protocol this property might become
-    mandatory to better express the active parameter if the
-    active signature does have any.
+    The active parameter of the active signature.
+
+    If `null`, no parameter of the signature is active (for example, a named
+    argument that does not match any declared parameters). This is only valid
+    since 3.18.0 and if the client specifies the client capability
+    `textDocument.signatureHelp.noActiveParameterSupport === true`.
+
+    If omitted or the value lies outside the range of
+    `signatures[activeSignature].parameters`, it defaults to 0 if the active
+    signature has parameters.
+
+    If the active signature has no parameters, it is ignored.
+
+    Since version 3.16.0 the `SignatureInformation` itself provides a
+    `activeParameter` property and it should be used instead of this one.
     """
-    activeParameter::Union{Nothing, UInt} = nothing
+    activeParameter::Union{Nothing, UInt, Null} = nothing
 end
 
 """
@@ -246,8 +276,8 @@ end
 end
 
 """
-The signature help request is sent from the client to the server to request signature
-information at a given cursor position.
+The signature help request is sent from the client to the server to request
+signature information at a given cursor position.
 """
 @interface SignatureHelpRequest @extends RequestMessage begin
     method::String = "textDocument/signatureHelp"
