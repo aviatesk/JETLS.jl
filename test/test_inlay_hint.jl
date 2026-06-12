@@ -672,8 +672,8 @@ end
             @test apply_inlay_hints(code, get_type_inlay_hints(code)) == expected
         end
 
-        # `op=` lowers to `K"unknown_head"`, which is in the skip set; the
-        # rewritten operator (`+`) and its LHS reference don't leak hints, so
+        # Compound assignments parse as `K"unknown_head"`, which is in the skip set;
+        # lowering-introduced operator and LHS references don't leak hints, so
         # the `inside += 1` line stays unannotated even though the surrounding
         # expressions get annotated normally.
         @testset "compound assignment emits nothing" begin

@@ -21,6 +21,10 @@ function build_syntax_tree(fi::FileInfo)
     return copy_syntax_tree(fi.syntax_tree0)
 end
 
+get_source_text(ps::JS.ParseStream) = JS.sourcetext(JS.SourceFile(ps))
+document_text(fi::FileInfo) = get_source_text(fi.parsed_stream)
+document_range(fi::FileInfo) = jsobj_to_range(fi.parsed_stream, fi)
+
 @static if JL.DEBUG
     function ensure_jl_source_attr!(graph::JS.SyntaxGraph)
         attrs = getfield(graph, :attributes)
@@ -97,7 +101,7 @@ Currently handled:
 
 Not yet handled because the malformed shape needs more than a child-collapse:
 
-- `K"->"`, `K"if"`, `K"for"`, compound-assignment `K"op="` — either a
+- `K"->"`, `K"if"`, `K"for"`, compound-assignment `K"unknown_head"` — either a
   structural rewrite or context-aware reasoning is required.
 
 Add new branches in [`_repair_node`](@ref) when these cause downstream

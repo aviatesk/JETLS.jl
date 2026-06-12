@@ -535,7 +535,7 @@ function _testrunner_run_testset(
     test_env_path = find_uri_env_path(server.state, uri)
     root_path = testrunner_root_path(server.state, uri)
     cmd = testrunner_cmd(executable, filepath, tsn, tsl, test_env_path, root_path)
-    source = JS.sourcetext(fi.parsed_stream)
+    source = String(document_text(fi))
     testrunnerproc = open(pipeline(cmd; stdin=IOBuffer(source)); read=true)
 
     result = try
@@ -833,7 +833,7 @@ function testrunner_run_testcase_from_uri(server::Server, uri::URI, tcl::Int, tc
         return "File is no longer available in the editor"
     end
     filepath = uri2filename(uri)
-    source = JS.sourcetext(fi.parsed_stream)
+    source = String(document_text(fi))
 
     if supports(server, :window, :workDoneProgress)
         id = String(gensym(:WorkDoneProgressCreateRequest_testrunner))
@@ -842,7 +842,7 @@ function testrunner_run_testcase_from_uri(server::Server, uri::URI, tcl::Int, tc
         params = WorkDoneProgressCreateParams(; token)
         send(server, WorkDoneProgressCreateRequest(; id, params))
     else
-        testrunner_run_testcase(server, uri, tcl, tct, filepath, String(source))
+        testrunner_run_testcase(server, uri, tcl, tct, filepath, source)
     end
     return nothing
 end
