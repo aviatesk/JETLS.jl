@@ -273,6 +273,8 @@ precedence. The priority order (highest to lowest) is:
 
 This priority strategy allows message-based patterns to override code-based
 patterns, enabling fine-grained control for specific diagnostic instances.
+When multiple matching patterns have the same priority, the later entry takes
+precedence.
 
 Example showing priority:
 

@@ -213,7 +213,7 @@ function _apply_diagnostic_config(
         is_message_match = pattern_config.match_by == "message"
         specificity = calculate_match_specificity(
             pattern_config.pattern, target, is_message_match)
-        if specificity > best_specificity
+        if specificity != 0 && specificity >= best_specificity
             best_specificity = specificity
             severity = pattern_config.severity
         end

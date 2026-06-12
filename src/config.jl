@@ -17,24 +17,45 @@ is_config_file(filepath::AbstractString) =
     :(T($(entries...)))
 end
 
+function unique_config_sections_keep_last(config::Vector{T}) where {T<:ConfigSection}
+    seen = Set{Any}()
+    result = T[]
+    sizehint!(result, length(config))
+    for item in Iterators.reverse(config)
+        key = merge_key_value(item)
+        key in seen && continue
+        push!(seen, key)
+        push!(result, item)
+    end
+    return reverse!(result)
+end
+
 function merge_and_track(
         on_difference,
         old_config::Vector{T},
         new_config::Vector{T},
         path::Tuple{Vararg{Symbol}}
     ) where {T<:ConfigSection}
-    old_by_key = Dict(merge_key_value(item) => item for item in old_config)
-    new_by_key = Dict(merge_key_value(item) => item for item in new_config)
+    old_config = unique_config_sections_keep_last(old_config)
+    new_config = unique_config_sections_keep_last(new_config)
+    old_keys = Any[merge_key_value(item) for item in old_config]
+    new_keys = Any[merge_key_value(item) for item in new_config]
+    isequal(old_keys, new_keys) || on_difference(old_keys, new_keys, path)
+
+    old_by_key = Dict{Any,T}(merge_key_value(item) => item for item in old_config)
+    new_keys_set = Set{Any}(new_keys)
     result = T[]
-    for (k, old_item) in old_by_key
-        if haskey(new_by_key, k)
-            push!(result, merge_and_track(on_difference, old_item, new_by_key[k], path))
-        else
-            push!(result, merge_and_track(on_difference, old_item, nothing, path))
-        end
+    sizehint!(result, length(old_config) + length(new_config))
+    for old_item in old_config
+        key = merge_key_value(old_item)
+        key in new_keys_set && continue
+        push!(result, merge_and_track(on_difference, old_item, nothing, path))
     end
-    for (k, new_item) in new_by_key
-        if !haskey(old_by_key, k)
+    for new_item in new_config
+        key = merge_key_value(new_item)
+        if haskey(old_by_key, key)
+            push!(result, merge_and_track(on_difference, old_by_key[key], new_item, path))
+        else
             push!(result, merge_and_track(on_difference, nothing, new_item, path))
         end
     end
@@ -59,7 +80,11 @@ function merge_and_track(
         new_config::Vector{T},
         path::Tuple{Vararg{Symbol}}
     ) where {T<:ConfigSection}
-    return T[merge_and_track(on_difference, nothing, new_item, path) for new_item in new_config]
+    new_config = unique_config_sections_keep_last(new_config)
+    return T[
+        merge_and_track(on_difference, nothing, new_item, path)
+        for new_item in new_config
+    ]
 end
 
 @generated function merge_and_track(
