@@ -1,9 +1,11 @@
 const CODE_ACTION_REGISTRATION_ID = "jetls-code-action"
 const CODE_ACTION_REGISTRATION_METHOD = "textDocument/codeAction"
 
+const SUPPORTED_CODE_ACTION_KINDS = CodeActionKind.Ty[CodeActionKind.QuickFix]
+
 function code_action_options()
     return CodeActionOptions(;
-        codeActionKinds = [CodeActionKind.Empty],  # Support all kinds
+        codeActionKinds = SUPPORTED_CODE_ACTION_KINDS,
         resolveProvider = false)
 end
 
@@ -13,7 +15,7 @@ function code_action_registration()
         method = CODE_ACTION_REGISTRATION_METHOD,
         registerOptions = CodeActionRegistrationOptions(;
             documentSelector = DEFAULT_DOCUMENT_SELECTOR,
-            codeActionKinds = [CodeActionKind.Empty],
+            codeActionKinds = SUPPORTED_CODE_ACTION_KINDS,
             resolveProvider = false))
 end
 
@@ -23,28 +25,48 @@ end
 #     method = CODE_ACTION_REGISTRATION_METHOD))
 # register(currently_running, code_action_registration())
 
+function code_action_kind_matches(requested::CodeActionKind.Ty, kind::CodeActionKind.Ty)
+    requested == CodeActionKind.Empty && return true
+    return kind == requested || startswith(kind, requested * ".")
+end
+
+function code_action_kind_requested(
+        only::Union{Nothing,Vector{CodeActionKind.Ty}},
+        kind::Union{Nothing,CodeActionKind.Ty}
+    )
+    only === nothing && return true
+    kind === nothing && return false
+    return any(requested -> code_action_kind_matches(requested, kind), only)
+end
+
 function handle_CodeActionRequest(
         server::Server, msg::CodeActionRequest, cancel_flag::CancelFlag)
     uri = msg.params.textDocument.uri
-    result = get_file_info(server.state, uri, cancel_flag)
-    if isnothing(result)
-        return send(server, CodeActionResponse(; id = msg.id, result = null))
-    elseif result isa ResponseError
-        return send(server, CodeActionResponse(; id = msg.id, result = nothing, error = result))
-    end
-    file_info = result
     code_actions = Union{CodeAction,Command}[]
-    testrunner_code_actions!(code_actions, uri, file_info, msg.params.range)
-    diagnostics = msg.params.context.diagnostics
-    unused_variable_code_actions!(code_actions, uri, diagnostics;
-        allow_unused_underscore = get_config(server, :diagnostic, :allow_unused_underscore))
-    delete_range_code_actions!(code_actions, uri, diagnostics)
-    sort_imports_code_actions!(code_actions, uri, diagnostics)
-    ambiguous_soft_scope_code_actions!(code_actions, uri, diagnostics)
-    return send(server,
-        CodeActionResponse(;
-            id = msg.id,
-            result = code_actions))
+    only = msg.params.context.only
+    wants_kindless_actions = code_action_kind_requested(only, nothing)
+    wants_quickfix_actions = code_action_kind_requested(only, CodeActionKind.QuickFix)
+    wants_kindless_actions || wants_quickfix_actions ||
+        return send(server, CodeActionResponse(; id = msg.id, result = code_actions))
+    if wants_kindless_actions
+        result = get_file_info(server.state, uri, cancel_flag)
+        if isnothing(result)
+            return send(server, CodeActionResponse(; id = msg.id, result = null))
+        elseif result isa ResponseError
+            return send(server, CodeActionResponse(; id = msg.id, result = nothing, error = result))
+        end
+        file_info = result::FileInfo
+        testrunner_code_actions!(code_actions, uri, file_info, msg.params.range)
+    end
+    if wants_quickfix_actions
+        diagnostics = msg.params.context.diagnostics
+        unused_variable_code_actions!(code_actions, uri, diagnostics;
+            allow_unused_underscore = get_config(server, :diagnostic, :allow_unused_underscore))
+        delete_range_code_actions!(code_actions, uri, diagnostics)
+        sort_imports_code_actions!(code_actions, uri, diagnostics)
+        ambiguous_soft_scope_code_actions!(code_actions, uri, diagnostics)
+    end
+    return send(server, CodeActionResponse(; id = msg.id, result = code_actions))
 end
 
 function unused_variable_code_actions!(
