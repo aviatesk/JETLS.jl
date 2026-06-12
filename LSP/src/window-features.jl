@@ -108,8 +108,7 @@ end
 """
 Client capabilities for the show document request.
 
-# Tags
-- since - 3.16.0
+- `@since` 3.16.0
 """
 @interface ShowDocumentClientCapabilities begin
     """
@@ -122,8 +121,7 @@ end
 """
 Params to show a resource.
 
-# Tags
-- since - 3.16.0
+- `@since` 3.16.0
 """
 @interface ShowDocumentParams begin
     """
@@ -158,8 +156,7 @@ end
 """
 The result of an show document request.
 
-# Tags
-- since - 3.16.0
+- `@since` 3.16.0
 """
 @interface ShowDocumentResult begin
     """
@@ -172,8 +169,7 @@ end
 The show document request is sent from a server to a client to ask the client to display a
 particular resource referenced by a URI in the user interface.
 
-# Tags
-- since - 3.16.0
+- `@since` 3.16.0
 """
 @interface ShowDocumentRequest @extends RequestMessage begin
     method::String = "window/showDocument"

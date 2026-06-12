@@ -42,8 +42,7 @@ end
     """
     Specific options for the folding range kind.
 
-    # Tags
-    - since - 3.17.0
+    - `@since` 3.17.0
     """
     foldingRangeKind::Union{Nothing, @interface begin
         """
@@ -58,16 +57,14 @@ end
     """
     Specific options for the folding range.
 
-    # Tags
-    - since - 3.17.0
+    - `@since` 3.17.0
     """
     foldingRange::Union{Nothing, @interface begin
         """
         If set, the client signals that it supports setting collapsedText on
         folding ranges to display custom labels instead of the default text.
 
-        # Tags
-        - since - 3.17.0
+        - `@since` 3.17.0
         """
         collapsedText::Union{Nothing, Bool} = nothing
     end} = nothing
@@ -125,8 +122,7 @@ are free to ignore invalid ranges.
     collapsed. If not defined or not supported by the client, a default
     will be chosen by the client.
 
-    # Tags
-    - since - 3.17.0 - proposed
+    - `@since` 3.17.0 - proposed
     """
     collapsedText::Union{Nothing, String} = nothing
 end
@@ -142,8 +138,7 @@ end
 The folding range request is sent from the client to the server to return all
 folding ranges found in a given text document.
 
-# Tags
-- since - 3.10.0
+- `@since` 3.10.0
 """
 @interface FoldingRangeRequest @extends RequestMessage begin
     method::String = "textDocument/foldingRange"

@@ -54,8 +54,7 @@ ranges and others do not, `result[i].range` is allowed to be the empty range at
 Typically, but not necessary, selection ranges correspond to the nodes of the
 syntax tree.
 
-# Tags
-- since - 3.15.0
+- `@since` 3.15.0
 """
 @interface SelectionRangeRequest @extends RequestMessage begin
     method::String = "textDocument/selectionRange"

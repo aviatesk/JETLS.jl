@@ -32,8 +32,7 @@
     `DocumentSymbol` if `hierarchicalDocumentSymbolSupport` is set to true.
     Clients supporting tags have to handle unknown tags gracefully.
 
-    # Tags
-    - since - 3.16.0
+    - `@since` 3.16.0
     """
     tagSupport::Union{Nothing, @interface begin
         "The tags supported by the client."
@@ -44,8 +43,7 @@
     The client supports an additional label presented in the UI when
     registering a document symbol provider.
 
-    # Tags
-    - since - 3.16.0
+    - `@since` 3.16.0
     """
     labelSupport::Union{Nothing, Bool} = nothing
 end
@@ -55,8 +53,7 @@ end
     A human-readable string that is shown when multiple outlines trees
     are shown for the same document.
 
-    # Tags
-    - since - 3.16.0
+    - `@since` 3.16.0
     """
     label::Union{Nothing, String} = nothing
 end
@@ -88,8 +85,7 @@ its most interesting range, e.g. the range of an identifier.
     """
     Tags for this document symbol.
 
-    # Tags
-    - since - 3.16.0
+    - `@since` 3.16.0
     """
     tags::Union{Nothing, Vector{SymbolTag.Ty}} = nothing
 

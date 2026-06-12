@@ -1,8 +1,7 @@
 """
 A set of predefined token types.
 
-# Tags
-- since - 3.16.0
+- `@since` 3.16.0
 """
 @namespace SemanticTokenTypes::String begin
     namespace = "namespace"
@@ -32,8 +31,7 @@ A set of predefined token types.
     regexp = "regexp"
     operator = "operator"
     """
-    # Tags
-    - since - 3.17.0
+    - `@since` 3.17.0
     """
     decorator = "decorator"
 end
@@ -41,8 +39,7 @@ end
 """
 A set of predefined token modifiers.
 
-# Tags
-- since - 3.16.0
+- `@since` 3.16.0
 """
 @namespace SemanticTokenModifiers::String begin
     declaration = "declaration"
@@ -60,8 +57,7 @@ end
 """
 The token format.
 
-# Tags
-- since - 3.16.0
+- `@since` 3.16.0
 """
 @namespace TokenFormat::String begin
     Relative = "relative"
@@ -143,8 +139,7 @@ end
     ErrorCodes.ServerCancelled. If a server does the client
     needs to retrigger the request.
 
-    # Tags
-    - since - 3.17.0
+    - `@since` 3.17.0
     """
     serverCancelSupport::Union{Nothing, Bool} = nothing
 
@@ -158,8 +153,7 @@ end
     If the value is `undefined` then the client behavior is not
     specified.
 
-    # Tags
-    - since - 3.17.0
+    - `@since` 3.17.0
     """
     augmentsSyntaxTokens::Union{Nothing, Bool} = nothing
 end
@@ -220,8 +214,7 @@ end
 The request is sent from the client to the server to resolve semantic tokens
 for a given file.
 
-# Tags
-- since - 3.16.0
+- `@since` 3.16.0
 """
 @interface SemanticTokensFullRequest @extends RequestMessage begin
     method::String = "textDocument/semanticTokens/full"
@@ -280,8 +273,7 @@ end
 The request is sent from the client to the server to resolve semantic token
 delta for a given file.
 
-# Tags
-- since - 3.16.0
+- `@since` 3.16.0
 """
 @interface SemanticTokensDeltaRequest @extends RequestMessage begin
     method::String = "textDocument/semanticTokens/full/delta"
@@ -308,8 +300,7 @@ end
 The request is sent from the client to the server to resolve semantic tokens
 for a range in a given file.
 
-# Tags
-- since - 3.16.0
+- `@since` 3.16.0
 """
 @interface SemanticTokensRangeRequest @extends RequestMessage begin
     method::String = "textDocument/semanticTokens/range"
@@ -323,8 +314,7 @@ end
 """
 Client workspace capabilities specific to semantic tokens.
 
-# Tags
-- since - 3.16.0
+- `@since` 3.16.0
 """
 @interface SemanticTokensWorkspaceClientCapabilities begin
     """
@@ -344,8 +334,7 @@ The `workspace/semanticTokens/refresh` request is sent from the server to the cl
 Servers can use it to ask clients to refresh the editors for which this server provides
 semantic tokens.
 
-# Tags
-- since - 3.16.0
+- `@since` 3.16.0
 """
 @interface SemanticTokensRefreshRequest @extends RequestMessage begin
     method::String = "workspace/semanticTokens/refresh"

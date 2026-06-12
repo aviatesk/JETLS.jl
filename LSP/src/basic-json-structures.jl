@@ -69,8 +69,7 @@ end
 """
 A type indicating how positions are encoded, specifically what column offsets mean.
 
-# Tags
-- since – 3.17.0
+- `@since` 3.17.0
 """
 @namespace PositionEncodingKind::String begin
     """
@@ -234,8 +233,7 @@ end
 A notebook document filter denotes a notebook document by
 different properties.
 
-# Tags
-- since - 3.17.0
+- `@since` 3.17.0
 """
 @interface NotebookDocumentFilter begin
     "The type of the enclosing notebook."
@@ -252,8 +250,7 @@ end
 A notebook cell text document filter denotes a cell text
 document by different properties.
 
-# Tags
-- since - 3.17.0
+- `@since` 3.17.0
 """
 @interface NotebookCellTextDocumentFilter begin
     """
@@ -338,16 +335,14 @@ end
 An identifier referring to a change annotation managed by a workspace
 edit.
 
-# Tags
-- since - 3.16.0.
+- `@since` 3.16.0.
 """
 const ChangeAnnotationIdentifier = String
 
 """
 A special text edit with an additional change annotation.
 
-# Tags
-- since - 3.16.0.
+- `@since` 3.16.0.
 """
 @interface AnnotatedTextEdit @extends TextEdit begin
     annotationId::ChangeAnnotationIdentifier
@@ -391,8 +386,7 @@ or do any kind of ordering. However the edits must be non overlapping.
     """
     The edits to be applied.
 
-    # Tags
-    - since - 3.16.0 - support for AnnotatedTextEdit. This is guarded by the
+    - `@since` 3.16.0 - support for AnnotatedTextEdit. This is guarded by the
       client capability `workspace.workspaceEdit.changeAnnotationSupport`
     """
     edits::Vector{Union{TextEdit, AnnotatedTextEdit}}
@@ -409,7 +403,6 @@ end
 """
 Represents a link between a source and a target location.
 
-# Tags
 - since 3.14.0
 """
 @interface LocationLink begin
@@ -505,8 +498,7 @@ Known markdown parsers used by clients right now are:
 | marked | 1.1.0 | [Marked Documentation](https://marked.js.org/) |
 | Python-Markdown | 3.2.2 | [Python-Markdown Documentation](https://python-markdown.github.io/) |
 
-# Tags
-- since – 3.16.0
+- `@since` 3.16.0
 """
 @interface MarkdownClientCapabilities begin
     """
@@ -523,8 +515,7 @@ Known markdown parsers used by clients right now are:
     A list of HTML tags that the client allows / supports in
     Markdown.
 
-    # Tags
-    - since – 3.17.0
+    - `@since` 3.17.0
     """
     allowedTags::Union{Vector{String}, Nothing} = nothing
 end
@@ -549,8 +540,7 @@ end
 """
 The diagnostic tags.
 
-# Tags
-- since – 3.15.0
+- `@since` 3.15.0
 """
 @namespace DiagnosticTag::Int begin
     """
@@ -582,8 +572,7 @@ end
 """
 Structure to capture a description for an error code.
 
-# Tags
-- since – 3.16.0
+- `@since` 3.16.0
 """
 @interface CodeDescription begin
     "An URI to open with more information about the diagnostic error."
@@ -650,8 +639,7 @@ Diagnostic objects are only valid in the scope of a resource.
     """
     An optional property to describe the error code.
 
-    # Tags
-    - since – 3.16.0
+    - `@since` 3.16.0
     """
     codeDescription::Union{CodeDescription, Nothing} = nothing
 
@@ -664,8 +652,7 @@ Diagnostic objects are only valid in the scope of a resource.
     """
     The diagnostic's message.
 
-    # Tags
-    - since – 3.18.0 - support for MarkupContent. This is guarded by the client capability
+    - `@since` 3.18.0 - support for MarkupContent. This is guarded by the client capability
     `textDocument.diagnostic.markupMessageSupport`.
     """
     message::Union{String, MarkupContent}
@@ -673,8 +660,7 @@ Diagnostic objects are only valid in the scope of a resource.
     """
     Additional metadata about the diagnostic.
 
-    # Tags
-    - since – 3.15.0
+    - `@since` 3.15.0
     """
     tags::Union{Vector{DiagnosticTag.Ty}, Nothing} = nothing
 
@@ -688,8 +674,7 @@ Diagnostic objects are only valid in the scope of a resource.
     A data entry field that is preserved between a `textDocument/publishDiagnostics`
     notification and `textDocument/codeAction` request.
 
-    # Tags
-    - since – 3.16.0
+    - `@since` 3.16.0
     """
     data::Union{AmbiguousSoftScopeData, DeleteRangeData, UnsortedImportData, UnusedArgumentData, UnusedVariableData, Nothing} = nothing
 end
@@ -764,8 +749,7 @@ Create file operation
     """
     An optional annotation identifier describing the operation.
 
-    # Tags
-    - since - 3.16.0
+    - `@since` 3.16.0
     """
     annotationId::Union{Nothing, ChangeAnnotationIdentifier} = nothing
 end
@@ -809,8 +793,7 @@ Rename file operation
     """
     An optional annotation identifier describing the operation.
 
-    # Tags
-    - since - 3.16.0
+    - `@since` 3.16.0
     """
     annotationId::Union{Nothing, ChangeAnnotationIdentifier} = nothing
 end
@@ -849,8 +832,7 @@ Delete file operation
     """
     An optional annotation identifier describing the operation.
 
-    # Tags
-    - since - 3.16.0
+    - `@since` 3.16.0
     """
     annotationId::Union{Nothing, ChangeAnnotationIdentifier} = nothing
 end
@@ -950,8 +932,7 @@ the failure is described by the client capability:
     Whether clients honor this property depends on the client capability
     `workspace.changeAnnotationSupport`.
 
-    # Tags
-    - since - 3.16.0
+    - `@since` 3.16.0
     """
     changeAnnotations::Union{Nothing, Dict{ChangeAnnotationIdentifier, ChangeAnnotation}} = nothing
 end
@@ -974,8 +955,7 @@ their support using the following client capability:
     The resource operations the client supports. Clients should at least
     support 'create', 'rename' and 'delete' files and folders.
 
-    # Tags
-    - since - 3.13.0
+    - `@since` 3.13.0
     """
     resourceOperations::Union{Nothing, Vector{ResourceOperationKind.Ty}} = nothing
 
@@ -983,8 +963,7 @@ their support using the following client capability:
     The failure handling strategy of a client if applying the workspace edit
     fails.
 
-    # Tags
-    - since - 3.13.0
+    - `@since` 3.13.0
     """
     failureHandling::Union{Nothing, FailureHandlingKind.Ty} = nothing
 
@@ -994,8 +973,7 @@ their support using the following client capability:
     If set to `true` the client will normalize line ending characters
     in a workspace edit to the client specific new line character(s).
 
-    # Tags
-    - since - 3.16.0
+    - `@since` 3.16.0
     """
     normalizesLineEndings::Union{Nothing, Bool} = nothing
 
@@ -1003,8 +981,7 @@ their support using the following client capability:
     Whether the client in general supports change annotations on text edits,
     create file, rename file and delete file changes.
 
-    # Tags
-    - since - 3.16.0
+    - `@since` 3.16.0
     """
     changeAnnotationSupport::Union{Nothing, @interface begin
         """
@@ -1028,8 +1005,7 @@ The value payload of a work done progress notification can be of three different
 """
 To start progress reporting a `\$/progress` notification with the following payload must be sent.
 
-# Tags
-- since – 3.15.0
+- `@since` 3.15.0
 """
 @interface WorkDoneProgressBegin begin
     kind::String = "begin"
@@ -1072,8 +1048,7 @@ end
 """
 Reporting progress is done using the following payload.
 
-# Tags
-- since – 3.15.0
+- `@since` 3.15.0
 """
 @interface WorkDoneProgressReport begin
     kind::String = "report"
@@ -1110,8 +1085,7 @@ end
 """
 Signaling the end of a progress reporting is done using the following payload.
 
-# Tags
-- since – 3.15.0
+- `@since` 3.15.0
 """
 @interface WorkDoneProgressEnd begin
     kind::String = "end"
@@ -1160,8 +1134,7 @@ Progress is reported against a token.
 The token is different than the request ID which allows to report progress out of band
 and also for notification.
 
-# Tags
-- since – 3.15.0
+- `@since` 3.15.0
 """
 @interface ProgressNotification @extends NotificationMessage begin
     method::String = "\$/progress"
@@ -1212,8 +1185,7 @@ If the response errors the provided partial results should be treated as follows
   results but should make clear that the request got canceled and may be incomplete.
 - in all other cases the provided partial results shouldn’t be used.
 
-# Tags
-- since – 3.15.0
+- `@since` 3.15.0
 """
 :(partial_result_progress)
 
@@ -1266,8 +1238,7 @@ end
 """
 Symbol tags are extra annotations that tweak the rendering of a symbol.
 
-# Tags
-- since - 3.16
+- `@since` 3.16
 """
 @namespace SymbolTag::Int begin
     """
@@ -1296,8 +1267,7 @@ interfaces etc.
     """
     Tags for this symbol.
 
-    # Tags
-    - since - 3.16.0
+    - `@since` 3.16.0
     """
     tags::Union{Nothing, Vector{SymbolTag.Ty}} = nothing
 

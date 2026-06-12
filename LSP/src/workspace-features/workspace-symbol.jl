@@ -26,8 +26,7 @@
     The client supports tags on `SymbolInformation` and `WorkspaceSymbol`.
     Clients supporting tags have to handle unknown tags gracefully.
 
-    # Tags
-    - since - 3.16.0
+    - `@since` 3.16.0
     """
     tagSupport::Union{Nothing, @interface begin
         """
@@ -41,8 +40,7 @@
     request `workspaceSymbol/resolve` to the server to resolve additional
     properties.
 
-    # Tags
-    - since - 3.17.0 - proposedState
+    - `@since` 3.17.0 - proposedState
     """
     resolveSupport::Union{Nothing, @interface begin
         """
@@ -58,8 +56,7 @@ end
     The server provides support to resolve additional
     information for a workspace symbol.
 
-    # Tags
-    - since - 3.17.0
+    - `@since` 3.17.0
     """
     resolveProvider::Union{Nothing, Bool} = nothing
 end
@@ -81,8 +78,7 @@ end
 """
 A special workspace symbol that supports locations without a range.
 
-# Tags
-- since - 3.17.0
+- `@since` 3.17.0
 """
 @interface WorkspaceSymbol begin
     """

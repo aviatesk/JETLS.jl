@@ -386,8 +386,7 @@ As an example of the conversion, it is shown below how the
     The client supports processing label offsets instead of a
     simple label string.
 
-    # Tags
-    - since - 3.14.0
+    - `@since` 3.14.0
     """
     labelOffsetSupport::Union{Nothing, Bool} = nothing
 end
@@ -408,8 +407,7 @@ end
     The client supports the `activeParameter` property on
     `SignatureInformation` literal.
 
-    # Tags
-    - since - 3.16.0
+    - `@since` 3.16.0
     """
     activeParameterSupport::Union{Nothing, Bool} = nothing
 
@@ -418,8 +416,7 @@ end
     `SignatureHelp`/`SignatureInformation` being set to `null` to
     indicate that no parameter should be active.
 
-    # Tags
-    - since - 3.18.0
+    - `@since` 3.18.0
     """
     noActiveParameterSupport::Union{Nothing, Bool} = nothing
 end
@@ -442,8 +439,7 @@ end
     contextSupport will also support the `retriggerCharacters` on
     `SignatureHelpOptions`.
 
-    # Tags
-    - since - 3.15.0
+    - `@since` 3.15.0
     """
     contextSupport::Union{Nothing, Bool} = nothing
 end
@@ -462,8 +458,7 @@ end
     showing. All trigger characters are also counted as re-trigger
     characters.
 
-    # Tags
-    - since - 3.15.0
+    - `@since` 3.15.0
     """
     retriggerCharacters::Union{Nothing, Vector{String}} = nothing
 end
@@ -474,8 +469,7 @@ end
 """
 How a signature help was triggered.
 
-# Tags
-- since - 3.15.0
+- `@since` 3.15.0
 """
 @namespace SignatureHelpTriggerKind::Int begin
     """
@@ -556,8 +550,7 @@ a set of parameters.
 
     If provided (or `null`), this is used in place of `SignatureHelp.activeParameter`.
 
-    # Tags
-    - since - 3.16.0
+    - `@since` 3.16.0
     """
     activeParameter::Union{Nothing, UInt, Null} = nothing
 end
@@ -611,8 +604,7 @@ end
 Additional information about the context in which a signature help request
 was triggered.
 
-# Tags
-- since - 3.15.0
+- `@since` 3.15.0
 """
 @interface SignatureHelpContext begin
     """
@@ -652,8 +644,7 @@ end
     specifies to send this using the client capability
     `textDocument.signatureHelp.contextSupport === true`
 
-    # Tags
-    - since - 3.15.0
+    - `@since` 3.15.0
     """
     context::Union{Nothing, SignatureHelpContext} = nothing
 end

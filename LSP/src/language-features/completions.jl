@@ -23,8 +23,7 @@
     If a server provides both `allCommitCharacters` and commit characters on
     an individual completion item the ones on the completion item win.
 
-    # Tags
-    - since - 3.2.0
+    - `@since` 3.2.0
     """
     allCommitCharacters::Union{Vector{String}, Nothing} = nothing
 
@@ -38,8 +37,7 @@
     The server supports the following `CompletionItem` specific
     capabilities.
 
-    # Tags
-    - since - 3.17.0
+    - `@since` 3.17.0
     """
     completionItem::Union{Nothing, @interface begin
         """
@@ -47,8 +45,7 @@
         details (see also `CompletionItemLabelDetails`) when receiving
         a completion item in a resolve call.
 
-        # Tags
-        - since - 3.17.0
+        - `@since` 3.17.0
         """
         labelDetailsSupport::Union{Bool, Nothing} = nothing
     end} = nothing
@@ -124,8 +121,7 @@ end
 How whitespace and indentation is handled during completion
 item insertion
 
-# Tags
-- since - 3.16.0
+- `@since` 3.16.0
 """
 @namespace InsertTextMode::Int begin
     """
@@ -184,8 +180,7 @@ end
 Completion item tags are extra annotations that tweak the rendering of a
 completion item.
 
-# Tags
-- since - 3.15.0
+- `@since` 3.15.0
 """
 @namespace CompletionItemTag::Int begin
     "Render a completion as obsolete, usually using a strike-out."
@@ -195,8 +190,7 @@ end
 """
 A special text edit to provide an insert and a replace operation.
 
-# Tags
-- since - 3.16.0
+- `@since` 3.16.0
 """
 @interface InsertReplaceEdit begin
     "The string to be inserted."
@@ -211,8 +205,7 @@ end
 
 """
 Additional details for a completion item label
-# Tags
-- since - 3.17.0
+- `@since` 3.17.0
 """
 @interface CompletionItemLabelDetails begin
 
@@ -262,8 +255,7 @@ export GlobalCompletionData, MethodSignatureCompletionData, PropertyCompletionDa
     """
     Additional details for the label
 
-    # Tags
-    - since - 3.17.0
+    - `@since` 3.17.0
     """
     labelDetails::Union{CompletionItemLabelDetails, Nothing} = nothing
 
@@ -277,8 +269,7 @@ export GlobalCompletionData, MethodSignatureCompletionData, PropertyCompletionDa
     """
     Tags for this completion item.
 
-    # Tags
-    - since - 3.15.0
+    - `@since` 3.15.0
     """
     tags::Union{Vector{CompletionItemTag.Ty}, Nothing} = nothing
 
@@ -349,10 +340,9 @@ export GlobalCompletionData, MethodSignatureCompletionData, PropertyCompletionDa
     item insertion. If not provided the client's default value depends on
     the `textDocument.completion.insertTextMode` client capability.
 
-    # Tags
 
-    - since - 3.16.0
-    - since - 3.17.0 - support for `textDocument.completion.insertTextMode`
+    - `@since` 3.16.0
+    - `@since` 3.17.0 - support for `textDocument.completion.insertTextMode`
     """
     insertTextMode::Union{InsertTextMode.Ty, Nothing} = nothing
 
@@ -378,8 +368,7 @@ export GlobalCompletionData, MethodSignatureCompletionData, PropertyCompletionDa
     must be a prefix of the edit's replace range, that means it must be
     contained and starting at the same position.
 
-    # Tags
-    - since - 3.16.0 additional type `InsertReplaceEdit`
+    - `@since` 3.16.0 additional type `InsertReplaceEdit`
     """
     textEdit::Union{TextEdit, InsertReplaceEdit, Nothing} = nothing
 
@@ -393,8 +382,7 @@ export GlobalCompletionData, MethodSignatureCompletionData, PropertyCompletionDa
     If not provided and a list's default range is provided the label
     property is used as a text.
 
-    # Tags
-    - since - 3.17.0
+    - `@since` 3.17.0
     """
     textEditText::Union{String, Nothing} = nothing
 
@@ -458,23 +446,20 @@ presented in the editor.
     signals support for this via the `completionList.itemDefaults`
     capability.
 
-    # Tags
-    - since - 3.17.0
+    - `@since` 3.17.0
     """
     itemDefaults::Union{Nothing, @interface begin
         """
         A default commit character set.
 
-        # Tags
-        - since - 3.17.0
+        - `@since` 3.17.0
         """
         commitCharacters::Union{Vector{String}, Nothing} = nothing
 
         """
         A default edit range
 
-        # Tags
-        - since - 3.17.0
+        - `@since` 3.17.0
         """
         editRange::Union{Range, Nothing, @interface begin
             insert::Range
@@ -484,24 +469,21 @@ presented in the editor.
         """
         A default insert text format
 
-        # Tags
-        - since - 3.17.0
+        - `@since` 3.17.0
         """
         insertTextFormat::Union{InsertTextFormat.Ty, Nothing} = nothing
 
         """
         A default insert text mode
 
-        # Tags
-        - since - 3.17.0
+        - `@since` 3.17.0
         """
         insertTextMode::Union{InsertTextMode.Ty, Nothing} = nothing
 
         """
         A default data value.
 
-        # Tags
-        - since - 3.17.0
+        - `@since` 3.17.0
         """
 
         data::Union{GlobalCompletionData, MethodSignatureCompletionData, PropertyCompletionData, Nothing} = nothing
@@ -637,8 +619,7 @@ end
         especially need to preserve unknown tags when sending a completion
         item back to the server in a resolve call.
 
-        # Tags
-        - since - 3.15.0
+        - `@since` 3.15.0
         """
         tagSupport::Union{Nothing, @interface begin
             """
@@ -651,8 +632,7 @@ end
         Client supports insert replace edit to control different behavior if
         a completion item is inserted in the text or should replace text.
 
-        # Tags
-        - since - 3.16.0
+        - `@since` 3.16.0
         """
         insertReplaceSupport::Union{Nothing, Bool} = nothing
 
@@ -661,8 +641,7 @@ end
         completion item. Before version 3.16.0 only the predefined properties
         `documentation` and `detail` could be resolved lazily.
 
-        # Tags
-        - since - 3.16.0
+        - `@since` 3.16.0
         """
         resolveSupport::Union{Nothing, @interface begin
             """
@@ -676,8 +655,7 @@ end
         a completion item to override the whitespace handling mode
         as defined by the client (see `insertTextMode`).
 
-        # Tags
-        - since - 3.16.0
+        - `@since` 3.16.0
         """
         insertTextModeSupport::Union{Nothing, @interface begin
             valueSet::Vector{InsertTextMode.Ty}
@@ -687,8 +665,7 @@ end
         The client has support for completion item label
         details (see also `CompletionItemLabelDetails`).
 
-        # Tags
-        - since - 3.17.0
+        - `@since` 3.17.0
         """
         labelDetailsSupport::Union{Nothing, Bool} = nothing
     end} = nothing
@@ -717,8 +694,7 @@ end
     The client's default when the completion item doesn't provide a
     `insertTextMode` property.
 
-    # Tags
-    - since - 3.17.0
+    - `@since` 3.17.0
     """
     insertTextMode::Union{Nothing, InsertTextMode.Ty} = nothing
 
@@ -726,8 +702,7 @@ end
     The client supports the following `CompletionList` specific
     capabilities.
 
-    # Tags
-    - since - 3.17.0
+    - `@since` 3.17.0
     """
     completionList::Union{Nothing, @interface begin
         """
@@ -738,8 +713,7 @@ end
         `CompletionList.itemDefaults` object. If omitted
         no properties are supported.
 
-        # Tags
-        - since - 3.17.0
+        - `@since` 3.17.0
         """
         itemDefaults::Union{Nothing, Vector{String}} = nothing
     end} = nothing

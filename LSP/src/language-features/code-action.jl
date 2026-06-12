@@ -82,8 +82,7 @@ to the server during initialization.
     do not require user input. They should not suppress errors or perform
     unsafe fixes such as generating new types or classes.
 
-    # Tags
-    - since - 3.17.0
+    - `@since` 3.17.0
     """
     SourceFixAll = "source.fixAll"
 end
@@ -91,8 +90,7 @@ end
 """
 The reason why code actions were requested.
 
-# Tags
-- since - 3.17.0
+- `@since` 3.17.0
 """
 @namespace CodeActionTriggerKind::Int begin
     """
@@ -119,8 +117,7 @@ end
     The client supports code action literals as a valid
     response of the `textDocument/codeAction` request.
 
-    # Tags
-    - since - 3.8.0
+    - `@since` 3.8.0
     """
     codeActionLiteralSupport::Union{Nothing, @interface begin
         """
@@ -141,16 +138,14 @@ end
     """
     Whether code action supports the `isPreferred` property.
 
-    # Tags
-    - since - 3.15.0
+    - `@since` 3.15.0
     """
     isPreferredSupport::Union{Nothing, Bool} = nothing
 
     """
     Whether code action supports the `disabled` property.
 
-    # Tags
-    - since - 3.16.0
+    - `@since` 3.16.0
     """
     disabledSupport::Union{Nothing, Bool} = nothing
 
@@ -159,8 +154,7 @@ end
     preserved between a `textDocument/codeAction` and a
     `codeAction/resolve` request.
 
-    # Tags
-    - since - 3.16.0
+    - `@since` 3.16.0
     """
     dataSupport::Union{Nothing, Bool} = nothing
 
@@ -168,8 +162,7 @@ end
     Whether the client supports resolving additional code action
     properties via a separate `codeAction/resolve` request.
 
-    # Tags
-    - since - 3.16.0
+    - `@since` 3.16.0
     """
     resolveSupport::Union{Nothing, @interface begin
         """
@@ -185,8 +178,7 @@ end
     the workspace edit in the user interface and asking
     for confirmation.
 
-    # Tags
-    - since - 3.16.0
+    - `@since` 3.16.0
     """
     honorsChangeAnnotations::Union{Nothing, Bool} = nothing
 end
@@ -204,8 +196,7 @@ end
     The server provides support to resolve additional
     information for a code action.
 
-    # Tags
-    - since - 3.16.0
+    - `@since` 3.16.0
     """
     resolveProvider::Union{Nothing, Bool} = nothing
 end
@@ -239,8 +230,7 @@ a code action is run.
     """
     The reason why code actions were requested.
 
-    # Tags
-    - since - 3.17.0
+    - `@since` 3.17.0
     """
     triggerKind::Union{Nothing, CodeActionTriggerKind.Ty} = nothing
 end
@@ -278,8 +268,7 @@ the `edit` is applied first, then the `command` is executed.
     underlying error. A refactoring should be marked preferred if it is the
     most reasonable choice of actions to take.
 
-    # Tags
-    - since - 3.15.0
+    - `@since` 3.15.0
     """
     isPreferred::Union{Nothing, Bool} = nothing
 
@@ -300,8 +289,7 @@ the `edit` is applied first, then the `command` is executed.
       a disabled code actions are returned, the client should show the user
       an error message with `reason` in the editor.
 
-    # Tags
-    - since - 3.16.0
+    - `@since` 3.16.0
     """
     disabled::Union{Nothing, @interface begin
         """
@@ -329,8 +317,7 @@ the `edit` is applied first, then the `command` is executed.
     A data entry field that is preserved on a code action between
     a `textDocument/codeAction` and a `codeAction/resolve` request.
 
-    # Tags
-    - since - 3.16.0
+    - `@since` 3.16.0
     """
     data::Union{Nothing, LSPAny} = nothing
 end
@@ -366,8 +353,7 @@ server and not by the client (see `workspace/executeCommand` and
 `ServerCapabilities.executeCommandProvider`). If the client supports providing
 edits with a code action then that mode should be used.
 
-# Tags
-- since - 3.8.0 - support for CodeAction literals to enable the following scenarios:
+- `@since` 3.8.0 - support for CodeAction literals to enable the following scenarios:
   - the ability to directly return a workspace edit from the code action request.
     This avoids having another server roundtrip to execute an actual code action.
     However server providers should be aware that if the code action is expensive
@@ -377,7 +363,7 @@ edits with a code action then that mode should be used.
     that information. However it allows them to better group code action for
     example into corresponding menus (e.g. all refactor code actions into a
     refactor menu).
-- since - 3.16.0 - a client can offer a server to delay the computation of code
+- `@since` 3.16.0 - a client can offer a server to delay the computation of code
   action properties during a 'textDocument/codeAction' request
 """
 @interface CodeActionRequest @extends RequestMessage begin
@@ -405,8 +391,7 @@ textDocument.codeAction.resolveSupport = { properties: ['edit'] };
 then a code action needs to be resolved using the `codeAction/resolve` request
 before it can be applied.
 
-# Tags
-- since - 3.16.0
+- `@since` 3.16.0
 """
 @interface CodeActionResolveRequest @extends RequestMessage begin
     method::String = "codeAction/resolve"

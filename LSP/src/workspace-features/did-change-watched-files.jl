@@ -58,8 +58,7 @@ A relative pattern is a helper to construct glob patterns that are matched
 relatively to a base URI. The common value for a baseUri is a workspace
 folder root, but it can be another absolute URI as well.
 
-# Tags
-- since – 3.17.0
+- `@since` 3.17.0
 """
 @interface RelativePattern begin
     """
@@ -77,8 +76,7 @@ end
 """
 The glob pattern. Either a string pattern or a relative pattern.
 
-# Tags
-- since – 3.17.0
+- `@since` 3.17.0
 """
 const GlobPattern = Union{Pattern, RelativePattern}
 
@@ -90,8 +88,7 @@ A glob pattern specifying which files to watch.
     The glob pattern to watch. See {@link GlobPattern glob pattern}
     for more detail.
 
-    # Tags
-    - since – 3.17.0 support for relative patterns.
+    - `@since` 3.17.0 support for relative patterns.
     """
     globPattern::GlobPattern
 
@@ -126,8 +123,7 @@ Capabilities specific to the `workspace/didChangeWatchedFiles` notification.
     Whether the client has support for relative patterns
     or not.
 
-    # Tags
-    - since – 3.17.0
+    - `@since` 3.17.0
     """
     relativePatternSupport::Union{Bool, Nothing} = nothing
 end
