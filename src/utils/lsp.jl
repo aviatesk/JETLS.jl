@@ -20,7 +20,8 @@ overlap(rng1::Range, rng2::Range) = max(rng1.start, rng2.start) <= min(rng1.var"
 @define_override_constructor LSP.TextEdit
 
 const DEFAULT_DOCUMENT_SELECTOR = DocumentFilter[
-    DocumentFilter(; language = "julia")
+    DocumentFilter(; language = "julia", scheme = "file"),
+    DocumentFilter(; language = "julia", scheme = "untitled"),
 ]
 
 """
