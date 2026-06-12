@@ -72,6 +72,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- Fixed `diagnostic.patterns` order handling so declaration order is preserved after configuration merging. When multiple matching rules have the same priority, later rules now override earlier rules.
+
 - Fixed type information collapsing to `Any` inside closures defined in functions that have default positional arguments or keyword arguments. Hover, inlay hints and other type-aware features now show precise types for such closure bodies and their captured variables.
 
 ## 2026-06-03
