@@ -531,7 +531,9 @@ end
         @test hint.data isa TypeInlayHintData
         resolved = JETLS.resolve_inlay_hint(server.state, hint)
         @test resolved.label == hint.label
-        @test resolved.tooltip == "```julia\nLinearAlgebra.Adjoint{Float64, Matrix{Float64}}\n```"
+        @test resolved.tooltip isa MarkupContent
+        @test resolved.tooltip.kind == MarkupKind.Markdown
+        @test resolved.tooltip.value == "```julia\nLinearAlgebra.Adjoint{Float64, Matrix{Float64}}\n```"
     end
 
     @testset "operator expressions" begin
@@ -1693,8 +1695,9 @@ end
         union_hints = filter(h -> occursin("::Union{}", h.label), hints)
         @test !isempty(union_hints)
         for h in union_hints
-            @test h.tooltip isa AbstractString
-            @test occursin("provably never produces a value", h.tooltip)
+            @test h.tooltip isa MarkupContent
+            @test h.tooltip.kind == MarkupKind.Markdown
+            @test occursin("provably never produces a value", h.tooltip.value)
         end
     end
 
