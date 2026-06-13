@@ -146,6 +146,30 @@ end
     end
 end
 
+@testset "jetls scheme excluded from document synchronization" begin
+    # Spec-conformant clients may sync `jetls:` virtual documents. The Julia-only
+    # sync handlers must not run for them (no crash on the non-`julia` languageId,
+    # no `FileInfo` pollution).
+    server = JETLS.Server()
+    juri = URI(; scheme="jetls", path="/testrunner/logs", query="source=x&index=1&name=ts")
+
+    open_msg = DidOpenTextDocumentNotification(; params = DidOpenTextDocumentParams(;
+        textDocument = TextDocumentItem(; uri=juri, languageId="log", version=1, text="logs\n")))
+    @test JETLS.handle_DidOpenTextDocumentNotification(server, open_msg) === nothing
+    @test JETLS.get_file_info(server.state, juri) === nothing
+
+    chg_msg = DidChangeTextDocumentNotification(; params = DidChangeTextDocumentParams(;
+        textDocument = VersionedTextDocumentIdentifier(; uri=juri, version=2),
+        contentChanges = TextDocumentContentChangeEvent[
+            TextDocumentContentChangeEvent(; text="new logs\n")]))
+    @test JETLS.handle_DidChangeTextDocumentNotification(server, chg_msg) === nothing
+    @test JETLS.get_file_info(server.state, juri) === nothing
+
+    close_msg = DidCloseTextDocumentNotification(; params = DidCloseTextDocumentParams(;
+        textDocument = TextDocumentIdentifier(; uri=juri)))
+    @test JETLS.handle_DidCloseTextDocumentNotification(server, close_msg) === nothing
+end
+
 @testset "testrunner_code_lenses" begin
     let server = JETLS.Server()
         test_code = """
