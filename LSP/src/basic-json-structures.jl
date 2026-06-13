@@ -193,41 +193,121 @@ can for example honor or ignore the selection direction to make LSP request
     position::Position
 end
 
-"""
-A document filter denotes a document through properties like language, scheme or pattern.
-An example is a filter that applies to TypeScript files on disk. Another example is a filter
-that applies to JSON files with name package.json:
-```json
-{ language: 'typescript', scheme: 'file' }
-{ language: 'json', pattern: '**\\/package.json' }
-```
+# Patterns and `WorkspaceFolder` live in their own sections of the spec, but
+# `RelativePattern` references `WorkspaceFolder` and `GlobPattern` is used by the
+# document filters below, so all three must be defined before `DocumentFilter`.
+# `WorkspaceFolder` itself only depends on `URI`.
 
-Please note that for a document filter to be valid at least one of the properties for
-language, scheme, or pattern must be set.
-To keep the type definition simple all properties are marked as optional.
+@interface WorkspaceFolder begin
+    "The associated URI for this workspace folder."
+    uri::URI
+
+    """
+    The name of the workspace folder. Used to refer to this workspace folder in the user
+    interface.
+    """
+    name::String
+end
+
+"A glob pattern as a string, like `*.{ts,js}`."
+const Pattern = String
+
 """
-@interface DocumentFilter begin
+A relative pattern is a helper to construct glob patterns that are matched
+relatively to a base URI. The common value for a baseUri is a workspace
+folder root, but it can be another absolute URI as well.
+
+- `@since` 3.17.0
+"""
+@interface RelativePattern begin
+    """
+    A workspace folder or a base URI to which this pattern will be matched
+    against relatively.
+    """
+    baseUri::Union{WorkspaceFolder, URI}
+
+    "The actual glob pattern."
+    pattern::Pattern
+end
+
+"""
+The glob pattern. Either a string pattern or a relative pattern.
+
+Glob patterns can have the following syntax:
+- `*` to match zero or more characters in a path segment
+- `?` to match on one character in a path segment
+- `**` to match any number of path segments, including none
+- `{}` to group sub patterns into an OR expression
+  (e.g. `**/*.{ts,js}` matches all TypeScript and JavaScript files)
+- `[]` to declare a range of characters to match in a path segment
+  (e.g. `example.[0-9]` to match on `example.0`, `example.1`, …)
+- `[!...]` to negate a range of characters to match in a path segment
+  (e.g. `example.[!0-9]` to match on `example.a`, `example.b`, but not `example.0`)
+
+- `@since` 3.17.0
+"""
+const GlobPattern = Union{Pattern, RelativePattern}
+
+"""
+A document filter where `language` is a required field.
+
+- `@since` 3.18.0
+"""
+@interface TextDocumentFilterLanguage begin
+    "A language id, like `typescript`."
+    language::String
+
+    "A Uri scheme, like `file` or `untitled`."
+    scheme::Union{String, Nothing} = nothing
+
+    "A glob pattern, like `*.{ts,js}`."
+    pattern::Union{GlobPattern, Nothing} = nothing
+end
+
+"""
+A document filter where `scheme` is a required field.
+
+- `@since` 3.18.0
+"""
+@interface TextDocumentFilterScheme begin
+    "A language id, like `typescript`."
+    language::Union{String, Nothing} = nothing
+
+    "A Uri scheme, like `file` or `untitled`."
+    scheme::String
+
+    "A glob pattern, like `*.{ts,js}`."
+    pattern::Union{GlobPattern, Nothing} = nothing
+end
+
+"""
+A document filter where `pattern` is a required field.
+
+- `@since` 3.18.0
+"""
+@interface TextDocumentFilterPattern begin
     "A language id, like `typescript`."
     language::Union{String, Nothing} = nothing
 
     "A Uri scheme, like `file` or `untitled`."
     scheme::Union{String, Nothing} = nothing
 
-    """
-    A glob pattern, like `*.{ts,js}`.
-    Glob patterns can have the following syntax:
-    - `*` to match one or more characters in a path segment
-    - `?` to match on one character in a path segment
-    - `**` to match any number of path segments, including none
-    - `{}` to group sub patterns into an OR expression. (e.g. `**\u200b/*.{ts,js}` matches
-      all TypeScript and JavaScript files)
-    - `[]` to declare a range of characters to match in a path segment (e.g.,
-      `example.[0-9]` to match on `example.0`, `example.1`, …)
-    - `[!...]` to negate a range of characters to match in a path segment (e.g.,
-      `example.[!0-9]` to match on `example.a`, `example.b`, but not `example.0`)
-    """
-    pattern::Union{String, Nothing} = nothing
+    "A glob pattern, like `*.{ts,js}`."
+    pattern::GlobPattern
 end
+
+"""
+A document filter denotes a document by different properties like the language,
+the scheme of its resource, or a glob-pattern applied to the path. At least one
+of `language`, `scheme`, or `pattern` must be set, which is why this is a union
+of three variants rather than a single all-optional struct.
+
+# Examples
+- `{ language: "typescript", scheme: "file" }`
+- `{ language: "json", pattern: "**/package.json" }`
+"""
+const TextDocumentFilter = Union{
+    TextDocumentFilterLanguage, TextDocumentFilterScheme, TextDocumentFilterPattern}
 
 """
 A notebook document filter denotes a notebook document by
@@ -271,12 +351,22 @@ document by different properties.
 end
 
 """
+A document filter describes a top level text document or a notebook cell document.
+
+- `@since` 3.17.0 - support for `NotebookCellTextDocumentFilter`.
+"""
+const DocumentFilter = Union{TextDocumentFilter, NotebookCellTextDocumentFilter}
+
+# `const` aliases are not auto-exported by `@interface`; export the ones JETLS uses.
+push!(exports, :TextDocumentFilter, :DocumentFilter)
+
+"""
 A document selector is the combination of one or more document filters.
 
 !!! note "3.17.0"
     Since 3.17.0, a document selector can also include notebook cell text document filters.
 """
-const DocumentSelector = Vector{Union{DocumentFilter, NotebookCellTextDocumentFilter}}
+const DocumentSelector = Vector{DocumentFilter}
 
 # TextEdit & AnnotatedTextEdit
 # ============================
