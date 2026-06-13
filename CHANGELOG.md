@@ -70,6 +70,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - JETLS now performs correct scope resolution on identifiers used inside `@static` macrocalls, which previously could yield incorrect results in edge cases.
   Invalid `@static` usage (an unsupported expression shape, or a condition that fails to evaluate to a `Bool`) is now reported in place as `lowering/macro-expansion-error` while the code still flows through to analysis.
 
+- The `"JuliaFormatter"` preset now supports `textDocument/rangeFormatting` and `textDocument/rangesFormatting`, which previously failed with a "JuliaFormatter does not support range formatting" error. This requires [JuliaFormatter v2.7.0](https://github.com/JuliaEditorSupport/JuliaFormatter.jl/releases/tag/v2.7.0) or later. See [the formatter integration docs](https://aviatesk.github.io/JETLS.jl/release/formatting/#formatting/prerequisites) for setup.
+
 - Allows scope resolution for identifiers inside `@lock` blocks so language features distinguish bindings introduced in the protected body from surrounding bindings.
 
 - Signature help now uses LSP 3.18 `activeParameter: null` for clients that support it, so editors can avoid highlighting a stale parameter after all known keywords have already been filled.
