@@ -70,7 +70,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - JETLS now performs correct scope resolution on identifiers used inside `@static` macrocalls, which previously could yield incorrect results in edge cases.
   Invalid `@static` usage (an unsupported expression shape, or a condition that fails to evaluate to a `Bool`) is now reported in place as `lowering/macro-expansion-error` while the code still flows through to analysis.
 
+- Allows scope resolution for identifiers inside `@lock` blocks so language features distinguish bindings introduced in the protected body from surrounding bindings.
+
 - Signature help now uses LSP 3.18 `activeParameter: null` for clients that support it, so editors can avoid highlighting a stale parameter after all known keywords have already been filled.
+
+- Changed TestRunner log viewing to use readonly virtual documents when supported, and cleanup-enabled temporary files otherwise, avoiding empty `untitled:` log tabs and mismatched log file paths.
 
 ### Fixed
 
@@ -82,11 +86,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Fixed type information collapsing to `Any` inside closures defined in functions that have default positional arguments or keyword arguments. Hover, inlay hints and other type-aware features now show precise types for such closure bodies and their captured variables.
 
-- Fixed TestRunner log viewing to use readonly virtual documents when supported, and cleanup-enabled temporary files otherwise, avoiding empty `untitled:` log tabs and mismatched log file paths.
-
 - Fixed renaming symbols inside Jupyter notebook cells on VS Code, which previously failed with a "The rename edit returned from the server is not valid anymore and cannot be applied." error.
 
-- Fixed scope resolution for identifiers inside `@lock` blocks so language features distinguish bindings introduced in the protected body from surrounding bindings.
+- Fixed dot completion erroring (or offering nothing) when the prefix sits in code that inference proves unreachable, such as code after a non-returning call. Module and global-const prefixes such as `Base.` now resolve their members there as usual.
 
 ## 2026-06-03
 

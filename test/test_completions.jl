@@ -614,6 +614,42 @@ end
         @test cnt[] == 1
     end
 
+    # A `Union{}`-typed prefix that isn't a resolvable global const (here a
+    # `Bottom`-returning call): the `resolve_global_const` fallback yields `nothing`,
+    # so no properties are offered and we don't fall through to global/local completions.
+    let text = """
+        function bar()
+            error("unreachable").│
+        end
+        """
+        cnt = Ref(0)
+        with_completion_items(text; context=dot_context) do (; result)
+            @test isempty(result.items)
+            cnt[] += 1
+        end
+        @test cnt[] == 1
+    end
+
+    # A `Union{}`-typed prefix that *is* a resolvable global const recovers module completions
+    # via the `resolve_global_const` fallback. Here `Base` sits in a dead branch, so its
+    # inferred type is `Union{}`, yet `Base.` still completes.
+    let text = """
+        function bar()
+            c = false
+            if c
+                Base.│
+            end
+        end
+        """
+        cnt = Ref(0)
+        with_completion_items(text; context=dot_context) do (; result)
+            labels = Set(it.label for it in result.items)
+            @test "isexpr" in labels   # Base member → module completion fired
+            cnt[] += 1
+        end
+        @test cnt[] == 1
+    end
+
     # `r.│` sitting inside a call's argument list (parser inserts an error
     # in the property-name slot, so the dot subtree must be repaired before
     # lowering can resolve `r`'s type).
