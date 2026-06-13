@@ -119,6 +119,7 @@ include("notebook.jl")
 include("analysis/full-analysis.jl")
 include("registration.jl")
 include("apply-edit.jl")
+include("text-document-content.jl")
 include("execute-command.jl")
 include("signature-help.jl")
 include("completions.jl")
@@ -414,6 +415,8 @@ function handle_response_message(
         handle_code_lens_refresh_response(server, msg, request_caller)
     elseif request_caller isa DiagnosticRefreshRequestCaller
         handle_diagnostic_refresh_response(server, msg, request_caller)
+    elseif request_caller isa TextDocumentContentRefreshCaller
+        handle_text_document_content_refresh_response(server, msg, request_caller)
     elseif request_caller isa FormattingProgressCaller
         handle_formatting_progress_response(server, msg, request_caller, cancel_flag)
     elseif request_caller isa RangeFormattingProgressCaller
@@ -499,6 +502,8 @@ function handle_request_message(server::Server, @nospecialize(msg), cancel_flag:
         handle_PrepareRenameRequest(server, msg, cancel_flag)
     elseif msg isa ExecuteCommandRequest
         handle_ExecuteCommandRequest(server, msg)
+    elseif msg isa TextDocumentContentRequest
+        handle_TextDocumentContentRequest(server, msg)
     elseif JETLS_DEV_MODE
         if isdefined(msg, :method)
             _id = getfield(msg, :method)

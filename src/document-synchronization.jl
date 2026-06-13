@@ -80,8 +80,10 @@ end
 
 function handle_DidOpenTextDocumentNotification(server::Server, msg::DidOpenTextDocumentNotification)
     textDocument = msg.params.textDocument
-    @assert textDocument.languageId == "julia"
     uri = textDocument.uri
+    is_text_document_content_uri(uri) &&
+        return mark_text_document_content_opened!(server, uri) # turn on the `opened` flag
+    @assert textDocument.languageId == "julia"
     parsed_stream = ParseStream!(textDocument.text)
     cache_file_info!(server, uri, textDocument.version, parsed_stream)
     cache_saved_file_info!(server.state, uri, parsed_stream)
@@ -92,6 +94,8 @@ end
 function handle_DidChangeTextDocumentNotification(server::Server, msg::DidChangeTextDocumentNotification)
     (; textDocument, contentChanges) = msg.params
     uri = textDocument.uri
+    # Read-only `jetls-*:` virtual documents never carry user edits to sync, so just ignore it.
+    is_text_document_content_uri(uri) && return nothing
     for contentChange in contentChanges
         @assert contentChange.range === contentChange.rangeLength === nothing # since `change = TextDocumentSyncKind.Full`
     end
@@ -127,6 +131,8 @@ end
 
 function handle_DidCloseTextDocumentNotification(server::Server, msg::DidCloseTextDocumentNotification)
     uri = msg.params.textDocument.uri
+    is_text_document_content_uri(uri) &&
+        return mark_text_document_content_closed!(server, uri) # turn off the `opened` flag
     store!(server.state.file_cache) do cache
         Base.delete(cache, uri), nothing
     end
