@@ -54,6 +54,11 @@ After running tests, the code lens is refreshed as follows:
 > </div>
 > ```
 
+On editors that support [`workspace/textDocumentContent`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.18/specification/#workspace_textDocumentContent)
+(an LSP 3.18 feature), the logs open in a read-only virtual document that
+refreshes in place when you re-run the same testset, so you don't need to reopen
+it. On other editors, the logs open as a temporary file instead.
+
 ### [Code actions](@id testrunner/features/code-actions)
 
 You can trigger test runs via "code actions" that are explicitly requested by the user:
