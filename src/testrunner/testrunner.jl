@@ -164,7 +164,7 @@ function testrunner_code_lenses!(
                 arguments = run_arguments)
             push!(code_lenses, CodeLens(; range, command))
         end
-        logs_arguments = Any[uri, idx, tsn, prev_result.logs]
+        logs_arguments = Any[uri, idx, tsn]
         let command = Command(;
                 title = TESTRUNNER_OPEN_LOGS_TITLE,
                 command = COMMAND_TESTRUNNER_OPEN_LOGS,
@@ -228,7 +228,7 @@ function testrunner_testset_code_actions!(
                 arguments = run_arguments)
             push!(code_actions, CodeAction(; title, command))
         end
-        logs_arguments = Any[uri, idx, tsn, prev_result.logs]
+        logs_arguments = Any[uri, idx, tsn]
         let title = TESTRUNNER_OPEN_LOGS_TITLE
             command = Command(;
                 title,
@@ -396,12 +396,8 @@ function show_testrunner_result_in_message(server::Server, result::TestRunnerRes
     id = String(gensym(:ShowMessageRequest))
     addrequest!(server, id=>request_caller)
 
-    send(server, ShowMessageRequest(;
-        id,
-        params = ShowMessageRequestParams(;
-            type = msg_type,
-            message,
-            actions)))
+    params = ShowMessageRequestParams(; type = msg_type, message, actions)
+    send(server, ShowMessageRequest(; id, params))
 end
 
 function handle_test_runner_message_response2(
@@ -743,6 +739,17 @@ end
 function testsetinfo_logs_content_uri(source_uri::URI, idx::Int, tsn::AbstractString)
     query = LSP.URIs2.escapeuri((source=string(source_uri), index=idx, name=tsn))
     return URI(; scheme = TESTRUNNER_LOGS_SCHEME, path = "/testrunner/logs", query)
+end
+
+# Look up the logs of the testset at `idx` in `uri`. Returns `nothing` if the file or
+# its result is gone (e.g. cleared, or the file changed since the code lens / action
+# that carries this `idx` was generated), so the caller can degrade gracefully.
+function get_testsetinfo_logs(state::ServerState, uri::URI, idx::Int)
+    fi = @something get_file_info(state, uri) return nothing
+    is_testsetinfo_valid(fi, idx) || return nothing
+    testsetinfo = fi.testsetinfos[idx]
+    isdefined(testsetinfo, :result) || return nothing
+    return testsetinfo.result.result.logs
 end
 
 function show_testsetinfo_logs_path_message(

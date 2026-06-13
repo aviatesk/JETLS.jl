@@ -226,7 +226,11 @@ end
         logs_lens = code_lenses[2]
         @test logs_lens.command.title == JETLS.TESTRUNNER_OPEN_LOGS_TITLE
         @test logs_lens.command.command == JETLS.COMMAND_TESTRUNNER_OPEN_LOGS
-        @test logs_lens.command.arguments == [uri, 1, tsn1, result.logs]
+        @test logs_lens.command.arguments == [uri, 1, tsn1]
+        # logs are looked up server-side rather than carried in the command arguments
+        @test JETLS.get_testsetinfo_logs(server.state, uri, 1) == result.logs
+        @test JETLS.get_testsetinfo_logs(server.state, uri, 2) === nothing
+        @test JETLS.get_testsetinfo_logs(server.state, URI("file:///none.jl"), 1) === nothing
 
         clear_lens = code_lenses[3]
         @test clear_lens.command.title == JETLS.TESTRUNNER_CLEAR_RESULT_TITLE
@@ -361,7 +365,7 @@ end
 
         @test code_actions[2].title == JETLS.TESTRUNNER_OPEN_LOGS_TITLE
         @test code_actions[2].command.command == JETLS.COMMAND_TESTRUNNER_OPEN_LOGS
-        @test code_actions[2].command.arguments == [uri, 1, tsn, result.logs]
+        @test code_actions[2].command.arguments == [uri, 1, tsn]
 
         @test code_actions[3].title == JETLS.TESTRUNNER_CLEAR_RESULT_TITLE
         @test code_actions[3].command.command == JETLS.COMMAND_TESTRUNNER_CLEAR_RESULT

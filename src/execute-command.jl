@@ -122,8 +122,13 @@ function execute_testrunner_open_logs_command(server::Server, msg::ExecuteComman
     source_uri = URI(@tryparsearg server msg[1]::String)
     idx = @tryparsearg server msg[2]::Int
     tsn = @tryparsearg server msg[3]::String
-    logs = @tryparsearg server msg[4]::String
-    open_testsetinfo_logs!(server, tsn, logs; source_uri, testset_index=idx)
+    logs = get_testsetinfo_logs(server.state, source_uri, idx)
+    if logs === nothing
+        show_warning_message(server,
+            "The test result is no longer available. Re-run the testset to view its logs.")
+    else
+        open_testsetinfo_logs!(server, tsn, logs; source_uri, testset_index=idx)
+    end
     return send(server, ExecuteCommandResponse(; id = msg.id, result = null))
 end
 
