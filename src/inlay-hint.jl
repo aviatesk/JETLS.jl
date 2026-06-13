@@ -641,10 +641,12 @@ end
 # Explain `Union{}` hints, which otherwise look like obscure valid syntax.
 function format_type_inlay_hint_tooltip(@nospecialize(rawtyp), postprocessor::LSPostProcessor)
     if rawtyp === Union{}
-        return "`Union{}` — this expression provably never produces a value (always throws, or is unreachable)."
+        value = "`Union{}` — this expression provably never produces a value (always throws, or is unreachable)."
+    else
+        full_typstr = postprocessor(sprint(show, rawtyp))
+        value = "```julia\n$full_typstr\n```"
     end
-    full_typstr = postprocessor(sprint(show, rawtyp))
-    return "```julia\n$full_typstr\n```"
+    return MarkupContent(; kind = MarkupKind.Markdown, value)
 end
 
 # Resolve a lazy type-hint tooltip by recomputing the type for the source range
