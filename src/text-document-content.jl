@@ -46,6 +46,21 @@ function mark_text_document_content_opened!(server::Server, uri::URI)
     end
 end
 
+function mark_text_document_content_closed!(server::Server, uri::URI)
+    return store!(server.state.text_document_content_cache) do data
+        entry = @something get(data, uri, nothing) return data, nothing
+        new_data = Base.PersistentDict(data, uri => TextDocumentContentEntry(entry.text, false))
+        return new_data, nothing
+    end
+end
+
+function delete_text_document_content!(server::Server, uri::URI)
+    return store!(server.state.text_document_content_cache) do data
+        haskey(data, uri) || return data, nothing
+        return Base.delete(data, uri), nothing
+    end
+end
+
 function request_text_document_content_refresh!(server::Server, uri::URI)
     supports_text_document_content(server) || return nothing
     id = String(gensym(:TextDocumentContentRefreshRequest))

@@ -465,6 +465,13 @@ async function startLanguageServer() {
         notebook: { notebookType: "jupyter-notebook" },
         language: "julia",
       },
+      // Sync `jetls:` virtual documents (e.g. TestRunner logs) so the server is
+      // notified when they are opened/closed. Language features are registered
+      // separately (see `DEFAULT_DOCUMENT_SELECTOR`) and do not target this scheme;
+      // this entry only drives document synchronization.
+      {
+        scheme: "jetls",
+      },
     ],
     synchronize: {
       fileEvents: [

@@ -143,31 +143,40 @@ end
         JETLS.update_text_document_content!(server, uri, "new logs")
         @test JETLS.get_text_document_content(server.state, uri) == "new logs"
         @test JETLS.load(server.state.text_document_content_cache)[uri].opened
+        JETLS.mark_text_document_content_closed!(server, uri)
+        @test !JETLS.load(server.state.text_document_content_cache)[uri].opened
+        JETLS.delete_text_document_content!(server, uri)
+        @test JETLS.get_text_document_content(server.state, uri) === nothing
     end
 end
 
-@testset "jetls scheme excluded from document synchronization" begin
+@testset "jetls document synchronization (track open/close, no Julia analysis)" begin
     # Spec-conformant clients may sync `jetls:` virtual documents. The Julia-only
-    # sync handlers must not run for them (no crash on the non-`julia` languageId,
-    # no `FileInfo` pollution).
+    # sync path must not run for them (no crash on the non-`julia` languageId, no
+    # `FileInfo` pollution); instead open/close is tracked to drive content refreshes.
     server = JETLS.Server()
     juri = URI(; scheme="jetls", path="/testrunner/logs", query="source=x&index=1&name=ts")
+    JETLS.update_text_document_content!(server, juri, "logs\n")
 
     open_msg = DidOpenTextDocumentNotification(; params = DidOpenTextDocumentParams(;
         textDocument = TextDocumentItem(; uri=juri, languageId="log", version=1, text="logs\n")))
     @test JETLS.handle_DidOpenTextDocumentNotification(server, open_msg) === nothing
     @test JETLS.get_file_info(server.state, juri) === nothing
+    @test JETLS.load(server.state.text_document_content_cache)[juri].opened
 
     chg_msg = DidChangeTextDocumentNotification(; params = DidChangeTextDocumentParams(;
         textDocument = VersionedTextDocumentIdentifier(; uri=juri, version=2),
         contentChanges = TextDocumentContentChangeEvent[
-            TextDocumentContentChangeEvent(; text="new logs\n")]))
+            TextDocumentContentChangeEvent(; text="ignored\n")]))
     @test JETLS.handle_DidChangeTextDocumentNotification(server, chg_msg) === nothing
     @test JETLS.get_file_info(server.state, juri) === nothing
+    # read-only: didChange does not overwrite the server-held content
+    @test JETLS.get_text_document_content(server.state, juri) == "logs\n"
 
     close_msg = DidCloseTextDocumentNotification(; params = DidCloseTextDocumentParams(;
         textDocument = TextDocumentIdentifier(; uri=juri)))
     @test JETLS.handle_DidCloseTextDocumentNotification(server, close_msg) === nothing
+    @test !JETLS.load(server.state.text_document_content_cache)[juri].opened
 end
 
 @testset "testrunner_code_lenses" begin

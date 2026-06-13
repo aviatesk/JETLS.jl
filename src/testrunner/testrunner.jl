@@ -944,6 +944,12 @@ function try_clear_testrunner_result!(server::Server, uri::URI, idx::Int, tsn::S
     end
     updated || return nothing
 
+    # Drop the cached log content for this testset; its result no longer exists.
+    if supports_text_document_content(server)
+        log_uri = testsetinfo_logs_content_uri(uri, idx, String(rlstrip(tsn, '"')))
+        delete_text_document_content!(server, log_uri)
+    end
+
     if clear_extra_diagnostics!(server, TestsetDiagnosticsKey(uri, tsn, idx))
         notify_diagnostics!(server; ensure_cleared=uri)
     end
