@@ -157,6 +157,7 @@ const NEW_STYLE_MACROCALL_NAMES = (
     "@invokelatest",
     "@kwdef",
     "@label",
+    "@lock",
     "@logmsg",
     "@noinline",
     "@propagate_inbounds",
@@ -226,6 +227,27 @@ end
 
 function Base.var"@inbounds"(__context__::JL.MacroContext, ex::SyntaxTreeC)
     JL.@ast(__context__, ex, ex)
+end
+
+# Keep the lock expression in the enclosing scope, but wrap only the protected
+# body in a local scope to mirror the `try` scope introduced by Base's macro.
+function Base.var"@lock"(
+        __context__::JL.MacroContext, lock::SyntaxTreeC, body::SyntaxTreeC
+    )
+    mc = __context__.macrocall::SyntaxTreeC
+    return JL.@ast(__context__, mc,
+        [JS.K"block"
+            lock
+            [JS.K"let"
+                [JS.K"block"]
+                [JS.K"block" body]]])
+end
+
+function Base.var"@lock"(__context__::JL.MacroContext, args::SyntaxTreeC...)
+    mc = __context__.macrocall::SyntaxTreeC
+    push_macro_error!(mc, "@lock expects exactly two arguments: `lock body`")
+    isempty(args) && return JL.@ast(__context__, mc, nothing::JS.K"Value")
+    return JL.@ast(__context__, mc, [JS.K"block" args...])
 end
 
 # Stub new-style implementation of `Threads.@spawn`. The real macro wraps the
