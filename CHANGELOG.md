@@ -76,6 +76,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Fixed language feature registrations so JETLS only targets supported Julia document URI schemes (`file:` and `untitled:`). This prevents virtual documents from unsupported schemes from triggering diagnostics, code actions, and other file-backed features.
 
+- Fixed language feature requests for unsupported document URIs (e.g. virtual documents, or any request from clients that ignore the registered document selectors) blocking for up to 10 seconds before returning an empty result; such requests now return immediately.
+
 - Fixed `diagnostic.patterns` order handling so declaration order is preserved after configuration merging. When multiple matching rules have the same priority, later rules now override earlier rules.
 
 - Fixed type information collapsing to `Any` inside closures defined in functions that have default positional arguments or keyword arguments. Hover, inlay hints and other type-aware features now show precise types for such closure bodies and their captured variables.
