@@ -789,11 +789,8 @@ function open_testsetinfo_logs_tempfile!(server::Server, tsn::String, logs::Stri
     if supports(server, :window, :showDocument, :support)
         id = String(gensym(:ShowDocumentRequest))
         addrequest!(server, id=>ShowDocumentRequestCaller(tsn, uri, temp_path, nothing))
-        return send(server, ShowDocumentRequest(;
-            id,
-            params = ShowDocumentParams(;
-                uri,
-                takeFocus = true)))
+        params = ShowDocumentParams(; uri, takeFocus = true)
+        return send(server, ShowDocumentRequest(; id, params))
     else
         return show_testsetinfo_logs_path_message(server, tsn, temp_path, uri)
     end
