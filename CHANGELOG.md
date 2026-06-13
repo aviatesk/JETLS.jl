@@ -86,6 +86,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Fixed renaming symbols inside Jupyter notebook cells on VS Code, which previously failed with a "The rename edit returned from the server is not valid anymore and cannot be applied." error.
 
+- Fixed scope resolution for identifiers inside `@lock` blocks so language features distinguish bindings introduced in the protected body from surrounding bindings.
+
 ## 2026-06-03
 
 - Commit: [`a42a435`](https://github.com/aviatesk/JETLS.jl/commit/a42a435)

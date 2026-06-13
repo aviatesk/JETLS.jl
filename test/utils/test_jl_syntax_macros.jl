@@ -204,6 +204,58 @@ end
     end
 end
 
+@testset "@lock" begin
+    @testset "macro expansion" begin
+        let st1 = jlexpand("@lock lk begin x = 1; x end")
+            @test JS.kind(st1) === JS.K"block"
+            @test JS.numchildren(st1) == 2
+            @test JS.sourcetext(st1[1]) == "lk"
+            @test JS.kind(st1[2]) === JS.K"let"
+        end
+    end
+
+    @testset "validation" begin
+        for code in ("@lock", "@lock lk", "@lock lk body extra")
+            let diags = collect_macro_diagnostics() do
+                    jlexpand(code)
+                end
+                @test length(diags) == 1
+                d = only(diags)
+                @test d.severity == JETLS.LSP.DiagnosticSeverity.Error
+                @test occursin("@lock expects exactly two arguments", d.msg)
+            end
+        end
+    end
+
+    @testset "scope isolation + provenance" begin
+        let res = jlresolve("""
+                function f()
+                    @lock lk begin
+                        guarded = 1
+                        guarded
+                    end
+                    guarded
+                end
+                """)
+            assert_binding_provenance(res, :global, "lk")
+            assert_binding_provenance(res, :local, "guarded")
+            assert_binding_provenance(res, :global, "guarded")
+        end
+
+        let res = jlresolve("""
+                function f()
+                    @lock (lk = 1) begin
+                        guarded = 1
+                    end
+                    lk
+                end
+                """)
+            assert_binding_provenance(res, :local, "lk")
+            assert_no_binding(res, :global, "lk")
+        end
+    end
+end
+
 @testset "Threads.@spawn" begin
     @testset "macro expansion" begin
         # Single-argument form: returns the body unchanged.
