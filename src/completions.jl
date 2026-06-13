@@ -314,7 +314,9 @@ function global_completions!(
         rng = JS.byte_range(dotprefix)
         ctx = get_inferred_ctx!(comp_ctx; caller="global_completions!")
         prefixtyp = ctx === nothing ? nothing : get_type_for_range(ctx, rng)
-        if prefixtyp === nothing
+        # A `Union{}` prefix type is uninformative (the prefix throws or is dead code);
+        # treat it like `nothing` so module/const prefixes such as `Base.` still complete.
+        if prefixtyp === nothing || prefixtyp === Union{}
             prefixtyp = resolve_global_const(context_module, dotprefix, world)
         end
         # Module prefix → enumerate that module's globals below.
@@ -477,6 +479,7 @@ end
 
 function union_components(@nospecialize(prefixtyp))
     typ = CC.widenconst(prefixtyp)
+    typ === Union{} && return Any[]
     return typ isa Union ? Base.uniontypes(typ) : Any[typ]
 end
 
