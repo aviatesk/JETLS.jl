@@ -74,7 +74,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
-- Fixed language feature registrations so JETLS only targets supported Julia document URI schemes (`file:` and `untitled:`). This prevents virtual documents from unsupported schemes from triggering diagnostics, code actions, and other file-backed features.
+- Fixed language feature registrations so JETLS only targets supported Julia documents — saved files (`file:`), unsaved buffers (`untitled:` and `buffer:`), and notebook cells — while still keeping virtual documents from unsupported schemes (e.g. `jetls:`) from triggering diagnostics, code actions, and other file-backed features.
 
 - Fixed `diagnostic.patterns` order handling so declaration order is preserved after configuration merging. When multiple matching rules have the same priority, later rules now override earlier rules.
 
