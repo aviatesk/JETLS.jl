@@ -132,11 +132,11 @@ end
         log_uri = JETLS.testsetinfo_logs_content_uri(uri, 1, testset_name)
         @test log_uri == JETLS.testsetinfo_logs_content_uri(uri, 1, testset_name)
         @test log_uri != JETLS.testsetinfo_logs_content_uri(uri, 2, testset_name)
-        @test log_uri.scheme == JETLS.TEXT_DOCUMENT_CONTENT_SCHEME
+        @test log_uri.scheme == JETLS.TESTRUNNER_LOGS_SCHEME
         @test log_uri.path == "/testrunner/logs"
     end
 
-    let server = JETLS.Server(), uri = URI(; scheme="jetls", path="/test")
+    let server = JETLS.Server(), uri = URI(; scheme=JETLS.TESTRUNNER_LOGS_SCHEME, path="/test")
         JETLS.update_text_document_content!(server, uri, "old logs")
         @test JETLS.get_text_document_content(server.state, uri) == "old logs"
         JETLS.mark_text_document_content_opened!(server, uri)
@@ -155,7 +155,7 @@ end
     # sync path must not run for them (no crash on the non-`julia` languageId, no
     # `FileInfo` pollution); instead open/close is tracked to drive content refreshes.
     server = JETLS.Server()
-    juri = URI(; scheme="jetls", path="/testrunner/logs", query="source=x&index=1&name=ts")
+    juri = URI(; scheme=JETLS.TESTRUNNER_LOGS_SCHEME, path="/testrunner/logs", query="source=x&index=1&name=ts")
     JETLS.update_text_document_content!(server, juri, "logs\n")
 
     open_msg = DidOpenTextDocumentNotification(; params = DidOpenTextDocumentParams(;

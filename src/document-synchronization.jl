@@ -85,7 +85,7 @@ function handle_DidOpenTextDocumentNotification(server::Server, msg::DidOpenText
     # (`workspace/textDocumentContent`); they carry no Julia source, so skip the
     # Julia-only path below. Record that the view is open so subsequent content
     # updates refresh it.
-    uri.scheme == TEXT_DOCUMENT_CONTENT_SCHEME &&
+    is_text_document_content_uri(uri) &&
         return mark_text_document_content_opened!(server, uri)
     @assert textDocument.languageId == "julia"
     parsed_stream = ParseStream!(textDocument.text)
@@ -100,7 +100,7 @@ function handle_DidChangeTextDocumentNotification(server::Server, msg::DidChange
     uri = textDocument.uri
     # Read-only `jetls:` virtual documents never carry user edits to sync (see
     # `handle_DidOpenTextDocumentNotification`).
-    uri.scheme == TEXT_DOCUMENT_CONTENT_SCHEME && return nothing
+    is_text_document_content_uri(uri) && return nothing
     for contentChange in contentChanges
         @assert contentChange.range === contentChange.rangeLength === nothing # since `change = TextDocumentSyncKind.Full`
     end
@@ -139,7 +139,7 @@ function handle_DidCloseTextDocumentNotification(server::Server, msg::DidCloseTe
     # `jetls:` virtual documents are never tracked in the Julia caches (see
     # `handle_DidOpenTextDocumentNotification`), so skip the file-backed cleanup;
     # just record that the view closed so we stop refreshing it.
-    uri.scheme == TEXT_DOCUMENT_CONTENT_SCHEME &&
+    is_text_document_content_uri(uri) &&
         return mark_text_document_content_closed!(server, uri)
     store!(server.state.file_cache) do cache
         Base.delete(cache, uri), nothing

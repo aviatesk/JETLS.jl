@@ -1,6 +1,14 @@
 const TEXT_DOCUMENT_CONTENT_REGISTRATION_ID = "jetls-text-document-content"
 const TEXT_DOCUMENT_CONTENT_REGISTRATION_METHOD = "workspace/textDocumentContent"
-const TEXT_DOCUMENT_CONTENT_SCHEME = "jetls"
+
+# Each `workspace/textDocumentContent` view gets its own scheme so document selectors
+# can enable language features per view: TestRunner logs need none, while future
+# Julia-code views (macro expansion, type annotations, `code_typed`, …) will want
+# semantic tokens, go-to-definition, etc. New views add their scheme here.
+const TESTRUNNER_LOGS_SCHEME = "jetls-testrunner-logs"
+const TEXT_DOCUMENT_CONTENT_SCHEMES = String[TESTRUNNER_LOGS_SCHEME]
+
+is_text_document_content_uri(uri::URI) = uri.scheme in TEXT_DOCUMENT_CONTENT_SCHEMES
 
 struct TextDocumentContentRefreshCaller <: RequestCaller
     uri::URI
@@ -10,7 +18,7 @@ supports_text_document_content(server::Server) =
     getcapability(server, :workspace, :textDocumentContent) !== nothing
 
 function text_document_content_options()
-    return TextDocumentContentOptions(; schemes = String[TEXT_DOCUMENT_CONTENT_SCHEME])
+    return TextDocumentContentOptions(; schemes = TEXT_DOCUMENT_CONTENT_SCHEMES)
 end
 
 function text_document_content_registration()
@@ -18,7 +26,7 @@ function text_document_content_registration()
         id = TEXT_DOCUMENT_CONTENT_REGISTRATION_ID,
         method = TEXT_DOCUMENT_CONTENT_REGISTRATION_METHOD,
         registerOptions = TextDocumentContentRegistrationOptions(;
-            schemes = String[TEXT_DOCUMENT_CONTENT_SCHEME]))
+            schemes = TEXT_DOCUMENT_CONTENT_SCHEMES))
 end
 
 function get_text_document_content(state::ServerState, uri::URI)
@@ -72,7 +80,7 @@ end
 
 function handle_TextDocumentContentRequest(server::Server, msg::TextDocumentContentRequest)
     uri = msg.params.uri
-    if uri.scheme != TEXT_DOCUMENT_CONTENT_SCHEME
+    if !is_text_document_content_uri(uri)
         return send(server, TextDocumentContentResponse(; id = msg.id, result = null))
     end
     text = get_text_document_content(server.state, uri)

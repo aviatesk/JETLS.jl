@@ -742,7 +742,7 @@ end
 
 function testsetinfo_logs_content_uri(source_uri::URI, idx::Int, tsn::AbstractString)
     query = LSP.URIs2.escapeuri((source=string(source_uri), index=idx, name=tsn))
-    return URI(; scheme = TEXT_DOCUMENT_CONTENT_SCHEME, path = "/testrunner/logs", query)
+    return URI(; scheme = TESTRUNNER_LOGS_SCHEME, path = "/testrunner/logs", query)
 end
 
 function show_testsetinfo_logs_path_message(
@@ -819,7 +819,7 @@ function handle_show_document_response(
     elseif haskey(msg, :result)
         result = msg[:result] # ::ShowDocumentResult
         if haskey(result, "success") && result["success"] === true
-            uri.scheme == TEXT_DOCUMENT_CONTENT_SCHEME &&
+            is_text_document_content_uri(uri) &&
                 return mark_text_document_content_opened!(server, uri)
         else
             show_error_message(server, "Failed to open document for viewing test logs")
