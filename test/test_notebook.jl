@@ -89,6 +89,15 @@ function make_InlayHintRequest(id::Int, uri::URI, range::Range)
             range))
 end
 
+function make_RenameRequest(id::Int, uri::URI, position::Position, newName::AbstractString)
+    return RenameRequest(;
+        id,
+        params = RenameParams(;
+            textDocument = TextDocumentIdentifier(; uri),
+            position,
+            newName = String(newName)))
+end
+
 @testset "notebook end to end" begin
     mktempdir() do tempdir; Pkg.activate(tempdir) do
         Pkg.add("Example"; io=devnull)
@@ -445,6 +454,45 @@ end
                 @test edit.range.var"end".line == 3
                 @test edit.range.var"end".character == 19
                 @test edit.newText == "function myfunc(y)\n    y + 1\nend\nresult = myfunc(42)"
+            end
+        end
+    end
+end
+
+@testset "notebook rename keeps per-cell document version" begin
+    mktempdir() do tempdir
+        notebook_uri = filepath2uri(normpath(tempdir, "test.ipynb"))
+        # Rename only emits versioned `TextDocumentEdit`s when the client advertises
+        # `workspaceEdit.documentChanges`.
+        capabilities = ClientCapabilities(;
+            workspace = WorkspaceClientCapabilities(;
+                workspaceEdit = WorkspaceEditClientCapabilities(; documentChanges = true)))
+        withserver(; capabilities) do (; writereadmsg, id_counter)
+            cell_uri = make_cell_uri(tempdir, 1)
+            # Open at notebook version 5; the cell text document stays at version 1. The two
+            # differ on purpose so the rename edit's version is unambiguously the cell's.
+            let cells = NotebookCell[NotebookCell(; kind = NotebookCellKind.Code, document = cell_uri)]
+                cell_texts = Dict{URI,String}(cell_uri => "function foo(yy)\n    return yy + yy\nend")
+                writereadmsg(
+                    make_DidOpenNotebookDocumentNotification(notebook_uri, cells, cell_texts; version = 5))
+            end
+
+            # Renaming the local `yy` must return an edit carrying the *cell* version (1),
+            # not the notebook version (5) — sending the notebook version is what made the
+            # client reject the edit as "not valid anymore".
+            let id = id_counter[] += 1
+                pos = Position(; line = 0, character = 13) # `yy` parameter, cell-local
+                (; raw_res) = writereadmsg(make_RenameRequest(id, cell_uri, pos, "ww"))
+                @test raw_res isa RenameResponse
+                @test raw_res.result isa WorkspaceEdit
+                documentChanges = raw_res.result.documentChanges
+                @test documentChanges isa Vector && length(documentChanges) == 1
+                tde = documentChanges[1]
+                @test tde isa TextDocumentEdit
+                @test tde.textDocument.uri == cell_uri
+                @test tde.textDocument.version == 1
+                @test length(tde.edits) == 3
+                @test all(e -> e.newText == "ww", tde.edits)
             end
         end
     end
