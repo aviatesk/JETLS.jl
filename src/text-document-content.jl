@@ -73,9 +73,8 @@ function request_text_document_content_refresh!(server::Server, uri::URI)
     supports_text_document_content(server) || return nothing
     id = String(gensym(:TextDocumentContentRefreshRequest))
     addrequest!(server, id=>TextDocumentContentRefreshCaller(uri))
-    return send(server, TextDocumentContentRefreshRequest(;
-        id,
-        params = TextDocumentContentRefreshParams(; uri)))
+    params = TextDocumentContentRefreshParams(; uri)
+    return send(server, TextDocumentContentRefreshRequest(; id, params))
 end
 
 function handle_TextDocumentContentRequest(server::Server, msg::TextDocumentContentRequest)
@@ -83,10 +82,10 @@ function handle_TextDocumentContentRequest(server::Server, msg::TextDocumentCont
     if !is_text_document_content_uri(uri)
         return send(server, TextDocumentContentResponse(; id = msg.id, result = null))
     end
-    text = get_text_document_content(server.state, uri)
-    text === nothing && return send(server, TextDocumentContentResponse(;
-        id = msg.id,
-        result = null))
+    text = @something get_text_document_content(server.state, uri) begin
+        return send(server,
+            TextDocumentContentResponse(; id = msg.id, result = null))
+    end
     return send(server, TextDocumentContentResponse(;
         id = msg.id,
         result = TextDocumentContentResult(; text)))

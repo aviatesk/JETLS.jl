@@ -767,14 +767,10 @@ function open_testsetinfo_logs!(
         supports_text_document_content(server) &&
         supports(server, :window, :showDocument, :support))
         uri = testsetinfo_logs_content_uri(source_uri, testset_index, testset_name)
-        update_text_document_content!(server, uri, logs)
         id = String(gensym(:ShowDocumentRequest))
         addrequest!(server, id=>ShowDocumentRequestCaller(testset_name, uri, nothing, logs))
-        return send(server, ShowDocumentRequest(;
-            id,
-            params = ShowDocumentParams(;
-                uri,
-                takeFocus = true)))
+        params = ShowDocumentParams(; uri, takeFocus = true)
+        return send(server, ShowDocumentRequest(; id, params))
     else
         return open_testsetinfo_logs_tempfile!(server, testset_name, logs)
     end
@@ -813,26 +809,19 @@ function handle_show_document_response(
     )
     (; testset_name, uri, temp_path, logs) = request_caller
     if handle_response_error(server, msg, "show document")
-        temp_path !== nothing &&
-            return show_testsetinfo_logs_path_message(server, testset_name, temp_path, uri)
-        logs !== nothing && return open_testsetinfo_logs_tempfile!(server, testset_name, logs)
     elseif haskey(msg, :result)
         result = msg[:result] # ::ShowDocumentResult
         if haskey(result, "success") && result["success"] === true
-            is_text_document_content_uri(uri) &&
-                return mark_text_document_content_opened!(server, uri)
+            return
         else
             show_error_message(server, "Failed to open document for viewing test logs")
-            temp_path !== nothing &&
-                return show_testsetinfo_logs_path_message(server, testset_name, temp_path, uri)
-            logs !== nothing && return open_testsetinfo_logs_tempfile!(server, testset_name, logs)
         end
     else
         show_error_message(server, "Unexpected response from show document request")
-        temp_path !== nothing &&
-            return show_testsetinfo_logs_path_message(server, testset_name, temp_path, uri)
-        logs !== nothing && return open_testsetinfo_logs_tempfile!(server, testset_name, logs)
     end
+    temp_path !== nothing &&
+        return show_testsetinfo_logs_path_message(server, testset_name, temp_path, uri)
+    logs !== nothing && return open_testsetinfo_logs_tempfile!(server, testset_name, logs)
 end
 
 struct TestRunnerTestsetProgressCaller <: RequestCaller
@@ -944,7 +933,6 @@ function try_clear_testrunner_result!(server::Server, uri::URI, idx::Int, tsn::S
     end
     updated || return nothing
 
-    # Drop the cached log content for this testset; its result no longer exists.
     if supports_text_document_content(server)
         log_uri = testsetinfo_logs_content_uri(uri, idx, String(rlstrip(tsn, '"')))
         delete_text_document_content!(server, log_uri)

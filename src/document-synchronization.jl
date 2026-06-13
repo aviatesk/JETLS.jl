@@ -81,12 +81,8 @@ end
 function handle_DidOpenTextDocumentNotification(server::Server, msg::DidOpenTextDocumentNotification)
     textDocument = msg.params.textDocument
     uri = textDocument.uri
-    # `jetls:` documents are server-provided, read-only virtual documents
-    # (`workspace/textDocumentContent`); they carry no Julia source, so skip the
-    # Julia-only path below. Record that the view is open so subsequent content
-    # updates refresh it.
     is_text_document_content_uri(uri) &&
-        return mark_text_document_content_opened!(server, uri)
+        return mark_text_document_content_opened!(server, uri) # turn on the `opened` flag
     @assert textDocument.languageId == "julia"
     parsed_stream = ParseStream!(textDocument.text)
     cache_file_info!(server, uri, textDocument.version, parsed_stream)
@@ -98,8 +94,7 @@ end
 function handle_DidChangeTextDocumentNotification(server::Server, msg::DidChangeTextDocumentNotification)
     (; textDocument, contentChanges) = msg.params
     uri = textDocument.uri
-    # Read-only `jetls:` virtual documents never carry user edits to sync (see
-    # `handle_DidOpenTextDocumentNotification`).
+    # Read-only `jetls-*:` virtual documents never carry user edits to sync, so just ignore it.
     is_text_document_content_uri(uri) && return nothing
     for contentChange in contentChanges
         @assert contentChange.range === contentChange.rangeLength === nothing # since `change = TextDocumentSyncKind.Full`
@@ -136,11 +131,8 @@ end
 
 function handle_DidCloseTextDocumentNotification(server::Server, msg::DidCloseTextDocumentNotification)
     uri = msg.params.textDocument.uri
-    # `jetls:` virtual documents are never tracked in the Julia caches (see
-    # `handle_DidOpenTextDocumentNotification`), so skip the file-backed cleanup;
-    # just record that the view closed so we stop refreshing it.
     is_text_document_content_uri(uri) &&
-        return mark_text_document_content_closed!(server, uri)
+        return mark_text_document_content_closed!(server, uri) # turn off the `opened` flag
     store!(server.state.file_cache) do cache
         Base.delete(cache, uri), nothing
     end

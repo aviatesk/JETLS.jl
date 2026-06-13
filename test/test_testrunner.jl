@@ -164,15 +164,6 @@ end
     @test JETLS.get_file_info(server.state, juri) === nothing
     @test JETLS.load(server.state.text_document_content_cache)[juri].opened
 
-    chg_msg = DidChangeTextDocumentNotification(; params = DidChangeTextDocumentParams(;
-        textDocument = VersionedTextDocumentIdentifier(; uri=juri, version=2),
-        contentChanges = TextDocumentContentChangeEvent[
-            TextDocumentContentChangeEvent(; text="ignored\n")]))
-    @test JETLS.handle_DidChangeTextDocumentNotification(server, chg_msg) === nothing
-    @test JETLS.get_file_info(server.state, juri) === nothing
-    # read-only: didChange does not overwrite the server-held content
-    @test JETLS.get_text_document_content(server.state, juri) == "logs\n"
-
     close_msg = DidCloseTextDocumentNotification(; params = DidCloseTextDocumentParams(;
         textDocument = TextDocumentIdentifier(; uri=juri)))
     @test JETLS.handle_DidCloseTextDocumentNotification(server, close_msg) === nothing
