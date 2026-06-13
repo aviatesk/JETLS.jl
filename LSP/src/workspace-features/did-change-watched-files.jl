@@ -50,36 +50,6 @@ The kind of watcher events to register for.
     Delete = 4
 end
 
-# Type aliases for glob patterns
-const Pattern = String
-
-"""
-A relative pattern is a helper to construct glob patterns that are matched
-relatively to a base URI. The common value for a baseUri is a workspace
-folder root, but it can be another absolute URI as well.
-
-- `@since` 3.17.0
-"""
-@interface RelativePattern begin
-    """
-    A workspace folder or a base URI to which this pattern will be matched
-    against relatively.
-    """
-    baseUri::Union{WorkspaceFolder, URI}
-
-    """
-    The actual glob pattern.
-    """
-    pattern::Pattern
-end
-
-"""
-The glob pattern. Either a string pattern or a relative pattern.
-
-- `@since` 3.17.0
-"""
-const GlobPattern = Union{Pattern, RelativePattern}
-
 """
 A glob pattern specifying which files to watch.
 """
