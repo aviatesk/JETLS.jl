@@ -169,6 +169,13 @@ end
 struct NotebookCellInfo
     uri::URI
     kind::LSP.NotebookCellKind.Ty
+    """
+    The client-tracked text-document version of this cell. Each notebook cell is an
+    independent text document with its own version counter, distinct from the enclosing
+    `NotebookInfo.version` (the notebook-document version). This per-cell version is what
+    the client expects in `OptionalVersionedTextDocumentIdentifier` for cell edits.
+    """
+    version::Int
     text::String
 end
 

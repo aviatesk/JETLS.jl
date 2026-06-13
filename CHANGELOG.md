@@ -82,6 +82,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Fixed TestRunner log viewing to open saved temporary log files instead of relying on `untitled:` buffers, avoiding empty log tabs and mismatched log file paths.
 
+- Fixed renaming symbols inside Jupyter notebook cells on VS Code, which previously failed with a "The rename edit returned from the server is not valid anymore and cannot be applied." error.
+
 ## 2026-06-03
 
 - Commit: [`a42a435`](https://github.com/aviatesk/JETLS.jl/commit/a42a435)
