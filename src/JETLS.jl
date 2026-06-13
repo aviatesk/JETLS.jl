@@ -433,6 +433,8 @@ function handle_response_message(
         handle_profile_progress_response(server, msg, request_caller)
     elseif request_caller isa WorkspaceConfigurationCaller
         handle_workspace_configuration_response(server, msg, request_caller)
+    elseif request_caller isa OpenMacroExpansionCaller
+        handle_open_macro_expansion_response(server, msg, request_caller)
     elseif request_caller isa RegisterCapabilityRequestCaller || request_caller isa UnregisterCapabilityRequestCaller
         # nothing to do
     else

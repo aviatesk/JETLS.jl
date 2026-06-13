@@ -80,6 +80,24 @@ xy_to_offset( # used by tests
     encoding::PositionEncodingKind.Ty = PositionEncodingKind.UTF16
 ) = xy_to_offset(FileInfo(#=version=#0, s, filename, encoding), pos)
 
+"""
+    range_to_byte_range(fi::FileInfo, range::Range; collapse_empty::Bool = false)
+        -> bytes::UnitRange{Int}
+
+Convert an LSP half-open range to a 1-based inclusive byte range.
+
+When `collapse_empty` is `true`, empty ranges are converted to `start:start`.
+This is useful for syntax lookups at a cursor position.
+"""
+function range_to_byte_range(fi::FileInfo, range::Range; collapse_empty::Bool = false)
+    start_byte = xy_to_offset(fi, range.start)
+    stop_byte = xy_to_offset(fi, range.var"end") - 1
+    if collapse_empty && stop_byte < start_byte
+        return start_byte:start_byte
+    end
+    return start_byte:stop_byte
+end
+
 function _xy_to_offset(
         textbuf::Vector{UInt8}, pos::Position, encoding::PositionEncodingKind.Ty,
         line_starts::LineStartsIndex

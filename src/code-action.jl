@@ -55,18 +55,53 @@ function handle_CodeActionRequest(
         elseif result isa ResponseError
             return send(server, CodeActionResponse(; id = msg.id, result = nothing, error = result))
         end
-        file_info = result::FileInfo
-        testrunner_code_actions!(code_actions, uri, file_info, msg.params.range)
+        fi = result
+        testrunner_code_actions!(code_actions, uri, fi, msg.params.range)
+        macro_expansion_code_actions!(code_actions, server, uri, fi, msg.params.range)
     end
     if wants_quickfix_actions
         diagnostics = msg.params.context.diagnostics
-        unused_variable_code_actions!(code_actions, uri, diagnostics;
-            allow_unused_underscore = get_config(server, :diagnostic, :allow_unused_underscore))
+        allow_unused_underscore = get_config(server, :diagnostic, :allow_unused_underscore)
+        unused_variable_code_actions!(code_actions, uri, diagnostics; allow_unused_underscore)
         delete_range_code_actions!(code_actions, uri, diagnostics)
         sort_imports_code_actions!(code_actions, uri, diagnostics)
         ambiguous_soft_scope_code_actions!(code_actions, uri, diagnostics)
     end
     return send(server, CodeActionResponse(; id = msg.id, result = code_actions))
+end
+
+first_syntax_node(nodes::SyntaxListC) = isempty(nodes) ? nothing : nodes[1]
+
+function macrocall_at_range(st0_top::SyntaxTreeC, range::UnitRange{Int})
+    macrocall = first_syntax_node(byte_ancestors(
+        st -> JS.kind(st) === JS.K"macrocall", st0_top, range))
+    macrocall !== nothing && return macrocall
+    first(range) > 1 || return nothing
+    return first_syntax_node(byte_ancestors(
+        st -> JS.kind(st) === JS.K"macrocall", st0_top, first(range)-1))
+end
+
+function macro_expansion_code_actions!(
+        code_actions::Vector{Union{CodeAction,Command}}, server::Server, uri::URI,
+        fi::FileInfo, range::Range
+    )
+    supports(server, :window, :showDocument, :support) || return code_actions
+    st0_top = build_syntax_tree(fi)
+    byte_range = range_to_byte_range(fi, range; collapse_empty = true)
+    macrocall = @something macrocall_at_range(st0_top, byte_range) return code_actions
+    title = "Show macro expansion for `$(macrocall_name(macrocall))`"
+    push!(code_actions, CodeAction(;
+        title,
+        command = Command(;
+            title,
+            command = COMMAND_OPEN_MACRO_EXPANSION,
+            arguments = Any[string(macro_expansion_content_uri(uri, macrocall))])))
+    return code_actions
+end
+
+function macrocall_name(macrocall::SyntaxTreeC)
+    JS.numchildren(macrocall) >= 1 || return "macro"
+    return JS.sourcetext(macrocall[1])
 end
 
 function unused_variable_code_actions!(

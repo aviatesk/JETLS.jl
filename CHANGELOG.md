@@ -65,6 +65,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Added support for the LSP 3.18 `textDocument/rangesFormatting` request so clients that advertise `textDocument.rangeFormatting.rangesSupport` can format multiple ranges in a single request.
 
+- Added a code action on macro calls that opens the expanded macro code through the LSP 3.18 `workspace/textDocumentContent` request when the client can display server-provided virtual documents.
+
 ### Changed
 
 - Improved type precision for local closures with untyped parameters (`do x`, `x -> ...`): their parameter types are now inferred from the argument types observed at the closure's call sites instead of degrading to `Any`, so hover, inlay hints and other type-aware features show precise types in closure bodies, in comprehensions, and for results of higher-order calls like `map`. Parameter annotations other than `::Any` are always respected as-is.
