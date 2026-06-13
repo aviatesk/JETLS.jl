@@ -83,8 +83,8 @@ end
 
 # Macro expansion view
 # ====================
-# Unlike cached content, a macro expansion is computed on demand from the request
-# URI, which encodes the source document and the macrocall's byte range.
+# Unlike cached content, a macro expansion is computed on demand from the request URI,
+# which encodes the source document and the byte range of the macrocall (or top-level form) to expand.
 
 const MACRO_EXPANSION_CONTENT_PATH = "/macro-expanded.jl"
 
@@ -101,17 +101,22 @@ function parse_text_document_content_query(uri::URI)
     return params
 end
 
-function macro_expansion_content_uri(source_uri::URI, macrocall::SyntaxTreeC)
-    range = JS.byte_range(macrocall)
-    query = join((
+# The view comes in two modes, distinguished by the `mode` query parameter:
+# the default (call-site) expands a single macrocall one level, while `mode=toplevel`
+# recursively expands every macrocall in a lowerable top-level form. The byte range names
+# the macrocall or the top-level form respectively.
+function macro_expansion_content_uri(source_uri::URI, node::SyntaxTreeC; toplevel::Bool=false)
+    range = JS.byte_range(node)
+    parts = String[
         "source=$(LSP.URIs2.escapeuri(string(source_uri)))",
         "start=$(first(range))",
         "stop=$(last(range))",
-    ), '&')
+    ]
+    toplevel && push!(parts, "mode=toplevel")
     return URI(;
         scheme = MACRO_EXPANSION_SCHEME,
         path = MACRO_EXPANSION_CONTENT_PATH,
-        query)
+        query = join(parts, '&'))
 end
 
 function find_macrocall_by_range(st0_top::SyntaxTreeC, range::UnitRange{<:Integer})
@@ -119,6 +124,13 @@ function find_macrocall_by_range(st0_top::SyntaxTreeC, range::UnitRange{<:Intege
         JS.kind(st) === JS.K"macrocall" || return nothing
         JS.byte_range(st) == range || return nothing
         return TraversalReturn(st; terminate=true)
+    end
+end
+
+function find_toplevel_tree_by_range(st0_top::SyntaxTreeC, range::UnitRange{<:Integer})
+    return iterate_toplevel_tree(st0_top) do st0::SyntaxTreeC
+        JS.byte_range(st0) == range || return nothing
+        return TraversalReturn(st0; terminate=true)
     end
 end
 
@@ -189,12 +201,8 @@ function print_macrocall_provenance(io::IO, macrocall::SyntaxTreeC)
     return nothing
 end
 
-function format_macro_expansion_text(macrocall::SyntaxTreeC, @nospecialize expanded)
+function print_expanded_code(io::IO, @nospecialize expanded)
     expanded = strip_macro_expansion_linenums!(expanded)
-    io = IOBuffer()
-    println(io, "# Macro call:")
-    print_macrocall_provenance(io, macrocall)
-    println(io, "# Expanded code view:")
     if Meta.isexpr(expanded, :toplevel)
         for i = eachindex(expanded.args)
             show(io, MIME("text/plain"), expanded.args[i])
@@ -204,13 +212,10 @@ function format_macro_expansion_text(macrocall::SyntaxTreeC, @nospecialize expan
         show(io, MIME("text/plain"), expanded)
         println(io)
     end
-    return String(take!(io))
+    return nothing
 end
 
-function format_macro_expansion_error_text(macrocall::SyntaxTreeC, @nospecialize(err), bt)
-    io = IOBuffer()
-    println(io, "# Macro call:")
-    print_macrocall_provenance(io, macrocall)
+function print_expansion_error_trace(io::IO, @nospecialize(err), bt)
     println(io, "# Expansion error trace:")
     buf = IOBuffer()
     Base.display_error(buf, err, bt)
@@ -218,6 +223,49 @@ function format_macro_expansion_error_text(macrocall::SyntaxTreeC, @nospecialize
         println(io, "# ", l)
     end
     println(io)
+    return nothing
+end
+
+function format_macro_expansion_text(macrocall::SyntaxTreeC, @nospecialize expanded)
+    io = IOBuffer()
+    println(io, "# Macro call:")
+    print_macrocall_provenance(io, macrocall)
+    println(io, "# Expanded code view:")
+    print_expanded_code(io, expanded)
+    return String(take!(io))
+end
+
+function format_macro_expansion_error_text(macrocall::SyntaxTreeC, @nospecialize(err), bt)
+    io = IOBuffer()
+    println(io, "# Macro call:")
+    print_macrocall_provenance(io, macrocall)
+    print_expansion_error_trace(io, err, bt)
+    return String(take!(io))
+end
+
+# The recursive top-level view has no single macrocall to anchor a provenance
+# block on, so it only notes where the expanded form was defined.
+function print_toplevel_expansion_header(io::IO, filename::AbstractString, line::Integer)
+    println(io, "# All macros expanded in the top-level form at ", filename, ":", line)
+    println(io)
+    return nothing
+end
+
+function format_toplevel_expansion_text(
+        filename::AbstractString, line::Integer, @nospecialize expanded
+    )
+    io = IOBuffer()
+    print_toplevel_expansion_header(io, filename, line)
+    print_expanded_code(io, expanded)
+    return String(take!(io))
+end
+
+function format_toplevel_expansion_error_text(
+        filename::AbstractString, line::Integer, @nospecialize(err), bt
+    )
+    io = IOBuffer()
+    print_toplevel_expansion_header(io, filename, line)
+    print_expansion_error_trace(io, err, bt)
     return String(take!(io))
 end
 
@@ -232,25 +280,37 @@ function macro_expansion_text(server::Server, content_uri::URI)
     stop = @something tryparse(Int, get(params, "stop", "")) begin
         return "Invalid `stop` parameter.\n"
     end
+    toplevel = get(params, "mode", "call") == "toplevel"
     source_uri = URI(source)
     fi = @something get_file_info(server.state, source_uri) begin
         return "Source document is not available: $(string(source_uri))\n"
     end
-    macrocall = @something find_macrocall_by_range(build_syntax_tree(fi), start:stop) begin
-        return "Macro call is no longer available: $(string(source_uri))\n"
+    st0_top = build_syntax_tree(fi)
+    node = if toplevel
+        @something find_toplevel_tree_by_range(st0_top, start:stop) begin
+            return "Top-level form is no longer available: $(string(source_uri))\n"
+        end
+    else
+        @something find_macrocall_by_range(st0_top, start:stop) begin
+            return "Macro call is no longer available: $(string(source_uri))\n"
+        end
     end
-    macrocall_source = JS.sourcetext(macrocall)
-    pos = offset_to_xy(fi, JS.first_byte(macrocall))
+    pos = offset_to_xy(fi, JS.first_byte(node))
     (; context_module) = get_context_info(server.state, source_uri, pos)
     first_line = Int(pos.line) + 1
-    ex = macro_expr_from_text(macrocall_source, fi.filename, first_line)
+    ex = macro_expr_from_text(JS.sourcetext(node), fi.filename, first_line)
     expanded = try
-        macroexpand(context_module, ex; recursive=false)
+        macroexpand(context_module, ex; recursive=toplevel)
     catch err
-        return format_macro_expansion_error_text(macrocall, err, catch_backtrace())
+        bt = catch_backtrace()
+        return toplevel ?
+            format_toplevel_expansion_error_text(fi.filename, first_line, err, bt) :
+            format_macro_expansion_error_text(node, err, bt)
     end
     expanded = simplify_macro_expansion!(expanded, context_module)
-    return format_macro_expansion_text(macrocall, expanded)
+    return toplevel ?
+        format_toplevel_expansion_text(fi.filename, first_line, expanded) :
+        format_macro_expansion_text(node, expanded)
 end
 
 # Request handlers

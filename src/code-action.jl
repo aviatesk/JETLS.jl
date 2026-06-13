@@ -88,15 +88,40 @@ function macro_expansion_code_actions!(
     supports(server, :window, :showDocument, :support) || return code_actions
     st0_top = build_syntax_tree(fi)
     byte_range = range_to_byte_range(fi, range; collapse_empty = true)
-    macrocall = @something macrocall_at_range(st0_top, byte_range) return code_actions
-    title = "Show macro expansion for `$(macrocall_name(macrocall))`"
+    macrocall = macrocall_at_range(st0_top, byte_range)
+    # `@doc` (a docstring) wraps the whole documented form; its expansion is just
+    # doc-registration machinery, so don't offer it as a macro view.
+    if macrocall !== nothing && !is_doc0_any(macrocall)
+        push_macro_expansion_action!(code_actions,
+            "Show macro expansion for `$(macrocall_name(macrocall))`",
+            macro_expansion_content_uri(uri, macrocall))
+    end
+    toplevel = lowerable_toplevel_at(st0_top, first(byte_range))
+    if toplevel !== nothing && toplevel_contains_macrocall(toplevel)
+        push_macro_expansion_action!(code_actions,
+            "Expand all macros in this top-level form",
+            macro_expansion_content_uri(uri, toplevel; toplevel=true))
+    end
+    return code_actions
+end
+
+function push_macro_expansion_action!(
+        code_actions::Vector{Union{CodeAction,Command}}, title::String, content_uri::URI)
     push!(code_actions, CodeAction(;
         title,
         command = Command(;
             title,
             command = COMMAND_OPEN_MACRO_EXPANSION,
-            arguments = Any[string(macro_expansion_content_uri(uri, macrocall))])))
+            arguments = Any[string(content_uri)])))
     return code_actions
+end
+
+function toplevel_contains_macrocall(st0::SyntaxTreeC)
+    found = traverse(st0) do st::SyntaxTreeC
+        JS.kind(st) === JS.K"macrocall" || return nothing
+        return TraversalReturn(true; terminate=true)
+    end
+    return found === true
 end
 
 function macrocall_name(macrocall::SyntaxTreeC)

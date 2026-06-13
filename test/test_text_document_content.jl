@@ -27,6 +27,16 @@ function macroexpand_testcase(text::AbstractString)
     return (; server, uri, fi, macrocall, content_uri)
 end
 
+function toplevel_expansion_testcase(text::AbstractString)
+    server = server_with_show_document_support()
+    uri = filepath2uri(joinpath(pkgdir(JETLS), "test", "macroexpand_testcase.jl"))
+    fi = JETLS.cache_file_info!(server, uri, 1, text)
+    st0 = JETLS.build_syntax_tree(fi)
+    tree = @something JETLS.lowerable_toplevel_at(st0, 1) error("missing toplevel tree")
+    content_uri = JETLS.macro_expansion_content_uri(uri, tree; toplevel=true)
+    return (; server, uri, fi, tree, content_uri)
+end
+
 @testset "macro expansion content" begin
     let case = macroexpand_testcase("@time 1 + 2\n")
         content_uri = JETLS.URI(string(case.content_uri))
@@ -109,12 +119,83 @@ end
             var"end" = Position(; line = 0, character = 1))
         JETLS.macro_expansion_code_actions!(
             actions, case.server, case.uri, case.fi, range)
-        @test length(actions) == 1
-        action = only(actions)
-        @test action.title == "Show macro expansion for `@time`"
-        @test action.kind === nothing
+        titles = String[a.title for a in actions]
+        # the call-site action targets the `@time` macrocall
+        callsite = actions[findfirst(==("Show macro expansion for `@time`"), titles)]
+        @test callsite.kind === nothing
+        @test callsite.command.command == JETLS.COMMAND_OPEN_MACRO_EXPANSION
+        @test only(callsite.command.arguments) == string(case.content_uri)
+        # the whole-form action is also offered, since the form contains a macro
+        @test "Expand all macros in this top-level form" in titles
+    end
+end
+
+@testset "toplevel macro expansion content" begin
+    let case = toplevel_expansion_testcase("function f()\n    @assert false\nend\n")
+        content_uri = JETLS.URI(string(case.content_uri))
+        params = JETLS.parse_text_document_content_query(content_uri)
+        @test params["mode"] == "toplevel"
+        @test params["source"] == string(case.uri)
+
+        text = JETLS.macro_expansion_text(case.server, content_uri)
+        @test occursin("All macros expanded", text)
+        @test occursin("macroexpand_testcase.jl:1", text)
+        @test !occursin("the macro call being expanded", text) # no per-call provenance
+        # the nested `@assert` is recursively expanded away
+        @test occursin("AssertionError", text)
+        @test !occursin("@assert", text)
+    end
+end
+
+@testset "toplevel macro expansion code action" begin
+    full_range() = Range(;
+        start = Position(; line = 0, character = 0),
+        var"end" = Position(; line = 0, character = 0))
+    # offered when the enclosing top-level form contains a macrocall
+    let case = toplevel_expansion_testcase("function f()\n    @assert false\nend\n")
+        actions = Union{CodeAction,Command}[]
+        JETLS.macro_expansion_code_actions!(
+            actions, case.server, case.uri, case.fi, full_range())
+        titles = String[a.title for a in actions]
+        action = actions[findfirst(==("Expand all macros in this top-level form"), titles)]
         @test action.command.command == JETLS.COMMAND_OPEN_MACRO_EXPANSION
         @test only(action.command.arguments) == string(case.content_uri)
+    end
+    # not offered when the form has no macrocalls
+    let case = toplevel_expansion_testcase("function f()\n    return 1\nend\n")
+        actions = Union{CodeAction,Command}[]
+        JETLS.macro_expansion_code_actions!(
+            actions, case.server, case.uri, case.fi, full_range())
+        @test isempty(actions)
+    end
+end
+
+@testset "macro expansion: suppress `@doc` docstring" begin
+    server = server_with_show_document_support()
+    uri = filepath2uri(joinpath(pkgdir(JETLS), "test", "macroexpand_testcase.jl"))
+    fi = JETLS.cache_file_info!(server, uri, 1,
+        """
+        \"\"\"
+        doc
+        \"\"\"
+        f(x) = @assert x > 0
+        """)
+    has_callsite(actions) = any(a -> startswith(a.title, "Show macro expansion"), actions)
+    # cursor in the docstring: the enclosing macrocall is `@doc`, which is skipped
+    let actions = Union{CodeAction,Command}[]
+        range = Range(; start = Position(; line = 1, character = 2),
+                        var"end" = Position(; line = 1, character = 2))
+        JETLS.macro_expansion_code_actions!(actions, server, uri, fi, range)
+        @test !has_callsite(actions)
+    end
+    # cursor on the `function` keyword: only the whole-form action, not `@doc`
+    let actions = Union{CodeAction,Command}[]
+        range = Range(; start = Position(; line = 3, character = 0),
+                        var"end" = Position(; line = 3, character = 0))
+        JETLS.macro_expansion_code_actions!(actions, server, uri, fi, range)
+        titles = String[a.title for a in actions]
+        @test "Expand all macros in this top-level form" in titles
+        @test !has_callsite(actions)
     end
 end
 
