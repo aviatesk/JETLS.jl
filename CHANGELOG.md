@@ -65,7 +65,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Added support for the LSP 3.18 `textDocument/rangesFormatting` request so clients that advertise `textDocument.rangeFormatting.rangesSupport` can format multiple ranges in a single request.
 
-- Added code actions that open expanded macro code through the LSP 3.18 `workspace/textDocumentContent` request when the client can display server-provided virtual documents: one expands the macro call under the cursor, and one recursively expands every macro in the enclosing top-level form.
+- Added code actions that open expanded macro code in a read-only view — served through the LSP 3.18 `workspace/textDocumentContent` request, or a temporary-file fallback for clients without that capability: one expands the macro call under the cursor, and one recursively expands every macro in the enclosing top-level form.
 
 ### Changed
 

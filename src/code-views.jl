@@ -226,29 +226,11 @@ function macro_expansion_text(server::Server, content_uri::URI)
         format_macro_expansion_text(node, expanded)
 end
 
-struct OpenMacroExpansionCaller <: RequestCaller end
-
-function request_open_macro_expansion(server::Server, uri::URI)
-    if !supports(server, :window, :showDocument, :support)
-        show_warning_message(server, "Client does not support `window/showDocument`.")
-        return nothing
-    end
-    id = String(gensym(:ShowMacroExpansionRequest))
-    addrequest!(server, id=>OpenMacroExpansionCaller())
-    params = ShowDocumentParams(; uri, takeFocus = true)
-    return send(server, ShowDocumentRequest(; id, params))
-end
-
-function handle_open_macro_expansion_response(
-        server::Server, msg::Dict{Symbol,Any}, ::OpenMacroExpansionCaller
-    )
-    if handle_response_error(server, msg, "open macro expansion")
-    elseif haskey(msg, :result)
-        result = msg[:result]
-        if !(haskey(result, "success") && result["success"] === true)
-            show_error_message(server, "Failed to open macro expansion document")
-        end
-    else
-        show_error_message(server, "Unexpected response from macro expansion open request")
-    end
+# A macro expansion is a read-only snapshot, so it degrades gracefully to a temp
+# file for clients without `workspace/textDocumentContent`; the expansion text is
+# produced lazily, only if a fallback needs it.
+function request_open_macro_expansion(server::Server, content_uri::URI)
+    return open_text_document_content!(server, content_uri,
+        #=label=# "macro expansion", #=tempfile_name=# "macro-expanded.jl",
+        ProduceText(() -> macro_expansion_text(server, content_uri)))
 end

@@ -909,10 +909,9 @@ A few representative examples:
 JETLS can open read-only *code views*: server-computed Julia documents
 derived from your source, such as the result of macro expansion. They are
 served as virtual documents through the LSP 3.18
-`workspace/textDocumentContent` request, so they require a client that can
-display server-provided virtual documents (and supports `window/showDocument`
-to open them); editors without that support do not offer the actions
-below.
+`workspace/textDocumentContent` request when the client supports it, and
+otherwise fall back to a temporary file opened via `window/showDocument`,
+so they work across editors regardless of `textDocumentContent` support.
 
 ### [Macro expansion](@id features/code-views/macro-expansion)
 

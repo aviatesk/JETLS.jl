@@ -702,13 +702,6 @@ function _testrunner_run_testcase(
     return summary_testrunner_result(result)
 end
 
-struct ShowDocumentRequestCaller <: RequestCaller
-    testset_name::String
-    uri::URI
-    temp_path::Union{Nothing,String}
-    logs::Union{Nothing,String}
-end
-
 is_testsetinfo_logs_filename_unsafe(c::Char) =
     isspace(c) || iscntrl(c) ||
     c in ('%', '/', '\\', '?', '#', '<', '>', ':', '"', '|', '*')
@@ -752,80 +745,18 @@ function get_testsetinfo_logs(state::ServerState, uri::URI, idx::Int)
     return testsetinfo.result.result.logs
 end
 
-function show_testsetinfo_logs_path_message(
-        server::Server, tsn::String, temp_path::String, uri::URI
-    )
-    return show_info_message(server, """
-    Test logs for $tsn saved temporarily to:
-
-    [$temp_path]($uri)
-
-    This file will be removed when JETLS exits.
-    """)
-end
-
 function open_testsetinfo_logs!(
         server::Server, tsn::String, logs::String;
         source_uri::Union{Nothing,URI} = nothing,
         testset_index::Union{Nothing,Int} = nothing
     )
     testset_name = String(rlstrip(tsn, '"'))
-    if (source_uri !== nothing && testset_index !== nothing &&
-        supports_text_document_content(server) &&
-        supports(server, :window, :showDocument, :support))
-        uri = testsetinfo_logs_content_uri(source_uri, testset_index, testset_name)
-        id = String(gensym(:ShowDocumentRequest))
-        addrequest!(server, id=>ShowDocumentRequestCaller(testset_name, uri, nothing, logs))
-        params = ShowDocumentParams(; uri, takeFocus = true)
-        return send(server, ShowDocumentRequest(; id, params))
-    else
-        return open_testsetinfo_logs_tempfile!(server, testset_name, logs)
-    end
-end
-
-function open_testsetinfo_logs_tempfile!(server::Server, tsn::String, logs::String)
-    saved = @something save_testsetinfo_logs_tempfile(server, tsn, logs) return nothing
-    (; temp_path, uri) = saved
-    if supports(server, :window, :showDocument, :support)
-        id = String(gensym(:ShowDocumentRequest))
-        addrequest!(server, id=>ShowDocumentRequestCaller(tsn, uri, temp_path, nothing))
-        params = ShowDocumentParams(; uri, takeFocus = true)
-        return send(server, ShowDocumentRequest(; id, params))
-    else
-        return show_testsetinfo_logs_path_message(server, tsn, temp_path, uri)
-    end
-end
-
-function save_testsetinfo_logs_tempfile(server::Server, tsn::String, logs::String)
-    temp_filename = testsetinfo_logs_filename(tsn)
-    temp_path = joinpath(mktempdir(; cleanup=true), temp_filename)
-    try
-        write(temp_path, logs)
-    catch err
-        show_error_message(server, "Failed to save test logs: $(sprint(showerror, err))")
-        return nothing
-    end
-    return (; temp_path, uri = filepath2uri(temp_path))
-end
-
-function handle_show_document_response(
-        server::Server, msg::Dict{Symbol,Any}, request_caller::ShowDocumentRequestCaller
-    )
-    (; testset_name, uri, temp_path, logs) = request_caller
-    if handle_response_error(server, msg, "show document")
-    elseif haskey(msg, :result)
-        result = msg[:result] # ::ShowDocumentResult
-        if haskey(result, "success") && result["success"] === true
-            return
-        else
-            show_error_message(server, "Failed to open document for viewing test logs")
-        end
-    else
-        show_error_message(server, "Unexpected response from show document request")
-    end
-    temp_path !== nothing &&
-        return show_testsetinfo_logs_path_message(server, testset_name, temp_path, uri)
-    logs !== nothing && return open_testsetinfo_logs_tempfile!(server, testset_name, logs)
+    content_uri = source_uri !== nothing && testset_index !== nothing ?
+        testsetinfo_logs_content_uri(source_uri, testset_index, testset_name) : nothing
+    return open_text_document_content!(server, content_uri,
+        #=label=# "test logs for `$testset_name`",
+        #=tempfile_name=# testsetinfo_logs_filename(testset_name),
+        ProduceText(() -> logs))
 end
 
 struct TestRunnerTestsetProgressCaller <: RequestCaller

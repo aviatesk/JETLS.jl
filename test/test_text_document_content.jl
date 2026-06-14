@@ -35,4 +35,14 @@ using JETLS.LSP.URIs2
     end
 end
 
+@testset "save_text_document_content_tempfile" begin
+    server = JETLS.Server()
+    saved = JETLS.save_text_document_content_tempfile(server, "hello\nworld\n",
+        #=label=# "thing", #=tempfile_name=# "x.jl")
+    @test saved !== nothing
+    @test basename(saved.temp_path) == "x.jl"
+    @test read(saved.temp_path, String) == "hello\nworld\n"
+    @test JETLS.filepath2uri(saved.temp_path) == saved.uri
+end
+
 end # module test_text_document_content
