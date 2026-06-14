@@ -341,7 +341,7 @@ function global_completions!(
 
     prioritized_names = let s = Set{Symbol}()
         pnames = Base.invoke_in_world(
-            world, names, context_module; all=true)::Vector{Symbol}
+            world, Base.unsorted_names, context_module; all=true)::Vector{Symbol}
         sizehint!(s, length(pnames))
         for name in pnames
             startswith(String(name), "#") && continue
@@ -350,7 +350,7 @@ function global_completions!(
         s
     end
 
-    all_names = Base.invoke_in_world(world, names, context_module;
+    all_names = Base.invoke_in_world(world, Base.unsorted_names, context_module;
         all=true, imported=true, usings=true)::Vector{Symbol}
     for name in all_names
         s = String(name)
