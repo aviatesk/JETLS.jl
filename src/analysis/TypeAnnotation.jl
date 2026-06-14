@@ -863,12 +863,13 @@ function _infer_toplevel_tree(
         world::UInt = Base.get_world_counter()
     )
     filter = SyntheticFilter(st0, ctx3.bindings)
+    inf_cache = CC.InferenceResult[]
     interp = refinements = nothing
     for _ = 1:MAX_OC_REFINEMENT_PASSES
         observations = OCArgtypeTable()
         interp = @something infer_lowered_tree(
             ctx3, inferrable_tree3, context_module, world, filter,
-            observations, refinements) return interp
+            observations, refinements, inf_cache) return interp
         nextrefinements = @something merge_refinements(
             refinements, viable_oc_argtype_refinements(observations)) break
         isequal(nextrefinements, refinements) && break
@@ -928,16 +929,15 @@ function viable_oc_argtype_refinements(observations::OCArgtypeTable)
 end
 
 # Each pass re-lowers from `(ctx3, st3)` rather than reusing the previous pass's lowered
-# code: re-lowering materializes fresh OC `Method`s, so a later pass's inference can't
-# hit the engine cache entries (shared via the `cache_owner` token) that the previous
-# pass created for the same body — a cache hit would skip `finishinfer!` and leave the
-# body tree unannotated. Refinements are keyed by body byte range, which is stable
-# across re-lowering.
+# code. Re-lowering materializes fresh OC `Method`s, so sharing `inf_cache` across
+# passes won't make OC body inference hit stale entries and skip `finishinfer!`.
+# Non-OC callees can still reuse pass-local inference results. Refinements are keyed
+# by body byte range, which is stable across re-lowering.
 function infer_lowered_tree(
         ctx3::JL.VariableAnalysisContext, inferrable_tree3::SyntaxTreeC,
         context_module::Module, world::UInt, filter::SyntheticFilter,
-        observations::OCArgtypeTable,
-        refinements::Union{Nothing,OCArgtypeTable}
+        observations::OCArgtypeTable, refinements::Union{Nothing,OCArgtypeTable},
+        inf_cache::Vector{CC.InferenceResult}
     )
     inferrable_tree = try
         # Route single-method local closures through `OpaqueClosure` instead of
@@ -959,9 +959,9 @@ function infer_lowered_tree(
     src = lwr.args[1]::CodeInfo
 
     interp = infer_thunk!(inferrable_tree, src, context_module, nothing, world, filter,
-        observations, refinements)
+        observations, refinements, inf_cache)
     infer_method_defs!(inferrable_tree, src, context_module, world, filter,
-        observations, refinements)
+        observations, refinements, inf_cache)
     return interp
 end
 
@@ -978,11 +978,12 @@ function infer_thunk!(
         tree::SyntaxTreeC, src::CodeInfo, context_module::Module,
         argtypes::Union{Nothing,Vector{Any}}, world::UInt, filter::SyntheticFilter,
         observations::OCArgtypeTable, refinements::Union{Nothing,OCArgtypeTable},
+        inf_cache::Vector{CC.InferenceResult}
     )
     strip_latestworld!(src)
     mi = construct_toplevel_mi(src, context_module)
     interp = ASTTypeAnnotator(world, tree, mi, filter;
-        oc_argtype_observations=observations, oc_argtype_refinements=refinements)
+        oc_argtype_observations=observations, oc_argtype_refinements=refinements, inf_cache)
     register_oc_body_trees!(interp.oc_body_trees, tree, src)
     result = CC.InferenceResult(mi)
     if argtypes !== nothing
@@ -1037,9 +1038,9 @@ function resolve_toplevel_symbols!(src::CodeInfo, context_module::Module)
 end
 
 function infer_method_defs!(
-        inferred::SyntaxTreeC, src::CodeInfo, context_module::Module, world::UInt,
-        filter::SyntheticFilter, observations::OCArgtypeTable,
-        refinements::Union{Nothing,OCArgtypeTable},
+        inferred::SyntaxTreeC, src::CodeInfo, context_module::Module, world::UInt, filter::SyntheticFilter,
+        observations::OCArgtypeTable, refinements::Union{Nothing,OCArgtypeTable},
+        inf_cache::Vector{CC.InferenceResult}
     )
     block = inferred[1]
     nstmts = JS.numchildren(block)
@@ -1069,7 +1070,7 @@ function infer_method_defs!(
             resolve_method_argtypes(sig_ref, src, nargs, context_module, world),
             Any[Any for _ in 1:nargs])
         infer_thunk!(body_tree, body_codeinfo, context_module, argtypes, world, filter,
-            observations, refinements)
+            observations, refinements, inf_cache)
     end
     return
 end
