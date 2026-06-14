@@ -171,25 +171,16 @@ function get_formatter_executable(formatter::FormatterConfig, for_range::Bool)
                 "Unknown formatter preset \"$formatter\". " *
                 "Valid presets are: \"Runic\", \"JuliaFormatter\". " *
                 "For custom formatters, use [formatter.custom] configuration.")
-
-        if for_range && formatter == "JuliaFormatter"
-            return request_failed_error(
-                "JuliaFormatter does not support range formatting. " *
-                "Please use document formatting instead or configure a custom " *
-                "formatter with `executable_range`.")
+        additional_msg = if formatter == "JuliaFormatter"
+            install_instruction_message(executable, JULIAFORMATTER_INSTALLATION_URL)
+        elseif formatter == "Runic"
+            install_instruction_message(executable, RUNIC_INSTALLATION_URL)
         else
-            additional_msg = if formatter == "JuliaFormatter"
-                install_instruction_message(executable, JULIAFORMATTER_INSTALLATION_URL)
-            elseif formatter == "Runic"
-                install_instruction_message(executable, RUNIC_INSTALLATION_URL)
-            else
-                check_settings_message(:formatter)
-            end
-
-            exe_path = @something Sys.which(executable) return request_failed_error(
-                app_notfound_message(executable) * additional_msg)
-            return exe_path
+            check_settings_message(:formatter)
         end
+        exe_path = @something Sys.which(executable) return request_failed_error(
+            app_notfound_message(executable) * additional_msg)
+        return exe_path
     else # Custom formatter
         formatter = formatter::CustomFormatterConfig
         if for_range
@@ -426,8 +417,13 @@ function format_file(
 
     formatter_result = run_formatter(exe, text, line_ranges, uri, options, formatter)
     newText = @something formatter_result begin
-        return request_failed_error(
-            "Formatter returned an error. See server logs for details.")
+        msg = "Formatter returned an error. See server logs for details."
+        if line_ranges !== nothing && formatter == "JuliaFormatter"
+            # `jlfmt` only learned `--lines` in v2.7.0, so an older executable
+            # fails the range request; hint at the version requirement.
+            msg *= " Note that range formatting requires JuliaFormatter v2.7.0 or later."
+        end
+        return request_failed_error(msg)
     end
     edit_range = if cell_text !== nothing
         cell_range(cell_text, fi.encoding)
@@ -443,42 +439,7 @@ function run_formatter(
     )
     line_args = line_ranges === nothing ?
         String[] : ["--lines=$line_range" for line_range in line_ranges]
-    cmd = if formatter isa String
-        # Preset formatter: "Runic" or "JuliaFormatter"
-        if formatter == "Runic"
-            if isempty(line_args)
-                `$exe`
-            else
-                `$exe $(line_args)`
-            end
-        elseif formatter == "JuliaFormatter"
-            # JuliaFormatter doesn't support range formatting
-            # (should not reach here due to earlier validation)
-            if line_ranges === nothing
-                tabSize = options.tabSize
-                filepath = uri2filepath(uri)
-                if filepath !== nothing
-                    config_dir = dirname(filepath)
-                    `$exe --indent=$(Int(tabSize)) --prioritize-config-file --config-dir=$config_dir`
-                else
-                    `$exe --indent=$(Int(tabSize))`
-                end
-            else
-                return nothing
-            end
-        else # Unknown preset (should not reach here)
-            return nothing
-        end
-    else # Custom formatter
-        formatter = formatter::CustomFormatterConfig
-        # Assume custom formatters use the same interface as Runic
-        if isempty(line_args)
-            `$exe`
-        else
-            `$exe $(line_args)`
-        end
-    end
-
+    cmd = @something formatter_command(exe, line_args, uri, options, formatter) return nothing
     proc = open(cmd; read = true, write = true)
     write(proc, text)
     close(proc.in)
@@ -490,4 +451,33 @@ function run_formatter(
     ret = read(proc)
     close(proc)
     return String(ret)
+end
+
+# Build the formatter command line. `line_args` is a (possibly empty) list of
+# `--lines=START:END` arguments; when empty the whole document is formatted.
+function formatter_command(
+        exe::String, line_args::Vector{String},
+        uri::URI, options::FormattingOptions, formatter::FormatterConfig
+    )
+    if formatter isa String
+        # Preset formatter: "Runic" or "JuliaFormatter"
+        if formatter == "Runic"
+            return `$exe $(line_args)`
+        elseif formatter == "JuliaFormatter"
+            tabSize = Int(options.tabSize)
+            filepath = uri2filepath(uri)
+            if filepath !== nothing
+                config_dir = dirname(filepath)
+                return `$exe --indent=$tabSize --prioritize-config-file --config-dir=$config_dir $(line_args)`
+            else
+                return `$exe --indent=$tabSize $(line_args)`
+            end
+        else # Unknown preset (should not reach here)
+            return nothing
+        end
+    else # Custom formatter
+        formatter = formatter::CustomFormatterConfig
+        # Assume custom formatters use the same interface as Runic
+        return `$exe $(line_args)`
+    end
 end
