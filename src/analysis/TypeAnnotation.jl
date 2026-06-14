@@ -1161,17 +1161,18 @@ end
 
 """
     InferredTreeContext(
-            inferred_tree::SyntaxTreeC, st3::SyntaxTreeC,
-            surface_kind_index::Dict{UnitRange{Int},JS.Kind},
+            inferred_tree::SyntaxTreeC, ctx3::JL.VariableAnalysisContext,
+            st3::SyntaxTreeC, surface_kind_index::Dict{UnitRange{Int},JS.Kind},
             macrocall_types::Dict{UnitRange{Int},Vector{Any}}
         ) -> ctx::InferredTreeContext
 
 [`TypeAnnotation`](@ref) pipeline step 3: wrap an annotated `inferred_tree` (from
-[`infer_toplevel_tree`](@ref)) plus the post-scope-resolution `st3` (from
+[`infer_toplevel_tree`](@ref)) plus the post-scope-resolution `ctx3` / `st3` (from
 [`get_inferrable_tree`](@ref)) and provenance indexes built before pruning,
 yielding a query handle that [`get_type_for_range`](@ref) and friends can answer
 in \$O(1)\$ per call (or \$O(log N)\$ for the branching case).
 
+`ctx3` supplies closure argument binding ranges for parameter-position queries.
 `st3` (rather than the surface tree) is needed to identify byte ranges of
 *user-written* `K"return"` surface forms, which `type_for_branching` looks up
 to filter user returns out of the value type of an enclosing branching
@@ -1187,7 +1188,7 @@ as new queries demand different indexes.
 See the [`TypeAnnotation`](@ref) module docstring for the full pipeline.
 """
 function InferredTreeContext(
-        inferred_tree::SyntaxTreeC, st3::SyntaxTreeC,
+        inferred_tree::SyntaxTreeC, ctx3::JL.VariableAnalysisContext, st3::SyntaxTreeC,
         surface_kind_index::Dict{UnitRange{Int},JS.Kind},
         macrocall_types::Dict{UnitRange{Int},Vector{Any}}
     )
@@ -1217,11 +1218,12 @@ function InferredTreeContext(
 
     oc_body_scope = Dict{Int,UnitRange{Int}}()
     populate_oc_body_scope!(oc_body_scope, inferred_tree, nothing)
+    oc_argument_binding_types = collect_oc_argument_binding_types(ctx3, inferred_tree)
 
     return InferredTreeContext(
         inferred_tree, surface_kind_index, by_byte_range,
         macrocall_types, return_first_bytes, return_nodes,
-        user_return_form_ranges, oc_body_scope)
+        user_return_form_ranges, oc_body_scope, oc_argument_binding_types)
 end
 
 # The surface kinds `get_type_for_range` selects a lookup strategy for. When several
@@ -1286,6 +1288,65 @@ function populate_oc_body_scope!(
         end
     end
     return
+end
+
+function collect_oc_argument_binding_types(
+        ctx3::JL.VariableAnalysisContext, inferred_tree::SyntaxTreeC
+    )
+    oc_argtypes = collect_oc_argtypes_by_binding(inferred_tree)
+    binding_types = Dict{UnitRange{Int},Any}()
+    isempty(oc_argtypes) && return binding_types
+    lambda_ranges = collect_lambda_ranges(ctx3)
+    for binfo in ctx3.bindings.info
+        binfo.kind === :argument || continue
+        binfo.is_internal && continue
+        lambda_range = get(lambda_ranges, binfo.lambda_id, nothing)
+        lambda_range === nothing && continue
+        name = binfo.name
+        name isa AbstractString || continue
+        typ = get(oc_argtypes, (lambda_range, Symbol(name)), nothing)
+        typ === nothing && continue
+        binding = SyntaxTreeC(ctx3.graph, binfo.node_id)
+        JS.kind(binding) === JS.K"BindingId" || continue
+        binding_types[JS.byte_range(binding)] = typ
+    end
+    return binding_types
+end
+
+function collect_lambda_ranges(ctx3::JL.VariableAnalysisContext)
+    ranges = Dict{Int,UnitRange{Int}}()
+    for scope in ctx3.scopes
+        node = SyntaxTreeC(ctx3.graph, scope.node_id)
+        JS.kind(node) === JS.K"lambda" || continue
+        ranges[scope.lambda_id] = JS.byte_range(node)
+    end
+    return ranges
+end
+
+function collect_oc_argtypes_by_binding(inferred_tree::SyntaxTreeC)
+    oc_argtypes = Dict{Tuple{UnitRange{Int},Symbol},Any}()
+    traverse(inferred_tree) do st::SyntaxTreeC
+        JS.kind(st) === JS.K"new_opaque_closure" || return nothing
+        hasproperty(st, :type) || return nothing
+        entry = @something oc_argtypes_for_node(st.type, JS.byte_range(st)) return nothing
+        for i = 1:length(entry.argnames)
+            typ = entry.argtypes[i]
+            is_refined_slot(typ) || continue
+            oc_argtypes[(entry.range, entry.argnames[i])] = typ
+        end
+        return nothing
+    end
+    return oc_argtypes
+end
+
+function oc_argtypes_for_node(@nospecialize(typ), rng::UnitRange{Int})
+    typ isa CC.PartialOpaque || return nothing
+    source = typ.source
+    source isa Method || return nothing
+    argnames = (Base.method_argnames(source)[2:end]...,)
+    argtypes = @something opaque_closure_argtypes(typ) return nothing
+    length(argnames) == length(argtypes) || return nothing
+    return (; range = rng, argnames, argtypes)
 end
 
 # `st3` (not `st0`) so `K"return"`s introduced by macro expansion are picked up.
@@ -1377,7 +1438,7 @@ function build_inferred_context(
     inferred = @something infer_toplevel_tree(ctx3, st3, st0, context_module; world) return nothing
     # `JS.prune` minimizes provenance, so collect query-dispatch indexes first.
     surface_kind_index, macrocall_types = collect_provenance_indexes(inferred)
-    return InferredTreeContext(JS.prune(inferred), st3, surface_kind_index, macrocall_types)
+    return InferredTreeContext(JS.prune(inferred), ctx3, st3, surface_kind_index, macrocall_types)
 end
 
 """
@@ -1407,6 +1468,8 @@ nodes appropriately; see the source of each helper for the rationale behind its 
 | everything else                                        | `tmerge_at_range`            |
 """
 function get_type_for_range(ctx::InferredTreeContext, rng::UnitRange{<:Integer})
+    binding_typ = get(ctx.oc_argument_binding_types, rng, nothing)
+    binding_typ === nothing || return binding_typ
     surface_kind = surface_kind_at_range(ctx, rng)
     if surface_kind === JS.K"macrocall"
         return type_for_macroexpansion(ctx, rng)
@@ -1670,17 +1733,22 @@ function get_oc_argtypes_for_range(ctx::InferredTreeContext, rng::UnitRange{<:In
     for st in get(ctx.by_byte_range, rng, ())
         JS.kind(st) === JS.K"new_opaque_closure" || continue
         hasproperty(st, :type) || continue
-        oc = Base.unwrap_unionall(CC.widenconst(st.type))
-        oc isa DataType || continue
-        oc.name === Base.typename(Core.OpaqueClosure) || continue
-        argt = oc.parameters[1]
-        argt isa DataType || continue
-        argt <: Tuple || continue
-        params = argt.parameters
-        any(CC.isvarargtype, params) && continue
-        return Any[params...]
+        argtypes = @something opaque_closure_argtypes(st.type) continue
+        return argtypes
     end
     return nothing
+end
+
+function opaque_closure_argtypes(@nospecialize(typ))
+    oc = Base.unwrap_unionall(CC.widenconst(typ))
+    oc isa DataType || return nothing
+    oc.name === Base.typename(Core.OpaqueClosure) || return nothing
+    argt = oc.parameters[1]
+    argt isa DataType || return nothing
+    argt <: Tuple || return nothing
+    params = argt.parameters
+    any(CC.isvarargtype, params) && return nothing
+    return Any[params...]
 end
 
 end # module TypeAnnotation

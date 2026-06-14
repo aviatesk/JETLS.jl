@@ -589,6 +589,10 @@ end
                     end
                     """
                     _, ctx = type_annotate(code)
+                    xrng = range_of(code, "x in")
+                    yrng = range_of(code, "y in")
+                    @test widenconst(get_type_for_range(ctx, first(xrng):first(xrng))) === Int
+                    @test widenconst(get_type_for_range(ctx, first(yrng):first(yrng))) === Float64
                     @test widenconst(get_type_for_range(ctx, range_of(code, "x + y"))) === Float64
                     @test widenconst(get_type_for_range(ctx, range_of(code, "[x + y for x in xs for y in ys]"))) === Vector{Float64}
                 end

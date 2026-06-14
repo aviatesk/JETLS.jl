@@ -335,7 +335,7 @@ function collect_type_inlay_hints!(
         if k in JS.KSet"-> function ="
             emit_lambda_param_hints!(
                 inlay_hints, node, ctx, fi, uri, range, nontrivia_index,
-                postprocessor, label_cache, maxdepth, maxwidth, lazy_tooltips)
+                postprocessor, emitted_ranges, label_cache, maxdepth, maxwidth, lazy_tooltips)
         end
 
         # Emit function return hints on the signature, not the full definition.
@@ -363,7 +363,8 @@ function collect_type_inlay_hints!(
             if JS.kind(spec) === JS.K"=" && JS.numchildren(spec) >= 1
                 emit_destructure_var_hints!(
                     inlay_hints, spec[1], ctx, fi, uri, range, nontrivia_index,
-                    postprocessor, label_cache, maxdepth, maxwidth, lazy_tooltips)
+                    postprocessor, emitted_ranges, label_cache, maxdepth, maxwidth,
+                    lazy_tooltips)
             end
         end
         # Emit per-variable hints and skip the comprehension lowering node.
@@ -372,7 +373,8 @@ function collect_type_inlay_hints!(
             if spec !== nothing && JS.numchildren(spec) >= 1
                 emit_destructure_var_hints!(
                     inlay_hints, spec[1], ctx, fi, uri, range, nontrivia_index,
-                    postprocessor, label_cache, maxdepth, maxwidth, lazy_tooltips)
+                    postprocessor, emitted_ranges, label_cache, maxdepth, maxwidth,
+                    lazy_tooltips)
             end
             return nothing
         end
@@ -523,7 +525,8 @@ function emit_lambda_param_hints!(
         inlay_hints::Vector{InlayHint}, lambda::SyntaxTreeC,
         ctx::InferredTreeContext, fi::FileInfo, uri::URI, range::Range,
         nontrivia_index::Vector{Int}, postprocessor::LSPostProcessor,
-        label_cache::IdDict{Any,String}, maxdepth::Int, maxwidth::Int, lazy_tooltips::Bool
+        emitted_ranges::Set{UnitRange{Int}}, label_cache::IdDict{Any,String},
+        maxdepth::Int, maxwidth::Int, lazy_tooltips::Bool
     )
     argtypes = @something get_oc_argtypes_for_range(ctx, JS.byte_range(lambda)) return nothing
     JS.numchildren(lambda) >= 1 || return nothing
@@ -563,7 +566,8 @@ function emit_lambda_param_hints!(
         elseif pk === JS.K"tuple" # destructuring pattern — annotate each component
             emit_destructure_var_hints!(
                 inlay_hints, p, ctx, fi, uri, range, nontrivia_index,
-                postprocessor, label_cache, maxdepth, maxwidth, lazy_tooltips)
+                postprocessor, emitted_ranges, label_cache, maxdepth, maxwidth,
+                lazy_tooltips)
         end
     end
     return nothing
@@ -594,18 +598,19 @@ function emit_destructure_var_hints!(
         inlay_hints::Vector{InlayHint}, lhs::SyntaxTreeC,
         ctx::InferredTreeContext, fi::FileInfo, uri::URI, range::Range,
         nontrivia_index::Vector{Int}, postprocessor::LSPostProcessor,
-        label_cache::IdDict{Any,String}, maxdepth::Int, maxwidth::Int, lazy_tooltips::Bool
+        emitted_ranges::Set{UnitRange{Int}}, label_cache::IdDict{Any,String},
+        maxdepth::Int, maxwidth::Int, lazy_tooltips::Bool
     )
     k = JS.kind(lhs)
     if k === JS.K"Identifier"
         emit_destructure_var_hint!(
             inlay_hints, lhs, ctx, fi, uri, range, nontrivia_index, postprocessor,
-            label_cache, maxdepth, maxwidth, lazy_tooltips)
+            emitted_ranges, label_cache, maxdepth, maxwidth, lazy_tooltips)
     elseif k in JS.KSet"tuple parameters"
         for child in JS.children(lhs)
             emit_destructure_var_hints!(
                 inlay_hints, child, ctx, fi, uri, range, nontrivia_index, postprocessor,
-                label_cache, maxdepth, maxwidth, lazy_tooltips)
+                emitted_ranges, label_cache, maxdepth, maxwidth, lazy_tooltips)
         end
     end
     return nothing
@@ -615,9 +620,11 @@ function emit_destructure_var_hint!(
         inlay_hints::Vector{InlayHint}, lvar::SyntaxTreeC,
         ctx::InferredTreeContext, fi::FileInfo, uri::URI, range::Range,
         nontrivia_index::Vector{Int}, postprocessor::LSPostProcessor,
-        label_cache::IdDict{Any,String}, maxdepth::Int, maxwidth::Int, lazy_tooltips::Bool,
+        emitted_ranges::Set{UnitRange{Int}}, label_cache::IdDict{Any,String},
+        maxdepth::Int, maxwidth::Int, lazy_tooltips::Bool,
     )
     byterng = JS.byte_range(lvar)
+    byterng in emitted_ranges && return nothing
     ltyp = @something get_type_for_range(ctx, byterng) return nothing
     should_annotate_type(ltyp) || return nothing
     endpos = offset_to_xy(fi, JS.last_byte(lvar) + 1)
@@ -625,6 +632,7 @@ function emit_destructure_var_hint!(
     emit_type_hint!(
         inlay_hints, lvar, ltyp, fi, uri, nontrivia_index, endpos, postprocessor,
         label_cache, maxdepth, maxwidth, lazy_tooltips, byterng)
+    push!(emitted_ranges, byterng)
     return nothing
 end
 
