@@ -580,8 +580,8 @@ end
                 end
             end
 
-            # A multi-`for` comprehension lowers to nested generator closures.
-            # Requires `record_generator_argtype_observation!`'s synthetic observation recording.
+            # A multi-`for` comprehension lowers to nested iterator closures.
+            # Requires synthetic observations at iterator adaptor construction sites.
             @testset "multi-`for` comprehension inner variable" begin
                 let code = """
                     let xs = [1, 2, 3], ys = [1.0]
@@ -595,6 +595,18 @@ end
                     @test widenconst(get_type_for_range(ctx, first(yrng):first(yrng))) === Float64
                     @test widenconst(get_type_for_range(ctx, range_of(code, "x + y"))) === Float64
                     @test widenconst(get_type_for_range(ctx, range_of(code, "[x + y for x in xs for y in ys]"))) === Vector{Float64}
+                end
+
+                let code = """
+                    let xs = [1, 2, 3], ys = [1.0, -1.0]
+                        [x + y for x in xs for y in ys if y > 0]
+                    end
+                    """
+                    _, ctx = type_annotate(code)
+                    crng = range_of(code, " y > 0")
+                    @test widenconst(get_type_for_range(
+                        ctx, (first(crng)+1):(first(crng)+1))) === Float64
+                    @test widenconst(get_type_for_range(ctx, crng)) === Bool
                 end
             end
 

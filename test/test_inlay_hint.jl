@@ -982,6 +982,19 @@ end
                     end
                     """
             end
+
+            # `if cond` on an inner generator adds a filter predicate OC.
+            let code = """
+                    let xs = [1, 2, 3], ys = [1.0, -1.0]
+                        [x + y for x in xs for y in ys if y > 0]
+                    end
+                    """
+                @test apply_inlay_hints(code, get_type_inlay_hints(code)) == """
+                    let xs = [1, 2, 3]::Vector{$Int}, ys = [1.0, -1.0]::Vector{Float64}
+                        [(x::$Int + y::Float64)::Float64 for x::$Int in xs::Vector{$Int} for y::Float64 in ys::Vector{Float64} if (y::Float64 > 0)::Bool]::Vector{Float64}
+                    end
+                    """
+            end
         end
 
         @testset "typed iter var" begin

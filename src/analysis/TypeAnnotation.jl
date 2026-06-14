@@ -102,7 +102,7 @@ Untyped closure parameters (`do x`, `x -> ...`) have no declared types to feed t
 body's signature-view inference, so a single pass would annotate such bodies against
 `Tuple{Any,…}`. Instead, [`infer_toplevel_tree`](@ref) runs up to
 `MAX_OC_REFINEMENT_PASSES` inference passes: each pass records OC argtypes observed
-at calls and `Base.Generator` construction sites (`record_oc_argtype_observation!`,
+at calls and iterator adaptor construction sites (`record_oc_argtype_observation!`,
 keyed by body byte range), and the next pass substitutes the per-slot join into the
 declared-`Any` slots of the OC's argt (`refine_partial_opaque_argt`) before the eager
 body inference runs. Body
@@ -468,21 +468,23 @@ function CC.abstract_call_opaque_closure(
         si::CC.StmtInfo, sv::CC.AbsIntState, check::Bool)
 end
 
-# `Generator(f, iter)` invokes `f` as iteration advances. In nested generators,
-# such as multi-`for` comprehensions lowered through `Flatten`, that invocation is
-# mediated by iterator machinery, so the `PartialOpaque` call hook may not observe
-# it. Treat the construction as observing `f` at the iterator element type.
+# `Generator(f, iter)` and `Filter(f, iter)` invoke `f` as iteration advances. In
+# nested iterator pipelines, that invocation is mediated by iterator machinery, so
+# the `PartialOpaque` call hook may not observe it. Treat construction as observing
+# `f` at the iterator element type.
 function CC.abstract_call_gf_by_type(
         interp::ASTTypeAnnotator, @nospecialize(func), arginfo::CC.ArgInfo,
         si::CC.StmtInfo, @nospecialize(atype), sv::CC.AbsIntState, max_methods::Int
     )
-    func === Base.Generator && record_generator_argtype_observation!(interp, arginfo)
+    if func === Base.Generator || func === Base.Iterators.Filter
+        record_iterator_argtype_observation!(interp, arginfo)
+    end
     return @invoke CC.abstract_call_gf_by_type(
         interp::CC.AbstractInterpreter, func::Any, arginfo::CC.ArgInfo,
         si::CC.StmtInfo, atype::Any, sv::CC.AbsIntState, max_methods::Int)
 end
 
-function record_generator_argtype_observation!(
+function record_iterator_argtype_observation!(
         interp::ASTTypeAnnotator, arginfo::CC.ArgInfo
     )
     argtypes = arginfo.argtypes
