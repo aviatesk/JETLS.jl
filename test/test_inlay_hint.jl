@@ -970,11 +970,7 @@ end
                     """
             end
 
-            # Multi-`for` (cartesian) lowers to nested OCs. The outer iteration variable
-            # refines from its observed call sites; the inner lambda is only ever called
-            # at the type level inside `Iterators.flatten`'s machinery, so `y` honestly
-            # stays `Any` (cross-applying the outer's observation to it is prevented by
-            # the argname component of the refinement key).
+            # Multi-`for` lowers to nested generator OCs.
             let code = """
                     let xs = [1, 2, 3], ys = [1.0]
                         [x + y for x in xs for y in ys]
@@ -982,7 +978,7 @@ end
                     """
                 @test apply_inlay_hints(code, get_type_inlay_hints(code)) == """
                     let xs = [1, 2, 3]::Vector{$Int}, ys = [1.0]::Vector{Float64}
-                        [(x::$Int + y::Any)::Any for x::$Int in xs::Vector{$Int} for y in ys::Vector{Float64}]::Vector
+                        [(x::$Int + y::Float64)::Float64 for x::$Int in xs::Vector{$Int} for y in ys::Vector{Float64}]::Vector{Float64}
                     end
                     """
             end

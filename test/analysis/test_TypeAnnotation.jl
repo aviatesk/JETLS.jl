@@ -563,22 +563,17 @@ end
                 end
             end
 
-            # A multi-`for` comprehension lowers to nested generator closures. The outer
-            # iteration variable's closure is observed (so `x` refines to `Int`), but the
-            # inner generator closure is only ever called at the type level inside
-            # `Iterators.flatten`'s machinery — never as a `PartialOpaque` — so `y` is
-            # never observed and the body stays `Any`. Unlike the depth-3 case this is
-            # not a pass-cap limitation (more passes wouldn't help); resolving it needs
-            # observation at the generator construction site, a different mechanism.
-            @testset "multi-`for` comprehension inner variable is unobserved" begin
+            # A multi-`for` comprehension lowers to nested generator closures.
+            # Requires `record_generator_argtype_observation!`'s synthetic observation recording.
+            @testset "multi-`for` comprehension inner variable" begin
                 let code = """
                     let xs = [1, 2, 3], ys = [1.0]
                         [x + y for x in xs for y in ys]
                     end
                     """
                     _, ctx = type_annotate(code)
-                    @test_broken widenconst(get_type_for_range(ctx, range_of(code, "x + y"))) === Float64
-                    @test_broken widenconst(get_type_for_range(ctx, range_of(code, "[x + y for x in xs for y in ys]"))) === Vector{Float64}
+                    @test widenconst(get_type_for_range(ctx, range_of(code, "x + y"))) === Float64
+                    @test widenconst(get_type_for_range(ctx, range_of(code, "[x + y for x in xs for y in ys]"))) === Vector{Float64}
                 end
             end
 

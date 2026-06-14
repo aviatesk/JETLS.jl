@@ -101,10 +101,11 @@ No `Method` lookup, no dispatch, no `Base._which`.
 Untyped closure parameters (`do x`, `x -> ...`) have no declared types to feed the
 body's signature-view inference, so a single pass would annotate such bodies against
 `Tuple{Any,…}`. Instead, [`infer_toplevel_tree`](@ref) runs up to
-`MAX_OC_REFINEMENT_PASSES` inference passes: each pass records the argtypes every OC
-body is actually called with (`record_oc_argtype_observation!`, keyed by body byte
-range), and the next pass substitutes the per-slot join into the declared-`Any` slots of
-the OC's argt (`refine_partial_opaque_argt`) before the eager body inference runs. Body
+`MAX_OC_REFINEMENT_PASSES` inference passes: each pass records OC argtypes observed
+at calls and `Base.Generator` construction sites (`record_oc_argtype_observation!`,
+keyed by body byte range), and the next pass substitutes the per-slot join into the
+declared-`Any` slots of the OC's argt (`refine_partial_opaque_argt`) before the eager
+body inference runs. Body
 annotations therefore stay a deterministic signature view — the signature itself is just
 inferred from observed call sites, the same annotation model as Kotlin/Swift-style
 lambda parameter inference. Refinement fills only the unannotated blanks, per slot:
@@ -193,9 +194,9 @@ struct ASTTypeAnnotator <: CC.AbstractInterpreter
     oc_body_trees::IdDict{Method,SyntaxTreeC}
     # Push site: `abstract_eval_new_opaque_closure`. Consume site: `finishinfer!`.
     oc_methods_to_annotate::Set{Method}
-    # Per OC body byte range, the per-slot join of call-site argtypes observed for
-    # slots the user left untyped (`Union{}` = unobserved). Shared across all thunk
-    # interps of one inference pass; see `record_oc_argtype_observation!`.
+    # Per OC body byte range, the per-slot join of argtypes observed for slots the
+    # user left untyped (`Union{}` = unobserved). Shared across all thunk interps of
+    # one inference pass; see `record_oc_argtype_observation!`.
     oc_argtype_observations::OCArgtypeTable
     # Refinements derived from the previous pass's observations, applied by
     # `refine_partial_opaque_argt`; `nothing` during the first pass.
@@ -467,9 +468,48 @@ function CC.abstract_call_opaque_closure(
         si::CC.StmtInfo, sv::CC.AbsIntState, check::Bool)
 end
 
-# Join each call site's argtypes into `interp.oc_argtype_observations`, per slot —
-# see `refinable_oc_shape` / `is_unannotated_slot` for the matching preconditions and
-# the slot-eligibility policy.
+# `Generator(f, iter)` invokes `f` as iteration advances. In nested generators,
+# such as multi-`for` comprehensions lowered through `Flatten`, that invocation is
+# mediated by iterator machinery, so the `PartialOpaque` call hook may not observe
+# it. Treat the construction as observing `f` at the iterator element type.
+function CC.abstract_call_gf_by_type(
+        interp::ASTTypeAnnotator, @nospecialize(func), arginfo::CC.ArgInfo,
+        si::CC.StmtInfo, @nospecialize(atype), sv::CC.AbsIntState, max_methods::Int
+    )
+    func === Base.Generator && record_generator_argtype_observation!(interp, arginfo)
+    return @invoke CC.abstract_call_gf_by_type(
+        interp::CC.AbstractInterpreter, func::Any, arginfo::CC.ArgInfo,
+        si::CC.StmtInfo, atype::Any, sv::CC.AbsIntState, max_methods::Int)
+end
+
+function record_generator_argtype_observation!(
+        interp::ASTTypeAnnotator, arginfo::CC.ArgInfo
+    )
+    argtypes = arginfo.argtypes
+    length(argtypes) == 3 || return nothing
+    closure = CC.widenslotwrapper(argtypes[2])
+    closure isa CC.PartialOpaque || return nothing
+    iter_eltype = @something iterator_upper_bound_type(interp, argtypes[3]) return nothing
+    is_refined_slot(iter_eltype) || return nothing
+    return record_oc_argtype_observation!(
+        interp, closure, CC.ArgInfo(nothing, Any[closure.env, iter_eltype]))
+end
+
+function iterator_upper_bound_type(interp::ASTTypeAnnotator, @nospecialize(iter_arg))
+    iter_type = CC.widenconst(CC.widenslotwrapper(iter_arg))
+    iter_type isa Type || return nothing
+    iter_type === Any && return nothing
+    rt = try
+        Base._return_type(Base._iterator_upper_bound, Tuple{iter_type}, interp.world)
+    catch
+        return nothing
+    end
+    return rt isa Type ? rt : nothing
+end
+
+# Join observed argtypes into `interp.oc_argtype_observations`, per slot — see
+# `refinable_oc_shape` / `is_unannotated_slot` for the matching preconditions and the
+# slot-eligibility policy.
 function record_oc_argtype_observation!(
         interp::ASTTypeAnnotator, closure::CC.PartialOpaque, arginfo::CC.ArgInfo
     )
