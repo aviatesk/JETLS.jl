@@ -419,6 +419,14 @@ end
         """, "(local) y :: Int")
     end
 
+    @testset "multi-for comprehension iteration binding" begin
+        hover_test("""
+            let xs = [1, 2, 3], ys = [1.0]
+                [x + y for x in xs for y│ in ys]
+            end
+        """, "(argument) y :: Float64")
+    end
+
     @testset "closure values format as a function-arrow signature" begin
         # closures get rewritten to `Core.OpaqueClosure` by JETLS' inference
         # pipeline; surface that as `(args...) -> rt` instead of leaking the

@@ -940,7 +940,7 @@ end
                     """
                 @test apply_inlay_hints(code, get_type_inlay_hints(code)) == """
                     let xs = rand(3)::Vector{Float64}
-                        [2x::Float64 for x in xs::Vector{Float64}]::Vector{Float64}
+                        [2x::Float64 for x::Float64 in xs::Vector{Float64}]::Vector{Float64}
                     end
                     """
             end
@@ -965,7 +965,7 @@ end
                     """
                 @test apply_inlay_hints(code, get_type_inlay_hints(code)) == """
                     let xs = [1, 2, 3]::Vector{$Int}
-                        [x for x in xs::Vector{$Int} if (x::$Int > 0)::Bool]::Vector{$Int}
+                        [x for x::$Int in xs::Vector{$Int} if (x::$Int > 0)::Bool]::Vector{$Int}
                     end
                     """
             end
@@ -978,7 +978,7 @@ end
                     """
                 @test apply_inlay_hints(code, get_type_inlay_hints(code)) == """
                     let xs = [1, 2, 3]::Vector{$Int}, ys = [1.0]::Vector{Float64}
-                        [(x::$Int + y::Float64)::Float64 for x::$Int in xs::Vector{$Int} for y in ys::Vector{Float64}]::Vector{Float64}
+                        [(x::$Int + y::Float64)::Float64 for x::$Int in xs::Vector{$Int} for y::Float64 in ys::Vector{Float64}]::Vector{Float64}
                     end
                     """
             end

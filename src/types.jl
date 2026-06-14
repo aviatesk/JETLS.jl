@@ -83,6 +83,8 @@ struct InferredTreeContext
     # inside an outer OC body (e.g. multi-`for` comprehension, closure-of-closure) is
     # filtered when querying at the inner OC's range.
     oc_body_scope::Dict{Int,UnitRange{Int}}
+    # Refined OC argument types keyed by argument binding byte range.
+    oc_argument_binding_types::Dict{UnitRange{Int},Any}
 end
 
 const InferredContextCacheKey = Tuple{Module,UInt,UnitRange{Int}}
