@@ -9,7 +9,20 @@ using LinearAlgebra: LinearAlgebra
 
 include("../HierarchicalTestSet.jl")
 
-module type_annotate_module end
+module type_annotate_module
+# Helper for closure-argument-refinement tests: a user higher-order function the
+# `PartialOpaque` gets const-prop forwarded into.
+callback(f, x) = f(x)
+# Side-effect-only iteration helper mirroring `JETLS.traverse`'s shape (worklist
+# mutation, callback result discarded).
+function eachint(f, xs::Vector{Int})
+    stack = copy(xs)
+    while !isempty(stack)
+        f(pop!(stack))
+    end
+    return nothing
+end
+end
 
 # Run the full TypeAnnotation pipeline through its exported driver and return
 # `(fi, ctx)` for the toplevel containing byte 1 — i.e. the *first* top-level
@@ -295,18 +308,20 @@ end
         # bodies. Body inference uses the eager `most_general_argtypes(po.typ)`
         # specialization, and per-call-site specializations only update the call site
         # annotation (`finishinfer!`'s marker is consumed once at the eager `finishinfer!`
-        # and skipped for subsequent dispatches). The untyped multi-call shape below is the
-        # most observable demonstration: under "last-write-wins" the body would depend on
-        # which call site CC infers last; here it should be `Any`.
+        # and skipped for subsequent dispatches). For untyped parameters the signature
+        # itself is inferred as the join of observed call-site argtypes (see "Closure
+        # argument-type refinement" in the `TypeAnnotation` module docstring) — still
+        # deterministic (a join over the call-site set, not "last-write-wins"), so the
+        # untyped multi-call shape below annotates the body at `Union{Float64, Int}`.
         @testset "closure body annotation is signature-based" begin
             let code = """
                 function multi_call(xs::Vector{Float64}, ys::Vector{Int})
-                    f(x) = 2x
+                    f(x) = 2 * x
                     (f(xs[1]), f(ys[1]))
                 end
                 """
                 _, ctx = type_annotate(code)
-                @test widenconst(get_type_for_range(ctx, range_of(code, "2x"))) === Any
+                @test widenconst(get_type_for_range(ctx, range_of(code, "2 * x"))) === Union{Float64, Int}
                 @test widenconst(get_type_for_range(ctx, range_of(code, "f(xs[1])"))) === Float64
                 @test widenconst(get_type_for_range(ctx, range_of(code, "f(ys[1])"))) === Int
             end
@@ -444,16 +459,14 @@ end
                 @test widenconst(get_type_for_range(ctx, map_call)) === Vector{Int}
             end
 
-            # Untyped `do x`: the body is annotated from the eager
-            # `most_general_argtypes(Tuple{Any})` specialization (signature view, like a
-            # top-level untyped method body), so `x * 2` is `Any`. That matches what native
-            # closure inference would expose for the method body.
-            # The call-site annotation widens to `Vector` though: the OC's rt parameter
-            # stays `T<:Any` (no concrete rt to bind from the eager body), so
-            # `Generator{Vector{Int}, F<:OC{Tuple{Any}, T}}` is non-concrete and
-            # `Base._collect` can't recover the element type. Native closures dispatch
-            # through the synthetic struct's method table and infer this as `Vector{Int}`;
-            # matching that here would need call-site-aware refinement (thus kept `@test_broken`).
+            # Untyped `do x`: pass 1 observes the OC being called with `Int` inside
+            # `map`'s `collect` chain (the `PartialOpaque` survives there via
+            # `PartialStruct{Generator}` forwarding) and pass 2 re-infers the body
+            # against the refined `Tuple{Int}` signature, so `x * 2` annotates as `Int`.
+            # The refined rt then makes `Generator{Vector{Int}, OC{Tuple{Int}, Int}}`
+            # concrete enough for `Base._collect`'s `Compiler.return_type` probe, sizing
+            # the call-site annotation to `Vector{Int}` — matching native closure
+            # inference on both counts.
             let code = """
                 function with_do(xs::Vector{Int})
                     map(xs) do x
@@ -462,9 +475,176 @@ end
                 end
                 """
                 _, ctx = type_annotate(code)
-                @test widenconst(get_type_for_range(ctx, range_of(code, "x * 2"))) === Any
+                @test widenconst(get_type_for_range(ctx, range_of(code, "x * 2"))) === Int
                 map_call = range_of(code, "map(xs) do x\n        x * 2\n    end")
-                @test_broken widenconst(get_type_for_range(ctx, map_call)) === Vector{Int}
+                @test widenconst(get_type_for_range(ctx, map_call)) === Vector{Int}
+            end
+        end
+
+        # Closure argument-type refinement (see the `TypeAnnotation` module docstring):
+        # untyped closure parameters get their signature inferred from the join of
+        # observed call-site argtypes across inference passes, instead of degrading
+        # the body view to `Any`.
+        @testset "untyped closure argument refinement" begin
+            # User higher-order function: `aggressive_constant_propagation` forwards
+            # the `PartialOpaque` into `callback`'s body, so the OC call inside it is
+            # observed precisely — captured variables resolve too.
+            @testset "user HOF with captured variable" begin
+                let code = """
+                    function withcls(x::Float64)
+                        y = rand()
+                        res = callback(x) do z
+                            z + y
+                        end
+                        res
+                    end
+                    """
+                    _, ctx = type_annotate(code)
+                    @test widenconst(get_type_for_range(ctx, range_of(code, "z + y"))) === Float64
+                    @test widenconst(get_type_for_range(ctx, range_of(code, "res"))) === Float64
+                end
+            end
+
+            @testset "direct call of untyped closure" begin
+                let code = """
+                    function direct(v::Float64)
+                        f(x) = x + 1
+                        f(v)
+                    end
+                    """
+                    _, ctx = type_annotate(code)
+                    @test widenconst(get_type_for_range(ctx, range_of(code, "x + 1"))) === Float64
+                    @test widenconst(get_type_for_range(ctx, range_of(code, "f(v)"))) === Float64
+                end
+            end
+
+            @testset "Base.Compiler.return_type of untyped closure" begin
+                let code = """
+                    let
+                        f = x -> x + 1
+                        Base.Compiler.return_type(f, Tuple{Int})
+                    end
+                    """
+                    _, ctx = type_annotate(code)
+                    # `return_type` sees the rewritten closure as a `PartialOpaque`,
+                    # but its compiler tfunc does not infer the OC body through that
+                    # wrapper. Since there is no regular call site to observe `x::Int`,
+                    # the closure signature and the `return_type` result stay imprecise.
+                    @test_broken widenconst(get_type_for_range(ctx, range_of(code, "x + 1"))) === Int
+                    @test_broken get_type_for_range(ctx, range_of(code, "Base.Compiler.return_type(f, Tuple{Int})")) === Core.Const(Int)
+                end
+            end
+
+            # Nested: the inner closure's call sites live inside the outer do-closure's
+            # body, so its observations only become informative once the outer body is
+            # re-inferred under its own refinement — the 3rd pass picks them up.
+            @testset "nested untyped closures" begin
+                let code = """
+                    function nested(xs::Vector{Int})
+                        map(xs) do x
+                            g(y) = y + x
+                            g(2 * x)
+                        end
+                    end
+                    """
+                    _, ctx = type_annotate(code)
+                    @test widenconst(get_type_for_range(ctx, range_of(code, "y + x"))) === Int
+                    @test widenconst(get_type_for_range(ctx, range_of(code, "g(2 * x)"))) === Int
+                end
+            end
+
+            # Refinement propagates one nesting level per pass, so `MAX_OC_REFINEMENT_PASSES`
+            # (=3) covers closure nesting up to depth 2. At depth 3 — each closure called
+            # with an expression depending on the enclosing closure's parameter — the
+            # innermost body would only be refined by a 4th pass and stays `Any`:
+            #   pass 1 observes `x` (from `map`); pass 2 applies `x::Int`, observes `y`;
+            #   pass 3 applies `y::Int`, observes `z` — but `z`'s refinement is never applied.
+            @testset "depth-3 nested closures exceed the pass cap" begin
+                let code = """
+                    function nested3(xs::Vector{Int})
+                        map(xs) do x
+                            g = function (y)
+                                h = z -> z + y
+                                h(2 * y)
+                            end
+                            g(2 * x)
+                        end
+                    end
+                    """
+                    _, ctx = type_annotate(code)
+                    # Outer two levels refine within the cap.
+                    @test widenconst(get_type_for_range(ctx, range_of(code, "2 * x"))) === Int
+                    @test widenconst(get_type_for_range(ctx, range_of(code, "2 * y"))) === Int
+                    # The innermost body would need a 4th pass to refine `z`.
+                    @test_broken widenconst(get_type_for_range(ctx, range_of(code, "z + y"))) === Int
+                end
+            end
+
+            # A multi-`for` comprehension lowers to nested generator closures.
+            # Requires `record_generator_argtype_observation!`'s synthetic observation recording.
+            @testset "multi-`for` comprehension inner variable" begin
+                let code = """
+                    let xs = [1, 2, 3], ys = [1.0]
+                        [x + y for x in xs for y in ys]
+                    end
+                    """
+                    _, ctx = type_annotate(code)
+                    @test widenconst(get_type_for_range(ctx, range_of(code, "x + y"))) === Float64
+                    @test widenconst(get_type_for_range(ctx, range_of(code, "[x + y for x in xs for y in ys]"))) === Vector{Float64}
+                end
+            end
+
+            # User-written parameter annotations are authoritative: the observed `Int`
+            # must not narrow the declared `Number` view.
+            @testset "user annotation is not narrowed" begin
+                let code = """
+                    function annotated(xs::Vector{Int})
+                        map(xs) do x::Number
+                            identity(x)
+                        end
+                    end
+                    """
+                    _, ctx = type_annotate(code)
+                    @test widenconst(get_type_for_range(ctx, range_of(code, "identity(x)"))) === Number
+                end
+            end
+
+            # A side-effect-only `do` body returning `nothing` bakes a concrete rt into
+            # the OC type already in pass 1 (`refine_partial_opaque_rt`), so call sites
+            # see a non-UnionAll `PartialOpaque`. The observation side must accept that
+            # shape — with the old UnionAll-only guard such closures were never observed
+            # and their bodies stayed `Any`.
+            @testset "nothing-returning closure through side-effect HOF" begin
+                let code = """
+                    function bump_all(out::Vector{Int}, xs::Vector{Int})
+                        eachint(xs) do z
+                            push!(out, z + 1)
+                            nothing
+                        end
+                        return out
+                    end
+                    """
+                    _, ctx = type_annotate(code)
+                    # The lowered `z + 1` node's range includes leading trivia here, so
+                    # query the `z` use and the enclosing `push!` call instead.
+                    zrng = range_of(code, "z + 1")
+                    @test widenconst(get_type_for_range(ctx, first(zrng):first(zrng))) === Int
+                    pushrng = range_of(code, "push!(out, z + 1)")
+                    @test widenconst(get_type_for_range(ctx, pushrng)) === Vector{Int}
+                end
+            end
+
+            # No call sites → nothing observed → the body keeps the `Any` view.
+            @testset "never-called closure stays Any" begin
+                let code = """
+                    function unused_closure()
+                        f(x) = x + 1
+                        f
+                    end
+                    """
+                    _, ctx = type_annotate(code)
+                    @test widenconst(get_type_for_range(ctx, range_of(code, "x + 1"))) === Any
+                end
             end
         end
 
@@ -687,6 +867,19 @@ end
             _, ctx = type_annotate(code)
             rng = range_of(code, "Any[Any for _ in 1:n]")
             @test widenconst(get_type_for_range(ctx, rng)) === Vector{Any}
+        end
+
+        # Same collision for short-form funcdef bodies; the juxtaposed `2x` call's
+        # kind takes the range, so the synthesized `*` callee no longer leaks into
+        # the merge.
+        let code = """
+            function juxt(xs::Vector{Float64})
+                g(x) = 2x
+                g(xs[1])
+            end
+            """
+            _, ctx = type_annotate(code)
+            @test widenconst(get_type_for_range(ctx, range_of(code, "2x"))) === Float64
         end
     end
 
@@ -1194,21 +1387,17 @@ end
                 @test typ === Union{Int, String, Nothing}
             end
         end
-        # A user-written `return X` inside a branching expression exits the
-        # function entirely; `X` must not contribute to the enclosing
-        # expression's value (only the implicit fall-through does). When
-        # `X` is itself a tail-recursing form (`if` / `&&` / `||` / ternary
-        # / comparison / `block`), lowering splits it into per-branch tail
-        # returns at narrower byte ranges than `X` itself, so a literal
-        # byte-range match doesn't suffice. The walker over `st3`
-        # (post-desugaring, post-macro-expansion) handles all these uniform
-        # cases since they're already collapsed to `K"if"` / `K"block"` /
-        # nested `K"return"`.
+        # A user-written `return X` inside a branching expression exits the function
+        # entirely; `X` must not contribute to the enclosing expression's value (only the
+        # implicit fall-through does). When `X` is itself a tail-recursing form
+        # (`if` / `&&` / `||` / ternary / comparison / `block` / `try`-`catch`),
+        # lowering splits it into per-branch tail returns at narrower byte ranges than `X`
+        # itself, so a literal byte-range match doesn't suffice. The walker over `st3`
+        # (post-desugaring, post-macro-expansion) handles all these uniform cases since
+        # they collect the nested `K"return"`s regardless of the wrapping form.
         #
-        # In every case below, the outer `if b ... end` should resolve to
-        # `Nothing` (the implicit fall-through is the only path that reaches
-        # `out`). `try` / `catch` is not yet covered (recorded as
-        # `@test_broken`).
+        # In every case below, the outer `if b ... end` should resolve to `Nothing`
+        # (the implicit fall-through is the only path that reaches `out`).
         @testset "user return inside branching expression" begin
             @testset "simple value" begin
                 let code = """

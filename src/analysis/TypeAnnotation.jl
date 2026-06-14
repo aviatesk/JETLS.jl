@@ -96,6 +96,24 @@ No `Method` lookup, no dispatch, no `Base._which`.
     entries. Static svec evaluation avoids both; the synthetic-name slot simply
     degrades to `Any` (see Limitations).
 
+# Closure argument-type refinement
+
+Untyped closure parameters (`do x`, `x -> ...`) have no declared types to feed the
+body's signature-view inference, so a single pass would annotate such bodies against
+`Tuple{Any,…}`. Instead, [`infer_toplevel_tree`](@ref) runs up to
+`MAX_OC_REFINEMENT_PASSES` inference passes: each pass records OC argtypes observed
+at calls and `Base.Generator` construction sites (`record_oc_argtype_observation!`,
+keyed by body byte range), and the next pass substitutes the per-slot join into the
+declared-`Any` slots of the OC's argt (`refine_partial_opaque_argt`) before the eager
+body inference runs. Body
+annotations therefore stay a deterministic signature view — the signature itself is just
+inferred from observed call sites, the same annotation model as Kotlin/Swift-style
+lambda parameter inference. Refinement fills only the unannotated blanks, per slot:
+non-`Any` user annotations are authoritative and never refined (such slots behave
+exactly like top-level typed method parameters), while an explicit `::Any` annotation
+is indistinguishable from an unannotated parameter after lowering and is refined the
+same way. Closures never called within the analyzed tree keep their `Any` view.
+
 # Limitations
 
 The static-svec approach inherits a few precision losses around lowering's
@@ -141,6 +159,15 @@ export InferredTreeContext, build_inferred_context_for_range, get_matches_for_ra
 
 struct ASTTypeAnnotatorToken end
 
+# Keyed per OC body byte range plus the OC's parameter names — both stable across
+# re-lowering passes, unlike `Method` identity. The byte range alone is ambiguous:
+# nested generator lambdas (`[x + y for x in xs for y in ys]`) all collapse their body
+# provenance onto the same user expression, and a range-only key would cross-apply one
+# lambda's observations to another. One entry per OC parameter slot; used both for
+# call-site argtype observations and for the refinements derived from them.
+const OCArgtypeKey = Tuple{UnitRange{Int},Tuple{Vararg{Symbol}}}
+const OCArgtypeTable = Dict{OCArgtypeKey,Vector{Any}}
+
 struct SyntheticFilter
     bindings::JL.Bindings
     destructure_ranges::Vector{UnitRange{Int}}
@@ -167,6 +194,19 @@ struct ASTTypeAnnotator <: CC.AbstractInterpreter
     oc_body_trees::IdDict{Method,SyntaxTreeC}
     # Push site: `abstract_eval_new_opaque_closure`. Consume site: `finishinfer!`.
     oc_methods_to_annotate::Set{Method}
+    # Per OC body byte range, the per-slot join of argtypes observed for slots the
+    # user left untyped (`Union{}` = unobserved). Shared across all thunk interps of
+    # one inference pass; see `record_oc_argtype_observation!`.
+    oc_argtype_observations::OCArgtypeTable
+    # Refinements derived from the previous pass's observations, applied by
+    # `refine_partial_opaque_argt`; `nothing` during the first pass.
+    oc_argtype_refinements::Union{Nothing,OCArgtypeTable}
+    # `Method` → refinement-key memo for `refinable_oc_shape`. The key derivation
+    # (`Base.method_argnames` + tuple construction) allocates, and the observation hook
+    # runs on every `PartialOpaque` call-site evaluation; the key is immutable per
+    # `Method` and `Method`s are fresh per pass, so per-interp memoization is exact.
+    # `nothing` marks Methods without a registered body tree.
+    oc_key_memo::IdDict{Method,Union{Nothing,OCArgtypeKey}}
     function ASTTypeAnnotator(
             world::UInt,
             toptree::SyntaxTreeC,
@@ -178,10 +218,14 @@ struct ASTTypeAnnotator <: CC.AbstractInterpreter
             opt_params::CC.OptimizationParams = CC.OptimizationParams(),
             inf_cache::Vector{CC.InferenceResult} = CC.InferenceResult[],
             oc_body_trees::IdDict{Method,SyntaxTreeC} = IdDict{Method,SyntaxTreeC}(),
-            oc_methods_to_annotate::Set{Method} = Set{Method}()
+            oc_methods_to_annotate::Set{Method} = Set{Method}(),
+            oc_argtype_observations::OCArgtypeTable = OCArgtypeTable(),
+            oc_argtype_refinements::Union{Nothing,OCArgtypeTable} = nothing,
+            oc_key_memo::IdDict{Method,Union{Nothing,OCArgtypeKey}} = IdDict{Method,Union{Nothing,OCArgtypeKey}}()
         )
         return new(world, inf_params, opt_params, inf_cache, toptree, topmi,
-            filter, oc_body_trees, oc_methods_to_annotate)
+            filter, oc_body_trees, oc_methods_to_annotate,
+            oc_argtype_observations, oc_argtype_refinements, oc_key_memo)
     end
 end
 CC.InferenceParams(interp::ASTTypeAnnotator) = interp.inf_params
@@ -252,15 +296,36 @@ end
 # accepts a class of incompleteness, so this unsoundness is also judged to be acceptable.
 # In most cases, it could become a problem when user code explicitly defines method
 # definitions for the `OpaqueClosure` type, and such cases are currently not very common.
+# The `PartialOpaque` construction replicates the default method instead of `@invoke`ing it:
+# the default eagerly infers the body against the *unrefined* signature before
+# `refine_partial_opaque_argt` could apply, and call-site observations recorded inside
+# that signature-view-with-`Any` frame would poison the per-slot joins
+# (`tmerge(Any, T) === Any`), blocking refinement convergence for nested closures.
+# Replicating lets the single eager body inference run against the refined signature.
 function CC.abstract_eval_new_opaque_closure(
         interp::ASTTypeAnnotator, e::Expr, sstate::CC.StatementState, sv::CC.InferenceState
     )
-    future = @invoke CC.abstract_eval_new_opaque_closure(
-        interp::CC.AbstractInterpreter, e::Expr, sstate::CC.StatementState, sv::CC.InferenceState)
-    rt_exct_effects = future[]
-    po = rt_exct_effects.rt
-    po isa CC.PartialOpaque || return future
-    CC.call_result_unused(sv, sv.currpc) && return future
+    ea = e.args
+    if length(ea) < 5
+        return @invoke CC.abstract_eval_new_opaque_closure(
+            interp::CC.AbstractInterpreter, e::Expr, sstate::CC.StatementState,
+            sv::CC.InferenceState)
+    end
+    argtypes = CC.collect_argtypes(interp, ea, sstate, sv)
+    if argtypes === nothing
+        return CC.Future(CC.RTEffects(Union{}, Any, CC.EFFECTS_THROWS))
+    end
+    rt = CC.opaque_closure_tfunc(CC.typeinf_lattice(interp),
+        argtypes[1], argtypes[2], argtypes[3], argtypes[5], argtypes[6:end],
+        CC.frame_instance(sv))
+    if ea[4] !== true && rt isa CC.PartialOpaque
+        rt = CC.widenconst(rt) # propagation of `PartialOpaque` disabled
+    end
+    effects = CC.Effects() # match the default method's `TODO` placeholder
+    if !(rt isa CC.PartialOpaque) || CC.call_result_unused(sv, sv.currpc)
+        return CC.Future(CC.RTEffects(rt, Any, effects))
+    end
+    po = refine_partial_opaque_argt(interp, rt)
     # Mark this OC's `Method`; `finishinfer!` annotates the citree (signature
     # view, like top-level methods) and atomically consumes the marker, so
     # per-call-site specializations see it missing and skip. Deletion must
@@ -268,17 +333,15 @@ function CC.abstract_eval_new_opaque_closure(
     # — that continuation can run synchronously (cache-hit body inference)
     # before the body's `finishinfer!`, breaking the invariant.
     push!(interp.oc_methods_to_annotate, po.source)
-    # Re-run the eager body inference the default just did; CC's specialization
-    # cache absorbs the duplication and this avoids re-implementing the
-    # function's `:opaque_closure`-Expr argument-collection plumbing.
-    argtypes = CC.most_general_argtypes(po)
-    pushfirst!(argtypes, po.env)
-    arginfo, stmtinfo = CC.ArgInfo(nothing, argtypes), CC.StmtInfo(true, false)
+    oc_argtypes = CC.most_general_argtypes(po)
+    pushfirst!(oc_argtypes, po.env)
+    arginfo, stmtinfo = CC.ArgInfo(nothing, oc_argtypes), CC.StmtInfo(true, false)
     callinfo = CC.abstract_call_opaque_closure(
         interp, po, arginfo, stmtinfo, sv, #=check=#false)::CC.Future
-    return CC.Future{CC.RTEffects}(callinfo, interp, sv) do callinfo, _, _
+    return CC.Future{CC.RTEffects}(callinfo, interp, sv) do callinfo, _, sv
+        sv.stmt_info[sv.currpc] = CC.OpaqueClosureCreateInfo(callinfo)
         refined_rt = refine_partial_opaque_rt(po, callinfo.rt)
-        return CC.RTEffects(refined_rt, rt_exct_effects.exct, rt_exct_effects.effects, rt_exct_effects.refinements)
+        return CC.RTEffects(refined_rt, Any, effects)
     end
 end
 
@@ -295,6 +358,182 @@ function refine_partial_opaque_rt(po::CC.PartialOpaque, @nospecialize inferred_r
         return po
     end
     return CC.PartialOpaque(refined_typ, po.env, po.parent, po.source)
+end
+
+# Shared precondition matcher for the two sides of closure argtype refinement —
+# `record_oc_argtype_observation!` (observation) and `refine_partial_opaque_argt`
+# (application): resolve a `PartialOpaque` to its refinement key (the OC body's byte
+# range — stable across re-lowering passes, unlike `Method` identity) and its declared
+# argt parameter list. Returns `nothing` when any precondition fails:
+# - `source` must be a `Method` registered in `interp.oc_body_trees`, i.e. an OC this
+#   pipeline created; OCs constructed inside foreign code under inference don't necessarily
+#   correspond to any tree we annotate.
+# - `typ` must be one of the two shapes our pipeline produces: the single-UnionAll-over-rt
+#   shape from `opaque_closure_tfunc` (rt still a free var), or the concrete `DataType`
+#   left after `refine_partial_opaque_rt` bakes the rt in — the latter is what call sites
+#   see whenever the eager body inference produced a concrete rt, so the observation side
+#   must accept it or such closures are never observed.
+#   Anything more complex (e.g. hand-written OCs with free argt vars, where `typ.body`
+#   is still a `UnionAll`) bails: `refine_partial_opaque_argt`'s reconstruction is only
+#   correct for the simple shapes, and recording what the application side can't consume
+#   would only waste passes.
+# - argt must be a plain `Vararg`-free `Tuple`, so slots map 1:1 onto call-site argtypes.
+function refinable_oc_shape(interp::ASTTypeAnnotator, po::CC.PartialOpaque)
+    m = po.source
+    m isa Method || return nothing
+    key = @something get!(interp.oc_key_memo, m) do
+        body_tree = get(interp.oc_body_trees, m, nothing)
+        body_tree === nothing && return nothing
+        argnames = (Base.method_argnames(m)[2:end]...,) # drop the implicit env slot
+        return (JS.byte_range(body_tree), argnames)
+    end return nothing
+    # The typ-dependent checks can't be memoized per `Method`: the same `Method` flows
+    # in both unrefined and refined `PartialOpaque`s, whose `typ`s differ.
+    typ = po.typ
+    oc = typ isa UnionAll ? typ.body : typ
+    oc isa DataType || return nothing
+    argt = oc.parameters[1]
+    argt isa DataType || return nothing
+    argt <: Tuple || return nothing
+    params = argt.parameters
+    any(CC.isvarargtype, params) && return nothing
+    return (; key, params)
+end
+
+# Refinement-eligibility policy for a single parameter slot: only slots the user left
+# unannotated participate, so non-`Any` annotations stay authoritative (an explicit
+# `::Any` is indistinguishable from an unannotated parameter after lowering and is
+# treated the same way).
+#
+# The application side always sees a freshly lowered argt, where unannotated slots are
+# still literally `Any` — the 1-arg form suffices. The observation side sees the
+# *post-refinement* `PartialOpaque`, where a previously refined slot is no longer
+# `Any`; the 3-arg form extends the test with the pass's applied refinement entry so
+# refined slots keep being re-observed and the refinement set stays stable across
+# passes (see `merge_refinements`).
+is_unannotated_slot(@nospecialize declared) = declared === Any
+is_unannotated_slot(@nospecialize(declared), refined::Union{Nothing,Vector{Any}}, i::Int) =
+    is_unannotated_slot(declared) || (refined !== nothing && is_refined_slot(refined[i]))
+
+# `Union{}` marks an unobserved slot; an `Any` join carries no refinement.
+is_refined_slot(@nospecialize t) = !(t === Union{} || t === Any)
+
+# Substitute call-site-observed types (joined by the previous inference pass; see
+# `record_oc_argtype_observation!`) into the declared-`Any` slots of `PartialOpaque.typ`'s
+# argt parameter. The body's eager signature-view inference and `refine_partial_opaque_rt`
+# then both run against the refined signature, so the body annotation and the OC's rt
+# parameter become as precise as the observed call sites allow. The body annotation thus
+# remains a deterministic signature view — the signature itself is just inferred from
+# call sites, the same annotation model as Kotlin/Swift-style lambda parameter inference.
+function refine_partial_opaque_argt(interp::ASTTypeAnnotator, po::CC.PartialOpaque)
+    refinements = @something interp.oc_argtype_refinements return po
+    # Application only ever sees the freshly constructed `PartialOpaque` (rt refinement
+    # happens later, in `abstract_eval_new_opaque_closure`'s continuation), so the typ
+    # is the UnionAll-over-rt shape; the guard documents the reconstruction's precondition
+    # rather than a reachable case.
+    typ = po.typ
+    typ isa UnionAll || return po
+    (; key, params) = @something refinable_oc_shape(interp, po) return po
+    refined_slots = @something get(refinements, key, nothing) return po
+    length(params) == length(refined_slots) || return po
+    newparams = Any[params[i] for i = 1:length(params)]
+    changed = false
+    for i = 1:length(params)
+        is_unannotated_slot(params[i]) || continue
+        is_refined_slot(refined_slots[i]) || continue
+        newparams[i] = refined_slots[i]
+        changed = true
+    end
+    changed || return po
+    refined_typ = try
+        Base.rewrap_unionall(Core.OpaqueClosure{Tuple{newparams...}, typ.var}, typ)
+    catch
+        return po
+    end
+    return CC.PartialOpaque(refined_typ, po.env, po.parent, po.source)
+end
+
+# Record the argtypes each OC body is actually called with, keyed by the body's byte
+# range — stable across re-lowering passes, unlike `Method` identity. The eager
+# signature-view inference from `abstract_eval_new_opaque_closure` passes `check=false`
+# and must not be recorded: it would join `most_general_argtypes` (the declared `Any`s)
+# into every observation and erase the refinement.
+function CC.abstract_call_opaque_closure(
+        interp::ASTTypeAnnotator, closure::CC.PartialOpaque, arginfo::CC.ArgInfo,
+        si::CC.StmtInfo, sv::CC.AbsIntState, check::Bool
+    )
+    check && record_oc_argtype_observation!(interp, closure, arginfo)
+    return @invoke CC.abstract_call_opaque_closure(
+        interp::CC.AbstractInterpreter, closure::CC.PartialOpaque, arginfo::CC.ArgInfo,
+        si::CC.StmtInfo, sv::CC.AbsIntState, check::Bool)
+end
+
+# `Generator(f, iter)` invokes `f` as iteration advances. In nested generators,
+# such as multi-`for` comprehensions lowered through `Flatten`, that invocation is
+# mediated by iterator machinery, so the `PartialOpaque` call hook may not observe
+# it. Treat the construction as observing `f` at the iterator element type.
+function CC.abstract_call_gf_by_type(
+        interp::ASTTypeAnnotator, @nospecialize(func), arginfo::CC.ArgInfo,
+        si::CC.StmtInfo, @nospecialize(atype), sv::CC.AbsIntState, max_methods::Int
+    )
+    func === Base.Generator && record_generator_argtype_observation!(interp, arginfo)
+    return @invoke CC.abstract_call_gf_by_type(
+        interp::CC.AbstractInterpreter, func::Any, arginfo::CC.ArgInfo,
+        si::CC.StmtInfo, atype::Any, sv::CC.AbsIntState, max_methods::Int)
+end
+
+function record_generator_argtype_observation!(
+        interp::ASTTypeAnnotator, arginfo::CC.ArgInfo
+    )
+    argtypes = arginfo.argtypes
+    length(argtypes) == 3 || return nothing
+    closure = CC.widenslotwrapper(argtypes[2])
+    closure isa CC.PartialOpaque || return nothing
+    iter_eltype = @something iterator_upper_bound_type(interp, argtypes[3]) return nothing
+    is_refined_slot(iter_eltype) || return nothing
+    return record_oc_argtype_observation!(
+        interp, closure, CC.ArgInfo(nothing, Any[closure.env, iter_eltype]))
+end
+
+function iterator_upper_bound_type(interp::ASTTypeAnnotator, @nospecialize(iter_arg))
+    iter_type = CC.widenconst(CC.widenslotwrapper(iter_arg))
+    iter_type isa Type || return nothing
+    iter_type === Any && return nothing
+    rt = try
+        Base._return_type(Base._iterator_upper_bound, Tuple{iter_type}, interp.world)
+    catch
+        return nothing
+    end
+    return rt isa Type ? rt : nothing
+end
+
+# Join observed argtypes into `interp.oc_argtype_observations`, per slot — see
+# `refinable_oc_shape` / `is_unannotated_slot` for the matching preconditions and the
+# slot-eligibility policy.
+function record_oc_argtype_observation!(
+        interp::ASTTypeAnnotator, closure::CC.PartialOpaque, arginfo::CC.ArgInfo
+    )
+    (; key, params) = @something refinable_oc_shape(interp, closure) return nothing
+    n = length(params)
+    argtypes = arginfo.argtypes
+    # `argtypes[1]` is the env (substituted by `abstract_call_unknown`); the rest must
+    # map 1:1 onto the OC's params — splat calls with unknown arity don't.
+    length(argtypes) == n + 1 || return nothing
+    any(CC.isvarargtype, argtypes) && return nothing
+    oc_argtype_refinements = interp.oc_argtype_refinements
+    refined = oc_argtype_refinements === nothing ? nothing :
+        get(oc_argtype_refinements, key, nothing)
+    refined !== nothing && length(refined) != n && (refined = nothing)
+    obs = get!(() -> Any[Union{} for _ = 1:n], interp.oc_argtype_observations, key)
+    length(obs) == n || return nothing # byte-range collision between different-arity OCs
+    𝕃 = CC.typeinf_lattice(interp)
+    for i = 1:n
+        is_unannotated_slot(params[i], refined, i) || continue
+        t = CC.widenconst(argtypes[i+1])
+        t === Union{} && continue
+        obs[i] = obs[i] === Union{} ? t : CC.tmerge(𝕃, obs[i], t)
+    end
+    return nothing
 end
 
 # Slot type at a specific use site. `argextype(SlotNumber)` returns the joined
@@ -326,7 +565,7 @@ end
 
 function collect_call_matches!(matches::Vector{Core.MethodMatch}, @nospecialize info)
     if info isa CC.MethodMatchInfo
-        for m in info.results.matches
+        for m in info.results
             push!(matches, m)
         end
     elseif info isa CC.UnionSplitInfo
@@ -612,12 +851,94 @@ the full-analysis prerequisite, and the current limitations.
 infer_toplevel_tree(args...; kwargs...) =
     (@something _infer_toplevel_tree(args...; kwargs...) return nothing).toptree
 
+# Pass cap for the closure argtype refinement loop in `_infer_toplevel_tree`: pass 1
+# collects observations; pass 2 applies them. A 3rd pass is only reached when pass 2's
+# refined inference observes new refinements itself (e.g. an inner closure whose call
+# sites live inside an outer refined closure body).
+const MAX_OC_REFINEMENT_PASSES = 3
+
 function _infer_toplevel_tree(
         ctx3::JL.VariableAnalysisContext, inferrable_tree3::SyntaxTreeC,
         st0::SyntaxTreeC, context_module::Module;
         world::UInt = Base.get_world_counter()
     )
     filter = SyntheticFilter(st0, ctx3.bindings)
+    inf_cache = CC.InferenceResult[]
+    interp = refinements = nothing
+    for _ = 1:MAX_OC_REFINEMENT_PASSES
+        observations = OCArgtypeTable()
+        interp = @something infer_lowered_tree(
+            ctx3, inferrable_tree3, context_module, world, filter,
+            observations, refinements, inf_cache) return interp
+        nextrefinements = @something merge_refinements(
+            refinements, viable_oc_argtype_refinements(observations)) break
+        isequal(nextrefinements, refinements) && break
+        refinements = nextrefinements
+    end
+    return interp
+end
+
+# Join, per slot, the previous pass's refinements with the new pass's observations,
+# so the refinement sequence `_infer_toplevel_tree` iterates is monotone (bounded
+# ascent via `tmerge`, saturating at `Any` where the slot drops out via
+# `is_refined_slot`). Monotonicity guarantees convergence to a fixpoint, and the
+# `isequal` break detects it.
+#
+# Why merge rather than just take the new pass's observations: that would only
+# converge if observations were stable across passes, and stability is an assumption
+# about CC's heuristics we'd rather not depend on. Concretely, a refined OC could in
+# principle stop being observed in a later pass (if its improved type made a guarding
+# branch or dispatch resolve away the call site it was observed at), and a plain
+# replace would then oscillate the refinement in and out. In practice this is hard to
+# even provoke — refining an OC's argt/rt doesn't change that it flows as a
+# `PartialOpaque` and re-enters its body at each call site, so observations stay
+# stable, and neither the test suite nor deliberately constructed cases exercise the
+# difference. So `merge` is a cheap, monotone safety net over a non-monotone
+# observation pattern we couldn't realize, not a routinely-needed step.
+function merge_refinements(prev::Union{Nothing,OCArgtypeTable}, next::Union{Nothing,OCArgtypeTable})
+    prev === nothing && return next
+    next === nothing && return prev
+    merged = copy(prev)
+    for (key, slots) in next
+        prevslots = get(merged, key, nothing)
+        if prevslots === nothing || length(prevslots) != length(slots)
+            merged[key] = slots
+            continue
+        end
+        mergedslots = Vector{Any}(undef, length(slots))
+        for i = 1:length(slots)
+            p, t = prevslots[i], slots[i]
+            mergedslots[i] = p === Union{} ? t : t === Union{} ? p : CC.tmerge(p, t)
+        end
+        merged[key] = mergedslots
+    end
+    return merged
+end
+
+# Keep only observations that would actually refine a slot: a slot joined to `Any` (or
+# never observed) carries no information, and an all-unrefinable entry would only
+# trigger useless extra passes.
+function viable_oc_argtype_refinements(observations::OCArgtypeTable)
+    refinements = nothing
+    for (key, slots) in observations
+        any(is_refined_slot, slots) || continue
+        refinements = @something refinements OCArgtypeTable()
+        refinements[key] = slots
+    end
+    return refinements
+end
+
+# Each pass re-lowers from `(ctx3, st3)` rather than reusing the previous pass's lowered
+# code. Re-lowering materializes fresh OC `Method`s, so sharing `inf_cache` across
+# passes won't make OC body inference hit stale entries and skip `finishinfer!`.
+# Non-OC callees can still reuse pass-local inference results. Refinements are keyed
+# by body byte range, which is stable across re-lowering.
+function infer_lowered_tree(
+        ctx3::JL.VariableAnalysisContext, inferrable_tree3::SyntaxTreeC,
+        context_module::Module, world::UInt, filter::SyntheticFilter,
+        observations::OCArgtypeTable, refinements::Union{Nothing,OCArgtypeTable},
+        inf_cache::Vector{CC.InferenceResult}
+    )
     inferrable_tree = try
         # Route single-method local closures through `OpaqueClosure` instead of
         # the synthetic-struct path. CC's native OC handling then resolves the
@@ -637,8 +958,10 @@ function _infer_toplevel_tree(
     Meta.isexpr(lwr, :thunk) || error("infer_toplevel_tree: Unexpected lowering result")
     src = lwr.args[1]::CodeInfo
 
-    interp = infer_thunk!(inferrable_tree, src, context_module, nothing, world, filter)
-    infer_method_defs!(inferrable_tree, src, context_module, world, filter)
+    interp = infer_thunk!(inferrable_tree, src, context_module, nothing, world, filter,
+        observations, refinements, inf_cache)
+    infer_method_defs!(inferrable_tree, src, context_module, world, filter,
+        observations, refinements, inf_cache)
     return interp
 end
 
@@ -654,10 +977,13 @@ end
 function infer_thunk!(
         tree::SyntaxTreeC, src::CodeInfo, context_module::Module,
         argtypes::Union{Nothing,Vector{Any}}, world::UInt, filter::SyntheticFilter,
+        observations::OCArgtypeTable, refinements::Union{Nothing,OCArgtypeTable},
+        inf_cache::Vector{CC.InferenceResult}
     )
     strip_latestworld!(src)
     mi = construct_toplevel_mi(src, context_module)
-    interp = ASTTypeAnnotator(world, tree, mi, filter)
+    interp = ASTTypeAnnotator(world, tree, mi, filter;
+        oc_argtype_observations=observations, oc_argtype_refinements=refinements, inf_cache)
     register_oc_body_trees!(interp.oc_body_trees, tree, src)
     result = CC.InferenceResult(mi)
     if argtypes !== nothing
@@ -712,8 +1038,9 @@ function resolve_toplevel_symbols!(src::CodeInfo, context_module::Module)
 end
 
 function infer_method_defs!(
-        inferred::SyntaxTreeC, src::CodeInfo, context_module::Module, world::UInt,
-        filter::SyntheticFilter,
+        inferred::SyntaxTreeC, src::CodeInfo, context_module::Module, world::UInt, filter::SyntheticFilter,
+        observations::OCArgtypeTable, refinements::Union{Nothing,OCArgtypeTable},
+        inf_cache::Vector{CC.InferenceResult}
     )
     block = inferred[1]
     nstmts = JS.numchildren(block)
@@ -742,7 +1069,8 @@ function infer_method_defs!(
         argtypes = something(
             resolve_method_argtypes(sig_ref, src, nargs, context_module, world),
             Any[Any for _ in 1:nargs])
-        infer_thunk!(body_tree, body_codeinfo, context_module, argtypes, world, filter)
+        infer_thunk!(body_tree, body_codeinfo, context_module, argtypes, world, filter,
+            observations, refinements, inf_cache)
     end
     return
 end
@@ -1255,6 +1583,11 @@ function tmerge_at_range(ctx::InferredTreeContext, rng::UnitRange{<:Integer})
     is_oc_site = any(s -> JS.kind(s) === JS.K"new_opaque_closure", nodes)
     typ = nothing
     for st in nodes
+        # `K"core"` leaves are lowering-introduced `Core.X` references (e.g. the
+        # `Core.Any` argtype entry of a closure's argt svec, whose provenance sits on
+        # the parameter's surface position); users can't write them, so their types
+        # (`Const(Any)` etc.) must not leak into surface queries.
+        JS.kind(st) === JS.K"core" && continue
         hasproperty(st, :type) || continue
         if is_oc_site && get(ctx.oc_body_scope, st._id, nothing) !== rng
             continue
