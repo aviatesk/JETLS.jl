@@ -518,6 +518,23 @@ end
                 end
             end
 
+            @testset "Base.Compiler.return_type of untyped closure" begin
+                let code = """
+                    let
+                        f = x -> x + 1
+                        Base.Compiler.return_type(f, Tuple{Int})
+                    end
+                    """
+                    _, ctx = type_annotate(code)
+                    # `return_type` sees the rewritten closure as a `PartialOpaque`,
+                    # but its compiler tfunc does not infer the OC body through that
+                    # wrapper. Since there is no regular call site to observe `x::Int`,
+                    # the closure signature and the `return_type` result stay imprecise.
+                    @test_broken widenconst(get_type_for_range(ctx, range_of(code, "x + 1"))) === Int
+                    @test_broken get_type_for_range(ctx, range_of(code, "Base.Compiler.return_type(f, Tuple{Int})")) === Core.Const(Int)
+                end
+            end
+
             # Nested: the inner closure's call sites live inside the outer do-closure's
             # body, so its observations only become informative once the outer body is
             # re-inferred under its own refinement — the 3rd pass picks them up.
