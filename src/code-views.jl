@@ -234,3 +234,91 @@ function request_open_macro_expansion(server::Server, content_uri::URI)
         #=label=# "macro expansion", #=tempfile_name=# "macro-expanded.jl",
         ProduceText(() -> macro_expansion_text(server, content_uri)))
 end
+
+# Type annotation view
+# --------------------
+# Renders a lowerable top-level form with JETLS's type inlay hints spliced into
+# the source as explicit `::T` annotations, so the inferred types read inline.
+# The URI encodes the source document and the form's byte range.
+
+const TYPE_ANNOTATION_CONTENT_PATH = "/type-annotated.jl"
+
+function type_annotation_content_uri(source_uri::URI, tree::SyntaxTreeC)
+    range = JS.byte_range(tree)
+    query = join((
+        "source=$(LSP.URIs2.escapeuri(string(source_uri)))",
+        "start=$(first(range))",
+        "stop=$(last(range))",
+    ), '&')
+    return URI(;
+        scheme = TYPE_ANNOTATION_SCHEME,
+        path = TYPE_ANNOTATION_CONTENT_PATH,
+        query)
+end
+
+function collect_type_annotation_hints(
+        state::ServerState, fi::FileInfo, uri::URI, tree::SyntaxTreeC
+    )
+    startpos = offset_to_xy(fi, JS.first_byte(tree))
+    endpos = offset_to_xy(fi, JS.last_byte(tree) + 1)
+    tree_range = Range(; start = startpos, var"end" = endpos)
+    (; context_module, postprocessor, world) = get_context_info(state, uri, startpos)
+    ctx = @something build_inferred_context_for_tree(tree, context_module;
+        world, caller="type_annotation", cache=fi.inferred_context_cache) return nothing
+    hints = InlayHint[]
+    # Unlike the glanceable inline hints, a written-out view shows the full
+    # inferred type rather than a `…`-clipped one, so truncation is disabled.
+    # Only the labels are spliced in, so `lazy_tooltips=true` skips the otherwise
+    # eager (and here discarded) tooltip formatting.
+    collect_type_inlay_hints!(hints, tree, ctx, fi, uri, tree_range, postprocessor;
+        maxdepth = typemax(Int), maxwidth = typemax(Int), lazy_tooltips = true)
+    return hints
+end
+
+function type_annotation_text(server::Server, content_uri::URI)
+    params = parse_text_document_content_query(content_uri)
+    source = @something get(params, "source", nothing) begin
+        return "Missing `source` parameter.\n"
+    end
+    start = @something tryparse(Int, get(params, "start", "")) begin
+        return "Invalid `start` parameter.\n"
+    end
+    stop = @something tryparse(Int, get(params, "stop", "")) begin
+        return "Invalid `stop` parameter.\n"
+    end
+    source_uri = URI(source)
+    fi = @something get_file_info(server.state, source_uri) begin
+        return "Source document is not available: $(string(source_uri))\n"
+    end
+    st0_top = build_syntax_tree(fi)
+    tree = @something find_toplevel_tree_by_range(st0_top, start:stop) begin
+        return "Top-level form is no longer available: $(string(source_uri))\n"
+    end
+    line = Int(offset_to_xy(fi, JS.first_byte(tree)).line) + 1
+    src = JS.sourcetext(tree)
+    hints = @something try
+        collect_type_annotation_hints(server.state, fi, source_uri, tree)
+    catch
+        nothing
+    end begin
+        io = IOBuffer()
+        println(io, "# Failed to infer type annotations at ", fi.filename, ":", line)
+        println(io)
+        print(io, src)
+        endswith(src, '\n') || println(io)
+        return String(take!(io))
+    end
+    annotated = apply_inlay_hints(fi, src, JS.first_byte(tree), hints)
+    io = IOBuffer()
+    println(io, "# Inferred type annotations at ", fi.filename, ":", line)
+    println(io)
+    print(io, annotated)
+    endswith(annotated, '\n') || println(io)
+    return String(take!(io))
+end
+
+function request_open_type_annotation(server::Server, content_uri::URI)
+    return open_text_document_content!(server, content_uri,
+        #=label=# "type annotations", #=tempfile_name=# "type-annotated.jl",
+        ProduceText(() -> type_annotation_text(server, content_uri)))
+end

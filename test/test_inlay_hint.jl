@@ -8,34 +8,11 @@ using JETLS.URIs2
 include(normpath(pkgdir(JETLS), "test", "setup.jl"))
 include(normpath(pkgdir(JETLS), "test", "jsjl-utils.jl"))
 
-# Inserts each `hint.label` at its `position` in `code` and returns the
-# resulting text, mirroring how an editor renders the hint (honouring
-# `paddingLeft` / `paddingRight`). ASCII-only — LSP `Position.character` is
-# treated as a byte index into the line. Hints on the same position are
-# inserted in their original (traversal) order.
+# Render `hints` into `code` via the shared `JETLS.apply_inlay_hints` helper
+# (the whole document starts at byte 1).
 function apply_inlay_hints(code::AbstractString, hints::Vector{InlayHint})
-    by_line = Dict{Int,Vector{InlayHint}}()
-    for h in hints
-        push!(get!(() -> InlayHint[], by_line, h.position.line), h)
-    end
-    out = IOBuffer()
-    lines = split(code, '\n'; keepempty=true)
-    for (i, line) in enumerate(lines)
-        s = String(line)
-        line_hints = sort(get(by_line, i-1, InlayHint[]); by = h -> h.position.character)
-        cursor = 0
-        for h in line_hints
-            c = h.position.character
-            print(out, s[cursor+1:c])
-            something(h.paddingLeft, false) && print(out, ' ')
-            print(out, h.label)
-            something(h.paddingRight, false) && print(out, ' ')
-            cursor = c
-        end
-        print(out, s[cursor+1:end])
-        i < length(lines) && print(out, '\n')
-    end
-    return String(take!(out))
+    fi = JETLS.FileInfo(1, code, @__FILE__)
+    return JETLS.apply_inlay_hints(fi, code, 1, hints)
 end
 
 function get_syntactic_inlay_hints(

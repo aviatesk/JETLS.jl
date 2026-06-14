@@ -3,11 +3,16 @@ const TEXT_DOCUMENT_CONTENT_REGISTRATION_METHOD = "workspace/textDocumentContent
 
 # Each `workspace/textDocumentContent` view gets its own scheme so document selectors
 # can enable language features per view: TestRunner logs need none, while Julia-code
-# views (macro expansion, and future `code_typed`, type annotations, …) can opt into
+# views (macro expansion, type annotations, and future `code_typed`, …) can opt into
 # semantic tokens, go-to-definition, etc. New views add their scheme here.
 const TESTRUNNER_LOGS_SCHEME = "jetls-testrunner-logs"
 const MACRO_EXPANSION_SCHEME = "jetls-macro-expansion"
-const TEXT_DOCUMENT_CONTENT_SCHEMES = String[TESTRUNNER_LOGS_SCHEME, MACRO_EXPANSION_SCHEME]
+const TYPE_ANNOTATION_SCHEME = "jetls-type-annotation"
+const TEXT_DOCUMENT_CONTENT_SCHEMES = String[
+    TESTRUNNER_LOGS_SCHEME,
+    MACRO_EXPANSION_SCHEME,
+    TYPE_ANNOTATION_SCHEME,
+]
 
 is_text_document_content_uri(uri::URI) = uri.scheme in TEXT_DOCUMENT_CONTENT_SCHEMES
 
@@ -103,9 +108,13 @@ function handle_TextDocumentContentRequest(server::Server, msg::TextDocumentCont
     if !is_text_document_content_uri(uri)
         return send(server, TextDocumentContentResponse(; id = msg.id, result = null))
     end
+    # Code views are computed on demand from the request URI rather than cached.
     if uri.scheme == MACRO_EXPANSION_SCHEME
-        # Computed on demand from the request URI rather than served from the cache.
         text = macro_expansion_text(server, uri)
+        return send(server, TextDocumentContentResponse(;
+            id = msg.id, result = TextDocumentContentResult(; text)))
+    elseif uri.scheme == TYPE_ANNOTATION_SCHEME
+        text = type_annotation_text(server, uri)
         return send(server, TextDocumentContentResponse(;
             id = msg.id, result = TextDocumentContentResult(; text)))
     end

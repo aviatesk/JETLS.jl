@@ -37,6 +37,16 @@ function toplevel_expansion_testcase(text::AbstractString)
     return (; server, uri, fi, tree, content_uri)
 end
 
+function type_annotation_testcase(text::AbstractString)
+    server = server_with_show_document_support()
+    uri = filepath2uri(joinpath(pkgdir(JETLS), "test", "annotate_testcase.jl"))
+    fi = JETLS.cache_file_info!(server, uri, 1, text)
+    st0 = JETLS.build_syntax_tree(fi)
+    tree = @something JETLS.lowerable_toplevel_at(st0, 1) error("missing toplevel tree")
+    content_uri = JETLS.type_annotation_content_uri(uri, tree)
+    return (; server, uri, fi, tree, content_uri)
+end
+
 @testset "macro expansion content" begin
     let case = macroexpand_testcase("@time 1 + 2\n")
         content_uri = JETLS.URI(string(case.content_uri))
@@ -194,6 +204,65 @@ end
         titles = String[a.title for a in actions]
         @test "Expand all macros in this top-level form" in titles
         @test !has_callsite(actions)
+    end
+end
+
+@testset "type annotation content" begin
+    let case = type_annotation_testcase("function f(a, b)\n    return a + b\nend\n")
+        content_uri = JETLS.URI(string(case.content_uri))
+        params = JETLS.parse_text_document_content_query(content_uri)
+        @test params["source"] == string(case.uri)
+
+        text = JETLS.type_annotation_text(case.server, content_uri)
+        @test occursin("Inferred type annotations", text)
+        @test occursin("annotate_testcase.jl:1", text)
+        # the original source is preserved; annotations are spliced in additively
+        @test occursin("function f(a, b)", text)
+        # untyped parameters infer to `Any`, applied as `::Any`
+        @test occursin("::Any", text)
+    end
+
+    let case = type_annotation_testcase("@__undefined_macro_for_test__ xyz\n")
+        content_uri = JETLS.URI(string(case.content_uri))
+        text = JETLS.type_annotation_text(case.server, content_uri)
+        @test occursin("Failed to infer type annotations", text)
+        @test occursin("annotate_testcase.jl:1", text)
+        @test occursin("@__undefined_macro_for_test__ xyz", text)
+    end
+end
+
+@testset "type annotation code action" begin
+    let case = type_annotation_testcase("function f(a, b)\n    return a + b\nend\n")
+        actions = Union{CodeAction,Command}[]
+        range = Range(;
+            start = Position(; line = 0, character = 0),
+            var"end" = Position(; line = 0, character = 0))
+        JETLS.type_annotation_code_actions!(
+            actions, case.server, case.uri, case.fi, range)
+        titles = String[a.title for a in actions]
+        action = actions[findfirst(==("Show inferred type annotations"), titles)]
+        @test action.command.command == JETLS.COMMAND_OPEN_TYPE_ANNOTATION
+        @test only(action.command.arguments) == string(case.content_uri)
+    end
+    full_range() = Range(;
+        start = Position(; line = 0, character = 0),
+        var"end" = Position(; line = 0, character = 0))
+    # not offered on declaration forms with no inferable values
+    for code in ("using Base\n", "import Base: map\n", "export foo, bar\n",
+                 "public baz\n", "abstract type A end\n", "primitive type P 8 end\n")
+        case = type_annotation_testcase(code)
+        actions = Union{CodeAction,Command}[]
+        JETLS.type_annotation_code_actions!(
+            actions, case.server, case.uri, case.fi, full_range())
+        @test isempty(actions)
+    end
+    # still offered on `struct` (inner constructors have inferable bodies)
+    let case = type_annotation_testcase(
+            "struct Point\n    x::Int\n    Point(x::Int) = new(x + 1)\nend\n")
+        actions = Union{CodeAction,Command}[]
+        JETLS.type_annotation_code_actions!(
+            actions, case.server, case.uri, case.fi, full_range())
+        @test "Show inferred type annotations" in String[a.title for a in actions]
     end
 end
 

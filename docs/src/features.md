@@ -831,6 +831,8 @@ JETLS provides code actions for quick fixes and refactoring, including:
   [TestRunner code actions](@ref testrunner/features/code-actions)
 - Expand macro calls via
   [macro expansion views](@ref features/code-views/macro-expansion)
+- View inferred types as
+  [type annotations](@ref features/code-views/type-annotations)
 
 A few representative examples:
 
@@ -972,6 +974,64 @@ To read like hand-written code, the view trims hygiene noise: it strips
 context (or to an exported `Base`/`Core` name) as bare symbols (so the
 expansions above show `throw`/`AssertionError`, not `Base.throw`). If
 expansion throws, the error trace is shown instead.
+
+### [Type annotations](@id features/code-views/type-annotations)
+
+**Show inferred type annotations** opens a read-only view of the enclosing
+top-level form with JETLS's [type inlay hints](@ref features/inlay-hint/types)
+spliced into the source as explicit `::T` annotations — every expression
+(parameter uses, intermediate results, the return value) carries its inferred
+type. Unlike the inline hints, which are transient editor decorations, the
+result is an annotated copy of the code as ordinary buffer text: you can
+select, scroll, search, and copy it like any other document.
+
+For example, consider this function:
+
+```julia
+function summarize(xs::Vector{Int}, label)
+    total = sum(xs)
+    first_pos_even = findfirst(xs) do x
+        x > 0 && iseven(x)
+    end
+    sample = if first_pos_even === nothing
+        missing
+    else
+        xs[first_pos_even]
+    end
+    return (
+        label,
+        total,
+        sample,
+    )
+end
+```
+
+The resulting annotated copy surfaces several related inference results at
+once: the do-block argument `x` is inferred as `Int64`, the predicate
+expression as `Bool`, `findfirst` returns `Union{Nothing, Int64}`, the `else`
+branch narrows the index to `Int64`, and the untyped `label` propagates to the
+final `Tuple{Any, Int64, Union{Missing, Int64}}` return type:
+
+```julia
+# Inferred type annotations at summary.jl:1
+
+function summarize(xs::Vector{Int}, label)::Tuple{Any, Int64, Union{Missing, Int64}}
+    total = sum(xs::Vector{Int64})::Int64
+    first_pos_even = findfirst(xs::Vector{Int64}) do x::Int64
+        ((x::Int64 > 0)::Bool && iseven(x::Int64)::Bool)::Bool
+    end::Union{Nothing, Int64}
+    sample = if (first_pos_even::Union{Nothing, Int64} === nothing)::Bool
+        missing
+    else
+        (xs::Vector{Int64})[first_pos_even::Int64]::Int64
+    end::Union{Missing, Int64}
+    return (
+        label::Any,
+        total::Int64,
+        sample::Union{Missing, Int64},
+    )::Tuple{Any, Int64, Union{Missing, Int64}}
+end
+```
 
 ## [Formatting](@id features/formatting)
 
