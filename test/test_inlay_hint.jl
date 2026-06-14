@@ -1465,7 +1465,7 @@ end
                 """
             expected = """
                 function with_rt(xs::Vector{Float64})::Float64
-                    f(y)::Float64 = ((xs::Vector{Float64})[1]::Float64 + y::Float64)::Float64
+                    f(y::Float64)::Float64 = ((xs::Vector{Float64})[1]::Float64 + y::Float64)::Float64
                     f(2.0)::Float64
                 end
                 """
@@ -1522,8 +1522,9 @@ end
         end
 
         # No-paren `x -> body`: parameter byte range overlaps with the OC binding's
-        # `PartialOpaque` slot. Without the verbatim-range entry the parameter would pick
-        # up a misleading `x::OpaqueClosure{…}` hint.
+        # `PartialOpaque` slot, so the generic path is suppressed (it would emit a
+        # misleading `x::OpaqueClosure{…}` hint); the dedicated parameter hint reads
+        # the refined argt off the constructed OC instead.
         @testset "no-paren anonymous lambda" begin
             code = """
                 let g = x -> 2x
@@ -1531,8 +1532,184 @@ end
                 end
                 """
             expected = """
-                let g = x -> 2x::Float64
+                let g = x::Float64 -> 2x::Float64
                     g(1.0)
+                end
+                """
+            @test apply_inlay_hints(code, get_type_inlay_hints(code)) == expected
+        end
+
+        # Multi-call-site lambda: the parameter hint shows the join of the observed
+        # call-site argtypes, matching the signature view the body is inferred under.
+        @testset "multi-call-site lambda parameter" begin
+            code = """
+                function genfunc(x::Float64)
+                    f = x -> 2x
+                    o1 = f(x)
+                    o2 = f(rand(Int))
+                    o1, o2
+                end
+                """
+            expected = """
+                function genfunc(x::Float64)::Tuple{Float64, $Int}
+                    f = x::Union{Float64, $Int} -> 2x::Union{Float64, $Int}
+                    o1 = f(x::Float64)::Float64
+                    o2 = f(rand(Int)::$Int)::$Int
+                    (o1::Float64, o2::$Int)::Tuple{Float64, $Int}
+                end
+                """
+            @test apply_inlay_hints(code, get_type_inlay_hints(code)) == expected
+        end
+
+        # Parameter hints apply to every local-closure definition form, not just
+        # arrow lambdas: anonymous `function (…) … end`, and named local closures
+        # in both long and short form (the function name is skipped, and the
+        # return-type hint still coexists with the parameter hints).
+        @testset "anonymous function form" begin
+            code = """
+                function outer(s::String)
+                    create = function (key, val, flag::Bool)
+                        key * val
+                    end
+                    create(s, s, true)
+                end
+                """
+            expected = """
+                function outer(s::String)::String
+                    create = function (key::String, val::String, flag::Bool)
+                        (key::String * val::String)::String
+                    end
+                    create(s::String, s::String, true)::String
+                end
+                """
+            @test apply_inlay_hints(code, get_type_inlay_hints(code)) == expected
+        end
+
+        @testset "named local closure (long form)" begin
+            code = """
+                function outer(s::String)
+                    function inner(key, val)
+                        key * val
+                    end
+                    inner(s, s)
+                end
+                """
+            expected = """
+                function outer(s::String)::String
+                    function inner(key::String, val::String)::String
+                        (key::String * val::String)::String
+                    end
+                    inner(s::String, s::String)::String
+                end
+                """
+            @test apply_inlay_hints(code, get_type_inlay_hints(code)) == expected
+        end
+
+        @testset "named local closure (short form)" begin
+            code = """
+                function outer(s::String)
+                    inner(key, val) = key * val
+                    inner(s, s)
+                end
+                """
+            expected = """
+                function outer(s::String)::String
+                    inner(key::String, val::String)::String = (key::String * val::String)::String
+                    inner(s::String, s::String)::String
+                end
+                """
+            @test apply_inlay_hints(code, get_type_inlay_hints(code)) == expected
+        end
+
+        # Top-level methods are not opaque closures, so their parameters get no
+        # call-site-refined hints (only the body uses and return type do).
+        @testset "top-level method parameters stay un-hinted" begin
+            code = """
+                function topf(key, val)
+                    key * val
+                end
+                """
+            expected = """
+                function topf(key, val)::Any
+                    (key::Any * val::Any)::Any
+                end
+                """
+            @test apply_inlay_hints(code, get_type_inlay_hints(code)) == expected
+        end
+
+        # A destructuring parameter is a single closure argument, but each component
+        # is annotated from its own resolved type (consistent with for-loop iteration
+        # variable destructuring), not from the aggregate argument type.
+        @testset "destructuring parameter (plain)" begin
+            code = """
+                let ps = [1=>"a", 2=>"b"]
+                    foreach(ps) do (k, v)
+                        k, v
+                    end
+                end
+                """
+            expected = """
+                let ps = [1=>"a", 2=>"b"]::Vector{Pair{$Int, String}}
+                    foreach(ps::Vector{Pair{$Int, String}}) do (k::$Int, v::String)
+                        (k::$Int, v::String)::Tuple{$Int, String}
+                    end
+                end
+                """
+            @test apply_inlay_hints(code, get_type_inlay_hints(code)) == expected
+        end
+
+        @testset "destructuring parameter (nested)" begin
+            code = """
+                let ts = [(1, (2.0, "x"))]
+                    foreach(ts) do (a, (b, c))
+                        a, b, c
+                    end
+                end
+                """
+            expected = """
+                let ts = [(1, (2.0, "x"))]::Vector{Tuple{$Int, Tuple{Float64, String}}}
+                    foreach(ts::Vector{Tuple{$Int, Tuple{Float64, String}}}) do (a::$Int, (b::Float64, c::String))
+                        (a::$Int, b::Float64, c::String)::Tuple{$Int, Float64, String}
+                    end
+                end
+                """
+            @test apply_inlay_hints(code, get_type_inlay_hints(code)) == expected
+        end
+
+        # Property destructuring (`(; a, b)`) reuses each name as both a binding and a
+        # `getproperty` field-name symbol; the field-name `Symbol` must not pollute the
+        # binding's type (it would otherwise surface as `Union{Int, Symbol}`).
+        @testset "destructuring parameter (property)" begin
+            code = """
+                let nts = [(a=1, b="x")]
+                    foreach(nts) do (; a, b)
+                        a, b
+                    end
+                end
+                """
+            expected = """
+                let nts = [(a=1, b="x")]::Vector{@NamedTuple{a::$Int, b::String}}
+                    foreach(nts::Vector{@NamedTuple{a::$Int, b::String}}) do (; a::$Int, b::String)
+                        (a::$Int, b::String)::Tuple{$Int, String}
+                    end
+                end
+                """
+            @test apply_inlay_hints(code, get_type_inlay_hints(code)) == expected
+        end
+
+        # A parenthesized two-parameter arrow `(a, b) -> …` is two separate parameters,
+        # not a destructuring of one — each gets its own call-site-refined type.
+        @testset "two-parameter arrow is not destructuring" begin
+            code = """
+                function f(x::Float64)
+                    g = (a, b) -> a + b
+                    g(x, 1) + g(2, 3)
+                end
+                """
+            expected = """
+                function f(x::Float64)::Float64
+                    g = (a::Union{Float64, $Int}, b::$Int) -> (a::Union{Float64, $Int} + b::$Int)::Union{Float64, $Int}
+                    (g(x::Float64, 1)::Float64 + g(2, 3))::Float64
                 end
                 """
             @test apply_inlay_hints(code, get_type_inlay_hints(code)) == expected
@@ -1577,8 +1754,8 @@ end
             @test apply_inlay_hints(code, get_type_inlay_hints(code)) == expected
         end
 
-        # Untyped `do x` resolves precisely via closure argument-type refinement,
-        # including `map`'s result element type.
+        # Untyped `do x` resolves precisely via closure argument-type refinement —
+        # the parameter hint, the body, and `map`'s result element type.
         @testset "untyped do-block" begin
             code = """
                 let xs = [1, 2, 3]
@@ -1589,7 +1766,7 @@ end
                 """
             @test apply_inlay_hints(code, get_type_inlay_hints(code)) == """
                 let xs = [1, 2, 3]::Vector{$Int}
-                    map(xs::Vector{$Int}) do x
+                    map(xs::Vector{$Int}) do x::$Int
                         (x::$Int * 2)::$Int
                     end::Vector{$Int}
                 end
