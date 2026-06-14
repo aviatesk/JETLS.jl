@@ -829,6 +829,8 @@ JETLS provides code actions for quick fixes and refactoring, including:
 - Insert `global` / `local` declarations for ambiguous soft scope variables
 - Run a nearby `@testset` or `@test` case via
   [TestRunner code actions](@ref testrunner/features/code-actions)
+- Expand macro calls via
+  [macro expansion views](@ref features/code-views/macro-expansion)
 
 A few representative examples:
 
@@ -901,6 +903,75 @@ A few representative examples:
   </tbody>
 </table>
 ```
+
+## [Code views](@id features/code-views)
+
+JETLS can open read-only *code views*: server-computed Julia documents
+derived from your source, such as the result of macro expansion. They are
+served as virtual documents through the LSP 3.18
+`workspace/textDocumentContent` request when the client supports it, and
+otherwise fall back to a temporary file opened via `window/showDocument`,
+so they work across editors regardless of `textDocumentContent` support.
+
+### [Macro expansion](@id features/code-views/macro-expansion)
+
+JETLS offers two [code actions](@ref features/code-actions) on macro calls,
+each opening the expanded code in a read-only `.jl` view:
+
+- **Show macro expansion for `@macro`** expands the macro call under the
+  cursor a single level, to see what one macro produces.
+- **Expand all macros in this top-level form** recursively expands every
+  macro in the enclosing top-level form (the `@macroexpand` view).
+
+You can trigger the first with the cursor on the macro call, and the
+second from anywhere inside a top-level form that contains a macro.
+
+For example, **Show macro expansion for `@assert`** on `@assert 1 + 1 == 2`
+opens a view like:
+
+```julia
+# Macro call:
+# @assert 1 + 1 == 2
+# └────────────────┘ ── the macro call being expanded
+# # @ demo.jl:1
+
+# Expanded code view:
+:(if 1 + 1 == 2
+      nothing
+  else
+      throw(AssertionError("1 + 1 == 2"))
+  end)
+```
+
+while **Expand all macros in this top-level form** on
+
+```julia
+function f(x)
+    @assert x > 0
+    return 2x
+end
+```
+
+expands every macro the form contains:
+
+```julia
+# All macros expanded in the top-level form at demo.jl:1
+
+:(function f(x)
+      if x > 0
+          nothing
+      else
+          throw(AssertionError("x > 0"))
+      end
+      return 2x
+  end)
+```
+
+To read like hand-written code, the view trims hygiene noise: it strips
+`LineNumberNode`s and shows `GlobalRef`s that resolve in the expansion
+context (or to an exported `Base`/`Core` name) as bare symbols (so the
+expansions above show `throw`/`AssertionError`, not `Base.throw`). If
+expansion throws, the error trace is shown instead.
 
 ## [Formatting](@id features/formatting)
 

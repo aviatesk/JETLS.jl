@@ -120,6 +120,7 @@ include("analysis/full-analysis.jl")
 include("registration.jl")
 include("apply-edit.jl")
 include("text-document-content.jl")
+include("code-views.jl")
 include("execute-command.jl")
 include("signature-help.jl")
 include("completions.jl")
@@ -397,8 +398,8 @@ function handle_response_message(
         handle_instantiation_progress_response(server, request_caller)
     elseif request_caller isa AnalysisProgressCaller
         handle_analysis_progress_response(server, request_caller, cancel_flag)
-    elseif request_caller isa ShowDocumentRequestCaller
-        handle_show_document_response(server, msg, request_caller)
+    elseif request_caller isa ShowTextDocumentContentCaller
+        handle_show_text_document_content_response(server, msg, request_caller)
     elseif request_caller isa SetDocumentContentCaller
         handle_apply_workspace_edit_response(server, msg, request_caller)
     elseif request_caller isa DeleteFileCaller

@@ -125,8 +125,7 @@ function compute_semantic_tokens(
     raw = SemanticTokenTuple[]
     # For range requests, convert the LSP range to a byte range so we can
     # cheaply skip toplevel statements that don't overlap.
-    range_bytes = range === nothing ? nothing :
-        xy_to_offset(fi, range.start):(xy_to_offset(fi, range.var"end") - 1)
+    range_bytes = range === nothing ? nothing : range_to_byte_range(fi, range)
     iterate_toplevel_tree(st0_top) do st0::SyntaxTreeC
         if range_bytes !== nothing && !overlaps_byte_range(st0, range_bytes)
             return

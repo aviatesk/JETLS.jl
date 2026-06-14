@@ -6,6 +6,7 @@ const COMMAND_TESTRUNNER_RUN_TESTCASE = "jetls.testrunner.run@test"
 const COMMAND_TESTRUNNER_CLEAR_RESULT = "jetls.testrunner.clearResult"
 const COMMAND_TESTRUNNER_OPEN_LOGS = "jetls.testrunner.openLogs"
 const COMMAND_SHOW_MESSAGE = "jetls.showMessage"
+const COMMAND_OPEN_MACRO_EXPANSION = "jetls.openMacroExpansion"
 
 const SUPPORTED_COMMANDS = [
     COMMAND_TESTRUNNER_RUN_TESTSET,
@@ -13,6 +14,7 @@ const SUPPORTED_COMMANDS = [
     COMMAND_TESTRUNNER_OPEN_LOGS,
     COMMAND_TESTRUNNER_CLEAR_RESULT,
     COMMAND_SHOW_MESSAGE,
+    COMMAND_OPEN_MACRO_EXPANSION,
 ]
 
 function execute_command_options()
@@ -46,6 +48,8 @@ function handle_ExecuteCommandRequest(server::Server, msg::ExecuteCommandRequest
         return execute_testrunner_clear_result_command(server, msg)
     elseif command == COMMAND_SHOW_MESSAGE
         return execute_show_message_command(server, msg)
+    elseif command == COMMAND_OPEN_MACRO_EXPANSION
+        return execute_open_macro_expansion_command(server, msg)
     end
     return send(server,
         invalid_execute_command_response(msg, "Unknown execution command: $command"))
@@ -137,6 +141,12 @@ function execute_testrunner_clear_result_command(server::Server, msg::ExecuteCom
     idx = @tryparsearg server msg[2]::Int
     tsn = @tryparsearg server msg[3]::String
     try_clear_testrunner_result!(server, uri, idx, tsn)
+    return send(server, ExecuteCommandResponse(; id = msg.id, result = null))
+end
+
+function execute_open_macro_expansion_command(server::Server, msg::ExecuteCommandRequest)
+    uri = URI(@tryparsearg server msg[1]::String)
+    request_open_macro_expansion(server, uri)
     return send(server, ExecuteCommandResponse(; id = msg.id, result = null))
 end
 
