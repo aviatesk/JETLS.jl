@@ -53,6 +53,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
   <img width="976" height="637" alt="Inlay type hint demo" src="https://github.com/user-attachments/assets/baa2ff1b-df38-4304-a479-f2a2b4ba3e7b" />
 
+- Added a macro expansion view that shows expanded macro code in a read-only document — served through the LSP 3.18 `workspace/textDocumentContent` request, or a temporary-file fallback for clients without that capability. It is triggered through code actions: one expands the macro call under the cursor, and one recursively expands every macro in the enclosing top-level form.
+  See the [Macro expansion code view](https://aviatesk.github.io/JETLS.jl/release/features/#features/code-views/macro-expansion) page for details.
+
 - Added [`lowering/inactive-code`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/inactive-code) diagnostic that marks `@static` branches not taken in the current environment (e.g. a Windows-only branch when analyzing on macOS) at `Hint` severity with the `Unnecessary` tag, so editors gray out code that is excluded from analysis.
 
 - Added [`lowering/unconstrained-static-parameter`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/unconstrained-static-parameter) diagnostic that warns when a method declares a static parameter that does not appear in the type of any function parameter, so its value cannot be deduced when the method is called.
@@ -64,8 +67,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   ```
 
 - Added support for the LSP 3.18 `textDocument/rangesFormatting` request so clients that advertise `textDocument.rangeFormatting.rangesSupport` can format multiple ranges in a single request.
-
-- Added code actions that open expanded macro code in a read-only view — served through the LSP 3.18 `workspace/textDocumentContent` request, or a temporary-file fallback for clients without that capability: one expands the macro call under the cursor, and one recursively expands every macro in the enclosing top-level form.
 
 ### Changed
 
