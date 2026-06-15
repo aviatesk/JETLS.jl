@@ -928,44 +928,61 @@ each opening the expanded code in a read-only `.jl` view:
 You can trigger the first with the cursor on the macro call, and the
 second from anywhere inside a top-level form that contains a macro.
 
-For example, **Show macro expansion for `@assert`** on `@assert 1 + 1 == 2`
-opens a view like:
+For example, **Show macro expansion for `@assert`** on
+`@assert @isdefined(x) "x should be defined"` opens a view like:
 
 ```julia
 # Macro call:
-# @assert 1 + 1 == 2
-# └────────────────┘ ── the macro call being expanded
+# @assert @isdefined(x) "x should be defined"
+# └─────────────────────────────────────────┘ ── the macro call being expanded
 # # @ demo.jl:1
 
 # Expanded code view:
-:(if 1 + 1 == 2
+:(if @isdefined(x)
       nothing
   else
-      throw(AssertionError("1 + 1 == 2"))
+      throw(AssertionError("x should be defined"))
   end)
 ```
 
-while **Expand all macros in this top-level form** on
+The nested `@isdefined` call stays in the result because this action expands
+only the selected macro call one level.
+
+In contrast, **Expand all macros in this top-level form** on
 
 ```julia
-function f(x)
-    @assert x > 0
-    return 2x
+function selected_value(primary, fallback)
+    if primary !== nothing
+        value = primary
+    elseif fallback !== nothing
+        value = fallback
+    else
+        error("no value available")
+    end
+    @assert @isdefined(value) "value should be assigned"
+    return value
 end
 ```
 
-expands every macro the form contains:
+expands every macro the form contains, including the nested `@isdefined`:
 
 ```julia
 # All macros expanded in the top-level form at demo.jl:1
 
-:(function f(x)
-      if x > 0
+:(function selected_value(primary, fallback)
+      if primary !== nothing
+          value = primary
+      elseif fallback !== nothing
+          value = fallback
+      else
+          error("no value available")
+      end
+      if $(Expr(:isdefined, :value))
           nothing
       else
-          throw(AssertionError("x > 0"))
+          throw(AssertionError("value should be assigned"))
       end
-      return 2x
+      return value
   end)
 ```
 
