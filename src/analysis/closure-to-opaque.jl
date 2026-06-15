@@ -6,7 +6,7 @@ export rewrite_local_closures_to_opaque
 
 """
     rewrite_local_closures_to_opaque(
-            ctx::JL.VariableAnalysisContext, ex::SyntaxTreeC
+            ctx::JL.VariableAnalysisContext, st3::SyntaxTreeC
         ) -> SyntaxTreeC
 
 Pre-lowering rewrite that turns single-method local closure definitions
@@ -20,7 +20,7 @@ into inference context module (which the regular conversion would require).
 
 # Limitations
 
-- Multi-method bindings (a single name with multiple `K"method_defs"` anywhere in `ex`)
+- Multi-method bindings (a single name with multiple `K"method_defs"` anywhere in `st3`)
   can't be represented as a single OC, so they fall through to the regular synthetic-struct
   path. A whole-tree pre-pass (`collect_multi_method_bindings`) identifies these so the
   per-block rewrite can skip every method definition for such bindings.
@@ -35,22 +35,22 @@ Designed to be called by `TypeAnnotation.infer_toplevel_tree` against a `K"tople
 The rewrite is non-destructive: nodes that don't match are returned unchanged, so the
 pipeline downstream sees an equivalent tree with only the eligible closures swapped.
 """
-function rewrite_local_closures_to_opaque(ctx::JL.VariableAnalysisContext, ex::SyntaxTreeC)
-    multis = collect_multi_method_bindings(ctx, ex)
-    return _rewrite_local_closures_to_opaque(ctx, ex, multis)
+function rewrite_local_closures_to_opaque(ctx::JL.VariableAnalysisContext, st3::SyntaxTreeC)
+    multis = collect_multi_method_bindings(ctx, st3)
+    return _rewrite_local_closures_to_opaque(ctx, st3, multis)
 end
 
-function _rewrite_local_closures_to_opaque(ctx::JL.VariableAnalysisContext, ex::SyntaxTreeC, multis::Set{Int})
-    if JS.kind(ex) === JS.K"block"
-        return rewrite_closure_block(ctx, ex, multis)
+function _rewrite_local_closures_to_opaque(ctx::JL.VariableAnalysisContext, st3::SyntaxTreeC, multis::Set{Int})
+    if JS.kind(st3) === JS.K"block"
+        return rewrite_closure_block(ctx, st3, multis)
     end
-    return JS.mapchildren(c::SyntaxTreeC -> _rewrite_local_closures_to_opaque(ctx, c, multis), ctx, ex)
+    return JS.mapchildren(c::SyntaxTreeC -> _rewrite_local_closures_to_opaque(ctx, c, multis), ctx, st3)
 end
 
 function rewrite_closure_block(
-        ctx::JL.VariableAnalysisContext, blk::SyntaxTreeC, multis::Set{Int}
+        ctx::JL.VariableAnalysisContext, blk3::SyntaxTreeC, multis::Set{Int}
     )
-    children_old = JS.children(blk)
+    children_old = JS.children(blk3)
     n = length(children_old)
     new_children = JS.SyntaxList(JS.syntax_graph(ctx))
     consumed = falses(n)
@@ -72,7 +72,7 @@ function rewrite_closure_block(
         end
         push!(new_children, _rewrite_local_closures_to_opaque(ctx, child, multis))
     end
-    return JL.@ast ctx blk [JS.K"block" new_children...]
+    return JL.@ast ctx blk3 [JS.K"block" new_children...]
 end
 
 # Collect `var_id`s that resolve to more than one method, plus any helper closure
@@ -98,11 +98,11 @@ end
 # top-level function with default positional args or kwargs) never goes through
 # synthetic-struct closure conversion, so single-method closures inside its bodies are
 # still safely rewritable to OCs and must not be tagged.
-function collect_multi_method_bindings(ctx::JL.VariableAnalysisContext, ex::SyntaxTreeC)
+function collect_multi_method_bindings(ctx::JL.VariableAnalysisContext, st3::SyntaxTreeC)
     method_defs_by_vid = Dict{Int,Vector{SyntaxTreeC}}()
     methods_per_vid = Dict{Int,Int}()
     multis = Set{Int}()
-    stack = SyntaxTreeC[ex]
+    stack = SyntaxTreeC[st3]
     while !isempty(stack)
         node = pop!(stack)
         k = JS.kind(node)
