@@ -317,6 +317,10 @@ function collect_type_inlay_hints!(
         if JS.kind(node) in JS.KSet"using import"
             push!(verbatim_ranges, JS.byte_range(node))
         end
+        # `K"inert"` wraps literal symbol contents and dot-property names.
+        if JS.kind(node) === JS.K"inert"
+            push!(verbatim_ranges, JS.byte_range(node))
+        end
     end
 
     traverse(st0, #=postorder=#true) do node::SyntaxTreeC
@@ -398,7 +402,7 @@ function collect_type_inlay_hints!(
         k !== JS.K"macrocall" && byterng in callee_ranges && return nothing
         typ = get_type_for_range(ctx, byterng)
         typ === nothing && return nothing
-        should_annotate_type(typ) || return nothing
+        should_annotate_type(node, typ) || return nothing
 
         # Wrap forms where `::T` would otherwise bind to the wrong expression,
         # or where trailing field/index access must stay outside the assertion.
@@ -487,7 +491,34 @@ function funcdef_sig_range(funcdef::SyntaxTreeC)
     return JS.byte_range(sig)
 end
 
-should_annotate_type(@nospecialize(typ)) = !(typ isa Core.Const)
+function should_annotate_type(node::SyntaxTreeC, @nospecialize(typ))
+    typ isa Core.Const || return true
+    val = typ.val
+    is_const_literal_node(node, val) && return false
+    is_const_binding_value(val) && return false
+    return true
+end
+
+function is_const_literal_node(node::SyntaxTreeC, @nospecialize(val))
+    k = JS.kind(node)
+    JS.is_literal(k) && return true
+    k === JS.K"inert" && return true
+    if k === JS.K"Identifier"
+        name = get_name_val(node)
+        if name isa String
+            return identifier_spells_const_value(name, val)
+        end
+    end
+    return false
+end
+
+function identifier_spells_const_value(name::String, @nospecialize val)
+    return (name == "nothing" && val === nothing) ||
+        (name == "missing" && val === missing)
+end
+
+is_const_binding_value(@nospecialize val) =
+    val isa Type || val isa Function || val isa Module
 
 # Register both variables and destructuring wrappers so the regular postorder
 # pass doesn't emit duplicate or wrapper-level iteration hints.
@@ -578,7 +609,7 @@ function emit_lambda_param_hint!(
         maxdepth::Int, maxwidth::Int, lazy_tooltips::Bool
     )
     typ === Any && return nothing # an unrefined slot adds nothing over the bare name
-    should_annotate_type(typ) || return nothing
+    should_annotate_type(p, typ) || return nothing
     endpos = offset_to_xy(fi, JS.last_byte(p) + 1)
     endpos ∈ range || return nothing
     emit_type_hint!(
@@ -624,7 +655,7 @@ function emit_destructure_var_hint!(
     byterng = JS.byte_range(lvar)
     byterng in emitted_ranges && return nothing
     ltyp = @something get_type_for_range(ctx, byterng) return nothing
-    should_annotate_type(ltyp) || return nothing
+    should_annotate_type(lvar, ltyp) || return nothing
     endpos = offset_to_xy(fi, JS.last_byte(lvar) + 1)
     endpos ∈ range || return nothing
     emit_type_hint!(
