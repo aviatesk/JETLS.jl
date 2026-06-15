@@ -55,6 +55,9 @@ end
             # collapses the outermost `{...}`.
             @test JETLS.truncate_typstr(s, typemax(Int), 20) == "Tuple{…}"
         end
+        let s = "LongTypeNameForInlayHintTruncation"
+            @test JETLS.truncate_typstr(s, typemax(Int), 20) == "LongTypeN…Truncation"
+        end
     end
 
     @testset "passes compose" begin

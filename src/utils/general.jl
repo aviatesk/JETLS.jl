@@ -294,7 +294,21 @@ function truncate_typstr(str::String, maxdepth::Int, maxwidth::Int)
         str = Base.type_depth_limit(str, 0; maxdepth)
     end
     lastindex(str) <= maxwidth && return str
-    return Base.type_depth_limit(str, maxwidth)
+    limited = Base.type_depth_limit(str, maxwidth)
+    isempty(limited) || return limited
+    return truncate_flat_typstr(str, maxwidth)
+end
+
+function truncate_flat_typstr(str::String, maxwidth::Int)
+    maxwidth <= 1 && return "…"
+    nchars = length(str)
+    nchars <= maxwidth && return str
+    nkeep = maxwidth - 1
+    prefix_len = max(1, nkeep ÷ 2)
+    suffix_len = nkeep - prefix_len
+    prefix = first(str, prefix_len)
+    suffix = suffix_len == 0 ? "" : last(str, suffix_len)
+    return prefix * "…" * suffix
 end
 
 function typstr_within_depth_limit(str::String, maxdepth::Int)

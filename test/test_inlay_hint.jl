@@ -8,6 +8,8 @@ using JETLS.URIs2
 include(normpath(pkgdir(JETLS), "test", "setup.jl"))
 include(normpath(pkgdir(JETLS), "test", "jsjl-utils.jl"))
 
+struct LongTypeNameForInlayHintTruncation end
+
 # Render `hints` into `code` via the shared `JETLS.apply_inlay_hints` helper
 # (the whole document starts at byte 1).
 function apply_inlay_hints(code::AbstractString, hints::Vector{InlayHint})
@@ -514,6 +516,25 @@ end
             "end\n"
         @test apply_inlay_hints(code, hints) == expected
         @test length(JETLS.load(cache)) == 1
+    end
+
+    @testset "long flat type names are middle-truncated" begin
+        code = """
+            let ltnflt = LongTypeNameForInlayHintTruncation()
+                ltnflt
+            end
+            """
+        expected = """
+            let ltnflt = LongTypeNameForInlayHintTruncation()::LongTypeN…Truncation
+                ltnflt::LongTypeN…Truncation
+            end
+            """
+        _, hints = get_lazy_type_inlay_hints(code, @__MODULE__)
+        @test apply_inlay_hints(code, hints) == expected
+        hint = only(filter(hints) do h
+            h.data isa TypeInlayHintData && h.position.line == 1
+        end)
+        @test hint.label == "::LongTypeN…Truncation"
     end
 
     @testset "lazy tooltip resolution" begin
