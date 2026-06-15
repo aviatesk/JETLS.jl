@@ -25,6 +25,8 @@ has_name_val(st::SyntaxTreeC) = JS.hasattr(st, :name_val)
 get_name_val(st::SyntaxTreeC, default=nothing) = has_name_val(st) ? st.name_val::String : default
 name_val(st::SyntaxTreeC) = st.name_val::String
 
+var_id(st::SyntaxTreeC) = st.var_id::JL.IdTag
+
 get_source_text(ps::JS.ParseStream) = JS.sourcetext(JS.SourceFile(ps))
 document_text(fi::FileInfo) = get_source_text(fi.parsed_stream)
 document_range(fi::FileInfo) = jsobj_to_range(fi.parsed_stream, fi)
@@ -1476,7 +1478,7 @@ function is_noreturn_call(
     JS.numchildren(st3) >= 1 || return false
     func = st3[1]
     if JS.kind(func) === JS.K"BindingId"
-        binfo = JL.get_binding(ctx3, func.var_id::JL.IdTag)
+        binfo = JL.get_binding(ctx3, var_id(func))
         binfo.kind === :global && Symbol(binfo.name) in allow_noreturn_optimization && return true
     end
     for i in 2:JS.numchildren(st3)

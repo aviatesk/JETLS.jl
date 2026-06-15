@@ -256,9 +256,9 @@ function undef_emit_isdefined_hints!(
         JS.numchildren(operand) >= 1 || return
         arg = operand[1]
         if JS.kind(arg) == JS.K"BindingId"
-            var_id = arg.var_id::JL.IdTag
-            if var_id in candidates
-                cfg_emit_event!(lin, :isdefined, var_id, arg)
+            vid = var_id(arg)
+            if vid in candidates
+                cfg_emit_event!(lin, :isdefined, vid, arg)
             end
         end
     end
@@ -271,7 +271,7 @@ function undef_cond_binding_ids!(result::Vector{JL.IdTag}, cond::SyntaxTreeC)
     all_bindings = Ref(true)
     for_each_cond_operand(cond) do operand::SyntaxTreeC
         if JS.kind(operand) == JS.K"BindingId"
-            push!(result, operand.var_id::JL.IdTag)
+            push!(result, var_id(operand))
         else
             all_bindings[] = false
         end
@@ -288,7 +288,7 @@ function undef_direct_assign_var_id(node::SyntaxTreeC)
     if (k == JS.K"=" || k == JS.K"function_decl") && JS.numchildren(node) >= 1
         lhs = node[1]
         if JS.kind(lhs) == JS.K"BindingId"
-            return lhs.var_id::JL.IdTag
+            return var_id(lhs)
         end
     end
     return nothing
@@ -377,9 +377,9 @@ function linearize_cfg_events!(
     k = JS.kind(ex3)
 
     if k == JS.K"BindingId"
-        var_id = ex3.var_id::JL.IdTag
-        if var_id in candidates
-            cfg_emit_event!(lin, :use, var_id, ex3)
+        vid = var_id(ex3)
+        if vid in candidates
+            cfg_emit_event!(lin, :use, vid, ex3)
         end
 
     elseif k == JS.K"symbolicblock"
@@ -439,11 +439,11 @@ function linearize_cfg_events!(
         # Then record assignment
         lhs = ex3[1]
         if JS.kind(lhs) == JS.K"BindingId"
-            var_id = lhs.var_id::JL.IdTag
-            if var_id in candidates
-                cfg_emit_event!(lin, :assign, var_id, lhs)
+            vid = var_id(lhs)
+            if vid in candidates
+                cfg_emit_event!(lin, :assign, vid, lhs)
             end
-            undef_invalidate_cond_implies!(lin, var_id)
+            undef_invalidate_cond_implies!(lin, vid)
         end
 
     elseif k == JS.K"function_decl"
@@ -454,11 +454,11 @@ function linearize_cfg_events!(
         # Then emit the assign event for the function name
         lhs = ex3[1]
         if JS.kind(lhs) == JS.K"BindingId"
-            var_id = lhs.var_id::JL.IdTag
-            if var_id in candidates
-                cfg_emit_event!(lin, :assign, var_id, lhs)
+            vid = var_id(lhs)
+            if vid in candidates
+                cfg_emit_event!(lin, :assign, vid, lhs)
             end
-            undef_invalidate_cond_implies!(lin, var_id)
+            undef_invalidate_cond_implies!(lin, vid)
         end
 
     elseif k == JS.K"isdefined"

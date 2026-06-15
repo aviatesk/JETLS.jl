@@ -1,7 +1,7 @@
 module Closure2Opaque
 
 using ..JETLS: JL, JS, SyntaxTreeC, TraversalReturn, get_name_val, is_core_svec_call,
-    traverse
+    traverse, var_id
 
 export rewrite_local_closures_to_opaque
 
@@ -60,8 +60,8 @@ function rewrite_closure_block(
         child = children_old[i]
         if JS.kind(child) === JS.K"function_decl" && is_local_closure_decl(ctx, child)
             func_name = child[1]
-            md_idx = find_matching_method_defs(children_old, i, func_name.var_id, consumed)
-            if md_idx !== nothing && !(func_name.var_id in multis)
+            md_idx = find_matching_method_defs(children_old, i, var_id(func_name), consumed)
+            if md_idx !== nothing && !(var_id(func_name) in multis)
                 method_defs = children_old[md_idx]
                 oc = try_build_oc_assignment(ctx, child, method_defs)
                 if oc !== nothing
@@ -109,7 +109,7 @@ function collect_multi_method_bindings(ctx::JL.VariableAnalysisContext, st3::Syn
         k = JS.kind(node)
         if ((k === JS.K"method" || k === JS.K"method_defs") &&
             JS.numchildren(node) >= 1 && JS.kind(node[1]) === JS.K"BindingId")
-            vid = node[1].var_id
+            vid = var_id(node[1])
             if k === JS.K"method"
                 n = (methods_per_vid[vid] = get(methods_per_vid, vid, 0) + 1)
                 n == 2 && push!(multis, vid) # fires exactly once per binding
@@ -141,7 +141,7 @@ function collect_referenced_closures!(
     while !isempty(stack)
         node = pop!(stack)
         if JS.kind(node) === JS.K"BindingId"
-            id = node.var_id
+            id = var_id(node)
             if id ∉ multis && haskey(method_defs_by_vid, id)
                 push!(multis, id)
                 push!(worklist, id)
@@ -160,7 +160,7 @@ function is_local_closure_decl(ctx::JL.VariableAnalysisContext, fd::SyntaxTreeC)
     JS.numchildren(fd) >= 1 || return false
     func_name = fd[1]
     return JS.kind(func_name) === JS.K"BindingId" &&
-        haskey(ctx.closure_bindings, func_name.var_id)
+        haskey(ctx.closure_bindings, var_id(func_name))
 end
 
 function find_matching_method_defs(
@@ -184,7 +184,7 @@ end
 
 function is_method_defs_for(c::SyntaxTreeC, target_var_id::Int)
     return JS.kind(c) === JS.K"method_defs" && JS.numchildren(c) >= 2 &&
-        JS.kind(c[1]) === JS.K"BindingId" && c[1].var_id::JL.IdTag == target_var_id
+        JS.kind(c[1]) === JS.K"BindingId" && var_id(c[1]) == target_var_id
 end
 
 # `method_defs[2]` is shaped like
@@ -196,7 +196,7 @@ function try_build_oc_assignment(
         ctx::JL.VariableAnalysisContext, fd::SyntaxTreeC, method_defs::SyntaxTreeC
     )
     func_name = fd[1]
-    method_node, sig_call = find_method_and_sig_call(method_defs[2], func_name.var_id)
+    method_node, sig_call = find_method_and_sig_call(method_defs[2], var_id(func_name))
     method_node === nothing && return nothing
     sig_call === nothing && return nothing
     JS.numchildren(sig_call) >= 4 || return nothing
@@ -256,14 +256,14 @@ function find_method_and_sig_call(root::SyntaxTreeC, target_var_id::Int)
     JS.numchildren(method_node) >= 2 || return (method_node, nothing)
     sig_ref = method_node[2]
     JS.kind(sig_ref) === JS.K"BindingId" || return (method_node, nothing)
-    sig_call = find_sig_call_for(root, sig_ref.var_id)
+    sig_call = find_sig_call_for(root, var_id(sig_ref))
     return (method_node, sig_call)
 end
 
 function find_method_node(root::SyntaxTreeC, target_var_id::Int)
     return traverse(root) do node::SyntaxTreeC
         if (JS.kind(node) === JS.K"method" && JS.numchildren(node) == 3 &&
-            JS.kind(node[1]) === JS.K"BindingId" && node[1].var_id == target_var_id)
+            JS.kind(node[1]) === JS.K"BindingId" && var_id(node[1]) == target_var_id)
             return TraversalReturn(node; terminate=true)
         end
         nothing
@@ -273,7 +273,7 @@ end
 function find_sig_call_for(root::SyntaxTreeC, sig_var_id::Int)
     return traverse(root) do node::SyntaxTreeC
         if (JS.kind(node) === JS.K"=" && JS.numchildren(node) == 2 &&
-            JS.kind(node[1]) === JS.K"BindingId" && node[1].var_id == sig_var_id &&
+            JS.kind(node[1]) === JS.K"BindingId" && var_id(node[1]) == sig_var_id &&
             JS.kind(node[2]) === JS.K"call" && is_core_svec_call(node[2]))
             return TraversalReturn(node[2]; terminate=true)
         end
