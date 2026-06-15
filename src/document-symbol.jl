@@ -166,7 +166,7 @@ function extract_module_symbol!(
     if JS.kind(body) === JS.K"block"
         extract_toplevel_symbols!(children, body, fi, context_module)
     end
-    is_baremodule = JS.has_flags(JS.flags(st0), JS.BARE_MODULE_FLAG)
+    is_baremodule = JS.has_flags(st0, JS.BARE_MODULE_FLAG)
     detail = (is_baremodule ? "baremodule " : "module ") * name
     push!(symbols, DocumentSymbol(;
         name,
@@ -186,7 +186,7 @@ function extract_function_symbol!(
     sig = st0[1]
     name, name_node = @something extract_function_name(sig) return nothing
     children = @something extract_scoped_children(st0, fi, context_module) Some(nothing)
-    is_short_form = JS.has_flags(JS.flags(st0), JS.SHORT_FORM_FUNCTION_FLAG)
+    is_short_form = JS.has_flags(st0, JS.SHORT_FORM_FUNCTION_FLAG)
     detail = is_short_form ? JS.sourcetext(sig) * " =" : "function " * JS.sourcetext(sig)
     push!(symbols, DocumentSymbol(;
         name,
@@ -296,7 +296,7 @@ function extract_struct_symbol!(
         name_node = name_node[1]
     end
     name = @something get_name_val(name_node) return nothing
-    is_mutable = JS.has_flags(JS.flags(st0), JS.MUTABLE_FLAG)
+    is_mutable = JS.has_flags(st0, JS.MUTABLE_FLAG)
     detail = (is_mutable ? "mutable struct " : "struct ") * lstrip(JS.sourcetext(sig_node))
     children = DocumentSymbol[]
     if JS.numchildren(st0) ≥ 3
@@ -716,7 +716,7 @@ function extract_string_content(st0::SyntaxTreeC)
     first_child = st0[1]
     if JS.numchildren(st0) == 1 && JS.kind(first_child) === JS.K"String"
         # Simple string without interpolation
-        return JS.hasattr(first_child, :value) ? first_child.value : nothing
+        return JS.hasattr(first_child, :value) ? first_child.value::String : nothing
     else
         # Interpolated string - extract content from source text
         src = JS.sourcetext(st0)

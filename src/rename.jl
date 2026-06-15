@@ -125,9 +125,7 @@ function file_rename_preparation(
     st0_top = build_syntax_tree(fi)
     offset = xy_to_offset(fi, pos)
 
-    string_node = @something begin
-        select_target_string(st0_top, offset)
-    end return nothing
+    string_node = @something select_target_string(st0_top, offset) return nothing
 
     resolved = @something(
         resolve_path_string_literal(string_node, dirname(uri2filename(uri))),
@@ -483,9 +481,7 @@ function file_rename(
     st0_top = build_syntax_tree(fi)
     offset = xy_to_offset(fi, pos)
 
-    string_node = @something begin
-        select_target_string(st0_top, offset)
-    end return nothing
+    string_node = @something select_target_string(st0_top, offset) return nothing
 
     basedir = dirname(uri2filename(uri))
     resolved = @something(

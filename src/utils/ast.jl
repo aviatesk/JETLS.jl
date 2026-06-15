@@ -1272,10 +1272,10 @@ function resolve_path_string_literal(
     )
     JS.hasattr(string_node, :value) || return nothing
     value = string_node.value
-    value isa AbstractString || return nothing
+    value isa String || return nothing
     path = joinpath(basedir, value)
     ispath(path) || return nothing
-    return (; value = String(value), path = String(path))
+    return (; value, path)
 end
 
 function select_target_node(filter, selector, st0::SyntaxTreeC, offset::Integer)

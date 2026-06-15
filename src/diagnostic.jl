@@ -1173,7 +1173,7 @@ function find_capture_sites(
             # Find the lambda in st3 that has matching lambda_bindings.self
             traverse(st3) do node3::SyntaxTreeC
                 JS.kind(node3) === JS.K"lambda" || return nothing
-                hasproperty(node3, :lambda_bindings) || return nothing
+                JS.hasattr(node3, :lambda_bindings) || return nothing
                 lambda_bindings = node3.lambda_bindings::JL.LambdaBindings
                 lambda_bindings.self == lambda.self || return nothing
                 # Find references to binfo.id inside this lambda

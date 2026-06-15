@@ -648,7 +648,7 @@ end
 # `K"tuple"` exactly when it's surrounded by `(` `)` (independent of any
 # nested tuple's parens), so checking the flag is the precise discriminator.
 is_open_tuple(node::SyntaxTreeC) =
-    JS.kind(node) === JS.K"tuple" && !(JS.hasattr(node, :syntax_flags) && JS.has_flags(node.syntax_flags, JS.PARENS_FLAG))
+    JS.kind(node) === JS.K"tuple" && !JS.has_flags(node, JS.PARENS_FLAG)
 
 # Recover dropped `K"parens"` nodes from neighboring tokens. A preceding `(` is
 # decorative unless it belongs to a call, index, or chained-call form.

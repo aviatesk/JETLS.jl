@@ -1257,7 +1257,7 @@ function collect_provenance_indexes(inferred_tree::SyntaxTreeC)
                 end
             end
         end
-        if JS.kind(st) === JS.K"call" && hasproperty(st, :type) &&
+        if JS.kind(st) === JS.K"call" && JS.hasattr(st, :type) &&
                 length(provs) >= 2 && JS.kind(first(provs)) === JS.K"macrocall"
             push!(get!(Vector{Any}, macrocall_types, JS.byte_range(first(provs))), st.type)
         end
@@ -1329,7 +1329,7 @@ function collect_oc_argtypes_by_binding(inferred_tree::SyntaxTreeC)
     oc_argtypes = Dict{Tuple{UnitRange{Int},Symbol},Any}()
     traverse(inferred_tree) do st::SyntaxTreeC
         JS.kind(st) === JS.K"new_opaque_closure" || return nothing
-        hasproperty(st, :type) || return nothing
+        JS.hasattr(st, :type) || return nothing
         entry = @something oc_argtypes_for_node(st.type, JS.byte_range(st)) return nothing
         for i = 1:length(entry.argnames)
             typ = entry.argtypes[i]
@@ -1530,7 +1530,7 @@ function type_for_call(ctx::InferredTreeContext, rng::UnitRange{<:Integer})
     typ = nothing
     for st in get(ctx.by_byte_range, rng, ())
         JS.kind(st) === JS.K"call" || continue
-        hasproperty(st, :type) || continue
+        JS.hasattr(st, :type) || continue
         typ = st.type
     end
     return typ
@@ -1553,7 +1553,7 @@ end
 function type_for_typed_comprehension(ctx::InferredTreeContext, rng::UnitRange{<:Integer})
     for st in get(ctx.by_byte_range, rng, ())
         JS.kind(st) === JS.K"call" || continue
-        hasproperty(st, :type) || continue
+        JS.hasattr(st, :type) || continue
         wt = CC.widenconst(st.type)
         wt !== Union{} && wt <: Array && return st.type
     end
@@ -1577,7 +1577,7 @@ function type_for_branching(ctx::InferredTreeContext, rng::UnitRange{<:Integer})
     typ = nothing
     # (1) equality match — any lowered kind, including merge-slot `K"="`.
     for st in get(ctx.by_byte_range, rng, ())
-        hasproperty(st, :type) || continue
+        JS.hasattr(st, :type) || continue
         ntyp = st.type
         typ = typ === nothing ? ntyp : CC.tmerge(ntyp, typ)
     end
@@ -1596,7 +1596,7 @@ function type_for_branching(ctx::InferredTreeContext, rng::UnitRange{<:Integer})
         form_rng = find_outermost_user_return_form(
             ctx.user_return_form_ranges, first_byte:last_byte)
         form_rng !== nothing && strictly_contains(rng, form_rng) && continue
-        hasproperty(st, :type) || continue
+        JS.hasattr(st, :type) || continue
         ntyp = st.type
         typ = typ === nothing ? ntyp : CC.tmerge(ntyp, typ)
     end
@@ -1627,7 +1627,7 @@ function type_for_funcdef(ctx::InferredTreeContext, rng::UnitRange{<:Integer})
             block = child[1]
             for j = 1:JS.numchildren(block)
                 stmt = block[j]
-                if JS.kind(stmt) === JS.K"return" && hasproperty(stmt, :type)
+                if JS.kind(stmt) === JS.K"return" && JS.hasattr(stmt, :type)
                     ntyp = stmt.type
                     typ = typ === nothing ? ntyp : CC.tmerge(ntyp, typ)
                 end
@@ -1660,7 +1660,7 @@ function tmerge_at_range(ctx::InferredTreeContext, rng::UnitRange{<:Integer})
         # (`Const(Any)` etc.) must not leak into surface queries.
         JS.kind(st) === JS.K"core" && continue
         has_binding_slot && JS.kind(st) === JS.K"Symbol" && continue
-        hasproperty(st, :type) || continue
+        JS.hasattr(st, :type) || continue
         if is_oc_site && get(ctx.oc_body_scope, st._id, nothing) !== rng
             continue
         end
@@ -1711,7 +1711,7 @@ function get_matches_for_range(ctx::InferredTreeContext, rng::UnitRange{<:Intege
         last_call = st
     end
     last_call === nothing && return nothing
-    hasproperty(last_call, :matches) || return nothing
+    JS.hasattr(last_call, :matches) || return nothing
     return last_call.matches::Vector{Core.MethodMatch}
 end
 
@@ -1734,7 +1734,7 @@ surface the closure's own `OpaqueClosure{…}` type instead.
 function get_oc_argtypes_for_range(ctx::InferredTreeContext, rng::UnitRange{<:Integer})
     for st in get(ctx.by_byte_range, rng, ())
         JS.kind(st) === JS.K"new_opaque_closure" || continue
-        hasproperty(st, :type) || continue
+        JS.hasattr(st, :type) || continue
         argtypes = @something opaque_closure_argtypes(st.type) continue
         return argtypes
     end
