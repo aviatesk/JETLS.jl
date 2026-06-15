@@ -904,8 +904,7 @@ end
         doc = inner_doc[]
         @test doc !== nothing
         @test any(JS.children(doc)) do c
-            JS.kind(c) === JS.K"Identifier" &&
-                JS.hasattr(c, :name_val) && c.name_val == "SIGNATURES"
+            JS.kind(c) === JS.K"Identifier" && JETLS.get_name_val(c) == "SIGNATURES"
         end
     end
 end
@@ -943,7 +942,7 @@ end
         # `g(binfo)` after repair → `(call g binfo)`.
         @test JS.numchildren(call) == 2
         @test JS.kind(call[2]) === JS.K"Identifier"
-        @test call[2].name_val == "binfo"
+        @test JETLS.get_name_val(call[2]) == "binfo"
         @test lowers_ok(trimmed)
     end
 
@@ -974,7 +973,7 @@ end
         @test JS.is_prefix_op_call(ascription)
         @test JS.numchildren(ascription) == 1
         @test JS.kind(ascription[1]) === JS.K"Identifier"
-        @test ascription[1].name_val == "Int"
+        @test JETLS.get_name_val(ascription[1]) == "Int"
         @test lowers_ok(trimmed)
     end
 

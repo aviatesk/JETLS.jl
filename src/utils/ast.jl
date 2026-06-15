@@ -21,6 +21,10 @@ function build_syntax_tree(fi::FileInfo)
     return copy_syntax_tree(fi.syntax_tree0)
 end
 
+has_name_val(st::SyntaxTreeC) = JS.hasattr(st, :name_val)
+get_name_val(st::SyntaxTreeC, default=nothing) = has_name_val(st) ? st.name_val::String : default
+name_val(st::SyntaxTreeC) = st.name_val::String
+
 get_source_text(ps::JS.ParseStream) = JS.sourcetext(JS.SourceFile(ps))
 document_text(fi::FileInfo) = get_source_text(fi.parsed_stream)
 document_range(fi::FileInfo) = jsobj_to_range(fi.parsed_stream, fi)
@@ -176,8 +180,8 @@ function _unwrap_interpolations(st::SyntaxTreeC)
     # `name_val`, and JuliaLowering's validator requires it to be present.
     new_node = if !changed
         st
-    elseif hasproperty(st, :name_val)
-        JL.@ast(JS.syntax_graph(st), st, [k(name_val=st.name_val::String) new_children...])
+    elseif has_name_val(st)
+        JL.@ast(JS.syntax_graph(st), st, [k(name_val=name_val(st)) new_children...])
     else
         JL.@ast(JS.syntax_graph(st), st, [k new_children...])
     end
@@ -193,13 +197,12 @@ function is_macrocall_st0(st0::SyntaxTreeC, names::AbstractString...; from::Unio
     JS.kind(st0) === JS.K"macrocall" || return false
     JS.numchildren(st0) >= 1 || return false
     macro_name = st0[1]
-    name_val = if hasproperty(macro_name, :name_val)
-        macro_name.name_val
+    nv = if has_name_val(macro_name)
+        name_val(macro_name)
     else
         JS.sourcetext(macro_name)
     end
-    name_val isa AbstractString || return false
-    return name_val in names && (isnothing(from) || (JS.hasattr(macro_name, :mod) && macro_name.mod === from))
+    return nv in names && (isnothing(from) || (JS.hasattr(macro_name, :mod) && macro_name.mod === from))
 end
 
 is_mainfunc0(st0::SyntaxTreeC) = is_macrocall_st0(st0, "@main")
@@ -383,10 +386,7 @@ end
 
 function find_inert_identifier_name(st::SyntaxTreeC, offset::Integer)
     id_node = @something find_inert_identifier(st, offset) return nothing
-    JS.hasattr(id_node, :name_val) || return nothing
-    name_val = id_node.name_val
-    name_val isa AbstractString || return nothing
-    return name_val
+    return get_name_val(id_node)
 end
 
 function is_nospecialize_or_specialize_macrocall3(st3::SyntaxTreeC)
@@ -397,8 +397,7 @@ function is_nospecialize_or_specialize_macrocall3(st3::SyntaxTreeC)
     JS.numchildren(st3) >= 2 || return false
     macro_name = macro_name[2]
     JS.kind(macro_name) === JS.K"Identifier" || return false
-    hasproperty(macro_name, :name_val) || return false
-    return macro_name.name_val == "nospecialize" || macro_name.name_val == "specialize"
+    return get_name_val(macro_name) in ("nospecialize", "specialize")
 end
 
 function _remove_macrocalls(st0::SyntaxTreeC)
@@ -452,8 +451,8 @@ function _remove_macrocalls(st0::SyntaxTreeC)
     # `name_val`, and JuliaLowering's validator requires it to be present.
     new_node = if !changed
         st0
-    elseif hasproperty(st0, :name_val)
-        JL.@ast(JS.syntax_graph(st0), st0, [k(name_val=st0.name_val::String) new_children...])
+    elseif has_name_val(st0)
+        JL.@ast(JS.syntax_graph(st0), st0, [k(name_val=name_val(st0)) new_children...])
     else
         JL.@ast(JS.syntax_graph(st0), st0, [k new_children...])
     end
@@ -581,15 +580,12 @@ function unwrap_funcdef_sig(node::SyntaxTreeC)
     end
 end
 
-extract_name_val(node::SyntaxTreeC) =
-    hasproperty(node, :name_val) ? node.name_val::String : nothing
-
 # Collect the `name_val` of every `K"Identifier"` node reachable from `st` into `names`.
 function collect_identifier_names!(names::Set{String}, st::SyntaxTreeC)
     traverse(st) do node
         if JS.kind(node) === JS.K"Identifier"
-            name = get(node, :name_val, nothing)
-            name === nothing || push!(names, name::String)
+            name = get_name_val(node)
+            name === nothing || push!(names, name)
         end
         return
     end
@@ -599,8 +595,7 @@ end
 # `K"core"` leaves can't appear in user-written source (`Core.x` lowers through
 # `K"globalref"`), so these match only lowering-generated references.
 function is_core_ref(node::SyntaxTreeC, name::String)
-    return JS.kind(node) === JS.K"core" && JS.hasattr(node, :name_val) &&
-        node.name_val == name
+    return JS.kind(node) === JS.K"core" && get_name_val(node) == name
 end
 
 function is_core_svec_call(call_node::SyntaxTreeC)
@@ -1096,7 +1091,7 @@ end
 is_special_macrocall(st0::SyntaxTreeC) =
     JS.kind(st0) === JS.K"macrocall" && JS.numchildren(st0) >= 1 &&
     let mname = JS.kind(st0[1]) === JS.K"." && JS.numchildren(st0[1]) === 2 ? st0[1][2] : st0[1]
-        mname_s = hasproperty(mname, :name_val) ? mname.name_val : ""
+        mname_s = get_name_val(mname, "")
         endswith(mname_s, "_str") || endswith(mname_s, "_cmd")
     end
 

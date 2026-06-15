@@ -147,7 +147,7 @@ module TypeAnnotation
 using Core.IR
 using JET: CC
 using ..JETLS: InferredContextCache, InferredContextCacheData, JETLS_DEBUG_LOWERING,
-    JL, JS, SyntaxTreeC, TraversalReturn, iterate_toplevel_tree,
+    JL, JS, SyntaxTreeC, TraversalReturn, get_name_val, iterate_toplevel_tree,
     jl_lower_for_scope_resolution, load, rewrite_local_closures_to_opaque, store!, traverse
 import ..JETLS: InferredTreeContext
 
@@ -1682,7 +1682,7 @@ function is_synthetic_typeof_scaffolding(st::SyntaxTreeC)
     JS.numchildren(st) >= 1 || return false
     c1 = st[1]
     JS.kind(c1) === JS.K"core" || return false
-    return get(c1, :name_val, nothing) == "Typeof"
+    return get_name_val(c1) == "Typeof"
 end
 
 """

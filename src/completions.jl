@@ -650,7 +650,7 @@ end
 function extract_param_text(p::SyntaxTreeC)
      k = JS.kind(p)
     if k === JS.K"Identifier"
-        return extract_name_val(p)
+        return get_name_val(p)
     elseif k === JS.K"::"
         n = JS.numchildren(p)
         if n == 1
@@ -666,7 +666,7 @@ function extract_param_text(p::SyntaxTreeC)
     elseif k === JS.K"var" && JS.numchildren(p) == 1
         inner = p[1]
         if JS.kind(inner) === JS.K"Identifier"
-            return extract_name_val(inner)
+            return get_name_val(inner)
         end
     end
     return nothing
@@ -729,7 +729,7 @@ end
 
 function extract_kwarg_name_str(p::SyntaxTreeC)
     node = @something extract_kwarg_name(p; sig=true) return nothing
-    return extract_name_val(node)
+    return get_name_val(node)
 end
 
 function should_insert_spaces_around_equal(fi::FileInfo, ca::CallArgs)

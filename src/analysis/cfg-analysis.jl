@@ -384,7 +384,7 @@ function linearize_cfg_events!(
 
     elseif k == JS.K"symbolicblock"
         label_node = ex3[1]
-        label_name = label_node.name_val::String
+        label_name = name_val(label_node)
         exit_label = cfg_make_label!(lin)
         # Save and set the break target for this label (handles nesting)
         outer_target = get(lin.break_targets, label_name, nothing)
@@ -406,7 +406,7 @@ function linearize_cfg_events!(
         end
         # Emit goto to matching symbolicblock exit if label is known
         if JS.numchildren(ex3) >= 1 && JS.kind(ex3[1]) == JS.K"symboliclabel"
-            label_name = ex3[1].name_val::String
+            label_name = name_val(ex3[1])
             target_label = get(lin.break_targets, label_name, nothing)
             if !isnothing(target_label)
                 cfg_emit_goto!(lin, target_label)
@@ -420,14 +420,14 @@ function linearize_cfg_events!(
         # `@label name` — register a CFG label at the current position so any
         # `K"symbolicgoto"` referencing this name (forward or backward) can
         # land here. At `st3` this node is a leaf; the name lives on `name_val`.
-        label_id = cfg_get_or_create_goto_label!(lin, ex3.name_val::String)
+        label_id = cfg_get_or_create_goto_label!(lin, name_val(ex3))
         cfg_emit_label!(lin, label_id)
 
     elseif k == JS.K"symbolicgoto" || k == JS.K"oldsymbolicgoto"
         # `@goto name` — unconditional jump to the matching `K"symboliclabel"`.
         # Forward references work because `pending_gotos` is resolved later in
         # `cfg_finalize!`.
-        label_id = cfg_get_or_create_goto_label!(lin, ex3.name_val::String)
+        label_id = cfg_get_or_create_goto_label!(lin, name_val(ex3))
         cfg_emit_goto!(lin, label_id)
 
     elseif JS.is_leaf(ex3) || JL.is_quoted(ex3)

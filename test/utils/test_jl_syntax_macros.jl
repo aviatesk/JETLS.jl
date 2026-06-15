@@ -646,8 +646,7 @@ end
 function find_named_ref(st::JS.SyntaxTree, k::JS.Kind, name::AbstractString)
     if JS.kind(st) === k && JS.numchildren(st) >= 1
         inner = st[1]
-        if JS.kind(inner) === JS.K"Identifier" &&
-            hasproperty(inner, :name_val) && inner.name_val == name
+        if JS.kind(inner) === JS.K"Identifier" && JETLS.get_name_val(inner) == name
             return st
         end
     end

@@ -1,6 +1,7 @@
 module Closure2Opaque
 
-using ..JETLS: JL, JS, SyntaxTreeC, TraversalReturn, is_core_svec_call, traverse
+using ..JETLS: JL, JS, SyntaxTreeC, TraversalReturn, get_name_val, is_core_svec_call,
+    traverse
 
 export rewrite_local_closures_to_opaque
 
@@ -285,11 +286,9 @@ end
 function argtype_is_vararg(t::SyntaxTreeC)
     JS.kind(t) === JS.K"call" && JS.numchildren(t) >= 2 || return false
     callee = t[1]
-    JS.kind(callee) === JS.K"core" && JS.hasattr(callee, :name_val) &&
-        callee.name_val == "apply_type" || return false
+    JS.kind(callee) === JS.K"core" && get_name_val(callee) == "apply_type" || return false
     inner = t[2]
-    return JS.kind(inner) === JS.K"core" && JS.hasattr(inner, :name_val) &&
-        inner.name_val == "Vararg"
+    return JS.kind(inner) === JS.K"core" && get_name_val(inner) == "Vararg"
 end
 
 end # module Closure2Opaque

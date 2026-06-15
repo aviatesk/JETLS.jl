@@ -681,9 +681,9 @@ end
 function is_assignment_expression(st::SyntaxTreeC)
     k = JS.kind(st)
     k === JS.K"=" && return true
-    if k === JS.K"unknown_head" && hasproperty(st, :name_val)
-        name = st.name_val
-        return name isa AbstractString && endswith(name, "=")
+    if k === JS.K"unknown_head"
+        name = get_name_val(st)
+        return name !== nothing && endswith(name, "=")
     end
     return false
 end
@@ -1449,11 +1449,11 @@ function collect_gotos_labels!(
         if k === JS.K"lambda"
             # Nested lambdas have their own goto/label scope; handled separately.
             return traversal_no_recurse
-        elseif k === JS.K"symboliclabel" && hasproperty(node, :name_val)
-            push!(labels, (node.name_val::String, node))
+        elseif k === JS.K"symboliclabel"
+            push!(labels, (name_val(node), node))
             return traversal_no_recurse
-        elseif (k === JS.K"symbolicgoto" || k === JS.K"oldsymbolicgoto") && hasproperty(node, :name_val)
-            push!(gotos, (node.name_val::String, node))
+        elseif k === JS.K"symbolicgoto" || k === JS.K"oldsymbolicgoto"
+            push!(gotos, (name_val(node), node))
             return traversal_no_recurse
         elseif k === JS.K"symbolicblock" || k === JS.K"break"
             # `K"symbolicblock"`'s first child is a lowering-internal label

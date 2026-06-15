@@ -468,8 +468,7 @@ function collapse_alias_to_source(
     JS.numchildren(as_node) >= 2 || return nothing
     source_path = as_node[1]
     source_id = @something get_local_import_identifier(source_path) return nothing
-    source_name = get(source_id, :name_val, nothing)
-    source_name isa AbstractString || return nothing
+    source_name = @something get_name_val(source_id) return nothing
     effective_new = ismacro ? "@" * newName : newName
     source_name == effective_new || return nothing
     source_range = jsobj_to_range(source_path, fi)

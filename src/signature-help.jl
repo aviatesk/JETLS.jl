@@ -135,7 +135,10 @@ function find_kws(args::SyntaxListC, kw_i::Int; sig=false, cursor::Int=-1)
         JS.kind(args[i]) ∉ JS.KSet"= kw" && i < kw_i && continue
         n = extract_kwarg_name(args[i]; sig)
         if !isnothing(n) && !(JS.first_byte(n) <= cursor <= JS.last_byte(n) + 1)
-            out[n.name_val] = i
+            nv = get_name_val(n)
+            if nv !== nothing
+                out[nv] = i
+            end
         end
     end
     return out
@@ -379,7 +382,7 @@ function make_siginfo(
                 maybe_var_kwp
             else
                 # we don't have a backwards mapping
-                out = get(kwp_map, kwname.name_val, nothing)
+                out = get(kwp_map, get_name_val(kwname), nothing)
                 if isnothing(out)
                     isnothing(maybe_var_kwp) ? noActiveParameter : maybe_var_kwp
                 else

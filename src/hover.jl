@@ -252,7 +252,7 @@ function lookup_doc_for_identifier(
             identifier_node = identifier_node[1]
         end
         JS.is_identifier(identifier_node) || return nothing
-        field = Symbol(identifier_node.name_val)::Symbol
+        field = Symbol(@something get_name_val(identifier_node) return nothing)
         mod = resolve_dot_prefix_module(prefix_node, context_module, ctx, world)
         if mod !== nothing
             return lookup_doc_for_binding(mod, field, sig, world)
@@ -266,7 +266,8 @@ function lookup_doc_for_identifier(
         return lookup_field_doc(prefix_typ, field, world)
     end
     JS.is_identifier(node) || return nothing
-    return lookup_doc_for_binding(context_module, Symbol(node.name_val)::Symbol, sig, world)
+    name = @something get_name_val(node) return nothing
+    return lookup_doc_for_binding(context_module, Symbol(name), sig, world)
 end
 
 # Resolve a dot expression's left-hand side to a `Module` value. Tries a direct
@@ -279,8 +280,8 @@ function resolve_dot_prefix_module(
         dotprefix::SyntaxTreeC, context_module::Module,
         ctx::Union{Nothing,InferredTreeContext}, world::UInt
     )
-    if JS.is_identifier(dotprefix)
-        name = Symbol(dotprefix.name_val)::Symbol
+    if JS.is_identifier(dotprefix) && (nv = get_name_val(dotprefix)) !== nothing
+        name = Symbol(nv)
         if Base.invoke_in_world(world, isdefinedglobal, context_module, name)
             v = Base.invoke_in_world(world, getglobal, context_module, name)
             v isa Module && return v

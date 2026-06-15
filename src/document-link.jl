@@ -64,8 +64,7 @@ function include_path_string_node(node::SyntaxTreeC)
     JS.numchildren(node) == 2 || return nothing
     callee = node[1]
     JS.kind(callee) === JS.K"Identifier" || return nothing
-    JS.hasattr(callee, :name_val) || return nothing
-    callee.name_val in ("include", "include_dependency") || return nothing
+    get_name_val(callee) in ("include", "include_dependency") || return nothing
     arg = node[2]
     JS.kind(arg) === JS.K"String" || return nothing
     return arg

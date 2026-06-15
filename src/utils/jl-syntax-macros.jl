@@ -302,9 +302,9 @@ function _validate_spawn_threadpool(threadpool::SyntaxTreeC)
         # Literal symbol form (`:foo` parses as `K"inert"` containing
         # `K"Identifier"`, the EST analog of `QuoteNode(:foo)`).
         inner = threadpool[1]
-        if JS.kind(inner) === JS.K"Identifier" && hasproperty(inner, :name_val)
-            name = inner.name_val
-            if name isa AbstractString
+        if JS.kind(inner) === JS.K"Identifier"
+            name = get_name_val(inner)
+            if name !== nothing
                 name in _SPAWN_THREADPOOLS && return
                 # Base defers the threadpool check to runtime; flag it statically as an
                 # error but keep expanding so the body (and threadpool identifier, if any)
@@ -530,7 +530,8 @@ function _logmsg_stub(
                 push_macro_error!(ex, "$name: malformed keyword argument")
                 continue
             end
-            kwname = _validate_logmsg_kw(ex)
+            key = ex[1]
+            kwname = JS.kind(key) === JS.K"Identifier" ? get_name_val(key) : nothing
             if kwname !== nothing
                 if kwname in seen_kws
                     # Base would let the synthesized `(; k=…, k=…)` named tuple fail
@@ -553,20 +554,6 @@ function _logmsg_stub(
         end
     end
     return JL.@ast(ctx, mc, [JS.K"block" children... nothing::JS.K"Value"])
-end
-
-# Returns the kwarg name as a `String`, or `nothing` if the name isn't a
-# plain identifier. The latter case (e.g. `"foo"=val`, which Base silently
-# routes through `Symbol(k)`) is rare enough that we just skip the
-# duplicate check rather than reject it outright. Assumes `JS.numchildren(kw) == 2`
-# (the caller pre-validates the shape so it can safely access `kw[2]`).
-function _validate_logmsg_kw(kw::SyntaxTreeC)
-    key = kw[1]
-    if JS.kind(key) === JS.K"Identifier" && hasproperty(key, :name_val)
-        n = key.name_val
-        return n isa AbstractString ? String(n) : nothing
-    end
-    return nothing
 end
 
 # New-style implementations of `Base.@invoke` / `Base.@invokelatest`. These match Base's
@@ -1036,11 +1023,11 @@ function _validate_test_kw(kw::SyntaxTreeC)
         return nothing
     end
     name = kw[1]
-    if !(JS.kind(name) === JS.K"Identifier" && hasproperty(name, :name_val))
+    if !(JS.kind(name) === JS.K"Identifier" && has_name_val(name))
         push_macro_error!(name, "invalid test macro call: keyword name must be an identifier")
         return nothing
     end
-    return name.name_val::String
+    return name_val(name)
 end
 
 function Test.var"@testset"(__context__::JL.MacroContext, args::SyntaxTreeC...)
@@ -1106,11 +1093,11 @@ function _validate_testset_option(arg::SyntaxTreeC)
         return nothing
     end
     name = arg[1]
-    if !(JS.kind(name) === JS.K"Identifier" && hasproperty(name, :name_val))
+    if !(JS.kind(name) === JS.K"Identifier" && has_name_val(name))
         push_macro_error!(name, "@testset: option name must be an identifier")
         return nothing
     end
-    return name.name_val::String
+    return name_val(name)
 end
 
 # Stub for `Base.@assume_effects`. The real macro emits `Expr(:purity)` / `Expr(:meta)`
@@ -1180,15 +1167,13 @@ end
 function _extract_assume_effect_setting_name(setting::SyntaxTreeC)
     while JS.kind(setting) === JS.K"call" && JS.numchildren(setting) == 2
         op = setting[1]
-        JS.kind(op) === JS.K"Identifier" && hasproperty(op, :name_val) &&
-            op.name_val === "!" || break
+        JS.kind(op) === JS.K"Identifier" && get_name_val(op) === "!" || break
         setting = setting[2]
     end
     if JS.kind(setting) === JS.K"inert" && JS.numchildren(setting) >= 1
         inner = setting[1]
-        if JS.kind(inner) === JS.K"Identifier" && hasproperty(inner, :name_val)
-            name = inner.name_val
-            return name isa AbstractString ? name : nothing
+        if JS.kind(inner) === JS.K"Identifier"
+            return get_name_val(inner)
         end
     end
     return nothing

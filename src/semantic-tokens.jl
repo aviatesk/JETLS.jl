@@ -228,7 +228,7 @@ function collect_type_param_names_from_tree!(names::Set{String}, st0::SyntaxTree
                 if JS.kind(param) === JS.K"<:" && JS.numchildren(param) >= 1
                     param = param[1]
                 end
-                name = @something extract_name_val(param) continue
+                name = @something get_name_val(param) continue
                 push!(names, name)
             end
         end
