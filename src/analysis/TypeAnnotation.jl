@@ -11,8 +11,10 @@ byte-range type lookups.
 LSP feature code should normally only need these:
 
 - [`build_inferred_context_for_range`](@ref) locates the top-level tree containing a
-  byte range and returns an [`InferredTreeContext`](@ref). Pass `cache` when the
-  caller can reuse inferred contexts for the same document version.
+  byte range and returns an [`InferredTreeContext`](@ref). Use
+  [`build_inferred_context_for_tree`](@ref) when the caller already has the lowerable
+  top-level tree. Pass `cache` when the caller can reuse inferred contexts for the
+  same document version.
 - [`get_type_for_range`](@ref) queries the inferred type at a surface byte range
   from an [`InferredTreeContext`](@ref).
 - [`get_matches_for_range`](@ref) queries the `Vector{Core.MethodMatch}` that
@@ -56,9 +58,10 @@ The pipeline has four steps. Each step's output feeds the next:
    the lowered surface kind (`K"call"`, `K"macrocall"`, `K"function"`, branching forms, …)
    and returns the inferred lattice element.
 
-For LSP feature code, [`build_inferred_context_for_range`](@ref) collapses steps 1–3 into
-a single call (locate the toplevel containing a byte range, run the pipeline, return a
-ready-to-query [`InferredTreeContext`](@ref), optionally through a per-document-version cache).
+For LSP feature code, [`build_inferred_context_for_range`](@ref) and
+[`build_inferred_context_for_tree`](@ref) collapse steps 1–3 into a single call
+(locate or accept the toplevel, run the pipeline, return a ready-to-query
+[`InferredTreeContext`](@ref), optionally through a per-document-version cache).
 
 # Prerequisite: full-analysis must have run first
 
@@ -151,8 +154,10 @@ using ..JETLS: InferredContextCache, InferredContextCacheData, JETLS_DEBUG_LOWER
     jl_lower_for_scope_resolution, load, rewrite_local_closures_to_opaque, store!, traverse
 import ..JETLS: InferredTreeContext
 
-export InferredTreeContext, build_inferred_context_for_range, get_matches_for_range,
-    get_oc_argtypes_for_range, get_type_for_range
+export InferredTreeContext,
+    build_inferred_context_for_range, build_inferred_context_for_tree,
+    get_matches_for_range, get_oc_argtypes_for_range, get_type_for_range,
+    is_type_annotation_skipped_toplevel
 
 # ASTTypeAnnotator
 # ================
@@ -791,6 +796,15 @@ end
 # ======================
 
 """
+    is_type_annotation_skipped_toplevel(st0::SyntaxTreeC)
+
+Return whether type-annotation features should skip a lowerable top-level form.
+Declaration-only forms have no useful inferred value annotations.
+"""
+is_type_annotation_skipped_toplevel(st0::SyntaxTreeC) =
+    JS.kind(st0) in JS.KSet"using import export public abstract primitive"
+
+"""
     get_inferrable_tree(
             st0::SyntaxTreeC, context_module::Module;
             world::UInt = Base.get_world_counter(),
@@ -1377,6 +1391,52 @@ function find_outermost_user_return_form(
 end
 
 """
+    build_inferred_context_for_tree(
+            st0::SyntaxTreeC, context_module::Module;
+            world::UInt = Base.get_world_counter(),
+            caller::AbstractString = "build_inferred_context_for_tree",
+            cache::Union{Nothing,InferredContextCache} = nothing
+        ) -> ctx::InferredTreeContext | nothing
+
+Compose [`TypeAnnotation`](@ref) pipeline steps 1–3 into a single call for an
+already-selected lowerable top-level tree: run [`get_inferrable_tree`](@ref) and
+[`infer_toplevel_tree`](@ref), and wrap the result in an [`InferredTreeContext`](@ref).
+Returns `nothing` when the top-level form is skipped by type-annotation features,
+or when lowering / inference fails.
+
+When `cache` is provided, inferred contexts are reused by `(context_module, world,
+top-level range)`, allowing repeated requests for the same synced document version to skip
+lowering and inference.
+
+Cache misses build outside the cache lock. Racing requests may duplicate inference for the
+same key, but unrelated cache hits/misses are not blocked.
+"""
+function build_inferred_context_for_tree(
+        st0::SyntaxTreeC, context_module::Module;
+        world::UInt = Base.get_world_counter(),
+        caller::AbstractString = "build_inferred_context_for_tree",
+        cache::Union{Nothing,InferredContextCache} = nothing
+    )
+    is_type_annotation_skipped_toplevel(st0) && return nothing
+    top_rng = JS.byte_range(st0)
+    if cache === nothing
+        return build_inferred_context(st0, context_module; world, caller)
+    end
+    key = (context_module, world, top_rng)
+    entries = load(cache)
+    haskey(entries, key) && return entries[key]
+    # Build outside the cache lock: racing requests may duplicate inference
+    # for the same key, but they don't block unrelated cache hits/misses.
+    new_ctx = build_inferred_context(st0, context_module; world, caller)
+    return store!(cache) do entries
+        if haskey(entries, key)
+            return entries, entries[key]
+        end
+        return InferredContextCacheData(entries, key => new_ctx), new_ctx
+    end
+end
+
+"""
     build_inferred_context_for_range(
             st0_top::SyntaxTreeC, context_module::Module, rng::UnitRange{<:Integer};
             world::UInt = Base.get_world_counter(),
@@ -1388,7 +1448,8 @@ Compose [`TypeAnnotation`](@ref) pipeline steps 1–3 into a single call: locate
 top-level subtree of `st0_top` that contains `rng`, run [`get_inferrable_tree`](@ref)
 and [`infer_toplevel_tree`](@ref) on it, and wrap the result in an
 [`InferredTreeContext`](@ref).
-Returns `nothing` when no top-level subtree contains `rng`, or when lowering / inference fails.
+Returns `nothing` when no top-level subtree contains `rng`, the top-level form is skipped
+by type-annotation features, or lowering / inference fails.
 
 This is the standard entry point for LSP features that need TypeAnnotation queries.
 Callers can then issue one or more [`get_type_for_range`](@ref) /
@@ -1407,26 +1468,8 @@ function build_inferred_context_for_range(
         cache::Union{Nothing,InferredContextCache} = nothing
     )
     return iterate_toplevel_tree(st0_top) do st0::SyntaxTreeC
-        top_rng = JS.byte_range(st0)
-        rng ⊆ top_rng || return nothing
-        if cache === nothing
-            ctx = build_inferred_context(st0, context_module; world, caller)
-            return TraversalReturn(ctx; terminate=true)
-        end
-        key = (context_module, world, top_rng)
-        entries = load(cache)
-        if haskey(entries, key)
-            return TraversalReturn(entries[key]; terminate=true)
-        end
-        # Build outside the cache lock: racing requests may duplicate inference
-        # for the same key, but they don't block unrelated cache hits/misses.
-        new_ctx = build_inferred_context(st0, context_module; world, caller)
-        ctx = store!(cache) do entries
-            if haskey(entries, key)
-                return entries, entries[key]
-            end
-            return InferredContextCacheData(entries, key => new_ctx), new_ctx
-        end
+        rng ⊆ JS.byte_range(st0) || return nothing
+        ctx = build_inferred_context_for_tree(st0, context_module; world, caller, cache)
         return TraversalReturn(ctx; terminate=true)
     end
 end

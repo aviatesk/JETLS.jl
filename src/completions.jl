@@ -138,15 +138,14 @@ end
 # cursor can sit past the toplevel's `last_byte` in incomplete code (e.g.
 # `sin(42,│\n` — parser ends the `K"call"` at byte 7, cursor at byte 8 is
 # outside). `lowerable_toplevel_at` has an `offset - 1` retry that handles
-# this, so we go through it and pass the toplevel's actual byte range.
+# this, so we go through it and build the context for the selected toplevel.
 function get_inferred_ctx!(comp_ctx::CompletionCtx; caller::AbstractString)
     isassigned(comp_ctx.inferred_ctx) && return comp_ctx.inferred_ctx[]
     toplevel = lowerable_toplevel_at(comp_ctx.st0_top, comp_ctx.offset)
     ctx = if toplevel === nothing
         nothing
     else
-        build_inferred_context_for_range(
-            comp_ctx.st0_top, comp_ctx.context_module, JS.byte_range(toplevel);
+        build_inferred_context_for_tree(toplevel, comp_ctx.context_module;
             world=comp_ctx.world, caller, cache=comp_ctx.fi.inferred_context_cache)
     end
     return comp_ctx.inferred_ctx[] = ctx

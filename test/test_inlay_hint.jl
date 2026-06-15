@@ -1839,13 +1839,14 @@ end
         end
     end
 
-    # User-written module/import syntax should not receive nested hints.
-    @testset "using / import statements produce no hints" begin
+    @testset "declaration-only statements produce no hints" begin
         let code = """
             using Pkg
             using JET: CC, JET
             using JuliaSyntax: JuliaSyntax as JS
             import Markdown: Markdown
+            export foo, bar
+            public baz
             """
             @test apply_inlay_hints(code, get_type_inlay_hints(code)) == code
         end

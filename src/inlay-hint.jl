@@ -173,10 +173,8 @@ function type_inlay_hints!(
         endpos = offset_to_xy(fi, JS.last_byte(st0) + 1)
         overlap(Range(; start=startpos, var"end"=endpos), range) || return nothing
         (; context_module, postprocessor, world) = get_context_info(state, uri, startpos)
-        ctx = @something build_inferred_context_for_range(
-            st0_top, context_module, JS.byte_range(st0);
-            world, caller="type_inlay_hints!",
-            cache=fi.inferred_context_cache) return nothing
+        ctx = @something build_inferred_context_for_tree(st0, context_module;
+            world, caller="type_inlay_hints!", cache=fi.inferred_context_cache) return nothing
         collect_type_inlay_hints!(
             inlay_hints, st0, ctx, fi, uri, range, postprocessor, nontrivia_index;
             lazy_tooltips = supports_inlay_hint_resolve(state, "tooltip"))

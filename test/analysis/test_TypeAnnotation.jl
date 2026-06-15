@@ -91,11 +91,14 @@ end
     st0_top = JETLS.build_syntax_tree(fi)
     rng1 = range_of(code, "x + 1")
     rng2 = range_of(code, "y")
+    tree1 = @something JETLS.lowerable_toplevel_at(st0_top, first(rng1)) error("missing tree")
     ctx1 = build_inferred_context_for_range(st0_top, type_annotate_module, rng1; cache)
     ctx2 = build_inferred_context_for_range(st0_top, type_annotate_module, rng2; cache)
+    ctx1_tree = build_inferred_context_for_tree(tree1, type_annotate_module; cache)
     @test ctx1 !== nothing
     @test get_type_for_range(ctx1, rng1) === Int
     @test ctx1 === ctx2
+    @test ctx1 === ctx1_tree
     @test get_type_for_range(ctx2, rng2) === Int
     @test length(JETLS.load(cache)) == 1
     rng4 = rng3 = range_of(code, "z + 2")
@@ -110,6 +113,40 @@ end
     @test get_type_for_range(ctx4, rng4) === Int
     @test ctx4 !== ctx3
     @test length(JETLS.load(cache)) == 2
+end
+
+@testset "build_inferred_context_for_range declaration-only forms" begin
+    for code in ("using Base\n", "import Base: map\n", "export foo, bar\n",
+                 "public baz\n", "abstract type AT end\n", "primitive type PT 8 end\n")
+        cache = JETLS.InferredContextCache()
+        fi = JETLS.FileInfo(1, code, @__FILE__; inferred_context_cache=cache)
+        st0_top = JETLS.build_syntax_tree(fi)
+        tree = @something JETLS.lowerable_toplevel_at(st0_top, 1) error("missing tree")
+        tree_ctx = build_inferred_context_for_tree(tree, type_annotate_module; cache)
+        range_ctx = build_inferred_context_for_range(
+            st0_top, type_annotate_module, JS.byte_range(tree); cache)
+        @test tree_ctx === nothing
+        @test range_ctx === nothing
+        @test isempty(JETLS.load(cache))
+    end
+
+    let code = """
+        struct Point
+            x::Int
+            Point(x::Int) = new(x + 1)
+        end
+        """
+        cache = JETLS.InferredContextCache()
+        fi = JETLS.FileInfo(1, code, @__FILE__; inferred_context_cache=cache)
+        st0_top = JETLS.build_syntax_tree(fi)
+        tree = @something JETLS.lowerable_toplevel_at(st0_top, 1) error("missing tree")
+        tree_ctx = build_inferred_context_for_tree(tree, type_annotate_module; cache)
+        range_ctx = build_inferred_context_for_range(
+            st0_top, type_annotate_module, JS.byte_range(tree); cache)
+        @test tree_ctx !== nothing
+        @test range_ctx === tree_ctx
+        @test length(JETLS.load(cache)) == 1
+    end
 end
 
 @testset HierarchicalTestSet "get_inferrable_tree" begin
