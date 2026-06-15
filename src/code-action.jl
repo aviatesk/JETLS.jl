@@ -44,21 +44,10 @@ function handle_CodeActionRequest(
     uri = msg.params.textDocument.uri
     code_actions = Union{CodeAction,Command}[]
     only = msg.params.context.only
-    wants_kindless_actions = code_action_kind_requested(only, nothing)
     wants_quickfix_actions = code_action_kind_requested(only, CodeActionKind.QuickFix)
-    wants_kindless_actions || wants_quickfix_actions ||
+    wants_kindless_actions = code_action_kind_requested(only, nothing)
+    wants_quickfix_actions || wants_kindless_actions ||
         return send(server, CodeActionResponse(; id = msg.id, result = code_actions))
-    if wants_kindless_actions
-        result = get_file_info(server.state, uri, cancel_flag)
-        if isnothing(result)
-            return send(server, CodeActionResponse(; id = msg.id, result = null))
-        elseif result isa ResponseError
-            return send(server, CodeActionResponse(; id = msg.id, result = nothing, error = result))
-        end
-        fi = result
-        testrunner_code_actions!(code_actions, uri, fi, msg.params.range)
-        macro_expansion_code_actions!(code_actions, server, uri, fi, msg.params.range)
-    end
     if wants_quickfix_actions
         diagnostics = msg.params.context.diagnostics
         allow_unused_underscore = get_config(server, :diagnostic, :allow_unused_underscore)
@@ -66,6 +55,19 @@ function handle_CodeActionRequest(
         delete_range_code_actions!(code_actions, uri, diagnostics)
         sort_imports_code_actions!(code_actions, uri, diagnostics)
         ambiguous_soft_scope_code_actions!(code_actions, uri, diagnostics)
+    end
+    if wants_kindless_actions
+        result = get_file_info(server.state, uri, cancel_flag)
+        if result isa ResponseError
+            return send(server, CodeActionResponse(; id = msg.id, result = nothing, error = result))
+        elseif !isnothing(result)
+            fi = result
+            testrunner_code_actions!(code_actions, uri, fi, msg.params.range)
+            macro_expansion_code_actions!(code_actions, server, uri, fi, msg.params.range)
+        end
+        # When the file info is unavailable (`isnothing(result)`), skip the kindless actions
+        # but still return any quickfix actions accumulated above, since those are derived
+        # from the request's diagnostics and do not depend on the file cache.
     end
     return send(server, CodeActionResponse(; id = msg.id, result = code_actions))
 end
