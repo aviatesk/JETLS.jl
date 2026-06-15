@@ -310,7 +310,6 @@ function ambiguous_soft_scope_code_actions!(
             title = "Insert `global $(data.name)` declaration",
             kind = CodeActionKind.QuickFix,
             diagnostics = Diagnostic[diagnostic],
-            isPreferred = true,
             edit = WorkspaceEdit(;
                 changes = Dict{URI,Vector{TextEdit}}(
                     uri => TextEdit[TextEdit(;

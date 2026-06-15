@@ -477,7 +477,7 @@ end
         """)
         @test length(code_actions) == 2
         @test code_actions[1].title == "Insert `global x` declaration"
-        @test code_actions[1].isPreferred == true
+        @test code_actions[1].isPreferred === nothing
         edit = only(code_actions[1].edit.changes[uri])
         @test edit.newText == "    global x\n"
         @test edit.range.start == positions[1]
