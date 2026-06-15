@@ -10,6 +10,9 @@ include(normpath(pkgdir(JETLS), "test", "jsjl-utils.jl"))
 
 struct LongTypeNameForInlayHintTruncation end
 
+struct ThrowingShowForInlayHint end
+Base.show(::IO, ::ThrowingShowForInlayHint) = error("show failed")
+
 # Render `hints` into `code` via the shared `JETLS.apply_inlay_hints` helper
 # (the whole document starts at byte 1).
 function apply_inlay_hints(code::AbstractString, hints::Vector{InlayHint})
@@ -462,24 +465,6 @@ end
         @test apply_inlay_hints(code, get_type_inlay_hints(code)) == expected
     end
 
-    @testset "const-propagated expressions" begin
-        code = """
-            let x = 42
-                y = sin(x)
-                z = cos(y)
-                return z
-            end
-            """
-        expected = """
-            let x = 42
-                y = sin(x::$Int)::Float64
-                z = cos(y::Float64)::Float64
-                return z::Float64
-            end
-            """
-        @test apply_inlay_hints(code, get_type_inlay_hints(code)) == expected
-    end
-
     @testset "range filtering" begin
         code = "let x = [1, 2, 3]\n" *
             "    sum(x)\n" *
@@ -550,6 +535,53 @@ end
         @test resolved.tooltip isa MarkupContent
         @test resolved.tooltip.kind == MarkupKind.Markdown
         @test resolved.tooltip.value == "```julia\nLinearAlgebra.Adjoint{Float64, Matrix{Float64}}\n```"
+    end
+
+    @testset "const-propagated expressions" begin
+        code = """
+            let x = 42
+                y = sin(x)
+                z = cos(y)
+                return z
+            end
+            """
+        expected = """
+            let x = 42
+                y = sin(x::$Int)::Float64
+                z = cos(y::Float64)::Float64
+                return z::Float64
+            end
+            """
+        hints = get_type_inlay_hints(code)
+        @test apply_inlay_hints(code, hints) == expected
+        @test all(hints) do h
+            !(h.tooltip isa MarkupContent) || !occursin("\n---\n", h.tooltip.value)
+        end
+
+        server, lazy_hints = get_lazy_type_inlay_hints(code)
+        @test apply_inlay_hints(code, lazy_hints) == expected
+        hint = first(filter(lazy_hints) do h
+            h.data isa TypeInlayHintData && occursin("Float64", h.label)
+        end)
+        @test hint.tooltip === nothing
+        resolved = JETLS.resolve_inlay_hint(server.state, hint)
+        @test resolved.tooltip isa MarkupContent
+        @test occursin("```julia\nFloat64\n```", resolved.tooltip.value)
+        @test occursin("\n---\n", resolved.tooltip.value)
+        @test occursin("Core.Const", resolved.tooltip.value)
+    end
+
+    @testset "lattice tooltip ignores show errors" begin
+        tooltip = JETLS.format_type_inlay_hint_tooltip(
+            Core.Const(ThrowingShowForInlayHint()), JETLS.LSPostProcessor();
+            include_lattice = true)
+        @test tooltip isa MarkupContent
+        @test occursin("ThrowingShowForInlayHint", tooltip.value)
+        @test occursin("\n---\n", tooltip.value)
+        @test occursin(
+            "Failed to display inferred extended lattice element of type",
+            tooltip.value)
+        @test occursin("`Core.Const`", tooltip.value)
     end
 
     @testset "operator expressions" begin

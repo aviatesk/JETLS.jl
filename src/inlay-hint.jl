@@ -739,10 +739,10 @@ function emit_type_hint!(
         truncate_typstr(postprocessor(typstr), maxdepth, maxwidth)
     end
     tooltip = data = nothing
-    if lazy_tooltips && should_lazy_resolve_tooltip(rawtyp)
+    if lazy_tooltips && should_lazy_resolve_tooltip(typ, rawtyp)
         data = LSP.TypeInlayHintData(uri, fi.version, first(type_range), last(type_range))
     else
-        tooltip = format_type_inlay_hint_tooltip(rawtyp, postprocessor)
+        tooltip = format_type_inlay_hint_tooltip(typ, postprocessor)
     end
     push!(inlay_hints, InlayHint(;
         position = endpos,
@@ -762,11 +762,12 @@ function first_token_byte(node::SyntaxTreeC, nontrivia_index::Vector{Int})
     return nontrivia_index[idx]
 end
 
-# Lazy tooltip resolution avoids allocating full `show` output for complex types,
-# but serializing `TypeInlayHintData` is more expensive than sending short
-# tooltips. Keep simple scalar-like types eager and defer parameterized, alias,
-# union, and other potentially expensive type displays.
-function should_lazy_resolve_tooltip(@nospecialize rawtyp)
+# Lazy tooltip resolution avoids allocating full `show` output for complex types
+# and extended lattice elements, but serializing `TypeInlayHintData` is more
+# expensive than sending short tooltips. Keep simple scalar-like types eager and
+# defer parameterized, alias, union, and other potentially expensive displays.
+function should_lazy_resolve_tooltip(@nospecialize(typ), @nospecialize(rawtyp))
+    typ !== rawtyp && return true
     rawtyp === Union{} && return false
     rawtyp isa DataType && isempty(rawtyp.parameters) && return false
     rawtyp isa TypeVar && return false
@@ -774,14 +775,31 @@ function should_lazy_resolve_tooltip(@nospecialize rawtyp)
 end
 
 # Explain `Union{}` hints, which otherwise look like obscure valid syntax.
-function format_type_inlay_hint_tooltip(@nospecialize(rawtyp), postprocessor::LSPostProcessor)
+function format_type_inlay_hint_tooltip(
+        @nospecialize(typ), postprocessor::LSPostProcessor;
+        include_lattice::Bool = false
+    )
+    rawtyp = CC.widenconst(typ)
     if rawtyp === Union{}
         value = "`Union{}` — this expression provably never produces a value (always throws, or is unreachable)."
     else
         full_typstr = postprocessor(sprint(show, rawtyp))
         value = "```julia\n$full_typstr\n```"
     end
+    if include_lattice && typ !== rawtyp
+        value *= "\n\n---\n\n" * format_lattice_element_detail(typ)
+    end
     return MarkupContent(; kind = MarkupKind.Markdown, value)
+end
+
+function format_lattice_element_detail(@nospecialize(typ))
+    lattice_str = try
+        sprint(show, typ)
+    catch
+        typ_typstr = sprint(show, typeof(typ))
+        return "Failed to display inferred extended lattice element of type `$typ_typstr`."
+    end
+    return "```julia\n$lattice_str\n```"
 end
 
 # Resolve a lazy type-hint tooltip by recomputing the type for the source range
@@ -807,8 +825,7 @@ function resolve_inlay_hint(
         st0_top, context_module, type_range;
         world, caller="inlayHint/resolve", cache=fi.inferred_context_cache) return hint
     typ = @something get_type_for_range(ctx, type_range) return hint
-    rawtyp = CC.widenconst(typ)
-    tooltip = format_type_inlay_hint_tooltip(rawtyp, postprocessor)
+    tooltip = format_type_inlay_hint_tooltip(typ, postprocessor; include_lattice = true)
     return InlayHint(hint; tooltip)
 end
 
