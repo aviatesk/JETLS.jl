@@ -134,28 +134,42 @@
       </td>
     </tr>
   </tbody>
-</table><h2 id="features/code-views"><a class="docs-heading-anchor" href="#features/code-views">Code views</a><a id="features/code-views-1"></a><a class="docs-heading-anchor-permalink" href="#features/code-views" title="Permalink"></a></h2><p>JETLS can open read-only <em>code views</em>: server-computed Julia documents derived from your source, such as the result of macro expansion. They are served as virtual documents through the LSP 3.18 <code>workspace/textDocumentContent</code> request when the client supports it, and otherwise fall back to a temporary file opened via <code>window/showDocument</code>, so they work across editors regardless of <code>textDocumentContent</code> support.</p><h3 id="features/code-views/macro-expansion"><a class="docs-heading-anchor" href="#features/code-views/macro-expansion">Macro expansion</a><a id="features/code-views/macro-expansion-1"></a><a class="docs-heading-anchor-permalink" href="#features/code-views/macro-expansion" title="Permalink"></a></h3><p>JETLS offers two <a href="#features/code-actions">code actions</a> on macro calls, each opening the expanded code in a read-only <code>.jl</code> view:</p><ul><li><strong>Show macro expansion for <code>@macro</code></strong> expands the macro call under the cursor a single level, to see what one macro produces.</li><li><strong>Expand all macros in this top-level form</strong> recursively expands every macro in the enclosing top-level form (the <code>@macroexpand</code> view).</li></ul><p>You can trigger the first with the cursor on the macro call, and the second from anywhere inside a top-level form that contains a macro.</p><p>For example, <strong>Show macro expansion for <code>@assert</code></strong> on <code>@assert 1 + 1 == 2</code> opens a view like:</p><pre><code class="language-julia hljs"># Macro call:
-# @assert 1 + 1 == 2
-# └────────────────┘ ── the macro call being expanded
+</table><h2 id="features/code-views"><a class="docs-heading-anchor" href="#features/code-views">Code views</a><a id="features/code-views-1"></a><a class="docs-heading-anchor-permalink" href="#features/code-views" title="Permalink"></a></h2><p>JETLS can open read-only <em>code views</em>: server-computed Julia documents derived from your source, such as the result of macro expansion. They are served as virtual documents through the LSP 3.18 <code>workspace/textDocumentContent</code> request when the client supports it, and otherwise fall back to a temporary file opened via <code>window/showDocument</code>, so they work across editors regardless of <code>textDocumentContent</code> support.</p><h3 id="features/code-views/macro-expansion"><a class="docs-heading-anchor" href="#features/code-views/macro-expansion">Macro expansion</a><a id="features/code-views/macro-expansion-1"></a><a class="docs-heading-anchor-permalink" href="#features/code-views/macro-expansion" title="Permalink"></a></h3><p>JETLS offers two <a href="#features/code-actions">code actions</a> on macro calls, each opening the expanded code in a read-only <code>.jl</code> view:</p><ul><li><strong>Show macro expansion for <code>@macro</code></strong> expands the macro call under the cursor a single level, to see what one macro produces.</li><li><strong>Expand all macros in this top-level form</strong> recursively expands every macro in the enclosing top-level form (the <code>@macroexpand</code> view).</li></ul><p>You can trigger the first with the cursor on the macro call, and the second from anywhere inside a top-level form that contains a macro.</p><p>For example, <strong>Show macro expansion for <code>@assert</code></strong> on <code>@assert @isdefined(x) &quot;x should be defined&quot;</code> opens a view like:</p><pre><code class="language-julia hljs"># Macro call:
+# @assert @isdefined(x) &quot;x should be defined&quot;
+# └─────────────────────────────────────────┘ ── the macro call being expanded
 # # @ demo.jl:1
 
 # Expanded code view:
-:(if 1 + 1 == 2
+:(if @isdefined(x)
       nothing
   else
-      throw(AssertionError(&quot;1 + 1 == 2&quot;))
-  end)</code></pre><p>while <strong>Expand all macros in this top-level form</strong> on</p><pre><code class="language-julia hljs">function f(x)
-    @assert x &gt; 0
-    return 2x
-end</code></pre><p>expands every macro the form contains:</p><pre><code class="language-julia hljs"># All macros expanded in the top-level form at demo.jl:1
+      throw(AssertionError(&quot;x should be defined&quot;))
+  end)</code></pre><p>The nested <code>@isdefined</code> call stays in the result because this action expands only the selected macro call one level.</p><p>In contrast, <strong>Expand all macros in this top-level form</strong> on</p><pre><code class="language-julia hljs">function selected_value(primary, fallback)
+    if primary !== nothing
+        value = primary
+    elseif fallback !== nothing
+        value = fallback
+    else
+        error(&quot;no value available&quot;)
+    end
+    @assert @isdefined(value) &quot;value should be assigned&quot;
+    return value
+end</code></pre><p>expands every macro the form contains, including the nested <code>@isdefined</code>:</p><pre><code class="language-julia hljs"># All macros expanded in the top-level form at demo.jl:1
 
-:(function f(x)
-      if x &gt; 0
+:(function selected_value(primary, fallback)
+      if primary !== nothing
+          value = primary
+      elseif fallback !== nothing
+          value = fallback
+      else
+          error(&quot;no value available&quot;)
+      end
+      if $(Expr(:isdefined, :value))
           nothing
       else
-          throw(AssertionError(&quot;x &gt; 0&quot;))
+          throw(AssertionError(&quot;value should be assigned&quot;))
       end
-      return 2x
+      return value
   end)</code></pre><p>To read like hand-written code, the view trims hygiene noise: it strips <code>LineNumberNode</code>s and shows <code>GlobalRef</code>s that resolve in the expansion context (or to an exported <code>Base</code>/<code>Core</code> name) as bare symbols (so the expansions above show <code>throw</code>/<code>AssertionError</code>, not <code>Base.throw</code>). If expansion throws, the error trace is shown instead.</p><h3 id="features/code-views/type-annotations"><a class="docs-heading-anchor" href="#features/code-views/type-annotations">Type annotations</a><a id="features/code-views/type-annotations-1"></a><a class="docs-heading-anchor-permalink" href="#features/code-views/type-annotations" title="Permalink"></a></h3><p><strong>Show inferred type annotations</strong> opens a read-only view of the enclosing top-level form with JETLS&#39;s <a href="#features/inlay-hint/types">type inlay hints</a> spliced into the source as explicit <code>::T</code> annotations — every expression (parameter uses, intermediate results, the return value) carries its inferred type. Unlike the inline hints, which are transient editor decorations, the result is an annotated copy of the code as ordinary buffer text: you can select, scroll, search, and copy it like any other document.</p><p>For example, consider this function:</p><pre><code class="language-julia hljs">function summarize(xs::Vector{Int}, label)
     total = sum(xs)
     first_pos_even = findfirst(xs) do x
@@ -203,4 +217,4 @@ end</code></pre><h2 id="features/formatting"><a class="docs-heading-anchor" href
       &quot;*.definition&quot;: { &quot;bold&quot;: true }
     }
   }
-}</code></pre></li></ul></section></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../">« Index</a><a class="docs-footer-nextpage" href="../diagnostic/">Diagnostic »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.17.0 on <span class="colophon-date" title="Monday 15 June 2026 06:37">Monday 15 June 2026</span>. Using Julia version 1.12.6.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
+}</code></pre></li></ul></section></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../">« Index</a><a class="docs-footer-nextpage" href="../diagnostic/">Diagnostic »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.17.0 on <span class="colophon-date" title="Monday 15 June 2026 07:26">Monday 15 June 2026</span>. Using Julia version 1.12.6.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
