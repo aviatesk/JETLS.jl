@@ -780,3 +780,33 @@ function resolve_inlay_hint(
     tooltip = format_type_inlay_hint_tooltip(rawtyp, postprocessor)
     return InlayHint(hint; tooltip)
 end
+
+# Render `hints` into `src` — the source spanning `base_byte:…` of `fi` — by
+# inserting each hint's label (with any padding) at the byte offset it points
+# at, and return the annotated text. Shared by the type-annotation code view
+# and the inlay-hint tests; only `String` labels are spliced.
+function apply_inlay_hints(
+        fi::FileInfo, src::AbstractString, base_byte::Integer, hints::Vector{InlayHint}
+    )
+    inserts = Tuple{Int,String}[]
+    for hint in hints
+        hint.label isa String || continue
+        offset = xy_to_offset(fi, hint.position) - base_byte + 1
+        1 ≤ offset ≤ ncodeunits(src) + 1 || continue
+        text = hint.label
+        something(hint.paddingLeft, false) && (text = " " * text)
+        something(hint.paddingRight, false) && (text = text * " ")
+        push!(inserts, (offset, text))
+    end
+    isempty(inserts) && return String(src)
+    sort!(inserts; by=first)
+    io = IOBuffer()
+    prev = 1
+    for (offset, text) in inserts
+        print(io, SubString(src, prev, prevind(src, offset)))
+        print(io, text)
+        prev = offset
+    end
+    print(io, SubString(src, prev))
+    return String(take!(io))
+end

@@ -64,6 +64,7 @@ function handle_CodeActionRequest(
             fi = result
             testrunner_code_actions!(code_actions, uri, fi, msg.params.range)
             macro_expansion_code_actions!(code_actions, server, uri, fi, msg.params.range)
+            type_annotation_code_actions!(code_actions, server, uri, fi, msg.params.range)
         end
         # When the file info is unavailable (`isnothing(result)`), skip the kindless actions
         # but still return any quickfix actions accumulated above, since those are derived
@@ -94,26 +95,42 @@ function macro_expansion_code_actions!(
     # `@doc` (a docstring) wraps the whole documented form; its expansion is just
     # doc-registration machinery, so don't offer it as a macro view.
     if macrocall !== nothing && !is_doc0_any(macrocall)
-        push_macro_expansion_action!(code_actions,
+        push_code_view_action!(code_actions, COMMAND_OPEN_MACRO_EXPANSION,
             "Show macro expansion for `$(macrocall_name(macrocall))`",
             macro_expansion_content_uri(uri, macrocall))
     end
     toplevel = lowerable_toplevel_at(st0_top, first(byte_range))
     if toplevel !== nothing && toplevel_contains_macrocall(toplevel)
-        push_macro_expansion_action!(code_actions,
+        push_code_view_action!(code_actions, COMMAND_OPEN_MACRO_EXPANSION,
             "Expand all macros in this top-level form",
             macro_expansion_content_uri(uri, toplevel; toplevel=true))
     end
     return code_actions
 end
 
-function push_macro_expansion_action!(
-        code_actions::Vector{Union{CodeAction,Command}}, title::String, content_uri::URI)
+# Offer on any lowerable top-level form that type-annotation features do not skip.
+# No annotations appear if nothing was inferred (e.g. a literal-bound assignment).
+function type_annotation_code_actions!(
+        code_actions::Vector{Union{CodeAction,Command}}, server::Server, uri::URI,
+        fi::FileInfo, range::Range
+    )
+    supports(server, :window, :showDocument, :support) || return code_actions
+    st0_top = build_syntax_tree(fi)
+    byte_range = range_to_byte_range(fi, range; collapse_empty = true)
+    tree = @something lowerable_toplevel_at(st0_top, first(byte_range)) return code_actions
+    is_type_annotation_skipped_toplevel(tree) && return code_actions
+    push_code_view_action!(code_actions, COMMAND_OPEN_TYPE_ANNOTATION,
+        "Show inferred type annotations", type_annotation_content_uri(uri, tree))
+    return code_actions
+end
+
+function push_code_view_action!(
+        code_actions::Vector{Union{CodeAction,Command}},
+        command::String, title::String, content_uri::URI)
     push!(code_actions, CodeAction(;
         title,
         command = Command(;
-            title,
-            command = COMMAND_OPEN_MACRO_EXPANSION,
+            title, command,
             arguments = Any[string(content_uri)])))
     return code_actions
 end
