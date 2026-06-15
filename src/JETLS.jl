@@ -94,7 +94,7 @@ include("utils/lsp.jl")
 include("utils/server.jl")
 include("utils/native-inference.jl")
 
-include("analysis/closure-to-opaque.jl")
+include("analysis/Closure2Opaque.jl")
 using .Closure2Opaque
 
 include("analysis/TypeAnnotation.jl")
