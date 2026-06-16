@@ -555,6 +555,29 @@ end
                 end
             end
 
+            @testset "direct call uses const-prop capture details" begin
+                let code = """
+                    let x = rand(Int)
+                        y = Some{Any}(x)
+                        f = z -> z * y.value
+                        f(rand())
+                    end
+                    """
+                    fi, ctx = type_annotate(code)
+                    types = query_all_types(fi, ctx, "y")
+                    @test length(types) == 2
+                    @test all(types) do typ
+                        typ isa Core.PartialStruct && typ.typ === Some{Any} &&
+                            length(typ.fields) == 1 && only(typ.fields) === Int
+                    end
+                    @test get_type_for_range(ctx, range_of(code, "y.value")) === Int
+                    body_typ = get_type_for_range(ctx, range_of(code, " z * y.value"))
+                    call_typ = get_type_for_range(ctx, range_of(code, "f(rand())"))
+                    @test widenconst(body_typ) === Float64
+                    @test widenconst(call_typ) === Float64
+                end
+            end
+
             @testset "Base.Compiler.return_type of untyped closure" begin
                 let code = """
                     let

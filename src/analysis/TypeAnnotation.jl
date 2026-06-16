@@ -184,6 +184,11 @@ function SyntheticFilter(st0::SyntaxTreeC, bindings::JL.Bindings)
     return SyntheticFilter(bindings, destructure_ranges, user_assignment_ranges)
 end
 
+mutable struct OCBodyAnnotationState
+    last_frame::Union{Nothing,CC.InferenceState}
+end
+OCBodyAnnotationState() = OCBodyAnnotationState(nothing)
+
 struct ASTTypeAnnotator <: CC.AbstractInterpreter
     world::UInt
     inf_params::CC.InferenceParams
@@ -197,8 +202,10 @@ struct ASTTypeAnnotator <: CC.AbstractInterpreter
     filter::SyntheticFilter
     # OC `Method` → body's `K"code_info"` subtree; built by `register_oc_body_trees!`.
     oc_body_trees::IdDict{Method,SyntaxTreeC}
-    # Push site: `abstract_eval_new_opaque_closure`. Consume site: `finishinfer!`.
-    oc_methods_to_annotate::Set{Method}
+    # Pending eager OC body annotations. `abstract_eval_new_opaque_closure` opens an
+    # entry, `finishinfer!` records the last body frame seen for that fresh OC method,
+    # and the eager call's `Future` continuation consumes the entry.
+    oc_body_annotation_states::IdDict{Method,OCBodyAnnotationState}
     # Per OC body byte range, the per-slot join of argtypes observed for slots the
     # user left untyped (`Union{}` = unobserved). Shared across all thunk interps of
     # one inference pass; see `record_oc_argtype_observation!`.
@@ -223,13 +230,13 @@ struct ASTTypeAnnotator <: CC.AbstractInterpreter
             opt_params::CC.OptimizationParams = CC.OptimizationParams(),
             inf_cache::Vector{CC.InferenceResult} = CC.InferenceResult[],
             oc_body_trees::IdDict{Method,SyntaxTreeC} = IdDict{Method,SyntaxTreeC}(),
-            oc_methods_to_annotate::Set{Method} = Set{Method}(),
+            oc_body_annotation_states::IdDict{Method,OCBodyAnnotationState} = IdDict{Method,OCBodyAnnotationState}(),
             oc_argtype_observations::OCArgtypeTable = OCArgtypeTable(),
             oc_argtype_refinements::Union{Nothing,OCArgtypeTable} = nothing,
             oc_key_memo::IdDict{Method,Union{Nothing,OCArgtypeKey}} = IdDict{Method,Union{Nothing,OCArgtypeKey}}()
         )
         return new(world, inf_params, opt_params, inf_cache, toptree, topmi,
-            filter, oc_body_trees, oc_methods_to_annotate,
+            filter, oc_body_trees, oc_body_annotation_states,
             oc_argtype_observations, oc_argtype_refinements, oc_key_memo)
     end
 end
@@ -266,7 +273,7 @@ function CC.widen_call_result(
     )
     interp.topmi === sv.linfo && return false
     def = sv.linfo.def
-    def isa Method && def in interp.oc_methods_to_annotate && return false
+    def isa Method && haskey(interp.oc_body_annotation_states, def) && return false
     return @invoke CC.widen_call_result(
         interp::CC.AbstractInterpreter, si::CC.StmtInfo, state::CC.CallInferenceState,
         sv::CC.InferenceState)
@@ -331,19 +338,14 @@ function CC.abstract_eval_new_opaque_closure(
         return CC.Future(CC.RTEffects(rt, Any, effects))
     end
     po = refine_partial_opaque_argt(interp, rt)
-    # Mark this OC's `Method`; `finishinfer!` annotates the citree (signature
-    # view, like top-level methods) and atomically consumes the marker, so
-    # per-call-site specializations see it missing and skip. Deletion must
-    # happen inside `finishinfer!`, not in this override's `Future` continuation
-    # — that continuation can run synchronously (cache-hit body inference)
-    # before the body's `finishinfer!`, breaking the invariant.
-    push!(interp.oc_methods_to_annotate, po.source)
     oc_argtypes = CC.most_general_argtypes(po)
     pushfirst!(oc_argtypes, po.env)
+    interp.oc_body_annotation_states[po.source] = OCBodyAnnotationState()
     arginfo, stmtinfo = CC.ArgInfo(nothing, oc_argtypes), CC.StmtInfo(true, false)
     callinfo = CC.abstract_call_opaque_closure(
         interp, po, arginfo, stmtinfo, sv, #=check=#false)::CC.Future
     return CC.Future{CC.RTEffects}(callinfo, interp, sv) do callinfo, _, sv
+        consume_oc_body_annotation_state!(interp, po.source)
         sv.stmt_info[sv.currpc] = CC.OpaqueClosureCreateInfo(callinfo)
         refined_rt = refine_partial_opaque_rt(po, callinfo.rt)
         return CC.RTEffects(refined_rt, Any, effects)
@@ -739,16 +741,36 @@ function CC.finishinfer!(frame::CC.InferenceState, interp::ASTTypeAnnotator, cyc
         annotate_types!(interp.toptree[1], frame, interp.filter)
     else
         def = frame.linfo.def
-        # Consume the marker atomically with the annotation — see push site
-        # at `abstract_eval_new_opaque_closure` for the discipline.
-        if def isa Method && def in interp.oc_methods_to_annotate
-            delete!(interp.oc_methods_to_annotate, def)
-            oc_citree = get(interp.oc_body_trees, def, nothing)
-            # `oc_citree[1]` is the body block, matching `annotate_types!`'s contract.
-            oc_citree === nothing || annotate_types!(oc_citree[1], frame, interp.filter)
+        if def isa Method
+            record_oc_body_annotation_candidate!(interp, def, frame)
         end
     end
     return ret
+end
+
+# The pending `def` entry marks the dynamic extent of the eager `check=false`
+# OC body inference. Since OC methods are freshly materialized by each re-lowering
+# pass, both the regular body frame and, when const-prop' applies, its narrower
+# companion frame finish before the eager call's `Future` continuation. Keeping the
+# last frame therefore selects the const-prop' body view when it exists.
+function record_oc_body_annotation_candidate!(
+        interp::ASTTypeAnnotator, def::Method, frame::CC.InferenceState
+    )
+    state = get(interp.oc_body_annotation_states, def, nothing)
+    state === nothing && return nothing
+    state.last_frame = frame
+    return nothing
+end
+
+function consume_oc_body_annotation_state!(interp::ASTTypeAnnotator, def::Method)
+    state = get(interp.oc_body_annotation_states, def, nothing)
+    state === nothing && return false
+    delete!(interp.oc_body_annotation_states, def)
+    frame = @something state.last_frame return false
+    oc_citree = get(interp.oc_body_trees, def, nothing)
+    # `oc_citree[1]` is the body block, matching `annotate_types!`'s contract.
+    oc_citree === nothing || annotate_types!(oc_citree[1], frame, interp.filter)
+    return true
 end
 
 # Register `is_for_opaque_closure` `Method`s (replacements from

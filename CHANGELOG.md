@@ -109,6 +109,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Fixed hover on unannotated local closure parameters showing `Core.OpaqueClosure` internals instead of the inferred argument type.
 
+- Fixed hover and other type-aware features inside local closure bodies losing constant-propagated details for captured values.
+
 ## 2026-06-03
 
 - Commit: [`a42a435`](https://github.com/aviatesk/JETLS.jl/commit/a42a435)
