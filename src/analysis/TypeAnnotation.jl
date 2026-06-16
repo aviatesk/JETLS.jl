@@ -156,7 +156,7 @@ import ..JETLS: InferredTreeContext
 
 export InferredTreeContext,
     build_inferred_context_for_range, build_inferred_context_for_tree,
-    get_matches_for_range, get_oc_argtypes_for_range, get_type_for_range,
+    get_matches_for_range, get_type_for_range,
     is_type_annotation_skipped_toplevel
 
 # ASTTypeAnnotator
@@ -1340,19 +1340,40 @@ function collect_lambda_ranges(ctx3::JL.VariableAnalysisContext)
 end
 
 function collect_oc_argtypes_by_binding(inferred_tree::SyntaxTreeC)
+    body_ranges_by_surface = collect_oc_body_ranges_by_surface(inferred_tree)
     oc_argtypes = Dict{Tuple{UnitRange{Int},Symbol},Any}()
     traverse(inferred_tree) do st::SyntaxTreeC
         JS.kind(st) === JS.K"new_opaque_closure" || return nothing
         JS.hasattr(st, :type) || return nothing
         entry = @something oc_argtypes_for_node(st.type, JS.byte_range(st)) return nothing
+        body_ranges = get(Vector{UnitRange{Int}}, body_ranges_by_surface, entry.range)
         for i = 1:length(entry.argnames)
             typ = entry.argtypes[i]
             is_refined_slot(typ) || continue
-            oc_argtypes[(entry.range, entry.argnames[i])] = typ
+            name = entry.argnames[i]
+            oc_argtypes[(entry.range, name)] = typ
+            for body_range in body_ranges
+                oc_argtypes[(body_range, name)] = typ
+            end
         end
         return nothing
     end
     return oc_argtypes
+end
+
+function collect_oc_body_ranges_by_surface(inferred_tree::SyntaxTreeC)
+    body_ranges_by_surface = Dict{UnitRange{Int},Vector{UnitRange{Int}}}()
+    traverse(inferred_tree) do st::SyntaxTreeC
+        JS.kind(st) === JS.K"opaque_closure_method" || return nothing
+        surface_range = JS.byte_range(st)
+        for child in JS.children(st)
+            JS.kind(child) === JS.K"code_info" || continue
+            body_ranges = get!(Vector{UnitRange{Int}}, body_ranges_by_surface, surface_range)
+            push!(body_ranges, JS.byte_range(child))
+        end
+        return nothing
+    end
+    return body_ranges_by_surface
 end
 
 function oc_argtypes_for_node(@nospecialize(typ), rng::UnitRange{Int})
@@ -1756,32 +1777,6 @@ function get_matches_for_range(ctx::InferredTreeContext, rng::UnitRange{<:Intege
     last_call === nothing && return nothing
     JS.hasattr(last_call, :matches) || return nothing
     return last_call.matches::Vector{Core.MethodMatch}
-end
-
-"""
-    get_oc_argtypes_for_range(
-            ctx::InferredTreeContext, rng::UnitRange{<:Integer}
-        ) -> Union{Nothing,Vector{Any}}
-
-Look up the `Core.OpaqueClosure` constructed at surface byte range `rng` — a lambda or
-`do`-block closure routed through [`Closure2Opaque.rewrite_local_closures_to_opaque`](@ref)
-— and return its argument types: one entry per user-visible parameter, with any
-call-site argtype refinement applied (see "Closure argument-type refinement" in the
-[`TypeAnnotation`](@ref) module docstring). Returns `nothing` when no annotated OC
-construction lies at `rng` or its argt isn't a plain `Vararg`-free `Tuple`.
-
-Feature code uses this for parameter-position queries (e.g. inlay hints on unannotated
-lambda parameters), where the value-type query [`get_type_for_range`](@ref) would
-surface the closure's own `OpaqueClosure{…}` type instead.
-"""
-function get_oc_argtypes_for_range(ctx::InferredTreeContext, rng::UnitRange{<:Integer})
-    for st in get(ctx.by_byte_range, rng, ())
-        JS.kind(st) === JS.K"new_opaque_closure" || continue
-        JS.hasattr(st, :type) || continue
-        argtypes = @something opaque_closure_argtypes(st.type) continue
-        return argtypes
-    end
-    return nothing
 end
 
 function opaque_closure_argtypes(@nospecialize(typ))

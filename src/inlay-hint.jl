@@ -240,6 +240,14 @@ function collect_type_inlay_hints!(
         end
         if JS.kind(node) in JS.KSet"function macro"
             sig_rng = funcdef_sig_range(node)
+            if (sig_rng === nothing && JS.kind(node) === JS.K"function" &&
+                JS.numchildren(node) ≥ 1)
+                # Anonymous `function (args...) ... end` signatures are `K"tuple"`,
+                # not `K"call"`; suppress them like named signatures so the generic
+                # postorder path doesn't duplicate dedicated parameter hints.
+                sig = unwrap_funcdef_sig(node[1])
+                JS.kind(sig) === JS.K"tuple" && (sig_rng = JS.byte_range(sig))
+            end
             sig_rng !== nothing && push!(verbatim_ranges, sig_rng)
         end
         if JS.kind(node) === JS.K"->" && JS.numchildren(node) >= 1
@@ -333,7 +341,7 @@ function collect_type_inlay_hints!(
         # lambdas, anonymous `function (…) … end`, and named local closures. Emitted
         # before the funcdef return-type path's early return so a named local closure
         # gets both its parameter and return-type hints. `emit_lambda_param_hints!`
-        # is a no-op for non-closures (it gates on `get_oc_argtypes_for_range`).
+        # is a no-op when parameter ranges have no inferred types.
         if k in JS.KSet"-> function ="
             emit_lambda_param_hints!(
                 inlay_hints, node, ctx, fi, uri, range, nontrivia_index,
@@ -539,17 +547,12 @@ end
 # `K"->"` (arrow / `do`, bare `K"Identifier"` or `K"tuple"` params), anonymous
 # `function (…) … end` (`K"tuple"` signature), and named local closures /
 # short-form `f(…) = …` (`K"call"` signature, after stripping `where` / return-type
-# wrappers — its head child is the function name and is skipped). Each positional
-# parameter consumes one entry of the constructed `OpaqueClosure`'s argt (from
-# `get_oc_argtypes_for_range`, carrying the call-site argtype refinement):
-# - a simple `K"Identifier"` parameter gets that entry's type directly;
-# - a destructuring pattern (`(a, b)`, `(; a, b)`, …) is one parameter whose argt
-#   entry is the aggregate, so per-component hints come from each leaf's own range
-#   instead (`emit_destructure_var_hints!`, shared with for-loop iteration vars).
+# wrappers — its head child is the function name and is skipped). Each simple
+# `K"Identifier"` parameter is queried by its own source range via `get_type_for_range`;
+# destructuring patterns (`(a, b)`, `(; a, b)`, …) recurse into each leaf instead
+# (`emit_destructure_var_hints!`, shared with for-loop iteration vars).
 # `Any` entries on simple parameters are skipped (an unrefined slot adds no information
-# over the bare name); user-annotated (`K"::"`) parameters are left untouched. A no-op
-# when no OC was constructed at the range (top-level methods, plain assignments), since
-# `get_oc_argtypes_for_range` returns `nothing` there.
+# over the bare name); user-annotated (`K"::"`) parameters are left untouched.
 function emit_lambda_param_hints!(
         inlay_hints::Vector{InlayHint}, lambda::SyntaxTreeC,
         ctx::InferredTreeContext, fi::FileInfo, uri::URI, range::Range,
@@ -557,40 +560,43 @@ function emit_lambda_param_hints!(
         emitted_ranges::Set{UnitRange{Int}}, label_cache::IdDict{Any,String},
         maxdepth::Int, maxwidth::Int, lazy_tooltips::Bool
     )
-    argtypes = @something get_oc_argtypes_for_range(ctx, JS.byte_range(lambda)) return nothing
     JS.numchildren(lambda) >= 1 || return nothing
     sig = lambda[1]
+    k = JS.kind(lambda)
     # `params`: the node whose children (from `start` on) are the positional params.
-    if JS.kind(lambda) === JS.K"->"
+    if k === JS.K"->"
         if JS.kind(sig) === JS.K"Identifier" # no-paren single-parameter form
-            isempty(argtypes) || emit_lambda_param_hint!(
-                inlay_hints, sig, argtypes[1], fi, uri, range, nontrivia_index,
+            emit_lambda_param_hint!(
+                inlay_hints, sig, ctx, fi, uri, range, nontrivia_index,
                 postprocessor, label_cache, maxdepth, maxwidth, lazy_tooltips)
             return nothing
         end
         JS.kind(sig) === JS.K"tuple" || return nothing
         params, start = sig, 1
-    else # `K"function"` / `K"="`
+    elseif k === JS.K"function"
         sig = unwrap_funcdef_sig(sig)
         sk = JS.kind(sig)
-        if sk === JS.K"tuple"
+        if sk === JS.K"tuple" # anonymous `function (args...) ... end`
             params, start = sig, 1
-        elseif sk === JS.K"call"
+        elseif sk === JS.K"call" # named local `function f(args...) ... end`
             params, start = sig, 2 # skip the function name
         else
             return nothing
         end
+    elseif k === JS.K"="
+        sig = unwrap_funcdef_sig(sig)
+        JS.kind(sig) === JS.K"call" || return nothing # only short-form `f(args...) = ...`
+        params, start = sig, 2 # skip the function name
+    else
+        return nothing
     end
-    argi = 0
     for ci = start:JS.numchildren(params)
         p = params[ci]
         pk = JS.kind(p)
         pk === JS.K"parameters" && break # keyword parameters aren't positional
-        argi += 1
-        argi <= length(argtypes) || break
         if pk === JS.K"Identifier"
             emit_lambda_param_hint!(
-                inlay_hints, p, argtypes[argi], fi, uri, range, nontrivia_index,
+                inlay_hints, p, ctx, fi, uri, range, nontrivia_index,
                 postprocessor, label_cache, maxdepth, maxwidth, lazy_tooltips)
         elseif pk === JS.K"tuple" # destructuring pattern — annotate each component
             emit_destructure_var_hints!(
@@ -603,11 +609,12 @@ function emit_lambda_param_hints!(
 end
 
 function emit_lambda_param_hint!(
-        inlay_hints::Vector{InlayHint}, p::SyntaxTreeC, @nospecialize(typ),
+        inlay_hints::Vector{InlayHint}, p::SyntaxTreeC, ctx::InferredTreeContext,
         fi::FileInfo, uri::URI, range::Range, nontrivia_index::Vector{Int},
         postprocessor::LSPostProcessor, label_cache::IdDict{Any,String},
         maxdepth::Int, maxwidth::Int, lazy_tooltips::Bool
     )
+    typ = @something get_type_for_range(ctx, JS.byte_range(p)) return nothing
     typ === Any && return nothing # an unrefined slot adds nothing over the bare name
     should_annotate_type(p, typ) || return nothing
     endpos = offset_to_xy(fi, JS.last_byte(p) + 1)
