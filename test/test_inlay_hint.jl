@@ -1582,10 +1582,9 @@ end
             @test apply_inlay_hints(code, get_type_inlay_hints(code)) == expected
         end
 
-        # No-paren `x -> body`: parameter byte range overlaps with the OC binding's
-        # `PartialOpaque` slot, so the generic path is suppressed (it would emit a
-        # misleading `x::OpaqueClosure{…}` hint); the dedicated parameter hint reads
-        # the refined argt off the constructed OC instead.
+        # No-paren `x -> body`: parameter byte range overlaps with OC construction
+        # scaffolding, so `get_type_for_range` must resolve the parameter binding's
+        # refined argument type instead of surfacing `OpaqueClosure` internals.
         @testset "no-paren anonymous lambda" begin
             code = """
                 let g = x -> 2x

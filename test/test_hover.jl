@@ -448,6 +448,16 @@ end
         """, "(argument) y :: Float64")
     end
 
+    @testset "closure parameter binding uses refined argument type" begin
+        hover_test("""
+            let x = rand(Int)
+                y = Some{Any}(x)
+                f = z│ -> z * y.value
+                f(rand())
+            end
+        """, "(argument) z :: Float64"; notpat="OpaqueClosure")
+    end
+
     @testset "closure values format as a function-arrow signature" begin
         # closures get rewritten to `Core.OpaqueClosure` by JETLS' inference
         # pipeline; surface that as `(args...) -> rt` instead of leaking the

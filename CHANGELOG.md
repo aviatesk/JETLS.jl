@@ -107,6 +107,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Fixed dot completion erroring (or offering nothing) when the prefix sits in code that inference proves unreachable, such as code after a non-returning call. Module and global-const prefixes such as `Base.` now resolve their members there as usual.
 
+- Fixed hover on unannotated local closure parameters showing `Core.OpaqueClosure` internals instead of the inferred argument type.
+
 ## 2026-06-03
 
 - Commit: [`a42a435`](https://github.com/aviatesk/JETLS.jl/commit/a42a435)
