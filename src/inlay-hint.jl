@@ -792,16 +792,6 @@ function format_type_inlay_hint_tooltip(
     return MarkupContent(; kind = MarkupKind.Markdown, value)
 end
 
-function format_lattice_element_detail(@nospecialize(typ))
-    lattice_str = try
-        sprint(show, typ)
-    catch
-        typ_typstr = sprint(show, typeof(typ))
-        return "Failed to display inferred extended lattice element of type `$typ_typstr`."
-    end
-    return "```julia\n$lattice_str\n```"
-end
-
 # Resolve a lazy type-hint tooltip by recomputing the type for the source range
 # stored in `hint.data`, leaving stale or already-resolved hints unchanged.
 function resolve_inlay_hint(

@@ -221,6 +221,19 @@ end
             context_module = @__MODULE__)
     end
 
+    @testset "extended lattice detail" begin
+        text = """
+            let x = 42
+                y = sin(x)
+                y│
+            end
+            """
+        clean_text, positions = JETLS.get_text_and_positions(text)
+        result = get_hover(clean_text, only(positions))
+        @test result isa Hover
+        @test occursin("(local) y :: Float64  # Core.Const", result.contents.value)
+    end
+
     @testset "module alias resolves through DocsBinding helper" begin
         hover_test("B│.sin(42)", JETLS.lsrender(@doc Base);
             context_module = M_base_alias)

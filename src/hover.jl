@@ -102,7 +102,7 @@ function get_hover(
     display_rng = JS.byte_range(display_node)
     ctx = build_inferred_context_for_range(st0_top, context_module, display_rng;
         world, caller="get_hover", cache=fi.inferred_context_cache)
-    type_str = typ = nothing
+    type_str = typ = display_typ = nothing
     if ctx !== nothing
         display_typ = get_type_for_range(ctx, display_rng)
         if display_typ !== nothing
@@ -152,10 +152,18 @@ function get_hover(
         return nothing
     end
 
+    lattice_detail = type_str === nothing || display_typ === nothing ? nothing :
+        hover_lattice_detail(display_typ)
     io = IOBuffer()
     if show_header
         println(io, "```julia")
-        type_str === nothing ? println(io, header) : println(io, header, " :: ", postprocessor(type_str))
+        if type_str === nothing
+            println(io, header)
+        else
+            print(io, header, " :: ", postprocessor(type_str))
+            lattice_detail !== nothing && print(io, "  ", lattice_detail)
+            println(io)
+        end
         println(io, "```")
     end
     if !isempty(docs)
@@ -192,6 +200,15 @@ binding_kind_label(kind::Symbol) =
     kind === :argument ? "(argument)" :
     kind === :static_parameter ? "(static parameter)" :
     kind === :local ? "(local)" : "(global)"
+
+function hover_lattice_detail(@nospecialize(typ))
+    # `hover_type_string` already formats `PartialOpaque` as a closure shape, hiding
+    # the underlying `OpaqueClosure` internals. Do not re-append the raw lattice
+    # element as a comment and expose the internal representation again.
+    typ isa Core.PartialOpaque && return nothing
+    typ === CC.widenconst(typ) && return nothing
+    return format_lattice_element_comment(typ)
+end
 
 # Convert a lattice element from `get_type_for_range` into a string suitable for display
 # in a hover. Returns `nothing` for implementation-detail lattice elements that the user
