@@ -325,6 +325,33 @@ function typstr_within_depth_limit(str::String, maxdepth::Int)
     return true
 end
 
+function format_lattice_element_detail(@nospecialize(typ))
+    lattice_str = @something try_show_lattice_element(typ) begin
+        return failed_lattice_element_detail(typ)
+    end
+    return "```julia\n$lattice_str\n```"
+end
+
+function format_lattice_element_comment(@nospecialize(typ))
+    lattice_str = @something try_show_lattice_element(typ) begin
+        return "# " * failed_lattice_element_detail(typ)
+    end
+    return "# " * replace(lattice_str, '\n' => " ")
+end
+
+function try_show_lattice_element(@nospecialize(typ))
+    return try
+        sprint(show, typ)
+    catch
+        nothing
+    end
+end
+
+function failed_lattice_element_detail(@nospecialize(typ))
+    typ_typstr = sprint(show, typeof(typ))
+    return "Failed to display inferred extended lattice element of type `$typ_typstr`."
+end
+
 rlstrip(s::AbstractString, args...) = lstrip(rstrip(s, args...), args...)
 
 struct LSPostProcessor

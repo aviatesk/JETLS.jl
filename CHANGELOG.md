@@ -80,6 +80,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   Destructuring parameters are annotated per component (e.g. `do (key::String, val::Int)`), consistent with for-loop iteration variables.
   Parameters whose type cannot be narrowed beyond `Any` are left without a hint.
 
+- Hover headers now include inferred lattice details as a Julia comment when the displayed type hides more precise information.
+
 - JETLS now performs correct scope resolution on identifiers used inside `@static` macrocalls, which previously could yield incorrect results in edge cases.
   Invalid `@static` usage (an unsupported expression shape, or a condition that fails to evaluate to a `Bool`) is now reported in place as `lowering/macro-expansion-error` while the code still flows through to analysis.
 
