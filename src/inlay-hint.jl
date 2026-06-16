@@ -317,6 +317,10 @@ function collect_type_inlay_hints!(
         if JS.kind(node) in JS.KSet"using import"
             push!(verbatim_ranges, JS.byte_range(node))
         end
+        # `K"inert"` wraps literal symbol contents and dot-property names.
+        if JS.kind(node) === JS.K"inert"
+            push!(verbatim_ranges, JS.byte_range(node))
+        end
     end
 
     traverse(st0, #=postorder=#true) do node::SyntaxTreeC
@@ -398,7 +402,7 @@ function collect_type_inlay_hints!(
         k !== JS.K"macrocall" && byterng in callee_ranges && return nothing
         typ = get_type_for_range(ctx, byterng)
         typ === nothing && return nothing
-        should_annotate_type(typ) || return nothing
+        should_annotate_type(node, typ) || return nothing
 
         # Wrap forms where `::T` would otherwise bind to the wrong expression,
         # or where trailing field/index access must stay outside the assertion.
@@ -487,7 +491,34 @@ function funcdef_sig_range(funcdef::SyntaxTreeC)
     return JS.byte_range(sig)
 end
 
-should_annotate_type(@nospecialize(typ)) = !(typ isa Core.Const)
+function should_annotate_type(node::SyntaxTreeC, @nospecialize(typ))
+    typ isa Core.Const || return true
+    val = typ.val
+    is_const_literal_node(node, val) && return false
+    is_const_binding_value(val) && return false
+    return true
+end
+
+function is_const_literal_node(node::SyntaxTreeC, @nospecialize(val))
+    k = JS.kind(node)
+    JS.is_literal(k) && return true
+    k === JS.K"inert" && return true
+    if k === JS.K"Identifier"
+        name = get_name_val(node)
+        if name isa String
+            return identifier_spells_const_value(name, val)
+        end
+    end
+    return false
+end
+
+function identifier_spells_const_value(name::String, @nospecialize val)
+    return (name == "nothing" && val === nothing) ||
+        (name == "missing" && val === missing)
+end
+
+is_const_binding_value(@nospecialize val) =
+    val isa Type || val isa Function || val isa Module
 
 # Register both variables and destructuring wrappers so the regular postorder
 # pass doesn't emit duplicate or wrapper-level iteration hints.
@@ -578,7 +609,7 @@ function emit_lambda_param_hint!(
         maxdepth::Int, maxwidth::Int, lazy_tooltips::Bool
     )
     typ === Any && return nothing # an unrefined slot adds nothing over the bare name
-    should_annotate_type(typ) || return nothing
+    should_annotate_type(p, typ) || return nothing
     endpos = offset_to_xy(fi, JS.last_byte(p) + 1)
     endpos ∈ range || return nothing
     emit_type_hint!(
@@ -624,7 +655,7 @@ function emit_destructure_var_hint!(
     byterng = JS.byte_range(lvar)
     byterng in emitted_ranges && return nothing
     ltyp = @something get_type_for_range(ctx, byterng) return nothing
-    should_annotate_type(ltyp) || return nothing
+    should_annotate_type(lvar, ltyp) || return nothing
     endpos = offset_to_xy(fi, JS.last_byte(lvar) + 1)
     endpos ∈ range || return nothing
     emit_type_hint!(
@@ -708,10 +739,10 @@ function emit_type_hint!(
         truncate_typstr(postprocessor(typstr), maxdepth, maxwidth)
     end
     tooltip = data = nothing
-    if lazy_tooltips && should_lazy_resolve_tooltip(rawtyp)
+    if lazy_tooltips && should_lazy_resolve_tooltip(typ, rawtyp)
         data = LSP.TypeInlayHintData(uri, fi.version, first(type_range), last(type_range))
     else
-        tooltip = format_type_inlay_hint_tooltip(rawtyp, postprocessor)
+        tooltip = format_type_inlay_hint_tooltip(typ, postprocessor)
     end
     push!(inlay_hints, InlayHint(;
         position = endpos,
@@ -731,11 +762,12 @@ function first_token_byte(node::SyntaxTreeC, nontrivia_index::Vector{Int})
     return nontrivia_index[idx]
 end
 
-# Lazy tooltip resolution avoids allocating full `show` output for complex types,
-# but serializing `TypeInlayHintData` is more expensive than sending short
-# tooltips. Keep simple scalar-like types eager and defer parameterized, alias,
-# union, and other potentially expensive type displays.
-function should_lazy_resolve_tooltip(@nospecialize rawtyp)
+# Lazy tooltip resolution avoids allocating full `show` output for complex types
+# and extended lattice elements, but serializing `TypeInlayHintData` is more
+# expensive than sending short tooltips. Keep simple scalar-like types eager and
+# defer parameterized, alias, union, and other potentially expensive displays.
+function should_lazy_resolve_tooltip(@nospecialize(typ), @nospecialize(rawtyp))
+    typ !== rawtyp && return true
     rawtyp === Union{} && return false
     rawtyp isa DataType && isempty(rawtyp.parameters) && return false
     rawtyp isa TypeVar && return false
@@ -743,14 +775,31 @@ function should_lazy_resolve_tooltip(@nospecialize rawtyp)
 end
 
 # Explain `Union{}` hints, which otherwise look like obscure valid syntax.
-function format_type_inlay_hint_tooltip(@nospecialize(rawtyp), postprocessor::LSPostProcessor)
+function format_type_inlay_hint_tooltip(
+        @nospecialize(typ), postprocessor::LSPostProcessor;
+        include_lattice::Bool = false
+    )
+    rawtyp = CC.widenconst(typ)
     if rawtyp === Union{}
         value = "`Union{}` — this expression provably never produces a value (always throws, or is unreachable)."
     else
         full_typstr = postprocessor(sprint(show, rawtyp))
         value = "```julia\n$full_typstr\n```"
     end
+    if include_lattice && typ !== rawtyp
+        value *= "\n\n---\n\n" * format_lattice_element_detail(typ)
+    end
     return MarkupContent(; kind = MarkupKind.Markdown, value)
+end
+
+function format_lattice_element_detail(@nospecialize(typ))
+    lattice_str = try
+        sprint(show, typ)
+    catch
+        typ_typstr = sprint(show, typeof(typ))
+        return "Failed to display inferred extended lattice element of type `$typ_typstr`."
+    end
+    return "```julia\n$lattice_str\n```"
 end
 
 # Resolve a lazy type-hint tooltip by recomputing the type for the source range
@@ -776,8 +825,7 @@ function resolve_inlay_hint(
         st0_top, context_module, type_range;
         world, caller="inlayHint/resolve", cache=fi.inferred_context_cache) return hint
     typ = @something get_type_for_range(ctx, type_range) return hint
-    rawtyp = CC.widenconst(typ)
-    tooltip = format_type_inlay_hint_tooltip(rawtyp, postprocessor)
+    tooltip = format_type_inlay_hint_tooltip(typ, postprocessor; include_lattice = true)
     return InlayHint(hint; tooltip)
 end
 

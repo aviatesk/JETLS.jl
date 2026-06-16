@@ -8,6 +8,11 @@ using JETLS.URIs2
 include(normpath(pkgdir(JETLS), "test", "setup.jl"))
 include(normpath(pkgdir(JETLS), "test", "jsjl-utils.jl"))
 
+struct LongTypeNameForInlayHintTruncation end
+
+struct ThrowingShowForInlayHint end
+Base.show(::IO, ::ThrowingShowForInlayHint) = error("show failed")
+
 # Render `hints` into `code` via the shared `JETLS.apply_inlay_hints` helper
 # (the whole document starts at byte 1).
 function apply_inlay_hints(code::AbstractString, hints::Vector{InlayHint})
@@ -498,6 +503,25 @@ end
         @test length(JETLS.load(cache)) == 1
     end
 
+    @testset "long flat type names are middle-truncated" begin
+        code = """
+            let ltnflt = LongTypeNameForInlayHintTruncation()
+                ltnflt
+            end
+            """
+        expected = """
+            let ltnflt = LongTypeNameForInlayHintTruncation()::LongTypeN…Truncation
+                ltnflt::LongTypeN…Truncation
+            end
+            """
+        _, hints = get_lazy_type_inlay_hints(code, @__MODULE__)
+        @test apply_inlay_hints(code, hints) == expected
+        hint = only(filter(hints) do h
+            h.data isa TypeInlayHintData && h.position.line == 1
+        end)
+        @test hint.label == "::LongTypeN…Truncation"
+    end
+
     @testset "lazy tooltip resolution" begin
         code = "let M = rand(2, 2)\n" *
             "    M'\n" *
@@ -511,6 +535,53 @@ end
         @test resolved.tooltip isa MarkupContent
         @test resolved.tooltip.kind == MarkupKind.Markdown
         @test resolved.tooltip.value == "```julia\nLinearAlgebra.Adjoint{Float64, Matrix{Float64}}\n```"
+    end
+
+    @testset "const-propagated expressions" begin
+        code = """
+            let x = 42
+                y = sin(x)
+                z = cos(y)
+                return z
+            end
+            """
+        expected = """
+            let x = 42
+                y = sin(x::$Int)::Float64
+                z = cos(y::Float64)::Float64
+                return z::Float64
+            end
+            """
+        hints = get_type_inlay_hints(code)
+        @test apply_inlay_hints(code, hints) == expected
+        @test all(hints) do h
+            !(h.tooltip isa MarkupContent) || !occursin("\n---\n", h.tooltip.value)
+        end
+
+        server, lazy_hints = get_lazy_type_inlay_hints(code)
+        @test apply_inlay_hints(code, lazy_hints) == expected
+        hint = first(filter(lazy_hints) do h
+            h.data isa TypeInlayHintData && occursin("Float64", h.label)
+        end)
+        @test hint.tooltip === nothing
+        resolved = JETLS.resolve_inlay_hint(server.state, hint)
+        @test resolved.tooltip isa MarkupContent
+        @test occursin("```julia\nFloat64\n```", resolved.tooltip.value)
+        @test occursin("\n---\n", resolved.tooltip.value)
+        @test occursin("Core.Const", resolved.tooltip.value)
+    end
+
+    @testset "lattice tooltip ignores show errors" begin
+        tooltip = JETLS.format_type_inlay_hint_tooltip(
+            Core.Const(ThrowingShowForInlayHint()), JETLS.LSPostProcessor();
+            include_lattice = true)
+        @test tooltip isa MarkupContent
+        @test occursin("ThrowingShowForInlayHint", tooltip.value)
+        @test occursin("\n---\n", tooltip.value)
+        @test occursin(
+            "Failed to display inferred extended lattice element of type",
+            tooltip.value)
+        @test occursin("`Core.Const`", tooltip.value)
     end
 
     @testset "operator expressions" begin
@@ -831,7 +902,7 @@ end
             expected = """
                 let xs = rand(3)::Vector{Float64}
                     for x::Float64 = xs::Vector{Float64}
-                        println(x::Float64)
+                        println(x::Float64)::Nothing
                     end
                 end
                 """
@@ -848,7 +919,7 @@ end
             expected = """
                 let xs = String["a", "b"]::Vector{String}
                     for s::String in xs::Vector{String}
-                        print(s::String)
+                        print(s::String)::Nothing
                     end
                 end
                 """
@@ -867,7 +938,7 @@ end
             expected = """
                 let xs = rand(3)::Vector{Float64}
                     for (i::$Int, x::Float64) in enumerate(xs::Vector{Float64})::Enumerate{Vector{Float64}}
-                        println(i::$Int, x::Float64)
+                        println(i::$Int, x::Float64)::Nothing
                     end
                 end
                 """
@@ -883,9 +954,9 @@ end
                 end
                 """
             expected = """
-                let xs = Some{$Int}[Some(1)]::Vector{Some{$Int}}
+                let xs = Some{$Int}[Some(1)::Some{$Int}]::Vector{Some{$Int}}
                     for (; value::$Int) in xs::Vector{Some{$Int}}
-                        println(value::$Int)
+                        println(value::$Int)::Nothing
                     end
                 end
                 """
@@ -1066,8 +1137,8 @@ end
                 let x = rand()::Float64
                     r = (0 < x::Float64 < 1)::Bool
                     if (r::Bool && rand(Bool)::Bool)::Bool || rand(Bool)::Bool
-                        println(r::Bool)
-                    end
+                        println(r::Bool)::Nothing
+                    end::Nothing
                 end
                 """
             @test apply_inlay_hints(code, get_type_inlay_hints(code)) == expected
@@ -1148,8 +1219,8 @@ end
                 function f(x::Union{Int, Nothing})::Union{Nothing, String}
                     out = if (x::Union{Nothing, $Int} isa Int)::Bool
                         return string(x::$Int; base = 16)::String
-                    end
-                    out
+                    end::Nothing
+                    out::Nothing
                 end
                 """
             @test apply_inlay_hints(code, get_type_inlay_hints(code)) == expected
@@ -1172,8 +1243,8 @@ end
                 function g(b::Bool, c::Bool)::Union{Nothing, $Int, String}
                     out = if b
                         return if c; 1; else; "x"; end::Union{$Int, String}
-                    end
-                    out
+                    end::Nothing
+                    out::Nothing
                 end
                 """
             @test apply_inlay_hints(code, get_type_inlay_hints(code)) == expected
@@ -1523,7 +1594,7 @@ end
                 """
             expected = """
                 let g = x::Float64 -> 2x::Float64
-                    g(1.0)
+                    g(1.0)::Float64
                 end
                 """
             @test apply_inlay_hints(code, get_type_inlay_hints(code)) == expected
@@ -1639,10 +1710,10 @@ end
                 end
                 """
             expected = """
-                let ps = [1=>"a", 2=>"b"]::Vector{Pair{$Int, String}}
+                let ps = [(1=>"a")::Pair{$Int, String}, (2=>"b")::Pair{$Int, String}]::Vector{Pair{$Int, String}}
                     foreach(ps::Vector{Pair{$Int, String}}) do (k::$Int, v::String)
                         (k::$Int, v::String)::Tuple{$Int, String}
-                    end
+                    end::Nothing
                 end
                 """
             @test apply_inlay_hints(code, get_type_inlay_hints(code)) == expected
@@ -1657,10 +1728,10 @@ end
                 end
                 """
             expected = """
-                let ts = [(1, (2.0, "x"))]::Vector{Tuple{$Int, Tuple{Float64, String}}}
+                let ts = [(1, (2.0, "x")::Tuple{Float64, String})::Tuple{$Int, Tuple{Float64, String}}]::Vector{Tuple{$Int, Tuple{Float64, String}}}
                     foreach(ts::Vector{Tuple{$Int, Tuple{Float64, String}}}) do (a::$Int, (b::Float64, c::String))
                         (a::$Int, b::Float64, c::String)::Tuple{$Int, Float64, String}
-                    end
+                    end::Nothing
                 end
                 """
             @test apply_inlay_hints(code, get_type_inlay_hints(code)) == expected
@@ -1678,10 +1749,10 @@ end
                 end
                 """
             expected = """
-                let nts = [(a=1, b="x")]::Vector{@NamedTuple{a::$Int, b::String}}
+                let nts = [(a=1, b="x")::@NamedTuple{a::$Int, b::String}]::Vector{@NamedTuple{a::$Int, b::String}}
                     foreach(nts::Vector{@NamedTuple{a::$Int, b::String}}) do (; a::$Int, b::String)
                         (a::$Int, b::String)::Tuple{$Int, String}
-                    end
+                    end::Nothing
                 end
                 """
             @test apply_inlay_hints(code, get_type_inlay_hints(code)) == expected
@@ -1699,7 +1770,7 @@ end
             expected = """
                 function f(x::Float64)::Float64
                     g = (a::Union{Float64, $Int}, b::$Int) -> (a::Union{Float64, $Int} + b::$Int)::Union{Float64, $Int}
-                    (g(x::Float64, 1)::Float64 + g(2, 3))::Float64
+                    (g(x::Float64, 1)::Float64 + g(2, 3)::$Int)::Float64
                 end
                 """
             @test apply_inlay_hints(code, get_type_inlay_hints(code)) == expected
@@ -1840,7 +1911,7 @@ end
         expected = """
             function f()::$Int
                 x::$Int = 1
-                return x
+                return x::$Int
             end
             """
         @test apply_inlay_hints(code, get_type_inlay_hints(code)) == expected
@@ -1871,10 +1942,10 @@ end
         end
     end
 
-    # `Const` types (e.g. `x = println` makes both binding and reference
-    # `Const(println)`) are filtered by `should_annotate_type`, so the
-    # source is unchanged — no `typeof(println)` leaks through.
-    @testset "Const types are not annotated" begin
+    # `Const` callables (e.g. `x = println` makes both binding and reference
+    # `Const(println)`) are filtered by `should_annotate_type`, so the source
+    # is unchanged — no `typeof(println)` leaks through.
+    @testset "Const callables are not annotated" begin
         code = """
             let x = println
                 x
