@@ -376,6 +376,10 @@ module EmptyModule end
         @test isempty(get_lowering_diagnostics("struct A end"))
         @test isempty(get_lowering_diagnostics("struct A; x::Int; end"))
         @test isempty(get_lowering_diagnostics("struct A{T}; x::T; end"))
+        @test isempty(get_lowering_diagnostics("struct Phantom{T} end"))
+        @test isempty(get_lowering_diagnostics("struct Phantom{T<:Number} end"))
+        @test isempty(get_lowering_diagnostics("struct Phantom{T,S}; x::T; end"))
+        @test isempty(get_lowering_diagnostics("mutable struct Phantom{T} end"))
         let diagnostics = get_lowering_diagnostics("""
             struct A
                 x::Int

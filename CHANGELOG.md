@@ -113,6 +113,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Fixed false positive `lowering/undef-local-var` diagnostics for variables guarded by negated `@isdefined` conditions, including `&&` and `||` combinations where definedness is guaranteed.
 
+- Fixed false positive `lowering/unused-assignment` diagnostics on phantom `struct` type parameters such as `struct MyVal{T} end`.
+
 ## 2026-06-03
 
 - Commit: [`a42a435`](https://github.com/aviatesk/JETLS.jl/commit/a42a435)

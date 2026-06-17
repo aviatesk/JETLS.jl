@@ -710,6 +710,38 @@ function assignment_expression_for_prov(st0::SyntaxTreeC, prov::SyntaxTreeC)
     return first(assignments)
 end
 
+function is_struct_type_parameter_declaration(st0::SyntaxTreeC, prov::SyntaxTreeC)
+    ancestors = byte_ancestors(st0, JS.byte_range(prov))
+    for i = 2:length(ancestors)
+        curly = ancestors[i]
+        JS.kind(curly) === JS.K"curly" || continue
+        is_type_parameter = false
+        for j = 2:JS.numchildren(curly)
+            param = curly[j]
+            pk = JS.kind(param)
+            if (pk === JS.K"<:" || pk === JS.K">:") && JS.numchildren(param) >= 1
+                param = param[1]
+            end
+            if JS.byte_range(prov) ⊆ JS.byte_range(param)
+                is_type_parameter = true
+                break
+            end
+        end
+        is_type_parameter || continue
+        for j = i+1:length(ancestors)
+            parent = ancestors[j]
+            JS.kind(parent) === JS.K"struct" || continue
+            JS.numchildren(parent) >= 2 || continue
+            sig = parent[2]
+            if JS.kind(sig) === JS.K"<:" && JS.numchildren(sig) >= 1
+                sig = sig[1]
+            end
+            same_syntax_range(sig, curly) && return true
+        end
+    end
+    return false
+end
+
 function tail_returned_assignment_kind(
         st0::SyntaxTreeC, assignment::Union{Nothing,SyntaxTreeC}
     )
@@ -937,10 +969,13 @@ function analyze_unused_assignments!(
             provs = JL.flattened_provenance(dead_def_tree)
             is_from_user_ast(provs) || continue
             prov = last(provs)
+            assignment = assignment_expression_for_prov(st0, prov)
+            if assignment === nothing && is_struct_type_parameter_declaration(st0, prov)
+                continue
+            end
             range = jsobj_to_range(prov, fi)
             key = LoweringDiagnosticKey(range, binfo.kind, bn)
             key in reported ? continue : push!(reported, key)
-            assignment = assignment_expression_for_prov(st0, prov)
             tail_kind = tail_returned_assignment_kind(st0, assignment)
             push!(diagnostics, Diagnostic(;
                 range,
