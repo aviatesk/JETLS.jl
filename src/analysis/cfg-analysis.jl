@@ -247,20 +247,43 @@ function for_each_cond_operand(@specialize(callback), cond::SyntaxTreeC)
     end
 end
 
-# Emit `:isdefined` hints for `@isdefined(var)` in condition expressions.
-function undef_emit_isdefined_hints!(
-        lin::EventLinearizer, cond::SyntaxTreeC, candidates::Set{JL.IdTag}
+function undef_is_not_call(ctx3::JL.VariableAnalysisContext, cond::SyntaxTreeC)
+    JS.kind(cond) == JS.K"call" || return false
+    JS.numchildren(cond) == 2 || return false
+    func = cond[1]
+    JS.kind(func) == JS.K"BindingId" || return false
+    binfo = JL.get_binding(ctx3, var_id(func))
+    return binfo.kind === :global && binfo.name == "!"
+end
+
+function undef_emit_isdefined_hint!(
+        lin::EventLinearizer, arg::SyntaxTreeC, candidates::Set{JL.IdTag}
     )
-    for_each_cond_operand(cond) do operand::SyntaxTreeC
-        JS.kind(operand) == JS.K"isdefined" || return
-        JS.numchildren(operand) >= 1 || return
-        arg = operand[1]
-        if JS.kind(arg) == JS.K"BindingId"
-            vid = var_id(arg)
-            if vid in candidates
-                cfg_emit_event!(lin, :isdefined, vid, arg)
-            end
+    JS.kind(arg) == JS.K"BindingId" || return
+    vid = var_id(arg)
+    vid in candidates && cfg_emit_event!(lin, :isdefined, vid, arg)
+end
+
+# Emit `:isdefined` hints for condition branches where `@isdefined(var)` is true.
+function undef_emit_isdefined_hints!(
+        lin::EventLinearizer, ctx3::JL.VariableAnalysisContext,
+        cond::SyntaxTreeC, candidates::Set{JL.IdTag}, branch_value::Bool
+    )
+    k = JS.kind(cond)
+    if k == JS.K"block" && JS.numchildren(cond) == 1
+        undef_emit_isdefined_hints!(lin, ctx3, cond[1], candidates, branch_value)
+    elseif undef_is_not_call(ctx3, cond)
+        undef_emit_isdefined_hints!(lin, ctx3, cond[2], candidates, !branch_value)
+    elseif branch_value && k == JS.K"&&"
+        for child in JS.children(cond)
+            undef_emit_isdefined_hints!(lin, ctx3, child, candidates, true)
         end
+    elseif !branch_value && k == JS.K"||"
+        for child in JS.children(cond)
+            undef_emit_isdefined_hints!(lin, ctx3, child, candidates, false)
+        end
+    elseif branch_value && k == JS.K"isdefined" && JS.numchildren(cond) >= 1
+        undef_emit_isdefined_hint!(lin, cond[1], candidates)
     end
 end
 
@@ -499,11 +522,11 @@ function linearize_cfg_events!(
 
         cfg_emit_gotoifnot!(lin, else_label)
 
-        # Special case: if the condition contains @isdefined(var), the var is
-        # definitely defined in the true branch. This handles both direct
-        # `if @isdefined(var)` and `if ... && @isdefined(var)` patterns,
-        # since `&&` short-circuits: all operands must be true in the true branch.
-        undef_emit_isdefined_hints!(lin, cond, candidates)
+        # Special case: if the condition implies @isdefined(var), the var is
+        # definitely defined on that branch. This handles direct
+        # `if @isdefined(var)`, `if ... && @isdefined(var)`, and negated
+        # conditions like `if !(@isdefined(var)); ...; else ...`.
+        undef_emit_isdefined_hints!(lin, ctx3, cond, candidates, true)
 
         undef_emit_cond_implied_hints!(lin, cond, candidates)
 
@@ -524,6 +547,7 @@ function linearize_cfg_events!(
         cfg_emit_goto!(lin, end_label)
 
         cfg_emit_label!(lin, else_label)
+        undef_emit_isdefined_hints!(lin, ctx3, cond, candidates, false)
         let saved = undef_save_cond_implied(lin)
             if JS.numchildren(ex3) >= 3
                 linearize_cfg_events!(lin, ctx3, ex3[3], candidates, allow_noreturn_optimization)

@@ -111,6 +111,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Fixed hover and other type-aware features inside local closure bodies losing constant-propagated details for captured values.
 
+- Fixed false positive `lowering/undef-local-var` diagnostics for variables guarded by negated `@isdefined` conditions, including `&&` and `||` combinations where definedness is guaranteed.
+
 ## 2026-06-03
 
 - Commit: [`a42a435`](https://github.com/aviatesk/JETLS.jl/commit/a42a435)

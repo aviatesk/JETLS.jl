@@ -1214,6 +1214,33 @@ end
             """))
     end
 
+    @testset "!@isdefined guard - no diagnostic" begin
+        @test isempty(get_lowering_diagnostics("""
+            function f(xs)
+                local y
+                for x in xs
+                    y = x
+                end
+                if !(@isdefined(y))
+                    y = 42
+                end
+                return y
+            end
+            """))
+        @test isempty(get_lowering_diagnostics("""
+            function f(xs, cnd)
+                local y
+                for x in xs
+                    y = x
+                end
+                if cnd || !(@isdefined(y))
+                    y = 42
+                end
+                return y
+            end
+            """))
+    end
+
     @testset "@assert @isdefined hint" begin
         @test isempty(get_lowering_diagnostics("""
             function f(x)
