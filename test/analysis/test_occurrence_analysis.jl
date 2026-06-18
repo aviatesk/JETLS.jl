@@ -565,20 +565,24 @@ end
             @test binfo.name == "Inner"
             @test only(occs).kind === :decl
         end
-        # A block-nested `import`/`using` must not record its module path as
-        # spurious `:global :use` occurrences.
-        for code in (
-                "if VERSION >= v\"1.11\"\n    import A.B\nend",
-                "begin\n    import A.B\nend",
-                "if VERSION >= v\"1.11\"\n    using Foo: bar\nend",
+        # A block-nested `import`/`using` records its local binding as a `:decl`
+        # (like the top-level form). Neither that name nor the module-path prefix
+        # is used here, so neither may leak as a spurious `:global :use`.
+        for (code, declname, prefix) in (
+                ("if VERSION >= v\"1.11\"\n    import A.B\nend", "B", "A"),
+                ("begin\n    import A.B\nend", "B", "A"),
+                ("if VERSION >= v\"1.11\"\n    using Foo: bar\nend", "bar", "Foo"),
+                ("@static if VERSION >= v\"1.11\"\n    using Foo: baz\nend", "baz", "Foo"),
             )
             boccs = get_full_binding_occurrences(code)
-            n_spurious_use = 0
+            decl_names = [b.name for (b, occs) in boccs if any(o -> o.kind === :decl, occs)]
+            @test declname in decl_names
+            spurious_uses = 0
             for (binfo, occs) in boccs
-                binfo.name in ("A", "B", "Foo", "bar") || continue
-                n_spurious_use += count(o -> o.kind === :use, occs)
+                binfo.name in (declname, prefix) || continue
+                spurious_uses += count(o -> o.kind === :use, occs)
             end
-            @test n_spurious_use == 0
+            @test spurious_uses == 0
         end
     end
 

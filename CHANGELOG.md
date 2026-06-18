@@ -44,6 +44,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > This disables analysis for matched files. Basic features like completion still might work, but most LSP features will be unfunctional.
 > Note that `analysis_overrides` is provided as a temporary workaround and may be removed or changed at any time. A proper fix is being worked on.
 
+### Fixed
+
+- Fixed the names introduced by `import`/`using`/`export`/`public` statements nested in a block (e.g. version-gated imports) not being recognized by document highlight, find references, rename, and semantic tokens.
+
 ## 2026-06-18
 
 - Commit: [`5643648`](https://github.com/aviatesk/JETLS.jl/commit/5643648)
