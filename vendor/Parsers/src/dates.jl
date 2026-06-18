@@ -340,7 +340,7 @@ function tryparsenext(tok, source, pos, len, b, code)::Tuple{Any, Int, UInt8, Re
     return val, pos, b, code
 end
 
-function typeparser(::AbstractConf{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, b, code, pl, options) where {T <: Dates.TimeType}
+@inline function typeparser(::AbstractConf{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, b, code, pl, options) where {T <: Dates.TimeType}
     fmt = options.dateformat
     df = fmt === nothing ? default_format(T) : fmt
     tokens = df.tokens

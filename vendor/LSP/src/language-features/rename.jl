@@ -19,8 +19,7 @@ end
     Client supports testing for validity of rename operations
     before execution.
 
-    # Tags
-    - since - version 3.12.0
+    - `@since` version 3.12.0
     """
     prepareSupport::Union{Nothing, Bool} = nothing
 
@@ -31,8 +30,7 @@ end
     The value indicates the default behavior used by the
     client.
 
-    # Tags
-    - since - version 3.16.0
+    - `@since` version 3.16.0
     """
     prepareSupportDefaultBehavior::Union{Nothing, PrepareSupportDefaultBehavior.Ty} = nothing
 
@@ -43,8 +41,7 @@ end
     the workspace edit in the user interface and asking
     for confirmation.
 
-    # Tags
-    - since - 3.16.0
+    - `@since` 3.16.0
     """
     honorsChangeAnnotations::Union{Nothing, Bool} = nothing
 end
@@ -105,8 +102,7 @@ end
 The prepare rename request is sent from the client to the server to setup and
 test the validity of a rename operation at a given location.
 
-# Tags
-- since - version 3.12.0
+- `@since` version 3.12.0
 """
 @interface PrepareRenameRequest @extends RequestMessage begin
     method::String = "textDocument/prepareRename"
@@ -182,8 +178,7 @@ describe valid contents. A rename to one of the ranges can be applied to all
 other ranges if the new content is valid. If no result-specific word pattern is
 provided, the word pattern from the client's language configuration is used.
 
-# Tags
-- since - version 3.16.0
+- `@since` version 3.16.0
 """
 @interface LinkedEditingRangeRequest @extends RequestMessage begin
     method::String = "textDocument/linkedEditingRange"

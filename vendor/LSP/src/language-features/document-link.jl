@@ -7,8 +7,7 @@
     """
     Whether the client supports the `tooltip` property on `DocumentLink`.
 
-    # Tags
-    - since - 3.15.0
+    - `@since` 3.15.0
     """
     tooltipSupport::Union{Nothing, Bool} = nothing
 end
@@ -53,8 +52,7 @@ external resource, like another text document or a web site.
     The specific instructions vary depending on OS, user settings, and
     localization.
 
-    # Tags
-    - since - 3.15.0
+    - `@since` 3.15.0
     """
     tooltip::Union{Nothing, String} = nothing
 

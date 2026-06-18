@@ -446,6 +446,39 @@ end
         @test occursin("1/1 parsed files", str)
     end
 
+    do_test("Non-notifying filesystems (issue #514)") && @testset "Non-notifying filesystems (issue #514)" begin
+        # Path-prefix matching must respect path components.
+        @test Revise.is_path_prefix("/mnt", "/mnt/c")
+        @test Revise.is_path_prefix("/mnt/c", "/mnt/c")
+        @test Revise.is_path_prefix("/", "/anything")
+        @test !Revise.is_path_prefix("/mnt", "/mnts")
+        @test !Revise.is_path_prefix("/mnt/c", "/mnt")
+
+        # `/proc/mounts` escapes spaces, backslashes, etc. as octal.
+        @test Revise.unescape_mount("C:\\134") == "C:\\"
+        @test Revise.unescape_mount("a\\040b") == "a b"
+        @test Revise.unescape_mount("/plain/path") == "/plain/path"
+
+        # The fstype is taken from the most specific (longest) matching mount point.
+        # These use Unix-style absolute paths (the only ones `/proc/mounts` describes),
+        # so restrict to Unix where `abspath` leaves them unchanged.
+        if Sys.isunix()
+            mounts = [
+                "drivers /usr/lib/wsl/drivers 9p ro 0 0",
+                "C:\\134 /mnt/c 9p rw,aname=drvfs 0 0",
+                "/dev/sdc / ext4 rw 0 0",
+            ]
+            @test Revise.fstype_for_path("/mnt/c/Users/foo", mounts) == "9p"
+            @test Revise.fstype_for_path("/home/tim/x", mounts) == "ext4"
+            @test Revise.fstype_for_path("/mnt/cdrom/x", mounts) == "ext4"  # not under /mnt/c
+        end
+
+        # Off WSL, no path is ever treated as non-notifying.
+        if !Revise.is_wsl()
+            @test !Revise.nonnotifying_path("/mnt/c/whatever")
+        end
+    end
+
     do_test("File paths") && @testset "File paths" begin
         testdir = newtestdir()
         for wf in (Revise.watching_files[] ? (true,) : (true, false))
@@ -840,7 +873,13 @@ end
         @test Namespace.sin(0) == 10
         @test Base.sin(0) == 0
         @test Base.cos(Namespace.X()) == 20
-        @test_throws MethodError Namespace.cos(Namespace.X())
+        if Base.VERSION >= v"1.12.0-DEV.2047"
+            # The orphaned local `cos` is re-imported from `Base` (issue #239), matching what
+            # a fresh load of the revised source would give (`Namespace.cos === Base.cos`).
+            @test Namespace.cos(Namespace.X()) == 20
+        else
+            @test_throws MethodError Namespace.cos(Namespace.X())
+        end
 
         rm_precompile("Namespace")
         pop!(LOAD_PATH)
@@ -876,6 +915,72 @@ end
         @test Multidef.repeated(3) == 4
 
         rm_precompile("Multidef")
+        pop!(LOAD_PATH)
+    end
+
+    do_test("IJulia preexecute hook") && @testset "IJulia preexecute hook" begin
+        # IJulia reloads code by registering `Revise.revise` as a preexecute
+        # hook (IJulia.push_preexecute_hook) and invoking every hook before each
+        # cell runs. This reproduces that mechanism in-process (no Jupyter
+        # server) so CI guards the Revise side of the path exercised in issue
+        # #325: an edit to a tracked file between cells must take effect on the
+        # next cell, triggered solely by the hook and without an explicit
+        # `revise()` in the cell body.
+        testdir = newtestdir()
+        dn = joinpath(testdir, "JupyterRevise", "src")
+        mkpath(dn)
+        write(joinpath(dn, "JupyterRevise.jl"), """
+            module JupyterRevise
+            greet() = "hello"
+            end
+            """)
+        sleep(mtimedelay)
+
+        # The kernel's preexecute hooks, populated exactly as IJulia does.
+        preexecute_hooks = Function[]
+        push_preexecute_hook(f) = push!(preexecute_hooks, f)
+        # Run a "cell": fire every preexecute hook, then evaluate the body.
+        # Time passes between cells in a real notebook, so by the time the user
+        # runs the next cell the file-watcher task has already pushed the change
+        # onto `revision_queue`; wait for that here so it is the hook (not the
+        # test) that applies the revision.
+        function run_cell(thunk)
+            timedwait(() -> !isempty(Revise.revision_queue), event_timeout; pollint=0.02)
+            sleep(0.02)
+            for hook in preexecute_hooks
+                Base.invokelatest(hook)
+            end
+            return Base.invokelatest(thunk)
+        end
+
+        # Load Revise's IJulia integration the way IJulia does, then `using`.
+        push_preexecute_hook(Revise.revise)
+        @eval using JupyterRevise
+        @test JupyterRevise.greet() == "hello"
+
+        sleep(mtimedelay)
+        write(joinpath(dn, "JupyterRevise.jl"), """
+            module JupyterRevise
+            greet() = "world"
+            end
+            """)
+        # The preexecute hook fires `revise()` automatically before the cell.
+        @test run_cell(() -> JupyterRevise.greet()) == "world"
+
+        sleep(mtimedelay)
+        write(joinpath(dn, "JupyterRevise.jl"), """
+            module JupyterRevise
+            greet() = "again"
+            end
+            """)
+        # Without firing the hook the cell sees stale code; firing it reloads.
+        # This confirms the preexecute hook is what drives the reload.
+        timedwait(() -> !isempty(Revise.revision_queue), event_timeout; pollint=0.02)
+        sleep(0.02)
+        @test Base.invokelatest(() -> JupyterRevise.greet()) == "world"
+        @test run_cell(() -> JupyterRevise.greet()) == "again"
+
+        rm_precompile("JupyterRevise")
         pop!(LOAD_PATH)
     end
 
@@ -1232,6 +1337,34 @@ end
         @test get_docstring(ds) == "g"
 
         rm_precompile("FirstDocstring")
+        pop!(LOAD_PATH)
+    end
+
+    do_test("Forced revision docstrings (issue #975)") && @testset "Forced revision docstrings (issue #975)" begin
+        testdir = newtestdir()
+        dn = joinpath(testdir, "ForceDocstring", "src")
+        mkpath(dn)
+        write(joinpath(dn, "ForceDocstring.jl"), """
+            module ForceDocstring
+            "f" f() = 1
+            "g" g() = 1
+            end
+            """)
+        sleep(mtimedelay)
+        @eval using ForceDocstring
+        sleep(mtimedelay)
+        @test ForceDocstring.f() == 1
+        # `revise(mod; force=true)` re-evaluates every definition, which rewrites
+        # each docstring; `Base.Docs` warns on each rewrite unless we suppress it.
+        logs, _ = Test.collect_test_logs() do
+            revise(ForceDocstring)
+        end
+        @latestworld
+        @test !any(r -> occursin("Replacing docs", r.message), logs)
+        @test ForceDocstring.f() == 1
+        @test ForceDocstring.g() == 1
+
+        rm_precompile("ForceDocstring")
         pop!(LOAD_PATH)
     end
 
@@ -1809,7 +1942,7 @@ end
 
         # Set up a WatchList as init_watching would (baseline ctime recorded at push time)
         pkgid = Base.PkgId(UUIDs.uuid4(), "tracked1025_test")
-        @lock Revise.watched_files_lock begin
+        @lock Revise.revise_lock begin
             wl = Revise.WatchList()
             push!(wl, basename(tracked_file) => pkgid)
             wl.file_ctimes[basename(tracked_file)] = stat(tracked_file).ctime
@@ -1845,7 +1978,7 @@ end
 
             @test basename(tracked_file) ∈ detected[]
         finally
-            @lock Revise.watched_files_lock begin
+            @lock Revise.revise_lock begin
                 delete!(Revise.watched_files, testdir)
             end
         end
@@ -2041,6 +2174,143 @@ end
             m = @which ReviseTestPrivate.methspecificity(1)
             @test m.sig.parameters[2] === Integer
         end
+    end
+
+    # Repairing an orphaned binding requires binding partitions (`delete_binding`, 1.12+).
+    do_test("Orphaned binding realias (issue #239)") && Base.VERSION >= v"1.12.0-DEV.2047" &&
+            @testset "Orphaned binding realias (issue #239)" begin
+        # An accidental `iterate(x::Foo)=...` defines a module-local `iterate` that shadows
+        # `Base.iterate`, and `caller` binds to it. Correcting it to `Base.iterate(x::Foo)=...`
+        # must leave the unqualified reference in `caller` resolving to `Base.iterate`, without
+        # a session restart.
+        testdir = newtestdir()
+        dn = joinpath(testdir, "Orphan239", "src"); mkpath(dn)
+        fn = joinpath(dn, "Orphan239.jl")
+        write(fn, """
+            module Orphan239
+            struct Foo end
+            caller() = iterate(Foo())
+            iterate(x::Foo) = (42, nothing)   # accidental shadow of Base.iterate
+            end
+            """)
+        sleep(mtimedelay)
+        @eval using Orphan239
+        @test Orphan239.caller() == (42, nothing)
+        @test Orphan239.iterate !== Base.iterate
+        sleep(mtimedelay)
+        write(fn, """
+            module Orphan239
+            struct Foo end
+            caller() = iterate(Foo())
+            Base.iterate(x::Foo) = (42, nothing)   # fixed: extend Base.iterate
+            end
+            """)
+        @yry()
+        @test Orphan239.iterate === Base.iterate     # orphaned binding re-imported from Base
+        @test Orphan239.caller() == (42, nothing)    # `caller` works again, no restart
+
+        rm_precompile("Orphan239")
+
+        # The bug is not specific to `Base`: it arises for any name brought into implicit scope
+        # by a bare `using`. Here `flatten` (not a `Base` export) is shadowed via
+        # `using Base.Iterators`, and the repair must re-import it from `Base.Iterators`.
+        dn = joinpath(testdir, "Orphan239c", "src"); mkpath(dn)
+        fn = joinpath(dn, "Orphan239c.jl")
+        write(fn, """
+            module Orphan239c
+            using Base.Iterators
+            struct Foo end
+            caller() = flatten(Foo())
+            flatten(x::Foo) = :shadow   # accidental shadow of Base.Iterators.flatten
+            end
+            """)
+        sleep(mtimedelay)
+        @eval using Orphan239c
+        @test Orphan239c.caller() == :shadow
+        @test Orphan239c.flatten !== Base.Iterators.flatten
+        sleep(mtimedelay)
+        write(fn, """
+            module Orphan239c
+            using Base.Iterators
+            struct Foo end
+            caller() = flatten(Foo())
+            Base.Iterators.flatten(x::Foo) = :fixed   # fixed: extend Base.Iterators.flatten
+            end
+            """)
+        @yry()
+        @test Orphan239c.flatten === Base.Iterators.flatten   # re-imported from Base.Iterators
+        @test Orphan239c.caller() == :fixed                   # `caller` works again, no restart
+
+        rm_precompile("Orphan239c")
+
+        # The repair must be narrow: deleting a method that is NOT replaced by a same-named
+        # function leaves the (now empty) binding alone rather than re-importing it.
+        dn = joinpath(testdir, "Orphan239b", "src"); mkpath(dn)
+        fn = joinpath(dn, "Orphan239b.jl")
+        write(fn, """
+            module Orphan239b
+            gone(x::Int) = 1
+            keep() = 2
+            end
+            """)
+        sleep(mtimedelay)
+        @eval using Orphan239b
+        @test Orphan239b.gone(0) == 1
+        sleep(mtimedelay)
+        write(fn, """
+            module Orphan239b
+            function fwd end    # genuine forward declaration, must stay empty
+            keep() = 3
+            end
+            """)
+        @yry()
+        @test Orphan239b.keep() == 3
+        @test isempty(methods(Orphan239b.gone))             # emptied, not re-imported
+        @test isdefined(Orphan239b, :fwd) && isempty(methods(Orphan239b.fwd))  # left untouched
+
+        rm_precompile("Orphan239b")
+    end
+
+    do_test("Duplicate macro-defined methods") && @testset "Duplicate macro-defined methods" begin
+        # issue #668: two definitions sharing one signature, where the method's recorded
+        # location comes from a macro (a different file than the source). Deleting one of
+        # them must not fail with `AssertionError: ld[idx] < typemax(eltype(ld))`.
+        testdir = newtestdir()
+        dn = joinpath(testdir, "Dup668", "src"); mkpath(dn)
+        fn = joinpath(dn, "Dup668.jl")
+        # `@deffoo` stamps the method body with a LineNumberNode from a phantom file,
+        # mimicking what macros like `@views`/`@timing` do to a wrapped function.
+        write(fn, """
+            __precompile__(false)
+            module Dup668
+            macro deffoo(val)
+                esc(Expr(:function, :(foo()),
+                         Expr(:block, LineNumberNode(99, Symbol("phantom.jl")), val)))
+            end
+            @deffoo 1
+            @deffoo 2
+            end""")
+        sleep(mtimedelay)
+        using Dup668
+        sleep(mtimedelay)
+        @test Dup668.foo() == 2
+        key = Revise.MethodInfoKey(nothing, first(methods(Dup668.foo)).sig)
+        # Remove the first (duplicate) definition, leaving a single method.
+        write(fn, """
+            __precompile__(false)
+            module Dup668
+            macro deffoo(val)
+                esc(Expr(:function, :(foo()),
+                         Expr(:block, LineNumberNode(99, Symbol("phantom.jl")), val)))
+            end
+            @deffoo 2
+            end""")
+        @yry()
+        @test isempty(Revise.queue_errors)
+        @test Dup668.foo() == 2
+        @test length(CodeTracking.method_info[key]) == 1
+
+        rm_precompile("Dup668")
     end
 
     do_test("revise_file_now") && @testset "revise_file_now" begin
@@ -2360,6 +2630,7 @@ end
             g(x} = 2
             end
             """)
+        sleep(mtimedelay)
         @test try
             revise(throw=true)
             false
@@ -2998,6 +3269,235 @@ end
         end
     end
 
+    if Revise.__bpart__[] && do_test("struct revision (issue #1022)")
+        @testset "struct revision (issue #1022)" begin
+            # Editing only the default value of a `@kwdef` struct (or any other change
+            # that re-creates a type with identical structure) must not trigger the
+            # expensive struct-revision path: no `DeleteType` walk runs and the
+            # binding is preserved. Genuine changes to fields, types, or mutability
+            # still go through full revision.
+            testdir = newtestdir()
+            try
+                rlogger = Revise.debug_logger()
+                deletetype_logs() = filter(r -> r.level == Debug && r.group == "Action" &&
+                                                r.message == "DeleteType", rlogger.logs)
+                dn = joinpath(testdir, "Revise1022", "src")
+                mkpath(dn)
+                fn = joinpath(dn, "Revise1022.jl")
+                pkg_code_v1 = """
+                    module Revise1022
+                    Base.@kwdef struct Blah
+                        x = 4
+                    end
+                    # Dispatches on Blah but is otherwise untouched by the revisions below;
+                    # it keeps working as long as the Blah binding is preserved.
+                    useblah(b::Blah) = b.x + 1
+                    # The `if` block keeps the abstract type and the struct in a single
+                    # expression, so revision interprets (rather than `Core.eval`s) it and
+                    # registers a `TypeInfo` for the abstract type too. Editing the default
+                    # then exercises preservation prediction for both.
+                    if true
+                        abstract type AbstractWrapped end
+                        Base.@kwdef struct Wrapped <: AbstractWrapped
+                            w::Int = 1
+                        end
+                    end
+                    end
+                    """
+                write(fn, pkg_code_v1)
+                sleep(mtimedelay)
+                @eval using Revise1022
+                sleep(mtimedelay)
+                T_v1 = Revise1022.Blah
+                W_v1 = Revise1022.Wrapped
+                AW_v1 = Revise1022.AbstractWrapped
+                @test Revise1022.Blah().x == 4
+                @test Revise1022.useblah(Revise1022.Blah()) == 5
+
+                # Revision 1: change only default values — bindings must be preserved,
+                # and no DeleteType walk may run
+                empty!(rlogger.logs)
+                pkg_code_v2 = replace(pkg_code_v1, "x = 4" => "x = 5", "w::Int = 1" => "w::Int = 2")
+                write(fn, pkg_code_v2)
+                @yry()
+                @test @invokelatest(getfield(Revise1022, :Blah)) === T_v1
+                @test @invokelatest(getfield(Revise1022, :Wrapped)) === W_v1
+                @test @invokelatest(Revise1022.Blah()).x == 5
+                @test @invokelatest(Revise1022.Wrapped()).w == 2
+                @test isempty(deletetype_logs())
+                @test @invokelatest(Revise1022.useblah(Revise1022.Blah())) == 6
+
+                # Revision 2: another default-only edit. The `if` block was interpreted in
+                # `:eval` mode by revision 1, so the abstract type now has a `TypeInfo` on
+                # record and its preservation must also be predicted (via `_equiv_typedef`).
+                empty!(rlogger.logs)
+                pkg_code_v3 = replace(pkg_code_v2, "w::Int = 2" => "w::Int = 3")
+                write(fn, pkg_code_v3)
+                @yry()
+                @test @invokelatest(getfield(Revise1022, :Wrapped)) === W_v1
+                @test @invokelatest(getfield(Revise1022, :AbstractWrapped)) === AW_v1
+                @test @invokelatest(Revise1022.Wrapped()).w == 3
+                @test isempty(deletetype_logs())
+
+                # Revision 3: add a field — the full struct-revision path must run
+                empty!(rlogger.logs)
+                pkg_code_v4 = replace(pkg_code_v3,
+                    "x = 5" => "x = 5\n        y::Int = 7",
+                    "useblah(b::Blah) = b.x + 1" => "useblah(b::Blah) = b.x + b.y")
+                write(fn, pkg_code_v4)
+                @yry()
+                T_v4 = @invokelatest getfield(Revise1022, :Blah)
+                @test T_v4 !== T_v1
+                @test :y in fieldnames(T_v4)
+                @test @invokelatest(Revise1022.useblah(Revise1022.Blah())) == 12  # 5 + 7
+                @test !isempty(deletetype_logs())
+
+                # Revision 4: change a field type — the full struct-revision path must run
+                empty!(rlogger.logs)
+                pkg_code_v5 = replace(pkg_code_v4, "y::Int = 7" => "y::Float64 = 7.0")
+                write(fn, pkg_code_v5)
+                @yry()
+                T_v5 = @invokelatest getfield(Revise1022, :Blah)
+                @test T_v5 !== T_v4
+                @test fieldtype(T_v5, :y) === Float64
+                @test !isempty(deletetype_logs())
+            finally
+                rm_precompile("Revise1022")
+                pop!(LOAD_PATH)
+            end
+
+            # Changing a field's `const` or `@atomic` annotation changes the type even
+            # though the field names and types are identical; preservation must not be
+            # predicted (`Core._equiv_typedef` compares these flags, so delegating the
+            # equivalence check to the runtime gets them right).
+            testdir = newtestdir()
+            try
+                dn = joinpath(testdir, "ReviseFieldFlags", "src")
+                mkpath(dn)
+                fn = joinpath(dn, "ReviseFieldFlags.jl")
+                pkg_code_v1 = """
+                    module ReviseFieldFlags
+                    mutable struct MC
+                        x::Int
+                    end
+                    MC() = MC(0)
+                    mutable struct MA
+                        y::Int
+                    end
+                    MA() = MA(0)
+                    end
+                    """
+                write(fn, pkg_code_v1)
+                sleep(mtimedelay)
+                @eval using ReviseFieldFlags
+                sleep(mtimedelay)
+                MC_v1, MA_v1 = ReviseFieldFlags.MC, ReviseFieldFlags.MA
+                @test !isconst(MC_v1, 1)
+                @test !Base.isfieldatomic(MA_v1, 1)
+
+                pkg_code_v2 = replace(pkg_code_v1, "x::Int" => "const x::Int",
+                                                   "y::Int" => "@atomic y::Int")
+                write(fn, pkg_code_v2)
+                @yry()
+                MC_v2 = @invokelatest getfield(ReviseFieldFlags, :MC)
+                @test MC_v2 !== MC_v1
+                @test isconst(MC_v2, 1)
+                MA_v2 = @invokelatest getfield(ReviseFieldFlags, :MA)
+                @test MA_v2 !== MA_v1
+                @test Base.isfieldatomic(MA_v2, 1)
+            finally
+                rm_precompile("ReviseFieldFlags")
+                pop!(LOAD_PATH)
+            end
+
+            # Preservation predictions run before any of the queued changes are applied,
+            # so a same-revision change to a binding the struct's structure depends on
+            # (here, a `const` field-type alias) makes the prediction stale: evaluation
+            # redefines the struct after all. The post-evaluation check must catch this
+            # and run the deletion walk late, so that dependent methods (`dist`) are
+            # still re-evaluated for the new type.
+            testdir = newtestdir()
+            try
+                dn = joinpath(testdir, "ReviseStale", "src")
+                mkpath(dn)
+                fn = joinpath(dn, "ReviseStale.jl")
+                pkg_code_v1 = """
+                    module ReviseStale
+                    const Coord = Float32
+                    Base.@kwdef struct Pt
+                        x::Coord = 0
+                    end
+                    dist(p::Pt) = Float64(p.x)
+                    end
+                    """
+                write(fn, pkg_code_v1)
+                sleep(mtimedelay)
+                @eval using ReviseStale
+                sleep(mtimedelay)
+                P_v1 = ReviseStale.Pt
+                @test ReviseStale.dist(ReviseStale.Pt()) === 0.0
+
+                pkg_code_v2 = replace(pkg_code_v1, "const Coord = Float32" => "const Coord = Float64",
+                                                   "x::Coord = 0" => "x::Coord = 1")
+                write(fn, pkg_code_v2)
+                @yry()
+                P_v2 = @invokelatest getfield(ReviseStale, :Pt)
+                @test P_v2 !== P_v1
+                @test fieldtype(P_v2, :x) === Float64
+                @test @invokelatest(ReviseStale.dist(@invokelatest(ReviseStale.Pt()))) === 1.0
+            finally
+                rm_precompile("ReviseStale")
+                pop!(LOAD_PATH)
+            end
+
+            # Moving an unchanged struct between files deletes it from one file's exprs
+            # and re-creates it from another's. Predictions span all queued files, so
+            # the move is recognized as preserving and skips the deletion walk.
+            testdir = newtestdir()
+            try
+                rlogger = Revise.debug_logger()
+                dn = joinpath(testdir, "ReviseMove", "src")
+                mkpath(dn)
+                write(joinpath(dn, "ReviseMove.jl"), """
+                    module ReviseMove
+                    include("types.jl")
+                    include("methods.jl")
+                    end
+                    """)
+                write(joinpath(dn, "types.jl"), """
+                    struct Movable
+                        x::Int
+                    end
+                    """)
+                write(joinpath(dn, "methods.jl"), """
+                    usemovable(m::Movable) = m.x + 1
+                    """)
+                sleep(mtimedelay)
+                @eval using ReviseMove
+                sleep(mtimedelay)
+                M_v1 = ReviseMove.Movable
+                @test ReviseMove.usemovable(ReviseMove.Movable(1)) == 2
+
+                empty!(rlogger.logs)
+                write(joinpath(dn, "types.jl"), "\n")
+                write(joinpath(dn, "methods.jl"), """
+                    struct Movable
+                        x::Int
+                    end
+                    usemovable(m::Movable) = m.x + 1
+                    """)
+                @yry()
+                @test @invokelatest(getfield(ReviseMove, :Movable)) === M_v1
+                @test @invokelatest(ReviseMove.usemovable(@invokelatest(ReviseMove.Movable(1)))) == 2
+                @test isempty(filter(r -> r.level == Debug && r.group == "Action" &&
+                                          r.message == "DeleteType", rlogger.logs))
+            finally
+                rm_precompile("ReviseMove")
+                pop!(LOAD_PATH)
+            end
+        end
+    end
+
     do_test("get_def") && @testset "get_def" begin
         testdir = newtestdir()
         dn = joinpath(testdir, "GetDef", "src")
@@ -3264,6 +3764,61 @@ end
 
     end
 
+    do_test("Track sysimage package") && @testset "Track sysimage package" begin
+        # issue #685: a package baked into a system image (e.g. with PackageCompiler.jl)
+        # is already loaded at startup, so the `using` callback never fires and Revise
+        # has no record of it. `Revise.track` should start watching it and apply any
+        # edits made since it was precompiled. We reproduce the sysimage state by
+        # loading the package normally and then dropping Revise's record of it, leaving
+        # a valid `Base.pkgorigins` cache entry whose mtime predates the source edit.
+        testdir = newtestdir()
+        dn = joinpath(testdir, "TrackSysimg685", "src")
+        mkpath(dn)
+        write(joinpath(dn, "TrackSysimg685.jl"), """
+            module TrackSysimg685
+            f685() = 1
+            end
+            """)
+        sleep(mtimedelay)
+        @eval using TrackSysimg685
+        @latestworld
+        @test TrackSysimg685.f685() == 1
+        id = Base.PkgId(TrackSysimg685)
+        old_pkgdata = @lock Revise.revise_lock begin
+            pd = Revise.pkgdatas[id]
+            delete!(Revise.pkgdatas, id)
+            pd
+        end
+        sleep(mtimedelay)
+        fn685 = joinpath(dn, "TrackSysimg685.jl")
+        write(fn685, """
+            module TrackSysimg685
+            f685() = 2
+            end
+            """)
+        # In file-watching mode, the watcher task still holds the dropped record and
+        # queues it when the file changes; `track` then queues the replacement record
+        # for the same file. Each record carries its own copy of the file's old
+        # signatures, so processing both would delete `f685` twice. Push the stale
+        # entry explicitly so the duplicate pair is exercised deterministically
+        # rather than only when the watcher wins the race.
+        @lock Revise.revise_lock push!(Revise.revision_queue,
+                                       (old_pkgdata, relpath(fn685, old_pkgdata)))
+        Revise.track(TrackSysimg685)
+        @latestworld
+        @test TrackSysimg685.f685() == 2
+
+        # A package with no precompile cache cannot be tracked this way; fail with a
+        # clear message rather than a `KeyError` (PR #688 review). Drive `_track`
+        # directly with a synthetic, never-loaded package id: a module defined here
+        # would resolve to `Main`, which the testsets above have already tracked.
+        fakeid = Base.PkgId(Base.UUID("00000000-0000-0000-0000-000000000685"), "NotALoadedPkg685")
+        @test_throws "no Revise.track recipe" Revise._track(fakeid, :NotALoadedPkg685)
+
+        rm_precompile("TrackSysimg685")
+        pop!(LOAD_PATH)
+    end
+
     do_test("Auto-track user scripts") && @testset "Auto-track user scripts" begin
         srcfile = joinpath(tempdir(), randtmp()*".jl")
         push!(to_remove, srcfile)
@@ -3452,6 +4007,48 @@ end
         @test_throws RemoteException Distributed.remotecall_eval(Main, boring_proc, :(ReviseDistributedOnWorker.g(1)))
 
         rmprocs(favorite_proc, boring_proc; waitfor=10)
+    end
+
+    do_test("Distributed late worker") && @testset "Distributed late worker" begin
+        # A worker added *after* an in-session revision loads the package fresh
+        # from disk and so lacks the freshly-gensym'd closures the master now
+        # produces. Serializing such a closure to it (as `@distributed` bodies do)
+        # would throw `UndefVarError` on deserialization. `Revise.init_worker`
+        # must replay the session's revisions onto the new worker. (issue #637)
+        dirname = randtmp()
+        mkdir(dirname)
+        push!(to_remove, dirname)
+        push!(LOAD_PATH, dirname)
+        modname = "ReviseDist637"
+        dn = joinpath(dirname, modname, "src")
+        mkpath(dn)
+        file = joinpath(dn, modname * ".jl")
+        # `adder` returns an anonymous closure; revising its body re-lowers it and
+        # assigns it a new gensym type name on the master.
+        write(file, "module $modname\nadder() = (x -> x + 1)\nend\n")
+        sleep(mtimedelay)
+        @eval using ReviseDist637
+        sleep(mtimedelay)
+        @test ReviseDist637.adder()(5) == 6
+
+        write(file, "module $modname\nadder() = (x -> x + 10)\nend\n")
+        @yry()
+        @test ReviseDist637.adder()(5) == 15
+
+        # Add a worker only now, after the revision, then bring it up to date.
+        newproc = only(addprocs(1))
+        try
+            Distributed.remotecall_eval(Main, [newproc], :(push!(LOAD_PATH, $dirname)))
+            Distributed.remotecall_eval(Main, [newproc], :(using ReviseDist637))
+            Revise.init_worker(newproc)
+            # The master-created closure must deserialize on the new worker.
+            cl = ReviseDist637.adder()
+            @test remotecall_fetch(cl, newproc, 5) == 15
+        finally
+            rmprocs(newproc; waitfor=10)
+        end
+        rm_precompile(modname)
+        pop!(LOAD_PATH)
     end
 
     do_test("Git") && @testset "Git" begin
@@ -3957,6 +4554,100 @@ do_test("Switching free/dev") && @testset "Switching free/dev" begin
     push!(to_remove, depot)
 end
 
+do_test("pkgversion update") && @testset "pkgversion update" begin
+    # issue #684: Julia caches a package's version in `Base.pkgorigins` at load
+    # time (and on 1.12+ `pkgversion` returns that cached value). When developing
+    # a package and bumping its version, revising the source should refresh the
+    # cached version so `pkgversion` doesn't go stale.
+    testdir = newtestdir()
+    pkgdir = joinpath(testdir, "VersionPkg")
+    dn = joinpath(pkgdir, "src")
+    mkpath(dn)
+    projfile = joinpath(pkgdir, "Project.toml")
+    write(projfile, """
+        name = "VersionPkg"
+        uuid = "00000000-1111-2222-3333-000000000684"
+        version = "0.1.0"
+        """)
+    write(joinpath(dn, "VersionPkg.jl"), """
+        module VersionPkg
+        f() = 1
+        end
+        """)
+    sleep(mtimedelay)
+    @eval using VersionPkg
+    @latestworld
+    @test Base.invokelatest(VersionPkg.f) == 1
+    @test pkgversion(VersionPkg) == v"0.1.0"
+
+    sleep(mtimedelay)
+    # A normal dev cycle: bump the version and change the code together.
+    write(projfile, """
+        name = "VersionPkg"
+        uuid = "00000000-1111-2222-3333-000000000684"
+        version = "0.2.0"
+        """)
+    write(joinpath(dn, "VersionPkg.jl"), """
+        module VersionPkg
+        f() = 2
+        end
+        """)
+    @yry()
+    @test Base.invokelatest(VersionPkg.f) == 2
+    @test pkgversion(VersionPkg) == v"0.2.0"
+    @test Base.pkgorigins[Base.PkgId(VersionPkg)].version == v"0.2.0"
+
+    rm_precompile("VersionPkg")
+    pop!(LOAD_PATH)
+end
+
+do_test("Manifest re-extraction errors") && @testset "Manifest re-extraction errors" begin
+    # When a package's directory changes (e.g. a version bump), `switch_basepath`
+    # eagerly re-extracts signatures. For some macro-generated top-level code this can
+    # fail on re-lowering (issue #706, JLLWrappers' gensym'd closures). Such a failure
+    # must be recorded rather than abort the manifest watcher.
+    mod = Module(:Issue706)
+    Core.eval(mod, :(using Base))
+    # A method whose *signature* needs a throwing call, so extraction throws in `:sigs`.
+    badex = :(foo(::Val{error("issue 706 sigs failure")}) = 1)
+    mkfi() = begin
+        mei = Revise.ModuleExprsInfos(mod)
+        mei[mod][Revise.RelocatableExpr(badex)] = nothing
+        Revise.FileInfo(mei)
+    end
+    id = Base.PkgId(Base.UUID("00000000-0000-0000-0000-000000000706"), "Issue706")
+    pkgdata = Revise.PkgData(id, "/nonexistent/Issue706")
+    file = "src/Issue706.jl"
+    delete!(Revise.queue_errors, (pkgdata, file))
+    # Unguarded extraction throws ...
+    @test_throws Exception Revise.maybe_extract_sigs!(mkfi())
+    # ... but the resilient helper records the error instead of throwing.
+    @test (Revise.maybe_extract_sigs_or_queue_error!(pkgdata, file, mkfi()); true)
+    @test haskey(Revise.queue_errors, (pkgdata, file))
+    delete!(Revise.queue_errors, (pkgdata, file))   # leave global state clean
+end
+
+do_test("@require path switch") && @testset "@require path switch" begin
+    # `@require` blocks are tracked under a synthetic "__@require__" filename that has
+    # no corresponding file on disk. When a package's directory changes, `switch_basepath`
+    # must not try to read or watch that fictitious path (issue #678).
+    mod = Module(:Issue678)
+    Core.eval(mod, :(using Base))
+    id = Base.PkgId(Base.UUID("00000000-0000-0000-0000-000000000678"), "Issue678")
+    olddir, newdir = mktempdir(), mktempdir()
+    pkgdata = Revise.PkgData(id, olddir)
+    # Reproduce the state `add_require` leaves behind for a deferred `@require` block:
+    # empty `mod_exs_infos` plus an unprocessed `cacheexpr` and no cache file, which
+    # drives `switch_basepath` into its read-from-disk fallback.
+    reqfile = joinpath("src", "Issue678.jl") * Revise.requires_suffix
+    fi = Revise.FileInfo(Revise.ModuleExprsInfos(), "", "",
+                         Tuple{Module,Expr}[(mod, :(g() = 42))], Ref(false), Ref(false))
+    push!(pkgdata, reqfile=>fi)
+    @test Revise.is_requires_file(reqfile)
+    @test (Revise.switch_basepath(pkgdata, newdir); true)   # must not throw
+    @test Revise.basedir(pkgdata) == newdir
+end
+
 do_test("Switching environments") && @testset "Switching environments" begin
     old_project = Base.active_project()
 
@@ -4061,6 +4752,103 @@ do_test("Non-jl include_dependency (issue #388)") && @testset "Non-jl include_de
     @test joinpath("src", "ExcludeFile.jl") ∈ files
     @test joinpath("src", "f.jl") ∈ files
     @test joinpath("deps", "dependency.txt") ∉ files
+end
+
+do_test("Event-named files bypass the ctime filter") && @testset "Event-named files bypass the ctime filter" begin
+    # The kernel stamps inodes at timer-tick resolution (often ~10ms), so a
+    # delete-and-recreate can leave the new file with a ctime identical to the
+    # stored one; the event's filename plus a content-hash comparison identify
+    # the change (issue #945).
+    dir = randtmp()
+    mkdir(dir)
+    push!(to_remove, dir)
+    file = "tracked.jl"
+    fullpath = joinpath(dir, file)
+    write(fullpath, "f() = 1")
+    id = Base.PkgId("FakePkg")
+    wf = Revise.WatchList()
+    push!(wf, file=>id)
+    tracked = collect(wf.trackedfiles)
+
+    # Simulated ctime collision: stored ctime matches current and the content
+    # was never hashed, but the event names the file
+    wf.file_ctimes[file] = ctime(fullpath)
+    @test Revise.scan_changed_files(dir, wf, tracked, Set([file])) == [file=>id]
+    @test wf.file_hashes[file] == Revise.filehash(fullpath)   # hash recorded on queueing
+    # A duplicate notification (same name, same ctime, same content) is absorbed
+    wf.file_ctimes[file] = ctime(fullpath)
+    @test isempty(Revise.scan_changed_files(dir, wf, tracked, Set([file])))
+    # Same-tick rewrite: ctime and name as before, but the content differs
+    write(fullpath, "f() = 2")
+    wf.file_ctimes[file] = ctime(fullpath)
+    @test Revise.scan_changed_files(dir, wf, tracked, Set([file])) == [file=>id]
+    # An event naming only an untracked sibling leaves the unchanged file alone
+    wf.file_ctimes[file] = ctime(fullpath)
+    @test isempty(Revise.scan_changed_files(dir, wf, tracked, Set(["other.jl"])))
+    # Unknown event names fall back to the timestamp sweep
+    wf.file_ctimes[file] = ctime(fullpath)
+    @test isempty(Revise.scan_changed_files(dir, wf, tracked, nothing))
+    wf.file_ctimes[file] = ctime(fullpath) - 1
+    @test Revise.scan_changed_files(dir, wf, tracked, nothing) == [file=>id]
+end
+
+## A missing tracked file is often transient: code generators delete a whole
+## directory and rewrite it over several seconds (issue #945). Within
+## `missing_file_grace`, a `revise()` must neither delete the file's methods nor
+## drop it from tracking; past the grace its methods are deleted but the file
+## stays registered so a later recreation is picked up. The orchestration below
+## relies on directory-watch events, hence the `watching_files` gate.
+do_test("Missing-file grace") && !Revise.watching_files[] && @testset "Missing-file grace" begin
+    testdir = newtestdir()
+    dn = joinpath(testdir, "MissingFileGrace", "src")
+    mkpath(dn)
+    write(joinpath(dn, "MissingFileGrace.jl"), """
+        module MissingFileGrace
+        include("gen.jl")
+        end
+        """)
+    genfile = joinpath(dn, "gen.jl")
+    write(genfile, "gen() = 1")
+    sleep(mtimedelay)
+    @eval using MissingFileGrace
+    sleep(mtimedelay)
+    @test MissingFileGrace.gen() == 1
+
+    old_grace = Revise.missing_file_grace[]
+    try
+        # Within the grace period: methods survive the absence, and recreating
+        # the file with new content is a normal revision
+        Revise.missing_file_grace[] = 5.0
+        rm(genfile)
+        @yry()
+        @test MissingFileGrace.gen() == 1
+        @test !isempty(Revise.revision_queue)   # stays queued for revisiting
+        @yry()
+        @test MissingFileGrace.gen() == 1
+        write(genfile, "gen() = 2")
+        @yry()
+        @test MissingFileGrace.gen() == 2
+        @test isempty(Revise.revision_queue)
+
+        # Past the grace period: methods are deleted (with a warning), but the
+        # file remains registered, so recreating it still restores the methods
+        Revise.missing_file_grace[] = 0.5
+        rm(genfile)
+        @yry()      # notices the absence, starting the grace clock
+        @test MissingFileGrace.gen() == 2
+        sleep(1.0)
+        @test_logs (:warn, r"no longer exists, deleted all methods") match_mode=:any yry()
+        @latestworld
+        @test isempty(Revise.revision_queue)
+        @test_throws MethodError MissingFileGrace.gen()
+        write(genfile, "gen() = 3")
+        @yry()
+        @test MissingFileGrace.gen() == 3
+    finally
+        Revise.missing_file_grace[] = old_grace
+    end
+    rm_precompile("MissingFileGrace")
+    pop!(LOAD_PATH)
 end
 
 do_test("New files & Requires.jl") && @testset "New files & Requires.jl" begin
@@ -4360,8 +5148,15 @@ do_test("entr") && @testset "entr" begin
                 sleep(pause/4)
             end
             waitfor(() -> Main.__entr__ >= 3)
-            sleep(2*pause)            # a surplus callback would fire within ~pause
-            @test Main.__entr__ == 3  # the whole burst triggered the callback once
+            sleep(2*pause)            # any further callback would fire within ~pause
+            # The burst must *coalesce*: 8 rapid changes collapse to far fewer
+            # callbacks than changes. An exact count is too strict on Windows,
+            # where the OS can spread event delivery across more than one
+            # `pause` window and split the burst into a second callback (e.g.,
+            # CI failure on #1066); bound it loosely so it still catches a
+            # debounce that fails to coalesce at all.
+            nburst = Main.__entr__ - 2
+            @test 1 <= nburst <= 4
 
             write(srcfile1, "error(\"stop\")")
         end
@@ -4436,8 +5231,11 @@ do_test("entr") && @testset "entr" begin
                     sleep(pause/4)
                 end
                 waitfor(() -> counter[] >= 3)
-                sleep(2*pause)       # a surplus callback would fire within ~pause
-                @test counter[] == 3 # the whole burst triggered the callback once
+                sleep(2*pause)       # any further callback would fire within ~pause
+                # As above: assert the burst coalesced to far fewer callbacks than
+                # changes, but don't insist on just one.
+                nburst = counter[] - 2
+                @test 1 <= nburst <= 4
 
                 # Stop
                 stop[] = true
@@ -4567,23 +5365,33 @@ do_test("callbacks") && @testset "callbacks" begin
             contents[] = read(path, String)
         end
 
+        # Wait for the watcher to enqueue the change before revising, instead of
+        # hoping a fixed sleep outlasts event-detection latency (leading to
+        # occasional CI failures, e.g., #1066). A callback-only file is not part
+        # of a tracked package, so its change lands in `user_callbacks_queue`
+        # rather than `revision_queue`.
+        function revise_after_event()
+            timedwait(() -> !isempty(Revise.user_callbacks_queue), event_timeout; pollint=0.02)
+            sleep(0.02)
+            revise()
+            sleep(mtimedelay)   # ctime guard so the next write has a larger ctime
+        end
+
         sleep(2*mtimedelay)
 
         append(path, "abc")
-        sleep(2*mtimedelay)
-        revise()
+        revise_after_event()
         @test contents[] == "abc"
 
-        sleep(mtimedelay)
-
         append(path, "def")
-        sleep(mtimedelay)
-        revise()
+        revise_after_event()
         @test contents[] == "abcdef"
 
+        # The callback is removed, so nothing is enqueued and there is no event to
+        # wait for; a fixed wait is correct here because we assert the *absence*
+        # of an update.
         Revise.remove_callback(key)
         sleep(mtimedelay)
-
         append(path, "ghi")
         sleep(mtimedelay)
         revise()
@@ -4710,6 +5518,99 @@ do_test("misc - coverage") && !isinteractive() && @testset "misc - coverage" beg
     @test isnothing(Revise.revise(REPL.REPLBackend()))
 end
 
+do_test("watch reappearance") && @testset "watch reappearance" begin
+    # A transiently-missing watched path must not be abandoned (#523): the watcher
+    # waits up to `watch_reappear_grace[]` for it to return before giving up.
+    dir = mktempdir()
+    key = dir
+    Revise.watched_files[key] = Revise.WatchList()
+    old_grace = Revise.watch_reappear_grace[]
+    try
+        # Present: resume immediately.
+        @test Revise.await_watched_path(isdir, dir, key) === :reappeared
+        # Missing but reappears within the grace period: resume.
+        rm(dir; recursive=true)
+        recreate = @async (sleep(0.3); mkdir(dir))
+        Revise.watch_reappear_grace[] = 5.0
+        @test Revise.await_watched_path(isdir, dir, key) === :reappeared
+        wait(recreate)
+        # Missing past the grace period: give up (and the caller warns).
+        rm(dir; recursive=true)
+        Revise.watch_reappear_grace[] = 0.2
+        @test Revise.await_watched_path(isdir, dir, key) === :gone
+        # Missing and no longer registered (package moved/removed): give up quietly.
+        Revise.watch_reappear_grace[] = 5.0
+        delete!(Revise.watched_files, key)
+        @test Revise.await_watched_path(isdir, dir, key) === :removed
+    finally
+        Revise.watch_reappear_grace[] = old_grace
+        haskey(Revise.watched_files, key) && delete!(Revise.watched_files, key)
+        isdir(dir) && rm(dir; recursive=true)
+    end
+end
+
+# Restricted to directory-watching mode on Linux: this exercises a full
+# delete/recreate/edit round-trip through the filesystem watcher, and only inotify
+# delivers those events reliably enough to test. (FSEvents drops directory-removal
+# events -- cf. the `Cleanup` test -- and on Windows a same-path recreate-then-edit
+# races ReadDirectoryChangesW arming.) The fix itself is platform-general.
+do_test("re-watch after reappearance") && !Revise.watching_files[] && Sys.islinux() &&
+        @testset "re-watch after reappearance (#1057)" begin
+    # A branch switch can remove a watched subdirectory and later restore it. When
+    # it reappears, Revise must resume watching it so that subsequent edits are
+    # still detected, rather than leaving a stale, watcher-less registration.
+    testdir = newtestdir()
+    dn = joinpath(testdir, "ReWatch", "src")
+    mkpath(joinpath(dn, "sub"))
+    withinclude = """
+        module ReWatch
+        include("sub/extra.jl")
+        f() = 1
+        end
+        """
+    noinclude = """
+        module ReWatch
+        f() = 1
+        end
+        """
+    write(joinpath(dn, "ReWatch.jl"), withinclude)
+    write(joinpath(dn, "sub", "extra.jl"), "g() = 2")
+    sleep(mtimedelay)
+    @eval using ReWatch
+    sleep(mtimedelay)
+    subdir = joinpath(dn, "sub")
+    @test ReWatch.f() == 1
+    @test ReWatch.g() == 2
+    @test haskey(Revise.watched_files, subdir)
+
+    old_grace = Revise.watch_reappear_grace[]
+    Revise.watch_reappear_grace[] = 0.0   # give up promptly so the round-trip is quick
+    try
+        # "Switch away": drop the subdirectory and the `include`.
+        rm(subdir; recursive=true)
+        write(joinpath(dn, "ReWatch.jl"), noinclude)
+        # The watcher must relinquish the directory: releasing its registration is
+        # exactly what lets a fresh watcher start when the directory returns.
+        @test timedwait(() -> !haskey(Revise.watched_files, subdir), event_timeout) === :ok
+        @yry
+
+        # "Switch back": restore the subdirectory and the `include`.
+        mkdir(subdir)
+        write(joinpath(subdir, "extra.jl"), "g() = 2")
+        write(joinpath(dn, "ReWatch.jl"), withinclude)
+        @yry
+        @test haskey(Revise.watched_files, subdir)
+        @test ReWatch.g() == 2
+
+        # The crucial check: an edit to the reappeared file is detected.
+        write(joinpath(subdir, "extra.jl"), "g() = 99")
+        @yry
+        @test ReWatch.g() == 99
+    finally
+        Revise.watch_reappear_grace[] = old_grace
+    end
+end
+
 do_test("deprecated") && @testset "deprecated" begin
     @test_logs (:warn, r"`steal_repl_backend` has been removed.*") Revise.async_steal_repl_backend()
     @test_logs (:warn, r"`steal_repl_backend` has been removed.*") Revise.wait_steal_repl_backend()
@@ -4719,26 +5620,35 @@ println("beginning cleanup")
 GC.gc(); GC.gc()
 
 @testset "Cleanup" begin
-    logs, _ = Test.collect_test_logs() do
-        warnfile = randtmp()
-        open(warnfile, "w") do io
-            redirect_stderr(io) do
-                for name in to_remove
-                    try
-                        rm(name; force=true, recursive=true)
-                        deleteat!(LOAD_PATH, findall(LOAD_PATH .== name))
-                    catch
+    # The watchers defer their "is not watching" warning by `watch_reappear_grace`
+    # to ride out transient disappearances (#523). These deletions are permanent,
+    # so drop the grace to make the warning fire promptly within the window below.
+    old_grace = Revise.watch_reappear_grace[]
+    Revise.watch_reappear_grace[] = 0.0
+    try
+        logs, _ = Test.collect_test_logs() do
+            warnfile = randtmp()
+            open(warnfile, "w") do io
+                redirect_stderr(io) do
+                    for name in to_remove
+                        try
+                            rm(name; force=true, recursive=true)
+                            deleteat!(LOAD_PATH, findall(LOAD_PATH .== name))
+                        catch
+                        end
+                    end
+                    for i = 1:3
+                        yry()
+                        GC.gc()
                     end
                 end
-                for i = 1:3
-                    yry()
-                    GC.gc()
-                end
             end
+            msg = Revise.watching_files[] ? "is not an existing file" : "is not an existing directory"
+            isempty(ARGS) && !Sys.isapple() && @test occursin(msg, read(warnfile, String))
+            rm(warnfile)
         end
-        msg = Revise.watching_files[] ? "is not an existing file" : "is not an existing directory"
-        isempty(ARGS) && !Sys.isapple() && @test occursin(msg, read(warnfile, String))
-        rm(warnfile)
+    finally
+        Revise.watch_reappear_grace[] = old_grace
     end
 end
 
@@ -4779,6 +5689,33 @@ end
 
 do_test("Import in empty environment (issue #532)") && @testset "Import in empty environment (issue #532)" begin
     load_in_empty_project_test();
+end
+
+do_test("startup precompilation") && @testset "startup precompilation" begin
+    # issue #900: loading Revise and exiting must not force runtime compilation
+    # of any Revise-owned method; the whole load path should be covered by
+    # `src/precompile.jl`. `-i` without a tty exercises the REPL-backend-wait
+    # branch of `__init__`. Use a bare executable with pkgimages enabled (not
+    # `Base.julia_cmd()`): under coverage the parent runs `--pkgimages=no`,
+    # which bypasses the precompile image and makes everything compile at load.
+    julia = Base.julia_cmd().exec[1]
+    proj = dirname(Base.active_project())
+    loadfile = tempname()
+    write(loadfile, "using Revise\n")
+    tracefile = tempname()
+    code = "exit()"
+    try
+        run(pipeline(`$julia --startup-file=no --project=$proj --pkgimages=yes -i -L $loadfile --trace-compile=$tracefile -e $code`;
+                        stdin=devnull, stdout=devnull, stderr=devnull))
+        # `--trace-compile` only creates the file once something compiles; an
+        # absent file therefore means nothing compiled at all, which is the
+        # best possible outcome here.
+        trace = isfile(tracefile) ? read(tracefile, String) : ""
+        @test !occursin("Revise.", trace)
+    finally
+        rm(loadfile; force=true)
+        rm(tracefile; force=true)
+    end
 end
 
 # Issue #961: when an indirect dep has no precompile cache and Julia is started

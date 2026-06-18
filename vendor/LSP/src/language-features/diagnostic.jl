@@ -43,8 +43,7 @@ See also the [Diagnostic](@ref diagnostic) section.
     Client supports the tag property to provide meta data about a diagnostic.
     Clients supporting tags have to handle unknown tags gracefully.
 
-    # Tags
-    - since - 3.15.0
+    - `@since` 3.15.0
     """
     tagSupport::Union{Nothing, ClientDiagnosticsTagOptions} = nothing
 
@@ -52,16 +51,14 @@ See also the [Diagnostic](@ref diagnostic) section.
     Whether the client interprets the version property of the
     `textDocument/publishDiagnostics` notification's parameter.
 
-    # Tags
-    - since - 3.15.0
+    - `@since` 3.15.0
     """
     versionSupport::Union{Nothing, Bool} = nothing
 
     """
     Client supports a codeDescription property
 
-    # Tags
-    - since - 3.16.0
+    - `@since` 3.16.0
     """
     codeDescriptionSupport::Union{Nothing, Bool} = nothing
 
@@ -70,8 +67,7 @@ See also the [Diagnostic](@ref diagnostic) section.
     preserved between a `textDocument/publishDiagnostics` and
     `textDocument/codeAction` request.
 
-    # Tags
-    - since - 3.16.0
+    - `@since` 3.16.0
     """
     dataSupport::Union{Nothing, Bool} = nothing
 end
@@ -85,8 +81,7 @@ end
     """
     Optional the version number of the document the diagnostics are published for.
 
-    # Tags
-    - since - 3.15.0
+    - `@since` 3.15.0
     """
     version::Union{Nothing, Int} = nothing
 
@@ -111,8 +106,8 @@ the server has the freedom to compute them at a server preferred point in
 time. On the other hand the approach has the disadvantage that the server
 can't prioritize the computation for the file in which the user types or
 which are visible in the editor. Inferring the client's UI state from the
-[`textDocument/didOpen`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#textDocument_didOpen)
-and [`textDocument/didChange`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#textDocument_didChange)
+[`textDocument/didOpen`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.18/specification/#textDocument_didOpen)
+and [`textDocument/didChange`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.18/specification/#textDocument_didChange)
 notifications might lead to false positives since these notifications are
 ownership transfer notifications.
 
@@ -127,8 +122,7 @@ be computed and at which point in time.
 """
 Client capabilities specific to diagnostic pull requests.
 
-# Tags
-- since - 3.17.0
+- `@since` 3.17.0
 """
 @interface DiagnosticClientCapabilities begin
     """
@@ -164,8 +158,7 @@ Client capabilities specific to diagnostic pull requests.
     """
     Whether the client supports `MarkupContent` in diagnostic messages.
 
-    # Tags
-    - since - 3.18.0
+    - `@since` 3.18.0
     """
     markupMessageSupport::Union{Nothing, Bool} = nothing
 
@@ -180,8 +173,7 @@ end
 """
 Diagnostic options.
 
-# Tags
-- since - 3.17.0
+- `@since` 3.17.0
 """
 @interface DiagnosticOptions @extends WorkDoneProgressOptions begin
     """
@@ -207,8 +199,7 @@ end
 """
 Diagnostic registration options.
 
-# Tags
-- since - 3.17.0
+- `@since` 3.17.0
 """
 @interface DiagnosticRegistrationOptions @extends TextDocumentRegistrationOptions, DiagnosticOptions, StaticRegistrationOptions begin
 end
@@ -216,8 +207,7 @@ end
 """
 Parameters of the document diagnostic request.
 
-# Tags
-- since – 3.17.0
+- `@since` 3.17.0
 """
 @interface DocumentDiagnosticParams @extends WorkDoneProgressParams,
 PartialResultParams begin
@@ -234,8 +224,7 @@ end
 """
 The document diagnostic report kinds.
 
-# Tags
-- since – 3.17.0
+- `@since` 3.17.0
 """
 @namespace DocumentDiagnosticReportKind::String begin
     "A diagnostic report with a full set of problems."
@@ -247,8 +236,7 @@ end
 
 """A diagnostic report with a full set of problems.
 
-# Tags
-- since – 3.17.0
+- `@since` 3.17.0
 """
 @interface FullDocumentDiagnosticReport begin
     "A full document diagnostic report."
@@ -267,8 +255,7 @@ end
 """
 "A diagnostic report indicating that the last returned report is still accurate.
 
-# Tags
-- since – 3.17.0
+- `@since` 3.17.0
 """
 @interface UnchangedDocumentDiagnosticReport begin
     """
@@ -284,8 +271,7 @@ end
 """
 A full diagnostic report with a set of related documents.
 
-# Tags
-- since – 3.17.0
+- `@since` 3.17.0
 """
 @interface RelatedFullDocumentDiagnosticReport @extends FullDocumentDiagnosticReport begin
     """
@@ -294,8 +280,7 @@ A full diagnostic report with a set of related documents.
     An example of such a language is C/C++ where macro definitions in a file a.cpp and
     result in errors in a header file b.hpp.
 
-    # Tags
-    - since – 3.17.0
+    - `@since` 3.17.0
     """
     relatedDocuments::Union{Dict{DocumentUri, Union{FullDocumentDiagnosticReport, UnchangedDocumentDiagnosticReport}}, Nothing} = nothing
 end
@@ -303,8 +288,7 @@ end
 """
 An unchanged diagnostic report with a set of related documents.
 
-# Tags
-- since – 3.17.0
+- `@since` 3.17.0
 """
 @interface RelatedUnchangedDocumentDiagnosticReport @extends UnchangedDocumentDiagnosticReport begin
     """
@@ -313,8 +297,7 @@ An unchanged diagnostic report with a set of related documents.
     An example of such a language is C/C++ where macro definitions in a file a.cpp and
     result in errors in a header file b.hpp.
 
-    # Tags
-    - since – 3.17.0
+    - `@since` 3.17.0
     """
     relatedDocuments::Union{Dict{DocumentUri, Union{FullDocumentDiagnosticReport, UnchangedDocumentDiagnosticReport}}, Nothing} = nothing
 end
@@ -325,8 +308,7 @@ A report can either be a full report containing all diagnostics for the requeste
 or a unchanged report indicating that nothing has changed in terms of diagnostics in
 comparison to the last pull request.
 
-# Tags
-- since – 3.17.0
+- `@since` 3.17.0
 """
 const DocumentDiagnosticReport =
     Union{RelatedFullDocumentDiagnosticReport, RelatedUnchangedDocumentDiagnosticReport}
@@ -334,8 +316,7 @@ const DocumentDiagnosticReport =
 """
 A partial result for a document diagnostic report.
 
-# Tags
-- since - 3.17.0
+- `@since` 3.17.0
 """
 @interface DocumentDiagnosticReportPartialResult begin
     relatedDocuments::Dict{DocumentUri, Union{FullDocumentDiagnosticReport, UnchangedDocumentDiagnosticReport}}
@@ -368,8 +349,7 @@ end
 """
 Cancellation data returned from a diagnostic request.
 
-# Tags
-- since – 3.17.0
+- `@since` 3.17.0
 """
 @interface DiagnosticServerCancellationData begin
     retriggerRequest::Bool
@@ -381,8 +361,7 @@ end
 """
 A previous result id in a workspace pull request.
 
-# Tags
-- since – 3.17.0
+- `@since` 3.17.0
 """
 @interface PreviousResultId begin
     "The URI for which the client knows a result id."
@@ -395,8 +374,7 @@ end
 """
 Parameters of the workspace diagnostic request.
 
-# Tags
-- since – 3.17.0
+- `@since` 3.17.0
 """
 @interface WorkspaceDiagnosticParams @extends WorkDoneProgressParams, PartialResultParams begin
     "The additional identifier provided during registration."
@@ -431,8 +409,7 @@ end
 """
 A full document diagnostic report for a workspace diagnostic result.
 
-# Tags
-- since – 3.17.0
+- `@since` 3.17.0
 """
 @interface WorkspaceFullDocumentDiagnosticReport @extends FullDocumentDiagnosticReport begin
     "The URI for which diagnostic information is reported."
@@ -448,8 +425,7 @@ end
 """
 An unchanged document diagnostic report for a workspace diagnostic result.
 
-# Tags
-- since – 3.17.0
+- `@since` 3.17.0
 """
 @interface WorkspaceUnchangedDocumentDiagnosticReport @extends UnchangedDocumentDiagnosticReport begin
     "The URI for which diagnostic information is reported."
@@ -465,8 +441,7 @@ end
 """
 A workspace diagnostic document report.
 
-# Tags
-- since – 3.17.0
+- `@since` 3.17.0
 """
 const WorkspaceDocumentDiagnosticReport =
     Union{WorkspaceFullDocumentDiagnosticReport, WorkspaceUnchangedDocumentDiagnosticReport}
@@ -479,8 +454,7 @@ end
 """
 A partial result for a workspace diagnostic report.
 
-# Tags
-- since - 3.17.0
+- `@since` 3.17.0
 """
 @interface WorkspaceDiagnosticReportPartialResult begin
     items::Vector{WorkspaceDocumentDiagnosticReport}
@@ -506,8 +480,7 @@ end
 """
 Workspace client capabilities specific to diagnostic pull requests.
 
-# Tags
-- since - 3.17.0
+- `@since` 3.17.0
 """
 @interface DiagnosticWorkspaceClientCapabilities begin
     """

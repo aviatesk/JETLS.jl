@@ -89,29 +89,3 @@ function hash(s::OrderedSet, h::UInt)
     s.dict.ndel > 0 && rehash!(s.dict)
     hash(s.dict.keys, h)
 end
-
-# Deprecated functionality, see
-# https://github.com/JuliaCollections/DataStructures.jl/pull/180#issuecomment-400269803
-
-function getindex(s::OrderedSet, i::Int)
-    Base.depwarn("indexing is deprecated for OrderedSet, please rewrite your code to use iteration", :getindex)
-    s.dict.ndel > 0 && rehash!(s.dict)
-    return s.dict.keys[i]
-end
-
-function lastindex(s::OrderedSet)
-    Base.depwarn("indexing is deprecated for OrderedSet, please rewrite your code to use iteration", :lastindex)
-    s.dict.ndel > 0 && rehash!(s.dict)
-    return lastindex(s.dict.keys)
-end
-
-function nextind(::OrderedSet, i::Int)
-    Base.depwarn("indexing is deprecated for OrderedSet, please rewrite your code to use iteration", :lastindex)
-    return i + 1  # Needed on 0.7 to mimic array indexing.
-end
-
-function keys(s::OrderedSet)
-    Base.depwarn("indexing is deprecated for OrderedSet, please rewrite your code to use iteration", :lastindex)
-    s.dict.ndel > 0 && rehash!(s.dict)
-    return 1:length(s)
-end

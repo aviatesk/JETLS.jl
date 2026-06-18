@@ -1,3 +1,22 @@
+@interface ClientSymbolKindOptions begin
+    """
+    The symbol kind values the client supports. When this
+    property exists the client also guarantees that it will
+    handle values outside its set gracefully and falls back
+    to a default value when unknown.
+
+    If this property is not present the client only supports
+    the symbol kinds from `File` to `Array` as defined in
+    the initial version of the protocol.
+    """
+    valueSet::Union{Nothing, Vector{SymbolKind.Ty}} = nothing
+end
+
+@interface ClientSymbolTagOptions begin
+    "The tags supported by the client."
+    valueSet::Vector{SymbolTag.Ty}
+end
+
 @interface DocumentSymbolClientCapabilities begin
     """
     Whether document symbol supports dynamic registration.
@@ -8,19 +27,7 @@
     Specific capabilities for the `SymbolKind` in the
     `textDocument/documentSymbol` request.
     """
-    symbolKind::Union{Nothing, @interface begin
-        """
-        The symbol kind values the client supports. When this
-        property exists the client also guarantees that it will
-        handle values outside its set gracefully and falls back
-        to a default value when unknown.
-
-        If this property is not present the client only supports
-        the symbol kinds from `File` to `Array` as defined in
-        the initial version of the protocol.
-        """
-        valueSet::Union{Nothing, Vector{SymbolKind.Ty}} = nothing
-    end} = nothing
+    symbolKind::Union{Nothing, ClientSymbolKindOptions} = nothing
 
     """
     The client supports hierarchical document symbols.
@@ -32,20 +39,15 @@
     `DocumentSymbol` if `hierarchicalDocumentSymbolSupport` is set to true.
     Clients supporting tags have to handle unknown tags gracefully.
 
-    # Tags
-    - since - 3.16.0
+    - `@since` 3.16.0
     """
-    tagSupport::Union{Nothing, @interface begin
-        "The tags supported by the client."
-        valueSet::Vector{SymbolTag.Ty}
-    end} = nothing
+    tagSupport::Union{Nothing, ClientSymbolTagOptions} = nothing
 
     """
     The client supports an additional label presented in the UI when
     registering a document symbol provider.
 
-    # Tags
-    - since - 3.16.0
+    - `@since` 3.16.0
     """
     labelSupport::Union{Nothing, Bool} = nothing
 end
@@ -55,8 +57,7 @@ end
     A human-readable string that is shown when multiple outlines trees
     are shown for the same document.
 
-    # Tags
-    - since - 3.16.0
+    - `@since` 3.16.0
     """
     label::Union{Nothing, String} = nothing
 end
@@ -88,8 +89,7 @@ its most interesting range, e.g. the range of an identifier.
     """
     Tags for this document symbol.
 
-    # Tags
-    - since - 3.16.0
+    - `@since` 3.16.0
     """
     tags::Union{Nothing, Vector{SymbolTag.Ty}} = nothing
 

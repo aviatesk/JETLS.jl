@@ -5,20 +5,22 @@ using PrecompileTools
     # precompile file and potentially make loading faster.
     options = Parsers.Options()
     pos = 1
-    val = "123"
-    len = length(val)
+    int_val = "123"
+    float_val = "123.45"
+    bool_val = "true"
     @compile_workload begin
         # all calls in this block will be precompiled, regardless of whether
         # they belong to your package or not (on Julia 1.8 and higher)
-        for T in (String, Int32, Int64, Float64, BigFloat, Dates.Date, Dates.DateTime, Dates.Time, Bool)
+        for (T, val) in ((String, int_val), (Int32, int_val), (Int64, int_val), (Float64, float_val), (Bool, bool_val))
+            len = length(val)
             for buf in (codeunits(val), Vector(codeunits(val)))
                 Parsers.xparse(T, buf, pos, len, options)
                 Parsers.xparse(T, buf, pos, len, options, Any)
             end
         end
 
-        for T in (Int32, Int64, Float64, BigFloat, Dates.Date, Dates.DateTime, Dates.Time, Bool)
-            for buf in (val, SubString(val, 1:3), Vector(codeunits(val)), view(Vector(codeunits(val)), 1:3))
+        for (T, val) in ((Int32, int_val), (Int64, int_val), (Float64, float_val), (Bool, bool_val))
+            for buf in (val, Vector(codeunits(val)))
                 try
                     Parsers.parse(T, buf, options)
                 catch

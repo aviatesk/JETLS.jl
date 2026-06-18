@@ -7,8 +7,7 @@
     """
     The client supports additional metadata in the form of definition links.
 
-    # Tags
-    - since - 3.14.0
+    - `@since` 3.14.0
     """
     linkSupport::Union{Bool, Nothing} = nothing
 end

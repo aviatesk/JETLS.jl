@@ -30,8 +30,7 @@ The result type `LocationLink[]` got introduced with version 3.14.0 and
 depends on the corresponding client capability
 `textDocument.declaration.linkSupport`.
 
-# Tags
-- since – 3.14.0
+- `@since` 3.14.0
 """
 @interface DeclarationRequest @extends RequestMessage begin
     method::String = "textDocument/declaration"

@@ -2,11 +2,18 @@
     Revise.track(Base; revise_throw::Bool=!isinteractive())
     Revise.track(Core.Compiler; revise_throw::Bool=!isinteractive())
     Revise.track(stdlib; revise_throw::Bool=!isinteractive())
+    Revise.track(SysimagePackage; revise_throw::Bool=!isinteractive())
 
-Track updates to the code in Julia's `base` directory, `base/compiler`, or one of its
-standard libraries. Calls `revise()` after tracking to ensure that any changes
-detected during tracking are applied immediately. Optionally, if `revise_throw` is
-`true`, `revise()` will throw if any exceptions are encountered while revising.
+Track updates to the code in Julia's `base` directory, `base/compiler`, one of its
+standard libraries, or a package baked into the running system image (e.g. one
+compiled with PackageCompiler.jl). Calls `revise()` after tracking to ensure that any
+changes detected during tracking are applied immediately. Optionally, if `revise_throw`
+is `true`, `revise()` will throw if any exceptions are encountered while revising.
+
+A package compiled into a system image is already loaded at startup, so Revise's
+usual package callback never fires and any source edits made since the image was
+built go unnoticed. Calling `Revise.track` on such a package starts watching it and
+applies any pending edits.
 """
 function track(mod::Module; modified_files=revision_queue, revise_throw::Bool=!isinteractive())
     id = pkgidid_for_mod(mod)
@@ -36,9 +43,9 @@ function inpath(path::AbstractString, dirs::Vector{String})
 end
 
 function _track(id::PkgId, modname::Symbol; modified_files=revision_queue)
-    haskey(pkgdatas, id) && return nothing  # already tracked
+    haspkgdata(id) && return nothing  # already tracked
     isbase = modname === :Base
-    isstdlib = !isbase && modname ∈ stdlib_names
+    isstdlib = !isbase && Base.is_stdlib(id)
     if isbase || isstdlib
         # Test whether we know where to find the files
         if isbase
@@ -63,7 +70,7 @@ function _track(id::PkgId, modname::Symbol; modified_files=revision_queue)
         mtcache = mtime(basesrccache)
         # Initialize expression-tracking for files, and
         # note any modified since Base was built
-        pkgdata = get(pkgdatas, id, nothing)
+        pkgdata = getpkgdata(id)
         if pkgdata === nothing
             pkgdata = PkgData(id, srcdir)
         end
@@ -76,7 +83,7 @@ function _track(id::PkgId, modname::Symbol; modified_files=revision_queue)
         else
             cachefile = basesrccache
         end
-        @lock revision_queue_lock begin
+        @lock revise_lock begin
             for (submod, filename) in modulefiles_basestlibs(id)
                 ffilename = fixpath(filename)
                 inpath(ffilename, dirs) || continue
@@ -101,19 +108,42 @@ function _track(id::PkgId, modname::Symbol; modified_files=revision_queue)
         # Add the files to the watch list
         init_watching(pkgdata, srcfiles(pkgdata))
         # Save the result (unnecessary if already in pkgdatas, but doesn't hurt either)
-        @lock pkgdatas_lock pkgdatas[id] = pkgdata
+        @lock revise_lock pkgdatas[id] = pkgdata
     elseif modname === :Compiler
         compilerdir = joinpath(juliadir, "Compiler", "src")
         compilerdir_pre_112 = joinpath(juliadir, "base", "compiler")
         isdir(compilerdir) || (compilerdir = compilerdir_pre_112)
-        pkgdata = get(pkgdatas, id, nothing)
+        pkgdata = getpkgdata(id)
         if pkgdata === nothing
             pkgdata = PkgData(id, compilerdir)
         end
         track_subdir_from_git!(pkgdata, compilerdir; modified_files=modified_files)
         # insertion into pkgdatas is done by track_subdir_from_git!
     else
-        error("no Revise.track recipe for module ", modname)
+        # issue #685: a package compiled into a system image (e.g. with
+        # PackageCompiler.jl) is already loaded when the session starts, so the
+        # `using`/`import` package callback that normally sets up watching never
+        # fired, and Julia never checked whether the on-disk source is newer than
+        # the baked-in code. Set up watching now and queue any source file modified
+        # since the package was precompiled. We use the precompile cache file's
+        # mtime as the reference point; for a sysimage package the cache file
+        # remains in the depot after the build.
+        origin = get(Base.pkgorigins, id, nothing)
+        cachepath = origin === nothing ? nothing : origin.cachepath
+        if cachepath === nothing || isempty(cachepath)
+            error("no Revise.track recipe for module ", modname)
+        end
+        pkgdata = watch_package(id)
+        pkgdata === nothing && return nothing
+        reftime = mtime(cachepath)
+        @lock revise_lock begin
+            for rpath in srcfiles(pkgdata)
+                fullpath = joinpath(basedir(pkgdata), rpath)
+                if mtime(fullpath) > reftime
+                    push!(modified_files, (pkgdata, rpath))
+                end
+            end
+        end
     end
     return nothing
 end
@@ -153,7 +183,7 @@ function track_subdir_from_git!(pkgdata::PkgData, subdir::AbstractString; commit
     tree = git_tree(repo, commit)
     files = Iterators.filter(file->startswith(file, prefix) && endswith(file, ".jl"), keys(tree))
     ccall((:giterr_clear, :libgit2), Cvoid, ())  # necessary to avoid errors like "the global/xdg file 'attributes' doesn't exist: No such file or directory"
-    @lock revision_queue_lock begin
+    @lock revise_lock begin
         for file in files
             fullpath = joinpath(repo_path, file)
             rpath = relpath(fullpath, pkgdata)  # this might undo the above, except for Core.Compiler
@@ -204,21 +234,10 @@ function track_subdir_from_git!(pkgdata::PkgData, subdir::AbstractString; commit
         id = PkgId(pkgdata)
         CodeTracking._pkgfiles[id] = pkgdata.info
         init_watching(pkgdata, srcfiles(pkgdata))
-        @lock pkgdatas_lock pkgdatas[id] = pkgdata
+        @lock revise_lock pkgdatas[id] = pkgdata
     end
     return nothing
 end
-
-# For tracking Julia's own stdlibs
-const stdlib_names = Set([
-    :Base64, :CRC32c, :Dates, :DelimitedFiles, :Distributed,
-    :FileWatching, :Future, :InteractiveUtils, :Libdl,
-    :LibGit2, :LinearAlgebra, :Logging, :Markdown, :Mmap,
-    :OldPkg, :Pkg, :Printf, :Profile, :Random, :REPL,
-    :Serialization, :SHA, :SharedArrays, :Sockets, :SparseArrays,
-    :Statistics, :SuiteSparse, :Test, :Unicode, :UUIDs,
-    :TOML, :Artifacts, :LibCURL_jll, :LibCURL, :MozillaCACerts_jll,
-    :Downloads, :Tar, :ArgTools, :NetworkOptions, :PCRE2_jll, :Zlib_jll])
 
 # This replacement is needed because the path written during compilation differs from
 # the git source path

@@ -4,7 +4,7 @@ overflowval(::Type{T}) where {T <: Integer} = div(typemax(T) - T(9), T(10))
 # if we eventually support non-base 10
 # overflowval(::Type{T}, base) where {T <: Integer} = div(typemax(T) - base + 1, base)
 
-function typeparser(::AbstractConf{T}, source, pos, len, b, code, pl, opts) where {T <: Integer}
+@inline function typeparser(::AbstractConf{T}, source, pos, len, b, code, pl, opts) where {T <: Integer}
     x = zero(T)
     neg = false
     has_groupmark = _has_groupmark(opts, code)
