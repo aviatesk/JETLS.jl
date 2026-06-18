@@ -54,7 +54,10 @@ function find_analysis_env_path(state::ServerState, uri::URI)
                             @warn "Analysis module override specified but module not found" module_name path=filepath
                             return OutOfScope()
                         end
-                        JETLS_DEV_MODE && @info "Analysis module overridden" module_name path=filepath
+                        if JETLS_DEV_MODE
+                            path = filepath
+                            @info "Analysis module overridden" module_name path _id=path maxlog=1
+                        end
                         return KnownModule(mod)
                     end
                 end

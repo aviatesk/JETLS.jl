@@ -19,7 +19,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## Unreleased
 
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
-- Diff: [`0b038c7...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/0b038c7...HEAD)
+- Diff: [`a42a435...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/a42a435...HEAD)
 
 ### Announcement
 
@@ -44,6 +44,86 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > This disables analysis for matched files. Basic features like completion still might work, but most LSP features will be unfunctional.
 > Note that `analysis_overrides` is provided as a temporary workaround and may be removed or changed at any time. A proper fix is being worked on.
 
+### Added
+
+- Added type inlay hints showing inferred types next to expressions (bindings, calls, function return types, branch results, etc.) so types are visible inline without hovering.
+  Method bodies are inferred against their declared signature, and top-level chunks (e.g. standalone `let` blocks) are inferred independently.
+  Hints are enabled by default; [`[inlay_hint.types] enabled`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/inlay_hint/types/enabled) toggles them.
+  See the [Type hints](https://aviatesk.github.io/JETLS.jl/release/features/#features/inlay-hint/types) page for examples.
+
+  <img width="976" height="637" alt="Inlay type hint demo" src="https://github.com/user-attachments/assets/baa2ff1b-df38-4304-a479-f2a2b4ba3e7b" />
+
+- Added a macro expansion view that shows expanded macro code in a read-only document — served through the LSP 3.18 `workspace/textDocumentContent` request, or a temporary-file fallback for clients without that capability. It is triggered through code actions: one expands the macro call under the cursor, and one recursively expands every macro in the enclosing top-level form.
+  See the [Macro expansion code view](https://aviatesk.github.io/JETLS.jl/release/features/#features/code-views/macro-expansion) page for details.
+
+- Added a type annotation view that shows a top-level form with its inferred types applied as explicit `::T` annotations in a read-only document — served through the LSP 3.18 `workspace/textDocumentContent` request, or a temporary-file fallback for clients without that capability. It is triggered through a code action on the enclosing top-level form.
+  See the [Type annotation code view](https://aviatesk.github.io/JETLS.jl/release/features/#features/code-views/type-annotations) page for details.
+
+- Added [`lowering/inactive-code`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/inactive-code) diagnostic that marks `@static` branches not taken in the current environment (e.g. a Windows-only branch when analyzing on macOS) at `Hint` severity with the `Unnecessary` tag, so editors gray out code that is excluded from analysis.
+
+- Added [`lowering/unconstrained-static-parameter`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/unconstrained-static-parameter) diagnostic that warns when a method declares a static parameter that does not appear in the type of any function parameter, so its value cannot be deduced when the method is called.
+  This matches the warning Julia itself emits when evaluating such a method definition.
+  For example:
+  ```julia
+  f(::T) where {T,S} = S  # Method definition declares type variable `S` but does not use it in the type of any function parameter
+                          # (JETLS lowering/unconstrained-static-parameter)
+  ```
+
+- Added support for the LSP 3.18 `textDocument/rangesFormatting` request so clients that advertise `textDocument.rangeFormatting.rangesSupport` can format multiple ranges in a single request.
+
+### Changed
+
+- Improved type precision for local closures with untyped parameters (`do x`, `x -> ...`): their parameter types are now inferred from the argument types observed at the closure's call sites instead of degrading to `Any`, so hover, inlay hints and other type-aware features show precise types in closure bodies, in comprehensions, and for results of higher-order calls like `map`. Parameter annotations other than `::Any` are always respected as-is.
+
+- Added hover and inlay hints for unannotated parameters of local closures, showing the parameter types inferred from the closure's call sites (e.g. `map(xs) do x::Int` for `xs::Vector{Int}`, or `f = x::Union{Float64, Int} -> 2x` when `f` is called with both `Float64` and `Int`).
+  This covers all local-closure forms — arrow and `do`-block lambdas, anonymous and named local closures.
+  Destructuring parameters are annotated per component (e.g. `do (key::String, val::Int)`), consistent with for-loop iteration variables.
+  Parameters whose type cannot be narrowed beyond `Any` are left without a hint.
+
+- Hover headers now include inferred lattice details as a Julia comment when the displayed type hides more precise information.
+
+- JETLS now performs correct scope resolution on identifiers used inside `@static` macrocalls, which previously could yield incorrect results in edge cases.
+  Invalid `@static` usage (an unsupported expression shape, or a condition that fails to evaluate to a `Bool`) is now reported in place as `lowering/macro-expansion-error` while the code still flows through to analysis.
+
+- The `"JuliaFormatter"` preset now supports `textDocument/rangeFormatting` and `textDocument/rangesFormatting`, which previously failed with a "JuliaFormatter does not support range formatting" error. This requires [JuliaFormatter v2.7.0](https://github.com/JuliaEditorSupport/JuliaFormatter.jl/releases/tag/v2.7.0) or later. See [the formatter integration docs](https://aviatesk.github.io/JETLS.jl/release/formatting/#formatting/prerequisites) for setup.
+
+- Allows scope resolution for identifiers inside `@lock` blocks so language features distinguish bindings introduced in the protected body from surrounding bindings.
+
+- Signature help now uses LSP 3.18 `activeParameter: null` for clients that support it, so editors can avoid highlighting a stale parameter after all known keywords have already been filled.
+
+- Changed TestRunner log viewing to use readonly virtual documents when supported, and cleanup-enabled temporary files otherwise, avoiding empty `untitled:` log tabs and mismatched log file paths.
+
+### Fixed
+
+- Fixed language feature registrations so JETLS only targets supported Julia documents — saved files (`file:`), unsaved buffers (`untitled:` and `buffer:`), and notebook cells — while still keeping virtual documents from unsupported schemes (e.g. `jetls:`) from triggering diagnostics, code actions, and other file-backed features.
+
+- Fixed language feature requests for unsupported document URIs (e.g. virtual documents, or any request from clients that ignore the registered document selectors) blocking for up to 10 seconds before returning an empty result; such requests now return immediately.
+
+- Fixed `diagnostic.patterns` order handling so declaration order is preserved after configuration merging. When multiple matching rules have the same priority, later rules now override earlier rules.
+
+- Fixed type information collapsing to `Any` inside closures defined in functions that have default positional arguments or keyword arguments. Hover, inlay hints and other type-aware features now show precise types for such closure bodies and their captured variables.
+
+- Fixed renaming symbols inside Jupyter notebook cells on VS Code, which previously failed with a "The rename edit returned from the server is not valid anymore and cannot be applied." error.
+
+- Fixed dot completion erroring (or offering nothing) when the prefix sits in code that inference proves unreachable, such as code after a non-returning call. Module and global-const prefixes such as `Base.` now resolve their members there as usual.
+
+- Fixed hover on unannotated local closure parameters showing `Core.OpaqueClosure` internals instead of the inferred argument type.
+
+- Fixed hover and other type-aware features inside local closure bodies losing constant-propagated details for captured values.
+
+- Fixed false positive `lowering/undef-local-var` diagnostics for variables guarded by negated `@isdefined` conditions, including `&&` and `||` combinations where definedness is guaranteed.
+
+- Fixed false positive `lowering/unused-assignment` diagnostics on phantom `struct` type parameters such as `struct MyVal{T} end`.
+
+## 2026-06-03
+
+- Commit: [`a42a435`](https://github.com/aviatesk/JETLS.jl/commit/a42a435)
+- Diff: [`0b038c7...a42a435`](https://github.com/aviatesk/JETLS.jl/compare/0b038c7...a42a435)
+- Installation:
+  ```bash
+  julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="2026-06-03")'
+  ```
+
 ### Removed
 
 - Removed the legacy `inlay_hint.block_end_min_lines` configuration alias. Use `inlay_hint.block_end.min_lines` instead.
@@ -55,9 +135,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Updated JuliaSyntax.jl and JuliaLowering.jl dependency versions to latest.
 
-- Improved responsiveness for repeated requests against the same document version. After an edit, follow-up features such as diagnostics, document links, document highlights, semantic tokens, code actions, hover, definition, and document symbols now reuse the current file's prepared syntax tree instead of rebuilding it for each request.
+- Improved responsiveness for repeated requests against the same document version. After an edit, follow-up LSP features such as diagnostics, document highlights, code actions, hover, definition etc. now reuse the current file's prepared syntax tree instead of rebuilding it for each request.
 
-- Improved performance of type-aware features on open files. Repeated hover, definition, type definition, signature help, and completion requests in the same top-level expression can now reuse prior analysis results instead of rerunning inference each time.
+- Improved performance of type-aware features on open files. Repeated hover, definition, declaration and type definition requests in the same top-level expression can now reuse prior analysis results instead of rerunning inference each time.
 
 - Improved unused-variable diagnostic message for assignments returned from tail position.
   For both `lowering/unused-local` and `lowering/unused-assignment`, JETLS now explains when Julia is implicitly returning the assignment expression's value, suggests `return name` when the binding itself should be returned, and offers an "Insert explicit return" quick fix for simple tail assignments. (Closed https://github.com/aviatesk/JETLS.jl/issues/723)

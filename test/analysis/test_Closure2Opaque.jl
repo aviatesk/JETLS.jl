@@ -322,6 +322,36 @@ end
     end
 end
 
+# Multi-method *global* functions (default positional args / kwargs at top level)
+# also produce multiple `K"method"`s for one binding, but they never go through
+# synthetic-struct closure conversion, so they must not seed the propagation:
+# single-method closures inside their bodies stay OC-rewritable.
+@testset "closure inside multi-method global function" begin
+    let tree = rewrite_only("""
+            function withcls(x::Float64, b::Bool=false)
+                y = rand()
+                r = callback(x) do z::Float64
+                    z + y
+                end
+                r
+            end
+            """)
+        @test count_opaque_closures(tree) == 1
+    end
+
+    let tree = rewrite_only("""
+            function withcls(x::Float64; kw::Int=1)
+                y = rand()
+                r = callback(x) do z::Float64
+                    z + y
+                end
+                r
+            end
+            """)
+        @test count_opaque_closures(tree) == 1
+    end
+end
+
 # Regression for 3a648d0b: `rewrite_closure_block`'s old cost compounded to O(2^D) across
 # `D` nested blocks, so real-world files effectively never finished.
 # Verify that the performance issue does not reproduce using an artificial test case.

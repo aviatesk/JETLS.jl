@@ -2,6 +2,7 @@ Base.Experimental.@optlevel 1
 
 using FileWatching, REPL, UUIDs
 using LibGit2: LibGit2
+using CRC32c: crc32c
 using Base: PkgId, IdSet
 using Base.Meta: isexpr
 using InteractiveUtils: InteractiveUtils
@@ -45,6 +46,43 @@ function remotecall_impl end
 # - is_master_worker(w::MyWorkerType): check if `w` is the master.
 function is_master_worker end
 
+# Ordered record of the revision actions applied on the master this session, each
+# stored as `(mod, expr)` meaning "evaluate `expr` in `mod`". Revisions are
+# normally pushed to the workers that exist at revision time, but a worker added
+# *later* loads the package fresh from disk and would otherwise miss them; in
+# particular it would lack the freshly-gensym'd closures that `@distributed`
+# bodies serialize, giving an `UndefVarError` on deserialization (issue #637).
+# `init_worker` replays this log to bring such a worker up to date. Reads and
+# writes both go through `revise_lock` (see `record_worker_replay!` and
+# `init_worker`). Only populated while a Distributed-like library is loaded and
+# this process is the master, so non-distributed sessions pay nothing.
+const worker_replay_log = Tuple{Module,Any}[]
+
+# Record `(mod, expr)` for later replay onto workers added after this revision,
+# but only when this process is the master for some registered worker library.
+# Takes `revise_lock` directly: on the normal `revise` path the caller already
+# holds it (a reentrant re-acquire is cheap), and this also covers the side paths
+# (`revise_file_now`, `eval_revised`) that reach here without holding it.
+function record_worker_replay!(mod::Module, expr)
+    @lock revise_lock for get_workers in workers_functions
+        if @invokelatest is_master_worker(get_workers)
+            push!(worker_replay_log, (mod, expr))
+            break
+        end
+    end
+    return nothing
+end
+
+# Evaluate `expr` in `mod` on worker `p`, ignoring failures (e.g. `mod` not yet
+# loaded there, or a type the expression references being absent).
+function apply_worker_action(p, mod::Module, expr)
+    try
+        @invokelatest remotecall_impl(Core.eval, p, mod, expr)
+    catch
+    end
+    return nothing
+end
+
 ## END abstract Distributed API
 
 """
@@ -75,9 +113,77 @@ on such filesystems you should turn polling on.
 See the documentation for the `JULIA_REVISE_POLL` environment variable.
 """
 const polling_files = Ref(false)
+
+# Some filesystems accept `watch_file`/`watch_dir` calls but never deliver a
+# notification, so the watch silently blocks forever. The motivating case is the
+# Windows filesystem mounted into WSL under `/mnt/...` (a `drvfs`/`9p` mount):
+# inotify is broken there but `stat`-based polling works (issue #514). On such
+# paths Revise must poll regardless of the global `polling_files[]` setting.
+
+const _is_wsl = Ref{Union{Nothing,Bool}}(nothing)
+# Are we running under the Windows Subsystem for Linux? Cached after the first call.
+function is_wsl()
+    cached = _is_wsl[]
+    cached === nothing || return cached
+    wsl = false
+    if Sys.islinux()
+        try
+            wsl = occursin(r"microsoft|WSL"i, read("/proc/sys/kernel/osrelease", String))
+        catch
+            wsl = false
+        end
+    end
+    return _is_wsl[] = wsl
+end
+
+# `/proc/mounts` encodes spaces, tabs, etc. in mount points as octal escapes.
+function unescape_mount(s::AbstractString)
+    occursin('\\', s) || return s
+    return replace(s, r"\\([0-7]{3})" => m -> string(Char(parse(UInt8, m[2:end]; base=8))))
+end
+
+# Is `prefix` a path-component prefix of `path`? (`/mnt` is a prefix of `/mnt/c`
+# but not of `/mnts`.)
+function is_path_prefix(prefix::AbstractString, path::AbstractString)
+    prefix == path && return true
+    prefix == "/" && return startswith(path, "/")
+    return startswith(path, prefix * "/")
+end
+
+# Filesystem type for the most specific mount point containing `path`, given the
+# lines of a `/proc/mounts`-format table. Returns "" if none matches.
+function fstype_for_path(path::AbstractString, mount_lines)
+    apath = abspath(path)
+    best_mount = best_fstype = ""
+    for line in mount_lines
+        fields = split(line)
+        length(fields) >= 3 || continue
+        mountpoint = unescape_mount(fields[2])
+        if is_path_prefix(mountpoint, apath) && length(mountpoint) >= length(best_mount)
+            best_mount, best_fstype = mountpoint, fields[3]
+        end
+    end
+    return best_fstype
+end
+
+mount_fstype(path::AbstractString) =
+    fstype_for_path(path, try eachline("/proc/mounts") catch; () end)
+
+# Does `path` live on a filesystem that accepts file-watching calls but never
+# delivers change notifications, so that Revise must poll instead? The motivating
+# case is the Windows filesystem mounted into WSL (a `drvfs`/`9p` mount); see issue
+# #514. Only Linux's `/proc/mounts` is consulted, so the result is `false` on every
+# other platform.
+function nonnotifying_path(path::AbstractString)
+    is_wsl() || return false
+    fstype = mount_fstype(path)
+    return fstype == "9p" || fstype == "drvfs"
+end
+
 function wait_changed(file)
+    poll = polling_files[] || nonnotifying_path(file)
     try
-        polling_files[] ? poll_file(file) : watch_file(file)
+        poll ? poll_file(file) : watch_file(file)
     catch err
         if Sys.islinux() && err isa Base.IOError && err.code == -28  # ENOSPC; issue #1010
             @warn """Revise was unable to watch files for changes via inotify (ENOSPC).
@@ -124,6 +230,30 @@ include("callbacks.jl")
 
 ### Globals to keep track of state
 
+# All of Revise's mutable global state (the dictionaries, sets, and vectors
+# defined below) is protected by a single coarse lock. A coarse lock is used
+# because these structures are interdependent and are touched from several
+# threads: the REPL/interactive thread (via `revise`), the package-load callback
+# (`watch_package`, which since Julia 1.12 can run on a background thread when
+# `require` finishes there), and the file/manifest-watcher tasks. Earlier
+# per-structure locks did not compose, so a reader on one thread could observe a
+# dictionary mid-rehash while a writer on another thread mutated it, which
+# segfaults.
+#
+# The lock is a `ReentrantLock`, so nested acquisitions on the same task are
+# fine. It is held only around state access, with one deliberate exception:
+# `revise` holds it across evaluation of revised code to serialize concurrent
+# revisions, as it always has (see issues #837 and #845). It must NOT be held
+# across a blocking `wait`/`sleep`; the watcher tasks therefore acquire it only
+# to enqueue work, never while waiting for filesystem events.
+#
+# Guards: `watched_files`, `watched_manifests`, `revision_queue`, `queue_errors`,
+# `pkgdatas`, `included_files`, `cache_file_key`, `src_file_key`,
+# `dont_watch_pkgs`, `silence_pkgs`, `worker_replay_log`, the `user_callbacks_*`
+# collections, and the `@require` bookkeeping. (`types_cache` in visit.jl has its
+# own independent lock, on a separate code path.)
+const revise_lock = ReentrantLock()
+
 """
     Revise.watched_files
 
@@ -134,7 +264,6 @@ This variable allows us to watch directories rather than files, reducing the bur
 the OS.
 """
 const watched_files = Dict{String,WatchList}()
-const watched_files_lock = ReentrantLock()
 
 """
     Revise.watched_manifests
@@ -142,7 +271,6 @@ const watched_files_lock = ReentrantLock()
 Global variable, a set of `Manifest.toml` files from the active projects used during this session.
 """
 const watched_manifests = Set{String}()
-const watched_manifests_lock = ReentrantLock()
 
 """
     Revise.revision_queue
@@ -152,7 +280,6 @@ that these files have changed since we last processed a revision.
 This list gets populated by callbacks that watch directories for updates.
 """
 const revision_queue = Set{Tuple{PkgData,String}}()
-const revision_queue_lock = ReentrantLock() # see issues #837 and #845
 
 """
     Revise.queue_errors
@@ -160,7 +287,29 @@ const revision_queue_lock = ReentrantLock() # see issues #837 and #845
 Global variable, maps `(pkgdata, filename)` pairs that errored upon last revision to
 `(exception, backtrace)`.
 """
-const queue_errors = Dict{Tuple{PkgData,String},Tuple{Exception, Any}}() # locking is covered by revision_queue_lock
+const queue_errors = Dict{Tuple{PkgData,String},Tuple{Exception, Any}}() # locking is covered by revise_lock
+
+"""
+    Revise.missing_file_grace
+
+A tracked file can be missing transiently: code generators often delete a whole
+directory of sources and rewrite it over several seconds, and an editor's
+atomic-rename save passes through a deleted state. Deleting the file's methods
+at the first `revise()` that lands in such a window would be destructive, so a
+missing file is instead kept on [`Revise.revision_queue`](@ref) and revisited:
+only if it is still missing `missing_file_grace[]` seconds (default: 5.0) after
+first being noticed does `revise` delete its methods. Set this to `Inf` if
+sources are regenerated by a slow external process, or to `0.0` to delete
+methods immediately.
+
+Locking is covered by `revise_lock`.
+"""
+const missing_file_grace = Ref(5.0)
+
+# When a queued file is missing at revision time, records when `revise` first
+# noticed the absence; the entry is removed when the file reappears. Locking is
+# covered by `revise_lock`.
+const missing_file_times = Dict{Tuple{PkgData,String},Float64}()
 
 # Can we revise types? This is assigned in __init__() based on the Julia version
 # and preference.
@@ -184,7 +333,16 @@ It is a dictionary indexed by PkgId:
 `pkgdatas[id]` returns a value of type [`Revise.PkgData`](@ref).
 """
 const pkgdatas = Dict{PkgId,PkgData}(NOPACKAGE => PkgData(NOPACKAGE))
-const pkgdatas_lock = ReentrantLock()
+
+# Accessors that take `revise_lock` for the duration of a single `pkgdatas`
+# operation. Use these (rather than touching `pkgdatas` directly) anywhere that
+# might run concurrently with package loading, so a read never observes the
+# dictionary mid-rehash. They release the lock before returning, so the result
+# may be stale by the time it is used; any authoritative read-modify-write must
+# happen inside its own `@lock revise_lock` block.
+getpkgdata(id::PkgId) = @lock revise_lock get(pkgdatas, id, nothing)
+haspkgdata(id::PkgId) = @lock revise_lock haskey(pkgdatas, id)
+allpkgdatas() = @lock revise_lock collect(values(pkgdatas))
 
 """
     Revise.included_files
@@ -193,8 +351,7 @@ Global variable, `included_files` gets populated by callbacks we register with `
 It's used to track non-precompiled packages and, optionally, user scripts (see docs on
 `JULIA_REVISE_INCLUDE`).
 """
-const included_files = Tuple{Module,String}[]  # (module, filename)
-const included_files_lock = ReentrantLock()    # issue #947
+const included_files = Tuple{Module,String}[]  # (module, filename); see issue #947
 
 """
     expected_juliadir()
@@ -348,7 +505,8 @@ end
 
 function delete_missing!(
         exs_infos_old::ExprsInfos, exs_infos_new::ExprsInfos,
-        reeval_list::IdSet{Union{Method,Type}}, handled_types::IdSet{Type}, world::UInt
+        reeval_list::IdSet{Union{Method,Type}}, handled_types::IdSet{Type}, world::UInt,
+        predictions::TypePredictions = TypePredictions(),
     )
     with_logger(_debug_logger) do
         for (rex, exinfos) in exs_infos_old
@@ -357,9 +515,23 @@ function delete_missing!(
             exinfos === nothing && continue
             for exinfo in exinfos
                 if exinfo isa SigInfo
+                    # Method deletions are never skipped on the strength of a
+                    # prediction: a textually identical signature may dispatch on a
+                    # type that is itself being redefined, in which case the new
+                    # method is distinct from the old one and the old one must go.
                     handle_method_deletion!(exinfo, rex, world)
                 elseif __bpart__[]
-                    handle_type_deletion!(exinfo::TypeInfo, reeval_list, handled_types, world)
+                    typeinfo = exinfo::TypeInfo
+                    oldtype = prediction_preserves_type(predictions, typeinfo, world)
+                    if oldtype !== nothing
+                        # The new source redefines this type equivalently, so
+                        # evaluation will keep the existing binding and the
+                        # subtype-tree walk is unnecessary (issue #1022). The
+                        # prediction is re-checked after evaluation; see `revise`.
+                        push!(predictions.skipped, (typeinfo, oldtype))
+                        continue
+                    end
+                    handle_type_deletion!(typeinfo, reeval_list, handled_types, world)
                 end
             end
         end
@@ -367,16 +539,67 @@ function delete_missing!(
     return exs_infos_old
 end
 
+# Return the existing type when `predictions` says the new code redefines
+# `typeinfo`'s type equivalently (so its deletion walk can be skipped), else `nothing`.
+function prediction_preserves_type(predictions::TypePredictions, typeinfo::TypeInfo, world::UInt)
+    tn = typeinfo.typname
+    get(predictions.preserved, (tn.module, tn.name), false) || return nothing
+    Base.invoke_in_world(world, isdefinedglobal, tn.module, tn.name) || return nothing
+    existing = Base.invoke_in_world(world, getglobal, tn.module, tn.name)
+    existing isa Type || return nothing
+    return existing
+end
+
 const empty_exs_infos = ExprsInfos()
 function delete_missing!(
         mod_exs_infos_old::ModuleExprsInfos, mod_exs_infos_new::ModuleExprsInfos,
-        reeval_list::IdSet{Union{Method,Type}}, handled_types::IdSet{Type}, world::UInt
+        reeval_list::IdSet{Union{Method,Type}}, handled_types::IdSet{Type}, world::UInt,
+        predictions::TypePredictions = TypePredictions(),
     )
     for (mod, exs_infos_old) in mod_exs_infos_old
         exs_infos_new = get(mod_exs_infos_new, mod, empty_exs_infos)
-        delete_missing!(exs_infos_old, exs_infos_new, reeval_list, handled_types, world)
+        delete_missing!(exs_infos_old, exs_infos_new, reeval_list, handled_types, world, predictions)
     end
     return mod_exs_infos_old
+end
+
+# `true` if diffing old against new will delete at least one expression that defined
+# a type. This gates the prediction pass: when no type deletion is pending, there is
+# nothing for a prediction to save.
+function has_pending_type_deletion(mod_exs_infos_new::ModuleExprsInfos, mod_exs_infos_old::ModuleExprsInfos)
+    for (mod, exs_infos_old) in mod_exs_infos_old
+        exs_infos_new = get(mod_exs_infos_new, mod, empty_exs_infos)
+        for (rex, exinfos) in exs_infos_old
+            haskey(exs_infos_new, rex) && continue
+            exinfos === nothing && continue
+            any(exinfo -> exinfo isa TypeInfo, exinfos) && return true
+        end
+    end
+    return false
+end
+has_pending_type_deletion(@nospecialize(mod_exs_infos_new), mod_exs_infos_old::ModuleExprsInfos) = false
+
+# Run the type-preservation prediction over every expression the evaluation phase
+# will (re)evaluate, i.e., the new rexes. Best-effort: any error leaves the affected
+# types unpredicted, keeping the pessimistic deletion path in force.
+function predict_changes!(
+        predictions::TypePredictions,
+        mod_exs_infos_new::ModuleExprsInfos, mod_exs_infos_old::ModuleExprsInfos,
+    )
+    for (mod, exs_infos_new) in mod_exs_infos_new
+        exs_infos_old = get(mod_exs_infos_old, mod, empty_exs_infos)
+        for rex in keys(exs_infos_new)
+            haskey(exs_infos_old, rex) && continue
+            ex = rex.ex
+            try
+                predict_typebodies!(predictions, mod, ex)
+            catch err
+                isa(err, InterruptException) && rethrow(err)
+                @debug "PredictFailed" _group="Action" time=time() deltainfo=(mod, ex, err)
+            end
+        end
+    end
+    return predictions
 end
 
 function handle_method_deletion!(siginfo::SigInfo, rex::RelocatableExpr, world::UInt)
@@ -393,7 +616,13 @@ function handle_method_deletion!(siginfo::SigInfo, rex::RelocatableExpr, world::
                 line = firstline(rex)
                 ld = map(pr->linediff(line, pr[1]), locdefs)
                 idx = argmin(ld)
-                @assert ld[idx] < typemax(eltype(ld))
+                if ld[idx] === typemax(eltype(ld))
+                    # No `locdefs` entry shares a file with `rex`. This happens when the
+                    # method's recorded location comes from a macro rather than the source
+                    # file (e.g. `@views @timing function ... end`), so line matching can't
+                    # identify the reference to drop. Drop the last one, matching `eval_rex`. (#668)
+                    idx = length(locdefs)
+                end
                 deleteat!(locdefs, idx)
                 return nothing
             else
@@ -402,11 +631,11 @@ function handle_method_deletion!(siginfo::SigInfo, rex::RelocatableExpr, world::
         end
         @debug "DeleteMethod" _group="Action" time=time() deltainfo=(sig, MethodSummary(m))
         # Delete the corresponding methods
-        for get_workers in workers_functions
-            for p in @invokelatest get_workers()
-                try  # guard against serialization errors if the type isn't defined on the worker
-                    @invokelatest remotecall_impl(Core.eval, p, Main, :(delete_method_by_sig($mt, $sig)))
-                catch
+        let delexpr = :(delete_method_by_sig($mt, $sig))
+            record_worker_replay!(Main, delexpr)
+            for get_workers in workers_functions
+                for p in @invokelatest get_workers()
+                    apply_worker_action(p, Main, delexpr)  # guard against serialization errors if the type isn't defined on the worker
                 end
             end
         end
@@ -494,14 +723,12 @@ function eval_rex(rex_new::RelocatableExpr, exs_infos_old::ExprsInfos, mod::Modu
             if !isexpr(thunk, :thunk)
                 thunk = ex
             end
+            record_worker_replay!(mod, thunk)
             for get_workers in workers_functions
                 if @invokelatest is_master_worker(get_workers)
                     for p in @invokelatest get_workers()
                         @invokelatest(is_master_worker(p)) && continue
-                        try   # don't error if `mod` isn't defined on the worker
-                            @invokelatest remotecall_impl(Core.eval, p, mod, thunk)
-                        catch
-                        end
+                        apply_worker_action(p, mod, thunk)  # don't error if `mod` isn't defined on the worker
                     end
                 end
             end
@@ -612,35 +839,74 @@ function init_watching(pkgdata::PkgData, files=srcfiles(pkgdata))
         file = String(file)::String
         dir, basename = splitdir(file)
         dirfull = joinpath(basedir(pkgdata), dir)
-        already_watching_dir = haskey(watched_files, dirfull)
-        @lock watched_files_lock begin
+        # Hold the lock across the whole body: we both query/insert `watched_files`
+        # and mutate the `WatchList` it stores, which the watcher tasks read.
+        @lock revise_lock begin
+            already_watching_dir = haskey(watched_files, dirfull)
             already_watching_dir || (watched_files[dirfull] = WatchList())
-        end
-        watchlist = watched_files[dirfull]
-        current_id = get(watchlist.trackedfiles, basename, nothing)
-        new_id = pkgdata.info.id
-        if new_id != NOPACKAGE || current_id === nothing
-            # Allow the package id to be updated
-            push!(watchlist, basename=>pkgdata)
-            # Record the current ctime as baseline so only future changes are detected
-            watchlist.file_ctimes[basename] = ctime(joinpath(dirfull, basename))
-            if watching_files[]
-                fwatcher = TaskThunk(revise_file_queued, (pkgdata, file))
-                schedule(Task(fwatcher))
-            else
-                already_watching_dir || push!(udirs, dirfull)
+            watchlist = watched_files[dirfull]
+            current_id = get(watchlist.trackedfiles, basename, nothing)
+            new_id = pkgdata.info.id
+            if new_id != NOPACKAGE || current_id === nothing
+                # Allow the package id to be updated
+                push!(watchlist, basename=>pkgdata)
+                # Record the current ctime as baseline so only future changes are detected
+                watchlist.file_ctimes[basename] = ctime(joinpath(dirfull, basename))
+                # On filesystems that never deliver notifications (e.g. WSL drvfs,
+                # issue #514) we must watch each file individually and poll it;
+                # directory-polling cannot detect content changes within a file.
+                if watching_files[] || nonnotifying_path(dirfull)
+                    if !watching_files[]
+                        @info """Revise: code under $dirfull is on a filesystem that does not deliver \
+                                 file-change notifications (e.g. a WSL `/mnt/...` drive, issue #514). \
+                                 Falling back to polling these files; revisions may take a few seconds \
+                                 to register.""" maxlog=1
+                    end
+                    fwatcher = TaskThunk(revise_file_queued, (pkgdata, file))
+                    schedule(Task(fwatcher))
+                else
+                    already_watching_dir || push!(udirs, dirfull)
+                end
             end
         end
     end
     for dirfull in udirs
         if !watching_files[]
+            # Register the buffered directory monitor now, before the watcher task
+            # runs, so events are queued from the moment we start tracking and the
+            # startup gap is closed. Skipped on polling/non-notifying filesystems,
+            # which never deliver notifications.
+            polling_files[] || nonnotifying_path(dirfull) || watch_folder(dirfull, 0)
             dwatcher = TaskThunk(revise_dir_queued, (dirfull,))
             schedule(Task(dwatcher))
         end
     end
     return nothing
 end
-init_watching(files) = init_watching(pkgdatas[NOPACKAGE], files)
+init_watching(files) = init_watching((@lock revise_lock pkgdatas[NOPACKAGE]), files)
+
+# Maximum time (in seconds) a watched path may be absent before Revise concludes
+# it was genuinely removed. A shorter absence is treated as transient: a
+# `Pkg.build`, a git checkout, an environment switch, or an editor's
+# atomic-rename save can briefly remove and recreate a directory or file, and in
+# those cases the watch should resume silently rather than stop and warn (#523).
+const watch_reappear_grace = Ref(5.0)
+
+# Block while a watched path is missing. `exists(path)` reports whether it is
+# currently present; `watchkey` is its entry in `watched_files`. Returns:
+#   :reappeared — came back within the grace period (resume watching)
+#   :removed    — no longer in the watch list, e.g. the package moved (stop quietly)
+#   :gone       — stayed missing past the grace period (stop and warn)
+function await_watched_path(exists, path::AbstractString, watchkey::AbstractString)
+    waited = 0.0
+    while !exists(path)
+        @lock revise_lock haskey(watched_files, watchkey) || return :removed
+        waited ≥ watch_reappear_grace[] && return :gone
+        sleep(0.1)
+        waited += 0.1
+    end
+    return :reappeared
+end
 
 """
     revise_dir_queued(dirname::AbstractString)
@@ -651,28 +917,40 @@ This is generally called via a [`Revise.TaskThunk`](@ref).
 """
 @noinline function revise_dir_queued(dirname::AbstractString)
     @assert isabspath(dirname)
-    if !isdir(dirname)
-        sleep(0.1)   # in case git has done a delete/replace cycle
-    end
     stillwatching = true
     while stillwatching
         if !isdir(dirname)
-            with_logger(SimpleLogger(stderr)) do
-                @warn "$dirname is not an existing directory, Revise is not watching"
+            status = await_watched_path(isdir, dirname, dirname)
+            if status !== :reappeared
+                if status === :gone
+                    with_logger(SimpleLogger(stderr)) do
+                        @warn "$dirname is not an existing directory, Revise is not watching"
+                    end
+                    # Drop the watch registration as we stop. Otherwise, if `dirname`
+                    # is recreated later (e.g. switching back to a branch that has it),
+                    # `init_watching` would see the stale entry, assume a watcher is
+                    # already running, and never start a replacement — so edits to the
+                    # reappeared files would go unnoticed.
+                    @lock revise_lock delete!(watched_files, dirname)
+                end
+                break
             end
-            break
+            # Reappeared: the directory was removed and recreated, so the existing
+            # monitor may be watching a stale inode. Drop it; the next
+            # `wait_changed_dir` re-registers a fresh one.
+            unwatch_folder(dirname)
         end
 
         latestfiles, stillwatching = watch_files_via_dir(dirname)  # will block here until file(s) change
         for (file, id) in latestfiles
             key = joinpath(dirname, file)
-            if key in keys(user_callbacks_by_file)
-                union!(user_callbacks_queue, user_callbacks_by_file[key])
-                notify(revision_event)
-            end
-            if id != NOPACKAGE
-                pkgdata = pkgdatas[id]
-                @lock revision_queue_lock begin
+            @lock revise_lock begin
+                if key in keys(user_callbacks_by_file)
+                    union!(user_callbacks_queue, user_callbacks_by_file[key])
+                    notify(revision_event)
+                end
+                if id != NOPACKAGE
+                    pkgdata = pkgdatas[id]
                     if hasfile(pkgdata, key)  # issue #228
                         push!(revision_queue, (pkgdata, relpath(key, pkgdata)))
                         notify(revision_event)
@@ -681,6 +959,7 @@ This is generally called via a [`Revise.TaskThunk`](@ref).
             end
         end
     end
+    unwatch_folder(dirname)  # stop the OS watch now that we no longer watch this dir
     return
 end
 
@@ -697,21 +976,24 @@ function revise_file_queued(pkgdata::PkgData, file)
     if !isabspath(file)
         file = joinpath(basedir(pkgdata), file)
     end
-    if !file_exists(file)
-        sleep(0.1)  # in case git has done a delete/replace cycle
-    end
 
     dirfull, _ = splitdir(file)
+    fileexists(f) = file_exists(f) || isdir(f)
     stillwatching = true
     while stillwatching
-        if !file_exists(file) && !isdir(file)
-            let file=file
-                with_logger(SimpleLogger(stderr)) do
-                    @warn "$file is not an existing file, Revise is not watching"
+        if !fileexists(file)
+            status = await_watched_path(fileexists, file, dirfull)
+            if status !== :reappeared
+                if status === :gone
+                    let file=file
+                        with_logger(SimpleLogger(stderr)) do
+                            @warn "$file is not an existing file, Revise is not watching"
+                        end
+                    end
                 end
+                notify(revision_event)
+                break
             end
-            notify(revision_event)
-            break
         end
         try
             wait_changed(file)  # will block here until the file changes
@@ -720,15 +1002,14 @@ function revise_file_queued(pkgdata::PkgData, file)
             (isa(e, InterruptException) && throwto_repl(e)) || throw(e)
         end
 
-        if file in keys(user_callbacks_by_file)
-            union!(user_callbacks_queue, user_callbacks_by_file[file])
-            notify(revision_event)
-        end
-
-        # Check to see if we're still watching this file
-        stillwatching = haskey(watched_files, dirfull)
-        if PkgId(pkgdata) != NOPACKAGE
-            @lock revision_queue_lock begin
+        @lock revise_lock begin
+            if file in keys(user_callbacks_by_file)
+                union!(user_callbacks_queue, user_callbacks_by_file[file])
+                notify(revision_event)
+            end
+            # Check to see if we're still watching this file
+            stillwatching = haskey(watched_files, dirfull)
+            if PkgId(pkgdata) != NOPACKAGE
                 push!(revision_queue, (pkgdata, relpath(file, pkgdata)))
             end
         end
@@ -736,11 +1017,10 @@ function revise_file_queued(pkgdata::PkgData, file)
     return
 end
 
-# Because we delete first, we have to make sure we've parsed the file
-function handle_deletions(
-        pkgdata::PkgData, file::AbstractString,
-        reeval_list::IdSet{Union{Method,Type}}, handled_types::IdSet{Type}, world::UInt
-    )
+# Parse the file's current contents and look up the exprs Revise has on record for
+# it. Returns `(mod_exs_infos_new, mod_exs_infos_old, fileok)`. Safe to call from a
+# pre-deletion pass: any mutation of `pkgdata` is limited to lazily filling caches.
+function parse_for_revision(pkgdata::PkgData, file::AbstractString)
     fi = maybe_parse_from_cache!(pkgdata, file)
     maybe_extract_sigs!(fi)
     mod_exs_infos_old = fi.mod_exs_infos
@@ -756,19 +1036,48 @@ function handle_deletions(
     topmod = first(keys(mod_exs_infos_old))
     fileok = file_exists(String(filep)::String)
     mod_exs_infos_new = fileok ? parse_source(filep, topmod) : ModuleExprsInfos(topmod)
+    return mod_exs_infos_new, mod_exs_infos_old, fileok
+end
+
+# Apply deletions for `(pkgdata, file)` from the results of `parse_for_revision`.
+# Mutates `reeval_list`, `handled_types`, and `predictions.skipped`. A file that no
+# longer exists has all its methods deleted but stays registered in `pkgdata` and
+# the watch lists: if it is recreated later, the watcher queues it again and the
+# next `revise` re-evaluates the new content. (The caller replaces the stored
+# `FileInfo` with the parse result, which for a missing file is empty.)
+function delete_for_revision(
+        pkgdata::PkgData, file::AbstractString,
+        @nospecialize(mod_exs_infos_new), mod_exs_infos_old::ModuleExprsInfos, fileok::Bool,
+        reeval_list::IdSet{Union{Method,Type}}, handled_types::IdSet{Type}, world::UInt,
+        predictions::TypePredictions,
+    )
     if mod_exs_infos_new !== nothing && mod_exs_infos_new !== DoNotParse()
-        delete_missing!(mod_exs_infos_old, mod_exs_infos_new, reeval_list, handled_types, world)
+        delete_missing!(mod_exs_infos_old, mod_exs_infos_new::ModuleExprsInfos, reeval_list, handled_types, world, predictions)
     end
-    if !fileok
-        @warn("$filep no longer exists, deleted all methods")
-        deleteat!(pkgdata.fileinfos, idx)
-        deleteat!(pkgdata.info.files, idx)
-        wl = get(watched_files, basedir(pkgdata), nothing)
-        if isa(wl, WatchList)
-            delete!(wl.trackedfiles, file)
-            delete!(wl.file_ctimes, file)
+    if !fileok && any(!isempty, values(mod_exs_infos_old))
+        idx = fileindex(pkgdata, file)
+        filep = pkgdata.info.files[idx]
+        if isa(filep, AbstractString)
+            if file ≠ "."
+                filep = normpath(basedir(pkgdata), file)
+            else
+                filep = normpath(basedir(pkgdata))
+            end
         end
+        @warn("$filep no longer exists, deleted all methods")
     end
+    return nothing
+end
+
+# Because we delete first, we have to make sure we've parsed the file
+function handle_deletions(
+        pkgdata::PkgData, file::AbstractString,
+        reeval_list::IdSet{Union{Method,Type}}, handled_types::IdSet{Type}, world::UInt,
+        predictions::TypePredictions = TypePredictions(),
+    )
+    mod_exs_infos_new, mod_exs_infos_old, fileok = parse_for_revision(pkgdata, file)
+    delete_for_revision(pkgdata, file, mod_exs_infos_new, mod_exs_infos_old, fileok,
+                        reeval_list, handled_types, world, predictions)
     return mod_exs_infos_new, mod_exs_infos_old
 end
 
@@ -863,6 +1172,121 @@ function redefine_bindings!(revision_errors::Vector{Tuple{PkgData,String}}, reev
     return revision_errors
 end
 
+# Extract the singleton function instance from a method signature `Tuple{typeof(f), ...}`.
+# Returns `nothing` for constructors (`Type{T}`) or callable objects with no singleton instance.
+function sig_function(@nospecialize(sig))
+    ft = Base.unwrap_unionall(sig)
+    ft isa DataType && !isempty(ft.parameters) || return nothing
+    F = Base.unwrap_unionall(ft.parameters[1])
+    (F isa DataType && isdefined(F, :instance)) || return nothing
+    return F.instance
+end
+
+# Collect the set of method signatures defined by the `SigInfo`s in `exs_infos`.
+function sigset(exs_infos::ExprsInfos)
+    sigs = Set{Any}()
+    for (_, exinfos) in exs_infos
+        exinfos === nothing && continue
+        for exinfo in exinfos
+            exinfo isa SigInfo || continue
+            push!(sigs, exinfo.sig)
+        end
+    end
+    return sigs
+end
+
+# Issue #239. An accidental definition such as
+#     foo() = iterate(x)        # intends to call Base.iterate
+#     iterate(x::Foo) = ...     # OOPS: defines a *new* `MyMod.iterate`, shadowing Base.iterate
+# creates a module-local `iterate` that shadows the imported one, and `foo`
+# binds to it. When the user corrects it to `Base.iterate(x::Foo) = ...`, Revise
+# deletes the wrong method, but the now-methodless `MyMod.iterate` binding
+# lingers; unqualified references keep resolving to it, so the package stays
+# broken until the session is restarted.
+#
+# This shadowing can only happen for a name that was implicitly in scope; an
+# explicit import errors when code like the above is encountered. Thus if an
+# edit (a) *empties* a module-owned function binding and (b) adds a method to a
+# *different* function of the same name that is implicitly in scope, we take a
+# stab at guessing user-intent and make the change. Because this involves
+# inference on Revise's part, we log this with an `@info`.
+#
+# Requires binding partitions (Julia 1.12+): earlier, function bindings are
+# `const` and cannot be reassigned, and `delete_binding` does not exist.
+# This 1.12+ feature is not hidden behind a check on `__bpart__`, as that
+# focuses on type-redefinition.
+function realias_orphaned_bindings!(mod_exs_infos_new::ModuleExprsInfos,
+                                    mod_exs_infos_old::ModuleExprsInfos)
+    Base.VERSION >= v"1.12.0-DEV.2047" || return nothing
+    repaired = Tuple{Module,Symbol,Module}[]
+    with_logger(_debug_logger) do
+        for (mod, exs_infos_old) in mod_exs_infos_old
+            oldsigs = sigset(exs_infos_old)
+            newsigs = sigset(get(mod_exs_infos_new, mod, empty_exs_infos))
+            # (b) functions that gained a method this revision, indexed by name
+            added = Dict{Symbol,Any}()
+            for s in newsigs
+                s in oldsigs && continue
+                f = sig_function(s)
+                f === nothing && continue
+                added[nameof(f)] = f
+            end
+            isempty(added) && continue
+            # (a) functions that lost a method this revision and are now empty + module-owned
+            for s in oldsigs
+                s in newsigs && continue
+                fdel = sig_function(s)
+                fdel === nothing && continue
+                isempty(methods(fdel)) || continue       # still has methods => not orphaned
+                parentmodule(fdel) === mod || continue    # only repair bindings this module owns
+                n = nameof(fdel)
+                fadd = get(added, n, nothing)
+                (fadd === nothing || fadd === fdel) && continue
+                # Only repair when `fadd` was implicitly in scope (an export of a module `mod`
+                # bare-`using`s, including Base/Core): that is the sole situation that can
+                # produce this shadow, so re-importing reproduces the original implicit scope.
+                src = implicit_import_source(mod, n, fadd)
+                src === nothing && continue
+                # `delete_binding` clears the orphan; `using src: n` re-establishes the import.
+                # A bare `delete_binding` is not enough: implicit-import fallthrough after
+                # deletion is not yet implemented, so `n` would resolve to `UndefVarError`.
+                # TODO: replicate to distributed workers (cf. `delete_method_by_sig`).
+                # See https://github.com/timholy/Revise.jl/pull/1056#discussion_r3338811301
+                try
+                    Base.delete_binding(mod, n)
+                    usestmt = Expr(:using, Expr(:(:), Expr(:., fullname(src)...), Expr(:., n)))
+                    Core.eval(mod, usestmt)
+                    @debug "RealiasOrphan" _group="Action" time=time() deltainfo=(mod, n, src)
+                    push!(repaired, (mod, n, src))
+                catch err
+                    @debug "RealiasOrphanFailed" _group="Action" time=time() deltainfo=(mod, n, err)
+                end
+            end
+        end
+    end
+    # Surface the repair to the user. Unlike method deletion/redefinition (logged only at
+    # `@debug`), this is a binding mutation Revise infers — it does not correspond 1:1 to a
+    # source edit the user made — so it is worth an `@info`.
+    for (mod, n, src) in repaired
+        @info "Revise re-imported `$n` into `$mod` from `$src`, repairing an orphaned binding (issue #239)"
+    end
+    return nothing
+end
+
+# If `n` is implicitly in scope in `mod` — an export of a module `mod` brings in via a bare
+# `using` (including the implicit `Base`/`Core`) — and that export is the function `f`, return
+# the module supplying it; otherwise `nothing`. This is precisely the condition under which an
+# unqualified `n(x::T) = ...` definition shadows `f` with a new module-local binding (#239).
+function implicit_import_source(mod::Module, n::Symbol, @nospecialize(f))
+    for used in ccall(:jl_module_usings, Any, (Any,), mod)::Vector{Any}
+        used isa Module || continue
+        Base.isexported(used, n) || continue
+        isdefined(used, n) || continue
+        getglobal(used, n) === f && return used
+    end
+    return nothing
+end
+
 """
     Revise.revise_file_now(pkgdata::PkgData, file)
 
@@ -888,6 +1312,7 @@ function revise_file_now(pkgdata::PkgData, file)
     mod_exs_infos_new, mod_exs_infos_old = handle_deletions(pkgdata, file, reeval_list, handled_types, world)
     if mod_exs_infos_new != nothing
         _, includes = eval_new!(mod_exs_infos_new, mod_exs_infos_old)
+        realias_orphaned_bindings!(mod_exs_infos_new, mod_exs_infos_old)   # issue #239
         fi = fileinfo(pkgdata, i)
         pkgdata.fileinfos[i] = FileInfo(mod_exs_infos_new, fi)
         maybe_add_includes_to_pkgdata!(pkgdata, file, includes; eval_now=true)
@@ -924,7 +1349,7 @@ end
 Attempt to perform previously-failed revisions. This can be useful in cases of order-dependent errors.
 """
 function retry()
-    @lock revision_queue_lock begin
+    @lock revise_lock begin
         for k in keys(queue_errors)
             push!(revision_queue, k)
         end
@@ -943,7 +1368,7 @@ function revise(; throw::Bool=false)
     active[] || return nothing
     sleep(0.01)  # in case the file system isn't quite done writing out the new files
 
-    @lock revision_queue_lock begin
+    @lock revise_lock begin
         have_queue_errors = !isempty(queue_errors)
 
         # Julia 1.12+: when bindings switch to a new type, we need to re-evaluate method
@@ -956,15 +1381,79 @@ function revise(; throw::Bool=false)
         # won't get redefined first and deleted second.
         revision_errors = Tuple{PkgData,String}[]
         queue = sort!(collect(revision_queue); lt=pkgfileless)
+        # A watcher task can queue a `PkgData` that has since been replaced in
+        # `pkgdatas` (e.g., by `Revise.track` of a package whose record had been
+        # dropped, as for packages baked into a sysimage — issue #685). If both the
+        # stale and the current record are queued for the same file, keep only the
+        # current one: each holds its own copy of the file's old signatures, and
+        # processing both would delete the same methods twice.
+        keep = trues(length(queue))
+        for (i, (pkgdata, file)) in enumerate(queue)
+            current = get(pkgdatas, PkgId(pkgdata), nothing)
+            (current === nothing || current === pkgdata) && continue
+            if any(((qpkgdata, qfile),) -> qpkgdata === current && qfile == file, queue)
+                keep[i] = false
+            end
+        end
+        queue = queue[keep]
         finished = eltype(revision_queue)[]
         mod_exs_infos = ModuleExprsInfos[]
         interrupt = false
+
+        # Parse every queued file, then predict which already-defined types the new
+        # code re-creates unchanged (e.g., a `@kwdef` struct whose only edit is a
+        # default value — issue #1022). The prediction must precede `delete_missing!`,
+        # which consults it to skip the expensive subtype-tree walk, and it must span
+        # all queued files so a type moved between files is still recognized. It runs
+        # only when a type deletion is actually pending, and only under `__bpart__[]`
+        # (the consumer of the walk it can skip).
+        predictions = TypePredictions()
+        parsed = Tuple{PkgData,String,Any,ModuleExprsInfos,Bool}[]
+        pending_type_deletion = false
+        deferred_missing = Tuple{PkgData,String}[]
         for (pkgdata, file) in queue
             try
-                mod_exs_infos_new, _ = handle_deletions(pkgdata, file, reeval_list, handled_types, world)
+                mod_exs_infos_new, mod_exs_infos_old, fileok = parse_for_revision(pkgdata, file)
                 mod_exs_infos_new === DoNotParse() && continue
-                push!(mod_exs_infos, mod_exs_infos_new)
-                push!(finished, (pkgdata, file))
+                if fileok
+                    delete!(missing_file_times, (pkgdata, file))
+                else
+                    # The file may be missing only transiently (e.g., mid-rewrite by a
+                    # code generator). Within the grace period, leave it queued and
+                    # untouched; see `missing_file_grace`.
+                    tfirst = get!(missing_file_times, (pkgdata, file), time())
+                    if time() - tfirst < missing_file_grace[]
+                        push!(deferred_missing, (pkgdata, file))
+                        continue
+                    end
+                end
+                pending_type_deletion |= __bpart__[] && has_pending_type_deletion(mod_exs_infos_new, mod_exs_infos_old)
+                push!(parsed, (pkgdata, file, mod_exs_infos_new, mod_exs_infos_old, fileok))
+            catch err
+                throw && Base.throw(err)
+                interrupt |= isa(err, InterruptException)
+                push!(revision_errors, (pkgdata, file))
+                queue_errors[(pkgdata, file)] = (err, catch_backtrace())
+            end
+        end
+        if pending_type_deletion
+            with_logger(_debug_logger) do
+                for (pkgdata, file, mod_exs_infos_new, mod_exs_infos_old, fileok) in parsed
+                    mod_exs_infos_new isa ModuleExprsInfos || continue
+                    predict_changes!(predictions, mod_exs_infos_new, mod_exs_infos_old)
+                end
+            end
+        end
+
+        # Apply the deletions
+        for (pkgdata, file, mod_exs_infos_new, mod_exs_infos_old, fileok) in parsed
+            try
+                delete_for_revision(pkgdata, file, mod_exs_infos_new, mod_exs_infos_old, fileok,
+                                    reeval_list, handled_types, world, predictions)
+                if mod_exs_infos_new !== nothing
+                    push!(mod_exs_infos, mod_exs_infos_new)
+                    push!(finished, (pkgdata, file))
+                end
             catch err
                 throw && Base.throw(err)
                 interrupt |= isa(err, InterruptException)
@@ -977,7 +1466,7 @@ function revise(; throw::Bool=false)
         for ((pkgdata, file), mod_exs_infos_new) in zip(finished, mod_exs_infos)
             defaultmode = PkgId(pkgdata).name == "Main" ? :evalmeth : :eval
             i = fileindex(pkgdata, file)
-            i === nothing && continue   # file was deleted by `handle_deletions`
+            i === nothing && continue   # defensive: the file is no longer registered
             fi = fileinfo(pkgdata, i)
             modsremaining = Set(keys(mod_exs_infos_new))
             changed, err = true, nothing
@@ -1013,6 +1502,7 @@ function revise(; throw::Bool=false)
                 pkgdata.fileinfos[i] = FileInfo(mod_exs_infos_new, fi)
             end
             if isempty(modsremaining)
+                realias_orphaned_bindings!(mod_exs_infos_new, fi.mod_exs_infos)  # issue #239
                 delete!(queue_errors, (pkgdata, file))
             else
                 throw && Base.throw(err)
@@ -1022,8 +1512,28 @@ function revise(; throw::Bool=false)
             end
         end
 
+        # Keep `Base.pkgorigins` version in sync with revised source (issue #684)
+        for pkgdata in unique!(first.(finished))
+            update_pkgversion!(PkgId(pkgdata))
+        end
+
         # Do binding redefinitions
         if __bpart__[]
+            # Verify the predictions that suppressed deletion walks: they were made
+            # before any queued change was applied, so a same-revision change to a
+            # binding the type's structure depends on (a field-type alias, a
+            # supertype, a parameter bound) can falsify them. If the binding moved
+            # anyway, run the walk now — `world` still resolves the old type. Relative
+            # to a pre-evaluation walk, signature extraction for files that have not
+            # yet been parsed sees the new binding, so methods in such files may
+            # escape re-evaluation.
+            for (typeinfo, oldtype) in predictions.skipped
+                tn = typeinfo.typname
+                current = @invokelatest(isdefinedglobal(tn.module, tn.name)) ?
+                          @invokelatest(getglobal(tn.module, tn.name)) : nothing
+                current === oldtype && continue
+                handle_type_deletion!(typeinfo, reeval_list, handled_types, world)
+            end
             redefine_bindings!(revision_errors, reeval_list, world)
         end
 
@@ -1034,6 +1544,11 @@ function revise(; throw::Bool=false)
             end
         else
             empty!(revision_queue)
+            # Files missing within the grace period stay queued so the next
+            # `revise` revisits them (and `revise_first` keeps firing).
+            for pkgfile in deferred_missing
+                push!(revision_queue, pkgfile)
+            end
         end
         errors(revision_errors)
         if !isempty(queue_errors)
@@ -1075,25 +1590,29 @@ and can lead to long recompilation times.
 function revise(mod::Module; force::Bool=true)
     mod == Main && error("cannot revise(Main)")
     id = PkgId(mod)
-    pkgdata = pkgdatas[id]
-    for file in pkgdata.info.files
+    pkgdata = @lock revise_lock pkgdatas[id]
+    @lock revise_lock for file in pkgdata.info.files
         push!(revision_queue, (pkgdata, file))
     end
     revise()
     force || return true
-    for i = 1:length(srcfiles(pkgdata))
-        fi = fileinfo(pkgdata, i)
-        for (mod, exs_infos) in fi.mod_exs_infos
-            for def_rex in keys(exs_infos)
-                ex = def_rex.ex
-                exuw = unwrap(ex)
-                isexpr(exuw, :call) && is_some_include(exuw.args[1]) && continue
-                try
-                    Core.eval(mod, ex)
-                catch err
-                    @show mod
-                    display(ex)
-                    rethrow(err)
+    # issue #975: re-evaluating every definition rewrites each docstring, and
+    # `Base.Docs` warns on every rewrite; suppress that expected noise.
+    with_logger(SuppressReplacingDocsLogger(current_logger())) do
+        for i = 1:length(srcfiles(pkgdata))
+            fi = fileinfo(pkgdata, i)
+            for (mod, exs_infos) in fi.mod_exs_infos
+                for def_rex in keys(exs_infos)
+                    ex = def_rex.ex
+                    exuw = unwrap(ex)
+                    isexpr(exuw, :call) && is_some_include(exuw.args[1]) && continue
+                    try
+                        Core.eval(mod, ex)
+                    catch err
+                        @show mod
+                        display(ex)
+                        rethrow(err)
+                    end
                 end
             end
         end
@@ -1115,8 +1634,8 @@ function track(mod::Module, file::AbstractString; mode=:sigs, kwargs...)
     isfile(file) || error(file, " is not a file")
     # Determine whether we're already tracking this file
     id = Base.moduleroot(mod) == Main ? PkgId(mod, string(mod)) : PkgId(mod)  # see #689 for `Main`
-    if haskey(pkgdatas, id)
-        pkgdata = pkgdatas[id]
+    pkgdata = getpkgdata(id)
+    if pkgdata !== nothing
         relfile = relpath(abspath_no_normalize(file), pkgdata)
         hasfile(pkgdata, relfile) && return nothing
         # Use any "fixes" provided by relpath
@@ -1137,18 +1656,18 @@ function track(mod::Module, file::AbstractString; mode=:sigs, kwargs...)
             mode = :sigs   # we already handled evaluation in `parse_source`
         end
         invokelatest(instantiate_sigs!, mod_exs_infos; mode, kwargs...)
-        if !haskey(pkgdatas, id)
+        if !haspkgdata(id)
             # Wait a bit to see if `mod` gets initialized
             sleep(0.1)
         end
-        pkgdata = get(pkgdatas, id, nothing)
+        pkgdata = getpkgdata(id)
         if pkgdata === nothing
             pkgdata = PkgData(id, pathof(mod))
         end
         if !haskey(CodeTracking._pkgfiles, id)
             CodeTracking._pkgfiles[id] = pkgdata.info
         end
-        @lock pkgdatas_lock begin
+        @lock revise_lock begin
             push!(pkgdata, relpath(file, pkgdata)=>FileInfo(mod_exs_infos))
             init_watching(pkgdata, (String(file)::String,))
             pkgdatas[id] = pkgdata
@@ -1267,7 +1786,7 @@ See also [`Revise.unsilence`](@ref).
 """
 silence(pkg::Symbol) = silence(String(pkg))
 function silence(pkg::AbstractString)
-    push!(silence_pkgs, pkg)
+    @lock revise_lock push!(silence_pkgs, pkg)
     Preferences.@set_preferences!("silenced_packages" => collect(silence_pkgs))
     nothing
 end
@@ -1282,7 +1801,7 @@ See also [`Revise.silence`](@ref).
 """
 unsilence(pkg::Symbol) = unsilence(String(pkg))
 function unsilence(pkg::AbstractString)
-    delete!(silence_pkgs, pkg)
+    @lock revise_lock delete!(silence_pkgs, pkg)
     Preferences.@set_preferences!("silenced_packages" => collect(silence_pkgs))
     nothing
 end
@@ -1296,7 +1815,7 @@ The list of excluded packages is stored persistently using Preferences.jl.
 See also [`Revise.allow_watch`](@ref) and [`Revise.silence`](@ref).
 """
 function dont_watch(pkg::Symbol)
-    push!(dont_watch_pkgs, pkg)
+    @lock revise_lock push!(dont_watch_pkgs, pkg)
     Preferences.@set_preferences!("dont_watch_packages" => String[string(p) for p in dont_watch_pkgs])
     nothing
 end
@@ -1311,7 +1830,7 @@ changes to that package again.
 See also [`Revise.dont_watch`](@ref).
 """
 function allow_watch(pkg::Symbol)
-    delete!(dont_watch_pkgs, pkg)
+    @lock revise_lock delete!(dont_watch_pkgs, pkg)
     Preferences.@set_preferences!("dont_watch_packages" => String[string(p) for p in dont_watch_pkgs])
     nothing
 end
@@ -1348,7 +1867,7 @@ function get_def(method::Method; modified_files=revision_queue)
     end
     id = get_tracked_id(method.module; modified_files=modified_files)
     id === nothing && return false
-    pkgdata = pkgdatas[id]
+    pkgdata = @lock revise_lock pkgdatas[id]
     filename = relpath(filename, pkgdata)
     if hasfile(pkgdata, filename)
         def = get_def(method, pkgdata, filename)
@@ -1388,12 +1907,12 @@ end
 
 function get_tracked_id(id::PkgId; modified_files=revision_queue)
     # Methods from Base or the stdlibs may require that we start tracking
-    if !haskey(pkgdatas, id)
+    if !haspkgdata(id)
         recipe = id.name === "Compiler" ? :Compiler : Symbol(id.name)
         recipe === :Core && return nothing
         _track(id, recipe; modified_files=modified_files)
         @info "tracking $recipe"
-        if !haskey(pkgdatas, id)
+        if !haspkgdata(id)
             @warn "despite tracking $recipe, $id was not found"
             return nothing
         end
@@ -1405,7 +1924,7 @@ get_tracked_id(mod::Module; modified_files=revision_queue) =
 
 function get_expressions(id::PkgId, filename)
     get_tracked_id(id)
-    pkgdata = pkgdatas[id]
+    pkgdata = @lock revise_lock pkgdatas[id]
     fi = maybe_parse_from_cache!(pkgdata, filename)
     maybe_extract_sigs!(fi)
     return fi.mod_exs_infos
@@ -1417,7 +1936,7 @@ function add_definitions_from_repl(filename::String)
     entry = hp.history[hp.start_idx+hist_idx]
     src = entry isa AbstractString ? entry : entry.content
     id = PkgId(nothing, "@REPL")
-    pkgdata = pkgdatas[id]
+    pkgdata = @lock revise_lock pkgdatas[id]
     mod_exs_infos = ModuleExprsInfos(Main::Module)
     parse_source!(mod_exs_infos, src, filename, Main::Module)
     instantiate_sigs!(mod_exs_infos)
@@ -1554,8 +2073,15 @@ async_steal_repl_backend() = steal_repl_backend()
 """
     Revise.init_worker(p)
 
-Define methods on worker `p` that Revise needs in order to perform revisions on `p`.
+Define methods on worker `p` that Revise needs in order to perform revisions on `p`,
+and replay onto `p` any revisions already applied on the master this session.
 Revise itself does not need to be running on `p`.
+
+Call this after the relevant packages have been loaded on `p` (e.g. via
+`@everywhere using MyPkg`); otherwise the replayed revisions, which evaluate into
+those modules, are silently skipped and `p` stays at the on-disk state. Replaying
+is what keeps closures serialized across workers (such as `@distributed` bodies)
+in sync after a revision, including for workers added later (issue #637).
 """
 function init_worker(p::AbstractWorker)
     @invokelatest remotecall_impl(Core.eval, p, Main, quote
@@ -1572,11 +2098,41 @@ function init_worker(p::AbstractWorker)
             isa(m, Method) && Base.delete_method(m)
         end
     end)
+    @invokelatest(is_master_worker(p)) && return nothing
+    actions = lock(revise_lock) do
+        copy(worker_replay_log)
+    end
+    # Unlike the best-effort propagation during `revise`, this is an explicit
+    # synchronization point: wait for each action so the worker is fully caught up
+    # before `init_worker` returns and the caller starts dispatching work to it.
+    for (mod, expr) in actions
+        try
+            @invokelatest wait(remotecall_impl(Core.eval, p, mod, expr))
+        catch  # e.g. `mod` not loaded on the worker yet
+        end
+    end
+    return nothing
 end
 
 init_worker(p::Int) = init_worker(DistributedWorker(p))
 
 active_repl_backend_available() = isdefined(Base, :active_repl_backend) && Base.active_repl_backend !== nothing
+
+# Wait for the REPL backend to come up, then register `revise_first` on it.
+# #719: this runs async in case Revise is loaded from startup.jl, before the
+# backend exists. issue #900: keep this a named function (not an anonymous
+# `@async` closure) so it has a stable, precompilable signature.
+function wait_for_repl_backend()
+    iter = 0
+    while !active_repl_backend_available() && iter < 20
+        sleep(0.05)
+        iter += 1
+    end
+    if active_repl_backend_available()
+        push!(Base.active_repl_backend.ast_transforms, revise_first)
+    end
+    return nothing
+end
 
 function __init__()
     ccall(:jl_generating_output, Cint, ()) == 1 && return nothing
@@ -1636,7 +2192,7 @@ function __init__()
     end
     # Set up a repository for methods defined at the REPL
     id = PkgId(nothing, "@REPL")
-    @lock pkgdatas_lock begin
+    @lock revise_lock begin
         pkgdatas[id] = PkgData(id, nothing)
     end
     # Set the lookup callbacks
@@ -1646,7 +2202,7 @@ function __init__()
     # Watch the manifest file for changes
     mfile = manifest_file()
     if mfile !== nothing
-        @lock watched_manifests_lock begin
+        @lock revise_lock begin
             push!(watched_manifests, mfile)
             wmthunk = TaskThunk(watch_manifest, (mfile,))
             schedule(Task(wmthunk))
@@ -1662,18 +2218,11 @@ function __init__()
         if active_repl_backend_available()
             push!(Base.active_repl_backend.ast_transforms, revise_first)
         else
-            # wait for active_repl_backend to exist
-            # #719: do this async in case Revise is being loaded from startup.jl
-            t = @async begin
-                iter = 0
-                while !active_repl_backend_available() && iter < 20
-                    sleep(0.05)
-                    iter += 1
-                end
-                if active_repl_backend_available()
-                    push!(Base.active_repl_backend.ast_transforms, revise_first)
-                end
-            end
+            # wait for active_repl_backend to exist. Schedule the named function
+            # directly (rather than `@async`, which wraps it in an anonymous
+            # closure) so the task body carries a stable, precompilable signature.
+            t = Task(wait_for_repl_backend)
+            schedule(t)
             isdefined(Base, :errormonitor) && Base.errormonitor(t)
         end
 
@@ -1733,7 +2282,7 @@ end
 
 function add_revise_deps()
     # Populate CodeTracking data for dependencies and initialize watching on code that Revise depends on
-    @lock pkgdatas_lock begin
+    @lock revise_lock begin
         for mod in (CodeTracking, OrderedCollections, JuliaInterpreter, LoweredCodeUtils, Revise)
             id = PkgId(mod)
             pkgdata = parse_pkg_files(id)

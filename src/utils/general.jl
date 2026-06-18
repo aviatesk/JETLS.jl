@@ -287,10 +287,69 @@ end
 # is too wide for inline hints — call `type_depth_limit` directly. Two passes:
 # `maxdepth` first to cap structural depth, then `maxwidth` to cap textual
 # width. Passing `typemax(Int)` for either is the canonical "no limit".
+# `type_depth_limit` allocates even when it returns an unchanged string, so
+# guard each pass with the cheap condition that proves that pass unnecessary.
 function truncate_typstr(str::String, maxdepth::Int, maxwidth::Int)
-    str = Base.type_depth_limit(str, 0; maxdepth)
-    str = Base.type_depth_limit(str, maxwidth)
-    return str
+    if !typstr_within_depth_limit(str, maxdepth)
+        str = Base.type_depth_limit(str, 0; maxdepth)
+    end
+    lastindex(str) <= maxwidth && return str
+    limited = Base.type_depth_limit(str, maxwidth)
+    isempty(limited) || return limited
+    return truncate_flat_typstr(str, maxwidth)
+end
+
+function truncate_flat_typstr(str::String, maxwidth::Int)
+    maxwidth <= 1 && return "…"
+    nchars = length(str)
+    nchars <= maxwidth && return str
+    nkeep = maxwidth - 1
+    prefix_len = max(1, nkeep ÷ 2)
+    suffix_len = nkeep - prefix_len
+    prefix = first(str, prefix_len)
+    suffix = suffix_len == 0 ? "" : last(str, suffix_len)
+    return prefix * "…" * suffix
+end
+
+function typstr_within_depth_limit(str::String, maxdepth::Int)
+    maxdepth == typemax(Int) && return true
+    depth = 0
+    for c in str
+        if c == '{'
+            depth += 1
+            depth < maxdepth || return false
+        elseif c == '}'
+            depth -= 1
+        end
+    end
+    return true
+end
+
+function format_lattice_element_detail(@nospecialize(typ))
+    lattice_str = @something try_show_lattice_element(typ) begin
+        return failed_lattice_element_detail(typ)
+    end
+    return "```julia\n$lattice_str\n```"
+end
+
+function format_lattice_element_comment(@nospecialize(typ))
+    lattice_str = @something try_show_lattice_element(typ) begin
+        return "# " * failed_lattice_element_detail(typ)
+    end
+    return "# " * replace(lattice_str, '\n' => " ")
+end
+
+function try_show_lattice_element(@nospecialize(typ))
+    return try
+        sprint(show, typ)
+    catch
+        nothing
+    end
+end
+
+function failed_lattice_element_detail(@nospecialize(typ))
+    typ_typstr = sprint(show, typeof(typ))
+    return "Failed to display inferred extended lattice element of type `$typ_typstr`."
 end
 
 rlstrip(s::AbstractString, args...) = lstrip(rstrip(s, args...), args...)
@@ -321,20 +380,18 @@ end
 app_notfound_message(app::AbstractString) = "`$app` executable is not found on the `PATH`."
 
 function is_abstract_fieldtype(@nospecialize typ)
-    if typ isa Type
-        if typ isa UnionAll
-            # If field type is `UnionAll`, then it's always an abstract field type, e.g.
-            # `struct A; xs::Vector{<:Integer}; end`
-            return true
-        end
-        if isabstracttype(typ)
-            return true
-        end
-        if typ isa DataType
-            for i = 1:length(typ.parameters)
-                if is_abstract_fieldtype(typ.parameters[i])
-                    return true
-                end
+    if typ isa UnionAll
+        # If field type is `UnionAll`, then it's always an abstract field type, e.g.
+        # `struct A; xs::Vector{<:Integer}; end`
+        return true
+    end
+    if isabstracttype(typ)
+        return true
+    end
+    if typ isa DataType
+        for i = 1:length(typ.parameters)
+            if is_abstract_fieldtype(typ.parameters[i])
+                return true
             end
         end
     end

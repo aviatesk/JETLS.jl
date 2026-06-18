@@ -1,8 +1,12 @@
+@interface ClientInlayHintResolveOptions begin
+    "The properties that a client can resolve lazily."
+    properties::Vector{String}
+end
+
 """
 Inlay hint client capabilities.
 
-# Tags
-- since - 3.17.0
+- `@since` 3.17.0
 """
 @interface InlayHintClientCapabilities begin
     """
@@ -14,19 +18,13 @@ Inlay hint client capabilities.
     Indicates which properties a client can resolve lazily on an inlay
     hint.
     """
-    resolveSupport::Union{Nothing, @interface begin
-        """
-        The properties that a client can resolve lazily.
-        """
-        properties::Vector{String}
-    end} = nothing
+    resolveSupport::Union{Nothing, ClientInlayHintResolveOptions} = nothing
 end
 
 """
 Inlay hint options used during static registration.
 
-# Tags
-- since - 3.17.0
+- `@since` 3.17.0
 """
 @interface InlayHintOptions @extends WorkDoneProgressOptions begin
     """
@@ -39,8 +37,7 @@ end
 """
 Inlay hint options used during static or dynamic registration.
 
-# Tags
-- since - 3.17.0
+- `@since` 3.17.0
 """
 @interface InlayHintRegistrationOptions @extends InlayHintOptions, TextDocumentRegistrationOptions, StaticRegistrationOptions begin
 end
@@ -48,8 +45,7 @@ end
 """
 Inlay hint kinds.
 
-# Tags
-- since - 3.17.0
+- `@since` 3.17.0
 """
 @namespace InlayHintKind::Int begin
     """
@@ -67,8 +63,7 @@ end
 An inlay hint label part allows for interactive and composite labels
 of inlay hints.
 
-# Tags
-- since - 3.17.0
+- `@since` 3.17.0
 """
 @interface InlayHintLabelPart begin
     """
@@ -107,11 +102,19 @@ of inlay hints.
     command::Union{Nothing, Command} = nothing
 end
 
+# JETLS specific data structures for `data` field of `InlayHint`
+struct TypeInlayHintData
+    uri::URI
+    version::Int
+    firstByte::Int
+    lastByte::Int
+end
+export TypeInlayHintData
+
 """
 Inlay hint information.
 
-# Tags
-- since - 3.17.0
+- `@since` 3.17.0
 """
 @interface InlayHint begin
     """
@@ -178,14 +181,13 @@ Inlay hint information.
     A data entry field that is preserved on an inlay hint between
     a `textDocument/inlayHint` and a `inlayHint/resolve` request.
     """
-    data::Union{Nothing, LSPAny} = nothing
+    data::Union{Nothing, TypeInlayHintData} = nothing
 end
 
 """
 A parameter literal used in inlay hint requests.
 
-# Tags
-- since - 3.17.0
+- `@since` 3.17.0
 """
 @interface InlayHintParams @extends WorkDoneProgressParams begin
     """
@@ -204,8 +206,7 @@ The inlay hints request is sent from the client to the server to compute
 inlay hints for a given [text document, range] tuple that may be rendered
 in the editor in place with other text.
 
-# Tags
-- since - 3.17.0
+- `@since` 3.17.0
 """
 @interface InlayHintRequest @extends RequestMessage begin
     method::String = "textDocument/inlayHint"
@@ -232,8 +233,7 @@ textDocument.inlayHint.resolveSupport = { properties: ['label.location'] };
 then an inlay hint with a label part without a location needs to be resolved using the
 `inlayHint/resolve` request before it can be used.
 
-# Tags
-- since - 3.17.0
+- `@since` 3.17.0
 """
 @interface InlayHintResolveRequest @extends RequestMessage begin
     method::String = "inlayHint/resolve"
@@ -241,14 +241,13 @@ then an inlay hint with a label part without a location needs to be resolved usi
 end
 
 @interface InlayHintResolveResponse @extends ResponseMessage begin
-    result::Union{InlayHint, Nothing}
+    result::Union{InlayHint, Null, Nothing}
 end
 
 """
 Client workspace capabilities specific to inlay hints.
 
-# Tags
-- since - 3.17.0
+- `@since` 3.17.0
 """
 @interface InlayHintWorkspaceClientCapabilities begin
     """
@@ -271,8 +270,7 @@ This is useful if a server detects a configuration change which requires a re-ca
 of all inlay hints. Note that the client still has the freedom to delay the re-calculation
 of the inlay hints if for example an editor is currently not visible.
 
-# Tags
-- since - 3.17.0
+- `@since` 3.17.0
 """
 @interface InlayHintRefreshRequest @extends RequestMessage begin
     method::String = "workspace/inlayHint/refresh"

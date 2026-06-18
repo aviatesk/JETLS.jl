@@ -7,7 +7,7 @@ using JETLS.URIs2
 
 @testset "filepath2uri to string" begin
     # TODO Remove this Windows flag later, it is not in the original, but we need support for relative paths first
-    if Sys.iswindows()
+    @static if Sys.iswindows()
         @test filepath2uri("c:/win/path") |> string == "file:///c%3A/win/path"
         @test filepath2uri("C:/win/path") |> string == "file:///c%3A/win/path"
         @test filepath2uri("c:/win/path/") |> string == "file:///c%3A/win/path/"
@@ -16,7 +16,7 @@ using JETLS.URIs2
 end
 
 @testset "filepath2uri to string - Windows special" begin
-    if Sys.iswindows()
+    @static if Sys.iswindows()
         @test filepath2uri("c:\\win\\path") |> string == "file:///c%3A/win/path"
         @test filepath2uri("c:\\win/path") |> string == "file:///c%3A/win/path"
     # else TODO Put this else back in once we support these paths on Unix
@@ -26,7 +26,7 @@ end
 end
 
 @testset "uri2filepath to string - Windows special" begin
-    if Sys.iswindows()
+    @static if Sys.iswindows()
         @test uri2filepath(filepath2uri("c:\\win\\path")) == "c:\\win\\path"
         @test uri2filepath(filepath2uri("c:\\win/path")) == "c:\\win\\path"
 
@@ -49,7 +49,7 @@ end
 
     @test value.authority == "/home/ticino/desktop/cpluscplus/test.cpp"
     @test_broken value.path == "/"
-    if Sys.iswindows()
+    @static if Sys.iswindows()
         @test_broken uri2filepath(value) == "\\"
     else
         @test_broken uri2filepath(value) == "/"
@@ -77,7 +77,7 @@ end
     @test value.path == "/c:/test/me"
     @test value.fragment === nothing
     @test value.query=== nothing
-    @test uri2filepath(value) == (Sys.iswindows() ? "c:\\test\\me" : "c:/test/me")
+    @test uri2filepath(value) == (@static Sys.iswindows() ? "c:\\test\\me" : "c:/test/me")
 
     value = URI("file://shares/files/c%23/p.cs")
     @test value.scheme == "file"
@@ -85,7 +85,7 @@ end
     @test value.path == "/files/c#/p.cs"
     @test value.fragment === nothing
     @test value.query === nothing
-    @test uri2filepath(value) == (Sys.iswindows() ? "\\\\shares\\files\\c#\\p.cs" : "//shares/files/c#/p.cs")
+    @test uri2filepath(value) == (@static Sys.iswindows() ? "\\\\shares\\files\\c#\\p.cs" : "//shares/files/c#/p.cs")
 
     value = URI("file:///c:/Source/Z%C3%BCrich%20or%20Zurich%20(%CB%88zj%CA%8A%C9%99r%C9%AAk,/Code/resources/app/plugins/c%23/plugin.json")
     @test value.scheme == "file"

@@ -130,7 +130,7 @@ function find_executable_testsets(st0_top::SyntaxTreeC)
             return traversal_no_recurse
         elseif JS.kind(st0) === JS.K"macrocall" && JS.numchildren(st0) ≥ 2
             macroname = st0[1]
-            if hasproperty(macroname, :name_val) && macroname.name_val == "@testset"
+            if get_name_val(macroname) == "@testset"
                 if testset_description_node(st0) !== nothing
                     push!(testsets, st0)
                 end
@@ -162,35 +162,27 @@ function testrunner_code_lenses!(
                 title = "$TESTRUNNER_RERUN_TITLE $tsn $summary",
                 command = COMMAND_TESTRUNNER_RUN_TESTSET,
                 arguments = run_arguments)
-            push!(code_lenses, CodeLens(;
-                range,
-                command))
+            push!(code_lenses, CodeLens(; range, command))
         end
-        logs_arguments = Any[tsn, prev_result.logs]
+        logs_arguments = Any[uri, idx, tsn]
         let command = Command(;
                 title = TESTRUNNER_OPEN_LOGS_TITLE,
                 command = COMMAND_TESTRUNNER_OPEN_LOGS,
                 arguments = logs_arguments)
-            push!(code_lenses, CodeLens(;
-                range,
-                command))
+            push!(code_lenses, CodeLens(; range, command))
         end
         let command = Command(;
                 title = TESTRUNNER_CLEAR_RESULT_TITLE,
                 command = COMMAND_TESTRUNNER_CLEAR_RESULT,
                 arguments = clear_arguments)
-            push!(code_lenses, CodeLens(;
-                range,
-                command))
+            push!(code_lenses, CodeLens(; range, command))
         end
     else
         command = Command(;
             title = "$TESTRUNNER_RUN_TITLE $tsn",
             command = COMMAND_TESTRUNNER_RUN_TESTSET,
             arguments = run_arguments)
-        push!(code_lenses, CodeLens(;
-            range,
-            command))
+        push!(code_lenses, CodeLens(; range, command))
     end
     return code_lenses
 end
@@ -236,24 +228,20 @@ function testrunner_testset_code_actions!(
                 arguments = run_arguments)
             push!(code_actions, CodeAction(; title, command))
         end
-        logs_arguments = Any[tsn, prev_result.logs]
+        logs_arguments = Any[uri, idx, tsn]
         let title = TESTRUNNER_OPEN_LOGS_TITLE
             command = Command(;
                 title,
                 command = COMMAND_TESTRUNNER_OPEN_LOGS,
                 arguments = logs_arguments)
-            push!(code_actions, CodeAction(;
-                title,
-                command))
+            push!(code_actions, CodeAction(; title, command))
         end
         let title = TESTRUNNER_CLEAR_RESULT_TITLE
             command = Command(;
                 title,
                 command = COMMAND_TESTRUNNER_CLEAR_RESULT,
                 arguments = clear_arguments)
-            push!(code_actions, CodeAction(;
-                title,
-                command))
+            push!(code_actions, CodeAction(; title, command))
         end
     else
         title = "$TESTRUNNER_RUN_TITLE $tsn"
@@ -261,9 +249,7 @@ function testrunner_testset_code_actions!(
             title,
             command = COMMAND_TESTRUNNER_RUN_TESTSET,
             arguments = run_arguments)
-        push!(code_actions, CodeAction(;
-            title,
-            command))
+        push!(code_actions, CodeAction(; title, command))
     end
     return code_actions
 end
@@ -278,19 +264,18 @@ function testrunner_testcase_code_actions!(
             return traversal_no_recurse
         elseif JS.kind(st0) === JS.K"macrocall" && JS.numchildren(st0) ≥ 1
             macroname = st0[1]
-            if hasproperty(macroname, :name_val) && macroname.name_val::String in TEST_MACROS
+            if get_name_val(macroname) in TEST_MACROS
                 tcr = jsobj_to_range(st0, fi; adjust_last=1) # +1 to support cases like `@test ...│`
                 overlap(action_range, tcr) || return nothing
                 tcl = JS.source_line(st0)
                 tct = backtick(JS.sourcetext(st0))
                 run_arguments = Any[uri, tcl, tct]
                 title = "$TESTRUNNER_RUN_TITLE $tct"
-                push!(code_actions, CodeAction(;
+                command = Command(;
                     title,
-                    command = Command(;
-                        title,
-                        command = COMMAND_TESTRUNNER_RUN_TESTCASE,
-                        arguments = run_arguments)))
+                    command = COMMAND_TESTRUNNER_RUN_TESTCASE,
+                    arguments = run_arguments)
+                push!(code_actions, CodeAction(; title, command))
             end
         end
     end
@@ -411,12 +396,8 @@ function show_testrunner_result_in_message(server::Server, result::TestRunnerRes
     id = String(gensym(:ShowMessageRequest))
     addrequest!(server, id=>request_caller)
 
-    send(server, ShowMessageRequest(;
-        id,
-        params = ShowMessageRequestParams(;
-            type = msg_type,
-            message,
-            actions)))
+    params = ShowMessageRequestParams(; type = msg_type, message, actions)
+    send(server, ShowMessageRequest(; id, params))
 end
 
 function handle_test_runner_message_response2(
@@ -454,7 +435,7 @@ function handle_test_runner_message_response4(
                 show_error_message(server, error_msg)
             end
         elseif title == TESTRUNNER_OPEN_LOGS_TITLE
-            open_testsetinfo_logs!(server, testset_name, logs)
+            open_testsetinfo_logs!(server, testset_name, logs; source_uri=uri, testset_index=idx)
         elseif title == TESTRUNNER_CLEAR_RESULT_TITLE
             try_clear_testrunner_result!(server, uri, idx, testset_name)
         else
@@ -535,7 +516,7 @@ function _testrunner_run_testset(
     test_env_path = find_uri_env_path(server.state, uri)
     root_path = testrunner_root_path(server.state, uri)
     cmd = testrunner_cmd(executable, filepath, tsn, tsl, test_env_path, root_path)
-    source = JS.sourcetext(fi.parsed_stream)
+    source = String(document_text(fi))
     testrunnerproc = open(pipeline(cmd; stdin=IOBuffer(source)); read=true)
 
     result = try
@@ -585,6 +566,11 @@ function _testrunner_run_testset(
         # Simply show only the option to open logs
         show_testrunner_result_in_message(server, result, #=title=#tsn)
         return ret
+    end
+
+    if supports_text_document_content(server)
+        log_uri = testsetinfo_logs_content_uri(uri, idx, String(rlstrip(tsn, '"')))
+        update_text_document_content!(server, log_uri, result.logs)
     end
 
     if !isempty(result.diagnostics)
@@ -716,59 +702,61 @@ function _testrunner_run_testcase(
     return summary_testrunner_result(result)
 end
 
-struct ShowDocumentRequestCaller <: RequestCaller
-    uri::URI
-    logs::String
-    context::String
-end
+is_testsetinfo_logs_filename_unsafe(c::Char) =
+    isspace(c) || iscntrl(c) ||
+    c in ('%', '/', '\\', '?', '#', '<', '>', ':', '"', '|', '*')
 
-function open_testsetinfo_logs!(server::Server, tsn::String, logs::String)
-    tsn = rlstrip(tsn, '"')
-    if supports(server, :window, :showDocument, :support)
-        # Use `window/showDocument` to show logs in untitled editor if supported
-        untitled_name = "TestRunner_$tsn.log"
-        uri = URI(; scheme="untitled", path=untitled_name)
-        id = String(gensym(:ShowDocumentRequest))
-        context = "showing test logs"
-        addrequest!(server, id=>ShowDocumentRequestCaller(uri, logs, context))
-        send(server, ShowDocumentRequest(;
-            id,
-            params = ShowDocumentParams(;
-                uri,
-                takeFocus = true)))
-    else
-        # Fallback: save to temp file
-        temp_filename = "TestRunner_$(tsn)_$(getpid()).log"
-        temp_path = joinpath(mktempdir(; cleanup=false), temp_filename)
-        try
-            write(temp_path, logs)
-        catch err
-            return show_error_message(server, "Failed to save test logs: $(sprint(showerror, err))")
-        end
-        uri = filepath2uri(temp_path)
-        show_info_message(server, """
-        Test logs for $tsn saved to:
-
-        [$temp_path]($uri)
-        """)
-    end
-end
-
-function handle_show_document_response(
-        server::Server, msg::Dict{Symbol,Any}, request_caller::ShowDocumentRequestCaller
-    )
-    if handle_response_error(server, msg, "show document")
-    elseif haskey(msg, :result)
-        result = msg[:result] # ::ShowDocumentResult
-        if haskey(result, "success") && result["success"] === true
-            (; uri, logs, context) = request_caller
-            return set_document_content(server, uri, logs; context)
+# This builds a filesystem name, not a URI component. Keep Unicode names as-is
+# and let `filepath2uri` percent-encode the final path; putting literal `%XX`
+# escapes in the filename would show up as `%25XX` in `file:` links.
+function testsetinfo_logs_filename(tsn::AbstractString)
+    io = IOBuffer()
+    last_replaced = false
+    for c in tsn
+        if is_testsetinfo_logs_filename_unsafe(c)
+            if !last_replaced
+                print(io, '_')
+                last_replaced = true
+            end
         else
-            show_error_message(server, "Failed to open document for viewing test logs")
+            print(io, c)
+            last_replaced = false
         end
-    else
-        show_error_message(server, "Unexpected response from show document request")
     end
+    name = strip(String(take!(io)), '_')
+    isempty(name) && (name = "testset")
+    length(name) > 80 && (name = first(name, 80))
+    return "TestRunner_$name.log"
+end
+
+function testsetinfo_logs_content_uri(source_uri::URI, idx::Int, tsn::AbstractString)
+    query = LSP.URIs2.escapeuri((source=string(source_uri), index=idx, name=tsn))
+    return URI(; scheme = TESTRUNNER_LOGS_SCHEME, path = "/testrunner/logs", query)
+end
+
+# Look up the logs of the testset at `idx` in `uri`. Returns `nothing` if the file or
+# its result is gone (e.g. cleared, or the file changed since the code lens / action
+# that carries this `idx` was generated), so the caller can degrade gracefully.
+function get_testsetinfo_logs(state::ServerState, uri::URI, idx::Int)
+    fi = @something get_file_info(state, uri) return nothing
+    is_testsetinfo_valid(fi, idx) || return nothing
+    testsetinfo = fi.testsetinfos[idx]
+    isdefined(testsetinfo, :result) || return nothing
+    return testsetinfo.result.result.logs
+end
+
+function open_testsetinfo_logs!(
+        server::Server, tsn::String, logs::String;
+        source_uri::Union{Nothing,URI} = nothing,
+        testset_index::Union{Nothing,Int} = nothing
+    )
+    testset_name = String(rlstrip(tsn, '"'))
+    content_uri = source_uri !== nothing && testset_index !== nothing ?
+        testsetinfo_logs_content_uri(source_uri, testset_index, testset_name) : nothing
+    return open_text_document_content!(server, content_uri,
+        #=label=# "test logs for `$testset_name`",
+        #=tempfile_name=# testsetinfo_logs_filename(testset_name),
+        ProduceText(() -> logs))
 end
 
 struct TestRunnerTestsetProgressCaller <: RequestCaller
@@ -779,7 +767,7 @@ struct TestRunnerTestsetProgressCaller <: RequestCaller
     filepath::String
     token::ProgressToken
 end
-cancellable_token(rc::TestRunnerTestsetProgressCaller) = rc.token
+cancellable_token_impl(rc::TestRunnerTestsetProgressCaller) = rc.token
 
 """
     testrunner_run_testset_from_uri(server::Server, uri::URI, idx::Int) -> Union{Nothing, String}
@@ -826,14 +814,14 @@ struct TestRunnerTestcaseProgressCaller <: RequestCaller
     source::String
     token::ProgressToken
 end
-cancellable_token(rc::TestRunnerTestcaseProgressCaller) = rc.token
+cancellable_token_impl(rc::TestRunnerTestcaseProgressCaller) = rc.token
 
 function testrunner_run_testcase_from_uri(server::Server, uri::URI, tcl::Int, tct::String)
     fi = @something get_file_info(server.state, uri) begin
         return "File is no longer available in the editor"
     end
     filepath = uri2filename(uri)
-    source = JS.sourcetext(fi.parsed_stream)
+    source = String(document_text(fi))
 
     if supports(server, :window, :workDoneProgress)
         id = String(gensym(:WorkDoneProgressCreateRequest_testrunner))
@@ -842,7 +830,7 @@ function testrunner_run_testcase_from_uri(server::Server, uri::URI, tcl::Int, tc
         params = WorkDoneProgressCreateParams(; token)
         send(server, WorkDoneProgressCreateRequest(; id, params))
     else
-        testrunner_run_testcase(server, uri, tcl, tct, filepath, String(source))
+        testrunner_run_testcase(server, uri, tcl, tct, filepath, source)
     end
     return nothing
 end
@@ -879,6 +867,11 @@ function try_clear_testrunner_result!(server::Server, uri::URI, idx::Int, tsn::S
         Base.PersistentDict(cache, uri => new_fi), true
     end
     updated || return nothing
+
+    if supports_text_document_content(server)
+        log_uri = testsetinfo_logs_content_uri(uri, idx, String(rlstrip(tsn, '"')))
+        delete_text_document_content!(server, log_uri)
+    end
 
     if clear_extra_diagnostics!(server, TestsetDiagnosticsKey(uri, tsn, idx))
         notify_diagnostics!(server; ensure_cleared=uri)

@@ -2,7 +2,7 @@ isgreedy(::Type{T}) where {T <: AbstractString} = true
 isgreedy(::Type{Symbol}) = true
 isgreedy(T) = false
 
-function typeparser(::AbstractConf{T}, source, pos, len, b, code, pl, opts) where {T <: AbstractString}
+@inline function typeparser(::AbstractConf{T}, source, pos, len, b, code, pl, opts) where {T <: AbstractString}
     if quoted(code)
         code |= OK
         return findendquoted(T, source, pos, len, b, code, pl, true, opts.cq, opts.e, opts.flags.stripquoted)

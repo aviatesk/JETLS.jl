@@ -101,30 +101,32 @@ diagnostic, you'll find:
 
 Here is a summary table of the diagnostics explained in this section:
 
-| Code                                                                                             | Default Severity      | Source        | Description                                        |
-| ------------------------------------------------------------------------------------------------ | --------------------- | ------------- | -------------------------------------------------- |
-| [`syntax/parse-error`](@ref diagnostic/reference/syntax/parse-error)                             | `Error`               | `JETLS/live`  | Syntax parsing errors detected by JuliaSyntax.jl   |
-| [`lowering/error`](@ref diagnostic/reference/lowering/error)                                     | `Error`               | `JETLS/live`  | General lowering errors                            |
-| [`lowering/macro-expansion-error`](@ref diagnostic/reference/lowering/macro-expansion-error)     | `Error/Warning`       | `JETLS/live`  | Issues detected during macro expansion             |
-| [`lowering/undef-global-var`](@ref diagnostic/reference/lowering/undef-global-var)               | `Warning`             | `JETLS/live`  | References to undefined global variables           |
-| [`lowering/undef-local-var`](@ref diagnostic/reference/lowering/undef-local-var)                 | `Warning/Information` | `JETLS/live`  | References to undefined local variables            |
-| [`lowering/ambiguous-soft-scope`](@ref diagnostic/reference/lowering/ambiguous-soft-scope)       | `Warning`             | `JETLS/live`  | Assignment in soft scope shadows a global variable |
-| [`lowering/captured-boxed-variable`](@ref diagnostic/reference/lowering/captured-boxed-variable) | `Information`         | `JETLS/live`  | Variables captured by closures that require boxing |
-| [`lowering/unused-argument`](@ref diagnostic/reference/lowering/unused-argument)                 | `Information`         | `JETLS/live`  | Function arguments that are never used             |
-| [`lowering/unused-local`](@ref diagnostic/reference/lowering/unused-local)                       | `Information`         | `JETLS/live`  | Local variables that are never used                |
-| [`lowering/unused-assignment`](@ref diagnostic/reference/lowering/unused-assignment)             | `Information`         | `JETLS/live`  | Assignments whose values are never read            |
-| [`lowering/unused-import`](@ref diagnostic/reference/lowering/unused-import)                     | `Information`         | `JETLS/live`  | Imported names that are never used                 |
-| [`lowering/unreachable-code`](@ref diagnostic/reference/lowering/unreachable-code)               | `Information`         | `JETLS/live`  | Code after a block terminator that is never reached  |
-| [`lowering/unsorted-import-names`](@ref diagnostic/reference/lowering/unsorted-import-names)     | `Hint`                | `JETLS/live`  | Import/export names not sorted alphabetically      |
-| [`toplevel/error`](@ref diagnostic/reference/toplevel/error)                                     | `Error`               | `JETLS/save`  | Errors during code loading                         |
-| [`toplevel/method-overwrite`](@ref diagnostic/reference/toplevel/method-overwrite)               | `Warning`             | `JETLS/save`  | Method definitions that overwrite previous ones    |
-| [`toplevel/abstract-field`](@ref diagnostic/reference/toplevel/abstract-field)                   | `Information`         | `JETLS/save`  | Struct fields with abstract types                  |
-| [`inference/undef-global-var`](@ref diagnostic/reference/inference/undef-global-var)             | `Warning`             | `JETLS/save`  | References to undefined global variables           |
-| [`inference/field-error`](@ref diagnostic/reference/inference/field-error)                       | `Warning`             | `JETLS/save`  | Access to non-existent struct fields               |
-| [`inference/bounds-error`](@ref diagnostic/reference/inference/bounds-error)                     | `Warning`             | `JETLS/save`  | Out-of-bounds field access by index                |
-| [`inference/method-error`](@ref diagnostic/reference/inference/method-error)                     | `Warning`             | `JETLS/save`  | No matching method found for function calls        |
-| [`inference/non-boolean-cond`](@ref diagnostic/reference/inference/non-boolean-cond)             | `Warning`             | `JETLS/save`  | Non-boolean value used in boolean context          |
-| [`testrunner/test-failure`](@ref diagnostic/reference/testrunner/test-failure)                   | `Error`               | `JETLS/extra` | Test failures from TestRunner integration          |
+| Code                                                                                                           | Default Severity      | Source        | Description                                            |
+| -------------------------------------------------------------------------------------------------------------- | --------------------- | ------------- | ------------------------------------------------------ |
+| [`syntax/parse-error`](@ref diagnostic/reference/syntax/parse-error)                                           | `Error`               | `JETLS/live`  | Syntax parsing errors detected by JuliaSyntax.jl       |
+| [`lowering/error`](@ref diagnostic/reference/lowering/error)                                                   | `Error`               | `JETLS/live`  | General lowering errors                                |
+| [`lowering/macro-expansion-error`](@ref diagnostic/reference/lowering/macro-expansion-error)                   | `Error/Warning`       | `JETLS/live`  | Issues detected during macro expansion                 |
+| [`lowering/undef-global-var`](@ref diagnostic/reference/lowering/undef-global-var)                             | `Warning`             | `JETLS/live`  | References to undefined global variables               |
+| [`lowering/undef-local-var`](@ref diagnostic/reference/lowering/undef-local-var)                               | `Warning/Information` | `JETLS/live`  | References to undefined local variables                |
+| [`lowering/ambiguous-soft-scope`](@ref diagnostic/reference/lowering/ambiguous-soft-scope)                     | `Warning`             | `JETLS/live`  | Assignment in soft scope shadows a global variable     |
+| [`lowering/captured-boxed-variable`](@ref diagnostic/reference/lowering/captured-boxed-variable)               | `Information`         | `JETLS/live`  | Variables captured by closures that require boxing     |
+| [`lowering/unconstrained-static-parameter`](@ref diagnostic/reference/lowering/unconstrained-static-parameter) | `Warning`             | `JETLS/live`  | Static parameters not used in function parameter types |
+| [`lowering/unused-argument`](@ref diagnostic/reference/lowering/unused-argument)                               | `Information`         | `JETLS/live`  | Function arguments that are never used                 |
+| [`lowering/unused-local`](@ref diagnostic/reference/lowering/unused-local)                                     | `Information`         | `JETLS/live`  | Local variables that are never used                    |
+| [`lowering/unused-assignment`](@ref diagnostic/reference/lowering/unused-assignment)                           | `Information`         | `JETLS/live`  | Assignments whose values are never read                |
+| [`lowering/unused-import`](@ref diagnostic/reference/lowering/unused-import)                                   | `Information`         | `JETLS/live`  | Imported names that are never used                     |
+| [`lowering/unreachable-code`](@ref diagnostic/reference/lowering/unreachable-code)                             | `Information`         | `JETLS/live`  | Code after a block terminator that is never reached    |
+| [`lowering/inactive-code`](@ref diagnostic/reference/lowering/inactive-code)                                   | `Hint`                | `JETLS/live`  | Code excluded by `@static` in the current environment  |
+| [`lowering/unsorted-import-names`](@ref diagnostic/reference/lowering/unsorted-import-names)                   | `Hint`                | `JETLS/live`  | Import/export names not sorted alphabetically          |
+| [`toplevel/error`](@ref diagnostic/reference/toplevel/error)                                                   | `Error`               | `JETLS/save`  | Errors during code loading                             |
+| [`toplevel/method-overwrite`](@ref diagnostic/reference/toplevel/method-overwrite)                             | `Warning`             | `JETLS/save`  | Method definitions that overwrite previous ones        |
+| [`toplevel/abstract-field`](@ref diagnostic/reference/toplevel/abstract-field)                                 | `Information`         | `JETLS/save`  | Struct fields with abstract types                      |
+| [`inference/undef-global-var`](@ref diagnostic/reference/inference/undef-global-var)                           | `Warning`             | `JETLS/save`  | References to undefined global variables               |
+| [`inference/field-error`](@ref diagnostic/reference/inference/field-error)                                     | `Warning`             | `JETLS/save`  | Access to non-existent struct fields                   |
+| [`inference/bounds-error`](@ref diagnostic/reference/inference/bounds-error)                                   | `Warning`             | `JETLS/save`  | Out-of-bounds field access by index                    |
+| [`inference/method-error`](@ref diagnostic/reference/inference/method-error)                                   | `Warning`             | `JETLS/save`  | No matching method found for function calls            |
+| [`inference/non-boolean-cond`](@ref diagnostic/reference/inference/non-boolean-cond)                           | `Warning`             | `JETLS/save`  | Non-boolean value used in boolean context              |
+| [`testrunner/test-failure`](@ref diagnostic/reference/testrunner/test-failure)                                 | `Error`               | `JETLS/extra` | Test failures from TestRunner integration              |
 
 ### [Syntax diagnostic (`syntax/*`)](@id diagnostic/reference/syntax)
 
@@ -514,6 +516,41 @@ end
     generates `Core.Box` do not necessarily match the cases where JETLS reports
     captured boxes.
 
+#### [Unconstrained static parameter (`lowering/unconstrained-static-parameter`)](@id diagnostic/reference/lowering/unconstrained-static-parameter)
+
+**Default severity**: `Warning`
+
+Static parameters that are declared by a method but do not appear in the type
+of any function parameter. Such a type variable cannot be deduced when the
+method is called and may be undefined when the method body or return type
+annotation refers to it. This mirrors the warning Julia itself prints when
+evaluating such a method definition.
+
+Example:
+
+```julia
+f(::T) where {T,S} = S  # Method definition declares type variable `S` but does not use it in the type of any function parameter
+                        # (JETLS lowering/unconstrained-static-parameter)
+```
+
+This diagnostic is about whether the type variable can be deduced at the call
+site, not whether the static parameter is referenced in the method body. A
+static parameter that appears in a function parameter type is not reported,
+even if the body does not use it:
+
+```julia
+f(::T) where T = nothing  # OK: `T` appears in a function parameter type
+```
+
+Bounds on constrained type variables are also considered, but a bound reference
+only constrains type variables declared earlier in the `where` clause:
+
+```julia
+f(::T) where {S,T<:S} = S  # OK: `S` constrains the dispatched type variable `T`
+f(::T) where {T<:S,S} = S  # Method definition declares type variable `S` but does not use it in the type of any function parameter
+                           # (JETLS lowering/unconstrained-static-parameter)
+```
+
 #### [Unused argument (`lowering/unused-argument`)](@id diagnostic/reference/lowering/unused-argument)
 
 **Default severity**: `Information`
@@ -792,6 +829,34 @@ end
     produce incorrect results.
     Such overloading is extremely unlikely in practice, and this possibility is
     accepted as a trade-off for better diagnostics.
+
+#### [Inactive code (`lowering/inactive-code`)](@id diagnostic/reference/lowering/inactive-code)
+
+**Default severity**: `Hint`
+
+Reported on `@static` branches that are not taken in the current environment.
+JETLS evaluates `@static` conditions during analysis, so only the branch taken
+on the analyzing machine (its OS, Julia version, etc.) is analyzed; the other
+branches are excluded entirely, meaning LSP features such as diagnostics, hover,
+and inlay hints are unavailable inside them. The inactive region is marked with
+the `Unnecessary` tag,[^unnecessary_tag] so editors render it grayed out.
+
+Example (analyzed on a non-Windows machine):
+
+```julia
+function home_dir()
+    @static if Sys.iswindows()
+        ENV["USERPROFILE"]  # Inactive `@static` branch (condition evaluated to `false`)
+                            # (JETLS lowering/inactive-code)
+    else
+        ENV["HOME"]
+    end
+end
+```
+
+Unlike [`lowering/unreachable-code`](@ref diagnostic/reference/lowering/unreachable-code),
+this does not indicate a problem: the branch is intentionally inactive here
+and may be active in other environments, so no removal action is offered.
 
 #### [Unsorted import names (`lowering/unsorted-import-names`)](@id diagnostic/reference/lowering/unsorted-import-names)
 

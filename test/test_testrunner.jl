@@ -2,7 +2,7 @@ module test_testrunner
 
 using Test
 using JETLS
-using JETLS: JS, JL
+using JETLS: JL, JS
 using JETLS.LSP
 using JETLS.LSP.URIs2
 
@@ -95,6 +95,81 @@ end
     end
 end
 
+@testset "testsetinfo_logs_filename" begin
+    let filename = JETLS.testsetinfo_logs_filename("simple")
+        @test filename == "TestRunner_simple.log"
+    end
+
+    let filename = JETLS.testsetinfo_logs_filename("macro expansion content")
+        @test startswith(filename, "TestRunner_")
+        @test endswith(filename, ".log")
+        @test !occursin('%', filename)
+    end
+
+    let filename = JETLS.testsetinfo_logs_filename("a/b ?#%\n")
+        @test startswith(filename, "TestRunner_")
+        @test endswith(filename, ".log")
+        @test filename != "TestRunner_.log"
+        @test !any(c -> occursin(c, filename), ('/', '\\', '%', '?', '#', '\n'))
+    end
+
+    let filename = JETLS.testsetinfo_logs_filename("日本語")
+        @test startswith(filename, "TestRunner_")
+        @test endswith(filename, ".log")
+        @test occursin("日本語", filename)
+        @test !occursin('%', filename)
+    end
+
+    let filename = JETLS.testsetinfo_logs_filename(repeat("a", 100))
+        @test startswith(filename, "TestRunner_")
+        @test endswith(filename, ".log")
+        @test length(filename) <= length("TestRunner_") + 80 + length(".log")
+    end
+end
+
+@testset "testsetinfo_logs_content" begin
+    let uri = URI("file:///runtests.jl"), testset_name = "日本語"
+        log_uri = JETLS.testsetinfo_logs_content_uri(uri, 1, testset_name)
+        @test log_uri == JETLS.testsetinfo_logs_content_uri(uri, 1, testset_name)
+        @test log_uri != JETLS.testsetinfo_logs_content_uri(uri, 2, testset_name)
+        @test log_uri.scheme == JETLS.TESTRUNNER_LOGS_SCHEME
+        @test log_uri.path == "/testrunner/logs"
+    end
+
+    let server = JETLS.Server(), uri = URI(; scheme=JETLS.TESTRUNNER_LOGS_SCHEME, path="/test")
+        JETLS.update_text_document_content!(server, uri, "old logs")
+        @test JETLS.get_text_document_content(server.state, uri) == "old logs"
+        JETLS.mark_text_document_content_opened!(server, uri)
+        JETLS.update_text_document_content!(server, uri, "new logs")
+        @test JETLS.get_text_document_content(server.state, uri) == "new logs"
+        @test JETLS.load(server.state.text_document_content_cache)[uri].opened
+        JETLS.mark_text_document_content_closed!(server, uri)
+        @test !JETLS.load(server.state.text_document_content_cache)[uri].opened
+        JETLS.delete_text_document_content!(server, uri)
+        @test JETLS.get_text_document_content(server.state, uri) === nothing
+    end
+end
+
+@testset "jetls document synchronization (track open/close, no Julia analysis)" begin
+    # Spec-conformant clients may sync `jetls:` virtual documents. The Julia-only
+    # sync path must not run for them (no crash on the non-`julia` languageId, no
+    # `FileInfo` pollution); instead open/close is tracked to drive content refreshes.
+    server = JETLS.Server()
+    juri = URI(; scheme=JETLS.TESTRUNNER_LOGS_SCHEME, path="/testrunner/logs", query="source=x&index=1&name=ts")
+    JETLS.update_text_document_content!(server, juri, "logs\n")
+
+    open_msg = DidOpenTextDocumentNotification(; params = DidOpenTextDocumentParams(;
+        textDocument = TextDocumentItem(; uri=juri, languageId="log", version=1, text="logs\n")))
+    @test JETLS.handle_DidOpenTextDocumentNotification(server, open_msg) === nothing
+    @test JETLS.get_file_info(server.state, juri) === nothing
+    @test JETLS.load(server.state.text_document_content_cache)[juri].opened
+
+    close_msg = DidCloseTextDocumentNotification(; params = DidCloseTextDocumentParams(;
+        textDocument = TextDocumentIdentifier(; uri=juri)))
+    @test JETLS.handle_DidCloseTextDocumentNotification(server, close_msg) === nothing
+    @test !JETLS.load(server.state.text_document_content_cache)[juri].opened
+end
+
 @testset "testrunner_code_lenses" begin
     let server = JETLS.Server()
         test_code = """
@@ -151,8 +226,11 @@ end
         logs_lens = code_lenses[2]
         @test logs_lens.command.title == JETLS.TESTRUNNER_OPEN_LOGS_TITLE
         @test logs_lens.command.command == JETLS.COMMAND_TESTRUNNER_OPEN_LOGS
-        @test length(logs_lens.command.arguments) == 2
-        @test logs_lens.command.arguments[1] == tsn1
+        @test logs_lens.command.arguments == [uri, 1, tsn1]
+        # logs are looked up server-side rather than carried in the command arguments
+        @test JETLS.get_testsetinfo_logs(server.state, uri, 1) == result.logs
+        @test JETLS.get_testsetinfo_logs(server.state, uri, 2) === nothing
+        @test JETLS.get_testsetinfo_logs(server.state, URI("file:///none.jl"), 1) === nothing
 
         clear_lens = code_lenses[3]
         @test clear_lens.command.title == JETLS.TESTRUNNER_CLEAR_RESULT_TITLE
@@ -287,8 +365,7 @@ end
 
         @test code_actions[2].title == JETLS.TESTRUNNER_OPEN_LOGS_TITLE
         @test code_actions[2].command.command == JETLS.COMMAND_TESTRUNNER_OPEN_LOGS
-        @test length(code_actions[2].command.arguments) == 2
-        @test code_actions[2].command.arguments[1] == tsn
+        @test code_actions[2].command.arguments == [uri, 1, tsn]
 
         @test code_actions[3].title == JETLS.TESTRUNNER_CLEAR_RESULT_TITLE
         @test code_actions[3].command.command == JETLS.COMMAND_TESTRUNNER_CLEAR_RESULT
@@ -318,7 +395,6 @@ end
 
         uri = URI("file://runtests.jl")
         fi = JETLS.cache_file_info!(server, uri, 1, test_code)
-        testsetinfos = fi.testsetinfos
 
         # Test action on standalone @test (outside any testset)
         standalone_range = LSP.Range(;

@@ -28,7 +28,7 @@ function uri2filepath(uri::URI)
         value = path
     end
 
-    if Sys.iswindows()
+    @static if Sys.iswindows()
         value = replace(value, '/' => '\\')
     end
 
@@ -45,7 +45,16 @@ function get_unsaved_scheme(filename::AbstractString)
     return nothing
 end
 
-isunsaveduri(uri::URI) = uri.scheme == "untitled" || uri.scheme == "buffer"
+"""
+    UNSAVED_DOCUMENT_SCHEMES
+
+URI schemes editors use for in-memory/unsaved buffers. LSP has no first-class representation
+for unsaved documents, so each client picks its own scheme: `untitled:` (VSCode convention)
+and `buffer:` (SublimeText convention).
+"""
+const UNSAVED_DOCUMENT_SCHEMES = ("untitled", "buffer")
+
+isunsaveduri(uri::URI) = uri.scheme in UNSAVED_DOCUMENT_SCHEMES
 
 function filename2uri(filename::AbstractString)
     unsaved_scheme = get_unsaved_scheme(filename)

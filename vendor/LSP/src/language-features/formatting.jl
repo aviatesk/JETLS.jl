@@ -28,21 +28,21 @@ Value-object describing what options formatting should use.
     """
     Trim trailing whitespace on a line.
 
-    @since 3.15.0
+    - @since 3.15.0
     """
     trimTrailingWhitespace::Union{Nothing, Bool} = nothing
 
     """
     Insert a newline character at the end of the file if one does not exist.
 
-    @since 3.15.0
+    - @since 3.15.0
     """
     insertFinalNewline::Union{Nothing, Bool} = nothing
 
     """
     Trim all newlines after the final newline at the end of the file.
 
-    @since 3.15.0
+    - @since 3.15.0
     """
     trimFinalNewlines::Union{Nothing, Bool} = nothing
 end
@@ -77,9 +77,22 @@ end
     Whether formatting supports dynamic registration.
     """
     dynamicRegistration::Union{Nothing, Bool} = nothing
+
+    """
+    Whether the client supports formatting multiple ranges at once.
+
+    - @since 3.18.0
+    """
+    rangesSupport::Union{Nothing, Bool} = nothing
 end
 
 @interface DocumentRangeFormattingOptions @extends WorkDoneProgressOptions begin
+    """
+    Whether the server supports formatting multiple ranges at once.
+
+    - @since 3.18.0
+    """
+    rangesSupport::Union{Nothing, Bool} = nothing
 end
 
 @interface DocumentRangeFormattingRegistrationOptions @extends TextDocumentRegistrationOptions, DocumentRangeFormattingOptions begin
@@ -112,6 +125,32 @@ format a given range in a document.
 end
 
 @interface DocumentRangeFormattingResponse @extends ResponseMessage begin
+    result::Union{Vector{TextEdit}, Null, Nothing}
+end
+
+@interface DocumentRangesFormattingParams @extends WorkDoneProgressParams begin
+    """
+    The document to format.
+    """
+    textDocument::TextDocumentIdentifier
+
+    """
+    The ranges to format.
+    """
+    ranges::Vector{Range}
+
+    """
+    The format options.
+    """
+    options::FormattingOptions
+end
+
+@interface DocumentRangesFormattingRequest @extends RequestMessage begin
+    method::String = "textDocument/rangesFormatting"
+    params::DocumentRangesFormattingParams
+end
+
+@interface DocumentRangesFormattingResponse @extends ResponseMessage begin
     result::Union{Vector{TextEdit}, Null, Nothing}
 end
 

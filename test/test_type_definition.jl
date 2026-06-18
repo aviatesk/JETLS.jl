@@ -116,7 +116,8 @@ end
 
         # `do`-block calls — JuliaSyntax extends the call's byte range to the
         # closing `end`, so `func() do ... end│` resolves to the call's return
-        # type just like `func()│`.
+        # type just like `func()│`. The untyped `do x` refines from its call
+        # sites, so the result is the concrete `Vector{Int}`.
         @test with_find_type_definition("""
                 function f()
                     map([1,2,3]) do x
@@ -125,7 +126,7 @@ end
                 end
             """) do _, result, _
             @test result !== null
-            vec_files = base_method_files(Vector)
+            vec_files = base_method_files(Vector{Int})
             @test all(loc -> JETLS.uri2filepath(loc.uri) in vec_files, result)
             return 1
         end == 1

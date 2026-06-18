@@ -1,8 +1,7 @@
 """
 A set of predefined token types.
 
-# Tags
-- since - 3.16.0
+- `@since` 3.16.0
 """
 @namespace SemanticTokenTypes::String begin
     namespace = "namespace"
@@ -32,8 +31,7 @@ A set of predefined token types.
     regexp = "regexp"
     operator = "operator"
     """
-    # Tags
-    - since - 3.17.0
+    - `@since` 3.17.0
     """
     decorator = "decorator"
 end
@@ -41,8 +39,7 @@ end
 """
 A set of predefined token modifiers.
 
-# Tags
-- since - 3.16.0
+- `@since` 3.16.0
 """
 @namespace SemanticTokenModifiers::String begin
     declaration = "declaration"
@@ -60,8 +57,7 @@ end
 """
 The token format.
 
-# Tags
-- since - 3.16.0
+- `@since` 3.16.0
 """
 @namespace TokenFormat::String begin
     Relative = "relative"
@@ -79,6 +75,28 @@ end
     tokenModifiers::Vector{String}
 end
 
+@interface ClientSemanticTokensRequestFullDelta begin
+    """
+    The client will send the `textDocument/semanticTokens/full/delta` request
+    if the server provides a corresponding handler.
+    """
+    delta::Union{Nothing, Bool} = nothing
+end
+
+@interface ClientSemanticTokensRequestOptions begin
+    """
+    The client will send the `textDocument/semanticTokens/range` request
+    if the server provides a corresponding handler.
+    """
+    range::Union{Nothing, Bool, @interface begin end} = nothing
+
+    """
+    The client will send the `textDocument/semanticTokens/full` request
+    if the server provides a corresponding handler.
+    """
+    full::Union{Nothing, Bool, ClientSemanticTokensRequestFullDelta} = nothing
+end
+
 @interface SemanticTokensClientCapabilities begin
     """
     Whether implementation supports dynamic registration. If this is set to
@@ -92,25 +110,7 @@ end
     Which requests the client supports and might send to the server
     depending on the server's capability.
     """
-    requests::@interface begin
-        """
-        The client will send the `textDocument/semanticTokens/range` request
-        if the server provides a corresponding handler.
-        """
-        range::Union{Nothing, Bool, @interface begin end} = nothing
-
-        """
-        The client will send the `textDocument/semanticTokens/full` request
-        if the server provides a corresponding handler.
-        """
-        full::Union{Nothing, Bool, @interface begin
-            """
-            The client will send the `textDocument/semanticTokens/full/delta`
-            request if the server provides a corresponding handler.
-            """
-            delta::Union{Nothing, Bool} = nothing
-        end} = nothing
-    end
+    requests::ClientSemanticTokensRequestOptions
 
     """
     The token types that the client supports.
@@ -143,8 +143,7 @@ end
     ErrorCodes.ServerCancelled. If a server does the client
     needs to retrigger the request.
 
-    # Tags
-    - since - 3.17.0
+    - `@since` 3.17.0
     """
     serverCancelSupport::Union{Nothing, Bool} = nothing
 
@@ -158,10 +157,17 @@ end
     If the value is `undefined` then the client behavior is not
     specified.
 
-    # Tags
-    - since - 3.17.0
+    - `@since` 3.17.0
     """
     augmentsSyntaxTokens::Union{Nothing, Bool} = nothing
+end
+
+"""
+Semantic tokens options to support deltas for full documents.
+"""
+@interface SemanticTokensFullDelta begin
+    "The server supports deltas for full documents."
+    delta::Union{Nothing, Bool} = nothing
 end
 
 @interface SemanticTokensOptions @extends WorkDoneProgressOptions begin
@@ -179,12 +185,7 @@ end
     """
     Server supports providing semantic tokens for a full document.
     """
-    full::Union{Nothing, Bool, @interface begin
-        """
-        The server supports deltas for full documents.
-        """
-        delta::Union{Nothing, Bool} = nothing
-    end} = nothing
+    full::Union{Nothing, Bool, SemanticTokensFullDelta} = nothing
 end
 
 @interface SemanticTokensRegistrationOptions @extends TextDocumentRegistrationOptions, SemanticTokensOptions, StaticRegistrationOptions begin
@@ -220,8 +221,7 @@ end
 The request is sent from the client to the server to resolve semantic tokens
 for a given file.
 
-# Tags
-- since - 3.16.0
+- `@since` 3.16.0
 """
 @interface SemanticTokensFullRequest @extends RequestMessage begin
     method::String = "textDocument/semanticTokens/full"
@@ -280,8 +280,7 @@ end
 The request is sent from the client to the server to resolve semantic token
 delta for a given file.
 
-# Tags
-- since - 3.16.0
+- `@since` 3.16.0
 """
 @interface SemanticTokensDeltaRequest @extends RequestMessage begin
     method::String = "textDocument/semanticTokens/full/delta"
@@ -308,8 +307,7 @@ end
 The request is sent from the client to the server to resolve semantic tokens
 for a range in a given file.
 
-# Tags
-- since - 3.16.0
+- `@since` 3.16.0
 """
 @interface SemanticTokensRangeRequest @extends RequestMessage begin
     method::String = "textDocument/semanticTokens/range"
@@ -323,8 +321,7 @@ end
 """
 Client workspace capabilities specific to semantic tokens.
 
-# Tags
-- since - 3.16.0
+- `@since` 3.16.0
 """
 @interface SemanticTokensWorkspaceClientCapabilities begin
     """
@@ -344,8 +341,7 @@ The `workspace/semanticTokens/refresh` request is sent from the server to the cl
 Servers can use it to ask clients to refresh the editors for which this server provides
 semantic tokens.
 
-# Tags
-- since - 3.16.0
+- `@since` 3.16.0
 """
 @interface SemanticTokensRefreshRequest @extends RequestMessage begin
     method::String = "workspace/semanticTokens/refresh"

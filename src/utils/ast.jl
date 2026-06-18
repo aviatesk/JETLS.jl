@@ -21,6 +21,16 @@ function build_syntax_tree(fi::FileInfo)
     return copy_syntax_tree(fi.syntax_tree0)
 end
 
+has_name_val(st::SyntaxTreeC) = JS.hasattr(st, :name_val)
+get_name_val(st::SyntaxTreeC, default=nothing) = has_name_val(st) ? st.name_val::String : default
+name_val(st::SyntaxTreeC) = st.name_val::String
+
+var_id(st::SyntaxTreeC) = st.var_id::JL.IdTag
+
+get_source_text(ps::JS.ParseStream) = JS.sourcetext(JS.SourceFile(ps))
+document_text(fi::FileInfo) = get_source_text(fi.parsed_stream)
+document_range(fi::FileInfo) = jsobj_to_range(fi.parsed_stream, fi)
+
 @static if JL.DEBUG
     function ensure_jl_source_attr!(graph::JS.SyntaxGraph)
         attrs = getfield(graph, :attributes)
@@ -50,10 +60,10 @@ function _without_kinds(st::SyntaxTreeC, kinds::Tuple{Vararg{JS.Kind}})
     end
     new_children = JS.SyntaxList(JS.syntax_graph(st))
     changed = false
-    for c in JS.children(st)
-        nc, cc = _without_kinds(c, kinds)
-        changed |= cc
-        isnothing(nc) || push!(new_children, nc)
+    for child in JS.children(st)
+        new_child, child_changed = _without_kinds(child, kinds)
+        changed |= child_changed
+        isnothing(new_child) || push!(new_children, new_child)
     end
     # `mknode` copies all attrs (kind, syntax_flags, value, ...) from `st`, so
     # we don't lose the parser's infix/prefix tagging that downstream repair
@@ -97,7 +107,7 @@ Currently handled:
 
 Not yet handled because the malformed shape needs more than a child-collapse:
 
-- `K"->"`, `K"if"`, `K"for"`, compound-assignment `K"op="` — either a
+- `K"->"`, `K"if"`, `K"for"`, compound-assignment `K"unknown_head"` — either a
   structural rewrite or context-aware reasoning is required.
 
 Add new branches in [`_repair_node`](@ref) when these cause downstream
@@ -112,10 +122,10 @@ function _repair_after_trim(st0::SyntaxTreeC)
     JS.is_leaf(st0) && return st0
     new_children = JS.SyntaxList(JS.syntax_graph(st0))
     changed = false
-    for c in JS.children(st0)
-        nc = _repair_after_trim(c)
-        push!(new_children, nc)
-        changed |= nc !== c
+    for child in JS.children(st0)
+        new_child = _repair_after_trim(child)
+        push!(new_children, new_child)
+        changed |= new_child !== child
     end
     repaired = _repair_node(st0, new_children)
     repaired !== nothing && return repaired
@@ -152,8 +162,8 @@ so that parent nodes (e.g. dot expressions like `x.\$name`) remain well-formed.
 function _unwrap_interpolations(st::SyntaxTreeC)
     if JS.kind(st) === JS.K"$"
         if JS.numchildren(st) >= 1
-            nc, _ = _unwrap_interpolations(st[1])
-            return (nc, true)
+            new_child, _ = _unwrap_interpolations(st[1])
+            return (new_child, true)
         end
         return (st, false)
     elseif JS.is_leaf(st)
@@ -161,10 +171,10 @@ function _unwrap_interpolations(st::SyntaxTreeC)
     end
     new_children = JS.SyntaxList(JS.syntax_graph(st))
     changed = false
-    for c in JS.children(st)
-        nc, cc = _unwrap_interpolations(c)
-        changed |= cc
-        push!(new_children, nc)
+    for child in JS.children(st)
+        new_child, child_changed = _unwrap_interpolations(child)
+        changed |= child_changed
+        push!(new_children, new_child)
     end
     k = JS.kind(st)
     # Preserve `name_val` when reconstructing: kinds like `K"unknown_head"`
@@ -172,8 +182,8 @@ function _unwrap_interpolations(st::SyntaxTreeC)
     # `name_val`, and JuliaLowering's validator requires it to be present.
     new_node = if !changed
         st
-    elseif hasproperty(st, :name_val)
-        JL.@ast(JS.syntax_graph(st), st, [k(name_val=st.name_val::String) new_children...])
+    elseif has_name_val(st)
+        JL.@ast(JS.syntax_graph(st), st, [k(name_val=name_val(st)) new_children...])
     else
         JL.@ast(JS.syntax_graph(st), st, [k new_children...])
     end
@@ -189,13 +199,12 @@ function is_macrocall_st0(st0::SyntaxTreeC, names::AbstractString...; from::Unio
     JS.kind(st0) === JS.K"macrocall" || return false
     JS.numchildren(st0) >= 1 || return false
     macro_name = st0[1]
-    name_val = if hasproperty(macro_name, :name_val)
-        macro_name.name_val
+    nv = if has_name_val(macro_name)
+        name_val(macro_name)
     else
         JS.sourcetext(macro_name)
     end
-    name_val isa AbstractString || return false
-    return name_val in names && (isnothing(from) || (JS.hasattr(macro_name, :mod) && macro_name.mod === from))
+    return nv in names && (isnothing(from) || (JS.hasattr(macro_name, :mod) && macro_name.mod === from))
 end
 
 is_mainfunc0(st0::SyntaxTreeC) = is_macrocall_st0(st0, "@main")
@@ -379,10 +388,7 @@ end
 
 function find_inert_identifier_name(st::SyntaxTreeC, offset::Integer)
     id_node = @something find_inert_identifier(st, offset) return nothing
-    JS.hasattr(id_node, :name_val) || return nothing
-    name_val = id_node.name_val
-    name_val isa AbstractString || return nothing
-    return name_val
+    return get_name_val(id_node)
 end
 
 function is_nospecialize_or_specialize_macrocall3(st3::SyntaxTreeC)
@@ -393,8 +399,7 @@ function is_nospecialize_or_specialize_macrocall3(st3::SyntaxTreeC)
     JS.numchildren(st3) >= 2 || return false
     macro_name = macro_name[2]
     JS.kind(macro_name) === JS.K"Identifier" || return false
-    hasproperty(macro_name, :name_val) || return false
-    return macro_name.name_val == "nospecialize" || macro_name.name_val == "specialize"
+    return get_name_val(macro_name) in ("nospecialize", "specialize")
 end
 
 function _remove_macrocalls(st0::SyntaxTreeC)
@@ -448,8 +453,8 @@ function _remove_macrocalls(st0::SyntaxTreeC)
     # `name_val`, and JuliaLowering's validator requires it to be present.
     new_node = if !changed
         st0
-    elseif hasproperty(st0, :name_val)
-        JL.@ast(JS.syntax_graph(st0), st0, [k(name_val=st0.name_val::String) new_children...])
+    elseif has_name_val(st0)
+        JL.@ast(JS.syntax_graph(st0), st0, [k(name_val=name_val(st0)) new_children...])
     else
         JL.@ast(JS.syntax_graph(st0), st0, [k new_children...])
     end
@@ -577,19 +582,27 @@ function unwrap_funcdef_sig(node::SyntaxTreeC)
     end
 end
 
-extract_name_val(node::SyntaxTreeC) =
-    hasproperty(node, :name_val) ? node.name_val::String : nothing
-
 # Collect the `name_val` of every `K"Identifier"` node reachable from `st` into `names`.
 function collect_identifier_names!(names::Set{String}, st::SyntaxTreeC)
     traverse(st) do node
         if JS.kind(node) === JS.K"Identifier"
-            name = get(node, :name_val, nothing)
-            name === nothing || push!(names, name::String)
+            name = get_name_val(node)
+            name === nothing || push!(names, name)
         end
         return
     end
     return names
+end
+
+# `K"core"` leaves can't appear in user-written source (`Core.x` lowers through
+# `K"globalref"`), so these match only lowering-generated references.
+function is_core_ref(node::SyntaxTreeC, name::String)
+    return JS.kind(node) === JS.K"core" && get_name_val(node) == name
+end
+
+function is_core_svec_call(call_node::SyntaxTreeC)
+    JS.numchildren(call_node) >= 1 || return false
+    return is_core_ref(call_node[1], "svec")
 end
 
 """
@@ -1080,7 +1093,7 @@ end
 is_special_macrocall(st0::SyntaxTreeC) =
     JS.kind(st0) === JS.K"macrocall" && JS.numchildren(st0) >= 1 &&
     let mname = JS.kind(st0[1]) === JS.K"." && JS.numchildren(st0[1]) === 2 ? st0[1][2] : st0[1]
-        mname_s = hasproperty(mname, :name_val) ? mname.name_val : ""
+        mname_s = get_name_val(mname, "")
         endswith(mname_s, "_str") || endswith(mname_s, "_cmd")
     end
 
@@ -1259,10 +1272,10 @@ function resolve_path_string_literal(
     )
     JS.hasattr(string_node, :value) || return nothing
     value = string_node.value
-    value isa AbstractString || return nothing
+    value isa String || return nothing
     path = joinpath(basedir, value)
     ispath(path) || return nothing
-    return (; value = String(value), path = String(path))
+    return (; value, path)
 end
 
 function select_target_node(filter, selector, st0::SyntaxTreeC, offset::Integer)
@@ -1465,7 +1478,7 @@ function is_noreturn_call(
     JS.numchildren(st3) >= 1 || return false
     func = st3[1]
     if JS.kind(func) === JS.K"BindingId"
-        binfo = JL.get_binding(ctx3, func.var_id::JL.IdTag)
+        binfo = JL.get_binding(ctx3, var_id(func))
         binfo.kind === :global && Symbol(binfo.name) in allow_noreturn_optimization && return true
     end
     for i in 2:JS.numchildren(st3)

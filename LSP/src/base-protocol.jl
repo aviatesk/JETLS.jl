@@ -37,24 +37,21 @@ const decimal = Float64
 """
 The LSP any type
 
-# Tags
-- since – 3.17.0
+- `@since` 3.17.0
 """
 const LSPAny = Any
 
 """
 LSP object definition.
 
-# Tags
-- since – 3.17.0
+- `@since` 3.17.0
 """
 const LSPObject = Dict{String,Any}
 
 """
 LSP arrays.
 
-# Tags
-- since – 3.17.0
+- `@since` 3.17.0
 """
 const LSPArray = Vector{Any}
 
@@ -103,14 +100,12 @@ end
     the start and end range. For backwards compatibility the `ServerNotInitialized` and
     the `UnknownErrorCode` are left in the range.
 
-    # Tags
-    - since – 3.16.0
+    - `@since` 3.16.0
     """
     jsonrpcReservedErrorRangeStart = -32099
 
     """
-    # Tags
-    - deprecated – use jsonrpcReservedErrorRangeStart
+    - `@deprecated` use `jsonrpcReservedErrorRangeStart`
     """
     serverErrorStart = -32099
 
@@ -125,14 +120,12 @@ end
     This is the end range of JSON-RPC reserved error codes.
     It doesn't denote a real error code.
 
-    # Tags
-    - since – 3.16.0"
+    - `@since` 3.16.0
     """
     jsonrpcReservedErrorRangeEnd = -32000
 
     """
-    # Tags
-    - deprecated – use jsonrpcReservedErrorRangeEnd
+    - `@deprecated` use `jsonrpcReservedErrorRangeEnd`
     """
     serverErrorEnd = -32000
 
@@ -140,8 +133,7 @@ end
     This is the start range of LSP reserved error codes.
     It doesn't denote a real error code.
 
-    # Tags
-    - since – 3.16.0
+    - `@since` 3.16.0
     """
     lspReservedErrorRangeStart = -32899
 
@@ -150,8 +142,7 @@ end
     parameters were valid. The error message should contain human readable information about
     why the request failed.
 
-    # Tags
-    - since – 3.17.0
+    - `@since` 3.17.0
     """
     RequestFailed = -32803
 
@@ -159,8 +150,7 @@ end
     The server cancelled the request. This error code should only be used for requests that
     explicitly support being server cancellable.
 
-    # Tags
-    - since – 3.17.0
+    - `@since` 3.17.0
     """
     ServerCancelled = -32802
 
@@ -181,8 +171,7 @@ end
     """
     This is the end range of LSP reserved error codes. It doesn't denote a real error code.
 
-    # Tags
-    - since – 3.16.0
+    - `@since` 3.16.0
     """
     lspReservedErrorRangeEnd = -32800
 end  # @namespace ErrorCodes

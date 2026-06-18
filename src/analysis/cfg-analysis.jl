@@ -247,20 +247,43 @@ function for_each_cond_operand(@specialize(callback), cond::SyntaxTreeC)
     end
 end
 
-# Emit `:isdefined` hints for `@isdefined(var)` in condition expressions.
-function undef_emit_isdefined_hints!(
-        lin::EventLinearizer, cond::SyntaxTreeC, candidates::Set{JL.IdTag}
+function undef_is_not_call(ctx3::JL.VariableAnalysisContext, cond::SyntaxTreeC)
+    JS.kind(cond) == JS.K"call" || return false
+    JS.numchildren(cond) == 2 || return false
+    func = cond[1]
+    JS.kind(func) == JS.K"BindingId" || return false
+    binfo = JL.get_binding(ctx3, var_id(func))
+    return binfo.kind === :global && binfo.name == "!"
+end
+
+function undef_emit_isdefined_hint!(
+        lin::EventLinearizer, arg::SyntaxTreeC, candidates::Set{JL.IdTag}
     )
-    for_each_cond_operand(cond) do operand::SyntaxTreeC
-        JS.kind(operand) == JS.K"isdefined" || return
-        JS.numchildren(operand) >= 1 || return
-        arg = operand[1]
-        if JS.kind(arg) == JS.K"BindingId"
-            var_id = arg.var_id::JL.IdTag
-            if var_id in candidates
-                cfg_emit_event!(lin, :isdefined, var_id, arg)
-            end
+    JS.kind(arg) == JS.K"BindingId" || return
+    vid = var_id(arg)
+    vid in candidates && cfg_emit_event!(lin, :isdefined, vid, arg)
+end
+
+# Emit `:isdefined` hints for condition branches where `@isdefined(var)` is true.
+function undef_emit_isdefined_hints!(
+        lin::EventLinearizer, ctx3::JL.VariableAnalysisContext,
+        cond::SyntaxTreeC, candidates::Set{JL.IdTag}, branch_value::Bool
+    )
+    k = JS.kind(cond)
+    if k == JS.K"block" && JS.numchildren(cond) == 1
+        undef_emit_isdefined_hints!(lin, ctx3, cond[1], candidates, branch_value)
+    elseif undef_is_not_call(ctx3, cond)
+        undef_emit_isdefined_hints!(lin, ctx3, cond[2], candidates, !branch_value)
+    elseif branch_value && k == JS.K"&&"
+        for child in JS.children(cond)
+            undef_emit_isdefined_hints!(lin, ctx3, child, candidates, true)
         end
+    elseif !branch_value && k == JS.K"||"
+        for child in JS.children(cond)
+            undef_emit_isdefined_hints!(lin, ctx3, child, candidates, false)
+        end
+    elseif branch_value && k == JS.K"isdefined" && JS.numchildren(cond) >= 1
+        undef_emit_isdefined_hint!(lin, cond[1], candidates)
     end
 end
 
@@ -271,7 +294,7 @@ function undef_cond_binding_ids!(result::Vector{JL.IdTag}, cond::SyntaxTreeC)
     all_bindings = Ref(true)
     for_each_cond_operand(cond) do operand::SyntaxTreeC
         if JS.kind(operand) == JS.K"BindingId"
-            push!(result, operand.var_id::JL.IdTag)
+            push!(result, var_id(operand))
         else
             all_bindings[] = false
         end
@@ -288,7 +311,7 @@ function undef_direct_assign_var_id(node::SyntaxTreeC)
     if (k == JS.K"=" || k == JS.K"function_decl") && JS.numchildren(node) >= 1
         lhs = node[1]
         if JS.kind(lhs) == JS.K"BindingId"
-            return lhs.var_id::JL.IdTag
+            return var_id(lhs)
         end
     end
     return nothing
@@ -377,14 +400,14 @@ function linearize_cfg_events!(
     k = JS.kind(ex3)
 
     if k == JS.K"BindingId"
-        var_id = ex3.var_id::JL.IdTag
-        if var_id in candidates
-            cfg_emit_event!(lin, :use, var_id, ex3)
+        vid = var_id(ex3)
+        if vid in candidates
+            cfg_emit_event!(lin, :use, vid, ex3)
         end
 
     elseif k == JS.K"symbolicblock"
         label_node = ex3[1]
-        label_name = label_node.name_val::String
+        label_name = name_val(label_node)
         exit_label = cfg_make_label!(lin)
         # Save and set the break target for this label (handles nesting)
         outer_target = get(lin.break_targets, label_name, nothing)
@@ -406,7 +429,7 @@ function linearize_cfg_events!(
         end
         # Emit goto to matching symbolicblock exit if label is known
         if JS.numchildren(ex3) >= 1 && JS.kind(ex3[1]) == JS.K"symboliclabel"
-            label_name = ex3[1].name_val::String
+            label_name = name_val(ex3[1])
             target_label = get(lin.break_targets, label_name, nothing)
             if !isnothing(target_label)
                 cfg_emit_goto!(lin, target_label)
@@ -420,14 +443,14 @@ function linearize_cfg_events!(
         # `@label name` — register a CFG label at the current position so any
         # `K"symbolicgoto"` referencing this name (forward or backward) can
         # land here. At `st3` this node is a leaf; the name lives on `name_val`.
-        label_id = cfg_get_or_create_goto_label!(lin, ex3.name_val::String)
+        label_id = cfg_get_or_create_goto_label!(lin, name_val(ex3))
         cfg_emit_label!(lin, label_id)
 
     elseif k == JS.K"symbolicgoto" || k == JS.K"oldsymbolicgoto"
         # `@goto name` — unconditional jump to the matching `K"symboliclabel"`.
         # Forward references work because `pending_gotos` is resolved later in
         # `cfg_finalize!`.
-        label_id = cfg_get_or_create_goto_label!(lin, ex3.name_val::String)
+        label_id = cfg_get_or_create_goto_label!(lin, name_val(ex3))
         cfg_emit_goto!(lin, label_id)
 
     elseif JS.is_leaf(ex3) || JL.is_quoted(ex3)
@@ -439,11 +462,11 @@ function linearize_cfg_events!(
         # Then record assignment
         lhs = ex3[1]
         if JS.kind(lhs) == JS.K"BindingId"
-            var_id = lhs.var_id::JL.IdTag
-            if var_id in candidates
-                cfg_emit_event!(lin, :assign, var_id, lhs)
+            vid = var_id(lhs)
+            if vid in candidates
+                cfg_emit_event!(lin, :assign, vid, lhs)
             end
-            undef_invalidate_cond_implies!(lin, var_id)
+            undef_invalidate_cond_implies!(lin, vid)
         end
 
     elseif k == JS.K"function_decl"
@@ -454,11 +477,11 @@ function linearize_cfg_events!(
         # Then emit the assign event for the function name
         lhs = ex3[1]
         if JS.kind(lhs) == JS.K"BindingId"
-            var_id = lhs.var_id::JL.IdTag
-            if var_id in candidates
-                cfg_emit_event!(lin, :assign, var_id, lhs)
+            vid = var_id(lhs)
+            if vid in candidates
+                cfg_emit_event!(lin, :assign, vid, lhs)
             end
-            undef_invalidate_cond_implies!(lin, var_id)
+            undef_invalidate_cond_implies!(lin, vid)
         end
 
     elseif k == JS.K"isdefined"
@@ -499,11 +522,11 @@ function linearize_cfg_events!(
 
         cfg_emit_gotoifnot!(lin, else_label)
 
-        # Special case: if the condition contains @isdefined(var), the var is
-        # definitely defined in the true branch. This handles both direct
-        # `if @isdefined(var)` and `if ... && @isdefined(var)` patterns,
-        # since `&&` short-circuits: all operands must be true in the true branch.
-        undef_emit_isdefined_hints!(lin, cond, candidates)
+        # Special case: if the condition implies @isdefined(var), the var is
+        # definitely defined on that branch. This handles direct
+        # `if @isdefined(var)`, `if ... && @isdefined(var)`, and negated
+        # conditions like `if !(@isdefined(var)); ...; else ...`.
+        undef_emit_isdefined_hints!(lin, ctx3, cond, candidates, true)
 
         undef_emit_cond_implied_hints!(lin, cond, candidates)
 
@@ -524,6 +547,7 @@ function linearize_cfg_events!(
         cfg_emit_goto!(lin, end_label)
 
         cfg_emit_label!(lin, else_label)
+        undef_emit_isdefined_hints!(lin, ctx3, cond, candidates, false)
         let saved = undef_save_cond_implied(lin)
             if JS.numchildren(ex3) >= 3
                 linearize_cfg_events!(lin, ctx3, ex3[3], candidates, allow_noreturn_optimization)

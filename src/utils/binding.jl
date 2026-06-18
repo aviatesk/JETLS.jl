@@ -280,9 +280,7 @@ end
 function find_inert_target_binding(
         ctx3::JL.VariableAnalysisContext, st3::SyntaxTreeC, offset::Int)
     id_node = @something find_inert_identifier(st3, offset) return nothing
-    JS.hasattr(id_node, :name_val) || return nothing
-    name = id_node.name_val
-    name isa AbstractString || return nothing
+    name = @something get_name_val(id_node) return nothing
     generated_range = @something enclosing_generated_range(id_node) return nothing
     for binfo in ctx3.bindings.info
         binfo.kind === :argument || continue

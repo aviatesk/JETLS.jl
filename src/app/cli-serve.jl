@@ -98,7 +98,7 @@ function run_serve(args::Vector{String})
     local transport::String
     if !isnothing(pipe_connect_path)
         try
-            pipe_type = Sys.iswindows() ? "Windows named pipe" : "Unix domain socket"
+            pipe_type = @static Sys.iswindows() ? "Windows named pipe" : "Unix domain socket"
             conn = Sockets.connect(pipe_connect_path)
             endpoint = Endpoint(conn, conn)
             transport = "pipe-connect=$pipe_connect_path"
@@ -110,7 +110,7 @@ function run_serve(args::Vector{String})
         end
     elseif !isnothing(pipe_listen_path)
         try
-            pipe_type = Sys.iswindows() ? "Windows named pipe" : "Unix domain socket"
+            pipe_type = @static Sys.iswindows() ? "Windows named pipe" : "Unix domain socket"
             server_socket = Sockets.listen(pipe_listen_path)
             println(stdout, "<JETLS-PIPE-READY>$pipe_listen_path</JETLS-PIPE-READY>")
             @info "Waiting for connection on $pipe_type" pipe_listen_path

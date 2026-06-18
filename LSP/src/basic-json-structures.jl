@@ -69,8 +69,7 @@ end
 """
 A type indicating how positions are encoded, specifically what column offsets mean.
 
-# Tags
-- since – 3.17.0
+- `@since` 3.17.0
 """
 @namespace PositionEncodingKind::String begin
     """
@@ -194,48 +193,127 @@ can for example honor or ignore the selection direction to make LSP request
     position::Position
 end
 
-"""
-A document filter denotes a document through properties like language, scheme or pattern.
-An example is a filter that applies to TypeScript files on disk. Another example is a filter
-that applies to JSON files with name package.json:
-```json
-{ language: 'typescript', scheme: 'file' }
-{ language: 'json', pattern: '**\\/package.json' }
-```
+# Patterns and `WorkspaceFolder` live in their own sections of the spec, but
+# `RelativePattern` references `WorkspaceFolder` and `GlobPattern` is used by the
+# document filters below, so all three must be defined before `DocumentFilter`.
+# `WorkspaceFolder` itself only depends on `URI`.
 
-Please note that for a document filter to be valid at least one of the properties for
-language, scheme, or pattern must be set.
-To keep the type definition simple all properties are marked as optional.
+@interface WorkspaceFolder begin
+    "The associated URI for this workspace folder."
+    uri::URI
+
+    """
+    The name of the workspace folder. Used to refer to this workspace folder in the user
+    interface.
+    """
+    name::String
+end
+
+"A glob pattern as a string, like `*.{ts,js}`."
+const Pattern = String
+
 """
-@interface DocumentFilter begin
+A relative pattern is a helper to construct glob patterns that are matched
+relatively to a base URI. The common value for a baseUri is a workspace
+folder root, but it can be another absolute URI as well.
+
+- `@since` 3.17.0
+"""
+@interface RelativePattern begin
+    """
+    A workspace folder or a base URI to which this pattern will be matched
+    against relatively.
+    """
+    baseUri::Union{WorkspaceFolder, URI}
+
+    "The actual glob pattern."
+    pattern::Pattern
+end
+
+"""
+The glob pattern. Either a string pattern or a relative pattern.
+
+Glob patterns can have the following syntax:
+- `*` to match zero or more characters in a path segment
+- `?` to match on one character in a path segment
+- `**` to match any number of path segments, including none
+- `{}` to group sub patterns into an OR expression
+  (e.g. `**/*.{ts,js}` matches all TypeScript and JavaScript files)
+- `[]` to declare a range of characters to match in a path segment
+  (e.g. `example.[0-9]` to match on `example.0`, `example.1`, …)
+- `[!...]` to negate a range of characters to match in a path segment
+  (e.g. `example.[!0-9]` to match on `example.a`, `example.b`, but not `example.0`)
+
+- `@since` 3.17.0
+"""
+const GlobPattern = Union{Pattern, RelativePattern}
+
+"""
+A document filter where `language` is a required field.
+
+- `@since` 3.18.0
+"""
+@interface TextDocumentFilterLanguage begin
+    "A language id, like `typescript`."
+    language::String
+
+    "A Uri scheme, like `file` or `untitled`."
+    scheme::Union{String, Nothing} = nothing
+
+    "A glob pattern, like `*.{ts,js}`."
+    pattern::Union{GlobPattern, Nothing} = nothing
+end
+
+"""
+A document filter where `scheme` is a required field.
+
+- `@since` 3.18.0
+"""
+@interface TextDocumentFilterScheme begin
+    "A language id, like `typescript`."
+    language::Union{String, Nothing} = nothing
+
+    "A Uri scheme, like `file` or `untitled`."
+    scheme::String
+
+    "A glob pattern, like `*.{ts,js}`."
+    pattern::Union{GlobPattern, Nothing} = nothing
+end
+
+"""
+A document filter where `pattern` is a required field.
+
+- `@since` 3.18.0
+"""
+@interface TextDocumentFilterPattern begin
     "A language id, like `typescript`."
     language::Union{String, Nothing} = nothing
 
     "A Uri scheme, like `file` or `untitled`."
     scheme::Union{String, Nothing} = nothing
 
-    """
-    A glob pattern, like `*.{ts,js}`.
-    Glob patterns can have the following syntax:
-    - `*` to match one or more characters in a path segment
-    - `?` to match on one character in a path segment
-    - `**` to match any number of path segments, including none
-    - `{}` to group sub patterns into an OR expression. (e.g. `**\u200b/*.{ts,js}` matches
-      all TypeScript and JavaScript files)
-    - `[]` to declare a range of characters to match in a path segment (e.g.,
-      `example.[0-9]` to match on `example.0`, `example.1`, …)
-    - `[!...]` to negate a range of characters to match in a path segment (e.g.,
-      `example.[!0-9]` to match on `example.a`, `example.b`, but not `example.0`)
-    """
-    pattern::Union{String, Nothing} = nothing
+    "A glob pattern, like `*.{ts,js}`."
+    pattern::GlobPattern
 end
+
+"""
+A document filter denotes a document by different properties like the language,
+the scheme of its resource, or a glob-pattern applied to the path. At least one
+of `language`, `scheme`, or `pattern` must be set, which is why this is a union
+of three variants rather than a single all-optional struct.
+
+# Examples
+- `{ language: "typescript", scheme: "file" }`
+- `{ language: "json", pattern: "**/package.json" }`
+"""
+const TextDocumentFilter = Union{
+    TextDocumentFilterLanguage, TextDocumentFilterScheme, TextDocumentFilterPattern}
 
 """
 A notebook document filter denotes a notebook document by
 different properties.
 
-# Tags
-- since - 3.17.0
+- `@since` 3.17.0
 """
 @interface NotebookDocumentFilter begin
     "The type of the enclosing notebook."
@@ -252,8 +330,7 @@ end
 A notebook cell text document filter denotes a cell text
 document by different properties.
 
-# Tags
-- since - 3.17.0
+- `@since` 3.17.0
 """
 @interface NotebookCellTextDocumentFilter begin
     """
@@ -274,12 +351,22 @@ document by different properties.
 end
 
 """
+A document filter describes a top level text document or a notebook cell document.
+
+- `@since` 3.17.0 - support for `NotebookCellTextDocumentFilter`.
+"""
+const DocumentFilter = Union{TextDocumentFilter, NotebookCellTextDocumentFilter}
+
+# `const` aliases are not auto-exported by `@interface`; export the ones JETLS uses.
+push!(exports, :TextDocumentFilter, :DocumentFilter)
+
+"""
 A document selector is the combination of one or more document filters.
 
 !!! note "3.17.0"
     Since 3.17.0, a document selector can also include notebook cell text document filters.
 """
-const DocumentSelector = Vector{Union{DocumentFilter, NotebookCellTextDocumentFilter}}
+const DocumentSelector = Vector{DocumentFilter}
 
 # TextEdit & AnnotatedTextEdit
 # ============================
@@ -338,16 +425,14 @@ end
 An identifier referring to a change annotation managed by a workspace
 edit.
 
-# Tags
-- since - 3.16.0.
+- `@since` 3.16.0.
 """
 const ChangeAnnotationIdentifier = String
 
 """
 A special text edit with an additional change annotation.
 
-# Tags
-- since - 3.16.0.
+- `@since` 3.16.0.
 """
 @interface AnnotatedTextEdit @extends TextEdit begin
     annotationId::ChangeAnnotationIdentifier
@@ -391,8 +476,7 @@ or do any kind of ordering. However the edits must be non overlapping.
     """
     The edits to be applied.
 
-    # Tags
-    - since - 3.16.0 - support for AnnotatedTextEdit. This is guarded by the
+    - `@since` 3.16.0 - support for AnnotatedTextEdit. This is guarded by the
       client capability `workspace.workspaceEdit.changeAnnotationSupport`
     """
     edits::Vector{Union{TextEdit, AnnotatedTextEdit}}
@@ -406,10 +490,13 @@ Represents a location inside a resource, such as a line inside a text file.
     range::Range
 end
 
+@interface LocationUriOnly begin
+    uri::DocumentUri
+end
+
 """
 Represents a link between a source and a target location.
 
-# Tags
 - since 3.14.0
 """
 @interface LocationLink begin
@@ -505,8 +592,7 @@ Known markdown parsers used by clients right now are:
 | marked | 1.1.0 | [Marked Documentation](https://marked.js.org/) |
 | Python-Markdown | 3.2.2 | [Python-Markdown Documentation](https://python-markdown.github.io/) |
 
-# Tags
-- since – 3.16.0
+- `@since` 3.16.0
 """
 @interface MarkdownClientCapabilities begin
     """
@@ -523,8 +609,7 @@ Known markdown parsers used by clients right now are:
     A list of HTML tags that the client allows / supports in
     Markdown.
 
-    # Tags
-    - since – 3.17.0
+    - `@since` 3.17.0
     """
     allowedTags::Union{Vector{String}, Nothing} = nothing
 end
@@ -549,8 +634,7 @@ end
 """
 The diagnostic tags.
 
-# Tags
-- since – 3.15.0
+- `@since` 3.15.0
 """
 @namespace DiagnosticTag::Int begin
     """
@@ -582,8 +666,7 @@ end
 """
 Structure to capture a description for an error code.
 
-# Tags
-- since – 3.16.0
+- `@since` 3.16.0
 """
 @interface CodeDescription begin
     "An URI to open with more information about the diagnostic error."
@@ -650,8 +733,7 @@ Diagnostic objects are only valid in the scope of a resource.
     """
     An optional property to describe the error code.
 
-    # Tags
-    - since – 3.16.0
+    - `@since` 3.16.0
     """
     codeDescription::Union{CodeDescription, Nothing} = nothing
 
@@ -664,8 +746,7 @@ Diagnostic objects are only valid in the scope of a resource.
     """
     The diagnostic's message.
 
-    # Tags
-    - since – 3.18.0 - support for MarkupContent. This is guarded by the client capability
+    - `@since` 3.18.0 - support for MarkupContent. This is guarded by the client capability
     `textDocument.diagnostic.markupMessageSupport`.
     """
     message::Union{String, MarkupContent}
@@ -673,8 +754,7 @@ Diagnostic objects are only valid in the scope of a resource.
     """
     Additional metadata about the diagnostic.
 
-    # Tags
-    - since – 3.15.0
+    - `@since` 3.15.0
     """
     tags::Union{Vector{DiagnosticTag.Ty}, Nothing} = nothing
 
@@ -688,8 +768,7 @@ Diagnostic objects are only valid in the scope of a resource.
     A data entry field that is preserved between a `textDocument/publishDiagnostics`
     notification and `textDocument/codeAction` request.
 
-    # Tags
-    - since – 3.16.0
+    - `@since` 3.16.0
     """
     data::Union{AmbiguousSoftScopeData, DeleteRangeData, UnsortedImportData, UnusedArgumentData, UnusedVariableData, Nothing} = nothing
 end
@@ -764,8 +843,7 @@ Create file operation
     """
     An optional annotation identifier describing the operation.
 
-    # Tags
-    - since - 3.16.0
+    - `@since` 3.16.0
     """
     annotationId::Union{Nothing, ChangeAnnotationIdentifier} = nothing
 end
@@ -809,8 +887,7 @@ Rename file operation
     """
     An optional annotation identifier describing the operation.
 
-    # Tags
-    - since - 3.16.0
+    - `@since` 3.16.0
     """
     annotationId::Union{Nothing, ChangeAnnotationIdentifier} = nothing
 end
@@ -849,8 +926,7 @@ Delete file operation
     """
     An optional annotation identifier describing the operation.
 
-    # Tags
-    - since - 3.16.0
+    - `@since` 3.16.0
     """
     annotationId::Union{Nothing, ChangeAnnotationIdentifier} = nothing
 end
@@ -950,10 +1026,18 @@ the failure is described by the client capability:
     Whether clients honor this property depends on the client capability
     `workspace.changeAnnotationSupport`.
 
-    # Tags
-    - since - 3.16.0
+    - `@since` 3.16.0
     """
     changeAnnotations::Union{Nothing, Dict{ChangeAnnotationIdentifier, ChangeAnnotation}} = nothing
+end
+
+@interface ChangeAnnotationsSupportOptions begin
+    """
+    Whether the client groups edits with equal labels into tree nodes,
+    for instance all edits labelled with "Changes in Strings" would
+    be a tree node.
+    """
+    groupsOnLabel::Union{Nothing, Bool} = nothing
 end
 
 """
@@ -974,8 +1058,7 @@ their support using the following client capability:
     The resource operations the client supports. Clients should at least
     support 'create', 'rename' and 'delete' files and folders.
 
-    # Tags
-    - since - 3.13.0
+    - `@since` 3.13.0
     """
     resourceOperations::Union{Nothing, Vector{ResourceOperationKind.Ty}} = nothing
 
@@ -983,8 +1066,7 @@ their support using the following client capability:
     The failure handling strategy of a client if applying the workspace edit
     fails.
 
-    # Tags
-    - since - 3.13.0
+    - `@since` 3.13.0
     """
     failureHandling::Union{Nothing, FailureHandlingKind.Ty} = nothing
 
@@ -994,8 +1076,7 @@ their support using the following client capability:
     If set to `true` the client will normalize line ending characters
     in a workspace edit to the client specific new line character(s).
 
-    # Tags
-    - since - 3.16.0
+    - `@since` 3.16.0
     """
     normalizesLineEndings::Union{Nothing, Bool} = nothing
 
@@ -1003,17 +1084,9 @@ their support using the following client capability:
     Whether the client in general supports change annotations on text edits,
     create file, rename file and delete file changes.
 
-    # Tags
-    - since - 3.16.0
+    - `@since` 3.16.0
     """
-    changeAnnotationSupport::Union{Nothing, @interface begin
-        """
-        Whether the client groups edits with equal labels into tree nodes,
-        for instance all edits labelled with "Changes in Strings" would
-        be a tree node.
-        """
-        groupsOnLabel::Union{Nothing, Bool} = nothing
-    end} = nothing
+    changeAnnotationSupport::Union{Nothing, ChangeAnnotationsSupportOptions} = nothing
 end
 
 # Work Done Progress
@@ -1028,8 +1101,7 @@ The value payload of a work done progress notification can be of three different
 """
 To start progress reporting a `\$/progress` notification with the following payload must be sent.
 
-# Tags
-- since – 3.15.0
+- `@since` 3.15.0
 """
 @interface WorkDoneProgressBegin begin
     kind::String = "begin"
@@ -1072,8 +1144,7 @@ end
 """
 Reporting progress is done using the following payload.
 
-# Tags
-- since – 3.15.0
+- `@since` 3.15.0
 """
 @interface WorkDoneProgressReport begin
     kind::String = "report"
@@ -1110,8 +1181,7 @@ end
 """
 Signaling the end of a progress reporting is done using the following payload.
 
-# Tags
-- since – 3.15.0
+- `@since` 3.15.0
 """
 @interface WorkDoneProgressEnd begin
     kind::String = "end"
@@ -1160,8 +1230,7 @@ Progress is reported against a token.
 The token is different than the request ID which allows to report progress out of band
 and also for notification.
 
-# Tags
-- since – 3.15.0
+- `@since` 3.15.0
 """
 @interface ProgressNotification @extends NotificationMessage begin
     method::String = "\$/progress"
@@ -1212,8 +1281,7 @@ If the response errors the provided partial results should be treated as follows
   results but should make clear that the request got canceled and may be incomplete.
 - in all other cases the provided partial results shouldn’t be used.
 
-# Tags
-- since – 3.15.0
+- `@since` 3.15.0
 """
 :(partial_result_progress)
 
@@ -1266,8 +1334,7 @@ end
 """
 Symbol tags are extra annotations that tweak the rendering of a symbol.
 
-# Tags
-- since - 3.16
+- `@since` 3.16
 """
 @namespace SymbolTag::Int begin
     """
@@ -1296,8 +1363,7 @@ interfaces etc.
     """
     Tags for this symbol.
 
-    # Tags
-    - since - 3.16.0
+    - `@since` 3.16.0
     """
     tags::Union{Nothing, Vector{SymbolTag.Ty}} = nothing
 

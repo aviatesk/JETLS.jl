@@ -1,48 +1,70 @@
 # Formatting
+
+## Code formatting
+
 - When writing Julia code, use _4 whitespaces_ for indentation and try to keep
   the maximum line length under _92 characters_.
-- When writing Markdown text, use _2 whitespaces_ for indentation and try to
-  keep the maximum line length under _80 characters_.
-  - Exception: `CHANGELOG.md` is exempt from line length rules since it is
-    used for GitHub release notes, where hard line breaks disrupt rendering.
-  - Additionally, prioritize simple text style and limit unnecessary decorations
-    (e.g. `**`) to only truly necessary locations. This is a style that should
-    generally be aimed for, but pay particular attention when writing Markdown.
-  - Headers should use sentence case (only the first word capitalized), not
-    title case. For example:
-    - Good: `## Conclusion and alternative approaches`
-    - Bad: `## Conclusion And Alternative Approaches`
-- When writing commit messages, follow the format "component: Brief summary" for
-  the title. In the body of the commit message, provide a brief prose summary of
-  the purpose of the changes made.
-  Use backticks for code elements (function names, variables, file paths, etc.)
-  to improve readability.
-  Also, ensure that the maximum line length never exceeds 72 characters.
-  When referencing external GitHub PRs or issues, use proper GitHub interlinking
-  format (e.g., "owner/repo#123" for PRs/issues).
-  Finally, if you write code yourself, include a co-author trailer at the end
-  of the commit message, e.g.:
-  `Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>`
-  (adjust the model name as appropriate). However, when simply asked to write
-  a commit message, there's no need to add that trailer.
-- For file names, use `-` (hyphen) as the word separator by default.
-  However, if the file name corresponds directly to Julia code (e.g., a module
-  name), use `_` (underscore) instead, since Julia identifiers cannot contain
-  hyphens (unless we use `var"..."`). For example, test files like
-  `test_completions.jl` define a module `module test_completions`,
-  so they use underscores.
+- AI agents must not run automated formatters unless explicitly requested by a
+  human in the current conversation.
+  This includes file-wide or project-wide formatting commands and
+  editor-integrated formatting tools.
+  When editing code, preserve the surrounding formatting and make only minimal
+  local edits. If formatting seems necessary, ask before applying it.
+
+## Markdown formatting
+
+When writing Markdown text, use _2 whitespaces_ for indentation and try to
+keep the maximum line length under _80 characters_.
+- Exception: `CHANGELOG.md` is exempt from line length rules since it is
+  used for GitHub release notes, where hard line breaks disrupt rendering.
+- Additionally, prioritize simple text style and limit unnecessary decorations
+  (e.g. `**`) to only truly necessary locations. This is a style that should
+  generally be aimed for, but pay particular attention when writing Markdown.
+- Headers should use sentence case (only the first word capitalized), not
+  title case. For example:
+  - Good: `## Conclusion and alternative approaches`
+  - Bad: `## Conclusion And Alternative Approaches`
+
+## Commit message formatting
+
+When writing commit messages, follow the format "component: Brief summary" for
+the title.
+
+In the body, write paragraphs in this order:
+
+1. Explain the concrete problem or user-visible limitation being fixed.
+   If appropriate, include a small code example when it makes the issue
+   clearer.
+2. Explain the approach used to fix the problem.
+3. Mention important caveats, follow-up work, performance notes, or test
+   coverage when relevant.
+
+Use backticks for code elements (function names, variables, file paths, etc.)
+to improve readability.
+
+Ensure that the maximum line length never exceeds 72 characters.
+When referencing external GitHub PRs or issues, use proper GitHub interlinking
+format (e.g., "owner/repo#123" for PRs/issues).
+Finally, if you write code yourself, include a co-author trailer at the end
+of the commit message, e.g.:　`Co-Authored-By: GPT-5.5 noreply@openai.com`
+(adjust the model name as appropriate). However, when simply asked to write
+a commit message, there's no need to add that trailer.
+
+# File names
+
+For file names, use `-` (hyphen) as the word separator by default.
+However, if the file name corresponds directly to Julia code (e.g., a module
+name), use `_` (underscore) instead, since Julia identifiers cannot contain
+hyphens (unless we use `var"..."`). For example, test files like
+`test_completions.jl` define a module `module test_completions`,
+so they use underscores.
 
 # Coding rules
-- When writing functions, use the most restrictive signature type possible.
-  This allows JET to easily catch unintended errors.
-  Of course, when prototyping, it's perfectly fine to start with loose type
-  declarations, but for the functions you ultimately commit, it's desirable to
-  use type declarations as much as possible.
-  Especially when AI agents suggest code, please make sure to clearly specify
-  the argument types that functions expect.
-  In situations where there's no particular need to make a function generic, or
-  if you're unsure what to do, submit the function with the most restrictive
-  signature type you can think of.
+
+- When writing functions, use the most restrictive signature type practical so
+  JET can catch unintended errors. Loose signatures are fine while prototyping,
+  but committed code should specify expected argument types unless generic
+  behavior is intentional. When unsure, prefer the more restrictive signature.
 
 - For function calls with keyword arguments, use an explicit `;` for clarity.
   For example, code like this:
@@ -72,178 +94,73 @@
   ```
 
 ## Comments guideline
-Default to writing no comments. The general rule is
-**ONLY INCLUDE COMMENTS WHERE TRULY NECESSARY**: when the function name
-or implementation already makes the intent clear, comments are noise.
 
-When a comment is warranted:
-- Focus on what/why — the behavior contract, hidden constraints,
-  non-obvious invariants, or rationale.
-- Do not merely restate what the code does or walk the reader through
-  the implementation flow; a reader can derive that from the code itself.
+Default to no comments. Add comments only when they explain non-obvious
+behavior, constraints, invariants, rationale, or genuine hacks. Do not restate
+implementation flow.
 
-Exception: if the code is a genuine hack or encodes a surprising
-invariant, keep the detail and flag the hack explicitly — a future
-reader needs that context.
+Docstrings are fine for general utilities when they clarify behavior.
 
-For general utilities used across the language server, docstrings are
-fine when they clarify behavior. Even here, if the function name and
-behavior are self-explanatory, no docstring is needed.
+The same applies to tests: concise `@testset` descriptions and behavior-level
+comments are fine when they clarify what is being tested. Explain test setup
+only when it encodes a non-obvious constraint or hack.
 
-### Comments in test code
-The same principles apply to tests. In particular, don't explain the
-implementation flow of the code under test in order to justify the
-expected value — keep the comment at the behavior level
-(e.g. "cursor on X should resolve to Y"). If the test setup itself is
-a genuine hack, flag that explicitly.
+# Running `jetls check` for self diagnostics
 
-# Running test code
-Please make sure to test new code when you wrote.
+Please make sure to check self diagnostics after writing or modifying code.
 
-When working on a specific component (e.g., completions, diagnostics),
-run the component-specific test instead of the full test suite:
-```bash
-julia --startup-file=no --project=test -e 'using Test; @testset "test_XXX" include("test/test_XXX.jl")'
-```
-Note:
-- `--startup-file=no` avoids loading unnecessary startup utilities
-- `--project=test` enables `JETLS_TEST_MODE` for proper test execution
+The standard command is:
 
-For even faster iteration on a specific `@testset`, use
-[TestRunner.jl](#using-testrunnerjl):
-```bash
-testrunner --project=test test/test_XXX.jl "testset_name"
-```
-
-Running `Pkg.test()` takes about 8 minutes (as of December 2025), so avoid it unless:
-- Changes affect multiple components
-- The user explicitly requests the full test suite
-- You're unsure which tests are relevant
-
-# **Running `jetls check` for self diagnostics**
-**Please make sure to run `jetls check` after writing or modifying code**:
 ```bash
 ./scripts/selfcheck.sh
 ```
 
 This is run in CI and will cause failures if new warnings are introduced.
 
-# Test code structure
-Testing language server functionality is challenging.
-To fully test such functionality, you need to start a server loop,
-and send several requests to that server that mimic realistic user interactions.
-To write such tests, we've provided `withserver` implemented in
-[`test/setup.jl`](./test/setup.jl), and you can refer to
-[`test/test_full_lifecycle.jl`](./test/test_full_lifecycle.jl)
-as an example of its use.
+# Running test
 
-However, writing such tests is still somewhat tricky.
-Therefore, unless explicitly requested by the core developers, you don't need
-to write test code to fully test newly implemented language server features.
-It's generally sufficient to test important subroutines that are easy to test
-in the implementation of that language server feature.
+Please make sure to test new code when you wrote.
 
-Test code for new language server features should be written in files that
-define independent module spaces with a `test_` prefix.
-Then include these files from [`test/runtests.jl`](./test/runtests.jl).
-This ensures that these files can be run independently from the REPL.
-For example, test code for the "completion" feature would be in a file like
-this:
-> test/test_completions.jl
-```julia
-module test_completions
-using Test # Each module space needs to explicitly declare the code needed for execution
-...
-end # module test_completions
-```
-And `test/test_completions.jl` is included from `test/runtests.jl` like this:
-> test/runtests.jl
-```julia
-@testset "JETLS.jl" begin
-    ...
-    @testset "completions" include("test_completions.jl")
-    ...
-end
-```
+Run the most specific relevant tests when practical. Prefer component-specific
+tests over the full test suite. Avoid `Pkg.test()` unless changes affect
+multiple components, the user explicitly requests the full test suite,
+or no narrower validation is appropriate.
 
-In each test file, you are encouraged to use `@testset "testset name"` to
-organize our tests cleanly. For code clarity, unless specifically necessary,
-avoid using `using`, `import`, and `struct` definitions  inside `@testset`
-blocks, and instead place them at the top level.
+For detailed test-running workflows,
+use the [`run-test`](./.agents/skills/run-test/SKILL.md) skill.
 
-Also, you are encouraged to use `let`-blocks to ensure that names aren't
-unintentionally reused between multiple test cases.
-For example, here is what good test code looks like:
-> test/test_completions.jl
-```julia
-module test_completions
+# Writing test
 
-using Test # Each module space needs to explicitly declare the code needed for execution
-using JETLS: some_completion_func
+When adding or modifying tests, keep test files independently runnable and
+follow the project's test file structure. For new language server features,
+prefer focused subroutine tests unless the core developers explicitly request
+full language-server interaction coverage.
 
-function testcase_util(s::AbstractString)
-    ...
-end
-function with_testcase(s::AbstractString)
-    ...
-end
-
-@testset "some_completion_func" begin
-    let s = "..."
-        ret = some_completion_func(testcase_util(s))
-        @test test_with(ret)
-    end
-    let s = "..."
-        ret = some_completion_func(testcase_util(s))
-        @test test_with(ret)
-    end
-
-    # or `let` is unnecessary when testing with function scope
-    with_testcase(s) do case
-        ret = some_completion_func(case)
-        @test test_with(ret)
-    end
-end
-
-end # module test_completions
-```
-
-## Using TestRunner.jl
-Additionally, by using `@testset` as shown above, not only are tests hierarchized,
-but through integration with [TestRunner.jl](https://github.com/aviatesk/TestRunner.jl),
-you can also selectively execute specific `@testset`s, without executing the
-entire test file or test suite.
-If you're using this language server for development as well, you can run tests
-from code lenses or code actions within test files. If you need to run them from
-the command line, you can use commands like the following
-(assuming the `testrunner` executable is installed):
-```bash
-testrunner --project=test --verbose test/test_completions "some_completion_func"
-```
-Note that TestRunner.jl is still experimental.
-The most reliable way to run tests is still to execute test files standalone.
+For detailed test-writing workflows,
+use the [`write-test`](./.agents/skills/write-test/SKILL.md) skill.
 
 # Environment-related issues
-For AI agents: **NEVER MODIFY [Project.toml](./Project.toml) OR  [test/Project.toml](./test/Project.toml) BY YOURSELF**.
-If you encounter errors that seem to be environment-related when running tests,
-in most cases this is due to working directory issues, so first `cd` to the root directory of this project
-and re-run the tests. Never attempt to fix environment-related issues yourself.
-If you cannot resolve the problem, inform the human engineer and ask for instructions.
+
+For AI agents: never modify [`Project.toml`](./Project.toml) or
+[`test/Project.toml`](./test/Project.toml) by yourself.
+
+If test failures look environment-related, first ensure the test was run from
+the root directory of this project. Never attempt dependency or project-file
+fixes yourself. If the problem remains, inform the human engineer and ask for
+instructions.
 
 # About modifications to code you've written
-If you, as an AI agent, add or modify code, and the user appears to have made
-further manual changes to that code after your response, please respect those
-modifications as much as possible.
-For example, if the user has deleted a function you wrote, do not reintroduce
-that function in subsequent code generation.
-If you believe that changes made by the user are potentially problematic,
-please clearly explain your concerns and ask the user for clarification.
+
+If the user manually changes work you previously produced, respect those
+changes. Do not reintroduce deleted code or revert user edits without explicit
+permission. If you think a user edit is problematic, explain your concern and
+ask for clarification.
 
 # Git operations
-Only perform Git operations when the user explicitly requests them.
-After completing a Git operation, do not perform additional operations based on
-conversational context alone. Wait for explicit instructions.
 
-When the user provides feedback or points out issues with a commit:
-- Do NOT automatically amend the commit or create a fixup commit
-- Explain what could be changed, then wait for explicit instruction
+Only perform Git operations when the user explicitly requests them. After any
+Git operation, wait for explicit follow-up instructions before doing more.
+
+If the user provides feedback on a commit, do not automatically amend it or
+create a fixup commit. Explain what could change and wait for explicit
+instruction.

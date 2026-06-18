@@ -16,7 +16,7 @@ const COMPLETION_TRIGGER_CHARACTERS = [
 completion_options() = CompletionOptions(;
     triggerCharacters = COMPLETION_TRIGGER_CHARACTERS,
     resolveProvider = true,
-    completionItem = (;
+    completionItem = ServerCompletionItemOptions(;
         labelDetailsSupport = true))
 
 const COMPLETION_REGISTRATION_ID = "jetls-completion"
@@ -138,15 +138,14 @@ end
 # cursor can sit past the toplevel's `last_byte` in incomplete code (e.g.
 # `sin(42,│\n` — parser ends the `K"call"` at byte 7, cursor at byte 8 is
 # outside). `lowerable_toplevel_at` has an `offset - 1` retry that handles
-# this, so we go through it and pass the toplevel's actual byte range.
+# this, so we go through it and build the context for the selected toplevel.
 function get_inferred_ctx!(comp_ctx::CompletionCtx; caller::AbstractString)
     isassigned(comp_ctx.inferred_ctx) && return comp_ctx.inferred_ctx[]
     toplevel = lowerable_toplevel_at(comp_ctx.st0_top, comp_ctx.offset)
     ctx = if toplevel === nothing
         nothing
     else
-        build_inferred_context_for_range(
-            comp_ctx.st0_top, comp_ctx.context_module, JS.byte_range(toplevel);
+        build_inferred_context_for_tree(toplevel, comp_ctx.context_module;
             world=comp_ctx.world, caller, cache=comp_ctx.fi.inferred_context_cache)
     end
     return comp_ctx.inferred_ctx[] = ctx
@@ -314,7 +313,9 @@ function global_completions!(
         rng = JS.byte_range(dotprefix)
         ctx = get_inferred_ctx!(comp_ctx; caller="global_completions!")
         prefixtyp = ctx === nothing ? nothing : get_type_for_range(ctx, rng)
-        if prefixtyp === nothing
+        # A `Union{}` prefix type is uninformative (the prefix throws or is dead code);
+        # treat it like `nothing` so module/const prefixes such as `Base.` still complete.
+        if prefixtyp === nothing || prefixtyp === Union{}
             prefixtyp = resolve_global_const(context_module, dotprefix, world)
         end
         # Module prefix → enumerate that module's globals below.
@@ -339,7 +340,7 @@ function global_completions!(
 
     prioritized_names = let s = Set{Symbol}()
         pnames = Base.invoke_in_world(
-            world, names, context_module; all=true)::Vector{Symbol}
+            world, Base.unsorted_names, context_module; all=true)::Vector{Symbol}
         sizehint!(s, length(pnames))
         for name in pnames
             startswith(String(name), "#") && continue
@@ -348,7 +349,7 @@ function global_completions!(
         s
     end
 
-    all_names = Base.invoke_in_world(world, names, context_module;
+    all_names = Base.invoke_in_world(world, Base.unsorted_names, context_module;
         all=true, imported=true, usings=true)::Vector{Symbol}
     for name in all_names
         s = String(name)
@@ -477,6 +478,7 @@ end
 
 function union_components(@nospecialize(prefixtyp))
     typ = CC.widenconst(prefixtyp)
+    typ === Union{} && return Any[]
     return typ isa Union ? Base.uniontypes(typ) : Any[typ]
 end
 
@@ -647,7 +649,7 @@ end
 function extract_param_text(p::SyntaxTreeC)
      k = JS.kind(p)
     if k === JS.K"Identifier"
-        return extract_name_val(p)
+        return get_name_val(p)
     elseif k === JS.K"::"
         n = JS.numchildren(p)
         if n == 1
@@ -663,7 +665,7 @@ function extract_param_text(p::SyntaxTreeC)
     elseif k === JS.K"var" && JS.numchildren(p) == 1
         inner = p[1]
         if JS.kind(inner) === JS.K"Identifier"
-            return extract_name_val(inner)
+            return get_name_val(inner)
         end
     end
     return nothing
@@ -726,7 +728,7 @@ end
 
 function extract_kwarg_name_str(p::SyntaxTreeC)
     node = @something extract_kwarg_name(p; sig=true) return nothing
-    return extract_name_val(node)
+    return get_name_val(node)
 end
 
 function should_insert_spaces_around_equal(fi::FileInfo, ca::CallArgs)
@@ -744,7 +746,7 @@ function should_insert_spaces_around_equal(fi::FileInfo, ca::CallArgs)
         tok = @something next_tok(tok) continue
         JS.is_whitespace(this(tok)) || continue
         tok = @something next_tok(tok) continue
-        JS.is_plain_equals(this(tok)) || continue
+        JS.kind(this(tok)) === JS.K"=" || continue
         tok = @something next_tok(tok) continue
         JS.is_whitespace(this(tok)) || continue
         has_whitespaces += 1

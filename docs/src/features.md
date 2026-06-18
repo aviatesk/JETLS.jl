@@ -433,6 +433,13 @@ Run and re-run `@testset` blocks directly from the editor. See
 
 ## [Inlay hint](@id features/inlay-hint)
 
+Show inline annotations in the editor without modifying the source. JETLS
+provides two kinds of inlay hints: structural `end`-tag labels for long
+blocks, and inferred type annotations next to expressions.
+
+All inlay hints can be disabled via your editor's global settings (e.g.
+`editor.inlayHints.enabled` in VSCode, on by default).
+
 ### [Block-end hints](@id features/inlay-hint/block-end)
 
 Label the construct that a long `end` keyword closes — `module Foo`,
@@ -453,6 +460,76 @@ enable/disable and threshold configuration.
 > ```@raw html
 > </div>
 > ```
+
+### [Type hints](@id features/inlay-hint/types)
+
+Show inferred types next to expressions — bindings, calls, function
+return types, branch results, etc. — so types are visible inline
+without hovering. Long types are clipped with `…` to fit inline;
+hover the hint to see the unclipped type in the tooltip.
+
+**Method bodies:** Hints currently come from inference starting at the
+declared signature — parameter types as written, defaulting to `Any`
+if absent. Because this drives Julia's standard inference machinery,
+features like `isa` / `isnothing` narrowing and return-type merging
+work as expected, and the inline hints let you read those results
+directly off the source.
+
+> ```@raw html
+> <div class="display-light-only">
+> ```
+> ![Type hints — method body](assets/features/inlay-hint-types-format.png)
+> ```@raw html
+> </div>
+> <div class="display-dark-only">
+> ```
+> ![Type hints — method body](assets/features/inlay-hint-types-format-dark.png)
+> ```@raw html
+> </div>
+> ```
+
+Note that, in the example above, the `isnothing(x)` branch shows `x::Union{…}`
+— the unclipped `Union{Int, String, Nothing}` is in the hover tooltip.
+
+**Top-level chunks:** Type hints aren't limited to method bodies, e.g.
+standalone `let` blocks, are each inferred independently and get the same
+per-statement annotations.
+
+> ```@raw html
+> <div class="display-light-only">
+> ```
+> ![Type hints — top-level chunk inference](assets/features/inlay-hint-types-monte-carlo.png)
+> ```@raw html
+> </div>
+> <div class="display-dark-only">
+> ```
+> ![Type hints — top-level chunk inference](assets/features/inlay-hint-types-monte-carlo-dark.png)
+> ```@raw html
+> </div>
+> ```
+
+**Non-obvious types and `Union{}`:** Types you wouldn't write by hand
+surface inline — `Vector{SubString{String}}` from `split`,
+`SubString{String}` from `first`. When inference proves an expression
+always errors, the type collapses to `Union{}`; the tooltip explains
+the bottom type. Here, `parse(Int, head, 16)` has no matching method
+(the right form is `parse(Int, head; base = 16)`), so the call
+receives both a `::Union{}` hint and JET's method-error diagnostic.
+
+> ```@raw html
+> <div class="display-light-only">
+> ```
+> ![Type hints — non-obvious types and Union{}](assets/features/inlay-hint-types-parse-hex.png)
+> ```@raw html
+> </div>
+> <div class="display-dark-only">
+> ```
+> ![Type hints — non-obvious types and Union{}](assets/features/inlay-hint-types-parse-hex-dark.png)
+> ```@raw html
+> </div>
+> ```
+
+Can be disabled with [`[inlay_hint.types] enabled`](@ref config/inlay_hint/types/enabled) configuration.
 
 ## [Semantic tokens](@id features/semantic-tokens)
 
@@ -752,6 +829,10 @@ JETLS provides code actions for quick fixes and refactoring, including:
 - Insert `global` / `local` declarations for ambiguous soft scope variables
 - Run a nearby `@testset` or `@test` case via
   [TestRunner code actions](@ref testrunner/features/code-actions)
+- Expand macro calls via
+  [macro expansion views](@ref features/code-views/macro-expansion)
+- View inferred types as
+  [type annotations](@ref features/code-views/type-annotations)
 
 A few representative examples:
 
@@ -823,6 +904,150 @@ A few representative examples:
     </tr>
   </tbody>
 </table>
+```
+
+## [Code views](@id features/code-views)
+
+JETLS can open read-only *code views*: server-computed Julia documents
+derived from your source, such as the result of macro expansion. They are
+served as virtual documents through the LSP 3.18
+`workspace/textDocumentContent` request when the client supports it, and
+otherwise fall back to a temporary file opened via `window/showDocument`,
+so they work across editors regardless of `textDocumentContent` support.
+
+### [Macro expansion](@id features/code-views/macro-expansion)
+
+JETLS offers two [code actions](@ref features/code-actions) on macro calls,
+each opening the expanded code in a read-only `.jl` view:
+
+- **Show macro expansion for `@macro`** expands the macro call under the
+  cursor a single level, to see what one macro produces.
+- **Expand all macros in this top-level form** recursively expands every
+  macro in the enclosing top-level form (the `@macroexpand` view).
+
+You can trigger the first with the cursor on the macro call, and the
+second from anywhere inside a top-level form that contains a macro.
+
+For example, **Show macro expansion for `@assert`** on
+`@assert @isdefined(x) "x should be defined"` opens a view like:
+
+```julia
+# Macro call:
+# @assert @isdefined(x) "x should be defined"
+# └─────────────────────────────────────────┘ ── the macro call being expanded
+# # @ demo.jl:1
+
+# Expanded code view:
+:(if @isdefined(x)
+      nothing
+  else
+      throw(AssertionError("x should be defined"))
+  end)
+```
+
+The nested `@isdefined` call stays in the result because this action expands
+only the selected macro call one level.
+
+In contrast, **Expand all macros in this top-level form** on
+
+```julia
+function selected_value(primary, fallback)
+    if primary !== nothing
+        value = primary
+    elseif fallback !== nothing
+        value = fallback
+    else
+        error("no value available")
+    end
+    @assert @isdefined(value) "value should be assigned"
+    return value
+end
+```
+
+expands every macro the form contains, including the nested `@isdefined`:
+
+```julia
+# All macros expanded in the top-level form at demo.jl:1
+
+:(function selected_value(primary, fallback)
+      if primary !== nothing
+          value = primary
+      elseif fallback !== nothing
+          value = fallback
+      else
+          error("no value available")
+      end
+      if $(Expr(:isdefined, :value))
+          nothing
+      else
+          throw(AssertionError("value should be assigned"))
+      end
+      return value
+  end)
+```
+
+To read like hand-written code, the view trims hygiene noise: it strips
+`LineNumberNode`s and shows `GlobalRef`s that resolve in the expansion
+context (or to an exported `Base`/`Core` name) as bare symbols (so the
+expansions above show `throw`/`AssertionError`, not `Base.throw`). If
+expansion throws, the error trace is shown instead.
+
+### [Type annotations](@id features/code-views/type-annotations)
+
+**Show inferred type annotations** opens a read-only view of the enclosing
+top-level form with JETLS's [type inlay hints](@ref features/inlay-hint/types)
+spliced into the source as explicit `::T` annotations — every expression
+(parameter uses, intermediate results, the return value) carries its inferred
+type. Unlike the inline hints, which are transient editor decorations, the
+result is an annotated copy of the code as ordinary buffer text: you can
+select, scroll, search, and copy it like any other document.
+
+For example, consider this function:
+
+```julia
+function summarize(xs::Vector{Int}, label)
+    total = sum(xs)
+    first_pos_even = findfirst(xs) do x
+        x > 0 && iseven(x)
+    end
+    sample = if first_pos_even === nothing
+        missing
+    else
+        xs[first_pos_even]
+    end
+    return (
+        label,
+        total,
+        sample,
+    )
+end
+```
+
+The resulting annotated copy surfaces several related inference results at
+once: the do-block argument `x` is inferred as `Int64`, the predicate
+expression as `Bool`, `findfirst` returns `Union{Nothing, Int64}`, the `else`
+branch narrows the index to `Int64`, and the untyped `label` propagates to the
+final `Tuple{Any, Int64, Union{Missing, Int64}}` return type:
+
+```julia
+# Inferred type annotations at summary.jl:1
+
+function summarize(xs::Vector{Int}, label)::Tuple{Any, Int64, Union{Missing, Int64}}
+    total = sum(xs::Vector{Int64})::Int64
+    first_pos_even = findfirst(xs::Vector{Int64}) do x::Int64
+        ((x::Int64 > 0)::Bool && iseven(x::Int64)::Bool)::Bool
+    end::Union{Nothing, Int64}
+    sample = if (first_pos_even::Union{Nothing, Int64} === nothing)::Bool
+        missing
+    else
+        (xs::Vector{Int64})[first_pos_even::Int64]::Int64
+    end::Union{Missing, Int64}
+    return (
+        label::Any,
+        total::Int64,
+        sample::Union{Missing, Int64},
+    )::Tuple{Any, Int64, Union{Missing, Int64}}
+end
 ```
 
 ## [Formatting](@id features/formatting)

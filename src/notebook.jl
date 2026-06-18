@@ -16,6 +16,23 @@ get_notebook_uri_for_cell(state::ServerState, cell_uri::URI, default=nothing) =
 canonical_cache_uri(state::ServerState, uri::URI) =
     get_notebook_uri_for_cell(state, uri, uri)
 
+"""
+    notebook_cell_version(state::ServerState, cell_uri::URI) -> Union{Int,Nothing}
+
+Return the client-tracked text-document version of the notebook cell identified by
+`cell_uri`, or `nothing` if `cell_uri` is not a known notebook cell. This is the per-cell
+version the client expects in edits, as opposed to the notebook-document version stored in
+the cell's concat-source `FileInfo`.
+"""
+function notebook_cell_version(state::ServerState, cell_uri::URI)
+    notebook_uri = @something get_notebook_uri_for_cell(state, cell_uri) return nothing
+    notebook_info = @something get_notebook_info(state, notebook_uri) return nothing
+    for cell in notebook_info.cells
+        cell.uri == cell_uri && return cell.version
+    end
+    return nothing
+end
+
 function concatenate_cells(cells::Vector{NotebookCellInfo})
     source = ""
     cell_ranges = CellRange[]
@@ -52,12 +69,16 @@ function cache_notebook_saved_file_info!(server::Server, notebook_uri::URI, note
     end
 end
 
+# Cells inserted via a structure change carry no text/version of their own; those arrive
+# separately in `structure.didOpen` and get filled in during cell reconstruction from the
+# `cell_texts`/`cell_versions` maps (see `handle_DidChangeNotebookDocumentNotification`).
 cells_from_lsp(cells::Vector{NotebookCell}) =
-    NotebookCellInfo[NotebookCellInfo(cell.document, cell.kind, "") for cell in cells]
+    NotebookCellInfo[NotebookCellInfo(cell.document, cell.kind, 0, "") for cell in cells]
 
 function apply_cell_structure_change!(
         cells::Vector{NotebookCellInfo},
         cell_texts::Dict{URI,String},
+        cell_versions::Dict{URI,Int},
         structure::NotebookDocumentChangeEventCellsStructure
     )
     array_change = structure.array
@@ -74,12 +95,14 @@ function apply_cell_structure_change!(
     if did_open !== nothing
         for doc in did_open
             cell_texts[doc.uri] = doc.text
+            cell_versions[doc.uri] = doc.version
         end
     end
     did_close = structure.didClose
     if did_close !== nothing
         for doc in did_close
             delete!(cell_texts, doc.uri)
+            delete!(cell_versions, doc.uri)
         end
     end
 end
@@ -88,7 +111,7 @@ function apply_cell_data_change!(cells::Vector{NotebookCellInfo}, data::Vector{N
     for updated_cell in data
         for (i, cell) in enumerate(cells)
             if cell.uri == updated_cell.document
-                cells[i] = NotebookCellInfo(updated_cell.document, updated_cell.kind, cell.text)
+                cells[i] = NotebookCellInfo(updated_cell.document, updated_cell.kind, cell.version, cell.text)
                 break
             end
         end
@@ -101,11 +124,13 @@ end
 # `NotebookDocumentSyncOptions` does not provide an equivalent option for cell text content.
 function apply_cell_text_change!(
         cell_texts::Dict{URI,String},
+        cell_versions::Dict{URI,Int},
         text_content::Vector{NotebookDocumentChangeEventCellsTextContentItem},
         encoding::PositionEncodingKind.Ty
     )
     for content_change in text_content
         doc_uri = content_change.document.uri
+        cell_versions[doc_uri] = content_change.document.version
         current_text = get(cell_texts, doc_uri, "")
         for change_event in content_change.changes
             if change_event.range === nothing
@@ -126,8 +151,10 @@ function handle_DidOpenNotebookDocumentNotification(
     notebook_doc = msg.params.notebookDocument
     notebook_uri = notebook_doc.uri
     cell_texts = Dict{URI,String}(doc.uri => doc.text for doc in msg.params.cellTextDocuments)
+    cell_versions = Dict{URI,Int}(doc.uri => doc.version for doc in msg.params.cellTextDocuments)
     cells = NotebookCellInfo[
-        NotebookCellInfo(cell.document, cell.kind, get(cell_texts, cell.document, ""))
+        NotebookCellInfo(cell.document, cell.kind,
+            get(cell_versions, cell.document, 0), get(cell_texts, cell.document, ""))
         for cell in notebook_doc.cells]
     concat = concatenate_cells(cells)
     notebook_info = NotebookInfo(
@@ -161,16 +188,18 @@ function handle_DidChangeNotebookDocumentNotification(
         end
         cells = copy(notebook_info.cells)
         cell_texts = Dict{URI,String}(cell.uri => cell.text for cell in cells)
+        cell_versions = Dict{URI,Int}(cell.uri => cell.version for cell in cells)
         if cells_change !== nothing
             structure = cells_change.structure
-            structure !== nothing && apply_cell_structure_change!(cells, cell_texts, structure)
+            structure !== nothing && apply_cell_structure_change!(cells, cell_texts, cell_versions, structure)
             data = cells_change.data
             data !== nothing && apply_cell_data_change!(cells, data)
             text_content = cells_change.textContent
-            text_content !== nothing && apply_cell_text_change!(cell_texts, text_content, notebook_info.encoding)
+            text_content !== nothing && apply_cell_text_change!(cell_texts, cell_versions, text_content, notebook_info.encoding)
         end
         updated_cells = NotebookCellInfo[
-            NotebookCellInfo(cell.uri, cell.kind, get(cell_texts, cell.uri, cell.text))
+            NotebookCellInfo(cell.uri, cell.kind,
+                get(cell_versions, cell.uri, cell.version), get(cell_texts, cell.uri, cell.text))
             for cell in cells]
         concat = concatenate_cells(updated_cells)
         new_notebook_info = NotebookInfo(notebook_info;

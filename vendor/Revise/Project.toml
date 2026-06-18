@@ -1,18 +1,19 @@
 name = "Revise"
 uuid = "d54aa4ff-5f0d-5e64-8d83-7613e0a93f9b"
-version = "3.14.5"
+version = "3.15.1"
 
 [deps]
-LibGit2 = "76f85450-5226-5b5a-8eaa-529ad045b433"
-InteractiveUtils = "b77e0a4c-d291-57a0-90e8-8db25a27a240"
+CRC32c = "8bf52ea8-c179-5cab-976a-9e18b702a9bc"
+LoweredCodeUtils = "01ede001-ea10-5720-9c31-2e53839707a9"
+UUIDs = "cf7118a7-6976-5b1a-9a39-7adc72f591a4"
+CodeTracking = "29b28462-3302-58bb-873a-3f58224955cc"
 OrderedCollections = "64c61135-0f01-5c34-beb9-07fc02084e85"
 REPL = "3fa0cd96-eef1-5676-8a61-b3b8758bbffb"
-LoweredCodeUtils = "01ede001-ea10-5720-9c31-2e53839707a9"
 FileWatching = "7b1f6079-737a-58dc-b8bc-7a2ca5c1b5ee"
 JuliaInterpreter = "87c368a4-672f-5de1-91ff-3cc7fc652fab"
-UUIDs = "cf7118a7-6976-5b1a-9a39-7adc72f591a4"
+LibGit2 = "76f85450-5226-5b5a-8eaa-529ad045b433"
 Preferences = "cc588e5a-7be0-5224-8a6a-549b21958db9"
-CodeTracking = "29b28462-3302-58bb-873a-3f58224955cc"
+InteractiveUtils = "b77e0a4c-d291-57a0-90e8-8db25a27a240"
 
 [workspace]
 projects = ["docs", "test"]
@@ -37,7 +38,7 @@ Requires = "ae029012-a4dd-5104-9daa-d747884805df"
 [compat]
 julia = "1.10"
 InteractiveUtils = "1.10, 1.11"
-OrderedCollections = "1"
+OrderedCollections = "1, 2"
 LoweredCodeUtils = "3.5"
 JuliaInterpreter = "0.10.8"
 Preferences = "1.5.0"
@@ -50,25 +51,25 @@ test = ["CatIndices", "Distributed", "EndpointRanges", "EponymTuples", "Example"
 
 [sources.OrderedCollections]
 subdir = "vendor/OrderedCollections"
-rev = "bce1aa2e7d5e99c46fd0865122aa2febb98d30e7"
+rev = "40d7e1dc8318fc62f813f5bf9eb3f2c95acf73b8"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.LoweredCodeUtils]
 subdir = "vendor/LoweredCodeUtils"
-rev = "bce1aa2e7d5e99c46fd0865122aa2febb98d30e7"
+rev = "40d7e1dc8318fc62f813f5bf9eb3f2c95acf73b8"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.JuliaInterpreter]
 subdir = "vendor/JuliaInterpreter"
-rev = "bce1aa2e7d5e99c46fd0865122aa2febb98d30e7"
+rev = "40d7e1dc8318fc62f813f5bf9eb3f2c95acf73b8"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.Preferences]
 subdir = "vendor/Preferences"
-rev = "bce1aa2e7d5e99c46fd0865122aa2febb98d30e7"
+rev = "40d7e1dc8318fc62f813f5bf9eb3f2c95acf73b8"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.CodeTracking]
 subdir = "vendor/CodeTracking"
-rev = "bce1aa2e7d5e99c46fd0865122aa2febb98d30e7"
+rev = "40d7e1dc8318fc62f813f5bf9eb3f2c95acf73b8"
 url = "https://github.com/aviatesk/JETLS.jl"

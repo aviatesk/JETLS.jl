@@ -465,6 +465,14 @@ async function startLanguageServer() {
         notebook: { notebookType: "jupyter-notebook" },
         language: "julia",
       },
+      // Sync the server-provided virtual documents (`jetls-*` schemes, e.g.
+      // TestRunner logs) so the server is notified when they are opened/closed.
+      // Language features are registered separately (see `DEFAULT_DOCUMENT_SELECTOR`)
+      // and do not target these schemes; this only drives document synchronization.
+      // Each new view's scheme must be listed here to receive sync notifications.
+      {
+        scheme: "jetls-testrunner-logs",
+      },
     ],
     synchronize: {
       fileEvents: [
@@ -526,6 +534,10 @@ async function startLanguageServer() {
     serverOptions,
     clientOptions,
   );
+  // `workspace/textDocumentContent` is still exposed as a proposed
+  // vscode-languageclient feature. JETLS sends the supported `jetls` scheme
+  // in its server capability or dynamic registration.
+  languageClient.registerProposedFeatures();
 
   statusBarItem.text = "$(sync~spin) Loading JETLS ...";
   statusBarItem.tooltip =

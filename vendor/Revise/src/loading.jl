@@ -31,6 +31,38 @@ function pkg_fileinfo(id::PkgId)
 end
 
 """
+    update_pkgversion!(id::PkgId)
+
+Refresh `Base.pkgorigins[id].version` from the package's `Project.toml`.
+
+Julia caches a package's version in `Base.pkgorigins` at load time, and
+(on Julia 1.12+) `pkgversion` returns that cached value. When developing a
+package and bumping its version, the cached value would otherwise go stale
+(issue #684). Call this after revising a package so `pkgversion` and Pkg's
+version checks stay in sync with the source.
+"""
+function update_pkgversion!(id::PkgId)
+    isdefined(Base, :pkgorigins) || return nothing
+    isdefined(Base, :get_pkgversion_from_path) || return nothing
+    origin = get(Base.pkgorigins, id, nothing)
+    origin === nothing && return nothing
+    hasproperty(origin, :version) || return nothing
+    path = origin.path
+    path === nothing && return nothing
+    # `path` is the package entry file (e.g. `src/Foo.jl`); the version lives in
+    # the `Project.toml` one directory up from `src`. Note: we deliberately avoid
+    # taking `Base.require_lock` here. The load-time lock order is
+    # require_lock → revise_lock (`watch_package` is a `require` callback), and we
+    # hold `revise_lock` at our call sites; acquiring `require_lock` now would
+    # invert that order. A bare field assignment is safe without it.
+    v = Base.get_pkgversion_from_path(joinpath(dirname(path), ".."))
+    # Don't clobber a known version if the project file is momentarily unreadable
+    # (e.g. a path switch in flight) or has no `version` entry.
+    v === nothing || (origin.version = v)
+    return nothing
+end
+
+"""
     parse_pkg_files(id::PkgId)
 
 This function gets called by `watch_package` and runs when a package is first loaded.
@@ -96,7 +128,7 @@ function modulefiles(mod::Module)
         parentfile = String(first(methods(getfield(mod, :eval))).file)
     end
     id = PkgId(mod)
-    if id.name == "Base" || Symbol(id.name) ∈ stdlib_names
+    if id.name == "Base" || Base.is_stdlib(id)
         parentfile = normpath(Base.find_source_file(parentfile))
         if !startswith(parentfile, juliadir)
             parentfile = replace(parentfile, fallback_juliadir()=>juliadir)

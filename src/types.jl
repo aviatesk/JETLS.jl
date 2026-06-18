@@ -83,6 +83,8 @@ struct InferredTreeContext
     # inside an outer OC body (e.g. multi-`for` comprehension, closure-of-closure) is
     # filtered when querying at the inner OC's range.
     oc_body_scope::Dict{Int,UnitRange{Int}}
+    # Refined OC argument types keyed by argument binding byte range.
+    oc_argument_binding_types::Dict{UnitRange{Int},Any}
 end
 
 const InferredContextCacheKey = Tuple{Module,UInt,UnitRange{Int}}
@@ -169,6 +171,13 @@ end
 struct NotebookCellInfo
     uri::URI
     kind::LSP.NotebookCellKind.Ty
+    """
+    The client-tracked text-document version of this cell. Each notebook cell is an
+    independent text document with its own version counter, distinct from the enclosing
+    `NotebookInfo.version` (the notebook-document version). This per-cell version is what
+    the client expects in `OptionalVersionedTextDocumentIdentifier` for cell edits.
+    """
+    version::Int
     text::String
 end
 
@@ -318,7 +327,8 @@ struct AnalysisManager
 end
 
 abstract type RequestCaller end
-cancellable_token(::RequestCaller) = nothing
+cancellable_token(caller::RequestCaller) = cancellable_token_impl(caller)::Union{Nothing,ProgressToken}
+cancellable_token_impl(::RequestCaller) = nothing
 
 struct Registered
     id::String
@@ -472,11 +482,13 @@ const LOWERING_ERROR_CODE = "lowering/error"
 const LOWERING_MACRO_EXPANSION_ERROR_CODE = "lowering/macro-expansion-error"
 const LOWERING_UNDEF_GLOBAL_VAR_CODE = "lowering/undef-global-var"
 const LOWERING_UNDEF_LOCAL_VAR_CODE = "lowering/undef-local-var"
+const LOWERING_UNCONSTRAINED_STATIC_PARAMETER_CODE = "lowering/unconstrained-static-parameter"
 const LOWERING_CAPTURED_BOXED_VARIABLE_CODE = "lowering/captured-boxed-variable"
 const LOWERING_UNSORTED_IMPORT_NAMES_CODE = "lowering/unsorted-import-names"
 const LOWERING_UNUSED_IMPORT_CODE = "lowering/unused-import"
 const LOWERING_UNUSED_LABEL_CODE = "lowering/unused-label"
 const LOWERING_UNREACHABLE_CODE = "lowering/unreachable-code"
+const LOWERING_INACTIVE_CODE = "lowering/inactive-code"
 const LOWERING_AMBIGUOUS_SOFT_SCOPE_CODE = "lowering/ambiguous-soft-scope"
 const TOPLEVEL_ERROR_CODE = "toplevel/error"
 const TOPLEVEL_METHOD_OVERWRITE_CODE = "toplevel/method-overwrite"
@@ -498,11 +510,13 @@ const ALL_DIAGNOSTIC_CODES = Set{String}(String[
     LOWERING_MACRO_EXPANSION_ERROR_CODE,
     LOWERING_UNDEF_GLOBAL_VAR_CODE,
     LOWERING_UNDEF_LOCAL_VAR_CODE,
+    LOWERING_UNCONSTRAINED_STATIC_PARAMETER_CODE,
     LOWERING_CAPTURED_BOXED_VARIABLE_CODE,
     LOWERING_UNSORTED_IMPORT_NAMES_CODE,
     LOWERING_UNUSED_IMPORT_CODE,
     LOWERING_UNUSED_LABEL_CODE,
     LOWERING_UNREACHABLE_CODE,
+    LOWERING_INACTIVE_CODE,
     LOWERING_AMBIGUOUS_SOFT_SCOPE_CODE,
     TOPLEVEL_ERROR_CODE,
     TOPLEVEL_METHOD_OVERWRITE_CODE,
@@ -583,8 +597,14 @@ end
 end
 @define_eq_overloads InlayHintBlockEndConfig
 
+@kwdef struct InlayHintTypesConfig <: ConfigSection
+    enabled::Maybe{Bool} = nothing
+end
+@define_eq_overloads InlayHintTypesConfig
+
 @kwdef struct InlayHintConfig <: ConfigSection
     block_end::Maybe{InlayHintBlockEndConfig} = nothing
+    types::Maybe{InlayHintTypesConfig} = nothing
 end
 @define_eq_overloads InlayHintConfig
 
@@ -612,7 +632,8 @@ const DEFAULT_CONFIG = JETLSConfig(;
     completion = CompletionConfig(LaTeXEmojiConfig(missing)),
     code_lens = CodeLensConfig(false, true),
     inlay_hint = InlayHintConfig(
-        InlayHintBlockEndConfig(true, 25)),
+        InlayHintBlockEndConfig(true, 25),
+        InlayHintTypesConfig(true)),
     initialization_options = DEFAULT_INIT_OPTIONS)
 
 function get_default_config(path::Symbol...)
@@ -810,6 +831,13 @@ const ConfigManager = LWContainer{ConfigManagerData, LWStats}
 const UnsyncedFileCacheData = Base.PersistentDict{URI,FileInfo}
 const UnsyncedFileCache = LWContainer{UnsyncedFileCacheData, LWStats}
 
+struct TextDocumentContentEntry
+    text::String
+    opened::Bool
+end
+const TextDocumentContentCacheData = Base.PersistentDict{URI,TextDocumentContentEntry}
+const TextDocumentContentCache = LWContainer{TextDocumentContentCacheData, LWStats}
+
 const CurrentlyHandled = Dict{MessageId, CancelFlag}
 const HandledHistory = FixedSizeQueue{MessageId}
 
@@ -835,6 +863,7 @@ mutable struct ServerState
     const document_symbol_cache::DocumentSymbolCache
     const binding_occurrences_cache::BindingOccurrencesCache
     const per_file_diagnostics_cache::PerFileDiagnosticsCache
+    const text_document_content_cache::TextDocumentContentCache
     const analysis_manager::AnalysisManager
     const extra_diagnostics::ExtraDiagnostics
     const currently_handled::CurrentlyHandled
@@ -867,6 +896,7 @@ mutable struct ServerState
             #=document_symbol_cache=# DocumentSymbolCache(),
             #=binding_occurrences_cache=# BindingOccurrencesCache(),
             #=per_file_diagnostics_cache=# PerFileDiagnosticsCache(),
+            #=text_document_content_cache=# TextDocumentContentCache(),
             #=analysis_manager=# AnalysisManager(),
             #=extra_diagnostics=# ExtraDiagnostics(),
             #=currently_handled=# CurrentlyHandled(),

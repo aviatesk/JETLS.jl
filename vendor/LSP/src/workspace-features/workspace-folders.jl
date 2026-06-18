@@ -28,14 +28,3 @@ Returns an empty array if a workspace is open but no folders are configured.
     """
     changeNotifications::Union{String, Bool, Nothing} = nothing
 end
-
-@interface WorkspaceFolder begin
-    "The associated URI for this workspace folder."
-    uri::URI
-
-    """
-    The name of the workspace folder. Used to refer to this workspace folder in the user
-    interface.
-    """
-    name::String
-end

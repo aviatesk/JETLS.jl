@@ -6,6 +6,16 @@ function is_macrocall_use_site(fi::FileInfo, tree)
     return !iszero(fb) && fi.parsed_stream.textbuf[fb] == UInt8('@')
 end
 
+# Resolve the document version to attach to a `TextDocumentEdit` targeting `edit_uri`.
+# For a notebook cell the concat-source `FileInfo.version` (passed as `fallback`) is the
+# *notebook* version, which does not match the client's per-cell version and makes the
+# client reject the whole edit; use the cell's own version instead. For regular files
+# `edit_uri` is not a notebook cell, so `fallback` (the file's version) is used as-is.
+function rename_edit_version(state::ServerState, edit_uri::URI, fallback::Union{Int,Null})
+    cell_version = notebook_cell_version(state, edit_uri)
+    return cell_version === nothing ? fallback : cell_version
+end
+
 struct RenameProgressCaller <: RequestCaller
     uri::URI
     fi::FileInfo
@@ -15,7 +25,7 @@ struct RenameProgressCaller <: RequestCaller
     token::ProgressToken
     cancel_flag::CancelFlag
 end
-cancellable_token(caller::RenameProgressCaller) = caller.token
+cancellable_token_impl(caller::RenameProgressCaller) = caller.token
 
 function rename_options(server::Server)
     return RenameOptions(;
@@ -115,9 +125,7 @@ function file_rename_preparation(
     st0_top = build_syntax_tree(fi)
     offset = xy_to_offset(fi, pos)
 
-    string_node = @something begin
-        select_target_string(st0_top, offset)
-    end return nothing
+    string_node = @something select_target_string(st0_top, offset) return nothing
 
     resolved = @something(
         resolve_path_string_literal(string_node, dirname(uri2filename(uri))),
@@ -237,7 +245,7 @@ function local_binding_rename(
         documentChanges = TextDocumentEdit[
             TextDocumentEdit(;
                 textDocument = OptionalVersionedTextDocumentIdentifier(;
-                    uri = edit_uri, version = fi.version),
+                    uri = edit_uri, version = rename_edit_version(state, edit_uri, fi.version)),
                 edits)
             for (edit_uri, edits) in edits_by_uri]
         result = WorkspaceEdit(; documentChanges)
@@ -364,7 +372,7 @@ function collect_global_rename_edits!(
         if changes isa Vector{TextDocumentEdit}
             for (edit_uri, edits) in edits_by_uri
                 textDocument = OptionalVersionedTextDocumentIdentifier(;
-                    uri = edit_uri, version)
+                    uri = edit_uri, version = rename_edit_version(state, edit_uri, version))
                 push!(changes, TextDocumentEdit(; textDocument, edits))
             end
         else
@@ -458,8 +466,7 @@ function collapse_alias_to_source(
     JS.numchildren(as_node) >= 2 || return nothing
     source_path = as_node[1]
     source_id = @something get_local_import_identifier(source_path) return nothing
-    source_name = get(source_id, :name_val, nothing)
-    source_name isa AbstractString || return nothing
+    source_name = @something get_name_val(source_id) return nothing
     effective_new = ismacro ? "@" * newName : newName
     source_name == effective_new || return nothing
     source_range = jsobj_to_range(source_path, fi)
@@ -474,9 +481,7 @@ function file_rename(
     st0_top = build_syntax_tree(fi)
     offset = xy_to_offset(fi, pos)
 
-    string_node = @something begin
-        select_target_string(st0_top, offset)
-    end return nothing
+    string_node = @something select_target_string(st0_top, offset) return nothing
 
     basedir = dirname(uri2filename(uri))
     resolved = @something(
@@ -492,7 +497,8 @@ function file_rename(
     textEdit = TextEdit(; range, newText = newName)
 
     if supports(server, :workspace, :workspaceEdit, :documentChanges)
-        textDocument = OptionalVersionedTextDocumentIdentifier(; uri, fi.version)
+        textDocument = OptionalVersionedTextDocumentIdentifier(;
+            uri, version = rename_edit_version(state, uri, fi.version))
         textDocumentEdit = TextDocumentEdit(; textDocument, edits = [textEdit])
         result = WorkspaceEdit(; documentChanges = [textDocumentEdit, renameFile])
     else

@@ -2,8 +2,7 @@
 """
 A pattern kind describing if a glob pattern matches a file a folder or both.
 
-# Tags
-- since – 3.16.0
+- `@since` 3.16.0
 """
 @namespace FileOperationPatternKind::String begin
     "The pattern matches a file only."
@@ -16,8 +15,7 @@ end
 """
 Matching options for the file operation pattern.
 
-# Tags
-- since – 3.16.0
+- `@since` 3.16.0
 """
 @interface FileOperationPatternOptions begin
     "The pattern should be matched ignoring casing."
@@ -28,8 +26,7 @@ end
 A pattern to describe in which file operation requests or notifications the server is
 interested in.
 
-# Tags
-- since – 3.16.0
+- `@since` 3.16.0
 """
 @interface FileOperationPattern begin
     """
@@ -57,8 +54,7 @@ end
 A filter to describe in which file operation requests or notifications the server is
 interested in.
 
-# Tags
-- since – 3.16.0
+- `@since` 3.16.0
 """
 @interface FileOperationFilter begin
     "A Uri like `file` or `untitled`."
@@ -71,8 +67,7 @@ end
 """
 The options to register for file operations.
 
-# Tags
-- since – 3.16.0
+- `@since` 3.16.0
 """
 @interface FileOperationRegistrationOptions begin
     "The actual filters."

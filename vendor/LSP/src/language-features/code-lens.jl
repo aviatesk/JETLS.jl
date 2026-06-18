@@ -105,8 +105,7 @@ requires a re-calculation of all code lenses. Note that the client still has the
 freedom to delay the re-calculation of the code lenses if for example an editor
 is currently not visible.
 
-# Tags
-- since - 3.16.0
+- `@since` 3.16.0
 """
 @interface CodeLensRefreshRequest @extends RequestMessage begin
     method::String = "workspace/codeLens/refresh"

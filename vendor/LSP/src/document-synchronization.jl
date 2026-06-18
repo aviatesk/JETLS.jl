@@ -71,8 +71,7 @@ If only a text is provided it is considered to be the full content of the docume
     """
     The optional length of the range that got replaced.
 
-    # Tags
-    - deprecated – use range instead.
+    - `@deprecated` use range instead.
     """
     rangeLength::Union{UInt, Nothing} = nothing
 
@@ -201,8 +200,7 @@ end
 """
 A notebook cell kind.
 
-# Tags
-- since - 3.17.0
+- `@since` 3.17.0
 """
 @namespace NotebookCellKind::Int begin
     "A markup-cell is formatted source that is used for display."
@@ -215,8 +213,7 @@ end
 """
 Execution summary information for a notebook cell.
 
-# Tags
-- since - 3.17.0
+- `@since` 3.17.0
 """
 @interface ExecutionSummary begin
     """
@@ -237,8 +234,7 @@ A cell's document URI must be unique across ALL notebook
 cells and can therefore be used to uniquely identify a
 notebook cell or the cell's text document.
 
-# Tags
-- since - 3.17.0
+- `@since` 3.17.0
 """
 @interface NotebookCell begin
     "The cell's kind"
@@ -257,8 +253,7 @@ end
 """
 A notebook document.
 
-# Tags
-- since - 3.17.0
+- `@since` 3.17.0
 """
 @interface NotebookDocument begin
     "The notebook document's URI."
@@ -283,8 +278,7 @@ end
 """
 A literal to identify a notebook document in the client.
 
-# Tags
-- since - 3.17.0
+- `@since` 3.17.0
 """
 @interface NotebookDocumentIdentifier begin
     "The notebook document's URI."
@@ -294,8 +288,7 @@ end
 """
 A versioned notebook document identifier.
 
-# Tags
-- since - 3.17.0
+- `@since` 3.17.0
 """
 @interface VersionedNotebookDocumentIdentifier begin
     "The version number of this notebook document."
@@ -333,8 +326,7 @@ matching notebook document will be synced.
 If a selector provides no notebook document filter but only a cell selector all notebook
 documents that contain at least one matching cell will be synced.
 
-# Tags
-- since - 3.17.0
+- `@since` 3.17.0
 """
 @interface NotebookDocumentSyncOptions begin
     "The notebooks to be synced."
@@ -350,8 +342,7 @@ end
 """
 Registration options specific to a notebook.
 
-# Tags
-- since - 3.17.0
+- `@since` 3.17.0
 """
 @interface NotebookDocumentSyncRegistrationOptions @extends NotebookDocumentSyncOptions, StaticRegistrationOptions begin
 end
@@ -362,8 +353,7 @@ end
 """
 The params sent in an open notebook document notification.
 
-# Tags
-- since - 3.17.0
+- `@since` 3.17.0
 """
 @interface DidOpenNotebookDocumentParams begin
     "The notebook document that got opened."
@@ -387,8 +377,7 @@ end
 A change describing how to move a `NotebookCell`
 array from state S to S'.
 
-# Tags
-- since - 3.17.0
+- `@since` 3.17.0
 """
 @interface NotebookCellArrayChange begin
     "The start offset of the cell that changed."
@@ -434,8 +423,7 @@ end
 """
 A change event for a notebook document.
 
-# Tags
-- since - 3.17.0
+- `@since` 3.17.0
 """
 @interface NotebookDocumentChangeEvent begin
     "The changed meta data if any."
@@ -448,8 +436,7 @@ end
 """
 The params sent in a change notebook document notification.
 
-# Tags
-- since - 3.17.0
+- `@since` 3.17.0
 """
 @interface DidChangeNotebookDocumentParams begin
     """
@@ -487,8 +474,7 @@ end
 """
 The params sent in a save notebook document notification.
 
-# Tags
-- since - 3.17.0
+- `@since` 3.17.0
 """
 @interface DidSaveNotebookDocumentParams begin
     "The notebook document that got saved."
@@ -508,8 +494,7 @@ end
 """
 The params sent in a close notebook document notification.
 
-# Tags
-- since - 3.17.0
+- `@since` 3.17.0
 """
 @interface DidCloseNotebookDocumentParams begin
     "The notebook document that got closed."
