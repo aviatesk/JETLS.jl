@@ -354,14 +354,35 @@ function get_import_sort_key(st0::SyntaxTreeC)
 end
 
 """
+    is_import_eval_call(st3::SyntaxTreeC) -> Bool
+
+Return `true` when `st3` is a `K"call"` to JuliaLowering's `eval_import` /
+`eval_using` runtime helpers, which `import` / `using` statements desugar into.
+The module-path components are carried as `K"inert"` arguments of these calls.
+Because they are compiler-generated rather than user-authored quoted code, inert
+traversals skip such calls so module paths are not mistaken for ordinary global
+references (e.g. `import A.B` nested in an `if`/`begin` block).
+"""
+function is_import_eval_call(st3::SyntaxTreeC)
+    JS.kind(st3) === JS.K"call" || return false
+    JS.numchildren(st3) ≥ 1 || return false
+    head = st3[1]
+    JS.kind(head) === JS.K"Value" || return false
+    val = head.value
+    return val === JL.eval_import || val === JL.eval_using
+end
+
+"""
     foreach_inert_identifier(callback, st::SyntaxTreeC)
 
 Traverse `st` looking for `K"inert"` nodes, and call `f(id_node)` for each
 `K"Identifier"` found inside them. `callback` should return `true` to continue
 traversal or `false` to stop early.
 """
-function foreach_inert_identifier(@specialize(callback), node::SyntaxTreeC)
-    res = traverse(node) do n
+function foreach_inert_identifier(@specialize(callback), st::SyntaxTreeC)
+    res = traverse(st) do n
+        # Skip `import`/`using` desugaring (see `is_import_eval_call`).
+        is_import_eval_call(n) && return traversal_no_recurse
         JS.kind(n) === JS.K"inert" || return
         inner = traverse(n) do m
             JS.kind(m) === JS.K"Identifier" || return

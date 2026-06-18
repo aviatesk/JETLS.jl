@@ -565,6 +565,21 @@ end
             @test binfo.name == "Inner"
             @test only(occs).kind === :decl
         end
+        # A block-nested `import`/`using` must not record its module path as
+        # spurious `:global :use` occurrences.
+        for code in (
+                "if VERSION >= v\"1.11\"\n    import A.B\nend",
+                "begin\n    import A.B\nend",
+                "if VERSION >= v\"1.11\"\n    using Foo: bar\nend",
+            )
+            boccs = get_full_binding_occurrences(code)
+            n_spurious_use = 0
+            for (binfo, occs) in boccs
+                binfo.name in ("A", "B", "Foo", "bar") || continue
+                n_spurious_use += count(o -> o.kind === :use, occs)
+            end
+            @test n_spurious_use == 0
+        end
     end
 
     @testset "local declaration" begin

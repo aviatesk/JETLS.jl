@@ -450,9 +450,10 @@ function compute_full_binding_occurrences(
         is_notebook_uri(state, uri)
     (; context_module) = get_context_info(state, uri, offset_to_xy(fi, JS.first_byte(st0)); lookup_func)
 
-    # Lowering `export`/`public`/`import`/`using` statements collapses their listed
-    # identifiers into opaque `K"Value"` nodes and records no `BindingInfo` for them,
-    # so the usual traversal finds nothing. Handle them directly:
+    # `export`/`public`/`import`/`using` statements don't yield useful `BindingInfo`s
+    # through the normal lowered-tree traversal: `export`/`public` collapse their names
+    # into a runtime call argument, and `import`/`using` desugar their module paths into
+    # `K"inert"` nodes. Handle them directly on the source tree instead:
     # - `export foo`/`public foo`: record `foo` as a `:use` of the corresponding global
     #   binding in the surrounding module.
     # - `using M: foo`/`import M: foo`/`import M.foo`: record the local alias identifier
@@ -615,6 +616,9 @@ function collect_inert_global_occurrences!(
     end
     st3_range = JS.byte_range(st3)
     traverse(st3) do st3′::SyntaxTreeC
+        # Skip `import`/`using` desugaring (see `is_import_eval_call`); re-lowering
+        # its inert module path would record spurious `:global :use` occurrences.
+        is_import_eval_call(st3′) && return traversal_no_recurse
         JS.kind(st3′) === JS.K"inert" || return nothing
         JS.numchildren(st3′) >= 1 || return nothing
         # Skip the outer inert that wraps the entire generator template
