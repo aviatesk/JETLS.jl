@@ -1,5 +1,26 @@
 #:schema ./schemas/config-toml.schema.json
 
+# Treat all other diagnostics as warnings (for early detection via jetls check)
+[[diagnostic.patterns]]
+pattern = ".*"
+match_by = "code"
+match_type = "regex"
+severity = "warn"
+path = "src/**/*.jl"
+[[diagnostic.patterns]]
+pattern = ".*"
+match_by = "code"
+match_type = "regex"
+severity = "warn"
+path = "LSP/src/**/*.jl"
+
+[[diagnostic.patterns]]
+pattern = "lowering/inactive-code"
+match_by = "code"
+match_type = "literal" # Outrank code-regex catch-all diagnostic rules
+severity = "hint"
+path = "**/*.jl"
+
 # TODO [JETLS]
 # Need to properly set module context when a single file contains multiple modules (for the new incremental full analysis mode)
 [[diagnostic.patterns]]
@@ -34,20 +55,6 @@ match_by = "message"
 match_type = "regex"
 severity = "off"
 path = "src/testrunner/testrunner-types.jl"
-
-# Treat all other diagnostics as warnings (for early detection via jetls check)
-[[diagnostic.patterns]]
-pattern = ".*"
-match_by = "code"
-match_type = "regex"
-severity = "warn"
-path = "src/**/*.jl"
-[[diagnostic.patterns]]
-pattern = ".*"
-match_by = "code"
-match_type = "regex"
-severity = "warn"
-path = "LSP/src/**/*.jl"
 
 [[initialization_options.analysis_overrides]]
 module_name = "JETLS"

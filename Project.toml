@@ -33,23 +33,11 @@ TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [sources]
-CodeTracking = {rev = "bce1aa2e7d5e99c46fd0865122aa2febb98d30e7", subdir = "vendor/CodeTracking", url = "https://github.com/aviatesk/JETLS.jl"}
-Compiler = {rev = "bce1aa2e7d5e99c46fd0865122aa2febb98d30e7", subdir = "vendor/Compiler", url = "https://github.com/aviatesk/JETLS.jl"}
-Glob = {rev = "bce1aa2e7d5e99c46fd0865122aa2febb98d30e7", subdir = "vendor/Glob", url = "https://github.com/aviatesk/JETLS.jl"}
-JET = {rev = "bce1aa2e7d5e99c46fd0865122aa2febb98d30e7", subdir = "vendor/JET", url = "https://github.com/aviatesk/JETLS.jl"}
-JSON3 = {rev = "bce1aa2e7d5e99c46fd0865122aa2febb98d30e7", subdir = "vendor/JSON3", url = "https://github.com/aviatesk/JETLS.jl"}
-JuliaInterpreter = {rev = "bce1aa2e7d5e99c46fd0865122aa2febb98d30e7", subdir = "vendor/JuliaInterpreter", url = "https://github.com/aviatesk/JETLS.jl"}
-JuliaLowering = {rev = "bce1aa2e7d5e99c46fd0865122aa2febb98d30e7", subdir = "vendor/JuliaLowering", url = "https://github.com/aviatesk/JETLS.jl"}
-JuliaSyntax = {rev = "bce1aa2e7d5e99c46fd0865122aa2febb98d30e7", subdir = "vendor/JuliaSyntax", url = "https://github.com/aviatesk/JETLS.jl"}
-LSP = {rev = "bce1aa2e7d5e99c46fd0865122aa2febb98d30e7", subdir = "vendor/LSP", url = "https://github.com/aviatesk/JETLS.jl"}
-LoweredCodeUtils = {rev = "bce1aa2e7d5e99c46fd0865122aa2febb98d30e7", subdir = "vendor/LoweredCodeUtils", url = "https://github.com/aviatesk/JETLS.jl"}
-MacroTools = {rev = "bce1aa2e7d5e99c46fd0865122aa2febb98d30e7", subdir = "vendor/MacroTools", url = "https://github.com/aviatesk/JETLS.jl"}
-OrderedCollections = {rev = "bce1aa2e7d5e99c46fd0865122aa2febb98d30e7", subdir = "vendor/OrderedCollections", url = "https://github.com/aviatesk/JETLS.jl"}
-Parsers = {rev = "bce1aa2e7d5e99c46fd0865122aa2febb98d30e7", subdir = "vendor/Parsers", url = "https://github.com/aviatesk/JETLS.jl"}
-PrecompileTools = {rev = "bce1aa2e7d5e99c46fd0865122aa2febb98d30e7", subdir = "vendor/PrecompileTools", url = "https://github.com/aviatesk/JETLS.jl"}
-Preferences = {rev = "bce1aa2e7d5e99c46fd0865122aa2febb98d30e7", subdir = "vendor/Preferences", url = "https://github.com/aviatesk/JETLS.jl"}
-Revise = {rev = "bce1aa2e7d5e99c46fd0865122aa2febb98d30e7", subdir = "vendor/Revise", url = "https://github.com/aviatesk/JETLS.jl"}
-StructTypes = {rev = "bce1aa2e7d5e99c46fd0865122aa2febb98d30e7", subdir = "vendor/StructTypes", url = "https://github.com/aviatesk/JETLS.jl"}
+Compiler = {rev = "avi/JETLS-Compiler-head", subdir = "Compiler", url = "https://github.com/JuliaLang/julia"}
+JET = {rev = "763ae6b0", url = "https://github.com/aviatesk/JET.jl"}
+JuliaLowering = {rev = "0ad24a2cc1", subdir = "JuliaLowering", url = "https://github.com/JuliaLang/julia"}
+JuliaSyntax = {rev = "0ad24a2cc1", subdir = "JuliaSyntax", url = "https://github.com/JuliaLang/julia"}
+LSP = {path = "LSP"}
 
 [compat]
 Compiler = "0.1.1"

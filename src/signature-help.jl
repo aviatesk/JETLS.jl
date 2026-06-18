@@ -135,7 +135,10 @@ function find_kws(args::SyntaxListC, kw_i::Int; sig=false, cursor::Int=-1)
         JS.kind(args[i]) ∉ JS.KSet"= kw" && i < kw_i && continue
         n = extract_kwarg_name(args[i]; sig)
         if !isnothing(n) && !(JS.first_byte(n) <= cursor <= JS.last_byte(n) + 1)
-            out[n.name_val] = i
+            nv = get_name_val(n)
+            if nv !== nothing
+                out[nv] = i
+            end
         end
     end
     return out
@@ -240,11 +243,11 @@ end
 # do in make_siginfo.
 function get_sig_str(m::Method, ca::CallArgs, world::UInt)
     @static if VERSION ≥ v"1.13.0-DEV.710"
-        msig = Base.invoke_in_world(world, sprint, show, m; context=(:compact=>true, :print_method_signature_only=>true))
+        msig = Base.invoke_in_world(world, sprint, show, m; context=(:compact=>true, :print_method_signature_only=>true))::String
     else
         # methodshow prints "f(x::T) [unparseable stuff]"
         # parse the first part and put the remainder in documentation
-        mstr = Base.invoke_in_world(world, sprint, show, m; context=(:compact=>true))
+        mstr = Base.invoke_in_world(world, sprint, show, m; context=(:compact=>true))::String
         msig_locinfo = split(mstr, " @ ")
         length(msig_locinfo) == 2 || return nothing
         msig = strip(msig_locinfo[1])
@@ -294,7 +297,8 @@ end
 function make_siginfo(
         m::Method, ca::CallArgs, world::UInt,
         active_arg::Union{Nothing,Bool,Int}, argtypes::Vector{Any};
-        postprocessor::LSPostProcessor = LSPostProcessor()
+        postprocessor::LSPostProcessor = LSPostProcessor(),
+        no_active_parameter_support::Bool = false
     )
     msig = @something get_sig_str(m, ca, world)
     msig = postprocessor(msig)
@@ -325,6 +329,7 @@ function make_siginfo(
     maybe_var_kwp = kwp_i <= length(params) && JS.kind(params[end]) === JS.K"..." ?
         lastindex(params) : nothing
     kwp_map = find_kws(params, kwp_i; sig=true)
+    noActiveParameter = no_active_parameter_support ? null : nothing
 
     # Map active arg to active param, or nothing
     activeParameter =
@@ -346,12 +351,19 @@ function make_siginfo(
                         break
                     end
                 end
-                active_kw
+                if isnothing(active_kw)
+                    noActiveParameter
+                else
+                    active_kw
+                end
             else
-                # If the given positional argument list is larger than the positional parameter
-                # list, then use the position of the last parameter position, which is likely a
-                # vararg parameter, otherwise use the exact argument position.
-                max(1, ca.kw_i ≥ kwp_i ? kwp_i-1 : ca.kw_i)
+                if isempty(params)
+                    noActiveParameter
+                else
+                    # If the argument list is larger than the positional parameter list,
+                    # use the last parameter position, which is likely a vararg parameter.
+                    max(1, ca.kw_i ≥ kwp_i ? kwp_i-1 : ca.kw_i)
+                end
             end
         elseif active_arg in keys(ca.pos_map)
             lb, ub = get(ca.pos_map, active_arg, (1, nothing))
@@ -370,8 +382,12 @@ function make_siginfo(
                 maybe_var_kwp
             else
                 # we don't have a backwards mapping
-                out = get(kwp_map, kwname.name_val, nothing)
-                isnothing(out) ? maybe_var_kwp : out
+                out = get(kwp_map, get_name_val(kwname), nothing)
+                if isnothing(out)
+                    isnothing(maybe_var_kwp) ? noActiveParameter : maybe_var_kwp
+                else
+                    out
+                end
             end
         else
             JETLS_DEBUG_LOWERING && @info "No active arg" active_arg ca.args[active_arg]
@@ -381,11 +397,21 @@ function make_siginfo(
     parameters = ParameterInformation[]
     for (i, param) in enumerate(params)
         isactive = !isnothing(activeParameter) && activeParameter == i
-        active_argtree = isactive && checkbounds(Bool, ca.args, activeParameter) ? ca.args[activeParameter] : nothing
-        active_argtype = isactive && checkbounds(Bool, argtypes, activeParameter) ? argtypes[activeParameter] : nothing
+        active_argtree = if isactive && checkbounds(Bool, ca.args, activeParameter)
+            ca.args[activeParameter]
+        else
+            nothing
+        end
+        active_argtype = if isactive && checkbounds(Bool, argtypes, activeParameter)
+            argtypes[activeParameter]
+        else
+            nothing
+        end
         push!(parameters, make_paraminfo(param, active_argtree, active_argtype, postprocessor))
     end
-    isnothing(activeParameter) || (activeParameter -= 1) # shift to 0-based
+    if activeParameter isa Int
+        activeParameter = UInt(activeParameter - 1) # shift to 0-based
+    end
     return SignatureInformation(; label, documentation, parameters, activeParameter)
 end
 
@@ -562,7 +588,8 @@ end
 function cursor_siginfos(
         fi::FileInfo, b::Int, context_module::Module;
         world::UInt = Base.get_world_counter(),
-        postprocessor::LSPostProcessor = LSPostProcessor()
+        postprocessor::LSPostProcessor = LSPostProcessor(),
+        no_active_parameter_support::Bool = false
     )
     st0 = build_syntax_tree(fi)
     call = cursor_call(fi.parsed_stream, st0, b)
@@ -614,7 +641,8 @@ function cursor_siginfos(
     for match in matches
         m = match.method
         compatible_method(m, ca, world) || continue
-        siginfo = make_siginfo(m, ca, world, active_arg, argtypes′; postprocessor)
+        siginfo = make_siginfo(m, ca, world, active_arg, argtypes′;
+            postprocessor, no_active_parameter_support)
         if siginfo !== nothing
             push!(out, siginfo)
         end
@@ -640,7 +668,10 @@ function handle_SignatureHelpRequest(
     pos = adjust_position(state, uri, msg.params.position)
     (; context_module, world, postprocessor) = get_context_info(state, uri, pos)
     b = xy_to_offset(fi, pos)
-    signatures = cursor_siginfos(fi, b, context_module; world, postprocessor)
+    no_active_parameter_support = supports(state,
+        :textDocument, :signatureHelp, :signatureInformation, :noActiveParameterSupport)
+    signatures = cursor_siginfos(fi, b, context_module;
+        world, postprocessor, no_active_parameter_support)
     activeSignature = activeParameter = nothing
     return send(server,
         SignatureHelpResponse(;

@@ -1,3 +1,11 @@
+@interface ClientSymbolResolveOptions begin
+    """
+    The properties that a client can resolve lazily. Usually
+    `location.range`.
+    """
+    properties::Vector{String}
+end
+
 @interface WorkspaceSymbolClientCapabilities begin
     """
     Symbol request supports dynamic registration.
@@ -8,49 +16,24 @@
     Specific capabilities for the `SymbolKind` in the `workspace/symbol`
     request.
     """
-    symbolKind::Union{Nothing, @interface begin
-        """
-        The symbol kind values the client supports. When this
-        property exists the client also guarantees that it will
-        handle values outside its set gracefully and falls back
-        to a default value when unknown.
-
-        If this property is not present the client only supports
-        the symbol kinds from `File` to `Array` as defined in
-        the initial version of the protocol.
-        """
-        valueSet::Union{Nothing, Vector{SymbolKind.Ty}} = nothing
-    end} = nothing
+    symbolKind::Union{Nothing, ClientSymbolKindOptions} = nothing
 
     """
     The client supports tags on `SymbolInformation` and `WorkspaceSymbol`.
     Clients supporting tags have to handle unknown tags gracefully.
 
-    # Tags
-    - since - 3.16.0
+    - `@since` 3.16.0
     """
-    tagSupport::Union{Nothing, @interface begin
-        """
-        The tags supported by the client.
-        """
-        valueSet::Vector{SymbolTag.Ty}
-    end} = nothing
+    tagSupport::Union{Nothing, ClientSymbolTagOptions} = nothing
 
     """
     The client support partial workspace symbols. The client will send the
     request `workspaceSymbol/resolve` to the server to resolve additional
     properties.
 
-    # Tags
-    - since - 3.17.0 - proposedState
+    - `@since` 3.17.0 - proposedState
     """
-    resolveSupport::Union{Nothing, @interface begin
-        """
-        The properties that a client can resolve lazily. Usually
-        `location.range`
-        """
-        properties::Vector{String}
-    end} = nothing
+    resolveSupport::Union{Nothing, ClientSymbolResolveOptions} = nothing
 end
 
 @interface WorkspaceSymbolOptions @extends WorkDoneProgressOptions begin
@@ -58,8 +41,7 @@ end
     The server provides support to resolve additional
     information for a workspace symbol.
 
-    # Tags
-    - since - 3.17.0
+    - `@since` 3.17.0
     """
     resolveProvider::Union{Nothing, Bool} = nothing
 end
@@ -81,8 +63,7 @@ end
 """
 A special workspace symbol that supports locations without a range.
 
-# Tags
-- since - 3.17.0
+- `@since` 3.17.0
 """
 @interface WorkspaceSymbol begin
     """
@@ -115,9 +96,7 @@ A special workspace symbol that supports locations without a range.
 
     See also `SymbolInformation.location`.
     """
-    location::Union{Location, @interface begin
-        uri::DocumentUri
-    end}
+    location::Union{Location, LocationUriOnly}
 
     """
     A data entry field that is preserved on a workspace symbol between a

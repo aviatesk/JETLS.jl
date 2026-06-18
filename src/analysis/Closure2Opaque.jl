@@ -1,12 +1,13 @@
 module Closure2Opaque
 
-using ..JETLS: JL, JS, SyntaxTreeC, TraversalReturn, traverse
+using ..JETLS: JL, JS, SyntaxTreeC, TraversalReturn, get_name_val, is_core_svec_call,
+    traverse, var_id
 
 export rewrite_local_closures_to_opaque
 
 """
     rewrite_local_closures_to_opaque(
-            ctx::JL.VariableAnalysisContext, ex::SyntaxTreeC
+            ctx::JL.VariableAnalysisContext, st3::SyntaxTreeC
         ) -> SyntaxTreeC
 
 Pre-lowering rewrite that turns single-method local closure definitions
@@ -20,7 +21,7 @@ into inference context module (which the regular conversion would require).
 
 # Limitations
 
-- Multi-method bindings (a single name with multiple `K"method_defs"` anywhere in `ex`)
+- Multi-method bindings (a single name with multiple `K"method_defs"` anywhere in `st3`)
   can't be represented as a single OC, so they fall through to the regular synthetic-struct
   path. A whole-tree pre-pass (`collect_multi_method_bindings`) identifies these so the
   per-block rewrite can skip every method definition for such bindings.
@@ -35,22 +36,22 @@ Designed to be called by `TypeAnnotation.infer_toplevel_tree` against a `K"tople
 The rewrite is non-destructive: nodes that don't match are returned unchanged, so the
 pipeline downstream sees an equivalent tree with only the eligible closures swapped.
 """
-function rewrite_local_closures_to_opaque(ctx::JL.VariableAnalysisContext, ex::SyntaxTreeC)
-    multis = collect_multi_method_bindings(ex)
-    return _rewrite_local_closures_to_opaque(ctx, ex, multis)
+function rewrite_local_closures_to_opaque(ctx::JL.VariableAnalysisContext, st3::SyntaxTreeC)
+    multis = collect_multi_method_bindings(ctx, st3)
+    return _rewrite_local_closures_to_opaque(ctx, st3, multis)
 end
 
-function _rewrite_local_closures_to_opaque(ctx::JL.VariableAnalysisContext, ex::SyntaxTreeC, multis::Set{Int})
-    if JS.kind(ex) === JS.K"block"
-        return rewrite_closure_block(ctx, ex, multis)
+function _rewrite_local_closures_to_opaque(ctx::JL.VariableAnalysisContext, st3::SyntaxTreeC, multis::Set{Int})
+    if JS.kind(st3) === JS.K"block"
+        return rewrite_closure_block(ctx, st3, multis)
     end
-    return JS.mapchildren(c::SyntaxTreeC -> _rewrite_local_closures_to_opaque(ctx, c, multis), ctx, ex)
+    return JS.mapchildren(c::SyntaxTreeC -> _rewrite_local_closures_to_opaque(ctx, c, multis), ctx, st3)
 end
 
 function rewrite_closure_block(
-        ctx::JL.VariableAnalysisContext, blk::SyntaxTreeC, multis::Set{Int}
+        ctx::JL.VariableAnalysisContext, blk3::SyntaxTreeC, multis::Set{Int}
     )
-    children_old = JS.children(blk)
+    children_old = JS.children(blk3)
     n = length(children_old)
     new_children = JS.SyntaxList(JS.syntax_graph(ctx))
     consumed = falses(n)
@@ -59,8 +60,8 @@ function rewrite_closure_block(
         child = children_old[i]
         if JS.kind(child) === JS.K"function_decl" && is_local_closure_decl(ctx, child)
             func_name = child[1]
-            md_idx = find_matching_method_defs(children_old, i, func_name.var_id, consumed)
-            if md_idx !== nothing && !(func_name.var_id in multis)
+            md_idx = find_matching_method_defs(children_old, i, var_id(func_name), consumed)
+            if md_idx !== nothing && !(var_id(func_name) in multis)
                 method_defs = children_old[md_idx]
                 oc = try_build_oc_assignment(ctx, child, method_defs)
                 if oc !== nothing
@@ -72,11 +73,11 @@ function rewrite_closure_block(
         end
         push!(new_children, _rewrite_local_closures_to_opaque(ctx, child, multis))
     end
-    return JL.@ast ctx blk [JS.K"block" new_children...]
+    return JL.@ast ctx blk3 [JS.K"block" new_children...]
 end
 
 # Collect `var_id`s that resolve to more than one method, plus any helper closure
-# bindings reachable from those multi-method wrappers.
+# bindings reachable from multi-method *closure* wrappers.
 #
 # Multi-method detection counts `K"method"` nodes per `var_id` across the whole
 # tree. JL has two ways to express multi-method bindings — multiple sibling
@@ -93,17 +94,22 @@ end
 # OC breaks the wrapper's later synthetic-struct lowering (the wrapper's `function_type`
 # reference can no longer find the helper). Tagging any closure binding called from a
 # multi-method wrapper's bodies forces the helper through the same path as its wrapper.
-function collect_multi_method_bindings(ex::SyntaxTreeC)
+#
+# Propagation seeds are restricted to closure bindings: a multi-method *global* (e.g. a
+# top-level function with default positional args or kwargs) never goes through
+# synthetic-struct closure conversion, so single-method closures inside its bodies are
+# still safely rewritable to OCs and must not be tagged.
+function collect_multi_method_bindings(ctx::JL.VariableAnalysisContext, st3::SyntaxTreeC)
     method_defs_by_vid = Dict{Int,Vector{SyntaxTreeC}}()
     methods_per_vid = Dict{Int,Int}()
     multis = Set{Int}()
-    stack = SyntaxTreeC[ex]
+    stack = SyntaxTreeC[st3]
     while !isempty(stack)
         node = pop!(stack)
         k = JS.kind(node)
         if ((k === JS.K"method" || k === JS.K"method_defs") &&
             JS.numchildren(node) >= 1 && JS.kind(node[1]) === JS.K"BindingId")
-            vid = node[1].var_id
+            vid = var_id(node[1])
             if k === JS.K"method"
                 n = (methods_per_vid[vid] = get(methods_per_vid, vid, 0) + 1)
                 n == 2 && push!(multis, vid) # fires exactly once per binding
@@ -117,7 +123,7 @@ function collect_multi_method_bindings(ex::SyntaxTreeC)
             end
         end
     end
-    worklist = collect(multis)
+    worklist = Int[vid for vid in multis if haskey(ctx.closure_bindings, vid)]
     while !isempty(worklist)
         vid = pop!(worklist)
         for md in method_defs_by_vid[vid]
@@ -135,7 +141,7 @@ function collect_referenced_closures!(
     while !isempty(stack)
         node = pop!(stack)
         if JS.kind(node) === JS.K"BindingId"
-            id = node.var_id
+            id = var_id(node)
             if id ∉ multis && haskey(method_defs_by_vid, id)
                 push!(multis, id)
                 push!(worklist, id)
@@ -154,11 +160,11 @@ function is_local_closure_decl(ctx::JL.VariableAnalysisContext, fd::SyntaxTreeC)
     JS.numchildren(fd) >= 1 || return false
     func_name = fd[1]
     return JS.kind(func_name) === JS.K"BindingId" &&
-        haskey(ctx.closure_bindings, func_name.var_id)
+        haskey(ctx.closure_bindings, var_id(func_name))
 end
 
 function find_matching_method_defs(
-        children_old, fd_idx::Int, target_var_id::Int, consumed::BitVector
+        children_old::JL.SyntaxList, fd_idx::Int, target_var_id::Int, consumed::BitVector
     )
     # Search both directions; method_defs may appear before or after function_decl.
     for j = fd_idx+1:length(children_old)
@@ -178,7 +184,7 @@ end
 
 function is_method_defs_for(c::SyntaxTreeC, target_var_id::Int)
     return JS.kind(c) === JS.K"method_defs" && JS.numchildren(c) >= 2 &&
-        JS.kind(c[1]) === JS.K"BindingId" && c[1].var_id == target_var_id
+        JS.kind(c[1]) === JS.K"BindingId" && var_id(c[1]) == target_var_id
 end
 
 # `method_defs[2]` is shaped like
@@ -190,7 +196,7 @@ function try_build_oc_assignment(
         ctx::JL.VariableAnalysisContext, fd::SyntaxTreeC, method_defs::SyntaxTreeC
     )
     func_name = fd[1]
-    method_node, sig_call = find_method_and_sig_call(method_defs[2], func_name.var_id)
+    method_node, sig_call = find_method_and_sig_call(method_defs[2], var_id(func_name))
     method_node === nothing && return nothing
     sig_call === nothing && return nothing
     JS.numchildren(sig_call) >= 4 || return nothing
@@ -250,14 +256,14 @@ function find_method_and_sig_call(root::SyntaxTreeC, target_var_id::Int)
     JS.numchildren(method_node) >= 2 || return (method_node, nothing)
     sig_ref = method_node[2]
     JS.kind(sig_ref) === JS.K"BindingId" || return (method_node, nothing)
-    sig_call = find_sig_call_for(root, sig_ref.var_id)
+    sig_call = find_sig_call_for(root, var_id(sig_ref))
     return (method_node, sig_call)
 end
 
 function find_method_node(root::SyntaxTreeC, target_var_id::Int)
     return traverse(root) do node::SyntaxTreeC
         if (JS.kind(node) === JS.K"method" && JS.numchildren(node) == 3 &&
-            JS.kind(node[1]) === JS.K"BindingId" && node[1].var_id == target_var_id)
+            JS.kind(node[1]) === JS.K"BindingId" && var_id(node[1]) == target_var_id)
             return TraversalReturn(node; terminate=true)
         end
         nothing
@@ -267,7 +273,7 @@ end
 function find_sig_call_for(root::SyntaxTreeC, sig_var_id::Int)
     return traverse(root) do node::SyntaxTreeC
         if (JS.kind(node) === JS.K"=" && JS.numchildren(node) == 2 &&
-            JS.kind(node[1]) === JS.K"BindingId" && node[1].var_id == sig_var_id &&
+            JS.kind(node[1]) === JS.K"BindingId" && var_id(node[1]) == sig_var_id &&
             JS.kind(node[2]) === JS.K"call" && is_core_svec_call(node[2]))
             return TraversalReturn(node[2]; terminate=true)
         end
@@ -275,23 +281,14 @@ function find_sig_call_for(root::SyntaxTreeC, sig_var_id::Int)
     end
 end
 
-function is_core_svec_call(call_node::SyntaxTreeC)
-    JS.numchildren(call_node) >= 1 || return false
-    callee = call_node[1]
-    return JS.kind(callee) === JS.K"core" && JS.hasattr(callee, :name_val) &&
-        callee.name_val == "svec"
-end
-
 # Detect a vararg-typed entry in the user-argtypes svec. JL lowers both `(xs...)`
 # and `(xs::T...)` to `(call core.apply_type core.Vararg <type-arg>)`.
 function argtype_is_vararg(t::SyntaxTreeC)
     JS.kind(t) === JS.K"call" && JS.numchildren(t) >= 2 || return false
     callee = t[1]
-    JS.kind(callee) === JS.K"core" && JS.hasattr(callee, :name_val) &&
-        callee.name_val == "apply_type" || return false
+    JS.kind(callee) === JS.K"core" && get_name_val(callee) == "apply_type" || return false
     inner = t[2]
-    return JS.kind(inner) === JS.K"core" && JS.hasattr(inner, :name_val) &&
-        inner.name_val == "Vararg"
+    return JS.kind(inner) === JS.K"core" && get_name_val(inner) == "Vararg"
 end
 
 end # module Closure2Opaque

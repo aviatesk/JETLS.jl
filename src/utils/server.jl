@@ -194,6 +194,9 @@ function get_file_info(
         timeout::Float64 = @static(JETLS_TEST_MODE ? 1.0 : 10.),
         cancelled_error_data = nothing
     )
+    # No `didOpen` will arrive for a URI that cannot be backed by a `FileInfo`,
+    # so polling would only waste the full timeout before returning `nothing`.
+    may_have_file_info(s, uri) || return nothing
     start = time()
     request_id = objectid(cancel_flag) # Each request uses a unique `cancel_flag`, so this objectid can be used as a request-unique ID
     while true
@@ -219,6 +222,21 @@ function get_file_info(
 end
 get_file_info(s::ServerState, t::TextDocumentIdentifier, cancel_flag::AbstractCancelFlag; kwargs...) =
     get_file_info(s, t.uri, cancel_flag; kwargs...)
+
+"""
+    may_have_file_info(s::ServerState, uri::URI) -> Bool
+
+Return `true` if `uri` could ever be backed by a `FileInfo`, i.e. it is a saved (`file:`)
+or unsaved (`untitled:`/`buffer:`) document, or an already-registered notebook cell.
+Any other URI (e.g. server-provided `jetls:` virtual documents, or requests from clients
+that ignore the registered document selectors) can never receive a `FileInfo`, so the
+polling [`get_file_info`](@ref) returns early instead of blocking until its timeout.
+"""
+function may_have_file_info(s::ServerState, uri::URI)
+    uri.scheme == "file" && return true
+    isunsaveduri(uri) && return true
+    return get_notebook_uri_for_cell(s, uri) !== nothing
+end
 
 """
     get_saved_file_info(s::ServerState, uri::URI) -> fi::Union{Nothing,SavedFileInfo}

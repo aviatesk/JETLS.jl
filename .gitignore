@@ -1,5 +1,3 @@
-.claude/*
-!.claude/skills/
 node_modules
 out
 Project.toml.bak

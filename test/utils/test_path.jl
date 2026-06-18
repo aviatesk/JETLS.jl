@@ -101,7 +101,7 @@ end
         @test JETLS.issubdir("/home/user/project/", "/home/user/")
     end
 
-    if Sys.iswindows()
+    @static if Sys.iswindows()
         # Drive-letter casing must not affect the comparison: URI round-trip
         # lowercases the drive letter while `pwd()` preserves the original case.
         @test JETLS.issubdir("c:\\Users\\foo\\bar", "C:\\Users\\foo")

@@ -7,7 +7,7 @@ struct WorkspaceSymbolProgressCaller <: RequestCaller
     token::ProgressToken
     cancel_flag::CancelFlag
 end
-cancellable_token(caller::WorkspaceSymbolProgressCaller) = caller.token
+cancellable_token_impl(caller::WorkspaceSymbolProgressCaller) = caller.token
 
 function workspace_symbol_options(server::Server)
     return WorkspaceSymbolOptions(;

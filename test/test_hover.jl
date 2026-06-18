@@ -221,6 +221,19 @@ end
             context_module = @__MODULE__)
     end
 
+    @testset "extended lattice detail" begin
+        text = """
+            let x = 42
+                y = sin(x)
+                y│
+            end
+            """
+        clean_text, positions = JETLS.get_text_and_positions(text)
+        result = get_hover(clean_text, only(positions))
+        @test result isa Hover
+        @test occursin("(local) y :: Float64  # Core.Const", result.contents.value)
+    end
+
     @testset "module alias resolves through DocsBinding helper" begin
         hover_test("B│.sin(42)", JETLS.lsrender(@doc Base);
             context_module = M_base_alias)
@@ -417,6 +430,32 @@ end
                 y│
             end
         """, "(local) y :: Int")
+    end
+
+    @testset "multi-for comprehension iteration binding" begin
+        hover_test("""
+            let xs = [1, 2, 3], ys = [1.0]
+                [x + y for x in xs for y│ in ys]
+            end
+        """, "(argument) y :: Float64")
+    end
+
+    @testset "multi-for comprehension filter variable" begin
+        hover_test("""
+            let xs = [1, 2, 3], ys = [1.0, -1.0]
+                [x + y for x in xs for y in ys if y│ > 0]
+            end
+        """, "(argument) y :: Float64")
+    end
+
+    @testset "closure parameter binding uses refined argument type" begin
+        hover_test("""
+            let x = rand(Int)
+                y = Some{Any}(x)
+                f = z│ -> z * y.value
+                f(rand())
+            end
+        """, "(argument) z :: Float64"; notpat="OpaqueClosure")
     end
 
     @testset "closure values format as a function-arrow signature" begin

@@ -94,8 +94,8 @@ inputs need real inference, which the caller already attempted.
 fallback observe a newer world than the rest of the request.
 """
 function resolve_global_const(context_module::Module, node::SyntaxTreeC, world::UInt)
-    if JS.kind(node) === JS.K"Identifier" && JS.hasattr(node, :name_val)
-        sym = Symbol(node.name_val)
+    if JS.kind(node) === JS.K"Identifier" && has_name_val(node)
+        sym = Symbol(name_val(node))
         Base.invoke_in_world(world, isdefinedglobal, context_module, sym) || return nothing
         return Core.Const(Base.invoke_in_world(world, getglobal, context_module, sym))
     elseif JS.kind(node) === JS.K"." && JS.numchildren(node) == 2

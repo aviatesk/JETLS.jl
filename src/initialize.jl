@@ -270,6 +270,18 @@ function handle_InitializeRequest(
         end
     end
 
+    if !supports_text_document_content(server)
+        textDocumentContent = nothing
+    elseif supports(server, :workspace, :textDocumentContent, :dynamicRegistration)
+        textDocumentContent = nothing # will be registered dynamically
+    else
+        textDocumentContent = text_document_content_options()
+        if JETLS_DEV_MODE
+            @info "Registering 'workspace/textDocumentContent' with `InitializeResponse`"
+        end
+    end
+    workspace = textDocumentContent === nothing ? nothing : WorkspaceOptions(; textDocumentContent)
+
     positionEncodings = getcapability(state, :general, :positionEncodings)
     if isnothing(positionEncodings) || isempty(positionEncodings)
         positionEncoding = PositionEncodingKind.UTF16
@@ -316,8 +328,9 @@ function handle_InitializeRequest(
             semanticTokensProvider,
             renameProvider,
             workspaceSymbolProvider,
+            workspace,
         ),
-        serverInfo = (;
+        serverInfo = ServerInfo(;
             name = "JETLS",
             version = JETLS_VERSION))
 
@@ -574,6 +587,13 @@ function handle_InitializedNotification(server::Server)
         push!(registrations, workspace_symbol_registration(server))
         if JETLS_DEV_MODE
             @info "Dynamically registering 'workspace/symbol' upon `InitializedNotification`"
+        end
+    end
+
+    if supports(server, :workspace, :textDocumentContent, :dynamicRegistration)
+        push!(registrations, text_document_content_registration())
+        if JETLS_DEV_MODE
+            @info "Dynamically registering 'workspace/textDocumentContent' upon `InitializedNotification`"
         end
     end
 

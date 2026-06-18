@@ -51,13 +51,15 @@ struct MacroDiagnostic
     node::SyntaxTreeC
     msg::String
     severity::DiagnosticSeverity.Ty
+    code::String
 end
 
 """
     MACRO_DIAGNOSTIC_SINK :: ScopedValue{Union{Nothing,Vector{MacroDiagnostic}}}
 
-Side channel that lets macro stubs surface issues as LSP diagnostics without
-aborting expansion — the producer/consumer contract for [`push_macro_error!`](@ref)
+Side channel that lets macro stubs surface issues — and purely informational
+notes like [`push_inactive_code!`](@ref) — as LSP diagnostics without aborting
+expansion; the producer/consumer contract for [`push_macro_error!`](@ref)
 and [`push_macro_warning!`](@ref).
 
 Consumers bind this to a vector via `Base.ScopedValues.@with` around their lowering
@@ -78,11 +80,12 @@ const MACRO_DIAGNOSTIC_SINK =
     Base.ScopedValues.ScopedValue{Union{Nothing,Vector{MacroDiagnostic}}}(nothing)
 
 @noinline function push_macro_diagnostic!(
-        node::SyntaxTreeC, msg::AbstractString, severity::DiagnosticSeverity.Ty
+        node::SyntaxTreeC, msg::AbstractString, severity::DiagnosticSeverity.Ty,
+        code::String = LOWERING_MACRO_EXPANSION_ERROR_CODE
     )
     sink = MACRO_DIAGNOSTIC_SINK[]
     sink === nothing && return
-    push!(sink, MacroDiagnostic(node, String(msg), severity))
+    push!(sink, MacroDiagnostic(node, String(msg), severity, code))
     return
 end
 
@@ -107,6 +110,22 @@ $macro_issue_contract
 """
 push_macro_error!(node::SyntaxTreeC, msg::AbstractString) =
     push_macro_diagnostic!(node, msg, DiagnosticSeverity.Error)
+
+"""
+    push_inactive_code!(node::SyntaxTreeC, condval::Bool)
+
+Report `node` — a branch dropped at macro expansion time, e.g. the not-taken
+side of an `@static` conditional — as `lowering/inactive-code` at Hint severity
+into [`MACRO_DIAGNOSTIC_SINK`](@ref) (no-op if the sink is unbound). The
+consumer tags these `DiagnosticTag.Unnecessary` so clients render the region
+grayed out. Unlike the issue helpers above this is purely informational: the
+code is intentionally inactive in the current environment, not a problem.
+`condval` is the value the governing condition evaluated to.
+"""
+push_inactive_code!(node::SyntaxTreeC, condval::Bool) =
+    push_macro_diagnostic!(node,
+        "Inactive `@static` branch (condition evaluated to `$condval`)",
+        DiagnosticSeverity.Hint, LOWERING_INACTIVE_CODE)
 
 # Simple (non-qualified) macro names whose new-style implementations in this file and
 # `JuliaLowering/src/syntax_macros.jl` preserve fine-grained source provenance during
@@ -138,6 +157,7 @@ const NEW_STYLE_MACROCALL_NAMES = (
     "@invokelatest",
     "@kwdef",
     "@label",
+    "@lock",
     "@logmsg",
     "@noinline",
     "@propagate_inbounds",
@@ -145,6 +165,7 @@ const NEW_STYLE_MACROCALL_NAMES = (
     "@something",
     "@spawn",
     "@specialize",
+    "@static",
     "@test",
     "@test_broken",
     "@test_deprecated",
@@ -208,6 +229,27 @@ function Base.var"@inbounds"(__context__::JL.MacroContext, ex::SyntaxTreeC)
     JL.@ast(__context__, ex, ex)
 end
 
+# Keep the lock expression in the enclosing scope, but wrap only the protected
+# body in a local scope to mirror the `try` scope introduced by Base's macro.
+function Base.var"@lock"(
+        __context__::JL.MacroContext, lock::SyntaxTreeC, body::SyntaxTreeC
+    )
+    mc = __context__.macrocall::SyntaxTreeC
+    return JL.@ast(__context__, mc,
+        [JS.K"block"
+            lock
+            [JS.K"let"
+                [JS.K"block"]
+                [JS.K"block" body]]])
+end
+
+function Base.var"@lock"(__context__::JL.MacroContext, args::SyntaxTreeC...)
+    mc = __context__.macrocall::SyntaxTreeC
+    push_macro_error!(mc, "@lock expects exactly two arguments: `lock body`")
+    isempty(args) && return JL.@ast(__context__, mc, nothing::JS.K"Value")
+    return JL.@ast(__context__, mc, [JS.K"block" args...])
+end
+
 # Stub new-style implementation of `Threads.@spawn`. The real macro wraps the
 # expression in a `Task` and schedules it on a thread pool, but for LSP
 # analysis we only care that identifiers in the user-written body keep
@@ -260,9 +302,9 @@ function _validate_spawn_threadpool(threadpool::SyntaxTreeC)
         # Literal symbol form (`:foo` parses as `K"inert"` containing
         # `K"Identifier"`, the EST analog of `QuoteNode(:foo)`).
         inner = threadpool[1]
-        if JS.kind(inner) === JS.K"Identifier" && hasproperty(inner, :name_val)
-            name = inner.name_val
-            if name isa AbstractString
+        if JS.kind(inner) === JS.K"Identifier"
+            name = get_name_val(inner)
+            if name !== nothing
                 name in _SPAWN_THREADPOOLS && return
                 # Base defers the threadpool check to runtime; flag it statically as an
                 # error but keep expanding so the body (and threadpool identifier, if any)
@@ -488,7 +530,8 @@ function _logmsg_stub(
                 push_macro_error!(ex, "$name: malformed keyword argument")
                 continue
             end
-            kwname = _validate_logmsg_kw(ex)
+            key = ex[1]
+            kwname = JS.kind(key) === JS.K"Identifier" ? get_name_val(key) : nothing
             if kwname !== nothing
                 if kwname in seen_kws
                     # Base would let the synthesized `(; k=…, k=…)` named tuple fail
@@ -511,20 +554,6 @@ function _logmsg_stub(
         end
     end
     return JL.@ast(ctx, mc, [JS.K"block" children... nothing::JS.K"Value"])
-end
-
-# Returns the kwarg name as a `String`, or `nothing` if the name isn't a
-# plain identifier. The latter case (e.g. `"foo"=val`, which Base silently
-# routes through `Symbol(k)`) is rare enough that we just skip the
-# duplicate check rather than reject it outright. Assumes `JS.numchildren(kw) == 2`
-# (the caller pre-validates the shape so it can safely access `kw[2]`).
-function _validate_logmsg_kw(kw::SyntaxTreeC)
-    key = kw[1]
-    if JS.kind(key) === JS.K"Identifier" && hasproperty(key, :name_val)
-        n = key.name_val
-        return n isa AbstractString ? String(n) : nothing
-    end
-    return nothing
 end
 
 # New-style implementations of `Base.@invoke` / `Base.@invokelatest`. These match Base's
@@ -994,11 +1023,11 @@ function _validate_test_kw(kw::SyntaxTreeC)
         return nothing
     end
     name = kw[1]
-    if !(JS.kind(name) === JS.K"Identifier" && hasproperty(name, :name_val))
+    if !(JS.kind(name) === JS.K"Identifier" && has_name_val(name))
         push_macro_error!(name, "invalid test macro call: keyword name must be an identifier")
         return nothing
     end
-    return name.name_val::String
+    return name_val(name)
 end
 
 function Test.var"@testset"(__context__::JL.MacroContext, args::SyntaxTreeC...)
@@ -1064,11 +1093,11 @@ function _validate_testset_option(arg::SyntaxTreeC)
         return nothing
     end
     name = arg[1]
-    if !(JS.kind(name) === JS.K"Identifier" && hasproperty(name, :name_val))
+    if !(JS.kind(name) === JS.K"Identifier" && has_name_val(name))
         push_macro_error!(name, "@testset: option name must be an identifier")
         return nothing
     end
-    return name.name_val::String
+    return name_val(name)
 end
 
 # Stub for `Base.@assume_effects`. The real macro emits `Expr(:purity)` / `Expr(:meta)`
@@ -1138,16 +1167,90 @@ end
 function _extract_assume_effect_setting_name(setting::SyntaxTreeC)
     while JS.kind(setting) === JS.K"call" && JS.numchildren(setting) == 2
         op = setting[1]
-        JS.kind(op) === JS.K"Identifier" && hasproperty(op, :name_val) &&
-            op.name_val === "!" || break
+        JS.kind(op) === JS.K"Identifier" && get_name_val(op) === "!" || break
         setting = setting[2]
     end
     if JS.kind(setting) === JS.K"inert" && JS.numchildren(setting) >= 1
         inner = setting[1]
-        if JS.kind(inner) === JS.K"Identifier" && hasproperty(inner, :name_val)
-            name = inner.name_val
-            return name isa AbstractString ? name : nothing
+        if JS.kind(inner) === JS.K"Identifier"
+            return get_name_val(inner)
         end
     end
+    return nothing
+end
+
+# New-style implementation of `Base.@static`. Like the real macro, the condition is
+# evaluated at expansion time and only the taken branch survives — but as a new-style
+# macro that branch keeps its fine-grained provenance. The condition is `JL.eval`'d in
+# `__context__.scope_layer.mod`, the module JuliaLowering hands to old-style macros as
+# `__module__`. A condition that fails to evaluate (or doesn't produce a `Bool`) is
+# reported via the sink and recovered by returning the whole conditional unchanged, so
+# every branch and the condition itself still reach scope analysis as a runtime
+# conditional.
+#
+# Each dropped branch is reported via `push_inactive_code!` so editors can gray out
+# code that is excluded in the current environment (and won't get completion, hover,
+# diagnostics, etc.). When a branch chains further conditionals (`elseif`, right-nested
+# `&&`/`||`), dropping it covers the whole remaining chain — including conditions that
+# were consequently never evaluated — in one contiguous range.
+#
+# In EST a ternary stays `K"?"` (Expr conversion is what folds it into `:if`), so the
+# if-like kinds form one equivalence class when deciding whether to keep folding a
+# selected branch, mirroring Base's `x.head === :elseif || x.head === hd` loop.
+const _STATIC_IF_KINDS = JS.KSet"if elseif ?"
+const _STATIC_COND_KINDS = JS.KSet"if elseif ? && ||"
+
+function Base.var"@static"(__context__::JL.MacroContext, ex::SyntaxTreeC)
+    mc = __context__.macrocall::SyntaxTreeC
+    if JS.kind(ex) ∉ _STATIC_COND_KINDS
+        push_macro_error!(ex, "invalid @static macro")
+        return JL.@ast(__context__, mc, ex)
+    end
+    x = ex
+    while true
+        k = JS.kind(x)
+        cond = _static_eval_cond(__context__, x[1])
+        cond === nothing && return JL.@ast(__context__, mc, ex)
+        i = xor(cond, k === JS.K"||") ? 2 : 3
+        if i == 2
+            JS.numchildren(x) ≥ 3 && push_inactive_code!(x[3], cond)
+        else
+            push_inactive_code!(x[2], cond)
+            JS.numchildren(x) < 3 && return JL.@ast(__context__, mc, nothing::JS.K"Value")
+        end
+        x = x[i]
+        xk = JS.kind(x)
+        if xk === k || (xk in _STATIC_IF_KINDS && k in _STATIC_IF_KINDS)
+            continue # `elseif` chain, right-nested `&&`/`||`, or nested ternary
+        end
+        return JL.@ast(__context__, mc, x)
+    end
+end
+
+function Base.var"@static"(__context__::JL.MacroContext, args::SyntaxTreeC...)
+    mc = __context__.macrocall::SyntaxTreeC
+    push_macro_error!(mc, "invalid @static macro")
+    isempty(args) && return JL.@ast(__context__, mc, nothing::JS.K"Value")
+    return JL.@ast(__context__, mc, [JS.K"block" args...])
+end
+
+# Returns the condition's value as a `Bool`, or `nothing` (with the issue reported via
+# the sink) when it cannot be statically evaluated. `JL.eval` runs the condition through
+# JuliaLowering's own pipeline, which understands the hygiene (`scope_layer`) annotations
+# macro arguments carry: identifiers a user wrote directly at the macrocall site carry
+# the base layer and resolve in the module given here. (Identifiers spliced in from an
+# outer macro expansion carry layers a fresh lowering context doesn't know — those fail
+# to evaluate and take the recovery path below.) Base lets evaluation errors propagate
+# out of expansion; we recover per the macro issue contract.
+function _static_eval_cond(ctx::JL.MacroContext, cond::SyntaxTreeC)
+    val = try
+        JL.eval(ctx.scope_layer.mod, cond)
+    catch err
+        msg = first(split(sprint(showerror, err), '\n'))
+        push_macro_error!(cond, "@static: failed to evaluate condition: $msg")
+        return nothing
+    end
+    val isa Bool && return val
+    push_macro_error!(cond, "@static: condition did not evaluate to a Bool")
     return nothing
 end

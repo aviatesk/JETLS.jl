@@ -1027,6 +1027,32 @@ end
             @test only(diagnostics).severity == DiagnosticSeverity.Information
         end
 
+        # Later rules win when patterns have the same priority.
+        let diagnostics = [
+                make_test_diagnostic(;
+                    code = JETLS.LOWERING_UNUSED_ARGUMENT_CODE,
+                    severity = DiagnosticSeverity.Error)
+            ]
+            manager = make_test_manager(Dict{String,Any}(
+                "diagnostic" => Dict{String,Any}(
+                    "patterns" => [
+                        Dict{String,Any}(
+                            "pattern" => "lowering/.*",
+                            "match_by" => "code",
+                            "match_type" => "regex",
+                            "severity" => "warn"),
+                        Dict{String,Any}(
+                            "pattern" => "lowering/unused-argument",
+                            "match_by" => "code",
+                            "match_type" => "regex",
+                            "severity" => "hint"),
+                    ])))
+            uri = filepath2uri("/tmp/test.jl")
+            JETLS.apply_diagnostic_config!(diagnostics, manager, uri, nothing)
+            @test length(diagnostics) == 1
+            @test only(diagnostics).severity == DiagnosticSeverity.Hint
+        end
+
         @testset "path matching" begin
             let diagnostics = [
                     make_test_diagnostic(;

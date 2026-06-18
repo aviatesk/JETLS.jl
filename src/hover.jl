@@ -102,7 +102,7 @@ function get_hover(
     display_rng = JS.byte_range(display_node)
     ctx = build_inferred_context_for_range(st0_top, context_module, display_rng;
         world, caller="get_hover", cache=fi.inferred_context_cache)
-    type_str = typ = nothing
+    type_str = typ = display_typ = nothing
     if ctx !== nothing
         display_typ = get_type_for_range(ctx, display_rng)
         if display_typ !== nothing
@@ -152,10 +152,18 @@ function get_hover(
         return nothing
     end
 
+    lattice_detail = type_str === nothing || display_typ === nothing ? nothing :
+        hover_lattice_detail(display_typ)
     io = IOBuffer()
     if show_header
         println(io, "```julia")
-        type_str === nothing ? println(io, header) : println(io, header, " :: ", postprocessor(type_str))
+        if type_str === nothing
+            println(io, header)
+        else
+            print(io, header, " :: ", postprocessor(type_str))
+            lattice_detail !== nothing && print(io, "  ", lattice_detail)
+            println(io)
+        end
         println(io, "```")
     end
     if !isempty(docs)
@@ -192,6 +200,15 @@ binding_kind_label(kind::Symbol) =
     kind === :argument ? "(argument)" :
     kind === :static_parameter ? "(static parameter)" :
     kind === :local ? "(local)" : "(global)"
+
+function hover_lattice_detail(@nospecialize(typ))
+    # `hover_type_string` already formats `PartialOpaque` as a closure shape, hiding
+    # the underlying `OpaqueClosure` internals. Do not re-append the raw lattice
+    # element as a comment and expose the internal representation again.
+    typ isa Core.PartialOpaque && return nothing
+    typ === CC.widenconst(typ) && return nothing
+    return format_lattice_element_comment(typ)
+end
 
 # Convert a lattice element from `get_type_for_range` into a string suitable for display
 # in a hover. Returns `nothing` for implementation-detail lattice elements that the user
@@ -252,7 +269,7 @@ function lookup_doc_for_identifier(
             identifier_node = identifier_node[1]
         end
         JS.is_identifier(identifier_node) || return nothing
-        field = Symbol(identifier_node.name_val)::Symbol
+        field = Symbol(@something get_name_val(identifier_node) return nothing)
         mod = resolve_dot_prefix_module(prefix_node, context_module, ctx, world)
         if mod !== nothing
             return lookup_doc_for_binding(mod, field, sig, world)
@@ -266,7 +283,8 @@ function lookup_doc_for_identifier(
         return lookup_field_doc(prefix_typ, field, world)
     end
     JS.is_identifier(node) || return nothing
-    return lookup_doc_for_binding(context_module, Symbol(node.name_val)::Symbol, sig, world)
+    name = @something get_name_val(node) return nothing
+    return lookup_doc_for_binding(context_module, Symbol(name), sig, world)
 end
 
 # Resolve a dot expression's left-hand side to a `Module` value. Tries a direct
@@ -279,8 +297,8 @@ function resolve_dot_prefix_module(
         dotprefix::SyntaxTreeC, context_module::Module,
         ctx::Union{Nothing,InferredTreeContext}, world::UInt
     )
-    if JS.is_identifier(dotprefix)
-        name = Symbol(dotprefix.name_val)::Symbol
+    if JS.is_identifier(dotprefix) && (nv = get_name_val(dotprefix)) !== nothing
+        name = Symbol(nv)
         if Base.invoke_in_world(world, isdefinedglobal, context_module, name)
             v = Base.invoke_in_world(world, getglobal, context_module, name)
             v isa Module && return v

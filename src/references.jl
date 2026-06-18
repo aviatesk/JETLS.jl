@@ -10,7 +10,7 @@ struct ReferencesProgressCaller <: RequestCaller
     token::ProgressToken
     cancel_flag::CancelFlag
 end
-cancellable_token(caller::ReferencesProgressCaller) = caller.token
+cancellable_token_impl(caller::ReferencesProgressCaller) = caller.token
 
 function references_options(server::Server)
     return ReferenceOptions(;

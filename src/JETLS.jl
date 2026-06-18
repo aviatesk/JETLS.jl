@@ -94,7 +94,7 @@ include("utils/lsp.jl")
 include("utils/server.jl")
 include("utils/native-inference.jl")
 
-include("analysis/closure-to-opaque.jl")
+include("analysis/Closure2Opaque.jl")
 using .Closure2Opaque
 
 include("analysis/TypeAnnotation.jl")
@@ -119,6 +119,8 @@ include("notebook.jl")
 include("analysis/full-analysis.jl")
 include("registration.jl")
 include("apply-edit.jl")
+include("text-document-content.jl")
+include("code-views.jl")
 include("execute-command.jl")
 include("signature-help.jl")
 include("completions.jl")
@@ -396,8 +398,8 @@ function handle_response_message(
         handle_instantiation_progress_response(server, request_caller)
     elseif request_caller isa AnalysisProgressCaller
         handle_analysis_progress_response(server, request_caller, cancel_flag)
-    elseif request_caller isa ShowDocumentRequestCaller
-        handle_show_document_response(server, msg, request_caller)
+    elseif request_caller isa ShowTextDocumentContentCaller
+        handle_show_text_document_content_response(server, msg, request_caller)
     elseif request_caller isa SetDocumentContentCaller
         handle_apply_workspace_edit_response(server, msg, request_caller)
     elseif request_caller isa DeleteFileCaller
@@ -414,10 +416,14 @@ function handle_response_message(
         handle_code_lens_refresh_response(server, msg, request_caller)
     elseif request_caller isa DiagnosticRefreshRequestCaller
         handle_diagnostic_refresh_response(server, msg, request_caller)
+    elseif request_caller isa TextDocumentContentRefreshCaller
+        handle_text_document_content_refresh_response(server, msg, request_caller)
     elseif request_caller isa FormattingProgressCaller
         handle_formatting_progress_response(server, msg, request_caller, cancel_flag)
     elseif request_caller isa RangeFormattingProgressCaller
         handle_range_formatting_progress_response(server, msg, request_caller, cancel_flag)
+    elseif request_caller isa RangesFormattingProgressCaller
+        handle_ranges_formatting_progress_response(server, msg, request_caller, cancel_flag)
     elseif request_caller isa ReferencesProgressCaller
         handle_references_progress_response(server, msg, request_caller, cancel_flag)
     elseif request_caller isa RenameProgressCaller
@@ -479,6 +485,8 @@ function handle_request_message(server::Server, @nospecialize(msg), cancel_flag:
         handle_CodeActionRequest(server, msg, cancel_flag)
     elseif msg isa InlayHintRequest
         handle_InlayHintRequest(server, msg, cancel_flag)
+    elseif msg isa InlayHintResolveRequest
+        handle_InlayHintResolveRequest(server, msg, cancel_flag)
     elseif msg isa SemanticTokensFullRequest
         handle_SemanticTokensFullRequest(server, msg, cancel_flag)
     elseif msg isa SemanticTokensRangeRequest
@@ -487,12 +495,16 @@ function handle_request_message(server::Server, @nospecialize(msg), cancel_flag:
         handle_DocumentFormattingRequest(server, msg, cancel_flag)
     elseif msg isa DocumentRangeFormattingRequest
         handle_DocumentRangeFormattingRequest(server, msg, cancel_flag)
+    elseif msg isa DocumentRangesFormattingRequest
+        handle_DocumentRangesFormattingRequest(server, msg, cancel_flag)
     elseif msg isa RenameRequest
         handle_RenameRequest(server, msg, cancel_flag)
     elseif msg isa PrepareRenameRequest
         handle_PrepareRenameRequest(server, msg, cancel_flag)
     elseif msg isa ExecuteCommandRequest
         handle_ExecuteCommandRequest(server, msg)
+    elseif msg isa TextDocumentContentRequest
+        handle_TextDocumentContentRequest(server, msg)
     elseif JETLS_DEV_MODE
         if isdefined(msg, :method)
             _id = getfield(msg, :method)

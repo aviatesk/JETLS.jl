@@ -2,8 +2,7 @@
     """
     Did change configuration notification supports dynamic registration.
 
-    # Tags
-    - since - 3.6.0 to support the new pull model.
+    - `@since` 3.6.0 to support the new pull model.
     """
     dynamicRegistration::Union{Nothing, Bool} = nothing
 end
@@ -54,8 +53,7 @@ configuration change using the following registration pattern:
 connection.client.register(DidChangeConfigurationNotification.type, undefined)
 ```
 
-# Tags
-- since - 3.6.0
+- `@since` 3.6.0
 """
 @interface ConfigurationRequest @extends RequestMessage begin
     method::String = "workspace/configuration"

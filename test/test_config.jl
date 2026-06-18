@@ -29,13 +29,11 @@ using JETLS
             pattern1 = JETLS.DiagnosticPattern(r"error1", "code", "regex", 1, nothing, "error1")
             pattern2 = JETLS.DiagnosticPattern(r"error2", "code", "regex", 2, nothing, "error2")
             pattern3 = JETLS.DiagnosticPattern(r"error3", "code", "regex", 3, nothing, "error3")
-            # Same merge key (match_by, match_type, path, __pattern_value__), only severity differs
+            # Same merge key; only severity differs.
             pattern1_updated = JETLS.DiagnosticPattern(r"error1", "code", "regex", 4, nothing, "error1")
 
-            let base = JETLS.JETLSConfig(;
-                    diagnostic=JETLS.DiagnosticConfig(; patterns=[pattern1, pattern2]))
-                overlay = JETLS.JETLSConfig(;
-                    diagnostic=JETLS.DiagnosticConfig(; patterns=[pattern1_updated, pattern3]))
+            let base = JETLS.JETLSConfig(; diagnostic=JETLS.DiagnosticConfig(; patterns=[pattern1, pattern2]))
+                overlay = JETLS.JETLSConfig(; diagnostic=JETLS.DiagnosticConfig(; patterns=[pattern1_updated, pattern3]))
                 merged = JETLS.merge_settings(base, overlay)
                 patterns = JETLS.getobjpath(merged, :diagnostic, :patterns)
                 @test length(patterns) == 3
@@ -46,21 +44,28 @@ using JETLS
             end
 
             let base = JETLS.JETLSConfig(; diagnostic=JETLS.DiagnosticConfig(; patterns=nothing))
-                overlay = JETLS.JETLSConfig(;
-                    diagnostic=JETLS.DiagnosticConfig(; patterns=[pattern1]))
+                overlay = JETLS.JETLSConfig(; diagnostic=JETLS.DiagnosticConfig(; patterns=[pattern1]))
                 merged = JETLS.merge_settings(base, overlay)
                 patterns = JETLS.getobjpath(merged, :diagnostic, :patterns)
                 @test length(patterns) == 1
                 @test patterns[1] == pattern1
             end
 
-            let base = JETLS.JETLSConfig(;
-                    diagnostic=JETLS.DiagnosticConfig(; patterns=[pattern1]))
+            let base = JETLS.JETLSConfig(; diagnostic=JETLS.DiagnosticConfig(; patterns=[pattern1]))
                 overlay = JETLS.JETLSConfig(; diagnostic=JETLS.DiagnosticConfig(; patterns=nothing))
                 merged = JETLS.merge_settings(base, overlay)
                 patterns = JETLS.getobjpath(merged, :diagnostic, :patterns)
                 @test length(patterns) == 1
                 @test patterns[1] == pattern1
+            end
+
+            # Overlay entries come after unmatched base entries in merged order.
+            let base = JETLS.JETLSConfig(; diagnostic=JETLS.DiagnosticConfig(; patterns=[pattern1, pattern2]))
+                overlay = JETLS.JETLSConfig(; diagnostic=JETLS.DiagnosticConfig(; patterns=[pattern3, pattern1_updated]))
+                merged = JETLS.merge_settings(base, overlay)
+                patterns = JETLS.getobjpath(merged, :diagnostic, :patterns)
+                @test [p.__pattern_value__ for p in patterns] == ["error2", "error3", "error1"]
+                @test patterns[end].severity == 4
             end
         end
 
@@ -72,10 +77,8 @@ using JETLS
             pattern_src = JETLS.DiagnosticPattern(r".*", "code", "regex", 2, src_path, ".*")
             pattern_test = JETLS.DiagnosticPattern(r".*", "code", "regex", 0, test_path, ".*")
 
-            let base = JETLS.JETLSConfig(;
-                    diagnostic=JETLS.DiagnosticConfig(; patterns=[pattern_src, pattern_test]))
-                overlay = JETLS.JETLSConfig(;
-                    diagnostic=JETLS.DiagnosticConfig(; patterns=nothing))
+            let base = JETLS.JETLSConfig(; diagnostic=JETLS.DiagnosticConfig(; patterns=[pattern_src, pattern_test]))
+                overlay = JETLS.JETLSConfig(; diagnostic=JETLS.DiagnosticConfig(; patterns=nothing))
                 merged = JETLS.merge_settings(base, overlay)
                 patterns = JETLS.getobjpath(merged, :diagnostic, :patterns)
                 @test length(patterns) == 2
@@ -83,10 +86,8 @@ using JETLS
 
             # Updating only one of them should preserve the other
             pattern_src_updated = JETLS.DiagnosticPattern(r".*", "code", "regex", 1, src_path, ".*")
-            let base = JETLS.JETLSConfig(;
-                    diagnostic=JETLS.DiagnosticConfig(; patterns=[pattern_src, pattern_test]))
-                overlay = JETLS.JETLSConfig(;
-                    diagnostic=JETLS.DiagnosticConfig(; patterns=[pattern_src_updated]))
+            let base = JETLS.JETLSConfig(; diagnostic=JETLS.DiagnosticConfig(; patterns=[pattern_src, pattern_test]))
+                overlay = JETLS.JETLSConfig(; diagnostic=JETLS.DiagnosticConfig(; patterns=[pattern_src_updated]))
                 merged = JETLS.merge_settings(base, overlay)
                 patterns = JETLS.getobjpath(merged, :diagnostic, :patterns)
                 @test length(patterns) == 2
@@ -120,10 +121,8 @@ using JETLS
         let pattern1 = JETLS.DiagnosticPattern(r"error1", "code", "regex", 1, nothing, "error1")
             pattern1_updated = JETLS.DiagnosticPattern(r"error1", "code", "regex", 4, nothing, "error1")
             pattern2 = JETLS.DiagnosticPattern(r"error2", "code", "regex", 2, nothing, "error2")
-            config1 = JETLS.JETLSConfig(;
-                diagnostic=JETLS.DiagnosticConfig(; patterns=[pattern1]))
-            config2 = JETLS.JETLSConfig(;
-                diagnostic=JETLS.DiagnosticConfig(; patterns=[pattern1_updated, pattern2]))
+            config1 = JETLS.JETLSConfig(; diagnostic=JETLS.DiagnosticConfig(; patterns=[pattern1]))
+            config2 = JETLS.JETLSConfig(; diagnostic=JETLS.DiagnosticConfig(; patterns=[pattern1_updated, pattern2]))
             changes = []
             JETLS.track_setting_changes(config1, config2) do old_val, new_val, path
                 push!(changes, (old_val, new_val, path))
@@ -131,6 +130,20 @@ using JETLS
             @test any(changes) do (old_val, new_val, path)
                 path == (:diagnostic, :patterns, :severity) &&
                 old_val == 1 && new_val == 4
+            end
+        end
+
+        # Reordering patterns should invalidate diagnostics caches.
+        let pattern1 = JETLS.DiagnosticPattern(r"error1", "code", "regex", 1, nothing, "error1")
+            pattern2 = JETLS.DiagnosticPattern(r"error2", "code", "regex", 2, nothing, "error2")
+            config1 = JETLS.JETLSConfig(; diagnostic=JETLS.DiagnosticConfig(; patterns=[pattern1, pattern2]))
+            config2 = JETLS.JETLSConfig(; diagnostic=JETLS.DiagnosticConfig(; patterns=[pattern2, pattern1]))
+            changes = []
+            JETLS.track_setting_changes(config1, config2) do old_val, new_val, path
+                push!(changes, (old_val, new_val, path))
+            end
+            @test any(changes) do (_, _, path)
+                path == (:diagnostic, :patterns)
             end
         end
     end

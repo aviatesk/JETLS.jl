@@ -8,13 +8,17 @@ using JETLS.URIs2
 # siginfos(context_module, code) -> siginfos
 # nsigs(context_module, code) -> n
 
-function siginfos(context_module::Module, code::AbstractString; kwargs...)
+function siginfos(
+        context_module::Module, code::AbstractString;
+        no_active_parameter_support::Bool=false,
+        kwargs...
+    )
     clean_code, positions = JETLS.get_text_and_positions(code; kwargs...)
     @assert length(positions) == 1 "siginfos requires exactly one cursor marker"
     position = only(positions)
     fi = JETLS.FileInfo(0, clean_code, @__FILE__)
     b = JETLS.xy_to_offset(fi, position)
-    return JETLS.cursor_siginfos(fi, b, context_module)
+    return JETLS.cursor_siginfos(fi, b, context_module; no_active_parameter_support)
 end
 
 n_si(args...) = length(siginfos(args...))
@@ -213,10 +217,14 @@ module M_highlight
 f(a0, a1, a2, va3...; kw4=0, kw5=0, kws6...) = 0
 f1(x, xs...) = 0
 kwfunc(; kw0, kw1, kws2...) = nothing
+noargs() = nothing
+fixedkw(; kw0, kw1) = nothing
 end
 function active_parameter(context_module::Module, code::AbstractString; kwargs...)
     si = siginfos(context_module, code; kwargs...)
-    Int(@something only(si).activeParameter return nothing)
+    activeParameter = @something only(si).activeParameter return nothing
+    activeParameter isa JETLS.LSP.Null && return activeParameter
+    return Int(activeParameter)
 end
 @testset "Active param highlighting" begin
     @test 0 == active_parameter(M_highlight, "f(│)")
@@ -268,6 +276,14 @@ end
 
     # unrecognized kwarg forms should not crash and return something
     @test siginfos(M_highlight, "f(0, 1, 2; a.b=1│)") isa Vector
+
+    @test nothing === active_parameter(M_highlight, "noargs(│)")
+    @test JETLS.LSP.null === active_parameter(M_highlight, "noargs(│)"; no_active_parameter_support=true)
+    @test 0 == active_parameter(M_highlight, "fixedkw(; kw0=nothing│, kw1=missing, )")
+    @test 1 == active_parameter(M_highlight, "fixedkw(; kw0=nothing, kw1=missing│, )")
+    @test nothing === active_parameter(M_highlight, "fixedkw(; kw0, kw1, │)")
+    @test JETLS.LSP.null === active_parameter(M_highlight, "fixedkw(; kw0, kw1, │)"; no_active_parameter_support=true)
+    @test JETLS.LSP.null === active_parameter(M_highlight, "fixedkw(; fake│)"; no_active_parameter_support=true)
 end
 
 module M_nested

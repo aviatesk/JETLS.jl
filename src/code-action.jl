@@ -1,9 +1,11 @@
 const CODE_ACTION_REGISTRATION_ID = "jetls-code-action"
 const CODE_ACTION_REGISTRATION_METHOD = "textDocument/codeAction"
 
+const SUPPORTED_CODE_ACTION_KINDS = CodeActionKind.Ty[CodeActionKind.QuickFix]
+
 function code_action_options()
     return CodeActionOptions(;
-        codeActionKinds = [CodeActionKind.Empty],  # Support all kinds
+        codeActionKinds = SUPPORTED_CODE_ACTION_KINDS,
         resolveProvider = false)
 end
 
@@ -13,7 +15,7 @@ function code_action_registration()
         method = CODE_ACTION_REGISTRATION_METHOD,
         registerOptions = CodeActionRegistrationOptions(;
             documentSelector = DEFAULT_DOCUMENT_SELECTOR,
-            codeActionKinds = [CodeActionKind.Empty],
+            codeActionKinds = SUPPORTED_CODE_ACTION_KINDS,
             resolveProvider = false))
 end
 
@@ -23,28 +25,127 @@ end
 #     method = CODE_ACTION_REGISTRATION_METHOD))
 # register(currently_running, code_action_registration())
 
+function code_action_kind_matches(requested::CodeActionKind.Ty, kind::CodeActionKind.Ty)
+    requested == CodeActionKind.Empty && return true
+    return kind == requested || startswith(kind, requested * ".")
+end
+
+function code_action_kind_requested(
+        only::Union{Nothing,Vector{CodeActionKind.Ty}},
+        kind::Union{Nothing,CodeActionKind.Ty}
+    )
+    only === nothing && return true
+    kind === nothing && return false
+    return any(requested -> code_action_kind_matches(requested, kind), only)
+end
+
 function handle_CodeActionRequest(
         server::Server, msg::CodeActionRequest, cancel_flag::CancelFlag)
     uri = msg.params.textDocument.uri
-    result = get_file_info(server.state, uri, cancel_flag)
-    if isnothing(result)
-        return send(server, CodeActionResponse(; id = msg.id, result = null))
-    elseif result isa ResponseError
-        return send(server, CodeActionResponse(; id = msg.id, result = nothing, error = result))
-    end
-    file_info = result
     code_actions = Union{CodeAction,Command}[]
-    testrunner_code_actions!(code_actions, uri, file_info, msg.params.range)
-    diagnostics = msg.params.context.diagnostics
-    unused_variable_code_actions!(code_actions, uri, diagnostics;
-        allow_unused_underscore = get_config(server, :diagnostic, :allow_unused_underscore))
-    delete_range_code_actions!(code_actions, uri, diagnostics)
-    sort_imports_code_actions!(code_actions, uri, diagnostics)
-    ambiguous_soft_scope_code_actions!(code_actions, uri, diagnostics)
-    return send(server,
-        CodeActionResponse(;
-            id = msg.id,
-            result = code_actions))
+    only = msg.params.context.only
+    wants_quickfix_actions = code_action_kind_requested(only, CodeActionKind.QuickFix)
+    wants_kindless_actions = code_action_kind_requested(only, nothing)
+    wants_quickfix_actions || wants_kindless_actions ||
+        return send(server, CodeActionResponse(; id = msg.id, result = code_actions))
+    if wants_quickfix_actions
+        diagnostics = msg.params.context.diagnostics
+        allow_unused_underscore = get_config(server, :diagnostic, :allow_unused_underscore)
+        unused_variable_code_actions!(code_actions, uri, diagnostics; allow_unused_underscore)
+        delete_range_code_actions!(code_actions, uri, diagnostics)
+        sort_imports_code_actions!(code_actions, uri, diagnostics)
+        ambiguous_soft_scope_code_actions!(code_actions, uri, diagnostics)
+    end
+    if wants_kindless_actions
+        result = get_file_info(server.state, uri, cancel_flag)
+        if result isa ResponseError
+            return send(server, CodeActionResponse(; id = msg.id, result = nothing, error = result))
+        elseif !isnothing(result)
+            fi = result
+            testrunner_code_actions!(code_actions, uri, fi, msg.params.range)
+            macro_expansion_code_actions!(code_actions, server, uri, fi, msg.params.range)
+            type_annotation_code_actions!(code_actions, server, uri, fi, msg.params.range)
+        end
+        # When the file info is unavailable (`isnothing(result)`), skip the kindless actions
+        # but still return any quickfix actions accumulated above, since those are derived
+        # from the request's diagnostics and do not depend on the file cache.
+    end
+    return send(server, CodeActionResponse(; id = msg.id, result = code_actions))
+end
+
+first_syntax_node(nodes::SyntaxListC) = isempty(nodes) ? nothing : nodes[1]
+
+function macrocall_at_range(st0_top::SyntaxTreeC, range::UnitRange{Int})
+    macrocall = first_syntax_node(byte_ancestors(
+        st -> JS.kind(st) === JS.K"macrocall", st0_top, range))
+    macrocall !== nothing && return macrocall
+    first(range) > 1 || return nothing
+    return first_syntax_node(byte_ancestors(
+        st -> JS.kind(st) === JS.K"macrocall", st0_top, first(range)-1))
+end
+
+function macro_expansion_code_actions!(
+        code_actions::Vector{Union{CodeAction,Command}}, server::Server, uri::URI,
+        fi::FileInfo, range::Range
+    )
+    supports(server, :window, :showDocument, :support) || return code_actions
+    st0_top = build_syntax_tree(fi)
+    byte_range = range_to_byte_range(fi, range; collapse_empty = true)
+    macrocall = macrocall_at_range(st0_top, byte_range)
+    # `@doc` (a docstring) wraps the whole documented form; its expansion is just
+    # doc-registration machinery, so don't offer it as a macro view.
+    if macrocall !== nothing && !is_doc0_any(macrocall)
+        push_code_view_action!(code_actions, COMMAND_OPEN_MACRO_EXPANSION,
+            "Show macro expansion for `$(macrocall_name(macrocall))`",
+            macro_expansion_content_uri(uri, macrocall))
+    end
+    toplevel = lowerable_toplevel_at(st0_top, first(byte_range))
+    if toplevel !== nothing && toplevel_contains_macrocall(toplevel)
+        push_code_view_action!(code_actions, COMMAND_OPEN_MACRO_EXPANSION,
+            "Expand all macros in this top-level form",
+            macro_expansion_content_uri(uri, toplevel; toplevel=true))
+    end
+    return code_actions
+end
+
+# Offer on any lowerable top-level form that type-annotation features do not skip.
+# No annotations appear if nothing was inferred (e.g. a literal-bound assignment).
+function type_annotation_code_actions!(
+        code_actions::Vector{Union{CodeAction,Command}}, server::Server, uri::URI,
+        fi::FileInfo, range::Range
+    )
+    supports(server, :window, :showDocument, :support) || return code_actions
+    st0_top = build_syntax_tree(fi)
+    byte_range = range_to_byte_range(fi, range; collapse_empty = true)
+    tree = @something lowerable_toplevel_at(st0_top, first(byte_range)) return code_actions
+    is_type_annotation_skipped_toplevel(tree) && return code_actions
+    push_code_view_action!(code_actions, COMMAND_OPEN_TYPE_ANNOTATION,
+        "Show inferred type annotations", type_annotation_content_uri(uri, tree))
+    return code_actions
+end
+
+function push_code_view_action!(
+        code_actions::Vector{Union{CodeAction,Command}},
+        command::String, title::String, content_uri::URI)
+    push!(code_actions, CodeAction(;
+        title,
+        command = Command(;
+            title, command,
+            arguments = Any[string(content_uri)])))
+    return code_actions
+end
+
+function toplevel_contains_macrocall(st0::SyntaxTreeC)
+    found = traverse(st0) do st::SyntaxTreeC
+        JS.kind(st) === JS.K"macrocall" || return nothing
+        return TraversalReturn(true; terminate=true)
+    end
+    return found === true
+end
+
+function macrocall_name(macrocall::SyntaxTreeC)
+    JS.numchildren(macrocall) >= 1 || return "macro"
+    return JS.sourcetext(macrocall[1])
 end
 
 function unused_variable_code_actions!(
@@ -226,7 +327,6 @@ function ambiguous_soft_scope_code_actions!(
             title = "Insert `global $(data.name)` declaration",
             kind = CodeActionKind.QuickFix,
             diagnostics = Diagnostic[diagnostic],
-            isPreferred = true,
             edit = WorkspaceEdit(;
                 changes = Dict{URI,Vector{TextEdit}}(
                     uri => TextEdit[TextEdit(;

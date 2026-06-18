@@ -708,6 +708,53 @@ end
     end
 end
 
+@testset "if !@isdefined(y) - use after assignment guard" begin
+    let status = get_undef_status("""
+        function f(xs)
+            local y
+            for x in xs
+                y = x
+            end
+            if !(@isdefined(y))
+                y = 42
+            end
+            return y
+        end
+        """)
+        @test status["y"] === false
+    end
+    let status = get_undef_status("""
+        function f(xs)
+            local y
+            for x in xs
+                y = x
+            end
+            if !(@isdefined(y))
+                y = 42
+            else
+                return y
+            end
+            return y
+        end
+        """)
+        @test status["y"] === false
+    end
+    let status = get_undef_status("""
+        function f(xs, cnd)
+            local y
+            for x in xs
+                y = x
+            end
+            if cnd || !(@isdefined(y))
+                y = 42
+            end
+            return y
+        end
+        """)
+        @test status["y"] === false
+    end
+end
+
 @testset "if cond && @isdefined(y) - use inside true branch" begin
     let status = get_undef_status("""
         function f(x)

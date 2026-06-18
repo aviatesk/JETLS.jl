@@ -128,7 +128,7 @@ struct AnalysisProgressCaller <: RequestCaller
     notify_diagnostics::Bool
     token::ProgressToken
 end
-cancellable_token(rc::AnalysisProgressCaller) = rc.token
+cancellable_token_impl(rc::AnalysisProgressCaller) = rc.token
 
 function request_instantiation_progress!(
         server::Server, uri::URI, ins_request::InstantiationRequest,

@@ -153,7 +153,7 @@ function extract_module_symbol!(
     )
     JS.numchildren(st0) ≥ 3 || return nothing
     name_node = st0[2]
-    name = @something extract_name_val(name_node) return nothing
+    name = @something get_name_val(name_node) return nothing
     context_module = parent_context_module
     if invokelatest(isdefinedglobal, parent_context_module, Symbol(name))
         childmod = invokelatest(getglobal, parent_context_module, Symbol(name))
@@ -166,7 +166,7 @@ function extract_module_symbol!(
     if JS.kind(body) === JS.K"block"
         extract_toplevel_symbols!(children, body, fi, context_module)
     end
-    is_baremodule = JS.has_flags(JS.flags(st0), JS.BARE_MODULE_FLAG)
+    is_baremodule = JS.has_flags(st0, JS.BARE_MODULE_FLAG)
     detail = (is_baremodule ? "baremodule " : "module ") * name
     push!(symbols, DocumentSymbol(;
         name,
@@ -186,7 +186,7 @@ function extract_function_symbol!(
     sig = st0[1]
     name, name_node = @something extract_function_name(sig) return nothing
     children = @something extract_scoped_children(st0, fi, context_module) Some(nothing)
-    is_short_form = JS.has_flags(JS.flags(st0), JS.SHORT_FORM_FUNCTION_FLAG)
+    is_short_form = JS.has_flags(st0, JS.SHORT_FORM_FUNCTION_FLAG)
     detail = is_short_form ? JS.sourcetext(sig) * " =" : "function " * JS.sourcetext(sig)
     push!(symbols, DocumentSymbol(;
         name,
@@ -219,7 +219,7 @@ function extract_function_name(sig::SyntaxTreeC)
     elseif k === JS.K"tuple"
         return nothing
     elseif JS.is_identifier(k)
-        name = @something extract_name_val(sig) return nothing
+        name = @something get_name_val(sig) return nothing
         return (name, sig)
     elseif k === JS.K"."
         name = @something extract_dotted_name(sig) return nothing
@@ -231,15 +231,15 @@ end
 function extract_dotted_name(node::SyntaxTreeC)
     k = JS.kind(node)
     if JS.is_identifier(k)
-        return extract_name_val(node)
+        return get_name_val(node)
     elseif k === JS.K"."
         JS.numchildren(node) ≥ 2 || return nothing
         lhs = @something extract_dotted_name(node[1]) return nothing
         rhs_node = node[2]
         rhs = @something if JS.kind(rhs_node) in JS.KSet"quote inert" && JS.numchildren(rhs_node) ≥ 1
-            extract_name_val(rhs_node[1])
+            get_name_val(rhs_node[1])
         else
-            extract_name_val(rhs_node)
+            get_name_val(rhs_node)
         end return nothing
         return lhs * "." * rhs
     elseif k === JS.K"curly"
@@ -259,10 +259,10 @@ function extract_macro_symbol!(
     if JS.kind(sig) === JS.K"call"
         JS.numchildren(sig) ≥ 1 || return nothing
         callee = sig[1]
-        name = @something extract_name_val(callee) return nothing
+        name = @something get_name_val(callee) return nothing
         name_node = callee
     elseif JS.is_identifier(sig)
-        name = @something extract_name_val(sig) return nothing
+        name = @something get_name_val(sig) return nothing
         name_node = sig
     else
         return nothing
@@ -295,8 +295,8 @@ function extract_struct_symbol!(
         JS.numchildren(name_node) ≥ 1 || return nothing
         name_node = name_node[1]
     end
-    name = @something extract_name_val(name_node) return nothing
-    is_mutable = JS.has_flags(JS.flags(st0), JS.MUTABLE_FLAG)
+    name = @something get_name_val(name_node) return nothing
+    is_mutable = JS.has_flags(st0, JS.MUTABLE_FLAG)
     detail = (is_mutable ? "mutable struct " : "struct ") * lstrip(JS.sourcetext(sig_node))
     children = DocumentSymbol[]
     if JS.numchildren(st0) ≥ 3
@@ -336,7 +336,7 @@ function extract_struct_field!(
     if k === JS.K"::" && JS.numchildren(field_node) ≥ 1
         name_node = field_node[1]
     end
-    name = @something extract_name_val(name_node) return nothing
+    name = @something get_name_val(name_node) return nothing
     detail = lstrip(JS.sourcetext(st0))
     push!(symbols, DocumentSymbol(;
         name,
@@ -360,7 +360,7 @@ function extract_abstract_type_symbol!(
         JS.numchildren(name_node) ≥ 1 || return nothing
         name_node = name_node[1]
     end
-    name = @something extract_name_val(name_node) return nothing
+    name = @something get_name_val(name_node) return nothing
     detail = "abstract type " * lstrip(JS.sourcetext(def_node))
     push!(symbols, DocumentSymbol(;
         name,
@@ -382,7 +382,7 @@ function extract_primitive_type_symbol!(
         JS.numchildren(name_node) ≥ 1 || return nothing
         name_node = name_node[1]
     end
-    name = @something extract_name_val(name_node) return nothing
+    name = @something get_name_val(name_node) return nothing
     detail = "primitive type " * lstrip(JS.sourcetext(def_node)) * " " * JS.sourcetext(bits_node)
     push!(symbols, DocumentSymbol(;
         name,
@@ -447,7 +447,7 @@ function extract_assignment_symbols!(
             params = lhs[1]
             for i = 1:JS.numchildren(params)
                 name_node = params[i]
-                name = @something extract_name_val(name_node) continue
+                name = @something get_name_val(name_node) continue
                 push!(symbols, DocumentSymbol(;
                     name,
                     detail,
@@ -464,7 +464,7 @@ function extract_assignment_symbols!(
                     JS.numchildren(name_node) ≥ 1 || continue
                     name_node = name_node[1]
                 end
-                name = @something extract_name_val(name_node) continue
+                name = @something get_name_val(name_node) continue
                 push!(symbols, DocumentSymbol(;
                     name,
                     detail,
@@ -480,7 +480,7 @@ function extract_assignment_symbols!(
             JS.numchildren(lhs) ≥ 1 || return nothing
             name_node = lhs[1]
         end
-        name = @something extract_name_val(name_node) return nothing
+        name = @something get_name_val(name_node) return nothing
         push!(symbols, DocumentSymbol(;
             name,
             detail,
@@ -645,12 +645,12 @@ function get_macrocall_name(st0::SyntaxTreeC)
         JS.numchildren(macro_node) ≥ 2 || return nothing
         rhs = macro_node[2]
         if JS.kind(rhs) in JS.KSet"quote inert" && JS.numchildren(rhs) ≥ 1
-            return extract_name_val(rhs[1])
+            return get_name_val(rhs[1])
         else
-            return extract_name_val(rhs)
+            return get_name_val(rhs)
         end
     else
-        return extract_name_val(macro_node)
+        return get_name_val(macro_node)
     end
 end
 
@@ -716,7 +716,7 @@ function extract_string_content(st0::SyntaxTreeC)
     first_child = st0[1]
     if JS.numchildren(st0) == 1 && JS.kind(first_child) === JS.K"String"
         # Simple string without interpolation
-        return JS.hasattr(first_child, :value) ? first_child.value : nothing
+        return JS.hasattr(first_child, :value) ? first_child.value::String : nothing
     else
         # Interpolated string - extract content from source text
         src = JS.sourcetext(st0)
@@ -745,7 +745,7 @@ function extract_enum_symbol!(symbols::Vector{DocumentSymbol}, st0::SyntaxTreeC,
         JS.numchildren(type_node) ≥ 1 || return nothing
         name_node = type_node[1]
     end
-    name = @something extract_name_val(name_node) return nothing
+    name = @something get_name_val(name_node) return nothing
     children = DocumentSymbol[]
     for i = 4:JS.numchildren(st0)
         extract_enum_value!(children, st0[i], name, fi)
@@ -774,7 +774,7 @@ function extract_enum_value!(
         JS.numchildren(st0) ≥ 1 || return nothing
         name_node = st0[1]
     end
-    name = @something extract_name_val(name_node) return nothing
+    name = @something get_name_val(name_node) return nothing
     push!(symbols, DocumentSymbol(;
         name,
         detail = name * "::" * enum_name,

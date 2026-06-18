@@ -108,10 +108,8 @@ end
 function collect_inert_identifiers(st3::SyntaxTreeC)
     result = Dict{String,Vector{SyntaxTreeC}}()
     foreach_inert_identifier(st3) do id_node::SyntaxTreeC
-        JS.hasattr(id_node, :name_val) || return true
-        name_val = id_node.name_val
-        name_val isa AbstractString || return true
-        push!(get!(Vector{SyntaxTreeC}, result, name_val), id_node)
+        nv = @something get_name_val(id_node) return true
+        push!(get!(Vector{SyntaxTreeC}, result, nv), id_node)
         return true
     end
     return result
@@ -298,7 +296,7 @@ function compute_binding_occurrences!(
                     # Without this, `:use` of `a` in `func(a; x) = x` would be counted.
                     skip_arguments = true
                 end
-            elseif JS.kind(arg1) === JS.K"top" && get(arg1, :name_val, "") == "kwerr"
+            elseif JS.kind(arg1) === JS.K"top" && get_name_val(arg1) == "kwerr"
                 # Skip argument uses for `kwerr` calls as well
                 skip_arguments = true
             end
@@ -498,8 +496,7 @@ function collect_export_public_occurrences!(
     for i = 1:JS.numchildren(st0)
         child = st0[i]
         JS.kind(child) === JS.K"Identifier" || continue
-        name = get(child, :name_val, nothing)
-        name isa AbstractString || continue
+        name = @something get_name_val(child) continue
         binfo = JL.BindingInfo(0, name, :global, 0; mod=context_module)
         target_set = get!(Set{BindingOccurrence}, occurrences, binfo)
         push!(target_set, BindingOccurrence(child, :use))
@@ -512,8 +509,7 @@ function collect_import_using_occurrences!(
         st0::SyntaxTreeC, context_module::Module
     )
     foreach_local_import_identifier(st0) do id_st::SyntaxTreeC
-        name = get(id_st, :name_val, nothing)
-        name isa AbstractString || return
+        name = @something get_name_val(id_st) return
         binfo = JL.BindingInfo(0, name, :global, 0; mod=context_module)
         target_set = get!(Set{BindingOccurrence}, occurrences, binfo)
         push!(target_set, BindingOccurrence(id_st, :decl))

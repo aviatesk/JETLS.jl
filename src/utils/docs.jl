@@ -170,6 +170,8 @@ function lookup_doc_for_binding(binfo::JL.BindingInfo, @nospecialize(sig), world
     return lookup_doc_for_binding(mod, Symbol(binfo.name), sig, world)
 end
 
+is_doc_binding_value(@nospecialize(v)) = v isa Function || v isa Module || v isa Type
+
 """
     lookup_doc_for_value(v, sig, world::UInt) -> Markdown.MD | Nothing
 
@@ -185,7 +187,7 @@ to keep. For documentable values that nonetheless carry no docstring,
 [`lookup_doc_stripped`](@ref) handles the placeholder removal.
 """
 function lookup_doc_for_value(@nospecialize(v), @nospecialize(sig), world::UInt)
-    v isa Function || v isa Module || v isa Type || return nothing
+    is_doc_binding_value(v) || return nothing
     try
         if sig === nothing
             return lookup_doc_stripped(v, world)

@@ -20,13 +20,19 @@ overlap(rng1::Range, rng2::Range) = max(rng1.start, rng2.start) <= min(rng1.var"
 @define_override_constructor LSP.TextEdit
 
 const DEFAULT_DOCUMENT_SELECTOR = DocumentFilter[
-    DocumentFilter(; language = "julia")
+    TextDocumentFilterLanguage(; language = "julia", scheme = "file"),
+    [TextDocumentFilterLanguage(; language = "julia", scheme) for scheme in UNSAVED_DOCUMENT_SCHEMES]...,
+    # Notebook cells carry a client-defined URI scheme (e.g. `vscode-notebook-cell:`),
+    # so match them by notebook membership and cell language rather than by scheme.
+    NotebookCellTextDocumentFilter(; notebook = "*", language = "julia"),
 ]
 
 """
-    create_source_location_link(uri::URI, showtext::Union{Nothing,AbstractString}=nothing;
-                                line::Union{Integer,Nothing}=nothing,
-                                character::Union{Integer,Nothing}=nothing)
+    create_source_location_link(
+            uri::URI, showtext::Union{Nothing,AbstractString} = nothing;
+            line::Union{Integer,Nothing} = nothing,
+            character::Union{Integer,Nothing} = nothing
+        ) -> String
 
 Create a markdown-style link to a source location that can be displayed in LSP clients.
 
@@ -70,10 +76,11 @@ create_source_location_link(uri; line=42)
 # Returns: "[/path/to/file.jl:42](file:///path/to/file.jl#L42)"
 ```
 """
-function create_source_location_link(uri::URI,
-                                     showtext::Union{Nothing,AbstractString}=nothing;
-                                     line::Union{Integer,Nothing}=nothing,
-                                     character::Union{Integer,Nothing}=nothing)
+function create_source_location_link(
+        uri::URI, showtext::Union{Nothing,AbstractString} = nothing;
+        line::Union{Integer,Nothing} = nothing,
+        character::Union{Integer,Nothing} = nothing
+    )
     linktext = string(uri)
     if line !== nothing
         linktext *= "#L$line"

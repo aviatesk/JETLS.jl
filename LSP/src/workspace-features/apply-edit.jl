@@ -21,8 +21,7 @@ end
 """
 The result returned from the apply workspace edit request.
 
-# Tags
-- since - 3.17 renamed from ApplyWorkspaceEditResponse
+- `@since` 3.17 renamed from ApplyWorkspaceEditResponse
 """
 @interface ApplyWorkspaceEditResult begin
     """
