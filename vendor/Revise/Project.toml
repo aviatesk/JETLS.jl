@@ -50,16 +50,26 @@ CodeTracking = "3"
 test = ["CatIndices", "Distributed", "EndpointRanges", "EponymTuples", "Example", "IndirectArrays", "InteractiveUtils", "MacroTools", "MappedArrays", "Pkg", "Random", "Requires", "RoundingIntegers", "Test", "UnsafeArrays"]
 
 [sources.OrderedCollections]
-path = "../OrderedCollections"
+subdir = "vendor/OrderedCollections"
+rev = "40d7e1dc8318fc62f813f5bf9eb3f2c95acf73b8"
+url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.LoweredCodeUtils]
-path = "../LoweredCodeUtils"
+subdir = "vendor/LoweredCodeUtils"
+rev = "40d7e1dc8318fc62f813f5bf9eb3f2c95acf73b8"
+url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.JuliaInterpreter]
-path = "../JuliaInterpreter"
+subdir = "vendor/JuliaInterpreter"
+rev = "40d7e1dc8318fc62f813f5bf9eb3f2c95acf73b8"
+url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.Preferences]
-path = "../Preferences"
+subdir = "vendor/Preferences"
+rev = "40d7e1dc8318fc62f813f5bf9eb3f2c95acf73b8"
+url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.CodeTracking]
-path = "../CodeTracking"
+subdir = "vendor/CodeTracking"
+rev = "40d7e1dc8318fc62f813f5bf9eb3f2c95acf73b8"
+url = "https://github.com/aviatesk/JETLS.jl"
