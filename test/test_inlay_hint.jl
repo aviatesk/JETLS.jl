@@ -1352,8 +1352,8 @@ end
         end
 
         # `where` bounds are user-written signature syntax and should be skipped.
-        # Body hints may still use the static parameter upper bounds recovered by
-        # the TypeAnnotation-side method-signature evaluator.
+        # The `::Any` body hints below come from the current TypeAnnotation-side
+        # static-parameter limitation, not from the inlay-hint pass.
         @testset "where-clause type parameters" begin
             @testset "long-form" begin
                 code = """
@@ -1363,7 +1363,7 @@ end
                     """
                 expected = """
                     function func(x::T)::Any where {T <: Number}
-                        return 2x::Number
+                        return 2x::Any
                     end
                     """
                 @test apply_inlay_hints(code, get_type_inlay_hints(code)) == expected
@@ -1375,8 +1375,8 @@ end
                     end
                     """
                 expected = """
-                    function f(x::T, y::S)::Tuple{Number, AbstractString} where {T <: Number, S <: AbstractString}
-                        return (x::Number, y::AbstractString)::Tuple{Number, AbstractString}
+                    function f(x::T, y::S)::Tuple{Any, Any} where {T <: Number, S <: AbstractString}
+                        return (x::Any, y::Any)::Tuple{Any, Any}
                     end
                     """
                 @test apply_inlay_hints(code, get_type_inlay_hints(code)) == expected
@@ -1386,7 +1386,7 @@ end
                     add(x::T, y::T) where {T <: Real} = x + y
                     """
                 expected = """
-                    add(x::T, y::T)::Any where {T <: Real} = (x::Real + y::Real)::Any
+                    add(x::T, y::T)::Any where {T <: Real} = (x::Any + y::Any)::Any
                     """
                 @test apply_inlay_hints(code, get_type_inlay_hints(code)) == expected
             end

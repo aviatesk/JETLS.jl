@@ -1129,7 +1129,7 @@ function resolve_method_argtypes(
     argtypes = Vector{Any}(undef, nargs)
     for i = 1:nargs
         argtypes[i] = i <= length(inner_args) ?
-            eval_method_sig_type(inner_args[i], src, context_module, world) : Any
+            eval_to_type(inner_args[i], src, context_module, world) : Any
     end
     return argtypes
 end
@@ -1142,7 +1142,8 @@ function resolve_ssa_stmt(@nospecialize(expr), src::CodeInfo)
 end
 
 function svec_call_args(@nospecialize(expr))
-    Meta.isexpr(expr, :call) || return nothing
+    expr isa Expr || return nothing
+    expr.head === :call || return nothing
     length(expr.args) >= 1 || return nothing
     callee = expr.args[1]
     callee isa GlobalRef || return nothing
@@ -1150,40 +1151,28 @@ function svec_call_args(@nospecialize(expr))
     return @view expr.args[2:end]
 end
 
-function eval_method_sig_type(
+function eval_to_type(
         @nospecialize(expr), src::CodeInfo, context_module::Module, world::UInt
     )
-    val = eval_method_sig_value(expr, src, context_module, world)
+    val = eval_to_value(expr, src, context_module, world)
     val isa TypeVar && return val.ub
     return val isa Type ? val : Any
 end
 
 # Returns `nothing` when any leaf reference fails to resolve (e.g. undefined
 # synthetic name); callers must treat that as "could not statically evaluate".
-function eval_method_sig_value(
+function eval_to_value(
         @nospecialize(expr), src::CodeInfo, context_module::Module, world::UInt
     )
-    return eval_method_sig_value(expr, src, context_module, world, length(src.code) + 1)
-end
-
-function eval_method_sig_value(
-        @nospecialize(expr), src::CodeInfo, context_module::Module, world::UInt,
-        stmt_limit::Int
-    )
     if expr isa SSAValue
-        1 <= expr.id <= length(src.code) || return nothing
-        return eval_method_sig_value(src.code[expr.id], src, context_module, world, expr.id)
-    elseif expr isa SlotNumber
-        return eval_method_sig_slot_value(expr, src, context_module, world, stmt_limit)
+        return eval_to_value(resolve_ssa_stmt(expr, src), src, context_module, world)
     elseif expr isa GlobalRef
         return resolve_globalref(expr, world)
-    elseif Meta.isexpr(expr, :call)
-        f = @something eval_method_sig_value(
-            expr.args[1], src, context_module, world, stmt_limit) return nothing
+    elseif expr isa Expr && expr.head === :call
+        f = @something eval_to_value(expr.args[1], src, context_module, world) return nothing
         cargs = Any[]
         for i = 2:length(expr.args)
-            v = @something eval_method_sig_value(
-                expr.args[i], src, context_module, world, stmt_limit) return nothing
+            v = @something eval_to_value(expr.args[i], src, context_module, world) return nothing
             push!(cargs, v)
         end
         try
@@ -1196,22 +1185,6 @@ function eval_method_sig_value(
     end
     # Self-evaluating literal (Number, String, Symbol, Bool, ...).
     return expr
-end
-
-function eval_method_sig_slot_value(
-        slot::SlotNumber, src::CodeInfo, context_module::Module, world::UInt,
-        stmt_limit::Int
-    )
-    found = nothing
-    for i = 1:min(stmt_limit - 1, length(src.code))
-        stmt = src.code[i]
-        if Meta.isexpr(stmt, :(=)) && length(stmt.args) == 2 && stmt.args[1] === slot
-            found === nothing || return nothing
-            found = Pair{Int,Any}(i, stmt.args[2])
-        end
-    end
-    i, rhs = @something found return nothing
-    return eval_method_sig_value(rhs, src, context_module, world, i)
 end
 
 function resolve_globalref(g::GlobalRef, world::UInt)

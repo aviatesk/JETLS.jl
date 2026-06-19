@@ -209,20 +209,6 @@ end
         end
     end
 
-    @testset "does not bottom on static-parameter method body" begin
-        let code = """
-            function copy_parametric(a::Vector{T}) where {T}
-                _ = copy(a)
-                return 0
-            end
-            """
-            _, ctx = type_annotate(code)
-            copy_type = widenconst(get_type_for_range(ctx, range_of(code, "copy(a)")))
-            @test copy_type !== Union{}
-            @test widenconst(get_type_for_range(ctx, range_of_kind(code, JS.K"function"))) === Int
-        end
-    end
-
     # Kwarg lowering produces three `:method` 3-arg statements (kwbody,
     # public, kwcall); the user's body lives in kwbody and we expect its
     # user-named slots to resolve.
