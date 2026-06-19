@@ -27,8 +27,8 @@ Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 [sources]
 Compiler = {rev = "avi/JETLS-Compiler-head", subdir = "Compiler", url = "https://github.com/JuliaLang/julia"}
 JET = {rev = "763ae6b0", url = "https://github.com/aviatesk/JET.jl"}
-JuliaLowering = {rev = "0ad24a2cc1", subdir = "JuliaLowering", url = "https://github.com/JuliaLang/julia"}
-JuliaSyntax = {rev = "0ad24a2cc1", subdir = "JuliaSyntax", url = "https://github.com/JuliaLang/julia"}
+JuliaLowering = {rev = "523e98135d", subdir = "JuliaLowering", url = "https://github.com/JuliaLang/julia"}
+JuliaSyntax = {rev = "523e98135d", subdir = "JuliaSyntax", url = "https://github.com/JuliaLang/julia"}
 LSP = {path = "LSP"}
 
 [compat]
