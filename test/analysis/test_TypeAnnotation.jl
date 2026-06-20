@@ -1946,6 +1946,32 @@ end
         @test widenconst(get_type_for_range(ctx, range_of(code, "sin(1.0)"))) === Float64
     end
 
+    @testset "JET.AbstractBindingState integration" begin
+        # Exercising `concretize_abstract_binding_state_load`-based global binding type resolution
+        let context_module = Module(:type_annotation_abstract_binding_state)
+            binding_state = JETLS.JET.AbstractBindingState(true, false, Vector{Int})
+            Core.eval(context_module, Expr(:const, :THETA, binding_state))
+            code = """
+                for x in THETA
+                    x + 1
+                end
+                """
+            _, ctx = type_annotate(code, context_module)
+            @test widenconst(get_type_for_range(ctx, range_of(code, "THETA"))) === Vector{Int}
+            @test widenconst(get_type_for_range(ctx, range_of(code, "x"))) === Int
+            @test widenconst(get_type_for_range(ctx, range_of(code, "x + 1"))) === Int
+        end
+
+        # Exercising `abstract_binding_state_const_value`-based signature type resolution
+        let context_module = Module(:type_annotation_abstract_binding_state_signature)
+            binding_state = JETLS.JET.AbstractBindingState(true, false, Core.Const(Int))
+            Core.eval(context_module, Expr(:const, :MyInt, binding_state))
+            code = "func(x::MyInt) = sin(x)"
+            _, ctx = type_annotate(code, context_module)
+            @test widenconst(get_type_for_range(ctx, range_of(code, "sin(x)"))) === Float64
+        end
+    end
+
     # `get_inferrable_tree` does not bind `MACRO_DIAGNOSTIC_SINK`, so stubs that call
     # `push_macro_error!` (e.g. `Threads.@spawn` on an unsupported threadpool literal)
     # become no-ops and the macrocall still expands. Without this, a single such invalid

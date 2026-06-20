@@ -148,7 +148,7 @@ types to `Any`.
 module TypeAnnotation
 
 using Core.IR
-using JET: CC
+using JET: CC, JET
 using ..JETLS: InferredContextCache, InferredContextCacheData, JETLS_DEBUG_LOWERING,
     JL, JS, SyntaxTreeC, TraversalReturn, get_name_val, iterate_toplevel_tree,
     jl_lower_for_scope_resolution, load, rewrite_local_closures_to_opaque, store!, traverse
@@ -293,6 +293,36 @@ function CC.concrete_eval_eligible(
         ret = :none
     end
     return ret
+end
+
+function CC.abstract_eval_partition_load(
+        interp::ASTTypeAnnotator, binding::Core.Binding, partition::Core.BindingPartition
+    )
+    res = @invoke CC.abstract_eval_partition_load(
+        interp::CC.AbstractInterpreter, binding::Core.Binding, partition::Core.BindingPartition)
+    return concretize_abstract_binding_state_load(interp, res)
+end
+
+# Script-mode full analysis may hand us a context module populated by JET's virtualprocess,
+# where inferred const globals are materialized as `AbstractBindingState`.
+function concretize_abstract_binding_state_load(interp::ASTTypeAnnotator, res::CC.RTEffects)
+    ⊑ = CC.partialorder(CC.typeinf_lattice(interp))
+    if res.rt !== Union{} && res.rt ⊑ JET.AbstractBindingState
+        rt = res.rt
+        if rt isa Core.Const && (binding_state = rt.val) isa JET.AbstractBindingState
+            if isdefined(binding_state, :typ)
+                (; exct, effects) = res
+                if binding_state.maybeundef
+                    ⊔ = CC.join(CC.typeinf_lattice(interp))
+                    exct = exct ⊔ UndefVarError
+                    effects = CC.Effects(effects; nothrow = exct === Union{})
+                end
+                return CC.RTEffects(binding_state.typ, exct, effects)
+            end
+        end
+        return CC.RTEffects(Any, res.exct, res.effects)
+    end
+    return res
 end
 
 # Refine `PartialOpaque.typ`'s rt parameter using the OC body's eager inference
@@ -1216,9 +1246,22 @@ end
 
 function resolve_globalref(g::GlobalRef, world::UInt)
     if Base.invoke_in_world(world, isdefinedglobal, g.mod, g.name)::Bool
-        return Base.invoke_in_world(world, getglobal, g.mod, g.name)
+        val = Base.invoke_in_world(world, getglobal, g.mod, g.name)
+        if val isa JET.AbstractBindingState
+            val = abstract_binding_state_const_value(val)
+        end
+        return val
     end
     return nothing
+end
+
+# Static signature evaluation reads globals from the same virtualprocess-backed context
+# module, but can only reuse binding states that carry an actual const value.
+function abstract_binding_state_const_value(val::JET.AbstractBindingState)
+    isdefined(val, :typ) || return nothing
+    typ = val.typ
+    typ isa Core.Const || return nothing
+    return typ.val
 end
 
 # Queries

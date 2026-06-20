@@ -44,6 +44,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > This disables analysis for matched files. Basic features like completion still might work, but most LSP features will be unfunctional.
 > Note that `analysis_overrides` is provided as a temporary workaround and may be removed or changed at any time. A proper fix is being worked on.
 
+### Fixed
+
+- Fixed type annotation for script-mode files so inferred `const` globals use their actual type instead of an internal `JET.AbstractBindingState`, avoiding spurious annotations.
+
 ## 2026-06-20
 
 - Commit: [`d15f92f`](https://github.com/aviatesk/JETLS.jl/commit/d15f92f)
