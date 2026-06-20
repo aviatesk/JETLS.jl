@@ -19,7 +19,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## Unreleased
 
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
-- Diff: [`a42a435...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/a42a435...HEAD)
+- Diff: [`5643648...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/5643648...HEAD)
 
 ### Announcement
 
@@ -43,6 +43,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > ```
 > This disables analysis for matched files. Basic features like completion still might work, but most LSP features will be unfunctional.
 > Note that `analysis_overrides` is provided as a temporary workaround and may be removed or changed at any time. A proper fix is being worked on.
+
+### Fixed
+
+- Fixed false "not concretized" `toplevel/error` diagnostics on top-level `for` loops over `const` globals when the loop body contains a comprehension. (Fixed https://github.com/aviatesk/JETLS.jl/issues/555 via https://github.com/aviatesk/JET.jl/pull/830)
+
+- Fixed type annotation for nested local closures that capture values already captured by an enclosing closure.
+
+- Fixed type annotation results for methods whose signature contains static parameters such as `f(a::Vector{T}) where {T}` so reachable calls like `copy(a)` no longer collapse to `Union{}`. (Closed https://github.com/aviatesk/JETLS.jl/issues/764)
+
+- Fixed the names introduced by `import`/`using`/`export`/`public` statements nested in a block (e.g. version-gated imports) not being recognized by document highlight, find references, rename, and semantic tokens.
+
+## 2026-06-18
+
+- Commit: [`5643648`](https://github.com/aviatesk/JETLS.jl/commit/5643648)
+- Diff: [`a42a435...5643648`](https://github.com/aviatesk/JETLS.jl/compare/a42a435...5643648)
+- Installation:
+  ```bash
+  julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="2026-06-18")'
+  ```
 
 ### Added
 

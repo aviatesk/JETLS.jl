@@ -161,6 +161,18 @@ end
         @test binfo.kind === :global
         return true
     end == 4
+
+    # Cursor on the module-path prefix of a block-nested `import`/`using` must
+    # not resolve to a binding.
+    for code in (
+            "if VERSION >= v\"1.11\"\n    import │A.B\nend",
+            "begin\n    using │Foo: bar\nend",
+        )
+        clean_code, positions = JETLS.get_text_and_positions(code)
+        st0_top = jlparse(clean_code)
+        offset = JETLS.xy_to_offset(clean_code, only(positions), @__FILE__)
+        @test isnothing(JETLS.select_target_binding(st0_top, offset, lowering_module))
+    end
 end
 
 function with_target_binding_definitions(f, text::AbstractString; kwargs...)

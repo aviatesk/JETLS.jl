@@ -209,6 +209,20 @@ end
         end
     end
 
+    @testset "does not bottom on static-parameter method body" begin
+        let code = """
+            function copy_parametric(a::Vector{T}) where {T}
+                _ = copy(a)
+                return 0
+            end
+            """
+            _, ctx = type_annotate(code)
+            copy_type = widenconst(get_type_for_range(ctx, range_of(code, "copy(a)")))
+            @test copy_type !== Union{}
+            @test widenconst(get_type_for_range(ctx, range_of_kind(code, JS.K"function"))) === Int
+        end
+    end
+
     # Kwarg lowering produces three `:method` 3-arg statements (kwbody,
     # public, kwcall); the user's body lives in kwbody and we expect its
     # user-named slots to resolve.
@@ -515,6 +529,30 @@ end
                 @test widenconst(get_type_for_range(ctx, range_of(code, "x * 2"))) === Int
                 map_call = range_of(code, "map(xs) do x\n        x * 2\n    end")
                 @test widenconst(get_type_for_range(ctx, map_call)) === Vector{Int}
+            end
+        end
+
+        @testset "nested closure captures enclosing capture" begin
+            let code = """
+                function has_watched_change()
+                    watched = Set(["src/A.jl"])
+                    batches = [["src/A.jl", "src/B.jl"]]
+                    only(map(batches) do changed_files
+                        any(path -> path in watched, changed_files)
+                    end)
+                end
+                """
+                _, ctx = type_annotate(code)
+                any_expr = "any(path -> path in watched, changed_files)"
+                map_expr = "map(batches) do changed_files\n" *
+                    "        any(path -> path in watched, changed_files)\n" *
+                    "    end"
+                any_call = range_of(code, any_expr)
+                map_call = range_of(code, map_expr)
+                only_call = range_of(code, "only($map_expr)")
+                @test widenconst(get_type_for_range(ctx, any_call)) === Bool
+                @test widenconst(get_type_for_range(ctx, map_call)) === Vector{Bool}
+                @test widenconst(get_type_for_range(ctx, only_call)) === Bool
             end
         end
 

@@ -46,7 +46,7 @@ Ensure that the maximum line length never exceeds 72 characters.
 When referencing external GitHub PRs or issues, use proper GitHub interlinking
 format (e.g., "owner/repo#123" for PRs/issues).
 Finally, if you write code yourself, include a co-author trailer at the end
-of the commit message, e.g.:　`Co-Authored-By: GPT-5.5 noreply@openai.com`
+of the commit message, e.g.: `Co-Authored-By: GPT-5.5 <noreply@openai.com>`
 (adjust the model name as appropriate). However, when simply asked to write
 a commit message, there's no need to add that trailer.
 

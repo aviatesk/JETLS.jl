@@ -450,41 +450,30 @@ function compute_full_binding_occurrences(
         is_notebook_uri(state, uri)
     (; context_module) = get_context_info(state, uri, offset_to_xy(fi, JS.first_byte(st0)); lookup_func)
 
-    # Lowering `export`/`public`/`import`/`using` statements collapses their listed
-    # identifiers into opaque `K"Value"` nodes and records no `BindingInfo` for them,
-    # so the usual traversal finds nothing. Handle them directly:
-    # - `export foo`/`public foo`: record `foo` as a `:use` of the corresponding global
-    #   binding in the surrounding module.
-    # - `using M: foo`/`import M: foo`/`import M.foo`: record the local alias identifier
-    #   (`foo`, or `bar` in `foo as bar`) as a `:def` of the local global binding.
-    k0 = JS.kind(st0)
-    if k0 in JS.KSet"export public"
+    if JS.kind(st0) in JS.KSet"export public import using"
+        # `import`/`using`/`export`/`public` declarations are collected from the source tree
+        # by `collect_import_export_occurrences!` below (lowering doesn't surface them).
+        # A statement that is *only* such a declaration has no other code, so skip lowering it.
         binding_occurrences = Dict{JL.BindingInfo,Set{BindingOccurrence}}()
-        collect_export_public_occurrences!(binding_occurrences, st0, context_module)
-        return binding_occurrences
-    elseif k0 in JS.KSet"import using"
-        binding_occurrences = Dict{JL.BindingInfo,Set{BindingOccurrence}}()
-        collect_import_using_occurrences!(binding_occurrences, st0, context_module)
-        return binding_occurrences
+    else
+        (; ctx3, st3) = try
+            # Remove macros to preserve precise source locations.
+            # TODO: This won't be necessary once JuliaLowering can preserve precise
+            # source locations for old macro-expanded code.
+            jl_lower_for_scope_resolution(context_module, remove_macrocalls(st0); soft_scope)
+        catch
+            return nothing
+        end
+        occs = compute_binding_occurrences(ctx3, st3; include_global_bindings=true)
+        collect_macrocall_occurrences!(occs, context_module, st0; soft_scope)
+        # Global bindings used inside inert nodes (quoted expressions) are not
+        # resolved by scope analysis. This applies to `@generated` functions,
+        # macro definitions, and any function that constructs quoted expressions.
+        # Run independent scope resolution on inert content to collect them.
+        collect_inert_global_occurrences!(occs, ctx3, st3, context_module; soft_scope)
+        binding_occurrences = occs
     end
-
-    (; ctx3, st3) = try
-        # Remove macros to preserve precise source locations.
-        # TODO: This won't be necessary once JuliaLowering can preserve precise
-        # source locations for old macro-expanded code.
-        jl_lower_for_scope_resolution(context_module, remove_macrocalls(st0); soft_scope)
-    catch
-        return nothing
-    end
-    binding_occurrences = compute_binding_occurrences(ctx3, st3; include_global_bindings=true)
-
-    collect_macrocall_occurrences!(binding_occurrences, context_module, st0; soft_scope)
-    # Global bindings used inside inert nodes (quoted expressions) are not
-    # resolved by scope analysis. This applies to `@generated` functions,
-    # macro definitions, and any function that constructs quoted expressions.
-    # Run independent scope resolution on inert content to collect them.
-    collect_inert_global_occurrences!(binding_occurrences, ctx3, st3, context_module; soft_scope)
-
+    collect_import_export_occurrences!(binding_occurrences, st0, context_module)
     return binding_occurrences
 end
 
@@ -514,6 +503,36 @@ function collect_import_using_occurrences!(
         target_set = get!(Set{BindingOccurrence}, occurrences, binfo)
         push!(target_set, BindingOccurrence(id_st, :decl))
         return
+    end
+    return occurrences
+end
+
+# Collect occurrences for every `import`/`using`/`export`/`public` statement in `st0`,
+# whether it is the whole statement or nested in a block (`if`/`begin`/`@static if`/…).
+# Lowering doesn't surface these declarations — `export`/`public` collapse their names
+# into a runtime call argument, and `import`/`using` desugar their module paths into
+# `K"inert"` calls that `collect_inert_global_occurrences!` skips — so collect them from
+# the source tree instead:
+# - `export foo`/`public foo`: `foo` as a `:use` of the surrounding module's global.
+# - `using M: foo`/`import M.foo`/`foo as bar`: the local name (`foo`/`bar`) as a `:decl`.
+# `K"module"` (a distinct binding scope) and `K"quote"` (quoted, non-executed code) are
+# not descended into.
+function collect_import_export_occurrences!(
+        occurrences::Dict{JL.BindingInfo,Set{BindingOccurrence}},
+        st0::SyntaxTreeC, context_module::Module
+    )
+    traverse(st0) do st::SyntaxTreeC
+        k = JS.kind(st)
+        if k in JS.KSet"module quote"
+            return traversal_no_recurse
+        elseif k in JS.KSet"export public"
+            collect_export_public_occurrences!(occurrences, st, context_module)
+            return traversal_no_recurse
+        elseif k in JS.KSet"import using"
+            collect_import_using_occurrences!(occurrences, st, context_module)
+            return traversal_no_recurse
+        end
+        return nothing
     end
     return occurrences
 end
@@ -615,6 +634,9 @@ function collect_inert_global_occurrences!(
     end
     st3_range = JS.byte_range(st3)
     traverse(st3) do st3′::SyntaxTreeC
+        # Skip `import`/`using` desugaring (see `is_import_eval_call`); re-lowering
+        # its inert module path would record spurious `:global :use` occurrences.
+        is_import_eval_call(st3′) && return traversal_no_recurse
         JS.kind(st3′) === JS.K"inert" || return nothing
         JS.numchildren(st3′) >= 1 || return nothing
         # Skip the outer inert that wraps the entire generator template
