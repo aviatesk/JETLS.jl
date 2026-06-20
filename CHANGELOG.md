@@ -46,6 +46,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- Fixed false "not concretized" `toplevel/error` diagnostics on top-level `for` loops over `const` globals when the loop body contains a comprehension. (Fixed https://github.com/aviatesk/JETLS.jl/issues/555 via https://github.com/aviatesk/JET.jl/pull/830)
+
 - Fixed type annotation for nested local closures that capture values already captured by an enclosing closure.
 
 - Fixed type annotation results for methods whose signature contains static parameters such as `f(a::Vector{T}) where {T}` so reachable calls like `copy(a)` no longer collapse to `Union{}`. (Closed https://github.com/aviatesk/JETLS.jl/issues/764)
