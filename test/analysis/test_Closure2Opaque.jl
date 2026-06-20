@@ -234,6 +234,17 @@ end
         @test val == [11.0, 21.0, 12.0, 22.0, 13.0, 23.0]
         @test count_opaque_closures(tree) == 2
     end
+
+    let (val, tree) = rewrite_lower_eval("""
+            let watched = Set(["src/A.jl"]), batches = [["src/A.jl", "src/B.jl"]]
+                only(map(batches) do changed_files
+                    any(path -> path in watched, changed_files)
+                end)
+            end
+            """)
+        @test val === true
+        @test count_opaque_closures(tree) == 2
+    end
 end
 
 @testset "do-block as map argument" begin

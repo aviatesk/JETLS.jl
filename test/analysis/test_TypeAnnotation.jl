@@ -532,6 +532,30 @@ end
             end
         end
 
+        @testset "nested closure captures enclosing capture" begin
+            let code = """
+                function has_watched_change()
+                    watched = Set(["src/A.jl"])
+                    batches = [["src/A.jl", "src/B.jl"]]
+                    only(map(batches) do changed_files
+                        any(path -> path in watched, changed_files)
+                    end)
+                end
+                """
+                _, ctx = type_annotate(code)
+                any_expr = "any(path -> path in watched, changed_files)"
+                map_expr = "map(batches) do changed_files\n" *
+                    "        any(path -> path in watched, changed_files)\n" *
+                    "    end"
+                any_call = range_of(code, any_expr)
+                map_call = range_of(code, map_expr)
+                only_call = range_of(code, "only($map_expr)")
+                @test widenconst(get_type_for_range(ctx, any_call)) === Bool
+                @test widenconst(get_type_for_range(ctx, map_call)) === Vector{Bool}
+                @test widenconst(get_type_for_range(ctx, only_call)) === Bool
+            end
+        end
+
         # Closure argument-type refinement (see the `TypeAnnotation` module docstring):
         # untyped closure parameters get their signature inferred from the join of
         # observed call-site argtypes across inference passes, instead of degrading
