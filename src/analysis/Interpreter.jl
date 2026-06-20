@@ -286,15 +286,18 @@ function JuliaInterpreter.step_expr!(
         func = JuliaInterpreter.lookup(frame, node.args[1])
         if func === Core._typebody!
             structtyp = JuliaInterpreter.lookup(frame, node.args[3])
-            if structtyp isa Type
+            if structtyp isa Type && structtyp !== Union{}
                 ftypes = JuliaInterpreter.lookup(frame, node.args[4])::Core.SimpleVector
                 fnames = fieldnames(structtyp)
-                for (fname, ft) in zip(fnames, ftypes)
-                    if JETLS.is_abstract_fieldtype(ft)
-                        filename = JET.InterpretationState(interp).filename
-                        fieldline = extract_field_line(interp, frame, nameof(structtyp), fname)
-                        isnothing(fieldline) && continue
-                        push!(interp.warning_reports, JETLS.AbstractFieldReport(filename, fieldline, structtyp, fname, ft))
+                if fnames isa Tuple{Vararg{Symbol}} && length(ftypes) == length(fnames)
+                    for i = 1:length(ftypes)
+                        ft, fname = ftypes[i], fnames[i]
+                        if JETLS.is_abstract_fieldtype(ft)
+                            filename = JET.InterpretationState(interp).filename
+                            fieldline = @something extract_field_line(
+                                interp, frame, nameof(structtyp), fname) continue
+                            push!(interp.warning_reports, JETLS.AbstractFieldReport(filename, fieldline, structtyp, fname, ft))
+                        end
                     end
                 end
             end
@@ -302,8 +305,7 @@ function JuliaInterpreter.step_expr!(
     end
     @invoke JuliaInterpreter.step_expr!(
         interp::JET.ConcreteInterpreter, frame::JuliaInterpreter.Frame, node::Any,
-        istoplevel::Bool
-    )
+        istoplevel::Bool)
 end
 
 # TODO Use lowered `SyntaxTree` for finding field line for macro-generated structs
@@ -311,8 +313,7 @@ function extract_field_line(interp::LSInterpreter, frame::JuliaInterpreter.Frame
     isassigned(interp.current_node) || return JuliaInterpreter.linenumber(frame)
     return @something(
         JETLS.try_extract_field_line(interp.current_node[], structname, fname),
-        return JuliaInterpreter.linenumber(frame)
-    )
+        return JuliaInterpreter.linenumber(frame))
 end
 
 end # module Interpreter
