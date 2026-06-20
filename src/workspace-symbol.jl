@@ -98,9 +98,9 @@ function workspace_symbols(
         end
     end
     if errored
-        request_failed_error("workspace_symbol failed")
+        return request_failed_error("workspace_symbol failed")
     elseif !completed
-        request_cancelled_error("workspace_symbol cancelled")
+        return request_cancelled_error("workspace_symbol cancelled")
     else
         return symbols
     end

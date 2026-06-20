@@ -248,6 +248,7 @@ function runserver(
                 if isdefined(msg, :id)
                     send(server, ResponseMessage(;
                         id = msg.id,
+                        result = nothing,
                         error = ResponseError(;
                             code = ErrorCodes.ServerNotInitialized,
                             message = "Server has not been initialized")))
@@ -256,6 +257,7 @@ function runserver(
                 if isdefined(msg, :id)
                     send(server, ResponseMessage(;
                         id = msg.id,
+                        result = nothing,
                         error = ResponseError(;
                             code = ErrorCodes.InvalidRequest,
                             message = "Received request after a shutdown request requested")))
