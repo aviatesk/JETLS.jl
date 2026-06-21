@@ -46,6 +46,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- Fixed spurious `Any` type annotations caused by free static parameters left inside inferred method argument types, such as `Vector{T}` in `f(a::Vector{T}) where {T}`. (Closed https://github.com/aviatesk/JETLS.jl/issues/768)
+
 - Fixed type annotation for script-mode files so inferred `const` globals use their actual type instead of an internal `JET.AbstractBindingState`, avoiding spurious annotations.
 
 ## 2026-06-20

@@ -139,11 +139,13 @@ types to `Any`.
   defined in `context_module`. User-named slots (`init`, `xs`, …) still resolve
   correctly via the svec, so the body code itself is inferred precisely.
 
-- **Parametric methods.** `TypeVar`s constructed via `Core.TypeVar(:T, ub)` in the
-  argtypes svec are flattened to their upper bound (`val.ub`) so the slot has a
-  usable `Type`. Furthermore, the thunk's `MethodInstance` is a thunk MI (`def isa Module`);
+- **Parametric methods.** Signature types statically evaluated from the argtypes
+  svec are normalized to contain no free `TypeVar`s: a bare `T` collapses to its
+  upper bound, while nested uses such as `Vector{T}` are existentially closed.
+  Furthermore, the thunk's `MethodInstance` is a thunk MI (`def isa Module`);
   CC's `sptypes_from_meth_instance` forces `EMPTY_SPTYPES` for toplevel MIs, so an
-  `Expr(:static_parameter, i)` reference inside the body cannot retrieve `T` and infers as `Any`.
+  `Expr(:static_parameter, i)` reference inside the body cannot retrieve `T` and
+  infers as `Any`.
 """
 module TypeAnnotation
 
@@ -1143,6 +1145,15 @@ function infer_method_defs!(
     return
 end
 
+# Preserve identity of `TypeVar`s shared between argtypes and sparams in lowered
+# signatures. Re-evaluating `Core.TypeVar(:T, ...)` would create distinct objects
+# that can't be closed by the sparams `UnionAll`s.
+struct MethodSigEvalCache
+    ssa_values::Dict{Int,Any}
+    slot_assignment_values::Dict{Tuple{Int,Int},Any}
+end
+MethodSigEvalCache() = MethodSigEvalCache(Dict{Int,Any}(), Dict{Tuple{Int,Int},Any}())
+
 # `sig_ref` (= `stmt.args[2]` of a `:method` 3-arg Expr) points to an outer
 # `Core.svec(argtypes_svec, sparams_svec, source_loc)`; the first element is the
 # argtypes svec we evaluate. Slots whose source expression can't be resolved (e.g.
@@ -1156,12 +1167,32 @@ function resolve_method_argtypes(
     length(args) >= 1 || return nothing
     inner = resolve_ssa_stmt(args[1], src)
     inner_args = @something svec_call_args(inner) return nothing
+    cache = MethodSigEvalCache()
+    sparams = resolve_method_sparams(args, src, context_module, world, cache)
     argtypes = Vector{Any}(undef, nargs)
     for i = 1:nargs
-        argtypes[i] = i <= length(inner_args) ?
-            eval_method_sig_type(inner_args[i], src, context_module, world) : Any
+        argtypes[i] = if i <= length(inner_args)
+            eval_method_sig_type(inner_args[i], src, context_module, world, cache, sparams)
+        else
+            Any
+        end
     end
     return argtypes
+end
+
+function resolve_method_sparams(
+        outer_args, src::CodeInfo, context_module::Module, world::UInt,
+        cache::MethodSigEvalCache
+    )
+    sparams = TypeVar[]
+    length(outer_args) >= 2 || return sparams
+    sparams_expr = resolve_ssa_stmt(outer_args[2], src)
+    sparam_args = @something svec_call_args(sparams_expr) return sparams
+    for arg in sparam_args
+        val = eval_method_sig_value(arg, src, context_module, world, cache)
+        val isa TypeVar && push!(sparams, val)
+    end
+    return sparams
 end
 
 function resolve_ssa_stmt(@nospecialize(expr), src::CodeInfo)
@@ -1181,39 +1212,62 @@ function svec_call_args(@nospecialize(expr))
 end
 
 function eval_method_sig_type(
-        @nospecialize(expr), src::CodeInfo, context_module::Module, world::UInt
+        @nospecialize(expr), src::CodeInfo, context_module::Module, world::UInt,
+        cache::MethodSigEvalCache, sparams::Vector{TypeVar}
     )
-    val = eval_method_sig_value(expr, src, context_module, world)
-    val isa TypeVar && return val.ub
-    return val isa Type ? val : Any
+    val = eval_method_sig_value(expr, src, context_module, world, cache)
+    val isa Type || val isa TypeVar || return Any
+    return close_method_sig_typevars(val, sparams)
+end
+
+function close_method_sig_typevars(@nospecialize(typ), sparams::Vector{TypeVar})
+    Base.has_free_typevars(typ) || return typ
+    # Use the shortest `where`-order sparam prefix that closes `typ`. Later
+    # sparams can't appear in earlier bounds, while earlier unused binders
+    # collapse, matching `code_typed`'s unspecialized slot view.
+    for n = 1:length(sparams)
+        closed = @something close_method_sig_typevars(typ, sparams, n) return Any
+        Base.has_free_typevars(closed) || return closed
+    end
+    return Any
+end
+
+function close_method_sig_typevars(@nospecialize(typ), sparams::Vector{TypeVar}, n::Int)
+    closed = typ
+    for i = n:-1:1
+        closed = try
+            UnionAll(sparams[i], closed)
+        catch
+            return nothing
+        end
+    end
+    return closed
 end
 
 # Returns `nothing` when any leaf reference fails to resolve (e.g. undefined
 # synthetic name); callers must treat that as "could not statically evaluate".
 function eval_method_sig_value(
-        @nospecialize(expr), src::CodeInfo, context_module::Module, world::UInt
-    )
-    return eval_method_sig_value(expr, src, context_module, world, length(src.code) + 1)
-end
-
-function eval_method_sig_value(
         @nospecialize(expr), src::CodeInfo, context_module::Module, world::UInt,
-        stmt_limit::Int
+        cache::MethodSigEvalCache, stmt_limit::Int = length(src.code) + 1
     )
     if expr isa SSAValue
         1 <= expr.id <= length(src.code) || return nothing
-        return eval_method_sig_value(src.code[expr.id], src, context_module, world, expr.id)
+        haskey(cache.ssa_values, expr.id) && return cache.ssa_values[expr.id]
+        val = eval_method_sig_value(
+            src.code[expr.id], src, context_module, world, cache, expr.id)
+        cache.ssa_values[expr.id] = val
+        return val
     elseif expr isa SlotNumber
-        return eval_method_sig_slot_value(expr, src, context_module, world, stmt_limit)
+        return eval_method_sig_slot_value(expr, src, context_module, world, cache, stmt_limit)
     elseif expr isa GlobalRef
         return resolve_globalref(expr, world)
     elseif Meta.isexpr(expr, :call)
         f = @something eval_method_sig_value(
-            expr.args[1], src, context_module, world, stmt_limit) return nothing
+            expr.args[1], src, context_module, world, cache, stmt_limit) return nothing
         cargs = Any[]
         for i = 2:length(expr.args)
             v = @something eval_method_sig_value(
-                expr.args[i], src, context_module, world, stmt_limit) return nothing
+                expr.args[i], src, context_module, world, cache, stmt_limit) return nothing
             push!(cargs, v)
         end
         try
@@ -1230,8 +1284,9 @@ end
 
 function eval_method_sig_slot_value(
         slot::SlotNumber, src::CodeInfo, context_module::Module, world::UInt,
-        stmt_limit::Int
+        cache::MethodSigEvalCache, stmt_limit::Int
     )
+    slot_id = slot.id
     found = nothing
     for i = 1:min(stmt_limit - 1, length(src.code))
         stmt = src.code[i]
@@ -1241,7 +1296,11 @@ function eval_method_sig_slot_value(
         end
     end
     i, rhs = @something found return nothing
-    return eval_method_sig_value(rhs, src, context_module, world, i)
+    key = (slot_id, i)
+    haskey(cache.slot_assignment_values, key) && return cache.slot_assignment_values[key]
+    val = eval_method_sig_value(rhs, src, context_module, world, cache, i)
+    cache.slot_assignment_values[key] = val
+    return val
 end
 
 function resolve_globalref(g::GlobalRef, world::UInt)
