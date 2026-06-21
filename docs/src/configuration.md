@@ -561,7 +561,7 @@ section:
 
 > Example `.vscode/settings.json`:
 
-```json
+```jsonc
 {
   "jetls-client.settings": {
     "full_analysis": {
@@ -598,7 +598,7 @@ section:
 
 > Example `.zed/settings.json`:
 
-```json
+```jsonc
 {
   "lsp": {
     "JETLS": {
@@ -646,7 +646,7 @@ vim.lsp.config("jetls", {
       -- Use JuliaFormatter instead of Runic
       formatter = "JuliaFormatter",
       diagnostic = {
-        patterns = [
+        patterns = {
           -- Suppress toplevel/inference warnings in test folder
           {
             pattern = "(toplevel|inference)/.*",
@@ -655,7 +655,7 @@ vim.lsp.config("jetls", {
             severity = "off",
             path = "test/**/*.jl",
           },
-        ],
+        },
       },
       testrunner = {
         executable = "/path/to/custom/testrunner"
