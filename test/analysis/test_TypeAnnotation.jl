@@ -223,6 +223,56 @@ end
         end
     end
 
+    @testset "closes free typevars in method signature types" begin
+        let code = """
+            function issue768(a::Vector{Int}, b::Vector, c::Vector{T}) where {T}
+                _ = length(a)
+                _ = length(b)
+                _ = length(c)
+                return 0
+            end
+            """
+            _, ctx = type_annotate(code)
+            @test widenconst(get_type_for_range(ctx, range_of(code, "length(a)"))) === Int
+            @test widenconst(get_type_for_range(ctx, range_of(code, "length(b)"))) === Int
+            @test widenconst(get_type_for_range(ctx, range_of(code, "length(c)"))) === Int
+        end
+
+        let code = """
+            dependent_bound(c::Vector{S}) where {T<:Real,S<:T} = length(c)
+            """
+            _, ctx = type_annotate(code)
+            @test widenconst(get_type_for_range(ctx, range_of(code, "length(c)"))) === Int
+        end
+
+        let code = """
+            diagonal_nested(x::Vector{T}, y::Vector{T}) where {T<:Real} =
+                (length(x), length(y))
+            """
+            _, ctx = type_annotate(code)
+            @test widenconst(get_type_for_range(ctx, range_of(code, "length(x)"))) === Int
+            @test widenconst(get_type_for_range(ctx, range_of(code, "length(y)"))) === Int
+        end
+
+        let code = """
+            diagonal_bare(x::T, y::T) where {T<:Union{Float32,Float64}} = x + y
+            """
+            _, ctx = type_annotate(code)
+            @test widenconst(get_type_for_range(ctx, range_of(code, "x + y"))) === Union{Float32,Float64}
+        end
+
+        let code = """
+            mixed_diagonal(x::X, y::Vector{X}) where {X<:Union{Float32,Float64}} =
+                (x, length(y), eltype(y))
+            """
+            _, ctx = type_annotate(code)
+            @test widenconst(get_type_for_range(ctx, range_of(code, "length(y)"))) === Int
+            eltype_type = widenconst(get_type_for_range(ctx, range_of(code, "eltype(y)")))
+            @test eltype_type !== Any
+            @test eltype_type <: Type
+        end
+    end
+
     # Kwarg lowering produces three `:method` 3-arg statements (kwbody,
     # public, kwcall); the user's body lives in kwbody and we expect its
     # user-named slots to resolve.
