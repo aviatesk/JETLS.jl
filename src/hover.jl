@@ -207,6 +207,10 @@ function hover_lattice_detail(@nospecialize(typ))
     # element as a comment and expose the internal representation again.
     typ isa Core.PartialOpaque && return nothing
     typ === CC.widenconst(typ) && return nothing
+    if typ isa Core.Const
+        typ.val === nothing && return nothing
+        typ.val === missing && return nothing
+    end
     return format_lattice_element_comment(typ)
 end
 

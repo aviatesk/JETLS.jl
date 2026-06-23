@@ -232,6 +232,20 @@ end
         result = get_hover(clean_text, only(positions))
         @test result isa Hover
         @test occursin("(local) y :: Float64  # Core.Const", result.contents.value)
+
+        hover_test("""
+                let x = nothing
+                    x│
+                end
+            """, "(local) x :: Nothing";
+            notpat = "Core.Const(nothing)")
+
+        hover_test("""
+                let x = missing
+                    x│
+                end
+            """, "(local) x :: Missing";
+            notpat = "Core.Const(missing)")
     end
 
     @testset "module alias resolves through DocsBinding helper" begin
