@@ -175,7 +175,7 @@ The macro's behavior depends on the JETLS execution mode:
 - `JETLS_TEST_MODE=false`: Wraps the call in `try`-`catch` to log errors without crashing
 """
 macro tryinvokelatest(ex)
-    Meta.isexpr(ex, :call) || error("@tryinvokelatest expects :call expresion")
+    Meta.isexpr(ex, :call) || error("@tryinvokelatest expects :call expression")
 
     f, args, kwargs = Base.destructure_callex(__module__, ex)
     f = esc(f); args = esc.(args); kwargs = esc.(kwargs);
