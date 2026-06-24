@@ -44,6 +44,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > This disables analysis for matched files. Basic features like completion still might work, but most LSP features will be unfunctional.
 > Note that `analysis_overrides` is provided as a temporary workaround and may be removed or changed at any time. A proper fix is being worked on.
 
+### Fixed
+
+- Fixed hover on symbol literals such as `:foo` to show the literal expression (`:foo :: Symbol`) instead of the bare name with internal `Core.Const` details.
+
 ## 2026-06-23
 
 - Commit: [`35c3262`](https://github.com/aviatesk/JETLS.jl/commit/35c3262)

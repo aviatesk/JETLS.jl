@@ -91,6 +91,9 @@ function get_hover(
     # doc lookup keeps using `node` so the identifier-based resolution stays.
     callee_call = enclosing_call_for_matches(st0_top, node)
     display_node = (callee_call === nothing || callee_call === node) ? node : callee_call
+    symbol_literal_node = (binfo === nothing && display_node === node) ?
+        symbol_literal_container(st0_top, node) : nothing
+    symbol_literal_node === nothing || (display_node = symbol_literal_node)
     if display_node !== node
         header = JS.sourcetext(display_node)
     elseif binfo !== nothing
@@ -99,12 +102,12 @@ function get_hover(
         header = JS.sourcetext(node)
     end
 
-    display_rng = JS.byte_range(display_node)
-    ctx = build_inferred_context_for_range(st0_top, context_module, display_rng;
+    type_query_rng = JS.byte_range(symbol_literal_node === nothing ? display_node : node)
+    ctx = build_inferred_context_for_range(st0_top, context_module, type_query_rng;
         world, caller="get_hover", cache=fi.inferred_context_cache)
     type_str = typ = display_typ = nothing
     if ctx !== nothing
-        display_typ = get_type_for_range(ctx, display_rng)
+        display_typ = get_type_for_range(ctx, type_query_rng)
         if display_typ !== nothing
             type_str = hover_type_string(display_typ, JS.sourcetext(display_node))
         end
@@ -129,8 +132,8 @@ function get_hover(
     is_call_like_position = JS.kind(node) in _CALL_LIKE_KINDS
     if !is_call_like_position
         if !is_local
-            bdoc = binfo !== nothing ?
-                lookup_doc_for_binding(binfo, sig, world) :
+            bdoc = symbol_literal_node !== nothing ? nothing :
+                binfo !== nothing ? lookup_doc_for_binding(binfo, sig, world) :
                 lookup_doc_for_identifier(node, context_module, ctx, sig, world)
             bdoc === nothing || append!(docs, flatten_docs(bdoc))
         end
@@ -152,8 +155,8 @@ function get_hover(
         return nothing
     end
 
-    lattice_detail = type_str === nothing || display_typ === nothing ? nothing :
-        hover_lattice_detail(display_typ)
+    lattice_detail = type_str === nothing || display_typ === nothing ||
+        symbol_literal_node !== nothing ? nothing : hover_lattice_detail(display_typ)
     io = IOBuffer()
     if show_header
         println(io, "```julia")
@@ -200,6 +203,19 @@ binding_kind_label(kind::Symbol) =
     kind === :argument ? "(argument)" :
     kind === :static_parameter ? "(static parameter)" :
     kind === :local ? "(local)" : "(global)"
+
+function symbol_literal_container(st0_top::SyntaxTreeC, node::SyntaxTreeC)
+    JS.is_identifier(node) || return nothing
+    bas = @something byte_ancestors(st0_top, first(JS.byte_range(node))) return nothing
+    length(bas) ≥ 2 || return nothing
+    bas[1] === node || return nothing
+    parent = bas[2]
+    JS.kind(parent) === JS.K"inert" || return nothing
+    JS.numchildren(parent) == 1 || return nothing
+    parent[1] === node || return nothing
+    startswith(JS.sourcetext(parent), ":") || return nothing
+    return parent
+end
 
 function hover_lattice_detail(@nospecialize(typ))
     # `hover_type_string` already formats `PartialOpaque` as a closure shape, hiding
