@@ -620,5 +620,5 @@ function handle_InitializedNotification(server::Server)
     register(server, registrations)
 
     JETLS_DEV_MODE && show_setup_info("Initialized JETLS with the following setup:")
-    JETLS_DEV_MODE && @info "JETLS intialization options" init_options=state.init_options
+    JETLS_DEV_MODE && @info "JETLS initialization options" init_options=state.init_options
 end
