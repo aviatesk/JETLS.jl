@@ -46,10 +46,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
-- Updated JuliaSyntax.jl and JuliaLowering.jl dependency revisions to latest,
-  fixing several lowering-related bugs.
+- Updated JuliaSyntax.jl, JuliaLowering.jl, JET.jl and JuliaInterpreter.jl revisions, bringing in several lowering fixes and fixes for world-age-related analysis errors.
 
 ### Fixed
+
+- Fixed `toplevel/error` diagnostics reporting `method too new to be called from this world context` when analyzing top-level `@eval` loops that generate methods. (Closed https://github.com/aviatesk/JETLS.jl/issues/341)
 
 - Fixed hover on symbol literals such as `:foo` to show the literal expression (`:foo :: Symbol`) instead of the bare name with internal `Core.Const` details.
 

@@ -26,10 +26,11 @@ Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [sources]
 Compiler = {rev = "avi/JETLS-Compiler-head", subdir = "Compiler", url = "https://github.com/JuliaLang/julia"}
-JET = {rev = "f423d6f3", url = "https://github.com/aviatesk/JET.jl"}
+JET = {rev = "e8da89b199", url = "https://github.com/aviatesk/JET.jl"}
 JuliaLowering = {rev = "600fa49487", subdir = "JuliaLowering", url = "https://github.com/JuliaLang/julia"}
 JuliaSyntax = {rev = "600fa49487", subdir = "JuliaSyntax", url = "https://github.com/JuliaLang/julia"}
 LSP = {path = "LSP"}
+Revise = {rev = "cb35516a27", url = "https://github.com/timholy/Revise.jl"}
 
 [compat]
 Compiler = "0.1.1"
@@ -44,7 +45,7 @@ PrecompileTools = "1.3.2"
 Preferences = "1.4.3"
 Profile = "1.11.0"
 REPL = "1.11.0"
-Revise = "3.13"
+Revise = "3.16"
 Sockets = "1.11.0"
 TOML = "1.0.3"
 Test = "1.11.0"
