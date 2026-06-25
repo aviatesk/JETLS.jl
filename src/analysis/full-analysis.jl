@@ -124,7 +124,6 @@ struct AnalysisProgressCaller <: RequestCaller
     uri::URI
     invalidate::Bool
     entry::AnalysisEntry
-    prev_analysis_result::Union{Nothing,AnalysisResult}
     notify_diagnostics::Bool
     token::ProgressToken
 end
@@ -145,18 +144,17 @@ function handle_instantiation_progress_response(server::Server, caller::Instanti
     (; uri, ins_request, invalidate, notify_diagnostics, token) = caller
     entry = do_instantiation_with_progress(server, uri, ins_request, token)
     # Now request a new progress token for the analysis phase
-    request_analysis_progress!(server, uri, invalidate, entry, #=prev_analysis_result=#nothing, notify_diagnostics)
+    request_analysis_progress!(server, uri, invalidate, entry, notify_diagnostics)
 end
 
 function request_analysis_progress!(
         server::Server, uri::URI, invalidate::Bool, @nospecialize(entry::AnalysisEntry),
-        prev_analysis_result::Union{Nothing,AnalysisResult},
         notify_diagnostics::Bool
     )
     id = String(gensym(:WorkDoneProgressCreateRequest_analysis))
     token = String(gensym(:AnalysisProgress))
     addrequest!(server, id => AnalysisProgressCaller(
-        uri, invalidate, entry, prev_analysis_result, notify_diagnostics, token))
+        uri, invalidate, entry, notify_diagnostics, token))
     params = WorkDoneProgressCreateParams(; token)
     send(server, WorkDoneProgressCreateRequest(; id, params))
 end
@@ -164,10 +162,9 @@ end
 function handle_analysis_progress_response(
         server::Server, caller::AnalysisProgressCaller, cancel_flag::CancelFlag
     )
-    (; uri, invalidate, entry, prev_analysis_result, notify_diagnostics, token) = caller
+    (; uri, invalidate, entry, notify_diagnostics, token) = caller
     cancellable_token = CancellableToken(token, cancel_flag)
-    schedule_analysis!(
-        server, uri, entry, prev_analysis_result, invalidate;
+    schedule_analysis!(server, uri, entry, invalidate;
         cancellable_token, notify_diagnostics)
 end
 
@@ -241,18 +238,18 @@ function request_analysis!(
         debounce::Float64 = get_config(server, :full_analysis, :debounce),
     )
     manager = server.state.analysis_manager
-    prev_analysis_result = get_analysis_info(manager, uri)
+    prev_info = get_analysis_info(manager, uri)
 
-    if prev_analysis_result isa OutOfScope
-        cache_out_of_scope!(manager, uri, prev_analysis_result)
+    if prev_info isa OutOfScope
+        cache_out_of_scope!(manager, uri, prev_info)
         return nothing
     end
 
     local entry::AnalysisEntry
-    if prev_analysis_result isa AnalysisResult
-        entry = prev_analysis_result.entry
+    if prev_info isa AnalysisResult
+        entry = prev_info.entry
     else
-        # prev_analysis_result === nothing: fresh analysis
+        # prev_info === nothing: fresh analysis
         phase1_result = lookup_analysis_entry(server, uri)
         if phase1_result isa OutOfScope
             cache_out_of_scope!(manager, uri, phase1_result)
@@ -270,10 +267,10 @@ function request_analysis!(
     end
 
     if !wait && supports(server, :window, :workDoneProgress)
-        request_analysis_progress!(server, uri, invalidate, entry, prev_analysis_result, notify_diagnostics)
+        request_analysis_progress!(server, uri, invalidate, entry, notify_diagnostics)
     else
         completion = Base.Event()
-        schedule_analysis!(server, uri, entry, prev_analysis_result, invalidate;
+        schedule_analysis!(server, uri, entry, invalidate;
             completion, cancellable_token, notify_diagnostics, debounce)
         wait && Base.wait(completion)
     end
@@ -281,8 +278,7 @@ end
 
 """
     schedule_analysis!(
-        server::Server, uri::URI, entry::AnalysisEntry,
-        prev_analysis_result::Union{Nothing,AnalysisResult}, invalidate::Bool;
+        server::Server, uri::URI, entry::AnalysisEntry, invalidate::Bool;
         ...)
 
 Schedule analysis for a confirmed entry. This is called after entry lookup is complete.
@@ -302,8 +298,7 @@ See https://publish.obsidian.md/jetls/work/JETLS/Make+JETLS+multithreaded#4.%20M
 for the details of this concurrent analysis management.
 """
 function schedule_analysis!(
-        server::Server, uri::URI, @nospecialize(entry::AnalysisEntry),
-        prev_analysis_result::Union{Nothing,AnalysisResult}, invalidate::Bool;
+        server::Server, uri::URI, @nospecialize(entry::AnalysisEntry), invalidate::Bool;
         completion::Base.Event = Base.Event(),
         cancellable_token::Union{Nothing,CancellableToken} = nothing,
         notify_diagnostics::Bool = true,
@@ -314,8 +309,7 @@ function schedule_analysis!(
     generation = invalidate ? increment_generation!(manager, entry) : get_generation(manager, entry)
 
     request = AnalysisRequest(
-        entry, uri, generation, cancellable_token, notify_diagnostics,
-        prev_analysis_result, completion)
+        entry, uri, generation, cancellable_token, notify_diagnostics, completion)
 
     if invalidate && debounce > 0
         store!(manager.debounced) do debounced
@@ -386,12 +380,14 @@ function resolve_analysis_request(server::Server, request::AnalysisRequest)
         @goto next_request
     end
 
-    if has_any_parse_errors(server, request)
+    execution = AnalysisExecution(request, current_analysis_result(manager, request))
+    prev_result = execution.prev_result
+
+    if has_any_parse_errors(server, execution)
         JETLS_DEV_MODE && @info "Requested analysis unit has parse errors" entry=progress_title(request.entry) uri=request.uri generation=get_generation(manager,request.entry)
         @goto next_request
     end
 
-    prev_result = request.prev_analysis_result
     cancellable_token = request.cancellable_token
     if cancellable_token !== nothing
         begin_full_analysis_progress(server, cancellable_token, request.entry, prev_result === nothing)
@@ -401,10 +397,10 @@ function resolve_analysis_request(server::Server, request::AnalysisRequest)
     JETLS_DEV_MODE && @info "Executing analysis for:" entry=progress_title(request.entry) uri=request.uri generation=get_generation(manager,request.entry)
     local cleanup::Bool = local failed::Bool = false
     analysis_result = try
-        result, cleanup = execute_analysis_request(server, request)
+        result, cleanup = execute_analysis(server, execution)
         result
     catch err
-        @error "Error in `execute_analysis_request` for " request
+        @error "Error in `execute_analysis` for " request
         Base.display_error(stderr, err, catch_backtrace())
         failed = true
     finally
@@ -420,6 +416,8 @@ function resolve_analysis_request(server::Server, request::AnalysisRequest)
         empty!(Pkg.Registry.REGISTRY_CACHE)
         failed && @goto next_request
     end
+    @assert !(analysis_result isa Bool)
+
     tm = round(time() - s, digits=2)
     JETLS_DEV_MODE && @info "Analysis completed in $tm seconds:" entry=progress_title(request.entry) uri=request.uri generation=get_generation(manager,request.entry)
 
@@ -487,15 +485,25 @@ function is_generation_analyzed(manager::AnalysisManager, request::AnalysisReque
     return analyzed_generation == request.generation
 end
 
-function has_any_parse_errors(server::Server, request::AnalysisRequest)
-    prev_analysis_result = @something request.prev_analysis_result return false # fresh analysis, no knowledge about the sources
-    return any(analyzed_file_uris(prev_analysis_result)) do uri::URI
+function has_any_parse_errors(server::Server, execution::AnalysisExecution)
+    prev_result = @something execution.prev_result return false
+    return any(analyzed_file_uris(prev_result)) do uri::URI
         (; parsed_stream) = @something (isunsaveduri(uri) ?
             get_file_info(server.state, uri) :
             get_saved_file_info(server.state, uri)) return false
         return !isempty(parsed_stream.diagnostics)
     end
 end
+
+function current_analysis_result(manager::AnalysisManager, request::AnalysisRequest)
+    info = get_analysis_info(manager, request.uri)
+    if info isa AnalysisResult && info.entry == request.entry
+        return info
+    end
+    return nothing
+end
+
+is_method_disabled(m::Method) = m.dispatch_status == 0x00
 
 # Delete methods defined in previous analysis modules.
 # This doesn't free memory (Method objects remain in Core.methodtable), but removes them
@@ -510,15 +518,16 @@ function cleanup_prev_methods(prev_result::AnalysisResult)
     end
     methods_to_delete = Method[]
     Base.visit(Core.methodtable) do m::Method
-        if parentmodule(m) in prev_modules
+        if parentmodule(m) in prev_modules && !is_method_disabled(m)
             push!(methods_to_delete, m)
         end
     end
     for m in methods_to_delete
+        is_method_disabled(m) && continue
         try
             Base.delete_method(m)
         catch e
-            JETLS_DEV_MODE && @warn "Failed to delete method $m"
+            JETLS_DEV_MODE && @warn "Failed to delete method $m" disabled=is_method_disabled(m)
             JETLS_DEV_MODE && Base.showerror(stderr, e, catch_backtrace())
         end
     end
@@ -578,41 +587,54 @@ function cleanup_analysis_state!(server::Server, uri::URI)
     manager = server.state.analysis_manager
     prev_result = get_analysis_info(manager, uri)
     if prev_result isa AnalysisResult
-        entry = prev_result.entry
-        store!(manager.debounced) do debounced
-            haskey(debounced, entry) || return debounced, nothing
-            timer, completion = debounced[entry]
-            close(timer)
-            notify(completion)
-            new_debounced = copy(debounced)
-            delete!(new_debounced, entry)
-            return new_debounced, nothing
-        end
-        store!(manager.current_generations) do gens
-            haskey(gens, entry) || return gens, nothing
-            new_gens = copy(gens)
-            delete!(new_gens, entry)
-            return new_gens, nothing
-        end
-        store!(manager.analyzed_generations) do gens
-            haskey(gens, entry) || return gens, nothing
-            new_gens = copy(gens)
-            delete!(new_gens, entry)
-            return new_gens, nothing
-        end
-        cleanup_prev_methods(prev_result)
+        cleanup_analysis_entry_state!(manager, prev_result.entry)
     end
-    store!(manager.cache) do cache
+    popped_result = pop_analysis_info!(manager, uri)
+    if popped_result isa AnalysisResult
+        if !(prev_result isa AnalysisResult) || popped_result.entry != prev_result.entry
+            cleanup_analysis_entry_state!(manager, popped_result.entry)
+        end
+        cleanup_prev_methods(popped_result)
+    end
+end
+
+function cleanup_analysis_entry_state!(manager::AnalysisManager, entry::AnalysisEntry)
+    store!(manager.debounced) do debounced
+        haskey(debounced, entry) || return debounced, nothing
+        timer, completion = debounced[entry]
+        close(timer)
+        notify(completion)
+        new_debounced = copy(debounced)
+        delete!(new_debounced, entry)
+        return new_debounced, nothing
+    end
+    store!(manager.current_generations) do gens
+        haskey(gens, entry) || return gens, nothing
+        new_gens = copy(gens)
+        delete!(new_gens, entry)
+        return new_gens, nothing
+    end
+    store!(manager.analyzed_generations) do gens
+        haskey(gens, entry) || return gens, nothing
+        new_gens = copy(gens)
+        delete!(new_gens, entry)
+        return new_gens, nothing
+    end
+end
+
+function pop_analysis_info!(manager::AnalysisManager, uri::URI)
+    return store!(manager.cache) do cache
+        prev_result = get(cache, uri, nothing)
+        prev_result === nothing && return cache, nothing
         new_cache = copy(cache)
         if prev_result isa AnalysisResult
             for analyzed_uri in analyzed_file_uris(prev_result)
                 delete!(new_cache, analyzed_uri)
             end
         else
-            haskey(new_cache, uri) || return cache, nothing
             delete!(new_cache, uri)
         end
-        return new_cache, nothing
+        return new_cache, prev_result
     end
 end
 
@@ -662,7 +684,8 @@ function mark_analyzed_generation!(manager::AnalysisManager, request::AnalysisRe
     end
 end
 
-function execute_analysis_request(server::Server, request::AnalysisRequest)
+function execute_analysis(server::Server, execution::AnalysisExecution)
+    request = execution.request
     entry = request.entry
 
     if entry isa NewAnalysisEntry
@@ -672,28 +695,28 @@ function execute_analysis_request(server::Server, request::AnalysisRequest)
         else
             activate_with_early_release(env_path) do activation_done::Base.Event
                 analyze_package_with_revise(server, request, entry.pkgid, activation_done)
-            end
+            end::AnalysisResult
         end
         return result, false
     end
 
     interp, result = if entry isa ScriptAnalysisEntry
-        analyze_parsed_if_exist(server, request)
+        analyze_parsed_if_exist(server, execution)
     elseif entry isa ScriptInEnvAnalysisEntry
         activate_with_early_release(entry.env_path) do activation_done::Base.Event
-            analyze_parsed_if_exist(server, request; activation_done)
-        end
+            analyze_parsed_if_exist(server, execution; activation_done)
+        end::Tuple{LSInterpreter,JET.JETToplevelResult}
     elseif entry isa PackageSourceAnalysisEntry
         activate_with_early_release(entry.env_path) do activation_done::Base.Event
-            analyze_parsed_if_exist(server, request, entry.pkgid; activation_done)
-        end
+            analyze_parsed_if_exist(server, execution, entry.pkgid; activation_done)
+        end::Tuple{LSInterpreter,JET.JETToplevelResult}
     elseif entry isa PackageTestAnalysisEntry
         activate_with_early_release(entry.env_path) do activation_done::Base.Event
-            analyze_parsed_if_exist(server, request; activation_done)
-        end
+            analyze_parsed_if_exist(server, execution; activation_done)
+        end::Tuple{LSInterpreter,JET.JETToplevelResult}
     else error("Unsupported analysis entry $entry") end
 
-    ret, analysis_result_replaced = new_analysis_result(interp, request, result)
+    ret, analysis_result_replaced = new_analysis_result(interp, result)
 
     # TODO Request fallback analysis in cases this script was not analyzed by the analysis entry
     # request.uri ∉ analyzed_file_uris(ret)
@@ -720,12 +743,13 @@ function end_full_analysis_progress(server::Server, cancellable_token::Cancellab
 end
 
 function analyze_parsed_if_exist(
-        server::Server, request::AnalysisRequest, args...;
+        server::Server, execution::AnalysisExecution, args...;
         activation_done::Union{Nothing,Base.Event} = nothing
     )
+    request = execution.request
     uri = entryuri(request.entry)
     jetconfigs = getjetconfigs(request.entry)
-    interp = LSInterpreter(server, request; activation_done)
+    interp = LSInterpreter(server, execution; activation_done)
     if isunsaveduri(uri)
         # Unsaved buffers (`untitled:`/`buffer:`) are never persisted to the
         # `saved_file_cache`; consult the live `file_cache` instead. When that is
@@ -756,7 +780,9 @@ function update_analyzer_world(analyzer::LSAnalyzer, world::UInt = Base.get_worl
     return JET.AbstractAnalyzer(analyzer, newstate)
 end
 
-function new_analysis_result(interp::LSInterpreter, request::AnalysisRequest, result)
+function new_analysis_result(interp::LSInterpreter, result::JET.JETToplevelResult)
+    execution = interp.execution
+    request = execution.request
     analyzed_file_infos = Dict{URI,JET.AnalyzedFileInfo}(
         # `filepath` is an absolute path (since `path` is specified as absolute)
         filename2uri(filepath) => analyzed_file_info
@@ -769,11 +795,12 @@ function new_analysis_result(interp::LSInterpreter, request::AnalysisRequest, re
     toplevel_warning_reports_to_diagnostics!(uri2diagnostics, interp.warning_reports, interp.server, postprocessor)
     jet_result_to_diagnostics!(uri2diagnostics, result, result_world, postprocessor)
 
-    (; entry, prev_analysis_result) = request
-    replace_analysis_result = isempty(result.res.toplevel_error_reports) || isnothing(prev_analysis_result)
+    entry = request.entry
+    prev_result = execution.prev_result
+    replace_analysis_result = isempty(result.res.toplevel_error_reports) || isnothing(prev_result)
     if !replace_analysis_result
-        (; actual2virtual, analyzer, analyzed_file_infos) = prev_analysis_result
-        cache_world = prev_analysis_result.world
+        (; actual2virtual, analyzer, analyzed_file_infos) = prev_result
+        cache_world = prev_result.world
     else
         actual2virtual = result.res.actual2virtual::JET.Actual2Virtual
         analyzer = update_analyzer_world(result.analyzer, result_world)

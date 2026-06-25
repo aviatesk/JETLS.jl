@@ -275,13 +275,23 @@ end
 # TODO support multiple analysis units, which can happen if this file is included from multiple different analysis_units
 const AnalysisInfo = Union{AnalysisResult,OutOfScope}
 
+"""
+    AnalysisRequest
+
+Queueable scheduling metadata for a full-analysis run.
+
+An `AnalysisRequest` may cross debounce timers, `pending_analyses`, and the
+worker queue before it executes. It therefore must not hold cache snapshots such
+as the previous analysis result, which can become stale while the request is
+waiting. Progress-token round trips keep only scheduling metadata and create the
+request later, when the client confirms the token.
+"""
 struct AnalysisRequest
     entry::AnalysisEntry
     uri::URI
     generation::Int
     cancellable_token::Union{Nothing,CancellableToken}
     notify_diagnostics::Bool
-    prev_analysis_result::Union{Nothing,AnalysisResult}
     completion::Base.Event
     function AnalysisRequest(
             entry::AnalysisEntry,
@@ -289,11 +299,27 @@ struct AnalysisRequest
             generation::Int,
             cancellable_token::Union{Nothing,CancellableToken},
             notify_diagnostics::Bool,
-            prev_analysis_result::Union{Nothing,AnalysisResult},
             completion::Base.Event = Base.Event()
         )
-        return new(entry, uri, generation, cancellable_token, notify_diagnostics, prev_analysis_result, completion)
+        return new(
+            entry, uri, generation, cancellable_token, notify_diagnostics, completion)
     end
+end
+
+"""
+    AnalysisExecution
+
+Execution-time context for a full-analysis run.
+
+`prev_result` is looked up at the start of `resolve_analysis_request` and is the
+baseline result that this analysis run replaces. It is intentionally fixed for
+the whole run: it is not a live view of the latest analysis cache. This keeps
+intermediate and final results consistent even if the run itself updates the
+cache before completion.
+"""
+struct AnalysisExecution
+    request::AnalysisRequest
+    prev_result::Union{Nothing,AnalysisResult}
 end
 
 const AnalysisCache = LWContainer{Dict{URI,AnalysisInfo}, LWStats}

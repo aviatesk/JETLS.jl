@@ -4,7 +4,7 @@ export LSInterpreter
 
 using JuliaSyntax: JuliaSyntax as JS
 using JET: CC, JET, JuliaInterpreter
-using ..JETLS: AnalysisRequest, JETLS, JETLS_DEV_MODE, Server,
+using ..JETLS: AnalysisExecution, JETLS, JETLS_DEV_MODE, Server,
     get_source_text, is_cancelled, send_progress, yield_to_endpoint
 using ..JETLS.URIs2
 using ..JETLS.LSP
@@ -19,7 +19,7 @@ Base.getindex(counter::Counter) = counter.count
 
 struct LSInterpreter{S<:Server} <: JET.ConcreteInterpreter
     server::S
-    request::AnalysisRequest
+    execution::AnalysisExecution
     analyzer::LSAnalyzer
     counter::Counter
     activation_done::Union{Nothing,Base.Event}
@@ -27,37 +27,39 @@ struct LSInterpreter{S<:Server} <: JET.ConcreteInterpreter
     current_node::Base.RefValue{JS.SyntaxNode}
     state::JET.InterpretationState
     function LSInterpreter(
-            server::S, request::AnalysisRequest, analyzer::LSAnalyzer, counter::Counter,
+            server::S, execution::AnalysisExecution, analyzer::LSAnalyzer, counter::Counter,
             activation_done::Union{Nothing,Base.Event}
         ) where S<:Server
-        return new{S}(server, request, analyzer, counter, activation_done,
+        return new{S}(server, execution, analyzer, counter, activation_done,
             JETLS.ToplevelWarningReport[], Base.RefValue{JS.SyntaxNode}())
     end
     function LSInterpreter(
-            server::S, request::AnalysisRequest, analyzer::LSAnalyzer, counter::Counter,
+            server::S, execution::AnalysisExecution, analyzer::LSAnalyzer, counter::Counter,
             activation_done::Union{Nothing,Base.Event},
             warning_reports::Vector{JETLS.ToplevelWarningReport},
             current_node::Base.RefValue{JS.SyntaxNode},
             state::JET.InterpretationState,
         ) where S<:Server
-        return new{S}(server, request, analyzer, counter, activation_done,
+        return new{S}(server, execution, analyzer, counter, activation_done,
             warning_reports, current_node, state)
     end
 end
 
 # The main constructor
 function LSInterpreter(
-        server::Server, request::AnalysisRequest;
+        server::Server, execution::AnalysisExecution;
         activation_done::Union{Nothing,Base.Event} = nothing
     )
-    return LSInterpreter(server, request, LSAnalyzer(request.entry), Counter(), activation_done)
+    request = execution.request
+    return LSInterpreter(
+        server, execution, LSAnalyzer(request.entry), Counter(), activation_done)
 end
 
 # `JET.ConcreteInterpreter` interface
 JET.InterpretationState(interp::LSInterpreter) = interp.state
 function JET.ConcreteInterpreter(interp::LSInterpreter, state::JET.InterpretationState)
     return LSInterpreter(
-        interp.server, interp.request, interp.analyzer, interp.counter,
+        interp.server, interp.execution, interp.analyzer, interp.counter,
         interp.activation_done, interp.warning_reports, interp.current_node, state)
 end
 JET.ToplevelAbstractAnalyzer(interp::LSInterpreter) = interp.analyzer
@@ -102,7 +104,7 @@ end
 
 function cache_intermediate_analysis_result!(interp::LSInterpreter)
     result = JET.JETToplevelResult(interp.analyzer, interp.state.res, "LSInterpreter (intermediate result)", ())
-    intermediate_result, _ = JETLS.new_analysis_result(interp, interp.request, result)
+    intermediate_result, _ = JETLS.new_analysis_result(interp, result)
     JETLS.update_analysis_cache!(interp.server.state, intermediate_result)
 end
 
@@ -154,7 +156,7 @@ function JET.analyze_from_definitions!(interp::LSInterpreter, config::JET.Toplev
     entrypoint = config.analyze_from_definitions
     n_sigs = length(res.signature_infos)
     n_sigs == 0 && return
-    cancellable_token = interp.request.cancellable_token
+    cancellable_token = interp.execution.request.cancellable_token
     if cancellable_token !== nothing
         if is_cancelled(cancellable_token.cancel_flag)
             return
@@ -230,14 +232,14 @@ end
 function JET.virtual_process!(interp::LSInterpreter,
                               x::Union{AbstractString,JS.SyntaxNode},
                               overrideex::Union{Nothing,Expr})
-    cancellable_token = interp.request.cancellable_token
+    cancellable_token = interp.execution.request.cancellable_token
     if cancellable_token !== nothing
         filename = JET.InterpretationState(interp).filename
         shortpath = let state = interp.server.state
             isdefined(state, :root_path) ? relpath(filename, state.root_path) : basename(filename)
         end
-        percentage = let prev_analysis_result = interp.request.prev_analysis_result
-            n_files = isnothing(prev_analysis_result) ? 0 : length(prev_analysis_result.analyzed_file_infos)
+        percentage = let prev_result = interp.execution.prev_result
+            n_files = isnothing(prev_result) ? 0 : length(prev_result.analyzed_file_infos)
             analyze_from_definitions = JET.InterpretationState(interp).config.analyze_from_definitions
             analyze_from_definitions = analyze_from_definitions isa Symbol || analyze_from_definitions
             iszero(n_files) ? 0 : compute_percentage(interp.counter[], n_files,
