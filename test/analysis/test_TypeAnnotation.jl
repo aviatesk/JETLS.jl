@@ -1098,6 +1098,22 @@ end
             end
         end
 
+        @testset "comprehension with typed iterator branching body" begin
+            let code = "let xs = [1, 2, 3]; [(x > 0 ? x : -x) for x::Int in xs]; end"
+                _, ctx = type_annotate(code)
+                body_rng = range_of(code, "x > 0 ? x : -x")
+                @test widenconst(get_type_for_range(ctx, body_rng)) === Int
+            end
+        end
+
+        @testset "comprehension with typed iterator block body" begin
+            let code = "let xs = [1, 2, 3]; [begin z = x; z end for x::Int in xs]; end"
+                _, ctx = type_annotate(code)
+                body_rng = range_of(code, "begin z = x; z end")
+                @test widenconst(get_type_for_range(ctx, body_rng)) === Int
+            end
+        end
+
         @testset "comprehension with destructured tuple yield" begin
             let code = """
                 let xs = rand(3), ys = rand(3)
