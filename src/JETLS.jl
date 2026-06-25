@@ -161,15 +161,11 @@ include("did-change-watched-files.jl")
 include("initialize.jl")
 
 """
-    runserver([callback,] in::IO, out::IO; client_process_id=nothing) -> exit_code::Int
-    runserver([callback,] endpoint::Endpoint; client_process_id=nothing) -> exit_code::Int
-    runserver([callback,] server::Server; client_process_id=nothing) -> exit_code::Int
+    runserver(in::IO, out::IO; client_process_id=nothing) -> exit_code::Int
+    runserver(endpoint::Endpoint; client_process_id=nothing) -> exit_code::Int
+    runserver(server::Server; client_process_id=nothing) -> exit_code::Int
 
 Run the JETLS language server with the specified input/output streams or endpoint.
-
-The `callback` function is invoked on each message sent or received, with the
-signature `callback(event::Symbol, msg)` where `event` is either `:sent` or
-`:received`. If not specified, a no-op callback is used.
 
 When given IO streams, the function creates an `Endpoint` and then a `ServerState`
 before entering the message handling loop. The function returns after receiving an
@@ -211,9 +207,8 @@ allowing the caller side to safely `exit` this Julia process.
 """
 const self_shutdown_token = SelfShutdownNotification()
 
-runserver(args...; kwargs...) = runserver(Returns(nothing), args...; kwargs...) # no callback specified
-runserver(callback, in::IO, out::IO; kwargs...) = runserver(callback, Endpoint(in, out); kwargs...)
-runserver(callback, endpoint::Endpoint; kwargs...) = runserver(Server(callback, endpoint); kwargs...)
+runserver(in::IO, out::IO; kwargs...) = runserver(Endpoint(in, out); kwargs...)
+runserver(endpoint::Endpoint; kwargs...) = runserver(Server(endpoint); kwargs...)
 function runserver(
         server::Server;
         client_process_id::Union{Nothing,Int} = nothing,
