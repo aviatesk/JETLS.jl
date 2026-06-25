@@ -48,6 +48,16 @@ match_type = "regex"
 severity = "off"
 path = "LSP/src/**/*.jl"
 
+# TODO [JETLS]
+# When Revise updates the `Server` type graph, analyzing `run_serve` in the latest world
+# sees an impossible assignment from latest `Server(endpoint)` to the old typed global.
+[[diagnostic.patterns]]
+pattern = "no matching method found `convert.*@world.JETLS[.]Server.*::JETLS[.]Server"
+match_by = "message"
+match_type = "regex"
+severity = "off"
+path = "src/app/cli-serve.jl"
+
 # This is type instability within JSON3.jl
 [[diagnostic.patterns]]
 pattern = "no matching method found `convert(.+)`"
