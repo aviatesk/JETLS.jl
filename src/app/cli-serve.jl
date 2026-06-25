@@ -149,7 +149,7 @@ function run_serve(args::Vector{String})
     @with_cli_LOAD_PATH begin
         if JETLS_DEV_MODE
             global currently_running
-            currently_running = server = Server(Returns(nothing), endpoint)
+            currently_running = server = Server(endpoint)
             runserver_task = let client_process_id=client_process_id, transport=transport
                 Threads.@spawn :interactive runserver(server; client_process_id, transport)
             end

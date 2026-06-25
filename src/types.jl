@@ -939,21 +939,41 @@ mutable struct ServerState
     end
 end
 
-struct Server{Callback}
-    endpoint::Endpoint
-    callback::Callback
-    state::ServerState
-    message_queue::Channel{Any}
-    function Server(
-            callback::Callback, endpoint::Endpoint;
-            suppress_notifications::Bool=false, cli_mode::Bool=false
-        ) where Callback
-        return new{Callback}(
-            endpoint,
-            callback,
-            ServerState(; suppress_notifications, cli_mode),
-            Channel{Any}(Inf))
+struct ServerMessageRecorder
+    received_queue::Channel{Any}
+    sent_queue::Channel{Any}
+end
+function (callback::ServerMessageRecorder)(s::Symbol, @nospecialize(msg))
+    if s === :received
+        put!(callback.received_queue, msg)
+    elseif s === :sent
+        put!(callback.sent_queue, msg)
     end
 end
-Server(; suppress_notifications::Bool=true, cli_mode::Bool=false) = # used for tests
-    Server(Returns(nothing), Endpoint(IOBuffer(), IOBuffer()); suppress_notifications, cli_mode)
+
+struct Server
+    endpoint::Endpoint
+    state::ServerState
+    message_queue::Channel{Any}
+    callback::Union{Nothing,ServerMessageRecorder}
+    function Server(
+            endpoint::Endpoint;
+            suppress_notifications::Bool = false,
+            cli_mode::Bool = false,
+            callback::Union{Nothing,ServerMessageRecorder} = nothing
+        )
+        return new(
+            endpoint,
+            ServerState(; suppress_notifications, cli_mode),
+            Channel{Any}(Inf),
+            callback)
+    end
+end
+function Server(; # used by tests
+    suppress_notifications::Bool = true,
+    cli_mode::Bool = false,
+    callback::Union{Nothing,ServerMessageRecorder} = nothing)
+    return Server(
+        Endpoint(IOBuffer(), IOBuffer());
+        suppress_notifications, cli_mode, callback)
+end
