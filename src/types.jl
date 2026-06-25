@@ -898,7 +898,6 @@ mutable struct ServerState
     const currently_registered::CurrentlyRegistered
     const config_manager::ConfigManager
     const completion_resolver_info::CompletionResolverInfo
-    const suppress_notifications::Bool
     # When true, skip workspace-boundary guards intended for the LSP flow.
     # Files in CLI mode are explicitly named on the command line, so the
     # `state.root_path`-based "is this file inside the workspace?" check in
@@ -912,7 +911,7 @@ mutable struct ServerState
     root_path::String
     root_env_path::String
     init_params::InitializeParams
-    function ServerState(; suppress_notifications::Bool=false, cli_mode::Bool=false)
+    function ServerState(; cli_mode::Bool=false)
         return new(
             #=file_cache=# FileCache(),
             #=saved_file_cache=# SavedFileCache(),
@@ -931,7 +930,6 @@ mutable struct ServerState
             #=currently_registered=# CurrentlyRegistered(),
             #=config_manager=# ConfigManager(),
             #=completion_resolver_info=# CompletionResolverInfo(nothing),
-            suppress_notifications,
             cli_mode,
             #=encoding=# PositionEncodingKind.UTF16, # initialize with UTF16 (for tests)
             #=init_options=# DEFAULT_INIT_OPTIONS, # initialize with defaults
@@ -958,22 +956,14 @@ struct Server
     callback::Union{Nothing,ServerMessageRecorder}
     function Server(
             endpoint::Endpoint;
-            suppress_notifications::Bool = false,
             cli_mode::Bool = false,
             callback::Union{Nothing,ServerMessageRecorder} = nothing
         )
         return new(
             endpoint,
-            ServerState(; suppress_notifications, cli_mode),
+            ServerState(; cli_mode),
             Channel{Any}(Inf),
             callback)
     end
 end
-function Server(; # used by tests
-    suppress_notifications::Bool = true,
-    cli_mode::Bool = false,
-    callback::Union{Nothing,ServerMessageRecorder} = nothing)
-    return Server(
-        Endpoint(IOBuffer(), IOBuffer());
-        suppress_notifications, cli_mode, callback)
-end
+Server(; kwargs...) = Server(Endpoint(IOBuffer(), IOBuffer()); kwargs...) # used by tests
