@@ -151,15 +151,15 @@ module TypeAnnotation
 
 using Core.IR
 using JET: CC, JET
-using ..JETLS: InferredContextCache, InferredContextCacheData, JETLS_DEBUG_LOWERING,
-    JL, JS, SyntaxTreeC, TraversalReturn, get_name_val, iterate_toplevel_tree,
-    jl_lower_for_scope_resolution, load, rewrite_local_closures_to_opaque, store!, traverse
+using ..JETLS: InferredContextCache, InferredContextCacheData, SyntaxTreeC, TraversalReturn
+using ..JETLS: JETLS_DEBUG_LOWERING, JETLS_DEV_MODE, JL, JS
+using ..JETLS: get_name_val, iterate_toplevel_tree, jl_lower_for_scope_resolution, load,
+    rewrite_local_closures_to_opaque, store!, traverse
 import ..JETLS: InferredTreeContext
 
 export InferredTreeContext,
     build_inferred_context_for_range, build_inferred_context_for_tree,
-    get_matches_for_range, get_type_for_range,
-    is_type_annotation_skipped_toplevel
+    get_matches_for_range, get_type_for_range, is_type_annotation_skipped_toplevel
 
 # ASTTypeAnnotator
 # ================
@@ -1020,7 +1020,8 @@ function infer_lowered_tree(
         _, st5 = JL.linearize_ir(ctx4, st4)
         st5
     catch e
-        @error "infer_toplevel_tree: Lowering failed" e
+        JETLS_DEV_MODE && @error "infer_toplevel_tree: Lowering failed" e
+        JETLS_DEV_MODE && Base.showerror(stderr, e, catch_backtrace())
         return nothing
     end |> prepare_type_attr
     lwr = JL.to_lowered_expr(inferrable_tree)
