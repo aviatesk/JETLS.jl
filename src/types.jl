@@ -364,9 +364,12 @@ end
 struct ExtraDiagnosticsData
     keys::Dict{UInt,ExtraDiagnosticsKey}
     values::Dict{UInt,URI2Diagnostics}
+    ExtraDiagnosticsData(
+        keys::Dict{UInt,ExtraDiagnosticsKey}, values::Dict{UInt,URI2Diagnostics}
+    ) = new(keys, values)
 end
 ExtraDiagnosticsData() = ExtraDiagnosticsData(Dict{UInt,ExtraDiagnosticsKey}(), Dict{UInt,URI2Diagnostics}())
-function ExtraDiagnosticsData(data::ExtraDiagnosticsData, (key, val))
+function ExtraDiagnosticsData(data::ExtraDiagnosticsData, (key, val)::Pair{<:ExtraDiagnosticsKey,URI2Diagnostics})
     new_data = copy(data)
     new_data[key] = val
     return new_data
@@ -409,9 +412,9 @@ function Base.get!(f, extra_diagnostics::ExtraDiagnosticsData, key::ExtraDiagnos
 end
 Base.keys(extra_diagnostics::ExtraDiagnosticsData) = values(extra_diagnostics.keys)
 Base.values(extra_diagnostics::ExtraDiagnosticsData) = values(extra_diagnostics.values)
-function Base.push!(extra_diagnostics::ExtraDiagnosticsData, (key, val)::Pair{ExtraDiagnosticsKey,URI2Diagnostics})
+function Base.push!(extra_diagnostics::ExtraDiagnosticsData, (key, val)::Pair{<:ExtraDiagnosticsKey,URI2Diagnostics})
     k = to_key(key)
-    push!(extra_diagnostics.keys, k => val)
+    push!(extra_diagnostics.keys, k => key)
     push!(extra_diagnostics.values, k => val)
 end
 function Base.delete!(extra_diagnostics::ExtraDiagnosticsData, key::ExtraDiagnosticsKey)
