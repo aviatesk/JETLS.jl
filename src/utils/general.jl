@@ -160,17 +160,17 @@ end
 """
     @tryinvokelatest f(args...; kwargs...)
 
-Safely invoke a function with the latest method definitions and automatic error handling.
+Safely invoke a function in the server world with automatic error handling.
 
-This macro combines the functionality of `@invokelatest` and `try`-`catch` error handling,
+This macro combines pinned server-world dispatch and `try`-`catch` error handling,
 providing a robust way to call functions in the JETLS server environment where:
-- Methods that are called from unrevisable loop may be updated by Revise.jl during development
+- Methods that are called from unrevisable loops may be updated by Revise.jl during development
 - Errors should be logged but not crash the server (in non-test mode)
 
 The macro's behavior depends on the JETLS execution mode:
-- `JETLS_DEV_MODE=true`: Wraps the call with `@invokelatest` to ensure Revise.jl
-  changes are reflected without restarting the server
-- `JETLS_DEV_MODE=false`: Direct function call without `@invokelatest`
+- `JETLS_DEV_MODE=true`: Wraps the call with `call_in_server_world` so running server
+  code stays pinned until `advance_server_world!` is called
+- `JETLS_DEV_MODE=false`: Direct function call
 - `JETLS_TEST_MODE=true`: No `try`-`catch` wrapping, allowing errors to propagate for testing
 - `JETLS_TEST_MODE=false`: Wraps the call in `try`-`catch` to log errors without crashing
 """
@@ -184,9 +184,10 @@ macro tryinvokelatest(ex)
     isempty(kwargs) || push!(callex.args, Expr(:parameters, kwargs...))
     push!(callex.args, args...)
     callex = if JETLS_DEV_MODE
-        # `@invokelatest` for allowing changes maded by Revise to be reflected without
-        # terminating the `runserver` loop
-        :(@invokelatest $(callex))
+        worldex = Expr(:call, :call_in_server_world, f)
+        isempty(kwargs) || push!(worldex.args, Expr(:parameters, kwargs...))
+        push!(worldex.args, args...)
+        worldex
     else
         callex
     end

@@ -901,6 +901,7 @@ function analyze_package_with_revise(
 
     haskey(Revise.pkgdatas, pkgid) || Revise.watch_package(pkgid)
     haskey(Revise.pkgdatas, pkgid) || error(lazy"Package $(pkgid.name) is not analyzable by Revise")
+    revise_now!()
 
     # If Revise hasn't instantiated signatures yet, populate that cache here
     pkgdata = Revise.pkgdatas[pkgid]

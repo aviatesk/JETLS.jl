@@ -27,11 +27,27 @@ function show_setup_info(msg)
     @info msg Sys.BINDIR pkgdir(JETLS) Threads.nthreads() JETLS_VERSION JETLS_DEV_MODE JETLS_TEST_MODE JETLS_DEBUG_LOWERING
 end
 
+const server_world_age = Ref{UInt}(typemax(UInt))
+
+"""
+    advance_server_world!()
+
+Pin JETLS server dispatch to the current world age.
+"""
+advance_server_world!() = (server_world_age[] = Base.get_world_counter(); nothing)
+
+call_in_server_world(@nospecialize(f), args...; kwargs...) =
+    Base.invoke_in_world(server_world_age[], f, args...; kwargs...)
+
+push_init_hook!(advance_server_world!)
+
 if JETLS_DEV_MODE
     using Revise: Revise
 else
     const Revise = nothing
 end
+
+revise_now!() = JETLS_DEV_MODE && Revise.revise()
 
 using LSP
 using LSP: LSP

@@ -72,10 +72,13 @@ JETLS has a development mode that can be enabled through the `JETLS_DEV_MODE`
 [preference](https://github.com/JuliaPackaging/Preferences.jl).
 When this mode is enabled, the language server enables several features to aid
 in development:
-- Automatic loading of Revise when starting the server, allowing changes to be
-  applied without restarting
-- Uses `@invokelatest` in message handling to ensure that changes made by Revise
-  are reflected without terminating the `runserver` loop
+- Automatic loading of Revise when starting the server
+- Pins message handling to a server world age, so full-analysis can inspect
+  revised JETLS methods without changing the running server machinery
+- Applies Revise before Revise-based full-analysis, rather than on every
+  received LSP message
+- Watches `.JETLS_REVISE`; creating or touching this file applies Revise and
+  advances the running server world without restarting the server
 
 Note that error handling behavior (whether errors are caught or propagated) is
 controlled by `JETLS_TEST_MODE`, not `JETLS_DEV_MODE`.
