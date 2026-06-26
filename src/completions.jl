@@ -142,12 +142,9 @@ end
 function get_inferred_ctx!(comp_ctx::CompletionCtx; caller::AbstractString)
     isassigned(comp_ctx.inferred_ctx) && return comp_ctx.inferred_ctx[]
     toplevel = lowerable_toplevel_at(comp_ctx.st0_top, comp_ctx.offset)
-    ctx = if toplevel === nothing
-        nothing
-    else
+    ctx = toplevel === nothing ? nothing :
         build_inferred_context_for_tree(toplevel, comp_ctx.context_module;
             world=comp_ctx.world, caller, cache=comp_ctx.fi.inferred_context_cache)
-    end
     return comp_ctx.inferred_ctx[] = ctx
 end
 
@@ -181,9 +178,9 @@ end
 
 function get_cursor_bindings_cached!(comp_ctx::CompletionCtx)
     isassigned(comp_ctx.cursor_bindings) && return comp_ctx.cursor_bindings[]
-    cbs = cursor_bindings(comp_ctx.st0_top, comp_ctx.offset, comp_ctx.context_module;
-        soft_scope=comp_ctx.soft_scope)
-    return comp_ctx.cursor_bindings[] = cbs
+    return comp_ctx.cursor_bindings[] = cursor_bindings(
+        comp_ctx.st0_top, comp_ctx.offset, comp_ctx.context_module;
+            soft_scope=comp_ctx.soft_scope)
 end
 
 # Typical completion UI
