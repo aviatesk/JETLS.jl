@@ -138,15 +138,13 @@ function _repair_node(st0::SyntaxTreeC, new_children::JS.SyntaxList)
     k = JS.kind(st0)
     if k === JS.K"." && length(new_children) == 2 && _is_empty_non_leaf(new_children[2])
         return new_children[1]
-    end
-    if k in JS.KSet"&& ||" && length(new_children) == 1
+    elseif k in JS.KSet"&& ||" && length(new_children) == 1
         return new_children[1]
-    end
-    # `(:: x)` can mean either a trimmed `value::│` (infix, the user was typing
-    # a type annotation) or an anonymous `::T` (prefix, valid as a function
-    # arg slot). The parser's infix/prefix flag — preserved through trimming
-    # by `JS.mknode` — disambiguates them, so we only collapse the infix case.
-    if k === JS.K"::" && length(new_children) == 1 && JS.is_infix_op_call(st0)
+    elseif k === JS.K"::" && length(new_children) == 1 && JS.is_infix_op_call(st0)
+        # `(:: x)` can mean either a trimmed `value::│` (infix, the user was typing
+        # a type annotation) or an anonymous `::T` (prefix, valid as a function arg slot).
+        # The parser's infix/prefix flag — preserved through trimming by `JS.mknode` —
+        # disambiguates them, so we only collapse the infix case.
         return new_children[1]
     end
     return nothing
