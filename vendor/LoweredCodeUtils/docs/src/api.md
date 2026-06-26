@@ -17,6 +17,7 @@ lines_required
 lines_required!
 selective_eval!
 selective_eval_fromstart!
+SelectiveEvalController
 ```
 
 ## Interpreter

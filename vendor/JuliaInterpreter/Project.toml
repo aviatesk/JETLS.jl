@@ -1,6 +1,6 @@
 name = "JuliaInterpreter"
 uuid = "87c368a4-672f-5de1-91ff-3cc7fc652fab"
-version = "0.10.12"
+version = "0.11.1"
 authors = ["Tim Holy <tim.holy@gmail.com>, Kristoffer Carlsson <kcarlsson89@gmail.com>, Shuhei Kadowaki <aviatesk@gmail.com> and contributors"]
 
 [deps]
@@ -10,16 +10,16 @@ UUIDs = "cf7118a7-6976-5b1a-9a39-7adc72f591a4"
 CodeTracking = "29b28462-3302-58bb-873a-3f58224955cc"
 
 [extras]
+ExplicitImports = "7d51a73a-1435-4ff3-83d9-f097790105c7"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 FunctionWrappers = "069b7b12-0de2-55c6-9aab-29f3d0a68a2e"
 Distributed = "8ba89e20-285c-5b6f-9357-94700520ee1b"
-HTTP = "cd3eb016-35fb-5094-929b-558a96fad6f3"
 SHA = "ea8e919c-243c-51af-8825-aaa63cd721ce"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
-PyCall = "438e738f-606a-5dbb-bf0a-cddfbfd45ab0"
 LoopVectorization = "bdcacae8-1622-11e9-2a5c-532679323890"
 SparseArrays = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
 Mmap = "a63ad114-7e13-5084-954f-fe012c677804"
+Aqua = "4c88cf16-eb10-579e-8560-4a9242c79595"
 DeepDiffs = "ab62b9b5-e342-54a8-a765-a90f495de1a6"
 CassetteOverlay = "d78b62d4-37fa-4a6f-acd8-2f19986eb9ee"
 Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
@@ -27,13 +27,20 @@ DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
 Logging = "56ddb016-857b-54e1-b83d-db4d58db5568"
 
 [compat]
+CassetteOverlay = "0.2"
+ExplicitImports = "1.15"
 julia = "1.10"
+LoopVectorization = "0.12"
+FunctionWrappers = "1"
+DataFrames = "1"
+Aqua = "0.8"
+DeepDiffs = "1"
 CodeTracking = "2, 3"
 
 [targets]
-test = ["CassetteOverlay", "DataFrames", "Dates", "DeepDiffs", "Distributed", "FunctionWrappers", "HTTP", "LinearAlgebra", "Logging", "LoopVectorization", "Mmap", "PyCall", "SHA", "SparseArrays", "Test"]
+test = ["Aqua", "CassetteOverlay", "DataFrames", "Dates", "DeepDiffs", "Distributed", "ExplicitImports", "FunctionWrappers", "LinearAlgebra", "Logging", "LoopVectorization", "Mmap", "SHA", "SparseArrays", "Test"]
 
 [sources.CodeTracking]
 subdir = "vendor/CodeTracking"
-rev = "072d6ef8ad7d4e6679730af30124214e719ee834"
+rev = "53200a2f89d4cf2571e0bc4f1c59753ba8406f3a"
 url = "https://github.com/aviatesk/JETLS.jl"

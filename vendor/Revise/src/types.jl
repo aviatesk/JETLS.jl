@@ -241,7 +241,7 @@ or that the method table/signature pairs have not yet been cached.
 
 The first `mod` key is guaranteed to be the module into which this file was `include`d.
 
-To create a `ModuleExprsInfos` from a source file, see [`Revise.parse_source`](@ref).
+To create a `ModuleExprsInfos` from a source file, see [`Revise.parse_and_maybe_eval_source`](@ref).
 """
 const ModuleExprsInfos = OrderedDict{Module,ExprsInfos}
 
@@ -347,6 +347,14 @@ function fileindex(info::PkgData, file::AbstractString)
         String(f) == String(file) && return i
     end
     return nothing
+end
+
+# A single file may be `include`d into several modules, in which case it appears
+# once in `srcfiles` per inclusion, each with its own `FileInfo` (issue #730).
+# `fileindices` returns every such index so a revision updates all of them.
+function fileindices(info::PkgData, file::AbstractString)
+    sf = String(file)
+    return Int[i for (i, f) in enumerate(srcfiles(info)) if String(f) == sf]
 end
 
 function hasfile(info::PkgData, file::AbstractString)

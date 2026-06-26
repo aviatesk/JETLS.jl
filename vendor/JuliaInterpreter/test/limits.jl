@@ -87,7 +87,9 @@ module EvalLimited end
     modexs = collect(ExprSplitter(EvalLimited, ex))
     # See "uncomment the following..." in test/utils.jl for how to calibrate `nstmts` below
     # Adjust α so that the recursive mode ends up back in "fake.jl"
-    @static if VERSION >= v"1.12-"
+    @static if VERSION >= v"1.13-"
+        nstmts = 10*27 + 6 # 10 * 27 statements per iteration + α in compiled mode
+    elseif VERSION >= v"1.12-"
         nstmts = 10*24 + 50 # 10 * 24 statements per iteration + α in compiled mode
     elseif VERSION >= v"1.11-"
         nstmts = 10*17 + 20 # 10 * 17 statements per iteration + α

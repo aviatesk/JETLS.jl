@@ -147,7 +147,7 @@ end
     do_test("Parse errors") && @testset "Parse errors" begin
         md = Revise.ModuleExprsInfos(Main)
         errtype = Base.VERSION < v"1.10" ? LoadError : Base.Meta.ParseError
-        @test_throws errtype Revise.parse_source!(md, """
+        @test_throws errtype parse_source!(md, """
             begin # this block should parse correctly, cf. issue #109
 
             end
@@ -192,7 +192,7 @@ end
         scriptfile = joinpath(jidir, "test", "toplevel_script.jl")
         modex = :(module Toplevel include($scriptfile) end)
         mod = eval(modex)
-        mexs = Revise.parse_source(scriptfile, mod)
+        mexs = parse_source(scriptfile, mod)
         Revise.instantiate_sigs!(mexs)
         nms = names(mod; all=true)
         modeval, modinclude = getfield(mod, :eval), getfield(mod, :include)
@@ -262,12 +262,12 @@ end
         delmeth = first(methods(ReviseTest.Internal.mult4))
         mmult3 = @which ReviseTest.Internal.mult3(2)
 
-        mod_exs_infos_old = Revise.parse_source(tmpfile, Main)
+        mod_exs_infos_old = parse_source(tmpfile, Main)
         Revise.instantiate_sigs!(mod_exs_infos_old)
         mcube = @which ReviseTest.cube(2)
 
         cp(fl2, tmpfile; force=true)
-        mod_exs_infos_new = Revise.parse_source(tmpfile, Main)
+        mod_exs_infos_new = parse_source(tmpfile, Main)
         mod_exs_infos_new = Revise.eval_revised(mod_exs_infos_new, mod_exs_infos_old)
         @latestworld
         @test ReviseTest.cube(2) == 8
@@ -361,7 +361,7 @@ end
         # because both of these are revised definitions.
         cp(fl3, tmpfile; force=true)
         mod_exs_infos_old = mod_exs_infos_new
-        mod_exs_infos_new = Revise.parse_source(tmpfile, Main)
+        mod_exs_infos_new = parse_source(tmpfile, Main)
         mod_exs_infos_new = Revise.eval_revised(mod_exs_infos_new, mod_exs_infos_old)
         @latestworld
         try
@@ -402,15 +402,74 @@ end
         rex2 = Revise.RelocatableExpr(:(x = $sym2))
         @test isequal(rex1, rex2)
         @test hash(rex1) == hash(rex2)
+        # the gensym counter is ignored, but the base name is not
         sym3 = gensym(:world)
         rex3 = Revise.RelocatableExpr(:(x = $sym3))
-        @test isequal(rex1, rex3)
-        @test hash(rex1) == hash(rex3)
+        @test !isequal(rex1, rex3)
+        @test hash(rex1) != hash(rex3)
+        # the pairing between gensyms must be consistent across the expression
+        @test isequal(Revise.RelocatableExpr(:($sym1 + f($sym1))),
+                      Revise.RelocatableExpr(:($sym2 + f($sym2))))
+        @test hash(Revise.RelocatableExpr(:($sym1 + f($sym1)))) ==
+              hash(Revise.RelocatableExpr(:($sym2 + f($sym2))))
+        @test !isequal(Revise.RelocatableExpr(:($sym1 + f($sym1))),
+                       Revise.RelocatableExpr(:($sym1 + f($sym2))))
+        @test hash(Revise.RelocatableExpr(:($sym1 + f($sym1)))) !=
+              hash(Revise.RelocatableExpr(:($sym1 + f($sym2))))
+        @test !isequal(Revise.RelocatableExpr(:(g($sym1, $sym2) = $sym1)),
+                       Revise.RelocatableExpr(:(g($sym1, $sym2) = $sym2)))
+        # counter-free `#` names denote reproducible bindings and compare exactly
+        @test !isequal(Revise.RelocatableExpr(:(getval() = var"#x")),
+                       Revise.RelocatableExpr(:(getval() = var"#y")))
+        @test hash(Revise.RelocatableExpr(:(getval() = var"#x"))) !=
+              hash(Revise.RelocatableExpr(:(getval() = var"#y")))
+        @test isequal(Revise.RelocatableExpr(:(getval() = var"#x")),
+                      Revise.RelocatableExpr(:(getval() = var"#x")))
+        # expressions differing only in such names must not collide as
+        # `ExprsInfos` keys (generated precompile files contain many
+        # directives that differ only in the gensym base name)
+        src = """
+            module GensymKeyCollision
+            precompile(Tuple{typeof(var"#f#1"), Int})
+            precompile(Tuple{typeof(var"#g#2"), Int})
+            end
+            """
+        mexs = parse_source!(Revise.ModuleExprsInfos(), src, "gensym_collision.jl", Main)
+        @test length(mexs[getfield(Main, :GensymKeyCollision)]) == 2
 
         # coverage
         rex = convert(Revise.RelocatableExpr, :(a = 1))
         @test Revise.striplines!(rex) isa Revise.RelocatableExpr
         @test copy(rex) !== rex
+    end
+
+    do_test("Gensym names in source") && @testset "Gensym names in source" begin
+        # An edit confined to var"#..." names must still trigger revision
+        testdir = newtestdir()
+        fn = joinpath(testdir, "gensymnames.jl")
+        write(fn, """
+            module GensymNames
+            const var"#x" = 1
+            const var"#y" = 2
+            getval() = var"#x"
+            end
+            """)
+        sleep(mtimedelay)
+        includet(fn)
+        @latestworld
+        @test GensymNames.getval() == 1
+        sleep(mtimedelay)
+        write(fn, """
+            module GensymNames
+            const var"#x" = 1
+            const var"#y" = 2
+            getval() = var"#y"
+            end
+            """)
+        @yry()
+        @test GensymNames.getval() == 2
+
+        pop!(LOAD_PATH)
     end
 
     do_test("Display") && @testset "Display" begin
@@ -421,7 +480,7 @@ end
         mod = private_module()
         file = joinpath(@__DIR__, "revisetest.jl")
         Base.include(mod, file)
-        mexs = Revise.parse_source(file, mod)
+        mexs = parse_source(file, mod)
         Revise.instantiate_sigs!(mexs)
         print(IOContext(io, :compact=>true), mexs)
         str = String(take!(io))
@@ -918,6 +977,47 @@ end
         pop!(LOAD_PATH)
     end
 
+    do_test("Multimodule include") && @testset "Multimodule include" begin
+        # A single file `include`d into more than one module has one `FileInfo`
+        # per inclusion; a revision must update all of them, not just the first
+        # (issue #730).
+        testdir = newtestdir()
+        dn = joinpath(testdir, "Multimod730", "src")
+        mkpath(dn)
+        write(joinpath(dn, "Multimod730.jl"), """
+            module Multimod730
+            module A
+            include("multimod730_inc.jl")
+            end
+            module B
+            include("multimod730_inc.jl")
+            end
+            end
+            """)
+        write(joinpath(dn, "multimod730_inc.jl"), "f730(x) = 1")
+        sleep(mtimedelay)
+        @eval using Multimod730
+        @test Multimod730.A.f730(0) == 1
+        @test Multimod730.B.f730(0) == 1
+        # An edit must propagate to both modules
+        sleep(mtimedelay)
+        write(joinpath(dn, "multimod730_inc.jl"), "f730(x) = 2")
+        @yry()
+        @test Multimod730.A.f730(0) == 2
+        @test Multimod730.B.f730(0) == 2
+        # Method deletion must cascade to both modules
+        sleep(mtimedelay)
+        write(joinpath(dn, "multimod730_inc.jl"), "g730(x) = 3")
+        @yry()
+        @test_throws MethodError Multimod730.A.f730(0)
+        @test_throws MethodError Multimod730.B.f730(0)
+        @test Multimod730.A.g730(0) == 3
+        @test Multimod730.B.g730(0) == 3
+
+        rm_precompile("Multimod730")
+        pop!(LOAD_PATH)
+    end
+
     do_test("IJulia preexecute hook") && @testset "IJulia preexecute hook" begin
         # IJulia reloads code by registering `Revise.revise` as a preexecute
         # hook (IJulia.push_preexecute_hook) and invoking every hook before each
@@ -1370,7 +1470,7 @@ end
 
     do_test("doc expr signature") && @testset "Docstring attached to signatures" begin
         md = Revise.ModuleExprsInfos(Main)
-        Revise.parse_source!(md, """
+        parse_source!(md, """
             module DocstringSigsOnly
             function f end
             "basecase" f(x)
@@ -1387,8 +1487,8 @@ end
 
     do_test("Undef in docstrings") && @testset "Undef in docstrings" begin
         fn = Base.find_source_file("abstractset.jl")   # has lots of examples of """str""" func1, func2
-        mod_exs_infos_old = Revise.parse_source(fn, Base)
-        mod_exs_infos_new = Revise.parse_source(fn, Base)
+        mod_exs_infos_old = parse_source(fn, Base)
+        mod_exs_infos_new = parse_source(fn, Base)
         odict = mod_exs_infos_old[Base]
         ndict = mod_exs_infos_new[Base]
         for (k, v) in odict
@@ -1913,7 +2013,7 @@ end
             f(x) = 2
             end
             """)
-        @yry()
+        @yry(expect_revision=false)   # tmpfile is not the tracked path; no revision yet
         @test Timing.f(nothing) == 1
         mv(tmpfile, pathof(Timing), force=true)
         @yry()
@@ -2313,6 +2413,79 @@ end
         rm_precompile("Dup668")
     end
 
+    do_test("Duplicate method warning") && @testset "Duplicate method warning" begin
+        # issue #889: a duplicated method signature in a precompilable package works in the
+        # running session but fails the next precompilation. Revise warns and tracks it in
+        # `duplicated_signatures`, clearing the state once the duplicate is removed.
+        testdir = newtestdir()
+        dn = joinpath(testdir, "DupWarn", "src"); mkpath(dn)
+        fn = joinpath(dn, "DupWarn.jl")
+        write(fn, "module DupWarn\nfoo(x::Int) = 1\nend\n")
+        sleep(mtimedelay)
+        @eval using DupWarn
+        @test DupWarn.foo(1) == 1
+        @yry()  # populate `method_info` for the original definition
+        # Track this signature specifically: other test packages may leave unrelated
+        # duplicates in the global `duplicated_signatures`.
+        key = Revise.MethodInfoKey(nothing, first(methods(DupWarn.foo)).sig)
+        @test !haskey(Revise.duplicated_signatures, key)
+
+        # Add a second definition of the same signature.
+        write(fn, "module DupWarn\nfoo(x::Int) = 1\nfoo(x::Int) = 2\nend\n")
+        sleep(mtimedelay)
+        @test_logs (:warn, r"defined in more than one location") match_mode=:any yry()
+        @latestworld
+        @test DupWarn.foo(3) == 2                       # still works in this session
+        @test haskey(Revise.duplicated_signatures, key)
+        # `duplicate_methods()` re-reports the tracked duplicates on demand.
+        @test_logs (:warn, r"defined in more than one location") match_mode=:any Revise.duplicate_methods()
+
+        # Removing the duplicate clears the tracked state.
+        write(fn, "module DupWarn\nfoo(x::Int) = 99\nend\n")
+        sleep(mtimedelay)
+        @yry()
+        @test DupWarn.foo(3) == 99
+        @test !haskey(Revise.duplicated_signatures, key)
+
+        rm_precompile("DupWarn")
+    end
+
+    do_test("Duplicate method warning exclusions") && @testset "Duplicate method warning exclusions" begin
+        # The warning is scoped to precompilable packages: `includet`/`Main` scripts and
+        # `__precompile__(false)` packages never precompile, so duplicate methods there are
+        # harmless (and sometimes deliberate) and must not be flagged (issue #889).
+        testdir = newtestdir()
+
+        # `includet` script: a duplicated method must not be tracked.
+        script = joinpath(testdir, "dupscript.jl")
+        write(script, "dupscriptfn(x::Int) = 1\n")
+        sleep(mtimedelay)
+        includet(script)
+        write(script, "dupscriptfn(x::Int) = 1\ndupscriptfn(x::Int) = 2\n")
+        sleep(mtimedelay)
+        @yry()
+        scriptkey = Revise.MethodInfoKey(nothing, first(methods(Main.dupscriptfn)).sig)
+        @test !haskey(Revise.duplicated_signatures, scriptkey)
+
+        # `__precompile__(false)` package: likewise not tracked.
+        dn = joinpath(testdir, "NoPCDup", "src"); mkpath(dn)
+        fn = joinpath(dn, "NoPCDup.jl")
+        write(fn, "__precompile__(false)\nmodule NoPCDup\nbar(x::Int) = 1\nend\n")
+        sleep(mtimedelay)
+        @eval using NoPCDup
+        @test NoPCDup.bar(1) == 1
+        write(fn, "__precompile__(false)\nmodule NoPCDup\nbar(x::Int) = 1\nbar(x::Int) = 2\nend\n")
+        sleep(mtimedelay)
+        @yry()
+        # Assert only the exclusion, not that the revision landed: the extra
+        # filewatching CI pass can drop the event, and the duplicate would then simply
+        # never be created. Either way this signature must not be flagged.
+        barkey = Revise.MethodInfoKey(nothing, first(methods(NoPCDup.bar)).sig)
+        @test !haskey(Revise.duplicated_signatures, barkey)
+
+        rm_precompile("NoPCDup")
+    end
+
     do_test("revise_file_now") && @testset "revise_file_now" begin
         # Very rarely this is used for debugging
         testdir = newtestdir()
@@ -2546,7 +2719,7 @@ end
 
         # test errors are not re-reported
         logs, _ = Test.collect_test_logs() do
-            yry()
+            yry(expect_revision=false)   # nothing new to revise
         end
         @test isempty(logs)
 
@@ -2924,14 +3097,18 @@ end
     do_test("revise_structs preference") && if Base.VERSION >= v"1.12.0-DEV.2047"
         @testset "revise_structs preference" begin
             # The preference is read in __init__, so we have to test it via subprocesses.
+            # Set the value explicitly in the active project's `LocalPreferences.toml`: a
+            # preference there takes precedence over one inherited from the default
+            # environment, so the test reflects the `revise_structs` plumbing rather than
+            # whatever the host machine happens to set globally.
             test_proj_dir = dirname(Base.active_project())
-            prefs_file = joinpath(test_proj_dir, "JuliaLocalPreferences.toml")
+            prefs_file = joinpath(test_proj_dir, "LocalPreferences.toml")
             backup = isfile(prefs_file) ? read(prefs_file, String) : nothing
             julia = Base.julia_cmd()
             check_bpart = "using Revise; print(Revise.__bpart__[])"
             try
-                # Without the preference set, __bpart__ should be false
-                rm(prefs_file; force=true)
+                # With revise_structs = false, __bpart__ should be false
+                write(prefs_file, "[Revise]\nrevise_structs = false\n")
                 @test read(`$julia --project=$test_proj_dir -e $check_bpart`, String) == "false"
                 # With revise_structs = true, __bpart__ should be true
                 write(prefs_file, "[Revise]\nrevise_structs = true\n")
@@ -3049,6 +3226,67 @@ end
                 rm_precompile("StructExample")
                 pop!(LOAD_PATH)
             end
+        end
+    end
+
+    if Revise.__bpart__[] && do_test("type scan world-age (issue #993)")
+        @testset "type scan world-age (issue #993)" begin
+            # Enumerating the type tree for a struct revision must read bindings
+            # at the current world. The earlier recursive `subtypes`-per-type
+            # walk ran long enough that concurrent world advances left it
+            # reading freshly-defined bindings at a stale world, emitting
+            # "Detected access to binding ... prior to its definition world".
+            # `all_named_types()` is a single current-world pass: it must
+            # see types defined after Revise loaded (as runtime `eval` from
+            # Requires produces) and emit no such warning.
+            # Heavy reproducer: Revise#993 / JuliaLang/julia#61804.
+            @eval module Late993
+                abstract type LateAbs end
+                struct LateConcrete{T} <: LateAbs; x::T; end
+                struct LateUser; y::LateConcrete{Int}; end
+                module Inner
+                    struct LateNested; z::Int; end
+                end
+            end
+            Revise.all_named_types()  # warm up before capturing stderr
+            # redirect_stderr needs a real fd (the warning is a C-level write),
+            # so capture through a temp file rather than an IOBuffer.
+            errfile = tempname()
+            allt = open(errfile, "w") do io
+                redirect_stderr(io) do
+                    Revise.all_named_types()
+                end
+            end
+            errstr = read(errfile, String)
+            rm(errfile; force=true)
+            # Types defined after load are found at the current world
+            @test Late993.LateAbs in allt
+            @test Late993.LateConcrete in allt
+            @test Late993.LateUser in allt
+            @test Late993.Inner.LateNested in allt
+            # No world-age warning emitted by the scan
+            @test !occursin("definition world", errstr)
+            @test !occursin("Detected access", errstr)
+            # The flat pass must not lose coverage relative to a recursive
+            # `subtypes` walk. Compare by TypeName over non-anonymous types (the
+            # flat pass stores raw bindings, the recursion parent-intersected
+            # forms, so identity differs but the TypeName set must not shrink).
+            # Take the flat scan last so types created by JIT-compiling the
+            # reference walk cannot make it spuriously smaller than the reference.
+            function recursive_subtypes!(types, parent)
+                for Ty in InteractiveUtils.subtypes(parent)
+                    Ty in types && continue
+                    push!(types, Ty)
+                    recursive_subtypes!(types, Ty)
+                end
+                return types
+            end
+            ref = recursive_subtypes!(Base.IdSet{Type}(), Any)
+            flat = Revise.all_named_types()
+            realnames(s) = Set(dt.name for t in s
+                               for dt in (Base.unwrap_unionall(t),)
+                               if dt isa DataType && dt !== Any && !startswith(string(dt.name.name), "#"))
+            @test realnames(ref) ⊆ realnames(flat)
         end
     end
 
@@ -3498,6 +3736,161 @@ end
         end
     end
 
+    # issue #738
+    do_test("stale_load") && @testset "stale_load" begin
+        testdir = newtestdir()
+
+        # Methods changed, added, and deleted between cache build and load
+        dn = joinpath(testdir, "StaleLoadLeaf", "src")
+        mkpath(dn)
+        write(joinpath(dn, "StaleLoadLeaf.jl"), """
+            module StaleLoadLeaf
+            f() = 1
+            h(x) = x + 1
+            end
+            """)
+        id = Base.identify_package("StaleLoadLeaf")
+        ret = Base.compilecache(id)
+        cachefile = ret isa Tuple ? ret[1] : ret
+        sleep(mtimedelay)
+        write(joinpath(dn, "StaleLoadLeaf.jl"), """
+            module StaleLoadLeaf
+            f() = 2
+            g() = 42
+            end
+            """)
+        caches = Set(Base.find_all_in_cache_path(id))
+        m = Revise.stale_load("StaleLoadLeaf")
+        @latestworld
+        @test m isa Module
+        @test Base.root_module(id) === m
+        # The stale cache was loaded, and no new cache was built
+        @test Base.samefile(Base.pkgorigins[id].cachepath, cachefile)
+        @test Set(Base.find_all_in_cache_path(id)) == caches
+        # ...and revision brought the loaded code up to date
+        @test m.f() == 2
+        @test m.g() == 42
+        @test !isdefined(m, :h) || isempty(methods(m.h))
+        # The package is watched, so subsequent edits revise normally
+        sleep(mtimedelay)
+        write(joinpath(dn, "StaleLoadLeaf.jl"), """
+            module StaleLoadLeaf
+            f() = 3
+            g() = 42
+            end
+            """)
+        @yry()
+        @test m.f() == 3
+        # `using` binds the already-loaded module; a second `stale_load` warns
+        @eval using StaleLoadLeaf
+        @test StaleLoadLeaf === m
+        @test_logs (:warn, r"already loaded") Revise.stale_load("StaleLoadLeaf")
+        rm_precompile("StaleLoadLeaf")
+
+        @static if VERSION >= v"1.11"
+            # An edited dependency is stale-loaded and revised along with the top package
+            depuuid, topuuid = string(uuid4()), string(uuid4())
+            for (name, uuid, extra) in (("StaleLoadDep", depuuid, ""),
+                                        ("StaleLoadTop", topuuid, "\n[deps]\nStaleLoadDep = \"$depuuid\""))
+                mkpath(joinpath(testdir, name, "src"))
+                write(joinpath(testdir, name, "Project.toml"), """
+                    name = "$name"
+                    uuid = "$uuid"
+                    version = "0.1.0"
+                    $extra
+                    """)
+            end
+            write(joinpath(testdir, "StaleLoadDep", "src", "StaleLoadDep.jl"), """
+                module StaleLoadDep
+                dval() = 1
+                end
+                """)
+            write(joinpath(testdir, "StaleLoadTop", "src", "StaleLoadTop.jl"), """
+                module StaleLoadTop
+                using StaleLoadDep
+                tval() = StaleLoadDep.dval() + 10
+                end
+                """)
+            topid = Base.identify_package("StaleLoadTop")
+            depid = Base.identify_package(topid, "StaleLoadDep")
+            Base.compilecache(topid)   # also builds the dependency's cache
+            sleep(mtimedelay)
+            write(joinpath(testdir, "StaleLoadDep", "src", "StaleLoadDep.jl"), """
+                module StaleLoadDep
+                dval() = 2
+                end
+                """)
+            write(joinpath(testdir, "StaleLoadTop", "src", "StaleLoadTop.jl"), """
+                module StaleLoadTop
+                using StaleLoadDep
+                tval() = StaleLoadDep.dval() + 100
+                end
+                """)
+            mtop = Revise.stale_load(topid)
+            @latestworld
+            @test mtop.tval() == 102
+            @test Base.root_module_exists(depid)
+            @test haskey(Revise.pkgdatas, depid)
+            rm_precompile("StaleLoadTop")
+            rm_precompile("StaleLoadDep")
+        end
+
+        if Revise.__bpart__[]
+            # A `struct` redefined between cache build and load
+            dn = joinpath(testdir, "StaleLoadStruct", "src")
+            mkpath(dn)
+            write(joinpath(dn, "StaleLoadStruct.jl"), """
+                module StaleLoadStruct
+                struct Point
+                    x::Int
+                end
+                coord(p::Point) = (p.x,)
+                end
+                """)
+            sid = Base.identify_package("StaleLoadStruct")
+            Base.compilecache(sid)
+            sleep(mtimedelay)
+            write(joinpath(dn, "StaleLoadStruct.jl"), """
+                module StaleLoadStruct
+                struct Point
+                    x::Int
+                    y::Int
+                end
+                coord(p::Point) = (p.x, p.y)
+                end
+                """)
+            ms = Revise.stale_load(sid)
+            @latestworld
+            @test fieldnames(ms.Point) == (:x, :y)
+            @test ms.coord(ms.Point(3, 4)) == (3, 4)
+            rm_precompile("StaleLoadStruct")
+        end
+
+        # A package whose cache is up-to-date loads and revises nothing
+        dn = joinpath(testdir, "StaleLoadFresh", "src")
+        mkpath(dn)
+        write(joinpath(dn, "StaleLoadFresh.jl"), """
+            module StaleLoadFresh
+            fresh() = 1
+            end
+            """)
+        Base.compilecache(Base.identify_package("StaleLoadFresh"))
+        mf = Revise.stale_load(:StaleLoadFresh)
+        @latestworld
+        @test mf.fresh() == 1
+        rm_precompile("StaleLoadFresh")
+
+        # Failure modes
+        @test_throws "could not identify a package" Revise.stale_load("NotAPackageAnywhereZZZ")
+        dn = joinpath(testdir, "StaleLoadNoCache", "src")
+        mkpath(dn)
+        write(joinpath(dn, "StaleLoadNoCache.jl"), """
+            module StaleLoadNoCache
+            end
+            """)
+        @test_throws "no loadable precompile cache" Revise.stale_load("StaleLoadNoCache")
+    end
+
     do_test("get_def") && @testset "get_def" begin
         testdir = newtestdir()
         dn = joinpath(testdir, "GetDef", "src")
@@ -3578,9 +3971,11 @@ end
         srcfile = joinpath(tempdir(), randtmp()*".jl")
         write(srcfile, "revise_f(x) = 1")
         sleep(mtimedelay)
-        includet(srcfile)
+        # issue #783: `includet` returns the value of the last evaluated expression
+        ret = includet(srcfile)
         sleep(mtimedelay)
         @latestworld
+        @test ret === revise_f
         @test revise_f(10) == 1
         @test length(signatures_at(srcfile, 1)) == 1
         write(srcfile, "revise_f(x) = 2")
@@ -3613,7 +4008,8 @@ end
         srcfile = joinpath(tempdir(), randtmp()*".jl")
         write(srcfile, "\n")
         sleep(mtimedelay)
-        includet(srcfile)
+        # issue #783: an empty file has no last expression, so `includet` returns `nothing`
+        @test includet(srcfile) === nothing
         sleep(mtimedelay)
         @test basename(srcfile) ∈ Revise.watched_files[dirname(srcfile)]
         push!(to_remove, srcfile)
@@ -3829,10 +4225,10 @@ end
         user_track_includes = Revise.tracking_Main_includes[]
         Revise.tracking_Main_includes[] = false
         include(srcfile)
-        @yry()
+        @yry(expect_revision=false)   # user scripts are not tracked by default
         @test revise_g() == 1
         write(srcfile, "revise_g() = 2")
-        @yry()
+        @yry(expect_revision=false)   # still untracked, so the edit is not picked up
         @test revise_g() == 1
         # Turn on tracking of user scripts
         empty!(Revise.included_files)  # don't track files already loaded (like this one)
@@ -3843,7 +4239,7 @@ end
             write(srcfile, "revise_g() = 1")
             sleep(mtimedelay)
             include(srcfile)
-            @yry()
+            @yry(expect_revision=false)   # include just ran; no edit to revise yet
             @test revise_g() == 1
             write(srcfile, "revise_g() = 2")
             @yry()
@@ -3852,9 +4248,9 @@ end
             # issue #257
             logs, _ = Test.collect_test_logs() do  # just to prevent noisy warning
                 try include("nonexistent1.jl") catch end
-                yry()
+                yry(expect_revision=false)   # include of a missing file revises nothing
                 try include("nonexistent2.jl") catch end
-                yry()
+                yry(expect_revision=false)
             end
         finally
             Revise.tracking_Main_includes[] = user_track_includes  # restore old behavior
@@ -4831,16 +5227,30 @@ do_test("Missing-file grace") && !Revise.watching_files[] && @testset "Missing-f
         @test isempty(Revise.revision_queue)
 
         # Past the grace period: methods are deleted (with a warning), but the
-        # file remains registered, so recreating it still restores the methods
+        # file remains registered, so recreating it still restores the methods.
+        # The grace clock starts only when a `revise()` first observes the
+        # absence, and that observation rides a filesystem event whose delivery
+        # time we don't control. Rather than sleep a fixed interval and assume one
+        # revise deletes, poll: keep revising until the deletion lands. This can't
+        # flake on a late clock start; a genuine failure to ever delete still
+        # surfaces as the `timedwait` timing out.
         Revise.missing_file_grace[] = 0.5
         rm(genfile)
-        @yry()      # notices the absence, starting the grace clock
-        @test MissingFileGrace.gen() == 2
-        sleep(1.0)
-        @test_logs (:warn, r"no longer exists, deleted all methods") match_mode=:any yry()
+        @yry()
+        @test MissingFileGrace.gen() == 2          # survives while within grace
+        logs = []
+        deleted = timedwait(20.0; pollint=0.1) do
+            logs, _ = Test.collect_test_logs() do
+                revise()
+            end
+            isempty(methods(MissingFileGrace.gen))
+        end
+        @test deleted === :ok                      # :timed_out ⇒ a genuine "never deleted" bug
         @latestworld
         @test isempty(Revise.revision_queue)
         @test_throws MethodError MissingFileGrace.gen()
+        # the deleting revise (the final poll iteration) is the one that warns
+        @test any(r -> occursin("no longer exists, deleted all methods", r.message), logs)
         write(genfile, "gen() = 3")
         @yry()
         @test MissingFileGrace.gen() == 3
@@ -5509,11 +5919,38 @@ do_test("includet with mod arg (issue #689)") && @testset "includet with mod arg
     @test Driver.Codes.Common.foo == 2
 end
 
+do_test("@includet uses caller's module (issue #682)") && @testset "@includet uses caller's module (issue #682)" begin
+    testdir = newtestdir()
+
+    srcfile = joinpath(testdir, "evalscope.jl")
+    write(srcfile, "f_682() = 1")
+
+    module682 = Module(:Module682)
+    Core.eval(module682, :(using Revise))
+    sleep(mtimedelay)
+    Core.eval(module682, :(@includet $srcfile))
+
+    # The macro evaluates into the caller's module, not `Main`.
+    @test Base.invokelatest(module682.f_682) == 1
+    @test !isdefined(Main, :f_682)
+
+    # Tracking still works.
+    sleep(mtimedelay)
+    write(srcfile, "f_682() = 2")
+    yry()
+    @test Base.invokelatest(module682.f_682) == 2
+end
+
 do_test("misc - coverage") && !isinteractive() && @testset "misc - coverage" begin
     @test Revise.ReviseEvalException("undef", UndefVarError(:foo)).loc isa String
     @test !Revise.throwto_repl(UndefVarError(:foo))   # this causes an error in interactive
 
     @test endswith(Revise.fallback_juliadir(), "julia")
+
+    # issue #717: the stale-cache hint must point at the active depot, not a
+    # hardcoded ~/.julia
+    major, minor = Base.VERSION.major, Base.VERSION.minor
+    @test Revise.revise_cache_dir() == joinpath(first(DEPOT_PATH), "compiled", "v$major.$minor", "Revise")
 
     @test isnothing(Revise.revise(REPL.REPLBackend()))
 end
@@ -5609,6 +6046,88 @@ do_test("re-watch after reappearance") && !Revise.watching_files[] && Sys.islinu
     finally
         Revise.watch_reappear_grace[] = old_grace
     end
+end
+
+do_test("Frozen world") && @testset "Frozen world" begin
+    # Revise pins its own method dispatch to the world it froze at `__init__` (issue #552),
+    # so revising a method Revise itself uses cannot invalidate Revise mid-operation. The rest
+    # of this suite is itself the functional test: every revision here runs while Revise is
+    # frozen. Here we check the freeze/advance semantics directly.
+    @test Revise.worldage[] isa UInt
+    saved = Revise.worldage[]
+    try
+        @eval frozenworld_probe() = 1
+        Revise.advance_world!()                      # freeze with the `== 1` method visible
+        wfrozen = Revise.worldage[]
+        @test Revise.frozen(frozenworld_probe) == 1
+        @eval frozenworld_probe() = 2                # redefine; advances the global world
+        @test frozenworld_probe() == 2               # latest dispatch sees the new method
+        @test Revise.frozen(frozenworld_probe) == 1  # frozen dispatch still sees the old one
+        @test Revise.worldage[] == wfrozen           # advancing is manual-only
+        Revise.advance_world!()
+        @test Revise.frozen(frozenworld_probe) == 2  # now the frozen world includes it
+    finally
+        Revise.worldage[] = saved
+    end
+end
+
+do_test("Frozen world user-code frame") && @testset "Frozen world user-code frame" begin
+    # Counterpart to "Frozen world": while Revise's own dispatch is frozen, the code it
+    # interprets on the user's behalf must run at the *latest* world, or a definition made
+    # earlier in the same revision is "too new" when later code dispatches to it (issues
+    # #552, #607). Revise secures this by building the interpreter `Frame` with
+    # `world=get_world_counter()` (see `methods_by_execution!`). This checks the underlying
+    # capability directly: the same call interpreted in a stale world throws "method too
+    # new", while at the latest world it succeeds.
+    @eval function frozenframe_target end           # commit the binding at its own world
+    wstale = Base.get_world_counter()               # after the binding, before any method
+    @eval frozenframe_target(x::Int) = 42           # only applicable method, defined after wstale
+    lwr = Meta.lower(@__MODULE__, :(frozenframe_target(1)))
+    mkframe(w) = Frame(@__MODULE__, lwr.args[1]::Core.CodeInfo; world=w)
+    # At the latest world the freshly-defined method is visible and the call succeeds:
+    @test Revise.JuliaInterpreter.finish_and_return!(mkframe(Base.get_world_counter())) == 42
+    # Pinned to the pre-definition world it is not: the call throws (a "method too new"
+    # MethodError, or its binding-partition analog). The two frames differ only in `world`,
+    # so the world is the sole cause — exactly what threading it into the frame fixes.
+    # `NullLogger` silences any stale-world access warning a given Julia version may emit.
+    @test_throws Exception Base.CoreLogging.with_logger(Base.CoreLogging.NullLogger()) do
+        Revise.JuliaInterpreter.finish_and_return!(mkframe(wstale))
+    end
+end
+
+do_test("Revise issue #607") && @testset "Revise issue #607" begin
+    # A top-level loop that defines methods (so Revise must interpret it during a revision)
+    # and, while building each method's arguments, applies a freshly-created closure (the
+    # comprehension). Under Revise's frozen world this closure-application must still see the
+    # latest world; otherwise it throws "method too new" and the revision silently fails
+    # (issue #607, originally hit via Plots' `utils_eval.jl`).
+    testdir = newtestdir()
+    dn = joinpath(testdir, "WA607", "src"); mkpath(dn)
+    fn = joinpath(dn, "WA607.jl")
+    write(fn, """
+        module WA607
+        for fname in (:wa_a, :wa_b)
+            argtypes = (Int, Float64)
+            args = Any[:(\$(Symbol(:x, i))::\$T) for (i, T) in enumerate(argtypes)]
+            @eval \$fname(\$(args...)) = 1
+        end
+        end""")
+    sleep(mtimedelay)
+    @eval using WA607
+    sleep(mtimedelay)
+    @test WA607.wa_a(1, 2.0) == 1
+    write(fn, """
+        module WA607
+        for fname in (:wa_a, :wa_b)
+            argtypes = (Int, Float64)
+            args = Any[:(\$(Symbol(:x, i))::\$T) for (i, T) in enumerate(argtypes)]
+            @eval \$fname(\$(args...)) = 2
+        end
+        end""")
+    @yry()
+    @test WA607.wa_a(1, 2.0) == 2
+    @test WA607.wa_b(3, 4.0) == 2
+    rm_precompile("WA607")
 end
 
 do_test("deprecated") && @testset "deprecated" begin

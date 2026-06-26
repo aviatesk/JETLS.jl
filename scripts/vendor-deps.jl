@@ -368,7 +368,9 @@ function update_project_with_vendored_deps(
         end
     end
 
-    project["sources"] = Dict{String, Any}()
+    if !haskey(project, "sources")
+        project["sources"] = Dict{String, Any}()
+    end
 
     if use_local_path
         for (pkg_name, original_uuid) in all_vendored_packages

@@ -27,11 +27,27 @@ function show_setup_info(msg)
     @info msg Sys.BINDIR pkgdir(JETLS) Threads.nthreads() JETLS_VERSION JETLS_DEV_MODE JETLS_TEST_MODE JETLS_DEBUG_LOWERING
 end
 
+const server_world_age = Ref{UInt}(typemax(UInt))
+
+"""
+    advance_server_world!()
+
+Pin JETLS server dispatch to the current world age.
+"""
+advance_server_world!() = (server_world_age[] = Base.get_world_counter(); nothing)
+
+call_in_server_world(@nospecialize(f), args...; kwargs...) =
+    Base.invoke_in_world(server_world_age[], f, args...; kwargs...)
+
+push_init_hook!(advance_server_world!)
+
 if JETLS_DEV_MODE
     using Revise: Revise
 else
     const Revise = nothing
 end
+
+revise_now!() = JETLS_DEV_MODE && Revise.revise()
 
 using LSP
 using LSP: LSP
@@ -145,15 +161,11 @@ include("did-change-watched-files.jl")
 include("initialize.jl")
 
 """
-    runserver([callback,] in::IO, out::IO; client_process_id=nothing) -> exit_code::Int
-    runserver([callback,] endpoint::Endpoint; client_process_id=nothing) -> exit_code::Int
-    runserver([callback,] server::Server; client_process_id=nothing) -> exit_code::Int
+    runserver(in::IO, out::IO; client_process_id=nothing) -> exit_code::Int
+    runserver(endpoint::Endpoint; client_process_id=nothing) -> exit_code::Int
+    runserver(server::Server; client_process_id=nothing) -> exit_code::Int
 
 Run the JETLS language server with the specified input/output streams or endpoint.
-
-The `callback` function is invoked on each message sent or received, with the
-signature `callback(event::Symbol, msg)` where `event` is either `:sent` or
-`:received`. If not specified, a no-op callback is used.
 
 When given IO streams, the function creates an `Endpoint` and then a `ServerState`
 before entering the message handling loop. The function returns after receiving an
@@ -195,9 +207,8 @@ allowing the caller side to safely `exit` this Julia process.
 """
 const self_shutdown_token = SelfShutdownNotification()
 
-runserver(args...; kwargs...) = runserver(Returns(nothing), args...; kwargs...) # no callback specified
-runserver(callback, in::IO, out::IO; kwargs...) = runserver(callback, Endpoint(in, out); kwargs...)
-runserver(callback, endpoint::Endpoint; kwargs...) = runserver(Server(callback, endpoint); kwargs...)
+runserver(in::IO, out::IO; kwargs...) = runserver(Endpoint(in, out); kwargs...)
+runserver(endpoint::Endpoint; kwargs...) = runserver(Server(endpoint); kwargs...)
 function runserver(
         server::Server;
         client_process_id::Union{Nothing,Int} = nothing,

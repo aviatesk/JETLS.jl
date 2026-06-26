@@ -12,8 +12,6 @@ function _precompile_()
         end
         const threshold = 0.1
     end
-    for (mod, ex) in ExprSplitter(var"#Internal", expr)
-        frame = Frame(mod, ex)
-        debug_command(frame, :c, true)
-    end
+    frame = Frame(var"#Internal", Expr(:toplevel, expr.args...))
+    debug_command(frame, :c, true)
 end

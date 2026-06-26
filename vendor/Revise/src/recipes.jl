@@ -23,7 +23,7 @@ function track(mod::Module; modified_files=revision_queue, revise_throw::Bool=!i
     return ret
 end
 
-pkgidid_for_mod(mod) = id = Base.moduleroot(mod) == Core.Compiler ? PkgId(mod, "Core.Compiler") : PkgId(mod)
+pkgidid_for_mod(mod) = Base.moduleroot(mod) == Core.Compiler ? PkgId(mod, "Core.Compiler") : PkgId(mod)
 
 const vstring = "v$(VERSION.major).$(VERSION.minor)"
 
@@ -222,7 +222,7 @@ function track_subdir_from_git!(pkgdata::PkgData, subdir::AbstractString; commit
                 push!(modified_files, (pkgdata, rpath))
             end
             fi = FileInfo(fmod)
-            if parse_source!(fi.mod_exs_infos, src, file, fmod) === nothing
+            if !parse_and_maybe_eval_source!(fi.mod_exs_infos, src, file, fmod).success
                 @warn "failed to parse Git source text for $file"
             else
                 instantiate_sigs!(fi.mod_exs_infos)

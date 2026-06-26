@@ -96,41 +96,39 @@ A future refactor that unifies `cursor_bindings` and `build_inferred_context_for
 at the `jl_lower_for_scope_resolution` level can replace the lazy accessors
 without disturbing call sites.
 """
-struct CompletionCtx
-    state::ServerState
-    uri::URI
-    fi::FileInfo
-    pos::Position
-    context::Union{Nothing,CompletionContext}
+mutable struct CompletionCtx
+    const state::ServerState
+    const uri::URI
+    const fi::FileInfo
+    const pos::Position
+    const context::Union{Nothing,CompletionContext}
 
     # Eagerly populated by the constructor.
-    offset::Int
-    st0_top::SyntaxTreeC
-    context_module::Module
-    world::UInt
-    postprocessor::LSPostProcessor
-    soft_scope::Bool
+    const offset::Int
+    const st0_top::SyntaxTreeC
+    const context_module::Module
+    const world::UInt
+    const postprocessor::LSPostProcessor
+    const soft_scope::Bool
 
-    # Lazy. `isassigned(ref)` distinguishes "not yet computed" from
+    # Lazily populated. `isdefiend` check distinguishes "not yet computed" from
     # "computed but the underlying build returned `nothing`".
-    inferred_ctx::Base.RefValue{Union{Nothing,InferredTreeContext}}
-    cursor_bindings::Base.RefValue{Union{Nothing,Vector{Tuple{JL.BindingInfo,SyntaxTreeC,Int}}}}
-end
+    inferred_ctx::Union{Nothing,InferredTreeContext}
+    cursor_bindings::Union{Nothing,Vector{Tuple{JL.BindingInfo,SyntaxTreeC,Int}}}
 
-function CompletionCtx(
-        state::ServerState, uri::URI, fi::FileInfo, pos::Position,
-        context::Union{Nothing,CompletionContext};
-        context_module::Union{Nothing,Module} = nothing
-    )
-    st0_top = build_syntax_tree(fi)
-    info = get_context_info(state, uri, pos)
-    context_mod = something(context_module, info.context_module)
-    offset = xy_to_offset(fi, pos)
-    soft_scope = is_notebook_cell_uri(state, uri)
-    return CompletionCtx(state, uri, fi, pos, context,
-        offset, st0_top, context_mod, info.world, info.postprocessor, soft_scope,
-        Base.RefValue{Union{Nothing,InferredTreeContext}}(),
-        Base.RefValue{Union{Nothing,Vector{Tuple{JL.BindingInfo,SyntaxTreeC,Int}}}}())
+    function CompletionCtx(
+            state::ServerState, uri::URI, fi::FileInfo, pos::Position,
+            context::Union{Nothing,CompletionContext};
+            context_module::Union{Nothing,Module} = nothing
+        )
+        st0_top = build_syntax_tree(fi)
+        info = get_context_info(state, uri, pos)
+        context_mod = something(context_module, info.context_module)
+        offset = xy_to_offset(fi, pos)
+        soft_scope = is_notebook_cell_uri(state, uri)
+        return new(state, uri, fi, pos, context,
+            offset, st0_top, context_mod, info.world, info.postprocessor, soft_scope)
+    end
 end
 
 # Why not query the inferred-context cache with `offset:offset` directly:
@@ -140,22 +138,46 @@ end
 # outside). `lowerable_toplevel_at` has an `offset - 1` retry that handles
 # this, so we go through it and build the context for the selected toplevel.
 function get_inferred_ctx!(comp_ctx::CompletionCtx; caller::AbstractString)
-    isassigned(comp_ctx.inferred_ctx) && return comp_ctx.inferred_ctx[]
+    isdefined(comp_ctx, :inferred_ctx) && return comp_ctx.inferred_ctx
     toplevel = lowerable_toplevel_at(comp_ctx.st0_top, comp_ctx.offset)
-    ctx = if toplevel === nothing
-        nothing
-    else
+    return comp_ctx.inferred_ctx = toplevel === nothing ? nothing :
         build_inferred_context_for_tree(toplevel, comp_ctx.context_module;
             world=comp_ctx.world, caller, cache=comp_ctx.fi.inferred_context_cache)
+end
+
+# Property completion only needs the prefix type. Build inference from a virtual
+# source where the cursor's incomplete `.partial` accessor is removed, instead of
+# teaching generic AST repair every parser-recovery shape around `prefix.│`.
+function get_dotprefix_inferred_ctx(
+        comp_ctx::CompletionCtx, dotprefix::SyntaxTreeC; caller::AbstractString
+    )
+    hole_start = JS.last_byte(dotprefix) + 1
+    hole_end = property_completion_hole_end(comp_ctx.fi, comp_ctx.offset, hole_start)
+    textbuf = copy(comp_ctx.fi.parsed_stream.textbuf)
+    if hole_start ≤ hole_end
+        deleteat!(textbuf, hole_start:hole_end)
     end
-    return comp_ctx.inferred_ctx[] = ctx
+    virtual_fi = FileInfo(comp_ctx.fi.version, textbuf, comp_ctx.fi.filename, comp_ctx.fi.encoding)
+    virtual_st0_top = build_syntax_tree(virtual_fi)
+    virtual_st0 = @something lowerable_toplevel_at(virtual_st0_top, JS.first_byte(dotprefix)) return nothing
+    return build_inferred_context_for_tree(virtual_st0, comp_ctx.context_module;
+        world=comp_ctx.world, caller, cache=nothing)
+end
+
+function property_completion_hole_end(fi::FileInfo, offset::Int, hole_start::Int)
+    hole_end = max(hole_start - 1, offset - 1)
+    tok = @something token_at_offset(fi.parsed_stream, offset) return hole_end
+    if JS.kind(tok) === JS.K"Identifier" && JS.first_byte(tok) ≥ hole_start
+        hole_end = max(hole_end, JS.last_byte(tok))
+    end
+    return hole_end
 end
 
 function get_cursor_bindings_cached!(comp_ctx::CompletionCtx)
-    isassigned(comp_ctx.cursor_bindings) && return comp_ctx.cursor_bindings[]
-    cbs = cursor_bindings(comp_ctx.st0_top, comp_ctx.offset, comp_ctx.context_module;
-        soft_scope=comp_ctx.soft_scope)
-    return comp_ctx.cursor_bindings[] = cbs
+    isdefined(comp_ctx, :cursor_bindings) && return comp_ctx.cursor_bindings
+    return comp_ctx.cursor_bindings = cursor_bindings(
+        comp_ctx.st0_top, comp_ctx.offset, comp_ctx.context_module;
+            soft_scope=comp_ctx.soft_scope)
 end
 
 # Typical completion UI
@@ -311,7 +333,7 @@ function global_completions!(
     dotprefix = select_dotprefix_identifier(st0_top, comp_ctx.offset)
     if !isnothing(dotprefix)
         rng = JS.byte_range(dotprefix)
-        ctx = get_inferred_ctx!(comp_ctx; caller="global_completions!")
+        ctx = get_dotprefix_inferred_ctx(comp_ctx, dotprefix; caller="global_completions!")
         prefixtyp = ctx === nothing ? nothing : get_type_for_range(ctx, rng)
         # A `Union{}` prefix type is uninformative (the prefix throws or is dead code);
         # treat it like `nothing` so module/const prefixes such as `Base.` still complete.

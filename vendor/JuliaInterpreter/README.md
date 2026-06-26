@@ -4,7 +4,7 @@
 
 | **Documentation**                                                               | **Build Status**                                                                                |
 |:-------------------------------------------------------------------------------:|:-----------------------------------------------------------------------------------------------:|
-| [![][docs-stable-img]][docs-stable-url] | [![][gh-actions-img]][gh-actions-url]  [![][codecov-img]][codecov-url] |
+| [![][docs-stable-img]][docs-stable-url] | [![][gh-actions-img]][gh-actions-url]  [![][codecov-img]][codecov-url] [![Aqua QA](https://juliatesting.github.io/Aqua.jl/dev/assets/badge.svg)](https://github.com/JuliaTesting/Aqua.jl) |
 
 ## Installation
 

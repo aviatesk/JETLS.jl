@@ -366,7 +366,7 @@ function run_check(args::Vector{String})
 end
 
 function start_cli_server(root_path::AbstractString)
-    server = Server(; suppress_notifications=true, cli_mode=true)
+    server = Server(; cli_mode=true)
 
     # Normalize via URI round-trip so the casing of `state.root_path` matches
     # paths reconstructed from URIs (lowercase drive letter on Windows).

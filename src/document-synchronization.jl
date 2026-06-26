@@ -53,9 +53,7 @@ function cache_file_info!(
 
     invalidate_per_file_caches!(state, uri)
 
-    if !state.suppress_notifications && any_deleted
-        notify_diagnostics!(server; ensure_cleared=uri)
-    end
+    any_deleted && notify_diagnostics!(server; ensure_cleared=uri)
 
     return fi
 end

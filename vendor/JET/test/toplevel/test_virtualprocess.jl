@@ -531,7 +531,8 @@ end
         # FIXME syntax: "module" expression not at top level
         @test isempty(res.res.toplevel_error_reports)
         @test isconcrete(res, vmod, :foo)
-        @test isconcrete(res, vmod.foo, :bar)
+        foo = @invokelatest vmod.foo
+        @test isconcrete(res, foo, :bar)
 
         vmod, res = @analyze_toplevel2 begin
             """
@@ -544,7 +545,8 @@ end
             end
         end
         @test isconcrete(res, vmod, :foo)
-        @test isconcrete(res, @invokelatest(vmod.foo), :bar)
+        foo = @invokelatest vmod.foo
+        @test isconcrete(res, foo, :bar)
     end
 end
 
@@ -638,7 +640,8 @@ end
         @test inc2 in JET.included_files(res.res)
         @test isempty(res.res.toplevel_error_reports)
         @test isempty(res.res.inference_error_reports)
-        @test isconcrete(res, @invokelatest(context.Outer), :foo)
+        outer = @invokelatest context.Outer
+        @test isconcrete(res, outer, :foo)
     end
 
     # bad includes
@@ -1141,8 +1144,8 @@ end
             @test isempty(er.st)
         end
 
-        # errors from user functions (i.e. those from `@invokelatest f(fargs...)` in the overload
-        # `JuliaInterpreter.evaluate_call_recurse!(interp::ConcreteInterpreter, frame::Frame, call_expr::Expr; enter_generated::Bool=false)`)
+        # errors from user functions (i.e. those from `Base.invoke_in_world(frame.world, f, args...)`
+        # in `JuliaInterpreter.evaluate_call!(::ConcreteInterpreter, ::Frame, ...)`)
         mktemp() do filename, io
             res = report_text("""
                 foo() = throw("don't call me, pal") # L1
@@ -1222,6 +1225,20 @@ end
 end
 
 @testset "world age" begin
+    let res = @analyze_toplevel concretization_patterns = [:(outer())] begin
+            too_new_for_outer(::String) = 1
+            function outer()
+                @eval too_new_for_outer(::Int) = 2
+                return too_new_for_outer(1)
+            end
+            outer()
+        end
+        @test length(res.res.toplevel_error_reports) == 1
+        report = only(res.res.toplevel_error_reports)
+        @test report isa ActualErrorWrapped
+        @test report.err isa MethodError
+    end
+
     # https://github.com/aviatesk/JET.jl/issues/104
     @test let res = @analyze_toplevel begin
             using Test
@@ -1379,20 +1396,24 @@ end
         qux(a::T) where T<:Integer = return a
     end
     @test !isempty(res.res.signature_infos)
+    foo = @invokelatest vmod.foo
+    bar = @invokelatest vmod.bar
+    baz = @invokelatest vmod.baz
+    qux = @invokelatest vmod.qux
     @test any(res.res.signature_infos) do (; tt)
-        tt === Tuple{typeof(vmod.foo)}
+        tt === Tuple{typeof(foo)}
     end
     @test any(res.res.signature_infos) do (; tt)
-        tt === Tuple{typeof(vmod.bar),Any}
+        tt === Tuple{typeof(bar),Any}
     end
     @test any(res.res.signature_infos) do (; tt)
-        tt === Tuple{typeof(vmod.baz),Any}
+        tt === Tuple{typeof(baz),Any}
     end
     @test any(res.res.signature_infos) do (; tt)
-        tt === Tuple{typeof(vmod.baz),Int}
+        tt === Tuple{typeof(baz),Int}
     end
     @test any(res.res.signature_infos) do (; tt)
-        tt <: Tuple{typeof(vmod.qux),Integer} # `Tuple{typeof(vmod.qux),TypeVar}`
+        tt <: Tuple{typeof(qux),Integer} # `Tuple{typeof(qux),TypeVar}`
     end
 
     vmod, res = @analyze_toplevel2 analyze_from_definitions=true begin
@@ -1796,50 +1817,6 @@ end
             test_sum_over_string(res)
         end
 
-        # captured variables within a catch clause
-        let res = @analyze_toplevel analyze_from_definitions=true try
-                s = "julia"
-                foo(f) = f(s) # should be concretized
-                foo(sum) # shouldn't be concretized
-            catch err
-                function shows() # should be concretized
-                    io = stderr::IO
-                    showerror(io, err)
-                    showerror(io, err2)
-                end
-                shows() # shouldn't be concretized
-            end
-
-            @test isempty(res.res.toplevel_error_reports)
-            @test length(res.res.signature_infos) == 2
-            test_sum_over_string(res)
-            @test any(r->is_global_undef_var(r, :err2), res.res.inference_error_reports)
-        end
-
-        # XXX similar to "captured variables for global functions" cases, but such patterns
-        # can be even worse when used within a catch clause; it will just fail into a hell.
-        # I include this case just for the reference and won't expect this to work robustly
-        # since it heavily depends on Julia's AST lowering and the implementation detail of
-        # JuliaInterpreter.jl
-        let (vmod, res) = @analyze_toplevel2 try
-                s = "julia"
-                foo(f) = f(s) # should be concretized
-                foo(sum) # shouldn't be concretized
-            catch err # will be `MethodError` in actual execution
-                global geterr() = return err # should be concretized
-            end
-
-            # thanks to JuliaInterpreter's implementation detail, the analysis above won't
-            # report top-level errors and can concretize `geterr` even if the actual `err`
-            # is not thrown and thus these first two test cases will pass
-            @test isempty(res.res.toplevel_error_reports)
-            @test isconcrete(res, vmod, :geterr) && length(methods(@invokelatest(vmod.geterr))) == 1
-            # yet we still need to make `geterr` over-approximate an actual execution soundly;
-            # currently JET's abstract interpretation special-cases `_INACTIVE_EXCEPTION`
-            # and fix it to `Any`, and we test it here in the last test case
-            result = report_call(@invokelatest(vmod.geterr))
-            @test MethodError ⊑ get_result(result)
-        end
     end
 
     @testset "top-level `eval` statement" begin

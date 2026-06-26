@@ -14,6 +14,11 @@ function moduleof(@nospecialize(x))
     return isa(s, Module) ? s : s.module
 end
 
+# A frame executes top-level statements iff its scope is a Module. This cannot be inferred
+# from stack position: `:toplevel`/`:module` interpretation links module-scoped child frames
+# into the stack (see `step_toplevel!`), so a frame with a caller may still be toplevel.
+is_toplevel_frame(frame::Frame) = scopeof(frame) isa Module
+
 function Base.nameof(frame::Frame)
     s = frame.framecode.scope
     isa(s, Method) ? s.name : nameof(s)
@@ -21,20 +26,18 @@ end
 
 _Typeof(x) = isa(x, Type) ? Type{x} : typeof(x)
 
-function to_function(@nospecialize(x))
-    isa(x, GlobalRef) ? invokelatest(getfield, x.mod, x.name) : x
+function to_function(@nospecialize(x), world::UInt)
+    isa(x, GlobalRef) ? invoke_in_world(world, getglobal, x.mod, x.name) : x
 end
 
 """
-    method = whichtt(tt, mt = nothing)
+    method = whichtt(tt, mt=nothing; world=default_world())
 
 Like `which` except it operates on the complete tuple-type `tt`,
 and doesn't throw when there is no matching method.
 """
-function whichtt(@nospecialize(tt), mt::Union{Nothing,MethodTable}=nothing)
-    # TODO: provide explicit control over world age? In case we ever need to call "old" methods.
-    # TODO Use `CachedMethodTable` for better performance once `teh/worldage` is merged
-    match, _ = findsup_mt(tt, Base.get_world_counter(), mt)
+function whichtt(@nospecialize(tt), mt::Union{Nothing,MethodTable}=nothing; world::UInt=default_world())
+    match, _ = findsup_mt(tt, world, mt)
     match === nothing && return nothing
     return match.method
 end
@@ -223,7 +226,7 @@ end
 
 is_generated(meth::Method) = isdefined(meth, :generator)
 
-get_staged(mi::MethodInstance) = Core.Compiler.get_staged(mi, Base.get_world_counter())
+get_staged(mi::MethodInstance, world::UInt) = Core.Compiler.get_staged(mi, world)
 
 """
     is_doc_expr(ex)
@@ -294,6 +297,22 @@ end
 
 @static if VERSION ≥ v"1.12.0-DEV.173"
 
+getfirstline(arg) = getfirstline(linetable(arg))
+function getfirstline(debuginfo::Core.DebugInfo)
+    while true
+        ltnext = debuginfo.linetable
+        ltnext === nothing && break
+        debuginfo = ltnext
+    end
+    firstline = typemax(Int)
+    for k = 0:typemax(Int)
+        codeloc = Core.Compiler.getdebugidx(debuginfo, k)
+        line::Int = codeloc[1]
+        line < 0 && break
+        line > 0 && (firstline = min(firstline, line))
+    end
+    return firstline == typemax(Int) ? 0 : firstline
+end
 getlastline(arg) = getlastline(linetable(arg))
 function getlastline(debuginfo::Core.DebugInfo)
     while true
@@ -372,6 +391,22 @@ function firstline(ex::Expr)
     return nothing
 end
 
+# A toplevel-surface framecode carries its line info in the `LineNumberNode`s of the surface
+# statements themselves; the synthetic `CodeInfo`'s line table is an unrelated skeleton (see
+# `toplevel_codeinfo`). Return the most recent `LineNumberNode` at or before `pc`, or `nothing`.
+function toplevel_surface_lnn(framecode::FrameCode, pc::Int)
+    code = framecode.src.code
+    for i in min(pc, length(code)):-1:1
+        stmt = code[i]
+        isa(stmt, LineNumberNode) && return stmt
+        if isa(stmt, Expr)
+            lnn = firstline(stmt)
+            lnn !== nothing && return lnn
+        end
+    end
+    return nothing
+end
+
 """
     loc = whereis(frame, pc::Int=frame.pc; macro_caller=false)
 
@@ -383,6 +418,11 @@ definition, but with`macro_caller=true` you can obtain the location within the
 method that issued the macro.
 """
 function CodeTracking.whereis(framecode::FrameCode, pc::Int; kwargs...)
+    if framecode.is_toplevel_surface
+        lnn = toplevel_surface_lnn(framecode, pc)
+        (lnn === nothing || lnn.file === nothing) && return nothing
+        return (getfile(lnn), getline(lnn))
+    end
     codeloc = codelocation(framecode.src, pc)
     codeloc == 0 && return nothing
     m = framecode.scope
@@ -403,16 +443,26 @@ is the location at the time the method was most recently defined.
 See [`CodeTracking.whereis`](@ref) for dynamic line information.
 """
 function linenumber(framecode::FrameCode, pc)
+    if framecode.is_toplevel_surface
+        return getline(toplevel_surface_lnn(framecode, pc))
+    end
     codeloc = codelocation(framecode.src, pc)
     codeloc == 0 && return nothing
-    return getline(linetable(framecode, codeloc))
+    lineinfo = linetable(framecode, codeloc)
+    return lineinfo === nothing ? nothing : getline(lineinfo)
 end
 linenumber(frame::Frame, pc=frame.pc) = linenumber(frame.framecode, pc)
 
 function getfile(framecode::FrameCode, pc)
+    if framecode.is_toplevel_surface
+        lnn = toplevel_surface_lnn(framecode, pc)
+        (lnn === nothing || lnn.file === nothing) && return nothing
+        return getfile(lnn)
+    end
     codeloc = codelocation(framecode.src, pc)
     codeloc == 0 && return nothing
-    return getfile(linetable(framecode, codeloc))
+    lineinfo = linetable(framecode, codeloc)
+    return lineinfo === nothing ? nothing : getfile(lineinfo)
 end
 getfile(frame::Frame, pc=frame.pc) = getfile(frame.framecode, pc)
 
@@ -442,7 +492,7 @@ function compute_corrected_linerange(method::Method)
     _, line1 = whereis(method)
     offset = line1 - method.line
     @assert !is_generated(method)
-    src = JuliaInterpreter.get_source(method)
+    src = get_source(method)
     lastline = getlastline(src)
     return line1:lastline + offset
 end
@@ -788,7 +838,7 @@ function Base.StackTraces.StackFrame(frame::Frame)
     end
     Base.StackFrame(
         fname,
-        Symbol(getfile(frame)),
+        Symbol(@something(getfile(frame), :none)),
         @something(linenumber(frame), getfirstline(frame)),
         mi,
         false,
@@ -800,7 +850,7 @@ function Base.show_backtrace(io::IO, frame::Frame)
     stackframes = Tuple{Base.StackTraces.StackFrame, Int}[]
     while frame !== nothing
         push!(stackframes, (Base.StackTraces.StackFrame(frame), 1))
-        frame = JuliaInterpreter.caller(frame)
+        frame = caller(frame)
     end
     print(io, "\nStacktrace:")
     try invokelatest(Base.update_stackframes_callback[], stackframes) catch end
@@ -809,7 +859,11 @@ function Base.show_backtrace(io::IO, frame::Frame)
     for (i, (last_frame, n)) in enumerate(stackframes)
         frame_counter += 1
         println(io)
-        Base.print_stackframe(io, i, last_frame, n, nd, Base.info_color())
+        @static if VERSION >= v"1.13.0-DEV.927"
+            Base.print_stackframe(io, i, last_frame, nd, 0, 0, 0, Base.info_color())
+        else
+            Base.print_stackframe(io, i, last_frame, n, nd, Base.info_color())
+        end
     end
 end
 

@@ -227,7 +227,10 @@ function methods_by_execution!(
         mode === :sigs && return Pair{Any,Union{Nothing,Expr}}(nothing, nothing)
         return Pair{Any,Union{Nothing,Expr}}(Core.eval(mod, lwr), nothing)
     end
-    frame = Frame(mod, lwr.args[1]::CodeInfo)
+    # Interpret user code at the latest world (JuliaInterpreter dispatches it at `frame.world`),
+    # so that even when Revise's own machinery is pinned to its frozen world (issue #552), new
+    # definitions remain visible within the batch and to the running session.
+    frame = Frame(mod, lwr.args[1]::CodeInfo; world=Base.get_world_counter())
     mode === :eval || LoweredCodeUtils.rename_framemethods!(interp, frame)
     # Determine whether we need interpreted mode
     isrequired, evalassign = minimal_evaluation!(frame, mode)
@@ -287,8 +290,11 @@ function _methods_by_execution!(
     isok(lnn::LineTypes) = !iszero(lnn.line) || lnn.file !== :none   # might fail either one, but accept anything
 
     mod = moduleof(frame)
-    # Hoist this lookup for performance. Don't throw even when `mod` is a baremodule:
-    modinclude = isdefined(mod, :include) ? getglobal(mod, :include) : nothing
+    # Hoist this lookup for performance. Don't throw even when `mod` is a baremodule.
+    # Read at the latest world: when `frame` defines a new submodule, that module's
+    # `include` is a `const` created in a newer world than this frame runs in, and a
+    # plain access would be a backdated-const read (warning now, error in future Julia).
+    modinclude = @invokelatest(isdefinedglobal(mod, :include)) ? @invokelatest(getglobal(mod, :include)) : nothing
     signatures = MethodInfoKey[]  # temporary for method signature storage
     pc = frame.pc
     while true
@@ -348,7 +354,6 @@ function _methods_by_execution!(
                     pc, pc3 = ret
                     # Get the line number from the body
                     stmt3 = pc_expr(frame, pc3)::Expr
-                    lnn = nothing
                     sigcode = lookup(interp, frame, stmt3.args[2])::Core.SimpleVector
                     lnn = sigcode[end]
                     if !isa(lnn, LineNumberNode)
@@ -748,7 +753,7 @@ function predict_typebodies!(predictions::TypePredictions, mod::Module, ex::Expr
     lwr.head === :thunk || return predictions
     src = lwr.args[1]::CodeInfo
     any(stmt -> predict_predicate(stmt, src.code)[1], src.code) || return predictions
-    frame = Frame(mod, src)
+    frame = Frame(mod, src; world=Base.get_world_counter())
     isrequired, _ = minimal_evaluation!(predict_predicate, frame, :sigs)
     interp = Compiled()
     pc = frame.pc

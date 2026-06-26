@@ -275,13 +275,23 @@ end
 # TODO support multiple analysis units, which can happen if this file is included from multiple different analysis_units
 const AnalysisInfo = Union{AnalysisResult,OutOfScope}
 
+"""
+    AnalysisRequest
+
+Queueable scheduling metadata for a full-analysis run.
+
+An `AnalysisRequest` may cross debounce timers, `pending_analyses`, and the
+worker queue before it executes. It therefore must not hold cache snapshots such
+as the previous analysis result, which can become stale while the request is
+waiting. Progress-token round trips keep only scheduling metadata and create the
+request later, when the client confirms the token.
+"""
 struct AnalysisRequest
     entry::AnalysisEntry
     uri::URI
     generation::Int
     cancellable_token::Union{Nothing,CancellableToken}
     notify_diagnostics::Bool
-    prev_analysis_result::Union{Nothing,AnalysisResult}
     completion::Base.Event
     function AnalysisRequest(
             entry::AnalysisEntry,
@@ -289,11 +299,27 @@ struct AnalysisRequest
             generation::Int,
             cancellable_token::Union{Nothing,CancellableToken},
             notify_diagnostics::Bool,
-            prev_analysis_result::Union{Nothing,AnalysisResult},
             completion::Base.Event = Base.Event()
         )
-        return new(entry, uri, generation, cancellable_token, notify_diagnostics, prev_analysis_result, completion)
+        return new(
+            entry, uri, generation, cancellable_token, notify_diagnostics, completion)
     end
+end
+
+"""
+    AnalysisExecution
+
+Execution-time context for a full-analysis run.
+
+`prev_result` is looked up at the start of `resolve_analysis_request` and is the
+baseline result that this analysis run replaces. It is intentionally fixed for
+the whole run: it is not a live view of the latest analysis cache. This keeps
+intermediate and final results consistent even if the run itself updates the
+cache before completion.
+"""
+struct AnalysisExecution
+    request::AnalysisRequest
+    prev_result::Union{Nothing,AnalysisResult}
 end
 
 const AnalysisCache = LWContainer{Dict{URI,AnalysisInfo}, LWStats}
@@ -338,9 +364,12 @@ end
 struct ExtraDiagnosticsData
     keys::Dict{UInt,ExtraDiagnosticsKey}
     values::Dict{UInt,URI2Diagnostics}
+    ExtraDiagnosticsData(
+        keys::Dict{UInt,ExtraDiagnosticsKey}, values::Dict{UInt,URI2Diagnostics}
+    ) = new(keys, values)
 end
 ExtraDiagnosticsData() = ExtraDiagnosticsData(Dict{UInt,ExtraDiagnosticsKey}(), Dict{UInt,URI2Diagnostics}())
-function ExtraDiagnosticsData(data::ExtraDiagnosticsData, (key, val))
+function ExtraDiagnosticsData(data::ExtraDiagnosticsData, (key, val)::Pair{<:ExtraDiagnosticsKey,URI2Diagnostics})
     new_data = copy(data)
     new_data[key] = val
     return new_data
@@ -383,9 +412,9 @@ function Base.get!(f, extra_diagnostics::ExtraDiagnosticsData, key::ExtraDiagnos
 end
 Base.keys(extra_diagnostics::ExtraDiagnosticsData) = values(extra_diagnostics.keys)
 Base.values(extra_diagnostics::ExtraDiagnosticsData) = values(extra_diagnostics.values)
-function Base.push!(extra_diagnostics::ExtraDiagnosticsData, (key, val)::Pair{ExtraDiagnosticsKey,URI2Diagnostics})
+function Base.push!(extra_diagnostics::ExtraDiagnosticsData, (key, val)::Pair{<:ExtraDiagnosticsKey,URI2Diagnostics})
     k = to_key(key)
-    push!(extra_diagnostics.keys, k => val)
+    push!(extra_diagnostics.keys, k => key)
     push!(extra_diagnostics.values, k => val)
 end
 function Base.delete!(extra_diagnostics::ExtraDiagnosticsData, key::ExtraDiagnosticsKey)
@@ -872,7 +901,6 @@ mutable struct ServerState
     const currently_registered::CurrentlyRegistered
     const config_manager::ConfigManager
     const completion_resolver_info::CompletionResolverInfo
-    const suppress_notifications::Bool
     # When true, skip workspace-boundary guards intended for the LSP flow.
     # Files in CLI mode are explicitly named on the command line, so the
     # `state.root_path`-based "is this file inside the workspace?" check in
@@ -886,7 +914,7 @@ mutable struct ServerState
     root_path::String
     root_env_path::String
     init_params::InitializeParams
-    function ServerState(; suppress_notifications::Bool=false, cli_mode::Bool=false)
+    function ServerState(; cli_mode::Bool=false)
         return new(
             #=file_cache=# FileCache(),
             #=saved_file_cache=# SavedFileCache(),
@@ -905,7 +933,6 @@ mutable struct ServerState
             #=currently_registered=# CurrentlyRegistered(),
             #=config_manager=# ConfigManager(),
             #=completion_resolver_info=# CompletionResolverInfo(nothing),
-            suppress_notifications,
             cli_mode,
             #=encoding=# PositionEncodingKind.UTF16, # initialize with UTF16 (for tests)
             #=init_options=# DEFAULT_INIT_OPTIONS, # initialize with defaults
@@ -913,21 +940,33 @@ mutable struct ServerState
     end
 end
 
-struct Server{Callback}
-    endpoint::Endpoint
-    callback::Callback
-    state::ServerState
-    message_queue::Channel{Any}
-    function Server(
-            callback::Callback, endpoint::Endpoint;
-            suppress_notifications::Bool=false, cli_mode::Bool=false
-        ) where Callback
-        return new{Callback}(
-            endpoint,
-            callback,
-            ServerState(; suppress_notifications, cli_mode),
-            Channel{Any}(Inf))
+struct ServerMessageRecorder
+    received_queue::Channel{Any}
+    sent_queue::Channel{Any}
+end
+function (callback::ServerMessageRecorder)(s::Symbol, @nospecialize(msg))
+    if s === :received
+        put!(callback.received_queue, msg)
+    elseif s === :sent
+        put!(callback.sent_queue, msg)
     end
 end
-Server(; suppress_notifications::Bool=true, cli_mode::Bool=false) = # used for tests
-    Server(Returns(nothing), Endpoint(IOBuffer(), IOBuffer()); suppress_notifications, cli_mode)
+
+struct Server
+    endpoint::Endpoint
+    state::ServerState
+    message_queue::Channel{Any}
+    callback::Union{Nothing,ServerMessageRecorder}
+    function Server(
+            endpoint::Endpoint;
+            cli_mode::Bool = false,
+            callback::Union{Nothing,ServerMessageRecorder} = nothing
+        )
+        return new(
+            endpoint,
+            ServerState(; cli_mode),
+            Channel{Any}(Inf),
+            callback)
+    end
+end
+Server(; kwargs...) = Server(Endpoint(IOBuffer(), IOBuffer()); kwargs...) # used by tests

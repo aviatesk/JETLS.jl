@@ -15,7 +15,7 @@
 #     `loading.jl`), so module-of-evaluation can't identify it. Here we hope
 #     that the top-level filename follows convention and matches the module.
 #
-# We pass `Base.__toplevel__` through to `parse_source` unchanged. `ExprSplitter`
+# We pass `Base.__toplevel__` through to `parse_and_maybe_eval_source` unchanged. `ExprSplitter`
 # has a dedicated `loaded_modules` fallback for that case which resolves
 # `module PkgName ... end` to the real loaded module even when `PkgName` is not
 # a direct dep of the active project. Rewriting to `Main` here would skip that
@@ -28,10 +28,10 @@ function queue_includes!(pkgdata::PkgData, id::PkgId)
             mod, fname = included_files[i]
             modname = String(Symbol(mod))
             if startswith(modname, modstring) || endswith(fname, modstring*".jl")
-                mod_exs_infos = parse_source(fname, mod)
-                if mod_exs_infos !== nothing
+                pr = parse_and_maybe_eval_source(fname, mod)
+                if pr.success
                     fname = relpath(fname, pkgdata)
-                    push!(pkgdata, fname=>FileInfo(mod_exs_infos))
+                    push!(pkgdata, fname=>FileInfo(pr.modexinfos))
                 end
                 push!(delids, i)
             end
@@ -75,8 +75,9 @@ function remove_from_included_files(modsym::Symbol)
     end
 end
 
-function read_from_cache(pkgdata::PkgData, file::AbstractString)
-    fi = fileinfo(pkgdata, file)
+read_from_cache(pkgdata::PkgData, file::AbstractString) =
+    read_from_cache(pkgdata, file, fileinfo(pkgdata, file))
+function read_from_cache(pkgdata::PkgData, file::AbstractString, fi::FileInfo)
     filep = joinpath(basedir(pkgdata), file)
     if fi.cachefile == basesrccache
         # Get the original path
@@ -96,18 +97,20 @@ function maybe_parse_from_cache!(pkgdata::PkgData, file::AbstractString)
     if startswith(file, "REPL[")
         return add_definitions_from_repl(file)
     end
-    fi = fileinfo(pkgdata, file)
+    return maybe_parse_from_cache!(pkgdata, file, fileinfo(pkgdata, file))
+end
+function maybe_parse_from_cache!(pkgdata::PkgData, file::AbstractString, fi::FileInfo)
     if (isempty(fi.mod_exs_infos) && !fi.parsed[]) && (!isempty(fi.cachefile) || !isempty(fi.cacheexprs))
         # Source was never parsed, get it from the precompile cache
-        src = read_from_cache(pkgdata, file)
+        src = read_from_cache(pkgdata, file, fi)
         filep = joinpath(basedir(pkgdata), file)
         filec = get(cache_file_key, filep, filep)
         topmod = first(keys(fi.mod_exs_infos))
-        ret = parse_source!(fi.mod_exs_infos, src, filec, topmod)
-        if ret === nothing
+        pr = parse_and_maybe_eval_source!(fi.mod_exs_infos, src, filec, topmod)
+        if !pr.success
             @error "failed to parse cache file source text for $file"
         end
-        if ret !== DoNotParse()
+        if !pr.donotparse
             add_modexs!(fi, fi.cacheexprs)
             empty!(fi.cacheexprs)
         end
@@ -207,10 +210,11 @@ function maybe_add_includes_to_pkgdata!(pkgdata::PkgData, file::AbstractString, 
             # Parse the source of the new file
             fullfile = joinpath(basedir(pkgdata), incrp)
             if isfile(fullfile)
-                parse_source!(fi.mod_exs_infos, fullfile, mod)
+                parse_and_maybe_eval_source!(fi.mod_exs_infos, fullfile, mod)
                 if eval_now
-                    # Use runtime dispatch to reduce latency
-                    Base.invokelatest(instantiate_sigs!, fi.mod_exs_infos; mode=:eval)
+                    # Pin to Revise's frozen world (issue #552); `frozen`'s runtime dispatch
+                    # also reduces latency.
+                    frozen(instantiate_sigs!, fi.mod_exs_infos; mode=:eval)
                 end
             end
             # Add to watchlist
@@ -297,7 +301,7 @@ function add_require(sourcefile::String, modcaller::Module, idmod::String, ::Str
             end
         end
         if complex
-            Base.invokelatest(eval_require_now, pkgdata, fileidx, filekey, sourcefile, modcaller, expr)
+            frozen(eval_require_now, pkgdata, fileidx, filekey, sourcefile, modcaller, expr)
         end
     end
 end
@@ -477,9 +481,8 @@ function watch_package(id::PkgId)
     # we may have switched environments, so make sure we're watching the right manifest
     active_project_watcher()
 
-    local pkgdata   # declared here so it outlives the `try` scope that `@lock` introduces
-    @lock revise_lock begin
-        pkgdata = get(pkgdatas, id, nothing)
+    return @lock revise_lock begin
+        local pkgdata = get(pkgdatas, id, nothing)
         pkgdata !== nothing && return pkgdata
         modsym = Symbol(id.name)
         if modsym ∈ dont_watch_pkgs
@@ -494,8 +497,8 @@ function watch_package(id::PkgId)
             init_watching(pkgdata, srcfiles(pkgdata))
         end
         pkgdatas[id] = pkgdata
+        pkgdata
     end
-    return pkgdata
 end
 
 function has_writable_paths(pkgdata::PkgData)
@@ -632,7 +635,7 @@ function switch_basepath(pkgdata::PkgData, newpath::String)
                 filep = joinpath(basedir(pkgdata), file)
                 src = read(filep, String)
                 topmod = first(keys(fi.mod_exs_infos))
-                if parse_source!(fi.mod_exs_infos, src, filep, topmod) === nothing
+                if !parse_and_maybe_eval_source!(fi.mod_exs_infos, src, filep, topmod).success
                     @error "failed to parse source text for $filep"
                 end
                 add_modexs!(fi, fi.cacheexprs)
