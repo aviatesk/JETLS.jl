@@ -30,24 +30,38 @@ function old_methods_with(oldtypename::Core.TypeName)
     return meths[]
 end
 
-function collect_all_subtypes(@nospecialize(parent_typ::Type))
-    return _foreach_subtype!(Returns(nothing), parent_typ, Base.IdSet{Type}())
-end
-
-function foreach_subtype(f::Function, @nospecialize(parent_typ::Type))
-    _foreach_subtype!(f, parent_typ, Base.IdSet{Type}())
-    return nothing
-end
-
-function _foreach_subtype!(f::Function, @nospecialize(parent_typ::Type), types::Base.IdSet{Type})
-    # TODO: for Ty in InteractiveUtils.subtypes(parent_typ; max_world=Base.tls_world_age())
-    for Ty in InteractiveUtils.subtypes(parent_typ)
-        if Ty in types
-            continue
-        else
-            f(Ty)
-            push!(types, Ty)
-            _foreach_subtype!(f, Ty, types)
+# Every type reachable as `subtypes(Any)` recursively is the
+# canonical binding of some name in some loaded module. Enumerate them in a
+# single pass over module bindings, rather than issuing one `subtypes` query per
+# type: `subtypes(T)` rescans every loaded module's names on each call, so the
+# recursive walk costs one full system-wide name scan per abstract parent
+# (O(#abstract-types × #names)), whereas one binding sweep is O(#names).
+function all_named_types(world::UInt=Base.get_world_counter())
+    types = Base.IdSet{Type}()
+    seen = Base.IdSet{Module}()
+    work = Base.loaded_modules_array()
+    while !isempty(work)
+        m = pop!(work)
+        m in seen && continue
+        push!(seen, m)
+        # `unsorted_names` skips the per-module name sort that `names` does; since
+        #  the result is an unordered set, order is irrelevant here.
+        for s in Base.unsorted_names(m; all=true)
+            # Read bindings at `world` (the revision's pre-deletion snapshot). With Revise's own
+            # dispatch pinned to its frozen init world (issue #552), a plain access would miss or
+            # stale-read types defined or redefined after Revise initialized.
+            (!Base.isdeprecated(m, s) && Base.invoke_in_world(world, isdefinedglobal, m, s)) || continue
+            t = Base.invoke_in_world(world, getglobal, m, s)
+            if t isa Type
+                dt = Base.unwrap_unionall(t)
+                # Keep only the canonical binding (a type's home module/name)
+                # so re-exports and imports don't enter the set more than once.
+                if dt isa DataType && dt.name.name === s && dt.name.module === m && t !== Any
+                    push!(types, t)
+                end
+            elseif t isa Module && nameof(t) === s && parentmodule(t) === m && t !== m && t !== Base
+                push!(work, t)
+            end
         end
     end
     return types
@@ -140,6 +154,8 @@ function is_with_oldtypename(@nospecialize(typlike), oldtypename::Core.TypeName)
         return is_with_oldtypename(typeeq_parameter(typlike), oldtypename)
     elseif typlike isa UnionAll
         return is_with_oldtypename(typlike.body, oldtypename)
+    elseif typlike isa Union
+        return is_with_oldtypename(typlike.a, oldtypename) || is_with_oldtypename(typlike.b, oldtypename)
     elseif typlike isa TypeVar
         return is_with_oldtypename(typlike.lb, oldtypename) || is_with_oldtypename(typlike.ub, oldtypename)
     end

@@ -20,6 +20,24 @@ function maybe_recurse_expanded_builtin(interp::Interpreter, frame::Frame, new_e
     end
 end
 
+# Evaluate the target of an expanded `invokelatest`/`_call_latest` in the latest world, so that
+# bindings, methods, and types defined since the enclosing frame's world are visible.
+function recurse_expanded_builtin_latest(interp::Interpreter, frame::Frame, new_expr::Expr)
+    world = Base.get_world_counter()
+    oldworld = frame.world
+    frame.world = world
+    try
+        f = new_expr.args[1]
+        if supertype(typeof(f)) === Core.Builtin || isa(f, Core.IntrinsicFunction)
+            return invoke_in_world(world, maybe_evaluate_builtin, interp, frame, new_expr, true)
+        end
+        fargs = collect_args(interp, frame, new_expr)
+        return Some{Any}(invoke_in_world(world, evaluate_call!, interp, frame, fargs, false))
+    finally
+        frame.world = oldworld
+    end
+end
+
 """
     ret = maybe_evaluate_builtin(interp::Interpreter, frame::Frame, call_expr::Expr, expand::Bool)
 
@@ -70,14 +88,14 @@ function maybe_evaluate_builtin(interp::Interpreter, frame::Frame, call_expr::Ex
     elseif f === Core._apply_iterate
         argswrapped = getargs(interp, args, frame)
         if !expand
-            return Some{Any}(Core._apply_iterate(argswrapped...))
+            return Some{Any}(invoke_in_world(frame.world, Core._apply_iterate, argswrapped...))
         end
         aw1 = argswrapped[1]::Function
         @assert aw1 === Core.iterate || aw1 === Core.Compiler.iterate || aw1 === Base.iterate "cannot handle `_apply_iterate` with non iterate as first argument, got $(aw1), $(typeof(aw1))"
         new_expr = Expr(:call, argswrapped[2])
         popfirst!(argswrapped) # pop the iterate
         popfirst!(argswrapped) # pop the function
-        argsflat = append_any(argswrapped...)
+        argsflat = invoke_in_world(frame.world, append_any, argswrapped...)
         for x in argsflat
             push!(new_expr.args, QuoteNode(x))
         end
@@ -264,11 +282,11 @@ function maybe_evaluate_builtin(interp::Interpreter, frame::Frame, call_expr::Ex
         end
     elseif f === getglobal
         if nargs == 2
-            return Some{Any}(getglobal(lookup(interp, frame, args[2]), lookup(interp, frame, args[3])))
+            return Some{Any}(Base.invoke_in_world(frame.world, getglobal, lookup(interp, frame, args[2]), lookup(interp, frame, args[3])))
         elseif nargs == 3
-            return Some{Any}(getglobal(lookup(interp, frame, args[2]), lookup(interp, frame, args[3]), lookup(interp, frame, args[4])))
+            return Some{Any}(Base.invoke_in_world(frame.world, getglobal, lookup(interp, frame, args[2]), lookup(interp, frame, args[3]), lookup(interp, frame, args[4])))
         else
-            return Some{Any}(getglobal(getargs(interp, args, frame)...))
+            return Some{Any}(Base.invoke_in_world(frame.world, getglobal, getargs(interp, args, frame)...))
         end
     elseif f === invoke
         if !expand
@@ -288,7 +306,7 @@ function maybe_evaluate_builtin(interp::Interpreter, frame::Frame, call_expr::Ex
         for x in args
             push!(new_expr.args, QuoteNode(x))
         end
-        return maybe_recurse_expanded_builtin(interp, frame, new_expr)
+        return recurse_expanded_builtin_latest(interp, frame, new_expr)
 
     elseif f === isa
         if nargs == 2
@@ -305,7 +323,7 @@ function maybe_evaluate_builtin(interp::Interpreter, frame::Frame, call_expr::Ex
             return Some{Any}(isdefined(getargs(interp, args, frame)...))
         end
     elseif @static isdefinedglobal(Core, :isdefinedglobal) && f === isdefinedglobal
-        return Some{Any}(isdefinedglobal(getargs(interp, args, frame)...))
+        return Some{Any}(Base.invoke_in_world(frame.world, isdefinedglobal, getargs(interp, args, frame)...))
     elseif f === modifyfield!
         if nargs == 4
             return Some{Any}(modifyfield!(lookup(interp, frame, args[2]), lookup(interp, frame, args[3]), lookup(interp, frame, args[4]), lookup(interp, frame, args[5])))
@@ -532,7 +550,7 @@ function maybe_evaluate_builtin(interp::Interpreter, frame::Frame, call_expr::Ex
         for x in args
             push!(new_expr.args, QuoteNode(x))
         end
-        return maybe_recurse_expanded_builtin(interp, frame, new_expr)
+        return recurse_expanded_builtin_latest(interp, frame, new_expr)
 
     elseif f === Core.Intrinsics.llvmcall
         return Some{Any}(Core.Intrinsics.llvmcall(getargs(interp, args, frame)...))

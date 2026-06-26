@@ -17,7 +17,10 @@ function filepredicate(file, reffiles)
     return reljpath(bfile) ∈ reffiles
 end
 function signature_diffs(mod::Module, signatures; filepredicate=nothing)
-    extras = copy(signatures)
+    # `signatures` (CodeTracking.method_info) is keyed by `MethodInfoKey(mt, sig)`;
+    # compare against the signature types it records.
+    sigkeys = Set(k.sig for k in keys(signatures))
+    extras = copy(sigkeys)
     modeval, modinclude = getfield(mod, :eval), getfield(mod, :include)
     failed = []
     nmethods = 0
@@ -28,7 +31,7 @@ function signature_diffs(mod::Module, signatures; filepredicate=nothing)
         (f === modeval || f === modinclude) && continue
         for m in methods(f)
             nmethods += 1
-            if haskey(signatures, m.sig)
+            if m.sig in sigkeys
                 delete!(extras, m.sig)
             else
                 if filepredicate !== nothing
@@ -99,7 +102,7 @@ try # Suppress world age increments, since the instantiation messes with base
         Base.VERSION < v"1.7" && Sys.iswindows() && endswith(file, "RNGs.jl") && continue  # invalid redefinition of constant RandomDevice
         file = Revise.fixpath(file)
         push!(basefiles, reljpath(file))
-        mexs = Revise.parse_source(file, mod)
+        mexs = Revise.parse_and_maybe_eval_source(file, mod).modexinfos
         Revise.instantiate_sigs!(mexs; always_rethrow=true)
     end
     failed, extras, nmethods = signature_diffs(Base, CodeTracking.method_info; filepredicate = fn->filepredicate(fn, basefiles))

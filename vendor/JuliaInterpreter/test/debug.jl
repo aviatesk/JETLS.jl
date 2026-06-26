@@ -1,4 +1,4 @@
-using CodeTracking, JuliaInterpreter, Test
+using CodeTracking, JuliaInterpreter, Test, InteractiveUtils
 using JuliaInterpreter: enter_call, enter_call_expr, get_return
 using Base.Meta: isexpr
 include("utils.jl")
@@ -410,14 +410,31 @@ end
 
     @testset "Issue #178" begin
         remove()
+        # A breakpoint inside a callee, resumed with `:c`, must restore the caller's
+        # slots. The breakpoint target is called exactly once so that `:c` runs to
+        # completion. Local functions are used rather than `length`/`sum`: Base's
+        # reductions route through `length(::AbstractArray)` on some versions, which
+        # would hit a `length` breakpoint more than once and leave one set for later
+        # tests.
+        inner178(v) = length(v)
+        function outer178(v)
+            n = inner178(v)
+            s = 0
+            for x in v
+                s += x
+            end
+            return s + n
+        end
         a = [1, 2, 3, 4]
-        @breakpoint length(LinearIndices(a))
-        frame, bp = @interpret sum(a)
+        @breakpoint inner178(a)
+        frame, bp = @interpret outer178(a)
         @test debug_command(frame, :c) === nothing
-        @test get_return(frame) == sum(a)
+        @test get_return(frame) == outer178(a)
+        remove()
     end
 
     @testset "Stepping over kwfunc preparation" begin
+        remove()
         stepkw! = JuliaInterpreter.maybe_step_through_kwprep! # for brevity
         a = [4, 1, 3, 2]
         reversesort(x) = sort(x; rev=true)

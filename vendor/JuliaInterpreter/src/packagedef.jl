@@ -1,14 +1,14 @@
 using Base.Meta
-import Base: +, -, convert, isless, get_world_counter, mapany, ntupleany, invokelatest
-using Core: CodeInfo, SimpleVector, LineInfoNode, GotoNode, GotoIfNot, ReturnNode,
+using Base: mapany, ntupleany, invokelatest, invoke_in_world
+using Core: CodeInfo, SimpleVector, GotoNode, GotoIfNot, ReturnNode,
             GeneratedFunctionStub, MethodInstance, MethodTable, NewvarNode, TypeName
 
-using UUIDs
-using Random
+using UUIDs: UUIDs
+using Random: Random
 # The following are for circumventing #28, memcpy invalid instruction error,
 # in Base and stdlib
-using Random.DSFMT
-using InteractiveUtils
+using Random.DSFMT: DSFMT
+using InteractiveUtils: InteractiveUtils, subtypes
 
 export BreakpointRef, Compiled, ExprSplitter, Frame,
        Interpreter, NonRecursiveInterpreter, RecursiveInterpreter

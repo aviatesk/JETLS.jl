@@ -61,15 +61,45 @@ end
 #     path re-watches a single file after each revision and, unlike the
 #     buffered per-directory watcher, has neither an event queue nor a content
 #     hash to recover a write that lands while it is between watches.
-function yry()
-    timedwait(() -> !isempty(Revise.revision_queue), event_timeout; pollint=0.02)
+#
+# `expect_revision=true` (the default) means a write should already have been
+# queued: hitting `event_timeout` then signals a dropped/late filesystem event,
+# the usual cause of "revision not applied" CI flakes, so we warn. Tests that
+# legitimately expect no revision pass `expect_revision=false` to take the
+# timeout silently.
+function yry(; expect_revision::Bool=true)
+    status = timedwait(() -> !isempty(Revise.revision_queue), event_timeout; pollint=0.02)
+    if expect_revision && status === :timed_out
+        @warn "yry: timed out after $(event_timeout)s waiting for revision_queue; a filesystem event was likely dropped or delayed"
+    end
     sleep(0.02)
     revise()
+    # Drain to quiescence. The watcher can deliver a just-written edit's event
+    # *after* this first revise (notably under macOS FSEvents latency): the first
+    # revise then drains some earlier/stale queue entry while the edit we are
+    # waiting for is still in flight, so a single revise would leave it unapplied
+    # until a later `yry`. Keep revising as long as each pass clears something,
+    # absorbing such stragglers within this call. Two stop conditions keep this
+    # bounded: skip entirely once a revision errors (an errored file stays queued
+    # for retry, and re-revising it would re-log and perturb error-reporting
+    # tests), and stop on any pass that makes no progress (a missing file within
+    # `missing_file_grace` is re-queued each pass, so the queue need not empty).
+    if expect_revision
+        for _ in 1:50   # hard cap; the conditions below are the normal exits
+            isempty(Revise.queue_errors) || break
+            timedwait(() -> !isempty(Revise.revision_queue), mtimedelay; pollint=0.02) === :ok || break
+            n = length(Revise.revision_queue)
+            revise()
+            length(Revise.revision_queue) < n || break
+        end
+    end
     Revise.watching_files[] && sleep(mtimedelay)
 end
-macro yry()
+macro yry(args...)
+    # Forward `@yry(expect_revision=false)` as a keyword argument, not a positional one.
+    kws = [a isa Expr && a.head === :(=) ? Expr(:kw, a.args[1], a.args[2]) : a for a in args]
     esc(quote
-        yry()
+        yry($(kws...))
         @latestworld
     end)
 end
@@ -80,6 +110,20 @@ function collectexprs(rex::Revise.RelocatableExpr)
         push!(items, isa(item, Expr) ? Revise.RelocatableExpr(item) : item)
     end
     items
+end
+
+# Test helpers, *not* Revise functions: each wraps `Revise.parse_and_maybe_eval_source[!]`, asserts
+# the parse succeeded, and returns the resulting `ModuleExprsInfos`. Sharing one terse name keeps the
+# many call sites readable and localizes the `ParseResult` unwrapping to this one spot.
+function parse_source(file::AbstractString, mod::Module; kwargs...)
+    pr = Revise.parse_and_maybe_eval_source(file, mod; kwargs...)
+    pr.success || error("parsing $file produced no usable expressions")
+    return pr.modexinfos
+end
+function parse_source!(mexs::Revise.ModuleExprsInfos, args...; kwargs...)
+    pr = Revise.parse_and_maybe_eval_source!(mexs, args...; kwargs...)
+    pr.success || error("parsing produced no usable expressions")
+    return pr.modexinfos
 end
 
 function get_docstring(obj)

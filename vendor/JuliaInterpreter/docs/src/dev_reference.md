@@ -1,5 +1,9 @@
 # Function reference
 
+```@docs
+JuliaInterpreter.JuliaInterpreter
+```
+
 ## Running the interpreter
 
 ```@docs
@@ -21,6 +25,7 @@ JuliaInterpreter.method_table
 ```@docs
 Frame(mod::Module, ex::Expr)
 ExprSplitter
+JuliaInterpreter.find_or_create_module
 JuliaInterpreter.enter_call
 JuliaInterpreter.enter_call_expr
 JuliaInterpreter.prepare_frame
@@ -45,6 +50,7 @@ JuliaInterpreter.step_expr!
 JuliaInterpreter.finish!
 JuliaInterpreter.finish_and_return!
 JuliaInterpreter.finish_stack!
+JuliaInterpreter.finish_latestworld!
 JuliaInterpreter.get_return
 JuliaInterpreter.next_until!
 JuliaInterpreter.maybe_next_until!
@@ -102,6 +108,8 @@ JuliaInterpreter.genframedict
 JuliaInterpreter.compiled_methods
 JuliaInterpreter.compiled_modules
 JuliaInterpreter.interpreted_methods
+JuliaInterpreter.framecode_valid_world
+JuliaInterpreter.clear_caches
 ```
 
 ## Utilities

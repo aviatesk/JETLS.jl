@@ -30,6 +30,7 @@ Revise.watched_files
 Revise.revision_queue
 Revise.NOPACKAGE
 Revise.queue_errors
+Revise.duplicated_signatures
 Revise.included_files
 Revise.watched_manifests
 ```
@@ -98,6 +99,13 @@ Revise.remove_callback
 Revise.revise_file_now
 ```
 
+Revise pins its own method dispatch to the world age captured at initialization, so that
+revising a method Revise itself uses cannot disrupt its machinery mid-operation.
+
+```@docs
+Revise.advance_world!
+```
+
 ### Caching the definition of methods
 
 ```@docs
@@ -107,8 +115,9 @@ Revise.get_def
 ### Parsing source code
 
 ```@docs
-Revise.parse_source
-Revise.parse_source!
+Revise.parse_and_maybe_eval_source
+Revise.parse_and_maybe_eval_source!
+Revise.ParseResult
 ```
 
 ### Lowered source code
@@ -117,6 +126,7 @@ Much of the "brains" of Revise comes from doing analysis on lowered code.
 This part of the package is not as well documented.
 
 ```@docs
+Revise.gensym_base
 Revise.minimal_evaluation!
 Revise.methods_by_execution!
 Revise.ExInfo

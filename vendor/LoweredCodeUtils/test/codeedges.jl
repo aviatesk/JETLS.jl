@@ -223,13 +223,56 @@ module ModSelective end
     @test ModSelective.k11 == 0
     @test 3 <= ModSelective.s11 <= 15
 
+    # Final block is not a `return`: Need to use `controller::SelectiveEvalController` explicitly
+    ex = quote
+        x = 1
+        yy = 7
+        @label loop
+        x += 1
+        x < 5 || return yy
+        @goto loop
+    end
+    frame = Frame(ModSelective, ex)
+    src = frame.framecode.src
+    edges = CodeEdges(ModSelective, src)
+    controller = SelectiveEvalController()
+    isrequired = lines_required(GlobalRef(ModSelective, :x), src, edges, controller)
+    selective_eval_fromstart!(
+        LoweredCodeUtils.RecursiveInterpreter(), frame, isrequired, controller, true)
+    @test ModSelective.x == 5
+    @test !isdefined(ModSelective, :yy)
+
+    # Inactive statements at the beginning of a terminal block shouldn't terminate
+    # selective evaluation before later required statements in the same block.
+    let mod = Module(:ModTerminationPointAfterRequired)
+        Core.eval(mod, :(hits = Int[]))
+        ex = quote
+            if Base.inferencebarrier(true)
+                branch_value = 1
+            end
+            push!(hits, 1) # should not be called
+            push!(hits, 2)
+        end
+        frame = Frame(mod, ex)
+        src = frame.framecode.src
+        edges = CodeEdges(mod, src)
+        controller = SelectiveEvalController()
+        isrequired = fill(false, length(src.code))
+        targetidx = findlast(stmt -> Meta.isexpr(stmt, :call), src.code) # the second push!
+        isrequired[targetidx] = true
+        lines_required!(isrequired, (GlobalRef(mod, :branch_value),), src, edges, controller)
+        selective_eval_fromstart!(
+            LoweredCodeUtils.RecursiveInterpreter(), frame, isrequired, controller, true)
+        @test @invokelatest(mod.branch_value) == 1
+        @test @invokelatest(mod.hits) == [2]
+    end
+
     # Control-flow in an abstract type definition
     ex = :(abstract type StructParent{T, N} <: AbstractArray{T, N} end)
     frame = Frame(ModSelective, ex)
     src = frame.framecode.src
     edges = CodeEdges(ModSelective, src)
     # Check that the StructParent name is discovered everywhere it is used
-    var = edges.byname[GlobalRef(ModSelective, :StructParent)]
     isrequired = minimal_evaluation(hastrackedexpr, src, edges)
     selective_eval_fromstart!(frame, isrequired, #=istoplevel=#true)
     @test supertype(ModSelective.StructParent) === AbstractArray

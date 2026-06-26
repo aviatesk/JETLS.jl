@@ -18,8 +18,8 @@ Register a two-argument function to be called after any update to the set of all
 breakpoints. This includes their creation, deletion, enabling and disabling.
 
 The function `f` should take two inputs:
- - First argument is the function doing to update, this is provided to allow to dispatch
-   on its type. It will be one:
+ - First argument is the function performing the update, provided to allow dispatch
+   on its type. It will be one of:
    -  `::typeof(breakpoint)` for the creation,
    -  `::typeof(remove)` for the deletion.
    -  `::typeof(update_states)` for disable/enable/toggleing
@@ -109,14 +109,17 @@ end
 """
     breakpoint(f, [sig], [line], [condition])
 
-Add a breakpoint to `f` with the specified argument types `sig`.¨
+Add a breakpoint to `f` with the specified argument types `sig`.
 If `sig` is not given, the breakpoint will apply to all methods of `f`.
 If `f` is a method, the breakpoint will only apply to that method.
 Optionally specify an absolute line number `line` in the source file; the default
 is to break upon entry at the first line of the body.
-Without `condition`, the breakpoint will be triggered every time it is encountered;
-the second only if `condition` evaluates to `true`.
+Without `condition`, the breakpoint triggers every time it is encountered;
+with `condition`, it triggers only when `condition` evaluates to `true`.
 `condition` should be written in terms of the arguments and local variables of `f`.
+
+Returns a `BreakpointSignature` (a subtype of `AbstractBreakpoint`) that can be
+passed to [`enable`](@ref), [`disable`](@ref), [`remove`](@ref), and [`toggle`](@ref).
 
 # Example
 ```julia
@@ -156,7 +159,10 @@ breakpoint(f::Union{Method, Callable}, condition::Condition) = breakpoint(f, not
 Set a breakpoint in `file` at `line`. The argument `file` can be a filename, a partial path or absolute path.
 For example, `file = foo.jl` will match against all files with the name `foo.jl`,
 `file = src/foo.jl` will match against all paths containing `src/foo.jl`, e.g. both `Foo/src/foo.jl` and `Bar/src/foo.jl`.
-Absolute paths only matches against the file with that exact absolute path.
+Absolute paths only match against the file with that exact absolute path.
+
+Returns a `BreakpointFileLocation` (a subtype of `AbstractBreakpoint`) that can be
+passed to [`enable`](@ref), [`disable`](@ref), [`remove`](@ref), and [`toggle`](@ref).
 """
 function breakpoint(file::AbstractString, line::Integer, condition::Condition=nothing)
     file = normpath(file)
@@ -434,7 +440,25 @@ const __BREAK_POINT_MARKER__ = BreakPointMarker()
 """
     @bp
 
-Insert a breakpoint at a location in the source code.
+Insert a breakpoint at a specific line in the source code by placing this macro
+directly in the function body. When the function is executed under the
+interpreter (e.g., via [`@interpret`](@ref) or a debugger), execution pauses at
+the `@bp` line.
+
+# Example
+
+```jldoctest
+julia> function f_with_bp(x)
+           @bp
+           return 2x
+       end
+f_with_bp (generic function with 1 method)
+
+julia> frame, bp = @interpret f_with_bp(3);
+
+julia> bp isa BreakpointRef
+true
+```
 """
 macro bp()
     return :(__BREAK_POINT_MARKER__)

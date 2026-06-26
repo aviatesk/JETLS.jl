@@ -17,10 +17,10 @@ jobs:
           - version: '1' # current stable
             os: ubuntu-latest
             arch: x64
-          - version: '1.10' # lowest version supported
+          - version: 'min' # lowest version supported
             os: ubuntu-latest
             arch: x64
-          - version: '1.12-nightly' # next release
+          - version: 'pre' # upcoming release, or duplicate of '1'
             os: ubuntu-latest
             arch: x64
           - version: 'nightly' # dev
@@ -35,14 +35,14 @@ jobs:
           - version: '1' # x64 windows
             os: windows-latest
             arch: x64
-          - version: '1' # x64 macOS
+          - version: '1' # aarch64 macOS (Apple Silicon)
             os: macos-latest
-            arch: x64
+            arch: aarch64
     env:
       PYTHON: ""
     steps:
       - uses: actions/checkout@v6
-      - uses: julia-actions/setup-julia@v2
+      - uses: julia-actions/setup-julia@v3
         with:
           version: ${{ matrix.version }}
           arch: ${{ matrix.arch }}
@@ -59,6 +59,7 @@ jobs:
       - uses: julia-actions/julia-buildpkg@v1
       - uses: julia-actions/julia-runtest@v1
       - uses: julia-actions/julia-processcoverage@v1
-      - uses: codecov/codecov-action@v5
+      - uses: codecov/codecov-action@v6
         with:
-          file: lcov.info
+          files: lcov.info
+          token: ${{ secrets.CODECOV_TOKEN }}

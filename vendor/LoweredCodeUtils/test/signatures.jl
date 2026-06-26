@@ -26,6 +26,25 @@ module Lowering706
 ran = Ref(0)
 end
 
+# Stuff for testing signature resolution when the calling task runs in an older world age
+# than the one the method was defined in (Revise drives signature extraction pinned to its
+# frozen `__init__` world via `invoke_in_world`; see Revise issue #552).
+module LoweringWorldAge
+function fworld end   # forward-declare the binding so it predates the world snapshot taken in the test
+end
+
+# Extract signatures from `ex`. Both this and `extract_signatures_in_world` are defined at top
+# level (not as closures at the call site) so they predate the world snapshot taken in the test
+# and are reachable by `invoke_in_world`.
+function collect_signatures(mod::Module, ex::Expr)
+    frame = Frame(mod, ex)
+    sigs = MethodInfoKey[]
+    methoddefs!(sigs, frame; define=false)
+    return sigs
+end
+extract_signatures_in_world(mod::Module, ex::Expr, w::UInt) =
+    Base.invoke_in_world(w, collect_signatures, mod, ex)
+
 bodymethtest0(x) = 0
 function bodymethtest0(x)
     y = 2x
@@ -185,6 +204,16 @@ bodymethtest5(x, y=Dict(1=>2)) = 5
     ret = methoddef!(empty!(signatures), frame; define=false)
     @test ret === nothing
     @test Lowering706.ran[] == 0
+
+    # Signature resolution must use the latest committed world, not the calling task's
+    # world: a method may live in a newer world than the task driving extraction (Revise
+    # revises pinned to its frozen `__init__` world via `invoke_in_world`; see Revise #552).
+    wld = Base.get_world_counter()
+    Core.eval(LoweringWorldAge, :(fworld(x::Int) = 1))   # define the method in a newer world
+    @test Base.get_world_counter() > wld
+    sigs_world = extract_signatures_in_world(LoweringWorldAge, :(fworld(x::Int) = 1), wld)
+    @test length(sigs_world) == 1
+    @test only(sigs_world) == MethodInfoKey(nothing, which(LoweringWorldAge.fworld, Tuple{Int}).sig)
 
     # Anonymous functions in method signatures
     ex = :(max_values(T::Union{map(X -> Type{X}, Base.BitIntegerSmall_types)...}) = 1 << (8*sizeof(T)))  # base/abstractset.jl
@@ -436,9 +465,10 @@ bodymethtest5(x, y=Dict(1=>2)) = 5
     oldenv = Pkg.project().path
     try
         # we test with the old version of CBinding, let's do it in an isolated environment
+        # so we don't cause package conflicts with everything else
         Pkg.activate(; temp=true, io=devnull)
 
-        @info "Adding CBinding to the environment for test purposes"
+        @info "Adding CBinding v0.9.4 to the environment for test purposes"
         Pkg.add(; name="CBinding", version="0.9.4", io=devnull) # `@cstruct` isn't defined for v1.0 and above
 
         m = Module()

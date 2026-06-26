@@ -451,7 +451,9 @@ function get_running_name(interp::Interpreter, frame::Frame, pc::Int, name::Glob
     methinfo, lastpcparent = signature(interp, frame, pctop)
     methinfo === nothing && return name, pc, lastpcparent
     mt, sigtparent = methinfo
-    methparent = whichtt(sigtparent, mt)
+    # Resolve against the live method tables at the latest committed world, not `whichtt`'s
+    # default (caller task) world, which may be older than the world this method was defined in.
+    methparent = whichtt(sigtparent, mt; world=Base.get_world_counter())
     methparent === nothing && return name, pc, lastpcparent  # caller isn't defined, no correction is needed
     if isgen
         cname = GlobalRef(moduleof(frame), nameof(methparent.generator.gen))
@@ -546,12 +548,16 @@ function methoddef!(interp::Interpreter, signatures::Vector{MethodInfoKey}, fram
         pc3 = pc
         arg1 = stmt.args[1]
         (mt, sigt), pc = signature(interp, frame, stmt, pc)
-        meth = whichtt(sigt, mt)
+        # Resolve the signature against the live method tables at the latest committed world.
+        # `whichtt`'s default world is the caller's task world, which is too old here: the method
+        # may have just been defined by `step_expr!` (advancing the world past `frame.world`), and
+        # a caller may be driving this in a task pinned to an older world (e.g. Revise revising).
+        meth = whichtt(sigt, mt; world=Base.get_world_counter())
         if isa(meth, Method) && (meth.sig <: sigt && sigt <: meth.sig)
             pc = define ? step_expr!(interp, frame, stmt, true) : next_or_nothing!(interp, frame)
         elseif define
             pc = step_expr!(interp, frame, stmt, true)
-            meth = whichtt(sigt, mt)
+            meth = whichtt(sigt, mt; world=Base.get_world_counter())
         end
         if isa(meth, Method) && (meth.sig <: sigt && sigt <: meth.sig)
             push!(signatures, MethodInfoKey(mt, meth.sig))
@@ -559,7 +565,7 @@ function methoddef!(interp::Interpreter, signatures::Vector{MethodInfoKey}, fram
             if arg1 === false || arg1 === nothing || isa(mt, MethodTable)
                 # If it's anonymous and not defined, define it
                 pc = step_expr!(interp, frame, stmt, true)
-                meth = whichtt(sigt, mt)
+                meth = whichtt(sigt, mt; world=Base.get_world_counter())
                 isa(meth, Method) && push!(signatures, MethodInfoKey(mt, meth.sig))
                 return pc, pc3
             else
@@ -629,7 +635,7 @@ function methoddef!(interp::Interpreter, signatures::Vector{MethodInfoKey}, fram
         # signature of the active method. So let's get the active signature.
         frame.pc = pc
         pc = define ? step_expr!(interp, frame, stmt, true) : next_or_nothing!(interp, frame)
-        meth = whichtt(sigt, mt)
+        meth = whichtt(sigt, mt; world=Base.get_world_counter())
         isa(meth, Method) && push!(signatures, MethodInfoKey(mt, meth.sig)) # inner methods are not visible
         name === name3 && return pc, pc3     # if this was an inner method we should keep going
         stmt = pc_expr(frame, pc)  # there *should* be more statements in this frame

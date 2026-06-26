@@ -55,6 +55,70 @@ function return_from(frame::Frame)
     return frame
 end
 
+function link_caller_callee!(caller::Frame, callee::Frame)
+    caller.callee = callee
+    callee.caller = caller
+    return callee
+end
+
+"""
+    mod, body = find_or_create_module(parentmod::Module, ex::Expr)
+
+Given a `:module` expression `ex`, return the module it refers to (creating an empty one in
+`parentmod` if it does not yet exist) together with the `:block` of body statements. Handles
+both the 3-arg and 4-arg (syntax-versioned) `:module` forms.
+"""
+function find_or_create_module(parentmod::Module, ex::Expr)
+    @assert ex.head === :module
+    if length(ex.args) == 3
+        (std_imports, newname, modbody) = ex.args[1:3]
+        syntax_version = nothing
+    elseif length(ex.args) == 4
+        (syntax_version, std_imports, newname, modbody) = ex.args[1:4]
+    else
+        error("unexpected :module form with $(length(ex.args)) args")
+    end
+    newname = newname::Symbol
+    if invokelatest(isdefinedglobal, parentmod, newname)
+        mod = invokelatest(getglobal, parentmod, newname)
+        mod isa Module || throw(ErrorException("invalid redefinition of constant $(newname)"))
+    else
+        newnamestr = String(newname)
+        id = Base.identify_package(parentmod, newnamestr)
+        # If we're in a test environment and Julia's internal stdlibs are not a declared dependency
+        # of the package, we might fail to find it. Try really hard to find it.
+        if id === nothing && parentmod === Base.__toplevel__
+            for loaded_id in keys(Base.loaded_modules)
+                if loaded_id.name == newnamestr
+                    id = loaded_id
+                    break
+                end
+            end
+        end
+        if id !== nothing && haskey(Base.loaded_modules, id)
+            mod = Base.root_module(id)::Module
+        else
+            loc = firstline(ex)
+            module_ex = Expr(:module, std_imports, newname, Expr(:block, loc))
+            if syntax_version !== nothing
+                pushfirst!(module_ex.args, syntax_version)
+            end
+            mod = Core.eval(parentmod, module_ex)::Module
+        end
+    end
+    return mod, modbody::Expr
+end
+
+"""
+    JuliaInterpreter.clear_caches()
+
+Empty the internal caches of interpreted code: [`framedict`](@ref), [`genframedict`](@ref),
+the pools of reusable `FrameData`/`Frame` objects, and the per-breakpoint instance lists.
+
+This is not called automatically; framecodes are individually invalidated by world age (see
+[`framecode_valid_world`](@ref)) when their cached state goes stale. `clear_caches` is a
+coarse reset useful during debugging and development of JuliaInterpreter itself.
+"""
 function clear_caches()
     empty!(junk_framedata)
     empty!(framedict)
@@ -89,11 +153,11 @@ end
 
 get_source(meth::Method) = Base.uncompressed_ast(meth)
 
-function get_source(g::GeneratedFunctionStub, source::Method, env)
+function get_source(g::GeneratedFunctionStub, source::Method, env, world::UInt)
     b = @static if VERSION < v"1.12.0-DEV.1968"   # julia #57230
-        g(Base.get_world_counter(), LineNumberNode(Int(source.line), source.file), env..., g.argnames...)
+        g(world, LineNumberNode(Int(source.line), source.file), env..., g.argnames...)
     else
-        g(Base.get_world_counter(), source, env..., g.argnames...)
+        g(world, source, env..., g.argnames...)
     end
     b isa CodeInfo && return b
     return eval(b)
@@ -132,7 +196,7 @@ function prepare_args(@nospecialize(f), allargs, kwargs)
     return f, allargs
 end
 
-function prepare_framecode(method::Method, @nospecialize(argtypes); enter_generated=false)
+function prepare_framecode(method::Method, @nospecialize(argtypes); enter_generated=false, world::UInt=default_world())
     sig = method.sig
     if (method.module ∈ compiled_modules || method ∈ compiled_methods) && !(method ∈ interpreted_methods)
         return Compiled()
@@ -146,17 +210,23 @@ function prepare_framecode(method::Method, @nospecialize(argtypes); enter_genera
     else
         framecode = get(framedict, method, nothing)
     end
+    # A cached `FrameCode` that baked a binding's value (e.g. a library name in a compiled `ccall`
+    # wrapper) is only valid in worlds where the binding still holds that value; if not, drop it
+    # so a fresh one is built and re-cached below.
+    if framecode !== nothing && !framecode_valid_world(framecode, world)
+        framecode = nothing
+    end
     if framecode === nothing
         if is_generated(method) && !enter_generated
             # If we're stepping into a staged function, we need to use
             # the specialization, rather than stepping through the
             # unspecialized method.
-            code = get_staged(Core.Compiler.specialize_method(method, argtypes, lenv))
+            code = get_staged(Core.Compiler.specialize_method(method, argtypes, lenv), world)
             code === nothing && return nothing
             generator = false
         else
             if is_generated(method)
-                code = get_source(method.generator, method, lenv)
+                code = get_source(method.generator, method, lenv, world)
                 generator = true
             else
                 code = get_source(method)
@@ -172,7 +242,7 @@ function prepare_framecode(method::Method, @nospecialize(argtypes); enter_genera
                                hasarg(isidentical(:iolock_begin), code.code)
             return Compiled()
         end
-        framecode = FrameCode(method, code; generator=generator)
+        framecode = FrameCode(method, code; generator=generator, world)
         if is_generated(method) && !enter_generated
             genframedict[(method, argtypes)] = framecode
         else
@@ -182,15 +252,34 @@ function prepare_framecode(method::Method, @nospecialize(argtypes); enter_genera
     return framecode, lenv
 end
 
-function get_framecode(method)
+function get_framecode(method; world::UInt=default_world())
     framecode = get(framedict, method, nothing)
+    if framecode !== nothing && !framecode_valid_world(framecode, world)
+        framecode = nothing
+    end
     if framecode === nothing
         @assert !is_generated(method)
         code = get_source(method)
-        framecode = FrameCode(method, code; generator=false)
+        framecode = FrameCode(method, code; generator=false, world)
         framedict[method] = framecode
     end
     return framecode
+end
+
+"""
+    JuliaInterpreter.framecode_valid_world(framecode, world)
+
+Return `true` if `framecode`'s baked-in binding resolutions are valid in `world`.
+On Julia 1.12+, `optimize!` may bake `const`-global values (e.g. library names for
+`ccall` wrappers) into a `FrameCode`; if any such binding is later redefined, the cached
+`FrameCode` must be rebuilt. `prepare_framecode` and `get_framecode` call this before
+returning a cached entry.
+"""
+function framecode_valid_world(framecode::FrameCode, world::UInt)
+    for p in framecode.world_deps
+        (p.min_world <= world <= p.max_world) || return false
+    end
+    return true
 end
 
 """
@@ -231,6 +320,7 @@ Tuple{typeof(mymethod), Vector{Float64}}
 """
 function prepare_call(@nospecialize(f), allargs;
                       enter_generated::Bool=false,
+                      world::UInt=default_world(),
                       method_table::Union{Nothing,MethodTable}=nothing)
     # Can happen for thunks created by generated functions
     if isa(f, Core.Builtin) || isa(f, Core.IntrinsicFunction)
@@ -249,17 +339,17 @@ function prepare_call(@nospecialize(f), allargs;
             return nothing
         end
     else
-        method = whichtt(argtypes, method_table)
+        method = whichtt(argtypes, method_table; world)
     end
     if method === nothing
         # Call it to generate the exact error
-        return f(allargs[2:end]...)
+        return invoke_in_world(world, f, allargs[2:end]...)
     end
-    ret = prepare_framecode(method, argtypes; enter_generated)
+    ret = prepare_framecode(method, argtypes; enter_generated, world)
     # Exceptional returns
     if ret === nothing
         # The generator threw an error. Let's generate the same error by calling it.
-        return f(allargs[2:end]...)
+        return invoke_in_world(world, f, allargs[2:end]...)
     end
     isa(ret, Compiled) && return ret, argtypes
     # Typical return
@@ -338,14 +428,14 @@ end
 Construct a new `Frame` for `framecode`, given lowered-code arguments `frameargs` and
 static parameters `lenv`. See [`JuliaInterpreter.prepare_call`](@ref) for information about how to prepare the inputs.
 """
-function prepare_frame(framecode::FrameCode, args::Vector{Any}, lenv::SimpleVector, caller_will_catch_err::Bool=false)
+function prepare_frame(framecode::FrameCode, args::Vector{Any}, lenv::SimpleVector, caller_will_catch_err::Bool=false; world::UInt=default_world())
     framedata = prepare_framedata(framecode, args, lenv, caller_will_catch_err)
-    return Frame(framecode, framedata)
+    return Frame(framecode, framedata, 1, nothing, world)
 end
 
 function prepare_frame_caller(caller::Frame, framecode::FrameCode, args::Vector{Any}, lenv::SimpleVector)
     caller_will_catch_err = !isempty(caller.framedata.exception_frames) || caller.framedata.caller_will_catch_err
-    caller.callee = frame = prepare_frame(framecode, args, lenv, caller_will_catch_err)
+    caller.callee = frame = prepare_frame(framecode, args, lenv, caller_will_catch_err; world=caller.world)
     copy!(frame.framedata.current_scopes, caller.framedata.current_scopes)
     frame.caller = caller
     return frame
@@ -593,8 +683,9 @@ See [`JuliaInterpreter.prepare_call`](@ref) for information about the outputs.
 """
 function determine_method_for_expr(expr::Expr;
                                    enter_generated::Bool=false,
+                                   world::UInt=default_world(),
                                    method_table::Union{Nothing,MethodTable}=nothing)
-    f = to_function(expr.args[1])
+    f = to_function(expr.args[1], world)
     allargs = expr.args
     # Extract keyword args
     kwargs = Expr(:parameters)
@@ -602,7 +693,7 @@ function determine_method_for_expr(expr::Expr;
         kwargs = splice!(allargs, 2)::Expr
     end
     f, allargs = prepare_args(f, allargs, kwargs.args)
-    return prepare_call(f, allargs; enter_generated, method_table)
+    return prepare_call(f, allargs; enter_generated, world, method_table)
 end
 
 """
@@ -641,11 +732,11 @@ See [`enter_call`](@ref) for a similar approach not based on expressions.
 """
 function enter_call_expr(expr::Expr;
                          enter_generated::Bool=false,
+                         world::UInt=default_world(),
                          method_table::Union{Nothing,MethodTable}=nothing)
-    clear_caches()
-    r = determine_method_for_expr(expr; enter_generated, method_table)
+    r = determine_method_for_expr(expr; enter_generated, world, method_table)
     if r !== nothing && !isa(r[1], Compiled)
-        return prepare_frame(Base.front(r)...)
+        return prepare_frame(Base.front(r)...; world)
     end
     nothing
 end
@@ -682,9 +773,9 @@ would be created by the generator.
 See [`enter_call_expr`](@ref) for a similar approach based on expressions.
 """
 function enter_call(@nospecialize(finfo), @nospecialize(args...);
+                    world::UInt=default_world(),
                     method_table::Union{Nothing,MethodTable}=nothing,
                     kwargs...)
-    clear_caches()
     if isa(finfo, Tuple)
         f = finfo[1]
         enter_generated = finfo[2]::Bool
@@ -697,9 +788,9 @@ function enter_call(@nospecialize(finfo), @nospecialize(args...);
     if isa(f, Core.Builtin) || isa(f, Core.IntrinsicFunction)
         error(f, " is a builtin or intrinsic")
     end
-    r = prepare_call(f, allargs; enter_generated, method_table)
+    r = prepare_call(f, allargs; enter_generated, world, method_table)
     if r !== nothing && !isa(r[1], Compiled)
-        return prepare_frame(Base.front(r)...)
+        return prepare_frame(Base.front(r)...; world)
     end
     return nothing
 end
@@ -747,15 +838,34 @@ function extract_args(__module__, ex0)
                * "break it down to simpler parts if possible")
 end
 
-function interpret(mod::Module, @nospecialize(ex0); interp=RecursiveInterpreter())
+function interpret(mod::Module, @nospecialize(ex0); interp=RecursiveInterpreter(), world=nothing)
     args = try
         extract_args(mod, ex0)
     catch e
         return :(throw($e))
     end
+    if world === nothing
+        wexpr = :nothing
+        theargs = :($(esc(args)))
+        entercall = :(enter_call_expr(Expr(:call, theargs...)))
+    else
+        if world === :latest
+            # Resolve the function and arguments in the latest committed world captured here at call time
+            wexpr = :(Base.get_world_counter())
+            theargs = :(Base.invoke_in_world(w, () -> $(esc(args))))
+        else
+            # Numeric world: the interpreted call runs in `world`, but the function and arguments are
+            # resolved in the caller's current world.
+            wexpr = :(convert(UInt, $world))
+            theargs = :($(esc(args)))
+        end
+        # The call itself always runs in the world that will be resolved from evaluating `wexpr`
+        entercall = :(enter_call_expr(Expr(:call, theargs...); world=w))
+    end
     quote
-        local theargs = $(esc(args))
-        local frame = JuliaInterpreter.enter_call_expr(Expr(:call, theargs...))
+        local w = $wexpr
+        local theargs = $theargs
+        local frame = $entercall
         if frame === nothing
             eval(Expr(:call, map(QuoteNode, theargs)...))
         elseif shouldbreak(frame, 1)
@@ -776,6 +886,11 @@ function interpret(mod::Module, opt, xs...; kwargs...)
         optname isa Symbol || error("Invalid @interpret call: $optname is not a symbol")
         if optname === :interp
             return interpret(mod, xs...; interp=esc(optval), kwargs...)
+        elseif optname === :world
+            # `world=:latest` is a literal flag handled specially; any other value is an escaped
+            # expression evaluating to a `UInt` world age.
+            islatest = isa(optval, QuoteNode) && optval.value === :latest
+            return interpret(mod, xs...; world=(islatest ? :latest : esc(optval)), kwargs...)
         else
             error("Invalid @interpret call: $optname is not a recognized option")
         end
@@ -785,9 +900,22 @@ function interpret(mod::Module, opt, xs...; kwargs...)
 end
 
 """
-    @interpret [interp] f(args; kwargs...)
+    @interpret [interp] [world=w | world=:latest] f(args; kwargs...)
 
 Evaluate `f` on the specified arguments using the interpreter.
+
+The optional `world` argument selects the world age for the call:
+
+- omitted (default): `f` and the arguments are resolved, and the call is run, in the calling
+  task's current world.
+- `world=:latest`: resolve `f`/arguments and run the call in the latest committed world,
+  sampled when the call is made. Use this to reach methods or bindings defined more recently
+  than the calling task's (possibly frozen) world — for example a method just brought in by
+  `include` within the same function (issue #617).
+- `world=w`, where `w` is a `UInt` world age: run the interpreted call in world `w`. The
+  function and arguments are still resolved in the caller's current world, so `w` controls only
+  the methods visible *during* interpretation. The caller is responsible for choosing a usable
+  `w`; to also resolve recently-defined functions, use `world=:latest`.
 
 # Example
 

@@ -61,14 +61,19 @@ function finish_stack!(interp::Interpreter, frame::Frame, rootistoplevel::Bool=f
     frame0 = frame
     frame = leaf(frame)
     while true
-        istoplevel = rootistoplevel && frame.caller === nothing
+        istoplevel = rootistoplevel && is_toplevel_frame(frame)
         ret = finish_and_return!(interp, frame, istoplevel)
         isa(ret, BreakpointRef) && return ret
         frame === frame0 && return ret
         frame = return_from(frame)
         frame === nothing && return ret
         pc = frame.pc
-        if isassign(frame, pc)
+        if frame.framecode.is_toplevel_surface
+            # Driver frames record each statement's value (see `step_toplevel!`). The statement's
+            # side effects, including any global assignment, were performed by the child frame,
+            # so a surface `:(=)` must not be re-executed here.
+            frame.framedata.ssavalues[pc] = ret
+        elseif isassign(frame, pc)
             lhs = SSAValue(pc)
             do_assignment!(frame, lhs, ret)
         else
@@ -405,7 +410,7 @@ function maybe_reset_frame!(interp::Interpreter, frame::Frame, @nospecialize(pc)
         if is_wrapper
             return maybe_reset_frame!(interp, frame, finish!(interp, frame), rootistoplevel)
         end
-        pc = maybe_next_call!(interp, frame, rootistoplevel && frame.caller===nothing)
+        pc = maybe_next_call!(interp, frame, rootistoplevel && is_toplevel_frame(frame))
         return maybe_reset_frame!(interp, frame, pc, rootistoplevel)
     end
     return frame, pc
@@ -455,13 +460,13 @@ end
                         line::Union{Nothing,Integer}=nothing)
     ret = debug_command(frame::Frame, cmd::Symbol, rootistoplevel::Bool=false; line=nothing)
 
-Perform one "debugger" command. The keyword arguments are not used for all debug commands.
+Perform one "debugger" command. The keyword argument `line` is only used by `:until`.
 `cmd` should be one of:
 
 - `:n`: advance to the next line
 - `:s`: step into the next call
-- `:sl` step into the last call on the current line (e.g. steps into `f` if the line is `f(g(h(x)))`).
-- `:sr` step until the current function will return
+- `:sl`: step into the last call on the current line (e.g. steps into `f` if the line is `f(g(h(x)))`).
+- `:sr`: step until the current function will return
 - `:until`: advance the frame to line `line` if given, otherwise advance to the line after the current line
 - `:c`: continue execution until termination or reaching a breakpoint
 - `:finish`: finish the current frame and return to the parent
@@ -473,7 +478,15 @@ or one of the 'advanced' commands
 - `:si`: execute a single statement, stepping in if it's a call
 - `:sg`: step into the generator of a generated function
 
-`rootistoplevel` and `ret` are as described for [`JuliaInterpreter.maybe_reset_frame!`](@ref).
+`rootistoplevel` should be `true` if the root frame is a top-level frame.
+
+`ret` is `nothing` if a top-level frame completes. Otherwise,
+
+    cframe, cpc = ret
+
+where `cframe` is the frame from which execution should continue and `cpc` is either an
+integer program counter (normal execution), a `BreakpointRef` (a breakpoint was hit), or
+`nothing` (the frame finished).
 """
 function debug_command(interp::Interpreter, frame::Frame, cmd::Symbol, rootistoplevel::Bool=false;
                        line::Union{Nothing,Integer}=nothing)
@@ -481,11 +494,11 @@ function debug_command(interp::Interpreter, frame::Frame, cmd::Symbol, rootistop
         if pc === nothing || isa(pc, BreakpointRef)
             return maybe_reset_frame!(interp, frame, pc, rootistoplevel)
         end
-        maybe_step_through_kwprep!(interp, frame, rootistoplevel && frame.caller === nothing)
+        maybe_step_through_kwprep!(interp, frame, rootistoplevel && is_toplevel_frame(frame))
         return frame, frame.pc
     end
 
-    istoplevel = rootistoplevel && frame.caller === nothing
+    istoplevel = rootistoplevel && is_toplevel_frame(frame)
     cmd0 = cmd
     is_si = false
     if cmd === :si

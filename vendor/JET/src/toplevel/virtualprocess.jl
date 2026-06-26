@@ -142,24 +142,28 @@ end
 function print_report(io::IO, report::MissingConcretizationErrorReport)
     (; isconst, var) = report
     (; mod, name) = var
-    recommended_pattern = isconst ? ":(const $name = x_)" : ":($name = x_)"
-    msg = """
-    `$mod.$name` is not concretized but JET needs to use its actual value in order to define types or methods.
-    """
+    pattern = isconst ? ":(const $name = x_)" : ":($name = x_)"
+    example = "`report_file(\"path/to/file.jl\"; concretization_patterns = [$pattern])`"
+    println(io, "`$mod.$name` is used while JET is processing top-level definitions,")
+    println(io, "so JET needs its concrete value (the actual runtime value).")
+    println(io)
+    println(io, "JET tracked that the binding exists, but it did not actually evaluate")
+    println(io, "the assignment that gives this binding its value.")
+    println(io)
     if !isconst
-        msg *= """
-        - If this binding can be declared as a constant, try to declare it as a constant (i.e. `const $name = ...`).
-        """
+        println(io, "- If `$name` is intended to be a stable configuration value, declare")
+        println(io, "  it as a constant, e.g. `const $name = ...`.")
+        println(io, "- If that is not appropriate, add a `concretization_patterns` entry")
+    else
+        println(io, "- Add a `concretization_patterns` entry")
     end
-    msg *= """- You may need to specify `$recommended_pattern` pattern to the `concretization_patterns`
-      configuration to allow JET to actually evaluate this binding, e.g.,
-      `report_file("path/to/file.jl"; concretization_patterns = [$recommended_pattern])`.
-    """
-    msg *= """- If the above $(isconst ? "approach does" : "approaches do") not work, try `concretization_patterns = [:(x_)]` to
-      concretize all top-level code in the module (recommended as a last resort since it
-      would incur any side effects in your code and may cause the analysis to take longer time).
-    """
-    print(io, msg)
+    println(io, "  for the assignment. This option tells JET to actually evaluate")
+    println(io, "  top-level code that matches the pattern. For example:")
+    println(io, "  ", example)
+    println(io, "  Use a specific pattern when possible, because matching code is executed.")
+    println(io, "- As a last resort, use `concretization_patterns = [:(x_)]` to evaluate")
+    println(io, "  all top-level code in the module. This may run side effects and can")
+    print(io, "  make analysis slower.")
 end
 
 """
@@ -485,6 +489,7 @@ Holds the state needed by ConcreteInterpreter implementations.
 mutable struct InterpretationState
     const filename::String
     curline::Int
+    world::UInt
     const dependencies::Set{Symbol}
     const context::Module
     const config::ToplevelConfig
@@ -493,21 +498,24 @@ mutable struct InterpretationState
     const files_stack::Vector{String}
     isfailed::Bool
 end
-function InterpretationState(state::InterpretationState;
-                             filename::String = state.filename,
-                             curline::Int = state.curline,
-                             dependencies::Set{Symbol} = state.dependencies,
-                             context::Module = state.context,
-                             pkg_mod_depth::Int = state.pkg_mod_depth)
+function InterpretationState(
+        state::InterpretationState;
+        filename::String = state.filename,
+        curline::Int = state.curline,
+        world::UInt = state.world,
+        dependencies::Set{Symbol} = state.dependencies,
+        context::Module = state.context,
+        pkg_mod_depth::Int = state.pkg_mod_depth
+    )
     # these fields should be shared across all states
     config::ToplevelConfig = state.config
     res::VirtualProcessResult = state.res
     files_stack::Vector{String} = state.files_stack
-    # these fields should be initialized with default values
     isfailed = false
     return InterpretationState(
         filename,
         curline,
+        world,
         dependencies,
         context,
         config,
@@ -645,9 +653,10 @@ function virtual_process(interp::ConcreteInterpreter,
         Preferences.main_uuid[] = pkgid.uuid
     end
     res = VirtualProcessResult(actual2virtual)
-    state = InterpretationState(filename, #=curline=#0, #=dependencies=#Set{Symbol}(),
-                                context, config, res, #=pkg_mod_depth=#0,
-                                #=files_stack=#String[], #=isfailed=#false)
+    world = Base.get_world_counter()
+    state = InterpretationState(
+        filename, #=curline=#0, world, #=dependencies=#Set{Symbol}(), context, config,
+        res, #=pkg_mod_depth=#0, #=files_stack=#String[], #=isfailed=#false)
     interp = ConcreteInterpreter(interp, state)
     try
         virtual_process!(interp, x, overrideex)
@@ -883,7 +892,7 @@ end
 function eval_with_err_handling(state::InterpretationState, x::Expr)
     # `scrub_offset = 1`: `Core.eval`
     with_err_handling(general_err_handler, state; scrub_offset=1) do
-        Core.eval(state.context, x)
+        Base.invoke_in_world(state.world, Core.eval, state.context, x)
     end
 end
 
@@ -918,12 +927,12 @@ function desugar_main_macrocall(@nospecialize x)
 end
 
 function macroexpand_with_err_handling(state::InterpretationState, x::Expr)
-    # `scrub_offset = 2`: `macroexpand` -> kwfunc (`macroexpand`)
-    with_err_handling(macro_expansion_err_handler, state; scrub_offset=2) do
+    # `scrub_offset = 3`: `invoke_in_world` -> `macroexpand` -> kwfunc (`macroexpand`)
+    with_err_handling(macro_expansion_err_handler, state; scrub_offset=3) do
         # XXX we want to non-recursive, sequential partial macro expansion here,
         # which allows us to collect more fine-grained error reports within macro expansions
         # but it can lead to invalid macro hygiene escaping because of https://github.com/JuliaLang/julia/issues/20241
-        macroexpand(state.context, x; recursive = true)
+        Base.invoke_in_world(state.world, macroexpand, state.context, x; recursive = true)
     end
 end
 
@@ -934,7 +943,7 @@ function lower_with_err_handling(interp::ConcreteInterpreter, ::JS.SyntaxNode, x
     xexpanded = @something macroexpand_with_err_handling(state, xblk) return nothing
 
     with_err_handling(lowering_err_handler, state; scrub_offset=1) do
-        lwr = lower(state.context, xexpanded)
+        lwr = Base.invoke_in_world(state.world, lower, state.context, xexpanded)
         if isexpr(lwr, :error)
             msg = first(lwr.args)
             add_toplevel_error_report!(state, LoweringErrorReport(msg, state.filename, state.curline))
@@ -1000,6 +1009,7 @@ function _virtual_process!(interp::ConcreteInterpreter,
             x = Expr(node)
         end
         state.curline = JS.source_line(node)
+        state.world = Base.get_world_counter()
 
         # apply user-specified concretization strategy, which is configured as expression
         # pattern match on surface level AST code representation; if any of the specified
@@ -1009,10 +1019,10 @@ function _virtual_process!(interp::ConcreteInterpreter,
         if !force_concretize
             for pat in state.config.concretization_patterns
                 if @capture(x, $pat)
-                    toplevel_logger(state.config; filter=≥(JET_LOGGER_LEVEL_DEBUG)) do @nospecialize(io::IO)
+                    let x=x; toplevel_logger(state.config; filter=≥(JET_LOGGER_LEVEL_DEBUG)) do @nospecialize(io::IO)
                         x′ = striplines(normalise(x))
                         println(io, "concretization pattern `$pat` matched `$x′` at $(state.filename):$(state.curline)")
-                    end
+                    end; end
                     force_concretize = true
                     break
                 end
@@ -1117,7 +1127,7 @@ function _virtual_process!(interp::ConcreteInterpreter,
 
         state.isfailed = false
         if force_concretize
-            JuliaInterpreter.finish!(interp, Frame(state.context, src), true)
+            JuliaInterpreter.finish!(interp, Frame(state.context, src; world=state.world), true)
             continue
         end
         partially_interpret!(interp, concretized, state.context, src)
@@ -1321,28 +1331,34 @@ Partially interprets statements in `src` using JuliaInterpreter.jl:
 - special-cases `include` calls so that top-level analysis recursively enters the included file
 """
 function partially_interpret!(interp::ConcreteInterpreter, concretize::BitVector, mod::Module, src::CodeInfo)
+    state = InterpretationState(interp)
     fill!(resize!(concretize, length(src.code)), false)
-    select_statements!(concretize, mod, src)
+    controller = LoweredCodeUtils.SelectiveEvalController()
+    select_statements!(concretize, mod, src, controller)
 
-    toplevel_logger(InterpretationState(interp).config; filter=≥(JET_LOGGER_LEVEL_DEBUG)) do @nospecialize(io::IO)
-        println(io, "concretization plan at $(InterpretationState(interp).filename):$(InterpretationState(interp).curline):")
+    toplevel_logger(state.config; filter=≥(JET_LOGGER_LEVEL_DEBUG)) do @nospecialize(io::IO)
+        println(io, "concretization plan at $(state.filename):$(state.curline):")
         LoweredCodeUtils.print_with_code(io, src, concretize)
     end
 
     # NOTE if `JuliaInterpreter.optimize!` may modify `src`, `src` and `concretize` can be inconsistent
     # here we create `JuliaInterpreter.Frame` by ourselves disabling the optimization (#277)
-    frame = Frame(mod, src; optimize=false)
-    LoweredCodeUtils.selective_eval_fromstart!(interp, frame, concretize, #=istoplevel=#true)
+    frame = Frame(mod, src; optimize=false, world=state.world)
+    LoweredCodeUtils.selective_eval_fromstart!(interp, frame, concretize, controller, #=istoplevel=#true)
 
     return concretize
 end
 
 # select statements that should be concretized, and actually interpreted rather than abstracted
-function select_statements!(concretize::BitVector, mod::Module, src::CodeInfo)
+function select_statements!(
+        concretize::BitVector, mod::Module, src::CodeInfo,
+        controller::LoweredCodeUtils.SelectiveEvalController =
+            LoweredCodeUtils.SelectiveEvalController()
+    )
     cl = LoweredCodeUtils.CodeLinks(mod, src) # make `CodeEdges` hold `CodeLinks`?
     edges = LoweredCodeUtils.CodeEdges(src, cl)
     select_direct_requirement!(concretize, src.code, edges)
-    select_dependencies!(concretize, src, edges, cl)
+    select_dependencies!(concretize, src, edges, cl, controller)
     return concretize
 end
 
@@ -1493,7 +1509,12 @@ end
 # "static program slicing". The basic algorithm implemented here is an extension of the one
 # proposed in https://dl.acm.org/doi/10.5555/800078.802557, which is especially tuned for
 # Julia's intermediate code representation.
-function select_dependencies!(concretize::BitVector, src::CodeInfo, edges, cl)
+function select_dependencies!(
+        concretize::BitVector, src::CodeInfo, edges::LoweredCodeUtils.CodeEdges,
+        cl::LoweredCodeUtils.CodeLinks,
+        controller::LoweredCodeUtils.SelectiveEvalController =
+            LoweredCodeUtils.SelectiveEvalController()
+    )
     typedefs = LoweredCodeUtils.find_typedefs(src)
     cfg = CC.compute_basic_blocks(src.code)
     postdomtree = CC.construct_postdomtree(cfg.blocks)
@@ -1531,7 +1552,8 @@ function select_dependencies!(concretize::BitVector, src::CodeInfo, edges, cl)
     end
 
     # now mark the active goto nodes
-    LoweredCodeUtils.add_active_gotos!(concretize, src, cfg, postdomtree)
+    LoweredCodeUtils.add_active_gotos!(concretize, src, cfg, postdomtree, controller)
+    LoweredCodeUtils.record_termination_points!(controller, concretize, cfg)
 
     nothing
 end
@@ -1555,14 +1577,13 @@ function add_required_latestworld!(concretize::BitVector, src::CodeInfo, cfg::CC
     return changed
 end
 
-# TODO use proper world age for the lookups
 function JuliaInterpreter.lookup(interp::ConcreteInterpreter, frame::Frame, @nospecialize(node))
     if node isa Symbol
         node = GlobalRef(JuliaInterpreter.moduleof(frame), node)
     end
     if node isa GlobalRef
-        if @invokelatest isdefinedglobal(node.mod, node.name)
-            val = @invokelatest getglobal(node.mod, node.name)
+        if Base.invoke_in_world(frame.world, isdefinedglobal, node.mod, node.name)
+            val = Base.invoke_in_world(frame.world, getglobal, node.mod, node.name)
             if val isa AbstractBindingState
                 # HACK/FIXME Concretize `AbstractBindingState`
                 if isdefined(val, :typ)
@@ -1578,7 +1599,7 @@ function JuliaInterpreter.lookup(interp::ConcreteInterpreter, frame::Frame, @nos
             return val
         else
             binding_states = get_binding_states(ToplevelAbstractAnalyzer(interp))
-            partition = Base.lookup_binding_partition(Base.get_world_counter(), node)
+            partition = Base.lookup_binding_partition(frame.world, node)
             binding_state = get(binding_states, partition, nothing)
             if binding_state !== nothing
                 if binding_state.maybeundef
@@ -1603,7 +1624,7 @@ function JuliaInterpreter.lookup(interp::ConcreteInterpreter, frame::Frame, @nos
     return @invoke JuliaInterpreter.lookup(interp::Interpreter, frame::Frame, node::Any)
 end
 
-function usemodule_with_err_handling(interp::ConcreteInterpreter, ex::Expr)
+function usemodule_with_err_handling(interp::ConcreteInterpreter, ex::Expr, world::UInt)
     state = InterpretationState(interp)
     mod = state.context
     if isexpr(ex, (:export, :public))
@@ -1637,10 +1658,10 @@ function usemodule_with_err_handling(interp::ConcreteInterpreter, ex::Expr)
                     end
                     require_ex = :(const $dep = Base.require($depid))
                     # TODO better handling of loading errors that may happen here
-                    require_res = with_err_handling(general_err_handler, state; scrub_offset=1) do
-                        Core.eval(mod, require_ex)
+                    require_res = let mod=mod; with_err_handling(general_err_handler, state; scrub_offset=2) do
+                        Base.invoke_in_world(world, Core.eval, mod, require_ex)
                         true
-                    end
+                    end; end
                     isnothing(require_res) && return nothing
                     push!(dependencies, dep)
                 end
@@ -1673,19 +1694,20 @@ function usemodule_with_err_handling(interp::ConcreteInterpreter, ex::Expr)
         end
     end
     @label eval_usemodule
-    # `scrub_offset = 1`: `Core.eval`
-    with_err_handling(general_err_handler, state; scrub_offset=1) do
-        Core.eval(mod, ex)
+    # `scrub_offset = 2`: `invoke_in_world` -> `Core.eval`
+    let mod=mod, ex=ex; with_err_handling(general_err_handler, state; scrub_offset=2) do
+        Base.invoke_in_world(world, Core.eval, mod, ex)
         true
-    end
+    end; end
 end
 
 function JuliaInterpreter.step_expr!(interp::ConcreteInterpreter, frame::Frame, @nospecialize(node), istoplevel::Bool)
     @assert istoplevel "ConcreteInterpreter can only work for top-level code"
 
     if ismoduleusage(node)
+        world = frame.world
         for ex in to_simple_module_usages(node)
-            if usemodule_with_err_handling(interp, ex) === nothing
+            if usemodule_with_err_handling(interp, ex, world) === nothing
                 break
             end
         end
@@ -1776,8 +1798,10 @@ end
 # - Ignore C-side function definitions created via `Base._ccallable`. These definitions
 #   are not namespaced in the module and can cause false-positive name conflict errors
 #   when running analysis multiple times (see aviatesk/JET.jl#597).
-function JuliaInterpreter.evaluate_call!(interp::ConcreteInterpreter, frame::Frame, fargs::Vector{Any}, enter_generated::Bool)
-    args = fargs
+function JuliaInterpreter.evaluate_call!(
+        interp::ConcreteInterpreter, frame::Frame, fargs::Vector{Any},
+        _enter_generated::Bool
+    )
     f = popfirst!(fargs)
     args = fargs # now it's really args
     isinclude(f) && return handle_include(interp, f, args)
@@ -1790,7 +1814,7 @@ function JuliaInterpreter.evaluate_call!(interp::ConcreteInterpreter, frame::Fra
             # otherwise just call it to trigger a method error
         end
     end
-    return @invokelatest f(args...)
+    return Base.invoke_in_world(frame.world, f, args...)
 end
 
 isinclude(@nospecialize f) = f isa Base.IncludeInto || (isa(f, Function) && nameof(f) === :include)
@@ -1896,8 +1920,8 @@ function JuliaInterpreter.handle_err(interp::ConcreteInterpreter, frame::Frame, 
             break # keep `i = 0`
         end
 
-        # find an error frame that happened at `@invokelatest f(fargs...)` in the overload
-        # `JuliaInterpreter.evaluate_call!(::ConcreteInterpreter, ::Frame, ::Expr, ::Bool)`
+        # find an error frame that happened at `Base.invoke_in_world(frame.world, f, args...)`
+        # in the overload `JuliaInterpreter.evaluate_call!(::ConcreteInterpreter, ::Frame, ...)`
         if frame.file === JET_VIRTUALPROCESS_FILE && frame.func === :evaluate_call!
             i = j - 1 # offset: `evaluate_call!`
             break

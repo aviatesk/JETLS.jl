@@ -166,16 +166,10 @@ JuliaInterpreter.finish_and_return!(frame)
 
 ## Toplevel code and world age
 
-Code that defines new `struct`s, new methods, or new modules is a bit more complicated
-and requires special handling. In such cases, calling `finish_and_return!` on a frame that
-defines these new objects and then calls them can trigger a
+Code that defines new `struct`s, new methods, or new modules requires special handling.
+Calling `finish_and_return!` on a frame that defines and then calls new objects can trigger a
 [world age error](https://docs.julialang.org/en/v1/manual/methods/#Redefining-Methods-1),
-in which the method is considered to be too new to be run by the currently compiled code.
-While one can resolve this by using `Base.invokelatest`, we'd have to use that strategy
-throughout the entire package.  This would cause a major reduction in performance.
-To resolve this issue without leading to performance problems, care is required to
-return to "top level" after defining such objects. This leads to altered syntax for executing
-such expressions.
+in which a newly defined method is considered too new to be called by currently running code.
 
 Here's a demonstration of the problem:
 
@@ -185,10 +179,10 @@ julia> ex = :(map(x->x^2, [1, 2, 3]));
 julia> frame = Frame(Main, ex);
 
 julia> JuliaInterpreter.finish_and_return!(frame)
-ERROR: this frame needs to be run a top level
+ERROR: this frame needs to be run at top level
 ```
 
-The reason for this error becomes clearer if we examine `frame` or look directly at the lowered code:
+The reason for this error becomes clearer if we look directly at the lowered code:
 
 ```@setup world-age-example
 ex = :(map(x->x^2, [1, 2, 3]))
@@ -198,11 +192,11 @@ ex = :(map(x->x^2, [1, 2, 3]))
 Meta.lower(Main, ex)
 ```
 
-All of the code before the `%7` line is devoted to defining the anonymous function `x->x^2`:
-it creates a new "anonymous type" (here written as `var"#3#4"`), and then defines a "call
-function" for this type, equivalent to `(var"#3#4")(x) = x^2`.
+The code first defines the anonymous function `x->x^2` (creating an anonymous type and a call
+method for it) and then calls `map`. The problem is that the newly defined call method is in a
+world newer than the one in which `finish_and_return!` is running.
 
-In some cases one can fix this simply by indicating that we want to run this frame at top level:
+This can be fixed by indicating that we want to run this frame at top level:
 
 ```julia-repl
 julia> JuliaInterpreter.finish_and_return!(frame, true)
@@ -212,25 +206,48 @@ julia> JuliaInterpreter.finish_and_return!(frame, true)
  9
 ```
 
-In other cases, such as nested calls of new methods, you may need to allow the world age to update
-between evaluations. In such cases you want to use `ExprSplitter`:
+### Interpreting multi-statement programs
 
-```julia
-for (mod, e) in ExprSplitter(Main, ex)
-    frame = Frame(mod, e)
-    while true
-        JuliaInterpreter.through_methoddef_or_done!(frame) === nothing && break
-    end
-    JuliaInterpreter.get_return(frame)
-end
+When interpreting code with multiple statements — such as the contents of a source file —
+later statements often call methods or use types defined by earlier ones.
+`Frame` handles this automatically for `:toplevel` expressions (the representation used
+when parsing multiple statements) and `:module` expressions:
+
+```@setup toplevel-example
+using JuliaInterpreter
+JuliaInterpreter.clear_caches()
 ```
 
-This splits the expression into a sequence of frames (here just one, but more complex blocks may be split up into many).
-Then, each frame is executed until it finishes defining a new method, then returns to top level.
-The return to top level causes an update in the world age.
-If the frame hasn't been finished yet (if the return value wasn't `nothing`),
-this continues executing where it left off.
+```@repl toplevel-example
+ex = Meta.parseall("""
+    f_new(x) = 2x
+    g_new() = f_new(21)
+    g_new()
+""");
+
+ex.head
+
+frame = Frame(Main, ex);
+
+JuliaInterpreter.finish_and_return!(frame)
+```
+
+`Meta.parseall` (as opposed to `Meta.parse`) parses the entire string as a sequence of
+top-level statements, returning a `:toplevel` expression.
+`Frame` recognizes `:toplevel` and `:module` expressions and creates a driver frame that
+steps through the unlowered surface statements one at a time, raising the world age between
+each so that each statement sees all definitions from earlier ones.
+
+`ExprSplitter` remains available for applications that need fine-grained control
+over when each sub-expression is evaluated; `Revise.jl` uses it for this purpose.
 
 (Incidentally, `JuliaInterpreter.enter_call(map, x->x^2, [1, 2, 3])` works fine on its own,
-because the anonymous function is defined by the caller---you'll see that the created frame
+because the anonymous function is defined by the caller — you'll see that the created frame
 is very simple.)
+
+### World-age threading
+
+Each `Frame` captures the current world age at construction time. For method frames,
+this world is held fixed throughout execution, so stepping sees a consistent view of the
+method table even if new methods are defined mid-session. Toplevel driver frames refresh
+the world before each statement so they always see the latest definitions.
