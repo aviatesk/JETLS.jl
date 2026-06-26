@@ -56,6 +56,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Fixed stale methods from previous script or notebook analyses lingering after re-analysis or occasionally triggering `Method ... already disabled` cleanup errors.
 
+- Fixed property completion (`obj.`) returning no suggestions in some contexts where the incomplete dot-access prevented type inference, such as inside `try`/`catch` blocks or on the right-hand side of an assignment (`out = obj.`).
+
 ## 2026-06-23
 
 - Commit: [`35c3262`](https://github.com/aviatesk/JETLS.jl/commit/35c3262)
