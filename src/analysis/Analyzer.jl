@@ -2,7 +2,7 @@ module Analyzer
 
 export LSAnalyzer, inference_error_report_severity, inference_error_report_stack, reset_report_target_modules!
 export BoundsErrorReport, FieldErrorReport, MethodErrorReport, NonBooleanCondErrorReport,
-    TypeAssertErrorReport, TypeErrorReport, UndefVarErrorReport
+    TypeAssertErrorReport, TypeErrorReport, UndefVarErrorReport, UnsupportedKeywordArgReport
 
 using Core.IR
 using JET.JETInterface
@@ -253,23 +253,24 @@ end # @static if VERSION ≥ v"1.12.2"
 # Analysis injections
 # ===================
 
-function report_method_error_after_call!(
-        analyzer::LSAnalyzer, ret::CC.Future, arginfo::CC.ArgInfo,
-        @nospecialize(atype), sv::CC.InferenceState
+function after_abstract_call_gf_by_type(
+        analyzer::LSAnalyzer, ret::CC.Future, @nospecialize(func), arginfo::CC.ArgInfo,
+        @nospecialize(atype), sv::CC.InferenceState, max_methods::Int
     )
     if !should_analyze(analyzer, sv)
         return nothing
     end
     atype′ = Ref{Any}(atype)
-    function after_abstract_call_gf_by_type(analyzer′::LSAnalyzer, sv′::CC.InferenceState)
+    function _after_abstract_call_gf_by_type(analyzer′::LSAnalyzer, sv′::CC.InferenceState)
         ret′ = ret[]
         report_method_error!(analyzer′, sv′, ret′, arginfo, atype′[])
+        report_unsupported_kwarg_error!(analyzer′, sv′, func, ret′, arginfo, max_methods)
         return true
     end
     if isready(ret)
-        after_abstract_call_gf_by_type(analyzer, sv)
+        _after_abstract_call_gf_by_type(analyzer, sv)
     else
-        push!(sv.tasks, after_abstract_call_gf_by_type)
+        push!(sv.tasks, _after_abstract_call_gf_by_type)
     end
     return nothing
 end
@@ -286,7 +287,7 @@ function CC.abstract_call_gf_by_type(
         analyzer::ToplevelAbstractAnalyzer, func::Any, arginfo::CC.ArgInfo,
         si::CC.StmtInfo, atype::Any, vtypes::Union{Vector{CC.VarState},Nothing},
         sv::CC.InferenceState, max_methods::Int)
-    report_method_error_after_call!(analyzer, ret, arginfo, atype, sv)
+    after_abstract_call_gf_by_type(analyzer, ret, func, arginfo, atype, sv, max_methods)
     return ret
 end
 else
@@ -297,7 +298,7 @@ function CC.abstract_call_gf_by_type(
     ret = @invoke CC.abstract_call_gf_by_type(
         analyzer::ToplevelAbstractAnalyzer, func::Any, arginfo::CC.ArgInfo,
         si::CC.StmtInfo, atype::Any, sv::CC.InferenceState, max_methods::Int)
-    report_method_error_after_call!(analyzer, ret, arginfo, atype, sv)
+    after_abstract_call_gf_by_type(analyzer, ret, func, arginfo, atype, sv, max_methods)
     return ret
 end
 end
@@ -680,6 +681,97 @@ function report_method_error_for_union_split!(
     if empty_matches !== nothing
         add_new_report!(analyzer, sv.result, MethodErrorReport(sv, empty_matches...))
     end
+end
+
+# UnsupportedKeywordArgReport
+# ---------------------------
+
+# A call like `f(; unknownkw=...)` is lowered to `Core.kwcall((unknownkw=...,), f)`.
+# This dispatches successfully to `f`'s generated keyword sorter, which then throws a
+# `MethodError` via `Base.kwerr` for the surplus keyword. Since this is an explicit
+# `throw` rather than a dispatch failure, `MethodErrorReport` does not fire; we detect
+# the statically-determined surplus keyword here instead.
+@jetreport struct UnsupportedKeywordArgReport <: LSErrorReport
+    @nospecialize ftype
+    posargtypes::Vector{Any}
+    @nospecialize kwt
+    unsupported::Vector{Symbol}
+end
+function JETInterface.print_report_message(io::IO, r::UnsupportedKeywordArgReport)
+    unsupported = r.unsupported
+    print(io, "unsupported keyword argument")
+    isone(length(unsupported)) || print(io, 's')
+    print(io, ' ')
+    for (i, name) in enumerate(unsupported)
+        i == 1 || print(io, ", ")
+        print(io, '`', name, '`')
+    end
+    kwt = Base.unwrap_unionall(r.kwt)::DataType
+    keys = kwt.parameters[1]::Tuple{Vararg{Symbol}}
+    kwargs = Pair{Symbol,Any}[Pair{Symbol,Any}(keys[i], fieldtype(kwt, i)) for i in eachindex(keys)]
+    print(io, " in `")
+    Base.show_signature_function(io, r.ftype)
+    Base.show_tuple_as_call(io, Symbol(""), Tuple{r.posargtypes...}; hasfirst=false, kwargs)
+    print(io, '`')
+end
+inference_error_report_stack_impl(r::UnsupportedKeywordArgReport) = length(r.vst):-1:1
+inference_error_report_severity_impl(::UnsupportedKeywordArgReport) = DiagnosticSeverity.Warning
+
+function report_unsupported_kwarg_error!(
+        analyzer::LSAnalyzer, sv::CC.InferenceState, @nospecialize(func),
+        call::CC.CallMeta, arginfo::CC.ArgInfo, max_methods::Int
+    )
+    func === Core.kwcall || return false
+    # only report when inference agrees that the call always throws
+    call.rt === Union{} || return false
+    argtypes = arginfo.argtypes
+    # `Core.kwcall(kwnt, f, posargs...)`: Any[typeof(kwcall), kwnt, f, posargs...]
+    length(argtypes) ≥ 3 || return false
+
+    kwt = CC.widenconst(argtypes[2])
+    kwnames = @something kwcall_keyword_names(kwt) return false
+    isempty(kwnames) && return false
+
+    ftype = CC.widenconst(argtypes[3])
+    # Keep a trailing `Vararg` intact (a splatted call like `f(xs...; kw=v)`) instead of
+    # widening it into a bogus element; this also renders as `f(::T...)` in the report message.
+    posargtypes = Any[let argtype = argtypes[i]
+        CC.isvarargtype(argtype) ? argtype : CC.widenconst(argtype)
+    end for i = 4:length(argtypes)]
+    # Bound the lookup by inference's own `max_methods` (as `find_method_matches` does), so a
+    # pathologically large match set (e.g. when `ftype` is abstract) bails cleanly rather than
+    # enumerating every applicable method. `findall` returns `nothing` past the limit.
+    # `argtypes_to_type` collapses dead paths (a `Union{}` argument) to `Bottom`, where a plain
+    # `Tuple{...}` would error on a `Union{}` field.
+    callsig = CC.argtypes_to_type(Any[ftype; posargtypes])
+    callsig === Union{} && return false
+    matches = @something CC.findall(callsig, CC.method_table(analyzer); limit=max_methods) return false
+    isempty(matches) && return false
+    supported = Set{Symbol}()
+    for match in matches
+        for name in Base.kwarg_decl(match.method)
+            # a slurping `kwargs...` shows up as a name ending with `...` and accepts anything
+            endswith(String(name), "...") && return false
+            push!(supported, name)
+        end
+    end
+
+    unsupported = Symbol[name for name in kwnames if name ∉ supported]
+    isempty(unsupported) && return false
+
+    report = UnsupportedKeywordArgReport(sv, ftype, posargtypes, kwt, unsupported)
+    add_new_report!(analyzer, sv.result, report)
+    return true
+end
+
+function kwcall_keyword_names(@nospecialize kwt)
+    kwt = Base.unwrap_unionall(kwt)
+    isa(kwt, DataType) || return nothing
+    kwt <: NamedTuple || return nothing
+    isempty(kwt.parameters) && return nothing
+    names = kwt.parameters[1]
+    isa(names, Tuple{Vararg{Symbol}}) || return nothing
+    return names
 end
 
 # NonBooleanCondErrorReport

@@ -140,6 +140,92 @@ only_int(x::Int) = 2x
     end
 end
 
+kwfunc(; code::String="code", message::String="message", data=nothing) = (code, message, data)
+kwslurp(; a=1, kwargs...) = (a, kwargs)
+kwpos(x::Int; y=1) = (x, y)
+kwvaropt(pos...; y=1) = (pos, y) # optional keyword + positional vararg
+struct KwCallable end
+(::KwCallable)(x::Int; y=1) = (x, y)
+
+@testset "UnsupportedKeywordArgReport" begin
+    # a single unsupported keyword argument
+    let result = analyze_call() do
+            kwfunc(; result="result")
+        end
+        reports = get_reports(result)
+        @test length(reports) == 1
+        r = only(reports)
+        @test r isa UnsupportedKeywordArgReport
+        @test r.ftype === typeof(kwfunc)
+        @test r.unsupported == [:result]
+    end
+
+    # only the unsupported keywords are reported, supported ones are ignored
+    let result = analyze_call() do
+            kwfunc(; code="c", result="result", other=1)
+        end
+        reports = get_reports(result)
+        @test length(reports) == 1
+        r = only(reports)
+        @test r isa UnsupportedKeywordArgReport && r.unsupported == [:result, :other]
+    end
+
+    # no report when all keywords are supported
+    let result = analyze_call() do
+            kwfunc(; code="c", data=42)
+        end
+        @test isempty(get_reports(result))
+    end
+
+    # no report when the method slurps `kwargs...` (accepts any keyword)
+    let result = analyze_call() do
+            kwslurp(; whatever=1)
+        end
+        @test isempty(get_reports(result))
+    end
+
+    # unsupported keyword combined with positional arguments
+    let result = analyze_call((Int,)) do x
+            kwpos(x; z=2)
+        end
+        reports = get_reports(result)
+        @test length(reports) == 1
+        r = only(reports)
+        @test r isa UnsupportedKeywordArgReport && r.unsupported == [:z]
+    end
+
+    # supported keyword with positional arguments: no report
+    let result = analyze_call((Int,)) do x
+            kwpos(x; y=2)
+        end
+        @test isempty(get_reports(result))
+    end
+
+    # a non-constant callable object (resolved via its type, not a singleton instance)
+    let result = analyze_call((KwCallable, Int)) do c, x
+            c(x; z=2)
+        end
+        reports = get_reports(result)
+        @test length(reports) == 1
+        r = only(reports)
+        @test r isa UnsupportedKeywordArgReport
+        @test r.ftype === KwCallable && r.unsupported == [:z]
+    end
+
+    # splatted positional arguments leave a trailing `Vararg` in the call's argtypes, which
+    # must be kept intact rather than widened into a bogus signature element
+    let result = analyze_call((Tuple{Vararg{Int}},)) do args
+            kwvaropt(args...; z=2)
+        end
+        reports = get_reports(result)
+        @test length(reports) == 1
+        r = only(reports)
+        @test r isa UnsupportedKeywordArgReport
+        @test r.ftype === typeof(kwvaropt) && r.unsupported == [:z]
+        @test r.posargtypes == Any[Vararg{Int}]
+    end
+end
+
 @testset "BoundsError analysis" begin
     # `getindex(::Tuple, ::Int)`
     let result = analyze_call((Tuple{Int},)) do tpl1

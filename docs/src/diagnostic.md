@@ -1082,8 +1082,8 @@ runtime.
 Examples:
 
 ```julia
-function method_error_example()
-    return sin(1, 2)  # no matching method found `sin(::Int64, ::Int64)` (JETLS inference/method-error)
+let
+    sin(1, 2)  # no matching method found `sin(::Int64, ::Int64)` (JETLS inference/method-error)
 end
 ```
 
@@ -1097,6 +1097,16 @@ function union_split_method_error(x::Union{Int,String})
     return only_int(x)  # no matching method found `only_int(::String)` (1/2 union split)
                         # (JETLS inference/method-error)
 end
+```
+
+Passing a keyword argument that the called method does not accept, which
+raises a `MethodError` at runtime, is also reported under this code:
+
+```julia
+kwfunc(; kw1=nothing, kw2=nothing) = (kw1, kw2)
+
+kwfunc(; kw3=42)  # unsupported keyword argument `kw3` in `kwfunc(; kw3::Int64)`
+                  # (JETLS inference/method-error)
 ```
 
 #### [Type assertion error (`inference/type-error/type-assert`)](@id diagnostic/reference/inference/type-error/type-assert)
