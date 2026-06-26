@@ -151,6 +151,34 @@ function get_inferred_ctx!(comp_ctx::CompletionCtx; caller::AbstractString)
     return comp_ctx.inferred_ctx[] = ctx
 end
 
+# Property completion only needs the prefix type. Build inference from a virtual
+# source where the cursor's incomplete `.partial` accessor is removed, instead of
+# teaching generic AST repair every parser-recovery shape around `prefix.│`.
+function get_dotprefix_inferred_ctx(
+        comp_ctx::CompletionCtx, dotprefix::SyntaxTreeC; caller::AbstractString
+    )
+    hole_start = JS.last_byte(dotprefix) + 1
+    hole_end = property_completion_hole_end(comp_ctx.fi, comp_ctx.offset, hole_start)
+    textbuf = copy(comp_ctx.fi.parsed_stream.textbuf)
+    if hole_start ≤ hole_end
+        deleteat!(textbuf, hole_start:hole_end)
+    end
+    virtual_fi = FileInfo(comp_ctx.fi.version, textbuf, comp_ctx.fi.filename, comp_ctx.fi.encoding)
+    virtual_st0_top = build_syntax_tree(virtual_fi)
+    virtual_st0 = @something lowerable_toplevel_at(virtual_st0_top, JS.first_byte(dotprefix)) return nothing
+    return build_inferred_context_for_tree(virtual_st0, comp_ctx.context_module;
+        world=comp_ctx.world, caller, cache=nothing)
+end
+
+function property_completion_hole_end(fi::FileInfo, offset::Int, hole_start::Int)
+    hole_end = max(hole_start - 1, offset - 1)
+    tok = @something token_at_offset(fi.parsed_stream, offset) return hole_end
+    if JS.kind(tok) === JS.K"Identifier" && JS.first_byte(tok) ≥ hole_start
+        hole_end = max(hole_end, JS.last_byte(tok))
+    end
+    return hole_end
+end
+
 function get_cursor_bindings_cached!(comp_ctx::CompletionCtx)
     isassigned(comp_ctx.cursor_bindings) && return comp_ctx.cursor_bindings[]
     cbs = cursor_bindings(comp_ctx.st0_top, comp_ctx.offset, comp_ctx.context_module;
@@ -311,7 +339,7 @@ function global_completions!(
     dotprefix = select_dotprefix_identifier(st0_top, comp_ctx.offset)
     if !isnothing(dotprefix)
         rng = JS.byte_range(dotprefix)
-        ctx = get_inferred_ctx!(comp_ctx; caller="global_completions!")
+        ctx = get_dotprefix_inferred_ctx(comp_ctx, dotprefix; caller="global_completions!")
         prefixtyp = ctx === nothing ? nothing : get_type_for_range(ctx, rng)
         # A `Union{}` prefix type is uninformative (the prefix throws or is dead code);
         # treat it like `nothing` so module/const prefixes such as `Base.` still complete.
