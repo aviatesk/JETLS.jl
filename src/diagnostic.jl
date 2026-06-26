@@ -448,6 +448,8 @@ function inference_error_report_code(@nospecialize report::JET.InferenceErrorRep
         return INFERENCE_BOUNDS_ERROR_CODE
     elseif report isa MethodErrorReport
         return INFERENCE_METHOD_ERROR_CODE
+    elseif report isa UnsupportedKeywordArgReport
+        return INFERENCE_METHOD_ERROR_CODE
     elseif report isa TypeAssertErrorReport
         return INFERENCE_TYPE_ERROR_TYPE_ASSERT_CODE
     elseif report isa NonBooleanCondErrorReport
