@@ -1174,7 +1174,7 @@ under the `[diagnostic]` section. This allows you to customize JETLS's
 behavior to match your project's coding standards and preferences.
 
 ```@example
-nothing # This is an internal comment for this documentaion: # hide
+nothing # This is an internal comment for this documentation: # hide
 nothing # Use H5 for subsections in this section so that the `@contents` block above works as intended. # hide
 ```
 

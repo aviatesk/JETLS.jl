@@ -1,11 +1,6 @@
 # `CC.NativeInterpreter`-based abstract-call helpers, used by LSP features that need
 # a one-shot inference query (method signature completion, property completion, ...).
 
-const NATIVE_INFERENCE_WORLD = Ref{UInt}(typemax(UInt))
-push_init_hook!() do
-    NATIVE_INFERENCE_WORLD[] = Base.get_world_counter()
-end
-
 """
     infer_match!(world::UInt, match::Core.MethodMatch)
         -> (interp::CC.NativeInterpreter, result::CC.InferenceResult)
@@ -38,7 +33,7 @@ function infer_method_instance!(interp::CC.NativeInterpreter, mi::Core.MethodIns
 end
 
 function infer_frame!(interp::CC.NativeInterpreter, frame::CC.InferenceState)
-    Base.invoke_in_world(NATIVE_INFERENCE_WORLD[], CC.typeinf, interp, frame)
+    CC.typeinf(interp, frame)
     return interp, frame.result
 end
 
@@ -68,6 +63,6 @@ function abstract_call_const(@nospecialize(f), argtypes::Vector{Any}, world::UIn
     append!(result.argtypes, argtypes)
     frame = CC.InferenceState(result, #=cache_mode=#:no, interp)
     frame === nothing && return result.result
-    Base.invoke_in_world(NATIVE_INFERENCE_WORLD[], CC.typeinf, interp, frame)
+    CC.typeinf(interp, frame)
     return result.result
 end

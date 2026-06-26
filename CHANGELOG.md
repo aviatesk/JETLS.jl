@@ -19,7 +19,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## Unreleased
 
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
-- Diff: [`d15f92f...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/d15f92f...HEAD)
+- Diff: [`35c3262...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/35c3262...HEAD)
 
 ### Announcement
 
@@ -43,6 +43,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > ```
 > This disables analysis for matched files. Basic features like completion still might work, but most LSP features will be unfunctional.
 > Note that `analysis_overrides` is provided as a temporary workaround and may be removed or changed at any time. A proper fix is being worked on.
+
+### Changed
+
+- Updated JuliaSyntax.jl, JuliaLowering.jl, JET.jl and JuliaInterpreter.jl revisions, bringing in several lowering fixes and fixes for world-age-related analysis errors.
+
+### Fixed
+
+- Fixed `toplevel/error` diagnostics reporting `method too new to be called from this world context` when analyzing top-level `@eval` loops that generate methods. (Closed https://github.com/aviatesk/JETLS.jl/issues/341)
+
+- Fixed hover on symbol literals such as `:foo` to show the literal expression (`:foo :: Symbol`) instead of the bare name with internal `Core.Const` details.
+
+- Fixed stale methods from previous script or notebook analyses lingering after re-analysis or occasionally triggering `Method ... already disabled` cleanup errors.
+
+- Fixed property completion (`obj.`) returning no suggestions in some contexts where the incomplete dot-access prevented type inference, such as inside `try`/`catch` blocks or on the right-hand side of an assignment (`out = obj.`).
+
+## 2026-06-23
+
+- Commit: [`35c3262`](https://github.com/aviatesk/JETLS.jl/commit/35c3262)
+- Diff: [`d15f92f...35c3262`](https://github.com/aviatesk/JETLS.jl/compare/d15f92f...35c3262)
+- Installation:
+  ```bash
+  julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="2026-06-23")'
+  ```
 
 ### Fixed
 

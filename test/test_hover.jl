@@ -118,6 +118,11 @@ module M_doc_binding
     """Documented binding."""
     const documented_binding = 42
 end
+# Ensures symbol literal hover does not resolve to a same-named global binding.
+module M_symbol_literal
+    """Documented global `foo`."""
+    const foo = 42
+end
 module M_undoc_binding
     const undocumented_binding = 42
 end
@@ -232,6 +237,20 @@ end
         result = get_hover(clean_text, only(positions))
         @test result isa Hover
         @test occursin("(local) y :: Float64  # Core.Const", result.contents.value)
+
+        hover_test("""
+                let x = nothing
+                    x│
+                end
+            """, "(local) x :: Nothing";
+            notpat = "Core.Const(nothing)")
+
+        hover_test("""
+                let x = missing
+                    x│
+                end
+            """, "(local) x :: Missing";
+            notpat = "Core.Const(missing)")
     end
 
     @testset "module alias resolves through DocsBinding helper" begin
@@ -383,6 +402,13 @@ end
 
     @testset "regex literal" begin
         hover_test("rx = r│\"foo\"", JETLS.lsrender(@doc r""))
+    end
+
+    @testset "symbol literal" begin
+        hover_test(":fo│o", ":foo :: Symbol";
+            context_module = M_symbol_literal,
+            notpat = r"Const\(:foo\)|Documented global")
+        hover_test(":(fo│o)", ":(foo) :: Symbol"; notpat = "Const(:foo)")
     end
 
     @testset "for-loop variable shows local kind tag" begin

@@ -52,14 +52,7 @@ function withserver(f;
     received_queue = Channel{Any}(Inf)
     sent_queue = Channel{Any}(Inf)
     endpoint = Endpoint(in_pipe.out, out_pipe.in)
-    server = Server(endpoint) do s::Symbol, x
-        @nospecialize x
-        if s === :received
-            put!(received_queue, x)
-        elseif s === :sent
-            put!(sent_queue, x)
-        end
-    end
+    server = Server(endpoint; callback=JETLS.ServerMessageRecorder(received_queue, sent_queue))
     runserver_task = Threads.@spawn :interactive runserver(server)
     id_counter = Ref(0)
     old_env = Pkg.project().path

@@ -600,6 +600,46 @@ end
         @test cnt[] == 1
     end
 
+    let text = """
+        function func(c::Bool, r::Regex)
+            try
+                r.│
+                if c
+                    return nothing
+                end
+            catch
+            end
+        end
+        """
+        cnt = Ref(0)
+        with_completion_items(text; context=dot_context) do (; result)
+            labels = Set(it.label for it in only_props(result.items))
+            @test labels == Set(String.(fieldnames(Regex)))
+            cnt[] += 1
+        end
+        @test cnt[] == 1
+    end
+
+    let text = """
+        function func(c::Bool, r::Regex)
+            try
+                out = r.│
+                if c
+                    return nothing
+                end
+            catch
+            end
+        end
+        """
+        cnt = Ref(0)
+        with_completion_items(text; context=dot_context) do (; result)
+            labels = Set(it.label for it in only_props(result.items))
+            @test labels == Set(String.(fieldnames(Regex)))
+            cnt[] += 1
+        end
+        @test cnt[] == 1
+    end
+
     # Untyped prefix: no useful type to query, so no property completions.
     let text = """
         function bar(x)

@@ -151,15 +151,15 @@ module TypeAnnotation
 
 using Core.IR
 using JET: CC, JET
-using ..JETLS: InferredContextCache, InferredContextCacheData, JETLS_DEBUG_LOWERING,
-    JL, JS, SyntaxTreeC, TraversalReturn, get_name_val, iterate_toplevel_tree,
-    jl_lower_for_scope_resolution, load, rewrite_local_closures_to_opaque, store!, traverse
+using ..JETLS: InferredContextCache, InferredContextCacheData, SyntaxTreeC, TraversalReturn
+using ..JETLS: JETLS_DEBUG_LOWERING, JETLS_DEV_MODE, JL, JS
+using ..JETLS: get_name_val, iterate_toplevel_tree, jl_lower_for_scope_resolution, load,
+    rewrite_local_closures_to_opaque, store!, traverse
 import ..JETLS: InferredTreeContext
 
 export InferredTreeContext,
     build_inferred_context_for_range, build_inferred_context_for_tree,
-    get_matches_for_range, get_type_for_range,
-    is_type_annotation_skipped_toplevel
+    get_matches_for_range, get_type_for_range, is_type_annotation_skipped_toplevel
 
 # ASTTypeAnnotator
 # ================
@@ -1020,7 +1020,8 @@ function infer_lowered_tree(
         _, st5 = JL.linearize_ir(ctx4, st4)
         st5
     catch e
-        @error "infer_toplevel_tree: Lowering failed" e
+        JETLS_DEV_MODE && @error "infer_toplevel_tree: Lowering failed" e
+        JETLS_DEV_MODE && Base.showerror(stderr, e, catch_backtrace())
         return nothing
     end |> prepare_type_attr
     lwr = JL.to_lowered_expr(inferrable_tree)
@@ -1687,6 +1688,10 @@ nodes appropriately; see the source of each helper for the rationale behind its 
 function get_type_for_range(ctx::InferredTreeContext, rng::UnitRange{<:Integer})
     binding_typ = get(ctx.oc_argument_binding_types, rng, nothing)
     binding_typ === nothing || return binding_typ
+    if is_oc_construction_site(ctx, rng)
+        typ = type_for_oc_body_return_at_range(ctx, rng)
+        typ === nothing || return typ
+    end
     surface_kind = surface_kind_at_range(ctx, rng)
     if surface_kind === JS.K"macrocall"
         return type_for_macroexpansion(ctx, rng)
@@ -1852,15 +1857,38 @@ function type_for_funcdef(ctx::InferredTreeContext, rng::UnitRange{<:Integer})
     return typ
 end
 
+is_oc_construction_site(ctx::InferredTreeContext, rng::UnitRange{<:Integer}) =
+    any(s -> JS.kind(s) === JS.K"new_opaque_closure", get(ctx.by_byte_range, rng, ()))
+
+function type_for_oc_body_return_at_range(
+        ctx::InferredTreeContext, rng::UnitRange{<:Integer}
+    )
+    typ = nothing
+    lo = searchsortedfirst(ctx.return_first_bytes, first(rng))
+    for i in lo:length(ctx.return_first_bytes)
+        first_byte = ctx.return_first_bytes[i]
+        first_byte > last(rng) && break
+        st = ctx.return_nodes[i]
+        JS.last_byte(st) <= last(rng) || continue
+        get(ctx.oc_body_scope, st._id, nothing) === rng || continue
+        JS.hasattr(st, :type) || continue
+        ntyp = st.type
+        typ = typ === nothing ? ntyp : CC.tmerge(ntyp, typ)
+    end
+    return typ
+end
+
 function tmerge_at_range(ctx::InferredTreeContext, rng::UnitRange{<:Integer})
     nodes = get(ctx.by_byte_range, rng, ())
     # When `OpaqueClosure` construction occurs at `rng` (most often a comprehension/
     # `map`/`filter` auto-generated lambda whose source bytes coincide with the user's
     # yield expression), the construction scaffolding — OC method object, argt/rt_lb svec,
     # OC binding — would otherwise `tmerge` into the user-visible value and surface as
-    # `Union{T, Method, OpaqueClosure, Type}`. Keep only nodes attributed to the body of
-    # the OC at `rng`; outside that scope is scaffolding.
-    is_oc_site = any(s -> JS.kind(s) === JS.K"new_opaque_closure", nodes)
+    # `Union{T, Method, OpaqueClosure, Type}`. Prefer the OC body's return type when
+    # available; it summarizes the user-visible value without mixing in synthetic typed-
+    # iterator conversion checks. Otherwise keep only nodes attributed to the body of the
+    # OC at `rng`; outside that scope is scaffolding.
+    is_oc_site = is_oc_construction_site(ctx, rng)
     # Property destructuring in parameter position (`do (; a, b)`) emits a
     # `getproperty(obj, :a)` whose field-name `K"Symbol"` leaf lands on the binding's
     # byte range, polluting it to `Union{T, Symbol}`. (Assignment-position `(; a, b) =`
