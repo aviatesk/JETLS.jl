@@ -96,41 +96,39 @@ A future refactor that unifies `cursor_bindings` and `build_inferred_context_for
 at the `jl_lower_for_scope_resolution` level can replace the lazy accessors
 without disturbing call sites.
 """
-struct CompletionCtx
-    state::ServerState
-    uri::URI
-    fi::FileInfo
-    pos::Position
-    context::Union{Nothing,CompletionContext}
+mutable struct CompletionCtx
+    const state::ServerState
+    const uri::URI
+    const fi::FileInfo
+    const pos::Position
+    const context::Union{Nothing,CompletionContext}
 
     # Eagerly populated by the constructor.
-    offset::Int
-    st0_top::SyntaxTreeC
-    context_module::Module
-    world::UInt
-    postprocessor::LSPostProcessor
-    soft_scope::Bool
+    const offset::Int
+    const st0_top::SyntaxTreeC
+    const context_module::Module
+    const world::UInt
+    const postprocessor::LSPostProcessor
+    const soft_scope::Bool
 
-    # Lazy. `isassigned(ref)` distinguishes "not yet computed" from
+    # Lazily populated. `isdefiend` check distinguishes "not yet computed" from
     # "computed but the underlying build returned `nothing`".
-    inferred_ctx::Base.RefValue{Union{Nothing,InferredTreeContext}}
-    cursor_bindings::Base.RefValue{Union{Nothing,Vector{Tuple{JL.BindingInfo,SyntaxTreeC,Int}}}}
-end
+    inferred_ctx::Union{Nothing,InferredTreeContext}
+    cursor_bindings::Union{Nothing,Vector{Tuple{JL.BindingInfo,SyntaxTreeC,Int}}}
 
-function CompletionCtx(
-        state::ServerState, uri::URI, fi::FileInfo, pos::Position,
-        context::Union{Nothing,CompletionContext};
-        context_module::Union{Nothing,Module} = nothing
-    )
-    st0_top = build_syntax_tree(fi)
-    info = get_context_info(state, uri, pos)
-    context_mod = something(context_module, info.context_module)
-    offset = xy_to_offset(fi, pos)
-    soft_scope = is_notebook_cell_uri(state, uri)
-    return CompletionCtx(state, uri, fi, pos, context,
-        offset, st0_top, context_mod, info.world, info.postprocessor, soft_scope,
-        Base.RefValue{Union{Nothing,InferredTreeContext}}(),
-        Base.RefValue{Union{Nothing,Vector{Tuple{JL.BindingInfo,SyntaxTreeC,Int}}}}())
+    function CompletionCtx(
+            state::ServerState, uri::URI, fi::FileInfo, pos::Position,
+            context::Union{Nothing,CompletionContext};
+            context_module::Union{Nothing,Module} = nothing
+        )
+        st0_top = build_syntax_tree(fi)
+        info = get_context_info(state, uri, pos)
+        context_mod = something(context_module, info.context_module)
+        offset = xy_to_offset(fi, pos)
+        soft_scope = is_notebook_cell_uri(state, uri)
+        return new(state, uri, fi, pos, context,
+            offset, st0_top, context_mod, info.world, info.postprocessor, soft_scope)
+    end
 end
 
 # Why not query the inferred-context cache with `offset:offset` directly:
@@ -140,12 +138,11 @@ end
 # outside). `lowerable_toplevel_at` has an `offset - 1` retry that handles
 # this, so we go through it and build the context for the selected toplevel.
 function get_inferred_ctx!(comp_ctx::CompletionCtx; caller::AbstractString)
-    isassigned(comp_ctx.inferred_ctx) && return comp_ctx.inferred_ctx[]
+    isdefined(comp_ctx, :inferred_ctx) && return comp_ctx.inferred_ctx
     toplevel = lowerable_toplevel_at(comp_ctx.st0_top, comp_ctx.offset)
-    ctx = toplevel === nothing ? nothing :
+    return comp_ctx.inferred_ctx = toplevel === nothing ? nothing :
         build_inferred_context_for_tree(toplevel, comp_ctx.context_module;
             world=comp_ctx.world, caller, cache=comp_ctx.fi.inferred_context_cache)
-    return comp_ctx.inferred_ctx[] = ctx
 end
 
 # Property completion only needs the prefix type. Build inference from a virtual
@@ -177,8 +174,8 @@ function property_completion_hole_end(fi::FileInfo, offset::Int, hole_start::Int
 end
 
 function get_cursor_bindings_cached!(comp_ctx::CompletionCtx)
-    isassigned(comp_ctx.cursor_bindings) && return comp_ctx.cursor_bindings[]
-    return comp_ctx.cursor_bindings[] = cursor_bindings(
+    isdefined(comp_ctx, :cursor_bindings) && return comp_ctx.cursor_bindings
+    return comp_ctx.cursor_bindings = cursor_bindings(
         comp_ctx.st0_top, comp_ctx.offset, comp_ctx.context_module;
             soft_scope=comp_ctx.soft_scope)
 end
