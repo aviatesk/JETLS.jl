@@ -623,7 +623,12 @@ const KEYWORD_DOCS = Dict{String,MarkupContent}()
 let keywords = Set{String}()
     union!(keywords, REPL.REPLCompletions.sorted_keywords, REPL.REPLCompletions.sorted_keyvals)
     for keyword in keywords
-        documentation = get_keyword_doc(Symbol(keyword))
+        keysym = Symbol(keyword)
+        documentation = if keysym in (Symbol("true"), Symbol("false")) || haskey(Base.Docs.keywords, keysym)
+            get_keyword_doc(keysym)
+        else
+            nothing
+        end
         KEYWORD_COMPLETIONS[keyword] = CompletionItem(;
             label = keyword,
             labelDetails = CompletionItemLabelDetails(; description = "keyword"),
