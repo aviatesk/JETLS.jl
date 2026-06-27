@@ -3,6 +3,7 @@ out
 Project.toml.bak
 Manifest.toml
 Manifest-*.toml
+LocalPreferences.toml
 .envrc
 **/.JETLSConfig.toml
 !.JETLSConfig.toml
