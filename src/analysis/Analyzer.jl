@@ -2,7 +2,7 @@ module Analyzer
 
 export LSAnalyzer, inference_error_report_severity, inference_error_report_stack, reset_report_target_modules!
 export BoundsErrorReport, FieldErrorReport, MethodErrorReport, NonBooleanCondErrorReport,
-    UndefVarErrorReport
+    TypeAssertErrorReport, TypeErrorReport, UndefVarErrorReport
 
 using Core.IR
 using JET.JETInterface
@@ -363,13 +363,14 @@ end
 Abstract type for error reports analyzed by [`LSAnalyzer`](@ref).
 
 Subtypes:
-- `UndefVarErrorReport`: Undefined variables (global only, undefined static parameters is not analyzed currently)
-- `FieldErrorReport`: Access to non-existent struct fields
-- `BoundsErrorReport`: Out-of-bounds field access by index
-- `MethodErrorReport`: Method dispatch errors
-- `NonBooleanCondErrorReport`: Non-boolean value used in boolean context
+- `UndefVarErrorReport`: Undefined global bindings (corresponding to `UndefVarError`)
+- `FieldErrorReport`: Access to non-existent struct fields (corresponding to `FieldError`)
+- `BoundsErrorReport`: Out-of-bounds field access by index (corresponding to `BoundsError`)
+- `MethodErrorReport`: Method dispatch errors (corresponding to `MethodError`)
+- `TypeErrorReport`: Type errors (corresponding to `TypeError`)
 """
 abstract type LSErrorReport <: InferenceErrorReport end
+abstract type TypeErrorReport <: LSErrorReport end
 
 # UndefVarErrorReport
 # -------------------
@@ -454,6 +455,55 @@ JETInterface.print_report_message(io::IO, r::BoundsErrorReport) =
 inference_error_report_stack_impl(r::BoundsErrorReport) = (length(r.vst)-r.vst_offset):-1:1
 inference_error_report_severity_impl(::BoundsErrorReport) = DiagnosticSeverity.Warning
 
+# TypeAssertErrorReport
+# ---------------------
+
+@jetreport struct TypeAssertErrorReport <: TypeErrorReport
+    @nospecialize expected
+    @nospecialize actual
+    union_split::Int
+    vst_offset::Int
+end
+inference_error_report_stack_impl(r::TypeAssertErrorReport) = (length(r.vst)-r.vst_offset):-1:1
+inference_error_report_severity_impl(::TypeAssertErrorReport) = DiagnosticSeverity.Warning
+
+function JETInterface.print_report_message(io::IO, r::TypeAssertErrorReport)
+    print(io, "TypeError: in `typeassert`, expected `", r.expected, "`, got ")
+    print_type_error_got(io, r.actual)
+    if r.union_split != 0
+        print(io, " (", 1, '/', r.union_split, " union split)")
+    end
+end
+
+function print_type_error_got(io::IO, @nospecialize(actual))
+    if CC.isType(actual)
+        print(io, actual)
+    else
+        print(io, "a value of type `", actual, '`')
+    end
+end
+
+function report_typeassert_error!(
+        analyzer::LSAnalyzer, sv::CC.InferenceState, argtypes::Vector{Any}, offset::Int
+    )
+    length(argtypes) == 2 || return false
+    valtyp, asserttyp = argtypes
+
+    expected = CC.instanceof_tfunc(asserttyp, true)[1]
+    if expected === Union{}
+        actual = CC.widenconst(asserttyp)
+        actual === Union{} && return false
+        add_new_report!(analyzer, sv.result, TypeAssertErrorReport(sv, Type, actual, 0, offset))
+        return true
+    end
+
+    actual = CC.widenconst(valtyp)
+    actual === Union{} && return false
+    CC.hasintersect(actual, expected) && return false
+    add_new_report!(analyzer, sv.result, TypeAssertErrorReport(sv, expected, actual, 0, offset))
+    return true
+end
+
 function report_builtin_error!(
         analyzer::LSAnalyzer, sv::CC.InferenceState, @nospecialize(f), argtypes::Vector{Any},
         @nospecialize(ret), offset::Int
@@ -465,6 +515,8 @@ function report_builtin_error!(
             report_fieldaccess!(analyzer, sv, setfield!, argtypes, offset)
         elseif f === fieldtype
             report_fieldaccess!(analyzer, sv, fieldtype, argtypes, offset)
+        elseif f === Core.typeassert
+            report_typeassert_error!(analyzer, sv, argtypes, offset)
         end
     end
 end
@@ -617,7 +669,7 @@ end
 # NonBooleanCondErrorReport
 # -------------------------
 
-@jetreport struct NonBooleanCondErrorReport <: LSErrorReport
+@jetreport struct NonBooleanCondErrorReport <: TypeErrorReport
     @nospecialize t # ::Union{Type, Vector{Type}}
     union_split::Int
     uncovered::Bool

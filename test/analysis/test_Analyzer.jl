@@ -238,6 +238,115 @@ end
     end
 end
 
+@testset "TypeErrorReport" begin
+    @testset "TypeAssertErrorReport" begin
+        let result = analyze_call((Int,)) do x
+                x::Int
+            end
+            @test isempty(get_reports(result))
+        end
+        let result = analyze_call((Any,)) do x
+                x::Int
+            end
+            @test isempty(get_reports(result))
+        end
+
+        let result = analyze_call() do
+                let x = rand()
+                    o = x::Int
+                    o
+                end
+            end
+            reports = get_reports(result)
+            @test length(reports) == 1
+            r = only(reports)
+            @test r isa TypeAssertErrorReport
+            @test r.expected === Int && r.actual === Float64 && r.union_split == 0
+            @test sprint(JETLS.JET.print_report_message, r) == "TypeError: in `typeassert`, expected `Int64`, got a value of type `Float64`"
+        end
+
+        let result = analyze_call() do
+                (Int)::String
+            end
+            reports = get_reports(result)
+            @test length(reports) == 1
+            r = only(reports)
+            @test r isa TypeAssertErrorReport
+            @test r.expected === String && r.actual === Type{Int} && r.union_split == 0
+            @test sprint(JETLS.JET.print_report_message, r) == "TypeError: in `typeassert`, expected `String`, got Type{Int64}"
+        end
+
+        let result = analyze_call((Union{Int,Float64},)) do x
+                x::Int
+            end
+            @test isempty(get_reports(result))
+        end
+    end
+
+    @testset "NonBooleanCondErrorReport" begin
+        # no report for boolean condition
+        let result = analyze_call((Bool,)) do x
+                x ? 1 : 2
+            end
+            @test isempty(get_reports(result))
+        end
+        let result = analyze_call((Bool,)) do x
+                if x; 1; else; 2; end
+            end
+            @test isempty(get_reports(result))
+        end
+        let result = analyze_call((Bool,)) do x
+                x && return 1
+            end
+            @test isempty(get_reports(result))
+        end
+
+        # basic non-boolean condition
+        let result = analyze_call((Int,)) do x
+                x ? 1 : 2
+            end
+            reports = get_reports(result)
+            @test length(reports) == 1
+            r = only(reports)
+            @test r isa NonBooleanCondErrorReport && r.union_split == 0
+        end
+        let result = analyze_call((Int,)) do x
+                if x; 1; else; 2; end
+            end
+            reports = get_reports(result)
+            @test length(reports) == 1
+            r = only(reports)
+            @test r isa NonBooleanCondErrorReport && r.union_split == 0
+        end
+        let result = analyze_call((Int,)) do x
+                x && return 1
+            end
+            reports = get_reports(result)
+            @test length(reports) == 1
+            r = only(reports)
+            @test r isa NonBooleanCondErrorReport && r.union_split == 0
+        end
+
+        # union split case: only one branch is non-boolean
+        let result = analyze_call((Union{Bool,Int},)) do x
+                x ?  1 : 2
+            end
+            reports = get_reports(result)
+            @test length(reports) == 1
+            r = only(reports)
+            @test r isa NonBooleanCondErrorReport && r.union_split == 2 && length(r.t) == 1
+        end
+
+        # JuliaLang/julia#61526
+        let result = analyze_call((Vector{String},String,)) do xs, x
+                x in tuple(xs) ? 0 : 1
+            end
+            reports = get_reports(result)
+            @test isempty(reports)
+        end
+    end
+end
+
 @testset "report_target_modules" begin
     let result = analyze_call(; report_target_modules=()) do
             TestTargetModule.func()
@@ -315,69 +424,6 @@ end
             sin(1, 2)
         end
         @test isempty(get_reports(result))
-    end
-end
-
-@testset "NonBooleanCondErrorReport" begin
-    # no report for boolean condition
-    let result = analyze_call((Bool,)) do x
-            x ? 1 : 2
-        end
-        @test isempty(get_reports(result))
-    end
-    let result = analyze_call((Bool,)) do x
-            if x; 1; else; 2; end
-        end
-        @test isempty(get_reports(result))
-    end
-    let result = analyze_call((Bool,)) do x
-            x && return 1
-        end
-        @test isempty(get_reports(result))
-    end
-
-    # basic non-boolean condition
-    let result = analyze_call((Int,)) do x
-            x ? 1 : 2
-        end
-        reports = get_reports(result)
-        @test length(reports) == 1
-        r = only(reports)
-        @test r isa NonBooleanCondErrorReport && r.union_split == 0
-    end
-    let result = analyze_call((Int,)) do x
-            if x; 1; else; 2; end
-        end
-        reports = get_reports(result)
-        @test length(reports) == 1
-        r = only(reports)
-        @test r isa NonBooleanCondErrorReport && r.union_split == 0
-    end
-    let result = analyze_call((Int,)) do x
-            x && return 1
-        end
-        reports = get_reports(result)
-        @test length(reports) == 1
-        r = only(reports)
-        @test r isa NonBooleanCondErrorReport && r.union_split == 0
-    end
-
-    # union split case: only one branch is non-boolean
-    let result = analyze_call((Union{Bool,Int},)) do x
-            x ?  1 : 2
-        end
-        reports = get_reports(result)
-        @test length(reports) == 1
-        r = only(reports)
-        @test r isa NonBooleanCondErrorReport && r.union_split == 2 && length(r.t) == 1
-    end
-
-    # JuliaLang/julia#61526
-    let result = analyze_call((Vector{String},String,)) do xs, x
-            x in tuple(xs) ? 0 : 1
-        end
-        reports = get_reports(result)
-        @test isempty(reports)
     end
 end
 
