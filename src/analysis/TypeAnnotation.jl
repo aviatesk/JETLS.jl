@@ -374,8 +374,16 @@ function CC.abstract_eval_new_opaque_closure(
     pushfirst!(oc_argtypes, po.env)
     interp.oc_body_annotation_states[po.source] = OCBodyAnnotationState()
     arginfo, stmtinfo = CC.ArgInfo(nothing, oc_argtypes), CC.StmtInfo(true, false)
-    callinfo = CC.abstract_call_opaque_closure(
-        interp, po, arginfo, stmtinfo, sv, #=check=#false)::CC.Future
+    @static if hasmethod(CC.abstract_call_opaque_closure,
+        Tuple{CC.AbstractInterpreter, CC.PartialOpaque, CC.ArgInfo,
+              CC.StmtInfo, Union{Vector{CC.VarState}, Nothing}, CC.AbsIntState,
+              Bool})
+        callinfo = CC.abstract_call_opaque_closure(
+            interp, po, arginfo, stmtinfo, nothing, sv, #=check=#false)::CC.Future
+    else
+        callinfo = CC.abstract_call_opaque_closure(
+            interp, po, arginfo, stmtinfo, sv, #=check=#false)::CC.Future
+    end
     return CC.Future{CC.RTEffects}(callinfo, interp, sv) do callinfo, _, sv
         consume_oc_body_annotation_state!(interp, po.source)
         sv.stmt_info[sv.currpc] = CC.OpaqueClosureCreateInfo(callinfo)
@@ -497,6 +505,22 @@ end
 # signature-view inference from `abstract_eval_new_opaque_closure` passes `check=false`
 # and must not be recorded: it would join `most_general_argtypes` (the declared `Any`s)
 # into every observation and erase the refinement.
+@static if hasmethod(CC.abstract_call_opaque_closure,
+    Tuple{CC.AbstractInterpreter, CC.PartialOpaque, CC.ArgInfo,
+          CC.StmtInfo, Union{Vector{CC.VarState}, Nothing}, CC.AbsIntState,
+          Bool})
+function CC.abstract_call_opaque_closure(
+        interp::ASTTypeAnnotator, closure::CC.PartialOpaque, arginfo::CC.ArgInfo,
+        si::CC.StmtInfo, vtypes::Union{Vector{CC.VarState},Nothing}, sv::CC.AbsIntState,
+        check::Bool
+    )
+    check && record_oc_argtype_observation!(interp, closure, arginfo)
+    return @invoke CC.abstract_call_opaque_closure(
+        interp::CC.AbstractInterpreter, closure::CC.PartialOpaque, arginfo::CC.ArgInfo,
+        si::CC.StmtInfo, vtypes::Union{Vector{CC.VarState},Nothing}, sv::CC.AbsIntState,
+        check::Bool)
+end
+else
 function CC.abstract_call_opaque_closure(
         interp::ASTTypeAnnotator, closure::CC.PartialOpaque, arginfo::CC.ArgInfo,
         si::CC.StmtInfo, sv::CC.AbsIntState, check::Bool
@@ -506,11 +530,29 @@ function CC.abstract_call_opaque_closure(
         interp::CC.AbstractInterpreter, closure::CC.PartialOpaque, arginfo::CC.ArgInfo,
         si::CC.StmtInfo, sv::CC.AbsIntState, check::Bool)
 end
+end
 
 # `Generator(f, iter)` and `Filter(f, iter)` invoke `f` as iteration advances. In
 # nested iterator pipelines, that invocation is mediated by iterator machinery, so
 # the `PartialOpaque` call hook may not observe it. Treat construction as observing
 # `f` at the iterator element type.
+@static if hasmethod(CC.abstract_call_gf_by_type,
+        Tuple{CC.AbstractInterpreter, Any, CC.ArgInfo, CC.StmtInfo, Any,
+              Union{Vector{CC.VarState}, Nothing}, CC.AbsIntState, Int})
+function CC.abstract_call_gf_by_type(
+        interp::ASTTypeAnnotator, @nospecialize(func), arginfo::CC.ArgInfo,
+        si::CC.StmtInfo, @nospecialize(atype), vtypes::Union{Vector{CC.VarState},Nothing},
+        sv::CC.AbsIntState, max_methods::Int
+    )
+    if func === Base.Generator || func === Base.Iterators.Filter
+        record_iterator_argtype_observation!(interp, arginfo)
+    end
+    return @invoke CC.abstract_call_gf_by_type(
+        interp::CC.AbstractInterpreter, func::Any, arginfo::CC.ArgInfo,
+        si::CC.StmtInfo, atype::Any, vtypes::Union{Vector{CC.VarState},Nothing},
+        sv::CC.AbsIntState, max_methods::Int)
+end
+else
 function CC.abstract_call_gf_by_type(
         interp::ASTTypeAnnotator, @nospecialize(func), arginfo::CC.ArgInfo,
         si::CC.StmtInfo, @nospecialize(atype), sv::CC.AbsIntState, max_methods::Int
@@ -521,6 +563,7 @@ function CC.abstract_call_gf_by_type(
     return @invoke CC.abstract_call_gf_by_type(
         interp::CC.AbstractInterpreter, func::Any, arginfo::CC.ArgInfo,
         si::CC.StmtInfo, atype::Any, sv::CC.AbsIntState, max_methods::Int)
+end
 end
 
 function record_iterator_argtype_observation!(

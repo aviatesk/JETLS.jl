@@ -264,14 +264,12 @@ end # @static if VERSION ≥ v"1.12.2"
 # Analysis injections
 # ===================
 
-function CC.abstract_call_gf_by_type(
-        analyzer::LSAnalyzer, @nospecialize(func), arginfo::CC.ArgInfo, si::CC.StmtInfo,
-        @nospecialize(atype), sv::CC.InferenceState, max_methods::Int
+function report_method_error_after_call!(
+        analyzer::LSAnalyzer, ret::CC.Future, arginfo::CC.ArgInfo,
+        @nospecialize(atype), sv::CC.InferenceState
     )
-    ret = @invoke CC.abstract_call_gf_by_type(analyzer::ToplevelAbstractAnalyzer,
-        func::Any, arginfo::CC.ArgInfo, si::CC.StmtInfo, atype::Any, sv::CC.InferenceState, max_methods::Int)
     if !should_analyze(analyzer, sv)
-        return ret
+        return nothing
     end
     atype′ = Ref{Any}(atype)
     function after_abstract_call_gf_by_type(analyzer′::LSAnalyzer, sv′::CC.InferenceState)
@@ -284,7 +282,35 @@ function CC.abstract_call_gf_by_type(
     else
         push!(sv.tasks, after_abstract_call_gf_by_type)
     end
+    return nothing
+end
+
+@static if hasmethod(CC.abstract_call_gf_by_type,
+        Tuple{CC.AbstractInterpreter, Any, CC.ArgInfo, CC.StmtInfo, Any,
+              Union{Vector{CC.VarState}, Nothing}, CC.AbsIntState, Int})
+function CC.abstract_call_gf_by_type(
+        analyzer::LSAnalyzer, @nospecialize(func), arginfo::CC.ArgInfo,
+        si::CC.StmtInfo, @nospecialize(atype), vtypes::Union{Vector{CC.VarState},Nothing},
+        sv::CC.InferenceState, max_methods::Int
+    )
+    ret = @invoke CC.abstract_call_gf_by_type(
+        analyzer::ToplevelAbstractAnalyzer, func::Any, arginfo::CC.ArgInfo,
+        si::CC.StmtInfo, atype::Any, vtypes::Union{Vector{CC.VarState},Nothing},
+        sv::CC.InferenceState, max_methods::Int)
+    report_method_error_after_call!(analyzer, ret, arginfo, atype, sv)
     return ret
+end
+else
+function CC.abstract_call_gf_by_type(
+        analyzer::LSAnalyzer, @nospecialize(func), arginfo::CC.ArgInfo,
+        si::CC.StmtInfo, @nospecialize(atype), sv::CC.InferenceState, max_methods::Int
+    )
+    ret = @invoke CC.abstract_call_gf_by_type(
+        analyzer::ToplevelAbstractAnalyzer, func::Any, arginfo::CC.ArgInfo,
+        si::CC.StmtInfo, atype::Any, sv::CC.InferenceState, max_methods::Int)
+    report_method_error_after_call!(analyzer, ret, arginfo, atype, sv)
+    return ret
+end
 end
 
 # TODO Better to factor out and share it with `JET.JETAnalyzer`
