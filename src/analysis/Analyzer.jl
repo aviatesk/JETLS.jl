@@ -461,17 +461,18 @@ inference_error_report_severity_impl(::BoundsErrorReport) = DiagnosticSeverity.W
 @jetreport struct TypeAssertErrorReport <: TypeErrorReport
     @nospecialize expected
     @nospecialize actual
-    union_split::Int
     vst_offset::Int
 end
 inference_error_report_stack_impl(r::TypeAssertErrorReport) = (length(r.vst)-r.vst_offset):-1:1
 inference_error_report_severity_impl(::TypeAssertErrorReport) = DiagnosticSeverity.Warning
 
 function JETInterface.print_report_message(io::IO, r::TypeAssertErrorReport)
-    print(io, "TypeError: in `typeassert`, expected `", r.expected, "`, got ")
-    print_type_error_got(io, r.actual)
-    if r.union_split != 0
-        print(io, " (", 1, '/', r.union_split, " union split)")
+    (; expected, actual) = r
+    print(io, "TypeError: in `typeassert`, expected `", expected, "`, got ")
+    if CC.isType(actual)
+        print(io, actual)
+    else
+        print(io, "a value of type `", actual, '`')
     end
 end
 
@@ -493,14 +494,14 @@ function report_typeassert_error!(
     if expected === Union{}
         actual = CC.widenconst(asserttyp)
         actual === Union{} && return false
-        add_new_report!(analyzer, sv.result, TypeAssertErrorReport(sv, Type, actual, 0, offset))
+        add_new_report!(analyzer, sv.result, TypeAssertErrorReport(sv, Type, actual, offset))
         return true
     end
 
     actual = CC.widenconst(valtyp)
     actual === Union{} && return false
     CC.hasintersect(actual, expected) && return false
-    add_new_report!(analyzer, sv.result, TypeAssertErrorReport(sv, expected, actual, 0, offset))
+    add_new_report!(analyzer, sv.result, TypeAssertErrorReport(sv, expected, actual, offset))
     return true
 end
 

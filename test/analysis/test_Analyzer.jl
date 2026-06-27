@@ -261,7 +261,7 @@ end
             @test length(reports) == 1
             r = only(reports)
             @test r isa TypeAssertErrorReport
-            @test r.expected === Int && r.actual === Float64 && r.union_split == 0
+            @test r.expected === Int && r.actual === Float64
             @test sprint(JETLS.JET.print_report_message, r) == "TypeError: in `typeassert`, expected `Int64`, got a value of type `Float64`"
         end
 
@@ -272,7 +272,7 @@ end
             @test length(reports) == 1
             r = only(reports)
             @test r isa TypeAssertErrorReport
-            @test r.expected === String && r.actual === Type{Int} && r.union_split == 0
+            @test r.expected === String && r.actual === Type{Int}
             @test sprint(JETLS.JET.print_report_message, r) == "TypeError: in `typeassert`, expected `String`, got Type{Int64}"
         end
 
