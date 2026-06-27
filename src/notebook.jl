@@ -348,7 +348,7 @@ function localize_diagnostic_data(@nospecialize(data), concat::ConcatenatedNoteb
         end
         return_insert_position = data.return_insert_position
         if return_insert_position !== nothing
-            _, local_position = @something global_to_cell_position(
+            local_position, _ = @something global_to_cell_position(
                 concat, return_insert_position) return data
             return_insert_position = local_position
         end
