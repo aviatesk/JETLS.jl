@@ -106,7 +106,12 @@ end
 function handle_TextDocumentContentRequest(server::Server, msg::TextDocumentContentRequest)
     uri = msg.params.uri
     if !is_text_document_content_uri(uri)
-        return send(server, TextDocumentContentResponse(; id = msg.id, result = null))
+        return send(server, TextDocumentContentResponse(;
+            id = msg.id,
+            result = nothing,
+            error = ResponseError(;
+                code = ErrorCodes.InvalidParams,
+                message = "Unsupported text document content URI scheme: $(uri.scheme)")))
     end
     # Code views are computed on demand from the request URI rather than cached.
     if uri.scheme == MACRO_EXPANSION_SCHEME
@@ -120,7 +125,12 @@ function handle_TextDocumentContentRequest(server::Server, msg::TextDocumentCont
     end
     # Other schemes (e.g. TestRunner logs) are served from the content cache.
     text = @something get_text_document_content(server.state, uri) begin
-        return send(server, TextDocumentContentResponse(; id = msg.id, result = null))
+        return send(server, TextDocumentContentResponse(;
+            id = msg.id,
+            result = nothing,
+            error = ResponseError(;
+                code = ErrorCodes.RequestFailed,
+                message = "No text document content is available for URI: $uri")))
     end
     return send(server, TextDocumentContentResponse(;
         id = msg.id, result = TextDocumentContentResult(; text)))
