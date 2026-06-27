@@ -169,6 +169,14 @@ function calculate_match_specificity(
     return specificity
 end
 
+function diagnostic_code_match_specificity(pattern::Union{Regex,String}, code::String)
+    specificity = calculate_match_specificity(pattern, code, #=is_message_match=#false)
+    for alias in get(DIAGNOSTIC_CODE_ALIASES, code, String[])
+        specificity = max(specificity, calculate_match_specificity(pattern, alias, #=is_message_match=#false))
+    end
+    return specificity
+end
+
 function _apply_diagnostic_config(
         diagnostic::Diagnostic, manager::ConfigManager, uri::URI,
         root_path::Union{Nothing,String}
@@ -209,10 +217,13 @@ function _apply_diagnostic_config(
         if globpath !== nothing && !occursin(globpath, path_for_glob)
             continue
         end
-        target = pattern_config.match_by == "message" ? get_raw_message(diagnostic) : code
         is_message_match = pattern_config.match_by == "message"
-        specificity = calculate_match_specificity(
-            pattern_config.pattern, target, is_message_match)
+        specificity = if is_message_match
+            target = get_raw_message(diagnostic)
+            calculate_match_specificity(pattern_config.pattern, target, is_message_match)
+        else
+            diagnostic_code_match_specificity(pattern_config.pattern, code)
+        end
         if specificity != 0 && specificity >= best_specificity
             best_specificity = specificity
             severity = pattern_config.severity
@@ -437,8 +448,10 @@ function inference_error_report_code(@nospecialize report::JET.InferenceErrorRep
         return INFERENCE_BOUNDS_ERROR_CODE
     elseif report isa MethodErrorReport
         return INFERENCE_METHOD_ERROR_CODE
+    elseif report isa TypeAssertErrorReport
+        return INFERENCE_TYPE_ERROR_TYPE_ASSERT_CODE
     elseif report isa NonBooleanCondErrorReport
-        return INFERENCE_NON_BOOLEAN_COND_CODE
+        return INFERENCE_TYPE_ERROR_NON_BOOL_COND_CODE
     end
     error(lazy"No diagnostic code is defined for report: $report")
 end

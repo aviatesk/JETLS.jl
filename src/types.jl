@@ -527,7 +527,9 @@ const INFERENCE_UNDEF_STATIC_PARAM_CODE = "inference/undef-static-param" # curre
 const INFERENCE_FIELD_ERROR_CODE = "inference/field-error"
 const INFERENCE_BOUNDS_ERROR_CODE = "inference/bounds-error"
 const INFERENCE_METHOD_ERROR_CODE = "inference/method-error"
-const INFERENCE_NON_BOOLEAN_COND_CODE = "inference/non-boolean-cond"
+const INFERENCE_TYPE_ERROR_NON_BOOL_COND_CODE = "inference/type-error/non-bool-cond"
+const INFERENCE_TYPE_ERROR_TYPE_ASSERT_CODE = "inference/type-error/type-assert"
+const DEPRECATED_INFERENCE_NON_BOOLEAN_COND_CODE = "inference/non-boolean-cond"
 const TESTRUNNER_TEST_FAILURE_CODE = "testrunner/test-failure"
 
 const ALL_DIAGNOSTIC_CODES = Set{String}(String[
@@ -555,9 +557,16 @@ const ALL_DIAGNOSTIC_CODES = Set{String}(String[
     INFERENCE_FIELD_ERROR_CODE,
     INFERENCE_BOUNDS_ERROR_CODE,
     INFERENCE_METHOD_ERROR_CODE,
-    INFERENCE_NON_BOOLEAN_COND_CODE,
+    INFERENCE_TYPE_ERROR_NON_BOOL_COND_CODE,
+    INFERENCE_TYPE_ERROR_TYPE_ASSERT_CODE,
     TESTRUNNER_TEST_FAILURE_CODE,
 ])
+
+const DIAGNOSTIC_CODE_ALIASES = Dict{String,Vector{String}}(
+    INFERENCE_TYPE_ERROR_NON_BOOL_COND_CODE => String[
+        DEPRECATED_INFERENCE_NON_BOOLEAN_COND_CODE,
+    ],
+)
 
 struct DiagnosticPattern <: ConfigSection
     pattern::Union{Regex,String}

@@ -125,7 +125,8 @@ Here is a summary table of the diagnostics explained in this section:
 | [`inference/field-error`](@ref diagnostic/reference/inference/field-error)                                     | `Warning`             | `JETLS/save`  | Access to non-existent struct fields                   |
 | [`inference/bounds-error`](@ref diagnostic/reference/inference/bounds-error)                                   | `Warning`             | `JETLS/save`  | Out-of-bounds field access by index                    |
 | [`inference/method-error`](@ref diagnostic/reference/inference/method-error)                                   | `Warning`             | `JETLS/save`  | No matching method found for function calls            |
-| [`inference/non-boolean-cond`](@ref diagnostic/reference/inference/non-boolean-cond)                           | `Warning`             | `JETLS/save`  | Non-boolean value used in boolean context              |
+| [`inference/type-error/type-assert`](@ref diagnostic/reference/inference/type-error/type-assert)               | `Warning`             | `JETLS/save`  | Type assertion failures                                |
+| [`inference/type-error/non-bool-cond`](@ref diagnostic/reference/inference/type-error/non-bool-cond)           | `Warning`             | `JETLS/save`  | Non-boolean value used in boolean context              |
 | [`testrunner/test-failure`](@ref diagnostic/reference/testrunner/test-failure)                                 | `Error`               | `JETLS/extra` | Test failures from TestRunner integration              |
 
 ### [Syntax diagnostic (`syntax/*`)](@id diagnostic/reference/syntax)
@@ -1098,7 +1099,28 @@ function union_split_method_error(x::Union{Int,String})
 end
 ```
 
-#### [Non-boolean condition (`inference/non-boolean-cond`)](@id diagnostic/reference/inference/non-boolean-cond)
+#### [Type assertion error (`inference/type-error/type-assert`)](@id diagnostic/reference/inference/type-error/type-assert)
+
+**Default severity:** `Warning`
+
+Type assertions that are guaranteed to fail. Julia raises a `TypeError` at
+runtime when a value does not satisfy a type assertion like `x::T`.
+
+Example:
+
+```julia
+let x = rand()
+    o = x::Int  # TypeError: in typeassert, expected Int64, got a value of type Float64
+                # (JETLS inference/type-error/type-assert)
+    o
+end
+```
+
+This diagnostic is reported when inference can prove that the asserted value's
+inferred type has no overlap with the asserted type. Type assertions that may
+succeed for some runtime values are not reported.
+
+#### [Non-boolean condition (`inference/type-error/non-bool-cond`)](@id diagnostic/reference/inference/type-error/non-bool-cond)
 
 **Default severity:** `Warning`
 
@@ -1112,7 +1134,7 @@ Examples:
 function non_boolean_example()
     x = 1
     if x  # non-boolean `Int64` found in boolean context
-          # (JETLS inference/non-boolean-cond)
+          # (JETLS inference/type-error/non-bool-cond)
         return "truthy"
     end
 end
@@ -1124,7 +1146,7 @@ When union-split types include non-boolean branches:
 function find_zero(xs::Vector{Union{Missing,Int}})
     for i in eachindex(xs)
         xs[i] == 0 && return i  # non-boolean `Missing` found in boolean context (1/2 union split)
-                                # (JETLS inference/non-boolean-cond)
+                                # (JETLS inference/type-error/non-bool-cond)
     end
 end
 ```
@@ -1137,7 +1159,7 @@ end
     ```julia
     function check(x, y::AbstractString)
         x == :flag || error("x is invalid")  # non-boolean `Missing` found in boolean context (1/2 union split)
-                                             # (JETLS inference/non-boolean-cond)
+                                             # (JETLS inference/type-error/non-bool-cond)
         return println(y)
     end
     ```
@@ -1148,6 +1170,13 @@ end
     - Adding a `::Bool` return type annotation to the comparison
       expression if you know `x` will never be `missing`
       (e.g. `(x == :flag)::Bool`).
+
+##### [Legacy diagnostic code (`inference/non-boolean-cond`)](@id diagnostic/reference/inference/non-boolean-cond)
+
+`inference/non-boolean-cond` is a deprecated code alias for
+`inference/type-error/non-bool-cond`. It is kept for existing documentation
+links and diagnostic pattern configurations for now, but this compatibility
+support may be removed in a future release.
 
 ### [TestRunner diagnostic (`testrunner/*`)](@id diagnostic/reference/testrunner)
 

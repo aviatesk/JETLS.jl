@@ -44,6 +44,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > This disables analysis for matched files. Basic features like completion still might work, but most LSP features will be unfunctional.
 > Note that `analysis_overrides` is provided as a temporary workaround and may be removed or changed at any time. A proper fix is being worked on.
 
+### Breaking
+
+- `inference/non-boolean-cond` is now reported as `inference/type-error/non-bool-cond`. Existing diagnostic pattern configurations that match the old code continue to apply for now, but this compatibility support may be removed in a future release.
+
+### Added
+
+- Added the `inference/type-error/type-assert` diagnostic for type assertions that inference can prove will fail, such as `x::Int` when `x` is inferred as `Float64`.
+
+### Changed
+
+- `inference/type-error/*` now groups diagnostics for the subset of runtime `TypeError` cases that JETLS can infer, including non-`Bool` conditions and statically failing type assertions. Users can ignore or reconfigure this family together with a regex code match such as `^inference/type-error/`.
+
 ## 2026-06-26
 
 - Commit: [`0d67c12`](https://github.com/aviatesk/JETLS.jl/commit/0d67c12)
