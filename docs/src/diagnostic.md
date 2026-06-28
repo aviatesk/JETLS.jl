@@ -125,6 +125,7 @@ Here is a summary table of the diagnostics explained in this section:
 | [`inference/field-error`](@ref diagnostic/reference/inference/field-error)                                     | `Warning`             | `JETLS/save`  | Access to non-existent struct fields                   |
 | [`inference/bounds-error`](@ref diagnostic/reference/inference/bounds-error)                                   | `Warning`             | `JETLS/save`  | Out-of-bounds field access by index                    |
 | [`inference/method-error`](@ref diagnostic/reference/inference/method-error)                                   | `Warning`             | `JETLS/save`  | No matching method found for function calls            |
+| [`inference/undef-keyword`](@ref diagnostic/reference/inference/undef-keyword)                                 | `Warning`             | `JETLS/save`  | Missing required keyword argument                      |
 | [`inference/type-error/type-assert`](@ref diagnostic/reference/inference/type-error/type-assert)               | `Warning`             | `JETLS/save`  | Type assertion failures                                |
 | [`inference/type-error/non-bool-cond`](@ref diagnostic/reference/inference/type-error/non-bool-cond)           | `Warning`             | `JETLS/save`  | Non-boolean value used in boolean context              |
 | [`testrunner/test-failure`](@ref diagnostic/reference/testrunner/test-failure)                                 | `Error`               | `JETLS/extra` | Test failures from TestRunner integration              |
@@ -1082,9 +1083,7 @@ runtime.
 Examples:
 
 ```julia
-let
-    sin(1, 2)  # no matching method found `sin(::Int64, ::Int64)` (JETLS inference/method-error)
-end
+sin(1, 2)  # no matching method found `sin(::Int64, ::Int64)` (JETLS inference/method-error)
 ```
 
 When multiple union-split signatures fail to find matches, the diagnostic will
@@ -1108,6 +1107,25 @@ kwfunc(; kw1=nothing, kw2=nothing) = (kw1, kw2)
 kwfunc(; kw3=42)  # unsupported keyword argument `kw3` in `kwfunc(; kw3::Int64)`
                   # (JETLS inference/method-error)
 ```
+
+#### [Undefined keyword (`inference/undef-keyword`)](@id diagnostic/reference/inference/undef-keyword)
+
+**Default severity:** `Warning`
+
+Calls that omit a required keyword argument (a keyword declared without a
+default value). Julia raises an `UndefKeywordError` at runtime in this case.
+
+Examples:
+
+```julia
+required_keyword(pos; key) = (pos, key)
+
+required_keyword(42)  # missing keyword argument `key` (JETLS inference/undef-keyword)
+```
+
+To avoid false positives, this is only reported when the keyword is
+statically known to be missing on every path; calls that forward keywords
+dynamically (e.g. `f(; kwargs...)`) are not flagged.
 
 #### [Type assertion error (`inference/type-error/type-assert`)](@id diagnostic/reference/inference/type-error/type-assert)
 
