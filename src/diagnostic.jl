@@ -454,6 +454,8 @@ function inference_error_report_code(@nospecialize report::JET.InferenceErrorRep
         return INFERENCE_UNDEF_KEYWORD_CODE
     elseif report isa TypeAssertErrorReport
         return INFERENCE_TYPE_ERROR_TYPE_ASSERT_CODE
+    elseif report isa KeywordTypeErrorReport
+        return INFERENCE_TYPE_ERROR_KEYWORD_CODE
     elseif report isa NonBooleanCondErrorReport
         return INFERENCE_TYPE_ERROR_NON_BOOL_COND_CODE
     end
