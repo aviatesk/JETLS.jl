@@ -13,10 +13,18 @@ related_frame_indices(report) =
     map(frame -> frame.idx, inference_error_report_related_frames(report))
 related_frame_kinds(report) =
     map(frame -> frame.kind, inference_error_report_related_frames(report))
-related_frame_signatures(report) =
+function related_frame_signatures(report; actual2virtual=Main=>@__MODULE__)
+    postprocessor = JET.PostProcessor(actual2virtual)
     map(inference_error_report_related_frames(report)) do frame
-        sprint(JET.print_frame_sig, report.vst[frame.idx], JET.PrintConfig())
+        postprocessor(sprint(JET.print_frame_sig, report.vst[frame.idx], JET.PrintConfig()))
     end
+end
+
+function primary_frame_signature(report; actual2virtual=Main=>@__MODULE__)
+    postprocessor = JET.PostProcessor(actual2virtual)
+    sprint(JET.print_frame_sig, report.vst[first(inference_error_report_stack(report))],
+        JET.PrintConfig()) |> postprocessor
+end
 
 function analyze_signature(f; report_target_modules = nothing)
     analyzer = JETLS.LSAnalyzer(; report_target_modules)
@@ -39,19 +47,16 @@ baremodule TestTargetModule
     end
 end
 
+call_testtarget_func() = TestTargetModule.func()
+read_testtarget_unexisting() = TestTargetModule.unexisting
+function unpack_pair(pair::Pair{Any,Any})
+    _, _, _ = pair
+    return nothing
+end
+
 # test basic analysis abilities of `LSAnalyzer`
 function report_global_undef()
     return sin(undefvar)
-end
-@noinline callfunc(f) = f()
-
-struct Issue392
-    property::Int
-end
-function issue392()
-    x = Issue392(42)
-    println(x.propert)
-    return x
 end
 
 @testset "UndefVarErrorReport" begin
@@ -82,6 +87,41 @@ end
     end
 end
 
+struct Issue392
+    property::Int
+end
+function issue392()
+    x = Issue392(42)
+    println(x.propert)
+    return x
+end
+
+# aviatesk/JETLS.jl#469
+struct TransparentGetproperty
+    x::Int
+end
+function Base.getproperty(o::TransparentGetproperty, s::Symbol)
+    if s === :alias
+        return getfield(o, :x)
+    else
+        return getfield(o, s)
+    end
+end
+transparent_getproperty_error(o::TransparentGetproperty) = o.missing
+
+struct TypoGetproperty
+    x::Int
+end
+Base.getproperty(o::TypoGetproperty, ::Symbol) = getfield(o, :typo)
+typo_getproperty_error(o::TypoGetproperty) = o.missing
+
+struct HelperGetproperty
+    x::Int
+end
+Base.getproperty(o::HelperGetproperty, s::Symbol) = helper_getproperty(o, s)
+helper_getproperty(o::HelperGetproperty, s::Symbol) = getfield(o, s)
+helper_getproperty_error(o::HelperGetproperty) = o.missing
+
 @testset "FieldError analysis" begin
     let result = analyze_call((Some{Int},)) do some
             some.value
@@ -110,6 +150,35 @@ end
         @test length(reports) == 1
         r = only(reports)
         @test r isa FieldErrorReport && r.field === :propert
+    end
+
+    let result = analyze_call(transparent_getproperty_error; report_target_modules=(@__MODULE__,))
+        reports = get_reports(result)
+        @test length(reports) == 1
+        r = only(reports)
+        @test r isa FieldErrorReport && r.field === :missing
+        @test primary_frame_signature(r) == "transparent_getproperty_error(o::TransparentGetproperty)"
+        @test lastindex(r.vst) ∈ related_frame_indices(r)
+        @test RelatedOriginFrame ∈ related_frame_kinds(r)
+    end
+
+    let result = analyze_call(typo_getproperty_error; report_target_modules=(@__MODULE__,))
+        reports = get_reports(result)
+        @test length(reports) == 1
+        r = only(reports)
+        @test r isa FieldErrorReport && r.field === :typo
+        @test primary_frame_signature(r) == "getproperty(o::TypoGetproperty, ::Symbol)"
+        @test lastindex(r.vst) ∉ related_frame_indices(r)
+    end
+
+    let result = analyze_call(helper_getproperty_error; report_target_modules=(@__MODULE__,))
+        reports = get_reports(result)
+        @test length(reports) == 1
+        r = only(reports)
+        @test r isa FieldErrorReport && r.field === :missing
+        @test_broken primary_frame_signature(r) == "helper_getproperty_error(o::HelperGetproperty)" &&
+            lastindex(r.vst) ∈ related_frame_indices(r) &&
+            RelatedOriginFrame ∈ related_frame_kinds(r)
     end
 
     let result = analyze_call((Some,)) do some
@@ -457,17 +526,17 @@ end
 
     # `Base.indexed_iterate`
     let result = analyze_call((Tuple{Any,Any},)) do tpl2
-            a, b = tpl2
+            _, _ = tpl2
         end
         @test isempty(get_reports(result))
     end
     let result = analyze_call((Pair{Any,Any},)) do pair
-            a, b = pair
+            _, _ = pair
         end
         @test isempty(get_reports(result))
     end
     let result = analyze_call((Tuple{Any,Any},)) do tpl2
-            a, b, c = tpl2
+            _, _, _ = tpl2
         end
         reports = get_reports(result)
         @test length(reports) == 1
@@ -475,7 +544,7 @@ end
         @test r isa BoundsErrorReport && r.a === Tuple{Any,Any} && r.i === 3
     end
     let result = analyze_call((Pair{Any,Any},)) do pair
-            a, b, c = pair
+            _, _, _ = pair
         end
         reports = get_reports(result)
         @test length(reports) == 1
@@ -497,7 +566,7 @@ end
 kwtyped(a::Int; kw::Int=42) = a * kw       # typed keyword with a default, plus a positional
 kwtyped2(; x::Int, y::String="s") = (x, y) # required typed x, optional typed y
 kwtypedfwd(; kws...) = kwtyped(1; kws...)   # forwards slurped keywords
-kwtypedbad(; kws...) = kwtyped(1; kw=2.0)   # slurps but hardcodes a mismatching call
+kwtypedbad(; _kws...) = kwtyped(1; kw=2.0)   # slurps but hardcodes a mismatching call
 module KeywordTypeExternalModule
     libkwtyped(; kw::Int=1) = kw
 end
@@ -718,21 +787,20 @@ end
     end
 
     # UndefVarErrorReport
-    let result = analyze_call(; report_target_modules=(@__MODULE__,TestTargetModule,)) do
-            TestTargetModule.func()
-        end
+    let result = analyze_call(call_testtarget_func;
+            report_target_modules=(@__MODULE__,TestTargetModule,))
         reports = get_reports(result)
         @test length(reports) == 1
         r = only(reports)
-        @test r isa UndefVarErrorReport && r.var == GlobalRef(TestTargetModule, :undefvar) && r.vst_offset == 0
+        @test r isa UndefVarErrorReport && r.var == GlobalRef(TestTargetModule, :undefvar)
+        @test primary_frame_signature(r) == "func()"
     end
-    let result = analyze_call(; report_target_modules=(@__MODULE__,)) do
-            TestTargetModule.unexisting
-        end
+    let result = analyze_call(read_testtarget_unexisting; report_target_modules=(@__MODULE__,))
         reports = get_reports(result)
         @test length(reports) == 1
         r = only(reports)
-        @test r isa UndefVarErrorReport && r.var == GlobalRef(TestTargetModule, :unexisting) && r.vst_offset == 1
+        @test r isa UndefVarErrorReport && r.var == GlobalRef(TestTargetModule, :unexisting)
+        @test primary_frame_signature(r) == "read_testtarget_unexisting()"
     end
     let result = analyze_call(; report_target_modules=(ExternalModule,)) do
             TestTargetModule.func()
@@ -753,23 +821,23 @@ end
         reports = get_reports(result)
         @test length(reports) == 1
         r = only(reports)
-        @test r isa FieldErrorReport && r.field === :propert && r.vst_offset == 1
+        @test r isa FieldErrorReport && r.field === :propert
+        @test primary_frame_signature(r) == "issue392()"
     end
     let result = analyze_call(issue392; report_target_modules=(ExternalModule,))
         @test isempty(get_reports(result))
     end
 
     # BoundsErrorReport
-    let result = analyze_call((Pair{Any,Any},); report_target_modules=(@__MODULE__,)) do pair
-            a, b, c = pair
-        end
+    let result = analyze_call(unpack_pair; report_target_modules=(@__MODULE__,))
         reports = get_reports(result)
         @test length(reports) == 1
         r = only(reports)
-        @test r isa BoundsErrorReport && r.a === Pair{Any,Any} && r.i === 3 && r.vst_offset == 1
+        @test r isa BoundsErrorReport && r.a === Pair{Any,Any} && r.i === 3
+        @test primary_frame_signature(r) == "unpack_pair(pair::Pair{Any, Any})"
     end
     let result = analyze_call((Pair{Any,Any},); report_target_modules=(ExternalModule,)) do pair
-            a, b, c = pair
+            _, _, _ = pair
         end
         @test isempty(get_reports(result))
     end

@@ -744,11 +744,62 @@ function report_fieldaccess!(
     namev = (name::Const).val
     objtyp = s
     if namev isa Symbol
+        if f === getfield
+            offset = direct_transparent_getproperty_offset(sv, offset)
+        end
         add_new_report!(analyzer, sv.result, FieldErrorReport(sv, objtyp, namev, offset))
     elseif namev isa Int
         add_new_report!(analyzer, sv.result, BoundsErrorReport(sv, objtyp, namev, offset))
     else error("invalid field analysis") end
     return true
+end
+
+# TODO Replace this hack with a general report provenance attribution system
+
+function direct_transparent_getproperty_offset(sv::CC.InferenceState, offset::Int)
+    is_direct_transparent_getproperty_getfield(sv) || return offset
+    return max(offset, 1)
+end
+
+function is_direct_transparent_getproperty_getfield(sv::CC.InferenceState)
+    def = sv.linfo.def
+    def isa Method || return false
+    def.name === :getproperty || return false
+    length(sv.slottypes) ≥ 3 || return false
+    pc = JET.get_currpc(sv)
+    stmt = sv.src.code[pc]
+    Meta.isexpr(stmt, :call) || return false
+    length(stmt.args) == 3 || return false
+    seen_slots = BitSet()
+    receiver = @something transparent_getproperty_slot_id!(seen_slots, stmt.args[2], sv, pc) return false
+    receiver == 2 || return false
+    field = @something transparent_getproperty_slot_id!(seen_slots, stmt.args[3], sv, pc) return false
+    field == 3 || return false
+    return true
+end
+
+function transparent_getproperty_slot_id!(
+        seen_slots::BitSet, @nospecialize(x), sv::CC.InferenceState, pc::Int
+    )
+    while true
+        slot = CC.ssa_def_slot(x, sv)
+        slot isa SlotNumber || return nothing
+        slot.id ≤ 3 && return slot.id
+        slot.id ∈ seen_slots && return nothing
+        push!(seen_slots, slot.id)
+        pc_assign = CC.find_dominating_assignment(slot.id, pc, sv)
+        pc_assign === nothing && return nothing
+        stmt = sv.src.code[pc_assign]
+        if Meta.isexpr(stmt, :(=)) && length(stmt.args) == 2
+            lhs, rhs = stmt.args
+            if lhs isa SlotNumber && lhs.id == slot.id
+                x = rhs
+                pc = pc_assign
+                continue
+            end
+        end
+        return nothing
+    end
 end
 
 # NoMethodMatchReport

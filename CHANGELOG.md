@@ -101,6 +101,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Fixed false `lowering/unused-local`, `lowering/unused-argument`, and `lowering/unused-assignment` reports for a binding whose only use is in a `@static` branch not selected by the JETLS analysis process.
 
+- Fixed `inference/field-error` diagnostics for direct transparent custom `getproperty` implementations that forward to `getfield(o, s)`, so missing-property errors point at the user's property access instead of the forwarding implementation as the primary diagnostic location. (Closed https://github.com/aviatesk/JETLS.jl/issues/469)
+
 ## 2026-06-26
 
 - Commit: [`0d67c12`](https://github.com/aviatesk/JETLS.jl/commit/0d67c12)
