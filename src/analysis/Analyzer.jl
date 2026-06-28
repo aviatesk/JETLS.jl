@@ -196,6 +196,15 @@ end
 # but `report_target_modules` does not necessarily include `Base`.
 # Therefore, we need to check the inference frame one level up, and if it is in `report_target_modules`,
 # we also need to analyze it.
+#
+# The `return 1` path ties the decision to the caller (the parent module) and attaches the
+# report to the out-of-scope callee frame, so a cached-and-shared callee result could in
+# principle carry a stale decision across callers. In practice the builtins that take this
+# path are driven by constant arguments (the field name for `getproperty`/`getfield`, the
+# index for `getindex`), which inference evaluates with per-caller constant propagation,
+# not one shared global result, so the decision is re-derived per caller and no
+# order-dependent staleness arises. (`return 0` decides from the callee's own module and is
+# caller-independent regardless.)
 function should_analyze_for_builtins(analyzer::LSAnalyzer, sv::CC.InferenceState)
     report_target_modules = analyzer.report_target_modules
     isnothing(report_target_modules) && return 0
