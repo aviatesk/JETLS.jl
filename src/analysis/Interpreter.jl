@@ -182,15 +182,19 @@ function JET.analyze_from_definitions!(interp::LSInterpreter, config::JET.Toplev
             analyzer = JET.ToplevelAbstractAnalyzer(interp, JET.non_toplevel_concretized;
                 reset_report_target_modules = false,
                 refresh_local_cache = true)
+            inf_world = CC.get_inference_world(analyzer)
             match = Base._which(tt;
                 # NOTE use the latest world counter with `method_table(analyzer)` unwrapped,
                 # otherwise it may use a world counter when this method isn't defined yet
                 method_table = CC.method_table(analyzer),
-                world = CC.get_inference_world(analyzer),
+                world = inf_world,
                 raise = false)
             if (match !== nothing &&
                 (!(entrypoint isa Symbol) || # implies `analyze_from_definitions===true`
                  match.method.name === entrypoint))
+                # redirect keyword-slurping forwarders to the abstract keyword sorter,
+                # but only after the `entrypoint` check above sees the original method name
+                match = JETLS.redirect_keyword_slurp_match(analyzer, match, inf_world)
                 analyzer, result = JET.analyze_method_signature!(analyzer,
                     match.method, match.spec_types, match.sparams)
                 reports = JET.get_reports(analyzer, result)

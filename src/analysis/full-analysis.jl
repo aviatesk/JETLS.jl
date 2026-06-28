@@ -854,6 +854,42 @@ end # if JETLS_DEV_MODE
 
 const empty_lines_range = typemax(Int) => typemin(Int)
 
+function signature_method_slurps_keywords(m::Method)
+    for name in Base.kwarg_decl(m)
+        endswith(String(name), "...") && return true
+    end
+    return false
+end
+
+function abstract_kwsorter_signature(@nospecialize sig)
+    sig′ = Base.unwrap_unionall(sig)
+    sig′ isa DataType || return nothing
+    sig′ <: Tuple || return nothing
+    isempty(sig′.parameters) && return nothing
+    kwsig = Tuple{typeof(Core.kwcall), NamedTuple, sig′.parameters...}
+    return Base.rewrap_unionall(kwsig, sig)
+end
+
+# A keyword-forwarding method like `f(; kws...) = g(; kws...)` has the user-facing
+# signature `Tuple{typeof(f)}`, at which inference specializes `kws` to the *empty* set.
+# The forwarded call then looks like it omits `g`'s required keywords, producing spurious
+# `inference/undef-keyword` reports even though the keyword comes from `f`'s own caller.
+# Analyze the keyword sorter `Core.kwcall(::NamedTuple, ::typeof(f), ...)` instead, so `kws`
+# is an abstract `NamedTuple` ("any keywords") — the keyword analogue of how a positional
+# `args::T...` stays `Vararg{T}` rather than collapsing to zero arguments.
+function redirect_keyword_slurp_match(@nospecialize(analyzer), match::Core.MethodMatch, world::UInt)
+    signature_method_slurps_keywords(match.method) || return match
+    kwsig = @something abstract_kwsorter_signature(match.spec_types) return match
+    method_table = CC.method_table(analyzer)
+    return @something Base._which(kwsig; method_table, world, raise=false) match
+end
+
+function signature_analysis_match(@nospecialize(analyzer), @nospecialize(sig), world::UInt)
+    method_table = CC.method_table(analyzer)
+    match = @something Base._which(sig; method_table, world, raise=false) return nothing
+    return redirect_keyword_slurp_match(analyzer, match, world)
+end
+
 get_lines_in_ex(filepath::AbstractString, ex::Expr) = _get_lines_in_ex(empty_lines_range, filepath, ex)
 
 function _get_lines_in_ex(lines::Pair{Int,Int}, filepath::AbstractString, @nospecialize ex)
@@ -1020,10 +1056,7 @@ function analyze_package_with_revise(
             # to avoid data races between concurrent signature analysis tasks
             task_analyzer = JET.AbstractAnalyzer(analyzer,
                 JET.AnalyzerState(JET.AnalyzerState(analyzer), #=refresh_local_cache=#true))
-            match = Base._which(siginfo.sig;
-                method_table = CC.method_table(task_analyzer),
-                world = inf_world,
-                raise = false)
+            match = signature_analysis_match(task_analyzer, siginfo.sig, inf_world)
             if match !== nothing
                 task_analyzer, result = JET.analyze_method_signature!(task_analyzer,
                     match.method, match.spec_types, match.sparams)
