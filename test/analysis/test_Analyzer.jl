@@ -5,8 +5,21 @@ using JETLS
 
 include(normpath(pkgdir(JETLS), "test", "interactive-utils.jl"))
 
-using JETLS.JET: get_reports
+using JETLS.JET: CC, get_reports
 using JETLS.Analyzer
+
+function analyze_signature(f; report_target_modules = nothing)
+    analyzer = JETLS.LSAnalyzer(; report_target_modules)
+    analyzer = JET.AbstractAnalyzer(analyzer,
+        JET.AnalyzerState(JET.AnalyzerState(analyzer), #=refresh_local_cache=#true))
+    m = only(methods(f))
+    world = CC.get_inference_world(analyzer)
+    match = JETLS.signature_analysis_match(analyzer, m.sig, world)
+    match === nothing && error("No method match for signature analysis")
+    analyzer, result = JET.analyze_method_signature!(analyzer,
+        match.method, match.spec_types, match.sparams)
+    return get_reports(analyzer, result)
+end
 
 baremodule ExternalModule end
 
@@ -223,6 +236,133 @@ struct KwCallable end
         @test r isa UnsupportedKeywordArgReport
         @test r.ftype === typeof(kwvaropt) && r.unsupported == [:z]
         @test r.posargtypes == Any[Vararg{Int}]
+    end
+end
+
+kwreq(; x) = x            # required keyword x
+kwreq2(; x, y=2) = (x, y) # required x, optional y
+kwopt(; x=1) = x          # optional keyword x
+kwfwd(; kws...) = kwreq(; kws...) # forwards slurped keywords to a required-keyword function
+kwreqpos(pos; x) = (pos, x)
+kwfwdpos(; kws...) = kwreqpos(42; kws...)
+kwvarpos(pos...; x) = (pos, x) # required keyword + positional vararg
+kwcaller() = kwreq()      # never supplies the required keyword
+module UndefKeywordExternalModule
+    libkwreq(; x) = x
+end
+
+@testset "UndefKeywordErrorReport" begin
+    # required keyword missing on a direct call (no keyword sorter)
+    let result = analyze_call() do
+            kwreq()
+        end
+        reports = get_reports(result)
+        @test length(reports) == 1
+        r = only(reports)
+        @test r isa UndefKeywordErrorReport && r.var === :x
+    end
+
+    # required keyword missing while another keyword is provided (via keyword sorter)
+    let result = analyze_call() do
+            kwreq2(; y=3)
+        end
+        reports = get_reports(result)
+        @test length(reports) == 1
+        r = only(reports)
+        @test r isa UndefKeywordErrorReport && r.var === :x
+    end
+
+    # no report when the required keyword is provided
+    let result = analyze_call() do
+            kwreq(; x=1)
+        end
+        @test isempty(get_reports(result))
+    end
+
+    # no report for an optional keyword
+    let result = analyze_call() do
+            kwopt()
+        end
+        @test isempty(get_reports(result))
+    end
+
+    # no false positive when keywords are splatted dynamically: `nt` may supply `x`, so the
+    # call does not definitely throw
+    let result = analyze_call((NamedTuple,)) do nt
+            kwreq(; nt...)
+        end
+        @test isempty(get_reports(result))
+    end
+
+    # splatted positional arguments leave a trailing `Vararg` in the call's argtypes, which
+    # must be kept intact rather than widened into a bogus signature element
+    let result = analyze_call((Tuple{Vararg{Int}},)) do args
+            kwvarpos(args...)
+        end
+        reports = get_reports(result)
+        @test length(reports) == 1
+        r = only(reports)
+        @test r isa UndefKeywordErrorReport && r.var === :x
+    end
+
+    # signature analysis uses an abstract keyword sorter for keyword-forwarding wrappers,
+    # so a required keyword may be supplied by the wrapper's own caller
+    let reports = analyze_signature(kwfwd)
+        @test isempty(reports)
+    end
+    let reports = analyze_signature(kwfwdpos)
+        @test isempty(reports)
+    end
+    # ... but a concrete zero-keyword call to the forwarder still reports the real error
+    let result = analyze_call(kwfwd, ())
+        reports = get_reports(result)
+        @test length(reports) == 1
+        r = only(reports)
+        @test r isa UndefKeywordErrorReport && r.var === :x
+    end
+    let result = analyze_call(kwfwdpos, ())
+        reports = get_reports(result)
+        @test length(reports) == 1
+        r = only(reports)
+        @test r isa UndefKeywordErrorReport && r.var === :x
+    end
+    # ... and a non-forwarding function that never supplies the keyword is still reported
+    let reports = analyze_signature(kwcaller)
+        @test length(reports) == 1
+        r = only(reports)
+        @test r isa UndefKeywordErrorReport && r.var === :x
+    end
+
+    # each reached call site of the same missing-keyword callee must be reported
+    # independently. The throw lives in the callee's synthesized keyword sorter, which is
+    # inferred fresh only once; a throw-site detector would fire only for whichever call site
+    # triggered that inference and miss the rest, so detection must be per call site.
+    let result = analyze_call((Bool,)) do c
+            if c
+                kwreq()
+            else
+                kwreq()
+            end
+        end
+        reports = get_reports(result)
+        @test length(reports) == 2
+        @test all(r -> r isa UndefKeywordErrorReport && r.var === :x, reports)
+    end
+
+    # the throw happens in the callee's module, but gating is on the caller: a call from a
+    # target module is reported even when the function is defined elsewhere
+    let result = analyze_call(; report_target_modules=(@__MODULE__,)) do
+            UndefKeywordExternalModule.libkwreq()
+        end
+        reports = get_reports(result)
+        @test length(reports) == 1
+        @test only(reports) isa UndefKeywordErrorReport
+    end
+    # ... but not reported when the caller's module is outside the target set
+    let result = analyze_call(; report_target_modules=(UndefKeywordExternalModule,)) do
+            UndefKeywordExternalModule.libkwreq()
+        end
+        @test isempty(get_reports(result))
     end
 end
 

@@ -54,6 +54,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Added detection of unsupported keyword arguments: a call that passes a keyword argument the called method does not accept (e.g. `f(; unknown=...)`) is now reported under the `inference/method-error` diagnostic.
 
+- Added the `inference/undef-keyword` diagnostic: a call that omits a required keyword argument (one declared without a default), which raises `UndefKeywordError` at runtime, is now reported.
+
 ### Changed
 
 - `inference/type-error/*` now groups diagnostics for the subset of runtime `TypeError` cases that JETLS can infer, including non-`Bool` conditions and statically failing type assertions. Users can ignore or reconfigure this family together with a regex code match such as `^inference/type-error/`.

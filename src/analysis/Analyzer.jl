@@ -2,7 +2,8 @@ module Analyzer
 
 export LSAnalyzer, inference_error_report_severity, inference_error_report_stack, reset_report_target_modules!
 export BoundsErrorReport, FieldErrorReport, MethodErrorReport, NonBooleanCondErrorReport,
-    TypeAssertErrorReport, TypeErrorReport, UndefVarErrorReport, UnsupportedKeywordArgReport
+    TypeAssertErrorReport, TypeErrorReport, UndefKeywordErrorReport, UndefVarErrorReport,
+    UnsupportedKeywordArgReport
 
 using Core.IR
 using JET.JETInterface
@@ -265,6 +266,7 @@ function after_abstract_call_gf_by_type(
         ret′ = ret[]
         report_method_error!(analyzer′, sv′, ret′, arginfo, atype′[])
         report_unsupported_kwarg_error!(analyzer′, sv′, func, ret′, arginfo, max_methods)
+        report_undef_keyword!(analyzer′, sv′, func, ret′, arginfo, max_methods)
         return true
     end
     if isready(ret)
@@ -370,6 +372,22 @@ function CC.abstract_eval_value(analyzer::LSAnalyzer, @nospecialize(e), sstate::
     return ret
 end
 
+function CC.finish!(analyzer::LSAnalyzer, caller::CC.InferenceState, validation_world::UInt, time_before::UInt64)
+    # An `UndefKeywordError` thrown on a path that does not make the enclosing frame diverge
+    # was not actually taken (e.g. `f(; nt...)` lowers to a branch calling `f()` only when
+    # `nt` is empty), so drop such reports and keep only definitely-missing keyword calls.
+    # `finish!` runs after `finishinfer!`, and (for cycles) after every cycle member's
+    # `finishinfer!`, so `caller.bestguess` is the converged return type here. Unwrap
+    # `LimitedAccuracy` so a recursion-limited but diverging frame still keeps the report.
+    if CC.ignorelimited(caller.bestguess) !== Union{}
+        filter!(JET.get_reports(analyzer, caller.result)) do @nospecialize(report)
+            return !(report isa UndefKeywordErrorReport)
+        end
+    end
+    return @invoke CC.finish!(analyzer::ToplevelAbstractAnalyzer, caller::CC.InferenceState,
+        validation_world::UInt, time_before::UInt64)
+end
+
 # analysis
 # ========
 
@@ -383,6 +401,9 @@ Subtypes:
 - `FieldErrorReport`: Access to non-existent struct fields (corresponding to `FieldError`)
 - `BoundsErrorReport`: Out-of-bounds field access by index (corresponding to `BoundsError`)
 - `MethodErrorReport`: Method dispatch errors (corresponding to `MethodError`)
+- `UnsupportedKeywordArgReport`: Keyword arguments the method does not accept
+  (a `MethodError` raised via `Base.kwerr`)
+- `UndefKeywordErrorReport`: Missing required keyword arguments (corresponding to `UndefKeywordError`)
 - `TypeErrorReport`: Type errors (corresponding to `TypeError`)
 """
 abstract type LSErrorReport <: InferenceErrorReport end
@@ -772,6 +793,71 @@ function kwcall_keyword_names(@nospecialize kwt)
     names = kwt.parameters[1]
     isa(names, Tuple{Vararg{Symbol}}) || return nothing
     return names
+end
+
+# UndefKeywordErrorReport
+# -----------------------
+
+# Calling a function without one of its required keyword arguments (a keyword without a
+# default) raises `UndefKeywordError` at runtime. Detect this at the call site (not at the
+# `throw` inside the synthesized keyword sorter) so the report stays independent of analysis
+# order: the throw site only fires while the callee is freshly inferred, but its result —
+# including whether the call diverges — is cached and reused, which would make the report
+# appear or vanish depending on which signature got analyzed first.
+@jetreport struct UndefKeywordErrorReport <: LSErrorReport
+    var::Symbol
+end
+JETInterface.print_report_message(io::IO, r::UndefKeywordErrorReport) =
+    print(io, "missing keyword argument `", r.var, '`')
+inference_error_report_stack_impl(r::UndefKeywordErrorReport) = length(r.vst):-1:1
+inference_error_report_severity_impl(::UndefKeywordErrorReport) = DiagnosticSeverity.Warning
+
+function report_undef_keyword!(
+        analyzer::LSAnalyzer, sv::CC.InferenceState, @nospecialize(func),
+        call::CC.CallMeta, arginfo::CC.ArgInfo, max_methods::Int
+    )
+    # Decide *whether* to report from the return / exception types, which survive caching
+    # (`call.exct` carries the missing keyword as `Const(UndefKeywordError(name))` only while
+    # the callee is freshly inferred, and widens to the bare `UndefKeywordError` type once
+    # cached). Recover the *name* from the callee's declared keywords so both presence and
+    # message stay independent of analysis order.
+    call.rt === Union{} || return false
+    CC.widenconst(call.exct) <: UndefKeywordError || return false
+    argtypes = arginfo.argtypes
+    if func === Core.kwcall
+        # `Core.kwcall(kwnt, f, posargs...)`
+        length(argtypes) ≥ 3 || return false
+        provided = @something kwcall_keyword_names(CC.widenconst(argtypes[2])) return false
+        ftype = CC.widenconst(argtypes[3])
+        posbase = 4
+    else
+        # direct call with no keywords (the function's zero-keyword convenience method)
+        provided = ()
+        ftype = CC.widenconst(argtypes[1])
+        posbase = 2
+    end
+    # `arginfo.argtypes` may end in a `Vararg` (e.g. a splatted call like `f(xs...)`), and a
+    # positional argument may even be `Union{}` on a dead path. `argtypes_to_type` keeps a
+    # trailing vararg intact and collapses such dead paths to `Bottom`, where a plain
+    # `Tuple{...}` would instead error on a vararg or `Union{}` field.
+    callargtypes = Any[ftype]
+    append!(callargtypes, @view argtypes[posbase:end])
+    callsig = CC.argtypes_to_type(callargtypes)
+    callsig === Union{} && return false
+    matches = @something CC.findall(callsig, CC.method_table(analyzer); limit=max_methods) return false
+    isempty(matches) && return false
+    for match in matches
+        for name in Base.kwarg_decl(match.method)
+            endswith(String(name), "...") && continue # slurp absorbs any missing keyword
+            name ∈ provided && continue
+            # first declared keyword not supplied; the keyword sorter throws for the first
+            # such *required* one, which this matches under the usual required-before-optional
+            # declaration order
+            add_new_report!(analyzer, sv.result, UndefKeywordErrorReport(sv, name))
+            return true
+        end
+    end
+    return false
 end
 
 # NonBooleanCondErrorReport
