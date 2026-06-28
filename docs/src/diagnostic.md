@@ -9,23 +9,32 @@ severity levels, and how to configure them to match your project's needs.
 
 ## [Codes](@id diagnostic/code)
 
-JETLS reports diagnostics using hierarchical codes in the format
-`"category/kind"`, following the [LSP specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#diagnostic).
-This structure allows fine-grained control over which diagnostics to show and at
-what [severity level](@ref diagnostic/severity) through configuration.
+JETLS reports diagnostics using hierarchical, slash-separated codes, following
+the [LSP specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.18/specification/#diagnostic).
+A code is a slash-separated path, `category/.../kind`, where:
 
-All available diagnostic codes are listed below. Each category (e.g.,
-`syntax/*`, `lowering/*`) contains one or more specific diagnostic codes:
+- the first segment is a category (`syntax`, `lowering`, …), naming the
+  [analysis stage](@ref diagnostic/stage) that produces the diagnostic;
+- the last segment is the specific kind;
+- optional intermediate segments group related diagnostics.
+
+For example `syntax/parse-error`, or `inference/type-error/keyword` when nested.
+This hierarchy allows fine-grained control over which diagnostics to show and
+at what [severity level](@ref diagnostic/severity) through
+[configuration](@ref config/diagnostic), from a whole category down to an
+individual code.
+
+All available diagnostic codes are listed below:
 
 ```@contents
 Pages = ["diagnostic.md"]
-Depth = 3:4
+Depth = 3:5
 ```
 
 ## [Severity levels](@id diagnostic/severity)
 
 Each diagnostic has a severity level that indicates how serious the issue is.
-JETLS supports four severity levels defined by the [LSP specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#diagnosticSeverity):
+JETLS supports four severity levels defined by the [LSP specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.18/specification/#diagnosticSeverity):
 
 - **`Error`** (`1`): invalid code that cannot be compiled or loaded
   (e.g. syntax errors, lowering errors)
@@ -74,20 +83,106 @@ JETLS uses three diagnostic sources:
 
 - **`JETLS/live`**: Diagnostics available on demand via the pull model
   diagnostic channels
-  [`textDocument/diagnostic`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#textDocument_diagnostic)
+  [`textDocument/diagnostic`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.18/specification/#textDocument_diagnostic)
   (for open files) and
-  [`workspace/diagnostic`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#workspace_diagnostic)
+  [`workspace/diagnostic`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.18/specification/#workspace_diagnostic)
   (for unopened files when [`diagnostic.all_files`](@ref config/diagnostic/all_files) is enabled).
   Most clients request these as you edit, providing real-time feedback without
   requiring a file save. Includes syntax errors and lowering-based analysis
   (`syntax/*`, `lowering/*`).
 - **`JETLS/save`**: Diagnostics published by JETLS after on-save full analysis
-  via the push model channel [`textDocument/publishDiagnostics`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#textDocument_publishDiagnostics).
+  via the push model channel [`textDocument/publishDiagnostics`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.18/specification/#textDocument_publishDiagnostics).
   These run full analysis including type inference and require loading your
   code. Includes top-level errors and inference-based analysis (`toplevel/*`,
   `inference/*`).
 - **`JETLS/extra`**: Diagnostics from external sources like the TestRunner
-  integration (`testrunner/*`). Published via [`textDocument/publishDiagnostics`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#textDocument_publishDiagnostics).
+  integration (`testrunner/*`). Published via [`textDocument/publishDiagnostics`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.18/specification/#textDocument_publishDiagnostics).
+
+## [Analysis stages](@id diagnostic/stage)
+
+JETLS produces diagnostics at successive stages of analysis. Each stage owns a
+code [category](@ref diagnostic/code) (the first segment of its codes) and
+determines what is analyzed, which tool powers it, and through which
+[source](@ref diagnostic/source) its diagnostics are delivered:
+
+| Category                                               | Pipeline stage | Powered by                  | Source        | Depends on        |
+| ------------------------------------------------------ | -------------- | --------------------------- | ------------- | ----------------- |
+| [`syntax/*`](@ref diagnostic/reference/syntax)         | Parsing        | JuliaSyntax.jl              | `JETLS/live`  | —                 |
+| [`lowering/*`](@ref diagnostic/reference/lowering)     | Lowering       | JuliaLowering.jl            | `JETLS/live`  | parsing           |
+| [`toplevel/*`](@ref diagnostic/reference/toplevel)     | Code loading   | JuliaInterpreter.jl, JET.jl | `JETLS/save`  | parsing           |
+| [`inference/*`](@ref diagnostic/reference/inference)   | Type inference | JET.jl                      | `JETLS/save`  | code loading      |
+| [`testrunner/*`](@ref diagnostic/reference/testrunner) | Test execution | TestRunner.jl               | `JETLS/extra` | manual run        |
+
+The first four stages form a pipeline: each builds on the previous one, so a
+failure at an earlier stage limits what the later stages can analyze. Test
+execution is separate and runs only when you trigger it.
+
+Only parsing and lowering (the live stages) report byte-precise source ranges;
+every other stage (code loading, type inference, and test execution)
+reports at line granularity.
+
+###### [Parsing (`syntax/*`)](@id diagnostic/stage/syntax)
+
+[JuliaSyntax.jl](https://github.com/JuliaLang/julia/tree/master/JuliaSyntax)
+parses your source text into syntax trees. It runs on every edit without
+executing your code, so `syntax/*` diagnostics are delivered through the
+`JETLS/live` source and update as you type. Because every later stage builds on
+the parse result, unparsable code yields only `syntax/*` diagnostics. See
+[`syntax/*`](@ref diagnostic/reference/syntax) for the diagnostic codes.
+
+###### [Lowering (`lowering/*`)](@id diagnostic/stage/lowering)
+
+[JuliaLowering.jl](https://github.com/JuliaLang/julia/tree/master/JuliaLowering)
+lowers the parsed syntax tree into the intermediate representation JETLS
+analyzes, delivered through the `JETLS/live` source as you edit.
+It relies on binding and scope information, not types, so it flags undefined or
+unused variables, unreachable code, and the like — but not type-level problems,
+which require [type inference](@ref diagnostic/stage/inference).
+Most checks are self-contained, but macro expansion and global-name resolution
+need a module context, so they additionally depend on
+[code loading](@ref diagnostic/stage/toplevel)[^code_loading_dependency].
+See [`lowering/*`](@ref diagnostic/reference/lowering) for the diagnostic codes.
+
+[^code_loading_dependency]:
+    The [`lowering/macro-expansion-error`](@ref diagnostic/reference/lowering/macro-expansion-error) and
+    [`lowering/undef-global-var`](@ref diagnostic/reference/lowering/undef-global-var)
+    checks are reported only after a full analysis has established that context,
+    which JETLS refreshes diagnostics to pick up.
+
+###### [Code loading (`toplevel/*`)](@id diagnostic/stage/toplevel)
+
+[JET.jl](https://github.com/aviatesk/JET.jl) virtually loads your code as part
+of JETLS's full analysis, delivered through the `JETLS/save` source on save.
+Using [JuliaInterpreter.jl](https://github.com/JuliaDebug/JuliaInterpreter.jl),
+it selectively interprets the top-level code to load the definitions (methods,
+types, globals, macros) that the later type-inference stage needs. Package
+dependencies, by contrast, are loaded unconditionally.
+
+!!! danger "Security"
+    Do not run JETLS on code you do not trust. Full analysis runs your own
+    top-level code (scripts included) and the package dependencies it loads —
+    both can execute arbitrary code.
+
+Full analysis is debounced to avoid excessive work on frequent saves; configure
+it via [`[full_analysis] debounce`](@ref config/full_analysis/debounce). See
+[`toplevel/*`](@ref diagnostic/reference/toplevel) for the diagnostic codes.
+
+###### [Type inference (`inference/*`)](@id diagnostic/stage/inference)
+
+[JET.jl](https://github.com/aviatesk/JET.jl) runs type inference over your
+loaded code during the same on-save full analysis (`JETLS/save`). Inference
+only covers code that loaded successfully, so a `toplevel/error`
+(e.g. a missing dependency) suppresses `inference/*` diagnostics for the
+affected code. See
+[`inference/*`](@ref diagnostic/reference/inference) for the diagnostic codes.
+
+###### [Test execution (`testrunner/*`)](@id diagnostic/stage/testrunner)
+
+[TestRunner.jl](https://github.com/aviatesk/TestRunner.jl) runs your tests via
+the [TestRunner integration](@ref testrunner), reporting failures through the
+`JETLS/extra` source. Unlike the other categories, these run only when you
+trigger them manually, not automatically on edit or save. See
+[`testrunner/*`](@ref diagnostic/reference/testrunner) for the diagnostic codes.
 
 ## [Reference](@id diagnostic/reference)
 
@@ -133,6 +228,9 @@ Here is a summary table of the diagnostics explained in this section:
 
 ### [Syntax diagnostic (`syntax/*`)](@id diagnostic/reference/syntax)
 
+Syntax diagnostics come from JuliaSyntax.jl's parser and are reported with
+byte-precise ranges (see [Parsing](@ref diagnostic/stage/syntax)).
+
 #### [Syntax parse error (`syntax/parse-error`)](@id diagnostic/reference/syntax/parse-error)
 
 **Default severity**: `Error`
@@ -150,8 +248,8 @@ end
 
 ### [Lowering diagnostic (`lowering/*`)](@id diagnostic/reference/lowering)
 
-Lowering diagnostics are detected during Julia's lowering phase, which
-transforms parsed syntax into a simpler intermediate representation.
+Lowering diagnostics come from JETLS's lowering-phase analysis and are reported
+with byte-precise ranges (see [Lowering](@ref diagnostic/stage/lowering)).
 
 #### [Lowering error (`lowering/error`)](@id diagnostic/reference/lowering/error)
 
@@ -892,11 +990,9 @@ export bar, @foo  # Names are not sorted alphabetically (JETLS lowering/unsorted
 
 ### [Top-level diagnostic (`toplevel/*`)](@id diagnostic/reference/toplevel)
 
-Top-level diagnostics are reported by JETLS's full analysis feature (source:
-`JETLS/save`), which runs when you save a file. To prevent excessive analysis
-on frequent saves, JETLS uses a debounce mechanism. See the
-[`[full_analysis] debounce`](@ref config/full_analysis/debounce) configuration
-documentation to adjust the debounce period.
+Top-level diagnostics are reported while JETLS loads your code during the
+on-save full analysis, at line granularity
+(see [Code loading](@ref diagnostic/stage/toplevel)).
 
 #### [Top-level error (`toplevel/error`)](@id diagnostic/reference/toplevel/error)
 
@@ -1007,11 +1103,19 @@ end
 
 ### [Inference diagnostic (`inference/*`)](@id diagnostic/reference/inference)
 
-Inference diagnostics use [JET.jl](https://github.com/aviatesk/JET.jl) to
-perform type-aware analysis and detect potential errors through static analysis.
-These diagnostics are reported by JETLS's full analysis feature
-(source: `JETLS/save`), which runs when you save a file (similar to
-[Top-level diagnostic](@ref diagnostic/reference/toplevel)).
+Inference diagnostics come from JET.jl's type inference during the on-save
+full analysis, at line granularity
+(see [Type inference](@ref diagnostic/stage/inference)).
+
+Each corresponds to a concrete Julia runtime error that JET detects statically,
+before the code runs:
+
+- [`inference/undef-global-var`](@ref diagnostic/reference/inference/undef-global-var) → `UndefVarError`
+- [`inference/field-error`](@ref diagnostic/reference/inference/field-error) → `FieldError`
+- [`inference/bounds-error`](@ref diagnostic/reference/inference/bounds-error) → `BoundsError`
+- [`inference/method-error`](@ref diagnostic/reference/inference/method-error) → `MethodError` (no matching method, or an unsupported keyword argument)
+- [`inference/undef-keyword`](@ref diagnostic/reference/inference/undef-keyword) → `UndefKeywordError`
+- [`inference/type-error/*`](@ref diagnostic/reference/inference/type-error) → `TypeError` (failing type assertion, non-boolean condition, or keyword-value type mismatch)
 
 #### [Undefined global variable (`inference/undef-global-var`)](@id diagnostic/reference/inference/undef-global-var)
 
@@ -1128,7 +1232,13 @@ To avoid false positives, this is only reported when the keyword is
 statically known to be missing on every path; calls that forward keywords
 dynamically (e.g. `f(; kwargs...)`) are not flagged.
 
-#### [Keyword argument type error (`inference/type-error/keyword`)](@id diagnostic/reference/inference/type-error/keyword)
+#### [Type error (`inference/type-error`)](@id diagnostic/reference/inference/type-error)
+
+All `inference/type-error/*` codes report a `TypeError` raised at runtime. They
+share the `inference/type-error/` prefix, so a configuration pattern like
+`inference/type-error/.*` adjusts the whole group at once.
+
+##### [Keyword argument type error (`inference/type-error/keyword`)](@id diagnostic/reference/inference/type-error/keyword)
 
 **Default severity:** `Warning`
 
@@ -1149,7 +1259,7 @@ To avoid false positives, this is only reported when the value type can never
 match the declared type; calls where the value may match for some runtime
 values are not flagged.
 
-#### [Type assertion error (`inference/type-error/type-assert`)](@id diagnostic/reference/inference/type-error/type-assert)
+##### [Type assertion error (`inference/type-error/type-assert`)](@id diagnostic/reference/inference/type-error/type-assert)
 
 **Default severity:** `Warning`
 
@@ -1170,7 +1280,7 @@ This diagnostic is reported when inference can prove that the asserted value's
 inferred type has no overlap with the asserted type. Type assertions that may
 succeed for some runtime values are not reported.
 
-#### [Non-boolean condition (`inference/type-error/non-bool-cond`)](@id diagnostic/reference/inference/type-error/non-bool-cond)
+##### [Non-boolean condition (`inference/type-error/non-bool-cond`)](@id diagnostic/reference/inference/type-error/non-bool-cond)
 
 **Default severity:** `Warning`
 
@@ -1221,7 +1331,7 @@ end
       expression if you know `x` will never be `missing`
       (e.g. `(x == :flag)::Bool`).
 
-##### [Legacy diagnostic code (`inference/non-boolean-cond`)](@id diagnostic/reference/inference/non-boolean-cond)
+###### [Legacy diagnostic code (`inference/non-boolean-cond`)](@id diagnostic/reference/inference/non-boolean-cond)
 
 `inference/non-boolean-cond` is a deprecated code alias for
 `inference/type-error/non-bool-cond`. It is kept for existing documentation
@@ -1230,9 +1340,9 @@ support may be removed in a future release.
 
 ### [TestRunner diagnostic (`testrunner/*`)](@id diagnostic/reference/testrunner)
 
-TestRunner diagnostics are reported when you manually run tests via code lens
-or code actions through the [TestRunner integration](@ref testrunner) (source: `JETLS/extra`).
-Unlike other diagnostics, these are not triggered automatically by editing or saving files.
+TestRunner diagnostics come from manually running tests via the
+[TestRunner integration](@ref testrunner), at line granularity
+(see [Test execution](@ref diagnostic/stage/testrunner)).
 
 #### [Test failure (`testrunner/test-failure`)](@id diagnostic/reference/testrunner/test-failure)
 
@@ -1254,10 +1364,10 @@ behavior to match your project's coding standards and preferences.
 
 ```@example
 nothing # This is an internal comment for this documentation: # hide
-nothing # Use H5 for subsections in this section so that the `@contents` block above works as intended. # hide
+nothing # Use H6 for subsections in this section so that the `@contents` block above works as intended. # hide
 ```
 
-##### [Common use cases](@id diagnostic/configuring/common-use-cases)
+###### [Common use cases](@id diagnostic/configuring/common-use-cases)
 
 Suppress specific macro expansion errors:
 
@@ -1313,7 +1423,6 @@ For complete configuration options, severity values, pattern matching syntax,
 and more examples, see the [`[diagnostic]` configuration](@ref config/diagnostic)
 section in the [JETLS configuration](@ref config) page.
 
-
-[^unnecessary_tag]: The `Unnecessary` [diagnostic tag](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#diagnosticTag)
+[^unnecessary_tag]: The `Unnecessary` [diagnostic tag](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.18/specification/#diagnosticTag)
     indicates that the marked code is unnecessary or unused, which
     causes editors to display it as faded/grayed out.

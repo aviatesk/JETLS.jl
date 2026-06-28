@@ -16,6 +16,11 @@ diagnostic, macro-aware go-to definition and such.
     Not production-ready; APIs and behavior may change.
     Stability and performance are limited. Expect bugs and rough edges.
 
+!!! danger "Security"
+    Do not run JETLS on code you do not trust. To analyze your project it
+    runs your code — including the package dependencies it loads — which can
+    execute arbitrary code.
+
 See the [Features](@ref features) page for a visual overview of the LSP
 features JETLS provides.
 
