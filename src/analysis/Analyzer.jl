@@ -2,8 +2,9 @@ module Analyzer
 
 export LSAnalyzer, inference_error_report_severity, inference_error_report_stack, reset_report_target_modules!
 export BoundsErrorReport, FieldErrorReport, KeywordTypeErrorReport, MethodErrorReport,
-    NonBooleanCondErrorReport, TypeAssertErrorReport, TypeErrorReport,
-    UndefKeywordErrorReport, UndefVarErrorReport, UnsupportedKeywordArgReport
+    NoMethodMatchReport, NonBooleanCondErrorReport, TypeAssertErrorReport,
+    TypeErrorReport, UndefKeywordErrorReport, UndefVarErrorReport,
+    UnsupportedKeywordArgReport
 
 using Core.IR
 using JET.JETInterface
@@ -37,7 +38,7 @@ inference_error_report_severity(@nospecialize report::JET.InferenceErrorReport) 
 A code analyzer specially designed for the language server.
 It is implemented using the `JET.AbstractAnalyzer` framework,
 extending the base abstract interpretation performed by the Julia compiler
-to detect [`LSErrorReport`](@ref)s, along with analyzing types and effects.
+to detect [`JETLSErrorReport`](@ref)s, along with analyzing types and effects.
 """
 struct LSAnalyzer <: ToplevelAbstractAnalyzer
     state::AnalyzerState
@@ -334,7 +335,7 @@ function CC.builtin_tfunction(analyzer::LSAnalyzer,
     if f === fieldtype
         # the valid widest possible return type of `fieldtype_tfunc` is `Union{Type,TypeVar}`
         # because fields of unwrapped `DataType`s can legally be `TypeVar`s,
-        # but this will lead to lots of false positive `MethodErrorReport`s for inference
+        # but this will lead to lots of false positive `NoMethodMatchReport`s for inference
         # with accessing to abstract fields since most methods don't expect `TypeVar`
         # (e.g. `@report_call readuntil(stdin, 'c')`)
         # JET.jl further widens this case to `Any` and give up further analysis rather than
@@ -395,7 +396,7 @@ end
 # ========
 
 """
-    LSErrorReport <: InferenceErrorReport
+    JETLSErrorReport <: InferenceErrorReport
 
 Abstract type for error reports analyzed by [`LSAnalyzer`](@ref).
 
@@ -403,19 +404,25 @@ Subtypes:
 - `UndefVarErrorReport`: Undefined global bindings (corresponding to `UndefVarError`)
 - `FieldErrorReport`: Access to non-existent struct fields (corresponding to `FieldError`)
 - `BoundsErrorReport`: Out-of-bounds field access by index (corresponding to `BoundsError`)
-- `MethodErrorReport`: Method dispatch errors (corresponding to `MethodError`)
-- `UnsupportedKeywordArgReport`: Keyword arguments the method does not accept
-  (a `MethodError` raised via `Base.kwerr`)
-- `UndefKeywordErrorReport`: Missing required keyword arguments (corresponding to `UndefKeywordError`)
-- `TypeErrorReport`: Type errors (corresponding to `TypeError`)
+- `MethodErrorReport`: Errors that raise `MethodError` at runtime
+  * `NoMethodMatchReport`: No matching method for a call (a dispatch failure)
+  * `UnsupportedKeywordArgReport`: Keyword arguments the method does not accept
+    (raised via `Base.kwerr`)
+- `UndefKeywordErrorReport`: Missing required keyword arguments
+  (corresponding to `UndefKeywordError`)
+- `TypeErrorReport`: Errors that raise `TypeError` at runtime
+  * `TypeAssertErrorReport`: Statically failing type assertions
+  * `NonBooleanCondErrorReport`: Non-boolean value in a boolean context
+  * `KeywordTypeErrorReport`: Keyword argument value type mismatch
 """
-abstract type LSErrorReport <: InferenceErrorReport end
-abstract type TypeErrorReport <: LSErrorReport end
+abstract type JETLSErrorReport <: InferenceErrorReport end
+abstract type MethodErrorReport <: JETLSErrorReport end
+abstract type TypeErrorReport <: JETLSErrorReport end
 
 # UndefVarErrorReport
 # -------------------
 
-@jetreport struct UndefVarErrorReport <: LSErrorReport
+@jetreport struct UndefVarErrorReport <: JETLSErrorReport
     var::Union{GlobalRef,TypeVar}
     maybeundef::Bool
     vst_offset::Int
@@ -462,7 +469,7 @@ function report_undef_global_var!(
     return true
 end
 
-@jetreport struct FieldErrorReport <: LSErrorReport
+@jetreport struct FieldErrorReport <: JETLSErrorReport
     @nospecialize type
     field::Symbol
     vst_offset::Int
@@ -485,7 +492,7 @@ end
 inference_error_report_stack_impl(r::FieldErrorReport) = (length(r.vst)-r.vst_offset):-1:1
 inference_error_report_severity_impl(::FieldErrorReport) = DiagnosticSeverity.Warning
 
-@jetreport struct BoundsErrorReport <: LSErrorReport
+@jetreport struct BoundsErrorReport <: JETLSErrorReport
     @nospecialize a
     i::Int
     vst_offset::Int
@@ -629,14 +636,14 @@ function report_fieldaccess!(
     return true
 end
 
-# MethodErrorReport
-# -----------------
+# NoMethodMatchReport
+# -------------------
 
-@jetreport struct MethodErrorReport <: LSErrorReport
+@jetreport struct NoMethodMatchReport <: MethodErrorReport
     @nospecialize t # ::Union{Type, Vector{Type}}
     union_split::Int
 end
-function JETInterface.print_report_message(io::IO, report::MethodErrorReport)
+function JETInterface.print_report_message(io::IO, report::NoMethodMatchReport)
     print(io, "no matching method found ")
     if report.union_split == 0
         print_callsig(io, report.t)
@@ -655,8 +662,8 @@ function print_callsig(io, @nospecialize(t))
     Base.show_tuple_as_call(io, Symbol(""), t)
     print(io, '`')
 end
-inference_error_report_stack_impl(r::MethodErrorReport) = length(r.vst):-1:1
-inference_error_report_severity_impl(::MethodErrorReport) = DiagnosticSeverity.Warning
+inference_error_report_stack_impl(r::NoMethodMatchReport) = length(r.vst):-1:1
+inference_error_report_severity_impl(::NoMethodMatchReport) = DiagnosticSeverity.Warning
 
 function report_method_error!(
         analyzer::LSAnalyzer, sv::CC.InferenceState, call::CC.CallMeta,
@@ -678,7 +685,7 @@ function report_method_error!(
         @nospecialize(atype)
     )
     if CC.isempty(info.results)
-        report = MethodErrorReport(sv, atype, 0)
+        report = NoMethodMatchReport(sv, atype, 0)
         add_new_report!(analyzer, sv.result, report)
     end
 end
@@ -703,7 +710,7 @@ function report_method_error_for_union_split!(
         end
     end
     if empty_matches !== nothing
-        add_new_report!(analyzer, sv.result, MethodErrorReport(sv, empty_matches...))
+        add_new_report!(analyzer, sv.result, NoMethodMatchReport(sv, empty_matches...))
     end
 end
 
@@ -713,9 +720,9 @@ end
 # A call like `f(; unknownkw=...)` is lowered to `Core.kwcall((unknownkw=...,), f)`.
 # This dispatches successfully to `f`'s generated keyword sorter, which then throws a
 # `MethodError` via `Base.kwerr` for the surplus keyword. Since this is an explicit
-# `throw` rather than a dispatch failure, `MethodErrorReport` does not fire; we detect
+# `throw` rather than a dispatch failure, `NoMethodMatchReport` does not fire; we detect
 # the statically-determined surplus keyword here instead.
-@jetreport struct UnsupportedKeywordArgReport <: LSErrorReport
+@jetreport struct UnsupportedKeywordArgReport <: MethodErrorReport
     @nospecialize ftype
     posargtypes::Vector{Any}
     @nospecialize kwt
@@ -807,7 +814,7 @@ end
 # order: the throw site only fires while the callee is freshly inferred, but its result —
 # including whether the call diverges — is cached and reused, which would make the report
 # appear or vanish depending on which signature got analyzed first.
-@jetreport struct UndefKeywordErrorReport <: LSErrorReport
+@jetreport struct UndefKeywordErrorReport <: JETLSErrorReport
     var::Symbol
 end
 JETInterface.print_report_message(io::IO, r::UndefKeywordErrorReport) =
