@@ -136,20 +136,9 @@ const empty_target_modules = Set{Module}()
 const resolver_hash = rand(UInt)
 
 JETInterface.AnalyzerState(analyzer::LSAnalyzer) = analyzer.state
-function JETInterface.AbstractAnalyzer(
-        analyzer::LSAnalyzer, state::AnalyzerState;
-        resolver_mode::Bool = false
-    )
-    if resolver_mode
-        # Use special analysis cache for resolver purposes
-        analysis_cache_key = JET.compute_hash(state, analyzer.invariable_analysis_hash, resolver_hash)
-        # Force target modules to be empty and shutdown the report system
-        @assert isempty(empty_target_modules)
-        report_target_modules = empty_target_modules
-    else
-        analysis_cache_key = JET.compute_hash(state.inf_params, analyzer.invariable_analysis_hash)
-        report_target_modules = analyzer.report_target_modules
-    end
+function JETInterface.AbstractAnalyzer(analyzer::LSAnalyzer, state::AnalyzerState)
+    analysis_cache_key = JET.compute_hash(state.inf_params, analyzer.invariable_analysis_hash)
+    report_target_modules = analyzer.report_target_modules
     analysis_token = @lock LS_ANALYZER_CACHE_LOCK get!(AnalysisToken, LS_ANALYZER_CACHE, analysis_cache_key)
     return LSAnalyzer(state, analysis_token, report_target_modules, analyzer.invariable_analysis_hash)
 end
