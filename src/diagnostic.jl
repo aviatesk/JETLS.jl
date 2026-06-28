@@ -418,8 +418,8 @@ function jet_inference_error_report_to_diagnostic(
         Base.invoke_in_world(world, JET.print_report_message, io, report)
     end |> postprocessor
     relatedInformation = DiagnosticRelatedInformation[]
-    for i = 2:length(rstack)
-        frame = report.vst[rstack[i]]
+    for frameidx in inference_error_report_related_stack(report)
+        frame = report.vst[frameidx]
         location = @something jet_frame_to_location(frame) continue
         local message = postprocessor(Base.invoke_in_world(world,
             sprint, JET.print_frame_sig, frame, JET.PrintConfig())::String)

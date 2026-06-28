@@ -336,10 +336,10 @@ end
         @test r isa UndefKeywordErrorReport && r.var === :x
     end
 
-    # Two call sites of the same missing-keyword callee within one frame should each be
-    # reported independently. The report originates on the callee's keyword sorter, inferred
-    # once and shared by both sites, so they currently collapse into a single report — hence
-    # `@test_broken` on the count.
+    # Two call sites of the same missing-keyword callee within one frame are reported
+    # independently. The report originates on the callee's keyword sorter, inferred once
+    # and shared by both sites, but `ls_aggregation_policy` also keys on the attribution
+    # (call-site) frame, so the two sites are not collapsed into a single report.
     let result = analyze_call((Bool,)) do c
             if c
                 kwreq()
@@ -348,7 +348,7 @@ end
             end
         end
         reports = get_reports(result)
-        @test_broken length(reports) == 2
+        @test length(reports) == 2
         @test all(r -> r isa UndefKeywordErrorReport && r.var === :x, reports)
     end
 

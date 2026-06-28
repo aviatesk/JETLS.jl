@@ -1,6 +1,7 @@
 module Analyzer
 
-export LSAnalyzer, inference_error_report_severity, inference_error_report_stack, reset_report_target_modules!
+export LSAnalyzer, inference_error_report_related_stack, inference_error_report_severity,
+    inference_error_report_stack, reset_report_target_modules!
 export BoundsErrorReport, FieldErrorReport, KeywordTypeErrorReport, MethodErrorReport,
     NoMethodMatchReport, NonBooleanCondErrorReport, TypeAssertErrorReport,
     TypeErrorReport, UndefKeywordErrorReport, UndefVarErrorReport,
@@ -10,7 +11,7 @@ using Core.IR
 using JET.JETInterface
 using JET: CC, JET
 
-using ..JETLS: AnalysisEntry
+using ..JETLS: AnalysisEntry, JETLS_DEV_MODE
 using ..LSP
 
 # JETLS internal interface
@@ -25,7 +26,42 @@ function inference_error_report_stack(@nospecialize report::JET.InferenceErrorRe
         ret isa StepRange{Int,Int} ||
             error("Invalid implementation of `inference_error_report_stack_impl`")
     end
+    @static JETLS_DEV_MODE && assert_valid_report_stack(report, ret, "display")
     return ret
+end
+function assert_valid_report_stack(
+        @nospecialize(report::JET.InferenceErrorReport), stack, kind::String
+    )
+    valid = all(idx -> 1 ≤ idx ≤ lastindex(report.vst), stack)
+    report_type = typeof(report)
+    n = length(report.vst)
+    @assert valid lazy"invalid $kind stack for $report_type: stack=$stack, vst length=$n"
+end
+function inference_error_report_related_stack(@nospecialize report::JET.InferenceErrorReport)
+    stk = inference_error_report_stack(report)
+    isempty(stk) && return Int[]
+    primary = first(stk)
+    related = Int[]
+    for idx in inference_error_report_origin_stack(report)
+        idx == primary && continue
+        idx ∈ related && continue
+        push!(related, idx)
+    end
+    for idx in Iterators.drop(stk, 1)
+        idx == primary && continue
+        idx ∈ related && continue
+        push!(related, idx)
+    end
+    @static JETLS_DEV_MODE && assert_valid_report_stack(report, related, "related")
+    return related
+end
+function inference_error_report_origin_stack(@nospecialize report::JET.InferenceErrorReport)
+    offset = scope_offset(report)
+    offset > 0 || return 0:-1:1
+    n = length(report.vst)
+    first_origin = n - offset + 1
+    1 ≤ first_origin ≤ n || return 0:-1:1
+    return n:-1:first_origin
 end
 inference_error_report_severity_impl(@nospecialize _report::JET.InferenceErrorReport) =
     DiagnosticSeverity.Warning
@@ -145,6 +181,23 @@ function JETInterface.AbstractAnalyzer(analyzer::LSAnalyzer, state::AnalyzerStat
     return LSAnalyzer(state, analysis_token, report_target_modules, analyzer.invariable_analysis_hash)
 end
 JETInterface.AnalysisToken(analyzer::LSAnalyzer) = analyzer.analysis_token
+
+JET.@withmixedhash struct JETLSReportAggregationKey
+    T::DataType
+    sig::JET.Signature
+    primary_frame::JET.VirtualFrameNoLinfo
+    origin_frame::JET.VirtualFrameNoLinfo
+end
+JETInterface.aggregation_policy(::LSAnalyzer) = function (report::JET.InferenceErrorReport)
+    @nospecialize report
+    stk = inference_error_report_stack(report)
+    attribution_idx = isempty(stk) ? lastindex(report.vst) : first(stk)
+    return JETLSReportAggregationKey(
+        typeof(Base.inferencebarrier(report)),
+        report.sig,
+        JET.VirtualFrameNoLinfo(report.vst[attribution_idx]),
+        JET.VirtualFrameNoLinfo(last(report.vst)))
+end
 
 const LS_ANALYZER_CACHE = Dict{UInt,AnalysisToken}()
 const LS_ANALYZER_CACHE_LOCK = ReentrantLock()
