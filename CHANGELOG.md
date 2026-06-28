@@ -76,11 +76,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
-- `inference/type-error/*` now groups diagnostics for the subset of runtime `TypeError` cases that JETLS can infer, including non-`Bool` conditions and statically failing type assertions. Users can ignore or reconfigure this family together with a regex code match such as `^inference/type-error/`.
+- `inference/type-error/*` now groups diagnostics for the subset of runtime `TypeError` cases that JETLS can infer, including non-`Bool` conditions and statically failing type assertions. Users can ignore or reconfigure this family together with a regex code match such as `inference/type-error/.*`.
 
 - Updated Compiler.jl API compatibility for the incoming Julia 1.12.7 release while retaining support for Julia pre-1.12.6 Compiler.jl APIs.
 
 - Improved startup latency by precompiling the `initialize` request round-trip, so the first request is less likely to hit strict client `initialize` timeouts (such as Helix's 20-second default). On slower machines, raising the client-side timeout may still be needed. (xref: https://github.com/aviatesk/JETLS.jl/issues/784)
+
+- Reworked the [diagnostics documentation](https://aviatesk.github.io/JETLS.jl/release/diagnostic/): a new [Analysis stages](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/stage) section explains what produces each diagnostic category, which tool powers it, when it runs, and how the stages depend on one another. It also adds a [security caveat](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/stage/toplevel) that full analysis loads and runs your code (so JETLS should not be run on untrusted code), and documents how each [`inference/*` diagnostic](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/inference) corresponds to the Julia runtime error it predicts.
 
 ## 2026-06-26
 
