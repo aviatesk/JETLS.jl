@@ -65,15 +65,13 @@ end
 JET.ToplevelAbstractAnalyzer(interp::LSInterpreter) = interp.analyzer
 function JET.ToplevelAbstractAnalyzer(
         interp::LSInterpreter, concretized::BitVector;
-        refresh_local_cache::Bool = true,    # This option is used by JET v0.10. TODO We can remove this once we update JET to v0.11.
         reset_report_target_modules::Bool = true, # LSInterpreter specific option
     )
     if reset_report_target_modules
         reset_report_target_modules!(interp.analyzer, JET.InterpretationState(interp).res.analyzed_files)
     end
     return @invoke JET.ToplevelAbstractAnalyzer(
-        interp::JET.ConcreteInterpreter, concretized::BitVector;
-        refresh_local_cache)
+        interp::JET.ConcreteInterpreter, concretized::BitVector)
 end
 
 # overloads
