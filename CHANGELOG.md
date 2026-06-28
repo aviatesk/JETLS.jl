@@ -52,8 +52,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Added the [`inference/type-error/type-assert`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/inference/type-error/type-assert) diagnostic for type assertions that inference can prove will fail:
   ```julia
-  x = rand()
-  x::Int  # TypeError: expected Int64, got Float64 (JETLS inference/type-error/type-assert)
+  let x = rand()
+      x::Int  # TypeError: expected Int64, got Float64 (JETLS inference/type-error/type-assert)
+  end
   ```
 
 - Added detection of unsupported keyword arguments: a call that passes a keyword argument the called method does not accept is now reported under the [`inference/method-error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/inference/method-error) diagnostic:
