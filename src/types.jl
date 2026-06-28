@@ -952,6 +952,8 @@ end
 struct ServerMessageRecorder
     received_queue::Channel{Any}
     sent_queue::Channel{Any}
+    ServerMessageRecorder() = new(Channel{Any}(Inf), Channel{Any}(Inf))
+    ServerMessageRecorder(received_queue::Channel{Any}, sent_queue::Channel{Any}) = new(received_queue, sent_queue)
 end
 function (callback::ServerMessageRecorder)(s::Symbol, @nospecialize(msg))
     if s === :received

@@ -58,6 +58,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Updated Compiler.jl API compatibility for the incoming Julia 1.12.7 release while retaining support for Julia pre-1.12.6 Compiler.jl APIs.
 
+- Improved startup latency by precompiling the `initialize` request round-trip, so the first request is less likely to hit strict client `initialize` timeouts (such as Helix's 20-second default). On slower machines, raising the client-side timeout may still be needed. (xref: https://github.com/aviatesk/JETLS.jl/issues/784)
+
 ## 2026-06-26
 
 - Commit: [`0d67c12`](https://github.com/aviatesk/JETLS.jl/commit/0d67c12)
