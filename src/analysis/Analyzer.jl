@@ -1,9 +1,9 @@
 module Analyzer
 
 export LSAnalyzer, inference_error_report_severity, inference_error_report_stack, reset_report_target_modules!
-export BoundsErrorReport, FieldErrorReport, MethodErrorReport, NonBooleanCondErrorReport,
-    TypeAssertErrorReport, TypeErrorReport, UndefKeywordErrorReport, UndefVarErrorReport,
-    UnsupportedKeywordArgReport
+export BoundsErrorReport, FieldErrorReport, KeywordTypeErrorReport, MethodErrorReport,
+    NonBooleanCondErrorReport, TypeAssertErrorReport, TypeErrorReport,
+    UndefKeywordErrorReport, UndefVarErrorReport, UnsupportedKeywordArgReport
 
 using Core.IR
 using JET.JETInterface
@@ -267,6 +267,7 @@ function after_abstract_call_gf_by_type(
         report_method_error!(analyzer′, sv′, ret′, arginfo, atype′[])
         report_unsupported_kwarg_error!(analyzer′, sv′, func, ret′, arginfo, max_methods)
         report_undef_keyword!(analyzer′, sv′, func, ret′, arginfo, max_methods)
+        report_keyword_typeerror!(analyzer′, sv′, func, ret′, arginfo, max_methods)
         return true
     end
     if isready(ret)
@@ -379,6 +380,8 @@ function CC.finish!(analyzer::LSAnalyzer, caller::CC.InferenceState, validation_
     # `finish!` runs after `finishinfer!`, and (for cycles) after every cycle member's
     # `finishinfer!`, so `caller.bestguess` is the converged return type here. Unwrap
     # `LimitedAccuracy` so a recursion-limited but diverging frame still keeps the report.
+    # `KeywordTypeErrorReport` is not filtered here: it has no empty-`nt` branch to fire
+    # on spuriously, so a type mismatch on a conditional path is a real error.
     if CC.ignorelimited(caller.bestguess) !== Union{}
         filter!(JET.get_reports(analyzer, caller.result)) do @nospecialize(report)
             return !(report isa UndefKeywordErrorReport)
@@ -854,6 +857,93 @@ function report_undef_keyword!(
             # such *required* one, which this matches under the usual required-before-optional
             # declaration order
             add_new_report!(analyzer, sv.result, UndefKeywordErrorReport(sv, name))
+            return true
+        end
+    end
+    return false
+end
+
+# KeywordTypeErrorReport
+# ----------------------
+
+# Passing a keyword argument whose value type does not match the keyword's declared type
+# (`func(2; kw=42.0)` for `func(a; kw::Int=42)`) raises a `TypeError` at runtime: the keyword
+# sorter asserts each typed keyword and throws `TypeError(Symbol("keyword argument"), :kw, Int,
+# got)`. As with `UndefKeywordErrorReport`, detect this at the call site rather than at that
+# `throw`, so the report does not depend on which call site first inferred the sorter. The
+# offending keyword, its declared type, and the provided type are recovered from the call's
+# keyword `NamedTuple` and the callee's declared keyword types (caller-independent and
+# cache-stable), since `call.exct` widens to the bare `TypeError` type once cached.
+@jetreport struct KeywordTypeErrorReport <: TypeErrorReport
+    var::Symbol
+    @nospecialize expected
+    @nospecialize got
+end
+function JETInterface.print_report_message(io::IO, r::KeywordTypeErrorReport)
+    print(io, "TypeError: in keyword argument `", r.var, "`, expected `", r.expected, "`, got ")
+    print_type_error_got(io, r.got)
+end
+inference_error_report_stack_impl(r::KeywordTypeErrorReport) = length(r.vst):-1:1
+inference_error_report_severity_impl(::KeywordTypeErrorReport) = DiagnosticSeverity.Warning
+
+# Recover the declared keyword types of `m` as `name => type` pairs (declaration order),
+# skipping the slurp (`kws...`). The keyword sorter forwards the sorted keywords to the body
+# function as leading positional arguments, so the body method's argument types are exactly the
+# declared keyword types in `Base.kwarg_decl` order.
+function keyword_arg_types(m::Method)
+    decls = Base.kwarg_decl(m)
+    isempty(decls) && return nothing
+    bf = Base.bodyfunction(m)
+    bf === nothing && return nothing
+    bms = methods(bf)
+    length(bms) == 1 || return nothing
+    bsig = Base.unwrap_unionall((first(bms)).sig)
+    bsig isa DataType || return nothing
+    params = bsig.parameters
+    length(params) ≥ 1 + length(decls) || return nothing
+    kwtypes = Pair{Symbol,Any}[]
+    for i = 1:length(decls)
+        name = decls[i]
+        endswith(String(name), "...") && continue # slurp accepts any keyword
+        ty = params[1+i]
+        ty isa Type || continue
+        push!(kwtypes, name => ty)
+    end
+    return kwtypes
+end
+
+function report_keyword_typeerror!(
+        analyzer::LSAnalyzer, sv::CC.InferenceState, @nospecialize(func),
+        call::CC.CallMeta, arginfo::CC.ArgInfo, max_methods::Int
+    )
+    func === Core.kwcall || return false
+    call.rt === Union{} || return false
+    CC.widenconst(call.exct) <: TypeError || return false
+    argtypes = arginfo.argtypes
+    # `Core.kwcall(kwnt, f, posargs...)`
+    length(argtypes) ≥ 3 || return false
+    kwt = CC.widenconst(argtypes[2])
+    names = @something kwcall_keyword_names(kwt) return false
+    isempty(names) && return false
+    ftype = CC.widenconst(argtypes[3])
+    posargtypes = Any[let argtype = argtypes[i]
+        CC.isvarargtype(argtype) ? argtype : CC.widenconst(argtype)
+    end for i = 4:length(argtypes)]
+    callsig = CC.argtypes_to_type(Any[ftype; posargtypes])
+    callsig === Union{} && return false
+    matches = @something CC.findall(callsig, CC.method_table(analyzer); limit=max_methods) return false
+    isempty(matches) && return false
+    for match in matches
+        kwtypes = @something keyword_arg_types(match.method) continue
+        for (name, expected) in kwtypes
+            idx = findfirst(==(name), names)
+            idx === nothing && continue # this typed keyword was not provided
+            got = fieldtype(kwt, idx)
+            # report only a definite mismatch: no value of `got` can satisfy the keyword's
+            # `isa expected` assertion (the `call.rt === Union{}` gate already ensures the call
+            # always throws, so this picks the offending keyword)
+            typeintersect(got, expected) === Union{} || continue
+            add_new_report!(analyzer, sv.result, KeywordTypeErrorReport(sv, name, expected, got))
             return true
         end
     end

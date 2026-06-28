@@ -126,6 +126,7 @@ Here is a summary table of the diagnostics explained in this section:
 | [`inference/bounds-error`](@ref diagnostic/reference/inference/bounds-error)                                   | `Warning`             | `JETLS/save`  | Out-of-bounds field access by index                    |
 | [`inference/method-error`](@ref diagnostic/reference/inference/method-error)                                   | `Warning`             | `JETLS/save`  | No matching method found for function calls            |
 | [`inference/undef-keyword`](@ref diagnostic/reference/inference/undef-keyword)                                 | `Warning`             | `JETLS/save`  | Missing required keyword argument                      |
+| [`inference/type-error/keyword`](@ref diagnostic/reference/inference/type-error/keyword)                       | `Warning`             | `JETLS/save`  | Keyword argument value type mismatch                   |
 | [`inference/type-error/type-assert`](@ref diagnostic/reference/inference/type-error/type-assert)               | `Warning`             | `JETLS/save`  | Type assertion failures                                |
 | [`inference/type-error/non-bool-cond`](@ref diagnostic/reference/inference/type-error/non-bool-cond)           | `Warning`             | `JETLS/save`  | Non-boolean value used in boolean context              |
 | [`testrunner/test-failure`](@ref diagnostic/reference/testrunner/test-failure)                                 | `Error`               | `JETLS/extra` | Test failures from TestRunner integration              |
@@ -1126,6 +1127,27 @@ required_keyword(42)  # missing keyword argument `key` (JETLS inference/undef-ke
 To avoid false positives, this is only reported when the keyword is
 statically known to be missing on every path; calls that forward keywords
 dynamically (e.g. `f(; kwargs...)`) are not flagged.
+
+#### [Keyword argument type error (`inference/type-error/keyword`)](@id diagnostic/reference/inference/type-error/keyword)
+
+**Default severity:** `Warning`
+
+Keyword arguments passed with a value whose type does not match the keyword's
+declared type. Julia inserts a type assertion in the keyword sorter and raises
+a `TypeError` at runtime in this case.
+
+Examples:
+
+```julia
+typed_keyword(; key::Int=0) = key
+
+typed_keyword(; key=1.0)  # TypeError: in keyword argument `key`, expected `Int64`, got a value of type `Float64`
+                          # (JETLS inference/type-error/keyword)
+```
+
+To avoid false positives, this is only reported when the value type can never
+match the declared type; calls where the value may match for some runtime
+values are not flagged.
 
 #### [Type assertion error (`inference/type-error/type-assert`)](@id diagnostic/reference/inference/type-error/type-assert)
 

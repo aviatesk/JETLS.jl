@@ -366,6 +366,113 @@ end
     end
 end
 
+kwtyped(a::Int; kw::Int=42) = a * kw       # typed keyword with a default, plus a positional
+kwtyped2(; x::Int, y::String="s") = (x, y) # required typed x, optional typed y
+kwtypedfwd(; kws...) = kwtyped(1; kws...)   # forwards slurped keywords
+kwtypedbad(; kws...) = kwtyped(1; kw=2.0)   # slurps but hardcodes a mismatching call
+module KeywordTypeExternalModule
+    libkwtyped(; kw::Int=1) = kw
+end
+
+@testset "KeywordTypeErrorReport" begin
+    # keyword value whose type does not match the declared keyword type
+    let result = analyze_call() do
+            kwtyped(2; kw=42.0)
+        end
+        reports = get_reports(result)
+        @test length(reports) == 1
+        r = only(reports)
+        @test r isa KeywordTypeErrorReport
+        @test r.var === :kw && r.expected === Int && r.got === Float64
+    end
+
+    # mismatch on a required typed keyword (routed through the keyword sorter)
+    let result = analyze_call() do
+            kwtyped2(; x=1.0)
+        end
+        reports = get_reports(result)
+        @test length(reports) == 1
+        r = only(reports)
+        @test r isa KeywordTypeErrorReport && r.var === :x && r.expected === Int
+    end
+
+    # no report when the keyword value type matches
+    let result = analyze_call() do
+            kwtyped(2; kw=42)
+        end
+        @test isempty(get_reports(result))
+    end
+
+    # no report when the keyword is omitted (the default is used)
+    let result = analyze_call() do
+            kwtyped(2)
+        end
+        @test isempty(get_reports(result))
+    end
+
+    # no false positive when the value type only sometimes mismatches: the call does not
+    # definitely throw, so it is not flagged
+    let result = analyze_call((Union{Int,Float64},)) do x
+            kwtyped(1; kw=x)
+        end
+        @test !any(r -> r isa KeywordTypeErrorReport, get_reports(result))
+    end
+
+    # no false positive for a keyword-forwarding wrapper analyzed at its zero-keyword
+    # signature: a forwarded call carries no statically-known mismatching value
+    let result = analyze_call(kwtypedfwd)
+        @test isempty(get_reports(result))
+    end
+    # ... but a hardcoded mismatching call inside a slurping function is still reported
+    # (unlike missing keywords, slurping does not mask a value-type mismatch)
+    let result = analyze_call(kwtypedbad)
+        reports = get_reports(result)
+        @test length(reports) == 1
+        @test only(reports) isa KeywordTypeErrorReport
+    end
+
+    # each reached call site is reported independently (call-site, not throw-site, detection):
+    # both branches pass the same mismatching keyword, so throw-site detection — firing once on
+    # the shared sorter's fresh inference — would report only one of them
+    let result = analyze_call((Bool,)) do c
+            if c
+                kwtyped(1; kw=2.0)
+            else
+                kwtyped(1; kw=2.0)
+            end
+        end
+        reports = filter(r -> r isa KeywordTypeErrorReport, get_reports(result))
+        @test length(reports) == 2
+    end
+
+    # a definite type error on a conditional branch is still reported even when the frame
+    # returns normally on another path: unlike a missing keyword, a value-type mismatch is
+    # never spuriously synthesized on a non-taken branch, so it is not suppressed
+    let result = analyze_call((Bool,)) do c
+            c ? kwtyped(1; kw=2.0) : 0
+        end
+        reports = filter(r -> r isa KeywordTypeErrorReport, get_reports(result))
+        @test length(reports) == 1
+        @test only(reports).var === :kw
+    end
+
+    # the throw happens in the callee's module, but gating is on the caller: a call from a
+    # target module is reported even when the function is defined elsewhere
+    let result = analyze_call(; report_target_modules=(@__MODULE__,)) do
+            KeywordTypeExternalModule.libkwtyped(; kw=2.0)
+        end
+        reports = get_reports(result)
+        @test length(reports) == 1
+        @test only(reports) isa KeywordTypeErrorReport
+    end
+    # ... but not reported when the caller's module is outside the target set
+    let result = analyze_call(; report_target_modules=(KeywordTypeExternalModule,)) do
+            KeywordTypeExternalModule.libkwtyped(; kw=2.0)
+        end
+        @test isempty(get_reports(result))
+    end
+end
+
 @testset "BoundsError analysis" begin
     # `getindex(::Tuple, ::Int)`
     let result = analyze_call((Tuple{Int},)) do tpl1

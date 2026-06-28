@@ -56,6 +56,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Added the `inference/undef-keyword` diagnostic: a call that omits a required keyword argument (one declared without a default), which raises `UndefKeywordError` at runtime, is now reported.
 
+- Added the `inference/type-error/keyword` diagnostic: a call that passes a keyword argument whose value type does not match the keyword's declared type (e.g. `f(; key=1.0)` for `f(; key::Int)`), which raises `TypeError` at runtime, is now reported.
+
 ### Changed
 
 - `inference/type-error/*` now groups diagnostics for the subset of runtime `TypeError` cases that JETLS can infer, including non-`Bool` conditions and statically failing type assertions. Users can ignore or reconfigure this family together with a regex code match such as `^inference/type-error/`.
