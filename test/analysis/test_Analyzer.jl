@@ -4,6 +4,7 @@ using Test
 using JETLS
 
 include(normpath(pkgdir(JETLS), "test", "interactive-utils.jl"))
+include(normpath(pkgdir(JETLS), "test", "setup.jl"))
 
 using JETLS.JET: CC, get_reports
 using JETLS.Analyzer
@@ -473,7 +474,7 @@ end
     end
 end
 
-@testset "BoundsError analysis" begin
+@testset "BoundsErrorReport" begin
     # `getindex(::Tuple, ::Int)`
     let result = analyze_call((Tuple{Int},)) do tpl1
             tpl1[1]
@@ -571,7 +572,7 @@ end
     end
 end
 
-@testset "TypeErrorReport" begin
+@testset HierarchicalTestSet "TypeErrorReport" begin
     @testset "TypeAssertErrorReport" begin
         let result = analyze_call((Int,)) do x
                 x::Int
