@@ -46,17 +46,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Breaking
 
-- `inference/non-boolean-cond` is now reported as `inference/type-error/non-bool-cond`. Existing diagnostic pattern configurations that match the old code continue to apply for now, but this compatibility support may be removed in a future release.
+- `inference/non-boolean-cond` is now reported as [`inference/type-error/non-bool-cond`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/inference/type-error/non-bool-cond). Existing diagnostic pattern configurations that match the old code continue to apply for now, but this compatibility support may be removed in a future release.
 
 ### Added
 
-- Added the `inference/type-error/type-assert` diagnostic for type assertions that inference can prove will fail, such as `x::Int` when `x` is inferred as `Float64`.
+- Added the [`inference/type-error/type-assert`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/inference/type-error/type-assert) diagnostic for type assertions that inference can prove will fail:
+  ```julia
+  x = rand()
+  x::Int  # TypeError: expected Int64, got Float64 (JETLS inference/type-error/type-assert)
+  ```
 
-- Added detection of unsupported keyword arguments: a call that passes a keyword argument the called method does not accept (e.g. `f(; unknown=...)`) is now reported under the `inference/method-error` diagnostic.
+- Added detection of unsupported keyword arguments: a call that passes a keyword argument the called method does not accept is now reported under the [`inference/method-error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/inference/method-error) diagnostic:
+  ```julia
+  kwfunc(; kw1=nothing) = kw1
+  kwfunc(; kw3=42)  # unsupported keyword argument `kw3` (JETLS inference/method-error)
+  ```
 
-- Added the `inference/undef-keyword` diagnostic: a call that omits a required keyword argument (one declared without a default), which raises `UndefKeywordError` at runtime, is now reported.
+- Added the [`inference/undef-keyword`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/inference/undef-keyword) diagnostic: a call that omits a required keyword argument (one declared without a default), which raises `UndefKeywordError` at runtime, is now reported:
+  ```julia
+  required_keyword(pos; key) = (pos, key)
+  required_keyword(42)  # missing keyword argument `key` (JETLS inference/undef-keyword)
+  ```
 
-- Added the `inference/type-error/keyword` diagnostic: a call that passes a keyword argument whose value type does not match the keyword's declared type (e.g. `f(; key=1.0)` for `f(; key::Int)`), which raises `TypeError` at runtime, is now reported.
+- Added the [`inference/type-error/keyword`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/inference/type-error/keyword) diagnostic: a call that passes a keyword argument whose value type does not match the keyword's declared type, which raises `TypeError` at runtime, is now reported:
+  ```julia
+  typed_keyword(; key::Int=0) = key
+  typed_keyword(; key=1.0)  # TypeError: expected `Int64`, got `Float64` (JETLS inference/type-error/keyword)
+  ```
 
 ### Changed
 
