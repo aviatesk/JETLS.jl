@@ -3,7 +3,6 @@ using PrecompileTools
 module __demo__ end
 
 @setup_workload let
-    server = Server()
     save_text = """
         struct Foo
             x::Int
@@ -22,8 +21,29 @@ module __demo__ end
     """)
     position = only(positions)
     mktemp() do filename, _
-        uri = filepath2uri(filename)
         @compile_workload let
+            # Warm up the `initialize` round-trip: JSON deserialize -> handler ->
+            # JSON serialize. Deserializing the deeply nested `InitializeParams`/
+            # `ClientCapabilities` dominates time-to-first-response and is otherwise
+            # compiled lazily on the first request, which on slow machines can exceed
+            # strict client initialize timeouts (e.g. Helix's 20s default). See #784.
+            init_json = """
+                {"jsonrpc":"2.0","id":0,"method":"initialize","params":{"processId":null,"rootUri":null,"capabilities":{"textDocument":{"completion":{"dynamicRegistration":true},"hover":{"dynamicRegistration":true}},"general":{"positionEncodings":["utf-8"]}}}}
+                """
+            init_msg = LSP.to_lsp_object(init_json)
+            # Capture the response via the recorder (populated synchronously by `send`)
+            # so we can compile `to_lsp_json` on this task; silence the handler's
+            # registration/process-id logs that would otherwise leak into precompile output.
+            Base.CoreLogging.with_logger(Base.CoreLogging.NullLogger()) do
+                recorder = ServerMessageRecorder()
+                init_server = Server(; callback=recorder)
+                handle_InitializeRequest(init_server, init_msg)
+                LSP.to_lsp_json(take!(recorder.sent_queue))
+                close(init_server.endpoint)
+            end
+
+            server = Server()
+            uri = filepath2uri(filename)
             entry = ScriptAnalysisEntry(uri)
             request = AnalysisRequest(entry, uri, #=generation=#1, #=token=#nothing, #=notify=#false)
             execution = AnalysisExecution(request, #=prev_result=#nothing)
