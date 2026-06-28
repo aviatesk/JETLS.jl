@@ -1115,8 +1115,13 @@ end
 function collect_displayable_reports(
         reports::Vector{JET.InferenceErrorReport}, target_uris
     )
-    filter(reports) do report::JET.InferenceErrorReport
+    filter(reports) do report
         stk = inference_error_report_stack(report)
+        # An empty stack means the report was never re-rooted to a caller — e.g. an
+        # `UndefKeywordErrorReport` from a required-keyword definition analyzed by its
+        # positional signature, which has no call site to display. Suppressing it at
+        # creation would leak `sv`'s context into the callee cache, so it is dropped here.
+        isempty(stk) && return false
         topframe = report.vst[first(stk)]
         uri = @something jet_frame_to_uri(topframe) return false
         return uri in target_uris
