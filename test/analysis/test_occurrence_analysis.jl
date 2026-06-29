@@ -483,6 +483,56 @@ end
         end
     end
 
+    @testset "@static condition/branch uses" begin
+        # `@static` expands to only the branch selected for the current platform, dropping
+        # its condition and the branches not taken. Occurrence analysis retains all
+        # branches (as a plain conditional) so identifiers used in the condition or in any
+        # branch are still recorded — otherwise they would be misreported as unused.
+        function global_use_names(boccs)
+            names = String[]
+            for (binfo, occs) in boccs
+                binfo.kind === :global || continue
+                any(o -> o.kind === :use, occs) || continue
+                push!(names, binfo.name)
+            end
+            return names
+        end
+        local_names(boccs) = [b.name for (b, _) in boccs if b.kind === :local]
+        # simple `if` condition
+        let names = global_use_names(get_full_binding_occurrences(
+                "@static if VERSION >= v\"1.11\"\n    nothing\nend"))
+            @test "VERSION" in names
+        end
+        # short-circuit `&&` left operand
+        let names = global_use_names(get_full_binding_occurrences(
+                "@static VERSION >= v\"1.11\" && nothing"))
+            @test "VERSION" in names
+        end
+        # every condition in an `elseif` chain is collected regardless of which branch
+        # the current platform takes
+        let names = global_use_names(get_full_binding_occurrences(
+                "@static if VERSION < v\"0\"\n    nothing\nelseif Sys.iswindows()\n    nothing\nend"))
+            @test "VERSION" in names
+            @test "Sys" in names
+        end
+        # uses in *both* branches are collected, including the one not taken here
+        let names = global_use_names(get_full_binding_occurrences(
+                "@static if Sys.iswindows()\n    winonly()\nelse\n    maconly()\nend"))
+            @test "winonly" in names
+            @test "maconly" in names
+        end
+        # branches are resolved within the enclosing scope: a name bound in a branch is a
+        # local (not a spurious global), and `return` inside a branch lowers cleanly
+        let boccs = get_full_binding_occurrences(
+                "function f()\n    @static if Sys.iswindows()\n        x = 1\n        use(x)\n    end\n    return g()\nend")
+            @test "x" in local_names(boccs)
+            @test "x" ∉ global_use_names(boccs)
+            for name in ("use", "g")
+                @test name in global_use_names(boccs)
+            end
+        end
+    end
+
     @testset "export/public" begin
         let boccs = get_full_binding_occurrences("export foo, @bar, baz")
             @test length(boccs) == 3

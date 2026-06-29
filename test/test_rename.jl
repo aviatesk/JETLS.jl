@@ -264,6 +264,44 @@ end
         end
     end
 
+    @testset "rename across @static branches" begin
+        # A use in a `@static` branch not selected for the current platform must be
+        # renamed too — otherwise the rename leaves that branch referring to the old name,
+        # breaking the code on the platform where the branch is taken.
+        let code = """
+            function func()
+                │xx│x│ = 1
+                @static if Sys.iswindows()
+                    println(│xx│x│)
+                else
+                    println(│xx│x│)
+                end
+            end
+            """
+            fi, positions, furi = rename_testcase(code, 9)
+            for pos in positions
+                (; result, error) = JETLS.local_binding_rename(server, furi, fi, pos, @__MODULE__, "yyy")
+                @test result isa WorkspaceEdit && isnothing(error)
+                for (uri, edits) in result.changes
+                    @test furi == uri
+                    @test length(edits) == 3
+                    @test count(edits) do edit
+                        edit.newText == "yyy" &&
+                        edit.range == Range(; start=positions[1], var"end"=positions[3])
+                    end == 1
+                    @test count(edits) do edit
+                        edit.newText == "yyy" &&
+                        edit.range == Range(; start=positions[4], var"end"=positions[6])
+                    end == 1
+                    @test count(edits) do edit
+                        edit.newText == "yyy" &&
+                        edit.range == Range(; start=positions[7], var"end"=positions[9])
+                    end == 1
+                end
+            end
+        end
+    end
+
     @testset "@generated function rename" begin
         let code = """
             @generated function foo(│x│)

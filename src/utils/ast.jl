@@ -222,6 +222,8 @@ is_doc0_any(st0::SyntaxTreeC) = is_macrocall_st0(st0, "@doc") # Explicit `@doc` 
 
 is_cmd0(st0::SyntaxTreeC) = is_macrocall_st0(st0, "@cmd"; from=Core)
 
+is_static0(st0::SyntaxTreeC) = is_macrocall_st0(st0, "@static")
+
 """
     collect_import_names(st0::SyntaxTreeC) -> Vector{Pair{SyntaxTreeC, String}}
 
@@ -421,13 +423,18 @@ function is_nospecialize_or_specialize_macrocall3(st3::SyntaxTreeC)
     return get_name_val(macro_name) in ("nospecialize", "specialize")
 end
 
-function _remove_macrocalls(st0::SyntaxTreeC)
+function _remove_macrocalls(st0::SyntaxTreeC; strip_static::Bool=false)
     if JS.kind(st0) === JS.K"macrocall"
-        if is_new_style_macrocall0(st0)
+        if is_new_style_macrocall0(st0) && !(strip_static && is_static0(st0))
             # Macros with new-style JuliaLowering implementations preserve
             # fine-grained provenance during expansion, so we don't need to
             # rewrite them to a `block` to keep source locations accurate.
             # See `NEW_STYLE_MACROCALL_NAMES` for the list.
+            # With `strip_static`, `@static` is exempted from this exemption: it is
+            # rewritten to a `block` keeping *all* branches (a plain runtime
+            # conditional) instead of expanding to the single platform-selected
+            # branch, so occurrence analysis sees every branch — scope-aware — rather
+            # than dropping the branches not taken on the current platform.
             return st0, false
         elseif is_mainfunc0(st0)
             # `@main` functions are desugared by `desugar_main_macrocall` below,
@@ -452,7 +459,7 @@ function _remove_macrocalls(st0::SyntaxTreeC)
             # arguments out of the macrocall into a bare `block`, any surviving
             # `$` would be out of context and fail lowering, so unwrap
             # interpolations on the lifted child.
-            stripped, _ = _remove_macrocalls(st0[i])
+            stripped, _ = _remove_macrocalls(st0[i]; strip_static)
             push!(new_children, _unwrap_interpolations(stripped)[1])
         end
         return JL.@ast(JS.syntax_graph(st0), st0, [JS.K"block" new_children...]), true
@@ -462,7 +469,7 @@ function _remove_macrocalls(st0::SyntaxTreeC)
     (st0, changed) = desugar_main_macrocall(st0)
     new_children = JS.SyntaxList(JS.syntax_graph(st0))
     for c in JS.children(st0)
-        nc, cc = _remove_macrocalls(c)
+        nc, cc = _remove_macrocalls(c; strip_static)
         changed |= cc
         push!(new_children, nc)
     end
@@ -539,12 +546,19 @@ function desugar_main_macrocall(st0::SyntaxTreeC)
 end
 
 """
-    remove_macrocalls(st0::SyntaxTreeC) -> SyntaxTreeC
+    remove_macrocalls(st0::SyntaxTreeC; strip_static::Bool=false) -> SyntaxTreeC
 
 Convert each `macrocall` node to a `block` node, keeping the arguments intact so that
 identifiers passed to macros retain their original source locations. The transformed
 tree can then be fed into scope/binding resolution to drive LSP features such as
 find-references, document-highlight, rename, and go-to-definition.
+
+With `strip_static=true`, `@static` conditionals are also rewritten to plain runtime
+conditionals (keeping every branch) rather than expanded to the single branch selected
+for the current platform. This lets occurrence analysis see identifiers used in the
+condition and in every branch — scope-aware, since each branch is resolved within its
+enclosing scope — instead of dropping the ones not taken here (which would otherwise be
+misreported as unused).
 
 This is useful because JuliaLowering's macro expansion (for old-style macros) loses
 fine-grained provenance information, reducing it to line-level granularity. For example,
@@ -579,9 +593,9 @@ any bindings or control flow the macros themselves would have introduced.
     `desugar_main_macrocall`. As more macros migrate to the new style, the scope
     of this transformation is expected to shrink.
 """
-function remove_macrocalls(st0::SyntaxTreeC)
+function remove_macrocalls(st0::SyntaxTreeC; strip_static::Bool=false)
     ensure_jl_source_attr!(JS.syntax_graph(st0))
-    return first(_remove_macrocalls(st0))
+    return first(_remove_macrocalls(st0; strip_static))
 end
 
 # Iteratively peel a function-definition signature's `where {…}` clauses and outer `::T`
