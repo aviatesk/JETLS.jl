@@ -191,28 +191,15 @@ function should_analyze(analyzer::LSAnalyzer, sv::CC.InferenceState)
     return isnothing(report_target_modules) || CC.frame_module(sv) ∈ report_target_modules
 end
 
-# Many builtin functions are used in `getproperty(::Any,::Symbol)` or `getindex(::Tuple,::Int)`, etc.,
-# so analysis injection needs to be performed in the context of those methods (i.e. `Base`),
-# but `report_target_modules` does not necessarily include `Base`.
-# Therefore, we need to check the inference frame one level up, and if it is in `report_target_modules`,
-# we also need to analyze it.
-#
-# The `return 1` path ties the decision to the caller (the parent module) and attaches the
-# report to the out-of-scope callee frame, so a cached-and-shared callee result could in
-# principle carry a stale decision across callers. In practice the builtins that take this
-# path are driven by constant arguments (the field name for `getproperty`/`getfield`, the
-# index for `getindex`), which inference evaluates with per-caller constant propagation,
-# not one shared global result, so the decision is re-derived per caller and no
-# order-dependent staleness arises. (`return 0` decides from the callee's own module and is
-# caller-independent regardless.)
-function should_analyze_for_builtins(analyzer::LSAnalyzer, sv::CC.InferenceState)
+# `vst` offset for a report created unconditionally on the erroring frame `sv`: `0` when `sv`
+# is in scope (caller-independent, decided here), else `1` — `sv` is an out-of-scope helper
+# (e.g. `getproperty`/`getindex` in `Base`), so the in-scope decision is deferred to
+# `collect_callee_reports!` rather than baked into `sv`'s shared cache.
+function report_offset(analyzer::LSAnalyzer, sv::CC.InferenceState)
     report_target_modules = analyzer.report_target_modules
     isnothing(report_target_modules) && return 0
     CC.frame_module(sv) ∈ report_target_modules && return 0
-    checkbounds(Bool, sv.callstack, sv.parentid) || return nothing
-    parent = sv.callstack[sv.parentid]
-    CC.frame_module(parent) ∈ report_target_modules && return 1
-    return nothing
+    return 1
 end
 
 # Inference overloads
@@ -276,7 +263,6 @@ function after_abstract_call_gf_by_type(
         ret′ = ret[]
         report_method_error!(analyzer′, sv′, ret′, arginfo, atype′[])
         report_unsupported_kwarg_error!(analyzer′, sv′, func, ret′, arginfo, max_methods)
-        report_undef_keyword!(analyzer′, sv′, func, ret′, arginfo, max_methods)
         report_keyword_typeerror!(analyzer′, sv′, func, ret′, arginfo, max_methods)
         return true
     end
@@ -325,8 +311,8 @@ function CC.abstract_eval_globalref(
         return CC.RTEffects(Any, Any, CC.generic_getglobal_effects)
     end
     (valid_worlds, ret) = CC.scan_leaf_partitions(analyzer, g, sv.world) do analyzer::LSAnalyzer, binding::Core.Binding, partition::Core.BindingPartition
-        offset = should_analyze_for_builtins(analyzer, sv)
-        if offset !== nothing && offset ≤ allowed_offset
+        offset = report_offset(analyzer, sv)
+        if offset ≤ allowed_offset
             if partition.min_world ≤ sv.world.this ≤ partition.max_world # XXX This should probably be fixed on the Julia side
                 report_undef_global_var!(analyzer, sv, binding, partition, offset)
             end
@@ -354,9 +340,13 @@ function CC.builtin_tfunction(analyzer::LSAnalyzer,
             ret = Any
         end
     end
-    offset = should_analyze_for_builtins(analyzer, sv)
-    if offset !== nothing
-        report_builtin_error!(analyzer, sv, f, argtypes, ret, offset)
+    if ret === Union{}
+        # Gate on `ret === Union{}` first so valid builtins (the common case) skip all report
+        # work. Report unconditionally on the erroring frame `sv`; for an out-of-scope `sv`
+        # (offset 1) the `report_target_modules` check is deferred to `collect_callee_reports!`
+        # as the report propagates to its in-scope call site, so it is not baked into the cache.
+        offset = report_offset(analyzer, sv)
+        report_builtin_error!(analyzer, sv, f, argtypes, offset)
     end
     return ret
 end
@@ -400,6 +390,43 @@ function CC.finish!(analyzer::LSAnalyzer, caller::CC.InferenceState, validation_
     return @invoke CC.finish!(analyzer::ToplevelAbstractAnalyzer, caller::CC.InferenceState,
         validation_world::UInt, time_before::UInt64)
 end
+
+# Detect `UndefKeywordError` at the `throw` inside the synthesized keyword sorter and store
+# the report unconditionally on that (caller-independent) frame; see `report_undef_keyword!`.
+function CC.abstract_throw(
+        analyzer::LSAnalyzer, argtypes::Vector{Any}, sv::CC.InferenceState
+    )
+    report_undef_keyword!(analyzer, sv, argtypes)
+    return @invoke CC.abstract_throw(
+        analyzer::ToplevelAbstractAnalyzer, argtypes::Vector{Any}, sv::CC.InferenceState)
+end
+
+# Apply the `report_target_modules` filter as reports propagate into the caller `sv`, not at
+# creation — so it is never written to the callee cache. A report with positive
+# `scope_offset` is dropped here when `sv` (its call site) is out of scope;
+# offset `0` means the decision was already made at creation, so it is kept.
+function JET.collect_callee_reports!(analyzer::LSAnalyzer, sv::CC.InferenceState)
+    reports = JET.get_report_stash(analyzer)
+    if !isempty(reports)
+        vf = JET.get_virtual_frame(sv)
+        for report in reports
+            offset = scope_offset(report)
+            if offset > 0 && length(report.vst) == offset && !should_analyze(analyzer, sv)
+                continue # at the (out-of-scope) call-site frame: drop instead of propagating
+            end
+            pushfirst!(report.vst, vf)
+            add_new_report!(analyzer, sv.result, report)
+        end
+        empty!(reports)
+    end
+    return nothing
+end
+
+# `vst_offset` of a report subject to the propagation-time `report_target_modules` filter, or
+# `-1` for reports not created unconditionally (whose in-scope decision is made at creation).
+# Methods for the concrete report types are defined after those structs below.
+scope_offset(@nospecialize report::JET.InferenceErrorReport) = scope_offset_impl(report)::Int
+scope_offset_impl(@nospecialize _report::JET.InferenceErrorReport) = -1
 
 # analysis
 # ========
@@ -452,6 +479,7 @@ end
 inference_error_report_stack_impl(r::UndefVarErrorReport) = (length(r.vst)-r.vst_offset):-1:1
 inference_error_report_severity_impl(r::UndefVarErrorReport) =
     r.maybeundef ? DiagnosticSeverity.Information : DiagnosticSeverity.Warning
+scope_offset_impl(r::UndefVarErrorReport) = r.vst_offset
 
 function report_undef_global_var!(
         analyzer::LSAnalyzer, sv::CC.InferenceState, binding::Core.Binding, partition::Core.BindingPartition,
@@ -500,6 +528,7 @@ function JETInterface.print_report_message(io::IO, r::FieldErrorReport)
 end
 inference_error_report_stack_impl(r::FieldErrorReport) = (length(r.vst)-r.vst_offset):-1:1
 inference_error_report_severity_impl(::FieldErrorReport) = DiagnosticSeverity.Warning
+scope_offset_impl(r::FieldErrorReport) = r.vst_offset
 
 @jetreport struct BoundsErrorReport <: JETLSErrorReport
     @nospecialize a
@@ -510,6 +539,7 @@ JETInterface.print_report_message(io::IO, r::BoundsErrorReport) =
     print(io, lazy"BoundsError: attempt to access $(r.a) at index [$(r.i)]")
 inference_error_report_stack_impl(r::BoundsErrorReport) = (length(r.vst)-r.vst_offset):-1:1
 inference_error_report_severity_impl(::BoundsErrorReport) = DiagnosticSeverity.Warning
+scope_offset_impl(r::BoundsErrorReport) = r.vst_offset
 
 # TypeAssertErrorReport
 # ---------------------
@@ -521,6 +551,7 @@ inference_error_report_severity_impl(::BoundsErrorReport) = DiagnosticSeverity.W
 end
 inference_error_report_stack_impl(r::TypeAssertErrorReport) = (length(r.vst)-r.vst_offset):-1:1
 inference_error_report_severity_impl(::TypeAssertErrorReport) = DiagnosticSeverity.Warning
+scope_offset_impl(r::TypeAssertErrorReport) = r.vst_offset
 
 function JETInterface.print_report_message(io::IO, r::TypeAssertErrorReport)
     (; expected, actual) = r
@@ -562,19 +593,17 @@ function report_typeassert_error!(
 end
 
 function report_builtin_error!(
-        analyzer::LSAnalyzer, sv::CC.InferenceState, @nospecialize(f), argtypes::Vector{Any},
-        @nospecialize(ret), offset::Int
+        analyzer::LSAnalyzer, sv::CC.InferenceState, @nospecialize(f),
+        argtypes::Vector{Any}, offset::Int
     )
-    if ret === Union{}
-        if f === getfield
-            report_fieldaccess!(analyzer, sv, getfield, argtypes, offset)
-        elseif f === setfield!
-            report_fieldaccess!(analyzer, sv, setfield!, argtypes, offset)
-        elseif f === fieldtype
-            report_fieldaccess!(analyzer, sv, fieldtype, argtypes, offset)
-        elseif f === Core.typeassert
-            report_typeassert_error!(analyzer, sv, argtypes, offset)
-        end
+    if f === getfield
+        report_fieldaccess!(analyzer, sv, getfield, argtypes, offset)
+    elseif f === setfield!
+        report_fieldaccess!(analyzer, sv, setfield!, argtypes, offset)
+    elseif f === fieldtype
+        report_fieldaccess!(analyzer, sv, fieldtype, argtypes, offset)
+    elseif f === typeassert
+        report_typeassert_error!(analyzer, sv, argtypes, offset)
     end
 end
 
@@ -827,58 +856,29 @@ end
 # UndefKeywordErrorReport
 # -----------------------
 
-# Calling a function without one of its required keyword arguments (a keyword without a
-# default) raises `UndefKeywordError` at runtime. Detect this at the call site (not at the
-# `throw` inside the synthesized keyword sorter) so the report stays independent of analysis
-# order: the throw site only fires while the callee is freshly inferred, but its result —
-# including whether the call diverges — is cached and reused, which would make the report
-# appear or vanish depending on which signature got analyzed first.
+# A missing required keyword throws `UndefKeywordError` in the synthesized keyword sorter;
+# detect it there (`CC.abstract_throw`) and store the report unconditionally on the sorter
+# frame. That is caller-independent, so it caches cleanly and replays (re-rooted) to every
+# call site — offset 1 points one frame up, at the call site. `report_target_modules`
+# filtering is deferred to propagation.
 @jetreport struct UndefKeywordErrorReport <: JETLSErrorReport
     var::Symbol
 end
 JETInterface.print_report_message(io::IO, r::UndefKeywordErrorReport) =
     print(io, "missing keyword argument `", r.var, '`')
-inference_error_report_stack_impl(r::UndefKeywordErrorReport) = length(r.vst):-1:1
+inference_error_report_stack_impl(r::UndefKeywordErrorReport) = (length(r.vst)-1):-1:1
 inference_error_report_severity_impl(::UndefKeywordErrorReport) = DiagnosticSeverity.Warning
+scope_offset_impl(::UndefKeywordErrorReport) = 1
 
-function report_undef_keyword!(
-        analyzer::LSAnalyzer, sv::CC.InferenceState, @nospecialize(func),
-        call::CC.CallMeta, arginfo::CC.ArgInfo, max_methods::Int
-    )
-    # Decide *whether* to report from the return / exception types, which survive caching
-    # (`call.exct` carries the missing keyword as `Const(UndefKeywordError(name))` only while
-    # the callee is freshly inferred, and widens to the bare `UndefKeywordError` type once
-    # cached). Recover the *name* from the callee's declared keywords so both presence and
-    # message stay independent of analysis order.
-    call.rt === Union{} || return false
-    CC.widenconst(call.exct) <: UndefKeywordError || return false
-    argtypes = arginfo.argtypes
-    if func === Core.kwcall
-        # `Core.kwcall(kwnt, f, posargs...)`
-        length(argtypes) ≥ 3 || return false
-        provided = @something kwcall_keyword_names(CC.widenconst(argtypes[2])) return false
-        ftype = CC.widenconst(argtypes[3])
-        posbase = 4
-    else
-        # direct call with no keywords (the function's zero-keyword convenience method)
-        provided = ()
-        ftype = CC.widenconst(argtypes[1])
-        posbase = 2
-    end
-    _, matches = @something find_call_method_matches(
-        analyzer, ftype, argtypes, posbase, max_methods) return false
-    for match in matches
-        for name in Base.kwarg_decl(match.method)
-            endswith(String(name), "...") && continue # slurp absorbs any missing keyword
-            name ∈ provided && continue
-            # first declared keyword not supplied; the keyword sorter throws for the first
-            # such *required* one, which this matches under the usual required-before-optional
-            # declaration order
-            add_new_report!(analyzer, sv.result, UndefKeywordErrorReport(sv, name))
-            return true
-        end
-    end
-    return false
+function report_undef_keyword!(analyzer::LSAnalyzer, sv::CC.InferenceState, argtypes::Vector{Any})
+    length(argtypes) ≥ 2 || return false
+    a = argtypes[2]
+    a isa Const || return false
+    err = a.val
+    err isa UndefKeywordError || return false
+    # The report points at the user's call site, one frame up from the synthesized sorter.
+    add_new_report!(analyzer, sv.result, UndefKeywordErrorReport(sv, err.var))
+    return true
 end
 
 # KeywordTypeErrorReport
