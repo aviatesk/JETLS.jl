@@ -456,11 +456,15 @@ function compute_full_binding_occurrences(
         # A statement that is *only* such a declaration has no other code, so skip lowering it.
         binding_occurrences = Dict{JL.BindingInfo,Set{BindingOccurrence}}()
     else
+        # Remove macros to preserve precise source locations. `strip_static=true` keeps
+        # every `@static` branch as a plain conditional, so identifiers used in the
+        # condition and in branches not taken on this platform are still collected —
+        # scope-aware, since each branch is resolved within its enclosing scope.
+        # TODO: This won't be necessary once JuliaLowering can preserve precise
+        # source locations for old macro-expanded code.
         (; ctx3, st3) = try
-            # Remove macros to preserve precise source locations.
-            # TODO: This won't be necessary once JuliaLowering can preserve precise
-            # source locations for old macro-expanded code.
-            jl_lower_for_scope_resolution(context_module, remove_macrocalls(st0); soft_scope)
+            jl_lower_for_scope_resolution(context_module,
+                remove_macrocalls(st0; strip_static=true); soft_scope)
         catch
             return nothing
         end

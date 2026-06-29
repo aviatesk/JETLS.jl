@@ -115,6 +115,43 @@ end
             end
         end
 
+        @testset "highlight across @static branches" begin
+            # A binding used in a `@static` branch not selected for the current platform
+            # is still highlighted: occurrence analysis retains every branch (as a plain
+            # conditional), so the use isn't dropped with the unpicked branch.
+            let code = """
+                function func()
+                    │xx│x│ = 1
+                    @static if Sys.iswindows()
+                        println(│xx│x│)
+                    else
+                        println(│xx│x│)
+                    end
+                end
+                """
+                fi, positions = highlight_testcase(code, 9)
+                for pos in positions
+                    highlights = JETLS.document_highlights(fi, pos)
+                    @test length(highlights) == 3
+                    @test count(highlights) do highlight
+                        highlight.range.start == positions[1] &&
+                        highlight.range.var"end" == positions[3] &&
+                        highlight.kind == DocumentHighlightKind.Write
+                    end == 1
+                    @test count(highlights) do highlight
+                        highlight.range.start == positions[4] &&
+                        highlight.range.var"end" == positions[6] &&
+                        highlight.kind == DocumentHighlightKind.Read
+                    end == 1
+                    @test count(highlights) do highlight
+                        highlight.range.start == positions[7] &&
+                        highlight.range.var"end" == positions[9] &&
+                        highlight.kind == DocumentHighlightKind.Read
+                    end == 1
+                end
+            end
+        end
+
         @testset "do-block parameters in same lowering unit" begin
             # Two `do h` blocks share the same top-level statement but each
             # introduces its own fresh `h` binding; highlights must not cross.

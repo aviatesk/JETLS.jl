@@ -258,7 +258,7 @@ function select_target_binding(
 
     (; ctx3, st3) = try
         # Remove macros to preserve precise source locations
-        jl_lower_for_scope_resolution(context_module, remove_macrocalls(st0); soft_scope)
+        jl_lower_for_scope_resolution(context_module, remove_macrocalls(st0; strip_static=true); soft_scope)
     catch err
         JETLS_DEBUG_LOWERING && @warn "Error in lowering ($caller)" err
         JETLS_DEBUG_LOWERING && Base.show_backtrace(stderr, catch_backtrace())

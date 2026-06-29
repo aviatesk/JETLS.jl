@@ -85,6 +85,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Reworked the [diagnostics documentation](https://aviatesk.github.io/JETLS.jl/release/diagnostic/): a new [Analysis stages](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/stage) section explains what produces each diagnostic category, which tool powers it, when it runs, and how the stages depend on one another. It also adds a [security caveat](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/stage/toplevel) that full analysis loads and runs your code (so JETLS should not be run on untrusted code), and documents how each [`inference/*` diagnostic](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/inference) corresponds to the Julia runtime error it predicts.
 
+### Fixed
+
+- Fixed a false `lowering/unused-import` report for a name used only inside a `@static` condition or a branch not taken on the current platform. Such names are now correctly recognized as used:
+  ```julia
+  using Base: VERSION
+  @static if VERSION ≥ v"1.12"
+      # `VERSION` is no longer misreported as an unused import
+  end
+  ```
+
+- Document-highlight and rename now also cover identifiers used in `@static` branches not selected for the current platform.
+
 ## 2026-06-26
 
 - Commit: [`0d67c12`](https://github.com/aviatesk/JETLS.jl/commit/0d67c12)

@@ -1858,6 +1858,28 @@ end
         @test isempty(diagnostics)
     end
 
+    # Imports used only inside a `@static` condition should not be reported as unused:
+    # `@static` expands to only the platform-selected branch, dropping the condition.
+    let diagnostics = get_unused_import_diagnostics("""
+        using Base: VERSION
+        @static if VERSION >= v"1.11"
+            nothing
+        end
+        """)
+        @test isempty(diagnostics)
+    end
+
+    # Imports used only inside a `@static` branch not taken on this platform should not be
+    # reported as unused: removing the import would break the platform where it is taken.
+    let diagnostics = get_unused_import_diagnostics("""
+        using Base: VERSION
+        @static if Sys.iswindows()
+            println(VERSION)
+        end
+        """)
+        @test isempty(diagnostics)
+    end
+
     # Imports used inside macro body quoted expressions should not be reported as unused
     let diagnostics = get_unused_import_diagnostics("""
         using Base.Iterators: flatten
