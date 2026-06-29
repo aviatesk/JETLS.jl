@@ -524,7 +524,7 @@ function JETInterface.print_report_message(io::IO, r::FieldErrorReport)
     else
         tname = nameof(typ)
     end
-    return print(io, lazy"FieldError: type $tname has no field `$(r.field)`, available fields: $flds")
+    return print(io, lazy"FieldError: type `$tname` has no field `$(r.field)`, available fields: $flds")
 end
 inference_error_report_stack_impl(r::FieldErrorReport) = (length(r.vst)-r.vst_offset):-1:1
 inference_error_report_severity_impl(::FieldErrorReport) = DiagnosticSeverity.Warning

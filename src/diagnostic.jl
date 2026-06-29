@@ -269,8 +269,9 @@ end
 function apply_markdown_message!(diagnostics::Vector{Diagnostic})
     for i = 1:length(diagnostics)
         diagnostic = diagnostics[i]
-        if diagnostic.message isa String
-            diagnostics[i] = Diagnostic(diagnostic; message = MarkupContent(; kind = MarkupKind.Markdown, value = diagnostic.message))
+        message = diagnostic.message
+        if message isa String
+            diagnostics[i] = Diagnostic(diagnostic; message = MarkupContent(; kind = MarkupKind.Markdown, value = message))
         end
     end
 end

@@ -84,7 +84,7 @@ end
     end
     function field_error()
         x = MyStruct(42)
-        return x.propert  # FieldError: type MyStruct has no field `propert`, available fields: `property` (JETLS inference/field-error)
+        return x.propert  # FieldError: type `MyStruct` has no field `propert`, available fields: `property` (JETLS inference/field-error)
     end
 
     f32(x::Float32) = sin(x) + cos(x)
@@ -105,7 +105,7 @@ end
             found_diagnostic1 = found_diagnostic2 = false
             for diag in raw_res.params.diagnostics
                 if diag.source == JETLS.DIAGNOSTIC_SOURCE_SAVE
-                    if diag.code == JETLS.INFERENCE_FIELD_ERROR_CODE && occursin("type MyStruct has no field `propert`, available fields: `property`", diag.message)
+                    if diag.code == JETLS.INFERENCE_FIELD_ERROR_CODE && occursin("type `MyStruct` has no field `propert`, available fields: `property`", diag.message)
                         found_diagnostic1 = true
                     elseif diag.code == JETLS.INFERENCE_METHOD_ERROR_CODE && occursin("no matching method found `f32(::Float64)`", diag.message)
                         found_diagnostic2 = true

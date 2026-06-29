@@ -1153,7 +1153,7 @@ struct MyStruct
 end
 function field_error()
     x = MyStruct(42)
-    return x.propert  # FieldError: type MyStruct has no field `propert`, available fields: `property` (JETLS inference/field-error)
+    return x.propert  # FieldError: type `MyStruct` has no field `propert`, available fields: `property` (JETLS inference/field-error)
 end
 ```
 
