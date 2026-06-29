@@ -210,10 +210,10 @@ function get_file_info(
             cache !== nothing && return cache
         end
         if time() - start > timeout
-            JETLS_TEST_MODE || @warn "File cache not found" uri _id=uri maxlog=1 # Some tests intentionally call this path, so this log is probably not necessary.
+            @static JETLS_TEST_MODE || @warn "File cache not found" uri _id=uri maxlog=1 # Some tests intentionally call this path, so this log is probably not necessary.
             return nothing
         end
-        JETLS_DEV_MODE && @info "Waiting for file cache" uri _id=request_id maxlog=1
+        @static JETLS_DEV_MODE && @info "Waiting for file cache" uri _id=request_id maxlog=1
         # Shorten the polling interval under `JETLS_TEST_MODE` (paired with the
         # shortened `timeout` above) so the timeout-exercising tests finish fast.
         sleep(@static JETLS_TEST_MODE ? 0.05 : 0.5)
@@ -289,8 +289,8 @@ function _store_unsynced_file_info!(state::ServerState, uri::URI; force::Bool=fa
         parsed_stream = try
             ParseStream!(read(filename))
         catch e
-            JETLS_DEV_MODE && @error "Error parsing file $(filename)"
-            JETLS_DEV_MODE && Base.showerror(stderr, e, catch_backtrace())
+            @static JETLS_DEV_MODE && @error "Error parsing file $(filename)"
+            @static JETLS_DEV_MODE && Base.showerror(stderr, e, catch_backtrace())
             return cache, nothing
         end
         fi = FileInfo(version, parsed_stream, filename, state.encoding)

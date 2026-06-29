@@ -70,9 +70,9 @@ function jl_lower_for_scope_resolution(
         JL.expand_forms_1(context_module, st0, true, world)
     catch err
         recover_from_macro_errors || rethrow(err)
-        JETLS_DEBUG_LOWERING && @warn "Error in macro expansion; trimming and retrying"
-        JETLS_DEBUG_LOWERING && showerror(stderr, err)
-        JETLS_DEBUG_LOWERING && Base.show_backtrace(stderr, catch_backtrace())
+        @static JETLS_DEBUG_LOWERING && @warn "Error in macro expansion; trimming and retrying"
+        @static JETLS_DEBUG_LOWERING && showerror(stderr, err)
+        @static JETLS_DEBUG_LOWERING && Base.show_backtrace(stderr, catch_backtrace())
         st0 = remove_macrocalls(st0)
         JL.expand_forms_1(context_module, st0, true, world)
     end
@@ -108,8 +108,8 @@ function cursor_bindings(
     (; ctx3, st2) = try
         jl_lower_for_scope_resolution(context_module, st0; soft_scope)
     catch err
-        JETLS_DEBUG_LOWERING && @warn "Error in lowering" err
-        JETLS_DEBUG_LOWERING && Base.show_backtrace(stderr, catch_backtrace())
+        @static JETLS_DEBUG_LOWERING && @warn "Error in lowering" err
+        @static JETLS_DEBUG_LOWERING && Base.show_backtrace(stderr, catch_backtrace())
         return nothing # lowering failed, e.g. because of incomplete input
     end
 
@@ -156,7 +156,7 @@ function cursor_bindings(
             || bdistances[i] < bdistances[prev]
             || binfo.kind === :static_parameter)
             seen[binfo.name] = i
-        elseif JETLS_DEBUG_LOWERING
+        elseif @static JETLS_DEBUG_LOWERING ? true : false
             @info "Found two bindings with the same name:" binfo bscopeinfos[prev][1]
         end
     end
@@ -260,8 +260,8 @@ function select_target_binding(
         # Remove macros to preserve precise source locations
         jl_lower_for_scope_resolution(context_module, remove_macrocalls(st0; strip_static=true); soft_scope)
     catch err
-        JETLS_DEBUG_LOWERING && @warn "Error in lowering ($caller)" err
-        JETLS_DEBUG_LOWERING && Base.show_backtrace(stderr, catch_backtrace())
+        @static JETLS_DEBUG_LOWERING && @warn "Error in lowering ($caller)" err
+        @static JETLS_DEBUG_LOWERING && Base.show_backtrace(stderr, catch_backtrace())
         return nothing
     end
     primary = _select_target_binding(ctx3, st3, offset)
@@ -377,8 +377,8 @@ function select_macrocall_binding(
     (; ctx3, st3) = try
         jl_lower_for_scope_resolution(context_module, macrocall_name; soft_scope)
     catch err
-        JETLS_DEBUG_LOWERING && @warn "Error in lowering ($caller)" err
-        JETLS_DEBUG_LOWERING && Base.show_backtrace(stderr, catch_backtrace())
+        @static JETLS_DEBUG_LOWERING && @warn "Error in lowering ($caller)" err
+        @static JETLS_DEBUG_LOWERING && Base.show_backtrace(stderr, catch_backtrace())
         return nothing
     end
     for binfo in ctx3.bindings.info
@@ -422,8 +422,8 @@ function select_export_public_binding(
     (; ctx3, st3) = try
         jl_lower_for_scope_resolution(context_module, name_node; soft_scope)
     catch err
-        JETLS_DEBUG_LOWERING && @warn "Error in lowering ($caller)" err
-        JETLS_DEBUG_LOWERING && Base.show_backtrace(stderr, catch_backtrace())
+        @static JETLS_DEBUG_LOWERING && @warn "Error in lowering ($caller)" err
+        @static JETLS_DEBUG_LOWERING && Base.show_backtrace(stderr, catch_backtrace())
         return nothing
     end
     for binfo in ctx3.bindings.info
@@ -466,8 +466,8 @@ function select_import_using_binding(
     (; ctx3, st3) = try
         jl_lower_for_scope_resolution(context_module, name_node; soft_scope)
     catch err
-        JETLS_DEBUG_LOWERING && @warn "Error in lowering ($caller)" err
-        JETLS_DEBUG_LOWERING && Base.show_backtrace(stderr, catch_backtrace())
+        @static JETLS_DEBUG_LOWERING && @warn "Error in lowering ($caller)" err
+        @static JETLS_DEBUG_LOWERING && Base.show_backtrace(stderr, catch_backtrace())
         return nothing
     end
     for binfo in ctx3.bindings.info

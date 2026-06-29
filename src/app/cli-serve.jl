@@ -147,7 +147,7 @@ function run_serve(args::Vector{String})
     show_setup_info("Running JETLS with the following setup:")
 
     @with_cli_LOAD_PATH begin
-        if JETLS_DEV_MODE
+        @static if JETLS_DEV_MODE
             global currently_running
             currently_running = server = Server(endpoint)
             runserver_task = let client_process_id=client_process_id, transport=transport

@@ -173,7 +173,7 @@ end
 
 function start_analysis_workers!(server::Server)
     n_workers = get_init_option(server.state.init_options, :n_analysis_workers)
-    JETLS_DEV_MODE && @info "Starting $n_workers analysis workers"
+    @static JETLS_DEV_MODE && @info "Starting $n_workers analysis workers"
     worker_tasks = server.state.analysis_manager.worker_tasks
     isempty(worker_tasks) || error("The server has already started analysis workers")
     resize!(worker_tasks, n_workers)
@@ -317,7 +317,7 @@ function schedule_analysis!(
                 # Cancel existing timer if any
                 debounce_timer, debounce_completion = debounced[request.entry]
                 close(debounce_timer)
-                JETLS_DEV_MODE && @info "Cancelled analysis debounce timer:" entry=progress_title(request.entry) uri generation
+                @static JETLS_DEV_MODE && @info "Cancelled analysis debounce timer:" entry=progress_title(request.entry) uri generation
                 notify(debounce_completion)
             end
             local new_debounced = copy(debounced)
@@ -350,7 +350,7 @@ function queue_request!(server::Server, request::AnalysisRequest)
             local new_analyses = copy(analyses)
             new_analyses[request.entry] = request
             if old_request !== nothing # replaced by the new request i.e. cancelled
-                JETLS_DEV_MODE && @info "Cancelled duplicated pending analysis request:" entry=progress_title(request.entry) uri=request.uri generation=get_generation(manager,request.entry)
+                @static JETLS_DEV_MODE && @info "Cancelled duplicated pending analysis request:" entry=progress_title(request.entry) uri=request.uri generation=get_generation(manager,request.entry)
                 notify(old_request.completion)
             end
             return new_analyses, false
@@ -371,12 +371,12 @@ function resolve_analysis_request(server::Server, request::AnalysisRequest)
 
     if is_generation_analyzed(manager, request)
         # Skip if this generation was already analyzed (no new changes since last analysis)
-        JETLS_DEV_MODE && @info "Skipped analysis for unchanged analysis unit" entry=progress_title(request.entry) uri=request.uri generation=get_generation(manager,request.entry)
+        @static JETLS_DEV_MODE && @info "Skipped analysis for unchanged analysis unit" entry=progress_title(request.entry) uri=request.uri generation=get_generation(manager,request.entry)
         @goto next_request
     end
 
     if is_abandoned_request(server, request)
-        JETLS_DEV_MODE && @info "Skipped analysis for closed editor-managed document" entry=progress_title(request.entry) uri=request.uri
+        @static JETLS_DEV_MODE && @info "Skipped analysis for closed editor-managed document" entry=progress_title(request.entry) uri=request.uri
         @goto next_request
     end
 
@@ -384,7 +384,7 @@ function resolve_analysis_request(server::Server, request::AnalysisRequest)
     prev_result = execution.prev_result
 
     if has_any_parse_errors(server, execution)
-        JETLS_DEV_MODE && @info "Requested analysis unit has parse errors" entry=progress_title(request.entry) uri=request.uri generation=get_generation(manager,request.entry)
+        @static JETLS_DEV_MODE && @info "Requested analysis unit has parse errors" entry=progress_title(request.entry) uri=request.uri generation=get_generation(manager,request.entry)
         @goto next_request
     end
 
@@ -394,7 +394,7 @@ function resolve_analysis_request(server::Server, request::AnalysisRequest)
     end
 
     s = time()
-    JETLS_DEV_MODE && @info "Executing analysis for:" entry=progress_title(request.entry) uri=request.uri generation=get_generation(manager,request.entry)
+    @static JETLS_DEV_MODE && @info "Executing analysis for:" entry=progress_title(request.entry) uri=request.uri generation=get_generation(manager,request.entry)
     local cleanup::Bool = local failed::Bool = false
     analysis_result = try
         result, cleanup = execute_analysis(server, execution)
@@ -419,7 +419,7 @@ function resolve_analysis_request(server::Server, request::AnalysisRequest)
     @assert !(analysis_result isa Bool)
 
     tm = round(time() - s, digits=2)
-    JETLS_DEV_MODE && @info "Analysis completed in $tm seconds:" entry=progress_title(request.entry) uri=request.uri generation=get_generation(manager,request.entry)
+    @static JETLS_DEV_MODE && @info "Analysis completed in $tm seconds:" entry=progress_title(request.entry) uri=request.uri generation=get_generation(manager,request.entry)
 
     if is_abandoned_request(server, request)
         # Document was closed mid-analysis. `file_cache`/`notebook_cache`
@@ -427,7 +427,7 @@ function resolve_analysis_request(server::Server, request::AnalysisRequest)
         # `cleanup_analysis_state!` is taking care of
         # `manager.cache`/generations/debounced + the OLD prev_result's methods.
         # We just need to drop the methods this analysis just defined and skip the cache write.
-        JETLS_DEV_MODE && @info "Discarding analysis result for closed editor-managed document" entry=progress_title(request.entry) uri=request.uri
+        @static JETLS_DEV_MODE && @info "Discarding analysis result for closed editor-managed document" entry=progress_title(request.entry) uri=request.uri
         cleanup_prev_methods(analysis_result)
         @goto next_request
     end
@@ -527,8 +527,8 @@ function cleanup_prev_methods(prev_result::AnalysisResult)
         try
             Base.delete_method(m)
         catch e
-            JETLS_DEV_MODE && @warn "Failed to delete method $m" disabled=is_method_disabled(m)
-            JETLS_DEV_MODE && Base.showerror(stderr, e, catch_backtrace())
+            @static JETLS_DEV_MODE && @warn "Failed to delete method $m" disabled=is_method_disabled(m)
+            @static JETLS_DEV_MODE && Base.showerror(stderr, e, catch_backtrace())
         end
     end
 end
@@ -820,7 +820,7 @@ struct SigAnalysisResult
     codeinst::CC.CodeInstance
 end
 
-if JETLS_DEV_MODE
+@static if JETLS_DEV_MODE
 # Revise is currently only loaded in JETLS_DEV_MODE
 struct SigWorkItem
     file::String
@@ -850,7 +850,7 @@ mutable struct ReviseAnalysisProgress
     end
 end
 
-end # if JETLS_DEV_MODE
+end # @static if JETLS_DEV_MODE
 
 const empty_lines_range = typemax(Int) => typemin(Int)
 
@@ -1066,10 +1066,10 @@ function analyze_package_with_revise(
                 if isdefined(result, :ci)
                     siginfos[index] = Revise.replace_extended_data(siginfo, :JETLS, SigAnalysisResult(reports, result.ci))
                 else
-                    JETLS_DEV_MODE && @warn "Missing CodeInstance for method analysis instance for" siginfo.sig
+                    @static JETLS_DEV_MODE && @warn "Missing CodeInstance for method analysis instance for" siginfo.sig
                 end
             else
-                JETLS_DEV_MODE && @warn "Couldn't find a single matching method for the signature" siginfo.sig
+                @static JETLS_DEV_MODE && @warn "Couldn't find a single matching method for the signature" siginfo.sig
                 reports = JET.InferenceErrorReport[]
             end
             @label gotreports
@@ -1381,9 +1381,9 @@ function ensure_instantiated!(server::Server, env_path::String)
     if get_config(server, :full_analysis, :auto_instantiate)
         io = IOBuffer()
         try
-            JETLS_DEV_MODE && @info "Resolving package environment" env_path
+            @static JETLS_DEV_MODE && @info "Resolving package environment" env_path
             Pkg.resolve(; io)
-            JETLS_DEV_MODE && @info "Instantiating package environment" env_path
+            @static JETLS_DEV_MODE && @info "Instantiating package environment" env_path
             Pkg.instantiate(; io)
         catch e
             @error """Failed to instantiate package environment;

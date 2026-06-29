@@ -183,7 +183,7 @@ function handle_DidChangeNotebookDocumentNotification(
     next_notebook_info = store!(state.notebook_cache) do cache::Base.PersistentDict{URI,NotebookInfo}
         notebook_info = get(cache, notebook_uri, nothing)
         if notebook_info === nothing
-            JETLS_DEV_MODE && @warn "Received notebookDocument/didChange for unknown notebook" notebook_uri
+            @static JETLS_DEV_MODE && @warn "Received notebookDocument/didChange for unknown notebook" notebook_uri
             return cache, nothing
         end
         cells = copy(notebook_info.cells)

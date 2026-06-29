@@ -26,7 +26,7 @@ function did_change_watched_files_registration(server::Server)
                 pattern = "**/*.jl"),
             kind = WatchKind.Create | WatchKind.Change | WatchKind.Delete),
     ]
-    if JETLS_DEV_MODE
+    @static if JETLS_DEV_MODE
         push!(watchers, FileSystemWatcher(;
             globPattern = RelativePattern(;
                 baseUri = root_uri,
@@ -130,7 +130,7 @@ is_server_revise_trigger_file(path::AbstractString) = endswith(path, SERVER_REVI
 is_jl_file(path::AbstractString) = endswith(path, ".jl")
 
 function handle_server_revise_trigger!(server::Server, trigger_path::AbstractString)
-    JETLS_DEV_MODE || return show_warning_message(server,  ".JETLS_REVISE requires dev mode")
+    @static JETLS_DEV_MODE || return show_warning_message(server,  ".JETLS_REVISE requires dev mode")
     revise_now!()
     advance_server_world!()
     show_info_message(server, "JETLS server world advanced: $trigger_path")

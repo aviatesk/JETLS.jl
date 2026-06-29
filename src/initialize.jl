@@ -51,7 +51,7 @@ function handle_InitializeRequest(
         # leave Refs undefined
     end
 
-    if !JETLS_TEST_MODE
+    @static if !JETLS_TEST_MODE
         client_pid = something(init_params.processId, client_process_id, Some(nothing))
         version = JETLS_VERSION
         if version == "dev"
@@ -82,7 +82,7 @@ function handle_InitializeRequest(
         completionProvider = nothing # will be registered dynamically
     else
         completionProvider = completion_options()
-        if JETLS_DEV_MODE
+        @static if JETLS_DEV_MODE
             @info "Registering 'textDocument/completion' with `InitializeResponse`"
         end
     end
@@ -91,7 +91,7 @@ function handle_InitializeRequest(
         signatureHelpProvider = nothing # will be registered dynamically
     else
         signatureHelpProvider = signature_help_options()
-        if JETLS_DEV_MODE
+        @static if JETLS_DEV_MODE
             @info "Registering 'textDocument/signatureHelp' with `InitializeResponse`"
         end
     end
@@ -100,7 +100,7 @@ function handle_InitializeRequest(
         declarationProvider = nothing # will be registered dynamically
     else
         declarationProvider = declaration_options()
-        if JETLS_DEV_MODE
+        @static if JETLS_DEV_MODE
             @info "Registering 'textDocument/declaration' with `InitializeResponse`"
         end
     end
@@ -109,7 +109,7 @@ function handle_InitializeRequest(
         definitionProvider = nothing # will be registered dynamically
     else
         definitionProvider = definition_options()
-        if JETLS_DEV_MODE
+        @static if JETLS_DEV_MODE
             @info "Registering 'textDocument/definition' with `InitializeResponse`"
         end
     end
@@ -118,7 +118,7 @@ function handle_InitializeRequest(
         typeDefinitionProvider = nothing # will be registered dynamically
     else
         typeDefinitionProvider = type_definition_options()
-        if JETLS_DEV_MODE
+        @static if JETLS_DEV_MODE
             @info "Registering 'textDocument/typeDefinition' with `InitializeResponse`"
         end
     end
@@ -127,7 +127,7 @@ function handle_InitializeRequest(
         documentHighlightProvider = nothing # will be registered dynamically
     else
         documentHighlightProvider = document_highlight_options()
-        if JETLS_DEV_MODE
+        @static if JETLS_DEV_MODE
             @info "Registering 'textDocument/documentHighlight' with `InitializeResponse`"
         end
     end
@@ -136,7 +136,7 @@ function handle_InitializeRequest(
         documentSymbolProvider = nothing # will be registered dynamically
     else
         documentSymbolProvider = document_symbol_options()
-        if JETLS_DEV_MODE
+        @static if JETLS_DEV_MODE
             @info "Registering 'textDocument/documentSymbol' with `InitializeResponse`"
         end
     end
@@ -145,7 +145,7 @@ function handle_InitializeRequest(
         referencesProvider = nothing # will be registered dynamically
     else
         referencesProvider = references_options(server)
-        if JETLS_DEV_MODE
+        @static if JETLS_DEV_MODE
             @info "Registering 'textDocument/references' with `InitializeResponse`"
         end
     end
@@ -154,7 +154,7 @@ function handle_InitializeRequest(
         hoverProvider = nothing # will be registered dynamically
     else
         hoverProvider = hover_options()
-        if JETLS_DEV_MODE
+        @static if JETLS_DEV_MODE
             @info "Registering 'textDocument/hover' with `InitializeResponse`"
         end
     end
@@ -163,7 +163,7 @@ function handle_InitializeRequest(
         diagnosticProvider = nothing # will be registered dynamically
     else
         diagnosticProvider = diagnostic_options()
-        if JETLS_DEV_MODE
+        @static if JETLS_DEV_MODE
             @info "Registering 'textDocument/diagnostic' with `InitializeResponse`"
         end
     end
@@ -172,7 +172,7 @@ function handle_InitializeRequest(
         codeLensProvider = nothing # will be registered dynamically
     else
         codeLensProvider = code_lens_options()
-        if JETLS_DEV_MODE
+        @static if JETLS_DEV_MODE
             @info "Registering 'textDocument/codeLens' with `InitializeResponse`"
         end
     end
@@ -181,7 +181,7 @@ function handle_InitializeRequest(
         documentLinkProvider = nothing # will be registered dynamically
     else
         documentLinkProvider = document_link_options()
-        if JETLS_DEV_MODE
+        @static if JETLS_DEV_MODE
             @info "Registering 'textDocument/documentLink' with `InitializeResponse`"
         end
     end
@@ -190,14 +190,14 @@ function handle_InitializeRequest(
         codeActionProvider = nothing # will be registered dynamically
     else
         codeActionProvider = code_action_options()
-        if JETLS_DEV_MODE
+        @static if JETLS_DEV_MODE
             @info "Registering 'textDocument/codeAction' with `InitializeResponse`"
         end
     end
 
     # No support for dynamic registration
     executeCommandProvider = execute_command_options()
-    if JETLS_DEV_MODE
+    @static if JETLS_DEV_MODE
         @info "Registering 'workspace/executeCommand' with `InitializeResponse`"
     end
 
@@ -205,7 +205,7 @@ function handle_InitializeRequest(
         documentFormattingProvider = nothing # will be registered dynamically
     else
         documentFormattingProvider = formatting_options(server)
-        if JETLS_DEV_MODE
+        @static if JETLS_DEV_MODE
             @info "Registering 'textDocument/formatting' with `InitializeResponse`"
         end
     end
@@ -214,7 +214,7 @@ function handle_InitializeRequest(
         documentRangeFormattingProvider = nothing # will be registered dynamically
     else
         documentRangeFormattingProvider = range_formatting_options(server)
-        if JETLS_DEV_MODE
+        @static if JETLS_DEV_MODE
             @info "Registering 'textDocument/rangeFormatting' with `InitializeResponse`"
         end
     end
@@ -230,7 +230,7 @@ function handle_InitializeRequest(
         inlayHintProvider = nothing # will be registered dynamically
     else
         inlayHintProvider = inlay_hint_options()
-        if JETLS_DEV_MODE
+        @static if JETLS_DEV_MODE
             @info "Registering 'textDocument/inlayHint' with `InitializeResponse`"
         end
     end
@@ -247,7 +247,7 @@ function handle_InitializeRequest(
         semanticTokensProvider = nothing # will be registered dynamically
     else
         semanticTokensProvider = semantic_tokens_options()
-        if JETLS_DEV_MODE
+        @static if JETLS_DEV_MODE
             @info "Registering 'textDocument/semanticTokens' with `InitializeResponse`"
         end
     end
@@ -256,7 +256,7 @@ function handle_InitializeRequest(
         renameProvider = nothing # will be registered dynamically
     else
         renameProvider = rename_options(server)
-        if JETLS_DEV_MODE
+        @static if JETLS_DEV_MODE
             @info "Registering 'textDocument/rename' with `InitializeResponse`"
         end
     end
@@ -265,7 +265,7 @@ function handle_InitializeRequest(
         workspaceSymbolProvider = nothing # will be registered dynamically
     else
         workspaceSymbolProvider = workspace_symbol_options(server)
-        if JETLS_DEV_MODE
+        @static if JETLS_DEV_MODE
             @info "Registering 'workspace/symbol' with `InitializeResponse`"
         end
     end
@@ -276,7 +276,7 @@ function handle_InitializeRequest(
         textDocumentContent = nothing # will be registered dynamically
     else
         textDocumentContent = text_document_content_options()
-        if JETLS_DEV_MODE
+        @static if JETLS_DEV_MODE
             @info "Registering 'workspace/textDocumentContent' with `InitializeResponse`"
         end
     end
@@ -344,7 +344,7 @@ function handle_InitializeRequest(
                 @goto skip_monitoring
             end
         end
-        JETLS_DEV_MODE && @info "Monitoring parent process ID" process_id
+        @static JETLS_DEV_MODE && @info "Monitoring parent process ID" process_id
         Threads.@spawn while true
             # To handle cases where the client crashes and cannot execute the normal
             # server shutdown process, check every 60 seconds whether the `processId`
@@ -380,7 +380,7 @@ function handle_InitializedNotification(server::Server)
     # Load configurations: This needs to be done after the `InitializedNotification` is sent from the client
     # - Load .JETLSConfig.toml configuration
     if !isdefined(state, :root_path)
-        if JETLS_DEV_MODE
+        @static if JETLS_DEV_MODE
             @info "`server.state.root_path` is not defined, skip config registration at startup."
         end
     else
@@ -397,7 +397,7 @@ function handle_InitializedNotification(server::Server)
 
     if supports(server, :textDocument, :completion, :dynamicRegistration)
         push!(registrations, completion_registration())
-        if JETLS_DEV_MODE
+        @static if JETLS_DEV_MODE
             @info "Dynamically registering 'textDocument/completion' upon `InitializedNotification`"
         end
     else
@@ -408,7 +408,7 @@ function handle_InitializedNotification(server::Server)
 
     if supports(server, :textDocument, :signatureHelp, :dynamicRegistration)
         push!(registrations, signature_help_registration())
-        if JETLS_DEV_MODE
+        @static if JETLS_DEV_MODE
             @info "Dynamically registering 'textDocument/signatureHelp' upon `InitializedNotification`"
         end
     else
@@ -419,14 +419,14 @@ function handle_InitializedNotification(server::Server)
 
     if supports(server, :textDocument, :declaration, :dynamicRegistration)
         push!(registrations, declaration_registration())
-        if JETLS_DEV_MODE
+        @static if JETLS_DEV_MODE
             @info "Dynamically registering 'textDocument/declaration' upon `InitializedNotification`"
         end
     end
 
     if supports(server, :textDocument, :definition, :dynamicRegistration)
         push!(registrations, definition_registration())
-        if JETLS_DEV_MODE
+        @static if JETLS_DEV_MODE
             @info "Dynamically registering 'textDocument/definition' upon `InitializedNotification`"
         end
     else
@@ -437,14 +437,14 @@ function handle_InitializedNotification(server::Server)
 
     if supports(server, :textDocument, :typeDefinition, :dynamicRegistration)
         push!(registrations, type_definition_registration())
-        if JETLS_DEV_MODE
+        @static if JETLS_DEV_MODE
             @info "Dynamically registering 'textDocument/typeDefinition' upon `InitializedNotification`"
         end
     end
 
     if supports(server, :textDocument, :documentHighlight, :dynamicRegistration)
         push!(registrations, document_highlight_registration())
-        if JETLS_DEV_MODE
+        @static if JETLS_DEV_MODE
             @info "Dynamically registering 'textDocument/documentHighlight' upon `InitializedNotification`"
         end
     else
@@ -454,7 +454,7 @@ function handle_InitializedNotification(server::Server)
 
     if supports(server, :textDocument, :documentSymbol, :dynamicRegistration)
         push!(registrations, document_symbol_registration())
-        if JETLS_DEV_MODE
+        @static if JETLS_DEV_MODE
             @info "Dynamically registering 'textDocument/documentSymbol' upon `InitializedNotification`"
         end
     else
@@ -464,7 +464,7 @@ function handle_InitializedNotification(server::Server)
 
     if supports(server, :textDocument, :references, :dynamicRegistration)
         push!(registrations, references_registration(server))
-        if JETLS_DEV_MODE
+        @static if JETLS_DEV_MODE
             @info "Dynamically registering 'textDocument/references' upon `InitializedNotification`"
         end
     else
@@ -474,7 +474,7 @@ function handle_InitializedNotification(server::Server)
 
     if supports(server, :textDocument, :hover, :dynamicRegistration)
         push!(registrations, hover_registration())
-        if JETLS_DEV_MODE
+        @static if JETLS_DEV_MODE
             @info "Dynamically registering 'textDocument/hover' upon `InitializedNotification`"
         end
     else
@@ -485,14 +485,14 @@ function handle_InitializedNotification(server::Server)
 
     if supports(server, :textDocument, :diagnostic, :dynamicRegistration)
         push!(registrations, diagnostic_registration())
-        if JETLS_DEV_MODE
+        @static if JETLS_DEV_MODE
             @info "Dynamically registering 'textDocument/diagnostic' upon `InitializedNotification`"
         end
     end
 
     if supports(server, :textDocument, :codeLens, :dynamicRegistration)
         push!(registrations, code_lens_registration())
-        if JETLS_DEV_MODE
+        @static if JETLS_DEV_MODE
             @info "Dynamically registering 'textDocument/codeLens' upon `InitializedNotification`"
         end
     else
@@ -503,7 +503,7 @@ function handle_InitializedNotification(server::Server)
 
     if supports(server, :textDocument, :documentLink, :dynamicRegistration)
         push!(registrations, document_link_registration())
-        if JETLS_DEV_MODE
+        @static if JETLS_DEV_MODE
             @info "Dynamically registering 'textDocument/documentLink' upon `InitializedNotification`"
         end
     else
@@ -514,7 +514,7 @@ function handle_InitializedNotification(server::Server)
 
     if supports(server, :textDocument, :codeAction, :dynamicRegistration)
         push!(registrations, code_action_registration())
-        if JETLS_DEV_MODE
+        @static if JETLS_DEV_MODE
             @info "Dynamically registering 'textDocument/codeAction' upon `InitializedNotification`"
         end
     else
@@ -525,7 +525,7 @@ function handle_InitializedNotification(server::Server)
 
     if supports(server, :textDocument, :formatting, :dynamicRegistration)
         push!(registrations, formatting_registration(server))
-        if JETLS_DEV_MODE
+        @static if JETLS_DEV_MODE
             @info "Dynamically registering 'textDocument/formatting' upon `InitializedNotification`"
         end
     else
@@ -536,7 +536,7 @@ function handle_InitializedNotification(server::Server)
 
     if supports(server, :textDocument, :rangeFormatting, :dynamicRegistration)
         push!(registrations, range_formatting_registration(server))
-        if JETLS_DEV_MODE
+        @static if JETLS_DEV_MODE
             @info "Dynamically registering 'textDocument/rangeFormatting' upon `InitializedNotification`"
         end
     else
@@ -547,7 +547,7 @@ function handle_InitializedNotification(server::Server)
 
     if supports(server, :textDocument, :rename, :dynamicRegistration)
         push!(registrations, rename_registration(server))
-        if JETLS_DEV_MODE
+        @static if JETLS_DEV_MODE
             @info "Dynamically registering 'textDocument/rename' upon `InitializedNotification`"
         end
     else
@@ -560,7 +560,7 @@ function handle_InitializedNotification(server::Server)
     if (supports(state, :textDocument, :semanticTokens, :augmentsSyntaxTokens) &&
         supports(server, :textDocument, :semanticTokens, :dynamicRegistration))
         push!(registrations, semantic_tokens_registration())
-        if JETLS_DEV_MODE
+        @static if JETLS_DEV_MODE
             @info "Dynamically registering 'textDocument/semanticTokens' upon `InitializedNotification`"
         end
     else
@@ -570,7 +570,7 @@ function handle_InitializedNotification(server::Server)
 
     if supports(server, :textDocument, :inlayHint, :dynamicRegistration)
         push!(registrations, inlay_hint_registration(#=static=#false))
-        if JETLS_DEV_MODE
+        @static if JETLS_DEV_MODE
             @info "Dynamically registering 'textDocument/inlayHint' upon `InitializedNotification`"
         end
     # elseif getcapability(server,
@@ -578,21 +578,21 @@ function handle_InitializedNotification(server::Server)
     #     # `InlayHintRegistrationOptions` extends `StaticRegistrationOptions`,
     #     # prefer it over the registration with `InitializeResponse` if the client supports it
     #     push!(registrations, inlay_hint_registration(#=static=#true))
-    #     if JETLS_DEV_MODE
+    #     @static if JETLS_DEV_MODE
     #         @info "Statically registering 'textDocument/inlayHint' upon `InitializedNotification`"
     #     end
     end
 
     if supports(server, :workspace, :symbol, :dynamicRegistration)
         push!(registrations, workspace_symbol_registration(server))
-        if JETLS_DEV_MODE
+        @static if JETLS_DEV_MODE
             @info "Dynamically registering 'workspace/symbol' upon `InitializedNotification`"
         end
     end
 
     if supports(server, :workspace, :textDocumentContent, :dynamicRegistration)
         push!(registrations, text_document_content_registration())
-        if JETLS_DEV_MODE
+        @static if JETLS_DEV_MODE
             @info "Dynamically registering 'workspace/textDocumentContent' upon `InitializedNotification`"
         end
     end
@@ -601,7 +601,7 @@ function handle_InitializedNotification(server::Server)
         registration = did_change_watched_files_registration(server)
         if registration !== nothing
             push!(registrations, registration)
-            if JETLS_DEV_MODE
+            @static if JETLS_DEV_MODE
                 @info "Dynamically registering 'workspace/didChangeWatchedFiles' upon `InitializedNotification`"
             end
         end
@@ -612,13 +612,13 @@ function handle_InitializedNotification(server::Server)
 
     if supports(server, :workspace, :didChangeConfiguration, :dynamicRegistration)
         push!(registrations, did_change_configuration_registration())
-        if JETLS_DEV_MODE
+        @static if JETLS_DEV_MODE
             @info "Dynamically registering 'workspace/didChangeConfiguration' upon `InitializedNotification`"
         end
     end
 
     register(server, registrations)
 
-    JETLS_DEV_MODE && show_setup_info("Initialized JETLS with the following setup:")
-    JETLS_DEV_MODE && @info "JETLS initialization options" init_options=state.init_options
+    @static JETLS_DEV_MODE && show_setup_info("Initialized JETLS with the following setup:")
+    @static JETLS_DEV_MODE && @info "JETLS initialization options" init_options=state.init_options
 end
