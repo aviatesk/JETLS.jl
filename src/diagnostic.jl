@@ -910,7 +910,8 @@ function analyze_unused_bindings!(
         has_implicit_args::Bool, reported::Set{LoweringDiagnosticKey},
         kwarg_type_names::Dict{Tuple{Int,Int},Set{String}},
         kwarg_locations::Set{Tuple{Int,Int}};
-        allow_unused_underscore::Bool
+        allow_unused_underscore::Bool,
+        inactive_branch_names::Set{String} = Set{String}()
     )
     for (binfo, occurrences) in binding_occurrences
         bk = binfo.kind
@@ -919,6 +920,10 @@ function analyze_unused_bindings!(
             continue
         end
         bn = binfo.name
+        # A use in a `@static` branch dropped on this platform is absent from the lowered
+        # tree, so the binding looks unused here; don't report it (see
+        # `collect_inactive_branch_names`).
+        bn in inactive_branch_names && continue
         if has_implicit_args && bn in _IMPLICIT_BINDING_NAMES
             continue
         end
@@ -972,13 +977,17 @@ function analyze_unused_assignments!(
         diagnostics::Vector{Diagnostic}, fi::FileInfo, st0::SyntaxTreeC,
         dead_store_info::Dict{JL.BindingInfo, DeadStoreInfo},
         reported::Set{LoweringDiagnosticKey};
-        allow_unused_underscore::Bool
+        allow_unused_underscore::Bool,
+        inactive_branch_names::Set{String} = Set{String}()
     )
     for (binfo, dsinfo) in dead_store_info
         binfo.kind === :local || continue
         binfo.is_internal && continue
         startswith(binfo.name, '#') && continue
         bn = binfo.name
+        # See `analyze_unused_bindings!`: a value read only in a `@static` branch dropped
+        # on this platform looks dead here, but isn't on the platform taking that branch.
+        bn in inactive_branch_names && continue
         if allow_unused_underscore && startswith(bn, '_')
             continue
         end
@@ -1528,7 +1537,8 @@ function analyze_lowered_code!(
         analyzer::Union{Nothing,LSAnalyzer}, postprocessor::LSPostProcessor;
         skip_analysis_requiring_context::Bool = false,
         allow_unused_underscore::Bool = true,
-        allow_noreturn_optimization::Vector{Symbol} = Symbol[]
+        allow_noreturn_optimization::Vector{Symbol} = Symbol[],
+        inactive_branch_names::Set{String} = Set{String}()
     )
     (; ctx3, ctx4, st0, st3) = res
     binding_occurrences = compute_binding_occurrences(ctx3, st3;
@@ -1543,12 +1553,13 @@ function analyze_lowered_code!(
     analyze_unused_bindings!(
         diagnostics, fi, st0, ctx3, binding_occurrences, has_implicit_args, reported,
         kwarg_type_names, kwarg_locations;
-        allow_unused_underscore)
+        allow_unused_underscore, inactive_branch_names)
 
     (; undef_info, dead_store_info, unreachable_statements) =
         analyze_all_lambdas(ctx3, st3; allow_noreturn_optimization)
     analyze_undefined_local_bindings!(diagnostics, uri, fi, undef_info, reported)
-    analyze_unused_assignments!(diagnostics, fi, st0, dead_store_info, reported; allow_unused_underscore)
+    analyze_unused_assignments!(diagnostics, fi, st0, dead_store_info, reported;
+        allow_unused_underscore, inactive_branch_names)
 
     analyze_captured_boxes!(diagnostics, uri, fi, ctx4, st3, reported)
     analyze_unreachable_code!(diagnostics, fi, st3, unreachable_statements)
@@ -1628,6 +1639,7 @@ function per_stmt_diagnostics!(
         nothing # signal primary-attempt failure to the fallback path
     end
     emit_macro_diagnostics!(diagnostics, fi, macro_diags)
+    inactive_branch_names = collect_inactive_branch_names(macro_diags)
 
     if res === nothing
         # Fallback expansion runs *outside* the sink scope: `remove_macrocalls`
@@ -1660,7 +1672,36 @@ function per_stmt_diagnostics!(
 
     return analyze_lowered_code!(
         diagnostics, candidates, uri, fi, res, world, analyzer, postprocessor;
-        skip_analysis_requiring_context, allow_unused_underscore, allow_noreturn_optimization)
+        skip_analysis_requiring_context, allow_unused_underscore, allow_noreturn_optimization,
+        inactive_branch_names)
+end
+
+# Names of identifiers appearing in `@static` branches dropped at expansion time — the
+# regions reported as `lowering/inactive-code` via the macro-diagnostic sink. A local
+# binding or argument whose only use lives in such a dropped branch is absent from the
+# lowered tree and would otherwise be misreported as unused. The unused-binding /
+# unused-assignment analyses skip any binding whose name is in this set. Suppressing by
+# name is conservative: it can only hide a genuinely unused warning when the same name
+# happens to recur in a dropped branch, never introduce a false one.
+#
+# Only the dropped branches are walked — uses in the branch taken on this platform
+# survive into the lowered tree, so those bindings are never misreported and need no
+# suppression. `@static` reports *every* dropped branch via `push_inactive_code!`
+# (each arm of an `if`/`elseif`/`else` chain or short-circuit `&&`/`||`, including a
+# dropped `elseif`'s condition), so walking the inactive nodes misses no vanished use.
+function collect_inactive_branch_names(macro_diags::Vector{MacroDiagnostic})
+    names = Set{String}()
+    for d in macro_diags
+        d.code == LOWERING_INACTIVE_CODE || continue
+        traverse(d.node) do s
+            if JS.kind(s) === JS.K"Identifier"
+                nv = get_name_val(s)
+                nv === nothing || push!(names, nv)
+            end
+            return nothing
+        end
+    end
+    return names
 end
 
 function compute_unit_def_used_names(

@@ -64,6 +64,11 @@ length_utf16(s::AbstractString) = sum(c::Char -> codepoint(c) < 0x10000 ? 1 : 2,
 
 module EmptyModule end
 
+# A context module where `@static` conditions referencing `DEV_MODE` can be evaluated.
+module static_dev_mode_module
+    const DEV_MODE = false
+end
+
 @testset HierarchicalTestSet "unused binding detection" begin
     let diagnostics = get_lowering_diagnostics("""
         y = let x = 42
@@ -240,6 +245,68 @@ module EmptyModule end
                 diagnostic.range.start.line == 1 &&
                 diagnostic.range.var"end".line == 1
             end
+        end
+    end
+
+    @testset "use in dropped @static branch" begin
+        # `@static` expands to only the platform-selected branch, so a binding whose only
+        # use lives in a branch not taken here is absent from the lowered tree and would
+        # otherwise look unused. It must not be flagged — the use is real on the platform
+        # that takes the branch.
+        let diagnostics = get_lowering_diagnostics("""
+                function f(cond)
+                    x = compute()
+                    @static if Sys.iswindows()
+                        return g(x)
+                    end
+                    return h(cond)
+                end
+                """;
+                code = JETLS.LOWERING_UNUSED_LOCAL_CODE)
+            @test isempty(diagnostics)
+        end
+        # Same for an argument used only in a dropped branch.
+        let diagnostics = get_lowering_diagnostics("""
+                function f(x)
+                    @static if Sys.iswindows()
+                        return use(x)
+                    end
+                    return nothing
+                end
+                """;
+                code = JETLS.LOWERING_UNUSED_ARGUMENT_CODE)
+            @test isempty(diagnostics)
+        end
+        # A debug-only `@warn` guarded by `@static DEV_MODE` (short-circuit `&&` form):
+        # when `DEV_MODE` is `false` the `@warn` is dropped, so the caught `e` — used only
+        # there — must not be flagged unused.
+        let diagnostics = get_lowering_diagnostics("""
+                function f(x)
+                    try
+                        op(x)
+                    catch e
+                        @static DEV_MODE && @warn "error in op" e
+                    end
+                end
+                """;
+                code = JETLS.LOWERING_UNUSED_LOCAL_CODE,
+                context_module = static_dev_mode_module)
+            @test isempty(diagnostics)
+        end
+        # Guard against over-suppression: a genuinely unused binding is still reported even
+        # when the statement also contains a `@static` (its name isn't in any dropped branch).
+        let diagnostics = get_lowering_diagnostics("""
+                function f(cond)
+                    y = 1
+                    @static if Sys.iswindows()
+                        return g()
+                    end
+                    return h(cond)
+                end
+                """;
+                code = JETLS.LOWERING_UNUSED_LOCAL_CODE)
+            @test length(diagnostics) == 1
+            @test only(diagnostics).message == "Unused local binding `y`"
         end
     end
 
@@ -1413,6 +1480,20 @@ end
                 println(z)
             end
             """))
+    end
+
+    @testset "value read only in dropped @static branch" begin
+        # The assignment looks dead here because its only read is in a `@static` branch
+        # not taken on this platform, but it isn't dead on the platform taking the branch.
+        @test isempty(get_lowering_diagnostics("""
+            function f()
+                z = compute()
+                @static if Sys.iswindows()
+                    println(z)
+                end
+                return nothing
+            end
+            """; code = JETLS.LOWERING_UNUSED_ASSIGNMENT_CODE))
     end
 
     @testset "multiple dead stores" begin

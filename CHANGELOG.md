@@ -87,7 +87,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
-- Fixed a false `lowering/unused-import` report for a name used only inside a `@static` condition or a branch not taken on the current platform. Such names are now correctly recognized as used:
+- Fixed a false `lowering/unused-import` report for a name used only inside a `@static` condition or a branch not selected by the JETLS analysis process:
   ```julia
   using Base: VERSION
   @static if VERSION ≥ v"1.12"
@@ -95,7 +95,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   end
   ```
 
-- Document-highlight and rename now also cover identifiers used in `@static` branches not selected for the current platform.
+- Document-highlight and rename now also cover identifiers used in `@static` branches not selected by the JETLS analysis process.
+
+- Fixed false `lowering/unused-local`, `lowering/unused-argument`, and `lowering/unused-assignment` reports for a binding whose only use is in a `@static` branch not selected by the JETLS analysis process.
 
 ## 2026-06-26
 
