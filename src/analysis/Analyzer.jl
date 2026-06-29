@@ -757,6 +757,28 @@ end
 inference_error_report_stack_impl(r::UnsupportedKeywordArgReport) = length(r.vst):-1:1
 inference_error_report_severity_impl(::UnsupportedKeywordArgReport) = DiagnosticSeverity.Warning
 
+# `arginfo.argtypes` may end in a `Vararg` (e.g. a splatted call like `f(xs...)`), and a
+# positional argument may even be `Union{}` on a dead path. `argtypes_to_type` keeps a
+# trailing vararg intact and collapses such dead paths to `Bottom`, where a plain
+# `Tuple{...}` would instead error on a vararg or `Union{}` field.
+function find_call_method_matches(
+        analyzer::LSAnalyzer, @nospecialize(ftype), argtypes::Vector{Any},
+        posbase::Int, max_methods::Int
+    )
+    posargtypes = Any[let argtype = argtypes[i]
+        CC.isvarargtype(argtype) ? argtype : CC.widenconst(argtype)
+    end for i = posbase:length(argtypes)]
+    # Bound the lookup by inference's own `max_methods` (as `find_method_matches` does), so
+    # a pathologically large match set (e.g. when `ftype` is abstract) bails cleanly rather
+    # than enumerating every applicable method. `findall` returns `nothing` past the limit.
+    callsig = CC.argtypes_to_type(Any[ftype; posargtypes])
+    callsig === Union{} && return nothing
+    matches = CC.findall(callsig, CC.method_table(analyzer); limit=max_methods)
+    matches === nothing && return nothing
+    isempty(matches) && return nothing
+    return posargtypes, matches
+end
+
 function report_unsupported_kwarg_error!(
         analyzer::LSAnalyzer, sv::CC.InferenceState, @nospecialize(func),
         call::CC.CallMeta, arginfo::CC.ArgInfo, max_methods::Int
@@ -773,20 +795,8 @@ function report_unsupported_kwarg_error!(
     isempty(kwnames) && return false
 
     ftype = CC.widenconst(argtypes[3])
-    # Keep a trailing `Vararg` intact (a splatted call like `f(xs...; kw=v)`) instead of
-    # widening it into a bogus element; this also renders as `f(::T...)` in the report message.
-    posargtypes = Any[let argtype = argtypes[i]
-        CC.isvarargtype(argtype) ? argtype : CC.widenconst(argtype)
-    end for i = 4:length(argtypes)]
-    # Bound the lookup by inference's own `max_methods` (as `find_method_matches` does), so a
-    # pathologically large match set (e.g. when `ftype` is abstract) bails cleanly rather than
-    # enumerating every applicable method. `findall` returns `nothing` past the limit.
-    # `argtypes_to_type` collapses dead paths (a `Union{}` argument) to `Bottom`, where a plain
-    # `Tuple{...}` would error on a `Union{}` field.
-    callsig = CC.argtypes_to_type(Any[ftype; posargtypes])
-    callsig === Union{} && return false
-    matches = @something CC.findall(callsig, CC.method_table(analyzer); limit=max_methods) return false
-    isempty(matches) && return false
+    posargtypes, matches = @something find_call_method_matches(
+        analyzer, ftype, argtypes, 4, max_methods) return false
     supported = Set{Symbol}()
     for match in matches
         for name in Base.kwarg_decl(match.method)
@@ -855,16 +865,8 @@ function report_undef_keyword!(
         ftype = CC.widenconst(argtypes[1])
         posbase = 2
     end
-    # `arginfo.argtypes` may end in a `Vararg` (e.g. a splatted call like `f(xs...)`), and a
-    # positional argument may even be `Union{}` on a dead path. `argtypes_to_type` keeps a
-    # trailing vararg intact and collapses such dead paths to `Bottom`, where a plain
-    # `Tuple{...}` would instead error on a vararg or `Union{}` field.
-    callargtypes = Any[ftype]
-    append!(callargtypes, @view argtypes[posbase:end])
-    callsig = CC.argtypes_to_type(callargtypes)
-    callsig === Union{} && return false
-    matches = @something CC.findall(callsig, CC.method_table(analyzer); limit=max_methods) return false
-    isempty(matches) && return false
+    _, matches = @something find_call_method_matches(
+        analyzer, ftype, argtypes, posbase, max_methods) return false
     for match in matches
         for name in Base.kwarg_decl(match.method)
             endswith(String(name), "...") && continue # slurp absorbs any missing keyword
@@ -942,13 +944,8 @@ function report_keyword_typeerror!(
     names = @something kwcall_keyword_names(kwt) return false
     isempty(names) && return false
     ftype = CC.widenconst(argtypes[3])
-    posargtypes = Any[let argtype = argtypes[i]
-        CC.isvarargtype(argtype) ? argtype : CC.widenconst(argtype)
-    end for i = 4:length(argtypes)]
-    callsig = CC.argtypes_to_type(Any[ftype; posargtypes])
-    callsig === Union{} && return false
-    matches = @something CC.findall(callsig, CC.method_table(analyzer); limit=max_methods) return false
-    isempty(matches) && return false
+    _, matches = @something find_call_method_matches(
+        analyzer, ftype, argtypes, 4, max_methods) return false
     for match in matches
         kwtypes = @something keyword_arg_types(match.method) continue
         for (name, expected) in kwtypes
