@@ -929,8 +929,8 @@ function get_inferrable_tree(
     (; ctx3, st3) = try
         jl_lower_for_scope_resolution(context_module, st0; world, trim_error_nodes=true, recover_from_macro_errors=false)
     catch err
-        JETLS_DEBUG_LOWERING && @warn "Error in lowering ($caller)" err
-        JETLS_DEBUG_LOWERING && Base.show_backtrace(stderr, catch_backtrace())
+        @static JETLS_DEBUG_LOWERING && @warn "Error in lowering ($caller)" err
+        @static JETLS_DEBUG_LOWERING && Base.show_backtrace(stderr, catch_backtrace())
         return nothing
     end
     return (; ctx3, st3)
@@ -1063,8 +1063,8 @@ function infer_lowered_tree(
         _, st5 = JL.linearize_ir(ctx4, st4)
         st5
     catch e
-        JETLS_DEV_MODE && @error "infer_toplevel_tree: Lowering failed" e
-        JETLS_DEV_MODE && Base.showerror(stderr, e, catch_backtrace())
+        @static JETLS_DEV_MODE && @error "infer_toplevel_tree: Lowering failed" e
+        @static JETLS_DEV_MODE && Base.showerror(stderr, e, catch_backtrace())
         return nothing
     end |> prepare_type_attr
     lwr = JL.to_lowered_expr(inferrable_tree)

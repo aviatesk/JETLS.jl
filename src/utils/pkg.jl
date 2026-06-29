@@ -27,7 +27,7 @@ function find_analysis_env_path(state::ServerState, uri::URI)
                 if occursin(override.path, path_for_glob)
                     module_name = override.module_name
                     if module_name === nothing
-                        JETLS_DEV_MODE && @info "Analysis for this file is disabled" path=filepath
+                        @static JETLS_DEV_MODE && @info "Analysis for this file is disabled" path=filepath
                         return OutOfScope()
                     elseif module_name == ""
                         env_path = @something find_env_path(filepath) begin
@@ -47,14 +47,14 @@ function find_analysis_env_path(state::ServerState, uri::URI)
                         # Skip full analysis but provide a context module that has `Test`
                         # available, so that lowering analysis can handle macros like
                         # `@testset`/`@test` defined in test files.
-                        JETLS_DEV_MODE && @info "Using `JETLSTestModule` as out-of-scope lowering context" path=filepath
+                        @static JETLS_DEV_MODE && @info "Using `JETLSTestModule` as out-of-scope lowering context" path=filepath
                         return OutOfScope(JETLSTestModule)
                     else
                         mod = @something find_loaded_module(module_name) begin
                             @warn "Analysis module override specified but module not found" module_name path=filepath
                             return OutOfScope()
                         end
-                        if JETLS_DEV_MODE
+                        @static if JETLS_DEV_MODE
                             path = filepath
                             @info "Analysis module overridden" module_name path _id=path maxlog=1
                         end

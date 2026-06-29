@@ -111,7 +111,7 @@ function handle_DidSaveTextDocumentNotification(server::Server, msg::DidSaveText
         # Some language client implementations (in this case Zed) appear to be
         # sending `textDocument/didSave` notifications for arbitrary text documents,
         # so we add a save guard for such cases.
-        JETLS_DEV_MODE && @warn "Received textDocument/didSave for unopened or unsupported document" uri
+        @static JETLS_DEV_MODE && @warn "Received textDocument/didSave for unopened or unsupported document" uri
         return nothing
     end
     text = msg.params.text

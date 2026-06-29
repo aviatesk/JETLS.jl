@@ -183,14 +183,14 @@ function _apply_diagnostic_config(
     )
     code = diagnostic.code
     if !(code isa String)
-        if JETLS_DEV_MODE
+        @static if JETLS_DEV_MODE
             @warn "Diagnostic code must be a string" code code_type = typeof(code)
         elseif JETLS_TEST_MODE
             error(lazy"Diagnostic code must be a string, got $(typeof(code)): $code")
         end
         return diagnostic
     elseif code ∉ ALL_DIAGNOSTIC_CODES
-        if JETLS_DEV_MODE
+        @static if JETLS_DEV_MODE
             @warn "Diagnostic code is not registered" code
         elseif JETLS_TEST_MODE
             error(lazy"Diagnostic code is not registered: $code")
@@ -1632,9 +1632,9 @@ function per_stmt_diagnostics!(
                     relatedInformation))
             end
         else
-            JETLS_DEBUG_LOWERING && @warn "Error in lowering (with macrocall nodes)"
-            JETLS_DEBUG_LOWERING && showerror(stderr, err)
-            JETLS_DEBUG_LOWERING && Base.show_backtrace(stderr, catch_backtrace())
+            @static JETLS_DEBUG_LOWERING && @warn "Error in lowering (with macrocall nodes)"
+            @static JETLS_DEBUG_LOWERING && showerror(stderr, err)
+            @static JETLS_DEBUG_LOWERING && Base.show_backtrace(stderr, catch_backtrace())
         end
         nothing # signal primary-attempt failure to the fallback path
     end

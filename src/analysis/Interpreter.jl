@@ -200,7 +200,7 @@ function JET.analyze_from_definitions!(interp::LSInterpreter, config::JET.Toplev
                 reports = JET.get_reports(analyzer, result)
                 isempty(reports) || @lock progress.reports_lock append!(progress.reports, reports)
             else
-                JETLS_DEV_MODE && @warn "Couldn't find a single method matching the signature" tt
+                @static JETLS_DEV_MODE && @warn "Couldn't find a single method matching the signature" tt
             end
             done = (@atomic progress.done += 1)
             if cancellable_token !== nothing

@@ -100,7 +100,7 @@ function extract_kwarg_name(arg::SyntaxTreeC; sig::Bool=false)
     elseif JS.kind(arg) === JS.K"..."
         return nothing
     end
-    JETLS_DEBUG_LOWERING && @info "Unknown kwarg form" arg
+    @static JETLS_DEBUG_LOWERING && @info "Unknown kwarg form" arg
     return nothing
 end
 
@@ -390,7 +390,7 @@ function make_siginfo(
                 end
             end
         else
-            JETLS_DEBUG_LOWERING && @info "No active arg" active_arg ca.args[active_arg]
+            @static JETLS_DEBUG_LOWERING && @info "No active arg" active_arg ca.args[active_arg]
             nothing
         end
 
