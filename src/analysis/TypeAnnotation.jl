@@ -868,14 +868,13 @@ function register_oc_body_trees!(
         node = block_citree[i]
         stmt isa Method || continue
         ocmeth = stmt
-        if ocmeth isa Method && ocmeth.is_for_opaque_closure
+        if ocmeth.is_for_opaque_closure
             JS.kind(node) === JS.K"opaque_closure_method" || continue
             body_citree = @something find_code_info_child(node) continue
             haskey(oc_body_trees, ocmeth) && continue # avoid re-recursing on cycles
             oc_body_trees[ocmeth] = body_citree
             inner_src = Base.uncompressed_ir(ocmeth)
-            inner_src isa CodeInfo &&
-                register_oc_body_trees!(oc_body_trees, body_citree, inner_src)
+            register_oc_body_trees!(oc_body_trees, body_citree, inner_src)
         end
     end
     return oc_body_trees
@@ -1514,7 +1513,6 @@ function collect_oc_argument_binding_types(
         lambda_range = get(lambda_ranges, binfo.lambda_id, nothing)
         lambda_range === nothing && continue
         name = binfo.name
-        name isa AbstractString || continue
         typ = get(oc_argtypes, (lambda_range, Symbol(name)), nothing)
         typ === nothing && continue
         binding = SyntaxTreeC(ctx3.graph, binfo.node_id)

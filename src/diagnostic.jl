@@ -362,7 +362,7 @@ function jet_result_to_diagnostics!(
         end
         diagnostic = @something jet_toplevel_error_report_to_diagnostic(report, postprocessor) continue
         filename = report.file
-        filename === :none && continue
+        filename == "none" && continue
         uri = to_valid_uri(filename)
         push!(uri2diagnostics[uri], diagnostic)
     end

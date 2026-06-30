@@ -139,9 +139,9 @@ function JET.analyze_from_definitions!(interp::LSInterpreter, config::JET.Toplev
             original_definition = seen_sigs[tt]
             original_filename = original_definition.filename
             original_src = original_definition.src
-            original_lines = if src isa Core.CodeInfo
+            original_lines = if original_src isa Core.CodeInfo
                 JETLS.get_lines_in_src(original_filename, original_src)
-            elseif src isa Expr
+            elseif original_src isa Expr
                 JETLS.get_lines_in_ex(original_filename, original_src)
             else
                 @warn "Unsupported source type found" original_filename typeof(original_src)
