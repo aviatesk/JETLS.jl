@@ -641,11 +641,8 @@ function cursor_siginfos(
     for match in matches
         m = match.method
         compatible_method(m, ca, world) || continue
-        siginfo = make_siginfo(m, ca, world, active_arg, argtypes′;
-            postprocessor, no_active_parameter_support)
-        if siginfo !== nothing
-            push!(out, siginfo)
-        end
+        push!(out, make_siginfo(m, ca, world, active_arg, argtypes′;
+            postprocessor, no_active_parameter_support))
     end
     return out
 end

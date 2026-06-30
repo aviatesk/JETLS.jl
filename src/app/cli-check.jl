@@ -115,12 +115,9 @@ struct SpinnerProgressToken
 end
 
 function send_progress(::Server, token::SpinnerProgressToken, value::WorkDoneProgressValue)
-    if (value isa WorkDoneProgressBegin || value isa WorkDoneProgressReport ||
-        value isa WorkDoneProgressEnd)
-        message = value.message
-        if message !== nothing && !isempty(message)
-            update_spinner!(token.progress, message)
-        end
+    message = value.message
+    if message !== nothing && !isempty(message)
+        update_spinner!(token.progress, message)
     end
 end
 

@@ -583,12 +583,11 @@ function iterator_upper_bound_type(interp::ASTTypeAnnotator, @nospecialize(iter_
     iter_type = CC.widenconst(CC.widenslotwrapper(iter_arg))
     iter_type isa Type || return nothing
     iter_type === Any && return nothing
-    rt = try
-        Base._return_type(Base._iterator_upper_bound, Tuple{iter_type}, interp.world)
+    try
+        return Base._return_type(Base._iterator_upper_bound, Tuple{iter_type}, interp.world)
     catch
         return nothing
     end
-    return rt isa Type ? rt : nothing
 end
 
 # Join observed argtypes into `interp.oc_argtype_observations`, per slot — see
