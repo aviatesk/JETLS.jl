@@ -6,8 +6,17 @@ using JETLS
 include(normpath(pkgdir(JETLS), "test", "interactive-utils.jl"))
 include(normpath(pkgdir(JETLS), "test", "setup.jl"))
 
-using JETLS.JET: CC, get_reports
+using JETLS.JET: CC, JET, get_reports
 using JETLS.Analyzer
+
+related_frame_indices(report) =
+    map(frame -> frame.idx, inference_error_report_related_frames(report))
+related_frame_kinds(report) =
+    map(frame -> frame.kind, inference_error_report_related_frames(report))
+related_frame_signatures(report) =
+    map(inference_error_report_related_frames(report)) do frame
+        sprint(JET.print_frame_sig, report.vst[frame.idx], JET.PrintConfig())
+    end
 
 function analyze_signature(f; report_target_modules = nothing)
     analyzer = JETLS.LSAnalyzer(; report_target_modules)
@@ -114,6 +123,9 @@ end
 end
 
 only_int(x::Int) = 2x
+nested_only_int_inner(x) = only_int(x)
+nested_only_int_outer(x) = nested_only_int_inner(x)
+call_nested_only_int(x) = nested_only_int_outer(x)
 
 kwfunc(; code::String="code", message::String="message", data=nothing) = (code, message, data)
 kwslurp(; a=1, kwargs...) = (a, kwargs)
@@ -149,6 +161,21 @@ struct KwCallable end
             @test length(reports) == 1
             r = only(reports)
             @test r isa NoMethodMatchReport && r.union_split == 2 && length(r.t) == 1
+        end
+
+        let result = analyze_call(call_nested_only_int, (String,); report_target_modules=(@__MODULE__,))
+            reports = get_reports(result)
+            @test length(reports) == 1
+            r = only(reports)
+            @test r isa NoMethodMatchReport && r.union_split == 0
+            @test related_frame_kinds(r) == [
+                RelatedViaFrame,
+                RelatedEntryFrame,
+            ]
+            @test related_frame_signatures(r) == [
+                "nested_only_int_outer(x::String)",
+                "call_nested_only_int(x::String)",
+            ]
         end
 
         # union split case: all branches fail

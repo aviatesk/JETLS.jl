@@ -88,8 +88,10 @@ end
     end
 
     f32(x::Float32) = sin(x) + cos(x)
-    let x = rand()
-        @show f32(x) # no matching method found `f32(::Float64)` (JETLS inference/method-error)
+    call_f32(x) = f32(x)
+    function main32()
+        x = rand()
+        @show call_f32(x) # no matching method found `f32(::Float64)` (JETLS inference/method-error)
     end
     """
 
@@ -108,7 +110,9 @@ end
                     if diag.code == JETLS.INFERENCE_FIELD_ERROR_CODE && occursin("type `MyStruct` has no field `propert`, available fields: `property`", diag.message)
                         found_diagnostic1 = true
                     elseif diag.code == JETLS.INFERENCE_METHOD_ERROR_CODE && occursin("no matching method found `f32(::Float64)`", diag.message)
-                        found_diagnostic2 = true
+                        related2 = something(diag.relatedInformation, DiagnosticRelatedInformation[])
+                        related_messages2 = map(info -> info.message, related2)
+                        found_diagnostic2 = only(related_messages2) == "entry: main32()"
                     end
                 end
             end
