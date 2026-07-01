@@ -178,8 +178,7 @@ function JET.analyze_from_definitions!(interp::LSInterpreter, config::JET.Toplev
             # Create a new analyzer with fresh local caches (`inf_cache` and `analysis_results`)
             # to avoid data races between concurrent signature analysis tasks
             analyzer = JET.ToplevelAbstractAnalyzer(interp, JET.non_toplevel_concretized;
-                reset_report_target_modules = false,
-                refresh_local_cache = true)
+                reset_report_target_modules = false)
             inf_world = CC.get_inference_world(analyzer)
             match = Base._which(tt;
                 # NOTE use the latest world counter with `method_table(analyzer)` unwrapped,
