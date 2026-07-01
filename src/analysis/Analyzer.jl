@@ -1,11 +1,14 @@
 module Analyzer
 
-export LSAnalyzer, inference_error_report_related_stack, inference_error_report_severity,
-    inference_error_report_stack, reset_report_target_modules!
+export LSAnalyzer
+export inference_error_report_related_frames, inference_error_report_related_stack,
+    inference_error_report_severity, inference_error_report_stack,
+    reset_report_target_modules!
 export BoundsErrorReport, FieldErrorReport, KeywordTypeErrorReport, MethodErrorReport,
     NoMethodMatchReport, NonBooleanCondErrorReport, TypeAssertErrorReport,
     TypeErrorReport, UndefKeywordErrorReport, UndefVarErrorReport,
     UnsupportedKeywordArgReport
+export RelatedEntryFrame, RelatedFrame, RelatedFrameKind, RelatedOriginFrame, RelatedViaFrame
 
 using Core.IR
 using JET.JETInterface
@@ -37,22 +40,40 @@ function assert_valid_report_stack(
     n = length(report.vst)
     @assert valid lazy"invalid $kind stack for $report_type: stack=$stack, vst length=$n"
 end
-function inference_error_report_related_stack(@nospecialize report::JET.InferenceErrorReport)
+
+@enum RelatedFrameKind begin
+    RelatedOriginFrame
+    RelatedViaFrame
+    RelatedEntryFrame
+end
+
+struct RelatedFrame
+    idx::Int
+    kind::RelatedFrameKind
+end
+
+function inference_error_report_related_frames(@nospecialize report::JET.InferenceErrorReport)
     stk = inference_error_report_stack(report)
-    isempty(stk) && return Int[]
+    isempty(stk) && return RelatedFrame[]
     primary = first(stk)
-    related = Int[]
-    for idx in inference_error_report_origin_stack(report)
-        idx == primary && continue
-        idx ∈ related && continue
-        push!(related, idx)
+    entry = last(stk)
+    origin_stack = inference_error_report_origin_stack(report)
+    display_tail = Iterators.drop(stk, 1)
+    @static if JETLS_DEV_MODE
+        @assert isempty(intersect(origin_stack, display_tail)) lazy"related stack overlap found for $(report)"
     end
-    for idx in Iterators.drop(stk, 1)
+    related = RelatedFrame[]
+    for idx in origin_stack
         idx == primary && continue
-        idx ∈ related && continue
-        push!(related, idx)
+        push!(related, RelatedFrame(idx, RelatedOriginFrame))
     end
-    @static JETLS_DEV_MODE && assert_valid_report_stack(report, related, "related")
+    for idx in display_tail
+        idx == primary && continue
+        kind = idx == entry ? RelatedEntryFrame : RelatedViaFrame
+        push!(related, RelatedFrame(idx, kind))
+    end
+    @static JETLS_DEV_MODE &&
+        assert_valid_report_stack(report, map(frame -> frame.idx, related), "related")
     return related
 end
 function inference_error_report_origin_stack(@nospecialize report::JET.InferenceErrorReport)

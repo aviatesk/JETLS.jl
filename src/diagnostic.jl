@@ -418,11 +418,13 @@ function jet_inference_error_report_to_diagnostic(
         Base.invoke_in_world(world, JET.print_report_message, io, report)
     end |> postprocessor
     relatedInformation = DiagnosticRelatedInformation[]
-    for frameidx in inference_error_report_related_stack(report)
-        frame = report.vst[frameidx]
+    for related_frame in inference_error_report_related_frames(report)
+        frame = report.vst[related_frame.idx]
         location = @something jet_frame_to_location(frame) continue
-        local message = postprocessor(Base.invoke_in_world(world,
-            sprint, JET.print_frame_sig, frame, JET.PrintConfig())::String)
+        sig = Base.invoke_in_world(world,
+            sprint, JET.print_frame_sig, frame, JET.PrintConfig())::String
+        label = related_frame_label(related_frame.kind)
+        local message = postprocessor(label * ": " * sig)
         push!(relatedInformation, DiagnosticRelatedInformation(; location, message))
     end
     code = inference_error_report_code(report)
@@ -434,6 +436,13 @@ function jet_inference_error_report_to_diagnostic(
         code,
         codeDescription = diagnostic_code_description(code),
         relatedInformation)
+end
+
+function related_frame_label(kind::RelatedFrameKind)
+    kind === RelatedOriginFrame && return "origin"
+    kind === RelatedViaFrame && return "via"
+    kind === RelatedEntryFrame && return "entry"
+    error(lazy"unknown related frame kind: $kind")
 end
 
 function inference_error_report_code(@nospecialize report::JET.InferenceErrorReport)
