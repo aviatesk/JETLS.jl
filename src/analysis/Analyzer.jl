@@ -332,12 +332,15 @@ function after_abstract_call_gf_by_type(
     if !should_analyze(analyzer, sv)
         return nothing
     end
-    atype′ = Ref{Any}(atype)
+    atype_ref = Ref{Any}(atype)
+    func_ref = Ref{Any}(func)
     function _after_abstract_call_gf_by_type(analyzer′::LSAnalyzer, sv′::CC.InferenceState)
         ret′ = ret[]
-        report_method_error!(analyzer′, sv′, ret′, arginfo, atype′[])
-        report_unsupported_kwarg_error!(analyzer′, sv′, func, ret′, arginfo, max_methods)
-        report_keyword_typeerror!(analyzer′, sv′, func, ret′, arginfo, max_methods)
+        atype′ = atype_ref[]
+        func′ = func_ref[]
+        report_method_error!(analyzer′, sv′, ret′, arginfo, atype′)
+        report_unsupported_kwarg_error!(analyzer′, sv′, func′, ret′, arginfo, max_methods)
+        report_keyword_typeerror!(analyzer′, sv′, func′, ret′, arginfo, max_methods)
         return true
     end
     if isready(ret)
