@@ -308,7 +308,26 @@ function CC.abstract_eval_partition_load(
     )
     res = @invoke CC.abstract_eval_partition_load(
         interp::CC.AbstractInterpreter, binding::Core.Binding, partition::Core.BindingPartition)
-    return concretize_abstract_binding_state_load(interp, res)
+    res = concretize_abstract_binding_state_load(interp, res)
+    if res.rt === Any
+        # Non-const materialized globals load as `Any` (the binding itself is untyped);
+        # the recorded assignment type lives in the module value.
+        g = binding.globalref
+        world = Base.get_world_counter()
+        if Base.invoke_in_world(world, isdefinedglobal, g.mod, g.name)
+            val = Base.invoke_in_world(world, getglobal, g.mod, g.name)
+            if val isa JET.AbstractBindingState && isdefined(val, :typ)
+                (; exct, effects) = res
+                if val.maybeundef
+                    ⊔ = CC.join(CC.typeinf_lattice(interp))
+                    exct = exct ⊔ UndefVarError
+                    effects = CC.Effects(effects; nothrow = exct === Union{})
+                end
+                return CC.RTEffects(val.typ, exct, effects)
+            end
+        end
+    end
+    return res
 end
 
 # Script-mode full analysis may hand us a context module populated by JET's virtualprocess,
@@ -631,14 +650,19 @@ end
 # - If the same basic block has a slot assignment that dominates `idx`,
 #   use the assigned RHS's type (`ssavaluetypes[pc_assign]`).
 # - Otherwise fall back to the bb's entry varstate
-#   (`bb_vartables[bb][id]`), which CC's dataflow has already populated
+#   (`bb_states[bb].vartable[id]`), which CC's dataflow has already populated
 #   with cross-bb branch narrowing.
 function slot_type_at(slot::SlotNumber, idx::Int, frame::CC.InferenceState)
     pc_assign = CC.find_dominating_assignment(slot.id, idx, frame)
     pc_assign === nothing || return frame.ssavaluetypes[pc_assign]
     bb = CC.block_for_inst(frame.cfg, idx)
-    entry = @something frame.bb_vartables[bb] return frame.src.slottypes[slot.id]
-    return entry[slot.id].typ
+    @static if hasfield(CC.InferenceState, :bb_states)
+        entry = @something frame.bb_states[bb] return frame.src.slottypes[slot.id]
+        return entry.vartable[slot.id].typ
+    else
+        entry = @something frame.bb_vartables[bb] return frame.src.slottypes[slot.id]
+        return entry[slot.id].typ
+    end
 end
 
 # Extract the matched methods for a call site from CC's per-stmt `CallInfo`.
@@ -661,10 +685,14 @@ function collect_call_matches!(matches::Vector{Core.MethodMatch}, @nospecialize 
         for sub in info.split
             collect_call_matches!(matches, sub)
         end
-    elseif info isa CC.ConstCallInfo
-        # `ConstCallInfo` wraps the underlying dispatch info with a
-        # const-prop'd result; the same matching methods live one level down.
-        collect_call_matches!(matches, info.call)
+    else
+        @static if isdefined(CC, :ConstCallInfo)
+            if info isa CC.ConstCallInfo
+                # `ConstCallInfo` wraps the underlying dispatch info with a
+                # const-prop'd result; the same matching methods live one level down.
+                collect_call_matches!(matches, info.call)
+            end
+        end
     end
     return matches
 end
@@ -815,8 +843,24 @@ function annotate_types!(
     end
 end
 
+@static if hasmethod(CC.finishinfer!,
+    Tuple{CC.InferenceState, CC.AbstractInterpreter, Int, IdDict{MethodInstance, CodeInstance}})
+function CC.finishinfer!(frame::CC.InferenceState, interp::ASTTypeAnnotator, cycleid::Int,
+                         opt_cache::IdDict{MethodInstance, CodeInstance})
+    ret = @invoke CC.finishinfer!(frame::CC.InferenceState, interp::CC.AbstractInterpreter,
+                                  cycleid::Int, opt_cache::IdDict{MethodInstance, CodeInstance})
+    finishinfer_annotate!(frame, interp)
+    return ret
+end
+else
 function CC.finishinfer!(frame::CC.InferenceState, interp::ASTTypeAnnotator, cycleid::Int)
     ret = @invoke CC.finishinfer!(frame::CC.InferenceState, interp::CC.AbstractInterpreter, cycleid::Int)
+    finishinfer_annotate!(frame, interp)
+    return ret
+end
+end
+
+function finishinfer_annotate!(frame::CC.InferenceState, interp::ASTTypeAnnotator)
     if frame.linfo === interp.topmi
         annotate_types!(interp.toptree[1], frame, interp.filter)
     else
@@ -825,7 +869,7 @@ function CC.finishinfer!(frame::CC.InferenceState, interp::ASTTypeAnnotator, cyc
             record_oc_body_annotation_candidate!(interp, def, frame)
         end
     end
-    return ret
+    return nothing
 end
 
 # The pending `def` entry marks the dynamic extent of the eager `check=false`

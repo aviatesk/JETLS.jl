@@ -75,7 +75,7 @@ end
 
 """
     resolve_global_const(context_module::Module, node::SyntaxTreeC, world::UInt) ->
-        Core.Const | nothing
+        Core.Const | Type | nothing
 
 Best-effort static lookup of a `K"Identifier"` or `K"."` dotted-path node as a
 `Core.Const` value by walking the dotted path against `context_module`. Used as a fallback
@@ -97,7 +97,12 @@ function resolve_global_const(context_module::Module, node::SyntaxTreeC, world::
     if JS.kind(node) === JS.K"Identifier" && has_name_val(node)
         sym = Symbol(name_val(node))
         Base.invoke_in_world(world, isdefinedglobal, context_module, sym) || return nothing
-        return Core.Const(Base.invoke_in_world(world, getglobal, context_module, sym))
+        val = Base.invoke_in_world(world, getglobal, context_module, sym)
+        if val isa JET.AbstractBindingState
+            isdefined(val, :typ) || return nothing
+            return val.typ
+        end
+        return Core.Const(val)
     elseif JS.kind(node) === JS.K"." && JS.numchildren(node) == 2
         prefix = node[1]
         suffix = node[2]
