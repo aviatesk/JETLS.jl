@@ -178,6 +178,18 @@ module M_undoc_abstract_dispatch
     """Doc for `gen(::Vector{T})`."""
     gen(a::Vector{T}) where T = a
 end
+module M_curried
+    # `cur` mirrors the Base pattern (e.g. `isapprox`) of a 1-arg curried
+    # convenience form documented alongside the primary 2-arg method. A 2-arg
+    # call with untyped args is ambiguous (both 2-arg methods apply), so the
+    # lookup can't narrow to one method — the arity-ordering fallback must lead
+    # with the 2-arg doc rather than Base's insertion order (curried first).
+    """Curried one-arg doc for `cur`."""
+    cur(x) = identity
+    """Two-arg doc for `cur`."""
+    cur(x, y) = x
+    cur(x, y::Int) = y
+end
 module M_field_hover
     """Documented field-level struct."""
     struct DocStruct
@@ -350,6 +362,24 @@ end
             hover_test("let xs = view([1,2,3], 1:2); gen│(xs); end",
                 "Doc for `gen(::Vector{T})`.";
                 context_module = M_undoc_abstract_dispatch)
+        end
+
+        # Ambiguous dispatch: keep every applicable overload's doc but order
+        # the call-arity-matching (2-arg) doc ahead of the unrelated 1-arg
+        # curried convenience doc, instead of Base's insertion order.
+        @testset "ambiguous call orders arity-matching doc first" begin
+            clean_text, positions = JETLS.get_text_and_positions("""
+                function f(a, b)
+                    cur│(a, b)
+                end
+            """)
+            result = get_hover(clean_text, only(positions); context_module = M_curried)
+            @test result isa Hover
+            value = result.contents.value
+            @test occursin("Two-arg doc for `cur`.", value)
+            @test occursin("Curried one-arg doc for `cur`.", value)
+            @test occursin(
+                r"Two-arg doc for `cur`\..*Curried one-arg doc for `cur`\."s, value)
         end
     end
 
