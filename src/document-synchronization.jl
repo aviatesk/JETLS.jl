@@ -1,7 +1,58 @@
 function ParseStream!(s::Union{AbstractString,Vector{UInt8}})
-    stream = JS.ParseStream(s)
+    stream = JS.ParseStream(mask_noncode_cells(s))
     JS.parse!(stream; rule=:all)
     return stream
+end
+
+const NONCODE_CELL_MARKERS = ("@markdown", "@raw", "@typst")
+
+function cell_marker_kind(line::AbstractString)
+    for marker in NONCODE_CELL_MARKERS
+        if startswith(line, marker)
+            rest = SubString(line, ncodeunits(marker) + 1)
+            (isempty(rest) || first(rest) in (' ', '\t', '\r', '\n')) && return :noncode
+        end
+    end
+    if startswith(line, "@cell")
+        rest = SubString(line, ncodeunits("@cell") + 1)
+        (isempty(rest) || first(rest) in (' ', '\t', '\r', '\n')) && return :code
+    end
+    return :none
+end
+
+"""
+    mask_noncode_cells(s) -> Union{typeof(s), String}
+
+Blank out the body of nothelix notebook `@markdown`/`@raw`/`@typst` cells
+before parsing, so prose that is not comment-prefixed never produces Julia
+diagnostics. Each masked line is replaced with the same number of space bytes,
+keeping every byte offset and line number in the rest of the file identical.
+Files without cell markers are returned untouched.
+"""
+function mask_noncode_cells(s::Union{AbstractString,Vector{UInt8}})
+    text = s isa Vector{UInt8} ? String(copy(s)) : s
+    any_marker = false
+    masking = false
+    io = IOBuffer()
+    for line in eachline(IOBuffer(text); keep=true)
+        kind = cell_marker_kind(line)
+        if kind === :noncode
+            any_marker = true
+            masking = true
+            write(io, line)
+        elseif kind === :code
+            any_marker = true
+            masking = false
+            write(io, line)
+        elseif masking
+            for b in codeunits(line)
+                write(io, (b == UInt8('\n') || b == UInt8('\r')) ? b : UInt8(' '))
+            end
+        else
+            write(io, line)
+        end
+    end
+    return any_marker ? String(take!(io)) : s
 end
 
 # Drop every per-file cache entry for `uri`. Called whenever a file's content
