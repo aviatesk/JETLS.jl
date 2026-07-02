@@ -125,6 +125,13 @@ function request_cancelled_error(message::AbstractString="Request was cancelled"
         data)
 end
 
+function internal_error(message::AbstractString; data=nothing)
+    return ResponseError(;
+        code = ErrorCodes.InternalError,
+        message,
+        data)
+end
+
 show_message(server::Server, message::AbstractString, type::MessageType.Ty) =
     send(server, ShowMessageNotification(; params = ShowMessageParams(; type, message)))
 
