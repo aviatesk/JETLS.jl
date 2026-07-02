@@ -191,11 +191,17 @@ mutable struct OCBodyAnnotationState
 end
 OCBodyAnnotationState() = OCBodyAnnotationState(nothing)
 
+@static if isdefined(CC, :InferenceCache)
+    const ASTLocalInferenceCache = CC.InferenceCache
+else
+    const ASTLocalInferenceCache = Vector{CC.InferenceResult}
+end
+
 struct ASTTypeAnnotator <: CC.AbstractInterpreter
     world::UInt
     inf_params::CC.InferenceParams
     opt_params::CC.OptimizationParams
-    inf_cache::Vector{CC.InferenceResult}
+    inf_cache::ASTLocalInferenceCache
 
     toptree::SyntaxTreeC
     topmi::MethodInstance
@@ -230,7 +236,7 @@ struct ASTTypeAnnotator <: CC.AbstractInterpreter
                 aggressive_constant_propagation = true
             ),
             opt_params::CC.OptimizationParams = CC.OptimizationParams(),
-            inf_cache::Vector{CC.InferenceResult} = CC.InferenceResult[],
+            inf_cache::ASTLocalInferenceCache = ASTLocalInferenceCache(),
             oc_body_trees::IdDict{Method,SyntaxTreeC} = IdDict{Method,SyntaxTreeC}(),
             oc_body_annotation_states::IdDict{Method,OCBodyAnnotationState} = IdDict{Method,OCBodyAnnotationState}(),
             oc_argtype_observations::OCArgtypeTable = OCArgtypeTable(),
@@ -974,7 +980,7 @@ function _infer_toplevel_tree(
         world::UInt = Base.get_world_counter()
     )
     filter = SyntheticFilter(st0, ctx3.bindings)
-    inf_cache = CC.InferenceResult[]
+    inf_cache = ASTLocalInferenceCache()
     interp = refinements = nothing
     for _ = 1:MAX_OC_REFINEMENT_PASSES
         observations = OCArgtypeTable()
@@ -1048,7 +1054,7 @@ function infer_lowered_tree(
         ctx3::JL.VariableAnalysisContext, inferrable_tree3::SyntaxTreeC,
         context_module::Module, world::UInt, filter::SyntheticFilter,
         observations::OCArgtypeTable, refinements::Union{Nothing,OCArgtypeTable},
-        inf_cache::Vector{CC.InferenceResult}
+        inf_cache::ASTLocalInferenceCache
     )
     inferrable_tree = try
         # Route single-method local closures through `OpaqueClosure` instead of
@@ -1090,7 +1096,7 @@ function infer_thunk!(
         tree::SyntaxTreeC, src::CodeInfo, context_module::Module,
         argtypes::Union{Nothing,Vector{Any}}, world::UInt, filter::SyntheticFilter,
         observations::OCArgtypeTable, refinements::Union{Nothing,OCArgtypeTable},
-        inf_cache::Vector{CC.InferenceResult}
+        inf_cache::ASTLocalInferenceCache
     )
     strip_latestworld!(src)
     mi = construct_toplevel_mi(src, context_module)
@@ -1152,7 +1158,7 @@ end
 function infer_method_defs!(
         inferred::SyntaxTreeC, src::CodeInfo, context_module::Module, world::UInt, filter::SyntheticFilter,
         observations::OCArgtypeTable, refinements::Union{Nothing,OCArgtypeTable},
-        inf_cache::Vector{CC.InferenceResult}
+        inf_cache::ASTLocalInferenceCache
     )
     block = inferred[1]
     nstmts = JS.numchildren(block)

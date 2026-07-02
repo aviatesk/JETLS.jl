@@ -847,8 +847,10 @@ function report_method_error!(
         arginfo::CC.ArgInfo, @nospecialize(atype)
     )
     info = call.info
-    if isa(info, CC.ConstCallInfo)
-        info = info.call
+    @static if isdefined(CC, :ConstCallInfo)
+        if isa(info, CC.ConstCallInfo)
+            info = info.call
+        end
     end
     if isa(info, CC.MethodMatchInfo)
         report_method_error!(analyzer, sv, info, atype)
