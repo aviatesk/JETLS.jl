@@ -24,7 +24,38 @@ Render Markdown for LSP display with the following conversions:
 
 TODO: Resolve `@ref` targets to actual definitions rather than stripping the link.
 """
-lsrender(md::Markdown.MD) = strip_ref_links(sprint(lsrender, md))
+lsrender(md::Markdown.MD) = strip_ref_links(sprint(lsrender, strip_satisfied_compat(md)))
+
+"""
+    satisfied_julia_compat(title::AbstractString) -> Bool
+
+`true` when `title` names a Julia version requirement (`Julia 1.5`,
+`Julia 1.9.2`, `Julia 1.5 and later`, …) already met by the running server's
+`VERSION`. Package-style titles (`ColorTypes 0.10`), unparsable titles, and
+unmet Julia requirements return `false`.
+"""
+function satisfied_julia_compat(title::AbstractString)
+    tokens = split(title)
+    length(tokens) ≥ 2 || return false
+    lowercase(tokens[1]) == "julia" || return false
+    ver = tryparse(VersionNumber, tokens[2])
+    ver === nothing && return false
+    return VERSION ≥ ver
+end
+
+strip_satisfied_compat(md::Markdown.MD) =
+    Markdown.MD(filter_satisfied_compat(md.content), md.meta)
+
+function filter_satisfied_compat(content::AbstractVector)
+    out = Any[]
+    for el in content
+        el isa Markdown.Admonition || (push!(out, el); continue)
+        lowercase(el.category) == "compat" && satisfied_julia_compat(el.title) && continue
+        push!(out, Markdown.Admonition(
+            el.category, el.title, filter_satisfied_compat(el.content)))
+    end
+    return out
+end
 
 lsrender(io::IO, md::Markdown.MarkdownElement) = Markdown.plain(io, md)
 

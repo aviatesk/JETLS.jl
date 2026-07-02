@@ -260,4 +260,86 @@ end
     end
 end
 
+@testset "Satisfied Julia compat admonitions stripped" begin
+    unmet = "$(VERSION.major + 1).0"
+
+    # A satisfied `!!! compat "Julia X.Y"` note is pure noise on this server.
+    let input = """
+        Body first.
+
+        !!! compat "Julia 1.0"
+            This requires Julia 1.0 or later.
+        """
+        result = JETLS.lsrender(Markdown.parse(input))
+        @test occursin("Body first.", result)
+        @test !occursin("Julia 1.0", result)
+        @test !occursin("requires Julia", result)
+    end
+
+    # `Julia X.Y and later` suffix form is still recognized and stripped.
+    let input = """
+        !!! compat "Julia 1.5 and later"
+            Do a thing.
+        """
+        @test JETLS.lsrender(Markdown.parse(input)) == ""
+    end
+
+    # An UNSATISFIED Julia requirement is vital — keep it.
+    let input = """
+        !!! compat "Julia $unmet"
+            Needs a newer Julia.
+        """
+        result = JETLS.lsrender(Markdown.parse(input))
+        @test occursin("Needs a newer Julia.", result)
+        @test occursin("⬆️", result)
+    end
+
+    # Package-style compat titles are not Julia versions — keep them.
+    let input = """
+        !!! compat "ColorTypes 0.10"
+            Requires ColorTypes 0.10.
+        """
+        result = JETLS.lsrender(Markdown.parse(input))
+        @test occursin("Requires ColorTypes 0.10.", result)
+    end
+
+    # Unparsable / non-version titles are kept.
+    let input = """
+        !!! compat "Julia nightly"
+            Some note.
+        """
+        result = JETLS.lsrender(Markdown.parse(input))
+        @test occursin("Some note.", result)
+    end
+
+    # Non-compat admonitions are never touched by version filtering.
+    let input = """
+        !!! warning "Julia 1.0"
+            Kept.
+        """
+        result = JETLS.lsrender(Markdown.parse(input))
+        @test occursin("Kept.", result)
+    end
+
+    # Nested: a satisfied compat note inside another admonition is dropped,
+    # the outer admonition and its other content survive.
+    let inner = Markdown.Admonition("compat", "Julia 1.0",
+            Any[Markdown.parse("Inner satisfied note.").content...])
+        keep = Markdown.parse("Keep me.").content[1]
+        outer = Markdown.Admonition("note", "Outer", Any[keep, inner])
+        md = Markdown.MD(Any[outer])
+        result = JETLS.lsrender(md)
+        @test occursin("Keep me.", result)
+        @test !occursin("Inner satisfied note.", result)
+    end
+
+    # `satisfied_julia_compat` unit checks.
+    @test JETLS.satisfied_julia_compat("Julia 1.0")
+    @test JETLS.satisfied_julia_compat("Julia 1.5 and later")
+    @test !JETLS.satisfied_julia_compat("Julia $unmet")
+    @test !JETLS.satisfied_julia_compat("ColorTypes 0.10")
+    @test !JETLS.satisfied_julia_compat("Julia nightly")
+    @test !JETLS.satisfied_julia_compat("Julia")
+end
+
 end # module test_markdown
