@@ -1189,6 +1189,41 @@ end
         @test diagnostic.range.var"end".line == 1
         @test diagnostic.range.var"end".character == 2 + length("undef_doc_interp")
     end
+
+    let diagnostics = get_lowering_diagnostics(
+            "lazy\"interpolated: \$(undef_lazy_interp)\"";
+            context_module=@__MODULE__)
+        @test length(diagnostics) == 1
+        diagnostic = only(diagnostics)
+        @test diagnostic.code == JETLS.LOWERING_UNDEF_GLOBAL_VAR_CODE
+        @test diagnostic.message == "`$(@__MODULE__).undef_lazy_interp` is not defined"
+        @test diagnostic.range.start.line == 0
+        @test diagnostic.range.start.character == length("lazy\"interpolated: \$(")
+        @test diagnostic.range.var"end".line == 0
+        @test diagnostic.range.var"end".character ==
+            length("lazy\"interpolated: \$(") + length("undef_lazy_interp")
+    end
+
+    let code = join((
+            "let",
+            "    lazy\"\"\"",
+            "    This is",
+            "        \$undef_lazy_triple_interp",
+            "    \"\"\"",
+            "end",
+        ), '\n')
+        diagnostics = get_lowering_diagnostics(code; context_module=@__MODULE__)
+        @test length(diagnostics) == 1
+        diagnostic = only(diagnostics)
+        @test diagnostic.code == JETLS.LOWERING_UNDEF_GLOBAL_VAR_CODE
+        @test diagnostic.message ==
+            "`$(@__MODULE__).undef_lazy_triple_interp` is not defined"
+        @test diagnostic.range.start.line == 3
+        @test diagnostic.range.start.character == length("        \$")
+        @test diagnostic.range.var"end".line == 3
+        @test diagnostic.range.var"end".character ==
+            length("        \$") + length("undef_lazy_triple_interp")
+    end
 end
 
 @testset HierarchicalTestSet "Undefined local binding report" begin
