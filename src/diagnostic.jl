@@ -17,8 +17,7 @@ function parse_diagnostic_severity(
             return severity_value
         else
             throw(DiagnosticConfigError(
-                lazy"Invalid severity value \"$severity_value\" for diagnostic pattern \"$pattern\". " *
-                "Valid integer values are: 0 (off), 1 (error), 2 (warning), 3 (information), 4 (hint)"))
+                lazy"Invalid severity value \"$severity_value\" for diagnostic pattern \"$pattern\". Valid integer values are: 0 (off), 1 (error), 2 (warning), 3 (information), 4 (hint)"))
         end
     elseif severity_value isa String
         severity_str = lowercase(severity_value)
@@ -34,13 +33,11 @@ function parse_diagnostic_severity(
             return DiagnosticSeverity.Hint
         else
             throw(DiagnosticConfigError(
-                lazy"Invalid severity value \"$severity_value\" for diagnostic pattern \"$pattern\". " *
-                "Valid string values are: \"off\", \"error\", \"warning\"/\"warn\", \"information\"/\"info\", \"hint\""))
+                lazy"Invalid severity value \"$severity_value\" for diagnostic pattern \"$pattern\". Valid string values are: \"off\", \"error\", \"warning\"/\"warn\", \"information\"/\"info\", \"hint\""))
         end
     else
         throw(DiagnosticConfigError(
-            lazy"Invalid severity value \"$severity_value\" for diagnostic pattern \"$pattern\". " *
-            "Severity must be an integer (0-4) or string"))
+            lazy"Invalid severity value \"$severity_value\" for diagnostic pattern \"$pattern\". Severity must be an integer (0-4) or string"))
     end
 end
 
@@ -57,8 +54,7 @@ function parse_diagnostic_pattern(x::AbstractDict{String})
     for key in keys(x)
         if key::String ∉ ("pattern", "match_by", "match_type", "severity", "path")
             throw(DiagnosticConfigError(
-                lazy"Unknown field \"$key\" in diagnostic pattern for pattern \"$pattern_value\". " *
-                "Valid fields are: pattern, match_by, match_type, severity, path"))
+                lazy"Unknown field \"$key\" in diagnostic pattern for pattern \"$pattern_value\". Valid fields are: pattern, match_by, match_type, severity, path"))
         end
     end
 
