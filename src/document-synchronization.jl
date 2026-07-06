@@ -20,14 +20,23 @@ function cell_marker_kind(line::AbstractString)
     return :none
 end
 
+function blank_line!(io::IO, line::AbstractString)
+    for b in codeunits(line)
+        write(io, (b == UInt8('\n') || b == UInt8('\r')) ? b : UInt8(' '))
+    end
+end
+
 """
     mask_noncode_cells(s) -> Union{typeof(s), String}
 
-Blank out the body of nothelix notebook `@markdown`/`@raw`/`@typst` cells
-before parsing, so prose that is not comment-prefixed never produces Julia
-diagnostics. Each masked line is replaced with the same number of space bytes,
-keeping every byte offset and line number in the rest of the file identical.
-Files without cell markers are returned untouched.
+Blank out nothelix notebook scaffolding before parsing: the `@cell` /
+`@markdown` / `@raw` / `@typst` marker lines, the body of non-code cells, and a
+legacy `using NothelixMacros` line. The cell macros are plugin-level markers,
+not Julia the user wrote, so hiding them stops JETLS reporting them as undefined
+macros and removes any need for a `NothelixMacros` package. Each masked line
+becomes the same number of space bytes, keeping every byte offset and line
+number identical. Code-cell bodies are left intact for analysis. Files without
+cell markers are returned untouched.
 """
 function mask_noncode_cells(s::Union{AbstractString,Vector{UInt8}})
     text = s isa Vector{UInt8} ? String(copy(s)) : s
@@ -39,15 +48,15 @@ function mask_noncode_cells(s::Union{AbstractString,Vector{UInt8}})
         if kind === :noncode
             any_marker = true
             masking = true
-            write(io, line)
+            blank_line!(io, line)
         elseif kind === :code
             any_marker = true
             masking = false
-            write(io, line)
+            blank_line!(io, line)
         elseif masking
-            for b in codeunits(line)
-                write(io, (b == UInt8('\n') || b == UInt8('\r')) ? b : UInt8(' '))
-            end
+            blank_line!(io, line)
+        elseif startswith(lstrip(line), "using NothelixMacros")
+            blank_line!(io, line)
         else
             write(io, line)
         end
@@ -84,9 +93,11 @@ Computes testsetinfos atomically as part of the caching operation,
 preserving test results from previous testsetinfos where possible.
 """
 cache_file_info!(server::Server, uri::URI, version::Int, text::Union{AbstractString,Vector{UInt8}}) =
-    cache_file_info!(server, uri, version, ParseStream!(text))
+    cache_file_info!(server, uri, version, ParseStream!(text);
+        raw_text = text isa AbstractString ? String(text) : String(copy(text)))
 function cache_file_info!(
-        server::Server, uri::URI, version::Int, parsed_stream::JS.ParseStream
+        server::Server, uri::URI, version::Int, parsed_stream::JS.ParseStream;
+        raw_text::Union{Nothing,AbstractString} = nothing
     )
     state = server.state
     prev_fi = get_file_info(state, uri)
@@ -97,7 +108,7 @@ function cache_file_info!(
     testsetinfos, any_deleted = compute_testsetinfos!(server, st0, prev_testsetinfos)
 
     fi = FileInfo(version, parsed_stream, filename, state.encoding, testsetinfos;
-        syntax_tree0=st0, inferred_context_cache=InferredContextCache())
+        syntax_tree0=st0, inferred_context_cache=InferredContextCache(), raw_text)
     store!(state.file_cache) do cache
         Base.PersistentDict(cache, uri => fi), nothing
     end
@@ -134,7 +145,7 @@ function handle_DidOpenTextDocumentNotification(server::Server, msg::DidOpenText
         return mark_text_document_content_opened!(server, uri) # turn on the `opened` flag
     @assert textDocument.languageId == "julia"
     parsed_stream = ParseStream!(textDocument.text)
-    cache_file_info!(server, uri, textDocument.version, parsed_stream)
+    cache_file_info!(server, uri, textDocument.version, parsed_stream; raw_text = textDocument.text)
     cache_saved_file_info!(server.state, uri, parsed_stream)
     invalidate_unsynced_file_cache!(server.state, uri)
     request_analysis!(server, uri, #=invalidate=#false)
