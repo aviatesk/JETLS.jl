@@ -31,7 +31,7 @@ function did_change_watched_files_registration(server::Server)
             globPattern = RelativePattern(;
                 baseUri = root_uri,
                 pattern = SERVER_REVISE_TRIGGER_FILE),
-            kind = WatchKind.Create | WatchKind.Change))
+            kind = WatchKind.Create))
     end
     Registration(;
         id = DID_CHANGE_WATCHED_FILES_REGISTRATION_ID,
