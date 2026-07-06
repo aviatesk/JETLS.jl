@@ -413,17 +413,17 @@
     "vscode:prepublish": "npm run check && npm run build"
   },
   "dependencies": {
-    "vscode-languageclient": "^10.0.0"
+    "vscode-languageclient": "^10.1.0"
   },
   "devDependencies": {
-    "@eslint/js": "^9.13.0",
-    "@stylistic/eslint-plugin": "^2.9.0",
-    "@types/node": "^20",
-    "@types/vscode": "^1.75.1",
-    "esbuild": "^0.25.10",
-    "eslint": "^9.13.0",
-    "typescript": "^5.7.3",
-    "typescript-eslint": "^8.16.0"
+    "@eslint/js": "^10.0.0",
+    "@stylistic/eslint-plugin": "^5.10.0",
+    "@types/node": "^26.1.0",
+    "@types/vscode": "^1.96.0",
+    "esbuild": "^0.28.0",
+    "eslint": "^10.6.0",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.62.1"
   },
   "private": true
 }
