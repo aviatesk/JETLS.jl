@@ -413,7 +413,6 @@
     "vscode:prepublish": "npm run check && npm run build"
   },
   "dependencies": {
-    "glob": "^11.0.0",
     "vscode-languageclient": "^10.0.0"
   },
   "devDependencies": {
@@ -423,7 +422,6 @@
     "@types/vscode": "^1.75.1",
     "esbuild": "^0.25.10",
     "eslint": "^9.13.0",
-    "fs": "^0.0.1-security",
     "typescript": "^5.7.3",
     "typescript-eslint": "^8.16.0"
   },
