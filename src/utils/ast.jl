@@ -786,7 +786,14 @@ function iterate_toplevel_tree(callback, st0_top::SyntaxTreeC)
                 # node, both of which carry the macrocall's full byte range as provenance
                 # and would otherwise capture cursor-based lookups for any offset inside
                 # the doc-wrapped form; start at `i = 3` to skip them.
-                push!(sl, st0[i])
+                child = st0[i]
+                # Signature targets like `f(x)` or `f(::T)` are valid as `@doc`
+                # arguments, but standalone lowering treats them as normal expressions.
+                # TODO: Once `@doc` can be promoted to a new-style stub without breaking
+                # nested old-style macros (JuliaLang/JuliaLowering.jl#108), remove this
+                # split-side workaround.
+                JS.kind(child) in JS.KSet"call where ::" && continue
+                push!(sl, child)
             end
         else # st0 is lowerable tree
             ret = callback(st0)

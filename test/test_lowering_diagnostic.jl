@@ -983,6 +983,21 @@ end
         end
     end
 
+    @testset "docstring signature target" begin
+        diagnostics = get_lowering_diagnostics("""
+            function someinterface end
+
+            someinterface(::Type) = :generic
+            someinterface(::Type{T}) where T<:Integer = :integer
+
+            \"\"\"
+                someinterface(::Type{<:Integer})
+            \"\"\"
+            someinterface(::Type{<:Integer})
+            """; code = JETLS.LOWERING_ERROR_CODE)
+        @test isempty(diagnostics)
+    end
+
     @testset "macro not found error diagnostics" begin
         diagnostics = get_lowering_diagnostics("x = @notexisting 42"; context_module=@__MODULE__)
         @test length(diagnostics) == 1
