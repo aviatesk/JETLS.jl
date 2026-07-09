@@ -5,7 +5,13 @@ using JETLS: JETLS, JL, JS
 
 include(normpath(pkgdir(JETLS), "test", "jsjl-utils.jl"))
 
-module lowering_module end
+module lowering_module
+macro lazy_wrapper(idx)
+    return :(let idx = $(esc(idx))
+        lazy"idx=$idx"
+    end)
+end
+end
 
 function jlexpand(context_module::Module, code::AbstractString)
     st0 = jlparse(code; rule=:statement)
@@ -49,6 +55,23 @@ function assert_binding_provenance(res, kind::Symbol, name::AbstractString)
     provs = JS.flattened_provenance(JL.binding_ex(res.ctx3, binfo.id))
     @test JS.sourcetext(last(provs)) == name
     return (binfo, provs)
+end
+
+function source_range(code::AbstractString, text::AbstractString)
+    range = findfirst(text, code)
+    @test range !== nothing
+    return @something range error("`$text` is not found in source")
+end
+
+function assert_binding_provenance_range(
+        res, kind::Symbol, name::AbstractString,
+        byte_range::AbstractUnitRange{<:Integer}
+    )
+    ret = assert_binding_provenance(res, kind, name)
+    ret === nothing && return nothing
+    _, provs = ret
+    @test JS.byte_range(last(provs)) == byte_range
+    return ret
 end
 
 # Negative counterpart of `assert_binding_provenance`: verifies that no
@@ -423,6 +446,62 @@ end
             r = @something nothing (counter[] = true; 99)
             (r, counter[])
         end""") === (99, true)
+    end
+end
+
+@testset "@lazy_str" begin
+    @testset "validation" begin
+        let diags = collect_macro_diagnostics() do
+                jlexpand("lazy\"\$\"")
+            end
+            @test length(diags) == 1
+            d = only(diags)
+            @test d.severity == JETLS.LSP.DiagnosticSeverity.Error
+            @test occursin("@lazy_str", d.msg)
+        end
+        @test collect_macro_diagnostics() do
+            jlresolve(lowering_module, "f(idx) = @lazy_wrapper idx")
+        end |> isempty
+    end
+
+    @testset "binding resolution preserves provenance" begin
+        let code = "lazyfunc() = lazy\"value \$(xxx) \$(yyy + 1)\""
+            res = jlresolve(code)
+            assert_binding_provenance_range(res, :global, "xxx", source_range(code, "xxx"))
+            assert_binding_provenance_range(res, :global, "yyy", source_range(code, "yyy"))
+        end
+        let code = "lazyfunc() = lazy\"\\\"\$key\""
+            res = jlresolve(code)
+            assert_binding_provenance_range(res, :global, "key", source_range(code, "key"))
+        end
+        let code = join((
+                "lazyfunc() = lazy\"\"\"",
+                "    This is",
+                "        \$triple_key",
+                "    \"\"\"",
+            ), '\n')
+            res = jlresolve(code)
+            assert_binding_provenance_range(res, :global, "triple_key", source_range(code, "triple_key"))
+        end
+    end
+
+    @testset "runtime semantics" begin
+        let ls = jleval("lazy\"abc\"")
+            @test ls isa LazyString
+            @test String(ls) === "abc"
+        end
+        let ls = jleval("lazy\"a \$(1 + 2)\"")
+            @test ls isa LazyString
+            @test String(ls) === "a 3"
+        end
+        let ls = jleval("let x = 4; lazy\"x=\$x\"; end")
+            @test ls isa LazyString
+            @test String(ls) === "x=4"
+        end
+        let ls = jleval(lowering_module, "let idx = 4; @lazy_wrapper idx; end")
+            @test ls isa LazyString
+            @test String(ls) === "idx=4"
+        end
     end
 end
 

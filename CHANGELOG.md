@@ -105,6 +105,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Fixed `inference/field-error` diagnostics for direct transparent custom `getproperty` implementations that forward to `getfield(o, s)`, so missing-property errors point at the user's property access instead of the forwarding implementation as the primary diagnostic location. (Closed https://github.com/aviatesk/JETLS.jl/issues/469)
 
+- Fixed missing diagnostics, references, rename, and document-highlight support for identifiers interpolated into `lazy"..."` strings.
+
 ## 2026-06-26
 
 - Commit: [`0d67c12`](https://github.com/aviatesk/JETLS.jl/commit/0d67c12)

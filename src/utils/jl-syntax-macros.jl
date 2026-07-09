@@ -157,6 +157,7 @@ const NEW_STYLE_MACROCALL_NAMES = (
     "@invokelatest",
     "@kwdef",
     "@label",
+    "@lazy_str",
     "@lock",
     "@logmsg",
     "@noinline",
@@ -379,6 +380,225 @@ function Base.var"@something"(__context__::JL.MacroContext, args::SyntaxTreeC...
                         val_name::JS.K"Identifier"]]]])
     end
     return expr
+end
+
+# New-style implementation of `Base.@lazy_str`. Surface string macros arrive as
+# raw `K"String"` payloads, while string macros nested inside old-style macro
+# expansions arrive as `K"Value"` strings. In both cases `$` interpolations are
+# not parsed into child nodes yet. Mirror Base's `Meta.parseatom` loop using
+# JuliaSyntax, then copy each parsed interpolation back into the macro context
+# with source ranges remapped when source text is available and scope adopted
+# from the call site.
+function Base.var"@lazy_str"(__context__::JL.MacroContext, text::SyntaxTreeC)
+    mc = __context__.macrocall::SyntaxTreeC
+    if !JS.hasattr(text, :value) || !(text.value isa String)
+        push_macro_error!(text, "@lazy_str expects a string literal")
+        return JL.@ast(__context__, mc, text)
+    end
+    value = text.value::String
+    raw = if JS.kind(text) === JS.K"String"
+        String(JS.sourcetext(text))
+    elseif JS.kind(text) === JS.K"Value"
+        value
+    else
+        push_macro_error!(text, "@lazy_str expects a string literal")
+        return JL.@ast(__context__, mc, text)
+    end
+    source_map = _lazy_str_source_map(value, raw)
+    parts = _lazy_str_parts(__context__, text, value, source_map)
+    return JL.@ast(__context__, mc,
+        [JS.K"call" "LazyString"::JS.K"Identifier" parts...])
+end
+
+function Base.var"@lazy_str"(__context__::JL.MacroContext, args::SyntaxTreeC...)
+    mc = __context__.macrocall::SyntaxTreeC
+    push_macro_error!(mc, "@lazy_str expects exactly one string argument")
+    isempty(args) && return JL.@ast(__context__, mc, nothing::JS.K"Value")
+    return JL.@ast(__context__, mc, [JS.K"block" args...])
+end
+
+function _lazy_str_parts(
+        ctx::JL.MacroContext, text::SyntaxTreeC, value::String, source_map::Dict{Int,Int}
+    )
+    parts = SyntaxTreeC[]
+    isempty(value) && return parts
+    lastidx = idx = firstindex(value)
+    while true
+        dollar = findnext('$', value, idx)
+        dollar === nothing && break
+        if lastidx < dollar
+            push!(parts, _lazy_str_literal_part(ctx, text, value, source_map, lastidx, prevind(value, dollar)))
+        end
+        atom_start = nextind(value, dollar)
+        if atom_start > lastindex(value)
+            push_macro_error!(text, "@lazy_str: invalid interpolation")
+            push!(parts, _lazy_str_literal_part(ctx, text, value, source_map, dollar, lastindex(value)))
+            return parts
+        end
+        parsed, nextidx = @something _lazy_str_parse_interpolation(
+            ctx, text, value, source_map, atom_start) begin
+            push!(parts, _lazy_str_literal_part(ctx, text, value, source_map, dollar, lastindex(value)))
+            return parts
+        end
+        push!(parts, parsed)
+        lastidx = idx = nextidx
+    end
+    if lastidx <= lastindex(value)
+        push!(parts, _lazy_str_literal_part(ctx, text, value, source_map, lastidx, lastindex(value)))
+    end
+    return parts
+end
+
+function _lazy_str_source_map(value::String, raw::String)
+    if startswith(raw, "\"\"\"") && endswith(raw, "\"\"\"")
+        return _lazy_str_triple_source_map(value, raw)
+    end
+    return _lazy_str_linear_source_map(value, raw)
+end
+
+function _lazy_str_linear_source_map(value::String, raw::String)
+    value_to_raw = Dict{Int,Int}()
+    vi = firstindex(value)
+    ri = firstindex(raw)
+    value_to_raw[vi] = ri
+    while vi <= lastindex(value) && ri <= lastindex(raw)
+        vi, ri = _lazy_str_step_source_map!(value_to_raw, value, raw, vi, ri)
+    end
+    return value_to_raw
+end
+
+function _lazy_str_triple_source_map(value::String, raw::String)
+    value_to_raw = Dict{Int,Int}()
+    vi = firstindex(value)
+    ri = nextind(raw, firstindex(raw), 3)
+    closing = prevind(raw, lastindex(raw), 2)
+    payload_end = prevind(raw, closing)
+    if ri <= payload_end && raw[ri] == '\n'
+        ri = nextind(raw, ri)
+    elseif ri <= payload_end && raw[ri] == '\r'
+        ri_next = nextind(raw, ri)
+        if ri_next <= payload_end && raw[ri_next] == '\n'
+            ri = nextind(raw, ri_next)
+        end
+    end
+    indent = _lazy_str_closing_indent(raw, closing)
+    value_to_raw[vi] = _lazy_str_skip_dedent(raw, ri, payload_end, indent)
+    ri = value_to_raw[vi]
+    while vi <= lastindex(value) && ri <= payload_end
+        ri = _lazy_str_skip_dedent(raw, ri, payload_end, indent)
+        value_to_raw[vi] = ri
+        ri <= payload_end || break
+        vi, ri = _lazy_str_step_source_map!(value_to_raw, value, raw, vi, ri)
+    end
+    return value_to_raw
+end
+
+function _lazy_str_step_source_map!(
+        value_to_raw::Dict{Int,Int}, value::String, raw::String, vi::Int, ri::Int
+    )
+    vc = value[vi]
+    vi_next = nextind(value, vi)
+    ri_next = nextind(raw, ri)
+    if raw[ri] == vc
+        value_to_raw[vi_next] = ri_next
+    elseif raw[ri] == '\\' && ri_next <= lastindex(raw) && raw[ri_next] == vc
+        value_to_raw[vi_next] = nextind(raw, ri_next)
+    else
+        value_to_raw[vi_next] = ri_next
+    end
+    return vi_next, value_to_raw[vi_next]
+end
+
+function _lazy_str_closing_indent(raw::String, closing::Int)
+    line_start = closing
+    while line_start > firstindex(raw)
+        prev = prevind(raw, line_start)
+        raw[prev] == '\n' && break
+        line_start = prev
+    end
+    return raw[line_start:prevind(raw, closing)]
+end
+
+function _lazy_str_skip_dedent(
+        raw::String, ri::Int, payload_end::Int, indent::AbstractString
+    )
+    isempty(indent) && return ri
+    if ri > firstindex(raw) && raw[prevind(raw, ri)] != '\n'
+        return ri
+    end
+    i = ri
+    for c in indent
+        i <= payload_end && raw[i] == c || return ri
+        i = nextind(raw, i)
+    end
+    return i
+end
+
+function _lazy_str_literal_part(
+        ctx::JL.MacroContext, text::SyntaxTreeC, value::String,
+        source_map::Dict{Int,Int}, startidx::Int, stopidx::Int
+    )
+    src = JS.sourceref(text)
+    if src isa JS.SourceRef
+        srcref = _lazy_str_source_ref(text, src, value, source_map, startidx, stopidx)
+        return JS.newleaf(ctx, srcref, JS.K"String", value[startidx:stopidx])
+    end
+    return JS.newleaf(ctx, text, JS.K"String", value[startidx:stopidx])
+end
+
+function _lazy_str_parse_interpolation(
+        ctx::JL.MacroContext, text::SyntaxTreeC, value::String,
+        source_map::Dict{Int,Int}, idx::Int
+    )
+    parsed, nextidx = try
+        JS.parseatom(JS.SyntaxTree, value, idx; ignore_errors=false)
+    catch err
+        msg = first(split(sprint(showerror, err), '\n'))
+        push_macro_error!(text, "@lazy_str: failed to parse interpolation: $msg")
+        return nothing
+    end
+    src = JS.sourceref(text)
+    copied = if src isa JS.SourceRef
+        _lazy_str_copy_with_source(ctx, parsed, text, src, value, source_map)
+    else
+        JL.copy_ast(ctx, parsed)
+    end
+    return JL.adopt_scope(copied, ctx), nextidx
+end
+
+function _lazy_str_copy_with_source(
+        ctx::JL.MacroContext, node::JS.SyntaxTree, text::SyntaxTreeC, src::JS.SourceRef,
+        value::String, source_map::Dict{Int,Int}
+    )
+    srcref = _lazy_str_source_ref(text, src, value, source_map, JS.first_byte(node), JS.last_byte(node))
+    out = if JS.is_leaf(node)
+        JS.newleaf(ctx, srcref, JS.kind(node))
+    else
+        children = JS.SyntaxList(ctx)
+        for child in JS.children(node)
+            push!(children, _lazy_str_copy_with_source(ctx, child, text, src, value, source_map))
+        end
+        JS.newnode(ctx, srcref, JS.kind(node), children)
+    end
+    for attr in JS.attrnames(node)
+        attr === :source && continue
+        attr === :macro_source && continue
+        JS.setattr!(out, attr, getproperty(node, attr))
+    end
+    return out
+end
+
+function _lazy_str_source_ref(
+        text::SyntaxTreeC, src::JS.SourceRef, value::String, source_map::Dict{Int,Int},
+        startidx::Int, stopbyte::Int
+    )
+    stopidx = thisind(value, stopbyte)
+    raw_start = get(source_map, startidx, startidx)
+    afteridx = nextind(value, stopidx)
+    raw_after = get(source_map, afteridx, afteridx)
+    first_byte = JS.first_byte(text) + raw_start - 1
+    last_byte = JS.first_byte(text) + raw_after - 2
+    return JS.SourceRef(src.file, UInt32(first_byte), UInt32(last_byte))
 end
 
 # Stub for `Base.@assert`. Mirrors the real expansion
