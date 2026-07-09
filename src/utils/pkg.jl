@@ -21,6 +21,11 @@ function find_loaded_module(module_name::String)
     return topmod
 end
 
+function find_analysis_override_module(module_name::String)
+    module_name == "JETLSTestModule" && return JETLSTestModule
+    return find_loaded_module(module_name)
+end
+
 const JULIA_DIR = let
     p1 = normpath(Sys.BINDIR, "..", "..")
     p2 = normpath(Sys.BINDIR, Base.DATAROOTDIR, "julia")
@@ -40,31 +45,12 @@ function find_analysis_env_path(state::ServerState, uri::URI)
             for override in analysis_overrides
                 if occursin(override.path, path_for_glob)
                     module_name = override.module_name
-                    if module_name === nothing
-                        @static JETLS_DEV_MODE && @info "Analysis for this file is disabled" path=filepath
-                        return OutOfScope()
-                    elseif module_name == ""
-                        env_path = @something find_env_path(filepath) begin
-                            @warn "Analysis for this file is disabled, since Project.toml was not found" path=filepath
+                    if !override.full_analysis
+                        if module_name === nothing || module_name == ""
+                            @static JETLS_DEV_MODE && @info "Analysis for this file is disabled" path=filepath
                             return OutOfScope()
                         end
-                        pkg_name = @something find_pkg_name(env_path) begin
-                            @warn "New analysis is not supported for non-package code" path=filepath
-                            return OutOfScope()
-                        end
-                        pkg_uuid = @something find_pkg_uuid(env_path) begin
-                            @warn "New analysis is not supported for non-package code" path=filepath
-                            return OutOfScope()
-                        end
-                        return UserModule(env_path, pkg_name, pkg_uuid)
-                    elseif module_name == "JETLSTestModule"
-                        # Skip full analysis but provide a context module that has `Test`
-                        # available, so that lowering analysis can handle macros like
-                        # `@testset`/`@test` defined in test files.
-                        @static JETLS_DEV_MODE && @info "Using `JETLSTestModule` as out-of-scope lowering context" path=filepath
-                        return OutOfScope(JETLSTestModule)
-                    else
-                        mod = @something find_loaded_module(module_name) begin
+                        mod = @something find_analysis_override_module(module_name) begin
                             @warn "Analysis module override specified but module not found" module_name path=filepath
                             return OutOfScope()
                         end
@@ -73,6 +59,30 @@ function find_analysis_env_path(state::ServerState, uri::URI)
                             @info "Analysis module overridden" module_name=>nameof(mod) path _id=path maxlog=1
                         end
                         return OutOfScope(mod)
+                    elseif module_name === nothing || module_name == ""
+                        env_path = @something find_env_path(filepath) begin
+                            @warn "Analysis for this file is disabled, since Project.toml was not found" path=filepath
+                            return OutOfScope()
+                        end
+                        pkg_name = @something find_pkg_name(env_path) begin
+                            @warn "Full analysis is not supported for non-package code" path=filepath
+                            return OutOfScope()
+                        end
+                        pkg_uuid = @something find_pkg_uuid(env_path) begin
+                            @warn "Full analysis is not supported for non-package code" path=filepath
+                            return OutOfScope()
+                        end
+                        return UserModule(env_path, pkg_name, pkg_uuid)
+                    else
+                        mod = @something find_analysis_override_module(module_name) begin
+                            @warn "Analysis module override specified but module not found" module_name path=filepath
+                            return OutOfScope()
+                        end
+                        @static if JETLS_DEV_MODE
+                            path = filepath
+                            @info "Full analysis module overridden" module_name=>nameof(mod) path _id=path maxlog=1
+                        end
+                        return KnownModule(mod)
                     end
                 end
             end

@@ -19,7 +19,12 @@ function parse_analysis_override(x::AbstractDict{String})
         error(lazy"Invalid `module_name` value found in analysis_override for `$path_value`. Must be a string, got `$(typeof(module_name))`")
     end
 
-    return AnalysisOverride(path_glob, module_name)
+    full_analysis = get(x, "full_analysis", false)
+    if !(full_analysis isa Bool)
+        error(lazy"Invalid `full_analysis` value found in analysis_override for `$path_value`. Must be a boolean, got `$(typeof(full_analysis))`")
+    end
+
+    return AnalysisOverride(path_glob, module_name, full_analysis)
 end
 
 # Cache lookup
