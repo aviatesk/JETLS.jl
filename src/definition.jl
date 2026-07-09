@@ -249,7 +249,7 @@ function find_global_binding_definitions(
             get_unsynced_file_info!(state, search_uri)
         end continue
         for occurrence in find_global_binding_occurrences!(state, search_uri, fi, binfo)
-            if occurrence.kind === :def
+            if is_definition_occurrence(occurrence)
                 range, adjusted_uri = unadjust_range(state, search_uri, jsobj_to_range(occurrence.tree, fi))
                 push!(seen_locations, (adjusted_uri, range))
             end

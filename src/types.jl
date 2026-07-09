@@ -794,6 +794,9 @@ end
 
 const AnyBindingOccurrence = Union{BindingOccurrence,CachedBindingOccurrence}
 
+is_definition_occurrence(occ::AnyBindingOccurrence) = is_definition_occurrence_kind(occ.kind)
+is_definition_occurrence_kind(kind::Symbol) = kind === :def || kind === :method_def
+
 abstract type AbstractCompletionResolverInfo end
 
 struct GlobalCompletionResolverInfo <: AbstractCompletionResolverInfo
@@ -845,12 +848,14 @@ end
 struct DefUsedNames
     def::Set{String}
     used::Set{String}
-    DefUsedNames() = new(Set{String}(), Set{String}())
+    method_def::Set{String}
+    DefUsedNames() = new(Set{String}(), Set{String}(), Set{String}())
 end
 struct ImportInfo
     uri::URI
     name_range::Range
     delete_range::Range
+    import_kind::Symbol
 end
 # Undef-global candidate emitted by the per-file phase (with fresh `ctx3`),
 # consumed by the cross-file phase (which only does a cheap def-name lookup).

@@ -99,6 +99,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   end
   ```
 
+- Fixed a false `lowering/unused-import` report for names imported only to extend methods without qualification:
+  ```julia
+  import Base: show  # no longer reported as an unused import
+  struct A; x::Int; end
+  show(io::IO, a::A) = print(io, "A with ", a.x)
+  ```
+
 - Document-highlight and rename now also cover identifiers used in `@static` branches not selected by the JETLS analysis process.
 
 - Fixed false `lowering/unused-local`, `lowering/unused-argument`, and `lowering/unused-assignment` reports for a binding whose only use is in a `@static` branch not selected by the JETLS analysis process.

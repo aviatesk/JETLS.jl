@@ -289,7 +289,7 @@ end
 function classify_token_modifier(occurrence_kind::Symbol)
     if occurrence_kind === :decl
         return SEMANTIC_TOKEN_MODIFIER_DECLARATION
-    elseif occurrence_kind === :def
+    elseif is_definition_occurrence_kind(occurrence_kind)
         return SEMANTIC_TOKEN_MODIFIER_DEFINITION
     end
     return UInt(0)

@@ -1945,6 +1945,32 @@ end
         @test diagnostic.range.var"end".character == sizeof("using Base: sin, cos")
     end
 
+    # Unqualified method extension needs `import`, so it counts as using the import.
+    let diagnostics = get_unused_import_diagnostics("""
+        import Base: show
+
+        struct IssueUnusedImportShow
+            x::Int
+        end
+
+        show(io::IO, a::IssueUnusedImportShow) = print(io, "A with ", a.x)
+        """)
+        @test isempty(diagnostics)
+    end
+
+    let diagnostics = get_unused_import_diagnostics("""
+        using Base: show
+
+        struct IssueUnusedImportQShow
+            x::Int
+        end
+
+        Base.show(io::IO, a::IssueUnusedImportQShow) = print(io, "A with ", a.x)
+        """)
+        @test length(diagnostics) == 1
+        @test only(diagnostics).message == "Unused import `show`"
+    end
+
     # Macro imports should not be reported as unused when the macro is used
     # + Qualified macro calls (Module.@macro) should track module usage
     let diagnostics = get_unused_import_diagnostics("""
