@@ -1,10 +1,24 @@
 function find_loaded_module(module_name::String)
+    names = split(module_name, '.'; keepempty=true)
+    any(isempty, names) && return nothing
+
+    topname = first(names)
+    topmod = nothing
     for (pkgid, mod) in Base.loaded_modules
-        if pkgid.name == module_name
-            return mod
+        if pkgid.name == topname
+            topmod = mod
+            break
         end
     end
-    return nothing
+    topmod === nothing && return nothing
+    for i = 2:length(names)
+        name = Symbol(names[i])
+        isdefinedglobal(topmod, name) || return nothing
+        submod = getglobal(topmod, name)
+        submod isa Module || return nothing
+        topmod = submod
+    end
+    return topmod
 end
 
 const JULIA_DIR = let
@@ -56,9 +70,9 @@ function find_analysis_env_path(state::ServerState, uri::URI)
                         end
                         @static if JETLS_DEV_MODE
                             path = filepath
-                            @info "Analysis module overridden" module_name path _id=path maxlog=1
+                            @info "Analysis module overridden" module_name=>nameof(mod) path _id=path maxlog=1
                         end
-                        return KnownModule(mod)
+                        return OutOfScope(mod)
                     end
                 end
             end
