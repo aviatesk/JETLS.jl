@@ -34,7 +34,7 @@ function analyze_signature(f; report_target_modules = nothing)
     world = CC.get_inference_world(analyzer)
     match = JETLS.signature_analysis_match(analyzer, m.sig, world)
     match === nothing && error("No method match for signature analysis")
-    analyzer, result = JET.analyze_method_signature!(analyzer,
+    result = JET.analyze_method_signature!(analyzer,
         match.method, match.spec_types, match.sparams)
     return get_reports(analyzer, result)
 end

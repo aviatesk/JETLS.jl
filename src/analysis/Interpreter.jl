@@ -192,7 +192,7 @@ function JET.analyze_from_definitions!(interp::LSInterpreter, config::JET.Toplev
                 # redirect keyword-slurping forwarders to the abstract keyword sorter,
                 # but only after the `entrypoint` check above sees the original method name
                 match = JETLS.redirect_keyword_slurp_match(analyzer, match, inf_world)
-                analyzer, result = JET.analyze_method_signature!(analyzer,
+                result = JET.analyze_method_signature!(analyzer,
                     match.method, match.spec_types, match.sparams)
                 reports = JET.get_reports(analyzer, result)
                 isempty(reports) || @lock progress.reports_lock append!(progress.reports, reports)
