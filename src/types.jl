@@ -593,9 +593,10 @@ end
 @define_eq_overloads DiagnosticConfig
 
 # Internal, undocumented configuration for full-analysis module overrides.
-struct AnalysisOverride <: ConfigSection
+@kwdef struct AnalysisOverride <: ConfigSection
     path::Glob.FilenameMatch{String}
-    module_name::Maybe{String}
+    module_name::Maybe{String} = nothing
+    full_analysis::Bool = false
 end
 @define_eq_overloads AnalysisOverride
 merge_key_value(analysis_override::AnalysisOverride) = analysis_override.path

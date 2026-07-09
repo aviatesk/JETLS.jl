@@ -118,8 +118,13 @@
                 "items": {
                   "additionalProperties": false,
                   "properties": {
+                    "full_analysis": {
+                      "default": false,
+                      "markdownDescription": "Whether matched files should use the Revise-based full-analysis mode. This requires `JETLS_DEV_MODE` because the analysis relies on Revise-tracked loaded modules. Defaults to false, which keeps files out of full analysis and uses `module_name` only as a lowering context when provided. This option is highly experimental, and its behavior and semantics may change in future releases.",
+                      "type": "boolean"
+                    },
                     "module_name": {
-                      "markdownDescription": "Optional module name to associate with the matched files. When specified, analysis is performed within the context of this module.",
+                      "markdownDescription": "Optional module name to associate with the matched files. By default this is used as an out-of-scope lowering context. When `full_analysis` is true, it selects the loaded module to analyze.",
                       "type": "string"
                     },
                     "path": {
@@ -132,7 +137,7 @@
                   ],
                   "type": "object"
                 },
-                "markdownDescription": "Override full analysis behavior for specific file patterns. Primarily used as a temporary workaround to disable analysis for files affected by memory leak issues. Each override specifies a glob pattern and optionally a module name. Note: This is an experimental feature that may be removed or changed in future versions.",
+                "markdownDescription": "Override full analysis behavior for specific file patterns. Primarily used as a temporary workaround to disable analysis for files affected by memory leak issues. Each override specifies a glob pattern, optionally a module name, and can opt back into full analysis. Note: This is an experimental feature that may be removed or changed in future versions.",
                 "type": "array"
               },
               "n_analysis_workers": {
