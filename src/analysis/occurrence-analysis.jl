@@ -13,6 +13,7 @@ information:
 - `occurrence.kind::Symbol`
   - `:decl` - explicit declarations like `local x`
   - `:def` - assignments or function arguments
+  - `:method_def` - method definition names
   - `:use` - references to the binding
 
 # Arguments
@@ -208,7 +209,8 @@ function compute_binding_occurrences!(
                 start_idx = 2 # skip recording use
             end
         elseif k in JS.KSet"method_defs constdecl"
-            if nc ≥ 1 && may_record_occurrence!(occurrences, :def, st[1], ctx3)
+            occurrence_kind = k === JS.K"method_defs" ? :method_def : :def
+            if nc ≥ 1 && may_record_occurrence!(occurrences, occurrence_kind, st[1], ctx3)
                 start_idx = 2
             end
         elseif k === JS.K"block" && nc ≥ 1 && JS.kind(st[1]) === JS.K"function_decl"

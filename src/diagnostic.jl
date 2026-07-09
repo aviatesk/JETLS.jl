@@ -1052,7 +1052,7 @@ function collect_undef_global_candidates!(
         bk === :global || continue
         binfo.is_internal && continue
         startswith(binfo.name, '#') && continue
-        any(o->o.kind===:def, occurrences) && continue
+        any(is_definition_occurrence, occurrences) && continue
         bmod = binfo.mod
         isnothing(bmod) && continue
         Base.invoke_in_world(world, isdefinedglobal, bmod, Symbol(binfo.name))::Bool && continue
@@ -1748,6 +1748,7 @@ function merge_def_used_names!(
         dst_names = get!(DefUsedNames, dst, context_module)
         union!(dst_names.def, names.def)
         union!(dst_names.used, names.used)
+        union!(dst_names.method_def, names.method_def)
     end
     return dst
 end
@@ -1758,12 +1759,15 @@ function update_def_used_names!(
     )
     for (binfo_key, occurrences) in binding_occurrences
         binfo_key.kind === :global || continue
+        has_method_def = any(o -> o.kind === :method_def, occurrences)
         if any(o -> o.kind === :use, occurrences)
             def_used_names = get!(DefUsedNames, mod_def_used_names, context_module)
             push!(def_used_names.used, binfo_key.name)
-        elseif any(o -> o.kind === :def, occurrences)
+            has_method_def && push!(def_used_names.method_def, binfo_key.name)
+        elseif any(is_definition_occurrence, occurrences)
             def_used_names = get!(DefUsedNames, mod_def_used_names, context_module)
             push!(def_used_names.def, binfo_key.name)
+            has_method_def && push!(def_used_names.method_def, binfo_key.name)
         end
     end
     return mod_def_used_names
@@ -1814,6 +1818,10 @@ function analyze_unused_imports!(
         for (name, infos) in imported_names
             def_used_names !== nothing && name in def_used_names.used && continue
             for info in infos
+                if (def_used_names !== nothing && info.import_kind === :import &&
+                    name in def_used_names.method_def)
+                    continue
+                end
                 push!(diagnostics, Diagnostic(;
                     range = info.name_range,
                     severity = DiagnosticSeverity.Information,
@@ -1852,7 +1860,8 @@ function collect_explicit_imports_by_module(
             imported_names =
                 get!(Dict{String,Vector{ImportInfo}}, mod_imported_names, context_module)
             push!(get!(Vector{ImportInfo}, imported_names, name),
-                ImportInfo(uri, name_range, delete_range))
+                ImportInfo(uri, name_range, delete_range,
+                    JS.kind(st0) === JS.K"import" ? :import : :using))
         end
         return TraversalNoRecurse()
     end

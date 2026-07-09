@@ -83,7 +83,7 @@ function add_highlight_for_occurrence!(
 end
 
 document_highlight_kind(occurrence::AnyBindingOccurrence) =
-    occurrence.kind === :def ? DocumentHighlightKind.Write :
+    is_definition_occurrence(occurrence) ? DocumentHighlightKind.Write :
     occurrence.kind === :use ? DocumentHighlightKind.Read :
     DocumentHighlightKind.Text
 
