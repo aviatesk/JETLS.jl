@@ -480,7 +480,7 @@ function collect_struct_inner_constructor_occurrences!(
         ctx3::JL.VariableAnalysisContext, st0::SyntaxTreeC
     )
     foreach_struct_inner_constructor(st0) do name_node::SyntaxTreeC, constructor_node::SyntaxTreeC
-        binding = @something type_definition_global_binding(ctx3, name_node) return true
+        binding = @something _find_internal_global_binding_at_source(ctx3, name_node) return true
         binfo = JL.get_binding(ctx3, binding)
         boccs = get!(Set{BindingOccurrence}, occurrences, binfo)
         occ = BindingOccurrence(constructor_node, :method_def)

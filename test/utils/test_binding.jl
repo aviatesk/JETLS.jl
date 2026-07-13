@@ -162,6 +162,44 @@ end
         return true
     end == 4
 
+    @test with_target_binding("""
+        struct │MyType│ end
+        use_type(::│MyType│) = nothing
+        """) do _, (; ctx3, binding)
+        binfo = JL.get_binding(ctx3, binding)
+        @test binfo.name == "MyType"
+        @test binfo.kind === :global
+        return true
+    end == 4
+
+    @test with_target_binding("""
+        begin
+            x = 1
+            let │x│ = 2
+                │x│
+            end
+        end
+        """) do _, (; ctx3, binding)
+        binfo = JL.get_binding(ctx3, binding)
+        @test binfo.name == "x"
+        @test binfo.kind === :local
+        return true
+    end == 4
+
+    @test with_target_binding("""
+        begin
+            struct MyType end
+            let │MyType│ = 1
+                │MyType│
+            end
+        end
+        """) do _, (; ctx3, binding)
+        binfo = JL.get_binding(ctx3, binding)
+        @test binfo.name == "MyType"
+        @test binfo.kind === :local
+        return true
+    end == 4
+
     # Cursor on the module-path prefix of a block-nested `import`/`using` must
     # not resolve to a binding.
     for code in (

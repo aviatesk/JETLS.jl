@@ -266,7 +266,7 @@ function select_target_binding(
     end
     primary = _select_target_binding(ctx3, st3, offset)
     if primary !== nothing
-        binding = normalize_local_alias_to_global(ctx3, primary)
+        binding = @something _find_internal_global_binding_at_source(ctx3, primary) primary
         return (; ctx3, st3, st0, binding)
     end
     inner_constructor = select_struct_inner_constructor_binding(ctx3, st0, offset)
@@ -348,10 +348,16 @@ function enclosing_inert_tree(st3::SyntaxTreeC, offset::Int)
     return best[]
 end
 
-function type_definition_global_binding(
+# Low-level lookup for lowering-generated bindings that reuse a source token.
+# Callers must establish that the source form is expected to have such a binding.
+function _find_internal_global_binding_at_source(
         ctx3::JL.VariableAnalysisContext, name_node::SyntaxTreeC
     )
-    name = @something get_name_val(name_node) return nothing
+    name = if JS.kind(name_node) === JS.K"BindingId"
+        JL.get_binding(ctx3, name_node).name
+    else
+        @something get_name_val(name_node) return nothing
+    end
     range = JS.byte_range(name_node)
     for binfo::JL.BindingInfo in ctx3.bindings.info
         binfo.kind === :global && binfo.is_internal && binfo.name == name || continue
@@ -368,28 +374,10 @@ function select_struct_inner_constructor_binding(
     binding = Ref{Union{Nothing,SyntaxTreeC}}(nothing)
     foreach_struct_inner_constructor(st0) do name_node::SyntaxTreeC, constructor_node::SyntaxTreeC
         offset in JS.byte_range(constructor_node) || return true
-        binding[] = type_definition_global_binding(ctx3, name_node)
+        binding[] = _find_internal_global_binding_at_source(ctx3, name_node)
         return false
     end
     return binding[]
-end
-
-# Struct/type definitions generate a local binding with `mod=nothing` for
-# the type name, alongside an internal global binding with the same name.
-# Normalize to the global binding so callers don't need to handle both cases.
-# XXX: The returned binding may have `is_internal=true` — callers that inspect
-# this flag should be aware of this.
-function normalize_local_alias_to_global(
-        ctx3::JL.VariableAnalysisContext, binding::SyntaxTreeC,
-    )
-    binfo = JL.get_binding(ctx3, binding)
-    binfo.kind === :local && isnothing(binfo.mod) || return binding
-    for other::JL.BindingInfo in ctx3.bindings.info
-        if other.kind === :global && other.name == binfo.name
-            return JL.binding_ex(ctx3, other.id)
-        end
-    end
-    return binding
 end
 
 function select_macrocall_binding(
