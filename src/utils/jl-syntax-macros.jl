@@ -1436,7 +1436,12 @@ function Base.var"@static"(__context__::JL.MacroContext, ex::SyntaxTreeC)
             JS.numchildren(x) ≥ 3 && push_inactive_code!(x[3], cond)
         else
             push_inactive_code!(x[2], cond)
-            JS.numchildren(x) < 3 && return JL.@ast(__context__, mc, nothing::JS.K"Value")
+            if JS.numchildren(x) < 3
+                if k in _STATIC_IF_KINDS
+                    return JL.@ast(__context__, mc, nothing::JS.K"Value")
+                end
+                return JL.@ast(__context__, mc, cond::JS.K"Value")
+            end
         end
         x = x[i]
         xk = JS.kind(x)

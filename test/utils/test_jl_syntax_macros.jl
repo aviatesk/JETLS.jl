@@ -1414,8 +1414,14 @@ end
             @test JS.kind(st1) === JS.K"call"
             @test JS.sourcetext(st1) == "sin(xxx)"
         end
-        @test JS.kind(jlexpand("@static false && sin(xxx)")) === JS.K"Value"
-        @test JS.kind(jlexpand("@static true || sin(xxx)")) === JS.K"Value"
+        let st1 = jlexpand("@static false && sin(xxx)")
+            @test JS.kind(st1) === JS.K"Value"
+            @test st1.value === false
+        end
+        let st1 = jlexpand("@static true || sin(xxx)")
+            @test JS.kind(st1) === JS.K"Value"
+            @test st1.value === true
+        end
         let st1 = jlexpand("@static false || false || sin(xxx)")
             @test JS.kind(st1) === JS.K"call"
             @test JS.sourcetext(st1) == "sin(xxx)"
@@ -1564,8 +1570,10 @@ end
         @test jleval("@static true ? 1 : 2") === 1
         @test jleval("@static false ? 1 : 2") === 2
         @test jleval("@static true && 3") === 3
-        @test jleval("@static false && 3") === nothing
-        @test jleval("@static true || 3") === nothing
+        @test jleval("@static false && 3") === false
+        @test jleval("@static true && false && 3") === false
+        @test jleval("@static true || 3") === true
+        @test jleval("@static false || true || 3") === true
         @test jleval("@static false || 3") === 3
         @test jleval("@static if false; 1; elseif true; 2; else; 3; end") === 2
         # The dropped branch must never reach lowering: `break` outside a loop
