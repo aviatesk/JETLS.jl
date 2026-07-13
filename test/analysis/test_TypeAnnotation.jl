@@ -1257,6 +1257,45 @@ end
         end
     end
 
+    @testset "macrocall value-exit limitations" begin
+        @testset "constant @something results" begin
+            for code in (
+                    "@something 1",
+                    "@something nothing 1",
+                    "@something 1 nothing",
+                )
+                _, ctx = type_annotate(code)
+                @test_broken get_type_for_range(ctx, range_of_kind(code, JS.K"macrocall")) === Core.Const(1)
+            end
+
+            let code = "let result = @something 1; result; end"
+                _, ctx = type_annotate(code)
+                @test_broken get_type_for_range(ctx, range_of_kind(code, JS.K"macrocall")) === Core.Const(1)
+            end
+
+            let code = "@something nothing"
+                _, ctx = type_annotate(code)
+                @test get_type_for_range(ctx, range_of_kind(code, JS.K"macrocall")) === Union{}
+            end
+        end
+
+        @testset "@assert result" begin
+            for code in (
+                    "@assert true",
+                    "let result = @assert true; result; end",
+                    "let condition = Bool[true, false][1]; @assert condition; end",
+                )
+                _, ctx = type_annotate(code)
+                @test_broken get_type_for_range(ctx, range_of_kind(code, JS.K"macrocall")) === Core.Const(nothing)
+            end
+
+            let code = "@assert false"
+                _, ctx = type_annotate(code)
+                @test get_type_for_range(ctx, range_of_kind(code, JS.K"macrocall")) === Union{}
+            end
+        end
+    end
+
     # `@invoke` / `@invokelatest` lower to `Core.invoke(f, Tuple{...}, args...)`
     # and `Base.invokelatest(f, args...)` respectively. Both calls must dispatch
     # to the user-visible result, not to internal scaffolding.
