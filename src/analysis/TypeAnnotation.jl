@@ -1449,24 +1449,18 @@ function collect_provenance_indexes(inferred_tree::SyntaxTreeC)
     traverse(inferred_tree) do st::SyntaxTreeC
         provs = JS.flattened_provenance(st)
         if !isempty(provs)
-            # Register *every* provenance entry, not just `first(provs)`. For
-            # macro-wrapped surface forms — `@inline f(x) = body` whose chain is
-            # `[macrocall, function]` — this makes the inner funcdef's span queryable
-            # in addition to the macrocall's outer span. Within one range, dispatch
-            # kinds win over generic wrappers; otherwise first-wins.
-            for prov in provs
-                prov_rng = JS.byte_range(prov)
-                pk = JS.kind(prov)
-                existing = get(surface_kind_index, prov_rng, nothing)
-                if (existing === nothing ||
-                    (!(existing in DISPATCH_SURFACE_KINDS) && pk in DISPATCH_SURFACE_KINDS))
-                    surface_kind_index[prov_rng] = pk
-                end
+            prov = first(provs)
+            prov_rng = JS.byte_range(prov)
+            pk = JS.kind(prov)
+            existing = get(surface_kind_index, prov_rng, nothing)
+            if (existing === nothing ||
+                (!(existing in DISPATCH_SURFACE_KINDS) && pk in DISPATCH_SURFACE_KINDS))
+                surface_kind_index[prov_rng] = pk
             end
-        end
-        if JS.kind(st) === JS.K"call" && JS.hasattr(st, :type) &&
-                length(provs) >= 2 && JS.kind(first(provs)) === JS.K"macrocall"
-            push!(get!(Vector{Any}, macrocall_types, JS.byte_range(first(provs))), st.type)
+            if (JS.kind(st) === JS.K"call" && JS.hasattr(st, :type) &&
+                JS.kind(prov) === JS.K"macrocall")
+                push!(get!(Vector{Any}, macrocall_types, JS.byte_range(prov)), st.type)
+            end
         end
         return nothing
     end

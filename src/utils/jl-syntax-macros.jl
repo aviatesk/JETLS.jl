@@ -18,6 +18,14 @@ function mapchildren(f, ctx, ex::SyntaxTreeC, indices::UnitRange{<:Integer})
     end
 end
 
+# `@ast` copies the source tree's `SyntaxContext`. Use a valid, context-free
+# `TOMBSTONE` provenance anchor so generated syntax receives the macro-definition
+# layer while retaining the original macrocall's source range.
+function _macro_generated_source(ctx::JL.MacroContext)
+    mc = ctx.macrocall::SyntaxTreeC
+    return JS.newleaf(ctx, JS.sourceref(mc), JS.K"TOMBSTONE")
+end
+
 const macro_issue_contract = """
 # Macro issue contract
 
@@ -343,7 +351,10 @@ function Base.var"@label"(__context__::JL.MacroContext, ex::SyntaxTreeC)
         # reaches scope analysis. Goto-target semantics are lost.
         return JL.@ast(__context__, __context__.macrocall::SyntaxTreeC, ex)
     end
-    return JL.@ast(__context__, ex, [JS.K"symboliclabel" ex])
+    # Keep the label token's exact range without inheriting its caller context, so
+    # macro expansion records the originating `@label` call in `SyntaxContext`.
+    src = JS.sourceref(ex)
+    return JL.@ast(__context__, ex, [JS.K"symboliclabel"(src) ex])
 end
 
 function Base.var"@label"(__context__::JL.MacroContext, args::SyntaxTreeC...)
@@ -362,21 +373,25 @@ end
 # account for which paths each arg's body actually executes on.  The fresh `val_i` names
 # live in the macro's scope layer so they cannot clash with user code.
 function Base.var"@something"(__context__::JL.MacroContext, args::SyntaxTreeC...)
-    mc = __context__.macrocall::SyntaxTreeC
-    expr = JL.@ast(__context__, mc,
-        [JS.K"call" "something"::JS.K"Identifier" nothing::JS.K"Value"])
+    src = _macro_generated_source(__context__)
+    expr = JL.@ast(__context__, src,
+        [JS.K"call"
+            [JS.K"top" "something"::JS.K"Identifier"]
+            nothing::JS.K"Value"])
     for i in length(args):-1:1
         arg = args[i]
         val_name = "val_$i"
-        expr = JL.@ast(__context__, mc, [JS.K"let"
+        expr = JL.@ast(__context__, src, [JS.K"let"
             [JS.K"block"
                 [JS.K"=" val_name::JS.K"Identifier" arg]]
             [JS.K"block"
                 [JS.K"if"
-                    [JS.K"call" "isnothing"::JS.K"Identifier"
+                    [JS.K"call"
+                        [JS.K"top" "isnothing"::JS.K"Identifier"]
                         val_name::JS.K"Identifier"]
                     expr
-                    [JS.K"call" "something"::JS.K"Identifier"
+                    [JS.K"call"
+                        [JS.K"top" "something"::JS.K"Identifier"]
                         val_name::JS.K"Identifier"]]]])
     end
     return expr
@@ -406,8 +421,9 @@ function Base.var"@lazy_str"(__context__::JL.MacroContext, text::SyntaxTreeC)
     end
     source_map = _lazy_str_source_map(value, raw)
     parts = _lazy_str_parts(__context__, text, value, source_map)
-    return JL.@ast(__context__, mc,
-        [JS.K"call" "LazyString"::JS.K"Identifier" parts...])
+    src = _macro_generated_source(__context__)
+    return JL.@ast(__context__, src,
+        [JS.K"call" [JS.K"top" "LazyString"::JS.K"Identifier"] parts...])
 end
 
 function Base.var"@lazy_str"(__context__::JL.MacroContext, args::SyntaxTreeC...)
@@ -563,7 +579,7 @@ function _lazy_str_parse_interpolation(
     else
         JL.copy_ast(ctx, parsed)
     end
-    return JL.adopt_scope(copied, ctx), nextidx
+    return JL.adopt_scope(ctx.macrocall, copied), nextidx
 end
 
 function _lazy_str_copy_with_source(
@@ -582,7 +598,6 @@ function _lazy_str_copy_with_source(
     end
     for attr in JS.attrnames(node)
         attr === :source && continue
-        attr === :macro_source && continue
         JS.setattr!(out, attr, getproperty(node, attr))
     end
     return out
@@ -621,17 +636,19 @@ end
 function Base.var"@assert"(
         __context__::JL.MacroContext, ex::SyntaxTreeC, msgs::SyntaxTreeC...
     )
-    mc = __context__.macrocall::SyntaxTreeC
+    src = _macro_generated_source(__context__)
     msg_arg = isempty(msgs) ?
-        JL.@ast(__context__, mc, JS.sourcetext(ex)::JS.K"Value") :
+        JL.@ast(__context__, src, JS.sourcetext(ex)::JS.K"Value") :
         msgs[1]
-    if_throw = JL.@ast(__context__, mc, [JS.K"if" ex
+    if_throw = JL.@ast(__context__, src, [JS.K"if" ex
         nothing::JS.K"Value"
-        [JS.K"call" "throw"::JS.K"Identifier"
-            [JS.K"call" "AssertionError"::JS.K"Identifier" msg_arg]]])
+        [JS.K"call" [JS.K"core" "throw"::JS.K"Identifier"]
+            [JS.K"call"
+                [JS.K"core" "AssertionError"::JS.K"Identifier"]
+                msg_arg]]])
     length(msgs) <= 1 && return if_throw
     extras = msgs[2:end]
-    return JL.@ast(__context__, mc, [JS.K"block" extras... if_throw])
+    return JL.@ast(__context__, src, [JS.K"block" extras... if_throw])
 end
 
 # Stub for `Base.@show`. The real macro emits per-argument
@@ -1402,8 +1419,8 @@ end
 # New-style implementation of `Base.@static`. Like the real macro, the condition is
 # evaluated at expansion time and only the taken branch survives — but as a new-style
 # macro that branch keeps its fine-grained provenance. The condition is `JL.eval`'d in
-# `__context__.scope_layer.mod`, the module JuliaLowering hands to old-style macros as
-# `__module__`. A condition that fails to evaluate (or doesn't produce a `Bool`) is
+# the base syntax layer's module, matching the `__module__` JuliaLowering hands to
+# old-style macros. A condition that fails to evaluate (or doesn't produce a `Bool`) is
 # reported via the sink and recovered by returning the whole conditional unchanged, so
 # every branch and the condition itself still reach scope analysis as a runtime
 # conditional.
@@ -1460,16 +1477,17 @@ function Base.var"@static"(__context__::JL.MacroContext, args::SyntaxTreeC...)
 end
 
 # Returns the condition's value as a `Bool`, or `nothing` (with the issue reported via
-# the sink) when it cannot be statically evaluated. `JL.eval` runs the condition through
-# JuliaLowering's own pipeline, which understands the hygiene (`scope_layer`) annotations
-# macro arguments carry: identifiers a user wrote directly at the macrocall site carry
-# the base layer and resolve in the module given here. (Identifiers spliced in from an
-# outer macro expansion carry layers a fresh lowering context doesn't know — those fail
-# to evaluate and take the recovery path below.) Base lets evaluation errors propagate
-# out of expansion; we recover per the macro issue contract.
+# the sink) when it cannot be statically evaluated. Legacy `@static` discards macro
+# hygiene before calling `Core.eval(__module__, ...)`, so replace all syntax layers with
+# a fresh base context before running the condition through JuliaLowering's pipeline.
+# Base lets evaluation errors propagate out of expansion; we recover per the macro issue
+# contract.
 function _static_eval_cond(ctx::JL.MacroContext, cond::SyntaxTreeC)
+    sc = (ctx.macrocall::SyntaxTreeC).context::JS.SyntaxContext
+    base_mod = JS.base_layer(sc).mod
+    eval_cond = JS.fill_context(cond, JS.SyntaxContext(base_mod, sc.version))
     val = try
-        JL.eval(ctx.scope_layer.mod, cond)
+        JL.eval(base_mod, eval_cond)
     catch err
         msg = first(split(sprint(showerror, err), '\n'))
         push_macro_error!(cond, "@static: failed to evaluate condition: $msg")

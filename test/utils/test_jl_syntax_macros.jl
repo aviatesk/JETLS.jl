@@ -13,13 +13,21 @@ macro lazy_wrapper(idx)
 end
 end
 
-function jlexpand(context_module::Module, code::AbstractString)
+baremodule something_hygiene_module
+using Base: @something
+isnothing(_) = true
+something(_) = :shadowed
+end
+
+function jlexpand(
+        context_module::Module, code::AbstractString; recursive::Bool = true
+    )
     st0 = jlparse(code; rule=:statement)
     world = Base.get_world_counter()
-    _, st1 = JL.expand_forms_1(context_module, st0, true, world)
-    return st1
+    st0 = JL.rebase_layers(st0, context_module, JS.JL_OLD_SYNTAX_VERSION)
+    return JL.expand_forms_1(st0, world, recursive)
 end
-jlexpand(code::AbstractString) = jlexpand(lowering_module, code)
+jlexpand(code::AbstractString; kwargs...) = jlexpand(lowering_module, code; kwargs...)
 
 function jlresolve(context_module::Module, code::AbstractString)
     st0 = jlparse(code; rule=:statement)
@@ -33,6 +41,20 @@ jleval(context_module::Module, code::AbstractString) =
 jleval(code::AbstractString) = jleval(lowering_module, code)
 
 children_kinds(st::JS.SyntaxTree) = JS.Kind[JS.kind(c) for c in JS.children(st)]
+
+function has_qualified_name(
+        st::JS.SyntaxTree, qualifier::JS.Kind, name::AbstractString
+    )
+    found = Ref(false)
+    JETLS.traverse(st) do node::JS.SyntaxTree
+        if (JS.kind(node) === qualifier && JS.numchildren(node) == 1 &&
+            get(node[1], :name_val, nothing) == name)
+            found[] = true
+        end
+        return nothing
+    end
+    return found[]
+end
 
 # Look up the first binding matching `kind`/`name` in the resolved scope and
 # verify its last provenance entry's sourcetext is `name` — i.e. the user-
@@ -377,6 +399,15 @@ end
 end
 
 @testset "@label" begin
+    # Verify that provenance covers the entire macro call
+    let code = "@label foo", st1 = jlexpand(code)
+        @test JS.kind(st1) === JS.K"symboliclabel"
+        @test JS.byte_range(st1) == source_range(code, "foo")
+        label_call = JS.macro_prov(st1)
+        @test label_call !== nothing
+        @test JETLS.is_macrocall_st0(label_call, "@label")
+    end
+
     # Non-identifier argument: report via sink, let the expression flow through.
     let diags = collect_macro_diagnostics() do
             jlexpand("@label 42")
@@ -408,6 +439,13 @@ end
 end
 
 @testset "@something" begin
+    @testset "macro expansion" begin
+        let st1 = jlexpand("@something 1")
+            @test has_qualified_name(st1, JS.K"top", "something")
+            @test has_qualified_name(st1, JS.K"top", "isnothing")
+        end
+    end
+
     @testset "binding resolution preserves provenance" begin
         let res = jlresolve("somefunc(xxx) = @something(xxx, yyy)")
             assert_binding_provenance(res, :argument, "xxx")
@@ -432,6 +470,21 @@ end
         @test jleval("@something nothing Some(7)") === 7
         @test jleval("@something Some(nothing)") === nothing
 
+        @testset "generated helper hygiene" begin
+            @test Base.include_string(something_hygiene_module, "@something 1") === 1
+            @test jleval(something_hygiene_module, "@something 1") === 1
+            @test jleval("""
+                let something = typeof, isnothing = isone
+                    @something 1
+                end
+                """) === 1
+            @test jleval("""
+                let val_1 = 99
+                    @something(nothing, val_1, :fallback)
+                end
+                """) === 99
+        end
+
         # All-`nothing` (and the zero-argument form) throws
         @test_throws ArgumentError jleval("@something nothing")
         @test_throws ArgumentError jleval("@something nothing nothing")
@@ -450,6 +503,12 @@ end
 end
 
 @testset "@lazy_str" begin
+    @testset "macro expansion" begin
+        let st1 = jlexpand("lazy\"abc\"")
+            @test has_qualified_name(st1, JS.K"top", "LazyString")
+        end
+    end
+
     @testset "validation" begin
         let diags = collect_macro_diagnostics() do
                 jlexpand("lazy\"\$\"")
@@ -490,6 +549,14 @@ end
             @test ls isa LazyString
             @test String(ls) === "abc"
         end
+        let ls = jleval("""
+                let LazyString = typeof
+                    lazy\"abc\"
+                end
+                """)
+            @test ls isa LazyString
+            @test String(ls) === "abc"
+        end
         let ls = jleval("lazy\"a \$(1 + 2)\"")
             @test ls isa LazyString
             @test String(ls) === "a 3"
@@ -516,6 +583,8 @@ end
         # Condition + user message uses the message as the AssertionError arg.
         let st1 = jlexpand("@assert x == 1 \"failed\"")
             @test JS.kind(st1) === JS.K"if"
+            @test has_qualified_name(st1, JS.K"core", "throw")
+            @test has_qualified_name(st1, JS.K"core", "AssertionError")
         end
 
         # Base silently ignores extra trailing message arguments; extras are
@@ -545,6 +614,14 @@ end
             assert_binding_provenance(res, :global, "xxx")
             assert_binding_provenance(res, :global, "yyy")
         end
+    end
+
+    @testset "generated helper hygiene" begin
+        @test_throws AssertionError jleval("""
+            let throw = identity, AssertionError = typeof
+                @assert false "boom"
+            end
+            """)
     end
 end
 
@@ -1377,6 +1454,32 @@ module static_eval_module
 const STATIC_COND_FLAG = true
 end
 
+module static_macro_module
+using JETLS: JL, JS, SyntaxTreeC
+const STATIC_COND_FLAG = false
+function var"@wrapped_static"(ctx::JL.MacroContext, ex::SyntaxTreeC)
+    mc = ctx.macrocall::SyntaxTreeC
+    src = JS.sourceref(mc)
+    return JL.@ast(ctx, mc, [JS.K"macrocall"(src)
+        "@static"::JS.K"Identifier" mc[2] ex])
+end
+function var"@generated_static"(ctx::JL.MacroContext)
+    mc = ctx.macrocall::SyntaxTreeC
+    src = JS.newleaf(ctx, JS.sourceref(mc), JS.K"TOMBSTONE")
+    return JL.@ast(ctx, src, [JS.K"macrocall"
+        "@static"::JS.K"Identifier" mc[2]
+        [JS.K"?"
+            "STATIC_COND_FLAG"::JS.K"Identifier"
+            true::JS.K"Value"
+            false::JS.K"Value"]])
+end
+end
+
+module static_caller_module
+using ..static_macro_module: @generated_static, @wrapped_static
+const STATIC_COND_FLAG = true
+end
+
 @testset "@static" begin
     @testset "macro expansion" begin
         # Taken `if` branch survives as its source block; the dropped branch and the
@@ -1427,9 +1530,34 @@ end
             @test JS.sourcetext(st1) == "sin(xxx)"
         end
 
-        # The condition is evaluated in the macro expansion context module.
+        # A direct call evaluates in its base context module.
         let st1 = jlexpand(static_eval_module, "@static STATIC_COND_FLAG ? aaa : bbb")
             @test JS.sourcetext(st1) == "aaa"
+        end
+
+        # For an `@static` emitted by another macro, the immediate hygiene layer is
+        # the defining module, but `__module__` semantics require the caller's base
+        # layer.
+        let code = "@wrapped_static STATIC_COND_FLAG ? caller_branch : macro_branch"
+            st1 = jlexpand(static_caller_module, code; recursive=false)
+            sc = st1.context::JS.SyntaxContext
+            @test JS.syntax_module(st1) === static_macro_module
+            @test JS.base_layer(sc).mod === static_caller_module
+            st1 = jlexpand(static_caller_module, code)
+            @test JS.sourcetext(st1) == "caller_branch"
+        end
+
+        # A condition generated by the wrapper carries the wrapper's intermediate
+        # layer, but legacy `@static` still evaluates it in the caller module.
+        let code = "@generated_static"
+            st1 = jlexpand(static_caller_module, code; recursive=false)
+            cond = st1[3][1]
+            sc = cond.context::JS.SyntaxContext
+            @test JS.syntax_module(cond) === static_macro_module
+            @test JS.base_layer(sc).mod === static_caller_module
+            st1 = jlexpand(static_caller_module, code)
+            @test JS.kind(st1) === JS.K"Value"
+            @test st1.value === true
         end
     end
 

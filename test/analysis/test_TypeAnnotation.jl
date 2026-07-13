@@ -1473,18 +1473,14 @@ end
             end
         end
 
-        # Macro-wrapped funcdef (`@inline f(x) = body`) — `flattened_provenance` for nodes
-        # inside the expansion is `[macrocall, function]`. Registering every entry in
-        # `surface_kind_index` makes the inner funcdef's span dispatch to
-        # `type_for_funcdef`, while the macrocall's outer span still routes to
-        # `type_for_macroexpansion` independently.
-        @testset "macro-wrapped funcdef registers both provenance spans" begin
+        # `@inline` escapes the function definition, so the passed-through syntax
+        # retains its own provenance rather than the outer macrocall's provenance.
+        @testset "escaped macro-wrapped funcdef retains inner provenance" begin
             let code = """
                 @inline f(x::Int) = x + 1
                 """
                 _, ctx = type_annotate(code)
                 @test widenconst(get_type_for_range(ctx, range_of_kind(code, JS.K"="))) === Int
-                @test get_type_for_range(ctx, range_of_kind(code, JS.K"macrocall")) !== nothing
             end
         end
 

@@ -9,7 +9,11 @@ using JETLS.LSP.URIs2
 include(normpath(pkgdir(JETLS), "test", "setup.jl"))
 include(normpath(pkgdir(JETLS), "test", "jsjl-utils.jl"))
 
-module lowering_module end
+module lowering_module
+macro generated_label()
+    return :(@label generated)
+end
+end
 
 function get_lowering_diagnostics(
         text::AbstractString;
@@ -54,6 +58,11 @@ macro gen_unused(x)
         unused = nothing
         $(esc(x))
     end
+end
+
+macro expect_symbol(x)
+    x isa Symbol || error("expected a Symbol")
+    return x
 end
 
 macro just_return(x)
@@ -961,7 +970,7 @@ let code = """
         error("Error in foo")
     end
     macro m_outer_error_JL(x)
-        :(@m_inner_error_JL(\$x), @m_inner_error_JL(\$nothing))
+        JL.@legacy_quote_to_syntax(:(@m_inner_error_JL(\$x), @m_inner_error_JL(\$nothing)))
     end
     """
     JL.include_string(@__MODULE__, code)
@@ -1045,6 +1054,41 @@ end
         @test diagnostic.range.start.character == sizeof("x = ")
         @test diagnostic.range.var"end".line == 0
         @test diagnostic.range.var"end".character == sizeof("x = notexisting")
+    end
+
+    @testset "old-style macro nested in new-style macro (JuliaLowering.jl#108)" begin
+        diagnostics = get_lowering_diagnostics("""
+            function preserve_symbol_argument()
+                some_data = []
+                GC.@preserve some_data begin
+                    @expect_symbol nothing
+                end
+            end
+            """; context_module=@__MODULE__)
+        @test isempty(diagnostics)
+    end
+
+    @testset "old-style macro nested in new-style macro (Base.Broadcast example)" begin
+        diagnostics = get_lowering_diagnostics("""
+            @inline function copyto!(dest::AbstractArray, bc::Broadcasted{Nothing})
+                axes(dest) == axes(bc) || throwdm(axes(dest), axes(bc))
+                # Performance optimization: broadcast!(identity, dest, A) is equivalent to copyto!(dest, A) if indices match
+                if bc.f === identity && bc.args isa Tuple{AbstractArray} # only a single input argument to broadcast!
+                    A = bc.args[1]
+                    if axes(dest) == axes(A)
+                        return copyto!(dest, A)
+                    end
+                end
+                bc′ = preprocess(dest, bc)
+                # Performance may vary depending on whether `@inbounds` is placed outside the
+                # for loop or not. (cf. https://github.com/JuliaLang/julia/issues/38086)
+                @inbounds @simd for I in eachindex(bc′)
+                    dest[I] = bc′[I]
+                end
+                return dest
+            end
+            """; context_module=Base.Broadcast)
+        @test isempty(diagnostics)
     end
 
     @testset "macro expansion error diagnostics" begin
@@ -2833,6 +2877,36 @@ end
         @test d.severity == LSP.DiagnosticSeverity.Information
         @test !isnothing(d.tags) && LSP.DiagnosticTag.Unnecessary in d.tags
         @test d.range.start.line == 1
+    end
+
+    # Qualified calls are still direct user-written labels.
+    let diagnostics = get_lowering_diagnostics("""
+        function f()
+            Base.@label unused
+            return 1
+        end
+        """)
+        ds = filter(d -> d.code == JETLS.LOWERING_UNUSED_LABEL_CODE, diagnostics)
+        @test length(ds) == 1
+        d = only(ds)
+        @test d.message == "Unused label `unused`"
+        @test d.data isa JETLS.DeleteRangeData
+        dr = d.data.delete_range
+        @test dr.start.line == 1
+        @test dr.start.character == 0
+        @test dr.var"end".line == 2
+        @test dr.var"end".character == 0
+    end
+
+    # Macro-generated labels are not user-facing unused labels.
+    let diagnostics = get_lowering_diagnostics("""
+        function f()
+            @generated_label
+            return 1
+        end
+        """)
+        ds = filter(d -> d.code == JETLS.LOWERING_UNUSED_LABEL_CODE, diagnostics)
+        @test isempty(ds)
     end
 
     # referenced label — no diagnostic

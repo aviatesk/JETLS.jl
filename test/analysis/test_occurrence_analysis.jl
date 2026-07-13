@@ -726,6 +726,21 @@ end
         end
     end
 
+    @testset "known inert occurrence limitations" begin
+        # A plain identifier inside a quote is generated-code syntax, not a use of
+        # the enclosing function argument. The statement-wide argument-name filter
+        # currently drops the generated code's global `x` occurrence.
+        let boccs = get_full_binding_occurrences("""
+                function f(x)
+                    return :(G(x))
+                end
+                """)
+            @test_broken any(boccs) do (binfo, occs)
+                binfo.name == "x" && binfo.kind === :global && any(o -> o.kind === :use, occs)
+            end
+        end
+    end
+
     # Inert (quoted) content inside `@generated` functions is processed via
     # `_unwrap_interpolations`, which must preserve `name_val` on ancestors of
     # interpolations (e.g. `K"unknown_head"` from compound assignments like `+=`)
