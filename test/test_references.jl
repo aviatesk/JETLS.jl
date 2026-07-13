@@ -116,6 +116,21 @@ end
                 @test length(refs) == 1
             end
         end
+
+        @testset "struct definition is not a use" begin
+            let code = """
+                struct │MyType│
+                    x::Int
+                end
+                f(::│MyType│) = nothing
+                """
+                clean_code, positions = JETLS.get_text_and_positions(code)
+                @test length(positions) == 4
+                refs = find_references(clean_code, positions[1]; include_declaration=false)
+                expected = Range(; start=positions[3], var"end"=positions[4])
+                @test_broken length(refs) == 1 && only(refs).range == expected
+            end
+        end
     end
 
     @testset "docstring function references" begin
