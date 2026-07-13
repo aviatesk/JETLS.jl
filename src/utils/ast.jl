@@ -152,45 +152,50 @@ end
 
 _is_empty_non_leaf(st0::SyntaxTreeC) = !JS.is_leaf(st0) && JS.numchildren(st0) == 0
 
-"""
-Return a tree where `JS.K"\$"` interpolation nodes are replaced by their content.
-Unlike `without_kinds` which removes nodes entirely, this preserves the child
-so that parent nodes (e.g. dot expressions like `x.\$name`) remain well-formed.
-"""
-function _unwrap_interpolations(st::SyntaxTreeC)
-    if JS.kind(st) === JS.K"$"
+function _rewrite_interpolations(
+        st::SyntaxTreeC, placeholder_name::Union{Nothing,String}
+    )
+    k = JS.kind(st)
+    if k === JS.K"$"
         if JS.numchildren(st) >= 1
-            new_child, _ = _unwrap_interpolations(st[1])
+            new_child, _ = _rewrite_interpolations(st[1], placeholder_name)
             return (new_child, true)
         end
         return (st, false)
+    elseif placeholder_name !== nothing && k === JS.K"syntaxunquote"
+        placeholder = JS.setattr!(
+            JS.newleaf(JS.syntax_graph(st), st, JS.K"Identifier"),
+            :name_val, placeholder_name)
+        return (placeholder, true)
     elseif JS.is_leaf(st)
         return (st, false)
     end
     new_children = JS.SyntaxList(JS.syntax_graph(st))
     changed = false
     for child in JS.children(st)
-        new_child, child_changed = _unwrap_interpolations(child)
+        new_child, child_changed = _rewrite_interpolations(child, placeholder_name)
         changed |= child_changed
         push!(new_children, new_child)
     end
-    k = JS.kind(st)
-    # Preserve `name_val` when reconstructing: kinds like `K"unknown_head"`
-    # (used by compound assignments such as `+=`) carry the operator name in
-    # `name_val`, and JuliaLowering's validator requires it to be present.
-    new_node = if !changed
-        st
-    elseif has_name_val(st)
-        JL.@ast(JS.syntax_graph(st), st, [k(name_val=name_val(st)) new_children...])
-    else
-        JL.@ast(JS.syntax_graph(st), st, [k new_children...])
-    end
-    return (new_node, changed)
+    return (changed ? JS.mknode(st, new_children) : st, changed)
 end
 
+_unwrap_interpolations(st::SyntaxTreeC) = _rewrite_interpolations(st, nothing)
+
+"""
+Return a tree where `JS.K"\$"` interpolation nodes are replaced by their content.
+Unlike `without_kinds` which removes nodes entirely, this preserves the child
+so that parent nodes (e.g. dot expressions like `x.\$name`) remain well-formed.
+"""
 function unwrap_interpolations(st::SyntaxTreeC)
     ensure_jl_source_attr!(JS.syntax_graph(st))
     return _unwrap_interpolations(st)[1]
+end
+
+function prepare_inert_template(st::SyntaxTreeC)
+    ensure_jl_source_attr!(JS.syntax_graph(st))
+    placeholder_name = String(gensym("JETLS_UNQUOTE_PLACEHOLDER"))
+    return _rewrite_interpolations(st, placeholder_name)[1], placeholder_name
 end
 
 function is_macrocall_st0(st0::SyntaxTreeC, names::AbstractString...; from::Union{Nothing,Module}=nothing)
@@ -375,22 +380,35 @@ end
 """
     foreach_inert_identifier(callback, st::SyntaxTreeC)
 
-Traverse `st` looking for `K"inert"` nodes, and call `f(id_node)` for each
-`K"Identifier"` found inside them. `callback` should return `true` to continue
-traversal or `false` to stop early.
+Traverse `st` looking for `K"inert"` and `K"syntaxinert"` nodes, and call
+`f(id_node)` for each `K"Identifier"` found inside them. `callback` should
+return `true` to continue traversal or `false` to stop early.
 """
 function foreach_inert_identifier(@specialize(callback), st::SyntaxTreeC)
-    res = traverse(st) do n
+    res = traverse(st) do n::SyntaxTreeC
         # Skip `import`/`using` desugaring (see `is_import_eval_call`).
         is_import_eval_call(n) && return traversal_no_recurse
-        JS.kind(n) === JS.K"inert" || return
-        inner = traverse(n) do m
-            JS.kind(m) === JS.K"Identifier" || return
-            callback(m) || return TraversalReturn(false; terminate=true)
-            return
+        k = JS.kind(n)
+        if k === JS.K"inert"
+            inner = traverse(n) do m::SyntaxTreeC
+                JS.kind(m) === JS.K"Identifier" || return
+                callback(m) || return TraversalReturn(false; terminate=true)
+                return
+            end
+            inner === false && return TraversalReturn(false; terminate=true)
+            return traversal_no_recurse
+        elseif k === JS.K"syntaxinert"
+            inner = traverse(n) do m::SyntaxTreeC
+                m === n && return
+                mk = JS.kind(m)
+                mk in JS.KSet"inert syntaxinert syntaxunquote" && return traversal_no_recurse
+                mk === JS.K"Identifier" || return
+                callback(m) || return TraversalReturn(false; terminate=true)
+                return
+            end
+            inner === false && return TraversalReturn(false; terminate=true)
         end
-        inner === false && return TraversalReturn(false; terminate=true)
-        return traversal_no_recurse
+        return
     end
     return res !== false
 end
@@ -473,18 +491,7 @@ function _remove_macrocalls(st0::SyntaxTreeC; strip_static::Bool=false)
         changed |= cc
         push!(new_children, nc)
     end
-    k = JS.kind(st0)
-    # Preserve `name_val` when reconstructing: kinds like `K"unknown_head"`
-    # (used by compound assignments such as `+=`) carry the operator name in
-    # `name_val`, and JuliaLowering's validator requires it to be present.
-    new_node = if !changed
-        st0
-    elseif has_name_val(st0)
-        JL.@ast(JS.syntax_graph(st0), st0, [k(name_val=name_val(st0)) new_children...])
-    else
-        JL.@ast(JS.syntax_graph(st0), st0, [k new_children...])
-    end
-    return (new_node, changed)
+    return (changed ? JS.mknode(st0, new_children) : st0, changed)
 end
 
 """
@@ -1571,7 +1578,14 @@ function is_noreturn_call(
     func = st3[1]
     if JS.kind(func) === JS.K"BindingId"
         binfo = JL.get_binding(ctx3, var_id(func))
-        binfo.kind === :global && Symbol(binfo.name) in allow_noreturn_optimization && return true
+        if binfo.kind === :global && Symbol(binfo.name) in allow_noreturn_optimization
+            return true
+        end
+    elseif JS.kind(func) in JS.KSet"core top globalref"
+        name = get_name_val(func)
+        if name !== nothing && Symbol(name) in allow_noreturn_optimization
+            return true
+        end
     end
     for i in 2:JS.numchildren(st3)
         is_noreturn_call(ctx3, st3[i], allow_noreturn_optimization) && return true

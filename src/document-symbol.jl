@@ -1229,7 +1229,8 @@ function extract_argument_detail(
     )
     parent = get(parent_map, (fb, lb), nothing)
     detail = nothing
-    if !isnothing(parent) && JS.kind(parent) in JS.KSet":: kw ..."
+    if !isnothing(parent) && (JS.kind(parent) in JS.KSet":: kw ..." ||
+            is_nospecialize_or_specialize_macrocall0(parent))
         detail = lstrip(JS.sourcetext(parent))
         fb, lb = JS.first_byte(parent), JS.last_byte(parent)
         parent = get(parent_map, (fb, lb), nothing)

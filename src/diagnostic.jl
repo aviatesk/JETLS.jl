@@ -561,7 +561,7 @@ end
 # lowering diagnostic
 # ===================
 
-const JL_MACRO_FILE = only(methods(JL.expand_macro, (JL.MacroExpansionContext,SyntaxTreeC,SyntaxListC))).file
+const JL_MACRO_FILE = only(methods(JL.expand_macro, (JL.MacroExpansionContext, SyntaxTreeC))).file
 function scrub_expand_macro_stacktrace(stacktrace::Vector{Base.StackTraces.StackFrame})
     idx = @something findfirst(stacktrace) do stackframe::Base.StackTraces.StackFrame
         stackframe.func === :expand_macro && stackframe.file === JL_MACRO_FILE
@@ -1053,6 +1053,9 @@ function collect_undef_global_candidates!(
         binfo.is_internal && continue
         startswith(binfo.name, '#') && continue
         any(is_definition_occurrence, occurrences) && continue
+        # Lowering may create global bindings without source-level uses, such as
+        # struct names. Only actual reads can be undefined-global candidates.
+        any(o -> o.kind === :use, occurrences) || continue
         bmod = binfo.mod
         isnothing(bmod) && continue
         Base.invoke_in_world(world, isdefinedglobal, bmod, Symbol(binfo.name))::Bool && continue
@@ -1480,15 +1483,9 @@ function check_lambda_gotos!(
         # Skip macro-generated labels — only report user-written ones.
         provs = JL.flattened_provenance(st)
         is_from_user_ast(provs) || continue
-        # The provenance chain ends with the label-name identifier; the
-        # entry immediately above it (`provs[end-1]`) is the user-written
-        # `@label name` macrocall, which is what we want to delete.
-        # Using `first(provs)` would instead pick the outermost source —
-        # and for a `@label` nested inside another macrocall (e.g.
-        # `@testset begin; @label foo; end`) that is the entire enclosing
-        # macrocall, not the `@label` line.
-        delete_obj = length(provs) >= 2 ? provs[end-1] : first(provs)
-        delete_range = line_absorbing_delete_range(delete_obj, fi)
+        label_call = @something JS.macro_prov(st) continue
+        get_macrocall_name(label_call) == "@label" || continue
+        delete_range = line_absorbing_delete_range(label_call, fi)
         push!(diagnostics, Diagnostic(;
             range = jsobj_to_range(st, fi),
             severity = DiagnosticSeverity.Information,

@@ -106,16 +106,6 @@ function compute_binding_occurrences(
     return occurrences
 end
 
-function collect_inert_identifiers(st3::SyntaxTreeC)
-    result = Dict{String,Vector{SyntaxTreeC}}()
-    foreach_inert_identifier(st3) do id_node::SyntaxTreeC
-        nv = @something get_name_val(id_node) return true
-        push!(get!(Vector{SyntaxTreeC}, result, nv), id_node)
-        return true
-    end
-    return result
-end
-
 function enclosing_generated_range(node::SyntaxTreeC)
     s = node
     while true
@@ -130,21 +120,10 @@ function record_generated_inert_argument_uses!(
         occurrences::Dict{JL.BindingInfo,Set{BindingOccurrence}},
         ctx3::JL.VariableAnalysisContext, st3::SyntaxTreeC
     )
-    inert_ids = nothing
-    for (binfo, _) in occurrences
-        binfo.kind === :argument || continue
-        binding_ex = JL.binding_ex(ctx3, binfo.id)
-        generated_range = @something enclosing_generated_range(binding_ex) continue
-        ids = if inert_ids === nothing
-            inert_ids = collect_inert_identifiers(st3)
-        else
-            inert_ids
-        end
-        id_nodes = @something get(ids, binfo.name, nothing) continue
-        for id_node in id_nodes
-            enclosing_generated_range(id_node) == generated_range || continue
-            push!(occurrences[binfo], BindingOccurrence(id_node, :use))
-        end
+    foreach_generated_inert_argument(ctx3, st3) do _, binfo, id_node
+        haskey(occurrences, binfo) || return true
+        push!(occurrences[binfo], BindingOccurrence(id_node, :use))
+        return true
     end
     return occurrences
 end
@@ -578,11 +557,11 @@ end
 """
     collect_inert_global_occurrences!
 
-Collect global bindings used inside `K"inert"` nodes by running independent
-scope resolution on each inert subtree and recording any non-internal
-`:global` bindings it finds as `:use` occurrences. The inert subtree is
-lowered with `context_module` — the enclosing module at the inert's position — as
-the resolution module.
+Collect global bindings used inside `K"inert"` and `K"syntaxinert"` nodes by
+running independent scope resolution on each inert subtree and recording any
+non-internal `:global` bindings it finds as `:use` occurrences. The inert subtree
+is lowered with `context_module` — the enclosing module at the inert's position —
+as the resolution module.
 
 # Approximation
 
@@ -622,9 +601,8 @@ function/macro argument name are filtered out to avoid false
 - `@generated` bodies — plain identifiers in the returned quote are
   compile-time references to the function's parameters.
   `compute_binding_occurrences` already records them as
-  `:argument :use` via `collect_inert_identifiers` when
-  `is_generated=true`; the filter prevents duplicating those as
-  `:global :use` here.
+  `:argument :use` via `record_generated_inert_argument_uses!`; the
+  filter prevents duplicating those as `:global :use` here.
 - `quote ... \$arg ... end` inside any function or macro body —
   scope resolution handles `\$arg` correctly (the argument `arg` is
   used as an interpolation value, recorded as `:argument :use` in
@@ -650,21 +628,22 @@ function collect_inert_global_occurrences!(
         # Skip `import`/`using` desugaring (see `is_import_eval_call`); re-lowering
         # its inert module path would record spurious `:global :use` occurrences.
         is_import_eval_call(st3′) && return traversal_no_recurse
-        JS.kind(st3′) === JS.K"inert" || return nothing
+        JS.kind(st3′) in JS.KSet"inert syntaxinert" || return nothing
         JS.numchildren(st3′) >= 1 || return nothing
         # Skip the outer inert that wraps the entire generator template
         JS.byte_range(st3′) == st3_range && return nothing
+        # Inert templates with interpolation fail to lower directly. Unwrap
+        # source `$` nodes and replace lowered `syntaxunquote` nodes with an
+        # internal placeholder so non-interpolated identifiers are resolved.
+        template, placeholder_name = prepare_inert_template(st3′[1])
         ires = try
-            # Inert nodes with `$` (interpolation) fail to lower directly.
-            # Unwrap `$` nodes (replace with their content) instead of removing
-            # them, so that parent nodes like dot expressions (`x.$name`)
-            # remain well-formed and non-interpolated identifiers are resolved.
-            jl_lower_for_scope_resolution(context_module, unwrap_interpolations(st3′[1]); soft_scope)
+            jl_lower_for_scope_resolution(context_module, template; soft_scope)
         catch
             return nothing
         end
         for binfo in ires.ctx3.bindings.info
-            if binfo.kind === :global && !binfo.is_internal && !(binfo.name in arg_names)
+            if (binfo.kind === :global && !binfo.is_internal &&
+                    !(binfo.name in arg_names) && binfo.name != placeholder_name)
                 # Use the inert ctx's BindingInfo as key; when cached via
                 # BindingInfoKey(context_module, name, :global) it matches the import.
                 occ_set = get!(Set{BindingOccurrence}, occurrences, binfo)
