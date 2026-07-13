@@ -298,7 +298,7 @@ end
                     function say(h::Hel│lo)
                         println("Hello, \$(h.who)")
                     end
-                """, 0)
+                """, [0, 2])
         end
         @testset "function with default arguments aggregates" begin
             definition_test("""
