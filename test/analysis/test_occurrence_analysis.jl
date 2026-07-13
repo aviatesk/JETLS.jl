@@ -437,6 +437,22 @@ end
             end
         end
 
+        # Quote-local bindings should shadow generated-function arguments. Inert argument
+        # matching is currently name-based and links both local `x`s to the outer argument.
+        with_binding_occurrences("""
+            @generated function foo(x)
+                return :(let x = 1
+                    x
+                end)
+            end
+            """) do binding_occurrences
+            entries = collect(binding_occurrences)
+            i = @something findfirst(
+                ((b, _),) -> b.name == "x" && b.kind === :argument, entries)
+            _, occurrences = entries[i]
+            @test_broken !any(o -> o.kind === :use, occurrences)
+        end
+
         # aviatesk/JETLS.jl#722: a `@generated` function nested inside a
         # `struct` body must still attribute its argument's inert uses.
         with_binding_occurrences("""
@@ -595,7 +611,7 @@ end
             @test length(boccs) == 2
             for name in ("Base", "LinearAlgebra")
                 i = @something findfirst(((b, _),) -> b.name == name, collect(boccs))
-                binfo, occs = collect(boccs)[i]
+                _, occs = collect(boccs)[i]
                 @test only(occs).kind === :decl
             end
         end
@@ -654,7 +670,7 @@ end
             @test length(locals) == 2
             for name in ("x", "y")
                 i = @something findfirst(((b, _),) -> b.name == name, locals)
-                binfo, occs = locals[i]
+                _, occs = locals[i]
                 @test count(o -> o.kind === :decl, occs) == 1
                 @test count(o -> o.kind === :def, occs) == 1
             end

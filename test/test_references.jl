@@ -149,6 +149,21 @@ end
             end
         end
 
+        # Quote-local bindings should shadow generated-function arguments. The current
+        # name-based inert lookup links all three `x` occurrences.
+        let code = """
+            @generated function foo(│x│)
+                return :(let │x│ = 1
+                    │x│
+                end)
+            end
+            """
+            clean_code, positions = JETLS.get_text_and_positions(code)
+            @test length(positions) == 6
+            @test_broken length(find_references(clean_code, positions[1])) == 1
+            @test_broken length(find_references(clean_code, positions[3])) == 2
+        end
+
         # Static parameter merging
         let code = """
             @generated function foo(x::│T│) where {│T│}
