@@ -269,6 +269,13 @@ function select_target_binding(
         binding = normalize_local_alias_to_global(ctx3, primary)
         return (; ctx3, st3, st0, binding)
     end
+    inner_constructor = select_struct_inner_constructor_binding(ctx3, st0, offset)
+    if inner_constructor === nothing
+        inner_constructor = select_struct_inner_constructor_binding(ctx3, st0, offset-1)
+    end
+    if inner_constructor !== nothing
+        return (; ctx3, st3, st0, binding=inner_constructor)
+    end
     # Fall back to resolving an identifier inside a preserved macrocall's
     # inert template (e.g. `LSAnalyzer` in `@eval ::LSAnalyzer = ...`).
     # Inert contents aren't scope-resolved, so no `BindingId` exists for
@@ -339,6 +346,32 @@ function enclosing_inert_tree(st3::SyntaxTreeC, offset::Int)
         return nothing
     end
     return best[]
+end
+
+function type_definition_global_binding(
+        ctx3::JL.VariableAnalysisContext, name_node::SyntaxTreeC
+    )
+    name = @something get_name_val(name_node) return nothing
+    range = JS.byte_range(name_node)
+    for binfo::JL.BindingInfo in ctx3.bindings.info
+        binfo.kind === :global && binfo.is_internal && binfo.name == name || continue
+        binding = JL.binding_ex(ctx3, binfo.id)
+        JS.byte_range(binding) == range || continue
+        return binding
+    end
+    return nothing
+end
+
+function select_struct_inner_constructor_binding(
+        ctx3::JL.VariableAnalysisContext, st0::SyntaxTreeC, offset::Int
+    )
+    binding = Ref{Union{Nothing,SyntaxTreeC}}(nothing)
+    foreach_struct_inner_constructor(st0) do name_node::SyntaxTreeC, constructor_node::SyntaxTreeC
+        offset in JS.byte_range(constructor_node) || return true
+        binding[] = type_definition_global_binding(ctx3, name_node)
+        return false
+    end
+    return binding[]
 end
 
 # Struct/type definitions generate a local binding with `mod=nothing` for

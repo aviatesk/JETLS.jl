@@ -615,6 +615,58 @@ function unwrap_funcdef_sig(node::SyntaxTreeC)
     end
 end
 
+function foreach_struct_inner_constructor(@specialize(callback), st0::SyntaxTreeC)
+    name_node = @something struct_name_node(st0) return true
+    name = @something get_name_val(name_node) return true
+    JS.numchildren(st0) ≥ 3 || return true
+    body = st0[3]
+    for i = 1:JS.numchildren(body)
+        keep_going = foreach_wrapped_function_name(body[i]) do constructor_node::SyntaxTreeC
+            get_name_val(constructor_node) == name || return true
+            return callback(name_node, constructor_node)
+        end
+        keep_going || return false
+    end
+    return true
+end
+
+function struct_name_node(st0::SyntaxTreeC)
+    JS.kind(st0) === JS.K"struct" && JS.numchildren(st0) ≥ 2 || return nothing
+    node = st0[2]
+    if JS.kind(node) === JS.K"<:" && JS.numchildren(node) ≥ 1
+        node = node[1]
+    end
+    if JS.kind(node) === JS.K"curly" && JS.numchildren(node) ≥ 1
+        node = node[1]
+    end
+    return JS.is_identifier(node) ? node : nothing
+end
+
+function foreach_wrapped_function_name(@specialize(callback), st0::SyntaxTreeC)
+    name_node = function_definition_name_node(st0)
+    name_node === nothing || return callback(name_node)
+    JS.kind(st0) in JS.KSet"macrocall block" || return true
+    start = JS.kind(st0) === JS.K"macrocall" ? 3 : 1
+    for i = start:JS.numchildren(st0)
+        foreach_wrapped_function_name(callback, st0[i]) || return false
+    end
+    return true
+end
+
+function function_definition_name_node(st0::SyntaxTreeC)
+    k = JS.kind(st0)
+    if (k === JS.K"function" || k === JS.K"=") && JS.numchildren(st0) ≥ 1
+        sig = unwrap_funcdef_sig(st0[1])
+        JS.kind(sig) === JS.K"call" && JS.numchildren(sig) ≥ 1 || return nothing
+        node = sig[1]
+        while JS.kind(node) in JS.KSet":: curly" && JS.numchildren(node) ≥ 1
+            node = node[1]
+        end
+        return JS.is_identifier(node) ? node : nothing
+    end
+    return nothing
+end
+
 # Collect the `name_val` of every `K"Identifier"` node reachable from `st` into `names`.
 function collect_identifier_names!(names::Set{String}, st::SyntaxTreeC)
     traverse(st) do node

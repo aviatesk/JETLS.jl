@@ -843,6 +843,10 @@ macro noop(ex) esc(ex) end
         let boccs = get_full_binding_occurrences("""
                 struct MyType
                     x::Int
+                    MyType() = new(0)
+                    function MyType(x::Int)
+                        new(x)
+                    end
                 end
                 """)
             sentries = [(b, occs) for (b, occs) in boccs if b.name == "MyType"]
@@ -850,6 +854,7 @@ macro noop(ex) esc(ex) end
             occurrences = collect(Iterators.flatten(last.(sentries)))
             @test count(o -> o.kind === :decl, occurrences) == 1
             @test count(o -> o.kind === :def, occurrences) == 1
+            @test count(o -> o.kind === :method_def, occurrences) == 2
             @test !any(o -> o.kind === :use, occurrences)
         end
 

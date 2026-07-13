@@ -117,6 +117,28 @@ end
             end
         end
 
+        @testset "struct inner constructors" begin
+            let code = """
+                struct │MyType│
+                    x::Int
+                    │MyType│() = new(0)
+                    function │MyType│(x::Int)
+                        new(x)
+                    end
+                end
+                make_mytype() = │MyType│(42)
+                """
+                clean_code, positions = JETLS.get_text_and_positions(code)
+                @test length(positions) == 8
+                for pos in positions
+                    @test length(find_references(clean_code, pos)) == 4
+                    refs = find_references(clean_code, pos; include_declaration=false)
+                    @test length(refs) == 1
+                    @test only(refs).range == Range(; start=positions[7], var"end"=positions[8])
+                end
+            end
+        end
+
         @testset "struct definition is not a use" begin
             let code = """
                 struct │MyType│

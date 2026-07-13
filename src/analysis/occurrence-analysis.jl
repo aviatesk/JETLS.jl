@@ -462,6 +462,7 @@ function compute_full_binding_occurrences(
             return nothing
         end
         occs = compute_binding_occurrences(ctx3, st3; include_global_bindings=true)
+        collect_struct_inner_constructor_occurrences!(occs, ctx3, st0)
         collect_macrocall_occurrences!(occs, context_module, st0; soft_scope)
         # Global bindings used inside inert nodes (quoted expressions) are not
         # resolved by scope analysis. This applies to `@generated` functions,
@@ -472,6 +473,21 @@ function compute_full_binding_occurrences(
     end
     collect_import_export_occurrences!(binding_occurrences, st0, context_module)
     return binding_occurrences
+end
+
+function collect_struct_inner_constructor_occurrences!(
+        occurrences::Dict{JL.BindingInfo,Set{BindingOccurrence}},
+        ctx3::JL.VariableAnalysisContext, st0::SyntaxTreeC
+    )
+    foreach_struct_inner_constructor(st0) do name_node::SyntaxTreeC, constructor_node::SyntaxTreeC
+        binding = @something type_definition_global_binding(ctx3, name_node) return true
+        binfo = JL.get_binding(ctx3, binding)
+        boccs = get!(Set{BindingOccurrence}, occurrences, binfo)
+        occ = BindingOccurrence(constructor_node, :method_def)
+        push!(boccs, occ)
+        return true
+    end
+    return occurrences
 end
 
 function collect_export_public_occurrences!(
