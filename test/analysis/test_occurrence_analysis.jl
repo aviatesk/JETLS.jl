@@ -840,9 +840,6 @@ macro noop(ex) esc(ex) end
     end
 
     @testset "struct type" begin
-        # Struct lowering introduces a local type-name alias assigned from the
-        # synthetic `struct_type` binding. The assignment walker currently revisits
-        # that LHS as a `:use`, which is then remapped to the global type binding.
         let boccs = get_full_binding_occurrences("""
                 struct MyType
                     x::Int
@@ -853,7 +850,7 @@ macro noop(ex) esc(ex) end
             occurrences = collect(Iterators.flatten(last.(sentries)))
             @test count(o -> o.kind === :decl, occurrences) == 1
             @test count(o -> o.kind === :def, occurrences) == 1
-            @test_broken !any(o -> o.kind === :use, occurrences)
+            @test !any(o -> o.kind === :use, occurrences)
         end
 
         with_global_binding_occurrences("""

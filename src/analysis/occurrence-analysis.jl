@@ -271,15 +271,6 @@ function compute_binding_occurrences!(
             start_idx = 2 # the left hand side, i.e. "definition", does not account for usage
             if nc ≥ 1
                 may_record_occurrence!(occurrences, :def, st[1], ctx3)
-                if nc ≥ 2
-                    rhs = st[2]
-                    # In struct definitions, `local struct_name` is somehow introduced,
-                    # so special case it here: https://github.com/c42f/JuliaLowering.jl/blob/4b12ab19dad40c64767558be0a8a338eb4cc9172/src/desugaring.jl#L3833
-                    # TODO investigate why this local binding introduction is necessary on the JL side
-                    if JS.kind(rhs) === JS.K"BindingId" && JL.get_binding(ctx3, rhs).name == "struct_type"
-                        start_idx = 1
-                    end
-                end
             end
         elseif k === JS.K"call" && nc ≥ 1
             arg1 = st[1]

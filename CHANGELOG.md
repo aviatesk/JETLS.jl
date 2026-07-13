@@ -116,6 +116,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Fixed missing diagnostics, references, rename, and document-highlight support for identifiers interpolated into `lazy"..."` strings.
 
+- Fixed `textDocument/references` with `includeDeclaration=false` incorrectly including a `struct` definition as a reference.
+
 ## 2026-06-26
 
 - Commit: [`0d67c12`](https://github.com/aviatesk/JETLS.jl/commit/0d67c12)

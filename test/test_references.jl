@@ -128,7 +128,7 @@ end
                 @test length(positions) == 4
                 refs = find_references(clean_code, positions[1]; include_declaration=false)
                 expected = Range(; start=positions[3], var"end"=positions[4])
-                @test_broken length(refs) == 1 && only(refs).range == expected
+                @test length(refs) == 1 && only(refs).range == expected
             end
         end
     end
