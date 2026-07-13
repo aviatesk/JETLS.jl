@@ -948,9 +948,23 @@ macro m_gen_invalid(n)
     :([return i for i in 1:$n])
 end
 
-include(normpath(pkgdir(JETLS), "test", "fixtures", "macros.jl"))
-let filename = normpath(pkgdir(JETLS), "test", "fixtures", "macros-JL.jl")
-    JL.include_string(@__MODULE__, read(filename,String), filename)
+macro m_inner_error(_)
+    error("Error in foo")
+end
+macro m_outer_error(x)
+    :(@m_inner_error( $x ), @m_inner_error( $nothing ))
+end
+
+let code = """
+    using JETLS: JL
+    macro m_inner_error_JL(_)
+        error("Error in foo")
+    end
+    macro m_outer_error_JL(x)
+        :(@m_inner_error_JL(\$x), @m_inner_error_JL(\$nothing))
+    end
+    """
+    JL.include_string(@__MODULE__, code)
 end
 
 @testset HierarchicalTestSet "JuliaLowering error diagnostics" begin
