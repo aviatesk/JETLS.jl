@@ -64,6 +64,39 @@ end
     end
 end
 
+@testset "find_analysis_env_path" begin
+    mktempdir() do temp_root
+        project_dir = joinpath(temp_root, "project")
+        source_file = joinpath(project_dir, "src", "main.jl")
+        project_file = joinpath(project_dir, "Project.toml")
+        workspace_dir = joinpath(temp_root, "workspace")
+        mkpath(dirname(source_file))
+        mkpath(workspace_dir)
+        touch(source_file)
+        touch(project_file)
+        uri = JETLS.filepath2uri(source_file)
+
+        let state = JETLS.ServerState()
+            @test JETLS.find_analysis_env_path(state, uri) === nothing
+        end
+
+        let state = JETLS.ServerState()
+            state.root_path = project_dir
+            @test JETLS.find_analysis_env_path(state, uri) == project_file
+        end
+
+        let state = JETLS.ServerState()
+            state.root_path = workspace_dir
+            @test JETLS.find_analysis_env_path(state, uri) isa JETLS.OutOfScope
+        end
+
+        let state = JETLS.ServerState(; cli_mode=true)
+            state.root_path = workspace_dir
+            @test JETLS.find_analysis_env_path(state, uri) == project_file
+        end
+    end
+end
+
 @testset "search_up_file" begin
     mktempdir() do temp_root
         # Create test structure

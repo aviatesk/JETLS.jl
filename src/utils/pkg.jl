@@ -93,11 +93,12 @@ function find_analysis_env_path(state::ServerState, uri::URI)
         elseif issubdir(filepath, joinpath(JULIA_DIR, "Compiler", "src"))
             return OutOfScope(CC)
         end
-        # Files in CLI mode are explicitly passed on the command line, so the
-        # workspace-boundary guard intended for the LSP flow would wrongly mark
-        # paths outside `state.root_path` as out-of-scope (e.g. running
-        # `jetls check ../foo.jl` from within a cloned package).
-        if !state.cli_mode && isdefined(state, :root_path)
+        # Files in CLI mode are explicitly passed on the command line, so they may discover
+        # their own environments regardless of `state.root_path`. In the LSP flow, require an
+        # explicit workspace root before discovering an environment; rootless documents are
+        # analyzed as standalone scripts instead.
+        if !state.cli_mode
+            isdefined(state, :root_path) || return nothing
             if !issubdir(dirname(filepath), state.root_path)
                 return OutOfScope()
             end
