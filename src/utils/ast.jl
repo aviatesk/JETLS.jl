@@ -152,35 +152,26 @@ end
 
 _is_empty_non_leaf(st0::SyntaxTreeC) = !JS.is_leaf(st0) && JS.numchildren(st0) == 0
 
-function _rewrite_interpolations(
-        st::SyntaxTreeC, placeholder_name::Union{Nothing,String}
-    )
+function _unwrap_interpolations(st::SyntaxTreeC)
     k = JS.kind(st)
     if k === JS.K"$"
         if JS.numchildren(st) >= 1
-            new_child, _ = _rewrite_interpolations(st[1], placeholder_name)
+            new_child, _ = _unwrap_interpolations(st[1])
             return (new_child, true)
         end
         return (st, false)
-    elseif placeholder_name !== nothing && k === JS.K"syntaxunquote"
-        placeholder = JS.setattr!(
-            JS.newleaf(JS.syntax_graph(st), st, JS.K"Identifier"),
-            :name_val, placeholder_name)
-        return (placeholder, true)
     elseif JS.is_leaf(st)
         return (st, false)
     end
     new_children = JS.SyntaxList(JS.syntax_graph(st))
     changed = false
     for child in JS.children(st)
-        new_child, child_changed = _rewrite_interpolations(child, placeholder_name)
+        new_child, child_changed = _unwrap_interpolations(child)
         changed |= child_changed
         push!(new_children, new_child)
     end
     return (changed ? JS.mknode(st, new_children) : st, changed)
 end
-
-_unwrap_interpolations(st::SyntaxTreeC) = _rewrite_interpolations(st, nothing)
 
 """
 Return a tree where `JS.K"\$"` interpolation nodes are replaced by their content.
@@ -189,13 +180,7 @@ so that parent nodes (e.g. dot expressions like `x.\$name`) remain well-formed.
 """
 function unwrap_interpolations(st::SyntaxTreeC)
     ensure_jl_source_attr!(JS.syntax_graph(st))
-    return _unwrap_interpolations(st)[1]
-end
-
-function prepare_inert_template(st::SyntaxTreeC)
-    ensure_jl_source_attr!(JS.syntax_graph(st))
-    placeholder_name = String(gensym("JETLS_UNQUOTE_PLACEHOLDER"))
-    return _rewrite_interpolations(st, placeholder_name)[1], placeholder_name
+    return first(_unwrap_interpolations(st))
 end
 
 function is_macrocall_st0(st0::SyntaxTreeC, names::AbstractString...; from::Union{Nothing,Module}=nothing)
@@ -212,7 +197,25 @@ end
 
 is_mainfunc0(st0::SyntaxTreeC) = is_macrocall_st0(st0, "@main")
 
-is_generated0(st0::SyntaxTreeC) = is_macrocall_st0(st0, "@generated")
+function is_base_macrocall0(st0::SyntaxTreeC, name::AbstractString)
+    JS.kind(st0) === JS.K"macrocall" || return false
+    JS.numchildren(st0) >= 1 || return false
+    macro_name = st0[1]
+    JS.kind(macro_name) === JS.K"." || return false
+    JS.numchildren(macro_name) >= 2 || return false
+    get_name_val(macro_name[1]) == "Base" || return false
+    rhs = macro_name[2]
+    if JS.kind(rhs) in JS.KSet"quote inert" && JS.numchildren(rhs) >= 1
+        rhs = rhs[1]
+    end
+    return get_name_val(rhs) == name
+end
+
+is_base_generated0(st0::SyntaxTreeC) = is_base_macrocall0(st0, "@generated")
+is_generated0(st0::SyntaxTreeC) = is_macrocall_st0(st0, "@generated") || is_base_generated0(st0)
+
+is_base_ateval0(st0::SyntaxTreeC) = is_base_macrocall0(st0, "@eval")
+is_ateval0(st0::SyntaxTreeC) = is_macrocall_st0(st0, "@eval") || is_base_ateval0(st0)
 
 is_nospecialize_or_specialize_macrocall0(st0::SyntaxTreeC) =
     is_macrocall_st0(st0, "@nospecialize", "@specialize")
@@ -220,7 +223,8 @@ is_nospecialize_or_specialize_macrocall0(st0::SyntaxTreeC) =
 is_macro0(st0::SyntaxTreeC) = JS.kind(st0) === JS.K"macro"
 
 is_new_style_macrocall0(st0::SyntaxTreeC) =
-    is_macrocall_st0(st0, NEW_STYLE_MACROCALL_NAMES...)
+    is_macrocall_st0(st0, NEW_STYLE_MACROCALL_NAMES...) ||
+    is_base_generated0(st0) || is_base_ateval0(st0)
 
 is_doc0(st0::SyntaxTreeC) = is_macrocall_st0(st0, "@doc"; from=Core)
 is_doc0_any(st0::SyntaxTreeC) = is_macrocall_st0(st0, "@doc") # Explicit `@doc` can have any module set.
@@ -375,59 +379,6 @@ function is_import_eval_call(st3::SyntaxTreeC)
     JS.kind(head) === JS.K"Value" || return false
     val = head.value
     return val === JL.eval_import || val === JL.eval_using
-end
-
-"""
-    foreach_inert_identifier(callback, st::SyntaxTreeC)
-
-Traverse `st` looking for `K"inert"` and `K"syntaxinert"` nodes, and call
-`f(id_node)` for each `K"Identifier"` found inside them. `callback` should
-return `true` to continue traversal or `false` to stop early.
-"""
-function foreach_inert_identifier(@specialize(callback), st::SyntaxTreeC)
-    res = traverse(st) do n::SyntaxTreeC
-        # Skip `import`/`using` desugaring (see `is_import_eval_call`).
-        is_import_eval_call(n) && return traversal_no_recurse
-        k = JS.kind(n)
-        if k === JS.K"inert"
-            inner = traverse(n) do m::SyntaxTreeC
-                JS.kind(m) === JS.K"Identifier" || return
-                callback(m) || return TraversalReturn(false; terminate=true)
-                return
-            end
-            inner === false && return TraversalReturn(false; terminate=true)
-            return traversal_no_recurse
-        elseif k === JS.K"syntaxinert"
-            inner = traverse(n) do m::SyntaxTreeC
-                m === n && return
-                mk = JS.kind(m)
-                mk in JS.KSet"inert syntaxinert syntaxunquote" && return traversal_no_recurse
-                mk === JS.K"Identifier" || return
-                callback(m) || return TraversalReturn(false; terminate=true)
-                return
-            end
-            inner === false && return TraversalReturn(false; terminate=true)
-        end
-        return
-    end
-    return res !== false
-end
-
-function find_inert_identifier(st::SyntaxTreeC, offset::Integer)
-    found = Ref{Union{Nothing,SyntaxTreeC}}(nothing)
-    foreach_inert_identifier(st) do id_node::SyntaxTreeC
-        if offset in JS.byte_range(id_node)
-            found[] = id_node
-            return false
-        end
-        return true
-    end
-    return found[]
-end
-
-function find_inert_identifier_name(st::SyntaxTreeC, offset::Integer)
-    id_node = @something find_inert_identifier(st, offset) return nothing
-    return get_name_val(id_node)
 end
 
 function is_nospecialize_or_specialize_macrocall3(st3::SyntaxTreeC)

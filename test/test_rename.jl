@@ -321,6 +321,33 @@ end
             end
         end
 
+        # Quote-local bindings shadow the generated argument.
+        let code = """
+            @generated function foo(│x│)
+                return :(let │x│ = 1
+                    │x│
+                end)
+            end
+            """
+            fi, positions, furi = rename_testcase(code, 6)
+            let rename_result = JETLS.local_binding_rename(
+                    server, furi, fi, positions[1], @__MODULE__, "arg")
+                @test rename_result !== nothing
+                (; result, error) = rename_result
+                @test result isa WorkspaceEdit && isnothing(error)
+                edits = only(result.changes).second
+                @test length(edits) == 1
+            end
+            let rename_result = JETLS.local_binding_rename(
+                    server, furi, fi, positions[3], @__MODULE__, "local_x")
+                @test rename_result !== nothing
+                (; result, error) = rename_result
+                @test result isa WorkspaceEdit && isnothing(error)
+                edits = only(result.changes).second
+                @test length(edits) == 2
+            end
+        end
+
         # Static parameter merging
         let code = """
             @generated function foo(x::│T│) where {│T│}
@@ -360,6 +387,23 @@ end
                     @test length(edits) == 2
                     @test all(edit -> edit.newText == "y", edits)
                 end
+            end
+        end
+    end
+
+    @testset "ordinary quote-local rename" begin
+        let code = """
+            f() = :(let │x│ = 1
+                │x│
+            end)
+            """
+            fi, positions, furi = rename_testcase(code, 4)
+            for pos in positions
+                rename_result = JETLS.local_binding_rename(
+                    server, furi, fi, pos, @__MODULE__, "y")
+                @test rename_result !== nothing &&
+                    rename_result.result isa WorkspaceEdit &&
+                    length(only(rename_result.result.changes).second) == 2
             end
         end
     end
@@ -411,6 +455,27 @@ end
         rename_prep = JETLS.global_binding_rename_preparation(
             state, furi, fi, only(positions), @__MODULE__)
         @test isnothing(rename_prep)
+    end
+
+    @testset "ordinary unanchored quote" begin
+        let code = "f() = :(use(│x│))"
+            fi, positions, furi = rename_testcase(code, 2)
+            for pos in positions
+                rename_prep = JETLS.global_binding_rename_preparation(
+                    state, furi, fi, pos, @__MODULE__)
+                @test !isnothing(rename_prep) && rename_prep.placeholder == "x"
+            end
+        end
+
+        # An atomic quoted identifier is Symbol data, not a global binding target.
+        let code = "names = (:│sin│, :cos)"
+            fi, positions, furi = rename_testcase(code, 2)
+            for pos in positions
+                rename_prep = JETLS.global_binding_rename_preparation(
+                    state, furi, fi, pos, @__MODULE__)
+                @test isnothing(rename_prep)
+            end
+        end
     end
 
     @testset "macro rename prepare" begin

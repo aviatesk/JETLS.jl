@@ -93,6 +93,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Fixed false `lowering/macro-expansion-error` diagnostics when an old-style macro is nested inside a new-style macro. The failed expansion could also contaminate enclosing forms and produce repeated lowering diagnostics across a project, as reported for Makie. This incorporates [JuliaLang/julia#62221](https://github.com/JuliaLang/julia/pull/62221) and addresses [JuliaLang/JuliaLowering.jl#108](https://github.com/JuliaLang/JuliaLowering.jl/issues/108). (Closed https://github.com/aviatesk/JETLS.jl/issues/554)
 
+- Fixed many missing references, rename edits, document highlights, and `lowering/unused-import` diagnostic results for identifiers inside quoted expressions used by helper functions, macros, and generated functions.
+
 - Fixed a false `lowering/error` diagnostic for docstring signatures such as `someinterface(::Type{<:Integer})`.
 
 - Fixed a false `lowering/unused-import` report for a name used only inside a `@static` condition or a branch not selected by the JETLS analysis process:

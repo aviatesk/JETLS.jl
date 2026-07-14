@@ -105,6 +105,47 @@ end
         @test diagnostic.range.var"end".line == 0
     end
 
+    @testset "generated quote-local shadowing" begin
+        for src in (
+                """
+                @generated function foo(x)
+                    return :(let x = 1
+                        x
+                    end)
+                end
+                """,
+                """
+                Base.@generated function foo(x)
+                    return :(let x = 1
+                        x
+                    end)
+                end
+                """,
+                """
+                @generated function foo(x)
+                    return :(function inner(x)
+                        x
+                    end)
+                end
+                """,
+                """
+                @generated function foo(x)
+                    return :(map(1:2) do x
+                        x
+                    end)
+                end
+                """,
+                """
+                @generated function foo(x)
+                    return :([x + 1 for x in 1:2])
+                end
+                """)
+            diagnostics = get_lowering_diagnostics(src; code = JETLS.LOWERING_UNUSED_ARGUMENT_CODE)
+            @test length(diagnostics) == 1
+            @test only(diagnostics).message == "Unused argument `x`"
+        end
+    end
+
     let diagnostics = get_lowering_diagnostics("""
         function foo(x)
             local y
@@ -933,6 +974,15 @@ end
             """)
             @test length(diagnostics) == 1
             @test only(diagnostics).message == "Unused argument `unused`"
+        end
+
+        # Nested interpolation uses the argument in the generated output scope.
+        let diagnostics = get_lowering_diagnostics("""
+            @generated function foo(x)
+                return :( :(\$x) )
+            end
+            """; code = JETLS.LOWERING_UNUSED_ARGUMENT_CODE)
+            @test isempty(diagnostics)
         end
     end
 
@@ -2103,13 +2153,34 @@ end
         @test isempty(diagnostics)
     end
 
-    # Imports used in quoted expressions inside helper functions for macros
+    # A code-shaped helper quote uses construction-site globals without requiring
+    # interprocedural proof that the expression reaches macro output.
     let diagnostics = get_unused_import_diagnostics("""
         using Base.Iterators: flatten
         genfunc(xs) = :(flatten(\$(esc(xs))))
         macro myflatten(xs) genfunc(xs) end
         """)
         @test isempty(diagnostics)
+    end
+
+    # Atomic quoted identifiers remain Symbol data without a syntax-use context.
+    let diagnostics = get_unused_import_diagnostics("""
+        import Base: sin
+        names = (:sin, :cos)
+        """)
+        @test length(diagnostics) == 1
+    end
+
+    # Following Symbol values into an interpolated `@eval` name requires constant
+    # propagation and syntax-provenance analysis.
+    let diagnostics = get_unused_import_diagnostics("""
+        import Base: sin
+        struct MyType end
+        for name in (:sin, :cos)
+            @eval \$name(x::MyType) = nothing
+        end
+        """)
+        @test_broken isempty(diagnostics)
     end
 
     # Imports used in @generated function with interpolation in dot expression

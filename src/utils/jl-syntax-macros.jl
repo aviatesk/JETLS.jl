@@ -140,7 +140,12 @@ push_inactive_code!(node::SyntaxTreeC, condval::Bool) =
 # expansion. Unlike old-style macros — whose expansion collapses source positions to
 # line granularity and is why `_remove_macrocalls` exists — these don't need to be
 # rewritten to a `block` to keep accurate locations for scope resolution.
-# This is used by `remove_macrocalls` in ast.jl
+#
+# TODO: Define these as `(module, name)` pairs and have `remove_macrocalls` accept the
+# caller's `context_module` so it can resolve each source macrocall to its macro object.
+# Source-name matching cannot recognize qualified calls or aliases, and can mistake an
+# unrelated same-named macro for one of these implementations. `Base.@generated` and
+# `Base.@eval` are special-cased in `ast.jl` until this resolution is available.
 const NEW_STYLE_MACROCALL_NAMES = (
     # JuliaLowering/src/syntax_macros.jl
     "@__FUNCTION__",
