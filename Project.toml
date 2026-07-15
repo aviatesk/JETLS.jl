@@ -30,7 +30,6 @@ JET = {rev = "ab8d6dc4", url = "https://github.com/aviatesk/JET.jl"}
 JuliaLowering = {rev = "00897fc3f3", subdir = "JuliaLowering", url = "https://github.com/JuliaLang/julia"}
 JuliaSyntax = {rev = "00897fc3f3", subdir = "JuliaSyntax", url = "https://github.com/JuliaLang/julia"}
 LSP = {path = "LSP"}
-Revise = {rev = "cb35516a27", url = "https://github.com/timholy/Revise.jl"}
 
 [compat]
 Compiler = "0.1.1"
