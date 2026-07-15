@@ -36,11 +36,14 @@ function handle_HoverRequest(
     end
     fi = result
 
-    hover = @something get_hover(state, fi, uri, pos) begin
+    hover = get_hover(state, fi, uri, pos; cancel_flag)
+    if is_cancelled(cancel_flag)
         return send(server, HoverResponse(;
-            id = msg.id, result = something(keyword_hover(state, fi, uri, pos), null)))
+            id = msg.id,
+            result = nothing,
+            error = request_cancelled_error()))
     end
-    return send(server, HoverResponse(; id = msg.id, result = hover))
+    return send(server, HoverResponse(; id = msg.id, result = something(hover, null)))
 end
 
 # Unified hover entry. Whether the cursor is on a local binding, a global
@@ -64,8 +67,24 @@ end
 # alone wouldn't carry that information.
 function get_hover(
         state::ServerState, fi::FileInfo, uri::URI, pos::Position;
-        context_module::Union{Nothing,Module} = nothing
+        context_module::Union{Nothing,Module} = nothing,
+        cancel_flag::AbstractCancelFlag = DUMMY_CANCEL_FLAG
     )
+    hover = _get_hover(state, fi, uri, pos; context_module, cancel_flag)
+    if hover === nothing
+        is_cancelled(cancel_flag) && return nothing
+        return keyword_hover(state, fi, uri, pos)
+    end
+    return hover
+end
+
+function _get_hover(
+        state::ServerState, fi::FileInfo, uri::URI, pos::Position;
+        context_module::Union{Nothing,Module} = nothing,
+        cancel_flag::AbstractCancelFlag = DUMMY_CANCEL_FLAG
+    )
+    is_cancelled(cancel_flag) && return nothing
+
     st0_top = build_syntax_tree(fi)
     offset = xy_to_offset(fi, pos)
     (; postprocessor, world) = ctx_info = get_context_info(state, uri, pos)
@@ -75,6 +94,8 @@ function get_hover(
     context_module = something(context_module, ctx_info.context_module)
     soft_scope = is_notebook_cell_uri(state, uri)
     binding_result = select_target_binding(st0_top, offset, context_module; soft_scope)
+    is_cancelled(cancel_flag) && return nothing
+
     if binding_result !== nothing
         (; ctx3, binding) = binding_result
         binfo = JL.get_binding(ctx3, binding)
@@ -105,6 +126,8 @@ function get_hover(
     type_query_rng = JS.byte_range(symbol_literal_node === nothing ? display_node : node)
     ctx = build_inferred_context_for_range(st0_top, context_module, type_query_rng;
         world, caller="get_hover", cache=fi.inferred_context_cache)
+    is_cancelled(cancel_flag) && return nothing
+
     type_str = typ = display_typ = nothing
     if ctx !== nothing
         display_typ = get_type_for_range(ctx, type_query_rng)
@@ -144,6 +167,7 @@ function get_hover(
             end
         end
     end
+    is_cancelled(cancel_flag) && return nothing
 
     # The header line (`<expr> [:: T]` in a code block) is shown whenever the
     # cursor is on a binding — even without a type the kind tag / name is
