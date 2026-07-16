@@ -118,6 +118,50 @@ end
     end
 end
 
+@testset "static parameters" begin
+    let (val, _) = rewrite_lower_eval("""
+            function outer_static_capture(x::T) where T
+                f = (y::T) -> T(x + y)
+                f(x)
+            end
+            outer_static_capture(21)
+            """)
+        @test val == 42
+    end
+
+    let tree = rewrite_only("""
+            function outer_static_capture_tree(x::T) where T
+                f = (y::T) -> T(x + y)
+                f(x)
+            end
+            """)
+        @test count_opaque_closures(tree) == 1
+    end
+end
+
+@testset "limitations: unsupported local method shapes fall through" begin
+    @testset "method-owned static parameters" begin
+        let tree = rewrite_only("""
+                let f(y::S) where S = y
+                    f(42)
+                end
+                """)
+            @test count_opaque_closures(tree) == 0
+        end
+    end
+
+    @testset "generated local methods" begin
+        let tree = rewrite_only("""
+                let
+                    @generated f(x) = :(x)
+                    f(42)
+                end
+                """)
+            @test count_opaque_closures(tree) == 0
+        end
+    end
+end
+
 @testset "return type annotation" begin
     # Literal `::RT` on the closure: native `f(y)::T = body` lowers to
     # `convert(T, body)::T`, and the rewrite preserves that by passing the

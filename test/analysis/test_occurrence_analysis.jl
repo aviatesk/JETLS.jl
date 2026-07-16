@@ -152,6 +152,11 @@ end
             @test binding_occurrences[binfos[idxs[1]]] === binding_occurrences[binfos[idxs[2]]]
             occurrences = binding_occurrences[binfos[idxs[1]]]
             @test any(occurrences) do occurrence
+                occurrence.kind === :def &&
+                JS.sourcetext(occurrence.tree) == "TTT1" &&
+                JS.source_line(occurrence.tree) == 1
+            end
+            @test any(occurrences) do occurrence
                 occurrence.kind === :use &&
                 JS.sourcetext(occurrence.tree) == "TTT1" &&
                 JS.source_line(occurrence.tree) == 2

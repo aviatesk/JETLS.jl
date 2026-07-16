@@ -214,14 +214,17 @@ function to_completion(
     label_kind = CompletionItemKind.Variable
     label_detail = label_desc = nothing
 
+    # `:typevar` is defensive; current completion scopes expose `:static_parameter`.
     if binding.is_const
         label_kind = CompletionItemKind.Constant
-    elseif binding.kind === :static_parameter
+    elseif binding.kind in (:typevar, :static_parameter)
         label_kind = CompletionItemKind.TypeParameter
     end
 
-    if binding.kind in [:argument, :local, :global]
+    if binding.kind in (:argument, :local, :global)
         label_desc = String(binding.kind)
+    elseif binding.kind === :typevar
+        label_desc = "typevar"
     elseif binding.kind === :static_parameter
         label_desc = "sparam"
     end

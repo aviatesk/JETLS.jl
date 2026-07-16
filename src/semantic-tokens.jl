@@ -185,12 +185,12 @@ function collect_semantic_tokens_for_occurrences!(
         occs::BindingOccurrencesResult, st0::SyntaxTreeC,
     )
     # `:local` aliases for type parameters cover a superset of the corresponding
-    # `:static_parameter`'s occurrences — and for plain `struct A{T}; ...; end` are
-    # the only signal at all.
-    # Collect names from both and reclassify matching `:local`s as `typeParameter`.
+    # `:typevar` / `:static_parameter` occurrences — and for plain
+    # `struct A{T}; ...; end` are the only signal at all. Collect their names
+    # and reclassify matching `:local`s as `typeParameter`.
     type_param_names = Set{String}()
     for binfo_key in keys(occs)
-        if binfo_key.kind === :static_parameter
+        if binfo_key.kind in (:typevar, :static_parameter)
             push!(type_param_names, binfo_key.name)
         end
     end
@@ -277,12 +277,12 @@ end
 function classify_token_type(binfo_kind::Symbol)
     if binfo_kind === :argument
         return SEMANTIC_TOKEN_TYPE_PARAMETER
-    elseif binfo_kind === :static_parameter
-        return SEMANTIC_TOKEN_TYPE_TYPE_PARAMETER
     elseif binfo_kind === :local
         return SEMANTIC_TOKEN_TYPE_VARIABLE
     elseif binfo_kind === :global
         return SEMANTIC_TOKEN_TYPE_UNSPECIFIED
+    elseif binfo_kind in (:typevar, :static_parameter)
+        return SEMANTIC_TOKEN_TYPE_TYPE_PARAMETER
     else error("Unknown binding kind found") end
 end
 
