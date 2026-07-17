@@ -190,6 +190,12 @@ module M_field_hover
 end
 
 @testset HierarchicalTestSet "'hover' user-binding resolution" begin
+    @testset "method type parameters" begin
+        hover_test("func(x::│T) where T = T", "(type parameter) T")
+        hover_test("func(x::T) where │T = T", "(type parameter) T")
+        hover_test("func(x::T) where T = │T", "(static parameter) T")
+    end
+
     @testset "documented global binding" begin
         hover_test("documented_binding│", "Documented binding.";
             context_module = M_doc_binding)

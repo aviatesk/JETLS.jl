@@ -175,9 +175,10 @@ function cursor_bindings(
         (binfo, _) = bscopeinfos[i]
 
         prev = get(seen, binfo.name, nothing)
+        # `:typevar` is defensive; current cursor scopes expose `:static_parameter`.
         if (isnothing(prev)
             || bdistances[i] < bdistances[prev]
-            || binfo.kind === :static_parameter)
+            || binfo.kind in (:typevar, :static_parameter))
             seen[binfo.name] = i
         elseif @static JETLS_DEBUG_LOWERING ? true : false
             @info "Found two bindings with the same name:" binfo bscopeinfos[prev][1]
@@ -219,6 +220,16 @@ function find_target_binding(ctx3::JL.VariableAnalysisContext, st3::SyntaxTreeC,
         # names whose context was inherited from the macrocall.
         binding_is_in_base_layer(ctx3, binfo) || return nothing
         binding_has_source_name(ctx3, binfo) || return nothing
+        if binfo.kind === :static_parameter
+            typevar_id = get(ctx3.sp_typevars, binfo.id, nothing)
+            if typevar_id !== nothing
+                typevar = JL.binding_ex(ctx3, typevar_id)
+                # Prefer `:typevar` at the shared `where` binder source.
+                if JS.byte_range(typevar) == JS.byte_range(st3′)
+                    return TraversalReturn(typevar)
+                end
+            end
+        end
         return TraversalReturn(st3′)
     end
 end
@@ -644,7 +655,7 @@ end
 is_same_binding(x::SyntaxTreeC, id::Int) = JS.kind(x) === JS.K"BindingId" && id == JL._binding_id(x)
 
 is_local_binding(binfo::JL.BindingInfo) =
-    binfo.kind === :argument || binfo.kind === :static_parameter || binfo.kind === :local
+    binfo.kind in (:argument, :typevar, :static_parameter, :local)
 
 """
     lookup_binding_definitions(st3::SyntaxTreeC, binfo::JL.BindingInfo) -> definitions::SyntaxListC
@@ -654,11 +665,11 @@ containing the syntax nodes where the binding may be defined.
 
 This function traverses the syntax tree to collect `definitions` that tracks all the
 assignment expressions (`=`) and function declarations where the binding may be defined.
-For `:argument` or `:static_parameter` bindings, `definitions` also includes the argument
-or static parameter declaration itself.
+For `:argument`, `:typevar`, or `:static_parameter` bindings, `definitions` also includes
+the argument or type parameter declaration itself.
 """
 function lookup_binding_definitions(st3::SyntaxTreeC, binfo::JL.BindingInfo)
-    if binfo.kind === :argument || binfo.kind === :static_parameter
+    if binfo.kind in (:argument, :typevar, :static_parameter)
         sl = JS.SyntaxList(JS.syntax_graph(st3), [binfo.node_id])
     else
         sl = JS.SyntaxList(JS.syntax_graph(st3))

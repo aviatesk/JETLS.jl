@@ -815,21 +815,6 @@ function return_insert_data(
     return range.var"end", "\n$(indent)return $bn"
 end
 
-# `JL.method_def_expr` packages each lowered method's signature metadata as
-# `svec(svec(arg_types...), svec(static_parameters...), source_location)`, where the
-# static parameters are the locals `JL.assign_sparams` binds via `core.TypeVar` calls.
-# Matching that shape covers every method definition form — named, anonymous, callable
-# struct, macro-generated — while quoted code stays inert and never produces it.
-function method_signature_metadata(node::SyntaxTreeC)
-    JS.numchildren(node) == 4 && is_core_svec_call(node) || return nothing
-    arg_types = node[2]
-    sparams = node[3]
-    JS.kind(arg_types) === JS.K"call" && is_core_svec_call(arg_types) || return nothing
-    JS.kind(sparams) === JS.K"call" && is_core_svec_call(sparams) || return nothing
-    JS.kind(node[4]) === JS.K"SourceLocation" || return nothing
-    return arg_types, sparams
-end
-
 function collect_binding_ids!(ids::Set{JL.IdTag}, st::SyntaxTreeC)
     traverse(st) do node::SyntaxTreeC
         JS.kind(node) === JS.K"BindingId" && push!(ids, JL._binding_id(node))
@@ -838,39 +823,38 @@ function collect_binding_ids!(ids::Set{JL.IdTag}, st::SyntaxTreeC)
     return ids
 end
 
+function method_typevars(ctx3::JL.VariableAnalysisContext, method::SyntaxTreeC)
+    JS.kind(method) === JS.K"method" && JS.numchildren(method) == 3 || return nothing
+    arg_types = method[2]
+    is_core_svec_call(arg_types) || return nothing
+    lambda = method[3]
+    JS.kind(lambda) === JS.K"lambda" && JS.numchildren(lambda) >= 2 || return nothing
+    sparams = lambda[2]
+    JS.kind(sparams) === JS.K"block" || return nothing
+    typevar_ids = JL.IdTag[]
+    for sparam in JS.children(sparams)
+        JS.kind(sparam) === JS.K"BindingId" || continue
+        sp_id = JL._binding_id(sparam)
+        typevar_id = get(ctx3.sp_typevars, sp_id, nothing)
+        typevar_id === nothing || push!(typevar_ids, typevar_id)
+    end
+    isempty(typevar_ids) && return nothing
+    return arg_types, typevar_ids
+end
+
 function analyze_unconstrained_static_parameters!(
         diagnostics::Vector{Diagnostic}, fi::FileInfo, ctx3::JL.VariableAnalysisContext,
         st3::SyntaxTreeC, reported::Set{LoweringDiagnosticKey}
     )
-    typevar_assignments = Dict{JL.IdTag,SyntaxTreeC}()
-    signature_metadatas = Tuple{SyntaxTreeC,SyntaxTreeC}[]
+    methods = Tuple{SyntaxTreeC,Vector{JL.IdTag}}[]
     traverse(st3) do node::SyntaxTreeC
-        k = JS.kind(node)
-        if k === JS.K"=" && JS.numchildren(node) == 2 &&
-                JS.kind(node[1]) === JS.K"BindingId"
-            rhs = node[2]
-            if JS.kind(rhs) === JS.K"call" && JS.numchildren(rhs) >= 2 &&
-                    is_core_ref(rhs[1], "TypeVar")
-                typevar_assignments[JL._binding_id(node[1])] = rhs
-            end
-        elseif k === JS.K"call"
-            metadata = method_signature_metadata(node)
-            metadata === nothing || push!(signature_metadatas, metadata)
-        end
+        result = method_typevars(ctx3, node)
+        result === nothing || push!(methods, result)
         return nothing
     end
-    for (arg_types, sparams) in signature_metadatas
-        sparam_ids = JL.IdTag[]
-        for i = 2:JS.numchildren(sparams)
-            sparam = sparams[i]
-            # non-`BindingId` entries are e.g. the placeholder in `where {T,_}`
-            JS.kind(sparam) === JS.K"BindingId" || continue
-            id = JL._binding_id(sparam)
-            haskey(typevar_assignments, id) && push!(sparam_ids, id)
-        end
-        isempty(sparam_ids) && continue
+    for (arg_types, typevar_ids) in methods
         arg_type_ids = collect_binding_ids!(Set{JL.IdTag}(), arg_types)
-        constrained = Bool[id in arg_type_ids for id in sparam_ids]
+        constrained = Bool[id in arg_type_ids for id in typevar_ids]
         # A constrained type variable's bounds also constrain the type variables they
         # reference, but only those declared earlier: in `f(::T) where {T<:S, S}` the
         # `S` bound of `T` resolves to the later declaration without constraining it
@@ -878,23 +862,25 @@ function analyze_unconstrained_static_parameters!(
         todo = findall(constrained)
         while !isempty(todo)
             i = pop!(todo)
-            bound_ids = collect_binding_ids!(Set{JL.IdTag}(), typevar_assignments[sparam_ids[i]])
+            deps = @something get(ctx3.tv_deps, typevar_ids[i], nothing) continue
             for j = 1:i-1
                 constrained[j] && continue
-                sparam_ids[j] in bound_ids || continue
+                typevar_ids[j] in deps || continue
                 constrained[j] = true
                 push!(todo, j)
             end
         end
-        for i = eachindex(sparam_ids)
+        for i = eachindex(typevar_ids)
             constrained[i] && continue
-            binfo = JL.get_binding(ctx3, sparam_ids[i])
+            binfo = JL.get_binding(ctx3, typevar_ids[i])
             binfo.is_internal && continue
             bn = binfo.name
             startswith(bn, "#") && continue
             provs = JS.flattened_provenance(JL.binding_ex(ctx3, binfo.id))
             is_from_user_ast(provs) || continue
-            range = jsobj_to_range(last(provs), fi)
+            source = last(provs)
+            JS.sourcetext(source) == "_" && continue
+            range = jsobj_to_range(source, fi)
             key = LoweringDiagnosticKey(range, :static_parameter, bn)
             key in reported ? continue : push!(reported, key)
             push!(diagnostics, Diagnostic(;

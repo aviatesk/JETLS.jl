@@ -1,7 +1,6 @@
 module Closure2Opaque
 
-using ..JETLS: JL, JS, SyntaxTreeC, TraversalReturn, get_name_val, is_core_svec_call,
-    traverse, var_id
+using ..JETLS: JL, JS, SyntaxTreeC, get_name_val, var_id
 
 export rewrite_local_closures_to_opaque
 
@@ -25,9 +24,9 @@ into inference context module (which the regular conversion would require).
   can't be represented as a single OC, so they fall through to the regular synthetic-struct
   path. A whole-tree pre-pass (`collect_multi_method_bindings`) identifies these so the
   per-block rewrite can skip every method definition for such bindings.
-- Bodies whose `K"method_defs"` shape doesn't match the expected
-  `(block (block (= sig_ssa svec_call) (method ...) (removable ...)))`
-  template (e.g. generated functions) are likewise left untouched.
+- Bodies whose `K"method_defs"` shape doesn't contain exactly one method, or whose
+  method declares its own static parameters (e.g. generated or generic local methods),
+  are likewise left untouched.
 
 # Usage
 
@@ -183,28 +182,32 @@ function find_matching_method_defs(
 end
 
 function is_method_defs_for(c::SyntaxTreeC, target_var_id::Int)
-    return JS.kind(c) === JS.K"method_defs" && JS.numchildren(c) >= 2 &&
+    return JS.kind(c) === JS.K"method_defs" && JS.numchildren(c) == 3 &&
         JS.kind(c[1]) === JS.K"BindingId" && var_id(c[1]) == target_var_id
 end
 
-# `method_defs[2]` is shaped like
-#   (block (block (= sig_ssa (call core.svec inner_argtypes_svec sparams_svec functionloc))
-#                 (method func_name sig_ssa lambda)
-#                 (removable sig_ssa)))
-# Returns `nothing` if the structure doesn't match (e.g. generated functions).
+# `method_defs` is shaped like
+#   (method_defs func_name (block typevar_setup...)
+#     (block (block (method func_name inner_argtypes_svec lambda))))
+# Returns `nothing` for non-single-method scaffolding and methods with their own
+# static parameters.
 function try_build_oc_assignment(
         ctx::JL.VariableAnalysisContext, fd::SyntaxTreeC, method_defs::SyntaxTreeC
     )
     func_name = fd[1]
-    method_node, sig_call = find_method_and_sig_call(method_defs[2], var_id(func_name))
-    method_node === nothing && return nothing
-    sig_call === nothing && return nothing
-    JS.numchildren(sig_call) >= 4 || return nothing
-    inner_argtypes = sig_call[2]
-    functionloc = sig_call[4]
+    typevars = method_defs[2]
+    JS.kind(typevars) === JS.K"block" || return nothing
+    JS.numchildren(typevars) == 0 || return nothing
+
+    method_node = @something find_single_method_node(
+        method_defs[3], var_id(func_name)) return nothing
+    inner_argtypes = method_node[2]
     JS.kind(inner_argtypes) === JS.K"call" || return nothing
     # `core.svec` callee + at least the function-type arg
     JS.numchildren(inner_argtypes) >= 2 || return nothing
+    callee = inner_argtypes[1]
+    JS.kind(callee) === JS.K"core" && get_name_val(callee) == "svec" || return nothing
+    functionloc = JL.@ast ctx method_node (::JS.K"SourceLocation")
 
     # The inner argtypes svec is `core.svec(function_type, user_arg_types...)`.
     # Skip the `core.svec` callee (idx 1) and the function-type marker (idx 2);
@@ -248,37 +251,16 @@ function try_build_oc_assignment(
     return JL.@ast ctx method_defs [JS.K"=" func_name oc]
 end
 
-# `sig_call` must be matched by `var_id` (not "first svec_call DFS finds"):
-# nested closures embed the inner OC's `method_defs` inside the outer OC's lambda body,
-# so an unconstrained DFS attributes the inner's user-argtypes to the outer OC.
-function find_method_and_sig_call(root::SyntaxTreeC, target_var_id::Int)
-    method_node = @something find_method_node(root, target_var_id) return (nothing, nothing)
-    JS.numchildren(method_node) >= 2 || return (method_node, nothing)
-    sig_ref = method_node[2]
-    JS.kind(sig_ref) === JS.K"BindingId" || return (method_node, nothing)
-    sig_call = find_sig_call_for(root, var_id(sig_ref))
-    return (method_node, sig_call)
-end
-
-function find_method_node(root::SyntaxTreeC, target_var_id::Int)
-    return traverse(root) do node::SyntaxTreeC
-        if (JS.kind(node) === JS.K"method" && JS.numchildren(node) == 3 &&
-            JS.kind(node[1]) === JS.K"BindingId" && var_id(node[1]) == target_var_id)
-            return TraversalReturn(node; terminate=true)
-        end
-        nothing
+function find_single_method_node(root::SyntaxTreeC, target_var_id::Int)
+    node = root
+    while JS.kind(node) === JS.K"block" && JS.numchildren(node) == 1
+        node = node[1]
     end
-end
-
-function find_sig_call_for(root::SyntaxTreeC, sig_var_id::Int)
-    return traverse(root) do node::SyntaxTreeC
-        if (JS.kind(node) === JS.K"=" && JS.numchildren(node) == 2 &&
-            JS.kind(node[1]) === JS.K"BindingId" && var_id(node[1]) == sig_var_id &&
-            JS.kind(node[2]) === JS.K"call" && is_core_svec_call(node[2]))
-            return TraversalReturn(node[2]; terminate=true)
-        end
-        nothing
+    if (JS.kind(node) === JS.K"method" && JS.numchildren(node) == 3 &&
+        JS.kind(node[1]) === JS.K"BindingId" && var_id(node[1]) == target_var_id)
+        return node
     end
+    return nothing
 end
 
 # Detect a vararg-typed entry in the user-argtypes svec. JL lowers both `(xs...)`

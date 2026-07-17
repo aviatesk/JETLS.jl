@@ -125,6 +125,13 @@ end
         return true
     end == 4
 
+    let expected_kinds = (:typevar, :typevar, :static_parameter)
+        @test with_target_binding("func(x::│T) where │T = │T") do i, (; ctx3, binding)
+            @test JL.get_binding(ctx3, binding).kind === expected_kinds[i]
+            return true
+        end == 3
+    end
+
     # Qualified macrocall: cursor at end of macro name returns nothing
     @test with_target_binding("""
         Base.@info│ "hello"

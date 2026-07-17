@@ -225,6 +225,7 @@ end
 
 binding_kind_label(kind::Symbol) =
     kind === :argument ? "(argument)" :
+    kind === :typevar ? "(type parameter)" :
     kind === :static_parameter ? "(static parameter)" :
     kind === :local ? "(local)" : "(global)"
 

@@ -331,6 +331,20 @@ end
             end
         end
 
+        @testset "outer static parameter captured by closure" begin
+            let code = """
+                function with_static_capture(x::T) where T<:Int
+                    inner(y::T) = x + y
+                    inner(x)
+                end
+                """
+                _, ctx = type_annotate(code)
+                # The signature-view body can't recover the outer static parameter bound.
+                @test_broken widenconst(get_type_for_range(ctx, range_of(code, "x + y"))) === Int
+                @test widenconst(get_type_for_range(ctx, range_of(code, "inner(x)"))) === Int
+            end
+        end
+
         # Multiple captures of different types — the OC's env tuple keeps each
         # capture's type independently; integer-positional access in the body
         # resolves each precisely.
