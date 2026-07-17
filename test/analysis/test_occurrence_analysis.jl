@@ -428,6 +428,30 @@ end
         end
 
         with_binding_occurrences("""
+            Base.@generated function foo(x)
+                return :(x + 1)
+            end
+            """) do binding_occurrences
+            @test any(binding_occurrences) do (binding, occurrences)
+                binding.name == "x" && binding.kind === :argument &&
+                any(o -> o.kind === :use, occurrences)
+            end
+        end
+
+        # Interpolation in a nested quote executes in the generated output scope.
+        with_binding_occurrences("""
+            @generated function foo(x)
+                return :( :(\$x) )
+            end
+            """) do binding_occurrences
+            entries = collect(binding_occurrences)
+            i = @something findfirst(
+                ((b, _),) -> b.name == "x" && b.kind === :argument, entries)
+            _, occurrences = entries[i]
+            @test count(o -> o.kind === :use, occurrences) == 1
+        end
+
+        with_binding_occurrences("""
             @generated function foo(x, unused)
                 return :(x + 1)
             end
@@ -442,8 +466,7 @@ end
             end
         end
 
-        # Quote-local bindings should shadow generated-function arguments. Inert argument
-        # matching is currently name-based and links both local `x`s to the outer argument.
+        # Quote-local bindings shadow generated-function arguments.
         with_binding_occurrences("""
             @generated function foo(x)
                 return :(let x = 1
@@ -455,7 +478,51 @@ end
             i = @something findfirst(
                 ((b, _),) -> b.name == "x" && b.kind === :argument, entries)
             _, occurrences = entries[i]
-            @test_broken !any(o -> o.kind === :use, occurrences)
+            @test !any(o -> o.kind === :use, occurrences)
+        end
+
+        # Nested argument scopes must not be remapped to a same-named generated argument.
+        for code in (
+                """
+                @generated function foo(x)
+                    return :(function inner(x)
+                        x
+                    end)
+                end
+                """,
+                """
+                @generated function foo(x)
+                    return :(map(1:2) do x
+                        x
+                    end)
+                end
+                """,
+                """
+                @generated function foo(x)
+                    return :([x + 1 for x in 1:2])
+                end
+                """)
+            with_binding_occurrences(code) do binding_occurrences
+                entries = collect(binding_occurrences)
+                i = @something findfirst(
+                    ((b, _),) -> b.name == "x" && b.kind === :argument, entries)
+                _, occurrences = entries[i]
+                @test !any(o -> o.kind === :use, occurrences)
+            end
+        end
+
+        # The initializer RHS is evaluated before the new `let` binding exists.
+        with_binding_occurrences("""
+            @generated function foo(x)
+                return :(let x = x
+                    x
+                end)
+            end
+            """) do binding_occurrences
+            entries = collect(binding_occurrences)
+            i = @something findfirst(((b, _),) -> b.name == "x" && b.kind === :argument, entries)
+            _, occurrences = entries[i]
+            @test count(o -> o.kind === :use, occurrences) == 1
         end
 
         # aviatesk/JETLS.jl#722: a `@generated` function nested inside a
@@ -731,25 +798,217 @@ end
         end
     end
 
-    @testset "known inert occurrence limitations" begin
-        # A plain identifier inside a quote is generated-code syntax, not a use of
-        # the enclosing function argument. The statement-wide argument-name filter
-        # currently drops the generated code's global `x` occurrence.
+    @testset "inert occurrence policies" begin
+        # Code-shaped ordinary quotes use construction-site globals, not same-named
+        # outer locals.
         let boccs = get_full_binding_occurrences("""
                 function f(x)
                     return :(G(x))
                 end
                 """)
-            @test_broken any(boccs) do (binfo, occs)
+            @test all(("G", "x")) do name
+                any(boccs) do (binfo, occs)
+                    binfo.name == name && binfo.kind === :global && any(o -> o.kind === :use, occs)
+                end
+            end
+            @test !any(boccs) do (binfo, occs)
+                binfo.name == "x" && binfo.kind === :argument && any(o -> o.kind === :use, occs)
+            end
+        end
+
+        # A quote used as a complete top-level statement follows the same policy.
+        let boccs = get_full_binding_occurrences(":(G(x))")
+            @test all(("G", "x")) do name
+                any(boccs) do (binfo, occs)
+                    binfo.name == name && binfo.kind === :global && any(o -> o.kind === :use, occs)
+                end
+            end
+        end
+
+        # Atomic quoted identifiers are Symbol data without a syntax-use context.
+        let boccs = get_full_binding_occurrences("""
+                import Base: sin
+                names = (:sin, :cos)
+                """)
+            @test !any(boccs) do (binfo, occs)
+                binfo.name == "sin" && binfo.kind === :global && any(o -> o.kind === :use, occs)
+            end
+        end
+
+        # Quoted atomic input remains Symbol data when passed directly to `@eval`.
+        for eval_macro in ("@eval", "Base.@eval")
+            boccs = get_full_binding_occurrences("$eval_macro :sin")
+            @test !any(boccs) do (binfo, occs)
+                binfo.name == "sin" && binfo.kind === :global && any(o -> o.kind === :use, occs)
+            end
+        end
+
+        # Unquoted one-argument `@eval` input resolves in the construction module.
+        for eval_macro in ("@eval", "Base.@eval")
+            boccs = get_full_binding_occurrences("$eval_macro sin")
+            @test any(boccs) do (binfo, occs)
+                binfo.name == "sin" && binfo.kind === :global && any(o -> o.kind === :use, occs)
+            end
+        end
+
+        # Interpolation is an outer local use. Re-lowering the inert template must
+        # not manufacture a same-named global occurrence.
+        let boccs = get_full_binding_occurrences("""
+                function f()
+                    let x = 1
+                        return :(G(\$x))
+                    end
+                end
+                """)
+            @test any(boccs) do (binfo, occs)
+                binfo.name == "x" && binfo.kind === :local && any(o -> o.kind === :use, occs)
+            end
+            @test !any(boccs) do (binfo, occs)
                 binfo.name == "x" && binfo.kind === :global && any(o -> o.kind === :use, occs)
+            end
+        end
+
+        # One-argument `@eval` resolves inert globals in the construction module.
+        for eval_macro in ("@eval", "Base.@eval")
+            boccs = get_full_binding_occurrences("""
+                $eval_macro some_func(::EvalTarget) = nothing
+                """)
+            @test any(boccs) do (binfo, occs)
+                binfo.name == "EvalTarget" && binfo.kind === :global &&
+                    any(o -> o.kind === :use, occs)
+            end
+        end
+
+        # Two-argument `@eval` is unsupported even for a static-looking target.
+        for eval_macro in ("@eval", "Base.@eval")
+            boccs = get_full_binding_occurrences("""
+                $eval_macro SomeModule some_func(::EvalTarget) = nothing
+                """)
+            @test !any(boccs) do (binfo, occs)
+                binfo.name == "EvalTarget" && binfo.kind === :global &&
+                    any(o -> o.kind === :use, occs)
+            end
+        end
+
+        # A dynamic explicit module expression is likewise unsupported.
+        let boccs = get_full_binding_occurrences("""
+                @eval getcontext() some_func(::EvalTarget) = nothing
+                """)
+            @test !any(boccs) do (binfo, occs)
+                binfo.name == "EvalTarget" && binfo.kind === :global &&
+                    any(o -> o.kind === :use, occs)
+            end
+        end
+
+        # Generated method-body assignments introduce locals, not module globals.
+        let boccs = get_full_binding_occurrences("""
+                @generated function f(x)
+                    return quote
+                        y = x
+                        y
+                    end
+                end
+                """)
+            @test !any(boccs) do (binfo, occs)
+                binfo.name == "y" && binfo.kind === :global && any(o -> o.kind === :use, occs)
+            end
+        end
+
+        # Unescaped macro-output globals are hygienically resolved in the macro's
+        # definition module.
+        let boccs = get_full_binding_occurrences("""
+                macro m(ex)
+                    return :(helper(\$ex))
+                end
+                """)
+            @test any(boccs) do (binfo, occs)
+                binfo.name == "helper" && binfo.kind === :global && any(o -> o.kind === :use, occs)
+            end
+        end
+
+        # Macro hygiene renames names assigned in unescaped macro output, so the
+        # assignment must not be indexed as a use of a module-global `x`.
+        let boccs = get_full_binding_occurrences("""
+                macro m()
+                    quote
+                        x = 1
+                        helper()
+                    end
+                end
+                """)
+            @test any(boccs) do (binfo, occs)
+                binfo.name == "helper" && binfo.kind === :global && any(o -> o.kind === :use, occs)
+            end
+            @test !any(boccs) do (binfo, occs)
+                binfo.name == "x" && binfo.kind === :global && !isempty(occs)
+            end
+        end
+
+        # Escaped output is caller-owned and must not be indexed under the macro's
+        # definition module.
+        let boccs = get_full_binding_occurrences("""
+                macro m()
+                    return esc(:(helper(x)))
+                end
+                """)
+            @test !any(boccs) do (binfo, occs)
+                binfo.name in ("helper", "x") && binfo.kind === :global && any(o -> o.kind === :use, occs)
+            end
+        end
+
+        # The macro policy is determined by ancestry, so it also applies to macro
+        # definitions nested inside enclosing statements such as version-conditional `if` blocks.
+        let boccs = get_full_binding_occurrences("""
+                if VERSION >= v"1.11"
+                    macro m()
+                        return esc(:(helper(x)))
+                    end
+                end
+                """)
+            @test !any(boccs) do (binfo, occs)
+                binfo.name in ("helper", "x") && binfo.kind === :global && any(o -> o.kind === :use, occs)
+            end
+        end
+        let boccs = get_full_binding_occurrences("""
+                if VERSION >= v"1.11"
+                    macro m()
+                        quote
+                            x = 1
+                            helper()
+                        end
+                    end
+                end
+                """)
+            @test any(boccs) do (binfo, occs)
+                binfo.name == "helper" && binfo.kind === :global && any(o -> o.kind === :use, occs)
+            end
+            # Hygiene applies here as well: the assigned `x` must not leak
+            # as a module global.
+            @test !any(boccs) do (binfo, occs)
+                binfo.name == "x" && binfo.kind === :global && !isempty(occs)
+            end
+        end
+
+        # Unescaped code-shaped quotes in macro bodies use definition-module globals
+        # without requiring return-flow analysis.
+        let boccs = get_full_binding_occurrences("""
+                macro m()
+                    temporary = :(helper(x))
+                    return temporary
+                end
+                """)
+            @test all(("helper", "x")) do name
+                any(boccs) do (binfo, occs)
+                    binfo.name == name && binfo.kind === :global && any(o -> o.kind === :use, occs)
+                end
             end
         end
     end
 
-    # Inert (quoted) content inside `@generated` functions is processed via
-    # `_unwrap_interpolations`, which must preserve `name_val` on ancestors of
-    # interpolations (e.g. `K"unknown_head"` from compound assignments like `+=`)
-    # so that lowering succeeds and global bindings inside the quote are recorded.
+    # `prepare_inert_template` masks interpolations before re-lowering generated
+    # quoted code. Rebuilding ancestor nodes must preserve `name_val` metadata
+    # (e.g. `K"unknown_head"` for compound assignments such as `+=`), or lowering
+    # fails before globals in the quote can be recorded.
     @testset "inert content with compound assignment + interpolation" begin
         let boccs = get_full_binding_occurrences("""
                 @generated function f(x)
@@ -763,7 +1022,7 @@ end
                 """)
             @test boccs !== nothing
             # `sleep` is referenced only inside the inert block, so finding it
-            # requires `_unwrap_interpolations` to succeed through the `+=` node.
+            # requires interpolation masking to preserve the surrounding `+=` node.
             i = @something findfirst(((b, _),) -> b.name == "sleep", collect(boccs))
             binfo, occs = collect(boccs)[i]
             @test binfo.kind === :global

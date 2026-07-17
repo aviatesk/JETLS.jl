@@ -154,9 +154,7 @@ end
         return true
     end == 4
 
-    # User-written identifiers sitting in a macro's inert/quoted template
-    # (here the type name inside `@eval`) should resolve to the matching
-    # module-level global.
+    # One-argument `@eval` evaluates in the construction module.
     @test with_target_binding("""
         struct │LSAnalyzer│ end
         let x = 1
@@ -168,6 +166,22 @@ end
         @test binfo.kind === :global
         return true
     end == 4
+
+    # Two-argument `@eval` is left unresolved even when its target looks static.
+    @test with_target_binding("""
+        @eval SomeModule some_func(::│LSAnalyzer│) = nothing
+        """) do _, result
+        @test result === nothing
+        return true
+    end == 2
+
+    # A dynamic target module is likewise left unresolved.
+    @test with_target_binding("""
+        @eval getcontext() some_func(::│LSAnalyzer│) = nothing
+        """) do _, result
+        @test result === nothing
+        return true
+    end == 2
 
     @test with_target_binding("""
         struct │MyType│ end

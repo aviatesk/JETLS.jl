@@ -172,6 +172,87 @@ end
         end
     end
 
+    @testset "ordinary inert references" begin
+        # Code-shaped ordinary quotes resolve free names in the construction module.
+        let code = """
+            global │x│ = nothing
+            f() = :(use(│x│))
+            g() = :(│x│ = 1)
+            """
+            clean_code, positions = JETLS.get_text_and_positions(code)
+            @test length(positions) == 6
+            for pos in positions
+                @test length(find_references(clean_code, pos)) == 3
+            end
+        end
+
+        # An atomic quoted identifier is Symbol data, not a reference target.
+        let code = "names = (:│sin│, :cos)"
+            clean_code, positions = JETLS.get_text_and_positions(code)
+            @test length(positions) == 2
+            for pos in positions
+                @test isempty(find_references(clean_code, pos))
+            end
+        end
+
+        # A bare quoted name does not capture a same-named function argument.
+        let code = """
+            global │x│ = nothing
+            function f(│x│)
+                return :(G(│x│))
+            end
+            """
+            clean_code, positions = JETLS.get_text_and_positions(code)
+            @test length(positions) == 6
+            expected = (2, 2, 1, 1, 2, 2)
+            @test all(zip(positions, expected)) do (pos, nrefs)
+                length(find_references(clean_code, pos)) == nrefs
+            end
+        end
+
+        let code = """
+            global │x│ = nothing
+            function f(│x│)
+                return :(G(\$│x│))
+            end
+            """
+            clean_code, positions = JETLS.get_text_and_positions(code)
+            @test length(positions) == 6
+            for pos in positions[1:2]
+                @test length(find_references(clean_code, pos)) == 1
+            end
+            for pos in positions[3:6]
+                @test length(find_references(clean_code, pos)) == 2
+            end
+        end
+
+        let code = """
+            f() = :(let │x│ = 1
+                │x│
+            end)
+            """
+            clean_code, positions = JETLS.get_text_and_positions(code)
+            @test length(positions) == 4
+            for pos in positions
+                @test length(find_references(clean_code, pos)) == 2
+            end
+        end
+
+        let code = """
+            function f()
+                let │x│ = 1
+                    return :(G(\$│x│))
+                end
+            end
+            """
+            clean_code, positions = JETLS.get_text_and_positions(code)
+            @test length(positions) == 4
+            for pos in positions
+                @test length(find_references(clean_code, pos)) == 2
+            end
+        end
+    end
+
     @testset "@generated function references" begin
         let code = """
             @generated function foo(│xx│x│)
@@ -186,8 +267,19 @@ end
             end
         end
 
-        # Quote-local bindings should shadow generated-function arguments. The current
-        # name-based inert lookup links all three `x` occurrences.
+        let code = """
+            Base.@generated function foo(│x│)
+                return :(│x│)
+            end
+            """
+            clean_code, positions = JETLS.get_text_and_positions(code)
+            @test length(positions) == 4
+            for pos in positions
+                @test length(find_references(clean_code, pos)) == 2
+            end
+        end
+
+        # Quote-local bindings shadow generated-function arguments.
         let code = """
             @generated function foo(│x│)
                 return :(let │x│ = 1
@@ -197,8 +289,186 @@ end
             """
             clean_code, positions = JETLS.get_text_and_positions(code)
             @test length(positions) == 6
-            @test_broken length(find_references(clean_code, positions[1])) == 1
-            @test_broken length(find_references(clean_code, positions[3])) == 2
+            @test length(find_references(clean_code, positions[1])) == 1
+            @test length(find_references(clean_code, positions[3])) == 2
+        end
+
+        # The `let` initializer sees the generated argument, while the new
+        # binding shadows it in the body.
+        let code = """
+            @generated function foo(│x│)
+                return :(let │x│ = │x│
+                    │x│
+                end)
+            end
+            """
+            clean_code, positions = JETLS.get_text_and_positions(code)
+            @test length(positions) == 8
+            argument_ranges = Set((
+                Range(; start=positions[1], var"end"=positions[2]),
+                Range(; start=positions[5], var"end"=positions[6])))
+            local_ranges = Set((
+                Range(; start=positions[3], var"end"=positions[4]),
+                Range(; start=positions[7], var"end"=positions[8])))
+            for pos in positions[[1, 2, 5, 6]]
+                refs = find_references(clean_code, pos)
+                @test Set(r.range for r in refs) == argument_ranges
+            end
+            for pos in positions[[3, 4, 7, 8]]
+                refs = find_references(clean_code, pos)
+                @test Set(r.range for r in refs) == local_ranges
+            end
+        end
+
+        # Assignments in the generated method body introduce function locals.
+        let code = """
+            @generated function foo(x)
+                return quote
+                    │y│ = x
+                    │y│
+                end
+            end
+            """
+            clean_code, positions = JETLS.get_text_and_positions(code)
+            @test length(positions) == 4
+            for pos in positions
+                @test length(find_references(clean_code, pos)) == 2
+            end
+        end
+
+        # Nested generated-body scopes also shadow the generated argument.
+        for code in (
+                """
+                @generated function foo(│x│)
+                    return :(function inner(│x│)
+                        │x│
+                    end)
+                end
+                """,
+                """
+                @generated function foo(│x│)
+                    return :(map(1:2) do │x│
+                        │x│
+                    end)
+                end
+                """,
+                """
+                @generated function foo(│x│)
+                    return :(for │x│ = 1:2
+                        println(│x│)
+                    end)
+                end
+                """,
+                """
+                @generated function foo(│x│)
+                    return :([│x│ + 1 for │x│ in 1:2])
+                end
+                """)
+            clean_code, positions = JETLS.get_text_and_positions(code)
+            @test length(positions) == 6
+            outer_range = Range(; start=positions[1], var"end"=positions[2])
+            local_ranges = Set((
+                Range(; start=positions[3], var"end"=positions[4]),
+                Range(; start=positions[5], var"end"=positions[6])))
+            for pos in positions[1:2]
+                refs = find_references(clean_code, pos)
+                @test Set(r.range for r in refs) == Set((outer_range,))
+            end
+            for pos in positions[3:6]
+                refs = find_references(clean_code, pos)
+                @test Set(r.range for r in refs) == local_ranges
+            end
+        end
+
+        # A quote-local static-parameter name shadows the outer static parameter.
+        let code = """
+            @generated function foo(x::│T│) where {│T│}
+                return :(let │T│ = 1
+                    │T│
+                end)
+            end
+            """
+            clean_code, positions = JETLS.get_text_and_positions(code)
+            @test length(positions) == 8
+            outer_ranges = Set((
+                Range(; start=positions[1], var"end"=positions[2]),
+                Range(; start=positions[3], var"end"=positions[4])))
+            local_ranges = Set((
+                Range(; start=positions[5], var"end"=positions[6]),
+                Range(; start=positions[7], var"end"=positions[8])))
+            for pos in positions[1:4]
+                refs = find_references(clean_code, pos)
+                @test Set(r.range for r in refs) == outer_ranges
+            end
+            for pos in positions[5:8]
+                refs = find_references(clean_code, pos)
+                @test Set(r.range for r in refs) == local_ranges
+            end
+        end
+
+        # The generated argument scope must not leak into a nested quote stage.
+        let code = """
+            @generated function foo(│x│)
+                return :(begin
+                    │x│
+                    :(│x│)
+                end)
+            end
+            """
+            clean_code, positions = JETLS.get_text_and_positions(code)
+            @test length(positions) == 6
+            outer_ranges = Set((
+                Range(; start=positions[1], var"end"=positions[2]),
+                Range(; start=positions[3], var"end"=positions[4])))
+            for pos in positions[1:4]
+                refs = find_references(clean_code, pos)
+                @test Set(r.range for r in refs) == outer_ranges
+            end
+            for pos in positions[5:6]
+                @test isempty(find_references(clean_code, pos))
+            end
+        end
+
+        # Interpolation removes the nested quote stage and refers to the generated
+        # argument in the surrounding output scope.
+        let code = """
+            @generated function foo(│x│)
+                return :( :(\$│x│) )
+            end
+            """
+            clean_code, positions = JETLS.get_text_and_positions(code)
+            @test length(positions) == 4
+            expected_ranges = Set((
+                Range(; start=positions[1], var"end"=positions[2]),
+                Range(; start=positions[3], var"end"=positions[4])))
+            for pos in positions
+                refs = find_references(clean_code, pos)
+                @test Set(r.range for r in refs) == expected_ranges
+            end
+        end
+
+        # Nested interpolation respects locals introduced in the generated output.
+        let code = """
+            @generated function foo(│x│)
+                return :(let │x│ = 1
+                    :(\$│x│)
+                end)
+            end
+            """
+            clean_code, positions = JETLS.get_text_and_positions(code)
+            @test length(positions) == 6
+            outer_range = Range(; start=positions[1], var"end"=positions[2])
+            local_ranges = Set((
+                Range(; start=positions[3], var"end"=positions[4]),
+                Range(; start=positions[5], var"end"=positions[6])))
+            for pos in positions[1:2]
+                refs = find_references(clean_code, pos)
+                @test Set(r.range for r in refs) == Set((outer_range,))
+            end
+            for pos in positions[3:6]
+                refs = find_references(clean_code, pos)
+                @test Set(r.range for r in refs) == local_ranges
+            end
         end
 
         # Static parameter merging
@@ -257,6 +527,28 @@ end
             @test length(refs_glob) == 1
             @test Set(r.range for r in refs_arg) == Set(r.range for r in refs_inert)
         end
+
+    end
+
+    # A future confidence model should exclude a generated temporary used only
+    # as compile-time AST data from both references and rename. Unused-import
+    # analysis may consume separate possible-use information.
+    @testset "speculative generated quote references" begin
+        let code = """
+            │helper│() = nothing
+            @generated function f(x)
+                pattern = :(│helper│())
+                inspect(pattern)
+                return :(nothing)
+            end
+            """
+            clean_code, positions = JETLS.get_text_and_positions(code)
+            @test length(positions) == 4
+            expected = (1, 1, 0, 0)
+            for (pos, nrefs) in zip(positions, expected)
+                @test_broken length(find_references(clean_code, pos)) == nrefs
+            end
+        end
     end
 
     @testset "macro references" begin
@@ -304,6 +596,130 @@ end
             for pos in positions
                 refs = find_references(clean_code, pos; include_declaration=false)
                 @test length(refs) == 1
+            end
+        end
+
+        # Unescaped macro-output globals resolve in the definition module, while
+        # interpolated macro arguments remain argument uses.
+        let code = """
+            │helper│(x) = x
+            macro m(│ex│)
+                return :(│helper│(\$│ex│))
+            end
+            """
+            clean_code, positions = JETLS.get_text_and_positions(code)
+            @test length(positions) == 8
+            for pos in positions[[1, 2, 5, 6]]
+                @test length(find_references(clean_code, pos)) == 2
+            end
+            for pos in positions[[3, 4, 7, 8]]
+                @test length(find_references(clean_code, pos)) == 2
+            end
+        end
+
+        # Hygienic locals in macro output have their own quote-local binding.
+        let code = """
+            macro m(ex)
+                return quote
+                    local │y│ = \$ex
+                    │y│
+                end
+            end
+            """
+            clean_code, positions = JETLS.get_text_and_positions(code)
+            @test length(positions) == 4
+            for pos in positions
+                @test length(find_references(clean_code, pos)) == 2
+            end
+        end
+
+        # Escaped output is caller-owned, not linked to definition-module globals.
+        for escape in ("esc", "Base.esc")
+            code = """
+                │helper│(x) = x
+                macro escaped()
+                    return $escape(:(│helper│(│x│)))
+                end
+                """
+            clean_code, positions = JETLS.get_text_and_positions(code)
+            @test length(positions) == 6
+            for pos in positions[1:2]
+                @test length(find_references(clean_code, pos)) == 1
+            end
+            for pos in positions[3:6]
+                @test isempty(find_references(clean_code, pos))
+            end
+        end
+
+        # The macro policy also applies to macro definitions nested inside
+        # enclosing statements such as version-conditional `if` blocks.
+        let code = """
+            │helper│(x) = x
+            if VERSION >= v"1.11"
+                macro escaped()
+                    return esc(:(│helper│(│x│)))
+                end
+            end
+            """
+            clean_code, positions = JETLS.get_text_and_positions(code)
+            @test length(positions) == 6
+            for pos in positions[1:2]
+                @test length(find_references(clean_code, pos)) == 1
+            end
+            for pos in positions[3:6]
+                @test isempty(find_references(clean_code, pos))
+            end
+        end
+
+        # Escaped macro output does not expose nested macrocall bindings.
+        for escape in ("esc", "Base.esc")
+            code = """
+                macro │helper│()
+                    nothing
+                end
+                macro escaped()
+                    return $escape(:(│@helper│))
+                end
+                """
+            clean_code, positions = JETLS.get_text_and_positions(code)
+            @test length(positions) == 4
+            for pos in positions[1:2]
+                @test length(find_references(clean_code, pos)) == 1
+            end
+            for pos in positions[3:4]
+                @test isempty(find_references(clean_code, pos))
+            end
+        end
+
+        # Interpolation inside escaped output still executes in definition scope.
+        let code = """
+            macro │helper│()
+                :(nothing)
+            end
+            macro escaped()
+                return esc(:(\$(│@helper│)))
+            end
+            """
+            clean_code, positions = JETLS.get_text_and_positions(code)
+            @test length(positions) == 4
+            for pos in positions
+                @test length(find_references(clean_code, pos)) == 2
+            end
+        end
+
+        # Macro-body code-shaped quotes use definition-module globals.
+        let code = """
+            │helper│(x) = x
+            macro m()
+                temporary = :(│helper│(│x│))
+                return temporary
+            end
+            """
+            clean_code, positions = JETLS.get_text_and_positions(code)
+            @test length(positions) == 6
+            expected = (2, 2, 2, 2, 1, 1)
+            @test all(zip(positions, expected)) do (pos, nrefs)
+                length(find_references(clean_code, pos)) == nrefs
             end
         end
     end
@@ -450,20 +866,120 @@ end
         end
     end
 
-    # Cursor on a non-`\$` identifier inside a preserved macrocall's inert
-    # template must resolve to the matching module-level global.
-    @testset "cursor on inert global inside preserved macrocall" begin
-        let code = """
-            struct │LSAnalyzer│ end
-            let x = 1
-                @eval some_func(::│LSAnalyzer│) = \$x
-            end
-            """
+    @testset "cursor on inert global inside @eval" begin
+        # One-argument `@eval` resolves inert globals in the construction module.
+        for eval_macro in ("@eval", "Base.@eval")
+            code = """
+                struct │LSAnalyzer│ end
+                let x = 1
+                    $eval_macro some_func(::│LSAnalyzer│) = \$x
+                end
+                """
             clean_code, positions = JETLS.get_text_and_positions(code)
             @test length(positions) == 4
             for pos in positions
                 refs = find_references(clean_code, pos)
                 @test length(refs) == 2
+            end
+        end
+
+        # Quoted atomic input remains Symbol data rather than a global reference.
+        for eval_macro in ("@eval", "Base.@eval")
+            code = """
+                global │gvar│ = nothing
+                $eval_macro :│gvar│
+                """
+            clean_code, positions = JETLS.get_text_and_positions(code)
+            @test length(positions) == 4
+            for pos in positions[1:2]
+                @test length(find_references(clean_code, pos)) == 1
+            end
+            for pos in positions[3:4]
+                @test isempty(find_references(clean_code, pos))
+            end
+        end
+
+        # Nested quote stages inside `@eval` remain unresolved.
+        let code = """
+            global │x│ = nothing
+            @eval begin
+                q = :(use(│x│))
+            end
+            """
+            clean_code, positions = JETLS.get_text_and_positions(code)
+            @test length(positions) == 4
+            for pos in positions
+                @test_broken length(find_references(clean_code, pos)) == 2
+            end
+        end
+
+        # Macrocalls in the evaluated stage resolve in the construction module.
+        for eval_macro in ("@eval", "Base.@eval")
+            code = """
+                macro │helper│()
+                    nothing
+                end
+                $eval_macro begin
+                    │@helper│
+                end
+                """
+            clean_code, positions = JETLS.get_text_and_positions(code)
+            @test length(positions) == 4
+            for pos in positions
+                @test length(find_references(clean_code, pos)) == 2
+            end
+        end
+
+        # Nested quote stages inside `@eval` do not expose macrocall bindings.
+        for eval_macro in ("@eval", "Base.@eval")
+            code = """
+                macro │helper│()
+                    nothing
+                end
+                $eval_macro begin
+                    q = :(│@helper│)
+                end
+                """
+            clean_code, positions = JETLS.get_text_and_positions(code)
+            @test length(positions) == 4
+            for pos in positions[1:2]
+                @test length(find_references(clean_code, pos)) == 1
+            end
+            for pos in positions[3:4]
+                @test isempty(find_references(clean_code, pos))
+            end
+        end
+
+        # Two-argument `@eval` is unsupported because its target module may be
+        # dynamic, so its inert global is left unresolved even for `Main`.
+        for eval_macro in ("@eval", "Base.@eval")
+            code = """
+                struct │LSAnalyzer│ end
+                $eval_macro SomeModule some_func(::│LSAnalyzer│) = nothing
+                """
+            clean_code, positions = JETLS.get_text_and_positions(code)
+            @test length(positions) == 4
+            for (i, pos) in enumerate(positions)
+                refs = find_references(clean_code, pos)
+                @test length(refs) == (i <= 2 ? 1 : 0)
+            end
+        end
+
+        # Nested macrocalls in two-argument `@eval` input are unresolved too.
+        for eval_macro in ("@eval", "Base.@eval")
+            code = """
+                macro │helper│()
+                    nothing
+                end
+                $eval_macro SomeModule │@helper│
+                """
+            clean_code, positions = JETLS.get_text_and_positions(code)
+            @test length(positions) == 4
+            for pos in positions[1:2]
+                @test length(find_references(clean_code, pos)) == 1
+            end
+            for pos in positions[3:4]
+                @test isempty(find_references(clean_code, pos))
             end
         end
     end
