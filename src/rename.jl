@@ -165,15 +165,38 @@ function handle_RenameRequest(
     return nothing
 end
 
+"""
+    handle_rename_progress_response(server::Server, msg, request_caller, progress_cancel_flag)
+
+Continuation of a deferred `textDocument/rename`: runs after the client answers the
+`window/workDoneProgress/create` request, i.e. outside the scope of
+[`handle_request_message_or_respond_error`](@ref). A throw here must still produce a
+response for the original request id, otherwise the client blocks on the rename request.
+"""
 function handle_rename_progress_response(
         server::Server, msg::Dict{Symbol,Any}, request_caller::RenameProgressCaller,
         progress_cancel_flag::CancelFlag)
-    if handle_response_error(server, msg, "create work done progress")
-        return
-    end
     (; uri, fi, pos, newName, msg_id, token, cancel_flag) = request_caller
+    if handle_response_error(server, msg, "create work done progress")
+        return send(server,
+            RenameResponse(;
+                id = msg_id,
+                result = nothing,
+                error = request_failed_error("work done progress creation for rename failed")))
+    end
     combined_flag = CombinedCancelFlag(cancel_flag, progress_cancel_flag)
-    do_rename(server, uri, fi, pos, newName, msg_id, combined_flag; token)
+    try
+        do_rename(server, uri, fi, pos, newName, msg_id, combined_flag; token)
+    catch err
+        @error "do_rename failed in rename progress continuation" id = msg_id
+        Base.display_error(stderr, err, catch_backtrace())
+        send(server,
+            RenameResponse(;
+                id = msg_id,
+                result = nothing,
+                error = internal_error(sprint(showerror, err))))
+    end
+    nothing
 end
 
 function do_rename(

@@ -54,7 +54,11 @@ function Test.record(ts::HierarchicalTestSet, t::Union{Test.Fail, Test.Error};
         end
     end
     push!(ts.__hierarchical_testset_inner__.results, t)
-    (Test.FAIL_FAST[] || ts.__hierarchical_testset_inner__.failfast) && throw(Test.FailFastError())
+    failfast = ts.__hierarchical_testset_inner__.failfast
+    @static if isdefined(Test, :FAIL_FAST)
+        failfast |= Test.FAIL_FAST[]
+    end
+    failfast && throw(Test.FailFastError())
     return t
 end
 Test.record(ts::HierarchicalTestSet, t) = Test.record(ts.__hierarchical_testset_inner__, t)

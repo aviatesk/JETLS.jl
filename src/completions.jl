@@ -589,11 +589,14 @@ function add_emoji_latex_completions!(
                 newText = val))
     end
 
-    emojionly || foreach(REPL.REPLCompletions.latex_symbols) do (key, val)
-        items[key] = create_ci(key, val, false)
-    end
-    foreach(REPL.REPLCompletions.emoji_symbols) do (key, val)
-        items[key] = create_ci(key, val, true)
+    if emojionly
+        foreach(REPL.REPLCompletions.emoji_symbols) do (key, val)
+            items[key] = create_ci(key, val, true)
+        end
+    else
+        foreach(REPL.REPLCompletions.latex_symbols) do (key, val)
+            items[key] = create_ci(key, val, false)
+        end
     end
 
     # if we reached here, we have added all emoji and latex completions
@@ -626,7 +629,12 @@ const KEYWORD_DOCS = Dict{String,MarkupContent}()
 let keywords = Set{String}()
     union!(keywords, REPL.REPLCompletions.sorted_keywords, REPL.REPLCompletions.sorted_keyvals)
     for keyword in keywords
-        documentation = get_keyword_doc(Symbol(keyword))
+        keysym = Symbol(keyword)
+        documentation = if keysym in (Symbol("true"), Symbol("false")) || haskey(Base.Docs.keywords, keysym)
+            get_keyword_doc(keysym)
+        else
+            nothing
+        end
         KEYWORD_COMPLETIONS[keyword] = CompletionItem(;
             label = keyword,
             labelDetails = CompletionItemLabelDetails(; description = "keyword"),

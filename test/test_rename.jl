@@ -755,4 +755,73 @@ end
     end
 end
 
+# The overrides below shadow `JETLS.do_rename` with strictly more specific methods
+# (`CancelFlag`/`CombinedCancelFlag` vs the original `AbstractCancelFlag`) that throw,
+# simulating a handler crash; `Base.delete_method` restores the original dispatch.
+function make_throwing_do_rename(flagtype::Type)
+    @eval JETLS function do_rename(
+            server::Server, uri::URI, fi::FileInfo, pos::Position,
+            newName::String, msg_id::MessageId, cancel_flag::$flagtype;
+            token::Union{Nothing,ProgressToken} = nothing)
+        error("deliberate rename failure (test override)")
+    end
+    return which(JETLS.do_rename,
+        Tuple{JETLS.Server, JETLS.URI, JETLS.FileInfo, Position, String, JETLS.MessageId, flagtype})
+end
+
+@testset "error response when rename handler throws" begin
+    override = make_throwing_do_rename(JETLS.CancelFlag)
+    try
+        withserver() do (; server, writereadmsg, id_counter)
+            uri = filename2uri(joinpath(@__DIR__, "testfile_$(gensym(:rename_throw)).jl"))
+            JETLS.cache_file_info!(server, uri, 1, "const target_binding = 1\n")
+            let id = id_counter[] += 1
+                (; raw_res) = writereadmsg(RenameRequest(;
+                    id,
+                    params = RenameParams(;
+                        textDocument = TextDocumentIdentifier(; uri),
+                        position = Position(; line = 0, character = 6),
+                        newName = "renamed_binding")))
+                @test raw_res isa ResponseMessage
+                @test raw_res.id == id
+                @test isnothing(raw_res.result)
+                @test raw_res.error isa ResponseError
+                @test raw_res.error.code == ErrorCodes.InternalError
+            end
+        end
+    finally
+        Base.delete_method(override)
+    end
+end
+
+@testset "error response when deferred rename continuation throws" begin
+    override = make_throwing_do_rename(JETLS.CombinedCancelFlag)
+    try
+        capabilities = ClientCapabilities(;
+            window = WindowClientCapabilities(; workDoneProgress = true))
+        withserver(; capabilities) do (; server, writemsg, readmsg, writereadmsg, id_counter)
+            uri = filename2uri(joinpath(@__DIR__, "testfile_$(gensym(:rename_deferred_throw)).jl"))
+            JETLS.cache_file_info!(server, uri, 1, "const target_binding = 1\n")
+            let id = id_counter[] += 1
+                (; raw_res) = writereadmsg(RenameRequest(;
+                    id,
+                    params = RenameParams(;
+                        textDocument = TextDocumentIdentifier(; uri),
+                        position = Position(; line = 0, character = 6),
+                        newName = "renamed_binding")))
+                @test raw_res isa WorkDoneProgressCreateRequest
+                writemsg(ResponseMessage(; id = raw_res.id, result = nothing); check = false)
+                (; raw_msg) = readmsg()
+                @test raw_msg isa RenameResponse
+                @test raw_msg.id == id
+                @test isnothing(raw_msg.result)
+                @test raw_msg.error isa ResponseError
+                @test raw_msg.error.code == ErrorCodes.InternalError
+            end
+        end
+    finally
+        Base.delete_method(override)
+    end
+end
+
 end # test_rename

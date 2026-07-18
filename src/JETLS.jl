@@ -396,7 +396,7 @@ function handler_concurrent_message(server::Server, @nospecialize msg)
         end
     elseif isdefined(msg, :id) && (id = msg.id; id isa String || id isa Int)
         let cancel_flag = get!(()->CancelFlag(false), server.state.currently_handled, id)
-            Threads.@spawn :default @tryinvokelatest handle_request_message(server, msg, cancel_flag)
+            Threads.@spawn :default @tryinvokelatest handle_request_message_or_respond_error(server, msg, cancel_flag)
         end
     else
         Threads.@spawn :default @tryinvokelatest handle_notification_message(server, msg)
@@ -451,6 +451,30 @@ function handle_response_message(
         # nothing to do
     else
         error("Unknown request caller type")
+    end
+    nothing
+end
+
+"""
+    handle_request_message_or_respond_error(server::Server, msg, cancel_flag::CancelFlag)
+
+Run [`handle_request_message`](@ref), and if the handler throws, still send an
+`ErrorCodes.InternalError` response for `msg.id`: every LSP request must be
+answered or the client blocks on it until its own timeout. Sending the response
+also enqueues the `HandledToken` that clears `msg.id` from
+`server.state.currently_handled`.
+"""
+function handle_request_message_or_respond_error(server::Server, @nospecialize(msg), cancel_flag::CancelFlag)
+    try
+        handle_request_message(server, msg, cancel_flag)
+    catch err
+        @error "handle_request_message failed" id = msg.id
+        Base.display_error(stderr, err, catch_backtrace())
+        send(server,
+            ResponseMessage(;
+                id = msg.id,
+                result = nothing,
+                error = internal_error(sprint(showerror, err))))
     end
     nothing
 end

@@ -136,6 +136,46 @@ function narrow_doc_lookup(binding::Base.Docs.Binding, @nospecialize(sig), world
     return md
 end
 
+function doc_sig_arity(@nospecialize(msig))
+    msig === Union{} && return -1
+    body = Base.unwrap_unionall(msig)
+    (body isa DataType && body <: Tuple) || return -2
+    return length(body.parameters)
+end
+
+"""
+    order_doc_lookup(binding::Base.Docs.Binding, arity::Int, world::UInt) -> Markdown.MD | Nothing
+
+Ambiguous-dispatch fallback for a call with `arity` positional arguments: keep
+*every* stored doc (so no applicable overload is hidden) but surface the docs
+whose stored signature arity matches the call — plus interface declarations
+(`msig === Union{}`) — ahead of unrelated-arity overloads like the curried
+1-arg convenience forms Base attaches to many functions. Ordering only; returns
+`nothing` when the binding carries no stored docs so the caller can fall back to
+the auto-generated summary.
+"""
+function order_doc_lookup(binding::Base.Docs.Binding, arity::Int, world::UInt)
+    matched = Base.Docs.DocStr[]
+    rest = Base.Docs.DocStr[]
+    for mod in Base.Docs.modules
+        dict = @something Base.invoke_in_world(world, Base.Docs.meta, mod;
+            autoinit=false)::Union{Nothing,IdDict{Any,Any}} continue
+        haskey(dict, binding) || continue
+        multidoc = dict[binding]::Base.Docs.MultiDoc
+        for msig in multidoc.order
+            a = doc_sig_arity(msig)
+            push!(a == arity || a == -1 ? matched : rest, multidoc.docs[msig])
+        end
+    end
+    results = vcat(matched, rest)
+    isempty(results) && return nothing
+    md = Base.invoke_in_world(world, Base.Docs.catdoc, map(Base.Docs.parsedoc, results)...)
+    md isa Markdown.MD || return nothing
+    md.meta[:results] = results
+    md.meta[:binding] = binding
+    return md
+end
+
 """
     lookup_doc_for_binding(parentmod::Module, name::Symbol, sig, world::UInt) ->
         doc::Markdown.MD or nothing
@@ -159,6 +199,8 @@ function lookup_doc_for_binding(
     try
         if sig === nothing
             return lookup_doc_stripped(binding, world)
+        elseif sig isa Integer
+            return @something order_doc_lookup(binding, Int(sig), world) lookup_doc_stripped(binding, world)
         end
         return narrow_doc_lookup(binding, sig, world)
     catch
@@ -194,6 +236,9 @@ function lookup_doc_for_value(@nospecialize(v), @nospecialize(sig), world::UInt)
         end
         binding = Base.invoke_in_world(world, Base.Docs.aliasof, v, typeof(v))
         binding isa Base.Docs.Binding || return nothing
+        if sig isa Integer
+            return @something order_doc_lookup(binding, Int(sig), world) lookup_doc_stripped(v, world)
+        end
         return narrow_doc_lookup(binding, sig, world)
     catch
         return nothing

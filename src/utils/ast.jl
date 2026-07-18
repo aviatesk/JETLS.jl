@@ -28,7 +28,8 @@ name_val(st::SyntaxTreeC) = st.name_val::String
 var_id(st::SyntaxTreeC) = st.var_id::JL.IdTag
 
 get_source_text(ps::JS.ParseStream) = JS.sourcetext(JS.SourceFile(ps))
-document_text(fi::FileInfo) = get_source_text(fi.parsed_stream)
+document_text(fi::FileInfo) =
+    fi.raw_text === nothing ? get_source_text(fi.parsed_stream) : fi.raw_text
 document_range(fi::FileInfo) = jsobj_to_range(fi.parsed_stream, fi)
 
 @static if JL.DEBUG

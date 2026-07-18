@@ -152,7 +152,7 @@ function extract_module_symbol!(
         parent_context_module::Module
     )
     JS.numchildren(st0) ≥ 3 || return nothing
-    name_node = st0[2]
+    name_node = st0[end-1]
     name = @something get_name_val(name_node) return nothing
     context_module = parent_context_module
     if invokelatest(isdefinedglobal, parent_context_module, Symbol(name))

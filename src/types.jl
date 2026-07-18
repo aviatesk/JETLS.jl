@@ -118,18 +118,25 @@ struct FileInfo
     # O(N) line scan once per FileInfo (constructed on didOpen / didChange) is a
     # net win across the server.
     line_starts::LineStartsIndex
+    # Unmasked document text. `parsed_stream.textbuf` may be masked (nothelix
+    # cell markers blanked before parsing), so whole-document text extraction —
+    # formatting, test-runner — reads this instead. `nothing` for unsynced /
+    # disk files, where the (possibly masked) parsed stream is the only source.
+    raw_text::Union{Nothing,String}
 
     function FileInfo(
             version::Int, parsed_stream::JS.ParseStream, filename::AbstractString,
             encoding::LSP.PositionEncodingKind.Ty = LSP.PositionEncodingKind.UTF16,
             testsetinfos::Vector{TestsetInfo} = EMPTY_TESTSETINFOS;
             syntax_tree0::Union{Nothing,SyntaxTreeC} = nothing,
-            inferred_context_cache::Union{Nothing,InferredContextCache} = nothing
+            inferred_context_cache::Union{Nothing,InferredContextCache} = nothing,
+            raw_text::Union{Nothing,AbstractString} = nothing
         )
         syntax_tree0 = syntax_tree0 === nothing ? nothing : JS.prune(syntax_tree0)
         line_starts = build_line_starts(parsed_stream.textbuf)
         new(version, parsed_stream, filename, encoding, testsetinfos, syntax_tree0,
-            inferred_context_cache, line_starts)
+            inferred_context_cache, line_starts,
+            raw_text === nothing ? nothing : String(raw_text))
     end
 end
 @define_override_constructor FileInfo # For testsetinfos update

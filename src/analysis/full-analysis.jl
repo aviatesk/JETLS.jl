@@ -1063,7 +1063,7 @@ function analyze_package_with_revise(
                 JET.AnalyzerState(JET.AnalyzerState(analyzer), #=refresh_local_cache=#true))
             match = signature_analysis_match(task_analyzer, siginfo.sig, inf_world)
             if match !== nothing
-                task_analyzer, result = JET.analyze_method_signature!(task_analyzer,
+                result = JET.analyze_method_signature!(task_analyzer,
                     match.method, match.spec_types, match.sparams)
                 @atomic progress.analyzed += 1
                 reports = JET.get_reports(task_analyzer, result)

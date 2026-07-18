@@ -289,12 +289,25 @@ end
 # "(generic + the specific method's docs)".
 function call_doc_sig(ctx::InferredTreeContext, st0_top::SyntaxTreeC, node::SyntaxTreeC)
     call_node = @something enclosing_call_for_matches(st0_top, node) return nothing
-    matches = @something get_matches_for_range(ctx, JS.byte_range(call_node)) return nothing
-    # Require a single matched method — for ambiguous dispatch (union splits,
-    # multiple matching overloads) fall back to the unnarrowed lookup so we
-    # don't silently hide applicable docs.
-    length(matches) == 1 || return nothing
-    return method_doc_sig(only(matches).method)
+    arity = call_positional_arity(call_node)
+    matches = get_matches_for_range(ctx, JS.byte_range(call_node))
+    # A unique match narrows to its method signature; ambiguous dispatch hands
+    # down the call's positional arity so the lookup orders arity-matching docs
+    # first without hiding any applicable overload.
+    if matches !== nothing && length(matches) == 1
+        s = method_doc_sig(only(matches).method)
+        s === nothing || return s
+    end
+    return arity
+end
+
+function call_positional_arity(call_node::SyntaxTreeC)
+    n = 0
+    for i in 2:JS.numchildren(call_node)
+        JS.kind(call_node[i]) === JS.K"parameters" && continue
+        n += 1
+    end
+    return n
 end
 
 # Resolve `node` to a `(parentmod, identifier)` pair and look up its binding-
