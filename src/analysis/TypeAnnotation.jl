@@ -126,9 +126,9 @@ types to `Any`.
 - **Closures**: Single-method local closures are rewritten to `K"_opaque_closure"`
   by [`Closure2Opaque.rewrite_local_closures_to_opaque`](@ref) before
   `JL.convert_closures`, so CC's native `OpaqueClosure` path handles them
-  precisely (body, captures, and call sites all infer). Multi-method local
-  closures (same name with multiple method definitions) aren't representable as
-  a single OC, so the rewrite skips them and JL's synthetic struct path takes
+  precisely (body, captures, and call sites all infer). Local closures with
+  multiple method definitions for one `ClosureKey` aren't representable as a
+  single OC, so the rewrite skips them and JL's synthetic struct path takes
   over. JL's standard runtime materializes the synthetic struct type before
   dispatch, but `infer_toplevel_tree` deliberately avoids `Core.eval` to keep
   analysis side-effect-free, so the synthetic type never appears in

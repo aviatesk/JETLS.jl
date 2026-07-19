@@ -291,6 +291,22 @@ end
         @test val === true
         @test count_opaque_closures(tree) == 2
     end
+
+    let (val, tree) = rewrite_lower_eval("""
+            let a = 1, b = 10
+                inner() = a
+                v1 = inner
+                function mid()
+                    inner() = a + b
+                end
+                mid()
+                v2 = inner
+                (v1(), v2())
+            end
+            """)
+        @test val == (1, 11)
+        @test count_opaque_closures(tree) == 3
+    end
 end
 
 @testset "do-block as map argument" begin
@@ -307,11 +323,10 @@ end
 end
 
 # Multi-method local closures aren't representable as a single OC, so the rewrite
-# must skip them and let `JL.convert_closures` produce a synthetic struct. JL wraps
-# each method definition in its own inner block, so a sibling-only count would see
-# only one `K"method_defs"` per block. The pre-pass in
-# `_collect_multi_method_bindings` walks the whole tree to count `K"method_defs"`
-# per `var_id`, which is what lets the rewrite skip both methods here.
+# must skip them and let `JL.convert_closures` produce a synthetic struct. JL can
+# place methods in separate inner blocks, so scanning sibling `K"method_defs"`
+# nodes is insufficient. `collect_multi_method_bindings` counts `K"method"` nodes
+# per `ClosureKey` across the tree, allowing both definitions to bypass the rewrite.
 @testset "multi-method local closure should fall through" begin
     let tree = rewrite_only("""
             let
