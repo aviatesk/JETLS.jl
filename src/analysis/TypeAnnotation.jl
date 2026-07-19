@@ -897,7 +897,7 @@ Return whether type-annotation features should skip a lowerable top-level form.
 Declaration-only forms have no useful inferred value annotations.
 """
 is_type_annotation_skipped_toplevel(st0::SyntaxTreeC) =
-    JS.kind(st0) in JS.KSet"using import export public abstract primitive"
+    JS.kind(st0) in JS.KSet"using import export public abstract primitive String"
 
 """
     get_inferrable_tree(
