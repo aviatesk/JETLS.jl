@@ -7,20 +7,29 @@ using JETLS.LSP.URIs2
 
 include(normpath(pkgdir(JETLS), "test", "jsjl-utils.jl"))
 
-module lowering_module end
+module lowering_module
+const B = Base
+end
+
+module same_named_eval_context
+macro eval(args...)
+    return esc(last(args))
+end
+end
 
 with_binding_occurrences(callback, code::AbstractString; kwargs...) =
     with_binding_occurrences(callback, lowering_module, code; kwargs...)
 function with_binding_occurrences(
         callback, context_module::Module, code::AbstractString;
+        world::UInt = Base.get_world_counter(),
         remove_macrocalls::Bool = false
     )
     st0 = jlparse(code; rule=:statement)
     if remove_macrocalls
-        st0 = JETLS.remove_macrocalls(st0)
+        st0 = JETLS.remove_macrocalls(context_module, world, st0)
     end
-    (; ctx3, st3) = JETLS.jl_lower_for_scope_resolution(context_module, st0)
-    binding_occurrences = JETLS.compute_binding_occurrences(ctx3, st3)
+    (; ctx3, st3) = JETLS.jl_lower_for_scope_resolution(context_module, world, st0)
+    binding_occurrences = JETLS.compute_binding_occurrences(ctx3, st3, world)
     callback(binding_occurrences)
 end
 
@@ -427,14 +436,15 @@ end
             end
         end
 
-        with_binding_occurrences("""
-            Base.@generated function foo(x)
-                return :(x + 1)
-            end
-            """) do binding_occurrences
-            @test any(binding_occurrences) do (binding, occurrences)
-                binding.name == "x" && binding.kind === :argument &&
-                any(o -> o.kind === :use, occurrences)
+        for generated_macro in ("Base.@generated", "B.@generated")
+            with_binding_occurrences("""
+                $generated_macro function foo(x)
+                    return :(x + 1)
+                end
+                """) do binding_occurrences
+                @test any(binding_occurrences) do (binding, occurrences)
+                    binding.name == "x" && binding.kind === :argument && any(o -> o.kind === :use, occurrences)
+                end
             end
         end
 
@@ -545,13 +555,14 @@ end
 
 function get_full_binding_occurrences(text::AbstractString;
         filename::String = joinpath(@__DIR__, "testfile.jl"),
+        context_module::Module = lowering_module,
         kwargs...)
     fi = JETLS.FileInfo(#=version=#0, text, filename)
     st0 = jlparse(text; rule=:statement)
     uri = filename2uri(filename)
     state = JETLS.ServerState()
     return JETLS.compute_full_binding_occurrences(state, uri, fi, st0;
-        lookup_func = Returns(JETLS.OutOfScope(lowering_module)),
+        lookup_func = Returns(JETLS.OutOfScope(context_module)),
         kwargs...)
 end
 
@@ -836,7 +847,7 @@ end
         end
 
         # Quoted atomic input remains Symbol data when passed directly to `@eval`.
-        for eval_macro in ("@eval", "Base.@eval")
+        for eval_macro in ("@eval", "Base.@eval", "B.@eval")
             boccs = get_full_binding_occurrences("$eval_macro :sin")
             @test !any(boccs) do (binfo, occs)
                 binfo.name == "sin" && binfo.kind === :global && any(o -> o.kind === :use, occs)
@@ -844,7 +855,7 @@ end
         end
 
         # Unquoted one-argument `@eval` input resolves in the construction module.
-        for eval_macro in ("@eval", "Base.@eval")
+        for eval_macro in ("@eval", "Base.@eval", "B.@eval")
             boccs = get_full_binding_occurrences("$eval_macro sin")
             @test any(boccs) do (binfo, occs)
                 binfo.name == "sin" && binfo.kind === :global && any(o -> o.kind === :use, occs)
@@ -869,24 +880,31 @@ end
         end
 
         # One-argument `@eval` resolves inert globals in the construction module.
-        for eval_macro in ("@eval", "Base.@eval")
+        for eval_macro in ("@eval", "Base.@eval", "B.@eval")
             boccs = get_full_binding_occurrences("""
                 $eval_macro some_func(::EvalTarget) = nothing
                 """)
             @test any(boccs) do (binfo, occs)
-                binfo.name == "EvalTarget" && binfo.kind === :global &&
-                    any(o -> o.kind === :use, occs)
+                binfo.name == "EvalTarget" && binfo.kind === :global && any(o -> o.kind === :use, occs)
             end
         end
 
         # Two-argument `@eval` is unsupported even for a static-looking target.
-        for eval_macro in ("@eval", "Base.@eval")
+        for eval_macro in ("@eval", "Base.@eval", "B.@eval")
             boccs = get_full_binding_occurrences("""
                 $eval_macro SomeModule some_func(::EvalTarget) = nothing
                 """)
             @test !any(boccs) do (binfo, occs)
-                binfo.name == "EvalTarget" && binfo.kind === :global &&
-                    any(o -> o.kind === :use, occs)
+                binfo.name == "EvalTarget" && binfo.kind === :global && any(o -> o.kind === :use, occs)
+            end
+        end
+
+        # An unrelated same-named macro is not classified as `Base.@eval`.
+        let boccs = get_full_binding_occurrences("""
+                @eval SomeModule some_func(::EvalTarget) = nothing
+                """; context_module=same_named_eval_context)
+            @test any(boccs) do (binfo, occs)
+                binfo.name == "EvalTarget" && binfo.kind === :global && any(o -> o.kind === :use, occs)
             end
         end
 
@@ -895,8 +913,7 @@ end
                 @eval getcontext() some_func(::EvalTarget) = nothing
                 """)
             @test !any(boccs) do (binfo, occs)
-                binfo.name == "EvalTarget" && binfo.kind === :global &&
-                    any(o -> o.kind === :use, occs)
+                binfo.name == "EvalTarget" && binfo.kind === :global && any(o -> o.kind === :use, occs)
             end
         end
 
@@ -1069,8 +1086,9 @@ function with_global_binding_occurrences(
 
     pos = first(positions)
     offset = JETLS.xy_to_offset(clean_code, pos, filename)
+    world = Base.get_world_counter()
     (; ctx3, binding) = @something(
-        JETLS.select_target_binding(st0_top, offset, lowering_module),
+        JETLS.select_target_binding(st0_top, offset, lowering_module, world),
         error("No binding found at cursor position"))
     target_binfo = JL.get_binding(ctx3, binding)
     @test target_binfo.kind === :global

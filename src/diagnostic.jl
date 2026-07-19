@@ -1530,7 +1530,7 @@ function analyze_lowered_code!(
         inactive_branch_names::Set{String} = Set{String}()
     )
     (; ctx3, ctx4, st0, st3) = res
-    binding_occurrences = compute_binding_occurrences(ctx3, st3;
+    binding_occurrences = compute_binding_occurrences(ctx3, st3, world;
         include_global_bindings=true)
 
     reported = Set{LoweringDiagnosticKey}() # to prevent duplicate reports for unused default or keyword arguments
@@ -1538,7 +1538,7 @@ function analyze_lowered_code!(
 
     analyze_unconstrained_static_parameters!(diagnostics, fi, ctx3, st3, reported)
 
-    has_implicit_args = is_macro0(st0) || is_generated0(st0)
+    has_implicit_args = is_macro0(st0) || !isempty(generated_method_ids(ctx3, st3))
     analyze_unused_bindings!(
         diagnostics, fi, st0, ctx3, binding_occurrences, has_implicit_args, reported,
         kwarg_type_names, kwarg_locations;
@@ -1578,7 +1578,7 @@ function per_stmt_diagnostics!(
     (st0, _) = desugar_main_macrocall(st0)
     macro_diags = MacroDiagnostic[]
     res = Base.ScopedValues.@with MACRO_DIAGNOSTIC_SINK => macro_diags try
-        jl_lower_for_scope_resolution(context_module, st0; world,
+        jl_lower_for_scope_resolution(context_module, world, st0;
             recover_from_macro_errors=false, convert_closures=true, soft_scope)
     catch err
         if err isa JL.LoweringError
@@ -1636,9 +1636,9 @@ function per_stmt_diagnostics!(
         # the sink during the primary attempt would push the same entry again here
         # — emitting twice. With the sink unbound, those `push_macro_*!` calls
         # become no-ops, and stubs that genuinely throw simply re-throw and we bail.
-        st0 = remove_macrocalls(st0)
+        st0 = remove_macrocalls(context_module, world, st0)
         res = try
-            jl_lower_for_scope_resolution(context_module, st0; world,
+            jl_lower_for_scope_resolution(context_module, world, st0;
                 recover_from_macro_errors=false, convert_closures=true, soft_scope)
         catch
             return diagnostics

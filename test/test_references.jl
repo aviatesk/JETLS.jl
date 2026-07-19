@@ -847,8 +847,8 @@ end
     # a Julia binding. `@ccall` has a new-style JuliaLowering implementation
     # that correctly encodes this by wrapping `foo` in `K"inert"`, so scope
     # resolution must leave it alone. That only holds while
-    # `_remove_macrocalls` preserves the `@ccall` macrocall (because the
-    # macrocall is in `NEW_STYLE_MACROCALL_NAMES`) — if it ever falls back to
+    # `_remove_macrocalls` preserves the `@ccall` macrocall (because its binding
+    # is in `NEW_STYLE_MACRO_BINDINGS`) — if it ever falls back to
     # the generic stripping path, `foo` gets lifted into a plain `block` and
     # is misresolved to the enclosing Julia binding of the same name.
     @testset "@ccall C symbol vs enclosing Julia binding" begin

@@ -93,7 +93,8 @@ function _get_hover(
     # without running full-analysis on the test source.
     context_module = something(context_module, ctx_info.context_module)
     soft_scope = is_notebook_cell_uri(state, uri)
-    binding_result = select_target_binding(st0_top, offset, context_module; soft_scope)
+    binding_result = select_target_binding(
+        st0_top, offset, context_module, world; soft_scope)
     is_cancelled(cancel_flag) && return nothing
 
     if binding_result !== nothing
@@ -140,7 +141,7 @@ function _get_hover(
     end
     # Fallback when the TypeAnnotation pipeline can't supply a type
     if typ === nothing
-        typ = resolve_global_const(context_module, node, world)
+        typ = resolve_global_const(context_module, world, node)
         if typ !== nothing && type_str === nothing && display_node === node
             type_str = hover_type_string(typ, JS.sourcetext(display_node))
         end

@@ -176,8 +176,8 @@ end
 function get_cursor_bindings_cached!(comp_ctx::CompletionCtx)
     isdefined(comp_ctx, :cursor_bindings) && return comp_ctx.cursor_bindings
     return comp_ctx.cursor_bindings = cursor_bindings(
-        comp_ctx.st0_top, comp_ctx.offset, comp_ctx.context_module;
-            soft_scope=comp_ctx.soft_scope)
+        comp_ctx.st0_top, comp_ctx.offset, comp_ctx.context_module, comp_ctx.world;
+        soft_scope=comp_ctx.soft_scope)
 end
 
 # Typical completion UI
@@ -341,7 +341,7 @@ function global_completions!(
         # A `Union{}` prefix type is uninformative (the prefix throws or is dead code);
         # treat it like `nothing` so module/const prefixes such as `Base.` still complete.
         if prefixtyp === nothing || prefixtyp === Union{}
-            prefixtyp = resolve_global_const(context_module, dotprefix, world)
+            prefixtyp = resolve_global_const(context_module, world, dotprefix)
         end
         # Module prefix → enumerate that module's globals below.
         # Otherwise → property completion (abstract-call
@@ -798,7 +798,7 @@ function call_completions!(
     ctx = get_inferred_ctx!(comp_ctx; caller="call_completions!")
     fntyp = ctx === nothing ? nothing : get_type_for_range(ctx, JS.byte_range(call[1]))
     if fntyp === nothing
-        fntyp = resolve_global_const(context_module, call[1], world)
+        fntyp = resolve_global_const(context_module, world, call[1])
     end
     fntyp isa Core.Const || return nothing
 

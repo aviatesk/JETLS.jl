@@ -52,8 +52,7 @@ end
 
 """
     jl_lower_for_scope_resolution(
-            context_module::Module, st0::SyntaxTreeC;
-            world::UInt = Base.get_world_counter(),
+            context_module::Module, world::UInt, st0::SyntaxTreeC;
             trim_error_nodes::Bool = true,
             recover_from_macro_errors::Bool = true,
             convert_closures::Bool = false,
@@ -77,8 +76,7 @@ Throw if lowering fails otherwise.
 Note that ctx objects share mutable information, so we only return `ctx3`
 """
 function jl_lower_for_scope_resolution(
-        context_module::Module, st0::SyntaxTreeC;
-        world::UInt = Base.get_world_counter(),
+        context_module::Module, world::UInt, st0::SyntaxTreeC;
         trim_error_nodes::Bool = true,
         recover_from_macro_errors::Bool = true,
         convert_closures::Bool = false,
@@ -95,7 +93,7 @@ function jl_lower_for_scope_resolution(
         @static JETLS_DEBUG_LOWERING && @warn "Error in macro expansion; trimming and retrying"
         @static JETLS_DEBUG_LOWERING && showerror(stderr, err)
         @static JETLS_DEBUG_LOWERING && Base.show_backtrace(stderr, catch_backtrace())
-        st0 = remove_macrocalls(st0)
+        st0 = remove_macrocalls(context_module, world, st0)
         st0 = JL.rebase_layers(st0, context_module, JS.JL_OLD_SYNTAX_VERSION)
         JL.expand_forms_1(st0, world, true)
     end
@@ -123,13 +121,13 @@ as an ephemeral stack.)  We work around this by taking all available bindings
 and filtering out any that aren't declared in a scope containing the cursor.
 """
 function cursor_bindings(
-        st0_top::SyntaxTreeC, offset::Int, context_module::Module;
+        st0_top::SyntaxTreeC, offset::Int, context_module::Module, world::UInt;
         soft_scope::Bool = false
     )
     st0 = @something lowerable_toplevel_at(st0_top, offset) return nothing
     (st0, _) = desugar_main_macrocall(st0)
     (; ctx3, st2) = try
-        jl_lower_for_scope_resolution(context_module, st0; soft_scope)
+        jl_lower_for_scope_resolution(context_module, world, st0; soft_scope)
     catch err
         @static JETLS_DEBUG_LOWERING && @warn "Error in lowering" err
         @static JETLS_DEBUG_LOWERING && Base.show_backtrace(stderr, catch_backtrace())
@@ -265,7 +263,7 @@ end
 
 """
     select_target_binding(
-            st0_top::SyntaxTreeC, offset::Int, context_module::Module;
+            st0_top::SyntaxTreeC, offset::Int, context_module::Module, world::UInt;
             soft_scope::Bool = false
         ) -> Union{Nothing, NamedTuple}
 
@@ -275,24 +273,28 @@ contains `(; ctx3, st3, st0, binding)` where `binding` satisfies
 `JS.kind(binding) === JS.K"BindingId"`.
 """
 function select_target_binding(
-        st0_top::SyntaxTreeC, offset::Int, context_module::Module;
+        st0_top::SyntaxTreeC, offset::Int, context_module::Module, world::UInt;
         caller::AbstractString = "select_target_binding",
         soft_scope::Bool = false
     )
     st0 = @something lowerable_toplevel_at(st0_top, offset) return nothing
 
-    macrocall_result = select_macrocall_binding(st0, offset, context_module, caller; soft_scope)
+    macrocall_result = select_macrocall_binding(
+        st0, offset, context_module, world; caller, soft_scope)
     macrocall_result !== nothing && return macrocall_result
 
-    export_public_result = select_export_public_binding(st0, offset, context_module, caller; soft_scope)
+    export_public_result = select_export_public_binding(
+        st0, offset, context_module, world; caller, soft_scope)
     export_public_result !== nothing && return export_public_result
 
-    import_using_result = select_import_using_binding(st0, offset, context_module, caller; soft_scope)
+    import_using_result = select_import_using_binding(
+        st0, offset, context_module, world; caller, soft_scope)
     import_using_result !== nothing && return import_using_result
 
+    st0′ = remove_macrocalls(context_module, world, st0; strip_static=true)
     (; ctx3, st3) = try
         # Remove macros to preserve precise source locations
-        jl_lower_for_scope_resolution(context_module, remove_macrocalls(st0; strip_static=true); soft_scope)
+        jl_lower_for_scope_resolution(context_module, world, st0′; soft_scope)
     catch err
         @static JETLS_DEBUG_LOWERING && @warn "Error in lowering ($caller)" err
         @static JETLS_DEBUG_LOWERING && Base.show_backtrace(stderr, catch_backtrace())
@@ -304,7 +306,7 @@ function select_target_binding(
         return (; ctx3, st3, st0, binding)
     end
     inert_result = select_inert_target_binding(
-        st0, ctx3, st3, offset, context_module; soft_scope)
+        st0, ctx3, st3, offset, context_module, world; soft_scope)
     inert_result !== nothing && return inert_result
 
     inner_constructor = select_struct_inner_constructor_binding(ctx3, st0, offset)
@@ -460,7 +462,7 @@ function prepare_inert_template(
 end
 
 function resolve_inert_tree(
-        context_module::Module, inert_tree::SyntaxTreeC;
+        context_module::Module, world::UInt, inert_tree::SyntaxTreeC;
         parameters::Dict{String,SyntaxTreeC} = Dict{String,SyntaxTreeC}(),
         hard_scope::Bool = false,
         soft_scope::Bool = false,
@@ -483,7 +485,7 @@ function resolve_inert_tree(
         template
     end
     ires = try
-        jl_lower_for_scope_resolution(context_module, input; soft_scope)
+        jl_lower_for_scope_resolution(context_module, world, input; soft_scope)
     catch
         return nothing
     end
@@ -506,7 +508,7 @@ function contains_syntaxunquote(st::SyntaxTreeC)
 end
 
 function collect_generated_inert_resolutions(
-        ctx3::JL.VariableAnalysisContext, st3::SyntaxTreeC
+        ctx3::JL.VariableAnalysisContext, st3::SyntaxTreeC, world::UInt
     )
     resolutions = InertResolution[]
     seen = Set{Tuple{JS.Kind,UnitRange{Int}}}()
@@ -527,7 +529,7 @@ function collect_generated_inert_resolutions(
             key = (JS.kind(node), JS.byte_range(node))
             key in seen && return traversal_no_recurse
             push!(seen, key)
-            resolution = resolve_inert_tree(context_module, node;
+            resolution = resolve_inert_tree(context_module, world, node;
                 parameters=args, hard_scope=true,
                 preserve_nested_interpolations=true)
             resolution === nothing || push!(resolutions, resolution)
@@ -574,12 +576,19 @@ function is_code_shaped_quote_range(st0::SyntaxTreeC, range::UnitRange{Int})
     return false
 end
 
-is_generated_inert_range(st0::SyntaxTreeC, range::UnitRange{Int}) =
-    any(is_generated0, byte_ancestors(st0, range))
+function is_generated_inert_range(
+        context_module::Module, world::UInt, st0::SyntaxTreeC, range::UnitRange{Int}
+    )
+    return any(byte_ancestors(st0, range)) do ancestor
+        is_generated0(context_module, world, ancestor)
+    end
+end
 
-function eval_input_info(st0::SyntaxTreeC, range::UnitRange{Int})
+function eval_input_info(
+        context_module::Module, world::UInt, st0::SyntaxTreeC, range::UnitRange{Int}
+    )
     for ancestor in byte_ancestors(st0, range)
-        is_ateval0(ancestor) || continue
+        is_ateval0(context_module, world, ancestor) || continue
         nchildren = JS.numchildren(ancestor)
         for i = 3:nchildren
             range ⊆ JS.byte_range(ancestor[i]) || continue
@@ -592,7 +601,9 @@ function eval_input_info(st0::SyntaxTreeC, range::UnitRange{Int})
 end
 
 """
-    inert_resolution_policy(st0::SyntaxTreeC, range::UnitRange{Int}) -> Symbol
+    inert_resolution_policy(
+        context_module::Module, world::UInt, st0::SyntaxTreeC, range::UnitRange{Int}
+    ) -> Symbol
 
 Choose how to resolve bindings in an inert source range. This deliberately uses
 construction-site resolution for free globals in code-shaped quotes: it is a
@@ -618,8 +629,10 @@ References and rename share this policy so they agree on binding identity and
 occurrences. Generated-function inert code is handled separately with its
 synthetic function scope and argument remapping.
 """
-function inert_resolution_policy(st0::SyntaxTreeC, range::UnitRange{Int})
-    eval_input = eval_input_info(st0, range)
+function inert_resolution_policy(
+        context_module::Module, world::UInt, st0::SyntaxTreeC, range::UnitRange{Int}
+    )
+    eval_input = eval_input_info(context_module, world, st0, range)
     if eval_input !== nothing
         eval_input.nargs == 1 || return :unresolved
         if eval_input.is_direct && !is_quoted_range(st0, range)
@@ -651,14 +664,16 @@ end
 
 # `@eval` contributes an implicit quote stage. Interpolation removes a stage, so
 # a macrocall at depth zero executes in the surrounding lexical context.
-function should_resolve_macrocall(st0::SyntaxTreeC, range::UnitRange{Int})
-    eval_input = eval_input_info(st0, range)
+function should_resolve_macrocall(
+        context_module::Module, world::UInt, st0::SyntaxTreeC, range::UnitRange{Int}
+    )
+    eval_input = eval_input_info(context_module, world, st0, range)
     depth = quote_stage_depth(st0, range) + (eval_input === nothing ? 0 : 1)
     depth <= 0 && return true
     if eval_input !== nothing
         return eval_input.nargs == 1 && depth == 1
     end
-    return inert_resolution_policy(st0, range) !== :unresolved
+    return inert_resolution_policy(context_module, world, st0, range) !== :unresolved
 end
 
 function resolved_binding_at(resolution::InertResolution, offset::Int)
@@ -670,11 +685,11 @@ end
 
 function select_inert_target_binding(
         st0::SyntaxTreeC, ctx3::JL.VariableAnalysisContext, st3::SyntaxTreeC,
-        offset::Int, context_module::Module;
+        offset::Int, context_module::Module, world::UInt;
         soft_scope::Bool = false
     )
     inside_generated = false
-    for resolution in collect_generated_inert_resolutions(ctx3, st3)
+    for resolution in collect_generated_inert_resolutions(ctx3, st3, world)
         (offset in resolution.source_range ||
             (offset > 0 && offset-1 in resolution.source_range)) || continue
         inside_generated = true
@@ -694,9 +709,9 @@ function select_inert_target_binding(
         offset > 0 ? enclosing_inert_tree(st3, offset-1) : nothing,
         return nothing)
     range = JS.byte_range(inert_tree)
-    policy = inert_resolution_policy(st0, range)
+    policy = inert_resolution_policy(context_module, world, st0, range)
     resolution = @something resolve_inert_tree(
-        context_module, inert_tree;
+        context_module, world, inert_tree;
         hard_scope=policy === :macro, soft_scope) return nothing
     binding = @something resolved_binding_at(resolution, offset) return nothing
     binfo = JL.get_binding(resolution.ctx3, binding)
@@ -758,7 +773,8 @@ function select_struct_inner_constructor_binding(
 end
 
 function select_macrocall_binding(
-        st0::SyntaxTreeC, offset::Int, context_module::Module, caller::AbstractString;
+        st0::SyntaxTreeC, offset::Int, context_module::Module, world::UInt;
+        caller::AbstractString = "select_macrocall_binding",
         soft_scope::Bool = false
     )
     is_macrocall_name = (offset::Int) -> (st0′::SyntaxTreeC) ->
@@ -772,10 +788,11 @@ function select_macrocall_binding(
     end
     isempty(bas) && return nothing
     macrocall = bas[1]
-    should_resolve_macrocall(st0, JS.byte_range(macrocall)) || return nothing
+    should_resolve_macrocall(
+        context_module, world, st0, JS.byte_range(macrocall)) || return nothing
     macrocall_name = macrocall[1]
     (; ctx3, st3) = try
-        jl_lower_for_scope_resolution(context_module, macrocall_name; soft_scope)
+        jl_lower_for_scope_resolution(context_module, world, macrocall_name; soft_scope)
     catch err
         @static JETLS_DEBUG_LOWERING && @warn "Error in lowering ($caller)" err
         @static JETLS_DEBUG_LOWERING && Base.show_backtrace(stderr, catch_backtrace())
@@ -795,7 +812,8 @@ end
 # Detect that case directly and lower just the single identifier under the
 # cursor so callers receive a normal `(ctx3, st3, st0, binding)` tuple.
 function select_export_public_binding(
-        st0::SyntaxTreeC, offset::Int, context_module::Module, caller::AbstractString;
+        st0::SyntaxTreeC, offset::Int, context_module::Module, world::UInt;
+        caller::AbstractString = "select_export_public_binding",
         soft_scope::Bool = false
     )
     find_name_node = (offset::Int) -> (st0′::SyntaxTreeC) -> begin
@@ -820,7 +838,7 @@ function select_export_public_binding(
             1:JS.numchildren(parent)) return nothing; end
     name_node = parent[i]
     (; ctx3, st3) = try
-        jl_lower_for_scope_resolution(context_module, name_node; soft_scope)
+        jl_lower_for_scope_resolution(context_module, world, name_node; soft_scope)
     catch err
         @static JETLS_DEBUG_LOWERING && @warn "Error in lowering ($caller)" err
         @static JETLS_DEBUG_LOWERING && Base.show_backtrace(stderr, catch_backtrace())
@@ -840,7 +858,8 @@ end
 # detect the cursor against `foreach_local_import_identifier` and lower the
 # single matching identifier to synthesize a normal binding tuple.
 function select_import_using_binding(
-        st0::SyntaxTreeC, offset::Int, context_module::Module, caller::AbstractString;
+        st0::SyntaxTreeC, offset::Int, context_module::Module, world::UInt;
+        caller::AbstractString = "select_import_using_binding",
         soft_scope::Bool = false
     )
     find_name_node_at = function (offset::Int, st0′::SyntaxTreeC)
@@ -864,7 +883,7 @@ function select_import_using_binding(
     isempty(bas) && return nothing
     name_node = @something find_name_node_at(offset, bas[1]) return nothing
     (; ctx3, st3) = try
-        jl_lower_for_scope_resolution(context_module, name_node; soft_scope)
+        jl_lower_for_scope_resolution(context_module, world, name_node; soft_scope)
     catch err
         @static JETLS_DEBUG_LOWERING && @warn "Error in lowering ($caller)" err
         @static JETLS_DEBUG_LOWERING && Base.show_backtrace(stderr, catch_backtrace())
@@ -881,7 +900,7 @@ end
 
 """
     select_target_binding_definitions(
-            st0_top::SyntaxTreeC, offset::Int, context_module::Module
+            st0_top::SyntaxTreeC, offset::Int, context_module::Module, world::UInt
         ) -> nothing or (binding::SyntaxTreeC, definitions::SyntaxListC)
 
 Find the binding at the cursor position and return all of its definition sites.
@@ -892,11 +911,11 @@ has no definitions. Otherwise returns a tuple of `(binding, definitions)` where:
 - `definitions` is a `SyntaxListC` containing all definition sites for that binding
 """
 function select_target_binding_definitions(
-        st0_top::SyntaxTreeC, offset::Int, context_module::Module;
+        st0_top::SyntaxTreeC, offset::Int, context_module::Module, world::UInt;
         soft_scope::Bool = false, skip_global::Bool = false
     )
     (; ctx3, st3, binding) = @something select_target_binding(
-        st0_top, offset, context_module; soft_scope) return nothing
+        st0_top, offset, context_module, world; soft_scope) return nothing
     binfo = JL.get_binding(ctx3, binding)
     skip_global && binfo.kind === :global && return nothing
     definitions = @somereal lookup_binding_definitions(st3, binfo) return nothing

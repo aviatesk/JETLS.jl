@@ -135,61 +135,55 @@ push_inactive_code!(node::SyntaxTreeC, condval::Bool) =
         "Inactive `@static` branch (condition evaluated to `$condval`)",
         DiagnosticSeverity.Hint, LOWERING_INACTIVE_CODE)
 
-# Simple (non-qualified) macro names whose new-style implementations in this file and
+# Macro bindings whose new-style implementations in this file and
 # `JuliaLowering/src/syntax_macros.jl` preserve fine-grained source provenance during
 # expansion. Unlike old-style macros — whose expansion collapses source positions to
 # line granularity and is why `_remove_macrocalls` exists — these don't need to be
 # rewritten to a `block` to keep accurate locations for scope resolution.
-#
-# TODO: Define these as `(module, name)` pairs and have `remove_macrocalls` accept the
-# caller's `context_module` so it can resolve each source macrocall to its macro object.
-# Source-name matching cannot recognize qualified calls or aliases, and can mistake an
-# unrelated same-named macro for one of these implementations. `Base.@generated` and
-# `Base.@eval` are special-cased in `ast.jl` until this resolution is available.
-const NEW_STYLE_MACROCALL_NAMES = (
+const NEW_STYLE_MACRO_BINDINGS = (
     # JuliaLowering/src/syntax_macros.jl
-    "@__FUNCTION__",
-    "@ccall",
-    "@cfunction",
-    "@eval",
-    "@generated",
-    "@goto",
-    "@isdefined",
-    "@locals",
-    "@nospecialize",
+    Base => Symbol("@__FUNCTION__"),
+    Base => Symbol("@ccall"),
+    Base => Symbol("@cfunction"),
+    Base => Symbol("@eval"),
+    Base => Symbol("@generated"),
+    Base => Symbol("@goto"),
+    Base => Symbol("@isdefined"),
+    Base => Symbol("@locals"),
+    Base => Symbol("@nospecialize"),
     # src/utils/jl-syntax-macros.jl
-    "@assert",
-    "@assume_effects",
-    "@debug",
-    "@error",
-    "@inbounds",
-    "@inferred",
-    "@info",
-    "@inline",
-    "@invoke",
-    "@invokelatest",
-    "@kwdef",
-    "@label",
-    "@lazy_str",
-    "@lock",
-    "@logmsg",
-    "@noinline",
-    "@propagate_inbounds",
-    "@show",
-    "@something",
-    "@spawn",
-    "@specialize",
-    "@static",
-    "@test",
-    "@test_broken",
-    "@test_deprecated",
-    "@test_logs",
-    "@test_nowarn",
-    "@test_skip",
-    "@test_throws",
-    "@test_warn",
-    "@testset",
-    "@warn",
+    Base => Symbol("@assert"),
+    Base => Symbol("@assume_effects"),
+    Base => Symbol("@inbounds"),
+    Base => Symbol("@inline"),
+    Base => Symbol("@invoke"),
+    Base => Symbol("@invokelatest"),
+    Base => Symbol("@kwdef"),
+    Base => Symbol("@label"),
+    Base => Symbol("@lazy_str"),
+    Base => Symbol("@lock"),
+    Base => Symbol("@noinline"),
+    Base => Symbol("@propagate_inbounds"),
+    Base => Symbol("@show"),
+    Base => Symbol("@something"),
+    Base => Symbol("@specialize"),
+    Base => Symbol("@static"),
+    Base.Threads => Symbol("@spawn"),
+    Base.CoreLogging => Symbol("@debug"),
+    Base.CoreLogging => Symbol("@error"),
+    Base.CoreLogging => Symbol("@info"),
+    Base.CoreLogging => Symbol("@logmsg"),
+    Base.CoreLogging => Symbol("@warn"),
+    Test => Symbol("@inferred"),
+    Test => Symbol("@test"),
+    Test => Symbol("@test_broken"),
+    Test => Symbol("@test_deprecated"),
+    Test => Symbol("@test_logs"),
+    Test => Symbol("@test_nowarn"),
+    Test => Symbol("@test_skip"),
+    Test => Symbol("@test_throws"),
+    Test => Symbol("@test_warn"),
+    Test => Symbol("@testset"),
 )
 
 function Base.var"@specialize"(__context__::JL.MacroContext)

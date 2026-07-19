@@ -166,8 +166,9 @@ end
             fi = JETLS.FileInfo(1, code, @__FILE__)
             st0_top = JETLS.build_syntax_tree(fi)
             results = []
+            world = Base.get_world_counter()
             JETLS.iterate_toplevel_tree(st0_top) do st0::JS.SyntaxTree
-                r = get_inferrable_tree(st0, Main)
+                r = get_inferrable_tree(st0, Main, world)
                 r === nothing || push!(results, (; r..., st0))
                 return nothing
             end
@@ -186,8 +187,9 @@ end
         let code = "@__undefined_macro_for_test__ xyz"
             fi = JETLS.FileInfo(1, code, @__FILE__)
             st0_top = JETLS.build_syntax_tree(fi)
+            world = Base.get_world_counter()
             JETLS.iterate_toplevel_tree(st0_top) do st0::JS.SyntaxTree
-                @test isnothing(get_inferrable_tree(st0, @__MODULE__))
+                @test isnothing(get_inferrable_tree(st0, @__MODULE__, world))
                 return nothing
             end
         end

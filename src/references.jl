@@ -84,12 +84,13 @@ function find_references(
     )
     st0_top = build_syntax_tree(fi)
     offset = xy_to_offset(fi, pos)
-    (; context_module) = get_context_info(server.state, uri, pos)
+    (; context_module, world) = get_context_info(server.state, uri, pos)
     soft_scope = is_notebook_cell_uri(server.state, uri)
     locations = Location[]
 
     (; ctx3, st3, binding) = @something begin
-        select_target_binding(st0_top, offset, context_module; caller="find_references", soft_scope)
+        select_target_binding(st0_top, offset, context_module, world;
+            caller="find_references", soft_scope)
     end return locations
 
     binfo = JL.get_binding(ctx3, binding)
@@ -97,7 +98,7 @@ function find_references(
         error = find_global_references!(locations, server, uri, binfo; include_declaration, kwargs...)
         error !== nothing && return error
     else
-        find_local_references!(locations, server, uri, fi, ctx3, st3, binfo;
+        find_local_references!(locations, server, uri, fi, ctx3, st3, binfo, world;
             include_declaration)
     end
 
@@ -192,11 +193,11 @@ end
 
 function find_local_references!(
         locations::Vector{Location}, server::Server, uri::URI, fi::FileInfo,
-        ctx3, st3, binfo::JL.BindingInfo;
+        ctx3, st3, binfo::JL.BindingInfo, world::UInt;
         include_declaration::Bool = true,
     )
     seen_locations = Set{Tuple{URI,Range}}()
-    binding_occurrences = compute_binding_occurrences(ctx3, st3)
+    binding_occurrences = compute_binding_occurrences(ctx3, st3, world)
     if haskey(binding_occurrences, binfo)
         for occurrence in binding_occurrences[binfo]
             if include_declaration || occurrence.kind === :use

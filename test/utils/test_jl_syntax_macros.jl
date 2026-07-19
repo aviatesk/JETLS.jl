@@ -29,9 +29,9 @@ function jlexpand(
 end
 jlexpand(code::AbstractString; kwargs...) = jlexpand(lowering_module, code; kwargs...)
 
-function jlresolve(context_module::Module, code::AbstractString)
+function jlresolve(context_module::Module, code::AbstractString; world::UInt=Base.get_world_counter())
     st0 = jlparse(code; rule=:statement)
-    return JETLS.jl_lower_for_scope_resolution(context_module, st0;
+    return JETLS.jl_lower_for_scope_resolution(context_module, world, st0;
         recover_from_macro_errors=false, convert_closures=true)
 end
 jlresolve(code::AbstractString) = jlresolve(lowering_module, code)
@@ -62,9 +62,12 @@ end
 # downstream LSP analyses (`is_from_user_ast` etc.) can recognize it as
 # user code. Used by every macro stub's "binding resolution preserves
 # provenance" testset.
-function assert_binding_provenance(res, kind::Symbol, name::AbstractString)
+function assert_binding_provenance(
+        res, kind::Symbol, name::AbstractString;
+        world::UInt = Base.get_world_counter()
+    )
     binding_occurrences = JETLS.compute_binding_occurrences(
-        res.ctx3, res.st3; include_global_bindings=true)
+        res.ctx3, res.st3, world; include_global_bindings=true)
     binfo = nothing
     for (b, _) in binding_occurrences
         if b.kind === kind && b.name == name
@@ -100,9 +103,12 @@ end
 # binding of the given kind/name exists. Used for identifiers that the macro
 # stub intentionally drops (e.g. kwarg keys in logging macros, which are
 # metadata symbols and not user references).
-function assert_no_binding(res, kind::Symbol, name::AbstractString)
+function assert_no_binding(
+        res, kind::Symbol, name::AbstractString;
+        world::UInt = Base.get_world_counter()
+    )
     binding_occurrences = JETLS.compute_binding_occurrences(
-        res.ctx3, res.st3; include_global_bindings=true)
+        res.ctx3, res.st3, world; include_global_bindings=true)
     found = any(binding_occurrences) do (b, _)
         b.kind === kind && b.name == name
     end
@@ -230,6 +236,7 @@ end
     end
 
     @testset "binding resolution" begin
+        world = Base.get_world_counter()
         for code in [
             "@kwdef struct MyStruct{T <: Real}\n    a::T = 1.0\nend\n",
             "@kwdef struct MyStruct\n    a::Float64 = 1.0\nend\n",
@@ -240,7 +247,7 @@ end
         ]
             st0 = jlparse(code)
             offset = findfirst("MyStruct", code).start
-            result = JETLS.select_target_binding(st0, offset, lowering_module)
+            result = JETLS.select_target_binding(st0, offset, lowering_module, world)
             @test result !== nothing
             binfo = JL.get_binding(result.ctx3, result.binding)
             @test binfo.name == "MyStruct"

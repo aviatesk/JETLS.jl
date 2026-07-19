@@ -608,7 +608,7 @@ function cursor_siginfos(
         world, caller="cursor_siginfos", cache=fi.inferred_context_cache)
     fntyp = ctx === nothing ? nothing : get_type_for_range(ctx, JS.byte_range(call[1]))
     if fntyp === nothing
-        fntyp = resolve_global_const(context_module, call[1], world)
+        fntyp = resolve_global_const(context_module, world, call[1])
     end
     fntyp isa Core.Const || return empty_siginfos
 

@@ -6,6 +6,37 @@ using JETLS: JL, JS
 
 include(normpath(pkgdir(JETLS), "test", "jsjl-utils.jl"))
 
+module new_style_macro_context
+import Base: @inline as @base_inline
+using Test: Test
+const B = Base
+const ThreadsAlias = Base.Threads
+const T = Test
+end
+
+module same_named_macro_context
+macro inline(ex)
+    return esc(ex)
+end
+end
+
+module nested_same_named_macro_context
+module Inner
+macro inline(ex)
+    return esc(ex)
+end
+end
+end
+
+module nested_new_style_macro_context
+macro inline(ex)
+    return esc(ex)
+end
+module Inner
+using Base: @inline
+end
+end
+
 @testset "`byte_ancestors`" begin
     # Test with a simple function
     let code = """
@@ -452,6 +483,61 @@ end
     @test !JETLS.noparen_macrocall(jlparse("@test(true)"; rule=:statement))
     @test !JETLS.noparen_macrocall(jlparse("r\"xxx\""; rule=:statement))
     @test !JETLS.noparen_macrocall(jlparse("cmdmac`xxx`"; rule=:statement))
+end
+
+@testset "`remove_macrocalls` resolves macro objects" begin
+    world = Base.get_world_counter()
+    for code in (
+            "B.@inline x",
+            "@base_inline x",
+            "ThreadsAlias.@spawn x",
+            "T.@test true")
+        st0 = jlparse(code; rule=:statement)
+        transformed = JETLS.remove_macrocalls(new_style_macro_context, world, st0)
+        @test JS.kind(transformed) === JS.K"macrocall"
+    end
+
+    let st0 = jlparse("@inline x"; rule=:statement)
+        transformed = JETLS.remove_macrocalls(same_named_macro_context, world, st0)
+        @test JS.kind(transformed) === JS.K"block"
+    end
+
+    let st0 = jlparse("""
+            ThreadsAlias.@spawn begin
+                B.@static if true
+                    x
+                end
+            end
+            """; rule=:statement)
+        transformed = JETLS.remove_macrocalls(new_style_macro_context, world, st0; strip_static=true)
+        macrocalls = String[]
+        JETLS.traverse(transformed) do node::JS.SyntaxTree
+            JS.kind(node) === JS.K"macrocall" || return nothing
+            push!(macrocalls, JS.sourcetext(node[1]))
+            return nothing
+        end
+        @test macrocalls == ["ThreadsAlias.@spawn"]
+    end
+
+    for (context_module, expected_macrocalls) in (
+            (nested_same_named_macro_context, String[]),
+            (nested_new_style_macro_context, ["@inline"]))
+        st0 = jlparse("""
+            begin
+                module Inner
+                    @inline f() = 1
+                end
+            end
+            """; rule=:statement)
+        transformed = JETLS.remove_macrocalls(context_module, world, st0)
+        macrocalls = String[]
+        JETLS.traverse(transformed) do node::JS.SyntaxTree
+            JS.kind(node) === JS.K"macrocall" || return nothing
+            push!(macrocalls, JS.sourcetext(node[1]))
+            return nothing
+        end
+        @test macrocalls == expected_macrocalls
+    end
 end
 
 select_target_identifier(code::AbstractString, pos::Int) = JETLS.select_target_identifier(jlparse(code), pos)
@@ -924,7 +1010,7 @@ end
     # The repaired tree must be acceptable to scope-resolution lowering;
     # otherwise the repair didn't achieve its purpose.
     lowers_ok(st) = try
-        JETLS.jl_lower_for_scope_resolution(@__MODULE__, st;
+        JETLS.jl_lower_for_scope_resolution(@__MODULE__, Base.get_world_counter(), st;
             trim_error_nodes=false, recover_from_macro_errors=false)
         return true
     catch
