@@ -467,6 +467,31 @@ end
                 diagnostic.range.start.line == 0
             end
         end
+        # JuliaLowering marks local `#kw_body#f#N` bindings as internal, so
+        # they must not be reported as unused
+        @test isempty(get_lowering_diagnostics("""
+            function outer()
+                g(; kw = 1) = kw
+                return g()
+            end
+            """))
+    end
+
+    @testset "var-string binding with '#' prefix" begin
+        # User-authored `var"#..."` bindings must keep unused reports
+        let diagnostics = get_lowering_diagnostics("""
+            function fx()
+                var"#x" = 1
+                return 2
+            end
+            """)
+            @test length(diagnostics) == 1
+            @test only(diagnostics).message == "Unused local binding `#x`"
+        end
+        let diagnostics = get_lowering_diagnostics("fz(var\"#z\") = 1")
+            @test length(diagnostics) == 1
+            @test only(diagnostics).message == "Unused argument `#z`"
+        end
     end
 
     @testset "macro definition" begin

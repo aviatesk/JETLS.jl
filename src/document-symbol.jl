@@ -836,33 +836,58 @@ function build_node_maps!(
     return parent_map, node_map
 end
 
+function binding_provenance_range(ctx3::JL.VariableAnalysisContext, bid::Int)
+    provs = JS.flattened_provenance(JL.binding_ex(ctx3, bid))
+    isempty(provs) && return nothing
+    prov = last(provs)
+    return (JS.first_byte(prov), JS.last_byte(prov))
+end
+
 function build_func_to_scopes(ctx3::JL.VariableAnalysisContext)
+    # Keyed by binding id: scopes of every definition of a binding (JL keys
+    # `closure_bindings` per definition-site lambda) merge under the one
+    # symbol rendered for it.
     func_to_scopes = Dict{Int,Vector{Int}}()
-    kwsorter_to_func = Dict{Int,Int}()  # kwsorter bid → main func bid
-    for (func_bid, cb) in ctx3.closure_bindings
-        if !isempty(cb.lambdas)
-            func_to_scopes[func_bid] = Int[lb.scope_id for lb in cb.lambdas]
+    main_by_range = Dict{Tuple{Int,Int},Int}()
+    main_by_lambda_name = Dict{Tuple{Int,String},Set{Int}}()
+    helper_scopes = Pair{JL.ClosureKey,Vector{Int}}[]
+    for (func_key, cb) in ctx3.closure_bindings
+        bid = func_key.binding
+        scope_ids = Int[lb.scope_id for lb in cb.lambdas]
+        if !isempty(scope_ids)
+            append!(get!(Vector{Int}, func_to_scopes, bid), scope_ids)
         end
-        binfo = JL.get_binding(ctx3, func_bid)
+        binfo = JL.get_binding(ctx3, bid)
         # Detect kw body/sorter pattern: #funcname#N or #kw_body#funcname#N
-        m = match(r"^#(?:kw_body#)?(.+)#\d+$", binfo.name)
-        if m !== nothing
-            main_func_name = m.captures[1]
-            # Find the main function binding with this name
-            for (other_bid, _) in ctx3.closure_bindings
-                other_binfo = JL.get_binding(ctx3, other_bid)
-                if other_binfo.name == main_func_name
-                    kwsorter_to_func[func_bid] = other_bid
-                    break
-                end
-            end
+        if occursin(r"^#(?:kw_body#)?.+#\d+$", binfo.name)
+            push!(helper_scopes, func_key => scope_ids)
+        else
+            key = (func_key.lam, binfo.name)
+            push!(get!(Set{Int}, main_by_lambda_name, key), bid)
+            range = @something binding_provenance_range(ctx3, bid) continue
+            main_by_range[range] = bid
         end
     end
-    # Merge kwsorter scopes into main function scopes
-    for (kwsorter_bid, main_func_bid) in kwsorter_to_func
-        if haskey(func_to_scopes, kwsorter_bid) && haskey(func_to_scopes, main_func_bid)
-            append!(func_to_scopes[main_func_bid], func_to_scopes[kwsorter_bid])
+    # Prefer provenance ranges, which distinguish same-named definitions in a
+    # lambda. A binding shared by nested redefinitions retains only its first
+    # provenance, so fall back to an unambiguous definition-site lambda match.
+    for (helper_key, scope_ids) in helper_scopes
+        isempty(scope_ids) && continue
+        helper_bid = helper_key.binding
+        provs = JS.flattened_provenance(JL.binding_ex(ctx3, helper_bid))
+        isempty(provs) && continue
+        prov = last(provs)
+        range = (JS.first_byte(prov), JS.last_byte(prov))
+        main_bid = get(main_by_range, range, nothing)
+        if main_bid === nothing
+            name = @something get_name_val(prov) continue
+            candidates = get(main_by_lambda_name, (helper_key.lam, name), nothing)
+            candidates === nothing && continue
+            length(candidates) == 1 || continue
+            main_bid = only(candidates)
         end
+        haskey(func_to_scopes, main_bid) || continue
+        append!(func_to_scopes[main_bid], scope_ids)
     end
     return func_to_scopes
 end

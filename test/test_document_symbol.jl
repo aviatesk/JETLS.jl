@@ -775,6 +775,49 @@ end
             y_sym = only(filter(c -> c.name == "y", inner_sym.children))
             @test y_sym.kind == SymbolKind.Object
         end
+
+        # A nested-lambda redefinition is a separate `ClosureKey` entry in JL;
+        # its scopes must still merge under the one symbol rendered for the
+        # binding so its parameters don't vanish from the outline
+        let code = """
+            function outer(a, b)
+                inner(x) = a + x
+                function mid()
+                    inner(y, z) = a + b + y + z
+                end
+                mid()
+                return inner
+            end
+            """
+            symbols = get_document_symbols(code)
+            children = only(symbols).children
+            @test children !== nothing
+            inner_sym = only(filter(c -> c.name == "inner", children))
+            @test inner_sym.children !== nothing
+            @test Set(c.name for c in inner_sym.children) == Set(["x", "y", "z"])
+        end
+
+        # A local function declared in an outer lambda but defined only inside
+        # a nested lambda must still render as a Function with its parameters
+        let code = """
+            function outer()
+                local f
+                function mid()
+                    f(x) = x + 1
+                end
+                mid()
+                return f
+            end
+            """
+            symbols = get_document_symbols(code)
+            children = only(symbols).children
+            @test children !== nothing
+            f_sym = only(filter(c -> c.name == "f", children))
+            @test f_sym.kind == SymbolKind.Function
+            @test f_sym.children !== nothing
+            x_sym = only(filter(c -> c.name == "x", f_sym.children))
+            @test x_sym.kind == SymbolKind.Object
+        end
     end
 
     @testset "descendant scopes within nested function" begin
@@ -1242,7 +1285,8 @@ end
         @test kw_sym.detail == "; kw"
     end
 
-    # Varargs keyword argument should show only its own detail, not the entire parameters block
+    # Varargs keyword argument should show only its own detail, not the entire
+    # parameters block
     let code = """
         function outer()
             function inner(_; kw=nothing, kws...)
@@ -1261,6 +1305,68 @@ end
         @test kw_sym.detail == "kw=nothing"
         kws_sym = only(filter(c -> c.name == "kws", inner_sym.children))
         @test kws_sym.detail == "kws..."
+    end
+
+    # kw helper scopes must merge into their exact definition, not another
+    # same-named binding in a sibling scope of the same lambda
+    let code = """
+        function outer()
+            let
+                f(x) = 2x
+            end
+            let
+                function f(; k = 1)
+                    b = k + 1
+                    return b
+                end
+                f()
+            end
+        end
+        """
+        symbols = get_document_symbols(code)
+        @test length(symbols) == 1
+        children = symbols[1].children
+        @test children !== nothing
+        let_syms = filter(c -> c.detail == "let", children)
+        @test length(let_syms) == 2
+        f_syms = DocumentSymbol[]
+        for let_sym in let_syms
+            @test let_sym.children !== nothing
+            append!(f_syms, filter(c -> c.name == "f", let_sym.children))
+        end
+        @test length(f_syms) == 2
+        kw_f_sym = only(filter(s -> s.detail == "function f(; k = 1)", f_syms))
+        @test kw_f_sym.children !== nothing
+        @test Set(c.name for c in kw_f_sym.children) == Set(["k", "b"])
+        plain_f_sym = only(filter(s -> s.detail == "f(x) =", f_syms))
+        @test plain_f_sym.children !== nothing
+        @test Set(c.name for c in plain_f_sym.children) == Set(["x"])
+    end
+
+    let code = """
+        function outer(a, b)
+            f(x; k = 1) = begin
+                first_body = a + x + k
+                first_body
+            end
+            function mid()
+                f(y, z; q = 2) = begin
+                    second_body = a + b + y + z + q
+                    second_body
+                end
+            end
+            mid()
+            return f
+        end
+        """
+        symbols = get_document_symbols(code)
+        children = only(symbols).children
+        @test children !== nothing
+        f_sym = only(filter(c -> c.name == "f", children))
+        @test f_sym.children !== nothing
+        child_names = Set(c.name for c in f_sym.children)
+        @test Set(["x", "y", "z", "k", "first_body"]) ⊆ child_names
+        @test Set(["q", "second_body"]) ⊆ child_names
     end
 end
 
