@@ -56,7 +56,7 @@ function local_rename_preparation_testcase(
         context_module::Module
     )
     (; fi, positions, furi, world) = binding_rename_testcase(code, n)
-    prepare(pos::Position) = JETLS.local_binding_rename_preparation(
+    prepare(pos::Position) = JETLS.prepare_local_binding_rename(
         state, furi, fi, pos, context_module, world)
     return (; positions, prepare)
 end
@@ -66,7 +66,7 @@ function global_rename_preparation_testcase(
         context_module::Module
     )
     (; fi, positions, furi, world) = binding_rename_testcase(code, n)
-    prepare(pos::Position) = JETLS.global_binding_rename_preparation(
+    prepare(pos::Position) = JETLS.prepare_global_binding_rename(
         state, furi, fi, pos, context_module, world)
     return (; positions, prepare)
 end
@@ -76,7 +76,7 @@ function local_rename_testcase(
         context_module::Module
     )
     (; fi, positions, furi, world) = binding_rename_testcase(code, n)
-    rename_binding(pos::Position, new_name::String) = JETLS.local_binding_rename(
+    rename_binding(pos::Position, new_name::String) = JETLS.get_local_binding_rename(
         server, furi, fi, pos, context_module, world, new_name)
     return (; positions, furi, rename_binding)
 end
@@ -91,7 +91,7 @@ function global_rename_testcase(
         binding_rename_testcase(code, n)
     end
     (; fi, positions, furi, world) = testcase
-    rename_binding(pos::Position, new_name::String) = JETLS.global_binding_rename(
+    rename_binding(pos::Position, new_name::String) = JETLS.get_global_binding_rename(
         server, furi, fi, pos, context_module, world, new_name)
     return (; positions, furi, rename_binding)
 end
@@ -744,7 +744,7 @@ end
             fi, positions, furi = rename_testcase(code, 2;
                 filename = joinpath(dir, "main.jl"))
             for pos in positions
-                rename_prep = JETLS.file_rename_preparation(state, furi, fi, pos)
+                rename_prep = JETLS.prepare_file_rename(state, furi, fi, pos)
                 @test !isnothing(rename_prep)
                 @test rename_prep.placeholder == target_name
             end
@@ -753,7 +753,7 @@ end
         let code = """include("│nonexistent.jl│")"""
             fi, positions, furi = rename_testcase(code, 2;
                 filename = joinpath(dir, "main.jl"))
-            rename_prep = JETLS.file_rename_preparation(state, furi, fi, positions[1])
+            rename_prep = JETLS.prepare_file_rename(state, furi, fi, positions[1])
             @test isnothing(rename_prep)
         end
     end
@@ -767,7 +767,7 @@ end
         fi, positions, furi = rename_testcase(code, 2;
             filename = joinpath(dir, "main.jl"))
         for pos in positions
-            (; result, error) = JETLS.file_rename(server, furi, fi, pos, "bar.jl")
+            (; result, error) = JETLS.get_file_rename(server, furi, fi, pos, "bar.jl")
             @test result isa WorkspaceEdit && isnothing(error)
             @test length(result.changes) == 1
             edits = result.changes[furi]
