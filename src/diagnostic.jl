@@ -1627,7 +1627,7 @@ function per_stmt_diagnostics!(
         end
         nothing # signal primary-attempt failure to the fallback path
     end
-    emit_macro_diagnostics!(diagnostics, fi, macro_diags)
+    skip_analysis_requiring_context || emit_macro_diagnostics!(diagnostics, fi, macro_diags)
     inactive_branch_names = collect_inactive_branch_names(macro_diags)
 
     if res === nothing
@@ -1678,19 +1678,22 @@ end
 # suppression. `@static` reports *every* dropped branch via `push_inactive_code!`
 # (each arm of an `if`/`elseif`/`else` chain or short-circuit `&&`/`||`, including a
 # dropped `elseif`'s condition), so walking the inactive nodes misses no vanished use.
-function collect_inactive_branch_names(macro_diags::Vector{MacroDiagnostic})
-    names = Set{String}()
-    for d in macro_diags
-        d.code == LOWERING_INACTIVE_CODE || continue
-        traverse(d.node) do s
-            if JS.kind(s) === JS.K"Identifier"
-                nv = get_name_val(s)
-                nv === nothing || push!(names, nv)
+let empty_names = Set{String}()
+    global function collect_inactive_branch_names(macro_diags::Vector{MacroDiagnostic})
+        any(d->d.code == LOWERING_INACTIVE_CODE, macro_diags) || return empty_names
+        names = Set{String}()
+        for d in macro_diags
+            d.code == LOWERING_INACTIVE_CODE || continue
+            traverse(d.node) do s
+                if JS.kind(s) === JS.K"Identifier"
+                    nv = get_name_val(s)
+                    nv === nothing || push!(names, nv)
+                end
+                return nothing
             end
-            return nothing
         end
+        return names
     end
-    return names
 end
 
 function compute_unit_def_used_names(

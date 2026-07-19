@@ -1013,17 +1013,30 @@ end
         end
     end
 
-    @testset "before full-analysis, without macro expansion" begin
+    @testset "before full-analysis" begin
         # `@sprintf` is not available yet for EmptyModule (simulating the lowering analysis behavior before full-analysis complete)
         # https://github.com/aviatesk/JETLS.jl/issues/522
-        diagnostics = get_lowering_diagnostics("""
-            let
-                OLR = SW_in = 0.0
-                @info @sprintf("OLR: %.1f W/m², SW_in: %.1f W/m², net: %.1f W/m²",
-                                OLR, SW_in, SW_in - OLR)
-            end
-            """; context_module=EmptyModule, skip_analysis_requiring_context=true)
-        @test isempty(diagnostics)
+        let diagnostics = get_lowering_diagnostics("""
+                let
+                    OLR = SW_in = 0.0
+                    @info @sprintf("OLR: %.1f W/m², SW_in: %.1f W/m², net: %.1f W/m²",
+                                    OLR, SW_in, SW_in - OLR)
+                end
+                """; context_module=EmptyModule, skip_analysis_requiring_context=true)
+            @test isempty(diagnostics)
+        end
+
+        # The file-local constant has not been loaded into EmptyModule yet, so `@static`
+        # cannot evaluate it during pre-analysis lowering. Suppress that transient error
+        # until full analysis establishes the file context.
+        let diagnostics = get_lowering_diagnostics("""
+                const DEV_MODE = false
+                @static if DEV_MODE
+                    inactive_call()
+                end
+                """; context_module=EmptyModule, skip_analysis_requiring_context=true)
+            @test isempty(diagnostics)
+        end
     end
 end
 
