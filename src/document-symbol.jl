@@ -74,8 +74,8 @@ function get_document_symbols!(state::ServerState, uri::URI, fi::FileInfo)
         end
         st0 = build_syntax_tree(fi)
         pos = Position(; line=0, character=0)
-        (; context_module) = get_context_info(state, uri, pos)
-        symbols = extract_document_symbols(st0, fi, context_module)
+        (; context_module, world) = get_context_info(state, uri, pos)
+        symbols = extract_document_symbols(st0, fi, context_module, world)
         return DocumentSymbolCacheData(cache, cache_uri => symbols), symbols
     end
 end
@@ -91,65 +91,67 @@ function invalidate_document_symbol_cache!(state::ServerState, uri::URI)
     end
 end
 
-function extract_document_symbols(st0_top::SyntaxTreeC, fi::FileInfo, context_module::Module)
+function extract_document_symbols(
+        st0_top::SyntaxTreeC, fi::FileInfo, context_module::Module, world::UInt
+    )
     @assert JS.kind(st0_top) === JS.K"toplevel"
     symbols = DocumentSymbol[]
-    extract_toplevel_symbols!(symbols, st0_top, fi, context_module)
+    extract_toplevel_symbols!(symbols, st0_top, fi, context_module, world)
     sort!(symbols; by = s::DocumentSymbol -> (s.range.start.line, s.range.start.character))
     return symbols
 end
 
 function extract_toplevel_symbols!(
         symbols::Vector{DocumentSymbol}, st0::SyntaxTreeC, fi::FileInfo,
-        context_module::Module
+        context_module::Module, world::UInt
     )
     for i = 1:JS.numchildren(st0)
-        extract_toplevel_symbol!(symbols, st0[i], fi, context_module)
+        extract_toplevel_symbol!(symbols, st0[i], fi, context_module, world)
     end
 end
 
 function extract_toplevel_symbol!(
         symbols::Vector{DocumentSymbol}, st0::SyntaxTreeC, fi::FileInfo,
-        context_module::Module
+        context_module::Module, world::UInt
     )
     k = JS.kind(st0)
     if k === JS.K"module"
-        extract_module_symbol!(symbols, st0, fi, context_module)
+        extract_module_symbol!(symbols, st0, fi, context_module, world)
     elseif k === JS.K"function"
-        extract_function_symbol!(symbols, st0, fi, context_module)
+        extract_function_symbol!(symbols, st0, fi, context_module, world)
     elseif k === JS.K"macro"
-        extract_macro_symbol!(symbols, st0, fi, context_module)
+        extract_macro_symbol!(symbols, st0, fi, context_module, world)
     elseif k === JS.K"struct"
-        extract_struct_symbol!(symbols, st0, fi, context_module)
+        extract_struct_symbol!(symbols, st0, fi, context_module, world)
     elseif k === JS.K"abstract"
         extract_abstract_type_symbol!(symbols, st0, fi)
     elseif k === JS.K"primitive"
         extract_primitive_type_symbol!(symbols, st0, fi)
     elseif k === JS.K"const"
-        extract_const_symbols!(symbols, st0, fi, context_module)
+        extract_const_symbols!(symbols, st0, fi, context_module, world)
     elseif k === JS.K"global"
-        extract_global_symbols!(symbols, st0, fi, context_module)
+        extract_global_symbols!(symbols, st0, fi, context_module, world)
     elseif k === JS.K"="
-        extract_toplevel_assignment_symbols!(symbols, st0, fi, context_module)
+        extract_toplevel_assignment_symbols!(symbols, st0, fi, context_module, world)
     elseif k === JS.K"let"
-        extract_let_symbol!(symbols, st0, fi, context_module)
+        extract_let_symbol!(symbols, st0, fi, context_module, world)
     elseif k === JS.K"while"
-        extract_while_symbol!(symbols, st0, fi, context_module)
+        extract_while_symbol!(symbols, st0, fi, context_module, world)
     elseif k === JS.K"for"
-        extract_for_symbol!(symbols, st0, fi, context_module)
+        extract_for_symbol!(symbols, st0, fi, context_module, world)
     elseif k === JS.K"if"
-        extract_if_symbol!(symbols, st0, fi, context_module)
+        extract_if_symbol!(symbols, st0, fi, context_module, world)
     elseif k === JS.K"toplevel" || k === JS.K"block"
-        extract_toplevel_symbols!(symbols, st0, fi, context_module)
+        extract_toplevel_symbols!(symbols, st0, fi, context_module, world)
     elseif k === JS.K"macrocall"
-        extract_macrocall_symbol!(symbols, st0, fi, context_module)
+        extract_macrocall_symbol!(symbols, st0, fi, context_module, world)
     end
     return nothing
 end
 
 function extract_module_symbol!(
         symbols::Vector{DocumentSymbol}, st0::SyntaxTreeC, fi::FileInfo,
-        parent_context_module::Module
+        parent_context_module::Module, world::UInt
     )
     JS.numchildren(st0) ≥ 3 || return nothing
     name_node = st0[2]
@@ -164,7 +166,7 @@ function extract_module_symbol!(
     children = DocumentSymbol[]
     body = st0[end]
     if JS.kind(body) === JS.K"block"
-        extract_toplevel_symbols!(children, body, fi, context_module)
+        extract_toplevel_symbols!(children, body, fi, context_module, world)
     end
     is_baremodule = JS.has_flags(st0, JS.BARE_MODULE_FLAG)
     detail = (is_baremodule ? "baremodule " : "module ") * name
@@ -180,12 +182,13 @@ end
 
 function extract_function_symbol!(
         symbols::Vector{DocumentSymbol}, st0::SyntaxTreeC, fi::FileInfo,
-        context_module::Module
+        context_module::Module, world::UInt
     )
     JS.numchildren(st0) ≥ 1 || return nothing
     sig = st0[1]
     name, name_node = @something extract_function_name(sig) return nothing
-    children = @something extract_scoped_children(st0, fi, context_module) Some(nothing)
+    children = @something extract_scoped_children(
+        st0, fi, context_module, world) Some(nothing)
     is_short_form = JS.has_flags(st0, JS.SHORT_FORM_FUNCTION_FLAG)
     detail = is_short_form ? JS.sourcetext(sig) * " =" : "function " * JS.sourcetext(sig)
     push!(symbols, DocumentSymbol(;
@@ -251,7 +254,7 @@ end
 
 function extract_macro_symbol!(
         symbols::Vector{DocumentSymbol}, st0::SyntaxTreeC, fi::FileInfo,
-        context_module::Module
+        context_module::Module, world::UInt
     )
     JS.numchildren(st0) ≥ 1 || return nothing
     sig_orig = st0[1]
@@ -269,7 +272,7 @@ function extract_macro_symbol!(
     end
     name = "@" * name
     detail = "macro " * JS.sourcetext(sig_orig)
-    children = @something extract_scoped_children(st0, fi, context_module) Some(nothing)
+    children = @something extract_scoped_children(st0, fi, context_module, world) Some(nothing)
     push!(symbols, DocumentSymbol(;
         name,
         detail,
@@ -282,7 +285,7 @@ end
 
 function extract_struct_symbol!(
         symbols::Vector{DocumentSymbol}, st0::SyntaxTreeC, fi::FileInfo,
-        context_module::Module
+        context_module::Module, world::UInt
     )
     JS.numchildren(st0) ≥ 2 || return nothing
     sig_node = st0[2]
@@ -305,9 +308,10 @@ function extract_struct_symbol!(
             child = body[i]
             child_k = JS.kind(child)
             if child_k === JS.K"function"
-                extract_function_symbol!(children, child, fi, context_module)
+                extract_function_symbol!(children, child, fi, context_module, world)
             elseif child_k === JS.K"="
-                extract_toplevel_assignment_symbols!(children, child, fi, context_module)
+                extract_toplevel_assignment_symbols!(
+                    children, child, fi, context_module, world)
             else
                 extract_struct_field!(children, child, fi)
             end
@@ -395,7 +399,7 @@ end
 
 function extract_const_symbols!(
         symbols::Vector{DocumentSymbol}, st0::SyntaxTreeC, fi::FileInfo,
-        context_module::Module
+        context_module::Module, world::UInt
     )
     JS.numchildren(st0) ≥ 1 || return nothing
     assign = st0[1]
@@ -405,13 +409,14 @@ function extract_const_symbols!(
     rhs = assign[2]
     range = jsobj_to_range(st0, fi)
     detail = lstrip(JS.sourcetext(st0))
-    extract_assignment_symbols!(symbols, lhs, rhs, range, SymbolKind.Constant, detail, fi, context_module)
+    extract_assignment_symbols!(
+        symbols, lhs, rhs, range, SymbolKind.Constant, detail, fi, context_module, world)
     return nothing
 end
 
 function extract_global_symbols!(
         symbols::Vector{DocumentSymbol}, st0::SyntaxTreeC, fi::FileInfo,
-        context_module::Module
+        context_module::Module, world::UInt
     )
     JS.numchildren(st0) ≥ 1 || return nothing
     inner = st0[1]
@@ -421,21 +426,25 @@ function extract_global_symbols!(
         JS.numchildren(inner) ≥ 2 || return nothing
         lhs = inner[1]
         rhs = inner[2]
-        extract_assignment_symbols!(symbols, lhs, rhs, range, SymbolKind.Variable, detail, fi, context_module)
+        extract_assignment_symbols!(
+            symbols, lhs, rhs, range, SymbolKind.Variable, detail, fi,
+            context_module, world)
     else
-        extract_assignment_symbols!(symbols, inner, nothing, range, SymbolKind.Variable, detail, fi, context_module)
+        extract_assignment_symbols!(
+            symbols, inner, nothing, range, SymbolKind.Variable, detail, fi,
+            context_module, world)
     end
     return nothing
 end
 
 function extract_assignment_symbols!(
-        symbols::Vector{DocumentSymbol}, lhs::SyntaxTreeC, rhs::Union{SyntaxTreeC,Nothing},
-        range::Range, kind::SymbolKind.Ty, detail::AbstractString, fi::FileInfo,
-        context_module::Module
+        symbols::Vector{DocumentSymbol}, lhs::SyntaxTreeC,
+        rhs::Union{SyntaxTreeC,Nothing}, range::Range, kind::SymbolKind.Ty,
+        detail::AbstractString, fi::FileInfo, context_module::Module, world::UInt
     )
     children = if rhs !== nothing && JS.kind(rhs) === JS.K"let"
         let_children = DocumentSymbol[]
-        extract_let_symbol!(let_children, rhs, fi, context_module)
+        extract_let_symbol!(let_children, rhs, fi, context_module, world)
         @somereal let_children Some(nothing)
     else
         nothing
@@ -490,40 +499,41 @@ function extract_assignment_symbols!(
             children))
     end
     if rhs !== nothing && JS.kind(rhs) === JS.K"block"
-        extract_toplevel_symbols!(symbols, rhs, fi, context_module)
+        extract_toplevel_symbols!(symbols, rhs, fi, context_module, world)
     end
     return nothing
 end
 
 function extract_toplevel_assignment_symbols!(
         symbols::Vector{DocumentSymbol}, st0::SyntaxTreeC, fi::FileInfo,
-        context_module::Module
+        context_module::Module, world::UInt
     )
     JS.numchildren(st0) ≥ 2 || return nothing
     lhs = st0[1]
     JS.kind(lhs) in JS.KSet". ref" && return nothing # Skip property assignment like obj.field = value
     lhs_unwrapped = unwrap_funcdef_sig(lhs)
     if JS.kind(lhs_unwrapped) === JS.K"call" || is_mainfunc0(lhs_unwrapped)
-        extract_short_function_symbol!(symbols, st0, fi, context_module)
+        extract_short_function_symbol!(symbols, st0, fi, context_module, world)
         return nothing
     end
     rhs = st0[2]
     range = jsobj_to_range(st0, fi)
     detail = lstrip(JS.sourcetext(st0))
     kind = is_anonymous_function_rhs(rhs) ? SymbolKind.Function : SymbolKind.Variable
-    extract_assignment_symbols!(symbols, lhs, rhs, range, kind, detail, fi, context_module)
+    extract_assignment_symbols!(
+        symbols, lhs, rhs, range, kind, detail, fi, context_module, world)
     return nothing
 end
 
 # Short-form function definition: `f(x) = x` or `f(x) where T = x`
 function extract_short_function_symbol!(
         symbols::Vector{DocumentSymbol}, st0::SyntaxTreeC, fi::FileInfo,
-        context_module::Module
+        context_module::Module, world::UInt
     )
     JS.numchildren(st0) ≥ 2 || return nothing
     sig = st0[1]
     name, name_node = @something extract_function_name(sig) return nothing
-    children = @something extract_scoped_children(st0, fi, context_module) Some(nothing)
+    children = @something extract_scoped_children(st0, fi, context_module, world) Some(nothing)
     detail = JS.sourcetext(sig) * " ="
     push!(symbols, DocumentSymbol(;
         name,
@@ -543,13 +553,13 @@ extract_for_symbol!(args...) = extract_namespace_symbol!(args..., "for ")
 
 function extract_namespace_symbol!(
         symbols::Vector{DocumentSymbol}, st0::SyntaxTreeC, fi::FileInfo,
-        context_module::Module, prefix::AbstractString
+        context_module::Module, world::UInt, prefix::AbstractString
     )
     JS.numchildren(st0) ≥ 2 || return nothing
-    children = @something extract_scoped_children(st0, fi, context_module) return nothing
+    children = @something extract_scoped_children(st0, fi, context_module, world) return nothing
     body = st0[end]
     if JS.kind(body) === JS.K"block"
-        extract_macrocalls_from_block!(children, body, fi, context_module)
+        extract_macrocalls_from_block!(children, body, fi, context_module, world)
     end
     push!(symbols, DocumentSymbol(;
         name = " ",
@@ -563,13 +573,13 @@ end
 
 function extract_if_symbol!(
         symbols::Vector{DocumentSymbol}, st0::SyntaxTreeC, fi::FileInfo,
-        context_module::Module;
+        context_module::Module, world::UInt;
         prefix::AbstractString = "if ",
         range_node::SyntaxTreeC = st0
     )
     JS.numchildren(st0) ≥ 2 || return nothing
     children = DocumentSymbol[]
-    extract_if_children!(children, st0, fi, context_module)
+    extract_if_children!(children, st0, fi, context_module, world)
     isempty(children) && return nothing
     push!(symbols, DocumentSymbol(;
         name = " ",
@@ -583,58 +593,61 @@ end
 
 function extract_if_children!(
         children::Vector{DocumentSymbol}, st0::SyntaxTreeC, fi::FileInfo,
-        context_module::Module
+        context_module::Module, world::UInt
     )
     for i in 2:JS.numchildren(st0)
         child = st0[i]
         k = JS.kind(child)
         if k === JS.K"block"
-            extract_toplevel_symbols!(children, child, fi, context_module)
+            extract_toplevel_symbols!(children, child, fi, context_module, world)
         elseif k === JS.K"elseif" || k === JS.K"if"
-            extract_if_children!(children, child, fi, context_module)
+            extract_if_children!(children, child, fi, context_module, world)
         end
     end
     return nothing
 end
 
 function extract_macrocalls_from_block!(
-        symbols::Vector{DocumentSymbol}, st::SyntaxTreeC, fi::FileInfo, context_module::Module
+        symbols::Vector{DocumentSymbol}, st::SyntaxTreeC, fi::FileInfo,
+        context_module::Module, world::UInt
     )
     for i = 1:JS.numchildren(st)
         child = st[i]
         if JS.kind(child) === JS.K"macrocall"
-            extract_macrocall_symbol!(symbols, child, fi, context_module)
+            extract_macrocall_symbol!(symbols, child, fi, context_module, world)
         end
     end
     return nothing
 end
 
 function extract_macrocall_symbol!(
-        symbols::Vector{DocumentSymbol}, st0::SyntaxTreeC, fi::FileInfo, context_module::Module
+        symbols::Vector{DocumentSymbol}, st0::SyntaxTreeC, fi::FileInfo,
+        context_module::Module, world::UInt
     )
     macro_name = get_macrocall_name(st0)
     if macro_name == "@enum"
         extract_enum_symbol!(symbols, st0, fi)
     elseif macro_name == "@static"
-        extract_static_if_symbol!(symbols, st0, fi, context_module)
+        extract_static_if_symbol!(symbols, st0, fi, context_module, world)
     elseif macro_name == "@testset"
-        extract_testset_symbol!(symbols, st0, fi, context_module)
+        extract_testset_symbol!(symbols, st0, fi, context_module, world)
     elseif macro_name == "@test"
         extract_test_symbol!(symbols, st0, fi)
     else
-        extract_toplevel_symbols!(symbols, st0, fi, context_module)
+        extract_toplevel_symbols!(symbols, st0, fi, context_module, world)
     end
     return nothing
 end
 
 function extract_static_if_symbol!(
         symbols::Vector{DocumentSymbol}, st0::SyntaxTreeC, fi::FileInfo,
-        context_module::Module
+        context_module::Module, world::UInt
     )
     JS.numchildren(st0) ≥ 3 || return nothing
     if_node = st0[3]
     JS.kind(if_node) === JS.K"if" || return nothing
-    extract_if_symbol!(symbols, if_node, fi, context_module; prefix="@static if ", range_node=st0)
+    extract_if_symbol!(symbols, if_node, fi, context_module, world;
+        prefix = "@static if ", range_node = st0)
     return nothing
 end
 
@@ -656,7 +669,7 @@ end
 
 function extract_testset_symbol!(
         symbols::Vector{DocumentSymbol}, st0::SyntaxTreeC, fi::FileInfo,
-        context_module::Module
+        context_module::Module, world::UInt
     )
     JS.numchildren(st0) ≥ 3 || return nothing
 
@@ -682,18 +695,18 @@ function extract_testset_symbol!(
     body_kind = JS.kind(body)
     children = DocumentSymbol[]
     if body_kind === JS.K"block"
-        extract_toplevel_symbols!(children, body, fi, context_module)
+        extract_toplevel_symbols!(children, body, fi, context_module, world)
     elseif body_kind === JS.K"for" || body_kind === JS.K"let"
         JS.numchildren(body) ≥ 2 || return nothing
         body_block = body[end]
         if JS.kind(body_block) === JS.K"block"
-            extract_toplevel_symbols!(children, body_block, fi, context_module)
+            extract_toplevel_symbols!(children, body_block, fi, context_module, world)
         end
     elseif body_kind === JS.K"call"
         # Function call: @testset "desc" test_func()
         # No children to extract, the test function itself is the body
     else
-        extract_toplevel_symbol!(children, body, fi, context_module)
+        extract_toplevel_symbol!(children, body, fi, context_module, world)
     end
 
     # For @testset let, use bindings node as selection range since there's no description
@@ -786,11 +799,11 @@ end
 
 # Binding-based extraction for scoped children (function body, let block, etc.)
 function extract_scoped_children(
-        st0::SyntaxTreeC, fi::FileInfo, context_module::Module;
+        st0::SyntaxTreeC, fi::FileInfo, context_module::Module, world::UInt;
         soft_scope::Bool = false
     )
     (; ctx3) = try
-        jl_lower_for_scope_resolution(context_module, st0; soft_scope)
+        jl_lower_for_scope_resolution(context_module, world, st0; soft_scope)
     catch
         return nothing
     end

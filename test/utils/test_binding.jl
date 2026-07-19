@@ -7,7 +7,9 @@ using JETLS.LSP.URIs2
 
 include(normpath(pkgdir(JETLS), "test", "jsjl-utils.jl"))
 
-module lowering_module end
+module lowering_module
+const B = Base
+end
 
 function with_target_binding(f, text::AbstractString; kwargs...)
     clean_code, positions = JETLS.get_text_and_positions(text; kwargs...)
@@ -15,7 +17,7 @@ function with_target_binding(f, text::AbstractString; kwargs...)
     cnt = 0
     for (i, pos) in enumerate(positions)
         offset = JETLS.xy_to_offset(clean_code, pos, @__FILE__)
-        cnt += f(i, JETLS.select_target_binding(st0_top, offset, lowering_module))
+        cnt += f(i, JETLS.select_target_binding(st0_top, offset, lowering_module, Base.get_world_counter()))
     end
     return cnt
 end
@@ -155,25 +157,29 @@ end
     end == 4
 
     # One-argument `@eval` evaluates in the construction module.
-    @test with_target_binding("""
-        struct │LSAnalyzer│ end
-        let x = 1
-            @eval some_func(::│LSAnalyzer│) = \$x
-        end
-        """) do _, (; ctx3, binding)
-        binfo = JL.get_binding(ctx3, binding)
-        @test binfo.name == "LSAnalyzer"
-        @test binfo.kind === :global
-        return true
-    end == 4
+    for eval_macro in ("@eval", "B.@eval")
+        @test with_target_binding("""
+            struct │LSAnalyzer│ end
+            let x = 1
+                $eval_macro some_func(::│LSAnalyzer│) = \$x
+            end
+            """) do _, (; ctx3, binding)
+            binfo = JL.get_binding(ctx3, binding)
+            @test binfo.name == "LSAnalyzer"
+            @test binfo.kind === :global
+            return true
+        end == 4
+    end
 
     # Two-argument `@eval` is left unresolved even when its target looks static.
-    @test with_target_binding("""
-        @eval SomeModule some_func(::│LSAnalyzer│) = nothing
-        """) do _, result
-        @test result === nothing
-        return true
-    end == 2
+    for eval_macro in ("@eval", "B.@eval")
+        @test with_target_binding("""
+            $eval_macro SomeModule some_func(::│LSAnalyzer│) = nothing
+            """) do _, result
+            @test result === nothing
+            return true
+        end == 2
+    end
 
     # A dynamic target module is likewise left unresolved.
     @test with_target_binding("""
@@ -230,7 +236,7 @@ end
         clean_code, positions = JETLS.get_text_and_positions(code)
         st0_top = jlparse(clean_code)
         offset = JETLS.xy_to_offset(clean_code, only(positions), @__FILE__)
-        @test isnothing(JETLS.select_target_binding(st0_top, offset, lowering_module))
+        @test isnothing(JETLS.select_target_binding(st0_top, offset, lowering_module, Base.get_world_counter()))
     end
 end
 
@@ -240,7 +246,7 @@ function with_target_binding_definitions(f, text::AbstractString; kwargs...)
     cnt = 0
     for (i, pos) in enumerate(positions)
         offset = JETLS.xy_to_offset(clean_code, pos, @__FILE__)
-        cnt += f(i, JETLS.select_target_binding_definitions(st0_top, offset, lowering_module))
+        cnt += f(i, JETLS.select_target_binding_definitions(st0_top, offset, lowering_module, Base.get_world_counter()))
     end
     return cnt
 end

@@ -45,6 +45,57 @@ end
 
 module test_import_rename_context end
 
+function binding_rename_testcase(code::AbstractString, n::Int; kwargs...)
+    fi, positions, furi = rename_testcase(code, n; kwargs...)
+    world = Base.get_world_counter()
+    return (; fi, positions, furi, world)
+end
+
+function local_rename_preparation_testcase(
+        state::JETLS.ServerState, code::AbstractString, n::Int,
+        context_module::Module
+    )
+    (; fi, positions, furi, world) = binding_rename_testcase(code, n)
+    prepare(pos::Position) = JETLS.local_binding_rename_preparation(
+        state, furi, fi, pos, context_module, world)
+    return (; positions, prepare)
+end
+
+function global_rename_preparation_testcase(
+        state::JETLS.ServerState, code::AbstractString, n::Int,
+        context_module::Module
+    )
+    (; fi, positions, furi, world) = binding_rename_testcase(code, n)
+    prepare(pos::Position) = JETLS.global_binding_rename_preparation(
+        state, furi, fi, pos, context_module, world)
+    return (; positions, prepare)
+end
+
+function local_rename_testcase(
+        server::JETLS.Server, code::AbstractString, n::Int,
+        context_module::Module
+    )
+    (; fi, positions, furi, world) = binding_rename_testcase(code, n)
+    rename_binding(pos::Position, new_name::String) = JETLS.local_binding_rename(
+        server, furi, fi, pos, context_module, world, new_name)
+    return (; positions, furi, rename_binding)
+end
+
+function global_rename_testcase(
+        server::JETLS.Server, code::AbstractString, n::Int,
+        context_module::Module; register_file::Bool = false
+    )
+    testcase = if register_file
+        binding_rename_testcase(code, n; server, context_module)
+    else
+        binding_rename_testcase(code, n)
+    end
+    (; fi, positions, furi, world) = testcase
+    rename_binding(pos::Position, new_name::String) = JETLS.global_binding_rename(
+        server, furi, fi, pos, context_module, world, new_name)
+    return (; positions, furi, rename_binding)
+end
+
 @testset "local_binding_rename_preparation" begin
     state = JETLS.ServerState()
     let code = """
@@ -52,13 +103,13 @@ module test_import_rename_context end
             │pri│ntln│(│xx│x│, yyy)
         end
         """
-        fi, positions, furi = rename_testcase(code, 9)
+        (; positions, prepare) = local_rename_preparation_testcase(state, code, 9, @__MODULE__)
         for (i, pos) in enumerate(positions)
             if i in (4,5,6) # println
-                rename_prep = JETLS.local_binding_rename_preparation(state, furi, fi, pos, @__MODULE__)
+                rename_prep = prepare(pos)
                 @test isnothing(rename_prep)
             else
-                rename_prep = JETLS.local_binding_rename_preparation(state, furi, fi, pos, @__MODULE__)
+                rename_prep = prepare(pos)
                 @test !isnothing(rename_prep)
                 @test rename_prep.placeholder == "xxx"
             end
@@ -68,50 +119,47 @@ module test_import_rename_context end
     let code = """
         func(xxx) = println(xxx, 4│2)
         """
-        fi, positions, furi = rename_testcase(code, 1)
-        rename_prep = JETLS.local_binding_rename_preparation(state, furi, fi, only(positions), @__MODULE__)
+        (; positions, prepare) = local_rename_preparation_testcase(state, code, 1, @__MODULE__)
+        rename_prep = prepare(only(positions))
         @test isnothing(rename_prep)
     end
 
     @testset "static parameter rename prepare" begin
-        let code = """
-            func(::│TTT│) where │TTT│<:Integer = zero(│TTT│)
-            """
-            fi, positions, furi = rename_testcase(code, 6)
-            for pos in positions
-                rename_prep = JETLS.local_binding_rename_preparation(state, furi, fi, pos, @__MODULE__)
-                @test !isnothing(rename_prep)
-                @test rename_prep.placeholder == "TTT"
-            end
+        code = """
+        func(::│TTT│) where │TTT│<:Integer = zero(│TTT│)
+        """
+        (; positions, prepare) = local_rename_preparation_testcase(state, code, 6, @__MODULE__)
+        for pos in positions
+            rename_prep = prepare(pos)
+            @test !isnothing(rename_prep)
+            @test rename_prep.placeholder == "TTT"
         end
     end
 
     @testset "rename prepare with docstring" begin
-        let code = """
-            \"\"\"Docstring\"\"\"
-            function func(│xxx│, yyy)
-                println(│xxx│, yyy)
-            end
-            """
-            fi, positions, furi = rename_testcase(code, 4)
-            for pos in positions
-                rename_prep = JETLS.local_binding_rename_preparation(state, furi, fi, pos, @__MODULE__)
-                @test !isnothing(rename_prep)
-                @test rename_prep.placeholder == "xxx"
-            end
+        code = """
+        \"\"\"Docstring\"\"\"
+        function func(│xxx│, yyy)
+            println(│xxx│, yyy)
+        end
+        """
+        (; positions, prepare) = local_rename_preparation_testcase(state, code, 4, @__MODULE__)
+        for pos in positions
+            rename_prep = prepare(pos)
+            @test !isnothing(rename_prep)
+            @test rename_prep.placeholder == "xxx"
         end
     end
 
     @testset "rename prepare with macrocall" begin
-        let code = """
-            func(│xxx│) = @something rand((│xxx│, nothing)) return nothing
-            """
-            fi, positions, furi = rename_testcase(code, 4)
-            for pos in positions
-                rename_prep = JETLS.local_binding_rename_preparation(state, furi, fi, pos, @__MODULE__)
-                @test !isnothing(rename_prep)
-                @test rename_prep.placeholder == "xxx"
-            end
+        code = """
+        func(│xxx│) = @something rand((│xxx│, nothing)) return nothing
+        """
+        (; positions, prepare) = local_rename_preparation_testcase(state, code, 4, @__MODULE__)
+        for pos in positions
+            rename_prep = prepare(pos)
+            @test !isnothing(rename_prep)
+            @test rename_prep.placeholder == "xxx"
         end
     end
 end
@@ -123,13 +171,13 @@ end
             │pri│ntln│(│xx│x│, yyy)
         end
         """
-        fi, positions, furi = rename_testcase(code, 9)
+        (; positions, furi, rename_binding) = local_rename_testcase(server, code, 9, @__MODULE__)
         for (i, pos) in enumerate(positions)
             if i in (4,5,6) # println, should never be called if client supports rename prepare
-                rename = JETLS.local_binding_rename(server, furi, fi, pos, @__MODULE__, "zzz")
+                rename = rename_binding(pos, "zzz")
                 @test isnothing(rename)
             else
-                (; result, error) = JETLS.local_binding_rename(server, furi, fi, pos, @__MODULE__, "zzz")
+                (; result, error) = rename_binding(pos, "zzz")
                 @test result isa WorkspaceEdit && isnothing(error)
                 for (uri, edits) in result.changes
                     @test furi == uri
@@ -149,26 +197,26 @@ end
 
     # Guard against invalid variable names
     let code = "func(xx│x, yyy) = println(xxx, yyy)"
-        fi, positions, furi = rename_testcase(code, 1)
+        (; positions, rename_binding) = local_rename_testcase(server, code, 1, @__MODULE__)
         let
-            (; result, error) = JETLS.local_binding_rename(server, furi, fi, only(positions), @__MODULE__, "zzz zzz")
+            (; result, error) = rename_binding(only(positions), "zzz zzz")
             @test isnothing(result) && error isa ResponseError
         end
         let
-            (; result, error) = JETLS.local_binding_rename(server, furi, fi, only(positions), @__MODULE__, "42zzz")
+            (; result, error) = rename_binding(only(positions), "42zzz")
             @test isnothing(result) && error isa ResponseError
         end
         let
-            (; result, error) = JETLS.local_binding_rename(server, furi, fi, only(positions), @__MODULE__, "'zzz'")
+            (; result, error) = rename_binding(only(positions), "'zzz'")
             @test isnothing(result) && error isa ResponseError
         end
     end
 
     # Allow renaming on var"names"
     let code = """func(var"│xxx│") = println(var"│xxx│")"""
-        fi, positions, furi = rename_testcase(code, 4)
+        (; positions, furi, rename_binding) = local_rename_testcase(server, code, 4, @__MODULE__)
         for pos in positions
-            (; result, error) = JETLS.local_binding_rename(server, furi, fi, pos, @__MODULE__, "zzz zzz")
+            (; result, error) = rename_binding(pos, "zzz zzz")
             @test result isa WorkspaceEdit && isnothing(error)
             for (uri, edits) in result.changes
                 @test furi == uri
@@ -189,9 +237,9 @@ end
         let code = """
             func(::│TTT│) where │TTT│<:Integer = zero(│TTT│)
             """
-            fi, positions, furi = rename_testcase(code, 6)
+            (; positions, furi, rename_binding) = local_rename_testcase(server, code, 6, @__MODULE__)
             for pos in positions
-                (; result, error) = JETLS.local_binding_rename(server, furi, fi, pos, @__MODULE__, "SSS")
+                (; result, error) = rename_binding(pos, "SSS")
                 @test result isa WorkspaceEdit && isnothing(error)
                 for (uri, edits) in result.changes
                     @test furi == uri
@@ -214,52 +262,50 @@ end
     end
 
     @testset "rename with docstring" begin
-        let code = """
-            \"\"\"Docstring\"\"\"
-            function func(│xxx│, yyy)
-                println(│xxx│, yyy)
-            end
-            """
-            fi, positions, furi = rename_testcase(code, 4)
-            for pos in positions
-                (; result, error) = JETLS.local_binding_rename(server, furi, fi, pos, @__MODULE__, "zzz")
-                @test result isa WorkspaceEdit && isnothing(error)
-                for (uri, edits) in result.changes
-                    @test furi == uri
-                    @test length(edits) == 2
-                    @test count(edits) do edit
-                        edit.newText == "zzz" &&
-                        edit.range == Range(; start=positions[1], var"end"=positions[2])
-                    end == 1
-                    @test count(edits) do edit
-                        edit.newText == "zzz" &&
-                        edit.range == Range(; start=positions[3], var"end"=positions[4])
-                    end == 1
-                end
+        code = """
+        \"\"\"Docstring\"\"\"
+        function func(│xxx│, yyy)
+            println(│xxx│, yyy)
+        end
+        """
+        (; positions, furi, rename_binding) = local_rename_testcase(server, code, 4, @__MODULE__)
+        for pos in positions
+            (; result, error) = rename_binding(pos, "zzz")
+            @test result isa WorkspaceEdit && isnothing(error)
+            for (uri, edits) in result.changes
+                @test furi == uri
+                @test length(edits) == 2
+                @test count(edits) do edit
+                    edit.newText == "zzz" &&
+                    edit.range == Range(; start=positions[1], var"end"=positions[2])
+                end == 1
+                @test count(edits) do edit
+                    edit.newText == "zzz" &&
+                    edit.range == Range(; start=positions[3], var"end"=positions[4])
+                end == 1
             end
         end
     end
 
     @testset "rename with macrocall" begin
-        let code = """
-            func(│xxx│) = @something rand((│xxx│, nothing)) return nothing
-            """
-            fi, positions, furi = rename_testcase(code, 4)
-            for pos in positions
-                (; result, error) = JETLS.local_binding_rename(server, furi, fi, pos, @__MODULE__, "yyy")
-                @test result isa WorkspaceEdit && isnothing(error)
-                for (uri, edits) in result.changes
-                    @test furi == uri
-                    @test length(edits) == 2
-                    @test count(edits) do edit
-                        edit.newText == "yyy" &&
-                        edit.range == Range(; start=positions[1], var"end"=positions[2])
-                    end == 1
-                    @test count(edits) do edit
-                        edit.newText == "yyy" &&
-                        edit.range == Range(; start=positions[3], var"end"=positions[4])
-                    end == 1
-                end
+        code = """
+        func(│xxx│) = @something rand((│xxx│, nothing)) return nothing
+        """
+        (; positions, furi, rename_binding) = local_rename_testcase(server, code, 4, @__MODULE__)
+        for pos in positions
+            (; result, error) = rename_binding(pos, "yyy")
+            @test result isa WorkspaceEdit && isnothing(error)
+            for (uri, edits) in result.changes
+                @test furi == uri
+                @test length(edits) == 2
+                @test count(edits) do edit
+                    edit.newText == "yyy" &&
+                    edit.range == Range(; start=positions[1], var"end"=positions[2])
+                end == 1
+                @test count(edits) do edit
+                    edit.newText == "yyy" &&
+                    edit.range == Range(; start=positions[3], var"end"=positions[4])
+                end == 1
             end
         end
     end
@@ -268,36 +314,35 @@ end
         # A use in a `@static` branch not selected for the current platform must be
         # renamed too — otherwise the rename leaves that branch referring to the old name,
         # breaking the code on the platform where the branch is taken.
-        let code = """
-            function func()
-                │xx│x│ = 1
-                @static if Sys.iswindows()
-                    println(│xx│x│)
-                else
-                    println(│xx│x│)
-                end
+        code = """
+        function func()
+            │xx│x│ = 1
+            @static if Sys.iswindows()
+                println(│xx│x│)
+            else
+                println(│xx│x│)
             end
-            """
-            fi, positions, furi = rename_testcase(code, 9)
-            for pos in positions
-                (; result, error) = JETLS.local_binding_rename(server, furi, fi, pos, @__MODULE__, "yyy")
-                @test result isa WorkspaceEdit && isnothing(error)
-                for (uri, edits) in result.changes
-                    @test furi == uri
-                    @test length(edits) == 3
-                    @test count(edits) do edit
-                        edit.newText == "yyy" &&
-                        edit.range == Range(; start=positions[1], var"end"=positions[3])
-                    end == 1
-                    @test count(edits) do edit
-                        edit.newText == "yyy" &&
-                        edit.range == Range(; start=positions[4], var"end"=positions[6])
-                    end == 1
-                    @test count(edits) do edit
-                        edit.newText == "yyy" &&
-                        edit.range == Range(; start=positions[7], var"end"=positions[9])
-                    end == 1
-                end
+        end
+        """
+        (; positions, furi, rename_binding) = local_rename_testcase(server, code, 9, @__MODULE__)
+        for pos in positions
+            (; result, error) = rename_binding(pos, "yyy")
+            @test result isa WorkspaceEdit && isnothing(error)
+            for (uri, edits) in result.changes
+                @test furi == uri
+                @test length(edits) == 3
+                @test count(edits) do edit
+                    edit.newText == "yyy" &&
+                    edit.range == Range(; start=positions[1], var"end"=positions[3])
+                end == 1
+                @test count(edits) do edit
+                    edit.newText == "yyy" &&
+                    edit.range == Range(; start=positions[4], var"end"=positions[6])
+                end == 1
+                @test count(edits) do edit
+                    edit.newText == "yyy" &&
+                    edit.range == Range(; start=positions[7], var"end"=positions[9])
+                end == 1
             end
         end
     end
@@ -308,10 +353,9 @@ end
                 return :(copy(│x│) + │x│)
             end
             """
-            fi, positions, furi = rename_testcase(code, 6)
+            (; positions, furi, rename_binding) = local_rename_testcase(server, code, 6, @__MODULE__)
             for pos in positions
-                (; result, error) = JETLS.local_binding_rename(
-                    server, furi, fi, pos, @__MODULE__, "y")
+                (; result, error) = rename_binding(pos, "y")
                 @test result isa WorkspaceEdit && isnothing(error)
                 for (uri, edits) in result.changes
                     @test furi == uri
@@ -329,17 +373,15 @@ end
                 end)
             end
             """
-            fi, positions, furi = rename_testcase(code, 6)
-            let rename_result = JETLS.local_binding_rename(
-                    server, furi, fi, positions[1], @__MODULE__, "arg")
+            (; positions, rename_binding) = local_rename_testcase(server, code, 6, @__MODULE__)
+            let rename_result = rename_binding(positions[1], "arg")
                 @test rename_result !== nothing
                 (; result, error) = rename_result
                 @test result isa WorkspaceEdit && isnothing(error)
                 edits = only(result.changes).second
                 @test length(edits) == 1
             end
-            let rename_result = JETLS.local_binding_rename(
-                    server, furi, fi, positions[3], @__MODULE__, "local_x")
+            let rename_result = rename_binding(positions[3], "local_x")
                 @test rename_result !== nothing
                 (; result, error) = rename_result
                 @test result isa WorkspaceEdit && isnothing(error)
@@ -354,10 +396,9 @@ end
                 return :(zero(│T│))
             end
             """
-            fi, positions, furi = rename_testcase(code, 6)
+            (; positions, furi, rename_binding) = local_rename_testcase(server, code, 6, @__MODULE__)
             for pos in positions
-                (; result, error) = JETLS.local_binding_rename(
-                    server, furi, fi, pos, @__MODULE__, "S")
+                (; result, error) = rename_binding(pos, "S")
                 @test result isa WorkspaceEdit && isnothing(error)
                 for (uri, edits) in result.changes
                     @test furi == uri
@@ -377,10 +418,9 @@ end
                 end
             end
             """
-            fi, positions, furi = rename_testcase(code, 4)
+            (; positions, furi, rename_binding) = local_rename_testcase(server, code, 4, @__MODULE__)
             for pos in positions
-                (; result, error) = JETLS.local_binding_rename(
-                    server, furi, fi, pos, @__MODULE__, "y")
+                (; result, error) = rename_binding(pos, "y")
                 @test result isa WorkspaceEdit && isnothing(error)
                 for (uri, edits) in result.changes
                     @test furi == uri
@@ -392,19 +432,17 @@ end
     end
 
     @testset "ordinary quote-local rename" begin
-        let code = """
-            f() = :(let │x│ = 1
-                │x│
-            end)
-            """
-            fi, positions, furi = rename_testcase(code, 4)
-            for pos in positions
-                rename_result = JETLS.local_binding_rename(
-                    server, furi, fi, pos, @__MODULE__, "y")
-                @test rename_result !== nothing &&
-                    rename_result.result isa WorkspaceEdit &&
-                    length(only(rename_result.result.changes).second) == 2
-            end
+        code = """
+        f() = :(let │x│ = 1
+            │x│
+        end)
+        """
+        (; positions, rename_binding) = local_rename_testcase(server, code, 4, @__MODULE__)
+        for pos in positions
+            rename_result = rename_binding(pos, "y")
+            @test rename_result !== nothing &&
+                rename_result.result isa WorkspaceEdit &&
+                length(only(rename_result.result.changes).second) == 2
         end
     end
 end
@@ -416,34 +454,29 @@ end
         │bar│ = │foo│()
         │println│(│bar│)
         """
-        fi, positions, furi = rename_testcase(code, 10)
-
+        (; positions, prepare) = global_rename_preparation_testcase(state, code, 10, @__MODULE__)
         for pos in positions[1:2]
-            rename_prep = JETLS.global_binding_rename_preparation(state, furi, fi, pos, @__MODULE__)
+            rename_prep = prepare(pos)
             @test !isnothing(rename_prep)
             @test rename_prep.placeholder == "foo"
         end
-
         for pos in positions[3:4]
-            rename_prep = JETLS.global_binding_rename_preparation(state, furi, fi, pos, @__MODULE__)
+            rename_prep = prepare(pos)
             @test !isnothing(rename_prep)
             @test rename_prep.placeholder == "bar"
         end
-
         for pos in positions[5:6]
-            rename_prep = JETLS.global_binding_rename_preparation(state, furi, fi, pos, @__MODULE__)
+            rename_prep = prepare(pos)
             @test !isnothing(rename_prep)
             @test rename_prep.placeholder == "foo"
         end
-
         for pos in positions[7:8]
-            rename_prep = JETLS.global_binding_rename_preparation(state, furi, fi, pos, @__MODULE__)
+            rename_prep = prepare(pos)
             @test !isnothing(rename_prep)
             @test rename_prep.placeholder == "println"
         end
-
         for pos in positions[9:10]
-            rename_prep = JETLS.global_binding_rename_preparation(state, furi, fi, pos, @__MODULE__)
+            rename_prep = prepare(pos)
             @test !isnothing(rename_prep)
             @test rename_prep.placeholder == "bar"
         end
@@ -451,28 +484,25 @@ end
 
     # Non-binding position should be rejected
     let code = "func(xxx) = println(xxx, 4│2)"
-        fi, positions, furi = rename_testcase(code, 1)
-        rename_prep = JETLS.global_binding_rename_preparation(
-            state, furi, fi, only(positions), @__MODULE__)
+        (; positions, prepare) = global_rename_preparation_testcase(state, code, 1, @__MODULE__)
+        rename_prep = prepare(only(positions))
         @test isnothing(rename_prep)
     end
 
     @testset "ordinary unanchored quote" begin
         let code = "f() = :(use(│x│))"
-            fi, positions, furi = rename_testcase(code, 2)
+            (; positions, prepare) = global_rename_preparation_testcase(state, code, 2, @__MODULE__)
             for pos in positions
-                rename_prep = JETLS.global_binding_rename_preparation(
-                    state, furi, fi, pos, @__MODULE__)
+                rename_prep = prepare(pos)
                 @test !isnothing(rename_prep) && rename_prep.placeholder == "x"
             end
         end
 
         # An atomic quoted identifier is Symbol data, not a global binding target.
         let code = "names = (:│sin│, :cos)"
-            fi, positions, furi = rename_testcase(code, 2)
+            (; positions, prepare) = global_rename_preparation_testcase(state, code, 2, @__MODULE__)
             for pos in positions
-                rename_prep = JETLS.global_binding_rename_preparation(
-                    state, furi, fi, pos, @__MODULE__)
+                rename_prep = prepare(pos)
                 @test isnothing(rename_prep)
             end
         end
@@ -486,10 +516,9 @@ end
             end
             @mymacro println("hello")
             """
-            fi, positions, furi = rename_testcase(code, 2)
+            (; positions, prepare) = global_rename_preparation_testcase(state, code, 2, @__MODULE__)
             # Only test start position (end position selects implicit macro arg)
-            rename_prep = JETLS.global_binding_rename_preparation(
-                state, furi, fi, positions[1], @__MODULE__)
+            rename_prep = prepare(positions[1])
             @test !isnothing(rename_prep)
             @test rename_prep.placeholder == "mymacro"
         end
@@ -501,10 +530,9 @@ end
             end
             │@my│macro println("hello")
             """
-            fi, positions, furi = rename_testcase(code, 2)
+            (; positions, prepare) = global_rename_preparation_testcase(state, code, 2, @__MODULE__)
             for pos in positions
-                rename_prep = JETLS.global_binding_rename_preparation(
-                    state, furi, fi, pos, @__MODULE__)
+                rename_prep = prepare(pos)
                 @test !isnothing(rename_prep)
                 @test rename_prep.placeholder == "mymacro"
             end
@@ -519,9 +547,9 @@ end
         baz() = │foo│()
         │foo│(x) = x + 1
         """
-        fi, positions, furi = rename_testcase(code, 6)
+        (; positions, furi, rename_binding) = global_rename_testcase(server, code, 6, @__MODULE__)
         for pos in positions
-            (; result, error) = JETLS.global_binding_rename(server, furi, fi, pos, @__MODULE__, "qux")
+            (; result, error) = rename_binding(pos, "qux")
             @test result isa WorkspaceEdit && isnothing(error)
             for (uri, edits) in result.changes
                 @test furi == uri
@@ -541,11 +569,10 @@ end
             │@│mymacro println("hello")
             │@│mymacro println("world")
             """
-            fi, positions, furi = rename_testcase(code, 5)
+            (; positions, furi, rename_binding) = global_rename_testcase(server, code, 5, @__MODULE__)
             # Test from definition position
             let pos = positions[1]
-                (; result, error) = JETLS.global_binding_rename(
-                    server, furi, fi, pos, @__MODULE__, "newmacro")
+                (; result, error) = rename_binding(pos, "newmacro")
                 @test result isa WorkspaceEdit && isnothing(error)
                 for (uri, edits) in result.changes
                     @test furi == uri
@@ -561,10 +588,9 @@ end
             end
             # Test from macrocall positions
             for pos in positions[2:5]
-                (; result, error) = JETLS.global_binding_rename(
-                    server, furi, fi, pos, @__MODULE__, "newmacro")
+                (; result, error) = rename_binding(pos, "newmacro")
                 @test result isa WorkspaceEdit && isnothing(error)
-                for (uri, edits) in result.changes
+                for (_, edits) in result.changes
                     @test length(edits) == 3
                     @test all(edit -> edit.newText == "newmacro", edits)
                 end
@@ -578,10 +604,9 @@ end
             end
             │@│mymacro println("hello")
             """
-            fi, positions, furi = rename_testcase(code, 3)
+            (; positions, rename_binding) = global_rename_testcase(server, code, 3, @__MODULE__)
             for pos in positions
-                (; result, error) = JETLS.global_binding_rename(
-                    server, furi, fi, pos, @__MODULE__, "@newmacro")
+                (; result, error) = rename_binding(pos, "@newmacro")
                 @test result isa WorkspaceEdit && isnothing(error)
                 for (_, edits) in result.changes
                     @test all(edit -> edit.newText == "newmacro", edits)
@@ -598,10 +623,10 @@ end
             │foo│(1)
             bar() = │foo│()
             """
-            fi, positions, furi = rename_testcase(code, 6; server, context_module=test_import_rename_context)
+            (; positions, rename_binding) = global_rename_testcase(
+                server, code, 6, test_import_rename_context; register_file=true)
             for pos in positions
-                (; result, error) = JETLS.global_binding_rename(
-                    server, furi, fi, pos, test_import_rename_context, "qux")
+                (; result, error) = rename_binding(pos, "qux")
                 @test result isa WorkspaceEdit && isnothing(error)
                 edits = only(result.changes).second
                 @test length(edits) == 3
@@ -619,10 +644,10 @@ end
             using Base: foo as │myfoo│
             │myfoo│(1)
             """
-            fi, positions, furi = rename_testcase(code, 4; server, context_module=test_import_rename_context)
+            (; positions, rename_binding) = global_rename_testcase(
+                server, code, 4, test_import_rename_context; register_file=true)
             for pos in positions
-                (; result, error) = JETLS.global_binding_rename(
-                    server, furi, fi, pos, test_import_rename_context, "qux")
+                (; result, error) = rename_binding(pos, "qux")
                 @test result isa WorkspaceEdit && isnothing(error)
                 edits = only(result.changes).second
                 @test length(edits) == 2
@@ -635,10 +660,10 @@ end
             using Random: randcycle as │randcycle2│
             │randcycle2│(5)
             """
-            fi, positions, furi = rename_testcase(code, 4; server, context_module=test_import_rename_context)
+            (; positions, rename_binding) = global_rename_testcase(
+                server, code, 4, test_import_rename_context; register_file=true)
             for pos in positions
-                (; result, error) = JETLS.global_binding_rename(
-                    server, furi, fi, pos, test_import_rename_context, "randcycle")
+                (; result, error) = rename_binding(pos, "randcycle")
                 @test result isa WorkspaceEdit && isnothing(error)
                 edits = only(result.changes).second
                 @test length(edits) == 2
@@ -656,10 +681,10 @@ end
             import Base.│sin│
             │sin│(1.0)
             """
-            fi, positions, furi = rename_testcase(code, 4; server, context_module=test_import_rename_context)
+            (; positions, rename_binding) = global_rename_testcase(
+                server, code, 4, test_import_rename_context; register_file=true)
             for pos in positions
-                (; result, error) = JETLS.global_binding_rename(
-                    server, furi, fi, pos, test_import_rename_context, "mysin")
+                (; result, error) = rename_binding(pos, "mysin")
                 @test result isa WorkspaceEdit && isnothing(error)
                 edits = only(result.changes).second
                 @test length(edits) == 2
@@ -673,10 +698,10 @@ end
         let code = """
             using Base.│Iterators│
             """
-            fi, positions, furi = rename_testcase(code, 2; server, context_module=test_import_rename_context)
+            (; positions, rename_binding) = global_rename_testcase(
+                server, code, 2, test_import_rename_context; register_file=true)
             for pos in positions
-                (; result, error) = JETLS.global_binding_rename(
-                    server, furi, fi, pos, test_import_rename_context, "MyIter")
+                (; result, error) = rename_binding(pos, "MyIter")
                 @test result isa WorkspaceEdit && isnothing(error)
                 edits = only(result.changes).second
                 @test length(edits) == 1
@@ -688,20 +713,19 @@ end
     @testset "export/public rename" begin
         # Renaming from a cursor inside `export`/`public` should rewrite every
         # occurrence, including the export statement itself.
-        let code = """
-            │foo│() = 42
-            export │foo│
-            bar() = │foo│()
-            """
-            fi, positions, furi = rename_testcase(code, 6)
-            for pos in positions
-                (; result, error) = JETLS.global_binding_rename(
-                    server, furi, fi, pos, @__MODULE__, "qux")
-                @test result isa WorkspaceEdit && isnothing(error)
-                for (_, edits) in result.changes
-                    @test length(edits) == 3
-                    @test all(edit -> edit.newText == "qux", edits)
-                end
+        code = """
+        │foo│() = 42
+        export │foo│
+        bar() = │foo│()
+        """
+        (; positions, rename_binding) = global_rename_testcase(
+            server, code, 6, @__MODULE__)
+        for pos in positions
+            (; result, error) = rename_binding(pos, "qux")
+            @test result isa WorkspaceEdit && isnothing(error)
+            for (_, edits) in result.changes
+                @test length(edits) == 3
+                @test all(edit -> edit.newText == "qux", edits)
             end
         end
     end
@@ -716,14 +740,13 @@ end
         touch(joinpath(dir, "README.md"))
 
         for target_name = ("foo.jl", "subdir/foo.jl", "README.md")
-            let code = """include("│$(target_name)│")"""
-                fi, positions, furi = rename_testcase(code, 2;
-                    filename = joinpath(dir, "main.jl"))
-                for pos in positions
-                    rename_prep = JETLS.file_rename_preparation(state, furi, fi, pos)
-                    @test !isnothing(rename_prep)
-                    @test rename_prep.placeholder == target_name
-                end
+            code = """include("│$(target_name)│")"""
+            fi, positions, furi = rename_testcase(code, 2;
+                filename = joinpath(dir, "main.jl"))
+            for pos in positions
+                rename_prep = JETLS.file_rename_preparation(state, furi, fi, pos)
+                @test !isnothing(rename_prep)
+                @test rename_prep.placeholder == target_name
             end
         end
 
@@ -740,17 +763,16 @@ end
     server = JETLS.Server()
     mktempdir() do dir
         touch(joinpath(dir, "foo.jl"))
-        let code = """include("│foo.jl│")"""
-            fi, positions, furi = rename_testcase(code, 2;
-                filename = joinpath(dir, "main.jl"))
-            for pos in positions
-                (; result, error) = JETLS.file_rename(server, furi, fi, pos, "bar.jl")
-                @test result isa WorkspaceEdit && isnothing(error)
-                @test length(result.changes) == 1
-                edits = result.changes[furi]
-                @test length(edits) == 1
-                @test edits[1].newText == "bar.jl"
-            end
+        code = """include("│foo.jl│")"""
+        fi, positions, furi = rename_testcase(code, 2;
+            filename = joinpath(dir, "main.jl"))
+        for pos in positions
+            (; result, error) = JETLS.file_rename(server, furi, fi, pos, "bar.jl")
+            @test result isa WorkspaceEdit && isnothing(error)
+            @test length(result.changes) == 1
+            edits = result.changes[furi]
+            @test length(edits) == 1
+            @test edits[1].newText == "bar.jl"
         end
     end
 end

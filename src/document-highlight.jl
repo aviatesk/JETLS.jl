@@ -50,11 +50,12 @@ function document_highlights!(
     )
     st0_top = build_syntax_tree(fi)
     offset = xy_to_offset(fi, pos)
-    (; context_module) = get_context_info(state, uri, pos)
+    (; context_module, world) = get_context_info(state, uri, pos)
     soft_scope = is_notebook_cell_uri(state, uri)
 
     (; ctx3, st3, binding) = @something begin
-        select_target_binding(st0_top, offset, context_module; caller="document_highlights!", soft_scope)
+        select_target_binding(st0_top, offset, context_module, world;
+            caller="document_highlights!", soft_scope)
     end return highlights
 
     binfo = JL.get_binding(ctx3, binding)
@@ -63,7 +64,7 @@ function document_highlights!(
     if binfo.kind === :global
         global_document_highlights!(highlights′, state, uri, fi, st0_top, binfo)
     else
-        local_document_highlights!(highlights′, state, uri, fi, ctx3, st3, binfo)
+        local_document_highlights!(highlights′, state, uri, fi, ctx3, st3, binfo, world)
     end
 
     for (range, kind) in highlights′
@@ -100,9 +101,11 @@ end
 
 function local_document_highlights!(
         highlights′::Dict{Range,DocumentHighlightKind.Ty},
-        state::ServerState, uri::URI, fi::FileInfo, ctx3, st3, binfo::JL.BindingInfo,
+        state::ServerState, uri::URI, fi::FileInfo,
+        ctx3::JL.VariableAnalysisContext, st3::SyntaxTreeC,
+        binfo::JL.BindingInfo, world::UInt,
     )
-    binding_occurrences = compute_binding_occurrences(ctx3, st3)
+    binding_occurrences = compute_binding_occurrences(ctx3, st3, world)
     if haskey(binding_occurrences, binfo)
         for occurrence in binding_occurrences[binfo]
             add_highlight_for_occurrence!(highlights′, state, uri, fi, occurrence)

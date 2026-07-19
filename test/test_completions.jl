@@ -14,10 +14,11 @@ module lowering_module end
 function get_cursor_bindings(
         fi::JETLS.FileInfo, b::Int;
         context_module::Module = lowering_module,
-        soft_scope::Bool = false
+        soft_scope::Bool = false,
+        world::UInt = Base.get_world_counter()
     )
     st0 = JETLS.build_syntax_tree(fi)
-    cb = JETLS.cursor_bindings(st0, b, context_module; soft_scope)
+    cb = JETLS.cursor_bindings(st0, b, context_module, world; soft_scope)
     return isnothing(cb) ? [] : cb
 end
 function get_cursor_bindings(marked_text::AbstractString; kwargs...)

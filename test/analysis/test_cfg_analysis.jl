@@ -14,10 +14,12 @@ module lowering_module end
 function get_undef_status(
         text::AbstractString;
         context_module::Module = lowering_module,
+        world::UInt = Base.get_world_counter(),
         allow_noreturn_optimization::Vector{Symbol} = Symbol[]
     )
     st0 = jlparse(text; rule=:statement, filename=@__FILE__)
-    (; ctx3, st3) = JETLS.jl_lower_for_scope_resolution(context_module, st0; trim_error_nodes=false, recover_from_macro_errors=false)
+    (; ctx3, st3) = JETLS.jl_lower_for_scope_resolution(context_module, world, st0;
+        trim_error_nodes=false, recover_from_macro_errors=false)
     (; undef_info) = JETLS.analyze_all_lambdas(ctx3, st3; allow_noreturn_optimization)
     result = Dict{String, Union{Nothing,Bool}}()
     for (binfo, info) in undef_info
@@ -1147,10 +1149,11 @@ end # @testset "undef analysis" begin
 function get_dead_stores(
         text::AbstractString;
         context_module::Module = lowering_module,
+        world::UInt = Base.get_world_counter(),
         allow_noreturn_optimization::Vector{Symbol} = Symbol[]
     )
     st0 = jlparse(text; rule=:statement, filename=@__FILE__)
-    (; ctx3, st3) = JETLS.jl_lower_for_scope_resolution(context_module, st0;
+    (; ctx3, st3) = JETLS.jl_lower_for_scope_resolution(context_module, world, st0;
         trim_error_nodes=false, recover_from_macro_errors=false)
     (; dead_store_info) = JETLS.analyze_all_lambdas(ctx3, st3;
         allow_noreturn_optimization)
@@ -1587,10 +1590,11 @@ end # @testset "dead store analysis" begin
 function get_unreachable_statements(
         text::AbstractString;
         context_module::Module = lowering_module,
+        world::UInt = Base.get_world_counter(),
         allow_noreturn_optimization::Vector{Symbol} = Symbol[]
     )
     st0 = jlparse(text; rule=:statement, filename=@__FILE__)
-    (; ctx3, st3) = JETLS.jl_lower_for_scope_resolution(context_module, st0;
+    (; ctx3, st3) = JETLS.jl_lower_for_scope_resolution(context_module, world, st0;
         trim_error_nodes=false, recover_from_macro_errors=false)
     (; unreachable_statements) = JETLS.analyze_all_lambdas(ctx3, st3;
         allow_noreturn_optimization)

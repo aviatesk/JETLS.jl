@@ -63,27 +63,29 @@ function handle_PrepareRenameRequest(
     end
     fi = result
 
-    (; context_module) = get_context_info(state, uri, pos)
+    (; context_module, world) = get_context_info(state, uri, pos)
     soft_scope = is_notebook_cell_uri(state, uri)
     return send(server,
         PrepareRenameResponse(;
             id = msg.id,
             result = @something(
-                local_binding_rename_preparation(state, uri, fi, pos, context_module; soft_scope),
-                global_binding_rename_preparation(state, uri, fi, pos, context_module; soft_scope),
+                local_binding_rename_preparation(state, uri, fi, pos, context_module, world; soft_scope),
+                global_binding_rename_preparation(state, uri, fi, pos, context_module, world; soft_scope),
                 file_rename_preparation(state, uri, fi, pos),
                 null)))
 end
 
 function local_binding_rename_preparation(
-        state::ServerState, uri::URI, fi::FileInfo, pos::Position, context_module::Module;
-        soft_scope::Bool = false
+        state::ServerState, uri::URI, fi::FileInfo, pos::Position,
+        context_module::Module, world::UInt;
+        soft_scope::Bool = false,
     )
     st0_top = build_syntax_tree(fi)
     offset = xy_to_offset(fi, pos)
 
     (; ctx3, binding) = @something begin
-        select_target_binding(st0_top, offset, context_module; caller="local_binding_rename_preparation", soft_scope)
+        select_target_binding(st0_top, offset, context_module, world;
+            caller="local_binding_rename_preparation", soft_scope)
     end return nothing
 
     binfo = JL.get_binding(ctx3, binding)
@@ -96,14 +98,16 @@ function local_binding_rename_preparation(
 end
 
 function global_binding_rename_preparation(
-        state::ServerState, uri::URI, fi::FileInfo, pos::Position, context_module::Module;
+        state::ServerState, uri::URI, fi::FileInfo, pos::Position,
+        context_module::Module, world::UInt;
         soft_scope::Bool = false
     )
     st0_top = build_syntax_tree(fi)
     offset = xy_to_offset(fi, pos)
 
     (; ctx3, binding) = @something begin
-        select_target_binding(st0_top, offset, context_module; caller="global_binding_rename_preparation", soft_scope)
+        select_target_binding(st0_top, offset, context_module, world;
+            caller="global_binding_rename_preparation", soft_scope)
     end return nothing
 
     binfo = JL.get_binding(ctx3, binding)
@@ -188,17 +192,18 @@ function rename(
         server::Server, uri::URI, fi::FileInfo, pos::Position, newName::String;
         token::Union{Nothing,ProgressToken} = nothing,
         cancel_flag::AbstractCancelFlag = DUMMY_CANCEL_FLAG)
-    (; context_module) = get_context_info(server.state, uri, pos)
+    (; context_module, world) = get_context_info(server.state, uri, pos)
     soft_scope = is_notebook_cell_uri(server.state, uri)
     return @something(
-        local_binding_rename(server, uri, fi, pos, context_module, newName; soft_scope),
-        global_binding_rename(server, uri, fi, pos, context_module, newName; token, cancel_flag, soft_scope),
+        local_binding_rename(server, uri, fi, pos, context_module, world, newName; soft_scope),
+        global_binding_rename(server, uri, fi, pos, context_module, world, newName; token, cancel_flag, soft_scope),
         file_rename(server, uri, fi, pos, newName),
         (; result = null, error = nothing))
 end
 
 function local_binding_rename(
-        server::Server, uri::URI, fi::FileInfo, pos::Position, context_module::Module, newName::String;
+        server::Server, uri::URI, fi::FileInfo, pos::Position,
+        context_module::Module, world::UInt, newName::String;
         soft_scope::Bool = false
     )
     state = server.state
@@ -206,7 +211,8 @@ function local_binding_rename(
     offset = xy_to_offset(fi, pos)
 
     (; ctx3, st3, binding) = @something begin
-        select_target_binding(st0_top, offset, context_module; caller="local_binding_rename", soft_scope)
+        select_target_binding(st0_top, offset, context_module, world;
+            caller="local_binding_rename", soft_scope)
     end return nothing
 
     binfo = JL.get_binding(ctx3, binding)
@@ -224,7 +230,7 @@ function local_binding_rename(
         end
     end
 
-    binding_occurrences = compute_binding_occurrences(ctx3, st3)
+    binding_occurrences = compute_binding_occurrences(ctx3, st3, world)
     haskey(binding_occurrences, binfo) ||
         return (; result = nothing,
             error = ResponseError(;
@@ -257,7 +263,8 @@ function local_binding_rename(
 end
 
 function global_binding_rename(
-        server::Server, uri::URI, fi::FileInfo, pos::Position, context_module::Module, newName::String;
+        server::Server, uri::URI, fi::FileInfo, pos::Position,
+        context_module::Module, world::UInt, newName::String;
         token::Union{Nothing,ProgressToken} = nothing,
         cancel_flag::AbstractCancelFlag = DUMMY_CANCEL_FLAG,
         soft_scope::Bool = false
@@ -266,7 +273,8 @@ function global_binding_rename(
     offset = xy_to_offset(fi, pos)
 
     (; ctx3, binding) = @something begin
-        select_target_binding(st0_top, offset, context_module; caller="global_binding_rename", soft_scope)
+        select_target_binding(st0_top, offset, context_module, world;
+            caller="global_binding_rename", soft_scope)
     end return nothing
 
     binfo = JL.get_binding(ctx3, binding)

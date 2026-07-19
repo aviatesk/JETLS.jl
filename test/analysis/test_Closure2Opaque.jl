@@ -16,8 +16,9 @@ function rewrite_lower_eval(code::AbstractString)
     st0_top = JETLS.build_syntax_tree(fi)
     last_value = Ref{Any}(nothing)
     last_st3_oc = Ref{Union{JETLS.SyntaxTreeC,Nothing}}(nothing)
+    world = Base.get_world_counter()
     JETLS.iterate_toplevel_tree(st0_top) do st0::JS.SyntaxTree
-        result = JETLS.TypeAnnotation.get_inferrable_tree(st0, context_module)
+        result = JETLS.TypeAnnotation.get_inferrable_tree(st0, context_module, world)
         result === nothing && error("get_inferrable_tree failed for: $code")
         (; ctx3, st3) = result
         st3_oc = rewrite_local_closures_to_opaque(ctx3, st3)
@@ -41,8 +42,9 @@ function rewrite_only(code::AbstractString)
     fi = JETLS.FileInfo(1, code, @__FILE__)
     st0_top = JETLS.build_syntax_tree(fi)
     last_st3_oc = Ref{Union{JETLS.SyntaxTreeC,Nothing}}(nothing)
+    world = Base.get_world_counter()
     JETLS.iterate_toplevel_tree(st0_top) do st0::JS.SyntaxTree
-        result = JETLS.TypeAnnotation.get_inferrable_tree(st0, context_module)
+        result = JETLS.TypeAnnotation.get_inferrable_tree(st0, context_module, world)
         result === nothing && error("get_inferrable_tree failed for: $code")
         (; ctx3, st3) = result
         last_st3_oc[] = rewrite_local_closures_to_opaque(ctx3, st3)

@@ -33,7 +33,7 @@ in "Prerequisite" and "Limitations".
 The pipeline has four steps. Each step's output feeds the next:
 
 1. **Lower for scope resolution**:
-   [`get_inferrable_tree(st0::SyntaxTreeC, context_module::Module) -> (; ctx3::JL.VariableAnalysisContext, st3::SyntaxTreeC) | nothing`](@ref get_inferrable_tree)
+   [`get_inferrable_tree(st0::SyntaxTreeC, context_module::Module, world::UInt) -> (; ctx3::JL.VariableAnalysisContext, st3::SyntaxTreeC) | nothing`](@ref get_inferrable_tree)
    walks a top-level `st0` through JuliaLowering's early scope passes against
    `context_module`, returning an `(ctx3, st3)` pair. Surface `K"error"` nodes are stripped
    first so incomplete user input still produces a usable lowered tree.
@@ -920,12 +920,12 @@ JuliaLowering happily lowers what's left. For example, in
 See the [`TypeAnnotation`](@ref) module docstring for the full pipeline.
 """
 function get_inferrable_tree(
-        st0::SyntaxTreeC, context_module::Module;
-        world::UInt = Base.get_world_counter(),
+        st0::SyntaxTreeC, context_module::Module, world::UInt;
         caller::AbstractString = "get_inferrable_tree"
     )
     (; ctx3, st3) = try
-        jl_lower_for_scope_resolution(context_module, st0; world, trim_error_nodes=true, recover_from_macro_errors=false)
+        jl_lower_for_scope_resolution(context_module, world, st0;
+            trim_error_nodes=true, recover_from_macro_errors=false)
     catch err
         @static JETLS_DEBUG_LOWERING && @warn "Error in lowering ($caller)" err
         @static JETLS_DEBUG_LOWERING && Base.show_backtrace(stderr, catch_backtrace())
@@ -1686,7 +1686,7 @@ function build_inferred_context(
         world::UInt = Base.get_world_counter(),
         caller::AbstractString = "build_inferred_context"
     )
-    (; ctx3, st3) = @something get_inferrable_tree(st0, context_module; world, caller) return nothing
+    (; ctx3, st3) = @something get_inferrable_tree(st0, context_module, world; caller) return nothing
     inferred = @something infer_toplevel_tree(ctx3, st3, st0, context_module; world) return nothing
     # `JS.prune` minimizes provenance, so collect query-dispatch indexes first.
     surface_kind_index, macrocall_types = collect_provenance_indexes(inferred)

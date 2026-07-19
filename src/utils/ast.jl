@@ -197,41 +197,57 @@ end
 
 is_mainfunc0(st0::SyntaxTreeC) = is_macrocall_st0(st0, "@main")
 
-function is_base_macrocall0(st0::SyntaxTreeC, name::AbstractString)
-    JS.kind(st0) === JS.K"macrocall" || return false
-    JS.numchildren(st0) >= 1 || return false
-    macro_name = st0[1]
-    JS.kind(macro_name) === JS.K"." || return false
-    JS.numchildren(macro_name) >= 2 || return false
-    get_name_val(macro_name[1]) == "Base" || return false
-    rhs = macro_name[2]
-    if JS.kind(rhs) in JS.KSet"quote inert" && JS.numchildren(rhs) >= 1
-        rhs = rhs[1]
-    end
-    return get_name_val(rhs) == name
+function resolve_macrocall_object(context_module::Module, world::UInt, st0::SyntaxTreeC)
+    JS.kind(st0) === JS.K"macrocall" || return nothing
+    JS.numchildren(st0) >= 1 || return nothing
+    macro_const = resolve_global_const(context_module, world, st0[1])
+    macro_const isa Core.Const || return nothing
+    return macro_const.val
 end
 
-is_base_generated0(st0::SyntaxTreeC) = is_base_macrocall0(st0, "@generated")
-is_generated0(st0::SyntaxTreeC) = is_macrocall_st0(st0, "@generated") || is_base_generated0(st0)
+function is_macro_object_binding(
+        macro_object, world::UInt, defining_module::Module, name::Symbol
+    )
+    Base.invoke_in_world(world, isdefinedglobal, defining_module, name) || return false
+    target = Base.invoke_in_world(world, getglobal, defining_module, name)
+    return macro_object === target
+end
 
-is_base_ateval0(st0::SyntaxTreeC) = is_base_macrocall0(st0, "@eval")
-is_ateval0(st0::SyntaxTreeC) = is_macrocall_st0(st0, "@eval") || is_base_ateval0(st0)
+function is_macrocall_binding0(
+        context_module::Module, world::UInt, st0::SyntaxTreeC,
+        defining_module::Module, name::Symbol
+    )
+    macro_object = @something resolve_macrocall_object(context_module, world, st0) return false
+    return is_macro_object_binding(macro_object, world, defining_module, name)
+end
+
+is_generated0(context_module::Module, world::UInt, st0::SyntaxTreeC) =
+    is_macrocall_binding0(context_module, world, st0, Base, Symbol("@generated"))
+
+is_ateval0(context_module::Module, world::UInt, st0::SyntaxTreeC) =
+    is_macrocall_binding0(context_module, world, st0, Base, Symbol("@eval"))
 
 is_nospecialize_or_specialize_macrocall0(st0::SyntaxTreeC) =
     is_macrocall_st0(st0, "@nospecialize", "@specialize")
 
 is_macro0(st0::SyntaxTreeC) = JS.kind(st0) === JS.K"macro"
 
-is_new_style_macrocall0(st0::SyntaxTreeC) =
-    is_macrocall_st0(st0, NEW_STYLE_MACROCALL_NAMES...) ||
-    is_base_generated0(st0) || is_base_ateval0(st0)
+function is_new_style_macrocall0(
+        context_module::Module, world::UInt, st0::SyntaxTreeC
+    )
+    macro_object = @something resolve_macrocall_object(context_module, world, st0) return false
+    return any(NEW_STYLE_MACRO_BINDINGS) do (defining_module, name)
+        is_macro_object_binding(macro_object, world, defining_module, name)
+    end
+end
 
 is_doc0(st0::SyntaxTreeC) = is_macrocall_st0(st0, "@doc"; from=Core)
 is_doc0_any(st0::SyntaxTreeC) = is_macrocall_st0(st0, "@doc") # Explicit `@doc` can have any module set.
 
 is_cmd0(st0::SyntaxTreeC) = is_macrocall_st0(st0, "@cmd"; from=Core)
 
-is_static0(st0::SyntaxTreeC) = is_macrocall_st0(st0, "@static")
+is_static0(context_module::Module, world::UInt, st0::SyntaxTreeC) =
+    is_macrocall_binding0(context_module, world, st0, Base, Symbol("@static"))
 
 """
     collect_import_names(st0::SyntaxTreeC) -> Vector{Pair{SyntaxTreeC, String}}
@@ -392,19 +408,28 @@ function is_nospecialize_or_specialize_macrocall3(st3::SyntaxTreeC)
     return get_name_val(macro_name) in ("nospecialize", "specialize")
 end
 
-function _remove_macrocalls(st0::SyntaxTreeC; strip_static::Bool=false)
+function _remove_macrocalls(
+        context_module::Union{Nothing,Module}, world::UInt, st0::SyntaxTreeC;
+        strip_static::Bool = false
+    )
     if JS.kind(st0) === JS.K"macrocall"
-        if is_new_style_macrocall0(st0) && !(strip_static && is_static0(st0))
-            # Macros with new-style JuliaLowering implementations preserve
-            # fine-grained provenance during expansion, so we don't need to
-            # rewrite them to a `block` to keep source locations accurate.
-            # See `NEW_STYLE_MACROCALL_NAMES` for the list.
-            # With `strip_static`, `@static` is exempted from this exemption: it is
-            # rewritten to a `block` keeping *all* branches (a plain runtime
-            # conditional) instead of expanding to the single platform-selected
-            # branch, so occurrence analysis sees every branch — scope-aware — rather
-            # than dropping the branches not taken on the current platform.
-            return st0, false
+        is_new_style = context_module !== nothing &&
+            is_new_style_macrocall0(context_module, world, st0)
+        strip_current_static = strip_static && context_module !== nothing &&
+            is_static0(context_module, world, st0)
+        if is_new_style && !strip_current_static
+            # Preserve this macrocall, but still remove old-style macros and `@static`
+            # calls nested in its arguments.
+            new_children = JS.SyntaxList(JS.syntax_graph(st0))
+            push!(new_children, st0[1])
+            changed = false
+            for i = 2:JS.numchildren(st0)
+                child, child_changed = _remove_macrocalls(
+                    context_module, world, st0[i]; strip_static)
+                changed |= child_changed
+                push!(new_children, child)
+            end
+            return (changed ? JS.mknode(st0, new_children) : st0, changed)
         elseif is_mainfunc0(st0)
             # `@main` functions are desugared by `desugar_main_macrocall` below,
             # so there's no need to remove them here
@@ -428,7 +453,8 @@ function _remove_macrocalls(st0::SyntaxTreeC; strip_static::Bool=false)
             # arguments out of the macrocall into a bare `block`, any surviving
             # `$` would be out of context and fail lowering, so unwrap
             # interpolations on the lifted child.
-            stripped, _ = _remove_macrocalls(st0[i]; strip_static)
+            stripped, _ = _remove_macrocalls(
+                context_module, world, st0[i]; strip_static)
             push!(new_children, _unwrap_interpolations(stripped)[1])
         end
         return JL.@ast(JS.syntax_graph(st0), st0, [JS.K"block" new_children...]), true
@@ -437,8 +463,18 @@ function _remove_macrocalls(st0::SyntaxTreeC; strip_static::Bool=false)
     end
     (st0, changed) = desugar_main_macrocall(st0)
     new_children = JS.SyntaxList(JS.syntax_graph(st0))
+    inner_context = if JS.kind(st0) === JS.K"module" && JS.numchildren(st0) >= 2
+        module_const = context_module === nothing ? nothing :
+            resolve_global_const(context_module, world, st0[2])
+        module_const isa Core.Const && module_const.val isa Module ?
+            module_const.val : nothing
+    else
+        context_module
+    end
     for c in JS.children(st0)
-        nc, cc = _remove_macrocalls(c; strip_static)
+        child_context = JS.kind(st0) === JS.K"module" && JS.kind(c) === JS.K"block" ?
+            inner_context : context_module
+        nc, cc = _remove_macrocalls(child_context, world, c; strip_static)
         changed |= cc
         push!(new_children, nc)
     end
@@ -504,12 +540,17 @@ function desugar_main_macrocall(st0::SyntaxTreeC)
 end
 
 """
-    remove_macrocalls(st0::SyntaxTreeC; strip_static::Bool=false) -> SyntaxTreeC
+    remove_macrocalls(
+        context_module::Module, world::UInt, st0::SyntaxTreeC;
+        strip_static::Bool=false
+    ) -> SyntaxTreeC
 
-Convert each `macrocall` node to a `block` node, keeping the arguments intact so that
-identifiers passed to macros retain their original source locations. The transformed
-tree can then be fed into scope/binding resolution to drive LSP features such as
-find-references, document-highlight, rename, and go-to-definition.
+Convert each old-style `macrocall` node to a `block` node, keeping the arguments intact
+so that identifiers passed to macros retain their original source locations. Macro names
+are resolved from `context_module`; calls whose macro object matches a binding in
+`NEW_STYLE_MACRO_BINDINGS` are preserved. The transformed tree can then be fed into
+scope/binding resolution to drive LSP features such as find-references,
+document-highlight, rename, and go-to-definition.
 
 With `strip_static=true`, `@static` conditionals are also rewritten to plain runtime
 conditionals (keeping every branch) rather than expanded to the single branch selected
@@ -546,14 +587,17 @@ any bindings or control flow the macros themselves would have introduced.
 !!! note "Future direction"
     This transform is a workaround for old-style macros that lose provenance
     during expansion. Macros with new-style JuliaLowering implementations (listed
-    in `NEW_STYLE_MACROCALL_NAMES`) already preserve provenance and are therefore
+    in `NEW_STYLE_MACRO_BINDINGS`) already preserve provenance and are therefore
     exempt from removal, and `@main` is handled separately by
     `desugar_main_macrocall`. As more macros migrate to the new style, the scope
     of this transformation is expected to shrink.
 """
-function remove_macrocalls(st0::SyntaxTreeC; strip_static::Bool=false)
+function remove_macrocalls(
+        context_module::Module, world::UInt, st0::SyntaxTreeC;
+        strip_static::Bool = false
+    )
     ensure_jl_source_attr!(JS.syntax_graph(st0))
-    return first(_remove_macrocalls(st0; strip_static))
+    return first(_remove_macrocalls(context_module, world, st0; strip_static))
 end
 
 # Iteratively peel a function-definition signature's `where {…}` clauses and outer `::T`

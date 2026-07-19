@@ -164,7 +164,8 @@ function find_definition(
     end
 
     # Phase 2: source-level binding pass.
-    binding_jump = find_binding_definitions(server, uri, fi, st0, offset, context_module, soft_scope)
+    binding_jump = find_binding_definitions(
+        server, uri, fi, st0, offset, context_module, world; soft_scope)
     binding_jump === nothing || return binding_jump
 
     node === nothing && return nothing
@@ -213,10 +214,12 @@ end
 # the binding info.
 function find_binding_definitions(
         server::Server, uri::URI, fi::FileInfo, st0::SyntaxTreeC,
-        offset::Int, context_module::Module, soft_scope::Bool,
+        offset::Int, context_module::Module, world::UInt;
+        soft_scope::Bool = false
     )
     binding_result = @something select_target_binding(
-        st0, offset, context_module; caller="find_definition", soft_scope) return nothing
+        st0, offset, context_module, world;
+        caller="find_definition", soft_scope) return nothing
     (; ctx3, st3, binding) = binding_result
     binfo = JL.get_binding(ctx3, binding)
     if binfo.kind === :global
@@ -272,7 +275,7 @@ function find_value_definitions(
         ctx::Union{Nothing,InferredTreeContext}, world::UInt,
     )
     if ctx === nothing
-        objtyp = resolve_global_const(context_module, node, world)
+        objtyp = resolve_global_const(context_module, world, node)
     else
         objtyp = get_type_for_range(ctx, rng)
     end

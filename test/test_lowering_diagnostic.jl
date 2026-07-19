@@ -10,6 +10,7 @@ include(normpath(pkgdir(JETLS), "test", "setup.jl"))
 include(normpath(pkgdir(JETLS), "test", "jsjl-utils.jl"))
 
 module lowering_module
+const B = Base
 macro generated_label()
     return :(@label generated)
 end
@@ -967,11 +968,12 @@ end
             @test isempty(diagnostics)
         end
 
-        let diagnostics = get_lowering_diagnostics("""
-            @generated function foo(x, unused)
-                return :(x + 1)
-            end
-            """)
+        for generated_macro in ("@generated", "B.@generated")
+            diagnostics = get_lowering_diagnostics("""
+                $generated_macro function foo(x, unused)
+                    return :(x + 1)
+                end
+                """)
             @test length(diagnostics) == 1
             @test only(diagnostics).message == "Unused argument `unused`"
         end
