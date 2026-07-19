@@ -184,21 +184,14 @@ function do_rename(
         server::Server, uri::URI, fi::FileInfo, pos::Position,
         newName::String, msg_id::MessageId, cancel_flag::AbstractCancelFlag;
         token::Union{Nothing,ProgressToken} = nothing)
-    (; result, error) = get_rename(server, uri, fi, pos, newName; token, cancel_flag)
-    return send(server, RenameResponse(; id = msg_id, result, error))
-end
-
-function get_rename(
-        server::Server, uri::URI, fi::FileInfo, pos::Position, newName::String;
-        token::Union{Nothing,ProgressToken} = nothing,
-        cancel_flag::AbstractCancelFlag = DUMMY_CANCEL_FLAG)
     (; context_module, world) = get_context_info(server.state, uri, pos)
     soft_scope = is_notebook_cell_uri(server.state, uri)
-    return @something(
+    (; result, error) = @something(
         get_local_binding_rename(server, uri, fi, pos, context_module, world, newName; soft_scope),
         get_global_binding_rename(server, uri, fi, pos, context_module, world, newName; token, cancel_flag, soft_scope),
         get_file_rename(server, uri, fi, pos, newName),
         (; result = null, error = nothing))
+    return send(server, RenameResponse(; id = msg_id, result, error))
 end
 
 function get_local_binding_rename(
