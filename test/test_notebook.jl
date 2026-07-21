@@ -273,6 +273,14 @@ end
     mktempdir() do tempdir
         notebook_uri = filepath2uri(normpath(tempdir, "test.ipynb"))
 
+        formatter_exe = joinpath(tempdir, "fixed-output-formatter")
+        formatter_output = joinpath(tempdir, "formatter-output.txt")
+        write(formatter_exe,
+            "#!/bin/sh\n" *
+            "cat > /dev/null\n" *
+            "cat \"\$JETLS_TEST_FORMATTER_OUTPUT\"\n")
+        chmod(formatter_exe, 0o755)
+
         settings = Dict{String,Any}(
             # `code_lens.references` defaults to false, enable it for this test
             "code_lens" => Dict{String,Any}(
@@ -289,15 +297,14 @@ end
                     "enabled" => false,
                 ),
             ),
-            # Use `cat` as a test formatter (just echoes input)
             "formatter" => Dict{String,Any}(
                 "custom" => Dict{String,Any}(
-                    "executable" => "cat"
+                    "executable" => formatter_exe
                 )
             ),
         )
 
-        withserver(; settings) do (; writereadmsg, id_counter)
+        withserver(; settings) do (; server, writereadmsg, id_counter)
             cell1_uri = make_cell_uri(tempdir, 1)
             cell2_uri = make_cell_uri(tempdir, 2)
 
@@ -423,37 +430,42 @@ end
                     (raw_res.result isa Vector && isempty(raw_res.result))
             end
 
-            # formatting for cell 1 — `cat` echoes input. The edit range must
-            # be cell-local: cell 1 ends at line 2 (`end`, length 3).
-            let id = id_counter[] += 1
-                (; raw_res) = writereadmsg(make_DocumentFormattingRequest(id, cell1_uri))
-                @test raw_res isa DocumentFormattingResponse
-                edits = raw_res.result
-                @test edits !== nothing
-                @test length(edits) == 1
-                edit = edits[1]
-                @test edit.range.start.line == 0
-                @test edit.range.start.character == 0
-                @test edit.range.var"end".line == 2
-                @test edit.range.var"end".character == 3
-                @test edit.newText == "let x = 1\nprintln(sin(x))\nend"
-            end
+            withenv("JETLS_TEST_FORMATTER_OUTPUT" => formatter_output) do
+                let id = id_counter[] += 1
+                    original = "let x = 1\nprintln(sin(x))\nend"
+                    formatted = "let x = 1\nprintln(sin(x)) # ok\nend"
+                    write(formatter_output, formatted)
+                    (; raw_res) = writereadmsg(make_DocumentFormattingRequest(id, cell1_uri))
+                    @test raw_res isa DocumentFormattingResponse
+                    edits = raw_res.result
+                    @test edits isa Vector{TextEdit}
+                    @test length(edits) == 1
+                    edit = edits[1]
+                    @test edit.range.start.line == 1
+                    @test edit.range.start.character == 0
+                    @test edit.range.var"end".line == 2
+                    @test edit.range.var"end".character == 0
+                    @test edit.newText == "println(sin(x)) # ok\n"
+                    @test JETLS.apply_text_change(original, edit.range, edit.newText, server.state.encoding) == formatted
+                end
 
-            # formatting for cell 2 — independent of cell 1. The edit range
-            # must end at cell-local line 3 (`result = myfunc(42)`, length 19),
-            # not the notebook-global line 6.
-            let id = id_counter[] += 1
-                (; raw_res) = writereadmsg(make_DocumentFormattingRequest(id, cell2_uri))
-                @test raw_res isa DocumentFormattingResponse
-                edits = raw_res.result
-                @test edits !== nothing
-                @test length(edits) == 1
-                edit = edits[1]
-                @test edit.range.start.line == 0
-                @test edit.range.start.character == 0
-                @test edit.range.var"end".line == 3
-                @test edit.range.var"end".character == 19
-                @test edit.newText == "function myfunc(y)\n    y + 1\nend\nresult = myfunc(42)"
+                let id = id_counter[] += 1
+                    original = "function myfunc(y)\n    y + 1\nend\nresult = myfunc(42)"
+                    formatted = "function myfunc(y)\n    y + 2\nend\nresult = myfunc(42)"
+                    write(formatter_output, formatted)
+                    (; raw_res) = writereadmsg(make_DocumentFormattingRequest(id, cell2_uri))
+                    @test raw_res isa DocumentFormattingResponse
+                    edits = raw_res.result
+                    @test edits isa Vector{TextEdit}
+                    @test length(edits) == 1
+                    edit = edits[1]
+                    @test edit.range.start.line == 1
+                    @test edit.range.start.character == 0
+                    @test edit.range.var"end".line == 2
+                    @test edit.range.var"end".character == 0
+                    @test edit.newText == "    y + 2\n"
+                    @test JETLS.apply_text_change(original, edit.range, edit.newText, server.state.encoding) == formatted
+                end
             end
         end
     end

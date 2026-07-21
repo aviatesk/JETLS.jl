@@ -166,7 +166,7 @@ offset_to_xy( # used by tests
 ) = offset_to_xy(FileInfo(#=version=#0, s, filename, encoding), byte)
 
 # One-shot overload for callers that don't have a cached index and only convert
-# a single offset (e.g. `cell_range`); builds `line_starts` internally.
+# a single offset against an ad-hoc buffer; builds `line_starts` internally.
 _offset_to_xy(textbuf::Vector{UInt8}, byte::Integer, encoding::PositionEncodingKind.Ty) =
     _offset_to_xy(textbuf, byte, encoding, build_line_starts(textbuf))
 

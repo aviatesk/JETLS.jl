@@ -63,6 +63,40 @@ function cache_test_file!(server::JETLS.Server, uri::URI, text::AbstractString)
     return JETLS.cache_file_info!(server, uri, 1, text)
 end
 
+function write_fixed_output_formatter(tempdir::AbstractString)
+    exe = joinpath(tempdir, "fixed-output-formatter")
+    output_file = joinpath(tempdir, "formatter-output.txt")
+    write(exe,
+        "#!/bin/sh\n" *
+        "cat > /dev/null\n" *
+        "cat \"\$JETLS_TEST_FORMATTER_OUTPUT\"\n")
+    chmod(exe, 0o755)
+    return (; exe, output_file)
+end
+
+function apply_text_edits(text::AbstractString, edits::Vector{TextEdit}, encoding)
+    result = String(text)
+    for edit in sort(edits; by = e -> (e.range.start.line, e.range.start.character), rev = true)
+        result = JETLS.apply_text_change(result, edit.range, edit.newText, encoding)
+    end
+    return result
+end
+
+const FORMATTING_EDIT_FIXTURES = Tuple{String,String,String}[
+    ("identical",         "a = 1\nb = 2\n",   "a = 1\nb = 2\n"),
+    ("middle line",       "a=1\nb=2\nc=3\n",  "a=1\nb = 2\nc=3\n"),
+    ("first line",        "a=1\nb=2\nc=3\n",  "a = 1\nb=2\nc=3\n"),
+    ("last line",         "a=1\nb=2\nc=3\n",  "a=1\nb=2\nc = 3\n"),
+    ("insert line",       "a=1\nc=3\n",       "a=1\nb=2\nc=3\n"),
+    ("delete line",       "a=1\nb=2\nc=3\n",  "a=1\nc=3\n"),
+    ("whole document",    "a=1\nb=2\n",       "x=9\ny=8\n"),
+    ("gain trailing nl",  "a=1\nb=2",         "a=1\nb=2\n"),
+    ("drop trailing nl",  "a=1\nb=2\n",       "a=1\nb=2"),
+    ("empty to text",     "",                 "a=1\n"),
+    ("text to empty",     "a=1\n",            ""),
+    ("multibyte middle",  "α=1\nβ=2\nγ=3\n",  "α=1\nβ = 2\nγ=3\n"),
+]
+
 @testset "textDocument/formatting handler" begin
     @static if Sys.iswindows()
         @test_skip "shell-script-backed formatter test is Unix-only"
@@ -85,8 +119,7 @@ end
 
                     @test raw_res isa DocumentFormattingResponse
                     @test raw_res.result isa Vector{TextEdit}
-                    @test length(raw_res.result) == 1
-                    @test raw_res.result[1].newText == text
+                    @test isempty(raw_res.result)
                     @test readlines(args_file) == String[]
                 end
             end
@@ -118,8 +151,7 @@ end
 
                     @test raw_res isa DocumentRangeFormattingResponse
                     @test raw_res.result isa Vector{TextEdit}
-                    @test length(raw_res.result) == 1
-                    @test raw_res.result[1].newText == text
+                    @test isempty(raw_res.result)
                     @test readlines(args_file) == ["--lines=2:3"]
                 end
             end
@@ -155,9 +187,85 @@ end
 
                     @test raw_res isa DocumentRangesFormattingResponse
                     @test raw_res.result isa Vector{TextEdit}
-                    @test length(raw_res.result) == 1
-                    @test raw_res.result[1].newText == text
+                    @test isempty(raw_res.result)
                     @test readlines(args_file) == ["--lines=1:2", "--lines=4:4"]
+                end
+            end
+        end
+    end
+end
+
+@testset "textDocument/formatting minimal edits reproduce formatter output" begin
+    @static if Sys.iswindows()
+        @test_skip "shell-script-backed formatter test is Unix-only"
+    else
+        mktempdir() do tempdir
+            (; exe, output_file) = write_fixed_output_formatter(tempdir)
+            withenv("JETLS_TEST_FORMATTER_OUTPUT" => output_file) do
+                withserver() do (; server, writereadmsg, id_counter)
+                    configure_formatter!(server, exe)
+                    encoding = server.state.encoding
+                    for (i, (name, original, formatted)) in enumerate(FORMATTING_EDIT_FIXTURES)
+                        write(output_file, formatted)
+                        uri = filepath2uri(joinpath(tempdir, "fixture_$i.jl"))
+                        cache_test_file!(server, uri, original)
+
+                        request = DocumentFormattingRequest(;
+                            id = id_counter[] += 1,
+                            params = DocumentFormattingParams(;
+                                textDocument = TextDocumentIdentifier(; uri),
+                                options = formatting_options()))
+                        (; raw_res) = writereadmsg(request)
+
+                        @test raw_res isa DocumentFormattingResponse
+                        edits = raw_res.result
+                        @test edits isa Vector{TextEdit}
+                        if original == formatted
+                            @test isempty(edits)
+                        else
+                            @test !isempty(edits)
+                        end
+                        @test apply_text_edits(original, edits, encoding) == formatted
+                    end
+                end
+            end
+        end
+    end
+end
+
+@testset "textDocument/formatting minimal edit excludes untouched lines" begin
+    @static if Sys.iswindows()
+        @test_skip "shell-script-backed formatter test is Unix-only"
+    else
+        mktempdir() do tempdir
+            (; exe, output_file) = write_fixed_output_formatter(tempdir)
+            original = "a=1\nb=2\nc=3\nd=4\n"
+            formatted = "a=1\nb=2\nc = 3\nd=4\n"
+            write(output_file, formatted)
+            withenv("JETLS_TEST_FORMATTER_OUTPUT" => output_file) do
+                withserver() do (; server, writereadmsg, id_counter)
+                    configure_formatter!(server, exe)
+                    uri = filepath2uri(joinpath(tempdir, "middle.jl"))
+                    cache_test_file!(server, uri, original)
+
+                    request = DocumentFormattingRequest(;
+                        id = id_counter[] += 1,
+                        params = DocumentFormattingParams(;
+                            textDocument = TextDocumentIdentifier(; uri),
+                            options = formatting_options()))
+                    (; raw_res) = writereadmsg(request)
+
+                    @test raw_res isa DocumentFormattingResponse
+                    edits = raw_res.result
+                    @test edits isa Vector{TextEdit}
+                    @test length(edits) == 1
+                    edit = only(edits)
+                    @test edit.range.start.line == 2
+                    @test edit.range.start.character == 0
+                    @test edit.range.var"end".line == 3
+                    @test edit.range.var"end".character == 0
+                    @test edit.newText == "c = 3\n"
+                    @test apply_text_edits(original, edits, server.state.encoding) == formatted
                 end
             end
         end

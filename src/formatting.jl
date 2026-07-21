@@ -89,14 +89,6 @@ function get_cell_text(state::ServerState, cell_uri::URI)
     return nothing
 end
 
-function cell_range(text::AbstractString, encoding::PositionEncodingKind.Ty)
-    textbuf = Vector{UInt8}(text)
-    end_pos = _offset_to_xy(textbuf, sizeof(text) + 1, encoding)
-    return Range(;
-        start = Position(; line = 0, character = 0),
-        var"end" = end_pos)
-end
-
 function handle_DocumentFormattingRequest(
         server::Server, msg::DocumentFormattingRequest, cancel_flag::CancelFlag
     )
@@ -402,6 +394,70 @@ function range_lines(range::Range)
     return "$startline:$endline"
 end
 
+function line_bytes_equal(
+        abuf::Vector{UInt8}, a_starts::LineStartsIndex,
+        bbuf::Vector{UInt8}, b_starts::LineStartsIndex, i::Int, j::Int
+    )
+    a0 = a_starts[i]
+    a1 = i < length(a_starts) ? a_starts[i + 1] - 1 : lastindex(abuf)
+    b0 = b_starts[j]
+    b1 = j < length(b_starts) ? b_starts[j + 1] - 1 : lastindex(bbuf)
+    a1 - a0 == b1 - b0 || return false
+    @inbounds for k in 0:(a1 - a0)
+        abuf[a0 + k] == bbuf[b0 + k] || return false
+    end
+    return true
+end
+
+"""
+    compute_minimal_text_edits(old::AbstractString, newText::AbstractString, pos_at) -> Vector{TextEdit}
+
+Return the edits that turn `old` into `newText`, trimming the common leading and
+trailing lines so the emitted range covers only the changed middle region. `pos_at`
+maps a 1-based byte offset into `old` to an LSP `Position` in the document's
+encoding. Returns an empty vector when the texts are identical and a single
+full-range edit when no leading or trailing line is shared. Applying the result to
+`old` reproduces `newText` byte-for-byte.
+"""
+function compute_minimal_text_edits(
+        old::AbstractString, newText::AbstractString, pos_at
+    )
+    old == newText && return TextEdit[]
+
+    oldbuf = Vector{UInt8}(old)
+    newbuf = Vector{UInt8}(newText)
+    old_starts = build_line_starts(oldbuf)
+    new_starts = build_line_starts(newbuf)
+    n_old = length(old_starts)
+    n_new = length(new_starts)
+
+    common = min(n_old, n_new)
+    prefix = 0
+    while prefix < common &&
+            line_bytes_equal(oldbuf, old_starts, newbuf, new_starts, prefix + 1, prefix + 1)
+        prefix += 1
+    end
+    suffix = 0
+    while suffix < common - prefix &&
+            line_bytes_equal(oldbuf, old_starts, newbuf, new_starts, n_old - suffix, n_new - suffix)
+        suffix += 1
+    end
+
+    old_change_line = prefix + 1
+    old_keep_line = n_old - suffix + 1
+    new_change_line = prefix + 1
+    new_keep_line = n_new - suffix + 1
+
+    start_byte = old_change_line <= n_old ? old_starts[old_change_line] : lastindex(oldbuf) + 1
+    stop_byte = old_keep_line <= n_old ? old_starts[old_keep_line] : lastindex(oldbuf) + 1
+    new_start_byte = new_change_line <= n_new ? new_starts[new_change_line] : lastindex(newbuf) + 1
+    new_stop_byte = new_keep_line <= n_new ? new_starts[new_keep_line] : lastindex(newbuf) + 1
+
+    edit_range = Range(; start = pos_at(start_byte), var"end" = pos_at(stop_byte))
+    replacement = String(newbuf[new_start_byte:new_stop_byte - 1])
+    return TextEdit[TextEdit(; range = edit_range, newText = replacement)]
+end
+
 function format_file(
         state::ServerState, exe::String, uri::URI, fi::FileInfo,
         ranges::Union{Vector{Range},Nothing},
@@ -425,12 +481,13 @@ function format_file(
         end
         return request_failed_error(msg)
     end
-    edit_range = if cell_text !== nothing
-        cell_range(cell_text, fi.encoding)
+    if cell_text !== nothing
+        cellbuf = Vector{UInt8}(cell_text)
+        pos_at = byte -> _offset_to_xy(cellbuf, byte, fi.encoding)
     else
-        document_range(fi)
+        pos_at = byte -> offset_to_xy(fi, byte)
     end
-    return TextEdit[TextEdit(; range = edit_range, newText)]
+    return compute_minimal_text_edits(text, newText, pos_at)
 end
 
 function run_formatter(
