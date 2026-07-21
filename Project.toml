@@ -30,7 +30,7 @@ Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [sources]
 Compiler = {rev = "4a5bbcb016", subdir = "Compiler", url = "https://github.com/JuliaLang/julia"}
-JET = {rev = "2bd6fee0", url = "https://github.com/aviatesk/JET.jl"}
+JET = {rev = "f25494fd", url = "https://github.com/aviatesk/JET.jl"}
 JuliaLowering = {rev = "f66055cc4d", subdir = "JuliaLowering", url = "https://github.com/JuliaLang/julia"}
 JuliaSyntax = {rev = "f66055cc4d", subdir = "JuliaSyntax", url = "https://github.com/JuliaLang/julia"}
 LSP = {path = "LSP"}
