@@ -228,6 +228,11 @@ const LS_ANALYZER_CACHE_LOCK = ReentrantLock()
 
 Base.Experimental.@MethodTable jetls_method_table
 
+# `include` is concretely handled by `ConcreteInterpreter`; analyzing Base's file-loading
+# machinery only adds noise. Keep its unmodeled return value abstract.
+Base.Experimental.@overlay jetls_method_table Base.include(::Module, ::AbstractString) = Base.inferencebarrier(nothing)
+Base.Experimental.@overlay jetls_method_table Base.include(::Function, ::Module, ::AbstractString) = Base.inferencebarrier(nothing)
+
 @static if VERSION < v"1.14.0-DEV.2024"
 # Backport JuliaLang/julia#61526
 Base.Experimental.@overlay jetls_method_table Base.in(x, itr::Tuple) = _in_tuple(x, itr)
