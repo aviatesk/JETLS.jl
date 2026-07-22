@@ -441,14 +441,18 @@ function run_formatter(
         String[] : ["--lines=$line_range" for line_range in line_ranges]
     cmd = @something formatter_command(exe, line_args, uri, options, formatter) return nothing
     proc = open(cmd; read = true, write = true)
-    write(proc, text)
-    close(proc.in)
+    input_task = @async try
+        write(proc, text)
+    finally
+        close(proc.in)
+    end
+    ret = read(proc)
+    fetch(input_task)
     wait(proc)
     if proc.exitcode ≠ 0
         close(proc)
         return nothing
     end
-    ret = read(proc)
     close(proc)
     return String(ret)
 end

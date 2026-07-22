@@ -63,6 +63,23 @@ function cache_test_file!(server::JETLS.Server, uri::URI, text::AbstractString)
     return JETLS.cache_file_info!(server, uri, 1, text)
 end
 
+@testset "`run_formatter` handles large input and output" begin
+    @static if Sys.iswindows()
+        @test_skip "shell-script-backed formatter test is Unix-only"
+    else
+        mktempdir() do tempdir
+            with_passthrough_formatter(tempdir) do exe, _
+                text = repeat("a=1\n", 300_000)
+                uri = filepath2uri(joinpath(tempdir, "test.jl"))
+                formatter = JETLS.CustomFormatterConfig(exe, exe)
+                result = JETLS.run_formatter(
+                    exe, text, nothing, uri, formatting_options(), formatter)
+                @test result == text
+            end
+        end
+    end
+end
+
 @testset "textDocument/formatting handler" begin
     @static if Sys.iswindows()
         @test_skip "shell-script-backed formatter test is Unix-only"
