@@ -4,6 +4,7 @@ export Endpoint, Server, runserver
 
 const JETLS_VERSION = let
     version_file = joinpath(dirname(@__DIR__), "JETLS_VERSION")
+    include_dependency(version_file)
     isfile(version_file) ? strip(read(version_file, String)) : "unknown"
 end
 
