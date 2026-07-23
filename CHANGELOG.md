@@ -132,6 +132,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Fixed `@static false && expr` and `@static true || expr` expanding to `nothing` instead of `false` and `true`, respectively.
 
+- Fixed document formatting and TestRunner execution hanging on large documents or test output. TestRunner cancellation now also waits for the child process to stop cleanly, and formatter and TestRunner failures include process exit details in the server log.
+
 ## 2026-06-26
 
 - Commit: [`0d67c12`](https://github.com/aviatesk/JETLS.jl/commit/0d67c12)

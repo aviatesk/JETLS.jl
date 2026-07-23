@@ -1,6 +1,7 @@
 module test_testrunner
 
 using Test
+using Logging: with_logger
 using JETLS
 using JETLS: JL, JS
 using JETLS.LSP
@@ -92,6 +93,75 @@ end
 
     let result = mock_testrunner_result(; n_passed=100, duration=125.5)
         @test JETLS.summary_testrunner_result(result) == "[ Total: 100 | Pass: 100 | Time: 2m 5.5s ]"
+    end
+end
+
+@testset "read_testrunner_result" begin
+    @static if Sys.iswindows()
+        @test_skip "process-backed TestRunner test is Unix-only"
+    else
+        @testset "large stdin and stdout" begin
+            server = JETLS.Server()
+            stats = JETLS.TestRunnerStats(;
+                n_passed = 1, n_failed = 0, n_errored = 0, n_broken = 0,
+                duration = 1.0)
+            expected = JETLS.TestRunnerResult(;
+                filename = "test.jl", stats, logs = repeat("x", 1_200_000))
+            source = String(LSP.JSON3.write(expected))
+            result = JETLS.read_testrunner_result(server, `/bin/cat`, source)
+            result = result::JETLS.TestRunnerResult
+            @test result.filename == expected.filename
+            @test result.stats.n_passed == expected.stats.n_passed
+            @test result.logs == expected.logs
+        end
+
+        @testset "process failure logs metadata" begin
+            server = JETLS.Server()
+            cmd = Cmd(["/bin/sh", "-c", "printf 'testrunner failed\\n'; exit 1"])
+            logger = Test.TestLogger()
+            result = with_logger(logger) do
+                JETLS.read_testrunner_result(server, cmd, "")
+            end
+            @test result == "Test execution failed"
+            log = only(logger.logs)
+            @test log.message == "TestRunner execution failed"
+            details = log.kwargs[:details]
+            @test details.exitcode == 1
+            @test details.termsignal == 0
+            @test details.stdout_bytes == 18
+            @test details.reason === :process
+            @test isnothing(details.parse_error)
+        end
+
+        @testset "invalid JSON logs parse error" begin
+            server = JETLS.Server()
+            logger = Test.TestLogger()
+            result = with_logger(logger) do
+                JETLS.read_testrunner_result(server, `/bin/cat`, "not json\n")
+            end
+            @test result == "Test execution failed"
+            log = only(logger.logs)
+            @test log.message == "TestRunner execution failed"
+            details = log.kwargs[:details]
+            @test details.exitcode == 0
+            @test details.termsignal == 0
+            @test details.stdout_bytes == 9
+            @test details.reason === :invalid_output
+            @test details.parse_error isa String
+        end
+
+        @testset "cancellation terminates the process" begin
+            server = JETLS.Server()
+            cancel_flag = JETLS.CancelFlag(false)
+            cancellable_token = JETLS.CancellableToken("test", cancel_flag)
+            cancel_task = @async begin
+                sleep(0.2)
+                JETLS.cancel!(cancel_flag)
+            end
+            result = JETLS.read_testrunner_result(server, `/bin/sleep 30`, ""; cancellable_token)
+            wait(cancel_task)
+            @test result == "Test execution cancelled by user"
+        end
     end
 end
 
