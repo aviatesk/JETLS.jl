@@ -446,15 +446,22 @@ function run_formatter(
     finally
         close(proc.in)
     end
-    ret = read(proc)
-    fetch(input_task)
-    wait(proc)
-    if proc.exitcode ≠ 0
+    try
+        ret = read(proc)
+        process_success = success(proc)
+        wait(input_task; throw = false)
+        if !process_success || istaskfailed(input_task)
+            return nothing
+        end
+        return String(ret)
+    finally
         close(proc)
-        return nothing
+        if process_running(proc)
+            kill(proc)
+        end
+        wait(proc)
+        wait(input_task; throw = false)
     end
-    close(proc)
-    return String(ret)
 end
 
 # Build the formatter command line. `line_args` is a (possibly empty) list of

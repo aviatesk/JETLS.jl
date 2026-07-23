@@ -54,6 +54,17 @@ function with_passthrough_formatter(f, tempdir::AbstractString)
     end
 end
 
+function run_script_formatter(
+        tempdir::AbstractString, body::AbstractString, text::AbstractString
+    )
+    exe = joinpath(tempdir, "test-formatter")
+    write(exe, "#!/bin/sh\n" * body)
+    chmod(exe, 0o755)
+    uri = filepath2uri(joinpath(tempdir, "test.jl"))
+    formatter = JETLS.CustomFormatterConfig(exe, exe)
+    return JETLS.run_formatter(exe, text, nothing, uri, formatting_options(), formatter)
+end
+
 function configure_formatter!(server::JETLS.Server, exe::AbstractString)
     return store_lsp_config!(server, JETLS.JETLSConfig(;
         formatter = JETLS.CustomFormatterConfig(exe, exe)))
@@ -75,6 +86,22 @@ end
                 result = JETLS.run_formatter(
                     exe, text, nothing, uri, formatting_options(), formatter)
                 @test result == text
+            end
+        end
+    end
+end
+
+@testset "`run_formatter` handles formatter failures" begin
+    @static if Sys.iswindows()
+        @test_skip "shell-script-backed formatter test is Unix-only"
+    else
+        let text = repeat("x", 1_200_000)
+            mktempdir() do tempdir
+                @test isnothing(run_script_formatter(tempdir, "exit 1\n", text))
+            end
+            mktempdir() do tempdir
+                body = "kill -TERM \$\$\n"
+                @test isnothing(run_script_formatter(tempdir, body, text))
             end
         end
     end

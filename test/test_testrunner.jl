@@ -95,6 +95,40 @@ end
     end
 end
 
+@testset "read_testrunner_result" begin
+    @static if Sys.iswindows()
+        @test_skip "process-backed TestRunner test is Unix-only"
+    else
+        @testset "large stdin and stdout" begin
+            server = JETLS.Server()
+            stats = JETLS.TestRunnerStats(;
+                n_passed = 1, n_failed = 0, n_errored = 0, n_broken = 0,
+                duration = 1.0)
+            expected = JETLS.TestRunnerResult(;
+                filename = "test.jl", stats, logs = repeat("x", 1_200_000))
+            source = String(LSP.JSON3.write(expected))
+            result = JETLS.read_testrunner_result(server, `/bin/cat`, source)
+            result = result::JETLS.TestRunnerResult
+            @test result.filename == expected.filename
+            @test result.stats.n_passed == expected.stats.n_passed
+            @test result.logs == expected.logs
+        end
+
+        @testset "cancellation terminates the process" begin
+            server = JETLS.Server()
+            cancel_flag = JETLS.CancelFlag(false)
+            cancellable_token = JETLS.CancellableToken("test", cancel_flag)
+            cancel_task = @async begin
+                sleep(0.2)
+                JETLS.cancel!(cancel_flag)
+            end
+            result = JETLS.read_testrunner_result(server, `/bin/sleep 30`, ""; cancellable_token)
+            wait(cancel_task)
+            @test result == "Test execution cancelled by user"
+        end
+    end
+end
+
 @testset "testsetinfo_logs_filename" begin
     let filename = JETLS.testsetinfo_logs_filename("simple")
         @test filename == "TestRunner_simple.log"

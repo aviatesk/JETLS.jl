@@ -499,6 +499,76 @@ function is_testsetinfo_valid(server::Server, uri::URI, fi::FileInfo, idx::Int)
     return is_testsetinfo_valid(fi, idx)
 end
 
+function read_testrunner_output(
+        testrunnerproc::Base.Process, cancellable_token::Union{Nothing,CancellableToken}
+    )
+    cancelled = Ref(false)
+    cancellation_task = if cancellable_token === nothing
+        nothing
+    else
+        @async begin
+            while process_running(testrunnerproc)
+                if is_cancelled(cancellable_token.cancel_flag)
+                    cancelled[] = true
+                    kill(testrunnerproc)
+                    break
+                end
+                sleep(0.1)
+            end
+            if is_cancelled(cancellable_token.cancel_flag)
+                cancelled[] = true
+            end
+        end
+    end
+    try
+        output = read(testrunnerproc)
+        process_success = success(testrunnerproc)
+        if cancellation_task !== nothing
+            wait(cancellation_task; throw = false)
+        end
+        return (; output, process_success, cancelled = cancelled[])
+    finally
+        close(testrunnerproc)
+        if process_running(testrunnerproc)
+            kill(testrunnerproc)
+        end
+        wait(testrunnerproc)
+        if cancellation_task !== nothing
+            wait(cancellation_task; throw = false)
+        end
+    end
+end
+
+function read_testrunner_result(
+        server::Server, cmd::Cmd, source::String;
+        cancellable_token::Union{Nothing,CancellableToken} = nothing
+    )
+    testrunnerproc = open(pipeline(cmd; stdin = IOBuffer(source)); read = true)
+    (; output, process_success, cancelled) =
+        read_testrunner_output(testrunnerproc, cancellable_token)
+    if cancelled
+        return "Test execution cancelled by user"
+    elseif !process_success
+        @error "TestRunner process exited unsuccessfully" cmd
+        show_error_message(server, """
+        An unexpected error occurred while executing TestRunner.jl:
+        See the server log for details.
+        """)
+        return "Test execution failed"
+    end
+
+    try
+        return LSP.JSON3.read(output, TestRunnerResult)
+    catch err
+        @error "Error from testrunner process" exception = (err, catch_backtrace())
+        show_error_message(server, """
+        An unexpected error occurred while executing TestRunner.jl:
+        See the server log for details.
+        """)
+        return "Test execution failed"
+    end
+end
+
 function _testrunner_run_testset(
         server::Server, executable::AbstractString, uri::URI, fi::FileInfo,
         idx::Int, tsn::String, filepath::String;
@@ -517,35 +587,8 @@ function _testrunner_run_testset(
     root_path = testrunner_root_path(server.state, uri)
     cmd = testrunner_cmd(executable, filepath, tsn, tsl, test_env_path, root_path)
     source = String(document_text(fi))
-    testrunnerproc = open(pipeline(cmd; stdin=IOBuffer(source)); read=true)
-
-    result = try
-        # Wait for the process with cancellation support
-        while true
-            process_running(testrunnerproc) || break
-            if !isnothing(cancellable_token) && is_cancelled(cancellable_token.cancel_flag)
-                kill(testrunnerproc)
-                return "Test execution cancelled by user"
-            end
-            sleep(0.1)
-        end
-        if !isnothing(cancellable_token) && is_cancelled(cancellable_token.cancel_flag)
-            return "Test execution cancelled by user"
-        end
-
-        try
-            LSP.JSON3.read(testrunnerproc, TestRunnerResult)
-        catch err
-            @error "Error from testrunner process" err
-            show_error_message(server, """
-            An unexpected error occurred while executing TestRunner.jl:
-            See the server log for details.
-            """)
-            return "Test execution failed"
-        end
-    finally
-        close(testrunnerproc)
-    end
+    result = read_testrunner_result(server, cmd, source; cancellable_token)
+    result isa String && return result
 
     ret = summary_testrunner_result(result)
 
@@ -652,35 +695,8 @@ function _testrunner_run_testcase(
     test_env_path = find_uri_env_path(server.state, uri)
     root_path = testrunner_root_path(server.state, uri)
     cmd = testrunner_cmd(executable, filepath, tcl, test_env_path, root_path)
-    testrunnerproc = open(pipeline(cmd; stdin=IOBuffer(source)); read=true)
-
-    result = try
-        # Wait for the process with cancellation support
-        while true
-            process_running(testrunnerproc) || break
-            if !isnothing(cancellable_token) && is_cancelled(cancellable_token.cancel_flag)
-                kill(testrunnerproc)
-                return "Test execution cancelled by user"
-            end
-            sleep(0.1)
-        end
-        if !isnothing(cancellable_token) && is_cancelled(cancellable_token.cancel_flag)
-            return "Test execution cancelled by user"
-        end
-
-        try
-            LSP.JSON3.read(testrunnerproc, TestRunnerResult)
-        catch err
-            @error "Error from testrunner process" err
-            show_error_message(server, """
-            An unexpected error occurred while executing TestRunner.jl:
-            See the server log for details.
-            """)
-            return "Test execution failed"
-        end
-    finally
-        close(testrunnerproc)
-    end
+    result = read_testrunner_result(server, cmd, source; cancellable_token)
+    result isa String && return result
 
     # Show the results of this `@test` case temporarily as diagnostics:
     # The `Server` (or `FileInfo`) doesn't track the state of each `@test`,
