@@ -3,6 +3,7 @@ module test_formatting
 include("setup.jl")
 
 using Test
+using Logging: with_logger
 using JETLS
 using JETLS.LSP
 using JETLS.URIs2
@@ -96,12 +97,38 @@ end
         @test_skip "shell-script-backed formatter test is Unix-only"
     else
         let text = repeat("x", 1_200_000)
-            mktempdir() do tempdir
-                @test isnothing(run_script_formatter(tempdir, "exit 1\n", text))
+            @testset "nonzero exit logs stdout" begin
+                mktempdir() do tempdir
+                    logger = Test.TestLogger()
+                    body = "printf 'formatter failed\\n'\nexit 1\n"
+                    result = with_logger(logger) do
+                        run_script_formatter(tempdir, body, text)
+                    end
+                    @test isnothing(result)
+                    log = only(logger.logs)
+                    @test log.message == "Formatter execution failed"
+                    details = log.kwargs[:details]
+                    @test details.exitcode == 1
+                    @test details.termsignal == 0
+                    @test details.stdout_bytes == 17
+                end
             end
-            mktempdir() do tempdir
-                body = "kill -TERM \$\$\n"
-                @test isnothing(run_script_formatter(tempdir, body, text))
+
+            @testset "signal termination is logged" begin
+                mktempdir() do tempdir
+                    logger = Test.TestLogger()
+                    result = with_logger(logger) do
+                        body = "kill -TERM \$\$\n"
+                        run_script_formatter(tempdir, body, text)
+                    end
+                    @test isnothing(result)
+                    log = only(logger.logs)
+                    @test log.message == "Formatter execution failed"
+                    details = log.kwargs[:details]
+                    @test details.exitcode == 0
+                    @test details.termsignal == 15
+                    @test details.stdout_bytes == 0
+                end
             end
         end
     end

@@ -539,6 +539,22 @@ function read_testrunner_output(
     end
 end
 
+function log_testrunner_failure(
+        cmd::Cmd, proc::Base.Process, output::Vector{UInt8}, reason::Symbol;
+        parse_error::Union{Nothing,String} = nothing
+    )
+    details = (;
+        cmd,
+        exitcode = proc.exitcode,
+        termsignal = proc.termsignal,
+        stdout_bytes = length(output),
+        reason,
+        parse_error,
+    )
+    @error "TestRunner execution failed" details
+    return nothing
+end
+
 function read_testrunner_result(
         server::Server, cmd::Cmd, source::String;
         cancellable_token::Union{Nothing,CancellableToken} = nothing
@@ -549,7 +565,7 @@ function read_testrunner_result(
     if cancelled
         return "Test execution cancelled by user"
     elseif !process_success
-        @error "TestRunner process exited unsuccessfully" cmd
+        log_testrunner_failure(cmd, testrunnerproc, output, :process)
         show_error_message(server, """
         An unexpected error occurred while executing TestRunner.jl:
         See the server log for details.
@@ -560,7 +576,8 @@ function read_testrunner_result(
     try
         return LSP.JSON3.read(output, TestRunnerResult)
     catch err
-        @error "Error from testrunner process" exception = (err, catch_backtrace())
+        parse_error = sprint(Base.showerror, err, catch_backtrace())
+        log_testrunner_failure(cmd, testrunnerproc, output, :invalid_output; parse_error)
         show_error_message(server, """
         An unexpected error occurred while executing TestRunner.jl:
         See the server log for details.

@@ -91,7 +91,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
-- Fixed document formatting and TestRunner execution hanging on large documents or test output. TestRunner cancellation now also waits for the child process to stop cleanly.
+- Fixed document formatting and TestRunner execution hanging on large documents or test output. TestRunner cancellation now also waits for the child process to stop cleanly, and formatter and TestRunner failures include process exit details in the server log.
 
 - Fixed false `lowering/macro-expansion-error` diagnostics when an old-style macro is nested inside a new-style macro. The failed expansion could also contaminate enclosing forms and produce repeated lowering diagnostics across a project, as reported for Makie. This incorporates [JuliaLang/julia#62221](https://github.com/JuliaLang/julia/pull/62221) and addresses [JuliaLang/JuliaLowering.jl#108](https://github.com/JuliaLang/JuliaLowering.jl/issues/108). (Closed https://github.com/aviatesk/JETLS.jl/issues/554)
 

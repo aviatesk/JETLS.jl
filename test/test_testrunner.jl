@@ -1,6 +1,7 @@
 module test_testrunner
 
 using Test
+using Logging: with_logger
 using JETLS
 using JETLS: JL, JS
 using JETLS.LSP
@@ -112,6 +113,41 @@ end
             @test result.filename == expected.filename
             @test result.stats.n_passed == expected.stats.n_passed
             @test result.logs == expected.logs
+        end
+
+        @testset "process failure logs metadata" begin
+            server = JETLS.Server()
+            cmd = Cmd(["/bin/sh", "-c", "printf 'testrunner failed\\n'; exit 1"])
+            logger = Test.TestLogger()
+            result = with_logger(logger) do
+                JETLS.read_testrunner_result(server, cmd, "")
+            end
+            @test result == "Test execution failed"
+            log = only(logger.logs)
+            @test log.message == "TestRunner execution failed"
+            details = log.kwargs[:details]
+            @test details.exitcode == 1
+            @test details.termsignal == 0
+            @test details.stdout_bytes == 18
+            @test details.reason === :process
+            @test isnothing(details.parse_error)
+        end
+
+        @testset "invalid JSON logs parse error" begin
+            server = JETLS.Server()
+            logger = Test.TestLogger()
+            result = with_logger(logger) do
+                JETLS.read_testrunner_result(server, `/bin/cat`, "not json\n")
+            end
+            @test result == "Test execution failed"
+            log = only(logger.logs)
+            @test log.message == "TestRunner execution failed"
+            details = log.kwargs[:details]
+            @test details.exitcode == 0
+            @test details.termsignal == 0
+            @test details.stdout_bytes == 9
+            @test details.reason === :invalid_output
+            @test details.parse_error isa String
         end
 
         @testset "cancellation terminates the process" begin
