@@ -46,11 +46,14 @@ function collect_search_uris(server::Server, uri::URI)
         # TODO: This implementation should be revisited when Revise is integrated into full-analysis
         out_of_scope = analysis_info
         pkgid = Base.PkgId(something(out_of_scope.module_context, Main))
-        if haskey(Revise.pkgdatas, pkgid)
-            pkgdata = Revise.pkgdatas[pkgid]
-            for file in Revise.srcfiles(pkgdata)
-                tracked_uri = filepath2uri(joinpath(Revise.basedir(pkgdata), file))
-                push!(uris_to_search, tracked_uri)
+        @lock Revise.revise_lock begin
+            pkgdata = Revise.getpkgdata(pkgid)
+            if pkgdata !== nothing
+                basedir = Revise.basedir(pkgdata)
+                for file in Revise.srcfiles(pkgdata)
+                    tracked_uri = filepath2uri(joinpath(basedir, file))
+                    push!(uris_to_search, tracked_uri)
+                end
             end
         end
     end
@@ -831,8 +834,26 @@ struct SigWorkItem
     file::String
     mod::Module
     rex::Revise.RelocatableExpr
+    siginfo::Revise.SigInfo
     siginfos::Vector{Union{Revise.SigInfo,Revise.TypeInfo}}
     index::Int
+end
+
+function cache_sig_analysis!(workitem::SigWorkItem, result::SigAnalysisResult)
+    @lock Revise.revise_lock begin
+        checkbounds(Bool, workitem.siginfos, workitem.index) || return nothing
+        current = workitem.siginfos[workitem.index]
+        # Make sure the entry still holds the analyzed signature: attaching the result to a
+        # different signature's entry would let it be reused for the wrong signature, which
+        # the read-side validation cannot detect. On the other hand a stale result for the
+        # same signature is fine since the read-side world range validation rejects it.
+        if (current isa Revise.SigInfo &&
+            current.mt === workitem.siginfo.mt && current.sig === workitem.siginfo.sig)
+            workitem.siginfos[workitem.index] =
+                Revise.replace_extended_data(current, :JETLS, result)
+        end
+    end
+    return nothing
 end
 
 struct MethodDefinitionInfo
@@ -940,82 +961,63 @@ function analyze_package_with_revise(
         end
     end
 
-    haskey(Revise.pkgdatas, pkgid) || Revise.watch_package(pkgid)
-    haskey(Revise.pkgdatas, pkgid) || error(lazy"Package $(pkgid.name) is not analyzable by Revise")
+    Revise.getpkgdata(pkgid) === nothing && Revise.watch_package(pkgid)
     revise_now!()
 
-    # If Revise hasn't instantiated signatures yet, populate that cache here
-    pkgdata = Revise.pkgdatas[pkgid]
-    for file in Revise.srcfiles(pkgdata)
-        # fi = try
-        #     Revise.maybe_parse_from_cache!(pkgdata, file)
-        # catch
-        #     # Fallback: read source directly from file (e.g., for newly created packages)
-        #     # See https://github.com/JuliaLang/julia/issues/42404
-        #     fi = Revise.fileinfo(pkgdata, file)
-        #     if isempty(fi.mod_exs_infos) && (!isempty(fi.cachefile) || !isempty(fi.cacheexprs))
-        #         filep = joinpath(Revise.basedir(pkgdata), file)
-        #         src = read(filep, String)
-        #         topmod = first(keys(fi.mod_exs_infos))
-        #         if Revise.parse_source!(fi.mod_exs_infos, src, filep, topmod) === nothing
-        #             @error "failed to parse source text for $filep"
-        #         end
-        #         Revise.add_modexs!(fi, fi.cacheexprs)
-        #         empty!(fi.cacheexprs)
-        #         fi.parsed[] = true
-        #     end
-        #     fi
-        # end
-        fi = Revise.maybe_parse_from_cache!(pkgdata, file)
-        Revise.maybe_extract_sigs!(fi)
-    end
+    local world, analyzed_file_infos, basedir, report_target_modules, workitems
+    @lock Revise.revise_lock begin
+        pkgdata = @something Revise.getpkgdata(pkgid) error(lazy"Package $(pkgid.name) is not analyzable by Revise")
+        # If Revise hasn't instantiated signatures yet, populate that cache here
+        for (file, fi) in zip(Revise.srcfiles(pkgdata), pkgdata.fileinfos)
+            Revise.maybe_parse_from_cache!(pkgdata, file, fi)
+            Revise.maybe_extract_sigs!(fi)
+        end
+        # Signature extraction may advance the world age, so capture it afterward
+        world = Base.get_world_counter()
 
-    analyzed_file_infos = Dict{URI,JET.AnalyzedFileInfo}()
-    basedir = Revise.basedir(pkgdata)
-    report_target_modules = Set{Module}()
-    for (i, file) in enumerate(Revise.srcfiles(pkgdata))
-        filepath = joinpath(basedir, file)
-        uri = filepath2uri(filepath)
-        # Build module range info from Revise's tracked modules
-        # TODO This is pretty incorrect module context mapping
-        filemod, _ = last(pkgdata.fileinfos[i].mod_exs_infos)
-        module_range_infos = Pair{UnitRange{Int},Module}[(1:typemax(Int)) => filemod]
-        analyzed_file_infos[uri] = JET.AnalyzedFileInfo(module_range_infos)
-        push!(report_target_modules, filemod)
+        analyzed_file_infos = Dict{URI,JET.AnalyzedFileInfo}()
+        basedir = Revise.basedir(pkgdata)
+        report_target_modules = Set{Module}()
+        workitems = SigWorkItem[]
+        for (file, fi) in zip(Revise.srcfiles(pkgdata), pkgdata.fileinfos)
+            filepath = joinpath(basedir, file)
+            uri = filepath2uri(filepath)
+            # Build module range info from Revise's tracked modules
+            # TODO This is pretty incorrect module context mapping
+            filemod, _ = last(fi.mod_exs_infos)
+            module_range_infos = Pair{UnitRange{Int},Module}[(1:typemax(Int)) => filemod]
+            analyzed_file_infos[uri] = JET.AnalyzedFileInfo(module_range_infos)
+            push!(report_target_modules, filemod)
+
+            for (mod, exs_infos) in fi.mod_exs_infos, (rex, exinfos) in exs_infos
+                isnothing(exinfos) && continue
+                for (i, exinfo) in enumerate(exinfos)
+                    if exinfo isa Revise.SigInfo
+                        push!(workitems, SigWorkItem(file, mod, rex, exinfo, exinfos, i))
+                    end
+                end
+            end
+        end
     end
 
     analyzer = let analyzer # avoid captured boxes
         analyzer = LSAnalyzer(request.entry; report_target_modules) # TODO Revisit (submodules)
-        # Revise's signature population may execute code, which can increment the world age,
-        # so we update to the latest world age here
-        newstate = JET.AnalyzerState(JET.AnalyzerState(analyzer); world = Base.get_world_counter())
+        newstate = JET.AnalyzerState(JET.AnalyzerState(analyzer); world)
         JET.AbstractAnalyzer(analyzer, newstate)
-    end
-
-    workitems = SigWorkItem[]
-    for (file, fi) in zip(Revise.CodeTracking.srcfiles(pkgdata), pkgdata.fileinfos),
-        (mod, exs_infos) in fi.mod_exs_infos,
-        (rex, exinfos) in exs_infos
-        isnothing(exinfos) && continue
-        for (i, exinfo) in enumerate(exinfos)
-            if exinfo isa Revise.SigInfo
-                push!(workitems, SigWorkItem(file, mod, rex, exinfos, i))
-            end
-        end
     end
 
     # Detect method overwrites
     warning_reports = ToplevelWarningReport[]
     seen_sigs = IdDict{Revise.MethodInfoKey,MethodDefinitionInfo}()
     for workitem in workitems
-        siginfo = workitem.siginfos[workitem.index]::Revise.SigInfo
+        siginfo = workitem.siginfo
         key = Revise.MethodInfoKey(siginfo.mt, siginfo.sig)
         (; file, mod, rex) = workitem
         if haskey(seen_sigs, key)
-            filepath = joinpath(Revise.CodeTracking.basedir(pkgdata), file)
+            filepath = joinpath(basedir, file)
             lines = get_lines_in_ex(filepath, rex.ex)
             original_definition = seen_sigs[key]
-            original_filepath = joinpath(Revise.CodeTracking.basedir(pkgdata), original_definition.file)
+            original_filepath = joinpath(basedir, original_definition.file)
             original_lines = get_lines_in_ex(original_filepath, original_definition.rex.ex)
             push!(warning_reports, MethodOverwriteReport(mod, siginfo.sig, filepath, lines, original_filepath, original_lines))
         else
@@ -1040,8 +1042,7 @@ function analyze_package_with_revise(
     end
 
     tasks = let analyzer=analyzer, progress=progress; map(workitems) do workitem
-        (; siginfos, index) = workitem
-        siginfo = siginfos[index]::Revise.SigInfo
+        siginfo = workitem.siginfo
         Threads.@spawn :default try
             if cancellable_token !== nothing && is_cancelled(cancellable_token.cancel_flag)
                 return
@@ -1069,7 +1070,7 @@ function analyze_package_with_revise(
                 reports = JET.get_reports(task_analyzer, result)
                 # Cache the result if CodeInstance is available
                 if isdefined(result, :ci)
-                    siginfos[index] = Revise.replace_extended_data(siginfo, :JETLS, SigAnalysisResult(reports, result.ci))
+                    cache_sig_analysis!(workitem, SigAnalysisResult(reports, result.ci))
                 else
                     @static JETLS_DEV_MODE && @warn "Missing CodeInstance for method analysis instance for" siginfo.sig
                 end
