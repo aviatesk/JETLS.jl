@@ -322,6 +322,10 @@ struct AnalysisExecution
     prev_result::Union{Nothing,AnalysisResult}
 end
 
+abstract type AbstractSignatureAnalysisJob end
+signature_analysis_completion(job::AbstractSignatureAnalysisJob) =
+    getfield(job, :completion)::Base.Event
+
 const AnalysisCache = LWContainer{Dict{URI,AnalysisInfo}, LWStats}
 const PendingAnalyses = CASContainer{Dict{AnalysisEntry,Union{Nothing,AnalysisRequest}}, CASStats}
 const CurrentGenerations = CASContainer{Dict{AnalysisEntry,Int}, CASStats}
@@ -333,21 +337,25 @@ struct AnalysisManager
     cache::AnalysisCache
     pending_analyses::PendingAnalyses
     queue::Channel{Union{Nothing,AnalysisRequest}}
+    signature_queue::Channel{Union{Nothing,AbstractSignatureAnalysisJob}}
     current_generations::CurrentGenerations
     analyzed_generations::AnalyzedGenerations
     debounced::DebouncedRequests
     instantiated_envs::InstantiatedEnvs
     worker_task::Base.RefValue{Task}
+    signature_worker_tasks::Vector{Task}
     function AnalysisManager()
         return new(
             AnalysisCache(),
             PendingAnalyses(),
             Channel{Union{Nothing,AnalysisRequest}}(Inf),
+            Channel{Union{Nothing,AbstractSignatureAnalysisJob}}(Inf),
             CurrentGenerations(),
             AnalyzedGenerations(),
             DebouncedRequests(),
             InstantiatedEnvs(),
             Ref{Task}(), # initialized by start_analysis_worker!
+            Task[], # initialized by start_signature_analysis_workers!
         )
     end
 end

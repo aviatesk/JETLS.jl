@@ -289,6 +289,7 @@ function runserver(
         Base.display_error(stderr, err, catch_backtrace())
     finally
         stop_analysis_worker(server)
+        stop_signature_analysis_workers(server)
         put!(seq_queue, nothing); put!(con_queue, nothing);
         close(seq_queue); close(con_queue);
         waitall((seq_task, con_task))
