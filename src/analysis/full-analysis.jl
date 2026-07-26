@@ -179,27 +179,22 @@ end
 # Analysis worker
 # ===============
 
-function start_analysis_workers!(server::Server)
-    n_workers = get_init_option(server.state.init_options, :n_analysis_workers)
-    @static JETLS_DEV_MODE && @info "Starting $n_workers analysis workers"
-    worker_tasks = server.state.analysis_manager.worker_tasks
-    isempty(worker_tasks) || error("The server has already started analysis workers")
-    resize!(worker_tasks, n_workers)
-    for i = 1:n_workers
-        worker_tasks[i] = Threads.@spawn :default try
-            analysis_worker(server)
-        catch err
-            @error "Critical error happened in analysis worker"
-            Base.display_error(stderr, err, catch_backtrace())
-        end
+function start_analysis_worker!(server::Server)
+    @static JETLS_DEV_MODE && @info "Starting analysis worker"
+    worker_task = server.state.analysis_manager.worker_task
+    isassigned(worker_task) && error("The server has already started an analysis worker")
+    task = Threads.@spawn :default try
+        analysis_worker(server)
+    catch err
+        @error "Critical error happened in analysis worker"
+        Base.display_error(stderr, err, catch_backtrace())
     end
-    return worker_tasks
+    worker_task[] = task
+    return task
 end
 
 # Analysis queue processing implementation (analysis serialized per AnalysisEntry)
 function analysis_worker(server::Server)
-    # Note: Currently single worker, but designed for future multi-worker scaling.
-    # When multiple workers exist, the per-entry serialization ensures correctness.
     while true
         request = take!(server.state.analysis_manager.queue)
         request === nothing && break
@@ -208,11 +203,14 @@ function analysis_worker(server::Server)
     end
 end
 
-function stop_analysis_workers(server::Server)
-    for _ = 1:length(server.state.analysis_manager.worker_tasks)
-        put!(server.state.analysis_manager.queue, nothing)
-    end
-    waitall(server.state.analysis_manager.worker_tasks)
+function stop_analysis_worker(server::Server)
+    manager = server.state.analysis_manager
+    worker_task = manager.worker_task
+    isassigned(worker_task) || return nothing
+    task = worker_task[]
+    istaskdone(task) || put!(manager.queue, nothing)
+    wait(task)
+    return nothing
 end
 
 # Analysis worker pipeline

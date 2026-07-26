@@ -221,13 +221,6 @@
             "type": "object"
           },
           "type": "array"
-        },
-        "n_analysis_workers": {
-          "default": 1,
-          "description": "Number of concurrent analysis worker tasks for running full analysis (experimental). Default is 1. See [documentation](https://aviatesk.github.io/JETLS.jl/release/launching/#init-options/n_analysis_workers) for details and current limitations.",
-          "maximum": 9223372036854775807,
-          "minimum": -9223372036854775808,
-          "type": "integer"
         }
       },
       "required": [],

@@ -46,6 +46,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Breaking
 
+- Removed the experimental `n_analysis_workers` initialization option. Full-analysis requests are now processed serially, while signature analysis within each request remains parallel based on the available Julia threads. Existing client or `.JETLSConfig.toml` configurations must remove this option.
+
 - `inference/non-boolean-cond` is now reported as [`inference/type-error/non-bool-cond`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/inference/type-error/non-bool-cond). Existing diagnostic pattern configurations that match the old code continue to apply for now, but this compatibility support may be removed in a future release.
 
 ### Added

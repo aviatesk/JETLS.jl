@@ -33,7 +33,6 @@ executable = "Path to custom formatter executable for document formatting. The f
 executable_range = "Path to custom formatter executable for range formatting. Should accept a `--lines=START:END` argument to format only the specified line range."
 
 [InitOptions]
-n_analysis_workers = "Number of concurrent analysis worker tasks for running full analysis (experimental). Default is 1. See [documentation](https://aviatesk.github.io/JETLS.jl/release/launching/#init-options/n_analysis_workers) for details and current limitations."
 analysis_overrides = "Override full analysis behavior for specific file patterns. Primarily used as a temporary workaround to disable analysis for files affected by memory leak issues. Each override specifies a glob pattern, optionally a module name, and can opt back into full analysis. Note: This is an experimental feature that may be removed or changed in future versions."
 
 [AnalysisOverride]

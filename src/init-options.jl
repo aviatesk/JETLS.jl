@@ -2,21 +2,11 @@ function merge_init_options(base::InitOptions, overlay::InitOptions)
     merge_and_track(Returns(nothing), base, overlay, ())
 end
 
-function validate_init_options(server::Server, opts::InitOptions)
-    n = opts.n_analysis_workers
-    if n !== nothing && n < 1
-        show_warning_message(server,
-            "`n_analysis_workers` must be at least 1 (got $n), using default")
-        return InitOptions(; n_analysis_workers=DEFAULT_INIT_OPTIONS.n_analysis_workers)
-    end
-    return opts
-end
-
 function parse_init_options(server::Server, @nospecialize init_options)
     init_options === nothing && return DEFAULT_INIT_OPTIONS
     init_options isa AbstractDict || return DEFAULT_INIT_OPTIONS
     parsed = try
-        validate_init_options(server, parse_config_from_dict(InitOptions, init_options))
+        parse_config_from_dict(InitOptions, init_options)
     catch err
         show_warning_message(server,
             "Failed to parse initializationOptions, using defaults: $err")
@@ -47,7 +37,7 @@ function load_file_init_options(server::Server, filepath::AbstractString)
         return nothing
     end
     try
-        return validate_init_options(server, parse_config_from_dict(InitOptions, init_options_dict))
+        return parse_config_from_dict(InitOptions, init_options_dict)
     catch err
         show_error_message(server,
             "Failed to parse `[initialization_options]` in $filepath: $err")
