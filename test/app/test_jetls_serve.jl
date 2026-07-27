@@ -75,6 +75,18 @@ function read_lsp_message(io)
     return String(read(io, var"Content-Length"))
 end
 
+function read_lsp_response(io, id::Int)
+    preceding_messages = String[]
+    id_marker = "\"id\":$id"
+    while true
+        message = read_lsp_message(io)
+        if occursin(id_marker, message)
+            return (; response=message, preceding_messages)
+        end
+        push!(preceding_messages, message)
+    end
+end
+
 const DEFAULT_TIMEOUT = 10
 const STARTUP_TIMEOUT = 60
 
@@ -99,7 +111,7 @@ end
 end
 
 # test a very simple, normal server lifecycle
-withserverprocess() do proc
+withserverprocess() do proc; mktempdir() do root_dir
     # Send initialization request
     initialize_msg = """{
         "jsonrpc": "2.0",
@@ -107,15 +119,17 @@ withserverprocess() do proc
         "method": "initialize",
         "params": {
             "processId": $(getpid()),
-            "rootUri": null,
             "capabilities": {},
-            "workspaceFolders": []
+            "workspaceFolders": [{
+                "uri": "$(JETLS.LSP.URIs2.filepath2uri(root_dir))",
+                "name": "test-workspace"
+            }]
         }
     }"""
     write_lsp_message(proc, initialize_msg)
-    initialization_response = @something read_lsp_message(proc) begin
-        error("No response received from server (may have terminated)")
-    end
+    initialization = read_lsp_response(proc, 1)
+    @test isempty(initialization.preceding_messages)
+    initialization_response = initialization.response
     @test occursin("\"id\":1", initialization_response)
     @test occursin("\"result\"", initialization_response)
     # @info "Server responded to initialize request successfully"
@@ -128,9 +142,9 @@ withserverprocess() do proc
         "params": null
     }"""
     write_lsp_message(proc, shutdown_msg)
-    shutdown_response = @something read_lsp_message(proc) begin
-        error("No response received from server (may have terminated)")
-    end
+    shutdown = read_lsp_response(proc, 2)
+    @test isempty(shutdown.preceding_messages)
+    shutdown_response = shutdown.response
     @test occursin("\"id\":2", shutdown_response)
     @test occursin("\"result\":null", shutdown_response)
     # @info "Server responded to shutdown request"
@@ -148,10 +162,10 @@ withserverprocess() do proc
         return true
     end
     @test process_exited(proc) && proc.exitcode == 0
-end
+end; end
 
 # test a very simple, abnormal server lifecycle
-withserverprocess() do proc
+withserverprocess() do proc; mktempdir() do root_dir
     # Send initialization request
     initialize_msg = """{
         "jsonrpc": "2.0",
@@ -159,15 +173,17 @@ withserverprocess() do proc
         "method": "initialize",
         "params": {
             "processId": $(getpid()),
-            "rootUri": null,
             "capabilities": {},
-            "workspaceFolders": []
+            "workspaceFolders": [{
+                "uri": "$(JETLS.LSP.URIs2.filepath2uri(root_dir))",
+                "name": "test-workspace"
+            }]
         }
     }"""
     write_lsp_message(proc, initialize_msg)
-    initialization_response = @something read_lsp_message(proc) begin
-        error("No response received from server (may have terminated)")
-    end
+    initialization = read_lsp_response(proc, 1)
+    @test isempty(initialization.preceding_messages)
+    initialization_response = initialization.response
     @test occursin("\"id\":1", initialization_response)
     @test occursin("\"result\"", initialization_response)
     # @info "Server responded to initialize request successfully"
@@ -185,6 +201,6 @@ withserverprocess() do proc
         return true
     end
     @test process_exited(proc) && proc.exitcode == 1
-end
+end; end
 
 end # module test_jetls_serve

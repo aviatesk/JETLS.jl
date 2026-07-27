@@ -191,6 +191,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - JETLS servers started without a workspace root (i.e., when an LSP `InitializeRequest` specifies neither `workspaceFolders` nor `rootUri`) now analyze opened Julia files as standalone scripts instead of discovering nearby project environments. This avoids automatic environment setup and package-wide analysis in rootless LSP sessions.
 
+- JETLS now displays a warning when workspace analysis and folder-local configuration are unavailable because a server was started without a workspace folder, with an unsupported root URI scheme, or with multiple workspace folders. For multi-root workspaces, configure the editor to start one server per top-level folder.
+
 - `inference/*` diagnostic related information now labels inference frames as `origin`, `via`, or `entry`, making it clearer where the error originated and which analysis entry reported it.
 
 - `inference/type-error/*` now groups diagnostics for the subset of runtime `TypeError` cases that JETLS can infer, including non-`Bool` conditions and statically failing type assertions. Users can ignore or reconfigure this family together with a regex code match such as `inference/type-error/.*`.
