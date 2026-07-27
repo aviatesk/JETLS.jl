@@ -337,7 +337,7 @@ struct AnalysisManager
     analyzed_generations::AnalyzedGenerations
     debounced::DebouncedRequests
     instantiated_envs::InstantiatedEnvs
-    worker_tasks::Vector{Task}
+    worker_task::Base.RefValue{Task}
     function AnalysisManager()
         return new(
             AnalysisCache(),
@@ -347,7 +347,7 @@ struct AnalysisManager
             AnalyzedGenerations(),
             DebouncedRequests(),
             InstantiatedEnvs(),
-            Task[], # initialized by start_analysis_workers!
+            Ref{Task}(), # initialized by start_analysis_worker!
         )
     end
 end
@@ -604,19 +604,16 @@ merge_key_value(analysis_override::AnalysisOverride) = analysis_override.path
 # Static initialization options from `InitializeParams.initializationOptions`.
 # These are set once during the initialize request and remain constant.
 @kwdef struct InitOptions <: ConfigSection
-    n_analysis_workers::Maybe{Int} = nothing
     analysis_overrides::Maybe{Vector{AnalysisOverride}} = nothing
 end
 @define_eq_overloads InitOptions
 function Base.show(io::IO, init_options::InitOptions)
     print(io, "InitOptions(;")
-    n_analysis_workers = init_options.n_analysis_workers
-    n_analysis_workers === nothing || print(io, " n_analysis_workers=", n_analysis_workers)
     analysis_overrides = init_options.analysis_overrides
     analysis_overrides === nothing || print(io, " analysis_overrides=", analysis_overrides)
     print(io, ")")
 end
-const DEFAULT_INIT_OPTIONS = InitOptions(; n_analysis_workers=1, analysis_overrides=AnalysisOverride[])
+const DEFAULT_INIT_OPTIONS = InitOptions(; analysis_overrides=AnalysisOverride[])
 
 @kwdef struct LaTeXEmojiConfig <: ConfigSection
     strip_prefix::Maybe{Union{Missing,Bool}} = nothing # missing is used as sentinel for default setting value

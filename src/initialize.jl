@@ -76,7 +76,7 @@ function handle_InitializeRequest(
         load_file_init_options!(server, config_path)
     end
 
-    start_analysis_workers!(server)
+    start_analysis_worker!(server)
 
     if supports(server, :textDocument, :completion, :dynamicRegistration)
         completionProvider = nothing # will be registered dynamically

@@ -130,7 +130,12 @@ For detailed initialization options and examples, see the
 ```jsonc
 {
   "jetls-client.initializationOptions": {
-    "n_analysis_workers": 2
+    "analysis_overrides": [
+      {
+        "path": "test/fixtures/**",
+        "full_analysis": false
+      }
+    ]
   }
 }
 ```
