@@ -1077,15 +1077,13 @@ function analyze_package_with_revise(
         activation_done::Union{Nothing,Base.Event} = nothing
     )
     pkgmod = get(Base.loaded_modules, pkgid, nothing)
-    if pkgmod === nothing
-        pkgmod = try
-            Base.require(pkgid)
-        catch e
-            show_error_message(server, "Failed to load package $(pkgid.name): $(sprint(Base.showerror, e))")
-            error(lazy"Package $(pkgid.name) is not loadable") # TODO
-        finally
-            isnothing(activation_done) || notify(activation_done)
-        end
+    pkgmod = try
+        pkgmod === nothing ? Base.require(pkgid)::Module : pkgmod
+    catch e
+        show_error_message(server, "Failed to load package $(pkgid.name): $(sprint(Base.showerror, e))")
+        error(lazy"Package $(pkgid.name) is not loadable") # TODO Make this top-level diagnostic?
+    finally
+        isnothing(activation_done) || notify(activation_done)
     end
 
     Revise.getpkgdata(pkgid) === nothing && Revise.watch_package(pkgid)
