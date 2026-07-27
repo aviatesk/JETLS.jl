@@ -198,6 +198,22 @@ end
     end
 end
 
+@testset "analysis override lowering context" begin
+    mktempdir() do dir
+        filepath = write_test_file(dir, "test.jl", "f(x) = @somereal x\n")
+        write_config_file(dir, """
+            [[initialization_options.analysis_overrides]]
+            path = "test.jl"
+            module_name = "JETLS"
+            """)
+
+        result = run_jetls_check([filepath]; root=dir)
+        @test result.exitcode == 0
+        @test !occursin("lowering/macro-expansion-error", result.stdout)
+        @test occursin("No diagnostics found", result.stdout)
+    end
+end
+
 @testset "multiple files" begin
     mktempdir() do dir
         file1 = write_test_file(dir, "file1.jl", """

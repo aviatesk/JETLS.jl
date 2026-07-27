@@ -334,7 +334,6 @@ function run_check(args::Vector{String})
             uri = filepath2uri(filepath)
             push!(analysis_uris, uri)
         end
-        lookup_func = Returns(OutOfScope(Main))
     else
         # Full analysis phase (textDocument/publishDiagnostics equivalent)
         @with_cli_LOAD_PATH run_full_analysis(server, root_path, paths, progress_ctx)
@@ -343,13 +342,12 @@ function run_check(args::Vector{String})
             @error "Full analysis failed: could not find any files to analyze"
             return 1
         end
-        lookup_func = nothing
     end
 
     uri2diagnostics = get_full_diagnostics(server)
 
     # Per-file diagnostics phase (workspace/diagnostic equivalent)
-    total_uris = run_per_file_diagnostics!(uri2diagnostics, analysis_uris, server, root_path, progress_ctx; lookup_func)
+    total_uris = run_per_file_diagnostics!(uri2diagnostics, analysis_uris, server, root_path, progress_ctx)
 
     for (uri, diagnostics) in uri2diagnostics
         apply_diagnostic_config!(diagnostics, server.state.config_manager, uri, root_path)
@@ -414,9 +412,7 @@ end
 
 function run_per_file_diagnostics!(
         uri2diagnostics::Dict{URI,Vector{Diagnostic}}, analyzed_uris::Set{URI},
-        server::Server, root_path::AbstractString,
-        progress_ctx::ProgressContext;
-        lookup_func = nothing
+        server::Server, root_path::AbstractString, progress_ctx::ProgressContext
     )
     total_uris = length(analyzed_uris)
     uri2diagnostics_lock = ReentrantLock()
@@ -432,6 +428,10 @@ function run_per_file_diagnostics!(
                 get_unsynced_file_info!(server.state, uri)
             end return
             # Mirrors `compute_pull_diagnostics`: parse errors short-circuit lowering.
+            lookup_func = function ()
+                server_lookup_func = gen_lookup_out_of_scope!(server.state, uri)
+                @something server_lookup_func() OutOfScope(Main)
+            end
             diagnostics = if isempty(fi.parsed_stream.diagnostics)
                 toplevel_lowering_diagnostics!(def_used_names_cache, server, uri, fi; lookup_func)
             else
