@@ -315,7 +315,10 @@ function run_check(args::Vector{String})
     paths = String[isabspath(p) ? p : joinpath(root_path, p) for p in paths]
 
     server = start_cli_server(root_path)
-    skip_analysis || start_analysis_worker!(server)
+    if !skip_analysis
+        start_signature_analysis_workers!(server)
+        start_analysis_worker!(server)
+    end
     progress_ctx = ProgressContext(progress_mode, stderr)
 
     start_time = time()
@@ -587,5 +590,6 @@ end
 
 function cleanup_cli_tasks(server::Server)
     stop_analysis_worker(server)
+    stop_signature_analysis_workers(server)
     close(server.endpoint)
 end

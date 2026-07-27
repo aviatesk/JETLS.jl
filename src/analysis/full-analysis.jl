@@ -176,8 +176,66 @@ function handle_analysis_progress_response(
         cancellable_token, notify_diagnostics)
 end
 
-# Analysis worker
-# ===============
+# Analysis workers
+# ================
+
+function start_signature_analysis_workers!(server::Server)
+    manager = server.state.analysis_manager
+    worker_tasks = manager.signature_worker_tasks
+    isempty(worker_tasks) || error("The server has already started signature analysis workers")
+    n_workers = max(1, Threads.threadpoolsize(:default) - 1)
+    @static JETLS_DEV_MODE && @info "Starting $n_workers signature analysis workers"
+    resize!(worker_tasks, n_workers)
+    for i = 1:n_workers
+        worker_tasks[i] = Threads.@spawn :default try
+            signature_analysis_worker(server)
+        catch err
+            @error "Critical error happened in signature analysis worker"
+            Base.display_error(stderr, err, catch_backtrace())
+        end
+    end
+    return worker_tasks
+end
+
+function signature_analysis_worker(server::Server)
+    # HACK: Compiler engine reservations are owned by OS thread ID.
+    # Prevent migration only while this job may run inference. This assumes jobs don't
+    # leave sticky child tasks running: stickiness isn't reference-counted, so restoring
+    # it could erase stickiness propagated by a child scheduled during the job.
+    queue = server.state.analysis_manager.signature_queue
+    while true
+        job = @something take!(queue) break
+        task = current_task()
+        was_sticky = task.sticky
+        task.sticky = true
+        try
+            @tryinvokelatest job(server)
+        finally
+            task.sticky = was_sticky
+            notify(signature_analysis_completion(job))
+        end
+        yield()
+    end
+end
+
+function run_signature_analysis_jobs!(
+        server::Server, jobs::Vector{<:AbstractSignatureAnalysisJob}
+    )
+    queue = server.state.analysis_manager.signature_queue
+    foreach(job -> put!(queue, job), jobs)
+    foreach(job -> wait(signature_analysis_completion(job)), jobs)
+    return nothing
+end
+
+function stop_signature_analysis_workers(server::Server)
+    manager = server.state.analysis_manager
+    worker_tasks = manager.signature_worker_tasks
+    for _ in worker_tasks
+        put!(manager.signature_queue, nothing)
+    end
+    foreach(wait, worker_tasks)
+    return nothing
+end
 
 function start_analysis_worker!(server::Server)
     @static JETLS_DEV_MODE && @info "Starting analysis worker"
@@ -874,6 +932,77 @@ mutable struct ReviseAnalysisProgress
     end
 end
 
+struct ReviseSignatureAnalysisJob <: AbstractSignatureAnalysisJob
+    workitem::SigWorkItem
+    analyzer::LSAnalyzer
+    progress::ReviseAnalysisProgress
+    inf_world::UInt
+    cancellable_token::Union{Nothing,CancellableToken}
+    n_sigs::Int
+    completion::Base.Event
+end
+
+function (job::ReviseSignatureAnalysisJob)(server::Server)
+    (; workitem, analyzer, progress, inf_world, cancellable_token, n_sigs) = job
+    siginfo = workitem.siginfo
+    try
+        if cancellable_token !== nothing && is_cancelled(cancellable_token.cancel_flag)
+            return
+        end
+        ext = Revise.get_extended_data(siginfo, :JETLS)
+        local reports::Vector{JET.InferenceErrorReport}
+        if ext !== nothing && ext.data isa SigAnalysisResult
+            prev_result = ext.data::SigAnalysisResult
+            if (CC.cache_owner(analyzer) === prev_result.codeinst.owner &&
+                prev_result.codeinst.max_world ≥ inf_world ≥ prev_result.codeinst.min_world)
+                @atomic progress.cached += 1
+                reports = prev_result.reports
+                @goto gotreports
+            end
+        end
+        # Create a new analyzer with fresh local caches (`inf_cache` and `analysis_results`)
+        # to avoid data races between concurrent signature analysis tasks
+        task_analyzer = JET.AbstractAnalyzer(analyzer,
+            JET.AnalyzerState(JET.AnalyzerState(analyzer), #=refresh_local_cache=#true))
+        match = signature_analysis_match(task_analyzer, siginfo.sig, inf_world)
+        if match !== nothing
+            task_analyzer, result = JET.analyze_method_signature!(task_analyzer,
+                match.method, match.spec_types, match.sparams)
+            @atomic progress.analyzed += 1
+            reports = JET.get_reports(task_analyzer, result)
+            # Cache the result if CodeInstance is available
+            if isdefined(result, :ci)
+                cache_sig_analysis!(workitem, SigAnalysisResult(reports, result.ci))
+            else
+                @static JETLS_DEV_MODE && @warn "Missing CodeInstance for method analysis instance for" siginfo.sig
+            end
+        else
+            @static JETLS_DEV_MODE && @warn "Couldn't find a single matching method for the signature" siginfo.sig
+            reports = JET.InferenceErrorReport[]
+        end
+        @label gotreports
+        isempty(reports) || @lock progress.reports_lock append!(progress.reports, reports)
+    catch err
+        @error "Error analyzing method signature" siginfo.sig
+        Base.showerror(stderr, err, catch_backtrace())
+    finally
+        done = (@atomic progress.done += 1)
+        if cancellable_token !== nothing
+            current_next = @atomic progress.next_interval
+            if done >= current_next
+                @atomicreplace progress.next_interval current_next =>
+                    current_next + progress.interval
+                percentage = min(round(Int, (done / n_sigs) * 100), 100)
+                send_progress(server, cancellable_token.token,
+                    WorkDoneProgressReport(;
+                        cancellable = true,
+                        message = "$done / $n_sigs [signature analysis]",
+                        percentage))
+            end
+        end
+    end
+end
+
 end # @static if JETLS_DEV_MODE
 
 const empty_lines_range = typemax(Int) => typemin(Int)
@@ -1039,65 +1168,12 @@ function analyze_package_with_revise(
         yield_to_endpoint()
     end
 
-    tasks = let analyzer=analyzer, progress=progress; map(workitems) do workitem
-        siginfo = workitem.siginfo
-        Threads.@spawn :default try
-            if cancellable_token !== nothing && is_cancelled(cancellable_token.cancel_flag)
-                return
-            end
-            ext = Revise.get_extended_data(siginfo, :JETLS)
-            local reports::Vector{JET.InferenceErrorReport}
-            if ext !== nothing && ext.data isa SigAnalysisResult
-                prev_result = ext.data::SigAnalysisResult
-                if (CC.cache_owner(analyzer) === prev_result.codeinst.owner &&
-                    prev_result.codeinst.max_world ≥ inf_world ≥ prev_result.codeinst.min_world)
-                    @atomic progress.cached += 1
-                    reports = prev_result.reports
-                    @goto gotreports
-                end
-            end
-            # Create a new analyzer with fresh local caches (`inf_cache` and `analysis_results`)
-            # to avoid data races between concurrent signature analysis tasks
-            task_analyzer = JET.AbstractAnalyzer(analyzer,
-                JET.AnalyzerState(JET.AnalyzerState(analyzer), #=refresh_local_cache=#true))
-            match = signature_analysis_match(task_analyzer, siginfo.sig, inf_world)
-            if match !== nothing
-                task_analyzer, result = JET.analyze_method_signature!(task_analyzer,
-                    match.method, match.spec_types, match.sparams)
-                @atomic progress.analyzed += 1
-                reports = JET.get_reports(task_analyzer, result)
-                # Cache the result if CodeInstance is available
-                if isdefined(result, :ci)
-                    cache_sig_analysis!(workitem, SigAnalysisResult(reports, result.ci))
-                else
-                    @static JETLS_DEV_MODE && @warn "Missing CodeInstance for method analysis instance for" siginfo.sig
-                end
-            else
-                @static JETLS_DEV_MODE && @warn "Couldn't find a single matching method for the signature" siginfo.sig
-                reports = JET.InferenceErrorReport[]
-            end
-            @label gotreports
-            isempty(reports) || @lock progress.reports_lock append!(progress.reports, reports)
-        catch err
-            @error "Error analyzing method signature" siginfo.sig
-            Base.showerror(stderr, err, catch_backtrace())
-        finally
-            done = (@atomic progress.done += 1)
-            if cancellable_token !== nothing
-                current_next = @atomic progress.next_interval
-                if done >= current_next
-                    @atomicreplace progress.next_interval current_next => current_next + progress.interval
-                    percentage = min(round(Int, (done / n_sigs) * 100), 100)
-                    send_progress(server, cancellable_token.token,
-                        WorkDoneProgressReport(;
-                            cancellable = true,
-                            message = "$done / $n_sigs [signature analysis]",
-                            percentage))
-                end
-            end
-        end
-    end; end
-    waitall(tasks)
+    jobs = ReviseSignatureAnalysisJob[]
+    for workitem in workitems
+        push!(jobs, ReviseSignatureAnalysisJob(
+            workitem, analyzer, progress, inf_world, cancellable_token, n_sigs, Base.Event()))
+    end
+    run_signature_analysis_jobs!(server, jobs)
 
     @label completed
 
