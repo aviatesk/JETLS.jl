@@ -111,6 +111,15 @@ function compute_binding_occurrences(
     end
     for (local_binfo, global_binfo) in alias_remaps
         local_occs = pop!(occurrences, local_binfo)
+        definition_tree = JL.binding_ex(ctx3, local_binfo)
+        definition_range = JS.byte_range(definition_tree)
+        # Typegroup lowering assigns this alias twice and reads it in internal
+        # scaffolding at the definition range. Canonicalize that range while
+        # retaining user-written self-references at distinct ranges.
+        filter!(local_occs) do occ
+            JS.byte_range(occ.tree) != definition_range || occ.kind ∉ (:def, :use)
+        end
+        push!(local_occs, BindingOccurrence(definition_tree, :def))
         existing = get!(Set{BindingOccurrence}, occurrences, global_binfo)
         union!(existing, local_occs)
     end
