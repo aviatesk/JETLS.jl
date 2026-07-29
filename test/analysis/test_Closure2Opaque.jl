@@ -121,14 +121,16 @@ end
 end
 
 @testset "static parameters" begin
-    let (val, _) = rewrite_lower_eval("""
-            function outer_static_capture(x::T) where T
-                f = (y::T) -> T(x + y)
-                f(x)
-            end
-            outer_static_capture(21)
-            """)
-        @test val == 42
+    @static if isdefinedglobal(Core, :define_method)
+        let (val, _) = rewrite_lower_eval("""
+                function outer_static_capture(x::T) where T
+                    f = (y::T) -> T(x + y)
+                    f(x)
+                end
+                outer_static_capture(21)
+                """)
+            @test val == 42
+        end
     end
 
     let tree = rewrite_only("""

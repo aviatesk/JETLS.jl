@@ -1054,16 +1054,18 @@ macro m_outer_error(x)
     :(@m_inner_error( $x ), @m_inner_error( $nothing ))
 end
 
-let code = """
-    using JETLS: JL
-    macro m_inner_error_JL(_)
-        error("Error in foo")
+@static if isdefinedglobal(Core, :define_method)
+    let code = """
+        using JETLS: JL
+        macro m_inner_error_JL(_)
+            error("Error in foo")
+        end
+        macro m_outer_error_JL(x)
+            JL.@legacy_quote_to_syntax(:(@m_inner_error_JL(\$x), @m_inner_error_JL(\$nothing)))
+        end
+        """
+        JL.include_string(@__MODULE__, code)
     end
-    macro m_outer_error_JL(x)
-        JL.@legacy_quote_to_syntax(:(@m_inner_error_JL(\$x), @m_inner_error_JL(\$nothing)))
-    end
-    """
-    JL.include_string(@__MODULE__, code)
 end
 
 @testset HierarchicalTestSet "JuliaLowering error diagnostics" begin
@@ -1207,18 +1209,20 @@ end
         @test diagnostic.range.var"end".character == sizeof("    @m_outer_error missing")
     end
 
-    @testset "nested macro expansion error diagnostics (with JL provenance)" begin
-        diagnostics = get_lowering_diagnostics("""let
-            @m_outer_error_JL missing
-        end"""; context_module=@__MODULE__)
-        @test length(diagnostics) == 1
-        diagnostic = only(diagnostics)
-        @test diagnostic.source == JETLS.DIAGNOSTIC_SOURCE_LIVE
-        @test diagnostic.message == "Error expanding macro\nError in foo"
-        @test diagnostic.range.start.line == 1
-        @test diagnostic.range.start.character == 4
-        @test diagnostic.range.var"end".line == 1
-        @test diagnostic.range.var"end".character == sizeof("    @m_outer_error_JL missing")
+    @static if isdefinedglobal(Core, :define_method)
+        @testset "nested macro expansion error diagnostics (with JL provenance)" begin
+            diagnostics = get_lowering_diagnostics("""let
+                @m_outer_error_JL missing
+            end"""; context_module=@__MODULE__)
+            @test length(diagnostics) == 1
+            diagnostic = only(diagnostics)
+            @test diagnostic.source == JETLS.DIAGNOSTIC_SOURCE_LIVE
+            @test diagnostic.message == "Error expanding macro\nError in foo"
+            @test diagnostic.range.start.line == 1
+            @test diagnostic.range.start.character == 4
+            @test diagnostic.range.var"end".line == 1
+            @test diagnostic.range.var"end".character == sizeof("    @m_outer_error_JL missing")
+        end
     end
 
     @testset "lowering error within macro expanded code" begin
