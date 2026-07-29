@@ -51,16 +51,3 @@ end
 jldebug(context_module::Module, s::AbstractString, stop::Int=5) =
     jldebug(context_module, jlparse(s; rule=:statement), stop)
 jldebug(args...) = jldebug(@__MODULE__, args...)
-
-# Select a node by ID from a tree (its underlying graph), graph, or ctx
-function jlnode(g::JL.SyntaxGraph, i::JS.NodeId)
-    t = JS.SyntaxTree(g, i)
-    # show(stdout, MIME("text/x.sexpression"), t)
-    return t
-end
-function jlnode(st::JS.SyntaxTree, i::JS.NodeId)
-    return JS.SyntaxTree(st._graph, i)
-end
-function jlnode(ctx::T where {T<:JL.AbstractLoweringContext}, i::JS.NodeId)
-    return JS.SyntaxTree(ctx.graph, i)
-end

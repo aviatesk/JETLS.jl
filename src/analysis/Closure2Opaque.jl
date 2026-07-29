@@ -37,7 +37,7 @@ The rewrite is non-destructive: nodes that don't match are returned unchanged, s
 pipeline downstream sees an equivalent tree with only the eligible closures swapped.
 """
 function rewrite_local_closures_to_opaque(ctx::JL.VariableAnalysisContext, st3::SyntaxTreeC)
-    lambda_scope_id = (st3.lambda_bindings::JL.LambdaBindings).scope_id
+    lambda_scope_id = JL.lambda_bindings(st3[1]).scope_id
     multis = collect_multi_method_bindings(ctx, st3, lambda_scope_id)
     return _rewrite_local_closures_to_opaque(ctx, st3, multis, lambda_scope_id)
 end
@@ -50,10 +50,10 @@ function _rewrite_local_closures_to_opaque(
     if k === JS.K"block"
         return rewrite_closure_block(ctx, st3, multis, lambda_scope_id)
     elseif k === JS.K"lambda"
-        lambda_scope_id = (st3.lambda_bindings::JL.LambdaBindings).scope_id
+        lambda_scope_id = JL.lambda_bindings(st3[1]).scope_id
     end
     let lambda_scope_id=lambda_scope_id
-        return JS.mapchildren(ctx, st3) do c::SyntaxTreeC
+        return JS.mapchildren(st3) do c::SyntaxTreeC
             _rewrite_local_closures_to_opaque(ctx, c, multis, lambda_scope_id)
         end
     end
@@ -65,7 +65,7 @@ function rewrite_closure_block(
     )
     children_old = JS.children(blk3)
     n = length(children_old)
-    new_children = JS.SyntaxList(JS.syntax_graph(ctx))
+    new_children = JS.SyntaxList()
     consumed = falses(n)
     for i = 1:n
         consumed[i] && continue
@@ -125,7 +125,7 @@ function collect_multi_method_bindings(
         node, lambda_scope_id = pop!(stack)
         k = JS.kind(node)
         if k === JS.K"lambda"
-            lambda_scope_id = (node.lambda_bindings::JL.LambdaBindings).scope_id
+            lambda_scope_id = JL.lambda_bindings(node[1]).scope_id
         elseif ((k === JS.K"method" || k === JS.K"method_defs") &&
                 JS.numchildren(node) >= 1 && JS.kind(node[1]) === JS.K"BindingId")
             key = JL.ClosureKey(var_id(node[1]), lambda_scope_id)
@@ -169,7 +169,7 @@ function collect_referenced_closures!(
             # BindingId occurrences tag them, and tagged ones are walked via the worklist.
             continue
         elseif k === JS.K"lambda"
-            lambda_scope_id = (node.lambda_bindings::JL.LambdaBindings).scope_id
+            lambda_scope_id = JL.lambda_bindings(node[1]).scope_id
         elseif k === JS.K"BindingId" && var_id(node) in candidate_bids
             key = find_enclosing_closure_key(ctx, var_id(node), lambda_scope_id)
             if key !== nothing && key ∉ multis && haskey(method_defs_by_key, key)
@@ -258,7 +258,7 @@ function try_build_oc_assignment(
     # The inner argtypes svec is `core.svec(function_type, user_arg_types...)`.
     # Skip the `core.svec` callee (idx 1) and the function-type marker (idx 2);
     # the rest are the user-visible argtypes.
-    user_argtypes = JS.SyntaxList(JS.syntax_graph(ctx))
+    user_argtypes = JS.SyntaxList()
     for i = 3:JS.numchildren(inner_argtypes)
         push!(user_argtypes, inner_argtypes[i])
     end

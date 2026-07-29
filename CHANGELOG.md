@@ -79,15 +79,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
+- Updated JuliaSyntax.jl and JuliaLowering.jl revisions, incorporating JuliaLowering's new standard-tree `SyntaxTree` representation ([JuliaLang/julia#62474](https://github.com/JuliaLang/julia/pull/62474)), which makes lowering — the backbone of most lowering-based LSP features — several times faster and reduces its memory footprint.
+
+- Improved startup latency by precompiling the `initialize` request round-trip, so the first request is less likely to hit strict client `initialize` timeouts (such as Helix's 20-second default). On slower machines, raising the client-side timeout may still be needed. (xref: https://github.com/aviatesk/JETLS.jl/issues/784)
+
+- Updated Compiler.jl API compatibility for the incoming Julia 1.12.7 release while retaining support for Julia pre-1.12.6 Compiler.jl APIs.
+
 - JETLS servers started without a workspace root (i.e., when an LSP `InitializeRequest` specifies neither `workspaceFolders` nor `rootUri`) now analyze opened Julia files as standalone scripts instead of discovering nearby project environments. This avoids automatic environment setup and package-wide analysis in rootless LSP sessions.
 
 - `inference/*` diagnostic related information now labels inference frames as `origin`, `via`, or `entry`, making it clearer where the error originated and which analysis entry reported it.
 
 - `inference/type-error/*` now groups diagnostics for the subset of runtime `TypeError` cases that JETLS can infer, including non-`Bool` conditions and statically failing type assertions. Users can ignore or reconfigure this family together with a regex code match such as `inference/type-error/.*`.
-
-- Updated Compiler.jl API compatibility for the incoming Julia 1.12.7 release while retaining support for Julia pre-1.12.6 Compiler.jl APIs.
-
-- Improved startup latency by precompiling the `initialize` request round-trip, so the first request is less likely to hit strict client `initialize` timeouts (such as Helix's 20-second default). On slower machines, raising the client-side timeout may still be needed. (xref: https://github.com/aviatesk/JETLS.jl/issues/784)
 
 - Reworked the [diagnostics documentation](https://aviatesk.github.io/JETLS.jl/release/diagnostic/): a new [Analysis stages](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/stage) section explains what produces each diagnostic category, which tool powers it, when it runs, and how the stages depend on one another. It also adds a [security caveat](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/stage/toplevel) that full analysis loads and runs your code (so JETLS should not be run on untrusted code), and documents how each [`inference/*` diagnostic](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/inference) corresponds to the Julia runtime error it predicts.
 

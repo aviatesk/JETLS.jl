@@ -257,21 +257,22 @@ function compute_binding_occurrences!(
                 end
                 continue
             end
-        elseif k === JS.K"lambda"
+        elseif k in JS.KSet"lambda toplevel_lambda"
             # All blocks except the last one define arguments and static parameters,
             # so we recurse to avoid counting them as usage
-            if nc ≥ 2
-                arglist = st[1]
+            start_idx = 2 # skip the K"LambdaBindings" leaf
+            if nc ≥ 3
+                arglist = st[2]
                 for i = 1:JS.numchildren(arglist)
                     may_record_occurrence!(occurrences, :def, arglist[i], ctx3)
                 end
-                start_idx = 2
-                if nc ≥ 3
-                    sparamlist = st[2]
+                start_idx = 3
+                if nc ≥ 4
+                    sparamlist = st[3]
                     for i = 1:JS.numchildren(sparamlist)
                         may_record_occurrence!(occurrences, :def, sparamlist[i], ctx3)
                     end
-                    start_idx = 3
+                    start_idx = 4
                 end
             end
         elseif k === JS.K"="
@@ -499,6 +500,13 @@ function collect_struct_inner_constructor_occurrences!(
     return occurrences
 end
 
+# Standalone `BindingInfo` key (id 0, never registered with a `Bindings`) for
+# surface-only occurrences that lowering doesn't produce bindings for.
+surface_global_binfo(name::String, node::SyntaxTreeC, mod::Module) =
+    JL.BindingInfo(JL.IdTag(0), name, :global, node, mod, nothing, 0,
+        false, false, false, false, false, false, false, false, false, false,
+        false, false, false)
+
 function collect_export_public_occurrences!(
         occurrences::Dict{JL.BindingInfo,Set{BindingOccurrence}},
         st0::SyntaxTreeC, context_module::Module
@@ -508,7 +516,7 @@ function collect_export_public_occurrences!(
         child = st0[i]
         JS.kind(child) === JS.K"Identifier" || continue
         name = @something get_name_val(child) continue
-        binfo = JL.BindingInfo(0, name, :global, 0; mod=context_module)
+        binfo = surface_global_binfo(name, child, context_module)
         target_set = get!(Set{BindingOccurrence}, occurrences, binfo)
         push!(target_set, BindingOccurrence(child, :use))
     end
@@ -521,7 +529,7 @@ function collect_import_using_occurrences!(
     )
     foreach_local_import_identifier(st0) do id_st::SyntaxTreeC
         name = @something get_name_val(id_st) return
-        binfo = JL.BindingInfo(0, name, :global, 0; mod=context_module)
+        binfo = surface_global_binfo(name, id_st, context_module)
         target_set = get!(Set{BindingOccurrence}, occurrences, binfo)
         push!(target_set, BindingOccurrence(id_st, :decl))
         return

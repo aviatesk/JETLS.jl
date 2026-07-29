@@ -2,11 +2,12 @@
 # backwards through lowering to search for it.
 function binding_scope_layer(ctx3::JL.VariableAnalysisContext, binding::JL.BindingInfo)
     st3 = JL.binding_ex(ctx3, binding.id)
-    while get(st3, :source, nothing) isa JS.NodeId
-        if JS.hasattr(st3, :context)
-            return (st3.context::JS.SyntaxContext).layer
+    while st3.source isa SyntaxTreeC
+        context = st3.context
+        if context !== nothing
+            return (context::JS.SyntaxContext).layer
         end
-        st3 = SyntaxTreeC(JS.syntax_graph(st3), st3.source)
+        st3 = st3.source::SyntaxTreeC
     end
     return ctx3.layer
 end
@@ -154,7 +155,7 @@ function cursor_bindings(
     cursor_scopes = byte_ancestors(st2, offset)
 
     # ignore scopes we aren't in
-    filter!(((_, bs),) -> isnothing(bs) || bs._id in cursor_scopes.ids,
+    filter!(((_, bs),) -> isnothing(bs) || bs in cursor_scopes,
             bscopeinfos)
 
     # Now eliminate duplicates by name.
@@ -162,9 +163,9 @@ function cursor_bindings(
     # - If a static parameter and a local of the same name exist in the same
     #   scope (impossible in julia), the local is internal and should be ignored
     bdistances = map(((_, bs),) -> if isnothing(bs)
-                         lastindex(cursor_scopes.ids) + 1
+                         lastindex(cursor_scopes) + 1
                      else
-                         findfirst(cs -> bs._id === cs, cursor_scopes.ids)
+                         findfirst(cs -> bs === cs, cursor_scopes)
                      end,
                      bscopeinfos)
 
@@ -234,8 +235,8 @@ end
 
 function is_kwcall_lambda(ctx3::JL.VariableAnalysisContext, st3::SyntaxTreeC)
     @assert JS.kind(st3) === JS.K"lambda" "Expected `lambda` kind"
-    JS.numchildren(st3) ≥ 1 || return false
-    arglist = st3[1]
+    JS.numchildren(st3) ≥ 2 || return false
+    arglist = st3[2]
     na = JS.numchildren(arglist)
     return na ≥ 3 &&
         JS.kind(arglist[1]) === JS.K"BindingId" &&
@@ -362,9 +363,9 @@ end
 function generated_lambda_argument_bindings(
         ctx3::JL.VariableAnalysisContext, lambda::SyntaxTreeC
     )
-    JS.numchildren(lambda) >= 1 || return Dict{String,SyntaxTreeC}()
+    JS.numchildren(lambda) >= 2 || return Dict{String,SyntaxTreeC}()
     args = Dict{String,SyntaxTreeC}()
-    for arg in JS.children(lambda[1])
+    for arg in JS.children(lambda[2])
         JS.kind(arg) === JS.K"BindingId" || continue
         binfo = JL.get_binding(ctx3, arg)
         binfo.kind === :argument || continue
@@ -404,9 +405,7 @@ function synthetic_parameter_remap(
 end
 
 function _make_inert_placeholder(st3::SyntaxTreeC, placeholder_name::String)
-    placeholder = JS.newleaf(JS.syntax_graph(st3), st3, JS.K"Identifier")
-    placeholder = JS.setattr!(placeholder, :name_val, placeholder_name)
-    return placeholder
+    return JS.newleaf(st3, JS.K"Identifier", placeholder_name)
 end
 
 function _mask_inert_interpolations(
@@ -431,7 +430,7 @@ function _mask_inert_interpolations(
     child_quote_depth = quote_depth + (kind === JS.K"quote")
     child_syntax_quote_depth =
         syntax_quote_depth + (kind in JS.KSet"syntaxquote syntaxinert")
-    new_children = JS.SyntaxList(JS.syntax_graph(st3))
+    new_children = JS.SyntaxList()
     changed = false
     for child in JS.children(st3)
         new_child, child_changed = _mask_inert_interpolations(
@@ -454,7 +453,6 @@ mask_inert_interpolations(
 function prepare_inert_template(
         st3::SyntaxTreeC; preserve_nested_interpolations::Bool = false
     )
-    ensure_jl_source_attr!(JS.syntax_graph(st3))
     placeholder_name = String(gensym("JETLS_UNQUOTE_PLACEHOLDER"))
     template = mask_inert_interpolations(
         st3, placeholder_name; preserve_nested_interpolations)
@@ -472,15 +470,13 @@ function resolve_inert_tree(
     template, placeholder_name = prepare_inert_template(
         inert_tree[1]; preserve_nested_interpolations)
     input = if hard_scope || !isempty(parameters)
-        graph = JS.syntax_graph(inert_tree)
-        parameter_nodes = JS.SyntaxList(graph)
+        parameter_nodes = JS.SyntaxList()
         for (name, source) in parameters
-            parameter = JS.newleaf(graph, source, JS.K"Identifier")
-            parameter = JS.setattr!(parameter, :name_val, name)
+            parameter = JS.newleaf(source, JS.K"Identifier", name)
             push!(parameter_nodes, parameter)
         end
-        parameter_list = JL.@ast(graph, inert_tree, [JS.K"tuple" parameter_nodes...])
-        JL.@ast(graph, inert_tree, [JS.K"function" parameter_list template])
+        parameter_list = JL.@ast(_, inert_tree, [JS.K"tuple" parameter_nodes...])
+        JL.@ast(_, inert_tree, [JS.K"function" parameter_list template])
     else
         template
     end
@@ -922,7 +918,7 @@ function select_target_binding_definitions(
     return binding, definitions
 end
 
-is_same_binding(x::SyntaxTreeC, id::Int) = JS.kind(x) === JS.K"BindingId" && id == JL._binding_id(x)
+is_same_binding(x::SyntaxTreeC, id::Int) = JS.kind(x) === JS.K"BindingId" && id == JL.syntax_id(x)
 
 is_local_binding(binfo::JL.BindingInfo) =
     binfo.kind in (:argument, :typevar, :static_parameter, :local)
@@ -940,9 +936,9 @@ the argument or type parameter declaration itself.
 """
 function lookup_binding_definitions(st3::SyntaxTreeC, binfo::JL.BindingInfo)
     if binfo.kind in (:argument, :typevar, :static_parameter)
-        sl = JS.SyntaxList(JS.syntax_graph(st3), [binfo.node_id])
+        sl = JS.SyntaxList(binfo.node_id)
     else
-        sl = JS.SyntaxList(JS.syntax_graph(st3))
+        sl = JS.SyntaxList()
     end
     return _lookup_binding_definitions!(sl, st3, binfo.id)
 end

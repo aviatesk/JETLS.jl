@@ -123,7 +123,7 @@ function compute_testsetinfos!(
 end
 
 function find_executable_testsets(st0_top::SyntaxTreeC)
-    testsets = JS.SyntaxList(JS.syntax_graph(st0_top))
+    testsets = JS.SyntaxList()
     traverse(st0_top) do st0::SyntaxTreeC
         if JS.kind(st0) in JS.KSet"function macro"
             # avoid visit inside function scope

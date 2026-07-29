@@ -53,8 +53,22 @@ function build_line_starts(textbuf::Vector{UInt8})
     return starts
 end
 
+# Side tables for the per-node analysis results `TypeAnnotation` records on the
+# inferred tree. A fresh instance is created per inference pass (matching the
+# pre-standard-tree behavior of starting each pass with empty `:type`/`:matches`
+# graph attributes), and the final pass's instance is owned by
+# `InferredTreeContext`, so annotations never outlive the analysis nor mutate
+# nodes shared with other trees.
+struct TreeAnnotations
+    types::Dict{SyntaxTreeC,Any}
+    matches::Dict{SyntaxTreeC,Vector{Core.MethodMatch}}
+end
+TreeAnnotations() = TreeAnnotations(
+    Dict{SyntaxTreeC,Any}(), Dict{SyntaxTreeC,Vector{Core.MethodMatch}}())
+
 struct InferredTreeContext
     inferred_tree::SyntaxTreeC
+    annotations::TreeAnnotations
     # `byte_range => kind` for the surface node each lowered node was lowered
     # from (first element of `JS.flattened_provenance`). First-write-wins,
     # mirroring a `traverse`-then-pick-first lookup.
@@ -82,7 +96,7 @@ struct InferredTreeContext
     # only when the OC whose body it's in has the queried byte range — so inner-OC noise
     # inside an outer OC body (e.g. multi-`for` comprehension, closure-of-closure) is
     # filtered when querying at the inner OC's range.
-    oc_body_scope::Dict{Int,UnitRange{Int}}
+    oc_body_scope::Dict{SyntaxTreeC,UnitRange{Int}}
     # Refined OC argument types keyed by argument binding byte range.
     oc_argument_binding_types::Dict{UnitRange{Int},Any}
 end
@@ -100,7 +114,7 @@ struct FileInfo
     filename::String
     encoding::LSP.PositionEncodingKind.Ty
     testsetinfos::Vector{TestsetInfo}
-    # Pruned `st0` cache for synchronized documents. Access through
+    # `st0` cache for synchronized documents. Access through
     # `build_syntax_tree`, which returns a copy safe for lowering. Unsynced files
     # keep this `nothing`; workspace-wide hot paths should rely on summary caches
     # instead of retaining `st0` for every file.
@@ -126,7 +140,6 @@ struct FileInfo
             syntax_tree0::Union{Nothing,SyntaxTreeC} = nothing,
             inferred_context_cache::Union{Nothing,InferredContextCache} = nothing
         )
-        syntax_tree0 = syntax_tree0 === nothing ? nothing : JS.prune(syntax_tree0)
         line_starts = build_line_starts(parsed_stream.textbuf)
         new(version, parsed_stream, filename, encoding, testsetinfos, syntax_tree0,
             inferred_context_cache, line_starts)

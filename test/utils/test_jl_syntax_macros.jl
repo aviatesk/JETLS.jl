@@ -48,7 +48,7 @@ function has_qualified_name(
     found = Ref(false)
     JETLS.traverse(st) do node::JS.SyntaxTree
         if (JS.kind(node) === qualifier && JS.numchildren(node) == 1 &&
-            get(node[1], :name_val, nothing) == name)
+            JETLS.get_name_val(node[1]) == name)
             found[] = true
         end
         return nothing
@@ -1467,12 +1467,12 @@ const STATIC_COND_FLAG = false
 function var"@wrapped_static"(ctx::JL.MacroContext, ex::SyntaxTreeC)
     mc = ctx.macrocall::SyntaxTreeC
     src = JS.sourceref(mc)
-    return JL.@ast(ctx, mc, [JS.K"macrocall"(src)
+    return JL.@ast(ctx, mc, [JS.K"macrocall"(src; context=nothing)
         "@static"::JS.K"Identifier" mc[2] ex])
 end
 function var"@generated_static"(ctx::JL.MacroContext)
     mc = ctx.macrocall::SyntaxTreeC
-    src = JS.newleaf(ctx, JS.sourceref(mc), JS.K"TOMBSTONE")
+    src = JS.newleaf(JS.sourceref(mc), JS.K"TOMBSTONE")
     return JL.@ast(ctx, src, [JS.K"macrocall"
         "@static"::JS.K"Identifier" mc[2]
         [JS.K"?"

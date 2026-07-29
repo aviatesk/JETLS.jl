@@ -491,13 +491,13 @@ function linearize_cfg_events!(
     elseif k == JS.K"lambda"
         # Handle captured variables from outer scope by recursing into lambda body
         # We don't know when/if the closure is called, so wrap in an uncertain branch
-        nested_lb = ex3.lambda_bindings::JL.LambdaBindings
+        nested_lb = JL.lambda_bindings(ex3[1])
         has_outer_capture = any(is_capt && id in candidates for (id, is_capt) in nested_lb.locals_capt)
-        if has_outer_capture && JS.numchildren(ex3) >= 3
+        if has_outer_capture && JS.numchildren(ex3) >= 4
             skip_label = cfg_make_label!(lin)
             cfg_emit_gotoifnot!(lin, skip_label)
             let saved = undef_save_cond_implied(lin)
-                linearize_cfg_events!(lin, ctx3, ex3[3], candidates, allow_noreturn_optimization)
+                linearize_cfg_events!(lin, ctx3, ex3[4], candidates, allow_noreturn_optimization)
                 undef_restore_cond_implied!(lin, saved)
             end
             cfg_emit_label!(lin, skip_label)
@@ -773,7 +773,7 @@ function collect_closure_captured_vars(body::SyntaxTreeC, candidates::Set{JL.IdT
     result = Set{JL.IdTag}()
     traverse(body) do st::SyntaxTreeC
         JS.kind(st) == JS.K"lambda" || return nothing
-        nested_lb = st.lambda_bindings::JL.LambdaBindings
+        nested_lb = JL.lambda_bindings(st[1])
         for (id, is_capt) in nested_lb.locals_capt
             if is_capt && id in candidates
                 push!(result, id)
@@ -872,9 +872,9 @@ function build_lambda_cfg(
         ctx3::JL.VariableAnalysisContext, lambda_st3::SyntaxTreeC;
         allow_noreturn_optimization::Vector{Symbol} = Symbol[]
     )
-    JS.kind(lambda_st3) == JS.K"lambda" || return nothing
+    JS.kind(lambda_st3) in JS.KSet"lambda toplevel_lambda" || return nothing
 
-    lambda_bindings = lambda_st3.lambda_bindings::JL.LambdaBindings
+    lambda_bindings = JL.lambda_bindings(lambda_st3[1])
     candidates = Set{JL.IdTag}()
     for (id, from_outer_lambda) in lambda_bindings.locals_capt
         from_outer_lambda && continue
@@ -884,16 +884,16 @@ function build_lambda_cfg(
         end
     end
 
-    closure_captured = if JS.numchildren(lambda_st3) >= 3
-        collect_closure_captured_vars(lambda_st3[3], candidates)
+    closure_captured = if JS.numchildren(lambda_st3) >= 4
+        collect_closure_captured_vars(lambda_st3[4], candidates)
     else
         Set{JL.IdTag}()
     end
 
     lin = EventLinearizer()
-    if JS.numchildren(lambda_st3) >= 3
+    if JS.numchildren(lambda_st3) >= 4
         linearize_cfg_events!(
-            lin, ctx3, lambda_st3[3], candidates, allow_noreturn_optimization)
+            lin, ctx3, lambda_st3[4], candidates, allow_noreturn_optimization)
     end
     cfg_finalize!(lin)
 
@@ -1118,7 +1118,7 @@ function analyze_all_lambdas(
     dead_store_info = Dict{JL.BindingInfo, DeadStoreInfo}()
     unreachable_statements = Set{SyntaxTreeC}()
     traverse(st3) do st3′::SyntaxTreeC
-        if JS.kind(st3′) == JS.K"lambda"
+        if JS.kind(st3′) in JS.KSet"lambda toplevel_lambda"
             analyze_lambda!(
                 undef_info, dead_store_info, unreachable_statements,
                 ctx3, st3′, allow_noreturn_optimization)
