@@ -89,10 +89,10 @@ dispatch, but by treating each method's body `CodeInfo` as another anonymous thu
 whose argtypes are statically evaluated from its sig svec against `context_module`.
 No `Method` lookup, no dispatch, no `Base._which`.
 
-!!! note "Why we don't let `CC.typeinf` recurse into `:method` itself"
+!!! note "Why we don't let `CC.typeinf` recurse into method definitions"
     The straightforward alternative would be to let inference of the toplevel
-    thunk recurse into `:method` 3-arg statements via the usual dispatch path.
-    That path doesn't reach `function f(...; kw...) end`: JuliaLowering
+    thunk recurse into lowered method-definition statements via the usual dispatch
+    path. That path doesn't reach `function f(...; kw...) end`: JuliaLowering
     introduces synthetic kwbody bindings (e.g. `var"#kw_body#f#0"`) whose names
     don't match the bindings full analysis materialized in `context_module` via
     Julia's own lowering. Going through dispatch would either fail or hit stale
@@ -974,8 +974,8 @@ end
 [`get_inferrable_tree`](@ref)) through the remaining JuliaLowering passes, run CC
 inference under the internal `ASTTypeAnnotator`, and return a `SyntaxTreeC`
 annotated with a `:type` attribute on each lowered statement. The walk recurses
-into `:method` 3-arg statements: each method body is inferred as its own
-anonymous thunk against argtypes statically evaluated from the sig svec.
+into `Core.define_method` calls: each method body is inferred as its own anonymous
+thunk against argtypes statically evaluated from its sig svec.
 
 `st0` (raw parse) is used to collect surface destructure byte ranges; `st3`
 is post-desugaring and no longer carries those triggers.
@@ -1180,6 +1180,33 @@ function resolve_toplevel_symbols!(src::CodeInfo, context_module::Module)
     return src
 end
 
+function is_core_define_method_call(st::SyntaxTreeC)
+    JS.kind(st) === JS.K"call" || return false
+    JS.numchildren(st) >= 1 || return false
+    callee = st[1]
+    JS.kind(callee) === JS.K"core" || return false
+    return get_name_val(callee) == "define_method"
+end
+
+function is_core_define_method_call(ex::Expr)
+    ex.head === :call || return false
+    length(ex.args) >= 1 || return false
+    callee = ex.args[1]
+    return callee isa GlobalRef && callee.mod === Core && callee.name === :define_method
+end
+
+function method_definition_parts(node::SyntaxTreeC, stmt::Expr)
+    is_core_define_method_call(node) || return nothing
+    JS.numchildren(node) == 5 || return nothing
+    is_core_define_method_call(stmt) || return nothing
+    length(stmt.args) == 5 || return nothing
+    body_tree = node[5]
+    JS.kind(body_tree) === JS.K"code_info" || return nothing
+    body_codeinfo = stmt.args[5]
+    body_codeinfo isa CodeInfo || return nothing
+    return (; sig_ref_some=Some{Any}(stmt.args[4]), body_tree, body_codeinfo)
+end
+
 function should_infer_method_body(
         method_body_ranges::MethodBodyRangeIndex,
         method_node::SyntaxTreeC, body_tree::SyntaxTreeC
@@ -1204,24 +1231,19 @@ function infer_method_defs!(
     nstmts == length(src.code) || return
     for i = 1:nstmts
         node = block[i]
-        JS.kind(node) === JS.K"method" || continue
-        JS.numchildren(node) == 3 || continue
-        body_tree = node[3]
-        JS.kind(body_tree) === JS.K"code_info" || continue
+        stmt = src.code[i]
+        stmt isa Expr || continue
+        (; sig_ref_some, body_tree, body_codeinfo) = @something begin
+            method_definition_parts(node, stmt)
+        end continue
         # Dispatcher methods synthesized for default args / kwargs have a body that just
         # calls the user method with the defaults filled in, but the user method might not
         # be bound in `context_module` here, so the call would infer as `Any` anyway.
         # Select bodies contained in the user-written surface body. Dispatcher provenance
         # can be either the whole definition or one of its default expressions.
         should_infer_method_body(method_body_ranges, node, body_tree) || continue
-        stmt = src.code[i]
-        stmt isa Expr || continue
-        stmt.head === :method || continue
-        length(stmt.args) == 3 || continue
-        sig_ref = stmt.args[2]
-        body_codeinfo = stmt.args[3]
-        body_codeinfo isa CodeInfo || continue
 
+        sig_ref = sig_ref_some.value
         nargs = Int(body_codeinfo.nargs)
         argtypes = something(
             resolve_method_argtypes(sig_ref, src, nargs, context_module, world),
@@ -1241,9 +1263,9 @@ struct MethodSigEvalCache
 end
 MethodSigEvalCache() = MethodSigEvalCache(Dict{Int,Any}(), Dict{Tuple{Int,Int},Any}())
 
-# `sig_ref` (= `stmt.args[2]` of a `:method` 3-arg Expr) points to an outer
-# `Core.svec(argtypes_svec, sparams_svec, source_loc)`; the first element is the
-# argtypes svec we evaluate. Slots whose source expression can't be resolved (e.g.
+# `sig_ref` points to an outer `Core.svec(argtypes_svec, sparams_svec,
+# source_loc)`; the first element is the argtypes svec we evaluate. Slots whose
+# source expression can't be resolved (e.g.
 # references to synthetic kwbody self bindings) fall back to `Any`.
 function resolve_method_argtypes(
         @nospecialize(sig_ref), src::CodeInfo, nargs::Int,
@@ -1910,26 +1932,36 @@ function strictly_contains(outer::UnitRange{<:Integer}, inner::UnitRange{<:Integ
 end
 
 # For `function f(…) … end` / `macro m(…) … end`, the user-visible "value" is
-# the function's return type. The matching `K"method"` (or
-# `K"opaque_closure_method"` for single-method local closures rewritten by
-# `rewrite_local_closures_to_opaque`) wraps a `K"code_info"` body whose
-# `K"return"` stmts carry the inferred return types; `tmerge` over them
-# yields the function's value type.
+# the function's return type. The matching `Core.define_method` call or
+# `K"opaque_closure_method"` wraps a `K"code_info"` body whose `K"return"` stmts
+# carry the inferred return types; `tmerge` over them yields the function's value type.
+function method_body_tree(st::SyntaxTreeC)
+    k = JS.kind(st)
+    if is_core_define_method_call(st)
+        JS.numchildren(st) == 5 || return nothing
+        body_tree = st[5]
+    elseif k === JS.K"opaque_closure_method"
+        for child in JS.children(st)
+            JS.kind(child) === JS.K"code_info" && return child
+        end
+        return nothing
+    else
+        return nothing
+    end
+    return JS.kind(body_tree) === JS.K"code_info" ? body_tree : nothing
+end
+
 function type_for_funcdef(ctx::InferredTreeContext, rng::UnitRange{<:Integer})
     typ = nothing
     for st in get(ctx.by_byte_range, rng, ())
-        JS.kind(st) in JS.KSet"method opaque_closure_method" || continue
-        for i = 1:JS.numchildren(st)
-            child = st[i]
-            JS.kind(child) === JS.K"code_info" || continue
-            JS.numchildren(child) >= 1 || continue
-            block = child[1]
-            for j = 1:JS.numchildren(block)
-                stmt = block[j]
-                if JS.kind(stmt) === JS.K"return" && JS.hasattr(stmt, :type)
-                    ntyp = stmt.type
-                    typ = typ === nothing ? ntyp : CC.tmerge(ntyp, typ)
-                end
+        body_tree = @something method_body_tree(st) continue
+        JS.numchildren(body_tree) >= 1 || continue
+        block = body_tree[1]
+        for j = 1:JS.numchildren(block)
+            stmt = block[j]
+            if JS.kind(stmt) === JS.K"return" && JS.hasattr(stmt, :type)
+                ntyp = stmt.type
+                typ = typ === nothing ? ntyp : CC.tmerge(ntyp, typ)
             end
         end
     end

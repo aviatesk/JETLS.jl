@@ -31,8 +31,8 @@ Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 [sources]
 Compiler = {rev = "4a5bbcb016", subdir = "Compiler", url = "https://github.com/JuliaLang/julia"}
 JET = {rev = "10eedc16", url = "https://github.com/aviatesk/JET.jl"}
-JuliaLowering = {rev = "fd4f64f14d", subdir = "JuliaLowering", url = "https://github.com/JuliaLang/julia"}
-JuliaSyntax = {rev = "fd4f64f14d", subdir = "JuliaSyntax", url = "https://github.com/JuliaLang/julia"}
+JuliaLowering = {rev = "8dc3ef6ac0", subdir = "JuliaLowering", url = "https://github.com/JuliaLang/julia"}
+JuliaSyntax = {rev = "8dc3ef6ac0", subdir = "JuliaSyntax", url = "https://github.com/JuliaLang/julia"}
 LSP = {path = "LSP"}
 
 [compat]
