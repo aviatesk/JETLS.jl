@@ -686,7 +686,7 @@ function extract_testset_symbol!(
     description = if isnothing(description_node)
         ""
     elseif JS.kind(description_node) === JS.K"String"
-        JS.hasattr(description_node, :value) ? description_node.value::String : ""
+        description_node.value isa String ? description_node.value::String : ""
     else
         @something extract_string_content(description_node) ""
     end
@@ -729,7 +729,7 @@ function extract_string_content(st0::SyntaxTreeC)
     first_child = st0[1]
     if JS.numchildren(st0) == 1 && JS.kind(first_child) === JS.K"String"
         # Simple string without interpolation
-        return JS.hasattr(first_child, :value) ? first_child.value::String : nothing
+        return first_child.value isa String ? first_child.value::String : nothing
     else
         # Interpolated string - extract content from source text
         src = JS.sourcetext(st0)
@@ -1116,7 +1116,7 @@ function extract_child_scope_symbols!(
     for child_id in child_ids
         child_id in lctx.func_scope_ids && continue
         1 ≤ child_id ≤ length(ctx3.scopes) || continue
-        construct = find_scope_construct(ctx3, ctx3.scopes[child_id], lctx.parent_map, lctx.node_map)
+        construct = find_scope_construct(ctx3.scopes[child_id], lctx.parent_map, lctx.node_map)
         if construct === nothing
             push!(transparent_ids, child_id)
             continue
@@ -1217,8 +1217,7 @@ function _classify_try_clause(
     )
     1 ≤ scope_id ≤ length(ctx3.scopes) || return "try"
     scope = ctx3.scopes[scope_id]
-    scope_st = SyntaxTreeC(JS.syntax_graph(ctx3), scope.node_id)
-    prov = JS.flattened_provenance(scope_st)
+    prov = JS.flattened_provenance(scope.node_id)
     isempty(prov) && return "try"
     source_node = first(prov)
     fb = JS.first_byte(source_node)
@@ -1235,12 +1234,11 @@ function _classify_try_clause(
 end
 
 function find_scope_construct(
-        ctx3::JL.VariableAnalysisContext, scope::JL.ScopeInfo,
+        scope::JL.ScopeInfo,
         parent_map::Dict{Tuple{Int,Int},SyntaxTreeC},
         node_map::Dict{Tuple{Int,Int},SyntaxTreeC}
     )
-    scope_st = SyntaxTreeC(JS.syntax_graph(ctx3), scope.node_id)
-    prov = JS.flattened_provenance(scope_st)
+    prov = JS.flattened_provenance(scope.node_id)
     isempty(prov) && return nothing
     source_node = first(prov)
     k = JS.kind(source_node)
@@ -1334,13 +1332,12 @@ function find_anon_func_scope_ids(
     is_anonymous_function_rhs(rhs) || return nothing
     anon_body = rhs[JS.numchildren(rhs)]
     anon_fb, anon_lb = JS.first_byte(anon_body), JS.last_byte(anon_body)
-    graph = JS.syntax_graph(ctx3)
     for (func_bid, scope_ids) in func_to_scopes
         binfo = JL.get_binding(ctx3, func_bid)
         binfo.is_internal || continue
         for scope_id in scope_ids
             1 ≤ scope_id ≤ length(ctx3.scopes) || continue
-            scope_node = SyntaxTreeC(graph, ctx3.scopes[scope_id].node_id)
+            scope_node = ctx3.scopes[scope_id].node_id
             if JS.first_byte(scope_node) == anon_fb && JS.last_byte(scope_node) == anon_lb
                 return scope_ids
             end

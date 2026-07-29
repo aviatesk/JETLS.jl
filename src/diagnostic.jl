@@ -817,7 +817,7 @@ end
 
 function collect_binding_ids!(ids::Set{JL.IdTag}, st::SyntaxTreeC)
     traverse(st) do node::SyntaxTreeC
-        JS.kind(node) === JS.K"BindingId" && push!(ids, JL._binding_id(node))
+        JS.kind(node) === JS.K"BindingId" && push!(ids, JL.syntax_id(node))
         return nothing
     end
     return ids
@@ -828,13 +828,13 @@ function method_typevars(ctx3::JL.VariableAnalysisContext, method::SyntaxTreeC)
     arg_types = method[2]
     is_core_svec_call(arg_types) || return nothing
     lambda = method[3]
-    JS.kind(lambda) === JS.K"lambda" && JS.numchildren(lambda) >= 2 || return nothing
-    sparams = lambda[2]
+    JS.kind(lambda) === JS.K"lambda" && JS.numchildren(lambda) >= 3 || return nothing
+    sparams = lambda[3]
     JS.kind(sparams) === JS.K"block" || return nothing
     typevar_ids = JL.IdTag[]
     for sparam in JS.children(sparams)
         JS.kind(sparam) === JS.K"BindingId" || continue
-        sp_id = JL._binding_id(sparam)
+        sp_id = JL.syntax_id(sparam)
         typevar_id = get(ctx3.sp_typevars, sp_id, nothing)
         typevar_id === nothing || push!(typevar_ids, typevar_id)
     end
@@ -1229,12 +1229,14 @@ function find_capture_sites(
             # Find the lambda in st3 that has matching lambda_bindings.self
             traverse(st3) do node3::SyntaxTreeC
                 JS.kind(node3) === JS.K"lambda" || return nothing
-                JS.hasattr(node3, :lambda_bindings) || return nothing
-                lambda_bindings = node3.lambda_bindings::JL.LambdaBindings
+                JS.numchildren(node3) >= 1 || return nothing
+                lbnode = node3[1]
+                JS.kind(lbnode) === JS.K"LambdaBindings" || return nothing
+                lambda_bindings = JL.lambda_bindings(lbnode)
                 lambda_bindings.self == lambda.self || return nothing
                 # Find references to binfo.id inside this lambda
                 traverse(node3) do inner::SyntaxTreeC
-                    if JS.kind(inner) === JS.K"BindingId" && JL._binding_id(inner) == binfo.id
+                    if JS.kind(inner) === JS.K"BindingId" && JL.syntax_id(inner) == binfo.id
                         varprov = last(JL.flattened_provenance(inner))
                         push!(relatedInformation, DiagnosticRelatedInformation(;
                             location = Location(; uri, range = jsobj_to_range(varprov, fi)),
@@ -1438,9 +1440,9 @@ function analyze_unresolved_gotos!(
         diagnostics::Vector{Diagnostic}, fi::FileInfo, st3::SyntaxTreeC
     )
     traverse(st3) do st3′::SyntaxTreeC
-        JS.kind(st3′) === JS.K"lambda" || return nothing
-        JS.numchildren(st3′) >= 3 || return nothing
-        check_lambda_gotos!(diagnostics, fi, st3′[3])
+        JS.kind(st3′) in JS.KSet"lambda toplevel_lambda" || return nothing
+        JS.numchildren(st3′) >= 4 || return nothing
+        check_lambda_gotos!(diagnostics, fi, st3′[4])
         return nothing
     end
 end

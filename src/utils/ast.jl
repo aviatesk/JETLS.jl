@@ -1,46 +1,27 @@
-# Lightweight copy function for SyntaxTree
-# This copies the SyntaxGraph's mutable structures (edge_ranges, edges, attributes)
-# but shares the immutable data within attribute dictionaries
-function copy_syntax_tree(st::SyntaxTreeC)
-    g = JS.syntax_graph(st)
-    new_attrs = Dict{Symbol,Dict{JL.IdTag,Any}}()
-    for (k, v) in pairs(g.attributes)
-        new_attrs[k] = copy(v)
-    end
-    new_graph = JS.SyntaxGraph(copy(g.edge_ranges), copy(g.edges), new_attrs)
-    return SyntaxTreeC(new_graph, st._id)
-end
-
 function build_syntax_tree(fi::FileInfo)
     if fi.syntax_tree0 === nothing
-        st0 = JS.build_tree(JS.SyntaxTree, fi.parsed_stream; filename=fi.filename)
-        return JS.prune(st0)
+        return JS.build_tree(JS.SyntaxTree, fi.parsed_stream; filename=fi.filename)
     end
-    # The lowering pipeline modifies the internal state of `st0`,
+    # The lowering pipeline can mutate nodes in place (e.g. `JS.fill_context!`),
     # so we need to create a copy for each read to avoid race conditions.
-    return copy_syntax_tree(fi.syntax_tree0)
+    return JS.copy_ast(fi.syntax_tree0)
 end
 
-has_name_val(st::SyntaxTreeC) = JS.hasattr(st, :name_val)
-get_name_val(st::SyntaxTreeC, default=nothing) = has_name_val(st) ? st.name_val::String : default
-name_val(st::SyntaxTreeC) = st.name_val::String
+# kinds whose `value` holds the identifier name (see `JL.syntax_name`)
+const NAME_VAL_KINDS = JS.KSet"""
+Identifier Placeholder Symbol core top globalref symboliclabel symbolicgoto
+unknown_head oldsymbolicgoto
+"""
 
-var_id(st::SyntaxTreeC) = st.var_id::JL.IdTag
+has_name_val(st::SyntaxTreeC) = JS.kind(st) in NAME_VAL_KINDS
+get_name_val(st::SyntaxTreeC, default=nothing) = has_name_val(st) ? st.value::String : default
+name_val(st::SyntaxTreeC) = st.value::String
+
+var_id(st::SyntaxTreeC) = JL.syntax_id(st)
 
 get_source_text(ps::JS.ParseStream) = JS.sourcetext(JS.SourceFile(ps))
 document_text(fi::FileInfo) = get_source_text(fi.parsed_stream)
 document_range(fi::FileInfo) = jsobj_to_range(fi.parsed_stream, fi)
-
-@static if JL.DEBUG
-    function ensure_jl_source_attr!(graph::JS.SyntaxGraph)
-        attrs = getfield(graph, :attributes)
-        if !haskey(attrs, :jl_source)
-            attrs[:jl_source] = Dict{Int,LineNumberNode}()
-        end
-    end
-else
-    ensure_jl_source_attr!(::JS.SyntaxGraph) = nothing
-end
 
 """
     trim_error_nodes(st0::SyntaxTreeC) -> SyntaxTreeC
@@ -58,7 +39,7 @@ function _without_kinds(st::SyntaxTreeC, kinds::Tuple{Vararg{JS.Kind}})
     elseif JS.is_leaf(st)
         return (st, false)
     end
-    new_children = JS.SyntaxList(JS.syntax_graph(st))
+    new_children = JS.SyntaxList()
     changed = false
     for child in JS.children(st)
         new_child, child_changed = _without_kinds(child, kinds)
@@ -79,9 +60,8 @@ Return a tree where all nodes of `kinds` are trimmed.
 Should not modify any nodes, and should not create new nodes unnecessarily.
 """
 function without_kinds(st::SyntaxTreeC, kinds::Tuple{Vararg{JS.Kind}})
-    ensure_jl_source_attr!(JS.syntax_graph(st))
     return (JS.kind(st) in kinds ?
-        JL.@ast(JS.syntax_graph(st), st, [JS.K"TOMBSTONE"]) :
+        JL.@ast(_, st, [JS.K"TOMBSTONE"]) :
         _without_kinds(st, kinds)[1])::SyntaxTreeC
 end
 
@@ -114,13 +94,12 @@ Add new branches in [`_repair_node`](@ref) when these cause downstream
 breakage in practice.
 """
 function repair_after_trim(st0::SyntaxTreeC)
-    ensure_jl_source_attr!(JS.syntax_graph(st0))
     return _repair_after_trim(st0)::SyntaxTreeC
 end
 
 function _repair_after_trim(st0::SyntaxTreeC)
     JS.is_leaf(st0) && return st0
-    new_children = JS.SyntaxList(JS.syntax_graph(st0))
+    new_children = JS.SyntaxList()
     changed = false
     for child in JS.children(st0)
         new_child = _repair_after_trim(child)
@@ -163,7 +142,7 @@ function _unwrap_interpolations(st::SyntaxTreeC)
     elseif JS.is_leaf(st)
         return (st, false)
     end
-    new_children = JS.SyntaxList(JS.syntax_graph(st))
+    new_children = JS.SyntaxList()
     changed = false
     for child in JS.children(st)
         new_child, child_changed = _unwrap_interpolations(child)
@@ -179,7 +158,6 @@ Unlike `without_kinds` which removes nodes entirely, this preserves the child
 so that parent nodes (e.g. dot expressions like `x.\$name`) remain well-formed.
 """
 function unwrap_interpolations(st::SyntaxTreeC)
-    ensure_jl_source_attr!(JS.syntax_graph(st))
     return first(_unwrap_interpolations(st))
 end
 
@@ -192,7 +170,7 @@ function is_macrocall_st0(st0::SyntaxTreeC, names::AbstractString...; from::Unio
     else
         JS.sourcetext(macro_name)
     end
-    return nv in names && (isnothing(from) || (JS.hasattr(macro_name, :mod) && macro_name.mod === from))
+    return nv in names && (isnothing(from) || macro_name.mod === from)
 end
 
 is_mainfunc0(st0::SyntaxTreeC) = is_macrocall_st0(st0, "@main")
@@ -420,7 +398,7 @@ function _remove_macrocalls(
         if is_new_style && !strip_current_static
             # Preserve this macrocall, but still remove old-style macros and `@static`
             # calls nested in its arguments.
-            new_children = JS.SyntaxList(JS.syntax_graph(st0))
+            new_children = JS.SyntaxList()
             push!(new_children, st0[1])
             changed = false
             for i = 2:JS.numchildren(st0)
@@ -444,7 +422,7 @@ function _remove_macrocalls(
             # but binding occurrence analysis still get correct results.
             return st0, false
         end
-        new_children = JS.SyntaxList(JS.syntax_graph(st0))
+        new_children = JS.SyntaxList()
         for i = 2:JS.numchildren(st0)
             # `$` interpolations at macrocall-argument position are legal only
             # because the macro will typically splice the argument into a
@@ -457,12 +435,12 @@ function _remove_macrocalls(
                 context_module, world, st0[i]; strip_static)
             push!(new_children, _unwrap_interpolations(stripped)[1])
         end
-        return JL.@ast(JS.syntax_graph(st0), st0, [JS.K"block" new_children...]), true
+        return JL.@ast(_, st0, [JS.K"block" new_children...]), true
     elseif JS.is_leaf(st0)
         return st0, false
     end
     (st0, changed) = desugar_main_macrocall(st0)
-    new_children = JS.SyntaxList(JS.syntax_graph(st0))
+    new_children = JS.SyntaxList()
     inner_context = if JS.kind(st0) === JS.K"module" && JS.numchildren(st0) >= 2
         module_const = context_module === nothing ? nothing :
             resolve_global_const(context_module, world, st0[2])
@@ -507,36 +485,32 @@ function desugar_main_macrocall(st0::SyntaxTreeC)
         # Parenthesized form: (@main)(args...) — macrocall is the callee
         JS.numchildren(call_node) >= 1 || return (st0, false)
         is_mainfunc0(call_node[1]) || return (st0, false)
-        g = JS.syntax_graph(st0)
-        main_id = JS.setattr!(
-            JS.newleaf(g, call_node[1], JS.K"Identifier"), :name_val, "main")
-        new_call_children = JS.SyntaxList(g)
+        main_id = JS.newleaf(call_node[1], JS.K"Identifier", "main")
+        new_call_children = JS.SyntaxList()
         push!(new_call_children, main_id)
         for i in 2:JS.numchildren(call_node)
             push!(new_call_children, call_node[i])
         end
-        new_call = JS.newnode(g, call_node, JS.K"call", new_call_children)
+        new_call = JS.newnode(call_node, JS.K"call", new_call_children)
     elseif is_mainfunc0(call_node)
         # No-parens form: @main(args...) — entire signature is a macrocall
-        g = JS.syntax_graph(st0)
-        main_id = JS.setattr!(
-            JS.newleaf(g, call_node[1], JS.K"Identifier"), :name_val, "main")
-        new_call_children = JS.SyntaxList(g)
+        main_id = JS.newleaf(call_node[1], JS.K"Identifier", "main")
+        new_call_children = JS.SyntaxList()
         push!(new_call_children, main_id)
         for i in 2:JS.numchildren(call_node)
             JS.kind(call_node[i]) === JS.K"Value" && continue
             push!(new_call_children, call_node[i])
         end
-        new_call = JS.newnode(g, call_node, JS.K"call", new_call_children)
+        new_call = JS.newnode(call_node, JS.K"call", new_call_children)
     else
         return (st0, false)
     end
-    new_children = JS.SyntaxList(g)
+    new_children = JS.SyntaxList()
     push!(new_children, new_call)
     for i in 2:JS.numchildren(st0)
         push!(new_children, st0[i])
     end
-    return (JS.newnode(g, st0, k, new_children), true)
+    return (JS.newnode(st0, k, new_children), true)
 end
 
 """
@@ -596,7 +570,6 @@ function remove_macrocalls(
         context_module::Module, world::UInt, st0::SyntaxTreeC;
         strip_static::Bool = false
     )
-    ensure_jl_source_attr!(JS.syntax_graph(st0))
     return first(_remove_macrocalls(context_module, world, st0; strip_static))
 end
 
@@ -693,16 +666,16 @@ function is_core_svec_call(call_node::SyntaxTreeC)
 end
 
 """
-Like `Base.unique`, but over node ids, and with this comment promising that the
-lowest-index copy of each node is kept.
+Like `Base.unique`, but over node identities, and with this comment promising
+that the lowest-index copy of each node is kept.
 """
 function deduplicate_syntaxlist(sl::SyntaxListC)
-    sl2 = JS.SyntaxList(sl.graph)
-    seen = Set{JS.NodeId}()
+    sl2 = JS.SyntaxList()
+    seen = Set{SyntaxTreeC}()
     for st in sl
-        if !(st._id in seen)
-            push!(sl2, st._id)
-            push!(seen, st._id)
+        if !(st in seen)
+            push!(sl2, st)
+            push!(seen, st)
         end
     end
     return sl2
@@ -770,7 +743,7 @@ end
 
 function _traverse_postorder(@specialize(callback), stack::SyntaxListC)
     local retval = nothing
-    output = JS.SyntaxList(stack.graph)
+    output = JS.SyntaxList()
     while !isempty(stack)
         x = pop!(stack)
         push!(output, x)
@@ -878,7 +851,7 @@ that satisfy the predicate.
 byte_ancestors(args...) = byte_ancestors(Returns(true), args...)
 
 function byte_ancestors(flt, st::SyntaxTreeC, rng::UnitRange{<:Integer})
-    sl = JS.SyntaxList(JS.syntax_graph(st))
+    sl = JS.SyntaxList()
     if rng ⊆ JS.byte_range(st) && flt(st)
         push!(sl, st)
     end
@@ -1364,7 +1337,6 @@ If `string_node` is a non-interpolated string literal whose value joins with
 function resolve_path_string_literal(
         string_node::SyntaxTreeC, basedir::AbstractString
     )
-    JS.hasattr(string_node, :value) || return nothing
     value = string_node.value
     value isa String || return nothing
     path = joinpath(basedir, value)

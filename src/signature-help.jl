@@ -55,8 +55,8 @@ function flatten_args(call::SyntaxTreeC)
         orig = filter(usable, JS.children(call)[2:end])
     end
 
-    args = JS.SyntaxList(orig.graph)
-    kw_children = JS.SyntaxList(orig.graph)
+    args = JS.SyntaxList()
+    kw_children = JS.SyntaxList()
     has_semicolon = false
     for i in eachindex(orig)
         if JS.kind(orig[i]) === JS.K"parameters"
@@ -437,7 +437,7 @@ function call_is_decl(_bas::SyntaxListC, i::Int, _basᵢ::SyntaxTreeC = _bas[i])
     return j <= lastindex(_bas) &&
         # `=` covers short-form function definitions like `f(x) = 1`
         JS.kind(_bas[j]) in JS.KSet"macro function =" &&
-        _bas[j-1]._id == _bas[j][1]._id
+        _bas[j-1] === _bas[j][1]
 end
 
 # Find cases where a macro call is not surrounded by parentheses

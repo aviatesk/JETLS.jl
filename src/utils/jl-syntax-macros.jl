@@ -5,14 +5,14 @@
 # TODO: @boundscheck, @simd
 
 """
-    mapchildren(f, ctx, ex, indices::UnitRange{Int})
+    mapchildren(f, ex, indices::UnitRange{Int})
 
-Like `JS.mapchildren(f, ctx, ex)`, but applies `f` only to children at the
+Like `JS.mapchildren(f, ex)`, but applies `f` only to children at the
 given `indices`, leaving other children unchanged.
 """
-function mapchildren(f, ctx, ex::SyntaxTreeC, indices::UnitRange{<:Integer})
+function mapchildren(f, ex::SyntaxTreeC, indices::UnitRange{<:Integer})
     i = Ref(0)
-    JS.mapchildren(ctx, ex) do c
+    JS.mapchildren(ex) do c
         i[] += 1
         i[] in indices ? f(c) : c
     end
@@ -23,7 +23,7 @@ end
 # layer while retaining the original macrocall's source range.
 function _macro_generated_source(ctx::JL.MacroContext)
     mc = ctx.macrocall::SyntaxTreeC
-    return JS.newleaf(ctx, JS.sourceref(mc), JS.K"TOMBSTONE")
+    return JS.newleaf(JS.sourceref(mc), JS.K"TOMBSTONE")
 end
 
 const macro_issue_contract = """
@@ -353,7 +353,7 @@ function Base.var"@label"(__context__::JL.MacroContext, ex::SyntaxTreeC)
     # Keep the label token's exact range without inheriting its caller context, so
     # macro expansion records the originating `@label` call in `SyntaxContext`.
     src = JS.sourceref(ex)
-    return JL.@ast(__context__, ex, [JS.K"symboliclabel"(src) ex])
+    return JL.@ast(__context__, ex, [JS.K"symboliclabel"(src; context=nothing) ex])
 end
 
 function Base.var"@label"(__context__::JL.MacroContext, args::SyntaxTreeC...)
@@ -405,7 +405,7 @@ end
 # from the call site.
 function Base.var"@lazy_str"(__context__::JL.MacroContext, text::SyntaxTreeC)
     mc = __context__.macrocall::SyntaxTreeC
-    if !JS.hasattr(text, :value) || !(text.value isa String)
+    if !(text.value isa String)
         push_macro_error!(text, "@lazy_str expects a string literal")
         return JL.@ast(__context__, mc, text)
     end
@@ -442,24 +442,24 @@ function _lazy_str_parts(
         dollar = findnext('$', value, idx)
         dollar === nothing && break
         if lastidx < dollar
-            push!(parts, _lazy_str_literal_part(ctx, text, value, source_map, lastidx, prevind(value, dollar)))
+            push!(parts, _lazy_str_literal_part(text, value, source_map, lastidx, prevind(value, dollar)))
         end
         atom_start = nextind(value, dollar)
         if atom_start > lastindex(value)
             push_macro_error!(text, "@lazy_str: invalid interpolation")
-            push!(parts, _lazy_str_literal_part(ctx, text, value, source_map, dollar, lastindex(value)))
+            push!(parts, _lazy_str_literal_part(text, value, source_map, dollar, lastindex(value)))
             return parts
         end
         parsed, nextidx = @something _lazy_str_parse_interpolation(
             ctx, text, value, source_map, atom_start) begin
-            push!(parts, _lazy_str_literal_part(ctx, text, value, source_map, dollar, lastindex(value)))
+            push!(parts, _lazy_str_literal_part(text, value, source_map, dollar, lastindex(value)))
             return parts
         end
         push!(parts, parsed)
         lastidx = idx = nextidx
     end
     if lastidx <= lastindex(value)
-        push!(parts, _lazy_str_literal_part(ctx, text, value, source_map, lastidx, lastindex(value)))
+        push!(parts, _lazy_str_literal_part(text, value, source_map, lastidx, lastindex(value)))
     end
     return parts
 end
@@ -550,15 +550,15 @@ function _lazy_str_skip_dedent(
 end
 
 function _lazy_str_literal_part(
-        ctx::JL.MacroContext, text::SyntaxTreeC, value::String,
+        text::SyntaxTreeC, value::String,
         source_map::Dict{Int,Int}, startidx::Int, stopidx::Int
     )
     src = JS.sourceref(text)
     if src isa JS.SourceRef
         srcref = _lazy_str_source_ref(text, src, value, source_map, startidx, stopidx)
-        return JS.newleaf(ctx, srcref, JS.K"String", value[startidx:stopidx])
+        return JS.newleaf(srcref, JS.K"String", value[startidx:stopidx])
     end
-    return JS.newleaf(ctx, text, JS.K"String", value[startidx:stopidx])
+    return JS.newleaf(text, JS.K"String", value[startidx:stopidx])
 end
 
 function _lazy_str_parse_interpolation(
@@ -574,32 +574,28 @@ function _lazy_str_parse_interpolation(
     end
     src = JS.sourceref(text)
     copied = if src isa JS.SourceRef
-        _lazy_str_copy_with_source(ctx, parsed, text, src, value, source_map)
+        _lazy_str_copy_with_source(parsed, text, src, value, source_map)
     else
-        JL.copy_ast(ctx, parsed)
+        parsed
     end
     return JL.adopt_scope(ctx.macrocall, copied), nextidx
 end
 
 function _lazy_str_copy_with_source(
-        ctx::JL.MacroContext, node::JS.SyntaxTree, text::SyntaxTreeC, src::JS.SourceRef,
+        node::JS.SyntaxTree, text::SyntaxTreeC, src::JS.SourceRef,
         value::String, source_map::Dict{Int,Int}
     )
     srcref = _lazy_str_source_ref(text, src, value, source_map, JS.first_byte(node), JS.last_byte(node))
-    out = if JS.is_leaf(node)
-        JS.newleaf(ctx, srcref, JS.kind(node))
+    children = if JS.is_leaf(node)
+        nothing
     else
-        children = JS.SyntaxList(ctx)
+        cs = JS.SyntaxList()
         for child in JS.children(node)
-            push!(children, _lazy_str_copy_with_source(ctx, child, text, src, value, source_map))
+            push!(cs, _lazy_str_copy_with_source(child, text, src, value, source_map))
         end
-        JS.newnode(ctx, srcref, JS.kind(node), children)
+        cs
     end
-    for attr in JS.attrnames(node)
-        attr === :source && continue
-        JS.setattr!(out, attr, getproperty(node, attr))
-    end
-    return out
+    return JL.@mknode(node; source=srcref, children)
 end
 
 function _lazy_str_source_ref(
@@ -973,7 +969,7 @@ function Base.var"@kwdef"(__context__::JL.MacroContext, ex::SyntaxTreeC)
 
     stripped_body = JL.@ast(__context__, type_body::SyntaxTreeC,
                            [JS.K"block" stripped...])
-    new_struct = mapchildren(_ -> stripped_body, __context__, ex, 3:3)
+    new_struct = mapchildren(_ -> stripped_body, ex, 3:3)
 
     if isempty(field_names)
         return new_struct
@@ -1001,7 +997,7 @@ function _kwdef_collect_fields!(
                JS.kind(field[1]) === JS.K"="
             inner = field[1]
             _kwdef_push_field!(inner[1], inner[2], field_names, field_defaults)
-            push!(stripped, mapchildren(_ -> inner[1], ctx, field, 1:1))
+            push!(stripped, mapchildren(_ -> inner[1], field, 1:1))
         elseif k === JS.K"block"
             _kwdef_collect_fields!(ctx, field, field_names, field_defaults, stripped)
         else

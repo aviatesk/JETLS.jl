@@ -2,9 +2,9 @@
     TypeAnnotation
 
 Type-annotation pipeline for the LSP feature path: parse → lower → infer → query.
-Produces a `SyntaxTreeC` whose nodes carry `:type` attributes computed by a custom
-`CC.AbstractInterpreter`, plus a query handle ([`InferredTreeContext`](@ref)) for
-byte-range type lookups.
+Produces a `SyntaxTreeC` plus per-node `:type` annotations (side tables computed by
+a custom `CC.AbstractInterpreter`), wrapped in a query handle
+([`InferredTreeContext`](@ref)) for byte-range type lookups.
 
 # Exported API
 
@@ -42,9 +42,9 @@ The pipeline has four steps. Each step's output feeds the next:
    [`infer_toplevel_tree(ctx3::JL.VariableAnalysisContext, st3::SyntaxTreeC, st0::SyntaxTreeC, context_module::Module; world::UInt = Base.get_world_counter()) -> inferred_tree::SyntaxTreeC`](@ref infer_toplevel_tree)
    takes `(ctx3, st3)` through the remaining JuliaLowering passes (`convert_closures` →
    `linearize_ir`), runs CC inference under the internal `ASTTypeAnnotator`, and
-   writes the inferred type of each lowered statement back into the tree as a
-   `:type` attribute. The result is a `inferred_tree::SyntaxTreeC` whose nodes — both at
-   toplevel and inside method bodies — carry per-statement types.
+   records the inferred type of each lowered statement in node-keyed side tables
+   (`TreeAnnotations`). The result covers nodes both at toplevel and inside
+   method bodies with per-statement types.
 
 3. **Build query indexes**:
    [`build_inferred_context_for_range`](@ref) wraps the annotated tree with
@@ -151,7 +151,8 @@ module TypeAnnotation
 
 using Core.IR
 using JET: CC, JET
-using ..JETLS: InferredContextCache, InferredContextCacheData, SyntaxTreeC, TraversalReturn
+using ..JETLS: InferredContextCache, InferredContextCacheData, SyntaxTreeC,
+    TraversalReturn, TreeAnnotations
 using ..JETLS: JETLS_DEBUG_LOWERING, JETLS_DEV_MODE, JL, JS
 using ..JETLS: get_name_val, iterate_toplevel_tree, jl_lower_for_scope_resolution, load,
     rewrite_local_closures_to_opaque, store!, traverse, unwrap_funcdef_sig
@@ -231,6 +232,9 @@ struct ASTTypeAnnotator <: CC.AbstractInterpreter
     # Consumer-side classifier for "user-written vs lowering-introduced" used by
     # `annotate_types!`. See `is_internal_binding_leaf` and `is_synthetic_destructure_stmt`.
     filter::SyntheticFilter
+    # Side tables receiving `annotate_types!` results; shared across all thunk
+    # interps of one inference pass.
+    annotations::TreeAnnotations
     # OC `Method` → body's `K"code_info"` subtree; built by `register_oc_body_trees!`.
     oc_body_trees::IdDict{Method,SyntaxTreeC}
     # Pending eager OC body annotations. `abstract_eval_new_opaque_closure` opens an
@@ -260,6 +264,7 @@ struct ASTTypeAnnotator <: CC.AbstractInterpreter
             ),
             opt_params::CC.OptimizationParams = CC.OptimizationParams(),
             inf_cache::Vector{CC.InferenceResult} = CC.InferenceResult[],
+            annotations::TreeAnnotations = TreeAnnotations(),
             oc_body_trees::IdDict{Method,SyntaxTreeC} = IdDict{Method,SyntaxTreeC}(),
             oc_body_annotation_states::IdDict{Method,OCBodyAnnotationState} = IdDict{Method,OCBodyAnnotationState}(),
             oc_argtype_observations::OCArgtypeTable = OCArgtypeTable(),
@@ -267,7 +272,7 @@ struct ASTTypeAnnotator <: CC.AbstractInterpreter
             oc_key_memo::IdDict{Method,Union{Nothing,OCArgtypeKey}} = IdDict{Method,Union{Nothing,OCArgtypeKey}}()
         )
         return new(world, inf_params, opt_params, inf_cache, toptree, topmi,
-            filter, oc_body_trees, oc_body_annotation_states,
+            filter, annotations, oc_body_trees, oc_body_annotation_states,
             oc_argtype_observations, oc_argtype_refinements, oc_key_memo)
     end
 end
@@ -696,18 +701,15 @@ end
 # user arguments have an intermediate `is_internal=true` local that would
 # misreport `true` if we stopped at the first hop.
 function is_internal_binding_leaf(filter::SyntheticFilter, leaf::SyntaxTreeC)
-    graph = JS.syntax_graph(leaf)
-    src = get(leaf, :source, nothing)
-    src isa JS.NodeId || return false
-    cur = SyntaxTreeC(graph, src)
-    JS.kind(cur) === JS.K"BindingId" || return false
-    last_binding = cur
+    src = leaf.source
+    src isa SyntaxTreeC || return false
+    JS.kind(src) === JS.K"BindingId" || return false
+    last_binding = src
     while true
-        nxt = get(last_binding, :source, nothing)
-        nxt isa JS.NodeId || break
-        st = SyntaxTreeC(graph, nxt)
-        JS.kind(st) === JS.K"BindingId" || break
-        last_binding = st
+        nxt = last_binding.source
+        nxt isa SyntaxTreeC || break
+        JS.kind(nxt) === JS.K"BindingId" || break
+        last_binding = nxt
     end
     return JL.get_binding(filter.bindings, last_binding).is_internal
 end
@@ -757,7 +759,8 @@ is_synthetic_arg_leaf(stmttree::SyntaxTreeC, leaf::SyntaxTreeC) =
     JS.byte_range(leaf) == JS.byte_range(stmttree)
 
 function annotate_types!(
-        citree::SyntaxTreeC, frame::CC.InferenceState, filter::SyntheticFilter
+        annotations::TreeAnnotations, citree::SyntaxTreeC, frame::CC.InferenceState,
+        filter::SyntheticFilter
     )
     if length(frame.src.code) != JS.numchildren(citree)
         return @warn "ASTTypeAnnotator: Can't annotate types for " frame.linfo
@@ -776,7 +779,7 @@ function annotate_types!(
         # annotating them (or their inner K"call" / args, below) would shadow
         # source-range queries.
         is_synthesized_stmt = is_synthetic_destructure_stmt(filter, stmttree)
-        is_synthesized_stmt || JS.setattr!(stmttree, :type, stmttype)
+        is_synthesized_stmt || (annotations.types[stmttree] = stmttype)
         if stmt isa Expr
             stmt.head === :meta && continue
             # TODO: properly annotate static-parameter references once CC supports
@@ -795,23 +798,23 @@ function annotate_types!(
                     # lowering-introduced (e.g. tuple destructure's
                     # `iterstate` / `rhs_tmp`) — those slot leaves share the
                     # user's RHS source position and would pollute queries.
-                    JS.setattr!(treeref[1], :type, stmttype)
+                    annotations.types[treeref[1]] = stmttype
                 end
                 stmt = stmt.args[2]
                 stmt isa Expr || continue
                 treeref = treeref[2]
-                is_synthesized_stmt || JS.setattr!(treeref, :type, stmttype)
+                is_synthesized_stmt || (annotations.types[treeref] = stmttype)
             end
             is_call = stmt.head === :call
             if is_call && !is_synthesized_stmt
                 matches = extract_call_matches(frame.stmt_info[i])
-                matches === nothing || JS.setattr!(treeref, :matches, matches)
+                matches === nothing || (annotations.matches[treeref] = matches)
             end
             for j = 1:length(stmt.args)
                 arg = stmt.args[j]
                 if arg isa SlotNumber && !is_internal_binding_leaf(filter, treeref[j])
                     argtyp = slot_type_at(arg, i, frame)
-                    JS.setattr!(treeref[j], :type, argtyp)
+                    annotations.types[treeref[j]] = argtyp
                 elseif (!is_synthesized_stmt && is_call && !(arg isa SSAValue) &&
                         !is_synthetic_arg_leaf(treeref, treeref[j]))
                     # `is_synthetic_arg_leaf` filters lowering-inserted leaves
@@ -823,7 +826,7 @@ function annotate_types!(
                     # SSAValue args are skipped separately since the producing stmt already
                     # annotates the value.
                     argtyp = CC.argextype(arg, frame.src, frame.sptypes)
-                    JS.setattr!(treeref[j], :type, argtyp)
+                    annotations.types[treeref[j]] = argtyp
                 end
             end
         elseif stmt isa ReturnNode
@@ -833,7 +836,7 @@ function annotate_types!(
             else
                 rettyp = CC.argextype(val, frame.src, frame.sptypes)
             end
-            JS.setattr!(stmttree, :type, rettyp)
+            annotations.types[stmttree] = rettyp
         end
     end
 end
@@ -841,7 +844,8 @@ end
 function CC.finishinfer!(frame::CC.InferenceState, interp::ASTTypeAnnotator, cycleid::Int)
     ret = @invoke CC.finishinfer!(frame::CC.InferenceState, interp::CC.AbstractInterpreter, cycleid::Int)
     if frame.linfo === interp.topmi
-        annotate_types!(interp.toptree[1], frame, interp.filter)
+        annotate_types!(interp.annotations, code_info_stmts(interp.toptree), frame,
+            interp.filter)
     else
         def = frame.linfo.def
         if def isa Method
@@ -871,8 +875,8 @@ function consume_oc_body_annotation_state!(interp::ASTTypeAnnotator, def::Method
     delete!(interp.oc_body_annotation_states, def)
     frame = @something state.last_frame return false
     oc_citree = get(interp.oc_body_trees, def, nothing)
-    # `oc_citree[1]` is the body block, matching `annotate_types!`'s contract.
-    oc_citree === nothing || annotate_types!(oc_citree[1], frame, interp.filter)
+    oc_citree === nothing || annotate_types!(
+        interp.annotations, code_info_stmts(oc_citree), frame, interp.filter)
     return true
 end
 
@@ -889,7 +893,7 @@ end
 function register_oc_body_trees!(
         oc_body_trees::IdDict{Method,SyntaxTreeC}, citree::SyntaxTreeC, src::CodeInfo
     )
-    block_citree = JS.kind(citree) === JS.K"code_info" ? citree[1] : citree
+    block_citree = JS.kind(citree) in JS.KSet"thunk code_info" ? code_info_stmts(citree) : citree
     JS.numchildren(block_citree) == length(src.code) || return oc_body_trees
     for i = 1:length(src.code)
         stmt = src.code[i]
@@ -914,6 +918,16 @@ function find_code_info_child(node::SyntaxTreeC)
         JS.kind(c) === JS.K"code_info" && return c
     end
     return nothing
+end
+
+# Unwrap a (possibly `K"thunk"`-wrapped) `K"code_info"` node to its statements
+# block: `K"code_info"` children are `[K"Slots", stmts::K"block"]`.
+function code_info_stmts(citree::SyntaxTreeC)
+    if JS.kind(citree) === JS.K"thunk"
+        citree = citree[1]
+    end
+    @assert JS.kind(citree) === JS.K"code_info"
+    return citree[2]
 end
 
 # Type annotation driver
@@ -973,7 +987,8 @@ end
 [`TypeAnnotation`](@ref) pipeline step 2: take `(ctx3, st3)` (typically from
 [`get_inferrable_tree`](@ref)) through the remaining JuliaLowering passes, run CC
 inference under the internal `ASTTypeAnnotator`, and return a `SyntaxTreeC`
-annotated with a `:type` attribute on each lowered statement. The walk recurses
+whose lowered statements carry `:type` annotations (recorded in the
+interpreter's `TreeAnnotations` side tables). The walk recurses
 into `Core.define_method` calls: each method body is inferred as its own anonymous
 thunk against argtypes statically evaluated from its sig svec.
 
@@ -1095,24 +1110,18 @@ function infer_lowered_tree(
         @static JETLS_DEV_MODE && @error "infer_toplevel_tree: Lowering failed" e
         @static JETLS_DEV_MODE && Base.showerror(stderr, e, catch_backtrace())
         return nothing
-    end |> prepare_type_attr
+    end
     lwr = JL.to_lowered_expr(inferrable_tree)
 
     Meta.isexpr(lwr, :thunk) || error("infer_toplevel_tree: Unexpected lowering result")
     src = lwr.args[1]::CodeInfo
 
+    annotations = TreeAnnotations()
     interp = infer_thunk!(inferrable_tree, src, context_module, nothing, world, filter,
-        observations, refinements, inf_cache)
-    infer_method_defs!(inferrable_tree, src, context_module, world, filter,
+        annotations, observations, refinements, inf_cache)
+    infer_method_defs!(inferrable_tree, src, context_module, world, filter, annotations,
         method_body_ranges, observations, refinements, inf_cache)
     return interp
-end
-
-prepare_type_attr(st::SyntaxTreeC) = let g = JL.syntax_graph(st)
-    attrs = Dict(pairs(g.attributes))
-    attrs[:type] = Dict{Int, Any}()
-    attrs[:matches] = Dict{Int, Vector{Core.MethodMatch}}()
-    return SyntaxTreeC(JL.SyntaxGraph(g.edge_ranges, g.edges, attrs), st._id)
 end
 
 # `argtypes === nothing` keeps the `InferenceResult`'s default argtypes (intended
@@ -1120,13 +1129,15 @@ end
 function infer_thunk!(
         tree::SyntaxTreeC, src::CodeInfo, context_module::Module,
         argtypes::Union{Nothing,Vector{Any}}, world::UInt, filter::SyntheticFilter,
+        annotations::TreeAnnotations,
         observations::OCArgtypeTable, refinements::Union{Nothing,OCArgtypeTable},
         inf_cache::Vector{CC.InferenceResult}
     )
     strip_latestworld!(src)
     mi = construct_toplevel_mi(src, context_module)
     interp = ASTTypeAnnotator(world, tree, mi, filter;
-        oc_argtype_observations=observations, oc_argtype_refinements=refinements, inf_cache)
+        annotations, oc_argtype_observations=observations,
+        oc_argtype_refinements=refinements, inf_cache)
     register_oc_body_trees!(interp.oc_body_trees, tree, src)
     result = CC.InferenceResult(mi)
     if argtypes !== nothing
@@ -1222,11 +1233,12 @@ end
 
 function infer_method_defs!(
         inferred::SyntaxTreeC, src::CodeInfo, context_module::Module, world::UInt,
-        filter::SyntheticFilter, method_body_ranges::MethodBodyRangeIndex,
+        filter::SyntheticFilter, annotations::TreeAnnotations,
+        method_body_ranges::MethodBodyRangeIndex,
         observations::OCArgtypeTable, refinements::Union{Nothing,OCArgtypeTable},
         inf_cache::Vector{CC.InferenceResult}
     )
-    block = inferred[1]
+    block = code_info_stmts(inferred)
     nstmts = JS.numchildren(block)
     nstmts == length(src.code) || return
     for i = 1:nstmts
@@ -1249,7 +1261,7 @@ function infer_method_defs!(
             resolve_method_argtypes(sig_ref, src, nargs, context_module, world),
             Any[Any for _ in 1:nargs])
         infer_thunk!(body_tree, body_codeinfo, context_module, argtypes, world, filter,
-            observations, refinements, inf_cache)
+            annotations, observations, refinements, inf_cache)
     end
     return
 end
@@ -1437,14 +1449,16 @@ end
 
 """
     InferredTreeContext(
-            inferred_tree::SyntaxTreeC, ctx3::JL.VariableAnalysisContext,
-            st3::SyntaxTreeC, surface_kind_index::Dict{UnitRange{Int},JS.Kind},
+            inferred_tree::SyntaxTreeC, annotations::TreeAnnotations,
+            ctx3::JL.VariableAnalysisContext, st3::SyntaxTreeC,
+            surface_kind_index::Dict{UnitRange{Int},JS.Kind},
             macrocall_types::Dict{UnitRange{Int},Vector{Any}}
         ) -> ctx::InferredTreeContext
 
-[`TypeAnnotation`](@ref) pipeline step 3: wrap an annotated `inferred_tree` (from
-[`infer_toplevel_tree`](@ref)) plus the post-scope-resolution `ctx3` / `st3` (from
-[`get_inferrable_tree`](@ref)) and provenance indexes built before pruning,
+[`TypeAnnotation`](@ref) pipeline step 3: wrap the `inferred_tree` and its
+`annotations` side tables (from the interpreter driven by
+[`infer_toplevel_tree`](@ref)) plus the post-scope-resolution `ctx3` / `st3`
+(from [`get_inferrable_tree`](@ref)) and pre-built provenance indexes,
 yielding a query handle that [`get_type_for_range`](@ref) and friends can answer
 in \$O(1)\$ per call (or \$O(log N)\$ for the branching case).
 
@@ -1464,7 +1478,8 @@ as new queries demand different indexes.
 See the [`TypeAnnotation`](@ref) module docstring for the full pipeline.
 """
 function InferredTreeContext(
-        inferred_tree::SyntaxTreeC, ctx3::JL.VariableAnalysisContext, st3::SyntaxTreeC,
+        inferred_tree::SyntaxTreeC, annotations::TreeAnnotations,
+        ctx3::JL.VariableAnalysisContext, st3::SyntaxTreeC,
         surface_kind_index::Dict{UnitRange{Int},JS.Kind},
         macrocall_types::Dict{UnitRange{Int},Vector{Any}}
     )
@@ -1472,8 +1487,6 @@ function InferredTreeContext(
     return_first_bytes = Int[]
     return_nodes = SyntaxTreeC[]
 
-    # These indexes retain tree nodes, so they must be built from the pruned tree;
-    # otherwise the context would keep the unpruned graph alive.
     traverse(inferred_tree) do st::SyntaxTreeC
         rng = JS.byte_range(st)
         push!(get!(Vector{SyntaxTreeC}, by_byte_range, rng), st)
@@ -1492,12 +1505,13 @@ function InferredTreeContext(
 
     user_return_form_ranges = collect_user_return_form_ranges(st3)
 
-    oc_body_scope = Dict{Int,UnitRange{Int}}()
+    oc_body_scope = Dict{SyntaxTreeC,UnitRange{Int}}()
     populate_oc_body_scope!(oc_body_scope, inferred_tree, nothing)
-    oc_argument_binding_types = collect_oc_argument_binding_types(ctx3, inferred_tree)
+    oc_argument_binding_types =
+        collect_oc_argument_binding_types(ctx3, inferred_tree, annotations)
 
     return InferredTreeContext(
-        inferred_tree, surface_kind_index, by_byte_range,
+        inferred_tree, annotations, surface_kind_index, by_byte_range,
         macrocall_types, return_first_bytes, return_nodes,
         user_return_form_ranges, oc_body_scope, oc_argument_binding_types)
 end
@@ -1508,9 +1522,9 @@ end
 # collapses onto the very expression it wraps, and letting the wrapper claim the range
 # would drop the query into `tmerge_at_range`, merging loop/closure scaffolding types
 # into the user-visible result.
-const DISPATCH_SURFACE_KINDS = JS.KSet"macrocall call dotcall tuple ' do typed_comprehension for while function macro = comparison && || if ?"
+const DISPATCH_SURFACE_KINDS = JS.KSet"macrocall call dotcall tuple ' do juxtapose typed_comprehension for while function macro = comparison && || if ?"
 
-function collect_provenance_indexes(inferred_tree::SyntaxTreeC)
+function collect_provenance_indexes(inferred_tree::SyntaxTreeC, annotations::TreeAnnotations)
     surface_kind_index = Dict{UnitRange{Int},JS.Kind}()
     macrocall_types = Dict{UnitRange{Int},Vector{Any}}()
     traverse(inferred_tree) do st::SyntaxTreeC
@@ -1524,9 +1538,10 @@ function collect_provenance_indexes(inferred_tree::SyntaxTreeC)
                 (!(existing in DISPATCH_SURFACE_KINDS) && pk in DISPATCH_SURFACE_KINDS))
                 surface_kind_index[prov_rng] = pk
             end
-            if (JS.kind(st) === JS.K"call" && JS.hasattr(st, :type) &&
+            typ = get(annotations.types, st, nothing)
+            if (JS.kind(st) === JS.K"call" && typ !== nothing &&
                 JS.kind(prov) === JS.K"macrocall")
-                push!(get!(Vector{Any}, macrocall_types, JS.byte_range(prov)), st.type)
+                push!(get!(Vector{Any}, macrocall_types, JS.byte_range(prov)), typ)
             end
         end
         return nothing
@@ -1540,11 +1555,11 @@ end
 # scope; entering its `K"code_info"` child overrides the inherited scope so an inner OC's
 # body is attributed to the inner method, not the outer.
 function populate_oc_body_scope!(
-        scope::Dict{Int,UnitRange{Int}},
+        scope::Dict{SyntaxTreeC,UnitRange{Int}},
         node::SyntaxTreeC,
         current::Union{Nothing,UnitRange{Int}},
     )
-    current === nothing || (scope[node._id] = current)
+    current === nothing || (scope[node] = current)
     JS.is_leaf(node) && return
     if JS.kind(node) === JS.K"opaque_closure_method"
         method_range = JS.byte_range(node)
@@ -1561,9 +1576,10 @@ function populate_oc_body_scope!(
 end
 
 function collect_oc_argument_binding_types(
-        ctx3::JL.VariableAnalysisContext, inferred_tree::SyntaxTreeC
+        ctx3::JL.VariableAnalysisContext, inferred_tree::SyntaxTreeC,
+        annotations::TreeAnnotations
     )
-    oc_argtypes = collect_oc_argtypes_by_binding(inferred_tree)
+    oc_argtypes = collect_oc_argtypes_by_binding(inferred_tree, annotations)
     binding_types = Dict{UnitRange{Int},Any}()
     isempty(oc_argtypes) && return binding_types
     lambda_ranges = collect_lambda_ranges(ctx3)
@@ -1575,7 +1591,7 @@ function collect_oc_argument_binding_types(
         name = binfo.name
         typ = get(oc_argtypes, (lambda_range, Symbol(name)), nothing)
         typ === nothing && continue
-        binding = SyntaxTreeC(ctx3.graph, binfo.node_id)
+        binding = binfo.node_id
         JS.kind(binding) === JS.K"BindingId" || continue
         binding_types[JS.byte_range(binding)] = typ
     end
@@ -1585,20 +1601,22 @@ end
 function collect_lambda_ranges(ctx3::JL.VariableAnalysisContext)
     ranges = Dict{Int,UnitRange{Int}}()
     for scope in ctx3.scopes
-        node = SyntaxTreeC(ctx3.graph, scope.node_id)
-        JS.kind(node) === JS.K"lambda" || continue
+        node = scope.node_id
+        JS.kind(node) in JS.KSet"lambda toplevel_lambda generated_lambda" || continue
         ranges[scope.lambda_id] = JS.byte_range(node)
     end
     return ranges
 end
 
-function collect_oc_argtypes_by_binding(inferred_tree::SyntaxTreeC)
+function collect_oc_argtypes_by_binding(
+        inferred_tree::SyntaxTreeC, annotations::TreeAnnotations
+    )
     body_ranges_by_surface = collect_oc_body_ranges_by_surface(inferred_tree)
     oc_argtypes = Dict{Tuple{UnitRange{Int},Symbol},Any}()
     traverse(inferred_tree) do st::SyntaxTreeC
         JS.kind(st) === JS.K"new_opaque_closure" || return nothing
-        JS.hasattr(st, :type) || return nothing
-        entry = @something oc_argtypes_for_node(st.type, JS.byte_range(st)) return nothing
+        typ = @something get(annotations.types, st, nothing) return nothing
+        entry = @something oc_argtypes_for_node(typ, JS.byte_range(st)) return nothing
         body_ranges = get(Vector{UnitRange{Int}}, body_ranges_by_surface, entry.range)
         for i = 1:length(entry.argnames)
             typ = entry.argtypes[i]
@@ -1754,17 +1772,19 @@ function build_inferred_context(
         caller::AbstractString = "build_inferred_context"
     )
     (; ctx3, st3) = @something get_inferrable_tree(st0, context_module, world; caller) return nothing
-    inferred = @something infer_toplevel_tree(ctx3, st3, st0, context_module; world) return nothing
-    # `JS.prune` minimizes provenance, so collect query-dispatch indexes first.
-    surface_kind_index, macrocall_types = collect_provenance_indexes(inferred)
-    return InferredTreeContext(JS.prune(inferred), ctx3, st3, surface_kind_index, macrocall_types)
+    interp = @something _infer_toplevel_tree(ctx3, st3, st0, context_module; world) return nothing
+    inferred = interp.toptree
+    annotations = interp.annotations
+    surface_kind_index, macrocall_types = collect_provenance_indexes(inferred, annotations)
+    return InferredTreeContext(
+        inferred, annotations, ctx3, st3, surface_kind_index, macrocall_types)
 end
 
 """
     get_type_for_range(ctx::InferredTreeContext, rng::UnitRange{<:Integer})
 
 [`TypeAnnotation`](@ref) pipeline step 4: look up the inferred type at surface byte range `rng`.
-Returns `nothing` if no lowered node corresponding to `rng` carries a `:type` attribute.
+Returns `nothing` if no lowered node corresponding to `rng` carries a `:type` annotation.
 
 Build the [`InferredTreeContext`](@ref) once per inferred tree and reuse it across queries
 — see the [`TypeAnnotation`](@ref) module docstring for the full pipeline.
@@ -1796,7 +1816,9 @@ function get_type_for_range(ctx::InferredTreeContext, rng::UnitRange{<:Integer})
     surface_kind = surface_kind_at_range(ctx, rng)
     if surface_kind === JS.K"macrocall"
         return type_for_macroexpansion(ctx, rng)
-    elseif surface_kind in JS.KSet"call dotcall tuple ' do"
+    elseif surface_kind in JS.KSet"call dotcall tuple ' do juxtapose"
+        # `juxtapose`: parse-tree provenance retains the parser kind for `2x`,
+        # which desugars to a `K"call"` in the inferred tree.
         return type_for_call(ctx, rng)
     elseif surface_kind === JS.K"typed_comprehension"
         return type_for_typed_comprehension(ctx, rng)
@@ -1851,8 +1873,8 @@ function type_for_call(ctx::InferredTreeContext, rng::UnitRange{<:Integer})
     typ = nothing
     for st in get(ctx.by_byte_range, rng, ())
         JS.kind(st) === JS.K"call" || continue
-        JS.hasattr(st, :type) || continue
-        typ = st.type
+        ntyp = @something get(ctx.annotations.types, st, nothing) continue
+        typ = ntyp
     end
     return typ
 end
@@ -1874,9 +1896,9 @@ end
 function type_for_typed_comprehension(ctx::InferredTreeContext, rng::UnitRange{<:Integer})
     for st in get(ctx.by_byte_range, rng, ())
         JS.kind(st) === JS.K"call" || continue
-        JS.hasattr(st, :type) || continue
-        wt = CC.widenconst(st.type)
-        wt !== Union{} && wt <: Array && return st.type
+        typ = @something get(ctx.annotations.types, st, nothing) continue
+        wt = CC.widenconst(typ)
+        wt !== Union{} && wt <: Array && return typ
     end
     return nothing
 end
@@ -1898,8 +1920,7 @@ function type_for_branching(ctx::InferredTreeContext, rng::UnitRange{<:Integer})
     typ = nothing
     # (1) equality match — any lowered kind, including merge-slot `K"="`.
     for st in get(ctx.by_byte_range, rng, ())
-        JS.hasattr(st, :type) || continue
-        ntyp = st.type
+        ntyp = @something get(ctx.annotations.types, st, nothing) continue
         typ = typ === nothing ? ntyp : CC.tmerge(ntyp, typ)
     end
     # (2) containment match — `K"return"` strictly inside `rng`, excluding
@@ -1917,8 +1938,7 @@ function type_for_branching(ctx::InferredTreeContext, rng::UnitRange{<:Integer})
         form_rng = find_outermost_user_return_form(
             ctx.user_return_form_ranges, first_byte:last_byte)
         form_rng !== nothing && strictly_contains(rng, form_rng) && continue
-        JS.hasattr(st, :type) || continue
-        ntyp = st.type
+        ntyp = @something get(ctx.annotations.types, st, nothing) continue
         typ = typ === nothing ? ntyp : CC.tmerge(ntyp, typ)
     end
     return typ
@@ -1955,14 +1975,13 @@ function type_for_funcdef(ctx::InferredTreeContext, rng::UnitRange{<:Integer})
     typ = nothing
     for st in get(ctx.by_byte_range, rng, ())
         body_tree = @something method_body_tree(st) continue
-        JS.numchildren(body_tree) >= 1 || continue
-        block = body_tree[1]
+        JS.numchildren(body_tree) >= 2 || continue
+        block = body_tree[2]
         for j = 1:JS.numchildren(block)
             stmt = block[j]
-            if JS.kind(stmt) === JS.K"return" && JS.hasattr(stmt, :type)
-                ntyp = stmt.type
-                typ = typ === nothing ? ntyp : CC.tmerge(ntyp, typ)
-            end
+            JS.kind(stmt) === JS.K"return" || continue
+            ntyp = @something get(ctx.annotations.types, stmt, nothing) continue
+            typ = typ === nothing ? ntyp : CC.tmerge(ntyp, typ)
         end
     end
     return typ
@@ -1981,9 +2000,8 @@ function type_for_oc_body_return_at_range(
         first_byte > last(rng) && break
         st = ctx.return_nodes[i]
         JS.last_byte(st) <= last(rng) || continue
-        get(ctx.oc_body_scope, st._id, nothing) === rng || continue
-        JS.hasattr(st, :type) || continue
-        ntyp = st.type
+        get(ctx.oc_body_scope, st, nothing) === rng || continue
+        ntyp = @something get(ctx.annotations.types, st, nothing) continue
         typ = typ === nothing ? ntyp : CC.tmerge(ntyp, typ)
     end
     return typ
@@ -2014,15 +2032,14 @@ function tmerge_at_range(ctx::InferredTreeContext, rng::UnitRange{<:Integer})
         # (`Const(Any)` etc.) must not leak into surface queries.
         JS.kind(st) === JS.K"core" && continue
         has_binding_slot && JS.kind(st) === JS.K"Symbol" && continue
-        JS.hasattr(st, :type) || continue
-        if is_oc_site && get(ctx.oc_body_scope, st._id, nothing) !== rng
+        ntyp = @something get(ctx.annotations.types, st, nothing) continue
+        if is_oc_site && get(ctx.oc_body_scope, st, nothing) !== rng
             continue
         end
         # Synthetic `Core.Typeof(funcname)` overlaps the function name's byte
         # range; `tmerge`ing `Const(Type{T})` into `Const(T)` would surface
         # `Union{T, Type{T}}` for def-site name queries.
         is_synthetic_typeof_scaffolding(st) && continue
-        ntyp = st.type
         typ = typ === nothing ? ntyp : CC.tmerge(ntyp, typ)
     end
     return typ
@@ -2046,7 +2063,7 @@ end
 
 Look up the `Core.MethodMatch`es CC's dispatch produced for the call site at
 surface byte range `rng`. Returns `nothing` if no lowered `K"call"` node at
-`rng` carries a `:matches` attribute — the surface isn't a call site, the
+`rng` carries a `:matches` annotation — the surface isn't a call site, the
 lookup hit a non-method-dispatch `CallInfo` (`InvokeCallInfo`, `OpaqueClosureCallInfo`,
 `ApplyCallInfo`, …), or inference couldn't see the callee at all.
 
@@ -2065,8 +2082,8 @@ function get_matches_for_range(ctx::InferredTreeContext, rng::UnitRange{<:Intege
         last_call = st
     end
     last_call === nothing && return nothing
-    JS.hasattr(last_call, :matches) || return nothing
-    return last_call.matches::Vector{Core.MethodMatch}
+    matches = @something get(ctx.annotations.matches, last_call, nothing) return nothing
+    return matches::Vector{Core.MethodMatch}
 end
 
 function opaque_closure_argtypes(@nospecialize(typ))
