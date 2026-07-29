@@ -154,7 +154,7 @@ using JET: CC, JET
 using ..JETLS: InferredContextCache, InferredContextCacheData, SyntaxTreeC, TraversalReturn
 using ..JETLS: JETLS_DEBUG_LOWERING, JETLS_DEV_MODE, JL, JS
 using ..JETLS: get_name_val, iterate_toplevel_tree, jl_lower_for_scope_resolution, load,
-    rewrite_local_closures_to_opaque, store!, traverse
+    rewrite_local_closures_to_opaque, store!, traverse, unwrap_funcdef_sig
 import ..JETLS: InferredTreeContext
 
 export InferredTreeContext,
@@ -184,6 +184,35 @@ end
 function SyntheticFilter(st0::SyntaxTreeC, bindings::JL.Bindings)
     destructure_ranges, user_assignment_ranges = collect_assignment_ranges(st0)
     return SyntheticFilter(bindings, destructure_ranges, user_assignment_ranges)
+end
+
+const MethodBodyRangeIndex = Dict{UnitRange{Int},UnitRange{Int}}
+
+function collect_method_body_ranges(st0::SyntaxTreeC)
+    ranges = MethodBodyRangeIndex()
+    traverse(st0) do node::SyntaxTreeC
+        k = JS.kind(node)
+        if k in JS.KSet"function macro"
+            JS.numchildren(node) >= 2 || return nothing
+        elseif k === JS.K"="
+            JS.numchildren(node) >= 2 || return nothing
+            sig = unwrap_funcdef_sig(node[1])
+            JS.kind(sig) === JS.K"call" || return nothing
+        else
+            return nothing
+        end
+        body = nothing
+        for i = JS.numchildren(node):-1:1
+            child = node[i]
+            if JS.kind(child) === JS.K"block"
+                body = child
+                break
+            end
+        end
+        body === nothing || (ranges[JS.byte_range(node)] = JS.byte_range(body))
+        return nothing
+    end
+    return ranges
 end
 
 mutable struct OCBodyAnnotationState
@@ -974,12 +1003,13 @@ function _infer_toplevel_tree(
         world::UInt = Base.get_world_counter()
     )
     filter = SyntheticFilter(st0, ctx3.bindings)
+    method_body_ranges = collect_method_body_ranges(st0)
     inf_cache = CC.InferenceResult[]
     interp = refinements = nothing
     for _ = 1:MAX_OC_REFINEMENT_PASSES
         observations = OCArgtypeTable()
         interp = @something infer_lowered_tree(
-            ctx3, inferrable_tree3, context_module, world, filter,
+            ctx3, inferrable_tree3, context_module, world, filter, method_body_ranges,
             observations, refinements, inf_cache) return interp
         nextrefinements = @something merge_refinements(
             refinements, viable_oc_argtype_refinements(observations)) break
@@ -1047,6 +1077,7 @@ end
 function infer_lowered_tree(
         ctx3::JL.VariableAnalysisContext, inferrable_tree3::SyntaxTreeC,
         context_module::Module, world::UInt, filter::SyntheticFilter,
+        method_body_ranges::MethodBodyRangeIndex,
         observations::OCArgtypeTable, refinements::Union{Nothing,OCArgtypeTable},
         inf_cache::Vector{CC.InferenceResult}
     )
@@ -1073,7 +1104,7 @@ function infer_lowered_tree(
     interp = infer_thunk!(inferrable_tree, src, context_module, nothing, world, filter,
         observations, refinements, inf_cache)
     infer_method_defs!(inferrable_tree, src, context_module, world, filter,
-        observations, refinements, inf_cache)
+        method_body_ranges, observations, refinements, inf_cache)
     return interp
 end
 
@@ -1149,8 +1180,22 @@ function resolve_toplevel_symbols!(src::CodeInfo, context_module::Module)
     return src
 end
 
+function should_infer_method_body(
+        method_body_ranges::MethodBodyRangeIndex,
+        method_node::SyntaxTreeC, body_tree::SyntaxTreeC
+    )
+    method_range = JS.byte_range(method_node)
+    body_range = JS.byte_range(body_tree)
+    surface_body_range = get(method_body_ranges, method_range, nothing)
+    if surface_body_range === nothing
+        return body_range != method_range
+    end
+    return body_range ⊆ surface_body_range
+end
+
 function infer_method_defs!(
-        inferred::SyntaxTreeC, src::CodeInfo, context_module::Module, world::UInt, filter::SyntheticFilter,
+        inferred::SyntaxTreeC, src::CodeInfo, context_module::Module, world::UInt,
+        filter::SyntheticFilter, method_body_ranges::MethodBodyRangeIndex,
         observations::OCArgtypeTable, refinements::Union{Nothing,OCArgtypeTable},
         inf_cache::Vector{CC.InferenceResult}
     )
@@ -1166,9 +1211,9 @@ function infer_method_defs!(
         # Dispatcher methods synthesized for default args / kwargs have a body that just
         # calls the user method with the defaults filled in, but the user method might not
         # be bound in `context_module` here, so the call would infer as `Any` anyway.
-        # Skip them to save inference time and to keep the resulting tree free of
-        # meaningless `:type` annotations.
-        JS.byte_range(body_tree) == JS.byte_range(node) && continue
+        # Select bodies contained in the user-written surface body. Dispatcher provenance
+        # can be either the whole definition or one of its default expressions.
+        should_infer_method_body(method_body_ranges, node, body_tree) || continue
         stmt = src.code[i]
         stmt isa Expr || continue
         stmt.head === :method || continue
