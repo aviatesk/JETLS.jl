@@ -1155,6 +1155,24 @@ macro noop(ex) esc(ex) end
             @test !any(o -> o.kind === :use, occurrences)
         end
 
+        let boccs = get_full_binding_occurrences("""
+                struct Node
+                    next::Union{Nothing,Node}
+                end
+                """)
+            sentries = [(b, occs) for (b, occs) in boccs if b.name == "Node"]
+            @test !isempty(sentries)
+            occurrences = collect(Iterators.flatten(last.(sentries)))
+            declarations = filter(o -> o.kind === :decl, occurrences)
+            uses = filter(o -> o.kind === :use, occurrences)
+            @test length(declarations) == 1
+            @test count(o -> o.kind === :def, occurrences) == 1
+            @test length(uses) == 1
+            if length(declarations) == 1 && length(uses) == 1
+                @test JS.byte_range(only(declarations).tree) != JS.byte_range(only(uses).tree)
+            end
+        end
+
         with_global_binding_occurrences("""
             struct │MyType│
                 x::Int
