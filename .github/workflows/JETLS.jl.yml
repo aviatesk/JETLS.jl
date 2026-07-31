@@ -43,9 +43,9 @@ jobs:
           # - version: "1.13-nightly" # next release
           #   os: ubuntu-latest
           #   arch: x64
-          - version: "nightly" # dev
-            os: ubuntu-latest
-            arch: x64
+          # - version: "nightly" # dev
+          #   os: ubuntu-latest
+          #   arch: x64
           # - version: "1" # x86 ubuntu
           #   os: ubuntu-latest
           #   arch: x86
@@ -65,13 +65,13 @@ jobs:
           version: ${{ matrix.version }}
           arch: ${{ matrix.arch }}
       - uses: julia-actions/cache@v2
-      - name: set LocalPreferences.toml
-        working-directory: .
-        run: |
-          echo '
-          [JET]
-          JET_DEV_MODE = true # allow JET to be loaded on nightly
-          ' > LocalPreferences.toml
+      # - name: allow JET to be loaded on nightly
+      #   if: matrix.version == 'nightly'
+      #   run: |
+      #     echo '
+      #     [JET]
+      #     JET_DEV_MODE = true
+      #     ' > LocalPreferences.toml
       - uses: julia-actions/julia-buildpkg@latest
       - uses: julia-actions/julia-runtest@latest
       - uses: julia-actions/julia-processcoverage@v1
@@ -86,18 +86,32 @@ jobs:
       - uses: actions/checkout@v4
       - uses: julia-actions/setup-julia@v1
         with:
-          version: "1.12" # most stable version
+          version: "1"
+          arch: x64
+      - uses: julia-actions/cache@v2
+      - name: enable JETLS_DEV_MODE for tests
+        run: |
+          sed -i 's/JETLS_DEV_MODE = false/JETLS_DEV_MODE = true/' \
+            test/LocalPreferences.toml
+      - uses: julia-actions/julia-buildpkg@latest
+      - uses: julia-actions/julia-runtest@latest
+
+  JET_DEV_MODE:
+    name: Test with `JET_DEV_MODE = true`
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: julia-actions/setup-julia@v1
+        with:
+          version: "1"
           arch: x64
       - uses: julia-actions/cache@v2
       - name: set LocalPreferences.toml
         working-directory: .
         run: |
           echo '
-          [JETLS]
-          JETLS_DEV_MODE = true
-
           [JET]
-          JET_DEV_MODE = true # allow JET to be loaded on nightly
+          JET_DEV_MODE = true
           ' > LocalPreferences.toml
       - uses: julia-actions/julia-buildpkg@latest
       - uses: julia-actions/julia-runtest@latest
@@ -109,7 +123,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: julia-actions/setup-julia@v1
         with:
-          version: "1.12" # most stable version
+          version: "1"
           arch: x64
       - uses: julia-actions/cache@v2
       - name: set LocalPreferences.toml
@@ -118,9 +132,6 @@ jobs:
           echo '
           [JETLS]
           JETLS_DEBUG_LOWERING = true
-
-          [JET] # allow JET to be loaded on nightly
-          JET_DEV_MODE = true
           ' > LocalPreferences.toml
       - uses: julia-actions/julia-buildpkg@latest
       - uses: julia-actions/julia-runtest@latest
@@ -132,16 +143,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: julia-actions/setup-julia@v1
         with:
-          version: "1.12" # most stable version
+          version: "1"
           arch: x64
       - uses: julia-actions/cache@v2
-      - name: set LocalPreferences.toml
-        working-directory: .
-        run: |
-          echo '
-          [JET] # allow JET to be loaded on nightly
-          JET_DEV_MODE = true
-          ' > LocalPreferences.toml
       - uses: julia-actions/julia-buildpkg@latest
       - uses: julia-actions/julia-runtest@latest
         env:
@@ -160,7 +164,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: julia-actions/setup-julia@v1
         with:
-          version: "1.12" # most stable version
+          version: "1"
           arch: x64
       - uses: julia-actions/cache@v2
       - name: set LocalPreferences.toml
@@ -169,9 +173,6 @@ jobs:
           echo '
           [JETLS]
           JETLS_DEV_MODE = true
-
-          [JET]
-          JET_DEV_MODE = true # allow JET to be loaded on nightly
           ' > LocalPreferences.toml
       - uses: julia-actions/julia-buildpkg@latest
       - name: run jetls check
