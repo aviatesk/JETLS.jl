@@ -18,7 +18,7 @@ const MACRO_EXPANSION_CONTENT_PATH = "/macro-expanded.jl"
 # the default (call-site) expands a single macrocall one level, while `mode=toplevel`
 # recursively expands every macrocall in a lowerable top-level form. The byte range names
 # the macrocall or the top-level form respectively.
-function macro_expansion_content_uri(source_uri::URI, node::SyntaxTreeC; toplevel::Bool=false)
+function macro_expansion_content_uri(source_uri::URI, node::SyntaxTree; toplevel::Bool=false)
     range = JS.byte_range(node)
     parts = String[
         "source=$(LSP.URIs2.escapeuri(string(source_uri)))",
@@ -32,16 +32,16 @@ function macro_expansion_content_uri(source_uri::URI, node::SyntaxTreeC; topleve
         query = join(parts, '&'))
 end
 
-function find_macrocall_by_range(st0_top::SyntaxTreeC, range::UnitRange{<:Integer})
-    return traverse(st0_top) do st::SyntaxTreeC
+function find_macrocall_by_range(st0_top::SyntaxTree, range::UnitRange{<:Integer})
+    return traverse(st0_top) do st::SyntaxTree
         JS.kind(st) === JS.K"macrocall" || return nothing
         JS.byte_range(st) == range || return nothing
         return TraversalReturn(st; terminate=true)
     end
 end
 
-function find_toplevel_tree_by_range(st0_top::SyntaxTreeC, range::UnitRange{<:Integer})
-    return iterate_toplevel_tree(st0_top) do st0::SyntaxTreeC
+function find_toplevel_tree_by_range(st0_top::SyntaxTree, range::UnitRange{<:Integer})
+    return iterate_toplevel_tree(st0_top) do st0::SyntaxTree
         JS.byte_range(st0) == range || return nothing
         return TraversalReturn(st0; terminate=true)
     end
@@ -103,7 +103,7 @@ function strip_macro_expansion_linenums!(@nospecialize(x))
     return x
 end
 
-function print_macrocall_provenance(io::IO, macrocall::SyntaxTreeC)
+function print_macrocall_provenance(io::IO, macrocall::SyntaxTree)
     buf = IOBuffer()
     JL.showprov(buf, macrocall; note = "the macro call being expanded",
         context_lines_before=3, context_lines_after=3)
@@ -139,7 +139,7 @@ function print_expansion_error_trace(io::IO, @nospecialize(err), bt)
     return nothing
 end
 
-function format_macro_expansion_text(macrocall::SyntaxTreeC, @nospecialize expanded)
+function format_macro_expansion_text(macrocall::SyntaxTree, @nospecialize expanded)
     io = IOBuffer()
     println(io, "# Macro call:")
     print_macrocall_provenance(io, macrocall)
@@ -148,7 +148,7 @@ function format_macro_expansion_text(macrocall::SyntaxTreeC, @nospecialize expan
     return String(take!(io))
 end
 
-function format_macro_expansion_error_text(macrocall::SyntaxTreeC, @nospecialize(err), bt)
+function format_macro_expansion_error_text(macrocall::SyntaxTree, @nospecialize(err), bt)
     io = IOBuffer()
     println(io, "# Macro call:")
     print_macrocall_provenance(io, macrocall)
@@ -243,7 +243,7 @@ end
 
 const TYPE_ANNOTATION_CONTENT_PATH = "/type-annotated.jl"
 
-function type_annotation_content_uri(source_uri::URI, tree::SyntaxTreeC)
+function type_annotation_content_uri(source_uri::URI, tree::SyntaxTree)
     range = JS.byte_range(tree)
     query = join((
         "source=$(LSP.URIs2.escapeuri(string(source_uri)))",
@@ -257,7 +257,7 @@ function type_annotation_content_uri(source_uri::URI, tree::SyntaxTreeC)
 end
 
 function collect_type_annotation_hints(
-        state::ServerState, fi::FileInfo, uri::URI, tree::SyntaxTreeC
+        state::ServerState, fi::FileInfo, uri::URI, tree::SyntaxTree
     )
     startpos = offset_to_xy(fi, JS.first_byte(tree))
     endpos = offset_to_xy(fi, JS.last_byte(tree) + 1)

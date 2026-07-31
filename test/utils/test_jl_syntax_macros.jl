@@ -1462,16 +1462,16 @@ const STATIC_COND_FLAG = true
 end
 
 module static_macro_module
-using JETLS: JL, JS, SyntaxTreeC
+using JETLS: JL, JS, SyntaxTree
 const STATIC_COND_FLAG = false
-function var"@wrapped_static"(ctx::JL.MacroContext, ex::SyntaxTreeC)
-    mc = ctx.macrocall::SyntaxTreeC
+function var"@wrapped_static"(ctx::JL.MacroContext, ex::SyntaxTree)
+    mc = ctx.macrocall::SyntaxTree
     src = JS.sourceref(mc)
     return JL.@ast(ctx, mc, [JS.K"macrocall"(src; context=nothing)
         "@static"::JS.K"Identifier" mc[2] ex])
 end
 function var"@generated_static"(ctx::JL.MacroContext)
-    mc = ctx.macrocall::SyntaxTreeC
+    mc = ctx.macrocall::SyntaxTree
     src = JS.newleaf(JS.sourceref(mc), JS.K"TOMBSTONE")
     return JL.@ast(ctx, src, [JS.K"macrocall"
         "@static"::JS.K"Identifier" mc[2]

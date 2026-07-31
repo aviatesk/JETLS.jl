@@ -1,13 +1,13 @@
 module Closure2Opaque
 
-using ..JETLS: JL, JS, SyntaxTreeC, get_name_val, var_id
+using ..JETLS: JL, JS, SyntaxTree, get_name_val, var_id
 
 export rewrite_local_closures_to_opaque
 
 """
     rewrite_local_closures_to_opaque(
-            ctx::JL.VariableAnalysisContext, st3::SyntaxTreeC
-        ) -> SyntaxTreeC
+            ctx::JL.VariableAnalysisContext, st3::SyntaxTree
+        ) -> SyntaxTree
 
 Pre-lowering rewrite that turns single-method local closure definitions
 (`K"function_decl"` paired with a sibling `K"method_defs"`) into the equivalent
@@ -36,14 +36,14 @@ tracking), before `JL.convert_closures` runs.
 The rewrite is non-destructive: nodes that don't match are returned unchanged, so the
 pipeline downstream sees an equivalent tree with only the eligible closures swapped.
 """
-function rewrite_local_closures_to_opaque(ctx::JL.VariableAnalysisContext, st3::SyntaxTreeC)
+function rewrite_local_closures_to_opaque(ctx::JL.VariableAnalysisContext, st3::SyntaxTree)
     lambda_scope_id = JL.lambda_bindings(st3[1]).scope_id
     multis = collect_multi_method_bindings(ctx, st3, lambda_scope_id)
     return _rewrite_local_closures_to_opaque(ctx, st3, multis, lambda_scope_id)
 end
 
 function _rewrite_local_closures_to_opaque(
-        ctx::JL.VariableAnalysisContext, st3::SyntaxTreeC,
+        ctx::JL.VariableAnalysisContext, st3::SyntaxTree,
         multis::Set{JL.ClosureKey}, lambda_scope_id::Int
     )
     k = JS.kind(st3)
@@ -53,14 +53,14 @@ function _rewrite_local_closures_to_opaque(
         lambda_scope_id = JL.lambda_bindings(st3[1]).scope_id
     end
     let lambda_scope_id=lambda_scope_id
-        return JS.mapchildren(st3) do c::SyntaxTreeC
+        return JS.mapchildren(st3) do c::SyntaxTree
             _rewrite_local_closures_to_opaque(ctx, c, multis, lambda_scope_id)
         end
     end
 end
 
 function rewrite_closure_block(
-        ctx::JL.VariableAnalysisContext, blk3::SyntaxTreeC,
+        ctx::JL.VariableAnalysisContext, blk3::SyntaxTree,
         multis::Set{JL.ClosureKey}, lambda_scope_id::Int
     )
     children_old = JS.children(blk3)
@@ -115,12 +115,12 @@ end
 # synthetic-struct closure conversion, so single-method closures inside its bodies are
 # still safely rewritable to OCs and must not be tagged.
 function collect_multi_method_bindings(
-        ctx::JL.VariableAnalysisContext, st3::SyntaxTreeC, root_scope_id::Int
+        ctx::JL.VariableAnalysisContext, st3::SyntaxTree, root_scope_id::Int
     )
-    method_defs_by_key = Dict{JL.ClosureKey,Vector{SyntaxTreeC}}()
+    method_defs_by_key = Dict{JL.ClosureKey,Vector{SyntaxTree}}()
     methods_per_key = Dict{JL.ClosureKey,Int}()
     multis = Set{JL.ClosureKey}()
-    stack = Tuple{SyntaxTreeC,Int}[(st3, root_scope_id)]
+    stack = Tuple{SyntaxTree,Int}[(st3, root_scope_id)]
     while !isempty(stack)
         node, lambda_scope_id = pop!(stack)
         k = JS.kind(node)
@@ -133,7 +133,7 @@ function collect_multi_method_bindings(
                 n = (methods_per_key[key] = get(methods_per_key, key, 0) + 1)
                 n == 2 && push!(multis, key)
             else
-                push!(get!(() -> SyntaxTreeC[], method_defs_by_key, key), node)
+                push!(get!(() -> SyntaxTree[], method_defs_by_key, key), node)
             end
         end
         if !JS.is_leaf(node)
@@ -155,12 +155,12 @@ function collect_multi_method_bindings(
 end
 
 function collect_referenced_closures!(
-        ctx::JL.VariableAnalysisContext, root::SyntaxTreeC, lambda_scope_id::Int,
+        ctx::JL.VariableAnalysisContext, root::SyntaxTree, lambda_scope_id::Int,
         multis::Set{JL.ClosureKey}, worklist::Vector{JL.ClosureKey},
-        method_defs_by_key::Dict{JL.ClosureKey,Vector{SyntaxTreeC}},
+        method_defs_by_key::Dict{JL.ClosureKey,Vector{SyntaxTree}},
         candidate_bids::Set{Int}
     )
-    stack = Tuple{SyntaxTreeC,Int}[(c, lambda_scope_id) for c in JS.children(root)]
+    stack = Tuple{SyntaxTree,Int}[(c, lambda_scope_id) for c in JS.children(root)]
     while !isempty(stack)
         node, lambda_scope_id = pop!(stack)
         k = JS.kind(node)
@@ -199,7 +199,7 @@ end
 
 # Returns the `ClosureKey` for a `function_decl` of a local closure, `nothing` otherwise.
 function local_closure_key(
-        ctx::JL.VariableAnalysisContext, fd::SyntaxTreeC, lambda_scope_id::Int
+        ctx::JL.VariableAnalysisContext, fd::SyntaxTree, lambda_scope_id::Int
     )
     JS.numchildren(fd) >= 1 || return nothing
     func_name = fd[1]
@@ -227,7 +227,7 @@ function find_matching_method_defs(
     return nothing
 end
 
-function is_method_defs_for(c::SyntaxTreeC, target_var_id::Int)
+function is_method_defs_for(c::SyntaxTree, target_var_id::Int)
     return JS.kind(c) === JS.K"method_defs" && JS.numchildren(c) == 3 &&
         JS.kind(c[1]) === JS.K"BindingId" && var_id(c[1]) == target_var_id
 end
@@ -238,7 +238,7 @@ end
 # Returns `nothing` for non-single-method scaffolding and methods with their own
 # static parameters.
 function try_build_oc_assignment(
-        ctx::JL.VariableAnalysisContext, fd::SyntaxTreeC, method_defs::SyntaxTreeC
+        ctx::JL.VariableAnalysisContext, fd::SyntaxTree, method_defs::SyntaxTree
     )
     func_name = fd[1]
     typevars = method_defs[2]
@@ -297,7 +297,7 @@ function try_build_oc_assignment(
     return JL.@ast ctx method_defs [JS.K"=" func_name oc]
 end
 
-function find_single_method_node(root::SyntaxTreeC, target_var_id::Int)
+function find_single_method_node(root::SyntaxTree, target_var_id::Int)
     node = root
     while JS.kind(node) === JS.K"block" && JS.numchildren(node) == 1
         node = node[1]
@@ -311,7 +311,7 @@ end
 
 # Detect a vararg-typed entry in the user-argtypes svec. JL lowers both `(xs...)`
 # and `(xs::T...)` to `(call core.apply_type core.Vararg <type-arg>)`.
-function argtype_is_vararg(t::SyntaxTreeC)
+function argtype_is_vararg(t::SyntaxTree)
     JS.kind(t) === JS.K"call" && JS.numchildren(t) >= 2 || return false
     callee = t[1]
     JS.kind(callee) === JS.K"core" && get_name_val(callee) == "apply_type" || return false

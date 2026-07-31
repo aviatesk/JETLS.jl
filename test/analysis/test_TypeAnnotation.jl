@@ -176,7 +176,7 @@ end
             for (; ctx3, st3, st0) in results
                 @test ctx3 isa JL.VariableAnalysisContext
                 @test st3 isa JS.SyntaxTree
-                @test infer_toplevel_tree(ctx3, st3, st0, @__MODULE__) isa JETLS.SyntaxTreeC
+                @test infer_toplevel_tree(ctx3, st3, st0, @__MODULE__) isa JETLS.SyntaxTree
             end
         end
     end

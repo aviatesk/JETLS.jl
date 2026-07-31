@@ -45,7 +45,7 @@ function cache_file_info!(
     fi0 = FileInfo(version, parsed_stream, filename, state.encoding;
         cache_tree0=true, inferred_context_cache=InferredContextCache())
     testsetinfos, any_deleted = compute_testsetinfos!(
-        server, fi0.syntax_tree0::SyntaxTreeC, prev_testsetinfos)
+        server, fi0.syntax_tree0::SyntaxTree, prev_testsetinfos)
     fi = FileInfo(fi0; testsetinfos)
     store!(state.file_cache) do cache
         Base.PersistentDict(cache, uri => fi), nothing

@@ -79,8 +79,8 @@ const SWStats  = Nothing
 const LWStats  = Nothing
 const CASStats = Nothing
 
-const SyntaxTreeC = JS.SyntaxTree
-const SyntaxListC = JS.SyntaxList
+const SyntaxTree = JS.SyntaxTree
+const SyntaxList = JS.SyntaxList
 
 include("analysis/Analyzer.jl")
 using .Analyzer

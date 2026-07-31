@@ -126,7 +126,7 @@ function compute_semantic_tokens(
     # For range requests, convert the LSP range to a byte range so we can
     # cheaply skip toplevel statements that don't overlap.
     range_bytes = range === nothing ? nothing : range_to_byte_range(fi, range)
-    iterate_toplevel_tree(st0_top) do st0::SyntaxTreeC
+    iterate_toplevel_tree(st0_top) do st0::SyntaxTree
         if range_bytes !== nothing && !overlaps_byte_range(st0, range_bytes)
             return
         end
@@ -141,7 +141,7 @@ function compute_semantic_tokens(
     return encode_semantic_tokens(raw)
 end
 
-function overlaps_byte_range(st0::SyntaxTreeC, byte_range::UnitRange{Int})
+function overlaps_byte_range(st0::SyntaxTree, byte_range::UnitRange{Int})
     JS.last_byte(st0) < first(byte_range) && return false
     JS.first_byte(st0) > last(byte_range) && return false
     return true
@@ -182,7 +182,7 @@ end
 
 function collect_semantic_tokens_for_occurrences!(
         raw::Vector{SemanticTokenTuple}, state::ServerState, uri::URI, fi::FileInfo,
-        occs::BindingOccurrencesResult, st0::SyntaxTreeC,
+        occs::BindingOccurrencesResult, st0::SyntaxTree,
     )
     # `:local` aliases for type parameters cover a superset of the corresponding
     # `:typevar` / `:static_parameter` occurrences — and for plain
@@ -209,7 +209,7 @@ function collect_semantic_tokens_for_occurrences!(
     return raw
 end
 
-function collect_type_param_names_from_tree!(names::Set{String}, st0::SyntaxTreeC)
+function collect_type_param_names_from_tree!(names::Set{String}, st0::SyntaxTree)
     traverse(st0) do node
         k = JS.kind(node)
         if k === JS.K"struct" && JS.numchildren(node) >= 2

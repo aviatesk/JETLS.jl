@@ -50,7 +50,7 @@ end
 
 """
     find_declaration(server, uri, fi, pos; soft_scope, fallback_to_definition=false) ->
-        Union{Tuple{Vector{Location}, SyntaxTreeC}, Nothing}
+        Union{Tuple{Vector{Location}, SyntaxTree}, Nothing}
 
 Core routine behind `textDocument/declaration`. On success returns the
 declaration locations for the symbol at `pos` (source-level `:decl`

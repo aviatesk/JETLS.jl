@@ -90,7 +90,7 @@ document_highlight_kind(occurrence::AnyBindingOccurrence) =
 
 function global_document_highlights!(
         highlights′::Dict{Range,DocumentHighlightKind.Ty},
-        state::ServerState, uri::URI, fi::FileInfo, st0_top::SyntaxTreeC,
+        state::ServerState, uri::URI, fi::FileInfo, st0_top::SyntaxTree,
         binfo::JL.BindingInfo,
     )
     for occurrence in find_global_binding_occurrences_from_tree!(state, uri, fi, st0_top, binfo)
@@ -102,7 +102,7 @@ end
 function local_document_highlights!(
         highlights′::Dict{Range,DocumentHighlightKind.Ty},
         state::ServerState, uri::URI, fi::FileInfo,
-        ctx3::JL.VariableAnalysisContext, st3::SyntaxTreeC,
+        ctx3::JL.VariableAnalysisContext, st3::SyntaxTree,
         binfo::JL.BindingInfo, world::UInt,
     )
     binding_occurrences = compute_binding_occurrences(ctx3, st3, world)
