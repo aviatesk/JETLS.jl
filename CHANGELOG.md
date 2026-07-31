@@ -24,8 +24,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Announcement
 
 > [!important]
-> JETLS requires Julia 1.12.2 or later.
-> It does not support Julia 1.12.1 or earlier, nor Julia 1.13+/nightly.
+> JETLS supports Julia 1.12.2 through 1.13.
+> It does not support Julia 1.12.1 or earlier, nor Julia 1.14+/nightly.
 
 > [!warning]
 > JETLS currently has a known memory leak issue where memory usage grows with each re-analysis (https://github.com/aviatesk/JETLS.jl/issues/357).
@@ -51,6 +51,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - `inference/non-boolean-cond` is now reported as [`inference/type-error/non-bool-cond`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/inference/type-error/non-bool-cond). Existing diagnostic pattern configurations that match the old code continue to apply for now, but this compatibility support may be removed in a future release.
 
 ### Added
+
+- Added Julia 1.13 compatibility, allowing JETLS to run on Julia 1.13 runtimes. JETLS selects pinned Compiler.jl sources for the active Julia runtime while retaining Julia 1.12 support.
 
 - Added the [`inference/type-error/type-assert`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/inference/type-error/type-assert) diagnostic for type assertions that inference can prove will fail:
   ```julia

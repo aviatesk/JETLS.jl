@@ -1889,7 +1889,8 @@ end
     @testset "declaration-only statements produce no hints" begin
         let code = """
             using Pkg
-            using JET: CC, JET
+            using Compiler: Compiler as CC
+            using JET: JET
             using JuliaSyntax: JuliaSyntax as JS
             import Markdown: Markdown
             export foo, bar

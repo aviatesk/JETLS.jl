@@ -75,6 +75,10 @@ module_name = "LSP"
 path = "LSP/**/*.jl"
 full_analysis = true
 
+[[initialization_options.analysis_overrides]]
+path = "Compiler/snapshots/**/*.jl"
+full_analysis = false
+
 # Just disable analysis for test files for now
 [[initialization_options.analysis_overrides]]
 path = "test/**/*.jl"

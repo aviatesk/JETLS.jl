@@ -3,7 +3,8 @@ module Interpreter
 export LSInterpreter
 
 using JuliaSyntax: JuliaSyntax as JS
-using JET: CC, JET, JuliaInterpreter
+using Compiler: Compiler as CC
+using JET: JET, JuliaInterpreter
 using ..JETLS: AnalysisExecution, JETLS, JETLS_DEV_MODE, Server,
     get_source_text, is_cancelled, send_progress, yield_to_endpoint
 using ..JETLS.URIs2
