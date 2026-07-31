@@ -841,8 +841,7 @@ function annotate_types!(
     end
 end
 
-function CC.finishinfer!(frame::CC.InferenceState, interp::ASTTypeAnnotator, cycleid::Int)
-    ret = @invoke CC.finishinfer!(frame::CC.InferenceState, interp::CC.AbstractInterpreter, cycleid::Int)
+function finish_type_annotation!(frame::CC.InferenceState, interp::ASTTypeAnnotator)
     if frame.linfo === interp.topmi
         annotate_types!(interp.annotations, code_info_stmts(interp.toptree), frame,
             interp.filter)
@@ -852,7 +851,27 @@ function CC.finishinfer!(frame::CC.InferenceState, interp::ASTTypeAnnotator, cyc
             record_oc_body_annotation_candidate!(interp, def, frame)
         end
     end
+    return nothing
+end
+
+@static if VERSION ≥ v"1.13.0-DEV.565"
+function CC.finishinfer!(
+        frame::CC.InferenceState, interp::ASTTypeAnnotator, cycleid::Int,
+        opt_cache::IdDict{Core.MethodInstance,Core.CodeInstance}
+    )
+    ret = @invoke CC.finishinfer!(
+        frame::CC.InferenceState, interp::CC.AbstractInterpreter, cycleid::Int,
+        opt_cache::IdDict{Core.MethodInstance,Core.CodeInstance})
+    finish_type_annotation!(frame, interp)
     return ret
+end
+else
+function CC.finishinfer!(frame::CC.InferenceState, interp::ASTTypeAnnotator, cycleid::Int)
+    ret = @invoke CC.finishinfer!(
+        frame::CC.InferenceState, interp::CC.AbstractInterpreter, cycleid::Int)
+    finish_type_annotation!(frame, interp)
+    return ret
+end
 end
 
 # The pending `def` entry marks the dynamic extent of the eager `check=false`
