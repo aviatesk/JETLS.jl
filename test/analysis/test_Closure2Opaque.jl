@@ -15,7 +15,7 @@ function rewrite_lower_eval(code::AbstractString)
     fi = JETLS.FileInfo(1, code, @__FILE__)
     st0_top = JETLS.build_syntax_tree(fi)
     last_value = Ref{Any}(nothing)
-    last_st3_oc = Ref{Union{JETLS.SyntaxTreeC,Nothing}}(nothing)
+    last_st3_oc = Ref{Union{JETLS.SyntaxTree,Nothing}}(nothing)
     world = Base.get_world_counter()
     JETLS.iterate_toplevel_tree(st0_top) do st0::JS.SyntaxTree
         result = JETLS.TypeAnnotation.get_inferrable_tree(st0, context_module, world)
@@ -41,7 +41,7 @@ function rewrite_only(code::AbstractString)
     context_module = lowering_module
     fi = JETLS.FileInfo(1, code, @__FILE__)
     st0_top = JETLS.build_syntax_tree(fi)
-    last_st3_oc = Ref{Union{JETLS.SyntaxTreeC,Nothing}}(nothing)
+    last_st3_oc = Ref{Union{JETLS.SyntaxTree,Nothing}}(nothing)
     world = Base.get_world_counter()
     JETLS.iterate_toplevel_tree(st0_top) do st0::JS.SyntaxTree
         result = JETLS.TypeAnnotation.get_inferrable_tree(st0, context_module, world)
@@ -55,7 +55,7 @@ end
 
 # Count `K"_opaque_closure"` nodes in `tree`. Used to verify the rewrite emits
 # exactly one OC per source-level closure (no synthetic duplication).
-function count_opaque_closures(tree::JETLS.SyntaxTreeC)
+function count_opaque_closures(tree::JETLS.SyntaxTree)
     n = JS.kind(tree) === JS.K"_opaque_closure" ? 1 : 0
     if !JS.is_leaf(tree)
         for c in JS.children(tree)

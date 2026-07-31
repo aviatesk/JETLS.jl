@@ -73,9 +73,9 @@ function handle_CodeActionRequest(
     return send(server, CodeActionResponse(; id = msg.id, result = code_actions))
 end
 
-first_syntax_node(nodes::SyntaxListC) = isempty(nodes) ? nothing : nodes[1]
+first_syntax_node(nodes::SyntaxList) = isempty(nodes) ? nothing : nodes[1]
 
-function macrocall_at_range(st0_top::SyntaxTreeC, range::UnitRange{Int})
+function macrocall_at_range(st0_top::SyntaxTree, range::UnitRange{Int})
     macrocall = first_syntax_node(byte_ancestors(
         st -> JS.kind(st) === JS.K"macrocall", st0_top, range))
     macrocall !== nothing && return macrocall
@@ -135,15 +135,15 @@ function push_code_view_action!(
     return code_actions
 end
 
-function toplevel_contains_macrocall(st0::SyntaxTreeC)
-    found = traverse(st0) do st::SyntaxTreeC
+function toplevel_contains_macrocall(st0::SyntaxTree)
+    found = traverse(st0) do st::SyntaxTree
         JS.kind(st) === JS.K"macrocall" || return nothing
         return TraversalReturn(true; terminate=true)
     end
     return found === true
 end
 
-function macrocall_name(macrocall::SyntaxTreeC)
+function macrocall_name(macrocall::SyntaxTree)
     JS.numchildren(macrocall) >= 1 || return "macro"
     return JS.sourcetext(macrocall[1])
 end

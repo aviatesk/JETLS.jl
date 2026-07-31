@@ -74,7 +74,7 @@ function closure_argnames(po::Core.PartialOpaque, nargs::Int)
 end
 
 """
-    resolve_global_const(context_module::Module, world::UInt, node::SyntaxTreeC) ->
+    resolve_global_const(context_module::Module, world::UInt, node::SyntaxTree) ->
         Core.Const | nothing
 
 Best-effort static lookup of a `K"Identifier"` or `K"."` dotted-path node as a
@@ -93,7 +93,7 @@ inputs need real inference, which the caller already attempted.
 `world` pins the binding lookup so concurrent analysis updates can't make this
 fallback observe a newer world than the rest of the request.
 """
-function resolve_global_const(context_module::Module, world::UInt, node::SyntaxTreeC)
+function resolve_global_const(context_module::Module, world::UInt, node::SyntaxTree)
     if JS.kind(node) === JS.K"Identifier" && has_name_val(node)
         sym = Symbol(name_val(node))
         Base.invoke_in_world(world, isdefinedglobal, context_module, sym) || return nothing

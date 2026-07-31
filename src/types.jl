@@ -15,10 +15,10 @@ struct TestsetResult
 end
 
 struct TestsetInfo
-    st0::SyntaxTreeC
+    st0::SyntaxTree
     result::TestsetResult
-    TestsetInfo(st0::SyntaxTreeC) = new(st0)
-    TestsetInfo(st0::SyntaxTreeC, result::TestsetResult) = new(st0, result)
+    TestsetInfo(st0::SyntaxTree) = new(st0)
+    TestsetInfo(st0::SyntaxTree, result::TestsetResult) = new(st0, result)
 end
 
 const EMPTY_TESTSETINFOS = TestsetInfo[]
@@ -60,14 +60,14 @@ end
 # `InferredTreeContext`, so annotations never outlive the analysis nor mutate
 # nodes shared with other trees.
 struct TreeAnnotations
-    types::Dict{SyntaxTreeC,Any}
-    matches::Dict{SyntaxTreeC,Vector{Core.MethodMatch}}
+    types::Dict{SyntaxTree,Any}
+    matches::Dict{SyntaxTree,Vector{Core.MethodMatch}}
 end
 TreeAnnotations() = TreeAnnotations(
-    Dict{SyntaxTreeC,Any}(), Dict{SyntaxTreeC,Vector{Core.MethodMatch}}())
+    Dict{SyntaxTree,Any}(), Dict{SyntaxTree,Vector{Core.MethodMatch}}())
 
 struct InferredTreeContext
-    inferred_tree::SyntaxTreeC
+    inferred_tree::SyntaxTree
     annotations::TreeAnnotations
     # `byte_range => kind` for the surface node each lowered node was lowered
     # from (first element of `JS.flattened_provenance`). First-write-wins,
@@ -76,7 +76,7 @@ struct InferredTreeContext
     # Every lowered node keyed by its own `byte_range`, in preorder. The
     # preorder property is load-bearing for the "last `K"call"` wins"
     # semantics in `type_for_call`.
-    by_byte_range::Dict{UnitRange{Int}, Vector{SyntaxTreeC}}
+    by_byte_range::Dict{UnitRange{Int}, Vector{SyntaxTree}}
     # Result types from typed `K"call"` nodes whose first provenance is a
     # `K"macrocall"`, keyed by the macrocall's `byte_range`.
     macrocall_types::Dict{UnitRange{Int}, Vector{Any}}
@@ -85,7 +85,7 @@ struct InferredTreeContext
     # User-vs-synthetic classification is derived per-query from
     # `user_return_form_ranges` below — @mlechu's idea.
     return_first_bytes::Vector{Int}
-    return_nodes::Vector{SyntaxTreeC}
+    return_nodes::Vector{SyntaxTree}
     # Byte ranges of every user-written `K"return"` surface form in `st3`
     # (`st3` not `st0` so macro-expansion-introduced `K"return"`s are included).
     # Consumed by `type_for_branching`.
@@ -96,7 +96,7 @@ struct InferredTreeContext
     # only when the OC whose body it's in has the queried byte range — so inner-OC noise
     # inside an outer OC body (e.g. multi-`for` comprehension, closure-of-closure) is
     # filtered when querying at the inner OC's range.
-    oc_body_scope::Dict{SyntaxTreeC,UnitRange{Int}}
+    oc_body_scope::Dict{SyntaxTree,UnitRange{Int}}
     # Refined OC argument types keyed by argument binding byte range.
     oc_argument_binding_types::Dict{UnitRange{Int},Any}
 end
@@ -119,7 +119,7 @@ struct FileInfo
     # which returns a copy safe for lowering. Unsynced files keep this `nothing`;
     # workspace-wide hot paths should rely on summary caches instead of retaining
     # `st0` for every file.
-    syntax_tree0::Union{Nothing,SyntaxTreeC}
+    syntax_tree0::Union{Nothing,SyntaxTree}
     # Intentionally unbounded within a `FileInfo`: synced documents usually receive
     # repeated type queries for the same top-level tree. Content updates replace the
     # whole `FileInfo`, and full-analysis updates clear this cache so old analysis
@@ -756,12 +756,12 @@ function ConfigManagerData(
 end
 
 struct BindingOccurrence
-    tree::SyntaxTreeC
+    tree::SyntaxTree
     kind::Symbol
 end
 
 # Types for binding occurrences cache.
-# IMPORTANT: We must not cache full `SyntaxTreeC` or `JL.BindingInfo` objects
+# IMPORTANT: We must not cache full `SyntaxTree` or `JL.BindingInfo` objects
 # as they hold references to large internal structures (syntax graphs, lowering
 # contexts). Instead, we extract only the essential information needed for
 # LSP features, i.e. mainly binding kind and location information.
@@ -778,7 +778,7 @@ end
 
 A lightweight representation of syntax tree location information.
 This struct stores only the byte range and source location, implementing the
-minimum `SyntaxTreeC` API (`first_byte`, `last_byte`, `source_location`)
+minimum `SyntaxTree` API (`first_byte`, `last_byte`, `source_location`)
 required by [`jsobj_to_range`](@ref) that convert syntax tree to LSP `Range` objects.
 """
 struct CachedSyntaxTree
@@ -786,7 +786,7 @@ struct CachedSyntaxTree
     lb::Int
     line::Int
     column::Int
-    function CachedSyntaxTree(st::SyntaxTreeC)
+    function CachedSyntaxTree(st::SyntaxTree)
         return new(JS.first_byte(st), JS.last_byte(st), JS.source_location(st)...)
     end
 end

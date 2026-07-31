@@ -92,7 +92,7 @@ function invalidate_document_symbol_cache!(state::ServerState, uri::URI)
 end
 
 function extract_document_symbols(
-        st0_top::SyntaxTreeC, fi::FileInfo, context_module::Module, world::UInt
+        st0_top::SyntaxTree, fi::FileInfo, context_module::Module, world::UInt
     )
     @assert JS.kind(st0_top) === JS.K"toplevel"
     symbols = DocumentSymbol[]
@@ -102,7 +102,7 @@ function extract_document_symbols(
 end
 
 function extract_toplevel_symbols!(
-        symbols::Vector{DocumentSymbol}, st0::SyntaxTreeC, fi::FileInfo,
+        symbols::Vector{DocumentSymbol}, st0::SyntaxTree, fi::FileInfo,
         context_module::Module, world::UInt
     )
     for i = 1:JS.numchildren(st0)
@@ -111,7 +111,7 @@ function extract_toplevel_symbols!(
 end
 
 function extract_toplevel_symbol!(
-        symbols::Vector{DocumentSymbol}, st0::SyntaxTreeC, fi::FileInfo,
+        symbols::Vector{DocumentSymbol}, st0::SyntaxTree, fi::FileInfo,
         context_module::Module, world::UInt
     )
     k = JS.kind(st0)
@@ -150,7 +150,7 @@ function extract_toplevel_symbol!(
 end
 
 function extract_module_symbol!(
-        symbols::Vector{DocumentSymbol}, st0::SyntaxTreeC, fi::FileInfo,
+        symbols::Vector{DocumentSymbol}, st0::SyntaxTree, fi::FileInfo,
         parent_context_module::Module, world::UInt
     )
     JS.numchildren(st0) ≥ 3 || return nothing
@@ -181,7 +181,7 @@ function extract_module_symbol!(
 end
 
 function extract_function_symbol!(
-        symbols::Vector{DocumentSymbol}, st0::SyntaxTreeC, fi::FileInfo,
+        symbols::Vector{DocumentSymbol}, st0::SyntaxTree, fi::FileInfo,
         context_module::Module, world::UInt
     )
     JS.numchildren(st0) ≥ 1 || return nothing
@@ -201,7 +201,7 @@ function extract_function_symbol!(
     return nothing
 end
 
-function extract_function_name(sig::SyntaxTreeC)
+function extract_function_name(sig::SyntaxTree)
     sig = unwrap_funcdef_sig(sig)
     k = JS.kind(sig)
     if k === JS.K"call"
@@ -231,7 +231,7 @@ function extract_function_name(sig::SyntaxTreeC)
     return nothing
 end
 
-function extract_dotted_name(node::SyntaxTreeC)
+function extract_dotted_name(node::SyntaxTree)
     k = JS.kind(node)
     if JS.is_identifier(k)
         return get_name_val(node)
@@ -253,7 +253,7 @@ function extract_dotted_name(node::SyntaxTreeC)
 end
 
 function extract_macro_symbol!(
-        symbols::Vector{DocumentSymbol}, st0::SyntaxTreeC, fi::FileInfo,
+        symbols::Vector{DocumentSymbol}, st0::SyntaxTree, fi::FileInfo,
         context_module::Module, world::UInt
     )
     JS.numchildren(st0) ≥ 1 || return nothing
@@ -284,7 +284,7 @@ function extract_macro_symbol!(
 end
 
 function extract_struct_symbol!(
-        symbols::Vector{DocumentSymbol}, st0::SyntaxTreeC, fi::FileInfo,
+        symbols::Vector{DocumentSymbol}, st0::SyntaxTree, fi::FileInfo,
         context_module::Module, world::UInt
     )
     JS.numchildren(st0) ≥ 2 || return nothing
@@ -328,7 +328,7 @@ function extract_struct_symbol!(
 end
 
 function extract_struct_field!(
-        symbols::Vector{DocumentSymbol}, st0::SyntaxTreeC, fi::FileInfo
+        symbols::Vector{DocumentSymbol}, st0::SyntaxTree, fi::FileInfo
     )
     field_node = st0
     k = JS.kind(st0)
@@ -352,7 +352,7 @@ function extract_struct_field!(
 end
 
 function extract_abstract_type_symbol!(
-        symbols::Vector{DocumentSymbol}, st0::SyntaxTreeC, fi::FileInfo
+        symbols::Vector{DocumentSymbol}, st0::SyntaxTree, fi::FileInfo
     )
     JS.numchildren(st0) ≥ 1 || return nothing
     name_node = def_node = st0[1]
@@ -376,7 +376,7 @@ function extract_abstract_type_symbol!(
 end
 
 function extract_primitive_type_symbol!(
-        symbols::Vector{DocumentSymbol}, st0::SyntaxTreeC, fi::FileInfo
+        symbols::Vector{DocumentSymbol}, st0::SyntaxTree, fi::FileInfo
     )
     JS.numchildren(st0) ≥ 2 || return nothing
     def_node = st0[1]
@@ -398,7 +398,7 @@ function extract_primitive_type_symbol!(
 end
 
 function extract_const_symbols!(
-        symbols::Vector{DocumentSymbol}, st0::SyntaxTreeC, fi::FileInfo,
+        symbols::Vector{DocumentSymbol}, st0::SyntaxTree, fi::FileInfo,
         context_module::Module, world::UInt
     )
     JS.numchildren(st0) ≥ 1 || return nothing
@@ -415,7 +415,7 @@ function extract_const_symbols!(
 end
 
 function extract_global_symbols!(
-        symbols::Vector{DocumentSymbol}, st0::SyntaxTreeC, fi::FileInfo,
+        symbols::Vector{DocumentSymbol}, st0::SyntaxTree, fi::FileInfo,
         context_module::Module, world::UInt
     )
     JS.numchildren(st0) ≥ 1 || return nothing
@@ -438,8 +438,8 @@ function extract_global_symbols!(
 end
 
 function extract_assignment_symbols!(
-        symbols::Vector{DocumentSymbol}, lhs::SyntaxTreeC,
-        rhs::Union{SyntaxTreeC,Nothing}, range::Range, kind::SymbolKind.Ty,
+        symbols::Vector{DocumentSymbol}, lhs::SyntaxTree,
+        rhs::Union{SyntaxTree,Nothing}, range::Range, kind::SymbolKind.Ty,
         detail::AbstractString, fi::FileInfo, context_module::Module, world::UInt
     )
     children = if rhs !== nothing && JS.kind(rhs) === JS.K"let"
@@ -505,7 +505,7 @@ function extract_assignment_symbols!(
 end
 
 function extract_toplevel_assignment_symbols!(
-        symbols::Vector{DocumentSymbol}, st0::SyntaxTreeC, fi::FileInfo,
+        symbols::Vector{DocumentSymbol}, st0::SyntaxTree, fi::FileInfo,
         context_module::Module, world::UInt
     )
     JS.numchildren(st0) ≥ 2 || return nothing
@@ -527,7 +527,7 @@ end
 
 # Short-form function definition: `f(x) = x` or `f(x) where T = x`
 function extract_short_function_symbol!(
-        symbols::Vector{DocumentSymbol}, st0::SyntaxTreeC, fi::FileInfo,
+        symbols::Vector{DocumentSymbol}, st0::SyntaxTree, fi::FileInfo,
         context_module::Module, world::UInt
     )
     JS.numchildren(st0) ≥ 2 || return nothing
@@ -552,7 +552,7 @@ extract_while_symbol!(args...) = extract_namespace_symbol!(args..., "while ")
 extract_for_symbol!(args...) = extract_namespace_symbol!(args..., "for ")
 
 function extract_namespace_symbol!(
-        symbols::Vector{DocumentSymbol}, st0::SyntaxTreeC, fi::FileInfo,
+        symbols::Vector{DocumentSymbol}, st0::SyntaxTree, fi::FileInfo,
         context_module::Module, world::UInt, prefix::AbstractString
     )
     JS.numchildren(st0) ≥ 2 || return nothing
@@ -572,10 +572,10 @@ function extract_namespace_symbol!(
 end
 
 function extract_if_symbol!(
-        symbols::Vector{DocumentSymbol}, st0::SyntaxTreeC, fi::FileInfo,
+        symbols::Vector{DocumentSymbol}, st0::SyntaxTree, fi::FileInfo,
         context_module::Module, world::UInt;
         prefix::AbstractString = "if ",
-        range_node::SyntaxTreeC = st0
+        range_node::SyntaxTree = st0
     )
     JS.numchildren(st0) ≥ 2 || return nothing
     children = DocumentSymbol[]
@@ -592,7 +592,7 @@ function extract_if_symbol!(
 end
 
 function extract_if_children!(
-        children::Vector{DocumentSymbol}, st0::SyntaxTreeC, fi::FileInfo,
+        children::Vector{DocumentSymbol}, st0::SyntaxTree, fi::FileInfo,
         context_module::Module, world::UInt
     )
     for i in 2:JS.numchildren(st0)
@@ -608,7 +608,7 @@ function extract_if_children!(
 end
 
 function extract_macrocalls_from_block!(
-        symbols::Vector{DocumentSymbol}, st::SyntaxTreeC, fi::FileInfo,
+        symbols::Vector{DocumentSymbol}, st::SyntaxTree, fi::FileInfo,
         context_module::Module, world::UInt
     )
     for i = 1:JS.numchildren(st)
@@ -621,7 +621,7 @@ function extract_macrocalls_from_block!(
 end
 
 function extract_macrocall_symbol!(
-        symbols::Vector{DocumentSymbol}, st0::SyntaxTreeC, fi::FileInfo,
+        symbols::Vector{DocumentSymbol}, st0::SyntaxTree, fi::FileInfo,
         context_module::Module, world::UInt
     )
     macro_name = get_macrocall_name(st0)
@@ -640,7 +640,7 @@ function extract_macrocall_symbol!(
 end
 
 function extract_static_if_symbol!(
-        symbols::Vector{DocumentSymbol}, st0::SyntaxTreeC, fi::FileInfo,
+        symbols::Vector{DocumentSymbol}, st0::SyntaxTree, fi::FileInfo,
         context_module::Module, world::UInt
     )
     JS.numchildren(st0) ≥ 3 || return nothing
@@ -651,7 +651,7 @@ function extract_static_if_symbol!(
     return nothing
 end
 
-function get_macrocall_name(st0::SyntaxTreeC)
+function get_macrocall_name(st0::SyntaxTree)
     JS.numchildren(st0) ≥ 1 || return nothing
     macro_node = st0[1]
     if JS.kind(macro_node) === JS.K"."
@@ -668,7 +668,7 @@ function get_macrocall_name(st0::SyntaxTreeC)
 end
 
 function extract_testset_symbol!(
-        symbols::Vector{DocumentSymbol}, st0::SyntaxTreeC, fi::FileInfo,
+        symbols::Vector{DocumentSymbol}, st0::SyntaxTree, fi::FileInfo,
         context_module::Module, world::UInt
     )
     JS.numchildren(st0) ≥ 3 || return nothing
@@ -723,7 +723,7 @@ function extract_testset_symbol!(
     return nothing
 end
 
-function extract_string_content(st0::SyntaxTreeC)
+function extract_string_content(st0::SyntaxTree)
     JS.kind(st0) === JS.K"string" || return nothing
     JS.numchildren(st0) ≥ 1 || return nothing
     first_child = st0[1]
@@ -737,7 +737,7 @@ function extract_string_content(st0::SyntaxTreeC)
     end
 end
 
-function extract_test_symbol!(symbols::Vector{DocumentSymbol}, st0::SyntaxTreeC, fi::FileInfo)
+function extract_test_symbol!(symbols::Vector{DocumentSymbol}, st0::SyntaxTree, fi::FileInfo)
     JS.numchildren(st0) ≥ 3 || return nothing
     expr_node = st0[3]
     expr_text = lstrip(JS.sourcetext(expr_node))
@@ -750,7 +750,7 @@ function extract_test_symbol!(symbols::Vector{DocumentSymbol}, st0::SyntaxTreeC,
     return nothing
 end
 
-function extract_enum_symbol!(symbols::Vector{DocumentSymbol}, st0::SyntaxTreeC, fi::FileInfo)
+function extract_enum_symbol!(symbols::Vector{DocumentSymbol}, st0::SyntaxTree, fi::FileInfo)
     JS.numchildren(st0) ≥ 3 || return nothing
     type_node = st0[3]
     name_node = type_node
@@ -774,7 +774,7 @@ function extract_enum_symbol!(symbols::Vector{DocumentSymbol}, st0::SyntaxTreeC,
 end
 
 function extract_enum_value!(
-        symbols::Vector{DocumentSymbol}, st0::SyntaxTreeC, enum_name::String, fi::FileInfo
+        symbols::Vector{DocumentSymbol}, st0::SyntaxTree, enum_name::String, fi::FileInfo
     )
     if JS.kind(st0) === JS.K"block"
         for i = 1:JS.numchildren(st0)
@@ -799,7 +799,7 @@ end
 
 # Binding-based extraction for scoped children (function body, let block, etc.)
 function extract_scoped_children(
-        st0::SyntaxTreeC, fi::FileInfo, context_module::Module, world::UInt;
+        st0::SyntaxTree, fi::FileInfo, context_module::Module, world::UInt;
         soft_scope::Bool = false
     )
     (; ctx3) = try
@@ -814,14 +814,14 @@ function extract_scoped_children(
     return @somereal extract_local_symbols_from_scopes(ctx3, parent_map, node_map, fi, root_range) Some(nothing)
 end
 
-build_node_maps(st0::SyntaxTreeC) =
-    build_node_maps!(Dict{Tuple{Int,Int},SyntaxTreeC}(),
-                     Dict{Tuple{Int,Int},SyntaxTreeC}(), st0, nothing)
+build_node_maps(st0::SyntaxTree) =
+    build_node_maps!(Dict{Tuple{Int,Int},SyntaxTree}(),
+                     Dict{Tuple{Int,Int},SyntaxTree}(), st0, nothing)
 function build_node_maps!(
-        parent_map::Dict{Tuple{Int,Int},SyntaxTreeC},
-        node_map::Dict{Tuple{Int,Int},SyntaxTreeC},
-        st0::SyntaxTreeC,
-        parent::Union{Nothing,SyntaxTreeC}
+        parent_map::Dict{Tuple{Int,Int},SyntaxTree},
+        node_map::Dict{Tuple{Int,Int},SyntaxTree},
+        st0::SyntaxTree,
+        parent::Union{Nothing,SyntaxTree}
     )
     fb, lb = JS.first_byte(st0), JS.last_byte(st0)
     if !(iszero(fb) && iszero(lb))
@@ -894,8 +894,8 @@ end
 
 struct LocalScopeContext
     ctx3::JL.VariableAnalysisContext
-    parent_map::Dict{Tuple{Int,Int},SyntaxTreeC}
-    node_map::Dict{Tuple{Int,Int},SyntaxTreeC}
+    parent_map::Dict{Tuple{Int,Int},SyntaxTree}
+    node_map::Dict{Tuple{Int,Int},SyntaxTree}
     scope_children::Dict{Int,Vector{Int}}
     func_scope_ids::Set{Int}
     func_to_scopes::Dict{Int,Vector{Int}}
@@ -907,8 +907,8 @@ end
 function LocalScopeContext(
         lctx::LocalScopeContext;
         ctx3::JL.VariableAnalysisContext = lctx.ctx3,
-        parent_map::Dict{Tuple{Int, Int}, SyntaxTreeC} = lctx.parent_map,
-        node_map::Dict{Tuple{Int, Int}, SyntaxTreeC} = lctx.node_map,
+        parent_map::Dict{Tuple{Int, Int}, SyntaxTree} = lctx.parent_map,
+        node_map::Dict{Tuple{Int, Int}, SyntaxTree} = lctx.node_map,
         scope_children::Dict{Int, Vector{Int}} = lctx.scope_children,
         func_scope_ids::Set{Int} = lctx.func_scope_ids,
         func_to_scopes::Dict{Int, Vector{Int}} = lctx.func_to_scopes,
@@ -924,8 +924,8 @@ function LocalScopeContext(
 end
 
 function extract_local_symbols_from_scopes(
-        ctx3::JL.VariableAnalysisContext, parent_map::Dict{Tuple{Int,Int},SyntaxTreeC},
-        node_map::Dict{Tuple{Int,Int},SyntaxTreeC},
+        ctx3::JL.VariableAnalysisContext, parent_map::Dict{Tuple{Int,Int},SyntaxTree},
+        node_map::Dict{Tuple{Int,Int},SyntaxTree},
         fi::FileInfo, root_range::Tuple{Int,Int}=(0,0)
     )
     scopes = ctx3.scopes
@@ -1111,7 +1111,7 @@ function extract_child_scope_symbols!(
     # (e.g. a for loop creates scope_blocks for both iteration vars and body).
     # Scopes without a construct (or whose construct is already processed)
     # are collected as "transparent" and their bindings are inlined.
-    construct_groups = Dict{Tuple{Int,Int},Tuple{SyntaxTreeC,Vector{Int}}}()
+    construct_groups = Dict{Tuple{Int,Int},Tuple{SyntaxTree,Vector{Int}}}()
     transparent_ids = Int[]
     for child_id in child_ids
         child_id in lctx.func_scope_ids && continue
@@ -1147,7 +1147,7 @@ function extract_child_scope_symbols!(
 end
 
 function push_namespace_symbol!(
-        symbols::Vector{DocumentSymbol}, construct::SyntaxTreeC,
+        symbols::Vector{DocumentSymbol}, construct::SyntaxTree,
         children::Vector{DocumentSymbol}, fi::FileInfo
     )
     JS.numchildren(construct) ≥ 1 || return nothing
@@ -1173,7 +1173,7 @@ const TRY_CLAUSE_POSITIONS =
     (("try", 1), ("catch", 3), ("else", 5), ("finally", 4))
 
 function push_try_namespace_symbol!(
-        symbols::Vector{DocumentSymbol}, try_node::SyntaxTreeC,
+        symbols::Vector{DocumentSymbol}, try_node::SyntaxTree,
         lctx::LocalScopeContext, group_ids::Vector{Int}
     )
     (; ctx3, fi) = lctx
@@ -1213,7 +1213,7 @@ end
 
 function _classify_try_clause(
         ctx3::JL.VariableAnalysisContext, scope_id::Int,
-        try_node::SyntaxTreeC
+        try_node::SyntaxTree
     )
     1 ≤ scope_id ≤ length(ctx3.scopes) || return "try"
     scope = ctx3.scopes[scope_id]
@@ -1235,8 +1235,8 @@ end
 
 function find_scope_construct(
         scope::JL.ScopeInfo,
-        parent_map::Dict{Tuple{Int,Int},SyntaxTreeC},
-        node_map::Dict{Tuple{Int,Int},SyntaxTreeC}
+        parent_map::Dict{Tuple{Int,Int},SyntaxTree},
+        node_map::Dict{Tuple{Int,Int},SyntaxTree}
     )
     prov = JS.flattened_provenance(scope.node_id)
     isempty(prov) && return nothing
@@ -1261,7 +1261,7 @@ function find_scope_construct(
 end
 
 function extract_argument_detail(
-        parent_map::Dict{Tuple{Int,Int},SyntaxTreeC}, fb::Int, lb::Int
+        parent_map::Dict{Tuple{Int,Int},SyntaxTree}, fb::Int, lb::Int
     )
     parent = get(parent_map, (fb, lb), nothing)
     detail = nothing
@@ -1280,7 +1280,7 @@ function extract_argument_detail(
 end
 
 function extract_local_variable_detail(
-        parent_map::Dict{Tuple{Int,Int},SyntaxTreeC}, fb::Int, lb::Int
+        parent_map::Dict{Tuple{Int,Int},SyntaxTree}, fb::Int, lb::Int
     )
     parent = get(parent_map, (fb, lb), nothing)
     detail = nothing
@@ -1318,11 +1318,11 @@ function extract_local_variable_detail(
     return detail
 end
 
-is_anonymous_function_rhs(st::SyntaxTreeC) = JS.kind(st) === JS.K"->" ||
+is_anonymous_function_rhs(st::SyntaxTree) = JS.kind(st) === JS.K"->" ||
     (JS.kind(st) === JS.K"function" && JS.numchildren(st) ≥ 1 && JS.kind(st[1]) !== JS.K"call")
 
 function find_anon_func_scope_ids(
-        parent_map::Dict{Tuple{Int,Int},SyntaxTreeC}, fb::Int, lb::Int,
+        parent_map::Dict{Tuple{Int,Int},SyntaxTree}, fb::Int, lb::Int,
         func_to_scopes::Dict{Int,Vector{Int}}, ctx3::JL.VariableAnalysisContext
     )
     parent = @something get(parent_map, (fb, lb), nothing) return nothing

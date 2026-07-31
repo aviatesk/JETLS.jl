@@ -51,7 +51,7 @@ end
 
 """
     find_type_definition(server, uri, fi, pos) ->
-        (locations::Vector{Location}, origin_node::SyntaxTreeC) or nothing
+        (locations::Vector{Location}, origin_node::SyntaxTree) or nothing
 
 Core routine behind `textDocument/typeDefinition`. Returns the locations of the
 type definition for the expression at `pos` together with the origin node used

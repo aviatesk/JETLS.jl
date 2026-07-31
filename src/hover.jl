@@ -230,7 +230,7 @@ binding_kind_label(kind::Symbol) =
     kind === :static_parameter ? "(static parameter)" :
     kind === :local ? "(local)" : "(global)"
 
-function symbol_literal_container(st0_top::SyntaxTreeC, node::SyntaxTreeC)
+function symbol_literal_container(st0_top::SyntaxTree, node::SyntaxTree)
     JS.is_identifier(node) || return nothing
     bas = @something byte_ancestors(st0_top, first(JS.byte_range(node))) return nothing
     length(bas) ≥ 2 || return nothing
@@ -288,7 +288,7 @@ end
 # matched, or when the signature can't be stripped cleanly. Used to narrow
 # the hover docstring lookup from "all overloads merged" to
 # "(generic + the specific method's docs)".
-function call_doc_sig(ctx::InferredTreeContext, st0_top::SyntaxTreeC, node::SyntaxTreeC)
+function call_doc_sig(ctx::InferredTreeContext, st0_top::SyntaxTree, node::SyntaxTree)
     call_node = @something enclosing_call_for_matches(st0_top, node) return nothing
     matches = @something get_matches_for_range(ctx, JS.byte_range(call_node)) return nothing
     # Require a single matched method — for ambiguous dispatch (union splits,
@@ -304,7 +304,7 @@ end
 # whose left-hand side is an instance, looks up the per-field docstring on
 # the LHS's inferred type via [`lookup_field_doc`](@ref).
 function lookup_doc_for_identifier(
-        node::SyntaxTreeC, context_module::Module, ctx::Union{Nothing,InferredTreeContext},
+        node::SyntaxTree, context_module::Module, ctx::Union{Nothing,InferredTreeContext},
         @nospecialize(sig), world::UInt
     )
     if JS.kind(node) === JS.K"." && JS.numchildren(node) ≥ 2
@@ -340,7 +340,7 @@ end
 # for nested chains (`Base.Compiler.…`). `ctx === nothing` (toplevel failed to
 # lower) skips the inference fallback and only uses the direct lookup.
 function resolve_dot_prefix_module(
-        dotprefix::SyntaxTreeC, context_module::Module,
+        dotprefix::SyntaxTree, context_module::Module,
         ctx::Union{Nothing,InferredTreeContext}, world::UInt
     )
     if JS.is_identifier(dotprefix) && (nv = get_name_val(dotprefix)) !== nothing
