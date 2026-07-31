@@ -230,7 +230,7 @@ function collect_type_inlay_hints!(
             # as `(x::T)^2`), but the rendered text looks visually ambiguous —
             # a reader can mis-group as `x::(T^2)`. Wrap the LHS operand to
             # make the grouping explicit: `(x::T)^2`.
-            if JS.is_infix_op_call(node) && JS.numchildren(node) >= 3
+            if is_source_infix_op_call(node) && JS.numchildren(node) >= 3
                 callee_rng = JS.byte_range(node[1])
                 if length(callee_rng) == 1 &&
                         fi.parsed_stream.textbuf[first(callee_rng)] == UInt8('^')
@@ -416,15 +416,15 @@ function collect_type_inlay_hints!(
         # or where trailing field/index access must stay outside the assertion.
         is_dp = byterng in paren_wrap_ranges
         is_infix_call = k in JS.KSet"call dotcall" &&
-            (JS.is_infix_op_call(node) || JS.is_postfix_op_call(node) ||
-             JS.is_prefix_op_call(node))
+            (is_source_infix_op_call(node) || is_source_postfix_op_call(node) ||
+             is_source_prefix_op_call(node))
         is_noparen_macro = k === JS.K"macrocall" && noparen_macrocall(node)
         is_logical_or_chained = k in JS.KSet"&& || comparison" ||
             (k === JS.K"if" && is_ternary(node, fi))
         needs_wrap = is_infix_call || is_noparen_macro || is_logical_or_chained || is_open_tuple(node)
         # Reuse decorative source parens when possible; for prefix unary calls,
         # start the wrap at the argument so the operator remains outside.
-        is_prefix_unary = k in JS.KSet"call dotcall" && JS.is_prefix_op_call(node) &&
+        is_prefix_unary = k in JS.KSet"call dotcall" && is_source_prefix_op_call(node) &&
             JS.numchildren(node) >= 2
         paren_start_node = is_prefix_unary ? node[2] : node
         if (needs_wrap || is_dp) && is_decoratively_parenthesized(node, fi)
@@ -684,7 +684,7 @@ end
 # `K"tuple"` exactly when it's surrounded by `(` `)` (independent of any
 # nested tuple's parens), so checking the flag is the precise discriminator.
 is_open_tuple(node::SyntaxTree) =
-    JS.kind(node) === JS.K"tuple" && !JS.has_flags(node, JS.PARENS_FLAG)
+    JS.kind(node) === JS.K"tuple" && !has_source_flags(node, JS.PARENS_FLAG)
 
 # Recover dropped `K"parens"` nodes from neighboring tokens. A preceding `(` is
 # decorative unless it belongs to a call, index, or chained-call form.

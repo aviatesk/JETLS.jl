@@ -477,6 +477,33 @@ end
     end
 end
 
+@testset "source syntax flags" begin
+    # Query parser flags from source provenance rather than the flag-free EST itself.
+    @testset "parsed EST" begin
+        let st = jlparse("a + b"; rule=:statement)
+            @test JETLS.is_source_infix_op_call(st)
+        end
+        let st = jlparse("-x"; rule=:statement)
+            @test JETLS.is_source_prefix_op_call(st)
+        end
+        let st = jlparse("M'"; rule=:statement)
+            @test JETLS.is_source_postfix_op_call(st)
+        end
+        let st = jlparse("@foo(x)"; rule=:statement)
+            @test JETLS.has_source_flags(st, JS.PARENS_FLAG)
+        end
+        let st = jlparse("@foo x"; rule=:statement)
+            @test !JETLS.has_source_flags(st, JS.PARENS_FLAG)
+        end
+    end
+    @testset "copied EST" begin
+        # `mktree` adds a provenance layer when copying a cached surface tree.
+        let st = JS.mktree(jlparse("a + b"; rule=:statement))
+            @test JETLS.is_source_infix_op_call(st)
+        end
+    end
+end
+
 @testset "noparen_macrocall" begin
     @test JETLS.noparen_macrocall(jlparse("@test true"; rule=:statement))
     @test JETLS.noparen_macrocall(jlparse("@interface AAA begin end"; rule=:statement))
@@ -1044,8 +1071,8 @@ end
     end
 
     # `K"::"`: the infix form `value::│` collapses to `value`; the anonymous
-    # prefix form `f(::T)` is preserved. Disambiguation uses the parser's
-    # infix/prefix flag, which `JS.mknode` carries through the trim.
+    # prefix form `f(::T)` is preserved. Disambiguation recovers the parser's
+    # infix/prefix flag from source provenance after trimming.
     let st = jlparse("function f(); g(binfo::); end")
         trimmed = JETLS.trim_error_nodes(st)
         @test find_first_kind(trimmed, JS.K"::") === nothing
@@ -1055,7 +1082,7 @@ end
         trimmed = JETLS.trim_error_nodes(st)
         ascription = find_first_kind(trimmed, JS.K"::")
         @test ascription !== nothing
-        @test JS.is_prefix_op_call(ascription)
+        @test JETLS.is_source_prefix_op_call(ascription)
         @test JS.numchildren(ascription) == 1
         @test JS.kind(ascription[1]) === JS.K"Identifier"
         @test JETLS.get_name_val(ascription[1]) == "Int"

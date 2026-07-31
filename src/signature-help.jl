@@ -420,7 +420,7 @@ const empty_siginfos = SignatureInformation[]
 function is_relevant_call(call::SyntaxTree)
     JS.kind(call) in CALL_KINDS &&
         # don't show help for a+b, M', etc., where call[1] isn't the function
-        !(JS.is_infix_op_call(call) || JS.is_postfix_op_call(call)) &&
+        !(is_source_infix_op_call(call) || is_source_postfix_op_call(call)) &&
         # K"." is also used for member access (Base.sin) — only treat it as a
         # call when the second child is K"tuple" (i.e. broadcasting f.(args))
         !(JS.kind(call) === JS.K"." && (JS.numchildren(call) < 2 || JS.kind(call[2]) !== JS.K"tuple"))

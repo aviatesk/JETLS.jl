@@ -19,6 +19,12 @@ function build_syntax_tree(fi::FileInfo)
     return copy_syntax_tree(fi.syntax_tree0)
 end
 
+source_syntax_head(st::SyntaxTree) = JS.head(JS.prov_end(st))
+has_source_flags(st::SyntaxTree, flags::UInt16) = JS.has_flags(source_syntax_head(st), flags)
+is_source_infix_op_call(st::SyntaxTree) = JS.is_infix_op_call(source_syntax_head(st))
+is_source_prefix_op_call(st::SyntaxTree) = JS.is_prefix_op_call(source_syntax_head(st))
+is_source_postfix_op_call(st::SyntaxTree) = JS.is_postfix_op_call(source_syntax_head(st))
+
 # kinds whose `value` holds the identifier name (see `JL.syntax_name`)
 const NAME_VAL_KINDS = JS.KSet"""
 Identifier Placeholder Symbol core top globalref symboliclabel symbolicgoto
@@ -58,9 +64,8 @@ function _without_kinds(st::SyntaxTree, kinds::Tuple{Vararg{JS.Kind}})
         changed |= child_changed
         isnothing(new_child) || push!(new_children, new_child)
     end
-    # `mknode` copies all attrs (kind, syntax_flags, value, ...) from `st`, so
-    # we don't lose the parser's infix/prefix tagging that downstream repair
-    # passes need to disambiguate trimmed `(:: x)` from anonymous `(:: T)`.
+    # `mknode` preserves the provenance chain, so downstream repairs can recover
+    # parser flags after trimming.
     new_node = changed ? JS.mknode(st, new_children) : st
     return (new_node, changed)
 end
@@ -131,10 +136,10 @@ function _repair_node(st0::SyntaxTree, new_children::JS.SyntaxList)
         return new_children[1]
     elseif k in JS.KSet"&& ||" && length(new_children) == 1
         return new_children[1]
-    elseif k === JS.K"::" && length(new_children) == 1 && JS.is_infix_op_call(st0)
+    elseif k === JS.K"::" && length(new_children) == 1 && is_source_infix_op_call(st0)
         # `(:: x)` can mean either a trimmed `value::│` (infix, the user was typing
         # a type annotation) or an anonymous `::T` (prefix, valid as a function arg slot).
-        # The parser's infix/prefix flag — preserved through trimming by `JS.mknode` —
+        # The parser's infix/prefix flag, recovered from source provenance after trimming,
         # disambiguates them, so we only collapse the infix case.
         return new_children[1]
     end
@@ -1178,7 +1183,7 @@ is_special_macrocall(st0::SyntaxTree) =
 
 noparen_macrocall(st0::SyntaxTree) =
     JS.kind(st0) === JS.K"macrocall" &&
-    !JS.has_flags(st0, JS.PARENS_FLAG) &&
+    !has_source_flags(st0, JS.PARENS_FLAG) &&
     !is_special_macrocall(st0)
 
 """

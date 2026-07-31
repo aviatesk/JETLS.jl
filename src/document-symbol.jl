@@ -168,7 +168,7 @@ function extract_module_symbol!(
     if JS.kind(body) === JS.K"block"
         extract_toplevel_symbols!(children, body, fi, context_module, world)
     end
-    is_baremodule = JS.has_flags(st0, JS.BARE_MODULE_FLAG)
+    is_baremodule = has_source_flags(st0, JS.BARE_MODULE_FLAG)
     detail = (is_baremodule ? "baremodule " : "module ") * name
     push!(symbols, DocumentSymbol(;
         name,
@@ -189,7 +189,7 @@ function extract_function_symbol!(
     name, name_node = @something extract_function_name(sig) return nothing
     children = @something extract_scoped_children(
         st0, fi, context_module, world) Some(nothing)
-    is_short_form = JS.has_flags(st0, JS.SHORT_FORM_FUNCTION_FLAG)
+    is_short_form = has_source_flags(st0, JS.SHORT_FORM_FUNCTION_FLAG)
     detail = is_short_form ? JS.sourcetext(sig) * " =" : "function " * JS.sourcetext(sig)
     push!(symbols, DocumentSymbol(;
         name,
@@ -299,7 +299,7 @@ function extract_struct_symbol!(
         name_node = name_node[1]
     end
     name = @something get_name_val(name_node) return nothing
-    is_mutable = JS.has_flags(st0, JS.MUTABLE_FLAG)
+    is_mutable = has_source_flags(st0, JS.MUTABLE_FLAG)
     detail = (is_mutable ? "mutable struct " : "struct ") * lstrip(JS.sourcetext(sig_node))
     children = DocumentSymbol[]
     if JS.numchildren(st0) ≥ 3
