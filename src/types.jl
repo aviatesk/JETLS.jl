@@ -114,15 +114,16 @@ struct FileInfo
     filename::String
     encoding::LSP.PositionEncodingKind.Ty
     testsetinfos::Vector{TestsetInfo}
-    # `st0` cache for synchronized documents. Access through
-    # `build_syntax_tree`, which returns a copy safe for lowering. Unsynced files
-    # keep this `nothing`; workspace-wide hot paths should rely on summary caches
-    # instead of retaining `st0` for every file.
+    # `st0` cache for synchronized documents, built from `parsed_stream` when the
+    # constructor is given `cache_tree0=true`. Access through `build_syntax_tree`,
+    # which returns a copy safe for lowering. Unsynced files keep this `nothing`;
+    # workspace-wide hot paths should rely on summary caches instead of retaining
+    # `st0` for every file.
     syntax_tree0::Union{Nothing,SyntaxTreeC}
     # Intentionally unbounded within a `FileInfo`: synced documents usually receive
     # repeated type queries for the same top-level tree. Content updates replace the
     # whole `FileInfo`, and full-analysis updates clear this cache so old analysis
-    # worlds can be released. Unlike the pruned `syntax_tree0` cache, inferred
+    # worlds can be released. Unlike the `syntax_tree0` cache, inferred
     # contexts are several times heavier; e.g. caching them for unsynced workspace
     # files would retain roughly 140 MiB for JETLS' own `src/`, so keep this `nothing`
     # outside synchronized documents.
@@ -137,9 +138,11 @@ struct FileInfo
             version::Int, parsed_stream::JS.ParseStream, filename::AbstractString,
             encoding::LSP.PositionEncodingKind.Ty = LSP.PositionEncodingKind.UTF16,
             testsetinfos::Vector{TestsetInfo} = EMPTY_TESTSETINFOS;
-            syntax_tree0::Union{Nothing,SyntaxTreeC} = nothing,
+            cache_tree0::Bool = false,
             inferred_context_cache::Union{Nothing,InferredContextCache} = nothing
         )
+        syntax_tree0 = cache_tree0 ?
+            JS.build_tree(JS.SyntaxTree, parsed_stream; filename) : nothing
         line_starts = build_line_starts(parsed_stream.textbuf)
         new(version, parsed_stream, filename, encoding, testsetinfos, syntax_tree0,
             inferred_context_cache, line_starts)
