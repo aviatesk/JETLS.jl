@@ -1,10 +1,22 @@
+"""
+    copy_syntax_tree(st0::SyntaxTreeC) -> SyntaxTreeC
+
+Lightweight per-read copy for shared syntax tree caches. The lowering pipeline
+mutates nodes in place (`JL.rebase_layers` runs `JS.fill_context!` on
+context-free trees), so readers of a shared cache must lower a copy.
+`JS.mktree` rebuilds every node while sharing the `source` chain —
+`fill_context!` recurses only over `children`, so the cached original stays
+untouched — and is ~10x cheaper than `JS.copy_ast`, which would also deep-copy
+the parse tree behind `source`. Nodes aliased within the tree are duplicated
+(the same normalization `JS.unalias_nodes` performs).
+"""
+copy_syntax_tree(st0::SyntaxTreeC) = JS.mktree(st0)
+
 function build_syntax_tree(fi::FileInfo)
     if fi.syntax_tree0 === nothing
         return JS.build_tree(JS.SyntaxTree, fi.parsed_stream; filename=fi.filename)
     end
-    # The lowering pipeline can mutate nodes in place (e.g. `JS.fill_context!`),
-    # so we need to create a copy for each read to avoid race conditions.
-    return JS.copy_ast(fi.syntax_tree0)
+    return copy_syntax_tree(fi.syntax_tree0)
 end
 
 # kinds whose `value` holds the identifier name (see `JL.syntax_name`)
