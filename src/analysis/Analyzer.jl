@@ -11,8 +11,9 @@ export BoundsErrorReport, FieldErrorReport, KeywordTypeErrorReport, MethodErrorR
 export RelatedEntryFrame, RelatedFrame, RelatedFrameKind, RelatedOriginFrame, RelatedViaFrame
 
 using Core.IR
+using Compiler: Compiler as CC
 using JET.JETInterface
-using JET: CC, JET
+using JET: JET
 
 using ..JETLS: AnalysisEntry, JETLS_DEV_MODE
 using ..LSP

@@ -150,7 +150,8 @@ types to `Any`.
 module TypeAnnotation
 
 using Core.IR
-using JET: CC, JET
+using Compiler: Compiler as CC
+using JET: JET
 using ..JETLS: InferredContextCache, InferredContextCacheData, SyntaxTree,
     TraversalReturn, TreeAnnotations
 using ..JETLS: JETLS_DEBUG_LOWERING, JETLS_DEV_MODE, JL, JS

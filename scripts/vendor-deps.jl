@@ -102,22 +102,53 @@ function uuid_to_jl_hex_tuple(uuid::UUID)
     return "($hi, $lo)"
 end
 
+function compiler_snapshot_sources(vendor_pkg_dir::AbstractString)
+    config_path = joinpath(vendor_pkg_dir, "snapshots.toml")
+    isfile(config_path) ||
+        error("Compiler snapshot config not found: $config_path")
+
+    config = TOML.parsefile(config_path)
+    snapshots = get(config, "snapshots", nothing)
+    snapshots isa Dict{String,Any} ||
+        error("Compiler snapshot config must define a `snapshots` table")
+
+    source_files = String[]
+    for (label, snapshot) in snapshots
+        snapshot isa Dict{String,Any} ||
+            error("Compiler snapshot `$label` must be a table")
+        destination = get(snapshot, "destination", nothing)
+        destination isa String ||
+            error("Compiler snapshot `$label` must define `destination`")
+
+        source_file = normpath(
+            joinpath(vendor_pkg_dir, destination, "src", "Compiler.jl"))
+        relative_path = relpath(source_file, vendor_pkg_dir)
+        any(==(".."), splitpath(relative_path)) &&
+            error("Compiler snapshot `$label` escapes the package directory")
+        isfile(source_file) ||
+            error("Compiler snapshot `$label` is missing `src/Compiler.jl`")
+        push!(source_files, source_file)
+    end
+    isempty(source_files) && error("Compiler sources must define a snapshot")
+    sort!(source_files)
+    return source_files
+end
+
 function rewrite_compiler_module_uuid!(
         vendor_pkg_dir::AbstractString,
         original_uuid::UUID,
         new_uuid::UUID
     )
-    src_file = joinpath(vendor_pkg_dir, "src", "Compiler.jl")
-    isfile(src_file) || return
-
-    content = read(src_file, String)
     old_hex = uuid_to_jl_hex_tuple(original_uuid)
     new_hex = uuid_to_jl_hex_tuple(new_uuid)
-    contains(content, old_hex) || return
 
-    new_content = replace(content, old_hex => new_hex)
-    write(src_file, new_content)
-    @info "Rewrote jl_set_module_uuid in $src_file: $old_hex => $new_hex"
+    for source_file in compiler_snapshot_sources(vendor_pkg_dir)
+        content = read(source_file, String)
+        contains(content, old_hex) ||
+            error("Expected Compiler UUID $old_hex in $source_file")
+        write(source_file, replace(content, old_hex => new_hex))
+        @info "Rewrote jl_set_module_uuid in $source_file: $old_hex => $new_hex"
+    end
 end
 
 function rewrite_package_uuid(vendor_pkg_dir::AbstractString, new_uuid::UUID)

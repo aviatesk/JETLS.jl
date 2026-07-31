@@ -341,6 +341,33 @@ Both scripts support a `--check` flag that exits with an error
 if the output is out of date. CI runs them in this mode to
 ensure the generated files are kept in sync.
 
+## Updating Compiler.jl snapshots
+
+JET and JETLS use the local [`Compiler`](./Compiler/) package. Its
+Julia-version-specific sources are generated from the exact Julia commits
+recorded in [`Compiler/snapshots.toml`](./Compiler/snapshots.toml) and
+committed as regular files.
+
+To update or add a snapshot, edit `Compiler/snapshots.toml` and run:
+
+```bash
+julia --startup-file=no Compiler/update-snapshots.jl
+```
+
+Each snapshot has an explicit half-open Julia version range. The script rejects
+overlapping ranges and regenerates the version-selection logic in
+[`Compiler/src/Compiler.jl`](./Compiler/src/Compiler.jl).
+Julia versions outside all configured ranges fail with an explicit error.
+
+Verify that committed sources match the configured commits with:
+
+```bash
+julia --startup-file=no Compiler/update-snapshots.jl --check
+```
+
+See [`Compiler/README.md`](./Compiler/README.md) for the source layout and
+selection rules.
+
 ## Release process
 
 JETLS avoids dependency conflicts with packages being analyzed by rewriting the
@@ -440,8 +467,10 @@ The `prepare-release.sh` script automates the following steps:
 
 > [!note]
 > `vendor-deps.jl` generates UUIDs using `uuid5(original_uuid, "JETLS-vendor")`.
-> This is deterministic, so the same vendored UUID is always generated for the same
-> original UUID, ensuring consistency across multiple vendoring operations
+> This is deterministic, so the same vendored UUID is always generated for the
+> same original UUID, ensuring consistency across vendoring operations. For
+> `Compiler`, the script also rewrites the module UUID embedded in every
+> configured snapshot.
 
 > [!note]
 > To check which `master` commits are not yet included in `release`:

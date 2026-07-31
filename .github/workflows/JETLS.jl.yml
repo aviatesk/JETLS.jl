@@ -8,6 +8,7 @@ on:
       - "src/**"
       - "test/**"
       - "LSP/**"
+      - "Compiler/**"
       - "schemas/**"
       - "scripts/schema/**"
       - "Project.toml"
@@ -20,6 +21,7 @@ on:
       - "src/**"
       - "test/**"
       - "LSP/**"
+      - "Compiler/**"
       - "schemas/**"
       - "scripts/schema/**"
       - "Project.toml"
@@ -40,9 +42,9 @@ jobs:
           - version: "1.12" # minimum version supported
             os: ubuntu-latest
             arch: x64
-          # - version: "1.13-nightly" # next release
-          #   os: ubuntu-latest
-          #   arch: x64
+          - version: "1.13-nightly" # next release
+            os: ubuntu-latest
+            arch: x64
           # - version: "nightly" # dev
           #   os: ubuntu-latest
           #   arch: x64
@@ -153,6 +155,17 @@ jobs:
 
   test_app:
     uses: ./.github/workflows/test-app.yml
+
+  compiler-snapshots:
+    name: Check Compiler snapshots
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: "1"
+          arch: x64
+      - run: julia --startup-file=no Compiler/update-snapshots.jl --check
 
   check_schemas:
     uses: ./.github/workflows/check-schemas.yml

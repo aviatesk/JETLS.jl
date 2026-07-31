@@ -31,8 +31,8 @@ You need to install the `jetls` executable separately before using any editor in
 
 ### [Prerequisites](@id index/server-installation/prerequisites)
 
-JETLS requires [Julia v1.12.2](https://julialang.org/downloads) or later.
-It does not support Julia 1.12.1 or earlier, nor Julia 1.13+/nightly.
+JETLS supports [Julia v1.12.2](https://julialang.org/downloads) through Julia 1.13.
+It does not support Julia 1.12.1 or earlier, nor Julia 1.14+/nightly.
 
 ### [Installing the `jetls` executable](@id index/server-installation/install)
 

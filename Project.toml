@@ -1,7 +1,6 @@
 name = "JETLS"
 uuid = "a3b70258-0602-4ee2-b5a6-54c2470400db"
 version = "0.0.0"
-Compiler = "avi/JETLS-Compiler-head"
 JET = "avi/JET-JETLS-head"
 JuliaLowering = "avi/follow-62474"
 JuliaSyntax = "avi/follow-62474"
@@ -29,7 +28,7 @@ TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [sources]
-Compiler = {rev = "4a5bbcb016", subdir = "Compiler", url = "https://github.com/JuliaLang/julia"}
+Compiler = {path = "Compiler"}
 JET = {rev = "10eedc16", url = "https://github.com/aviatesk/JET.jl"}
 JuliaLowering = {rev = "c3abf87235", subdir = "JuliaLowering", url = "https://github.com/JuliaLang/julia"}
 JuliaSyntax = {rev = "c3abf87235", subdir = "JuliaSyntax", url = "https://github.com/JuliaLang/julia"}
@@ -52,7 +51,7 @@ Revise = "3.16"
 Sockets = "1.11.0"
 TOML = "1.0.3"
 Test = "1.11.0"
-julia = "1.12.2"
+julia = "1.12.2 - 1.13"
 
 [apps.jetls]
 julia_flags = ["--startup-file=no", "--history-file=no", "--threads=auto"]

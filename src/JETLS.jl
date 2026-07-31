@@ -58,7 +58,8 @@ using LSP.Communication: Endpoint
 const MessageId = Union{String, Int}
 
 using Pkg
-using JET: CC, JET
+using Compiler: Compiler as CC
+using JET: JET
 using JuliaSyntax: JuliaSyntax as JS
 using JuliaLowering: JuliaLowering as JL
 using REPL: REPL # loading REPL is necessary to make `Base.Docs.doc(::Base.Docs.Binding)` work
