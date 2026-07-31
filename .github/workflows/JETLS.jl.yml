@@ -96,6 +96,26 @@ jobs:
       - uses: julia-actions/julia-buildpkg@latest
       - uses: julia-actions/julia-runtest@latest
 
+  JET_DEV_MODE:
+    name: Test with `JET_DEV_MODE = true`
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: julia-actions/setup-julia@v1
+        with:
+          version: "1"
+          arch: x64
+      - uses: julia-actions/cache@v2
+      - name: set LocalPreferences.toml
+        working-directory: .
+        run: |
+          echo '
+          [JET]
+          JET_DEV_MODE = true
+          ' > LocalPreferences.toml
+      - uses: julia-actions/julia-buildpkg@latest
+      - uses: julia-actions/julia-runtest@latest
+
   JETLS_DEBUG_LOWERING:
     name: Test with `JETLS_DEBUG_LOWERING = true`
     runs-on: ubuntu-latest
