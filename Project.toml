@@ -3,8 +3,8 @@ uuid = "a3b70258-0602-4ee2-b5a6-54c2470400db"
 version = "0.0.0"
 Compiler = "avi/JETLS-Compiler-head"
 JET = "avi/JET-JETLS-head"
-JuliaLowering = "master"
-JuliaSyntax = "master"
+JuliaLowering = "avi/follow-62474"
+JuliaSyntax = "avi/follow-62474"
 authors = ["Shuhei Kadowaki <aviatesk@gmail.com>"]
 
 [workspace]
@@ -31,8 +31,8 @@ Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 [sources]
 Compiler = {rev = "4a5bbcb016", subdir = "Compiler", url = "https://github.com/JuliaLang/julia"}
 JET = {rev = "10eedc16", url = "https://github.com/aviatesk/JET.jl"}
-JuliaLowering = {rev = "b531c73d15", subdir = "JuliaLowering", url = "https://github.com/JuliaLang/julia"}
-JuliaSyntax = {rev = "b531c73d15", subdir = "JuliaSyntax", url = "https://github.com/JuliaLang/julia"}
+JuliaLowering = {rev = "c3abf87235", subdir = "JuliaLowering", url = "https://github.com/JuliaLang/julia"}
+JuliaSyntax = {rev = "c3abf87235", subdir = "JuliaSyntax", url = "https://github.com/JuliaLang/julia"}
 LSP = {path = "LSP"}
 
 [compat]
