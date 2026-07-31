@@ -112,9 +112,6 @@ jobs:
           echo '
           [JETLS]
           JETLS_DEBUG_LOWERING = true
-
-          [JET] # allow JET to be loaded on nightly
-          JET_DEV_MODE = true
           ' > LocalPreferences.toml
       - uses: julia-actions/julia-buildpkg@latest
       - uses: julia-actions/julia-runtest@latest
@@ -129,13 +126,6 @@ jobs:
           version: "1.12" # most stable version
           arch: x64
       - uses: julia-actions/cache@v2
-      - name: set LocalPreferences.toml
-        working-directory: .
-        run: |
-          echo '
-          [JET] # allow JET to be loaded on nightly
-          JET_DEV_MODE = true
-          ' > LocalPreferences.toml
       - uses: julia-actions/julia-buildpkg@latest
       - uses: julia-actions/julia-runtest@latest
         env:
@@ -163,9 +153,6 @@ jobs:
           echo '
           [JETLS]
           JETLS_DEV_MODE = true
-
-          [JET]
-          JET_DEV_MODE = true # allow JET to be loaded on nightly
           ' > LocalPreferences.toml
       - uses: julia-actions/julia-buildpkg@latest
       - name: run jetls check
