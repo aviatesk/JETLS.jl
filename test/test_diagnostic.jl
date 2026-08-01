@@ -77,6 +77,194 @@ end
     end
 end
 
+function get_open_diagnostics(
+        root_path::AbstractString, script_path::AbstractString, code::AbstractString;
+        settings = nothing
+    )
+    uri = filepath2uri(script_path)
+    rootUri = filepath2uri(root_path)
+    diagnostics = Diagnostic[]
+    withserver(; rootUri, settings) do (; writereadmsg)
+        (; raw_res) = writereadmsg(make_DidOpenTextDocumentNotification(uri, code))
+        @test raw_res isa PublishDiagnosticsNotification
+        append!(diagnostics, raw_res.params.diagnostics)
+    end
+    return diagnostics
+end
+
+const issue464_code = """
+USE_PULSE = false
+
+if USE_PULSE
+    SIMULATE = false
+else
+    SIMULATE = true
+end
+"""
+
+function get_included_diagnostics(
+        root_path::AbstractString, main_path::AbstractString,
+        included_path::AbstractString, settings
+    )
+    main_uri = filepath2uri(main_path)
+    included_uri = filepath2uri(included_path)
+    rootUri = filepath2uri(root_path)
+    diagnostics = Diagnostic[]
+    withserver(; rootUri, settings) do (; writereadmsg)
+        (; raw_res) = writereadmsg(
+            make_DidOpenTextDocumentNotification(main_uri, read(main_path, String));
+            read=2)
+        included_response = only(filter(raw_res) do response
+            return response isa PublishDiagnosticsNotification &&
+                response.params.uri == included_uri
+        end)
+        append!(diagnostics, included_response.params.diagnostics)
+    end
+    return diagnostics
+end
+
+function concretization_settings(path::Union{Nothing,String} = nothing)
+    pattern = Dict{String,Any}("pattern" => "USE_PULSE = x_")
+    path === nothing || (pattern["path"] = path)
+    return Dict{String,Any}(
+        "full_analysis" => Dict{String,Any}(
+            "concretization_patterns" => Any[pattern]))
+end
+
+@testset HierarchicalTestSet "missing concretization diagnostic" begin
+    @testset "`missing_concretization_data` preserves assignment syntax" begin
+        for (expression, expected) in (
+                (:(RandomType::DataType = rand((Bool, Int))), "RandomType::DataType = x_"),
+                (:(global RandomType = rand((Bool, Int))), "global RandomType = x_"),
+                (:(const RandomType = rand((Bool, Int))), "const RandomType = x_"),
+                (:(outer = RandomType = rand((Bool, Int))), "outer = (RandomType = x_)"),
+                # non-standard names need `var"..."` quoting to stay parseable
+                (Expr(:(=), Symbol("USE PULSE"), :(rand(Bool))), "var\"USE PULSE\" = x_"),
+            )
+            assignment = JETLS.JET.toplevel_assignment(expression, "config.jl", 1)
+            report = JETLS.JET.MissingConcretizationErrorReport(
+                false, GlobalRef(Main, :RandomType), assignment, "use.jl", 1)
+            data = JETLS.missing_concretization_data(report)
+            @test data.pattern == expected
+            # JET strips line numbers off configured patterns before matching
+            @test JETLS.JET.striplines(Meta.parse(data.pattern)) == assignment.pattern
+            @test data.assignment_file == "config.jl"
+        end
+        # no pattern could be derived: no `data`, hence no quick fix
+        let assignment = JETLS.JET.toplevel_assignment(
+                :(let; global RandomType = rand(Bool); end), "config.jl", 1)
+            @test assignment.pattern === nothing
+            report = JETLS.JET.MissingConcretizationErrorReport(
+                false, GlobalRef(Main, :RandomType), assignment, "use.jl", 1)
+            @test JETLS.missing_concretization_data(report) === nothing
+        end
+        let report = JETLS.JET.MissingConcretizationErrorReport(
+                false, GlobalRef(Main, :RandomType), nothing, "use.jl", 1)
+            @test JETLS.missing_concretization_data(report) === nothing
+        end
+    end
+
+    @testset "diagnostic reported for unconcretized global" begin
+        mktempdir() do dir
+            script_path = joinpath(dir, "issue464.jl")
+            write(script_path, issue464_code)
+            diagnostics = get_open_diagnostics(dir, script_path, issue464_code)
+            diag = only(filter(d -> d.code == JETLS.TOPLEVEL_MISSING_CONCRETIZATION_CODE, diagnostics))
+            @test diag.data isa MissingConcretizationData
+            @test diag.data.name == "USE_PULSE"
+            @test diag.data.pattern == "USE_PULSE = x_"
+            @test diag.data.assignment_file == script_path
+        end
+    end
+
+    # writing a pattern that covers the enclosing statement is left to the user, so no
+    # `data` is attached and no quick fix is offered; the message still locates it
+    @testset "no `data` when no pattern can be derived" begin
+        mktempdir() do dir
+            script_path = joinpath(dir, "nested.jl")
+            code = """
+                let
+                    global USE_PULSE = rand(Bool)
+                end
+
+                if USE_PULSE
+                    SIMULATE = false
+                else
+                    SIMULATE = true
+                end
+                """
+            write(script_path, code)
+            diagnostics = get_open_diagnostics(dir, script_path, code)
+            diag = only(filter(d -> d.code == JETLS.TOPLEVEL_MISSING_CONCRETIZATION_CODE, diagnostics))
+            @test diag.data === nothing
+            @test occursin("could not derive one from the statement holding that", diag.message)
+            # the `let` statement, while the diagnostic is anchored at the use site
+            @test occursin("the assignment at $script_path:1", diag.message)
+            @test diag.range.start.line == 4
+        end
+    end
+
+    @testset "suppressed by `.JETLSConfig.toml`" begin
+        mktempdir() do dir
+            script_path = joinpath(dir, "issue464.jl")
+            write(script_path, issue464_code)
+            write(joinpath(dir, ".JETLSConfig.toml"), """
+                [[full_analysis.concretization_patterns]]
+                pattern = "USE_PULSE = x_"
+                """)
+            diagnostics = get_open_diagnostics(dir, script_path, issue464_code)
+            @test !any(d -> d.code == JETLS.TOPLEVEL_MISSING_CONCRETIZATION_CODE, diagnostics)
+        end
+    end
+
+    @testset "suppressed by LSP settings" begin
+        mktempdir() do dir
+            script_path = joinpath(dir, "issue464.jl")
+            write(script_path, issue464_code)
+            settings = concretization_settings("issue464.jl")
+            diagnostics = get_open_diagnostics(dir, script_path, issue464_code; settings)
+            @test !any(d -> d.code == JETLS.TOPLEVEL_MISSING_CONCRETIZATION_CODE, diagnostics)
+        end
+    end
+
+    @testset "pattern `path` scoping with `include`" begin
+        mktempdir() do dir
+            main_path = joinpath(dir, "main.jl")
+            included_path = joinpath(dir, "config.jl")
+            write(main_path, "include(\"config.jl\")\n")
+            write(included_path, issue464_code)
+
+            @testset "path of the includer does not match" begin
+                diagnostics = get_included_diagnostics(dir, main_path, included_path, concretization_settings("main.jl"))
+                @test any(d -> d.code == JETLS.TOPLEVEL_MISSING_CONCRETIZATION_CODE, diagnostics)
+            end
+
+            @testset "path of the included file matches" begin
+                diagnostics = get_included_diagnostics(dir, main_path, included_path, concretization_settings("config.jl"))
+                @test !any(d -> d.code == JETLS.TOPLEVEL_MISSING_CONCRETIZATION_CODE, diagnostics)
+            end
+        end
+    end
+
+    @testset "configured patterns do not apply outside the workspace" begin
+        mktempdir() do dir
+            workspace = joinpath(dir, "workspace")
+            mkpath(workspace)
+            main_path = joinpath(workspace, "main.jl")
+            included_path = joinpath(dir, "config.jl")
+            write(main_path, "include($(repr(included_path)))\n")
+            write(included_path, issue464_code)
+            for settings in (
+                    concretization_settings(),
+                    concretization_settings(replace(included_path, '\\' => '/')),
+                )
+                diagnostics = get_included_diagnostics(workspace, main_path, included_path, settings)
+                @test any(d -> d.code == JETLS.TOPLEVEL_MISSING_CONCRETIZATION_CODE, diagnostics)
+            end
+        end
+    end
+end
+
 @testset "inference diagnostic (script analysis)" begin
     scriptcode = """
     struct MyStruct

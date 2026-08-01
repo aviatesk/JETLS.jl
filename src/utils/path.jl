@@ -82,6 +82,15 @@ end
 _paths_equal(a::AbstractString, b::AbstractString) =
     @static Sys.iswindows() ? lowercase(a) == lowercase(b) : a == b
 
+function escape_path_for_glob(path::AbstractString)
+    io = IOBuffer()
+    for c in glob_candidate_path(path, nothing)
+        c in ('\\', '*', '?', '[', ']') && write(io, '\\')
+        write(io, c)
+    end
+    return String(take!(io))
+end
+
 """
     fix_build_path(path::AbstractString) -> fixed_path::AbstractString
 

@@ -5,6 +5,7 @@ using JETLS
 using JETLS: JL, JS
 using JETLS.LSP
 using JETLS.LSP.URIs2
+using JETLS.TOML
 
 include(normpath(pkgdir(JETLS), "test", "setup.jl"))
 include(normpath(pkgdir(JETLS), "test", "jsjl-utils.jl"))
@@ -510,6 +511,150 @@ end
         @test edit.newText == "    global x\n"
         @test edit.range.start == positions[1]
         @test edit.range.var"end" == positions[1]
+    end
+end
+
+function missing_concretization_diagnostic(assignment_file::String)
+    return Diagnostic(;
+        range = JETLS.line_range(1),
+        severity = DiagnosticSeverity.Error,
+        message = "`USE_PULSE` is not concretized",
+        source = JETLS.DIAGNOSTIC_SOURCE_SAVE,
+        code = JETLS.TOPLEVEL_MISSING_CONCRETIZATION_CODE,
+        data = MissingConcretizationData("USE_PULSE", "USE_PULSE = x_", assignment_file))
+end
+
+@testset HierarchicalTestSet "missing concretization code actions" begin
+    @testset "`jetls_config_append_text` appends a new pattern" begin
+        text = "foo = 1\n"
+        appended = JETLS.jetls_config_append_text(text, "USE_PULSE = x_", "issue464.jl")
+        parsed = TOML.parse(text * appended)
+        pattern_config = only(parsed["full_analysis"]["concretization_patterns"])
+        @test pattern_config["pattern"] == "USE_PULSE = x_"
+        @test pattern_config["path"] == "issue464.jl"
+    end
+
+    @testset "`format_jetls_concretization_pattern` escapes special characters" begin
+        pattern = "A\nB\t\u0001\\\"雪"
+        path = "src/A\nB\t\u0001\\\"雪.jl"
+        text = JETLS.format_jetls_concretization_pattern(pattern, path)
+        parsed = TOML.parse(text)
+        pattern_config = only(parsed["full_analysis"]["concretization_patterns"])
+        @test pattern_config["pattern"] == pattern
+        @test pattern_config["path"] == path
+    end
+
+    @testset "`jetls_config_append_text` skips already configured patterns" begin
+        text = """
+            [[full_analysis.concretization_patterns]]
+            pattern = "USE_PULSE = x_"
+            path = "issue464.jl"
+            """
+        @test JETLS.jetls_config_append_text(text, "USE_PULSE = x_", "issue464.jl") === nothing
+    end
+
+    @testset "existing config: append via `changes` fallback" begin
+        mktempdir() do dir
+            assignment_path = joinpath(dir, "config.jl")
+            config_path = joinpath(dir, ".JETLSConfig.toml")
+            write(assignment_path, "USE_PULSE = false\n")
+            write(config_path, """
+                [[full_analysis.concretization_patterns]]
+                pattern = "OLD = x_"
+                """)
+            rootUri = filepath2uri(dir)
+            withserver(; rootUri) do (; server)
+                code_actions = Union{CodeAction,Command}[]
+                JETLS.missing_concretization_code_actions!(
+                    code_actions, server,
+                    Diagnostic[missing_concretization_diagnostic(assignment_path)])
+                action = only(code_actions)
+                @test action.title ==
+                    "Add `.JETLSConfig.toml` concretization pattern for `USE_PULSE`"
+                edit = only(action.edit.changes[filepath2uri(config_path)])
+                @test edit.range.start == edit.range.var"end"
+                original = read(config_path, String)
+                updated = JETLS.apply_text_change(
+                    original, edit.range, edit.newText, server.state.encoding)
+                parsed = TOML.parse(updated)
+                patterns = parsed["full_analysis"]["concretization_patterns"]
+                @test [config["pattern"] for config in patterns] == ["OLD = x_", "USE_PULSE = x_"]
+                @test patterns[2]["path"] == "config.jl"
+
+                dirty = original * "# unsaved\n"
+                updated_dirty = JETLS.apply_text_change(
+                    dirty, edit.range, edit.newText, server.state.encoding)
+                @test occursin("# unsaved\n", updated_dirty)
+            end
+        end
+    end
+
+    @testset "missing config: `CreateFile` edit" begin
+        mktempdir() do dir
+            script_path = joinpath(dir, "issue464.jl")
+            write(script_path, "USE_PULSE = false\n")
+            rootUri = filepath2uri(dir)
+            capabilities = ClientCapabilities(;
+                workspace = WorkspaceClientCapabilities(;
+                    workspaceEdit = WorkspaceEditClientCapabilities(;
+                        documentChanges = true,
+                        resourceOperations = ResourceOperationKind.Ty[
+                            ResourceOperationKind.Create])))
+            withserver(; rootUri, capabilities) do (; server)
+                code_actions = Union{CodeAction,Command}[]
+                JETLS.missing_concretization_code_actions!(
+                    code_actions, server,
+                    Diagnostic[missing_concretization_diagnostic(script_path)])
+                action = only(code_actions)
+                @test action.title ==
+                    "Create `.JETLSConfig.toml` concretization pattern for `USE_PULSE`"
+                edit = action.edit
+                @test edit.documentChanges !== nothing
+                @test edit.documentChanges[1] isa CreateFile
+                @test edit.documentChanges[2] isa TextDocumentEdit
+                text_edit = only(edit.documentChanges[2].edits)
+                parsed = TOML.parse(text_edit.newText)
+                patterns = parsed["full_analysis"]["concretization_patterns"]
+                pattern_config = only(patterns)
+                @test pattern_config["pattern"] == "USE_PULSE = x_"
+                @test pattern_config["path"] == "issue464.jl"
+            end
+        end
+    end
+
+    @testset "missing config: no edit without `CreateFile` support" begin
+        mktempdir() do dir
+            config_path = joinpath(dir, ".JETLSConfig.toml")
+            rootUri = filepath2uri(dir)
+            capabilities = ClientCapabilities(;
+                workspace = WorkspaceClientCapabilities(;
+                    workspaceEdit = WorkspaceEditClientCapabilities(;
+                        documentChanges = true)))
+            withserver(; rootUri, capabilities) do (; server)
+                @test JETLS.jetls_config_workspace_edit(
+                    server, config_path, "USE_PULSE = x_", "issue464.jl") === nothing
+            end
+        end
+    end
+
+    @testset "external assignment: no code action" begin
+        mktempdir() do dir
+            workspace = joinpath(dir, "workspace")
+            mkpath(workspace)
+            assignment_path = joinpath(dir, "config.jl")
+            write(assignment_path, "USE_PULSE = false\n")
+            write(joinpath(workspace, ".JETLSConfig.toml"), "")
+            rootUri = filepath2uri(workspace)
+            withserver(; rootUri) do (; server)
+                @test isnothing(JETLS.concretization_pattern_path_for_code_action(
+                    server, assignment_path))
+                code_actions = Union{CodeAction,Command}[]
+                JETLS.missing_concretization_code_actions!(
+                    code_actions, server,
+                    Diagnostic[missing_concretization_diagnostic(assignment_path)])
+                @test isempty(code_actions)
+            end
+        end
     end
 end
 

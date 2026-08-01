@@ -120,6 +120,10 @@ function handle_lsp_config_change!(server::Server, tracker::ConfigChangeTracker,
         notify_diagnostics!(server; ensure_cleared = true)
         request_diagnostic_refresh!(server)
     end
+    if tracker.analysis_setting_changed
+        request_reanalysis_for_cached_entries!(server)
+        request_diagnostic_refresh!(server)
+    end
 end
 
 function handle_DidChangeConfigurationNotification(server::Server, msg::DidChangeConfigurationNotification)

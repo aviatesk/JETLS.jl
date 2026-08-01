@@ -17,8 +17,7 @@ using JETLS: JETLS
     @testset "built-in function paths" begin
         m = only(methods(sin,(Float64,)))
 
-        let file = m.file
-            filepath = JETLS.to_full_path(m.file)
+        let filepath = JETLS.to_full_path(m.file)
             @test isabspath(filepath)
             @test normpath(filepath) == filepath
             @test isfile(filepath)
@@ -26,8 +25,7 @@ using JETLS: JETLS
             # Check that fix_build_path is applied correctly
             @test !occursin("/usr/share/julia/", filepath)
         end
-        let (file, line) = Base.updated_methodloc(m)
-            filepath = JETLS.to_full_path(m.file)
+        let filepath = JETLS.to_full_path(m.file)
             @test isabspath(filepath)
             @test normpath(filepath) == filepath
             @test isfile(filepath)
@@ -196,6 +194,19 @@ end
         @test JETLS.glob_candidate_path(
             "C:\\Users\\Foo\\Project\\src\\file.jl",
             "c:/users/foo/project") == "src/file.jl"
+    end
+end
+
+@testset "glob path utilities" begin
+    let path = "examples/[case]?*.jl"
+        escaped = JETLS.escape_path_for_glob(path)
+        @test escaped == "examples/\\[case\\]\\?\\*.jl"
+        matcher = JETLS.Glob.FilenameMatch(escaped, "dp")
+        @test occursin(matcher, path)
+        @test !occursin(matcher, "examples/case1.jl")
+    end
+    let path = "src/config.jl"
+        @test JETLS.escape_path_for_glob(path) == path
     end
 end
 

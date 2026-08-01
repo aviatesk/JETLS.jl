@@ -194,6 +194,29 @@
               "default": true,
               "description": "Automatically run `Pkg.resolve()` and `Pkg.instantiate()` for uninstantiated packages (e.g., freshly cloned repos). Creates versioned manifest if needed."
             },
+            "concretization_patterns": {
+              "default": [],
+              "description": "Additional JET top-level concretization patterns. Each entry requires a Julia expression `pattern` and can use an optional `path` glob to restrict it to specific source files.",
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "path": {
+                    "$ref": "#/$defs/Glob.FilenameMatch{Core.String}",
+                    "description": "Optional glob pattern to restrict this concretization pattern to matching source file paths, relative to the workspace root when available."
+                  },
+                  "pattern": {
+                    "description": "Julia expression pattern to force concretization, using JET/MacroTools pattern syntax (for example, `USE_PULSE = x_`).",
+                    "pattern": "\\S",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "pattern"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            },
             "debounce": {
               "$ref": "#/$defs/Core.Float64",
               "default": 1,

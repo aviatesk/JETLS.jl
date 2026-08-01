@@ -373,13 +373,27 @@ function jet_toplevel_error_report_to_diagnostic(
     message = JET.with_bufferring(:limit=>true) do io
         JET.print_report(io, report)
     end |> postprocessor
+    code = report isa JET.MissingConcretizationErrorReport ?
+        TOPLEVEL_MISSING_CONCRETIZATION_CODE : TOPLEVEL_ERROR_CODE
+    data = report isa JET.MissingConcretizationErrorReport ?
+        missing_concretization_data(report) : nothing
     return Diagnostic(;
         range = line_range(report.line),
         severity = DiagnosticSeverity.Error,
         message,
         source = DIAGNOSTIC_SOURCE_SAVE,
-        code = TOPLEVEL_ERROR_CODE,
-        codeDescription = diagnostic_code_description(TOPLEVEL_ERROR_CODE))
+        code,
+        codeDescription = diagnostic_code_description(code),
+        data)
+end
+
+# `nothing` when JET could not derive a pattern for the assignment: any pattern guessed
+# here would be one that never matches, so no quick fix is offered
+function missing_concretization_data(report::JET.MissingConcretizationErrorReport)
+    assignment = @something report.assignment return nothing
+    pattern = @something assignment.pattern return nothing
+    return MissingConcretizationData(
+        String(report.var.name), sprint(Base.show_unquoted, pattern), assignment.file)
 end
 
 # inference diagnostic

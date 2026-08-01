@@ -1,7 +1,6 @@
 const DID_CHANGE_WATCHED_FILES_REGISTRATION_ID = "jetls-did-change-watched-files"
 const DID_CHANGE_WATCHED_FILES_REGISTRATION_METHOD = "workspace/didChangeWatchedFiles"
 
-const CONFIG_FILE = ".JETLSConfig.toml"
 const PROFILE_TRIGGER_FILE = ".JETLSProfile"
 const SERVER_REVISE_TRIGGER_FILE = ".JETLS_REVISE"
 
@@ -71,6 +70,10 @@ function handle_config_file_change!(
     if tracker.diagnostic_setting_changed
         clear_per_file_diagnostics_cache!(server.state)
         notify_diagnostics!(server; ensure_cleared = true)
+        request_diagnostic_refresh!(server)
+    end
+    if tracker.analysis_setting_changed
+        request_reanalysis_for_cached_entries!(server)
         request_diagnostic_refresh!(server)
     end
 end

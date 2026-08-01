@@ -214,6 +214,7 @@ Here is a summary table of the diagnostics explained in this section:
 | [`lowering/inactive-code`](@ref diagnostic/reference/lowering/inactive-code)                                   | `Hint`                | `JETLS/live`  | Code excluded by `@static` in the current environment  |
 | [`lowering/unsorted-import-names`](@ref diagnostic/reference/lowering/unsorted-import-names)                   | `Hint`                | `JETLS/live`  | Import/export names not sorted alphabetically          |
 | [`toplevel/error`](@ref diagnostic/reference/toplevel/error)                                                   | `Error`               | `JETLS/save`  | Errors during code loading                             |
+| [`toplevel/missing-concretization`](@ref diagnostic/reference/toplevel/missing-concretization)                 | `Error`               | `JETLS/save`  | Top-level code needs a non-concretized binding value   |
 | [`toplevel/method-overwrite`](@ref diagnostic/reference/toplevel/method-overwrite)                             | `Warning`             | `JETLS/save`  | Method definitions that overwrite previous ones        |
 | [`toplevel/abstract-field`](@ref diagnostic/reference/toplevel/abstract-field)                                 | `Information`         | `JETLS/save`  | Struct fields with abstract types                      |
 | [`inference/undef-global-var`](@ref diagnostic/reference/inference/undef-global-var)                           | `Warning`             | `JETLS/save`  | References to undefined global variables               |
@@ -1028,6 +1029,53 @@ These errors prevent JETLS from fully analyzing your code, which means
 the top-level errors are resolved. To fix these errors, ensure your package
 environment is properly set up by running `Pkg.instantiate()` in your package
 directory, and verify that your package can be loaded successfully in a Julia REPL.
+
+#### [Missing concretization (`toplevel/missing-concretization`)](@id diagnostic/reference/toplevel/missing-concretization)
+
+**Default severity**: `Error`
+
+Reported when JET needs the actual value of a top-level binding while loading
+code for analysis, but the binding was not concretized. This often happens when
+a global binding is used to define a type or method and JET cannot determine the
+binding's concrete value during analysis.
+
+For example, suppose `src/random-type.jl` contains:
+
+```julia
+RandomType = rand((Bool, Int))
+
+struct Container
+    value::RandomType
+end
+```
+
+JETLS needs the actual value of `RandomType` to analyze the definition of
+`Container`. Adding `const` can fix this diagnostic in some cases. However,
+JETLS can treat the value of a `const` binding as concrete only when its
+right-hand side can be inferred as a single concrete value. In this example,
+JETLS cannot infer a single concrete result for `rand((Bool, Int))`, so use the
+[`full_analysis.concretization_patterns`](@ref config/full_analysis/concretization_patterns)
+configuration to allow JETLS to evaluate the assignment during full analysis.
+
+!!! tip "Code action available"
+    Use the "Create `.JETLSConfig.toml` concretization pattern for
+    `RandomType`" code action. If the configuration file already exists, the
+    action starts with "Add" instead. It creates or updates the configuration
+    with this entry:
+
+    ```toml
+    [[full_analysis.concretization_patterns]]
+    pattern = "RandomType = x_"
+    path = "src/random-type.jl"
+    ```
+
+    The generated `path` identifies the source file containing the assignment.
+    This may differ from the file containing the diagnostic when the binding is
+    defined in an included file. Scoping the pattern this way prevents it from
+    affecting unrelated files. Here, `x_` matches any right-hand-side
+    expression. See
+    [`full_analysis.concretization_patterns`](@ref config/full_analysis/concretization_patterns)
+    for details, including how patterns are matched and executed.
 
 #### [Method overwrite (`toplevel/method-overwrite`)](@id diagnostic/reference/toplevel/method-overwrite)
 

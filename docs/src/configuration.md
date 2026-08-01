@@ -27,6 +27,7 @@ Base.include(@__MODULE__, joinpath(pkgdir(JETLS), "docs", "config-schema-block.j
 - [`[full_analysis]`](@ref config/full_analysis)
   - [`[full_analysis] debounce`](@ref config/full_analysis/debounce)
   - [`[full_analysis] auto_instantiate`](@ref config/full_analysis/auto_instantiate)
+  - [`[full_analysis] concretization_patterns`](@ref config/full_analysis/concretization_patterns)
 - [`formatter`](@ref config/formatter)
 - [`[diagnostic]`](@ref config/diagnostic)
   - [`[diagnostic] enabled`](@ref config/diagnostic/enabled)
@@ -81,6 +82,71 @@ When no manifest file exists, JETLS first creates a
 [full_analysis]
 auto_instantiate = false  # Disable automatic instantiation
 ```
+
+#### [`[full_analysis] concretization_patterns`](@id config/full_analysis/concretization_patterns)
+
+- **Type**: array of tables
+- **Default**: `[]`
+
+JETLS normally analyzes top-level code without evaluating every expression. If
+it needs the value of a global binding to define a later type or method, it may
+report `toplevel/missing-concretization`.
+
+For example, suppose `src/random-type.jl` contains:
+
+```julia
+RandomType = rand((Bool, Int))
+
+struct Container
+    value::RandomType
+end
+```
+
+To analyze `Container`, JETLS must know whether `RandomType` is `Bool` or `Int`.
+Declaring the binding as `const` can sometimes resolve this diagnostic: if JETLS
+infers a concrete value for the right-hand side, it can safely reuse that value
+later in the analysis. This does not help when the right-hand side cannot be
+inferred as a single concrete value.
+
+In this example, JETLS cannot infer a single concrete result for
+`rand((Bool, Int))`, so the diagnostic's quick fix can add the following entry
+to `.JETLSConfig.toml`:
+
+```toml
+[[full_analysis.concretization_patterns]]
+pattern = "RandomType = x_"
+path = "src/random-type.jl"
+```
+
+This tells JETLS to evaluate an assignment to `RandomType` while processing
+`src/random-type.jl`. In the pattern, `x_` matches any right-hand-side
+expression, including `rand((Bool, Int))` in this example.
+
+Each table contains:
+
+- `pattern` (required): A Julia expression pattern using
+  [MacroTools.jl expression matching syntax](https://fluxml.ai/MacroTools.jl/stable/pattern-matching/).
+- `path` (optional): A glob restricting the pattern to matching source files.
+  Paths are relative to the workspace root. Each included file is matched using
+  its own path, not the path of the file that included it. If `path` is omitted,
+  the pattern applies to every analyzed file inside the workspace. For example,
+  `path = "src/**/*.jl"` applies the pattern to Julia files under `src`.
+
+  !!! note "Path separator on Windows"
+      Use `/` as the path separator on all platforms, including Windows. Glob
+      syntax does not treat `\` as a path separator.
+
+Configured patterns apply only to files inside the workspace. Included files
+outside the workspace use only JET's built-in patterns. These entries supplement
+the built-in patterns; they do not replace them.
+
+!!! warning "Concretization executes code"
+    Concretization causes the JETLS analysis process to execute each matching
+    top-level expression instead of only analyzing it. Any side effects of that
+    expression, such as writing files, accessing the network, starting external
+    processes, or mutating global state, can therefore occur during analysis.
+    Full analysis may run again after a file is saved, so these effects may occur
+    more than once. Keep both `pattern` and `path` as specific as possible.
 
 ### [`formatter`](@id config/formatter)
 
