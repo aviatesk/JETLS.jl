@@ -44,12 +44,12 @@ jobs:
           # - version: "nightly" # dev
           #   os: ubuntu-latest
           #   arch: x64
-          # - version: "1" # x86 ubuntu
-          #   os: ubuntu-latest
-          #   arch: x86
-          # - version: "1" # x86 windows
-          #   os: windows-latest
-          #   arch: x86
+          - version: "1" # x86 ubuntu
+            os: ubuntu-latest
+            arch: x86
+          - version: "1" # x86 windows
+            os: windows-latest
+            arch: x86
           - version: "1" # x64 windows
             os: windows-latest
             arch: x64
