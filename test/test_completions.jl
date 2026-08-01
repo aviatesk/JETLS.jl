@@ -724,10 +724,10 @@ end
             first_item = first(filter(it -> it.label == "first", props))
             resolved_first = JETLS.resolve_completion_item(state, first_item)
             @test occursin("Symbol", resolved_first.labelDetails.detail)
-            # Resolve `second` → `Union{Int64,String}` (merged from both sides).
+            # Resolve `second` → `Union{Int,String}` (merged from both sides).
             second_item = first(filter(it -> it.label == "second", props))
             resolved_second = JETLS.resolve_completion_item(state, second_item)
-            @test occursin("Int64", resolved_second.labelDetails.detail)
+            @test occursin("$Int", resolved_second.labelDetails.detail)
             @test occursin("String", resolved_second.labelDetails.detail)
             cnt[] += 1
         end
