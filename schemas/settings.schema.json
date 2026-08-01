@@ -93,7 +93,7 @@
                   },
                   "path": {
                     "$ref": "#/$defs/Glob.FilenameMatch{Core.String}",
-                    "description": "Optional glob pattern to restrict this configuration to specific files (e.g., `test/**/*.jl`). Patterns are matched against file paths relative to the workspace root. Supports globstar (`**`) for matching directories recursively. If omitted, the pattern applies to all files."
+                    "description": "Optional glob pattern to restrict this configuration to specific files (e.g., `test/**/*.jl`). Patterns are matched against file paths relative to the workspace root. Use `/` as the path separator on all platforms, including Windows; backslashes are not interpreted as path separators. Supports globstar (`**`) for matching directories recursively. If omitted, the pattern applies to all files."
                   },
                   "pattern": {
                     "anyOf": [
