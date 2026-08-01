@@ -1,6 +1,9 @@
 # inter-procedural
 # ================
 
+const ABSTRACT_CALL_USES_VTYPES = hasmethod(CC.abstract_call_known,
+    Tuple{AbstractInterpreter,Any,ArgInfo,StmtInfo, Union{VarTable,Nothing},InferenceState,Int})
+
 function collect_callee_reports!(analyzer::AbstractAnalyzer, sv::InferenceState)
     reports = get_report_stash(analyzer)
     if !isempty(reports)
@@ -14,15 +17,21 @@ function collect_callee_reports!(analyzer::AbstractAnalyzer, sv::InferenceState)
     return nothing
 end
 
-function collect_cached_callee_reports!(analyzer::AbstractAnalyzer, reports::Vector{InferenceErrorReport},
-                                        caller::InferenceState, origin_mi::MethodInstance)
+# Restore each cached report as a fresh copy — the cached report is shared on the callee's
+# `CodeInstance` and must not be mutated by the re-rooting `pushfirst!` in
+# `collect_callee_reports!` — and stash it. Insertion into the caller's result and re-rooting
+# onto the caller frame both happen there, uniformly with freshly inferred callee reports.
+function collect_cached_callee_reports!(
+        analyzer::AbstractAnalyzer, reports::Vector{InferenceErrorReport},
+        origin_mi::MethodInstance
+    )
     for cached in reports
-        restored = add_cached_report!(analyzer, caller.result, cached)
+        restored = copy_report_stable(cached)
         @static if JET_DEV_MODE
             actual, expected = first(restored.vst).linfo, origin_mi
             @assert actual === expected "invalid local cache restoration, expected $expected but got $actual"
         end
-        stash_report!(analyzer, restored) # should be updated in `abstract_call_method_with_const_args`
+        stash_report!(analyzer, restored)
     end
     return nothing
 end
@@ -70,44 +79,73 @@ function CC.concrete_eval_call(analyzer::AbstractAnalyzer,
     if ret isa ConstCallResult
         # this frame has been concretized, now we throw away reports collected
         # during the previous non-constant, abstract-interpretation
-        filter_lineages!(analyzer, sv.result, result.edge.def)
+        filter_lineages!(analyzer, sv, result.edge.def)
     end
     return ret
 end
 
+@static if ABSTRACT_CALL_USES_VTYPES
+function CC.abstract_call_known(analyzer::AbstractAnalyzer,
+    @nospecialize(f), arginfo::ArgInfo, si::StmtInfo, vtypes::Union{VarTable,Nothing},
+    sv::InferenceState, max_methods::Int)
+    ret = @invoke CC.abstract_call_known(analyzer::AbstractInterpreter,
+        f::Any, arginfo::ArgInfo, si::StmtInfo, vtypes::Union{VarTable,Nothing},
+        sv::InferenceState, max_methods::Int)
+    return postprocess_abstract_call_known!(analyzer, ret, f, arginfo, sv)
+end
+else
 function CC.abstract_call_known(analyzer::AbstractAnalyzer,
     @nospecialize(f), arginfo::ArgInfo, si::StmtInfo, sv::InferenceState, max_methods::Int)
     ret = @invoke CC.abstract_call_known(analyzer::AbstractInterpreter,
         f::Any, arginfo::ArgInfo, si::StmtInfo, sv::InferenceState, max_methods::Int)
-    f′ = Ref{Any}(f)
-    function after_call_known(analyzer′::AbstractAnalyzer, sv′::InferenceState)
-        analyze_task_parallel_code!(analyzer′, f′[], arginfo, sv′)
-        return true
+    return postprocess_abstract_call_known!(analyzer, ret, f, arginfo, sv)
+end
+end
+
+# Early take-in of https://github.com/JuliaLang/julia/pull/57222 for v1.12
+@static if VERSION < v"1.13.0-DEV.21"
+function refine_setfield_callmeta(res::CallMeta, arginfo::ArgInfo, sv::InferenceState)
+    (; argtypes, fargs) = arginfo
+    if res.rt !== Bottom && length(argtypes) == 4 &&
+        isa(argtypes[3], Const) && isa(fargs, Vector{Any})
+        # on successful return, the struct field can no longer be undefined,
+        # so we try to encode that information with a `PartialStruct`
+        farg2 = CC.ssa_def_slot(fargs[2], sv)
+        if farg2 isa SlotNumber
+            refined = CC.form_partially_defined_struct(argtypes[2], argtypes[3])
+            if refined !== nothing
+                refinements = CC.SlotRefinement(farg2, refined)
+                return CallMeta(res.rt, res.exct, res.effects, res.info, refinements)
+            end
+        end
     end
+    return res
+end
+end
+
+function postprocess_abstract_call_known!(analyzer::AbstractAnalyzer, ret::Future,
+    @nospecialize(f), arginfo::ArgInfo, sv::InferenceState)
     if isready(ret)
-        after_call_known(analyzer, sv)
+        if f === Task
+            analyze_task_parallel_code!(analyzer, arginfo, sv)
+        end
+        # `setfield!` is handled synchronously by the builtin path in `abstract_call_known`,
+        # so its `ret` is always ready and requires no delayed processing in the branch below.
         @static if VERSION < v"1.13.0-DEV.21"
-            # early take in of https://github.com/JuliaLang/julia/pull/57222 for v1.12
             if f === setfield!
-                (; argtypes, fargs) = arginfo
-                if length(argtypes) == 4 && isa(argtypes[3], Const)
-                    # from there on we know that the struct field will never be undefined,
-                    # so we try to encode that information with a `PartialStruct`
-                    farg2 = CC.ssa_def_slot(fargs[2], sv)
-                    if farg2 isa SlotNumber
-                        refined = CC.form_partially_defined_struct(argtypes[2], argtypes[3])
-                        if refined !== nothing
-                            refinements = CC.SlotRefinement(farg2, refined)
-                            ret = Future(let res = ret[]
-                                CallMeta(res.rt, res.exct, res.effects, res.info, refinements)
-                            end)
-                        end
-                    end
-                end
+                res = ret[]
+                res′ = refine_setfield_callmeta(res, arginfo, sv)
+                return res′ === res ? ret : Future(res′)
             end
         end
     else
-        push!(sv.tasks, after_call_known)
+        if f === Task
+            function after_call_known(analyzer′::AbstractAnalyzer, sv′::InferenceState)
+                analyze_task_parallel_code!(analyzer′, arginfo, sv′)
+                return true
+            end
+            push!(sv.tasks, after_call_known)
+        end
     end
     return ret
 end
@@ -129,14 +167,14 @@ See also: <https://github.com/aviatesk/JET.jl/issues/114>
     track <https://github.com/JuliaLang/julia/pull/39773> for the changes in native abstract
     interpretation routine.
 """
-function analyze_task_parallel_code!(analyzer::AbstractAnalyzer,
-    @nospecialize(f), arginfo::ArgInfo, sv::InferenceState)
+function analyze_task_parallel_code!(
+        analyzer::AbstractAnalyzer, arginfo::ArgInfo, sv::InferenceState
+    )
     # TODO we should analyze a closure wrapped in a `Task` only when it's `schedule`d
     # But the `Task` construction may not happen in the same frame where it's `schedule`d
     # and so we may not be able to access to the closure at that point.
     # As a compromise, here we invoke the additional analysis on `Task` construction,
     # regardless of whether it's really `schedule`d or not.
-    f === Task || return nothing
     argtypes = arginfo.argtypes
     length(argtypes) ≥ 2 || return nothing
     v = argtypes[2]
@@ -240,7 +278,7 @@ function CC.get(wvc::WorldView{<:AbstractAnalyzerView}, mi::MethodInstance, defa
     # XXX move this logic into `typeinf_edge`?
     cache_target = get_cache_target(analyzer)
     if cache_target !== nothing
-        context, caller = cache_target
+        context, _ = cache_target
         if context === :typeinf_edge
             if isa(codeinst, CodeInstance)
                 # cache hit, now we need to append cached reports associated with this `MethodInstance`
@@ -248,7 +286,7 @@ function CC.get(wvc::WorldView{<:AbstractAnalyzerView}, mi::MethodInstance, defa
                     analysis_result isa CachedAnalysisResult ? analysis_result.reports : nothing
                 end
                 cached_reports !== nothing &&
-                    collect_cached_callee_reports!(analyzer, cached_reports, caller, mi)
+                    collect_cached_callee_reports!(analyzer, cached_reports, mi)
             end
         end
         set_cache_target!(analyzer, nothing)
@@ -297,13 +335,13 @@ function CC.cache_lookup(𝕃ᵢ::CC.AbstractLattice, mi::MethodInstance, given_
         # with the extended lattice elements, here we should throw-away the error reports
         # that are collected during the previous non-constant abstract-interpretation
         # (see the `CC.typeinf(::AbstractAnalyzer, ::InferenceState)` overload)
-        filter_lineages!(analyzer, caller.result, mi)
+        filter_lineages!(analyzer, caller, mi)
 
         cached_reports = CC.traverse_analysis_results(inf_result) do @nospecialize analysis_result
             analysis_result isa CachedAnalysisResult ? analysis_result.reports : nothing
         end
         cached_reports !== nothing &&
-            collect_cached_callee_reports!(analyzer, cached_reports, caller, mi)
+            collect_cached_callee_reports!(analyzer, cached_reports, mi)
     end
     return inf_result
 end
@@ -317,13 +355,12 @@ CC.push!(view::AbstractAnalyzerView, inf_result::InferenceResult) = CC.push!(get
 function CC.typeinf(analyzer::AbstractAnalyzer, frame::InferenceState)
     parent = CC.frame_parent(frame)
 
-    if is_constant_propagated(frame) && parent !== nothing
-        parent::InferenceState
+    if is_constant_propagated(frame) && parent isa InferenceState
         # JET is going to perform the abstract-interpretation with the extended lattice elements:
         # throw-away the error reports that are collected during the previous non-constant abstract-interpretation
         # NOTE that the `linfo` here is the exactly same object as the method instance used
         # for the previous non-constant abstract-interpretation
-        filter_lineages!(analyzer, parent.result, CC.frame_instance(frame))
+        filter_lineages!(analyzer, parent, CC.frame_instance(frame))
     end
 
     ret = @invoke CC.typeinf(analyzer::AbstractInterpreter, frame::InferenceState)
@@ -332,17 +369,17 @@ function CC.typeinf(analyzer::AbstractAnalyzer, frame::InferenceState)
 end
 
 """
-    islineage(parent::MethodInstance, current::MethodInstance) ->
+    islineage(parent_frame::VirtualFrame, current::MethodInstance) ->
         (report::InferenceErrorReport) -> Bool
 
 Returns a function that checks if a given `InferenceErrorReport`
 - is generated from `current`, and
-- is "lineage" of `parent` (i.e. entered from it).
+- is "lineage" of `parent_frame` (i.e. entered from it).
 
-This function is supposed to be used when additional analysis with extended lattice information
-happens in order to filter out reports collected from `current` by analysis without
-using that extended information. When a report should be filtered out, the first virtual
-stack frame represents `parent` and the second does `current`.
+This function is supposed to be used when additional analysis with extended lattice
+information happens in order to filter out reports collected from `current` by analysis
+without using that extended information. When a report should be filtered out, the first
+virtual stack frame should match `parent_frame` and the second should represent `current`.
 
 Example:
 ```
@@ -353,26 +390,29 @@ entry
    │  └─ linfo2 (report2: linfo2)
    └─ linfo3′ (~~report2: linfo3->linfo2~~)
 ```
-In the example analysis above, `report2` should be filtered out on re-entering into `linfo3′`
-(i.e. when we're analyzing `linfo3` with constant arguments), nevertheless `report1` shouldn't
-because it is not detected within `linfo3` but within `linfo1` (so it's not a "lineage of `linfo3`"):
-- `islineage(linfo1, linfo3)(report2) === true`
-- `islineage(linfo1, linfo3)(report1) === false`
+In the example analysis above, `report2` should be filtered out on re-entering into
+`linfo3′` (i.e. when we're analyzing `linfo3` with constant arguments), nevertheless
+`report1` shouldn't because it is not detected within `linfo3` but within `linfo1`
+(so it's not a "lineage of `linfo3`"):
+- `islineage(vf1, linfo3)(report2) === true`, where `vf1` is `linfo1`'s frame at
+  the callsite of `linfo3`
+- `islineage(vf1, linfo3)(report1) === false`
 """
-function islineage(parent::MethodInstance, current::MethodInstance)
+function islineage(parent_frame::VirtualFrame, current::MethodInstance)
     function (report::InferenceErrorReport)
         @nospecialize report
-        @inbounds begin
-            vst = report.vst
-            length(vst) > 1 || return false
-            vst[1].linfo === parent || return false
-            return vst[2].linfo === current
-        end
+        vst = report.vst
+        return length(vst) > 1 && vst[1] == parent_frame && vst[2].linfo === current
     end
 end
 
-function filter_lineages!(analyzer::AbstractAnalyzer, caller::InferenceResult, current::MethodInstance)
-     filter!(!islineage(caller.linfo, current), get_reports(analyzer, caller))
+function filter_lineages!(
+        analyzer::AbstractAnalyzer, caller::InferenceState, current::MethodInstance
+    )
+    reports = get_reports(analyzer, caller.result)
+    isempty(reports) && return
+    parent_frame = get_virtual_frame(caller)
+    filter!(!islineage(parent_frame, current), reports)
 end
 
 function contains_edge(edges::Vector{Any}, edge::MethodInstance)
@@ -483,6 +523,56 @@ function CC.global_assignment_rt_exct(analyzer::ToplevelAbstractAnalyzer, sv::In
     return ret
 end
 
+@static if isdefinedglobal(Core, :declare_const)
+
+function abstract_eval_declare_const(
+        analyzer::ToplevelAbstractAnalyzer, arginfo::ArgInfo, si::StmtInfo,
+        sv::InferenceState
+    )
+    istoplevelframe(sv) || return nothing
+    isconcretized(analyzer, sv) && return nothing
+    argtypes = arginfo.argtypes
+    length(argtypes) in (3, 4) || return nothing
+    CC.isvarargtype(argtypes[end]) && return nothing
+    mod, name = argtypes[2], argtypes[3]
+    mod isa Const && mod.val isa Module || return nothing
+    name isa Const && name.val isa Symbol || return nothing
+    gr = GlobalRef(mod.val, name.val)
+    new_binding_typ = length(argtypes) == 4 ? argtypes[4] : nothing
+    rt, exct = const_assignment_rt_exct(analyzer, sv, si.saw_latestworld, gr, new_binding_typ)
+    if rt !== Union{}
+        rt = length(argtypes) == 4 ? new_binding_typ : Nothing
+    end
+    effects = CC.Effects(EFFECTS_THROWS; nothrow=exct===Union{})
+    return Future(CallMeta(rt, exct, effects, CC.NoCallInfo()))
+end
+
+@static if ABSTRACT_CALL_USES_VTYPES
+function CC.abstract_call_known(analyzer::ToplevelAbstractAnalyzer,
+    @nospecialize(f), arginfo::ArgInfo, si::StmtInfo, vtypes::Union{VarTable,Nothing},
+    sv::InferenceState, max_methods::Int)
+    if f === Core.declare_const
+        ret = abstract_eval_declare_const(analyzer, arginfo, si, sv)
+        ret === nothing || return ret
+    end
+    return @invoke CC.abstract_call_known(analyzer::AbstractAnalyzer,
+        f::Any, arginfo::ArgInfo, si::StmtInfo, vtypes::Union{VarTable,Nothing},
+        sv::InferenceState, max_methods::Int)
+end
+else
+function CC.abstract_call_known(analyzer::ToplevelAbstractAnalyzer,
+    @nospecialize(f), arginfo::ArgInfo, si::StmtInfo, sv::InferenceState, max_methods::Int)
+    if f === Core.declare_const
+        ret = abstract_eval_declare_const(analyzer, arginfo, si, sv)
+        ret === nothing || return ret
+    end
+    return @invoke CC.abstract_call_known(analyzer::AbstractAnalyzer,
+        f::Any, arginfo::ArgInfo, si::StmtInfo, sv::InferenceState, max_methods::Int)
+end
+end # @static if ABSTRACT_CALL_USES_VTYPES
+
+else # @static if isdefinedglobal(Core, :declare_const)
+
 function CC.abstract_eval_statement_expr(analyzer::ToplevelAbstractAnalyzer, e::Expr, sstate::StatementState,
                                          sv::InferenceState)::Future{RTEffects}
     if isexpr(e, :const)
@@ -519,6 +609,8 @@ function abstract_eval_const_stmt(analyzer::ToplevelAbstractAnalyzer, stmt::Expr
     end
 end
 
+end # @static if isdefinedglobal(Core, :declare_const)
+
 function const_assignment_rt_exct(analyzer::ToplevelAbstractAnalyzer, sv::InferenceState, saw_latestworld::Bool, gr::GlobalRef,
                                   @nospecialize(new_binding_typ))
     if saw_latestworld
@@ -532,26 +624,33 @@ function const_assignment_rt_exct(analyzer::ToplevelAbstractAnalyzer, sv::Infere
         rte = const_assignment_binding_rt_exct(analyzer, partition)
         rt, exct = rte
         if rt !== Union{}
-            # `:const` assignment destructively overrides the binding type
-            binding_states = get_binding_states(analyzer)
-            if !isconditional
-                binding_state = AbstractBindingState(true, false, new_binding_typ′[])
-            elseif haskey(binding_states, partition)
-                old_binding_state = binding_states[partition]
-                @assert old_binding_state.isconst && isdefined(old_binding_state, :typ)
-                newmaybeundef = old_binding_state.maybeundef & isconditional
-                newtyp = old_binding_state.typ ⊔ new_binding_typ′[]
-                binding_state = AbstractBindingState(true, newmaybeundef, newtyp)
+            if new_binding_typ′[] === nothing
+                Core.eval(gr.mod, Expr(:const, gr.name))
             else
-                binding_state = AbstractBindingState(true, true, new_binding_typ′[])
+                # `:const` assignment destructively overrides the binding type
+                binding_states = get_binding_states(analyzer)
+                binding_state = @lock binding_states.lock begin
+                    if !isconditional
+                        new_state = AbstractBindingState(true, false, new_binding_typ′[])
+                    elseif haskey(binding_states, partition)
+                        old_binding_state = binding_states[partition]
+                        @assert old_binding_state.isconst && isdefined(old_binding_state, :typ)
+                        newmaybeundef = old_binding_state.maybeundef & isconditional
+                        newtyp = old_binding_state.typ ⊔ new_binding_typ′[]
+                        new_state = AbstractBindingState(true, newmaybeundef, newtyp)
+                    else
+                        new_state = AbstractBindingState(true, true, new_binding_typ′[])
+                    end
+                    binding_states[partition] = new_state
+                    new_state
+                end
+                # HACK/FIXME Concretize `AbstractBindingState`
+                # For top-level analysis implementation reasons, we actually define this
+                # `AbstractBindingState` in the analyzed module’s namespace.
+                # This is necessary because binding resolution cannot be accurately tracked
+                # when using `export`/`using`.
+                Core.eval(gr.mod, Expr(:const, gr.name, binding_state))
             end
-            binding_states[partition] = binding_state
-            # HACK/FIXME Concretize `AbstractBindingState`
-            # For top-level analysis implementation reasons, we actually define this
-            # `AbstractBindingState` in the analyzed module’s namespace.
-            # This is necessary because binding resolution cannot be accurately tracked
-            # when using `export`/`using`.
-            Core.eval(gr.mod, Expr(:const, gr.name, binding_state))
         end
         return rte
     end

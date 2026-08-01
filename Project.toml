@@ -22,25 +22,34 @@ LSP = "ba3d5f2d-0240-5843-8ab5-e1c74856c201"
 LoweredCodeUtils = "01ede001-ea10-5720-9c31-2e53839707a9"
 MacroTools = "73a1cfca-4736-53e3-b924-35a7291c571e"
 Markdown = "d6f4376e-aef5-505a-96c1-9c027394607a"
-OrderedCollections = "64c61135-0f01-5c34-beb9-07fc02084e85"
 Parsers = "2bf889ff-109e-5fa9-9ba3-339ee07cbe67"
 Pkg = "44cfe95a-1eb2-52ea-b672-e2afdf69b78f"
 PrecompileTools = "32931bc0-5014-5544-84d5-53636ff9f6c5"
 Preferences = "cc588e5a-7be0-5224-8a6a-549b21958db9"
 Profile = "9abbd945-dff8-562f-b5e8-e1ebf5ef1b79"
 REPL = "3fa0cd96-eef1-5676-8a61-b3b8758bbffb"
-Revise = "d54aa4ff-5f0d-5e64-8d83-7613e0a93f9b"
+Revise = "295af30f-e4ad-537b-8983-00126c2a3abe"
 Sockets = "6462fe0b-24de-5631-8697-dd941f90decc"
 StructTypes = "66bcceda-d870-5865-93dd-65803322e79e"
 TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [sources]
-Compiler = {path = "Compiler"}
-JET = {rev = "10eedc16", url = "https://github.com/aviatesk/JET.jl"}
-JuliaLowering = {rev = "4547955bd1", subdir = "JuliaLowering", url = "https://github.com/JuliaLang/julia"}
-JuliaSyntax = {rev = "4547955bd1", subdir = "JuliaSyntax", url = "https://github.com/JuliaLang/julia"}
-LSP = {path = "LSP"}
+CodeTracking = {path = "vendor/CodeTracking"}
+Compiler = {path = "vendor/Compiler"}
+Glob = {path = "vendor/Glob"}
+JET = {path = "vendor/JET"}
+JSON3 = {path = "vendor/JSON3"}
+JuliaInterpreter = {path = "vendor/JuliaInterpreter"}
+JuliaLowering = {path = "vendor/JuliaLowering"}
+JuliaSyntax = {path = "vendor/JuliaSyntax"}
+LSP = {path = "vendor/LSP"}
+LoweredCodeUtils = {path = "vendor/LoweredCodeUtils"}
+MacroTools = {path = "vendor/MacroTools"}
+Parsers = {path = "vendor/Parsers"}
+PrecompileTools = {path = "vendor/PrecompileTools"}
+Preferences = {path = "vendor/Preferences"}
+StructTypes = {path = "vendor/StructTypes"}
 
 [compat]
 Compiler = "0.1.1"

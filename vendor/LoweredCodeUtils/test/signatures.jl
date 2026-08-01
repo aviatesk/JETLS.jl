@@ -559,6 +559,8 @@ end
 module ExternalMT
     Base.Experimental.@MethodTable method_table
     macro overlay(ex) esc(:(Base.Experimental.@overlay $method_table $ex)) end
+    get_method_table() = method_table
+    macro overlay_call(ex) esc(:(Base.Experimental.@overlay get_method_table() $ex)) end
 end
 
 @testset "Support for external method tables" begin
@@ -588,6 +590,15 @@ end
     (mt, sig) = pop!(signatures)
     @test (mt, sig) === (ExternalMT.method_table, Tuple{typeof(ExternalMT.foo), Int64})
     LoweredCodeUtils.identify_framemethod_calls(frame) # make sure this does not throw
+
+    # Exercise a method-table value computed by an inline call.
+    ex = :(@overlay_call foo(x::Float64) = "computed overlay")
+    Core.eval(ExternalMT, ex)
+    frame = Frame(ExternalMT, ex)
+    methoddefs!(signatures, frame; define = false)
+    @test length(signatures) == 1
+    (mt, sig) = pop!(signatures)
+    @test (mt, sig) === (ExternalMT.method_table, Tuple{typeof(ExternalMT.foo), Float64})
 end
 
 @testset "normalize_defsig with a quoted Symbol callee (issue Revise#914)" begin

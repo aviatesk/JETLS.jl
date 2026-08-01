@@ -1,0 +1,31 @@
+name: TypeStability
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+    tags: '*'
+jobs:
+  test:
+    name: 'JET runtime-dispatch check'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: julia-actions/setup-julia@v3
+        with:
+          version: '1' # JET does not support prerelease Julia
+          arch: x64
+      - uses: actions/cache@v6
+        env:
+          cache-name: cache-artifacts
+        with:
+          path: ~/.julia/artifacts
+          key: ${{ runner.os }}-typestability-${{ env.cache-name }}-${{ hashFiles('**/Project.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-typestability-${{ env.cache-name }}-
+            ${{ runner.os }}-typestability-
+            ${{ runner.os }}-
+      # JET depends on JuliaInterpreter, so it lives in a separate environment with
+      # this checkout dev'ed in, rather than in the package's test target.
+      - run: julia --project=jet-env -e 'import Pkg; Pkg.develop(path="."); Pkg.add(["JET", "Test"])'
+      - run: julia --project=jet-env test/typestability.jl

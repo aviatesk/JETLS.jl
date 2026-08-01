@@ -123,3 +123,33 @@ frame = JuliaInterpreter.enter_call(empty_code, 1)
 @test eval_code(frame, "") === nothing
 @test eval_code(frame, " ") === nothing
 @test eval_code(frame, "\n") === nothing
+
+# Static parameters are written back to the right slots when only some are requested
+sparam_slots(x::T, y::S) where {T,S} = (x, y)
+frame = JuliaInterpreter.enter_call(sparam_slots, 1, 2.0)
+eval_code(frame, "S")
+@test frame.framedata.sparams == Any[Int, Float64]  # Int, not Int64: CI runs 32-bit too
+
+# eval_code mutates a captured Core.Box in place
+function box_capture()
+    x = 1
+    setx = () -> (x = 99)
+    getx = () -> x
+    return getx()
+end
+frame = JuliaInterpreter.enter_call(box_capture)
+while !any(v -> v.name === :getx, JuliaInterpreter.locals(frame))
+    JuliaInterpreter.step_expr!(frame)
+end
+eval_code(frame, "x = 42")
+@test JuliaInterpreter.finish_and_return!(frame) == 42
+
+# eval_code evaluates every form of a toplevel expression
+toplevel_eval_arg(x) = x
+frame = JuliaInterpreter.enter_call(toplevel_eval_arg, 1)
+@test eval_code(frame, Expr(:toplevel, :(x = 5), :(x + 1))) == 6
+@test only(filter(v -> v.name === :x, JuliaInterpreter.locals(frame))).value == 5
+
+# Multi-statement strings arrive as a nested :toplevel from parse_input_line
+frame = JuliaInterpreter.enter_call(toplevel_eval_arg, 1)
+@test eval_code(frame, "x = 7; x + 1") == 8

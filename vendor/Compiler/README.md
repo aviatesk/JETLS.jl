@@ -1,45 +1,63 @@
-# The `Compiler` module
+# Compiler.jl snapshots
 
-This directory maintains the implementation of the Julia compiler.
+This directory defines the `Compiler` package used by the JETLS stack. It pins
+a Compiler.jl implementation for each supported Julia runtime range and selects
+the matching implementation when the package is loaded.
 
-Through a bootstrapping process, it is bundled into the Julia runtime as `Base.Compiler`.
+## Package identity
 
-You can also use this `Compiler` module as the `Compiler` standard library by following the steps below.
+The UUID in [`Project.toml`](./Project.toml) intentionally matches
+[JuliaLang/BaseCompiler.jl](https://github.com/JuliaLang/BaseCompiler.jl):
 
-## How to use
-
-To utilize this `Compiler.jl` standard library, you need to declare it as a dependency in
-your `Project.toml` as follows:
-> Project.toml
 ```toml
-[deps]
-Compiler = "807dbc54-b67e-4c79-8afb-eafe4df6f2e1"
-
-[compat]
-Compiler = "0.1"
+uuid = "807dbc54-b67e-4c79-8afb-eafe4df6f2e1"
 ```
 
-With the setup above, [the special placeholder version (v0.1)](https://github.com/JuliaLang/BaseCompiler.jl)
-will be installed by default.[^1]
+In the development environment, the JETLS root project resolves this package
+identity to the local `Compiler` directory. Dependencies in the JETLS stack
+that use `Compiler` declare the same UUID, so Julia loads this package for all
+of them. The generated entrypoint can therefore select one runtime-compatible
+Compiler.jl implementation for the entire stack. Keeping this UUID equal to
+the upstream Compiler UUID is the central invariant of the development setup.
 
-[^1]: Currently, only version v0.1 is registered in the [General](https://github.com/JuliaRegistries/General) registry.
+During [release vendoring](../DEVELOPMENT.md#release-process), the UUID is
+rewritten to a deterministic, JETLS-specific UUID. The release process
+rewrites the package UUID, the UUID embedded in every snapshot's `Compiler`
+module, and dependency references
+throughout the vendored JETLS stack. Applying the rewrite consistently
+preserves one shared package identity inside the stack while isolating it from
+packages in the user's environment that use the upstream Compiler UUID.
 
-If needed, you can switch to a custom implementation of the `Compiler` module by running
-```julia-repl
-pkg> dev /path/to/Compiler.jl # to use a local implementation
+## Snapshot sources
+
+[`snapshots.toml`](./snapshots.toml) is the source of truth for the
+snapshots. It records the upstream repository and, for each snapshot, the exact
+commit, provenance branch, destination, and supported Julia version range.
+The commit and version range control generation. `source-branch` is
+informational and is never followed automatically.
+
+Version ranges are half-open: `runtime.lower` is included and `runtime.upper`
+is excluded. Ranges must not overlap, but gaps may represent unsupported Julia
+versions. The generated entrypoint reports the supported ranges when the
+running Julia version does not match any snapshot.
+
+[`update-snapshots.jl`](./update-snapshots.jl) materializes the configured
+sources under [`snapshots/`](./snapshots/) and regenerates
+[`src/Compiler.jl`](./src/Compiler.jl). These generated files are committed so
+that a fresh checkout and source archive are self-contained and require no
+network access during package loading. Do not edit them directly.
+
+## Updating snapshots
+
+Edit `snapshots.toml`, using a full 40-character commit SHA, then regenerate the
+snapshots and entrypoint:
+
+```sh
+julia --startup-file=no Compiler/update-snapshots.jl
 ```
-or
-```julia-repl
-pkg> add https://url/of/Compiler/branch # to use a remote implementation
+
+Verify that the committed files match the configuration with:
+
+```sh
+julia --startup-file=no Compiler/update-snapshots.jl --check
 ```
-This feature is particularly useful for developing or experimenting with alternative compiler implementations.
-
-> [!note]
-> The Compiler.jl standard library is available starting from Julia v1.10.
-> However, switching to a custom compiler implementation is supported only from
-> Julia v1.12 onwards.
-
-> [!warning]
-> When using a custom, non-`Base` version of `Compiler` implementation, it may be necessary
-> to run `InteractiveUtils.@activate Compiler` to ensure proper functionality of certain
-> reflection utilities.

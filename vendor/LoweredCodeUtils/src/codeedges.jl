@@ -297,24 +297,25 @@ function direct_links!(cl::CodeLinks, src::CodeInfo)
             icl = CodeLinks(cl.thismod, arg1)
             add_inner!(cl, icl, i)
             continue
-        elseif isexpr(stmt, :method)
-            if length(stmt.args) === 1
+        elseif isexpr(stmt, :method) || is_define_method_call_2arg(stmt) || is_define_method_call_4arg(stmt)
+            if ismethod1(stmt)
                 # A function with no methods was defined. Associate its new binding to it.
-                name = stmt.args[1]
-                if isa(name, Symbol)
-                    name = GlobalRef(cl.thismod, name)
+                name = method_name(stmt)
+                if isa(name, Symbol) || isa(name, QuoteNode)
+                    name = isa(name, QuoteNode) ? name.value : name
+                    mmod = method_module(stmt)
+                    name = GlobalRef(mmod !== nothing ? mmod : cl.thismod, name::Symbol)
                 end
-                if !isa(name, GlobalRef)
-                    error("name ", typeof(name), " not recognized")
+                if isa(name, GlobalRef)
+                    assign = get!(Vector{Int}, cl.nameassigns, name)
+                    push!(assign, i)
+                    targetstore = get!(Links, cl.namepreds, name)
+                    target = P(name, targetstore)
+                    add_links!(target, stmt, cl)
                 end
-                assign = get!(Vector{Int}, cl.nameassigns, name)
-                push!(assign, i)
-                targetstore = get!(Links, cl.namepreds, name)
-                target = P(name, targetstore)
-                add_links!(target, stmt, cl)
-            elseif length(stmt.args) === 3 && (arg3 = stmt.args[3]; arg3 isa CodeInfo) # method definition
+            elseif ismethod3(stmt) && (mbody = method_body(stmt); mbody isa CodeInfo) # method definition
                 # A method was defined for an existing function.
-                icl = CodeLinks(cl.thismod, arg3)
+                icl = CodeLinks(cl.thismod, mbody)
                 add_inner!(cl, icl, i)
             end
             rhs = stmt
@@ -413,9 +414,11 @@ function add_links!(target::Pair{Union{SSAValue,SlotNumber,GlobalRef},Links}, @n
                 add_links!(target, stmt.args[i], cl)
             end
         end
-    elseif stmt isa Core.GotoIfNot
+    elseif (@static @isdefined(EnterNode) ? stmt isa EnterNode : false)
+        isdefined(stmt, :scope) && add_links!(target, stmt.scope, cl)
+    elseif stmt isa GotoIfNot
         add_links!(target, stmt.cond, cl)
-    elseif stmt isa Core.ReturnNode
+    elseif stmt isa ReturnNode
         add_links!(target, stmt.val, cl)
     end
     return nothing
@@ -1006,13 +1009,29 @@ function find_typedefs(src::CodeInfo)
         if istypedef(stmt) && !isanonymous_typedef(stmt::Expr)
             stmt = stmt::Expr
             r = typedef_range(src, i)
-            push!(typedef_blocks, r)
-            name = stmt.head === :call ? stmt.args[3] : stmt.args[1]
-            if isa(name, QuoteNode)
-                name = name.value
+            if is_resolve_typegroup_call(stmt)
+                # A typegroup defines one type per `declare_const` in the block;
+                # record each name against the same statement range.
+                for j in r
+                    s = src.code[j]
+                    is_declare_const(s) || continue
+                    name = (s::Expr).args[3]
+                    if isa(name, QuoteNode)
+                        name = name.value
+                    end
+                    isa(name, Symbol) || continue
+                    push!(typedef_blocks, r)
+                    push!(typedef_names, name)
+                end
+            else
+                push!(typedef_blocks, r)
+                name = stmt.head === :call ? stmt.args[3] : stmt.args[1]
+                if isa(name, QuoteNode)
+                    name = name.value
+                end
+                isa(name, Symbol) || @show src i r stmt
+                push!(typedef_names, name::Symbol)
             end
-            isa(name, Symbol) || @show src i r stmt
-            push!(typedef_names, name::Symbol)
             i = last(r)+1
         else
             i += 1
@@ -1026,6 +1045,11 @@ end
 function add_typedefs!(isrequired, src::CodeInfo, edges::CodeEdges, (typedef_blocks, typedef_names), norequire)
     changed = false
     stmts = src.code
+    defaultctors = Tuple{Int,BitSet}[]
+    for (i, stmt) in pairs(stmts)
+        is_defaultctors_call(stmt) || continue
+        push!(defaultctors, (i, terminal_preds(i, edges)))
+    end
     idx = 1
     while idx < length(stmts)
         stmt = stmts[idx]
@@ -1042,11 +1066,17 @@ function add_typedefs!(isrequired, src::CodeInfo, edges::CodeEdges, (typedef_blo
                         for s in var.succs
                             s ∈ norequire && continue
                             stmt2 = stmts[s]
-                            if isexpr(stmt2, :method) && (fname = (stmt2::Expr).args[1]; fname === false || fname === nothing)
+                            if ismethod(stmt2) && (fname = method_name(stmt2::Expr); fname === false || fname === nothing)
                                 isrequired[s] = true
                             end
                         end
                     end
+                end
+                for (ctor, preds) in defaultctors
+                    ctor ∈ norequire && continue
+                    any(p -> p ∈ typedefr, preds) || continue
+                    changed |= !isrequired[ctor]
+                    isrequired[ctor] = true
                 end
                 idx = last(typedefr) + 1
                 continue
@@ -1058,7 +1088,7 @@ function add_typedefs!(isrequired, src::CodeInfo, edges::CodeEdges, (typedef_blo
             while i <= length(stmts) && !ismethod3(stmts[i])
                 i += 1
             end
-            if i <= length(stmts) && (stmts[i]::Expr).args[1] == false
+            if i <= length(stmts) && method_name(stmts[i]::Expr) == false
                 tpreds = terminal_preds(i, edges)
                 if minimum(tpreds) == idx && i ∉ norequire
                     changed |= !isrequired[i]

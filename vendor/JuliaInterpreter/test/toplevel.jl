@@ -32,9 +32,13 @@ end
         end
     end
     modexs = collect(ExprSplitter(JIVisible, ex))
-    m, ex = first(modexs)        # FIXME don't use index in tests
+    # the doc application is yielded inside the module, after its body
+    m, ex = last(modexs)
+    @test m === JIVisible.DocStringTest
     @test JuliaInterpreter.is_doc_expr(ex.args[2])
-    Core.eval(m, ex)
+    for (m, ex) in modexs
+        Core.eval(m, ex)
+    end
     io = IOBuffer()
     show(io, @doc(JIVisible.DocStringTest))
     @test occursin("Special", String(take!(io)))
@@ -66,6 +70,16 @@ end
     collect(ExprSplitter(JIVisible, :(module JIInvisible f() = 1 end)))  # this looks up JIInvisible rather than create it
     @test !isdefinedglobal(Main, :JIInvisible)
     @test  isdefinedglobal(JIVisible, :JIInvisible)
+
+    # `Base` has a self-binding even though `parentmodule(Base) === Main`.
+    let mod = Module(:SelfBoundModule)
+        @test parentmodule(mod) === Main
+        @test getglobal(mod, :SelfBoundModule) === mod
+        modexs = collect(ExprSplitter(mod, :(baremodule SelfBoundModule; x = 1; end)))
+        @test first(only(modexs)) === mod
+        @test getglobal(mod, :SelfBoundModule) === mod
+    end
+
     mktempdir() do path
         push!(LOAD_PATH, path)
         open(joinpath(path, "TmpPkg1.jl"), "w") do io
@@ -83,15 +97,22 @@ end
                     """)
         end
         @eval using TmpPkg1
-        # Every package is technically parented in Main but the name may not be visible in Main
         @test @eval isdefinedglobal(@__MODULE__, :TmpPkg1)
         @test @eval !isdefinedglobal(@__MODULE__, :TmpPkg2)
-        collect(ExprSplitter(@__MODULE__, quote
-                module TmpPkg2
-                f() = 2
-                end
-            end))
-        @test @eval isdefinedglobal(@__MODULE__, :TmpPkg1)
+        # A top-level `module TmpPkg2` (the form used when a package loads itself, evaluated
+        # into `Base.__toplevel__`) resolves to the already-loaded package rather than
+        # building a duplicate, even when the name is not visible in the parsing module.
+        for (m, _) in ExprSplitter(Base.__toplevel__, :(module TmpPkg2; f() = 2; end))
+            @test nameof(m) === :TmpPkg2 && parentmodule(m) === m
+        end
+        @test @eval !isdefinedglobal(@__MODULE__, :TmpPkg2)
+        # The same declaration nested in an ordinary module is a *local* module that merely
+        # shares the package's name: it is built fresh as a submodule of that module and
+        # shadows the package, matching `include` (Revise issue #747).
+        for (m, _) in ExprSplitter(JIVisible, :(module TmpPkg2; f() = 3; end))
+            @test parentmodule(m) === JIVisible
+        end
+        @test isdefinedglobal(JIVisible, :TmpPkg2)
         @test @eval !isdefinedglobal(@__MODULE__, :TmpPkg2)
     end
 
@@ -209,7 +230,14 @@ function check_toplevel_script(M::Module)
     @test M.feval_add!(0) == 1
     @test M.feval_min!(0) == 1
     @test M.paramtype(Vector{Int8}) == Int8
-    @test M.paramtype(Vector) == M.NoParam
+    if VERSION < v"1.14.0-DEV"
+        # On 1.14-DEV this compiled (non-interpreted) call currently crashes with
+        # "Unreachable reached" (upstream regression in the in-progress
+        # static-parameter definedness work; see JuliaLang/julia#62001). Re-enable —
+        # possibly expecting the TypeVar instead of NoParam — once the upstream
+        # semantics settle.
+        @test M.paramtype(Vector) == M.NoParam
+    end
     @test M.Inner.g() == 5
     @test M.Inner.InnerInner.g() == 6
     @test isdefinedglobal(M, :Beat)
@@ -324,6 +352,47 @@ end
             end))
         (mod1, ex1), state1 = iterate(exsplit)
         @test mod1 === modref
+    end
+end
+
+# Two packages can load extensions sharing a name. When such a module is
+# re-parsed into `Base.__toplevel__`, `identify_package` returns `nothing` and
+# the name-only fallback over `Base.loaded_modules` (hash order) would bind the
+# file to whichever same-named module hashes first. `find_toplevel_module_id`
+# disambiguates by source file.
+let
+    dir = mktempdir()
+    atexit(() -> rm(dir; recursive=true, force=true))
+    global const collFileA = joinpath(dir, "hostA", "Coll.jl")
+    global const collFileB = joinpath(dir, "hostB", "Coll.jl")
+    mkpath(dirname(collFileA)); mkpath(dirname(collFileB))
+    write(collFileA, "module ReviseColl\nf() = :A\nend\n")
+    write(collFileB, "module ReviseColl\nf() = :B\nend\n")
+end
+module CollHostA end
+module CollHostB end
+Base.include(CollHostA, collFileA)
+Base.include(CollHostB, collFileB)
+@testset "Namespace collision disambiguation" begin
+    modA, modB = CollHostA.ReviseColl, CollHostB.ReviseColl
+    idA = Base.PkgId(Base.UUID("aaaaaaaa-0000-4000-8000-000000000001"), "ReviseColl")
+    idB = Base.PkgId(Base.UUID("bbbbbbbb-0000-4000-8000-000000000002"), "ReviseColl")
+    Base.loaded_modules[idA] = modA
+    Base.loaded_modules[idB] = modB
+    fileA, fileB = collFileA, collFileB
+    try
+        mkmod(file) = Expr(:module, false, :ReviseColl,
+                           Expr(:block, LineNumberNode(1, Symbol(file)), :(f() = :x)))
+        # Resolve to the module defined in the matching file regardless of hash order.
+        @test JuliaInterpreter.find_toplevel_module_id(Base.__toplevel__, :ReviseColl, mkmod(fileA)) === idA
+        @test JuliaInterpreter.find_toplevel_module_id(Base.__toplevel__, :ReviseColl, mkmod(fileB)) === idB
+        # And drive the full ExprSplitter path that hits the fallback.
+        exsplit = JuliaInterpreter.ExprSplitter(Base.__toplevel__, mkmod(fileB))
+        (mod1, _), _ = iterate(exsplit)
+        @test mod1 === modB
+    finally
+        delete!(Base.loaded_modules, idA)
+        delete!(Base.loaded_modules, idB)
     end
 end
 
@@ -620,6 +689,7 @@ end
     ex = quote
         external_foo() = 1
         Base.Experimental.@MethodTable method_table
+        get_method_table() = method_table
     end
     frame = Frame(Toplevel, ex)
     JuliaInterpreter.finish!(frame, true)
@@ -641,6 +711,12 @@ end
     frame = Frame(Toplevel, ex)
     JuliaInterpreter.finish!(frame, true)
     @test nmethods_in_overlay() == 4
+
+    # The method-table operand remains an inline call in lowered code.
+    ex = :(Base.Experimental.@overlay get_method_table() external_foo(x::Float64) = 5)
+    frame = Frame(Toplevel, ex)
+    JuliaInterpreter.finish!(frame, true)
+    @test nmethods_in_overlay() == 5
 end
 
 # Need to wrap rhs of `:const` expression
@@ -813,4 +889,74 @@ module DirectSurface end
     # `whereis` on a toplevel-surface frame reads the surface `LineNumberNode`s directly.
     fr = JuliaInterpreter.toplevel_frame(DirectSurface, Any[LineNumberNode(7, :somefile), :(x = 1)])
     @test JuliaInterpreter.whereis(fr, 2) == ("somefile", 7)
+end
+
+@testset "macrocall with nothing line info" begin
+    ex = Expr(:toplevel, Expr(:macrocall, GlobalRef(Core, Symbol("@doc")), nothing, "docstr", :(split_nolineinfo() = 1)))
+    @test length(collect(ExprSplitter(@__MODULE__, ex))) == 1
+end
+
+@testset "ExprSplitter executes an unsplittable block exactly once" begin
+    hits = Ref(0)
+    ex = quote
+        begin
+            local t = 1
+            $hits[] += t
+        end
+        split_once_after() = 2
+    end
+    for (mod, e) in ExprSplitter(@__MODULE__, ex)
+        JuliaInterpreter.finish_and_return!(Frame(mod, e), true)
+    end
+    @test hits[] == 1
+end
+
+@static if VERSION >= v"1.11"  # `public` and `Base.ispublic` are 1.11+
+@testset "public declarations" begin
+    @eval module PublicDeclTest end
+    fr = Frame(PublicDeclTest, Expr(:block, Expr(:public, :pubmarked), :(41 + 1)))
+    @test JuliaInterpreter.finish_and_return!(fr, true) == 42
+    @test Base.ispublic(PublicDeclTest, :pubmarked)
+end
+end
+
+@testset "Frame on declaration-only expressions" begin
+    @eval module BareDeclTest end
+    fr = Frame(BareDeclTest, :(global bare_declared))
+    @test JuliaInterpreter.finish_and_return!(fr, true) === nothing
+    # `global +` shadows the imported Base binding; lowering is the identity on it
+    fr = Frame(BareDeclTest, :(global +))
+    @test JuliaInterpreter.finish_and_return!(fr, true) === nothing
+    @test !Base.isdefined(BareDeclTest, :+)
+    @static if VERSION >= v"1.11"  # `public` and `Base.ispublic` are 1.11+
+        fr = Frame(BareDeclTest, Expr(:public, :bare_public))
+        @test JuliaInterpreter.finish_and_return!(fr, true) === nothing
+        @test Base.ispublic(BareDeclTest, :bare_public)
+    end
+end
+
+@testset "module docstrings evaluate within the module" begin
+    ex = Base.parse_input_line("""
+        "ModDoc, evaluating \$(KDOC)"
+        module ModDocEvalTest
+        const KDOC = :kdoc_value
+        end
+        """)
+    for (mod, e) in ExprSplitter(@__MODULE__, ex)
+        JuliaInterpreter.finish_and_return!(Frame(mod, e), true)
+    end
+    b = Base.Docs.Binding(ModDocEvalTest, :ModDocEvalTest)
+    @test haskey(Base.Docs.meta(ModDocEvalTest), b)
+    @test occursin("kdoc_value", string(Base.Docs.doc(b)))
+end
+
+@testset "macros expanding to declarations" begin
+    @eval module MacroDeclTest
+    macro decl(); esc(:(global from_macro)); end
+    end
+    # ExprSplitter wraps split statements in a (block lnn stmt); a macro expanding to
+    # `global` only lowers at true top level (issue JuliaLang/julia#28833's test)
+    ex = Expr(:block, LineNumberNode(1, :x), :(MacroDeclTest.@decl))
+    fr = Frame(MacroDeclTest, ex)
+    @test JuliaInterpreter.finish_and_return!(fr, true) === nothing
 end
