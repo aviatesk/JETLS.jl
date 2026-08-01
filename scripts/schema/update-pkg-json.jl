@@ -76,8 +76,8 @@ function update_package_json(
     result = deepcopy(package_json)
     result["contributes"]["configuration"]["properties"]["jetls-client.settings"]["properties"] =
         setting_schema
-    result["contributes"]["configuration"]["properties"]["jetls-client.initializationOptions"]["properties"] =
-        init_options_schema
+    init_options_config = result["contributes"]["configuration"]["properties"]["jetls-client.initializationOptions"]
+    merge!(init_options_config, init_options_schema)
     return result
 end
 

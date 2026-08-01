@@ -108,43 +108,39 @@
           "scope": "resource",
           "type": "object",
           "default": {},
-          "markdownDescription": "Static initialization options sent to JETLS during startup. These settings require a server restart to take effect.",
+          "markdownDescription": "Static initialization options that are set once at server startup and require a server restart to take effect. See [Initialization options](https://aviatesk.github.io/JETLS.jl/release/launching/#init-options).",
           "properties": {
-            "additionalProperties": false,
-            "markdownDescription": "Static initialization options that are set once at server startup and require a server restart to take effect. See [Initialization options](https://aviatesk.github.io/JETLS.jl/release/launching/#init-options).",
-            "properties": {
-              "analysis_overrides": {
-                "default": [],
-                "items": {
-                  "additionalProperties": false,
-                  "properties": {
-                    "full_analysis": {
-                      "default": false,
-                      "markdownDescription": "Whether matched files should use the Revise-based full-analysis mode. This requires `JETLS_DEV_MODE` because the analysis relies on Revise-tracked loaded modules. Defaults to false, which keeps files out of full analysis and uses `module_name` only as a lowering context when provided. This option is highly experimental, and its behavior and semantics may change in future releases.",
-                      "type": "boolean"
-                    },
-                    "module_name": {
-                      "markdownDescription": "Optional module name to associate with the matched files. By default this is used as an out-of-scope lowering context. When `full_analysis` is true, it selects the loaded module to analyze.",
-                      "type": "string"
-                    },
-                    "path": {
-                      "markdownDescription": "Glob pattern to match files for which analysis should be overridden (e.g., `src/**/*.jl`, `test/**/*.jl`). Patterns are matched against file paths relative to the workspace root. Supports globstar (`**`) for matching directories recursively.",
-                      "type": "string"
-                    }
+            "analysis_overrides": {
+              "default": [],
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "full_analysis": {
+                    "default": false,
+                    "markdownDescription": "Whether matched files should use the Revise-based full-analysis mode. This requires `JETLS_DEV_MODE` because the analysis relies on Revise-tracked loaded modules. Defaults to false, which keeps files out of full analysis and uses `module_name` only as a lowering context when provided. This option is highly experimental, and its behavior and semantics may change in future releases.",
+                    "type": "boolean"
                   },
-                  "required": [
-                    "path"
-                  ],
-                  "type": "object"
+                  "module_name": {
+                    "markdownDescription": "Optional module name to associate with the matched files. By default this is used as an out-of-scope lowering context. When `full_analysis` is true, it selects the loaded module to analyze.",
+                    "type": "string"
+                  },
+                  "path": {
+                    "markdownDescription": "Glob pattern to match files for which analysis should be overridden (e.g., `src/**/*.jl`, `test/**/*.jl`). Patterns are matched against file paths relative to the workspace root. Supports globstar (`**`) for matching directories recursively.",
+                    "type": "string"
+                  }
                 },
-                "markdownDescription": "Override full analysis behavior for specific file patterns. Primarily used as a temporary workaround to disable analysis for files affected by memory leak issues. Each override specifies a glob pattern, optionally a module name, and can opt back into full analysis. Note: This is an experimental feature that may be removed or changed in future versions.",
-                "type": "array"
-              }
-            },
-            "required": [],
-            "type": "object"
+                "required": [
+                  "path"
+                ],
+                "type": "object"
+              },
+              "markdownDescription": "Override full analysis behavior for specific file patterns. Primarily used as a temporary workaround to disable analysis for files affected by memory leak issues. Each override specifies a glob pattern, optionally a module name, and can opt back into full analysis. Note: This is an experimental feature that may be removed or changed in future versions.",
+              "type": "array"
+            }
           },
-          "order": 4
+          "order": 4,
+          "additionalProperties": false,
+          "required": []
         },
         "jetls-client.settings": {
           "scope": "resource",
@@ -404,9 +400,10 @@
   "scripts": {
     "build": "node esbuild.js --production",
     "build:watch": "node esbuild.js --watch",
-    "check": "npm run check:tsc && npm run check:lint",
+    "check": "npm run check:tsc && npm run check:lint && npm run check:package-schema",
     "check:tsc": "tsc --noEmit",
     "check:lint": "eslint",
+    "check:package-schema": "node check-package-schema.mjs",
     "clean": "rm -rf out *.vsix",
     "vscode:prepublish": "npm run check && npm run build"
   },
@@ -418,6 +415,7 @@
     "@stylistic/eslint-plugin": "^5.10.0",
     "@types/node": "^26.1.0",
     "@types/vscode": "^1.96.0",
+    "ajv": "^8.20.0",
     "esbuild": "^0.28.0",
     "eslint": "^10.6.0",
     "typescript": "^6.0.3",
