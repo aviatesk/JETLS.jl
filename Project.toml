@@ -7,7 +7,7 @@ JuliaSyntax = "master"
 authors = ["Shuhei Kadowaki <aviatesk@gmail.com>"]
 
 [workspace]
-projects = ["docs", "test", "scripts"]
+projects = ["docs", "test", "scripts", "scripts/schema"]
 
 [deps]
 Compiler = "807dbc54-b67e-4c79-8afb-eafe4df6f2e1"
