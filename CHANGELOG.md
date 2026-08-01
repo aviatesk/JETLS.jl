@@ -44,12 +44,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > This disables analysis for matched files. Basic features like completion still might work, but most LSP features will be unfunctional.
 > Note that `analysis_overrides` is provided as a temporary workaround and may be removed or changed at any time. A proper fix is being worked on.
 
-### Breaking
-
-- Removed the experimental `n_analysis_workers` initialization option. Full-analysis requests are now processed serially, while signature analysis within each request remains parallel based on the available Julia threads. Existing client or `.JETLSConfig.toml` configurations must remove this option.
-
-- `inference/non-boolean-cond` is now reported as [`inference/type-error/non-bool-cond`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/inference/type-error/non-bool-cond). Existing diagnostic pattern configurations that match the old code continue to apply for now, but this compatibility support may be removed in a future release.
-
 ## 2026-08-01
 
 - Commit: [`f64faec`](https://github.com/aviatesk/JETLS.jl/commit/f64faec)
@@ -58,6 +52,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   ```bash
   julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="2026-08-01")'
   ```
+
+### Breaking
+
+- Removed the experimental `n_analysis_workers` initialization option. Full-analysis requests are now processed serially, while signature analysis within each request remains parallel based on the available Julia threads. Existing client or `.JETLSConfig.toml` configurations must remove this option.
+
+- `inference/non-boolean-cond` is now reported as [`inference/type-error/non-bool-cond`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/inference/type-error/non-bool-cond). Existing diagnostic pattern configurations that match the old code continue to apply for now, but this compatibility support may be removed in a future release.
 
 ### Added
 
