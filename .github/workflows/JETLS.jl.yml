@@ -9,8 +9,6 @@ on:
       - "test/**"
       - "LSP/**"
       - "Compiler/**"
-      - "schemas/**"
-      - "scripts/schema/**"
       - "Project.toml"
       - ".github/workflows/JETLS.jl.yml"
       - ".github/workflows/test-app.yml"
@@ -22,8 +20,6 @@ on:
       - "test/**"
       - "LSP/**"
       - "Compiler/**"
-      - "schemas/**"
-      - "scripts/schema/**"
       - "Project.toml"
       - ".github/workflows/JETLS.jl.yml"
       - ".github/workflows/test-app.yml"
@@ -166,9 +162,6 @@ jobs:
           version: "1"
           arch: x64
       - run: julia --startup-file=no Compiler/update-snapshots.jl --check
-
-  check_schemas:
-    uses: ./.github/workflows/check-schemas.yml
 
   jetls_self_check:
     name: Self diagnostics

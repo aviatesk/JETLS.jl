@@ -1,6 +1,26 @@
 name: Check schemas
 
 on:
+  push:
+    branches:
+      - master
+    paths:
+      - "src/**"
+      - "schemas/**"
+      - "scripts/schema/**"
+      - "jetls-client/package.json"
+      - "Project.toml"
+      - ".github/workflows/check-schemas.yml"
+  pull_request:
+    branches-ignore:
+      - release
+    paths:
+      - "src/**"
+      - "schemas/**"
+      - "scripts/schema/**"
+      - "jetls-client/package.json"
+      - "Project.toml"
+      - ".github/workflows/check-schemas.yml"
   workflow_call:
 
 jobs:
