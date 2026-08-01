@@ -317,9 +317,9 @@ mutable struct CASStats <: AtomicStats
     "Maximum number of retries observed in any single `store!` call"
     @atomic max_retries::Int
     "Total time spent in all `store!` operations (nanoseconds)"
-    @atomic total_ns::UInt
+    @atomic total_ns::UInt64
     "Total time spent executing the user function `f(old)` (nanoseconds)"
-    @atomic f_ns::UInt
+    @atomic f_ns::UInt64
     CASStats() = new(0, 0, 0, 0, 0)
 end
 
