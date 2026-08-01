@@ -57,6 +57,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   pair(x::Int, y::AbstractString) :: Pair{Int64, <:AbstractString}
   ```
 
+### Fixed
+
+- Fixed diagnostic path patterns and `analysis_overrides` on Windows, allowing forward-slash glob patterns to match files under the workspace root.
+
 ## 2026-08-01
 
 - Commit: [`f64faec`](https://github.com/aviatesk/JETLS.jl/commit/f64faec)

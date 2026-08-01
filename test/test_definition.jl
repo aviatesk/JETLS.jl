@@ -11,7 +11,7 @@ include("setup.jl")
     test_method = first(methods(method_for_test_method_definition_range))
     method_location = JETLS.Location(test_method)
     @test method_location isa JETLS.LSP.Location
-    @test JETLS.URIs2.uri2filepath(method_location.uri) == @__FILE__
+    @test method_location.uri == filepath2uri(@__FILE__)
     @test method_location.range.start.line == (linenum - 1)
 end
 
@@ -23,7 +23,7 @@ const LINE_TestModuleDefinitionRange = (@__LINE__) - 3
 @testset "module location" begin
     loc = JETLS.Location(TestModuleDefinitionRange)
     @test loc isa JETLS.LSP.Location
-    @test JETLS.URIs2.uri2filepath(loc.uri) == @__FILE__
+    @test loc.uri == filepath2uri(@__FILE__)
     @test loc.range.start.line == LINE_TestModuleDefinitionRange-1
 end
 
@@ -194,7 +194,7 @@ end
 
     @testset "Base functions" begin
         sin_cand_file_, sin_cand_line = functionloc(first(methods(sin, (Float64,))))
-        sin_cand_file = JETLS.to_full_path(sin_cand_file_)
+        sin_cand_uri = filepath2uri(JETLS.to_full_path(sin_cand_file_))
 
         @testset "`Base.Compiler.tmeet` resolves" begin
             text, positions = JETLS.get_text_and_positions("Base.Compiler.tm│eet")
@@ -205,7 +205,7 @@ end
             text, positions = JETLS.get_text_and_positions("si│n(1.0)")
             locs, _ = @something find_definition(text, only(positions)) error("expected result")
             @test any(locs) do l
-                JETLS.uri2filepath(l.uri) == sin_cand_file &&
+                l.uri == sin_cand_uri &&
                 l.range.start.line == (sin_cand_line - 1)
             end
         end
@@ -216,6 +216,7 @@ end
         end
         @testset "`Base.cos(x)` ignores local `cos(x) = 1`" begin
             filename = joinpath(@__DIR__, "testfile_$(gensym(:definition)).jl")
+            filename_uri = filepath2uri(filename)
             text, positions = JETLS.get_text_and_positions("""
                     cos(x) = 1
                     global x::Float64 = let x = 42
@@ -224,7 +225,7 @@ end
                 """)
             locs, _ = @something find_definition(text, only(positions); filename) error("expected result")
             @test length(locs) >= 1
-            @test all(l -> JETLS.uri2filepath(l.uri) != filename, locs)
+            @test all(l -> l.uri != filename_uri, locs)
         end
     end
 
@@ -239,7 +240,7 @@ end
         # Phase 4 entirely (no `:matches` recorded for the surface byte range).
         getindex_cand_file_, getindex_cand_line =
             functionloc(first(methods(getindex, (Vector{Int}, Int))))
-        getindex_cand_file = JETLS.to_full_path(getindex_cand_file_)
+        getindex_cand_uri = filepath2uri(JETLS.to_full_path(getindex_cand_file_))
 
         function operator_dispatch_locs(cursor_text::AbstractString)
             text, positions = JETLS.get_text_and_positions("""
@@ -254,7 +255,7 @@ end
         @testset "`arr[i]` jumps to `getindex(::Vector{Int}, ::Int)`" begin
             locs = operator_dispatch_locs("arr[i]│")
             @test any(locs) do l
-                JETLS.uri2filepath(l.uri) == getindex_cand_file &&
+                l.uri == getindex_cand_uri &&
                 l.range.start.line == (getindex_cand_line - 1)
             end
         end
@@ -414,8 +415,9 @@ end
     # pass (otherwise `find_definition` only processes the cursor's
     # toplevel and never sees the `using` line).
     sin_cand_file_, sin_cand_line = functionloc(first(methods(sin, (Float64,))))
-    sin_cand_file = JETLS.to_full_path(sin_cand_file_)
+    sin_cand_uri = filepath2uri(JETLS.to_full_path(sin_cand_file_))
     filename = joinpath(@__DIR__, "testfile_$(gensym(:definition)).jl")
+    filename_uri = filepath2uri(filename)
     text, positions = JETLS.get_text_and_positions("""
             module M_import_test
                 using Base: sin
@@ -425,9 +427,9 @@ end
     locs, _ = @something find_definition(text, only(positions); filename) error("expected result")
     @test length(locs) >= 1
     # Jump must go outside the synthetic source (to `Base`'s source).
-    @test all(l -> JETLS.uri2filepath(l.uri) != filename, locs)
+    @test all(l -> l.uri != filename_uri, locs)
     @test any(locs) do l
-        JETLS.uri2filepath(l.uri) == sin_cand_file &&
+        l.uri == sin_cand_uri &&
         l.range.start.line == (sin_cand_line - 1)
     end
 end

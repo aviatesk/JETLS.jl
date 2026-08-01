@@ -1075,7 +1075,8 @@ end
                                 "path" => "LSP/src/**/*.jl")
                         ])))
                 uri = filepath2uri("/path/to/LSP/src/subdir/protocol.jl")
-                JETLS.apply_diagnostic_config!(diagnostics, manager, uri, "/path/to")
+                root_path = Sys.iswindows() ? "/PATH/TO" : "/path/to"
+                JETLS.apply_diagnostic_config!(diagnostics, manager, uri, root_path)
                 @test length(diagnostics) == 1
                 @test only(diagnostics).severity == DiagnosticSeverity.Information
             end
@@ -1118,7 +1119,8 @@ end
                                 "path" => "test/**/*.jl")
                         ])))
                 uri = filepath2uri("/path/to/test/foo/bar.jl")
-                JETLS.apply_diagnostic_config!(diagnostics, manager, uri, "/path/to")
+                root_path = Sys.iswindows() ? "/PATH/TO" : "/path/to"
+                JETLS.apply_diagnostic_config!(diagnostics, manager, uri, root_path)
                 @test isempty(diagnostics)
             end
         end

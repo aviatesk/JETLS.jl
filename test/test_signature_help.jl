@@ -428,20 +428,21 @@ end
         foo(xxx, yyy) = :xxx_yyy
         foo(nothing,│)
         """
-        @test with_signature_help_request(text) do _, result, _, script_path
+        @test with_signature_help_request(text) do _, result, uri, _
+            canonical_script_path = uri2filename(uri)
             @test length(result.signatures) == 2
             @test any(result.signatures) do siginfo
                 siginfo.label == "foo(xxx)" &&
                 # this also tests that JETLS doesn't show the nonsensical `var"..."`
                 # string caused by JET's internal details
-                occursin("@ `Main` [$(script_path):1]($(filepath2uri(script_path))#L1)",
+                occursin("@ `Main` [$canonical_script_path:1]($uri#L1)",
                     (siginfo.documentation::MarkupContent).value)
             end
             @test any(result.signatures) do siginfo
                 siginfo.label == "foo(xxx, yyy)" &&
                 # this also tests that JETLS doesn't show the nonsensical `var"..."`
                 # string caused by JET's internal details
-                occursin("@ `Main` [$(script_path):2]($(filepath2uri(script_path))#L2)",
+                occursin("@ `Main` [$canonical_script_path:2]($uri#L2)",
                     (siginfo.documentation::MarkupContent).value)
             end
             return true
@@ -479,19 +480,20 @@ end
                             textDocument = TextDocumentIdentifier(; uri),
                             position = Position(; line=2, character=12))))
                     @test raw_res isa SignatureHelpResponse
+                    canonical_script_path = uri2filename(uri)
                     @test length(raw_res.result.signatures) == 2
                     @test any(raw_res.result.signatures) do siginfo
                         siginfo.label == "foo(xxx)" &&
                         # this also tests that JETLS doesn't show the nonsensical `var"..."`
                         # string caused by JET's internal details
-                        occursin("@ `Main` [$(script_path):1]($(filepath2uri(script_path))#L1)",
+                        occursin("@ `Main` [$canonical_script_path:1]($uri#L1)",
                             (siginfo.documentation::MarkupContent).value)
                     end
                     @test any(raw_res.result.signatures) do siginfo
                         siginfo.label == "foo(xxx, yyy)" &&
                         # this also tests that JETLS doesn't show the nonsensical `var"..."`
                         # string caused by JET's internal details
-                        occursin("@ `Main` [$(script_path):2]($(filepath2uri(script_path))#L2)",
+                        occursin("@ `Main` [$canonical_script_path:2]($uri#L2)",
                             (siginfo.documentation::MarkupContent).value)
                     end
                 end
