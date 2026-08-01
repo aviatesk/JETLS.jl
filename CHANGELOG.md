@@ -44,6 +44,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > This disables analysis for matched files. Basic features like completion still might work, but most LSP features will be unfunctional.
 > Note that `analysis_overrides` is provided as a temporary workaround and may be removed or changed at any time. A proper fix is being worked on.
 
+### Changed
+
+- Function-definition hover now shows return types inferred from declared signature types alongside the source signature. For example, hovering over `pair` in:
+  ```julia
+  function pair(x::Int, y::AbstractString)
+      return x => y
+  end
+  ```
+  shows:
+  ```julia
+  pair(x::Int, y::AbstractString) :: Pair{Int64, <:AbstractString}
+  ```
+
 ## 2026-08-01
 
 - Commit: [`f64faec`](https://github.com/aviatesk/JETLS.jl/commit/f64faec)

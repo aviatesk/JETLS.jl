@@ -108,11 +108,19 @@ function _get_hover(
         is_local = false
     end
 
-    # When `node` is the callee of an enclosing call (`func│(x)`, `Foo.bar│(x)`),
-    # show the full call expression in the header and query its return type —
-    # doc lookup keeps using `node` so the identifier-based resolution stays.
-    callee_call = enclosing_call_for_matches(st0_top, node)
-    display_node = (callee_call === nothing || callee_call === node) ? node : callee_call
+    # For a function definition name, show its full signature and query the entire
+    # definition so `type_for_funcdef` can infer the return type. At call sites, promote
+    # the callee to its enclosing call and query that call's return type. Doc lookup keeps
+    # using `node` so identifier-based resolution stays intact in both cases.
+    funcdef = enclosing_function_definition_for_name(st0_top, node)
+    callee_call = funcdef === nothing ? enclosing_call_for_matches(st0_top, node) : nothing
+    display_node = if funcdef !== nothing
+        funcdef[1]
+    elseif callee_call !== nothing && callee_call !== node
+        callee_call
+    else
+        node
+    end
     symbol_literal_node = (binfo === nothing && display_node === node) ?
         symbol_literal_container(st0_top, node) : nothing
     symbol_literal_node === nothing || (display_node = symbol_literal_node)
@@ -124,7 +132,8 @@ function _get_hover(
         header = JS.sourcetext(node)
     end
 
-    type_query_rng = JS.byte_range(symbol_literal_node === nothing ? display_node : node)
+    type_query_rng = funcdef !== nothing ? JS.byte_range(funcdef) :
+        JS.byte_range(symbol_literal_node === nothing ? display_node : node)
     ctx = build_inferred_context_for_range(st0_top, context_module, type_query_rng;
         world, caller="get_hover", cache=fi.inferred_context_cache)
     is_cancelled(cancel_flag) && return nothing
@@ -204,6 +213,15 @@ function _get_hover(
     contents = MarkupContent(; kind = MarkupKind.Markdown, value = String(take!(io)))
     range, _ = unadjust_range(state, uri, jsobj_to_range(display_node, fi))
     return Hover(; contents, range)
+end
+
+function enclosing_function_definition_for_name(st0_top::SyntaxTree, node::SyntaxTree)
+    node_rng = JS.byte_range(node)
+    for ancestor in byte_ancestors(st0_top, first(node_rng))
+        name_node = @something function_definition_name_node(ancestor) continue
+        JS.byte_range(name_node) == node_rng && return ancestor
+    end
+    return nothing
 end
 
 # Unpack an aggregate `Markdown.MD` (what `Base.Docs.doc` returns when a
