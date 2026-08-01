@@ -166,8 +166,9 @@ end
             fi = JETLS.FileInfo(1, code, @__FILE__)
             st0_top = JETLS.build_syntax_tree(fi)
             results = []
+            world = Base.get_world_counter()
             JETLS.iterate_toplevel_tree(st0_top) do st0::JS.SyntaxTree
-                r = get_inferrable_tree(st0, Main)
+                r = get_inferrable_tree(st0, Main, world)
                 r === nothing || push!(results, (; r..., st0))
                 return nothing
             end
@@ -175,7 +176,7 @@ end
             for (; ctx3, st3, st0) in results
                 @test ctx3 isa JL.VariableAnalysisContext
                 @test st3 isa JS.SyntaxTree
-                @test infer_toplevel_tree(ctx3, st3, st0, @__MODULE__) isa JETLS.SyntaxTreeC
+                @test infer_toplevel_tree(ctx3, st3, st0, @__MODULE__) isa JETLS.SyntaxTree
             end
         end
     end
@@ -186,8 +187,9 @@ end
         let code = "@__undefined_macro_for_test__ xyz"
             fi = JETLS.FileInfo(1, code, @__FILE__)
             st0_top = JETLS.build_syntax_tree(fi)
+            world = Base.get_world_counter()
             JETLS.iterate_toplevel_tree(st0_top) do st0::JS.SyntaxTree
-                @test isnothing(get_inferrable_tree(st0, @__MODULE__))
+                @test isnothing(get_inferrable_tree(st0, @__MODULE__, world))
                 return nothing
             end
         end
@@ -328,6 +330,20 @@ end
                 """
                 _, ctx = type_annotate(code)
                 @test widenconst(get_type_for_range(ctx, range_of(code, "y * factor"))) === Int
+            end
+        end
+
+        @testset "outer static parameter captured by closure" begin
+            let code = """
+                function with_static_capture(x::T) where T<:Int
+                    inner(y::T) = x + y
+                    inner(x)
+                end
+                """
+                _, ctx = type_annotate(code)
+                # The signature-view body can't recover the outer static parameter bound.
+                @test_broken widenconst(get_type_for_range(ctx, range_of(code, "x + y"))) === Int
+                @test widenconst(get_type_for_range(ctx, range_of(code, "inner(x)"))) === Int
             end
         end
 
@@ -1257,6 +1273,45 @@ end
         end
     end
 
+    @testset "macrocall value-exit limitations" begin
+        @testset "constant @something results" begin
+            for code in (
+                    "@something 1",
+                    "@something nothing 1",
+                    "@something 1 nothing",
+                )
+                _, ctx = type_annotate(code)
+                @test_broken get_type_for_range(ctx, range_of_kind(code, JS.K"macrocall")) === Core.Const(1)
+            end
+
+            let code = "let result = @something 1; result; end"
+                _, ctx = type_annotate(code)
+                @test_broken get_type_for_range(ctx, range_of_kind(code, JS.K"macrocall")) === Core.Const(1)
+            end
+
+            let code = "@something nothing"
+                _, ctx = type_annotate(code)
+                @test get_type_for_range(ctx, range_of_kind(code, JS.K"macrocall")) === Union{}
+            end
+        end
+
+        @testset "@assert result" begin
+            for code in (
+                    "@assert true",
+                    "let result = @assert true; result; end",
+                    "let condition = Bool[true, false][1]; @assert condition; end",
+                )
+                _, ctx = type_annotate(code)
+                @test_broken get_type_for_range(ctx, range_of_kind(code, JS.K"macrocall")) === Core.Const(nothing)
+            end
+
+            let code = "@assert false"
+                _, ctx = type_annotate(code)
+                @test get_type_for_range(ctx, range_of_kind(code, JS.K"macrocall")) === Union{}
+            end
+        end
+    end
+
     # `@invoke` / `@invokelatest` lower to `Core.invoke(f, Tuple{...}, args...)`
     # and `Base.invokelatest(f, args...)` respectively. Both calls must dispatch
     # to the user-visible result, not to internal scaffolding.
@@ -1434,18 +1489,14 @@ end
             end
         end
 
-        # Macro-wrapped funcdef (`@inline f(x) = body`) — `flattened_provenance` for nodes
-        # inside the expansion is `[macrocall, function]`. Registering every entry in
-        # `surface_kind_index` makes the inner funcdef's span dispatch to
-        # `type_for_funcdef`, while the macrocall's outer span still routes to
-        # `type_for_macroexpansion` independently.
-        @testset "macro-wrapped funcdef registers both provenance spans" begin
+        # `@inline` escapes the function definition, so the passed-through syntax
+        # retains its own provenance rather than the outer macrocall's provenance.
+        @testset "escaped macro-wrapped funcdef retains inner provenance" begin
             let code = """
                 @inline f(x::Int) = x + 1
                 """
                 _, ctx = type_annotate(code)
                 @test widenconst(get_type_for_range(ctx, range_of_kind(code, JS.K"="))) === Int
-                @test get_type_for_range(ctx, range_of_kind(code, JS.K"macrocall")) !== nothing
             end
         end
 

@@ -1,10 +1,29 @@
 function find_loaded_module(module_name::String)
+    names = split(module_name, '.'; keepempty=true)
+    any(isempty, names) && return nothing
+
+    topname = first(names)
+    topmod = nothing
     for (pkgid, mod) in Base.loaded_modules
-        if pkgid.name == module_name
-            return mod
+        if pkgid.name == topname
+            topmod = mod
+            break
         end
     end
-    return nothing
+    topmod === nothing && return nothing
+    for i = 2:length(names)
+        name = Symbol(names[i])
+        isdefinedglobal(topmod, name) || return nothing
+        submod = getglobal(topmod, name)
+        submod isa Module || return nothing
+        topmod = submod
+    end
+    return topmod
+end
+
+function find_analysis_override_module(module_name::String)
+    module_name == "JETLSTestModule" && return JETLSTestModule
+    return find_loaded_module(module_name)
 end
 
 const JULIA_DIR = let
@@ -26,37 +45,42 @@ function find_analysis_env_path(state::ServerState, uri::URI)
             for override in analysis_overrides
                 if occursin(override.path, path_for_glob)
                     module_name = override.module_name
-                    if module_name === nothing
-                        JETLS_DEV_MODE && @info "Analysis for this file is disabled" path=filepath
-                        return OutOfScope()
-                    elseif module_name == ""
+                    if !override.full_analysis
+                        if module_name === nothing || module_name == ""
+                            @static JETLS_DEV_MODE && @info "Analysis for this file is disabled" path=filepath
+                            return OutOfScope()
+                        end
+                        mod = @something find_analysis_override_module(module_name) begin
+                            @warn "Analysis module override specified but module not found" module_name path=filepath
+                            return OutOfScope()
+                        end
+                        @static if JETLS_DEV_MODE
+                            path = filepath
+                            @info "Analysis module overridden" module_name=>nameof(mod) path _id=path maxlog=1
+                        end
+                        return OutOfScope(mod)
+                    elseif module_name === nothing || module_name == ""
                         env_path = @something find_env_path(filepath) begin
                             @warn "Analysis for this file is disabled, since Project.toml was not found" path=filepath
                             return OutOfScope()
                         end
                         pkg_name = @something find_pkg_name(env_path) begin
-                            @warn "New analysis is not supported for non-package code" path=filepath
+                            @warn "Full analysis is not supported for non-package code" path=filepath
                             return OutOfScope()
                         end
                         pkg_uuid = @something find_pkg_uuid(env_path) begin
-                            @warn "New analysis is not supported for non-package code" path=filepath
+                            @warn "Full analysis is not supported for non-package code" path=filepath
                             return OutOfScope()
                         end
                         return UserModule(env_path, pkg_name, pkg_uuid)
-                    elseif module_name == "JETLSTestModule"
-                        # Skip full analysis but provide a context module that has `Test`
-                        # available, so that lowering analysis can handle macros like
-                        # `@testset`/`@test` defined in test files.
-                        JETLS_DEV_MODE && @info "Using `JETLSTestModule` as out-of-scope lowering context" path=filepath
-                        return OutOfScope(JETLSTestModule)
                     else
-                        mod = @something find_loaded_module(module_name) begin
+                        mod = @something find_analysis_override_module(module_name) begin
                             @warn "Analysis module override specified but module not found" module_name path=filepath
                             return OutOfScope()
                         end
-                        if JETLS_DEV_MODE
+                        @static if JETLS_DEV_MODE
                             path = filepath
-                            @info "Analysis module overridden" module_name path _id=path maxlog=1
+                            @info "Full analysis module overridden" module_name=>nameof(mod) path _id=path maxlog=1
                         end
                         return KnownModule(mod)
                     end
@@ -69,11 +93,12 @@ function find_analysis_env_path(state::ServerState, uri::URI)
         elseif issubdir(filepath, joinpath(JULIA_DIR, "Compiler", "src"))
             return OutOfScope(CC)
         end
-        # Files in CLI mode are explicitly passed on the command line, so the
-        # workspace-boundary guard intended for the LSP flow would wrongly mark
-        # paths outside `state.root_path` as out-of-scope (e.g. running
-        # `jetls check ../foo.jl` from within a cloned package).
-        if !state.cli_mode && isdefined(state, :root_path)
+        # Files in CLI mode are explicitly passed on the command line, so they may discover
+        # their own environments regardless of `state.root_path`. In the LSP flow, require an
+        # explicit workspace root before discovering an environment; rootless documents are
+        # analyzed as standalone scripts instead.
+        if !state.cli_mode
+            isdefined(state, :root_path) || return nothing
             if !issubdir(dirname(filepath), state.root_path)
                 return OutOfScope()
             end

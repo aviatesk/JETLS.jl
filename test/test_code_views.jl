@@ -37,12 +37,12 @@ function toplevel_expansion_testcase(text::AbstractString)
     return (; server, uri, fi, tree, content_uri)
 end
 
-function type_annotation_testcase(text::AbstractString)
+function type_annotation_testcase(text::AbstractString; offset::Int = 1)
     server = server_with_show_document_support()
     uri = filepath2uri(joinpath(pkgdir(JETLS), "test", "annotate_testcase.jl"))
     fi = JETLS.cache_file_info!(server, uri, 1, text)
     st0 = JETLS.build_syntax_tree(fi)
-    tree = @something JETLS.lowerable_toplevel_at(st0, 1) error("missing toplevel tree")
+    tree = @something JETLS.lowerable_toplevel_at(st0, offset) error("missing toplevel tree")
     content_uri = JETLS.type_annotation_content_uri(uri, tree)
     return (; server, uri, fi, tree, content_uri)
 end
@@ -232,21 +232,38 @@ end
 end
 
 @testset "type annotation code action" begin
+    full_range() = Range(;
+        start = Position(; line = 0, character = 0),
+        var"end" = Position(; line = 0, character = 0))
     let case = type_annotation_testcase("function f(a, b)\n    return a + b\nend\n")
         actions = Union{CodeAction,Command}[]
-        range = Range(;
-            start = Position(; line = 0, character = 0),
-            var"end" = Position(; line = 0, character = 0))
         JETLS.type_annotation_code_actions!(
-            actions, case.server, case.uri, case.fi, range)
+            actions, case.server, case.uri, case.fi, full_range())
         titles = String[a.title for a in actions]
         action = actions[findfirst(==("Show inferred type annotations"), titles)]
         @test action.command.command == JETLS.COMMAND_OPEN_TYPE_ANNOTATION
         @test only(action.command.arguments) == string(case.content_uri)
     end
-    full_range() = Range(;
-        start = Position(; line = 0, character = 0),
-        var"end" = Position(; line = 0, character = 0))
+    # Skip type annotation code action for docstrings
+    let case = type_annotation_testcase(
+            "\"\"\"\ndoc\n\"\"\"\nf(x) = x + 1\n"; offset=5)
+        let actions = Union{CodeAction,Command}[]
+            range = Range(;
+                start = Position(; line = 1, character = 1),
+                var"end" = Position(; line = 1, character = 1))
+            JETLS.type_annotation_code_actions!(
+                actions, case.server, case.uri, case.fi, range)
+            @test isempty(actions)
+        end
+        let actions = Union{CodeAction,Command}[]
+            range = Range(;
+                start = Position(; line = 3, character = 0),
+                var"end" = Position(; line = 3, character = 0))
+            JETLS.type_annotation_code_actions!(
+                actions, case.server, case.uri, case.fi, range)
+            @test "Show inferred type annotations" in String[a.title for a in actions]
+        end
+    end
     # not offered on declaration forms with no inferable values
     for code in ("using Base\n", "import Base: map\n", "export foo, bar\n",
                  "public baz\n", "abstract type A end\n", "primitive type P 8 end\n")

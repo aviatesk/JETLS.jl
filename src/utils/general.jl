@@ -34,7 +34,7 @@ Internal `@elapsed` definition for JETLS that is only active in `JETLS_DEV_MODE`
 When `JETLS_DEV_MODE` is `false`, this macro simply evaluates the expression without timing.
 """
 macro elapsed(ex)
-    if JETLS_DEV_MODE
+    @static if JETLS_DEV_MODE
         :(Base.@elapsed $(esc(ex)))
     else
         :(begin $(esc(ex)); 0.0; end)
@@ -183,7 +183,7 @@ macro tryinvokelatest(ex)
     callex = Expr(:call, f)
     isempty(kwargs) || push!(callex.args, Expr(:parameters, kwargs...))
     push!(callex.args, args...)
-    callex = if JETLS_DEV_MODE
+    callex = @static if JETLS_DEV_MODE
         worldex = Expr(:call, :call_in_server_world, f)
         isempty(kwargs) || push!(worldex.args, Expr(:parameters, kwargs...))
         push!(worldex.args, args...)
@@ -192,7 +192,7 @@ macro tryinvokelatest(ex)
         callex
     end
 
-    JETLS_TEST_MODE && return callex
+    @static JETLS_TEST_MODE && return callex
 
     arglist = Any[f, args..., kwargs...]
     callargs = map(1:length(arglist)) do i::Int

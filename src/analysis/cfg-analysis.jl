@@ -38,7 +38,7 @@
 struct BlockEvent
     kind::Symbol
     var_id::JL.IdTag
-    st::SyntaxTreeC
+    st::SyntaxTree
 end
 
 # Per-variable, per-block event entry stored in `LambdaCFG.var_events`.
@@ -47,7 +47,7 @@ end
 struct VarEvent
     kind::Symbol
     block_id::Int
-    st::SyntaxTreeC
+    st::SyntaxTree
 end
 
 # A `K"block"` child statement together with the CFG blocks execution
@@ -56,7 +56,7 @@ end
 struct StatementRecord
     before_block::Int
     after_block::Int
-    st::SyntaxTreeC
+    st::SyntaxTree
 end
 
 mutable struct EventBlock
@@ -136,7 +136,7 @@ function cfg_add_edge!(lin::EventLinearizer, from::Int, to::Int)
     end
 end
 
-function cfg_emit_event!(lin::EventLinearizer, event_kind::Symbol, var_id::JL.IdTag, st::SyntaxTreeC)
+function cfg_emit_event!(lin::EventLinearizer, event_kind::Symbol, var_id::JL.IdTag, st::SyntaxTree)
     lin.blocks[lin.current_block].event = BlockEvent(event_kind, var_id, st)
     # Create a new block to ensure proper ordering.
     # This allows the path-based analysis to track intra-block event order:
@@ -236,8 +236,8 @@ end
 # Walk the top-level operands of a condition expression, unwrapping
 # EST `K"block"` wrappers and descending through `&&` chains (all
 # operands must be true in the true branch).
-function for_each_cond_operand(@specialize(callback), cond::SyntaxTreeC)
-    traverse(cond) do node::SyntaxTreeC
+function for_each_cond_operand(@specialize(callback), cond::SyntaxTree)
+    traverse(cond) do node::SyntaxTree
         k = JS.kind(node)
         if k == JS.K"&&" || (k == JS.K"block" && JS.numchildren(node) == 1)
             return # descend into children
@@ -247,7 +247,7 @@ function for_each_cond_operand(@specialize(callback), cond::SyntaxTreeC)
     end
 end
 
-function undef_is_not_call(ctx3::JL.VariableAnalysisContext, cond::SyntaxTreeC)
+function undef_is_not_call(ctx3::JL.VariableAnalysisContext, cond::SyntaxTree)
     JS.kind(cond) == JS.K"call" || return false
     JS.numchildren(cond) == 2 || return false
     func = cond[1]
@@ -257,7 +257,7 @@ function undef_is_not_call(ctx3::JL.VariableAnalysisContext, cond::SyntaxTreeC)
 end
 
 function undef_emit_isdefined_hint!(
-        lin::EventLinearizer, arg::SyntaxTreeC, candidates::Set{JL.IdTag}
+        lin::EventLinearizer, arg::SyntaxTree, candidates::Set{JL.IdTag}
     )
     JS.kind(arg) == JS.K"BindingId" || return
     vid = var_id(arg)
@@ -267,7 +267,7 @@ end
 # Emit `:isdefined` hints for condition branches where `@isdefined(var)` is true.
 function undef_emit_isdefined_hints!(
         lin::EventLinearizer, ctx3::JL.VariableAnalysisContext,
-        cond::SyntaxTreeC, candidates::Set{JL.IdTag}, branch_value::Bool
+        cond::SyntaxTree, candidates::Set{JL.IdTag}, branch_value::Bool
     )
     k = JS.kind(cond)
     if k == JS.K"block" && JS.numchildren(cond) == 1
@@ -290,9 +290,9 @@ end
 # Collect all BindingId var_ids asserted true by a condition.
 # Returns `true` if every operand is a BindingId (for recording),
 # `false` otherwise (lookup still uses the collected ids).
-function undef_cond_binding_ids!(result::Vector{JL.IdTag}, cond::SyntaxTreeC)
+function undef_cond_binding_ids!(result::Vector{JL.IdTag}, cond::SyntaxTree)
     all_bindings = Ref(true)
-    for_each_cond_operand(cond) do operand::SyntaxTreeC
+    for_each_cond_operand(cond) do operand::SyntaxTree
         if JS.kind(operand) == JS.K"BindingId"
             push!(result, var_id(operand))
         else
@@ -306,7 +306,7 @@ end
 # Returns `nothing` when the node is not a definition or the LHS is not a BindingId.
 # This is the single source of truth for "what counts as a local variable definition"
 # used by both event linearization and correlated condition recording.
-function undef_direct_assign_var_id(node::SyntaxTreeC)
+function undef_direct_assign_var_id(node::SyntaxTree)
     k = JS.kind(node)
     if (k == JS.K"=" || k == JS.K"function_decl") && JS.numchildren(node) >= 1
         lhs = node[1]
@@ -321,7 +321,7 @@ end
 # in a branch. Only considers assignments at the top level of `K"block"` nodes,
 # not those nested inside conditionals/loops.
 function undef_collect_branch_direct_assigns(
-        branch::SyntaxTreeC, candidates::Set{JL.IdTag}
+        branch::SyntaxTree, candidates::Set{JL.IdTag}
     )
     result = Set{JL.IdTag}()
     undef_scan_direct_assigns!(result, branch, candidates)
@@ -329,7 +329,7 @@ function undef_collect_branch_direct_assigns(
 end
 
 function undef_scan_direct_assigns!(
-        result::Set{JL.IdTag}, node::SyntaxTreeC, candidates::Set{JL.IdTag}
+        result::Set{JL.IdTag}, node::SyntaxTree, candidates::Set{JL.IdTag}
     )
     var_id = undef_direct_assign_var_id(node)
     if !isnothing(var_id)
@@ -358,7 +358,7 @@ end
 # Extracts all BindingId operands asserted true by the condition and checks
 # if any recorded implication key is a subset.
 function undef_emit_cond_implied_hints!(
-        lin::EventLinearizer, cond::SyntaxTreeC, candidates::Set{JL.IdTag}
+        lin::EventLinearizer, cond::SyntaxTree, candidates::Set{JL.IdTag}
     )
     isempty(lin.cond_implies_defined) && return
     cond_vars = JL.IdTag[]
@@ -394,7 +394,7 @@ function undef_record_cond_implies!(
 end
 
 function linearize_cfg_events!(
-        lin::EventLinearizer, ctx3::JL.VariableAnalysisContext, ex3::SyntaxTreeC,
+        lin::EventLinearizer, ctx3::JL.VariableAnalysisContext, ex3::SyntaxTree,
         candidates::Set{JL.IdTag}, allow_noreturn_optimization::Vector{Symbol}
     )
     k = JS.kind(ex3)
@@ -491,13 +491,13 @@ function linearize_cfg_events!(
     elseif k == JS.K"lambda"
         # Handle captured variables from outer scope by recursing into lambda body
         # We don't know when/if the closure is called, so wrap in an uncertain branch
-        nested_lb = ex3.lambda_bindings::JL.LambdaBindings
+        nested_lb = JL.lambda_bindings(ex3[1])
         has_outer_capture = any(is_capt && id in candidates for (id, is_capt) in nested_lb.locals_capt)
-        if has_outer_capture && JS.numchildren(ex3) >= 3
+        if has_outer_capture && JS.numchildren(ex3) >= 4
             skip_label = cfg_make_label!(lin)
             cfg_emit_gotoifnot!(lin, skip_label)
             let saved = undef_save_cond_implied(lin)
-                linearize_cfg_events!(lin, ctx3, ex3[3], candidates, allow_noreturn_optimization)
+                linearize_cfg_events!(lin, ctx3, ex3[4], candidates, allow_noreturn_optimization)
                 undef_restore_cond_implied!(lin, saved)
             end
             cfg_emit_label!(lin, skip_label)
@@ -769,11 +769,11 @@ end
 # closure does not correctly block assignments that come after the closure
 # definition, leading to false-positive dead store reports.  Variables
 # identified here are excluded from dead store analysis.
-function collect_closure_captured_vars(body::SyntaxTreeC, candidates::Set{JL.IdTag})
+function collect_closure_captured_vars(body::SyntaxTree, candidates::Set{JL.IdTag})
     result = Set{JL.IdTag}()
-    traverse(body) do st::SyntaxTreeC
+    traverse(body) do st::SyntaxTree
         JS.kind(st) == JS.K"lambda" || return nothing
-        nested_lb = st.lambda_bindings::JL.LambdaBindings
+        nested_lb = JL.lambda_bindings(st[1])
         for (id, is_capt) in nested_lb.locals_capt
             if is_capt && id in candidates
                 push!(result, id)
@@ -869,12 +869,12 @@ end
 # Construct the `LambdaCFG` for `lambda_st3`.
 # The returned CFG is shared between `analyze_local_def_use!` and `analyze_unreachable!`.
 function build_lambda_cfg(
-        ctx3::JL.VariableAnalysisContext, lambda_st3::SyntaxTreeC;
+        ctx3::JL.VariableAnalysisContext, lambda_st3::SyntaxTree;
         allow_noreturn_optimization::Vector{Symbol} = Symbol[]
     )
-    JS.kind(lambda_st3) == JS.K"lambda" || return nothing
+    JS.kind(lambda_st3) in JS.KSet"lambda toplevel_lambda" || return nothing
 
-    lambda_bindings = lambda_st3.lambda_bindings::JL.LambdaBindings
+    lambda_bindings = JL.lambda_bindings(lambda_st3[1])
     candidates = Set{JL.IdTag}()
     for (id, from_outer_lambda) in lambda_bindings.locals_capt
         from_outer_lambda && continue
@@ -884,16 +884,16 @@ function build_lambda_cfg(
         end
     end
 
-    closure_captured = if JS.numchildren(lambda_st3) >= 3
-        collect_closure_captured_vars(lambda_st3[3], candidates)
+    closure_captured = if JS.numchildren(lambda_st3) >= 4
+        collect_closure_captured_vars(lambda_st3[4], candidates)
     else
         Set{JL.IdTag}()
     end
 
     lin = EventLinearizer()
-    if JS.numchildren(lambda_st3) >= 3
+    if JS.numchildren(lambda_st3) >= 4
         linearize_cfg_events!(
-            lin, ctx3, lambda_st3[3], candidates, allow_noreturn_optimization)
+            lin, ctx3, lambda_st3[4], candidates, allow_noreturn_optimization)
     end
     cfg_finalize!(lin)
 
@@ -921,7 +921,7 @@ end
 # `unreachable_statements` every recorded statement whose entry and exit CFG blocks are
 # both unreachable from the lambda entry.
 function analyze_unreachable!(
-        unreachable_statements::Set{SyntaxTreeC}, cfg::LambdaCFG
+        unreachable_statements::Set{SyntaxTree}, cfg::LambdaCFG
     )
     reachable = compute_reachable_blocks(cfg.lin.blocks)
     for rec in cfg.lin.statement_blocks
@@ -937,18 +937,18 @@ end
 Information about a local variable's definition/use sites and undef status.
 
 Fields:
-- `defs::Vector{SyntaxTreeC}`: Definition sites (assignments, function declarations)
-- `undef_uses::Vector{Pair{Bool,SyntaxTreeC}}`: Use sites on undef paths.
+- `defs::Vector{SyntaxTree}`: Definition sites (assignments, function declarations)
+- `undef_uses::Vector{Pair{Bool,SyntaxTree}}`: Use sites on undef paths.
   Each entry is `is_strict => use_tree`:
   - `true => tree`: Variable is definitely undefined at `tree`
   - `false => tree`: Variable may be undefined at `tree`
 """
 struct UndefInfo
-    defs::Vector{SyntaxTreeC}
-    undef_uses::Vector{Pair{Bool,SyntaxTreeC}}
+    defs::Vector{SyntaxTree}
+    undef_uses::Vector{Pair{Bool,SyntaxTree}}
 end
 
-UndefInfo() = UndefInfo(SyntaxTreeC[], Pair{Bool,SyntaxTreeC}[])
+UndefInfo() = UndefInfo(SyntaxTree[], Pair{Bool,SyntaxTree}[])
 
 """
     DeadStoreInfo
@@ -956,11 +956,11 @@ UndefInfo() = UndefInfo(SyntaxTreeC[], Pair{Bool,SyntaxTreeC}[])
 Information about dead store assignments for a local variable.
 
 Fields:
-- `dead_defs::Vector{SyntaxTreeC}`: Assignment sites whose values are
+- `dead_defs::Vector{SyntaxTree}`: Assignment sites whose values are
   never read on any CFG path (dead stores).
 """
 struct DeadStoreInfo
-    dead_defs::Vector{SyntaxTreeC}
+    dead_defs::Vector{SyntaxTree}
 end
 
 # Run undef-analysis and dead-store analysis for every local binding tracked by
@@ -982,11 +982,11 @@ function analyze_local_def_use!(
             continue
         end
 
-        defs = SyntaxTreeC[]
+        defs = SyntaxTree[]
         assign_blocks = BitSet()       # for undef (includes :isdefined)
         real_assign_blocks = BitSet()  # for dead store (only :assign)
         use_blocks = BitSet()
-        event_trees = Dict{Int,SyntaxTreeC}()
+        event_trees = Dict{Int,SyntaxTree}()
         for evt in evts
             event_trees[evt.block_id] = evt.st
             if evt.kind === :assign
@@ -1002,15 +1002,15 @@ function analyze_local_def_use!(
 
         # --- Undef analysis ---
         if isempty(use_blocks)
-            undef_info[binfo] = UndefInfo(defs, Pair{Bool,SyntaxTreeC}[])
+            undef_info[binfo] = UndefInfo(defs, Pair{Bool,SyntaxTree}[])
         elseif isempty(assign_blocks)
-            undef_uses = Pair{Bool,SyntaxTreeC}[true => event_trees[ub] for ub in use_blocks]
+            undef_uses = Pair{Bool,SyntaxTree}[true => event_trees[ub] for ub in use_blocks]
             undef_info[binfo] = UndefInfo(defs, undef_uses)
         else
             reached = cfg_reachable_targets(cfg.lin.blocks, 1, use_blocks, assign_blocks, visited)
             if !isempty(reached)
                 min_assign_block = minimum(assign_blocks)
-                undef_uses = Pair{Bool,SyntaxTreeC}[]
+                undef_uses = Pair{Bool,SyntaxTree}[]
                 for ub in reached
                     is_strict = ub < min_assign_block &&
                                 cfg_is_must_execute(cfg.lin.blocks, ub, cfg.exit_blocks, visited)
@@ -1018,7 +1018,7 @@ function analyze_local_def_use!(
                 end
                 undef_info[binfo] = UndefInfo(defs, undef_uses)
             else
-                undef_info[binfo] = UndefInfo(defs, Pair{Bool,SyntaxTreeC}[])
+                undef_info[binfo] = UndefInfo(defs, Pair{Bool,SyntaxTree}[])
             end
         end
 
@@ -1027,7 +1027,7 @@ function analyze_local_def_use!(
            isempty(use_blocks) || isempty(real_assign_blocks)
             continue
         end
-        dead_defs = SyntaxTreeC[]
+        dead_defs = SyntaxTree[]
         other_assigns = BitSet()
         for def_block_id in real_assign_blocks
             empty!(other_assigns)
@@ -1054,8 +1054,8 @@ end
 function analyze_lambda!(
         undef_info::Dict{JL.BindingInfo, UndefInfo},
         dead_store_info::Dict{JL.BindingInfo, DeadStoreInfo},
-        unreachable_statements::Set{SyntaxTreeC},
-        ctx3::JL.VariableAnalysisContext, lambda_st3::SyntaxTreeC,
+        unreachable_statements::Set{SyntaxTree},
+        ctx3::JL.VariableAnalysisContext, lambda_st3::SyntaxTree,
         allow_noreturn_optimization::Vector{Symbol}
     )
     cfg = @something build_lambda_cfg(ctx3, lambda_st3; allow_noreturn_optimization) return
@@ -1086,7 +1086,7 @@ all three CFG-aware analyses on it:
 
 - **Unreachable-code analysis** — collects `K"block"` children whose
   CFG block is not reachable from the lambda entry. Returned as
-  `Set{SyntaxTreeC}`. Because the CFG accurately models
+  `Set{SyntaxTree}`. Because the CFG accurately models
   expression-nested control transfers, patterns like
   `return cnd ? @goto(fallback) : println("Return"); @label fallback; <code>`
   correctly keep `<code>` reachable via the goto edge.
@@ -1098,7 +1098,7 @@ per-lambda intermediate dicts/sets are allocated and merged.
 # Arguments
 - `ctx3::JL.VariableAnalysisContext`: the variable-analysis context
   produced by JuliaLowering's scope-resolution pass.
-- `st3::SyntaxTreeC`: scope-resolved syntax tree to analyze. Top-
+- `st3::SyntaxTree`: scope-resolved syntax tree to analyze. Top-
   level (non-lambda) constructs are skipped.
 - `allow_noreturn_optimization::Vector{Symbol}`: globals (typically
   function names) whose calls should be treated as guaranteed
@@ -1111,14 +1111,14 @@ Macro-expanded code is best fed in after `_remove_macrocalls` for old-style macr
 expression positions that this analysis is not designed to handle correctly.
 """
 function analyze_all_lambdas(
-        ctx3::JL.VariableAnalysisContext, st3::SyntaxTreeC;
+        ctx3::JL.VariableAnalysisContext, st3::SyntaxTree;
         allow_noreturn_optimization::Vector{Symbol} = Symbol[]
     )
     undef_info = Dict{JL.BindingInfo, UndefInfo}()
     dead_store_info = Dict{JL.BindingInfo, DeadStoreInfo}()
-    unreachable_statements = Set{SyntaxTreeC}()
-    traverse(st3) do st3′::SyntaxTreeC
-        if JS.kind(st3′) == JS.K"lambda"
+    unreachable_statements = Set{SyntaxTree}()
+    traverse(st3) do st3′::SyntaxTree
+        if JS.kind(st3′) in JS.KSet"lambda toplevel_lambda"
             analyze_lambda!(
                 undef_info, dead_store_info, unreachable_statements,
                 ctx3, st3′, allow_noreturn_optimization)

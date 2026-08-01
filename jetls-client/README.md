@@ -32,8 +32,8 @@ diagnostic, macro-aware go-to definition and such.
 ## Requirements
 
 - [VSCode](https://code.visualstudio.com/) v1.96.0 or higher
-- [Julia v1.12.2](https://julialang.org/downloads) or later:
-  Note that JETLS does not support Julia 1.12.1 or earlier, nor Julia 1.13+/nightly.
+- [Julia v1.12.2](https://julialang.org/downloads) through Julia 1.13:
+  Note that JETLS does not support Julia 1.12.1 or earlier, nor Julia 1.14+/nightly.
 
 ## Installation
 
@@ -130,7 +130,12 @@ For detailed initialization options and examples, see the
 ```jsonc
 {
   "jetls-client.initializationOptions": {
-    "n_analysis_workers": 2
+    "analysis_overrides": [
+      {
+        "path": "test/fixtures/**",
+        "full_analysis": false
+      }
+    ]
   }
 }
 ```

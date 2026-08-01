@@ -26,8 +26,8 @@ a sample VSCode extension that serves as a language client for testing JETLS.
 > Stability and performance are limited. Expect bugs and rough edges.
 
 > [!warning]
-> JETLS requires Julia 1.12.2 or later.
-> It does not support Julia 1.12.1 or earlier, nor Julia 1.13+/nightly.
+> JETLS supports Julia 1.12.2 through 1.13.
+> It does not support Julia 1.12.1 or earlier, nor Julia 1.14+/nightly.
 
 ## Documentation
 

@@ -50,9 +50,8 @@ end
 function cache_notebook_file_info!(server::Server, notebook_uri::URI, notebook_info::NotebookInfo)
     state = server.state
     parsed_stream = ParseStream!(notebook_info.concat.source)
-    st0 = JS.build_tree(JS.SyntaxTree, parsed_stream; filename=uri2filename(notebook_uri))
     fi = FileInfo(notebook_info.version, parsed_stream, notebook_uri, notebook_info.encoding;
-        syntax_tree0=st0, inferred_context_cache=InferredContextCache())
+        cache_tree0=true, inferred_context_cache=InferredContextCache())
     store!(state.file_cache) do cache
         Base.PersistentDict(cache, notebook_uri => fi), fi
     end
@@ -183,7 +182,7 @@ function handle_DidChangeNotebookDocumentNotification(
     next_notebook_info = store!(state.notebook_cache) do cache::Base.PersistentDict{URI,NotebookInfo}
         notebook_info = get(cache, notebook_uri, nothing)
         if notebook_info === nothing
-            JETLS_DEV_MODE && @warn "Received notebookDocument/didChange for unknown notebook" notebook_uri
+            @static JETLS_DEV_MODE && @warn "Received notebookDocument/didChange for unknown notebook" notebook_uri
             return cache, nothing
         end
         cells = copy(notebook_info.cells)
@@ -348,7 +347,7 @@ function localize_diagnostic_data(@nospecialize(data), concat::ConcatenatedNoteb
         end
         return_insert_position = data.return_insert_position
         if return_insert_position !== nothing
-            _, local_position = @something global_to_cell_position(
+            local_position, _ = @something global_to_cell_position(
                 concat, return_insert_position) return data
             return_insert_position = local_position
         end

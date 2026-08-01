@@ -1,14 +1,16 @@
 ---
 name: commit
-description: MUST invoke before creating any git commit.
-  Provides commit message format and safety rules.
+description: >-
+  Use when writing a commit message, and MUST invoke before creating any git
+  commit. Provides commit message format and safety rules.
 ---
 
 # Message guideline
 
 ## Title format
 
-Use "component: Brief summary" format for the commit title.
+Use "component: Brief summary" format and imperative mood for the commit
+title.
 
 Examples:
 - "completions: Add support for keyword argument completion"
@@ -17,39 +19,59 @@ Examples:
 
 ## Body
 
-Use a single body structure for feature additions, bug fixes, and other
-behavior changes. Do not introduce separate required formats for each kind.
+Write a body by default, including for small, self-contained changes. Do not
+treat a descriptive title as a reason to omit the body. When little explanation
+is needed, briefly state the motivation and implementation.
 
-Write paragraphs in this order:
+Organize body paragraphs in this order and omit any paragraph that is not
+relevant:
 
-1. Explain the concrete user-visible change. For a feature, describe the new
-   capability; for a bug fix, describe the failure or limitation being fixed.
-   If appropriate, include a small code example when it makes the issue
-   clearer.
-2. Explain the approach used to implement the feature or fix the problem.
+1. Explain the concrete problem, limitation, or goal motivating the change.
+   For user-facing work, describe the resulting capability or behavior. For
+   internal work, explain the engineering reason without inventing a
+   user-visible impact. Include a small code example when it adds clarity.
+2. Explain the approach used to implement the change.
 3. Mention important caveats, follow-up work, performance notes, or test
    coverage when relevant.
 
-Use backticks for code elements (function names, variables, file paths, etc.).
+Write body paragraphs as explanatory prose with explicit subjects:
+
+- Prefer a concrete subject such as the affected component or newly introduced
+  type.
+- Use `This change` or `This commit` when describing the patch as a whole.
+- Use `The implementation` when explaining the mechanism.
+- Do not omit a subject merely to avoid `we` or `I`.
+
+Use backticks for code elements such as function names, variables, and paths.
 
 ## Line length
 
 Ensure the maximum line length never exceeds 72 characters.
+Never rely on Git or an editor to wrap the message automatically.
+
+Before every commit, write the complete message to a uniquely named temporary
+file with explicit line breaks, then commit with
+`GIT_EDITOR=true git -c core.hooksPath=.githooks commit -F <message-file>`.
+Do not use repeated `git commit -m` arguments for a multi-paragraph message.
+
+The command-local `core.hooksPath` setting automatically runs the tracked
+`commit-msg` hook and rejects lines longer than 72 characters.
+Never use `--no-verify` to bypass it.
 
 ## GitHub references
 
 When referencing external GitHub PRs or issues, use proper GitHub interlinking
-format: "owner/repo#123"
+format: "owner/repo#123".
 
 ## Co-author trailer
 
-If you wrote code yourself, include a co-author trailer at the end of
-the commit message, e.g.:
-`Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>`
-(adjust the model name as appropriate).
+If you wrote code yourself, include a co-author trailer at the end of the
+commit message, for example:
 
-However, when simply asked to write a commit message (without having
-written the code), there's no need to add that trailer.
+`Co-Authored-By: GPT-5.6 Sol <noreply@openai.com>`
+
+Adjust the model name as appropriate. When simply asked to write a commit
+message without having written the code, do not add the trailer.
 
 ## Examples
 

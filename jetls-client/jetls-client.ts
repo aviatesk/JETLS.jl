@@ -185,6 +185,30 @@ function hasServerConfigChanged(
   );
 }
 
+function createWorkspaceRootFileWatcher(
+  fileName: string,
+  {
+    ignoreCreateEvents,
+    ignoreChangeEvents,
+    ignoreDeleteEvents,
+  }: {
+    ignoreCreateEvents?: boolean;
+    ignoreChangeEvents?: boolean;
+    ignoreDeleteEvents?: boolean;
+  } = {},
+): vscode.FileSystemWatcher | undefined {
+  const workspaceFolders = vscode.workspace.workspaceFolders;
+  if (!workspaceFolders || workspaceFolders.length !== 1) {
+    return undefined;
+  }
+  return vscode.workspace.createFileSystemWatcher(
+    new vscode.RelativePattern(workspaceFolders[0], fileName),
+    ignoreCreateEvents,
+    ignoreChangeEvents,
+    ignoreDeleteEvents,
+  );
+}
+
 async function startLanguageServer() {
   const serverConfig = getServerConfig();
   currentServerConfig = serverConfig;
@@ -451,6 +475,21 @@ async function startLanguageServer() {
     .getConfiguration("jetls-client")
     .get("initializationOptions", {});
 
+  const fileSystemWatchers = [
+    vscode.workspace.createFileSystemWatcher("**/*.jl"),
+    createWorkspaceRootFileWatcher(".JETLSConfig.toml"),
+    createWorkspaceRootFileWatcher(".JETLSProfile", {
+      ignoreCreateEvents: false,
+      ignoreChangeEvents: true,
+      ignoreDeleteEvents: true,
+    }),
+    createWorkspaceRootFileWatcher(".JETLS_REVISE", {
+      ignoreCreateEvents: false,
+      ignoreChangeEvents: true,
+      ignoreDeleteEvents: true,
+    }),
+  ].filter((watcher): watcher is vscode.FileSystemWatcher => watcher !== undefined);
+
   const clientOptions: LanguageClientOptions = {
     documentSelector: [
       {
@@ -475,11 +514,7 @@ async function startLanguageServer() {
       },
     ],
     synchronize: {
-      fileEvents: [
-        vscode.workspace.createFileSystemWatcher("**/*.jl"),
-        vscode.workspace.createFileSystemWatcher("**/.JETLSConfig.toml"),
-        vscode.workspace.createFileSystemWatcher("**/.JETLSProfile"),
-      ],
+      fileEvents: fileSystemWatchers,
     },
     middleware: {
       // `editor.action.showReferences` is a built-in VSCode command that

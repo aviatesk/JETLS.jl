@@ -1,5 +1,8 @@
 using Test
 
+using JETLS
+JETLS.show_setup_info("Testing JETLS with the following setup:")
+
 # test the basic server setup and lifecycle before running the tests
 include("setup.jl")
 @testset "basic lifecycle" begin

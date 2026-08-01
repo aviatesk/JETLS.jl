@@ -139,40 +139,9 @@ these options configure fundamental server behavior.
 
 ### [Schema](@id init-options/schema)
 
-A [JSON Schema](https://json-schema.org/) for initialization options is available.
-See the [JSON Schema](@ref config/schema-cli) section for download links.
-
-```json
-{
-  "n_analysis_workers": 1
-}
-```
-
-### [Reference](@id init-options/reference)
-
-#### [`n_analysis_workers` (experimental)](@id init-options/n_analysis_workers)
-
-- **Type**: integer
-- **Default**: `1`
-- **Minimum**: `1`
-
-Number of concurrent analysis worker tasks for running full analysis.
-
-The code loading phase must execute sequentially due to package environment and
-world age constraints. However, when multiple analysis units are open (e.g.,
-package source code and test code), increasing `n_analysis_workers` may reduce
-overall analysis time: while one unit is in the signature analysis phase,
-another can begin code loading concurrently.
-
-!!! warning "Experimental"
-    This option is experimental and may be removed or its semantics may be changed
-    substantially in future versions as the full analysis architecture evolves.
-
-!!! note "Signature analysis parallelization"
-    The signature analysis phase is parallelized automatically using
-    `Threads.@spawn` when Julia is started with multiple threads. This
-    parallelization is independent of `n_analysis_workers` and provides
-    significant speedups (e.g., ~4x faster with 4 threads for large packages).
+A [JSON Schema](https://json-schema.org/) for initialization options is
+available. See the [JSON Schema](@ref config/schema-cli) section for download
+links.
 
 ### [How to configure initialization options](@id init-options/configure)
 
@@ -189,8 +158,9 @@ Configure initialization options in [`.JETLSConfig.toml`](@ref config/file-based
 at your project root:
 
 ```toml
-[initialization_options]
-n_analysis_workers = 2
+[[initialization_options.analysis_overrides]]
+path = "test/fixtures/**"
+full_analysis = false
 ```
 
 This method is client-agnostic and can be easily committed to version control.
@@ -211,7 +181,12 @@ Configure initialization options in VSCode's `settings.json`:
 ```json
 {
   "jetls-client.initializationOptions": {
-    "n_analysis_workers": 2
+    "analysis_overrides": [
+      {
+        "path": "test/fixtures/**",
+        "full_analysis": false
+      }
+    ]
   }
 }
 ```
@@ -225,7 +200,12 @@ Configure initialization options in Zed's `settings.json`:
   "lsp": {
     "JETLS": {
       "initialization_options": {
-        "n_analysis_workers": 2
+        "analysis_overrides": [
+          {
+            "path": "test/fixtures/**",
+            "full_analysis": false
+          }
+        ]
       }
     }
   }

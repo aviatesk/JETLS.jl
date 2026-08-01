@@ -36,11 +36,14 @@ function handle_HoverRequest(
     end
     fi = result
 
-    hover = @something get_hover(state, fi, uri, pos) begin
+    hover = get_hover(state, fi, uri, pos; cancel_flag)
+    if is_cancelled(cancel_flag)
         return send(server, HoverResponse(;
-            id = msg.id, result = something(keyword_hover(state, fi, uri, pos), null)))
+            id = msg.id,
+            result = nothing,
+            error = request_cancelled_error()))
     end
-    return send(server, HoverResponse(; id = msg.id, result = hover))
+    return send(server, HoverResponse(; id = msg.id, result = something(hover, null)))
 end
 
 # Unified hover entry. Whether the cursor is on a local binding, a global
@@ -64,8 +67,24 @@ end
 # alone wouldn't carry that information.
 function get_hover(
         state::ServerState, fi::FileInfo, uri::URI, pos::Position;
-        context_module::Union{Nothing,Module} = nothing
+        context_module::Union{Nothing,Module} = nothing,
+        cancel_flag::AbstractCancelFlag = DUMMY_CANCEL_FLAG
     )
+    hover = _get_hover(state, fi, uri, pos; context_module, cancel_flag)
+    if hover === nothing
+        is_cancelled(cancel_flag) && return nothing
+        return keyword_hover(state, fi, uri, pos)
+    end
+    return hover
+end
+
+function _get_hover(
+        state::ServerState, fi::FileInfo, uri::URI, pos::Position;
+        context_module::Union{Nothing,Module} = nothing,
+        cancel_flag::AbstractCancelFlag = DUMMY_CANCEL_FLAG
+    )
+    is_cancelled(cancel_flag) && return nothing
+
     st0_top = build_syntax_tree(fi)
     offset = xy_to_offset(fi, pos)
     (; postprocessor, world) = ctx_info = get_context_info(state, uri, pos)
@@ -74,7 +93,10 @@ function get_hover(
     # without running full-analysis on the test source.
     context_module = something(context_module, ctx_info.context_module)
     soft_scope = is_notebook_cell_uri(state, uri)
-    binding_result = select_target_binding(st0_top, offset, context_module; soft_scope)
+    binding_result = select_target_binding(
+        st0_top, offset, context_module, world; soft_scope)
+    is_cancelled(cancel_flag) && return nothing
+
     if binding_result !== nothing
         (; ctx3, binding) = binding_result
         binfo = JL.get_binding(ctx3, binding)
@@ -105,6 +127,8 @@ function get_hover(
     type_query_rng = JS.byte_range(symbol_literal_node === nothing ? display_node : node)
     ctx = build_inferred_context_for_range(st0_top, context_module, type_query_rng;
         world, caller="get_hover", cache=fi.inferred_context_cache)
+    is_cancelled(cancel_flag) && return nothing
+
     type_str = typ = display_typ = nothing
     if ctx !== nothing
         display_typ = get_type_for_range(ctx, type_query_rng)
@@ -117,7 +141,7 @@ function get_hover(
     end
     # Fallback when the TypeAnnotation pipeline can't supply a type
     if typ === nothing
-        typ = resolve_global_const(context_module, node, world)
+        typ = resolve_global_const(context_module, world, node)
         if typ !== nothing && type_str === nothing && display_node === node
             type_str = hover_type_string(typ, JS.sourcetext(display_node))
         end
@@ -144,6 +168,7 @@ function get_hover(
             end
         end
     end
+    is_cancelled(cancel_flag) && return nothing
 
     # The header line (`<expr> [:: T]` in a code block) is shown whenever the
     # cursor is on a binding — even without a type the kind tag / name is
@@ -201,10 +226,11 @@ end
 
 binding_kind_label(kind::Symbol) =
     kind === :argument ? "(argument)" :
+    kind === :typevar ? "(type parameter)" :
     kind === :static_parameter ? "(static parameter)" :
     kind === :local ? "(local)" : "(global)"
 
-function symbol_literal_container(st0_top::SyntaxTreeC, node::SyntaxTreeC)
+function symbol_literal_container(st0_top::SyntaxTree, node::SyntaxTree)
     JS.is_identifier(node) || return nothing
     bas = @something byte_ancestors(st0_top, first(JS.byte_range(node))) return nothing
     length(bas) ≥ 2 || return nothing
@@ -262,7 +288,7 @@ end
 # matched, or when the signature can't be stripped cleanly. Used to narrow
 # the hover docstring lookup from "all overloads merged" to
 # "(generic + the specific method's docs)".
-function call_doc_sig(ctx::InferredTreeContext, st0_top::SyntaxTreeC, node::SyntaxTreeC)
+function call_doc_sig(ctx::InferredTreeContext, st0_top::SyntaxTree, node::SyntaxTree)
     call_node = @something enclosing_call_for_matches(st0_top, node) return nothing
     matches = @something get_matches_for_range(ctx, JS.byte_range(call_node)) return nothing
     # Require a single matched method — for ambiguous dispatch (union splits,
@@ -278,7 +304,7 @@ end
 # whose left-hand side is an instance, looks up the per-field docstring on
 # the LHS's inferred type via [`lookup_field_doc`](@ref).
 function lookup_doc_for_identifier(
-        node::SyntaxTreeC, context_module::Module, ctx::Union{Nothing,InferredTreeContext},
+        node::SyntaxTree, context_module::Module, ctx::Union{Nothing,InferredTreeContext},
         @nospecialize(sig), world::UInt
     )
     if JS.kind(node) === JS.K"." && JS.numchildren(node) ≥ 2
@@ -314,7 +340,7 @@ end
 # for nested chains (`Base.Compiler.…`). `ctx === nothing` (toplevel failed to
 # lower) skips the inference fallback and only uses the direct lookup.
 function resolve_dot_prefix_module(
-        dotprefix::SyntaxTreeC, context_module::Module,
+        dotprefix::SyntaxTree, context_module::Module,
         ctx::Union{Nothing,InferredTreeContext}, world::UInt
     )
     if JS.is_identifier(dotprefix) && (nv = get_name_val(dotprefix)) !== nothing

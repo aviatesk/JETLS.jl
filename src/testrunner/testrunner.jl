@@ -30,7 +30,7 @@ function summary_testrunner_result(result::TestRunnerResult)
 end
 
 testset_name(testsetinfo::TestsetInfo) = testset_name(testsetinfo.st0)
-function testset_name(testset::SyntaxTreeC)
+function testset_name(testset::SyntaxTree)
     desc = testset_description_node(testset)
     isnothing(desc) && return ""
     if JS.kind(desc) === JS.K"String"
@@ -40,7 +40,7 @@ function testset_name(testset::SyntaxTreeC)
     end
 end
 testset_line(testsetinfo::TestsetInfo) = testset_line(testsetinfo.st0)
-function testset_line(testset::SyntaxTreeC)
+function testset_line(testset::SyntaxTree)
     desc = testset_description_node(testset)
     return isnothing(desc) ? JS.source_line(testset) : JS.source_line(desc)
 end
@@ -48,7 +48,7 @@ end
 # Find the description string node of a `@testset` macrocall.
 # Returns `K"String"` for simple literals (sourcetext has no quotes)
 # or `K"string"` for interpolated strings (sourcetext includes quotes).
-function testset_description_node(testset::SyntaxTreeC)
+function testset_description_node(testset::SyntaxTree)
     for i = 2:JS.numchildren(testset)
         child = testset[i]
         if JS.kind(child) in JS.KSet"string String"
@@ -59,7 +59,7 @@ function testset_description_node(testset::SyntaxTreeC)
 end
 
 """
-    compute_testsetinfos!(server::Server, st0::SyntaxTreeC, prev_testsetinfos::Vector{TestsetInfo})
+    compute_testsetinfos!(server::Server, st0::SyntaxTree, prev_testsetinfos::Vector{TestsetInfo})
 
 Compute new testsetinfos from the syntax tree, preserving test results from
 previous testsetinfos where testset names match. Clears extra diagnostics for
@@ -69,7 +69,7 @@ Returns `(testsetinfos, any_deleted)` where `any_deleted` indicates whether any
 diagnostics were cleared.
 """
 function compute_testsetinfos!(
-        server::Server, st0::SyntaxTreeC, prev_testsetinfos::Vector{TestsetInfo}
+        server::Server, st0::SyntaxTree, prev_testsetinfos::Vector{TestsetInfo}
     )
     new_testsets = find_executable_testsets(st0)
     m = length(new_testsets)
@@ -122,9 +122,9 @@ function compute_testsetinfos!(
     return testsetinfos, any_deleted
 end
 
-function find_executable_testsets(st0_top::SyntaxTreeC)
-    testsets = JS.SyntaxList(JS.syntax_graph(st0_top))
-    traverse(st0_top) do st0::SyntaxTreeC
+function find_executable_testsets(st0_top::SyntaxTree)
+    testsets = JS.SyntaxList()
+    traverse(st0_top) do st0::SyntaxTree
         if JS.kind(st0) in JS.KSet"function macro"
             # avoid visit inside function scope
             return traversal_no_recurse
@@ -258,7 +258,7 @@ function testrunner_testcase_code_actions!(
         code_actions::Vector{Union{CodeAction,Command}}, uri::URI, fi::FileInfo, action_range::Range
     )
     st0_top = build_syntax_tree(fi)
-    traverse(st0_top) do st0::SyntaxTreeC
+    traverse(st0_top) do st0::SyntaxTree
         if JS.kind(st0) in JS.KSet"function macro"
             # avoid visit inside function scope
             return traversal_no_recurse
@@ -499,6 +499,93 @@ function is_testsetinfo_valid(server::Server, uri::URI, fi::FileInfo, idx::Int)
     return is_testsetinfo_valid(fi, idx)
 end
 
+function read_testrunner_output(
+        testrunnerproc::Base.Process, cancellable_token::Union{Nothing,CancellableToken}
+    )
+    cancelled = Ref(false)
+    cancellation_task = if cancellable_token === nothing
+        nothing
+    else
+        @async begin
+            while process_running(testrunnerproc)
+                if is_cancelled(cancellable_token.cancel_flag)
+                    cancelled[] = true
+                    kill(testrunnerproc)
+                    break
+                end
+                sleep(0.1)
+            end
+            if is_cancelled(cancellable_token.cancel_flag)
+                cancelled[] = true
+            end
+        end
+    end
+    try
+        output = read(testrunnerproc)
+        process_success = success(testrunnerproc)
+        if cancellation_task !== nothing
+            wait(cancellation_task; throw = false)
+        end
+        return (; output, process_success, cancelled = cancelled[])
+    finally
+        close(testrunnerproc)
+        if process_running(testrunnerproc)
+            kill(testrunnerproc)
+        end
+        wait(testrunnerproc)
+        if cancellation_task !== nothing
+            wait(cancellation_task; throw = false)
+        end
+    end
+end
+
+function log_testrunner_failure(
+        cmd::Cmd, proc::Base.Process, output::Vector{UInt8}, reason::Symbol;
+        parse_error::Union{Nothing,String} = nothing
+    )
+    details = (;
+        cmd,
+        exitcode = proc.exitcode,
+        termsignal = proc.termsignal,
+        stdout_bytes = length(output),
+        reason,
+        parse_error,
+    )
+    @error "TestRunner execution failed" details
+    return nothing
+end
+
+function read_testrunner_result(
+        server::Server, cmd::Cmd, source::String;
+        cancellable_token::Union{Nothing,CancellableToken} = nothing
+    )
+    testrunnerproc = open(pipeline(cmd; stdin = IOBuffer(source)); read = true)
+    (; output, process_success, cancelled) =
+        read_testrunner_output(testrunnerproc, cancellable_token)
+    if cancelled
+        return "Test execution cancelled by user"
+    elseif !process_success
+        log_testrunner_failure(cmd, testrunnerproc, output, :process)
+        show_error_message(server, """
+        An unexpected error occurred while executing TestRunner.jl:
+        See the server log for details.
+        """)
+        return "Test execution failed"
+    end
+
+    try
+        return LSP.JSON3.read(output, TestRunnerResult)
+    catch err
+        parse_error = sprint(Base.showerror, err, catch_backtrace())
+        log_testrunner_failure(cmd, testrunnerproc, output, :invalid_output; parse_error)
+        show_error_message(server, """
+        An unexpected error occurred while executing TestRunner.jl:
+        See the server log for details.
+        """)
+        return "Test execution failed"
+    end
+end
+
 function _testrunner_run_testset(
         server::Server, executable::AbstractString, uri::URI, fi::FileInfo,
         idx::Int, tsn::String, filepath::String;
@@ -517,35 +604,8 @@ function _testrunner_run_testset(
     root_path = testrunner_root_path(server.state, uri)
     cmd = testrunner_cmd(executable, filepath, tsn, tsl, test_env_path, root_path)
     source = String(document_text(fi))
-    testrunnerproc = open(pipeline(cmd; stdin=IOBuffer(source)); read=true)
-
-    result = try
-        # Wait for the process with cancellation support
-        while true
-            process_running(testrunnerproc) || break
-            if !isnothing(cancellable_token) && is_cancelled(cancellable_token.cancel_flag)
-                kill(testrunnerproc)
-                return "Test execution cancelled by user"
-            end
-            sleep(0.1)
-        end
-        if !isnothing(cancellable_token) && is_cancelled(cancellable_token.cancel_flag)
-            return "Test execution cancelled by user"
-        end
-
-        try
-            LSP.JSON3.read(testrunnerproc, TestRunnerResult)
-        catch err
-            @error "Error from testrunner process" err
-            show_error_message(server, """
-            An unexpected error occurred while executing TestRunner.jl:
-            See the server log for details.
-            """)
-            return "Test execution failed"
-        end
-    finally
-        close(testrunnerproc)
-    end
+    result = read_testrunner_result(server, cmd, source; cancellable_token)
+    result isa String && return result
 
     ret = summary_testrunner_result(result)
 
@@ -652,35 +712,8 @@ function _testrunner_run_testcase(
     test_env_path = find_uri_env_path(server.state, uri)
     root_path = testrunner_root_path(server.state, uri)
     cmd = testrunner_cmd(executable, filepath, tcl, test_env_path, root_path)
-    testrunnerproc = open(pipeline(cmd; stdin=IOBuffer(source)); read=true)
-
-    result = try
-        # Wait for the process with cancellation support
-        while true
-            process_running(testrunnerproc) || break
-            if !isnothing(cancellable_token) && is_cancelled(cancellable_token.cancel_flag)
-                kill(testrunnerproc)
-                return "Test execution cancelled by user"
-            end
-            sleep(0.1)
-        end
-        if !isnothing(cancellable_token) && is_cancelled(cancellable_token.cancel_flag)
-            return "Test execution cancelled by user"
-        end
-
-        try
-            LSP.JSON3.read(testrunnerproc, TestRunnerResult)
-        catch err
-            @error "Error from testrunner process" err
-            show_error_message(server, """
-            An unexpected error occurred while executing TestRunner.jl:
-            See the server log for details.
-            """)
-            return "Test execution failed"
-        end
-    finally
-        close(testrunnerproc)
-    end
+    result = read_testrunner_result(server, cmd, source; cancellable_token)
+    result isa String && return result
 
     # Show the results of this `@test` case temporarily as diagnostics:
     # The `Server` (or `FileInfo`) doesn't track the state of each `@test`,

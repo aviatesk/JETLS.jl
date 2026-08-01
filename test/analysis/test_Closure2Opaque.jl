@@ -15,9 +15,10 @@ function rewrite_lower_eval(code::AbstractString)
     fi = JETLS.FileInfo(1, code, @__FILE__)
     st0_top = JETLS.build_syntax_tree(fi)
     last_value = Ref{Any}(nothing)
-    last_st3_oc = Ref{Union{JETLS.SyntaxTreeC,Nothing}}(nothing)
+    last_st3_oc = Ref{Union{JETLS.SyntaxTree,Nothing}}(nothing)
+    world = Base.get_world_counter()
     JETLS.iterate_toplevel_tree(st0_top) do st0::JS.SyntaxTree
-        result = JETLS.TypeAnnotation.get_inferrable_tree(st0, context_module)
+        result = JETLS.TypeAnnotation.get_inferrable_tree(st0, context_module, world)
         result === nothing && error("get_inferrable_tree failed for: $code")
         (; ctx3, st3) = result
         st3_oc = rewrite_local_closures_to_opaque(ctx3, st3)
@@ -40,9 +41,10 @@ function rewrite_only(code::AbstractString)
     context_module = lowering_module
     fi = JETLS.FileInfo(1, code, @__FILE__)
     st0_top = JETLS.build_syntax_tree(fi)
-    last_st3_oc = Ref{Union{JETLS.SyntaxTreeC,Nothing}}(nothing)
+    last_st3_oc = Ref{Union{JETLS.SyntaxTree,Nothing}}(nothing)
+    world = Base.get_world_counter()
     JETLS.iterate_toplevel_tree(st0_top) do st0::JS.SyntaxTree
-        result = JETLS.TypeAnnotation.get_inferrable_tree(st0, context_module)
+        result = JETLS.TypeAnnotation.get_inferrable_tree(st0, context_module, world)
         result === nothing && error("get_inferrable_tree failed for: $code")
         (; ctx3, st3) = result
         last_st3_oc[] = rewrite_local_closures_to_opaque(ctx3, st3)
@@ -53,7 +55,7 @@ end
 
 # Count `K"_opaque_closure"` nodes in `tree`. Used to verify the rewrite emits
 # exactly one OC per source-level closure (no synthetic duplication).
-function count_opaque_closures(tree::JETLS.SyntaxTreeC)
+function count_opaque_closures(tree::JETLS.SyntaxTree)
     n = JS.kind(tree) === JS.K"_opaque_closure" ? 1 : 0
     if !JS.is_leaf(tree)
         for c in JS.children(tree)
@@ -115,6 +117,52 @@ end
             """)
         @test val == 42
         @test count_opaque_closures(tree) == 1
+    end
+end
+
+@testset "static parameters" begin
+    @static if isdefinedglobal(Core, :define_method)
+        let (val, _) = rewrite_lower_eval("""
+                function outer_static_capture(x::T) where T
+                    f = (y::T) -> T(x + y)
+                    f(x)
+                end
+                outer_static_capture(21)
+                """)
+            @test val == 42
+        end
+    end
+
+    let tree = rewrite_only("""
+            function outer_static_capture_tree(x::T) where T
+                f = (y::T) -> T(x + y)
+                f(x)
+            end
+            """)
+        @test count_opaque_closures(tree) == 1
+    end
+end
+
+@testset "limitations: unsupported local method shapes fall through" begin
+    @testset "method-owned static parameters" begin
+        let tree = rewrite_only("""
+                let f(y::S) where S = y
+                    f(42)
+                end
+                """)
+            @test count_opaque_closures(tree) == 0
+        end
+    end
+
+    @testset "generated local methods" begin
+        let tree = rewrite_only("""
+                let
+                    @generated f(x) = :(x)
+                    f(42)
+                end
+                """)
+            @test count_opaque_closures(tree) == 0
+        end
     end
 end
 
@@ -245,6 +293,22 @@ end
         @test val === true
         @test count_opaque_closures(tree) == 2
     end
+
+    let (val, tree) = rewrite_lower_eval("""
+            let a = 1, b = 10
+                inner() = a
+                v1 = inner
+                function mid()
+                    inner() = a + b
+                end
+                mid()
+                v2 = inner
+                (v1(), v2())
+            end
+            """)
+        @test val == (1, 11)
+        @test count_opaque_closures(tree) == 3
+    end
 end
 
 @testset "do-block as map argument" begin
@@ -261,11 +325,10 @@ end
 end
 
 # Multi-method local closures aren't representable as a single OC, so the rewrite
-# must skip them and let `JL.convert_closures` produce a synthetic struct. JL wraps
-# each method definition in its own inner block, so a sibling-only count would see
-# only one `K"method_defs"` per block. The pre-pass in
-# `_collect_multi_method_bindings` walks the whole tree to count `K"method_defs"`
-# per `var_id`, which is what lets the rewrite skip both methods here.
+# must skip them and let `JL.convert_closures` produce a synthetic struct. JL can
+# place methods in separate inner blocks, so scanning sibling `K"method_defs"`
+# nodes is insufficient. `collect_multi_method_bindings` counts `K"method"` nodes
+# per `ClosureKey` across the tree, allowing both definitions to bypass the rewrite.
 @testset "multi-method local closure should fall through" begin
     let tree = rewrite_only("""
             let

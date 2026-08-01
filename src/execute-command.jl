@@ -81,7 +81,7 @@ macro tryparsearg(server, ex)
                  T = $(esc(T))
         arguments = @something msg.params.arguments begin
             return send(server, invalid_execute_command_response(msg,
-                lazy"Expected `arguments` parameter to be set for `workspace/executeCommand` request"))
+                "Expected `arguments` parameter to be set for `workspace/executeCommand` request"))
         end
         if !(1 ≤ idx ≤ length(arguments))
             return send(server, invalid_execute_command_response(msg,
@@ -171,7 +171,7 @@ function execute_show_message_command(server::Server, msg::ExecuteCommandRequest
                 lazy"Expected `arguments[2]::$(MessageType.Ty)` for `workspace/executeCommand` request"))
         1 ≤ type_arg ≤ 5 || return send(server,
             invalid_execute_command_response(msg,
-                lazy"Expected `arguments[2]` to be in 1..5 (see `MessageType`)"))
+                "Expected `arguments[2]` to be in 1..5 (see `MessageType`)"))
         type = type_arg
     end
     send(server, ShowMessageNotification(;

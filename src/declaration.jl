@@ -50,7 +50,7 @@ end
 
 """
     find_declaration(server, uri, fi, pos; soft_scope, fallback_to_definition=false) ->
-        Union{Tuple{Vector{Location}, SyntaxTreeC}, Nothing}
+        Union{Tuple{Vector{Location}, SyntaxTree}, Nothing}
 
 Core routine behind `textDocument/declaration`. On success returns the
 declaration locations for the symbol at `pos` (source-level `:decl`
@@ -73,9 +73,10 @@ function find_declaration(
     state = server.state
     st0 = build_syntax_tree(fi)
     offset = xy_to_offset(fi, pos)
-    (; context_module) = get_context_info(state, uri, pos)
+    (; context_module, world) = get_context_info(state, uri, pos)
 
-    binding_result = select_target_binding(st0, offset, context_module; caller="find_declaration", soft_scope)
+    binding_result = select_target_binding(
+        st0, offset, context_module, world; caller="find_declaration", soft_scope)
     if !isnothing(binding_result)
         (; ctx3, st3, binding) = binding_result
         binfo = JL.get_binding(ctx3, binding)
@@ -83,7 +84,7 @@ function find_declaration(
             locations = find_global_binding_declarations(server, uri, binfo)
         else
             locations = find_local_binding_declarations(
-                state, uri, fi, ctx3, st3, binfo)
+                state, uri, fi, ctx3, st3, binfo, world)
         end
         isempty(locations) || return locations, binding
     end
@@ -119,10 +120,10 @@ end
 
 function find_local_binding_declarations(
         state::ServerState, uri::URI, fi::FileInfo,
-        ctx3, st3, binfo::JL.BindingInfo,
+        ctx3, st3, binfo::JL.BindingInfo, world::UInt,
     )
     locations = Location[]
-    binding_occurrences = compute_binding_occurrences(ctx3, st3)
+    binding_occurrences = compute_binding_occurrences(ctx3, st3, world)
     haskey(binding_occurrences, binfo) || return locations
     seen_locations = Set{Tuple{URI,Range}}()
     for occurrence in binding_occurrences[binfo]

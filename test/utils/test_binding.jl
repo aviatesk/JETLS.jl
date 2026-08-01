@@ -7,7 +7,9 @@ using JETLS.LSP.URIs2
 
 include(normpath(pkgdir(JETLS), "test", "jsjl-utils.jl"))
 
-module lowering_module end
+module lowering_module
+const B = Base
+end
 
 function with_target_binding(f, text::AbstractString; kwargs...)
     clean_code, positions = JETLS.get_text_and_positions(text; kwargs...)
@@ -15,7 +17,7 @@ function with_target_binding(f, text::AbstractString; kwargs...)
     cnt = 0
     for (i, pos) in enumerate(positions)
         offset = JETLS.xy_to_offset(clean_code, pos, @__FILE__)
-        cnt += f(i, JETLS.select_target_binding(st0_top, offset, lowering_module))
+        cnt += f(i, JETLS.select_target_binding(st0_top, offset, lowering_module, Base.get_world_counter()))
     end
     return cnt
 end
@@ -125,6 +127,13 @@ end
         return true
     end == 4
 
+    let expected_kinds = (:typevar, :typevar, :static_parameter)
+        @test with_target_binding("func(x::│T) where │T = │T") do i, (; ctx3, binding)
+            @test JL.get_binding(ctx3, binding).kind === expected_kinds[i]
+            return true
+        end == 3
+    end
+
     # Qualified macrocall: cursor at end of macro name returns nothing
     @test with_target_binding("""
         Base.@info│ "hello"
@@ -147,18 +156,74 @@ end
         return true
     end == 4
 
-    # User-written identifiers sitting in a macro's inert/quoted template
-    # (here the type name inside `@eval`) should resolve to the matching
-    # module-level global.
+    # One-argument `@eval` evaluates in the construction module.
+    for eval_macro in ("@eval", "B.@eval")
+        @test with_target_binding("""
+            struct │LSAnalyzer│ end
+            let x = 1
+                $eval_macro some_func(::│LSAnalyzer│) = \$x
+            end
+            """) do _, (; ctx3, binding)
+            binfo = JL.get_binding(ctx3, binding)
+            @test binfo.name == "LSAnalyzer"
+            @test binfo.kind === :global
+            return true
+        end == 4
+    end
+
+    # Two-argument `@eval` is left unresolved even when its target looks static.
+    for eval_macro in ("@eval", "B.@eval")
+        @test with_target_binding("""
+            $eval_macro SomeModule some_func(::│LSAnalyzer│) = nothing
+            """) do _, result
+            @test result === nothing
+            return true
+        end == 2
+    end
+
+    # A dynamic target module is likewise left unresolved.
     @test with_target_binding("""
-        struct │LSAnalyzer│ end
-        let x = 1
-            @eval some_func(::│LSAnalyzer│) = \$x
+        @eval getcontext() some_func(::│LSAnalyzer│) = nothing
+        """) do _, result
+        @test result === nothing
+        return true
+    end == 2
+
+    @test with_target_binding("""
+        struct │MyType│ end
+        use_type(::│MyType│) = nothing
+        """) do _, (; ctx3, binding)
+        binfo = JL.get_binding(ctx3, binding)
+        @test binfo.name == "MyType"
+        @test binfo.kind === :global
+        return true
+    end == 4
+
+    @test with_target_binding("""
+        begin
+            x = 1
+            let │x│ = 2
+                │x│
+            end
         end
         """) do _, (; ctx3, binding)
         binfo = JL.get_binding(ctx3, binding)
-        @test binfo.name == "LSAnalyzer"
-        @test binfo.kind === :global
+        @test binfo.name == "x"
+        @test binfo.kind === :local
+        return true
+    end == 4
+
+    @test with_target_binding("""
+        begin
+            struct MyType end
+            let │MyType│ = 1
+                │MyType│
+            end
+        end
+        """) do _, (; ctx3, binding)
+        binfo = JL.get_binding(ctx3, binding)
+        @test binfo.name == "MyType"
+        @test binfo.kind === :local
         return true
     end == 4
 
@@ -171,7 +236,7 @@ end
         clean_code, positions = JETLS.get_text_and_positions(code)
         st0_top = jlparse(clean_code)
         offset = JETLS.xy_to_offset(clean_code, only(positions), @__FILE__)
-        @test isnothing(JETLS.select_target_binding(st0_top, offset, lowering_module))
+        @test isnothing(JETLS.select_target_binding(st0_top, offset, lowering_module, Base.get_world_counter()))
     end
 end
 
@@ -181,7 +246,7 @@ function with_target_binding_definitions(f, text::AbstractString; kwargs...)
     cnt = 0
     for (i, pos) in enumerate(positions)
         offset = JETLS.xy_to_offset(clean_code, pos, @__FILE__)
-        cnt += f(i, JETLS.select_target_binding_definitions(st0_top, offset, lowering_module))
+        cnt += f(i, JETLS.select_target_binding_definitions(st0_top, offset, lowering_module, Base.get_world_counter()))
     end
     return cnt
 end

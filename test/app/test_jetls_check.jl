@@ -19,18 +19,65 @@ using JETLS
 const JULIA_CMD = normpath(Sys.BINDIR, "julia")
 const JETLS_DIR = pkgdir(JETLS)
 
+function build_check_args(
+        args::Vector{String};
+        root::Union{String,Nothing} = nothing,
+        skip_analysis::Bool = true
+    )
+    check_args = String[]
+    if root !== nothing
+        push!(check_args, "--root=$root")
+    end
+    push!(check_args, "--progress=none")
+    skip_analysis && push!(check_args, "--skip-full-analysis")
+    append!(check_args, args)
+    return check_args
+end
+
+function capture_jetls_check(f::Function)
+    return mktemp() do stdout_path, stdout_io
+        mktemp() do stderr_path, stderr_io
+            exitcode = redirect_stdout(stdout_io) do
+                redirect_stderr(stderr_io) do
+                    Int(f())
+                end
+            end
+            flush(stdout_io)
+            flush(stderr_io)
+            return (;
+                exitcode,
+                stdout = read(stdout_path, String),
+                stderr = read(stderr_path, String),
+            )
+        end
+    end
+end
+
 function run_jetls_check(
         args::Vector{String};
         root::Union{String,Nothing} = nothing,
-        skip_analysis::Bool = true # Enabled for faster test execution (this file doesn't test functionalities that depend on full-analysis)
+        skip_analysis::Bool = true
     )
-    cmd_args = String[JULIA_CMD, "--startup-file=no", "--project=$JETLS_DIR", "-m", "JETLS", "check"]
-    if root !== nothing
-        push!(cmd_args, "--root=$root")
+    check_args = build_check_args(args; root, skip_analysis)
+    return capture_jetls_check() do
+        JETLS.run_check(check_args)
     end
-    push!(cmd_args, "--progress=none")
-    skip_analysis && push!(cmd_args, "--skip-full-analysis")
-    append!(cmd_args, args)
+end
+
+function run_jetls_check_process(
+        args::Vector{String};
+        root::Union{String,Nothing} = nothing,
+        skip_analysis::Bool = true
+    )
+    cmd_args = String[
+        JULIA_CMD,
+        "--startup-file=no",
+        "--project=$JETLS_DIR",
+        "-m",
+        "JETLS",
+        "check",
+    ]
+    append!(cmd_args, build_check_args(args; root, skip_analysis))
     cmd = ignorestatus(Cmd(cmd_args))
     stdout_buf = IOBuffer()
     stderr_buf = IOBuffer()
@@ -52,6 +99,30 @@ function write_config_file(dir::String, content::String)
     filepath = joinpath(dir, ".JETLSConfig.toml")
     write(filepath, content)
     return filepath
+end
+
+@testset "process boundary" begin
+    mktempdir() do dir
+        filepath = write_test_file(dir, "test.jl", """
+            module TestModule
+            function foo()
+                x = 1
+                return nothing
+            end
+            end
+            """)
+
+        let result = run_jetls_check_process([filepath]; root=dir)
+            @test result.exitcode == 0
+            @test occursin("lowering/unused-local", result.stdout)
+        end
+        let result = run_jetls_check_process(
+                ["--exit-severity=info", filepath]; root=dir
+            )
+            @test result.exitcode == 1
+            @test occursin("lowering/unused-local", result.stdout)
+        end
+    end
 end
 
 @testset "basic functionality" begin
@@ -195,6 +266,22 @@ end
             @test !occursin("lowering/unused-local", result.stdout)
             @test occursin("No diagnostics found", result.stdout)
         end
+    end
+end
+
+@testset "analysis override lowering context" begin
+    mktempdir() do dir
+        filepath = write_test_file(dir, "test.jl", "f(x) = @somereal x\n")
+        write_config_file(dir, """
+            [[initialization_options.analysis_overrides]]
+            path = "test.jl"
+            module_name = "JETLS"
+            """)
+
+        result = run_jetls_check([filepath]; root=dir)
+        @test result.exitcode == 0
+        @test !occursin("lowering/macro-expansion-error", result.stdout)
+        @test occursin("No diagnostics found", result.stdout)
     end
 end
 

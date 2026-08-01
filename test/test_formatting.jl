@@ -3,6 +3,7 @@ module test_formatting
 include("setup.jl")
 
 using Test
+using Logging: with_logger
 using JETLS
 using JETLS.LSP
 using JETLS.URIs2
@@ -54,6 +55,17 @@ function with_passthrough_formatter(f, tempdir::AbstractString)
     end
 end
 
+function run_script_formatter(
+        tempdir::AbstractString, body::AbstractString, text::AbstractString
+    )
+    exe = joinpath(tempdir, "test-formatter")
+    write(exe, "#!/bin/sh\n" * body)
+    chmod(exe, 0o755)
+    uri = filepath2uri(joinpath(tempdir, "test.jl"))
+    formatter = JETLS.CustomFormatterConfig(exe, exe)
+    return JETLS.run_formatter(exe, text, nothing, uri, formatting_options(), formatter)
+end
+
 function configure_formatter!(server::JETLS.Server, exe::AbstractString)
     return store_lsp_config!(server, JETLS.JETLSConfig(;
         formatter = JETLS.CustomFormatterConfig(exe, exe)))
@@ -61,6 +73,65 @@ end
 
 function cache_test_file!(server::JETLS.Server, uri::URI, text::AbstractString)
     return JETLS.cache_file_info!(server, uri, 1, text)
+end
+
+@testset "`run_formatter` handles large input and output" begin
+    @static if Sys.iswindows()
+        @test_skip "shell-script-backed formatter test is Unix-only"
+    else
+        mktempdir() do tempdir
+            with_passthrough_formatter(tempdir) do exe, _
+                text = repeat("a=1\n", 300_000)
+                uri = filepath2uri(joinpath(tempdir, "test.jl"))
+                formatter = JETLS.CustomFormatterConfig(exe, exe)
+                result = JETLS.run_formatter(
+                    exe, text, nothing, uri, formatting_options(), formatter)
+                @test result == text
+            end
+        end
+    end
+end
+
+@testset "`run_formatter` handles formatter failures" begin
+    @static if Sys.iswindows()
+        @test_skip "shell-script-backed formatter test is Unix-only"
+    else
+        let text = repeat("x", 1_200_000)
+            @testset "nonzero exit logs stdout" begin
+                mktempdir() do tempdir
+                    logger = Test.TestLogger()
+                    body = "printf 'formatter failed\\n'\nexit 1\n"
+                    result = with_logger(logger) do
+                        run_script_formatter(tempdir, body, text)
+                    end
+                    @test isnothing(result)
+                    log = only(logger.logs)
+                    @test log.message == "Formatter execution failed"
+                    details = log.kwargs[:details]
+                    @test details.exitcode == 1
+                    @test details.termsignal == 0
+                    @test details.stdout_bytes == 17
+                end
+            end
+
+            @testset "signal termination is logged" begin
+                mktempdir() do tempdir
+                    logger = Test.TestLogger()
+                    result = with_logger(logger) do
+                        body = "kill -TERM \$\$\n"
+                        run_script_formatter(tempdir, body, text)
+                    end
+                    @test isnothing(result)
+                    log = only(logger.logs)
+                    @test log.message == "Formatter execution failed"
+                    details = log.kwargs[:details]
+                    @test details.exitcode == 0
+                    @test details.termsignal == 15
+                    @test details.stdout_bytes == 0
+                end
+            end
+        end
+    end
 end
 
 @testset "textDocument/formatting handler" begin

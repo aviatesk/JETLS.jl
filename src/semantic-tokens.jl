@@ -126,7 +126,7 @@ function compute_semantic_tokens(
     # For range requests, convert the LSP range to a byte range so we can
     # cheaply skip toplevel statements that don't overlap.
     range_bytes = range === nothing ? nothing : range_to_byte_range(fi, range)
-    iterate_toplevel_tree(st0_top) do st0::SyntaxTreeC
+    iterate_toplevel_tree(st0_top) do st0::SyntaxTree
         if range_bytes !== nothing && !overlaps_byte_range(st0, range_bytes)
             return
         end
@@ -141,7 +141,7 @@ function compute_semantic_tokens(
     return encode_semantic_tokens(raw)
 end
 
-function overlaps_byte_range(st0::SyntaxTreeC, byte_range::UnitRange{Int})
+function overlaps_byte_range(st0::SyntaxTree, byte_range::UnitRange{Int})
     JS.last_byte(st0) < first(byte_range) && return false
     JS.first_byte(st0) > last(byte_range) && return false
     return true
@@ -182,15 +182,15 @@ end
 
 function collect_semantic_tokens_for_occurrences!(
         raw::Vector{SemanticTokenTuple}, state::ServerState, uri::URI, fi::FileInfo,
-        occs::BindingOccurrencesResult, st0::SyntaxTreeC,
+        occs::BindingOccurrencesResult, st0::SyntaxTree,
     )
     # `:local` aliases for type parameters cover a superset of the corresponding
-    # `:static_parameter`'s occurrences — and for plain `struct A{T}; ...; end` are
-    # the only signal at all.
-    # Collect names from both and reclassify matching `:local`s as `typeParameter`.
+    # `:typevar` / `:static_parameter` occurrences — and for plain
+    # `struct A{T}; ...; end` are the only signal at all. Collect their names
+    # and reclassify matching `:local`s as `typeParameter`.
     type_param_names = Set{String}()
     for binfo_key in keys(occs)
-        if binfo_key.kind === :static_parameter
+        if binfo_key.kind in (:typevar, :static_parameter)
             push!(type_param_names, binfo_key.name)
         end
     end
@@ -209,7 +209,7 @@ function collect_semantic_tokens_for_occurrences!(
     return raw
 end
 
-function collect_type_param_names_from_tree!(names::Set{String}, st0::SyntaxTreeC)
+function collect_type_param_names_from_tree!(names::Set{String}, st0::SyntaxTree)
     traverse(st0) do node
         k = JS.kind(node)
         if k === JS.K"struct" && JS.numchildren(node) >= 2
@@ -277,19 +277,19 @@ end
 function classify_token_type(binfo_kind::Symbol)
     if binfo_kind === :argument
         return SEMANTIC_TOKEN_TYPE_PARAMETER
-    elseif binfo_kind === :static_parameter
-        return SEMANTIC_TOKEN_TYPE_TYPE_PARAMETER
     elseif binfo_kind === :local
         return SEMANTIC_TOKEN_TYPE_VARIABLE
     elseif binfo_kind === :global
         return SEMANTIC_TOKEN_TYPE_UNSPECIFIED
+    elseif binfo_kind in (:typevar, :static_parameter)
+        return SEMANTIC_TOKEN_TYPE_TYPE_PARAMETER
     else error("Unknown binding kind found") end
 end
 
 function classify_token_modifier(occurrence_kind::Symbol)
     if occurrence_kind === :decl
         return SEMANTIC_TOKEN_MODIFIER_DECLARATION
-    elseif occurrence_kind === :def
+    elseif is_definition_occurrence_kind(occurrence_kind)
         return SEMANTIC_TOKEN_MODIFIER_DEFINITION
     end
     return UInt(0)

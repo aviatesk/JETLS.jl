@@ -3,8 +3,9 @@ module test_jetls_serve
 """
 Test file for exercising the `jetls` executable app with raw JSON communication.
 
-This test spawns actual server processes using `julia -m JETLS` and communicates
-with them via stdin/stdout using raw JSON-RPC messages, testing:
+This test calls the top-level app directly for help behavior. It also spawns
+actual server processes using `julia -m JETLS` and communicates with them via
+stdin/stdout using raw JSON-RPC messages, testing:
 
 1. Server startup and basic lifecycle (initialize, shutdown, exit)
 2. Process management and graceful termination
@@ -77,15 +78,23 @@ end
 const DEFAULT_TIMEOUT = 10
 const STARTUP_TIMEOUT = 60
 
+function run_jetls_app(args::Vector{String})
+    return mktemp() do stdout_path, stdout_io
+        exitcode = redirect_stdout(stdout_io) do
+            Int(JETLS.main(args))
+        end
+        flush(stdout_io)
+        return (; exitcode, stdout=read(stdout_path, String))
+    end
+end
+
 @testset "jetls without subcommand shows help" begin
-    for args in (``, `--stdio`, `--socket=8080`)
-        cmd = `$JULIA_CMD --project=$JETLS_DIR -m JETLS $args`
-        out = IOBuffer()
-        proc = run(pipeline(cmd; stdout=out, stderr=devnull); wait=true)
-        @test proc.exitcode == 0
-        output = String(take!(out))
-        @test occursin("Usage: jetls <COMMAND>", output)
-        @test occursin("jetls serve", output)
+    for args in (String[], ["--stdio"], ["--socket=8080"])
+        let result = run_jetls_app(args)
+            @test result.exitcode == 0
+            @test occursin("Usage: jetls <COMMAND>", result.stdout)
+            @test occursin("jetls serve", result.stdout)
+        end
     end
 end
 
