@@ -27,11 +27,9 @@ def split_announcement_and_entries(text: str) -> tuple[str, str]:
     Returns (announcement, entries) tuple.
     The Announcement section is extracted regardless of its position in the text.
     """
-    # Standard changelog entry headers
-    entry_headers = r'### (?:Added|Changed|Fixed|Removed|Deprecated|Security|Internal)'
-
     # Find the Announcement section (may be anywhere in the text)
-    announcement_pattern = re.compile(r'### Announcement.*?(?=' + entry_headers + r'|\Z)', re.DOTALL)
+    announcement_pattern = re.compile(
+        r'^### Announcement.*?(?=^### |\Z)', re.MULTILINE | re.DOTALL)
     announcement_match = announcement_pattern.search(text)
 
     if announcement_match:
@@ -71,7 +69,7 @@ def extract_unreleased_content(version: str = "", commit: str = "", prev_commit:
     announcement, entries = split_announcement_and_entries(unreleased_content)
 
     # Check if announcement has content beyond just the header
-    announcement_has_content = announcement and not announcement.strip() == "### Announcement"
+    announcement_has_content = announcement and announcement.strip() != "### Announcement"
 
     # Reconstruct content, excluding empty announcement
     if announcement_has_content:
@@ -168,14 +166,11 @@ def strip_announcement(text: str) -> str:
     result_lines = []
     in_announcement = False
 
-    # Standard changelog entry headers that end the Announcement section
-    entry_header_pattern = re.compile(r'^### (?:Added|Changed|Fixed|Removed|Deprecated|Security|Internal)')
-
     for line in lines:
         if line.startswith('### Announcement'):
             in_announcement = True
             continue
-        if in_announcement and entry_header_pattern.match(line):
+        if in_announcement and line.startswith('### '):
             in_announcement = False
         if not in_announcement:
             result_lines.append(line)
