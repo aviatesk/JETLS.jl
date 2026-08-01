@@ -75,6 +75,8 @@ end
         touch(source_file)
         touch(project_file)
         uri = JETLS.filepath2uri(source_file)
+        normalized_project_file =
+            JETLS.uri2filepath(JETLS.filepath2uri(project_file))::String
 
         let state = JETLS.ServerState()
             @test JETLS.find_analysis_env_path(state, uri) === nothing
@@ -82,7 +84,16 @@ end
 
         let state = JETLS.ServerState()
             state.root_path = project_dir
-            @test JETLS.find_analysis_env_path(state, uri) == project_file
+            @test JETLS.find_analysis_env_path(state, uri) == normalized_project_file
+        end
+
+        let state = JETLS.ServerState()
+            state.root_path = project_dir
+            state.init_options = JETLS.InitOptions(; analysis_overrides=[
+                JETLS.AnalysisOverride(;
+                    path=JETLS.Glob.FilenameMatch("src/**/*.jl", "dp"))
+            ])
+            @test JETLS.find_analysis_env_path(state, uri) isa JETLS.OutOfScope
         end
 
         let state = JETLS.ServerState()
@@ -92,7 +103,7 @@ end
 
         let state = JETLS.ServerState(; cli_mode=true)
             state.root_path = workspace_dir
-            @test JETLS.find_analysis_env_path(state, uri) == project_file
+            @test JETLS.find_analysis_env_path(state, uri) == normalized_project_file
         end
     end
 end
@@ -116,6 +127,22 @@ end
         # Test with file in the same directory
         touch(joinpath(dir2, "same.txt"))
         @test JETLS.search_up_file(joinpath(dir2, "dummy.jl"), "same.txt") == joinpath(dir2, "same.txt")
+    end
+end
+
+@testset "glob_candidate_path" begin
+    mktempdir() do temp_root
+        root = joinpath(temp_root, "project")
+        nested = joinpath(root, "src", "subdir", "file.jl")
+        outside = joinpath(temp_root, "project-other", "src", "file.jl")
+        @test JETLS.glob_candidate_path(nested, root) == "src/subdir/file.jl"
+        @test JETLS.glob_candidate_path(outside, root) == replace(normpath(outside), '\\' => '/')
+        @test JETLS.glob_candidate_path(nested, nothing) == replace(normpath(nested), '\\' => '/')
+    end
+    @static if Sys.iswindows()
+        @test JETLS.glob_candidate_path(
+            "C:\\Users\\Foo\\Project\\src\\file.jl",
+            "c:/users/foo/project") == "src/file.jl"
     end
 end
 

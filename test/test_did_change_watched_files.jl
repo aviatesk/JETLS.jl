@@ -26,6 +26,8 @@ const TESTRUNNER_DEFAULT = JETLS.get_config(JETLS.ConfigManager(JETLS.ConfigMana
 @testset "DidChangeWatchedFilesNotification full-cycle" begin
     mktempdir() do tmpdir
         config_path = joinpath(tmpdir, ".JETLSConfig.toml")
+        config_event_uri = filepath2uri(config_path)
+        config_event_path = uri2filepath(config_event_uri)::String
         TESTRUNNER_STARTUP = "testrunner_startup"
         write(config_path, """
             [testrunner]
@@ -53,7 +55,7 @@ const TESTRUNNER_DEFAULT = JETLS.get_config(JETLS.ConfigManager(JETLS.ConfigMana
 
             let msg = DidChangeWatchedFilesNotification(;
                     params = DidChangeWatchedFilesParams(;
-                        changes = [FileEvent(; uri=filepath2uri(config_path), type=FileChangeType.Changed)]))
+                        changes = [FileEvent(; uri=config_event_uri, type=FileChangeType.Changed)]))
                 (; raw_res) = writereadmsg(msg)
                 @test raw_res isa ShowMessageNotification
                 @test raw_res.params.type == MessageType.Info
@@ -77,7 +79,7 @@ const TESTRUNNER_DEFAULT = JETLS.get_config(JETLS.ConfigManager(JETLS.ConfigMana
 
             let msg = DidChangeWatchedFilesNotification(;
                     params = DidChangeWatchedFilesParams(;
-                        changes = [FileEvent(; uri=filepath2uri(config_path), type=FileChangeType.Changed)]))
+                        changes = [FileEvent(; uri=config_event_uri, type=FileChangeType.Changed)]))
                 (; raw_res) = writereadmsg(msg)
                 @test raw_res isa ShowMessageNotification
                 @test raw_res.params.type == MessageType.Info
@@ -98,11 +100,11 @@ const TESTRUNNER_DEFAULT = JETLS.get_config(JETLS.ConfigManager(JETLS.ConfigMana
                 """)
             let msg = DidChangeWatchedFilesNotification(;
                     params = DidChangeWatchedFilesParams(;
-                        changes = [FileEvent(; uri=filepath2uri(config_path), type=FileChangeType.Changed)]))
+                        changes = [FileEvent(; uri=config_event_uri, type=FileChangeType.Changed)]))
                 (; raw_res) = writereadmsg(msg)
                 @test raw_res isa ShowMessageNotification
                 @test raw_res.params.type == MessageType.Error
-                expected_error_msg = JETLS.unmatched_key_in_config_file_msg(config_path, ["full_analysis", "___unknown_key___"])
+                expected_error_msg = JETLS.unmatched_key_in_config_file_msg(config_event_path, ["full_analysis", "___unknown_key___"])
                 @test occursin(expected_error_msg, raw_res.params.message)
             end
 
@@ -110,12 +112,12 @@ const TESTRUNNER_DEFAULT = JETLS.get_config(JETLS.ConfigManager(JETLS.ConfigMana
             rm(config_path)
             let msg = DidChangeWatchedFilesNotification(;
                     params = DidChangeWatchedFilesParams(;
-                        changes = [FileEvent(; uri=filepath2uri(config_path), type=FileChangeType.Deleted)]))
+                        changes = [FileEvent(; uri=config_event_uri, type=FileChangeType.Deleted)]))
                 (; raw_res) = writereadmsg(msg; read=2)
                 @test any(raw_res) do r
                     r isa ShowMessageNotification &&
                     r.params.type == MessageType.Info &&
-                    occursin(JETLS.config_file_deleted_msg(config_path), r.params.message)
+                    occursin(JETLS.config_file_deleted_msg(config_event_path), r.params.message)
                 end
                 @test any(raw_res) do r
                     if r isa ShowMessageNotification && r.params.type == MessageType.Info
@@ -141,12 +143,12 @@ const TESTRUNNER_DEFAULT = JETLS.get_config(JETLS.ConfigManager(JETLS.ConfigMana
 
             let msg = DidChangeWatchedFilesNotification(;
                     params = DidChangeWatchedFilesParams(;
-                        changes = [FileEvent(; uri=filepath2uri(config_path), type=FileChangeType.Created)]))
+                        changes = [FileEvent(; uri=config_event_uri, type=FileChangeType.Created)]))
                 (; raw_res) = writereadmsg(msg; read=2)
                 @test any(raw_res) do r
                     r isa ShowMessageNotification &&
                     r.params.type == MessageType.Info &&
-                    occursin(JETLS.config_file_created_msg(config_path), r.params.message)
+                    occursin(JETLS.config_file_created_msg(config_event_path), r.params.message)
                 end
                 @test any(raw_res) do r
                     if r isa ShowMessageNotification && r.params.type == MessageType.Info
@@ -181,6 +183,8 @@ end
             manager = server.state.config_manager
 
             config_path = joinpath(tmpdir, ".JETLSConfig.toml")
+            config_event_uri = filepath2uri(config_path)
+            config_event_path = uri2filepath(config_event_uri)::String
             TESTRUNNER_RECREATE = "testrunner_recreate"
             write(config_path, """
                 [testrunner]
@@ -188,12 +192,12 @@ end
                 """)
             creation_notification = DidChangeWatchedFilesNotification(;
                 params = DidChangeWatchedFilesParams(;
-                    changes = [FileEvent(; uri=filepath2uri(config_path), type=FileChangeType.Created)]))
+                    changes = [FileEvent(; uri=config_event_uri, type=FileChangeType.Created)]))
             (; raw_res) = writereadmsg(creation_notification; read=2)
             @test any(raw_res) do r
                 r isa ShowMessageNotification &&
                 r.params.type == MessageType.Info &&
-                occursin(JETLS.config_file_created_msg(config_path), r.params.message)
+                occursin(JETLS.config_file_created_msg(config_event_path), r.params.message)
             end
             @test any(raw_res) do r
                 if r isa ShowMessageNotification && r.params.type == MessageType.Info
@@ -213,7 +217,7 @@ end
                 """)
             change_notification = DidChangeWatchedFilesNotification(;
                 params = DidChangeWatchedFilesParams(;
-                    changes = [FileEvent(; uri=filepath2uri(config_path), type=FileChangeType.Changed)]))
+                    changes = [FileEvent(; uri=config_event_uri, type=FileChangeType.Changed)]))
             (; raw_res) = writereadmsg(change_notification)
             @test raw_res isa ShowMessageNotification
             @test raw_res.params.type == MessageType.Info

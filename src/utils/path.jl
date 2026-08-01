@@ -26,25 +26,53 @@ function traverse_dir(f, dir::AbstractString)
     return nothing
 end
 
+function _normalize_path(path::AbstractString)
+    path = normpath(path)
+    dir, name = splitdir(path)
+    return isempty(name) && dir != path ? dir : path
+end
+
+function _matching_path_ancestor(path::AbstractString, root::AbstractString)
+    path = _normalize_path(path)
+    root = _normalize_path(root)
+    @static if Sys.iswindows()
+        root = lowercase(root)
+    end
+    return traverse_dir(path) do candidate
+        candidate_match = candidate
+        @static if Sys.iswindows()
+            candidate_match = lowercase(candidate_match)
+        end
+        return candidate_match == root ? candidate : nothing
+    end
+end
+
 # check if `dir1` is a subdirectory of `dir2`
 function issubdir(dir1::AbstractString, dir2::AbstractString)
-    dir1 = rstrip(dir1, '/')
-    dir2 = rstrip(dir2, '/')
-    @static if Sys.iswindows()
-        # Windows file systems are case-insensitive, and paths reaching here
-        # may have come from different sources (e.g. `pwd()` vs URI round-trip)
-        # whose drive letter casing differs. Normalize before comparison.
-        dir2 = lowercase(dir2)
+    return _matching_path_ancestor(dir1, dir2) !== nothing
+end
+
+"""
+    glob_candidate_path(
+            filepath::AbstractString, root_path::Union{Nothing,AbstractString}
+        ) -> String
+
+Return a normalized path suitable for matching with `Glob.FilenameMatch`. When `filepath`
+is contained by `root_path`, return a path relative to that root. On Windows, use `/` as
+the path separator expected by Glob path matching.
+"""
+function glob_candidate_path(filepath::AbstractString, root_path::Union{Nothing,AbstractString})
+    filepath = _normalize_path(filepath)
+    if root_path !== nothing
+        root = _matching_path_ancestor(filepath, root_path)
+        if root !== nothing
+            filepath = relpath(filepath, root)
+        end
     end
-    something(traverse_dir(dir1) do dir
-        @static if Sys.iswindows()
-            dir = lowercase(dir)
-        end
-        if dir == dir2
-            return true
-        end
-        return nothing
-    end, false)
+    @static if Sys.iswindows()
+        filepath = replace(filepath, '\\' => '/')
+    end
+    return filepath
 end
 
 """

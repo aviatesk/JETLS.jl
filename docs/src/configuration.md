@@ -246,6 +246,10 @@ path = "src/**/*.jl"       # string (optional): restrict to specific files
   Supports globstar (`**`) for matching directories recursively.
   If omitted, the pattern applies to all files.
 
+  !!! note "Path separator on Windows"
+      Use `/` as the path separator on all platforms, including Windows. Glob
+      syntax does not treat `\` as a path separator.
+
 ##### Severity values
 
 [Severity level](@ref diagnostic/severity) to apply.

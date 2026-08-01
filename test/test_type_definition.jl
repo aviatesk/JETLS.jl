@@ -32,15 +32,15 @@ end
 
 # Locations for a Base type's constructor methods, used to assert the
 # response points into Base rather than the test buffer.
-function base_method_files(@nospecialize T)
-    files = Set{String}()
+function base_method_uris(@nospecialize T)
+    uris = Set{URI}()
     for m in methods(T)
         JETLS.is_location_unknown(m) && continue
         file, _ = functionloc(m)
         file === nothing && continue
-        push!(files, JETLS.to_full_path(String(file)))
+        push!(uris, filepath2uri(JETLS.to_full_path(String(file))))
     end
-    return files
+    return uris
 end
 
 @testset HierarchicalTestSet "find_type_definition" begin
@@ -52,8 +52,8 @@ end
                 end
             """) do _, result, _
             @test result !== null
-            int_files = base_method_files(Int)
-            @test all(loc -> JETLS.uri2filepath(loc.uri) in int_files, result)
+            int_uris = base_method_uris(Int)
+            @test all(loc -> loc.uri in int_uris, result)
             return 1
         end == 1
     end
@@ -67,8 +67,8 @@ end
                 end
             """) do _, result, _
             @test result !== null
-            int_files = base_method_files(Int)
-            @test all(loc -> JETLS.uri2filepath(loc.uri) in int_files, result)
+            int_uris = base_method_uris(Int)
+            @test all(loc -> loc.uri in int_uris, result)
             return 1
         end == 1
     end
@@ -80,8 +80,8 @@ end
                 const T = I│nt
             """) do _, result, _
             @test result !== null
-            int_files = base_method_files(Int)
-            @test all(loc -> JETLS.uri2filepath(loc.uri) in int_files, result)
+            int_uris = base_method_uris(Int)
+            @test all(loc -> loc.uri in int_uris, result)
             return 1
         end == 1
     end
@@ -94,8 +94,8 @@ end
                 const T = Base.Pa│ir
             """) do _, result, _
             @test result !== null
-            pair_files = base_method_files(Pair)
-            @test all(loc -> JETLS.uri2filepath(loc.uri) in pair_files, result)
+            pair_uris = base_method_uris(Pair)
+            @test all(loc -> loc.uri in pair_uris, result)
             return 1
         end == 1
     end
@@ -109,8 +109,8 @@ end
                 end
             """) do _, result, _
             @test result !== null
-            float_files = base_method_files(Float64)
-            @test all(loc -> JETLS.uri2filepath(loc.uri) in float_files, result)
+            float_uris = base_method_uris(Float64)
+            @test all(loc -> loc.uri in float_uris, result)
             return 1
         end == 1
 
@@ -126,8 +126,8 @@ end
                 end
             """) do _, result, _
             @test result !== null
-            vec_files = base_method_files(Vector{Int})
-            @test all(loc -> JETLS.uri2filepath(loc.uri) in vec_files, result)
+            vec_uris = base_method_uris(Vector{Int})
+            @test all(loc -> loc.uri in vec_uris, result)
             return 1
         end == 1
     end

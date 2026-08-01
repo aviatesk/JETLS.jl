@@ -37,11 +37,8 @@ function find_analysis_env_path(state::ServerState, uri::URI)
         filepath = uri2filepath(uri)::String
         analysis_overrides = state.init_options.analysis_overrides
         if analysis_overrides !== nothing
-            if isdefined(state, :root_path) && startswith(filepath, state.root_path)
-                path_for_glob = relpath(filepath, state.root_path)
-            else
-                path_for_glob = filepath
-            end
+            root_path = isdefined(state, :root_path) ? state.root_path : nothing
+            path_for_glob = glob_candidate_path(filepath, root_path)
             for override in analysis_overrides
                 if occursin(override.path, path_for_glob)
                     module_name = override.module_name
