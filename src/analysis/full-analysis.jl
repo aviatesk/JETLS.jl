@@ -384,6 +384,13 @@ function schedule_analysis!(
     )
     manager = server.state.analysis_manager
 
+    store!(manager.tracked_entries) do entries
+        get(entries, entry, nothing) == uri && return entries, nothing
+        new_entries = copy(entries)
+        new_entries[entry] = uri
+        return new_entries, nothing
+    end
+
     generation = invalidate ? increment_generation!(manager, entry) : get_generation(manager, entry)
 
     request = AnalysisRequest(
@@ -708,6 +715,12 @@ function cleanup_analysis_state!(server::Server, uri::URI)
 end
 
 function cleanup_analysis_entry_state!(manager::AnalysisManager, entry::AnalysisEntry)
+    store!(manager.tracked_entries) do entries
+        haskey(entries, entry) || return entries, nothing
+        new_entries = copy(entries)
+        delete!(new_entries, entry)
+        return new_entries, nothing
+    end
     store!(manager.debounced) do debounced
         haskey(debounced, entry) || return debounced, nothing
         timer, completion = debounced[entry]
@@ -921,15 +934,16 @@ function new_analysis_result(interp::LSInterpreter, result::JET.JETToplevelResul
     return analysis_result, replace_analysis_result
 end
 
-function request_reanalysis_for_cached_entries!(server::Server)
-    entries = Dict{AnalysisEntry,URI}()
-    for (uri, analysis_info) in load(server.state.analysis_manager.cache)
-        analysis_info isa AnalysisResult || continue
-        get!(entries, analysis_info.entry, uri)
-    end
-    for (_, uri) in entries
-        request_analysis!(server, uri, #=invalidate=#true;
-            debounce = 0.0, notify_diagnostics = true)
+function request_reanalysis_for_tracked_entries!(server::Server)
+    for (entry, uri) in load(server.state.analysis_manager.tracked_entries)
+        if supports(server, :window, :workDoneProgress)
+            request_analysis_progress!(
+                server, uri, #=invalidate=#true, entry,
+                #=notify_diagnostics=#true, #=debounce=#0.0)
+        else
+            schedule_analysis!(server, uri, entry, #=invalidate=#true;
+                debounce = 0.0, notify_diagnostics = true)
+        end
     end
     return nothing
 end

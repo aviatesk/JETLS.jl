@@ -73,7 +73,7 @@ function handle_config_file_change!(
         request_diagnostic_refresh!(server)
     end
     if tracker.analysis_setting_changed
-        request_reanalysis_for_cached_entries!(server)
+        request_reanalysis_for_tracked_entries!(server)
         request_diagnostic_refresh!(server)
     end
 end

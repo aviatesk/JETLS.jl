@@ -343,6 +343,7 @@ signature_analysis_completion(job::AbstractSignatureAnalysisJob) =
     getfield(job, :completion)::Base.Event
 
 const AnalysisCache = LWContainer{Dict{URI,AnalysisInfo}, LWStats}
+const TrackedAnalysisEntries = CASContainer{Dict{AnalysisEntry,URI}, CASStats}
 const PendingAnalyses = CASContainer{Dict{AnalysisEntry,Union{Nothing,AnalysisRequest}}, CASStats}
 const CurrentGenerations = CASContainer{Dict{AnalysisEntry,Int}, CASStats}
 const AnalyzedGenerations = CASContainer{Dict{AnalysisEntry,Int}, CASStats}
@@ -357,6 +358,7 @@ struct AnalysisManager
     current_generations::CurrentGenerations
     analyzed_generations::AnalyzedGenerations
     debounced::DebouncedRequests
+    tracked_entries::TrackedAnalysisEntries
     instantiated_envs::InstantiatedEnvs
     worker_task::Base.RefValue{Task}
     signature_worker_tasks::Vector{Task}
@@ -369,6 +371,7 @@ struct AnalysisManager
             CurrentGenerations(),
             AnalyzedGenerations(),
             DebouncedRequests(),
+            TrackedAnalysisEntries(),
             InstantiatedEnvs(),
             Ref{Task}(), # initialized by start_analysis_worker!
             Task[], # initialized by start_signature_analysis_workers!
