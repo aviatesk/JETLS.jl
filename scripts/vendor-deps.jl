@@ -177,6 +177,8 @@ function collect_loaded_package_uuids()
     return uuids
 end
 
+# Drop extensions JETLS does not load so analyzed environments cannot activate them
+# and interfere with vendored dependency isolation.
 function remove_unused_weakdeps_and_extensions!(
         vendor_pkg_dir::AbstractString,
         loaded_uuids::Set{UUID},
@@ -488,6 +490,7 @@ function vendor_dependencies_from_branch(config::Config)
     write(main_path, main_project)
     @info "Fetched Project.toml from $(config.source_branch)"
 
+    # Preserve source-branch projects before vendoring rewrites their metadata.
     backup_path = main_path * ".bak"
     cp(main_path, backup_path; force=true)
     @info "Backed up Project.toml to $(basename(backup_path))"
@@ -533,61 +536,29 @@ function vendor_dependencies_from_branch(config::Config)
 end
 
 function print_help()
-    println("""
-    scripts/vendor-deps.jl - JETLS Dependency Vendoring Script
+    println("""Usage: julia --project=. scripts/vendor-deps.jl
+           --source-branch=BRANCH (--local | --rev=REV)
 
-    USAGE:
-        julia scripts/vendor-deps.jl --source-branch=<branch> [--local | --rev=<rev>]
+    Fetch project files from BRANCH and vendor non-stdlib, non-JLL dependencies
+    for a JETLS release.
 
-    DESCRIPTION:
-        Automates the JETLS release process by vendoring all non-stdlib, non-JLL
-        dependencies. This creates isolated copies of dependencies with rewritten
-        UUIDs to avoid conflicts with packages being analyzed.
+    Effects:
+      - Replace Project.toml files with versions from BRANCH when available,
+        then rewrite their vendored dependency metadata
+      - Save fetched project files as Project.toml.bak before rewriting them
+      - Run Pkg.update() before rebuilding the vendored dependency set
+      - Replace package directories in vendor/ and remove stale directories
+      - Remove root Manifest.toml and Manifest-v*.toml files; --local then
+        reinstantiates the project
 
-    PROCESS:
-        1. Fetch Project.toml files from source branch
-        2. Backup existing Project.toml files (*.bak)
-        3. Clean manifest files
-        4. Update dependencies with Pkg.update()
-        5. Vendor packages:
-           - Remove stale packages no longer required from vendor/
-           - Copy package sources to vendor/ directory
-           - Rewrite UUIDs deterministically
-           - Remove unused weakdeps/extensions
-           - Update inter-package references
-        6. Replace Project.toml with vendored versions
+    Options:
+      -h, --help                 Show this help message and exit
+      --source-branch=BRANCH     Branch to fetch Project.toml files from (required)
+      --local                    Use local paths in [sources]
+      --rev=REV                  Use a Git revision in [sources]
 
-    OPTIONS:
-        --help, -h
-            Show this help message and exit
-
-        --source-branch=<branch>
-            Development branch to fetch Project.toml from (required)
-            Example: --source-branch=master
-
-        --local
-            Use local path references instead of GitHub URL+rev in [sources].
-            This is useful for CI testing or local development where the
-            vendor/ directory exists but is not committed to the repository.
-
-        --rev=<rev>
-            Git revision (commit SHA, tag, or branch) to use in [sources].
-            This is used for release builds where the vendor/ directory is
-            committed and referenced by a specific commit SHA.
-
-    EXAMPLE:
-        # Prepare release branch with vendored dependencies from master
-        julia scripts/vendor-deps.jl --source-branch=master --local
-
-        # Update [sources] to reference a specific commit SHA
-        julia scripts/vendor-deps.jl --source-branch=master --rev=abc1234
-
-    OUTPUT:
-        vendor/         Vendored package sources with rewritten UUIDs
-        Project.toml    Updated with vendored dependency UUIDs and [sources]
-        *.bak           Backup files of original Project.toml files
-
-    """)
+    Example:
+      julia --project=. scripts/vendor-deps.jl --source-branch=master --local""")
 end
 
 function parse_args(args::Vector{String})

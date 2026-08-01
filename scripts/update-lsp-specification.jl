@@ -356,14 +356,14 @@ end
 
 function print_usage(io::IO, program::String)
     return println(
-        io, """usage: $program [--version VERSION] [--output PATH]
+        io, """Usage: $program [OPTIONS]
 
-        Regenerate LSP/specification.md from the upstream LSP spec.
+        Regenerate LSP/specification.md from the upstream LSP specification.
 
-        options:
-          -h, --help         show this help message
-          --version VERSION  LSP version to fetch (default: 3.18)
-          --output PATH      output Markdown path (default: LSP/specification.md)"""
+        Options:
+          -h, --help         Show this help message and exit
+          --version=VERSION  LSP version to fetch (default: 3.18)
+          --output=PATH      Output Markdown path (default: LSP/specification.md)"""
     )
 end
 

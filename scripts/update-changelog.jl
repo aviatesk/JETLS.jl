@@ -124,15 +124,41 @@ end
 function print_usage(io::IO, program::String)
     println(
         io,
-        """Usage: $program <version> <commit> <prev_commit>
-               $program --extract-unreleased [<version> <commit> <prev_commit>]
-               $program --strip-announcement < input.md
-        Example: $program 2025-11-26 6bc34f1 2be0cff""",
+        """Usage: $program VERSION COMMIT PREVIOUS_COMMIT
+               $program --extract-unreleased
+                   [VERSION COMMIT PREVIOUS_COMMIT]
+               $program --strip-announcement
+
+        Update CHANGELOG.md or extract release-note content from its Unreleased
+        section.
+
+        Arguments:
+          VERSION             Release version in YYYY-MM-DD format
+          COMMIT              Commit for the release
+          PREVIOUS_COMMIT     Commit for the previous release
+
+        Options:
+          -h, --help          Show this help message and exit
+          --extract-unreleased
+                              Print release-note content from the Unreleased section
+          --strip-announcement
+                              Remove the Announcement section from standard input
+
+        Examples:
+          $program 2025-11-26 6bc34f1 2be0cff
+          $program --extract-unreleased
+          $program --strip-announcement < release-notes.md""",
     )
 end
 
 function (@main)(args::Vector{String})
+    program = isempty(PROGRAM_FILE) ? "scripts/update-changelog.jl" : PROGRAM_FILE
     command = get(args, 1, "")
+    if "-h" in args || "--help" in args
+        print_usage(stdout, program)
+        return 0
+    end
+
     if command == "--strip-announcement"
         println(strip_announcement(read(stdin, String)))
         return 0
@@ -149,7 +175,6 @@ function (@main)(args::Vector{String})
     end
 
     if length(args) != 3
-        program = isempty(PROGRAM_FILE) ? "scripts/update-changelog.jl" : PROGRAM_FILE
         print_usage(stdout, program)
         return 1
     end

@@ -1,21 +1,27 @@
 #!/bin/bash
-# Run JETLS self-diagnostics
-#
-# Usage: [JULIA=/path/to/julia] selfcheck.sh [OPTIONS]
-#
-# Environment variables:
-#   JULIA=<path>          Julia executable (default: julia)
-#
-# Options are passed through to `jetls check`. Useful options include:
-#   --skip-full-analysis  Skip the full analysis phase (faster, lowering-only)
-#
-# The following defaults can be overridden by passing them explicitly:
-#   --threads=auto        Julia thread count
-#   --root=<path>         Root path for configuration
-#   --quiet / --no-quiet  Suppress/enable log messages
-#   --exit-severity=warn  Minimum severity to exit with error
-#   --show-severity=warn  Minimum severity to display
-#
+
+print_help() {
+    cat <<'EOF'
+Usage: ./scripts/selfcheck.sh [OPTIONS]
+
+Run JETLS self-diagnostics on the server and protocol source files. Unrecognized
+options are passed through to jetls check.
+
+Options:
+  -h, --help              Show this help message and exit
+  --threads=COUNT         Set the Julia thread count (default: auto)
+  --root=PATH             Set the configuration root (default: project root)
+  --quiet                 Suppress log messages (default)
+  --no-quiet              Enable log messages
+  --exit-severity=LEVEL   Set the failing severity (default: warn)
+  --show-severity=LEVEL   Set the displayed severity (default: warn)
+  --skip-full-analysis    Skip full analysis and only run lowering analysis
+
+Environment variables:
+  JULIA=PATH              Set the Julia executable (default: julia)
+EOF
+}
+
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 
@@ -32,8 +38,8 @@ EXTRA_ARGS=()
 
 for arg in "$@"; do
     case "$arg" in
-        --help|-h)
-            sed -n '2,/^[^#]/{ /^#/{ s/^# \{0,1\}//; p; }; }' "$0"
+        -h|--help)
+            print_help
             exit 0
             ;;
         --threads=*)

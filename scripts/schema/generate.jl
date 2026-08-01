@@ -2,20 +2,21 @@ include("setup-schema-context.jl")
 include("utils.jl")
 
 const HELP_MSG = """
-Usage: julia generate.jl TARGET FILE [--check]
-Generates JSON Schema for JETLS configuration.
+Usage: julia --project=scripts/schema scripts/schema/generate.jl
+       [OPTIONS] TARGET FILE
+
+Generate a JSON Schema for JETLS configuration.
 
 Arguments:
-  TARGET            What schema to generate:
-                      --config-toml     Complete schema for .JETLSConfig.toml
-                      --settings        Settings schema
-                      --init-options    Initialization options schema
-  FILE              Path to output file (for generation) or file to check against (for --check)
+  TARGET            Schema to generate:
+                      --config-toml   Complete .JETLSConfig.toml schema
+                      --settings      Settings schema
+                      --init-options  Initialization options schema
+  FILE              Output file, or file to verify when using --check
 
 Options:
-  --check           Check if FILE matches the generated schema instead of writing to it
-  --help            Show this help message
-"""
+  -h, --help        Show this help message and exit
+  --check           Verify that FILE matches the generated schema"""
 
 const TARGETS = Dict(
     "--config-toml" => JETLS.JETLSConfig,
@@ -24,7 +25,7 @@ const TARGETS = Dict(
 )
 
 function parse_arguments(args::Vector{String})
-    if "--help" in args
+    if "-h" in args || "--help" in args
         println(HELP_MSG)
         exit(0)
     end
