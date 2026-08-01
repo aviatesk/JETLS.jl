@@ -12,6 +12,24 @@ function registration_for_method(request::RegisterCapabilityRequest, method::Str
         if registration.method == method)
 end
 
+function test_config_document_sync_registration(
+        request::RegisterCapabilityRequest, config_filter::Dict{String,Any}
+    )
+    for method in (
+            "textDocument/didOpen",
+            "textDocument/didChange",
+            "textDocument/didClose"
+        )
+        reg = registration_for_method(request, method)
+        options = reg.registerOptions::Dict{String,Any}
+        @test config_filter in options["documentSelector"]
+    end
+
+    save_registration = registration_for_method(request, "textDocument/didSave")
+    save_options = save_registration.registerOptions::Dict{String,Any}
+    @test config_filter ∉ save_options["documentSelector"]
+end
+
 @testset "dynamic document synchronization registration" begin
     capabilities = ClientCapabilities(;
         textDocument = TextDocumentClientCapabilities(;
@@ -153,10 +171,53 @@ end
     end
 end
 
+@testset "workspace config document synchronization registration" begin
+    mktempdir() do dir
+        root_uri = filepath2uri(dir)
+
+        let capabilities = ClientCapabilities(;
+                textDocument = TextDocumentClientCapabilities(;
+                    filters = TextDocumentFilterClientCapabilities(;
+                        relativePatternSupport = true),
+                    synchronization = TextDocumentSyncClientCapabilities(;
+                        dynamicRegistration = true,
+                        didSave = true)))
+            withserver(; capabilities, rootUri = root_uri) do (;
+                    register_capability_json_request
+                )
+                config_filter = Dict{String,Any}(
+                    "scheme" => "file",
+                    "pattern" => Dict{String,Any}(
+                        "baseUri" => string(root_uri),
+                        "pattern" => JETLS.CONFIG_FILE))
+                test_config_document_sync_registration(
+                    register_capability_json_request, config_filter)
+            end
+        end
+
+        let capabilities = ClientCapabilities(;
+                textDocument = TextDocumentClientCapabilities(;
+                    synchronization = TextDocumentSyncClientCapabilities(;
+                        dynamicRegistration = true,
+                        didSave = true)))
+            withserver(; capabilities, rootUri = root_uri) do (;
+                    register_capability_json_request
+                )
+                config_filter = Dict{String,Any}(
+                    "scheme" => "file",
+                    "pattern" => JETLS.CONFIG_FILE_GLOB_PATTERN)
+                test_config_document_sync_registration(
+                    register_capability_json_request, config_filter)
+            end
+        end
+    end
+end
+
 @testset "unsupported text documents are ignored" begin
     mktempdir() do dir
         server = JETLS.Server()
         state = server.state
+        state.root_path = dir
         uri = filepath2uri(joinpath(dir, "Manifest.toml"))
 
         open_notification = DidOpenTextDocumentNotification(;
@@ -168,6 +229,15 @@ end
         @test !haskey(JETLS.load(state.saved_file_cache), uri)
         @test JETLS.is_rejected_text_document(state, uri)
         @test !JETLS.may_have_file_info(state, uri)
+
+        config_uri = filepath2uri(joinpath(dir, JETLS.CONFIG_FILE))
+        @test !JETLS.may_have_file_info(state, config_uri)
+
+        nested_config_uri = filepath2uri(joinpath(dir, "nested", JETLS.CONFIG_FILE))
+        nested_open = make_DidOpenTextDocumentNotification(nested_config_uri, ""; languageId = "toml")
+        JETLS.handle_DidOpenTextDocumentNotification(server, nested_open)
+        @test JETLS.get_config_document(state, nested_config_uri) === nothing
+        @test JETLS.is_rejected_text_document(state, nested_config_uri)
 
         change_notification = DidChangeTextDocumentNotification(;
             params = DidChangeTextDocumentParams(;

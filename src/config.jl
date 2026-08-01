@@ -1,6 +1,42 @@
 const CONFIG_FILE = ".JETLSConfig.toml"
 const CONFIG_FILE_GLOB_PATTERN = "**/$CONFIG_FILE"
 
+function is_config_document_uri(state::ServerState, uri::URI)
+    filepath = @something uri2filepath(uri) return false
+    return is_workspace_root_file(state, filepath, CONFIG_FILE)
+end
+
+get_config_document(state::ServerState, uri::URI) =
+    get(load(state.config_document_cache), uri, nothing)
+
+function tryparse_config_data(text::String)
+    config_data = TOML.tryparse(text)
+    config_data isa TOML.ParserError && return nothing
+    try
+        return validate_config_data(config_data)
+    catch err
+        err isa InvalidConfigDataError || rethrow(err)
+        return nothing
+    end
+end
+
+function cache_config_document!(
+        state::ServerState, uri::URI, version::Int, text::String
+    )
+    info = ConfigDocumentInfo(version, text, tryparse_config_data(text))
+    store!(state.config_document_cache) do cache
+        Base.PersistentDict(cache, uri => info), nothing
+    end
+    return info
+end
+
+function delete_config_document!(state::ServerState, uri::URI)
+    store!(state.config_document_cache) do cache
+        Base.delete(cache, uri), nothing
+    end
+    return nothing
+end
+
 @generated function merge_and_track(
         on_difference,
         old_config::T,

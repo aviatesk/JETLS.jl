@@ -185,7 +185,6 @@ function hasServerConfigChanged(
   );
 }
 
-
 async function startLanguageServer() {
   const serverConfig = getServerConfig();
   currentServerConfig = serverConfig;
@@ -451,7 +450,6 @@ async function startLanguageServer() {
   const initializationOptions = vscode.workspace
     .getConfiguration("jetls-client")
     .get("initializationOptions", {});
-
 
   const clientOptions: LanguageClientOptions = {
     // Keep this selector as a static-registration fallback while jetls-client can
