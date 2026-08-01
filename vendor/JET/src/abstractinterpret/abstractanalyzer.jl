@@ -84,7 +84,25 @@ struct AbstractBindingState
     AbstractBindingState(isconst::Bool, maybeundef::Bool, @nospecialize typ) = new(isconst, maybeundef, typ)
     AbstractBindingState(isconst::Bool, maybeundef::Bool) = new(isconst, maybeundef)
 end
-const AbstractBindings = IdDict{Core.BindingPartition,AbstractBindingState}
+
+# `report_package` analyzes signatures concurrently while all task analyzers share a single
+# `binding_states::AbstractBindings` (see `AnalyzerState`). Guard the underlying `IdDict` with
+# a lock so concurrent `setindex!`/rehash cannot corrupt it; the accesses are infrequent
+# (only on global binding assignments and binding-partition lookups), so the uncontended lock
+# cost is negligible.
+struct AbstractBindings
+    bindings::IdDict{Core.BindingPartition,AbstractBindingState}
+    lock::ReentrantLock
+    AbstractBindings() = new(IdDict{Core.BindingPartition,AbstractBindingState}(), ReentrantLock())
+end
+@inline Base.getindex(b::AbstractBindings, partition::Core.BindingPartition) =
+    @lock b.lock b.bindings[partition]
+@inline Base.setindex!(b::AbstractBindings, binding_state::AbstractBindingState, partition::Core.BindingPartition) =
+    (@lock b.lock b.bindings[partition] = binding_state; return b)
+@inline Base.haskey(b::AbstractBindings, partition::Core.BindingPartition) =
+    @lock b.lock haskey(b.bindings, partition)
+@inline Base.get(b::AbstractBindings, partition::Core.BindingPartition, @nospecialize(default)) =
+    @lock b.lock get(b.bindings, partition, default)
 
 """
     mutable struct AnalyzerState
@@ -464,12 +482,6 @@ the logical sequence of errors discovered during analysis.
 function add_new_report!(analyzer::AbstractAnalyzer, result::InferenceResult, @nospecialize(report::InferenceErrorReport))
     push!(get_reports(analyzer, result), report)
     return report
-end
-
-function add_cached_report!(analyzer::AbstractAnalyzer, caller::InferenceResult, @nospecialize(cached::InferenceErrorReport))
-    cached = copy_report_stable(cached)
-    push!(get_reports(analyzer, caller), cached)
-    return cached
 end
 
 stash_report!(analyzer::AbstractAnalyzer, @nospecialize(report::InferenceErrorReport)) = push!(get_report_stash(analyzer), report)

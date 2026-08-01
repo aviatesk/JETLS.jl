@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
 - Diff: [`d4f7fe9b...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/d4f7fe9b...HEAD)
 
+### Removed
+
+- Removed the experimental `n_analysis_workers` property from `jetls-client.initializationOptions`. Existing VSCode settings must remove this property.
+
 ## v0.5.0
 
 - Commit: [`d4f7fe9b`](https://github.com/aviatesk/JETLS.jl/commit/d4f7fe9b)

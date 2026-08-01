@@ -103,7 +103,7 @@ end
 
 """
     find_definition(server, uri, fi, pos; soft_scope) ->
-        Union{Tuple{Vector{Location}, SyntaxTreeC}, Nothing}
+        Union{Tuple{Vector{Location}, SyntaxTree}, Nothing}
 
 Core routine behind `textDocument/definition`. On success returns
 `(locations, origin_node)` where `origin_node` is the syntax-tree node that
@@ -164,7 +164,8 @@ function find_definition(
     end
 
     # Phase 2: source-level binding pass.
-    binding_jump = find_binding_definitions(server, uri, fi, st0, offset, context_module, soft_scope)
+    binding_jump = find_binding_definitions(
+        server, uri, fi, st0, offset, context_module, world; soft_scope)
     binding_jump === nothing || return binding_jump
 
     node === nothing && return nothing
@@ -194,8 +195,8 @@ end
 # is unresolvable (e.g. typo, or rename without re-running full-analysis), so
 # Phase 2's binding pass takes over.
 function find_call_dispatch_definitions(
-        state::ServerState, uri::URI, st0::SyntaxTreeC,
-        node::SyntaxTreeC, ctx::InferredTreeContext,
+        state::ServerState, uri::URI, st0::SyntaxTree,
+        node::SyntaxTree, ctx::InferredTreeContext,
     )
     call_node = @something enclosing_call_for_matches(st0, node) return nothing
     matches = @something get_matches_for_range(ctx, JS.byte_range(call_node)) return nothing
@@ -212,11 +213,13 @@ end
 # `nothing` when no binding was selected or no `:def` was reachable from
 # the binding info.
 function find_binding_definitions(
-        server::Server, uri::URI, fi::FileInfo, st0::SyntaxTreeC,
-        offset::Int, context_module::Module, soft_scope::Bool,
+        server::Server, uri::URI, fi::FileInfo, st0::SyntaxTree,
+        offset::Int, context_module::Module, world::UInt;
+        soft_scope::Bool = false
     )
     binding_result = @something select_target_binding(
-        st0, offset, context_module; caller="find_definition", soft_scope) return nothing
+        st0, offset, context_module, world;
+        caller="find_definition", soft_scope) return nothing
     (; ctx3, st3, binding) = binding_result
     binfo = JL.get_binding(ctx3, binding)
     if binfo.kind === :global
@@ -249,7 +252,7 @@ function find_global_binding_definitions(
             get_unsynced_file_info!(state, search_uri)
         end continue
         for occurrence in find_global_binding_occurrences!(state, search_uri, fi, binfo)
-            if occurrence.kind === :def
+            if is_definition_occurrence(occurrence)
                 range, adjusted_uri = unadjust_range(state, search_uri, jsobj_to_range(occurrence.tree, fi))
                 push!(seen_locations, (adjusted_uri, range))
             end
@@ -268,11 +271,11 @@ end
 #   for call-like surfaces.
 function find_value_definitions(
         state::ServerState, uri::URI, context_module::Module,
-        node::SyntaxTreeC, rng::UnitRange{Int},
+        node::SyntaxTree, rng::UnitRange{Int},
         ctx::Union{Nothing,InferredTreeContext}, world::UInt,
     )
     if ctx === nothing
-        objtyp = resolve_global_const(context_module, node, world)
+        objtyp = resolve_global_const(context_module, world, node)
     else
         objtyp = get_type_for_range(ctx, rng)
     end
@@ -294,7 +297,7 @@ end
 # at Phase 3, jump to the matched operator dispatch instead.
 function find_operator_dispatch_definitions(
         state::ServerState, uri::URI,
-        node::SyntaxTreeC, rng::UnitRange{Int},
+        node::SyntaxTree, rng::UnitRange{Int},
         ctx::InferredTreeContext,
     )
     JS.kind(node) in _OPERATOR_CALL_KINDS || return nothing

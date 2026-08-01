@@ -32,7 +32,10 @@ runstack(frame) = Some{Any}(finish_and_return!(frame))
 
 function read_and_parse(filename)
     src = read(filename, String)
-    ex = Base.parse_input_line(src; filename=filename)
+    # `Meta.parseall` gives file (hard-scope) semantics, matching `include`;
+    # `Base.parse_input_line` would mark blocks for REPL soft scope, changing the
+    # outcome of scope-sensitive tests (e.g. issue #28789's soft-scope error test).
+    ex = Meta.parseall(src; filename=filename)
 end
 
 ## For running interpreter frames under resource limitations
@@ -54,6 +57,12 @@ mutable struct LimitedExec <: Interpreter
     nstmts::Int
 end
 
+# Thrown when the statement budget expires inside a nested call: returning `Aborted`
+# as the callee's value would let interpreted callers keep computing with it.
+struct AbortException <: Exception
+    aborted::Aborted
+end
+
 """
     ret, nstmtsleft = evaluate_limited!(interp::Interpreter, frame, nstmts, istoplevel::Bool=true)
 
@@ -68,6 +77,10 @@ function evaluate_limited!(interp::Interpreter, frame::Frame, nstmts::Int, istop
     # with limexec! rather than the default finish_and_return!
     pc = frame.pc
     while nstmts > 0
+        # Toplevel code always runs in the latest world (mirrors `step_expr!`): the frame
+        # is created with the task's (possibly frozen) world, and the `:call` branches
+        # below bypass `step_expr!`'s own per-statement refresh.
+        istoplevel && (frame.world = Base.get_world_counter())
         shouldbreak(frame, pc) && return BreakpointRef(frame.framecode, pc), limited_interp.nstmts
         stmt = pc_expr(frame, pc)
         # uncomment the following to calibrate `nstmts` in test/limits.jl
@@ -83,6 +96,7 @@ function evaluate_limited!(interp::Interpreter, frame::Frame, nstmts::Int, istop
                     do_assignment!(frame, lhs, rhs)
                     new_pc = pc + 1
                 catch err
+                    err isa AbortException && rethrow()
                     new_pc = handle_err(interp, frame, err)
                 end
                 nstmts = limited_interp.nstmts
@@ -94,6 +108,7 @@ function evaluate_limited!(interp::Interpreter, frame::Frame, nstmts::Int, istop
                     do_assignment!(frame, stmt.args[1], rhs)
                     new_pc = pc + 1
                 catch err
+                    err isa AbortException && rethrow()
                     new_pc = handle_err(interp, frame, err)
                 end
                 nstmts = limited_interp.nstmts
@@ -104,7 +119,10 @@ function evaluate_limited!(interp::Interpreter, frame::Frame, nstmts::Int, istop
                     new_pc = pc + 1
                 else
                     limited_interp.nstmts = nstmts
-                    newframe = Frame(moduleof(frame), stmt)
+                    # Construct from the thunk's CodeInfo directly: `Meta.lower` is not
+                    # idempotent on `:thunk` (it wraps it in a fresh thunk that contains the
+                    # original as a statement, which would recurse here forever).
+                    newframe = Frame(moduleof(frame), stmt.args[1]::Core.CodeInfo)
                     ret = finish_and_return!(limited_interp, newframe, true)
                     isa(ret, Aborted) && return ret, limited_interp.nstmts
                     JuliaInterpreter.recycle(newframe)
@@ -112,7 +130,7 @@ function evaluate_limited!(interp::Interpreter, frame::Frame, nstmts::Int, istop
                     frame.pc = pc + 1
                     return nothing, limited_interp.nstmts
                 end
-            elseif istoplevel && stmt.head === :method && length(stmt.args) == 3
+            elseif istoplevel && JuliaInterpreter.is_methoddef3(stmt)
                 step_expr!(interp, frame, stmt, istoplevel)
                 frame.pc = pc + 1
                 return nothing, nstmts - 1
@@ -148,7 +166,8 @@ evaluate_limited!(frame::Union{Frame, Tuple}, nstmts::Int, istoplevel::Bool=fals
 function JuliaInterpreter.finish_and_return!(interp::LimitedExec, newframe::Frame, istoplevel::Bool)
     ret, nleft = evaluate_limited!(interp, newframe, interp.nstmts, istoplevel)
     interp.nstmts = nleft
-    return isa(ret, Aborted) ? ret : something(ret)
+    isa(ret, Aborted) && throw(AbortException(ret))
+    return something(ret)
 end
 
 ### Functions needed on workers for running tests
@@ -193,12 +212,36 @@ function run_test_by_eval(test, fullpath, nstmts)
             nstmtsleft = $nstmts
             # mod, ex = modex
             # @show mod ex
-            frame = Frame(modex)
+            frame = Frame(modex...)
             yield()  # allow communication between processes
-            ret, nstmtsleft = evaluate_limited!(frame, nstmtsleft, true)
+            # `evaluate_limited!` pauses (returning `nothing`) after each nested
+            # `:thunk`/method definition so that subsequent statements run in the new
+            # world; resume the frame until it terminates or aborts.
+            local ret = nothing
+            try
+                while true
+                    ret, nstmtsleft = evaluate_limited!(frame, nstmtsleft, true)
+                    ret === nothing || break
+                end
+            catch err
+                if err isa AbortException
+                    ret = err.aborted
+                else
+                    # An uncaught error from one top-level expression should not kill
+                    # the whole file; record it and continue with the next expression.
+                    Test.record(ts, Test.Error(:nontest_error, "(top-level expression $i)", err,
+                                               Base.current_exceptions(), LineNumberNode(0)))
+                    continue
+                end
+            end
             if isa(ret, Aborted)
                 push!(aborts, ret)
-                JuliaInterpreter.finish_stack!(NonRecursiveInterpreter(), frame, true)
+                try
+                    JuliaInterpreter.finish_stack!(NonRecursiveInterpreter(), frame, true)
+                catch err
+                    Test.record(ts, Test.Error(:nontest_error, "(top-level expression $i, aborted continuation)",
+                                               err, Base.current_exceptions(), LineNumberNode(0)))
+                end
             end
         end
         println("Finished ", $test)

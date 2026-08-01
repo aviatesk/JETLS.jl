@@ -1,14 +1,21 @@
 module Analyzer
 
-export LSAnalyzer, inference_error_report_severity, inference_error_report_stack, reset_report_target_modules!
-export BoundsErrorReport, FieldErrorReport, MethodErrorReport, NonBooleanCondErrorReport,
-    UndefVarErrorReport
+export LSAnalyzer
+export inference_error_report_related_frames, inference_error_report_related_stack,
+    inference_error_report_severity, inference_error_report_stack,
+    reset_report_target_modules!
+export BoundsErrorReport, FieldErrorReport, KeywordTypeErrorReport, MethodErrorReport,
+    NoMethodMatchReport, NonBooleanCondErrorReport, TypeAssertErrorReport,
+    TypeErrorReport, UndefKeywordErrorReport, UndefVarErrorReport,
+    UnsupportedKeywordArgReport
+export RelatedEntryFrame, RelatedFrame, RelatedFrameKind, RelatedOriginFrame, RelatedViaFrame
 
 using Core.IR
+using Compiler: Compiler as CC
 using JET.JETInterface
-using JET: CC, JET
+using JET: JET
 
-using ..JETLS: AnalysisEntry
+using ..JETLS: AnalysisEntry, JETLS_DEV_MODE
 using ..LSP
 
 # JETLS internal interface
@@ -23,7 +30,60 @@ function inference_error_report_stack(@nospecialize report::JET.InferenceErrorRe
         ret isa StepRange{Int,Int} ||
             error("Invalid implementation of `inference_error_report_stack_impl`")
     end
+    @static JETLS_DEV_MODE && assert_valid_report_stack(report, ret, "display")
     return ret
+end
+function assert_valid_report_stack(
+        @nospecialize(report::JET.InferenceErrorReport), stack, kind::String
+    )
+    valid = all(idx -> 1 ≤ idx ≤ lastindex(report.vst), stack)
+    report_type = typeof(report)
+    n = length(report.vst)
+    @assert valid lazy"invalid $kind stack for $report_type: stack=$stack, vst length=$n"
+end
+
+@enum RelatedFrameKind begin
+    RelatedOriginFrame
+    RelatedViaFrame
+    RelatedEntryFrame
+end
+
+struct RelatedFrame
+    idx::Int
+    kind::RelatedFrameKind
+end
+
+function inference_error_report_related_frames(@nospecialize report::JET.InferenceErrorReport)
+    stk = inference_error_report_stack(report)
+    isempty(stk) && return RelatedFrame[]
+    primary = first(stk)
+    entry = last(stk)
+    origin_stack = inference_error_report_origin_stack(report)
+    display_tail = Iterators.drop(stk, 1)
+    @static if JETLS_DEV_MODE
+        @assert isempty(intersect(origin_stack, display_tail)) lazy"related stack overlap found for $(report)"
+    end
+    related = RelatedFrame[]
+    for idx in origin_stack
+        idx == primary && continue
+        push!(related, RelatedFrame(idx, RelatedOriginFrame))
+    end
+    for idx in display_tail
+        idx == primary && continue
+        kind = idx == entry ? RelatedEntryFrame : RelatedViaFrame
+        push!(related, RelatedFrame(idx, kind))
+    end
+    @static JETLS_DEV_MODE &&
+        assert_valid_report_stack(report, map(frame -> frame.idx, related), "related")
+    return related
+end
+function inference_error_report_origin_stack(@nospecialize report::JET.InferenceErrorReport)
+    offset = scope_offset(report)
+    offset > 0 || return 0:-1:1
+    n = length(report.vst)
+    first_origin = n - offset + 1
+    1 ≤ first_origin ≤ n || return 0:-1:1
+    return n:-1:first_origin
 end
 inference_error_report_severity_impl(@nospecialize _report::JET.InferenceErrorReport) =
     DiagnosticSeverity.Warning
@@ -36,7 +96,7 @@ inference_error_report_severity(@nospecialize report::JET.InferenceErrorReport) 
 A code analyzer specially designed for the language server.
 It is implemented using the `JET.AbstractAnalyzer` framework,
 extending the base abstract interpretation performed by the Julia compiler
-to detect [`LSErrorReport`](@ref)s, along with analyzing types and effects.
+to detect [`JETLSErrorReport`](@ref)s, along with analyzing types and effects.
 """
 struct LSAnalyzer <: ToplevelAbstractAnalyzer
     state::AnalyzerState
@@ -136,24 +196,30 @@ const empty_target_modules = Set{Module}()
 const resolver_hash = rand(UInt)
 
 JETInterface.AnalyzerState(analyzer::LSAnalyzer) = analyzer.state
-function JETInterface.AbstractAnalyzer(
-        analyzer::LSAnalyzer, state::AnalyzerState;
-        resolver_mode::Bool = false
-    )
-    if resolver_mode
-        # Use special analysis cache for resolver purposes
-        analysis_cache_key = JET.compute_hash(state, analyzer.invariable_analysis_hash, resolver_hash)
-        # Force target modules to be empty and shutdown the report system
-        @assert isempty(empty_target_modules)
-        report_target_modules = empty_target_modules
-    else
-        analysis_cache_key = JET.compute_hash(state.inf_params, analyzer.invariable_analysis_hash)
-        report_target_modules = analyzer.report_target_modules
-    end
+function JETInterface.AbstractAnalyzer(analyzer::LSAnalyzer, state::AnalyzerState)
+    analysis_cache_key = JET.compute_hash(state.inf_params, analyzer.invariable_analysis_hash)
+    report_target_modules = analyzer.report_target_modules
     analysis_token = @lock LS_ANALYZER_CACHE_LOCK get!(AnalysisToken, LS_ANALYZER_CACHE, analysis_cache_key)
     return LSAnalyzer(state, analysis_token, report_target_modules, analyzer.invariable_analysis_hash)
 end
 JETInterface.AnalysisToken(analyzer::LSAnalyzer) = analyzer.analysis_token
+
+JET.@withmixedhash struct JETLSReportAggregationKey
+    T::DataType
+    sig::JET.Signature
+    primary_frame::JET.VirtualFrameNoLinfo
+    origin_frame::JET.VirtualFrameNoLinfo
+end
+JETInterface.aggregation_policy(::LSAnalyzer) = function (report::JET.InferenceErrorReport)
+    @nospecialize report
+    stk = inference_error_report_stack(report)
+    attribution_idx = isempty(stk) ? lastindex(report.vst) : first(stk)
+    return JETLSReportAggregationKey(
+        typeof(Base.inferencebarrier(report)),
+        report.sig,
+        JET.VirtualFrameNoLinfo(report.vst[attribution_idx]),
+        JET.VirtualFrameNoLinfo(last(report.vst)))
+end
 
 const LS_ANALYZER_CACHE = Dict{UInt,AnalysisToken}()
 const LS_ANALYZER_CACHE_LOCK = ReentrantLock()
@@ -162,6 +228,11 @@ const LS_ANALYZER_CACHE_LOCK = ReentrantLock()
 # ==============
 
 Base.Experimental.@MethodTable jetls_method_table
+
+# `include` is concretely handled by `ConcreteInterpreter`; analyzing Base's file-loading
+# machinery only adds noise. Keep its unmodeled return value abstract.
+Base.Experimental.@overlay jetls_method_table Base.include(::Module, ::AbstractString) = Base.inferencebarrier(nothing)
+Base.Experimental.@overlay jetls_method_table Base.include(::Function, ::Module, ::AbstractString) = Base.inferencebarrier(nothing)
 
 @static if VERSION < v"1.14.0-DEV.2024"
 # Backport JuliaLang/julia#61526
@@ -200,19 +271,15 @@ function should_analyze(analyzer::LSAnalyzer, sv::CC.InferenceState)
     return isnothing(report_target_modules) || CC.frame_module(sv) ∈ report_target_modules
 end
 
-# Many builtin functions are used in `getproperty(::Any,::Symbol)` or `getindex(::Tuple,::Int)`, etc.,
-# so analysis injection needs to be performed in the context of those methods (i.e. `Base`),
-# but `report_target_modules` does not necessarily include `Base`.
-# Therefore, we need to check the inference frame one level up, and if it is in `report_target_modules`,
-# we also need to analyze it.
-function should_analyze_for_builtins(analyzer::LSAnalyzer, sv::CC.InferenceState)
+# `vst` offset for a report created unconditionally on the erroring frame `sv`: `0` when `sv`
+# is in scope (caller-independent, decided here), else `1` — `sv` is an out-of-scope helper
+# (e.g. `getproperty`/`getindex` in `Base`), so the in-scope decision is deferred to
+# `collect_callee_reports!` rather than baked into `sv`'s shared cache.
+function report_offset(analyzer::LSAnalyzer, sv::CC.InferenceState)
     report_target_modules = analyzer.report_target_modules
     isnothing(report_target_modules) && return 0
     CC.frame_module(sv) ∈ report_target_modules && return 0
-    checkbounds(Bool, sv.callstack, sv.parentid) || return nothing
-    parent = sv.callstack[sv.parentid]
-    CC.frame_module(parent) ∈ report_target_modules && return 1
-    return nothing
+    return 1
 end
 
 # Inference overloads
@@ -264,27 +331,58 @@ end # @static if VERSION ≥ v"1.12.2"
 # Analysis injections
 # ===================
 
-function CC.abstract_call_gf_by_type(
-        analyzer::LSAnalyzer, @nospecialize(func), arginfo::CC.ArgInfo, si::CC.StmtInfo,
+function after_abstract_call_gf_by_type(
+        analyzer::LSAnalyzer, ret::CC.Future, @nospecialize(func), arginfo::CC.ArgInfo,
         @nospecialize(atype), sv::CC.InferenceState, max_methods::Int
     )
-    ret = @invoke CC.abstract_call_gf_by_type(analyzer::ToplevelAbstractAnalyzer,
-        func::Any, arginfo::CC.ArgInfo, si::CC.StmtInfo, atype::Any, sv::CC.InferenceState, max_methods::Int)
     if !should_analyze(analyzer, sv)
-        return ret
+        return nothing
     end
-    atype′ = Ref{Any}(atype)
-    function after_abstract_call_gf_by_type(analyzer′::LSAnalyzer, sv′::CC.InferenceState)
+    atype_ref = Ref{Any}(atype)
+    func_ref = Ref{Any}(func)
+    function _after_abstract_call_gf_by_type(analyzer′::LSAnalyzer, sv′::CC.InferenceState)
         ret′ = ret[]
-        report_method_error!(analyzer′, sv′, ret′, arginfo, atype′[])
+        atype′ = atype_ref[]
+        func′ = func_ref[]
+        report_method_error!(analyzer′, sv′, ret′, arginfo, atype′)
+        report_unsupported_kwarg_error!(analyzer′, sv′, func′, ret′, arginfo, max_methods)
+        report_keyword_typeerror!(analyzer′, sv′, func′, ret′, arginfo, max_methods)
         return true
     end
     if isready(ret)
-        after_abstract_call_gf_by_type(analyzer, sv)
+        _after_abstract_call_gf_by_type(analyzer, sv)
     else
-        push!(sv.tasks, after_abstract_call_gf_by_type)
+        push!(sv.tasks, _after_abstract_call_gf_by_type)
     end
+    return nothing
+end
+
+@static if hasmethod(CC.abstract_call_gf_by_type,
+        Tuple{CC.AbstractInterpreter, Any, CC.ArgInfo, CC.StmtInfo, Any,
+              Union{Vector{CC.VarState}, Nothing}, CC.AbsIntState, Int})
+function CC.abstract_call_gf_by_type(
+        analyzer::LSAnalyzer, @nospecialize(func), arginfo::CC.ArgInfo,
+        si::CC.StmtInfo, @nospecialize(atype), vtypes::Union{Vector{CC.VarState},Nothing},
+        sv::CC.InferenceState, max_methods::Int
+    )
+    ret = @invoke CC.abstract_call_gf_by_type(
+        analyzer::ToplevelAbstractAnalyzer, func::Any, arginfo::CC.ArgInfo,
+        si::CC.StmtInfo, atype::Any, vtypes::Union{Vector{CC.VarState},Nothing},
+        sv::CC.InferenceState, max_methods::Int)
+    after_abstract_call_gf_by_type(analyzer, ret, func, arginfo, atype, sv, max_methods)
     return ret
+end
+else
+function CC.abstract_call_gf_by_type(
+        analyzer::LSAnalyzer, @nospecialize(func), arginfo::CC.ArgInfo,
+        si::CC.StmtInfo, @nospecialize(atype), sv::CC.InferenceState, max_methods::Int
+    )
+    ret = @invoke CC.abstract_call_gf_by_type(
+        analyzer::ToplevelAbstractAnalyzer, func::Any, arginfo::CC.ArgInfo,
+        si::CC.StmtInfo, atype::Any, sv::CC.InferenceState, max_methods::Int)
+    after_abstract_call_gf_by_type(analyzer, ret, func, arginfo, atype, sv, max_methods)
+    return ret
+end
 end
 
 # TODO Better to factor out and share it with `JET.JETAnalyzer`
@@ -296,8 +394,8 @@ function CC.abstract_eval_globalref(
         return CC.RTEffects(Any, Any, CC.generic_getglobal_effects)
     end
     (valid_worlds, ret) = CC.scan_leaf_partitions(analyzer, g, sv.world) do analyzer::LSAnalyzer, binding::Core.Binding, partition::Core.BindingPartition
-        offset = should_analyze_for_builtins(analyzer, sv)
-        if offset !== nothing && offset ≤ allowed_offset
+        offset = report_offset(analyzer, sv)
+        if offset ≤ allowed_offset
             if partition.min_world ≤ sv.world.this ≤ partition.max_world # XXX This should probably be fixed on the Julia side
                 report_undef_global_var!(analyzer, sv, binding, partition, offset)
             end
@@ -315,7 +413,7 @@ function CC.builtin_tfunction(analyzer::LSAnalyzer,
     if f === fieldtype
         # the valid widest possible return type of `fieldtype_tfunc` is `Union{Type,TypeVar}`
         # because fields of unwrapped `DataType`s can legally be `TypeVar`s,
-        # but this will lead to lots of false positive `MethodErrorReport`s for inference
+        # but this will lead to lots of false positive `NoMethodMatchReport`s for inference
         # with accessing to abstract fields since most methods don't expect `TypeVar`
         # (e.g. `@report_call readuntil(stdin, 'c')`)
         # JET.jl further widens this case to `Any` and give up further analysis rather than
@@ -325,9 +423,13 @@ function CC.builtin_tfunction(analyzer::LSAnalyzer,
             ret = Any
         end
     end
-    offset = should_analyze_for_builtins(analyzer, sv)
-    if offset !== nothing
-        report_builtin_error!(analyzer, sv, f, argtypes, ret, offset)
+    if ret === Union{}
+        # Gate on `ret === Union{}` first so valid builtins (the common case) skip all report
+        # work. Report unconditionally on the erroring frame `sv`; for an out-of-scope `sv`
+        # (offset 1) the `report_target_modules` check is deferred to `collect_callee_reports!`
+        # as the report propagates to its in-scope call site, so it is not baked into the cache.
+        offset = report_offset(analyzer, sv)
+        report_builtin_error!(analyzer, sv, f, argtypes, offset)
     end
     return ret
 end
@@ -354,27 +456,92 @@ function CC.abstract_eval_value(analyzer::LSAnalyzer, @nospecialize(e), sstate::
     return ret
 end
 
+function CC.finish!(analyzer::LSAnalyzer, caller::CC.InferenceState, validation_world::UInt, time_before::UInt64)
+    # An `UndefKeywordError` thrown on a path that does not make the enclosing frame diverge
+    # was not actually taken (e.g. `f(; nt...)` lowers to a branch calling `f()` only when
+    # `nt` is empty), so drop such reports and keep only definitely-missing keyword calls.
+    # `finish!` runs after `finishinfer!`, and (for cycles) after every cycle member's
+    # `finishinfer!`, so `caller.bestguess` is the converged return type here. Unwrap
+    # `LimitedAccuracy` so a recursion-limited but diverging frame still keeps the report.
+    # `KeywordTypeErrorReport` is not filtered here: it has no empty-`nt` branch to fire
+    # on spuriously, so a type mismatch on a conditional path is a real error.
+    if CC.ignorelimited(caller.bestguess) !== Union{}
+        filter!(JET.get_reports(analyzer, caller.result)) do @nospecialize(report)
+            return !(report isa UndefKeywordErrorReport)
+        end
+    end
+    return @invoke CC.finish!(analyzer::ToplevelAbstractAnalyzer, caller::CC.InferenceState,
+        validation_world::UInt, time_before::UInt64)
+end
+
+# Detect `UndefKeywordError` at the `throw` inside the synthesized keyword sorter and store
+# the report unconditionally on that (caller-independent) frame; see `report_undef_keyword!`.
+function CC.abstract_throw(
+        analyzer::LSAnalyzer, argtypes::Vector{Any}, sv::CC.InferenceState
+    )
+    report_undef_keyword!(analyzer, sv, argtypes)
+    return @invoke CC.abstract_throw(
+        analyzer::ToplevelAbstractAnalyzer, argtypes::Vector{Any}, sv::CC.InferenceState)
+end
+
+# Apply the `report_target_modules` filter as reports propagate into the caller `sv`, not at
+# creation — so it is never written to the callee cache. A report with positive
+# `scope_offset` is dropped here when `sv` (its call site) is out of scope;
+# offset `0` means the decision was already made at creation, so it is kept.
+function JET.collect_callee_reports!(analyzer::LSAnalyzer, sv::CC.InferenceState)
+    reports = JET.get_report_stash(analyzer)
+    if !isempty(reports)
+        vf = JET.get_virtual_frame(sv)
+        for report in reports
+            offset = scope_offset(report)
+            if offset > 0 && length(report.vst) == offset && !should_analyze(analyzer, sv)
+                continue # at the (out-of-scope) call-site frame: drop instead of propagating
+            end
+            pushfirst!(report.vst, vf)
+            add_new_report!(analyzer, sv.result, report)
+        end
+        empty!(reports)
+    end
+    return nothing
+end
+
+# `vst_offset` of a report subject to the propagation-time `report_target_modules` filter, or
+# `-1` for reports not created unconditionally (whose in-scope decision is made at creation).
+# Methods for the concrete report types are defined after those structs below.
+scope_offset(@nospecialize report::JET.InferenceErrorReport) = scope_offset_impl(report)::Int
+scope_offset_impl(@nospecialize _report::JET.InferenceErrorReport) = -1
+
 # analysis
 # ========
 
 """
-    LSErrorReport <: InferenceErrorReport
+    JETLSErrorReport <: InferenceErrorReport
 
 Abstract type for error reports analyzed by [`LSAnalyzer`](@ref).
 
 Subtypes:
-- `UndefVarErrorReport`: Undefined variables (global only, undefined static parameters is not analyzed currently)
-- `FieldErrorReport`: Access to non-existent struct fields
-- `BoundsErrorReport`: Out-of-bounds field access by index
-- `MethodErrorReport`: Method dispatch errors
-- `NonBooleanCondErrorReport`: Non-boolean value used in boolean context
+- `UndefVarErrorReport`: Undefined global bindings (corresponding to `UndefVarError`)
+- `FieldErrorReport`: Access to non-existent struct fields (corresponding to `FieldError`)
+- `BoundsErrorReport`: Out-of-bounds field access by index (corresponding to `BoundsError`)
+- `MethodErrorReport`: Errors that raise `MethodError` at runtime
+  * `NoMethodMatchReport`: No matching method for a call (a dispatch failure)
+  * `UnsupportedKeywordArgReport`: Keyword arguments the method does not accept
+    (raised via `Base.kwerr`)
+- `UndefKeywordErrorReport`: Missing required keyword arguments
+  (corresponding to `UndefKeywordError`)
+- `TypeErrorReport`: Errors that raise `TypeError` at runtime
+  * `TypeAssertErrorReport`: Statically failing type assertions
+  * `NonBooleanCondErrorReport`: Non-boolean value in a boolean context
+  * `KeywordTypeErrorReport`: Keyword argument value type mismatch
 """
-abstract type LSErrorReport <: InferenceErrorReport end
+abstract type JETLSErrorReport <: InferenceErrorReport end
+abstract type MethodErrorReport <: JETLSErrorReport end
+abstract type TypeErrorReport <: JETLSErrorReport end
 
 # UndefVarErrorReport
 # -------------------
 
-@jetreport struct UndefVarErrorReport <: LSErrorReport
+@jetreport struct UndefVarErrorReport <: JETLSErrorReport
     var::Union{GlobalRef,TypeVar}
     maybeundef::Bool
     vst_offset::Int
@@ -395,6 +562,7 @@ end
 inference_error_report_stack_impl(r::UndefVarErrorReport) = (length(r.vst)-r.vst_offset):-1:1
 inference_error_report_severity_impl(r::UndefVarErrorReport) =
     r.maybeundef ? DiagnosticSeverity.Information : DiagnosticSeverity.Warning
+scope_offset_impl(r::UndefVarErrorReport) = r.vst_offset
 
 function report_undef_global_var!(
         analyzer::LSAnalyzer, sv::CC.InferenceState, binding::Core.Binding, partition::Core.BindingPartition,
@@ -421,7 +589,7 @@ function report_undef_global_var!(
     return true
 end
 
-@jetreport struct FieldErrorReport <: LSErrorReport
+@jetreport struct FieldErrorReport <: JETLSErrorReport
     @nospecialize type
     field::Symbol
     vst_offset::Int
@@ -439,12 +607,13 @@ function JETInterface.print_report_message(io::IO, r::FieldErrorReport)
     else
         tname = nameof(typ)
     end
-    return print(io, lazy"FieldError: type $tname has no field `$(r.field)`, available fields: $flds")
+    return print(io, lazy"FieldError: type `$tname` has no field `$(r.field)`, available fields: $flds")
 end
 inference_error_report_stack_impl(r::FieldErrorReport) = (length(r.vst)-r.vst_offset):-1:1
 inference_error_report_severity_impl(::FieldErrorReport) = DiagnosticSeverity.Warning
+scope_offset_impl(r::FieldErrorReport) = r.vst_offset
 
-@jetreport struct BoundsErrorReport <: LSErrorReport
+@jetreport struct BoundsErrorReport <: JETLSErrorReport
     @nospecialize a
     i::Int
     vst_offset::Int
@@ -453,19 +622,71 @@ JETInterface.print_report_message(io::IO, r::BoundsErrorReport) =
     print(io, lazy"BoundsError: attempt to access $(r.a) at index [$(r.i)]")
 inference_error_report_stack_impl(r::BoundsErrorReport) = (length(r.vst)-r.vst_offset):-1:1
 inference_error_report_severity_impl(::BoundsErrorReport) = DiagnosticSeverity.Warning
+scope_offset_impl(r::BoundsErrorReport) = r.vst_offset
+
+# TypeAssertErrorReport
+# ---------------------
+
+@jetreport struct TypeAssertErrorReport <: TypeErrorReport
+    @nospecialize expected
+    @nospecialize actual
+    vst_offset::Int
+end
+inference_error_report_stack_impl(r::TypeAssertErrorReport) = (length(r.vst)-r.vst_offset):-1:1
+inference_error_report_severity_impl(::TypeAssertErrorReport) = DiagnosticSeverity.Warning
+scope_offset_impl(r::TypeAssertErrorReport) = r.vst_offset
+
+function JETInterface.print_report_message(io::IO, r::TypeAssertErrorReport)
+    (; expected, actual) = r
+    print(io, "TypeError: in `typeassert`, expected `", expected, "`, got ")
+    if CC.isType(actual)
+        print(io, actual)
+    else
+        print(io, "a value of type `", actual, '`')
+    end
+end
+
+function print_type_error_got(io::IO, @nospecialize(actual))
+    if CC.isType(actual)
+        print(io, actual)
+    else
+        print(io, "a value of type `", actual, '`')
+    end
+end
+
+function report_typeassert_error!(
+        analyzer::LSAnalyzer, sv::CC.InferenceState, argtypes::Vector{Any}, offset::Int
+    )
+    length(argtypes) == 2 || return false
+    valtyp, asserttyp = argtypes
+
+    expected = CC.instanceof_tfunc(asserttyp, true)[1]
+    if expected === Union{}
+        actual = CC.widenconst(asserttyp)
+        actual === Union{} && return false
+        add_new_report!(analyzer, sv.result, TypeAssertErrorReport(sv, Type, actual, offset))
+        return true
+    end
+
+    actual = CC.widenconst(valtyp)
+    actual === Union{} && return false
+    CC.hasintersect(actual, expected) && return false
+    add_new_report!(analyzer, sv.result, TypeAssertErrorReport(sv, expected, actual, offset))
+    return true
+end
 
 function report_builtin_error!(
-        analyzer::LSAnalyzer, sv::CC.InferenceState, @nospecialize(f), argtypes::Vector{Any},
-        @nospecialize(ret), offset::Int
+        analyzer::LSAnalyzer, sv::CC.InferenceState, @nospecialize(f),
+        argtypes::Vector{Any}, offset::Int
     )
-    if ret === Union{}
-        if f === getfield
-            report_fieldaccess!(analyzer, sv, getfield, argtypes, offset)
-        elseif f === setfield!
-            report_fieldaccess!(analyzer, sv, setfield!, argtypes, offset)
-        elseif f === fieldtype
-            report_fieldaccess!(analyzer, sv, fieldtype, argtypes, offset)
-        end
+    if f === getfield
+        report_fieldaccess!(analyzer, sv, getfield, argtypes, offset)
+    elseif f === setfield!
+        report_fieldaccess!(analyzer, sv, setfield!, argtypes, offset)
+    elseif f === fieldtype
+        report_fieldaccess!(analyzer, sv, fieldtype, argtypes, offset)
+    elseif f === typeassert
+        report_typeassert_error!(analyzer, sv, argtypes, offset)
     end
 end
 
@@ -529,6 +750,9 @@ function report_fieldaccess!(
     namev = (name::Const).val
     objtyp = s
     if namev isa Symbol
+        if f === getfield
+            offset = direct_transparent_getproperty_offset(sv, offset)
+        end
         add_new_report!(analyzer, sv.result, FieldErrorReport(sv, objtyp, namev, offset))
     elseif namev isa Int
         add_new_report!(analyzer, sv.result, BoundsErrorReport(sv, objtyp, namev, offset))
@@ -536,14 +760,62 @@ function report_fieldaccess!(
     return true
 end
 
-# MethodErrorReport
-# -----------------
+# TODO Replace this hack with a general report provenance attribution system
 
-@jetreport struct MethodErrorReport <: LSErrorReport
+function direct_transparent_getproperty_offset(sv::CC.InferenceState, offset::Int)
+    is_direct_transparent_getproperty_getfield(sv) || return offset
+    return max(offset, 1)
+end
+
+function is_direct_transparent_getproperty_getfield(sv::CC.InferenceState)
+    def = sv.linfo.def
+    def isa Method || return false
+    def.name === :getproperty || return false
+    length(sv.slottypes) ≥ 3 || return false
+    pc = JET.get_currpc(sv)
+    stmt = sv.src.code[pc]
+    Meta.isexpr(stmt, :call) || return false
+    length(stmt.args) == 3 || return false
+    seen_slots = BitSet()
+    receiver = @something transparent_getproperty_slot_id!(seen_slots, stmt.args[2], sv, pc) return false
+    receiver == 2 || return false
+    field = @something transparent_getproperty_slot_id!(seen_slots, stmt.args[3], sv, pc) return false
+    field == 3 || return false
+    return true
+end
+
+function transparent_getproperty_slot_id!(
+        seen_slots::BitSet, @nospecialize(x), sv::CC.InferenceState, pc::Int
+    )
+    while true
+        slot = CC.ssa_def_slot(x, sv)
+        slot isa SlotNumber || return nothing
+        slot.id ≤ 3 && return slot.id
+        slot.id ∈ seen_slots && return nothing
+        push!(seen_slots, slot.id)
+        pc_assign = CC.find_dominating_assignment(slot.id, pc, sv)
+        pc_assign === nothing && return nothing
+        stmt = sv.src.code[pc_assign]
+        if Meta.isexpr(stmt, :(=)) && length(stmt.args) == 2
+            lhs, rhs = stmt.args
+            if lhs isa SlotNumber && lhs.id == slot.id
+                x = rhs
+                pc = pc_assign
+                continue
+            end
+        end
+        return nothing
+    end
+end
+
+# NoMethodMatchReport
+# -------------------
+
+@jetreport struct NoMethodMatchReport <: MethodErrorReport
     @nospecialize t # ::Union{Type, Vector{Type}}
     union_split::Int
 end
-function JETInterface.print_report_message(io::IO, report::MethodErrorReport)
+function JETInterface.print_report_message(io::IO, report::NoMethodMatchReport)
     print(io, "no matching method found ")
     if report.union_split == 0
         print_callsig(io, report.t)
@@ -562,8 +834,8 @@ function print_callsig(io, @nospecialize(t))
     Base.show_tuple_as_call(io, Symbol(""), t)
     print(io, '`')
 end
-inference_error_report_stack_impl(r::MethodErrorReport) = length(r.vst):-1:1
-inference_error_report_severity_impl(::MethodErrorReport) = DiagnosticSeverity.Warning
+inference_error_report_stack_impl(r::NoMethodMatchReport) = length(r.vst):-1:1
+inference_error_report_severity_impl(::NoMethodMatchReport) = DiagnosticSeverity.Warning
 
 function report_method_error!(
         analyzer::LSAnalyzer, sv::CC.InferenceState, call::CC.CallMeta,
@@ -585,7 +857,7 @@ function report_method_error!(
         @nospecialize(atype)
     )
     if CC.isempty(info.results)
-        report = MethodErrorReport(sv, atype, 0)
+        report = NoMethodMatchReport(sv, atype, 0)
         add_new_report!(analyzer, sv.result, report)
     end
 end
@@ -610,14 +882,225 @@ function report_method_error_for_union_split!(
         end
     end
     if empty_matches !== nothing
-        add_new_report!(analyzer, sv.result, MethodErrorReport(sv, empty_matches...))
+        add_new_report!(analyzer, sv.result, NoMethodMatchReport(sv, empty_matches...))
     end
+end
+
+# UnsupportedKeywordArgReport
+# ---------------------------
+
+# A call like `f(; unknownkw=...)` is lowered to `Core.kwcall((unknownkw=...,), f)`.
+# This dispatches successfully to `f`'s generated keyword sorter, which then throws a
+# `MethodError` via `Base.kwerr` for the surplus keyword. Since this is an explicit
+# `throw` rather than a dispatch failure, `NoMethodMatchReport` does not fire; we detect
+# the statically-determined surplus keyword here instead.
+@jetreport struct UnsupportedKeywordArgReport <: MethodErrorReport
+    @nospecialize ftype
+    posargtypes::Vector{Any}
+    @nospecialize kwt
+    unsupported::Vector{Symbol}
+end
+function JETInterface.print_report_message(io::IO, r::UnsupportedKeywordArgReport)
+    unsupported = r.unsupported
+    print(io, "unsupported keyword argument")
+    isone(length(unsupported)) || print(io, 's')
+    print(io, ' ')
+    for (i, name) in enumerate(unsupported)
+        i == 1 || print(io, ", ")
+        print(io, '`', name, '`')
+    end
+    kwt = Base.unwrap_unionall(r.kwt)::DataType
+    keys = kwt.parameters[1]::Tuple{Vararg{Symbol}}
+    kwargs = Pair{Symbol,Any}[Pair{Symbol,Any}(keys[i], fieldtype(kwt, i)) for i in eachindex(keys)]
+    print(io, " in `")
+    Base.show_signature_function(io, r.ftype)
+    Base.show_tuple_as_call(io, Symbol(""), Tuple{r.posargtypes...}; hasfirst=false, kwargs)
+    print(io, '`')
+end
+inference_error_report_stack_impl(r::UnsupportedKeywordArgReport) = length(r.vst):-1:1
+inference_error_report_severity_impl(::UnsupportedKeywordArgReport) = DiagnosticSeverity.Warning
+
+# `arginfo.argtypes` may end in a `Vararg` (e.g. a splatted call like `f(xs...)`), and a
+# positional argument may even be `Union{}` on a dead path. `argtypes_to_type` keeps a
+# trailing vararg intact and collapses such dead paths to `Bottom`, where a plain
+# `Tuple{...}` would instead error on a vararg or `Union{}` field.
+function find_call_method_matches(
+        analyzer::LSAnalyzer, @nospecialize(ftype), argtypes::Vector{Any},
+        posbase::Int, max_methods::Int
+    )
+    posargtypes = Any[let argtype = argtypes[i]
+        CC.isvarargtype(argtype) ? argtype : CC.widenconst(argtype)
+    end for i = posbase:length(argtypes)]
+    # Bound the lookup by inference's own `max_methods` (as `find_method_matches` does), so
+    # a pathologically large match set (e.g. when `ftype` is abstract) bails cleanly rather
+    # than enumerating every applicable method. `findall` returns `nothing` past the limit.
+    callsig = CC.argtypes_to_type(Any[ftype; posargtypes])
+    callsig === Union{} && return nothing
+    matches = CC.findall(callsig, CC.method_table(analyzer); limit=max_methods)
+    matches === nothing && return nothing
+    isempty(matches) && return nothing
+    return posargtypes, matches
+end
+
+function report_unsupported_kwarg_error!(
+        analyzer::LSAnalyzer, sv::CC.InferenceState, @nospecialize(func),
+        call::CC.CallMeta, arginfo::CC.ArgInfo, max_methods::Int
+    )
+    func === Core.kwcall || return false
+    # only report when inference agrees that the call always throws
+    call.rt === Union{} || return false
+    argtypes = arginfo.argtypes
+    # `Core.kwcall(kwnt, f, posargs...)`: Any[typeof(kwcall), kwnt, f, posargs...]
+    length(argtypes) ≥ 3 || return false
+
+    kwt = CC.widenconst(argtypes[2])
+    kwnames = @something kwcall_keyword_names(kwt) return false
+    isempty(kwnames) && return false
+
+    ftype = CC.widenconst(argtypes[3])
+    posargtypes, matches = @something find_call_method_matches(
+        analyzer, ftype, argtypes, 4, max_methods) return false
+    supported = Set{Symbol}()
+    for match in matches
+        for name in Base.kwarg_decl(match.method)
+            # a slurping `kwargs...` shows up as a name ending with `...` and accepts anything
+            endswith(String(name), "...") && return false
+            push!(supported, name)
+        end
+    end
+
+    unsupported = Symbol[name for name in kwnames if name ∉ supported]
+    isempty(unsupported) && return false
+
+    report = UnsupportedKeywordArgReport(sv, ftype, posargtypes, kwt, unsupported)
+    add_new_report!(analyzer, sv.result, report)
+    return true
+end
+
+function kwcall_keyword_names(@nospecialize kwt)
+    kwt = Base.unwrap_unionall(kwt)
+    isa(kwt, DataType) || return nothing
+    kwt <: NamedTuple || return nothing
+    isempty(kwt.parameters) && return nothing
+    names = kwt.parameters[1]
+    isa(names, Tuple{Vararg{Symbol}}) || return nothing
+    return names
+end
+
+# UndefKeywordErrorReport
+# -----------------------
+
+# A missing required keyword throws `UndefKeywordError` in the synthesized keyword sorter;
+# detect it there (`CC.abstract_throw`) and store the report unconditionally on the sorter
+# frame. That is caller-independent, so it caches cleanly and replays (re-rooted) to every
+# call site — offset 1 points one frame up, at the call site. `report_target_modules`
+# filtering is deferred to propagation.
+@jetreport struct UndefKeywordErrorReport <: JETLSErrorReport
+    var::Symbol
+end
+JETInterface.print_report_message(io::IO, r::UndefKeywordErrorReport) =
+    print(io, "missing keyword argument `", r.var, '`')
+inference_error_report_stack_impl(r::UndefKeywordErrorReport) = (length(r.vst)-1):-1:1
+inference_error_report_severity_impl(::UndefKeywordErrorReport) = DiagnosticSeverity.Warning
+scope_offset_impl(::UndefKeywordErrorReport) = 1
+
+function report_undef_keyword!(analyzer::LSAnalyzer, sv::CC.InferenceState, argtypes::Vector{Any})
+    length(argtypes) ≥ 2 || return false
+    a = argtypes[2]
+    a isa Const || return false
+    err = a.val
+    err isa UndefKeywordError || return false
+    # The report points at the user's call site, one frame up from the synthesized sorter.
+    add_new_report!(analyzer, sv.result, UndefKeywordErrorReport(sv, err.var))
+    return true
+end
+
+# KeywordTypeErrorReport
+# ----------------------
+
+# Passing a keyword argument whose value type does not match the keyword's declared type
+# (`func(2; kw=42.0)` for `func(a; kw::Int=42)`) raises a `TypeError` at runtime: the keyword
+# sorter asserts each typed keyword and throws `TypeError(Symbol("keyword argument"), :kw, Int,
+# got)`. As with `UndefKeywordErrorReport`, detect this at the call site rather than at that
+# `throw`, so the report does not depend on which call site first inferred the sorter. The
+# offending keyword, its declared type, and the provided type are recovered from the call's
+# keyword `NamedTuple` and the callee's declared keyword types (caller-independent and
+# cache-stable), since `call.exct` widens to the bare `TypeError` type once cached.
+@jetreport struct KeywordTypeErrorReport <: TypeErrorReport
+    var::Symbol
+    @nospecialize expected
+    @nospecialize got
+end
+function JETInterface.print_report_message(io::IO, r::KeywordTypeErrorReport)
+    print(io, "TypeError: in keyword argument `", r.var, "`, expected `", r.expected, "`, got ")
+    print_type_error_got(io, r.got)
+end
+inference_error_report_stack_impl(r::KeywordTypeErrorReport) = length(r.vst):-1:1
+inference_error_report_severity_impl(::KeywordTypeErrorReport) = DiagnosticSeverity.Warning
+
+# Recover the declared keyword types of `m` as `name => type` pairs (declaration order),
+# skipping the slurp (`kws...`). The keyword sorter forwards the sorted keywords to the body
+# function as leading positional arguments, so the body method's argument types are exactly the
+# declared keyword types in `Base.kwarg_decl` order.
+function keyword_arg_types(m::Method)
+    decls = Base.kwarg_decl(m)
+    isempty(decls) && return nothing
+    bf = Base.bodyfunction(m)
+    bf === nothing && return nothing
+    bms = methods(bf)
+    length(bms) == 1 || return nothing
+    bsig = Base.unwrap_unionall((first(bms)).sig)
+    bsig isa DataType || return nothing
+    params = bsig.parameters
+    length(params) ≥ 1 + length(decls) || return nothing
+    kwtypes = Pair{Symbol,Any}[]
+    for i = 1:length(decls)
+        name = decls[i]
+        endswith(String(name), "...") && continue # slurp accepts any keyword
+        ty = params[1+i]
+        ty isa Type || continue
+        push!(kwtypes, name => ty)
+    end
+    return kwtypes
+end
+
+function report_keyword_typeerror!(
+        analyzer::LSAnalyzer, sv::CC.InferenceState, @nospecialize(func),
+        call::CC.CallMeta, arginfo::CC.ArgInfo, max_methods::Int
+    )
+    func === Core.kwcall || return false
+    call.rt === Union{} || return false
+    CC.widenconst(call.exct) <: TypeError || return false
+    argtypes = arginfo.argtypes
+    # `Core.kwcall(kwnt, f, posargs...)`
+    length(argtypes) ≥ 3 || return false
+    kwt = CC.widenconst(argtypes[2])
+    names = @something kwcall_keyword_names(kwt) return false
+    isempty(names) && return false
+    ftype = CC.widenconst(argtypes[3])
+    _, matches = @something find_call_method_matches(
+        analyzer, ftype, argtypes, 4, max_methods) return false
+    for match in matches
+        kwtypes = @something keyword_arg_types(match.method) continue
+        for (name, expected) in kwtypes
+            idx = findfirst(==(name), names)
+            idx === nothing && continue # this typed keyword was not provided
+            got = fieldtype(kwt, idx)
+            # report only a definite mismatch: no value of `got` can satisfy the keyword's
+            # `isa expected` assertion (the `call.rt === Union{}` gate already ensures the call
+            # always throws, so this picks the offending keyword)
+            typeintersect(got, expected) === Union{} || continue
+            add_new_report!(analyzer, sv.result, KeywordTypeErrorReport(sv, name, expected, got))
+            return true
+        end
+    end
+    return false
 end
 
 # NonBooleanCondErrorReport
 # -------------------------
 
-@jetreport struct NonBooleanCondErrorReport <: LSErrorReport
+@jetreport struct NonBooleanCondErrorReport <: TypeErrorReport
     @nospecialize t # ::Union{Type, Vector{Type}}
     union_split::Int
     uncovered::Bool

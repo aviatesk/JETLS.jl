@@ -35,6 +35,8 @@ const compiled_modules = Set{Module}()
 
 const junk_framedata = FrameData[] # to allow re-use of allocated memory (this is otherwise a bottleneck)
 const junk_frames = Frame[]
+# Tracks which frames are currently pooled, so `recycle` can be idempotent (see below).
+const pooled_frames = Base.IdSet{Frame}()
 debug_mode() = false
 @noinline function _check_frame_not_in_junk(frame)
     @assert frame.framedata ∉ junk_framedata
@@ -42,7 +44,14 @@ debug_mode() = false
 end
 
 @inline function recycle(frame)
+    # A single exception can recycle the same frame twice: `handle_err` recycles the
+    # throwing frame, then `unwind_exception` walks the same frames again to reach the
+    # catch block. `return_from`'s link-clearing is idempotent, but pooling a frame twice
+    # lets it be handed out twice, aliasing a live frame into its own caller chain (an
+    # infinite loop on the next exception). Pool each frame at most once.
+    frame in pooled_frames && return
     debug_mode() && _check_frame_not_in_junk(frame)
+    push!(pooled_frames, frame)
     push!(junk_framedata, frame.framedata)
     push!(junk_frames, frame)
 end
@@ -59,6 +68,43 @@ function link_caller_callee!(caller::Frame, callee::Frame)
     caller.callee = callee
     callee.caller = caller
     return callee
+end
+
+_module_deffile(mod::Module) = @static if isdefined(Base, :moduleloc)
+    String(Base.moduleloc(mod).file)
+else
+    String(first(methods(getfield(mod, :eval))).file)
+end
+
+# Resolve a top-level `module newname ... end` (with source expression `ex`),
+# evaluated into `parentmod === Base.__toplevel__`, to the `PkgId` of the module it
+# refers to, or `nothing`.
+# `Base.identify_package` is the normal lookup; it returns `nothing` when
+# `newname` is not a declared dependency of the active project (an stdlib in a
+# bare test environment, or a package extension), in which case toplevel
+# evaluation falls back to searching `Base.loaded_modules` by name.
+#
+# Names are not unique: two packages might load extensions with the same name,
+# and `loaded_modules` is a `Dict` whose iteration is hash order. Picking the
+# first name match would bind the file to whichever same-named module happens to
+# come first, cross-wiring one package's extension code into another's module.
+# Disambiguate by the source file of `ex`, which uniquely identifies the intended
+# extension; fall back to the first name match when no file matches (preserving
+# resolution for the stdlib-in-test case).
+function find_toplevel_module_id(parentmod::Module, newname::Symbol, ex::Expr)
+    newnamestr = String(newname)
+    id = Base.identify_package(parentmod, newnamestr)
+    id === nothing || return id
+    lnn = firstline(ex)
+    exfile = (lnn === nothing || lnn.file === nothing) ? nothing : String(lnn.file)
+    fallback = nothing
+    @lock Base.require_lock for (loaded_id, mod) in Base.loaded_modules
+        loaded_id.name == newnamestr || continue
+        fallback === nothing && (fallback = loaded_id)
+        exfile === nothing && continue
+        _module_deffile(mod) == exfile && return loaded_id
+    end
+    return fallback
 end
 
 """
@@ -79,32 +125,40 @@ function find_or_create_module(parentmod::Module, ex::Expr)
         error("unexpected :module form with $(length(ex.args)) args")
     end
     newname = newname::Symbol
+    mod = nothing
     if invokelatest(isdefinedglobal, parentmod, newname)
-        mod = invokelatest(getglobal, parentmod, newname)
-        mod isa Module || throw(ErrorException("invalid redefinition of constant $(newname)"))
-    else
-        newnamestr = String(newname)
-        id = Base.identify_package(parentmod, newnamestr)
-        # If we're in a test environment and Julia's internal stdlibs are not a declared dependency
-        # of the package, we might fail to find it. Try really hard to find it.
-        if id === nothing && parentmod === Base.__toplevel__
-            for loaded_id in keys(Base.loaded_modules)
-                if loaded_id.name == newnamestr
-                    id = loaded_id
-                    break
-                end
-            end
+        found = invokelatest(getglobal, parentmod, newname)
+        found isa Module || throw(ErrorException("invalid redefinition of constant $(newname)"))
+        # Reuse a module's self-binding (`Base.Base === Base`), a loaded package when it
+        # loads itself (`parentmod === Base.__toplevel__`), or a genuine submodule of
+        # `parentmod` (re-revision of a module we created). A nested `module newname` that
+        # merely shares a loaded package's name is a fresh local module that shadows the
+        # package, matching `include` (Revise issue #747).
+        # The self-binding reuse knowingly diverges from `include` for a genuinely nested
+        # `module A` inside `module A` (plain evaluation creates a fresh child `A.A`):
+        # that input is syntactically indistinguishable from re-interpreting `A`'s own
+        # definition, the primary use of this machinery, so we re-enter `parentmod`.
+        # Creating a fresh child here would also clobber `parentmod`'s self-binding.
+        if (found === parentmod || parentmod === Base.__toplevel__ ||
+            parentmodule(found) === parentmod)
+            mod = found
         end
-        if id !== nothing && haskey(Base.loaded_modules, id)
-            mod = Base.root_module(id)::Module
-        else
-            loc = firstline(ex)
-            module_ex = Expr(:module, std_imports, newname, Expr(:block, loc))
-            if syntax_version !== nothing
-                pushfirst!(module_ex.args, syntax_version)
-            end
-            mod = Core.eval(parentmod, module_ex)::Module
+    elseif parentmod === Base.__toplevel__
+        id = find_toplevel_module_id(parentmod, newname, ex)
+        # Atomically fetch the loaded module under `require_lock` (see
+        # `find_toplevel_module_id`); `nothing` means `id` is identifiable but
+        # not yet loaded, so we create the module below.
+        existing = id === nothing ? nothing :
+            @lock Base.require_lock get(Base.loaded_modules, id, nothing)
+        existing === nothing || (mod = existing::Module)
+    end
+    if mod === nothing
+        loc = firstline(ex)
+        module_ex = Expr(:module, std_imports, newname, Expr(:block, loc))
+        if syntax_version !== nothing
+            pushfirst!(module_ex.args, syntax_version)
         end
+        mod = Core.eval(parentmod, module_ex)::Module
     end
     return mod, modbody::Expr
 end
@@ -124,12 +178,15 @@ function clear_caches()
     empty!(framedict)
     empty!(genframedict)
     empty!(junk_frames)
+    empty!(pooled_frames)
     for bp in breakpoints()
         empty!(bp.instances)
     end
 end
 
 const empty_svec = Core.svec()
+is_envout_marker(@nospecialize(x)) =
+    isa(x, Core.SimpleVector) && length(x) == 2 && x[2] isa Bool
 
 function namedtuple(kwargs)
     names, types, vals = Symbol[], [], []
@@ -206,7 +263,7 @@ function prepare_framecode(method::Method, @nospecialize(argtypes); enter_genera
                         argtypes, sig)::SimpleVector
     enter_generated &= is_generated(method)
     if is_generated(method) && !enter_generated
-        framecode = get(genframedict, (method, argtypes::Type), nothing)
+        framecode = get(genframedict, (method, argtypes::DataType), nothing)
     else
         framecode = get(framedict, method, nothing)
     end
@@ -238,13 +295,13 @@ function prepare_framecode(method::Method, @nospecialize(argtypes); enter_genera
         # (the "mini interpreter" runs in module scope, not method scope)
         if (!isempty(lenv) && (hasarg(isidentical(:llvmcall), code.code) ||
                                hasarg(isidentical(Core.Intrinsics.llvmcall), code.code) ||
-                               hasarg(a->is_global_ref_egal(a, :llvmcall, Core.Intrinsics.llvmcall), code.code))) ||
+                               hasarg(a->is_global_ref_egal(a, :llvmcall, Core.Intrinsics.llvmcall, world), code.code))) ||
                                hasarg(isidentical(:iolock_begin), code.code)
             return Compiled()
         end
         framecode = FrameCode(method, code; generator=generator, world)
         if is_generated(method) && !enter_generated
-            genframedict[(method, argtypes)] = framecode
+            genframedict[(method, argtypes::DataType)] = framecode
         else
             framedict[method] = framecode
         end
@@ -332,9 +389,16 @@ function prepare_call(@nospecialize(f), allargs;
     argtypes = Tuple{argtypesv...}
     if f isa Core.OpaqueClosure
         method = f.source
-        # don't try to interpret optimized ir
+        # Don't try to interpret closures whose source is unavailable (e.g. constructed
+        # from an `IRCode`) ...
+        if !(isa(method, Method) && (isdefined(method, :source) || isdefined(method, :generator)))
+            return nothing
+        end
+        # ... or optimized/inferred ir
         src = Base.uncompressed_ir(method)
-        if hasfield(CodeInfo, :inferred) && src.inferred   # xref https://github.com/JuliaLang/julia/pull/53219
+        isinferred = hasfield(CodeInfo, :inferred) ? src.inferred :   # xref https://github.com/JuliaLang/julia/pull/53219
+            !isa(src.ssavaluetypes, Int)  # inferred code has a type vector here
+        if isinferred
             @debug "not interpreting opaque closure $f since it contains inferred code"
             return nothing
         end
@@ -342,14 +406,13 @@ function prepare_call(@nospecialize(f), allargs;
         method = whichtt(argtypes, method_table; world)
     end
     if method === nothing
-        # Call it to generate the exact error
-        return invoke_in_world(world, f, allargs[2:end]...)
+        return Compiled(), argtypes
     end
     ret = prepare_framecode(method, argtypes; enter_generated, world)
-    # Exceptional returns
+    # Fall back to native dispatch when generated code is unavailable. Calling the
+    # function here would return a value where callers expect frame metadata.
     if ret === nothing
-        # The generator threw an error. Let's generate the same error by calling it.
-        return invoke_in_world(world, f, allargs[2:end]...)
+        return Compiled(), argtypes
     end
     isa(ret, Compiled) && return ret, argtypes
     # Typical return
@@ -369,6 +432,7 @@ function prepare_framedata(framecode, argvals::Vector{Any}, lenv::SimpleVector=e
         olddata = pop!(junk_framedata)
         locals, ssavalues, sparams = olddata.locals, olddata.ssavalues, olddata.sparams
         exception_frames, current_scopes, last_reference = olddata.exception_frames, olddata.current_scopes, olddata.last_reference
+        exception_scopes, exceptions = olddata.exception_scopes, olddata.exceptions
         last_exception = olddata.last_exception
         callargs = olddata.callargs
         resize!(locals, ns)
@@ -378,6 +442,8 @@ function prepare_framedata(framecode, argvals::Vector{Any}, lenv::SimpleVector=e
         # for check_isdefined to work properly, we need sparams to start out unassigned
         resize!(sparams, 0)
         empty!(exception_frames)
+        empty!(exception_scopes)
+        empty!(exceptions)
         empty!(current_scopes)
         resize!(last_reference, ns)
         last_exception[] = _INACTIVE_EXCEPTION.instance
@@ -386,6 +452,8 @@ function prepare_framedata(framecode, argvals::Vector{Any}, lenv::SimpleVector=e
         ssavalues = Vector{Any}(undef, ng)
         sparams = Vector{Any}(undef, 0)
         exception_frames = Int[]
+        exception_scopes = Int[]
+        exceptions = Any[]
         current_scopes = Scope[]
         last_reference = Vector{Int}(undef, ns)
         callargs = Any[]
@@ -394,8 +462,17 @@ function prepare_framedata(framecode, argvals::Vector{Any}, lenv::SimpleVector=e
     fill!(last_reference, 0)
     if isa(framecode.scope, Method)
         meth = framecode.scope::Method
-        nargs, meth_nargs = length(argvals), Int(meth.nargs)
-        islastva = meth.isva && nargs >= meth_nargs
+        nargs = length(argvals)
+        @static if hasfield(Core.CodeInfo, :nargs)
+            # The CodeInfo's own signature takes precedence: a generated function may
+            # return another method's CodeInfo, whose nargs/isva differ from the
+            # generated method's (issue JuliaLang/julia#54341).
+            meth_nargs = Int(framecode.src.nargs)
+            islastva = framecode.src.isva && nargs >= meth_nargs
+        else
+            meth_nargs = Int(meth.nargs)
+            islastva = meth.isva && nargs >= meth_nargs
+        end
         for i = 1:meth_nargs-islastva
             # for OCs #self# actually refers to the captures instead
             if i == 1 && (oc = argvals[1]) isa Core.OpaqueClosure
@@ -403,7 +480,9 @@ function prepare_framedata(framecode, argvals::Vector{Any}, lenv::SimpleVector=e
             elseif i <= nargs
                 locals[i], last_reference[i] = Some{Any}(argvals[i]), 1
             else
-                locals[i] = Some{Any}(())
+                # An empty vararg is still a defined local (`x === ()`); mark it referenced
+                # so `locals(frame)`/`eval_code` can see it.
+                locals[i], last_reference[i] = Some{Any}(()), 1
             end
         end
         if islastva
@@ -415,11 +494,20 @@ function prepare_framedata(framecode, argvals::Vector{Any}, lenv::SimpleVector=e
     # Add static parameters to environment
     for i = 1:length(lenv)
         T = lenv[i]
-        isa(T, TypeVar) && continue  # only fill concrete types
+        if isa(T, TypeVar)
+            continue
+        elseif is_envout_marker(T)
+            T[2]::Bool || continue
+            inner = T[1]
+            inner isa TypeVar || continue
+            inner.lb === inner.ub || continue
+            T = inner.lb
+        end
         sparams[i] = T
     end
-    return FrameData(locals, ssavalues, sparams, exception_frames, current_scopes,
-                     last_exception, caller_will_catch_err, last_reference, callargs)
+    return FrameData(locals, ssavalues, sparams, exception_frames, exception_scopes,
+                     exceptions, current_scopes, last_exception, caller_will_catch_err,
+                     last_reference, callargs)
 end
 
 """
@@ -446,7 +534,10 @@ end
 
 Given a module `mod` and a top-level expression `ex` in `mod`, create an iterable that returns
 individual expressions together with their module of evaluation.
-Optionally supply an initial `LineNumberNode` `lnn`.
+`module` statements are handled specially: `ExprSplitter` is used in *re*interpreting code, so
+it is conservative about creating modules: it will check to see whether the module already exists
+and if so return it rather than try to create a new module with the same name.
+Optionally supply an initial `LineNumberNode` `lnn` to endow returned expressions with file/line context.
 
 # Example
 
@@ -484,9 +575,7 @@ mod = Main
 ex = :($(Expr(:toplevel, :(#= REPL[7]:6 =#), :(const threshold = 0.1))))
 ```
 
-`ExprSplitter` created `Main.Private` was created for you so that its internal expressions could be evaluated.
-`ExprSplitter` will check to see whether the module already exists and if so return it rather than
-try to create a new module with the same name.
+`ExprSplitter` created `Main.Private` so that its internal expressions could be evaluated.
 
 In general each returned expression is a block with two parts: a `LineNumberNode` followed by a single expression.
 In some cases the returned expression may be `:toplevel`, as shown in the `const` declaration,
@@ -575,47 +664,17 @@ function queuenext!(iter::ExprSplitter)
     mod, ex = iter.stack[end]
     head = ex.head
     if head === :module
-        if length(ex.args) == 3
-            (std_imports, newname::Symbol, modbody) = ex.args[1:3]
-            syntax_version = nothing
-        elseif length(ex.args) == 4
-            (syntax_version, std_imports, newname, modbody) = ex.args[1:4]
-        else @assert false "unexpected :module form" end
-        if invokelatest(isdefinedglobal, mod, newname)
-            newmod = invokelatest(getglobal, mod, newname)
-            newmod isa Module || throw(ErrorException("invalid redefinition of constant $(newname)"))
-            mod = newmod
-        else
-            newnamestr = String(newname)
-            id = Base.identify_package(mod, newnamestr)
-            # If we're in a test environment and Julia's internal stdlibs are not a declared dependency of the package,
-            # we might fail to find it. Try really hard to find it.
-            if id === nothing && mod === Base.__toplevel__
-                for loaded_id in keys(Base.loaded_modules)
-                    if loaded_id.name == newnamestr
-                        id = loaded_id
-                        break
-                    end
-                end
-            end
-            if id !== nothing && haskey(Base.loaded_modules, id)
-                mod = Base.root_module(id)::Module
-            else
-                loc = firstline(ex)
-                module_ex = Expr(:module, std_imports, newname, Expr(:block, loc))
-                if syntax_version !== nothing
-                    pushfirst!(module_ex.args, syntax_version)
-                end
-                mod = Core.eval(mod, module_ex)::Module
-            end
-        end
+        mod, modbody = find_or_create_module(mod, ex)
         # We've handled the module declaration, remove it and queue the body
         pop!(iter.stack)
-        ex = modbody::Expr
+        ex = modbody
         push_modex!(iter, mod, ex)
         return queuenext!(iter)
     elseif head === :macrocall
-        iter.lnn = ex.args[2]::LineNumberNode
+        # The canonical second argument is a LineNumberNode, but `nothing` is also legal
+        # (common in programmatically constructed ASTs).
+        a2 = ex.args[2]
+        a2 isa LineNumberNode && (iter.lnn = a2)
     elseif head === :block || head === :toplevel
         # Container expression
         idx = iter.index[end]
@@ -649,22 +708,26 @@ function Base.iterate(iter::ExprSplitter, state=nothing)
     if is_doc_expr(ex)
         body = ex.args[4]
         if isa(body, Expr) && body.head === :module
-            # Just document the module itself and push the module def onto the stack
+            # Rewrite to document the module by name, and queue that application to run
+            # *inside* the module, *after* its body: module docstrings are evaluated
+            # within the module, and interpolation may reference bindings the body defines.
             excopy = Expr(ex.head, ex.args[1], ex.args[2], ex.args[3])
             module_name = body.args[end - 1]
             push!(excopy.args, module_name)
             append!(excopy.args, ex.args[5:end])   # there should only be at most a 5th, but just for robustness
-            ex = excopy
-            push_modex!(iter, mod, body)
+            newmod, modbody = find_or_create_module(mod, body)
+            push_modex!(iter, newmod, excopy)   # popped only once the body is exhausted
+            push_modex!(iter, newmod, modbody)
+            queuenext!(iter)
+            return Base.iterate(iter, state)
         end
     end
     if ex.head === :block || ex.head === :toplevel
-        # This was a block that we couldn't safely descend into (issue #427)
-        if !isempty(iter.index) && iter.index[end] > length(iter.stack[end][2].args)
-            pop!(iter.stack)
-            pop!(iter.index)
-            queuenext!(iter)
-        end
+        # This was a block that we couldn't safely descend into (issue #427).
+        # Queue the parent container's next statement (`queuenext!` pops exhausted
+        # containers itself); failing to do so would re-yield the parent wholesale,
+        # evaluating the already-returned statements a second time.
+        queuenext!(iter)
         return (mod, ex), nothing
     end
     queuenext!(iter)
@@ -686,7 +749,7 @@ function determine_method_for_expr(expr::Expr;
                                    world::UInt=default_world(),
                                    method_table::Union{Nothing,MethodTable}=nothing)
     f = to_function(expr.args[1], world)
-    allargs = expr.args
+    allargs = copy(expr.args)  # keyword extraction below must not mutate the caller's AST
     # Extract keyword args
     kwargs = Expr(:parameters)
     if length(allargs) > 1 && isexpr(allargs[2], :parameters)
@@ -829,7 +892,7 @@ function extract_args(__module__, ex0)
             a11 = a1.args[1]
             if a11 === :setindex!
                 return Expr(:tuple,
-                    mapany(x->isexpr(x, :parameters) ? QuoteNode(x) : x, arg.args)...)
+                    mapany(x->isexpr(x, :parameters) ? QuoteNode(x) : x, a1.args)...)
             end
         end
     end
@@ -867,7 +930,14 @@ function interpret(mod::Module, @nospecialize(ex0); interp=RecursiveInterpreter(
         local theargs = $theargs
         local frame = $entercall
         if frame === nothing
-            eval(Expr(:call, map(QuoteNode, theargs)...))
+            # Call the (already-resolved) function directly rather than through `Core.eval`:
+            # `eval` would run the call in the latest world, changing the semantics of an
+            # invocation issued from an older task world or an explicitly requested world.
+            if w === nothing
+                theargs[1](theargs[2:end]...)
+            else
+                Base.invoke_in_world(w, theargs[1], theargs[2:end]...)
+            end
         elseif shouldbreak(frame, 1)
             frame, BreakpointRef(frame.framecode, 1)
         else

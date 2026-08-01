@@ -42,11 +42,11 @@ function cache_file_info!(
     prev_testsetinfos = prev_fi === nothing ? EMPTY_TESTSETINFOS : prev_fi.testsetinfos
 
     filename = uri2filename(uri)
-    st0 = JS.build_tree(JS.SyntaxTree, parsed_stream; filename)
-    testsetinfos, any_deleted = compute_testsetinfos!(server, st0, prev_testsetinfos)
-
-    fi = FileInfo(version, parsed_stream, filename, state.encoding, testsetinfos;
-        syntax_tree0=st0, inferred_context_cache=InferredContextCache())
+    fi0 = FileInfo(version, parsed_stream, filename, state.encoding;
+        cache_tree0=true, inferred_context_cache=InferredContextCache())
+    testsetinfos, any_deleted = compute_testsetinfos!(
+        server, fi0.syntax_tree0::SyntaxTree, prev_testsetinfos)
+    fi = FileInfo(fi0; testsetinfos)
     store!(state.file_cache) do cache
         Base.PersistentDict(cache, uri => fi), nothing
     end
@@ -111,7 +111,7 @@ function handle_DidSaveTextDocumentNotification(server::Server, msg::DidSaveText
         # Some language client implementations (in this case Zed) appear to be
         # sending `textDocument/didSave` notifications for arbitrary text documents,
         # so we add a save guard for such cases.
-        JETLS_DEV_MODE && @warn "Received textDocument/didSave for unopened or unsupported document" uri
+        @static JETLS_DEV_MODE && @warn "Received textDocument/didSave for unopened or unsupported document" uri
         return nothing
     end
     text = msg.params.text

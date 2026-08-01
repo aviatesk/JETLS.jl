@@ -63,27 +63,29 @@ function handle_PrepareRenameRequest(
     end
     fi = result
 
-    (; context_module) = get_context_info(state, uri, pos)
+    (; context_module, world) = get_context_info(state, uri, pos)
     soft_scope = is_notebook_cell_uri(state, uri)
     return send(server,
         PrepareRenameResponse(;
             id = msg.id,
             result = @something(
-                local_binding_rename_preparation(state, uri, fi, pos, context_module; soft_scope),
-                global_binding_rename_preparation(state, uri, fi, pos, context_module; soft_scope),
-                file_rename_preparation(state, uri, fi, pos),
+                prepare_local_binding_rename(state, uri, fi, pos, context_module, world; soft_scope),
+                prepare_global_binding_rename(state, uri, fi, pos, context_module, world; soft_scope),
+                prepare_file_rename(state, uri, fi, pos),
                 null)))
 end
 
-function local_binding_rename_preparation(
-        state::ServerState, uri::URI, fi::FileInfo, pos::Position, context_module::Module;
-        soft_scope::Bool = false
+function prepare_local_binding_rename(
+        state::ServerState, uri::URI, fi::FileInfo, pos::Position,
+        context_module::Module, world::UInt;
+        soft_scope::Bool = false,
     )
     st0_top = build_syntax_tree(fi)
     offset = xy_to_offset(fi, pos)
 
     (; ctx3, binding) = @something begin
-        select_target_binding(st0_top, offset, context_module; caller="local_binding_rename_preparation", soft_scope)
+        select_target_binding(st0_top, offset, context_module, world;
+            caller="local_binding_rename_preparation", soft_scope)
     end return nothing
 
     binfo = JL.get_binding(ctx3, binding)
@@ -95,15 +97,17 @@ function local_binding_rename_preparation(
     end
 end
 
-function global_binding_rename_preparation(
-        state::ServerState, uri::URI, fi::FileInfo, pos::Position, context_module::Module;
+function prepare_global_binding_rename(
+        state::ServerState, uri::URI, fi::FileInfo, pos::Position,
+        context_module::Module, world::UInt;
         soft_scope::Bool = false
     )
     st0_top = build_syntax_tree(fi)
     offset = xy_to_offset(fi, pos)
 
     (; ctx3, binding) = @something begin
-        select_target_binding(st0_top, offset, context_module; caller="global_binding_rename_preparation", soft_scope)
+        select_target_binding(st0_top, offset, context_module, world;
+            caller="global_binding_rename_preparation", soft_scope)
     end return nothing
 
     binfo = JL.get_binding(ctx3, binding)
@@ -119,7 +123,7 @@ function global_binding_rename_preparation(
     end
 end
 
-function file_rename_preparation(
+function prepare_file_rename(
         state::ServerState, uri::URI, fi::FileInfo, pos::Position,
     )
     st0_top = build_syntax_tree(fi)
@@ -180,25 +184,19 @@ function do_rename(
         server::Server, uri::URI, fi::FileInfo, pos::Position,
         newName::String, msg_id::MessageId, cancel_flag::AbstractCancelFlag;
         token::Union{Nothing,ProgressToken} = nothing)
-    (; result, error) = rename(server, uri, fi, pos, newName; token, cancel_flag)
+    (; context_module, world) = get_context_info(server.state, uri, pos)
+    soft_scope = is_notebook_cell_uri(server.state, uri)
+    (; result, error) = @something(
+        get_local_binding_rename(server, uri, fi, pos, context_module, world, newName; soft_scope),
+        get_global_binding_rename(server, uri, fi, pos, context_module, world, newName; token, cancel_flag, soft_scope),
+        get_file_rename(server, uri, fi, pos, newName),
+        (; result = null, error = nothing))
     return send(server, RenameResponse(; id = msg_id, result, error))
 end
 
-function rename(
-        server::Server, uri::URI, fi::FileInfo, pos::Position, newName::String;
-        token::Union{Nothing,ProgressToken} = nothing,
-        cancel_flag::AbstractCancelFlag = DUMMY_CANCEL_FLAG)
-    (; context_module) = get_context_info(server.state, uri, pos)
-    soft_scope = is_notebook_cell_uri(server.state, uri)
-    return @something(
-        local_binding_rename(server, uri, fi, pos, context_module, newName; soft_scope),
-        global_binding_rename(server, uri, fi, pos, context_module, newName; token, cancel_flag, soft_scope),
-        file_rename(server, uri, fi, pos, newName),
-        (; result = null, error = nothing))
-end
-
-function local_binding_rename(
-        server::Server, uri::URI, fi::FileInfo, pos::Position, context_module::Module, newName::String;
+function get_local_binding_rename(
+        server::Server, uri::URI, fi::FileInfo, pos::Position,
+        context_module::Module, world::UInt, newName::String;
         soft_scope::Bool = false
     )
     state = server.state
@@ -206,7 +204,8 @@ function local_binding_rename(
     offset = xy_to_offset(fi, pos)
 
     (; ctx3, st3, binding) = @something begin
-        select_target_binding(st0_top, offset, context_module; caller="local_binding_rename", soft_scope)
+        select_target_binding(st0_top, offset, context_module, world;
+            caller="local_binding_rename", soft_scope)
     end return nothing
 
     binfo = JL.get_binding(ctx3, binding)
@@ -224,7 +223,7 @@ function local_binding_rename(
         end
     end
 
-    binding_occurrences = compute_binding_occurrences(ctx3, st3)
+    binding_occurrences = compute_binding_occurrences(ctx3, st3, world)
     haskey(binding_occurrences, binfo) ||
         return (; result = nothing,
             error = ResponseError(;
@@ -256,8 +255,9 @@ function local_binding_rename(
     return (; result, error = nothing)
 end
 
-function global_binding_rename(
-        server::Server, uri::URI, fi::FileInfo, pos::Position, context_module::Module, newName::String;
+function get_global_binding_rename(
+        server::Server, uri::URI, fi::FileInfo, pos::Position,
+        context_module::Module, world::UInt, newName::String;
         token::Union{Nothing,ProgressToken} = nothing,
         cancel_flag::AbstractCancelFlag = DUMMY_CANCEL_FLAG,
         soft_scope::Bool = false
@@ -266,7 +266,8 @@ function global_binding_rename(
     offset = xy_to_offset(fi, pos)
 
     (; ctx3, binding) = @something begin
-        select_target_binding(st0_top, offset, context_module; caller="global_binding_rename", soft_scope)
+        select_target_binding(st0_top, offset, context_module, world;
+            caller="global_binding_rename", soft_scope)
     end return nothing
 
     binfo = JL.get_binding(ctx3, binding)
@@ -386,7 +387,7 @@ end
 
 function collect_global_rename_edits_in_file!(
         seen_edits::Set{Tuple{URI,Range,String}}, state::ServerState, uri::URI, fi::FileInfo,
-        st0_top::SyntaxTreeC, binfo::JL.BindingInfo, newName::String
+        st0_top::SyntaxTree, binfo::JL.BindingInfo, newName::String
     )
     ismacro = startswith(binfo.name, '@')
     for occurrence in find_global_binding_occurrences_from_tree!(state, uri, fi, st0_top, binfo)
@@ -428,10 +429,10 @@ end
 # - `:implicit_bare`  — bare source name in `using M`, `using M, N`, or `using M.N` where
 #                       `using ... as ...` is not legal syntax; fall back to a standard replace
 #                       (breaks code, but matches the rename policy for implicit imports).
-function classify_import_rename(st0_top::SyntaxTreeC, id_byte_range::UnitRange{Int}, kind::Symbol)
+function classify_import_rename(st0_top::SyntaxTree, id_byte_range::UnitRange{Int}, kind::Symbol)
     kind === :decl || return :regular
     bas = byte_ancestors(st0_top, id_byte_range)
-    import_stmt_idx = findfirst(b::SyntaxTreeC -> JS.kind(b) in JS.KSet"import using", bas)
+    import_stmt_idx = findfirst(b::SyntaxTree -> JS.kind(b) in JS.KSet"import using", bas)
     isnothing(import_stmt_idx) && return :regular
     has_colon = false
     for i = 1:import_stmt_idx-1
@@ -457,11 +458,11 @@ end
 # surrounding `K"as"` node, return the LSP range covering ` as <alias>` so a
 # single empty-text edit can delete it. Otherwise return `nothing`.
 function collapse_alias_to_source(
-        st0_top::SyntaxTreeC, id_byte_range::UnitRange{Int}, fi::FileInfo,
+        st0_top::SyntaxTree, id_byte_range::UnitRange{Int}, fi::FileInfo,
         newName::String, ismacro::Bool
     )
     bas = byte_ancestors(st0_top, id_byte_range)
-    as_idx = @something findfirst(b::SyntaxTreeC -> JS.kind(b) === JS.K"as", bas) return nothing
+    as_idx = @something findfirst(b::SyntaxTree -> JS.kind(b) === JS.K"as", bas) return nothing
     as_node = bas[as_idx]
     JS.numchildren(as_node) >= 2 || return nothing
     source_path = as_node[1]
@@ -474,7 +475,7 @@ function collapse_alias_to_source(
     return Range(; start=source_range.var"end", var"end"=alias_range.var"end")
 end
 
-function file_rename(
+function get_file_rename(
         server::Server, uri::URI, fi::FileInfo, pos::Position, newName::String
     )
     state = server.state

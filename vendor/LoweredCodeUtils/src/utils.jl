@@ -58,6 +58,21 @@ function callee_matches(f, mod, sym)
     return false
 end
 
+# Recognize the default-constructor call emitted when lowering a struct definition.
+function is_defaultctors_call(@nospecialize(stmt))
+    isexpr(stmt, :call) || return false
+    f = stmt.args[1]
+    is_global_ref(f, Core, :_defaultctors) && return true
+    is_global_ref(f, Base, :_defaultctors) && return true
+    @static if isdefined(Core, :_defaultctors)
+        is_quotenode_egal(f, Core._defaultctors) && return true
+    end
+    @static if isdefined(Base, :_defaultctors)
+        is_quotenode_egal(f, Base._defaultctors) && return true
+    end
+    return false
+end
+
 function getrhs(@nospecialize(stmt))
     lhs_rhs = get_lhs_rhs(stmt)
     return lhs_rhs === nothing ? stmt : lhs_rhs[2]
@@ -66,16 +81,68 @@ end
 ismethod(frame::Frame)  = ismethod(pc_expr(frame))
 ismethod3(frame::Frame) = ismethod3(pc_expr(frame))
 
-ismethod(stmt)  = isexpr(stmt, :method)
-ismethod1(stmt) = isexpr(stmt, :method, 1)
-ismethod3(stmt) = isexpr(stmt, :method, 3)
+# Check if a call argument refers to Core.define_method
+function is_define_method_ref(@nospecialize(f))
+    is_global_ref(f, Core, :define_method) && return true
+    @static if isdefined(Core, :define_method)
+        is_quotenode_egal(f, Core.define_method) && return true
+    end
+    return false
+end
+
+# define_method(mod, name) — 2-arg form creates generic function binding
+function is_define_method_call_2arg(@nospecialize(stmt))
+    isexpr(stmt, :call) || return false
+    length(stmt.args) == 3 || return false
+    return is_define_method_ref(stmt.args[1])
+end
+
+# define_method(mod, name_or_mt, sigdata, codeinfo) — 4-arg form defines a method
+function is_define_method_call_4arg(@nospecialize(stmt))
+    isexpr(stmt, :call) || return false
+    length(stmt.args) == 5 || return false
+    return is_define_method_ref(stmt.args[1])
+end
+
+ismethod(stmt)  = isexpr(stmt, :method) || is_define_method_call_2arg(stmt) || is_define_method_call_4arg(stmt)
+ismethod1(stmt) = isexpr(stmt, :method, 1) || is_define_method_call_2arg(stmt)
+ismethod3(stmt) = isexpr(stmt, :method, 3) || is_define_method_call_4arg(stmt)
+
+# Extract the "name" argument from a method-definition statement.
+# For Expr(:method, name, ...) it's args[1]; for define_method(mod, name, ...) it's args[3].
+function method_name(@nospecialize(stmt))
+    if is_define_method_call_2arg(stmt) || is_define_method_call_4arg(stmt)
+        return stmt.args[3]
+    else
+        return stmt.args[1]
+    end
+end
+
+# Extract the module from a define_method call, or nothing for :method expressions.
+function method_module(@nospecialize(stmt))
+    if is_define_method_call_2arg(stmt) || is_define_method_call_4arg(stmt)
+        return stmt.args[2]  # define_method(mod, name, ...)
+    end
+    return nothing
+end
+
+# Extract the CodeInfo body from a method3 statement.
+# For Expr(:method, name, sig, body) it's args[3]; for define_method(mod, name, sigdata, body) it's args[5].
+function method_body(@nospecialize(stmt))
+    if is_define_method_call_4arg(stmt)
+        return stmt.args[5]
+    else
+        return stmt.args[3]
+    end
+end
+
 function ismethod_with_name(src, stmt, target::AbstractString; reentrant::Bool=false)
     if reentrant
         name = stmt
     else
         ismethod3(stmt) || return false
-        name = stmt.args[1]
-        if name === nothing
+        name = method_name(stmt)
+        if name === nothing && isexpr(stmt, :method)
             name = stmt.args[2]
         end
     end
@@ -132,6 +199,20 @@ function isanonymous_typedef(@nospecialize stmt)
     return false
 end
 
+# Recognize the `Core.resolve_typegroup` call that creates the types of a type
+# group. On Julia versions where `struct` definitions lower through the
+# typegroup mechanism, ordinary structs also produce this form (with a
+# single-element group); `typegroup` blocks produce multi-element groups.
+function is_resolve_typegroup_call(@nospecialize(stmt))
+    isexpr(stmt, :call) || return false
+    f = (stmt::Expr).args[1]
+    is_global_ref(f, Core, :resolve_typegroup) && return true
+    @static if isdefined(Core, :resolve_typegroup)
+        is_quotenode_egal(f, Core.resolve_typegroup) && return true
+    end
+    return false
+end
+
 function istypedef(stmt)
     isa(stmt, Expr) || return false
     stmt = getrhs(stmt)
@@ -148,6 +229,7 @@ function istypedef(stmt)
             end
         end
     end
+    is_resolve_typegroup_call(stmt) && return true
     isanonymous_typedef(stmt) && return true
     return false
 end
@@ -188,6 +270,31 @@ function typedef_range(src::CodeInfo, idx)
         isexpr(s, :global) && break
         is_declare_global(s) && break
         istart -= 1
+    end
+    if is_resolve_typegroup_call(getrhs(stmt))
+        # Typegroup form: `TypeVar` bindings and struct-info svecs, then
+        # `resolve_typegroup(mod, typevars, infos, olds)`, then `getfield`
+        # extractions and one `declare_const` per type, closed by `latestworld`.
+        # Ordinary struct definitions open with a `global` marker; `typegroup`
+        # blocks do not, so if none was found fall back to extending the range
+        # backwards to the previous statement that cannot be part of the group.
+        if istart < 1
+            istart = idx
+            for j = idx-1:-1:1
+                s = src.code[j]
+                (isexpr(s, :latestworld) || isexpr(s, :method) || isexpr(s, :thunk) ||
+                 is_return(s)) && break
+                istart = j
+            end
+        end
+        iend, n = idx, length(src.code)
+        while iend <= n
+            s = src.code[iend]
+            (isexpr(s, :latestworld) || isexpr(s, :global) || is_return(s)) && break
+            iend += 1
+        end
+        iend <= n || error("no final latestworld found for typegroup")
+        return istart:iend-1
     end
     istart >= 1 || error("no initial :global or declare_global found")
     iend, n = idx, length(src.code)

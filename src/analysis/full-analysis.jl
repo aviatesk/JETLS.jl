@@ -19,7 +19,12 @@ function parse_analysis_override(x::AbstractDict{String})
         error(lazy"Invalid `module_name` value found in analysis_override for `$path_value`. Must be a string, got `$(typeof(module_name))`")
     end
 
-    return AnalysisOverride(path_glob, module_name)
+    full_analysis = get(x, "full_analysis", false)
+    if !(full_analysis isa Bool)
+        error(lazy"Invalid `full_analysis` value found in analysis_override for `$path_value`. Must be a boolean, got `$(typeof(full_analysis))`")
+    end
+
+    return AnalysisOverride(path_glob, module_name, full_analysis)
 end
 
 # Cache lookup
@@ -41,11 +46,14 @@ function collect_search_uris(server::Server, uri::URI)
         # TODO: This implementation should be revisited when Revise is integrated into full-analysis
         out_of_scope = analysis_info
         pkgid = Base.PkgId(something(out_of_scope.module_context, Main))
-        if haskey(Revise.pkgdatas, pkgid)
-            pkgdata = Revise.pkgdatas[pkgid]
-            for file in Revise.srcfiles(pkgdata)
-                tracked_uri = filepath2uri(joinpath(Revise.basedir(pkgdata), file))
-                push!(uris_to_search, tracked_uri)
+        @lock Revise.revise_lock begin
+            pkgdata = Revise.getpkgdata(pkgid)
+            if pkgdata !== nothing
+                basedir = Revise.basedir(pkgdata)
+                for file in Revise.srcfiles(pkgdata)
+                    tracked_uri = filepath2uri(joinpath(basedir, file))
+                    push!(uris_to_search, tracked_uri)
+                end
             end
         end
     end
@@ -168,30 +176,83 @@ function handle_analysis_progress_response(
         cancellable_token, notify_diagnostics)
 end
 
-# Analysis worker
-# ===============
+# Analysis workers
+# ================
 
-function start_analysis_workers!(server::Server)
-    n_workers = get_init_option(server.state.init_options, :n_analysis_workers)
-    JETLS_DEV_MODE && @info "Starting $n_workers analysis workers"
-    worker_tasks = server.state.analysis_manager.worker_tasks
-    isempty(worker_tasks) || error("The server has already started analysis workers")
+function start_signature_analysis_workers!(server::Server)
+    manager = server.state.analysis_manager
+    worker_tasks = manager.signature_worker_tasks
+    isempty(worker_tasks) || error("The server has already started signature analysis workers")
+    n_workers = max(1, Threads.threadpoolsize(:default) - 1)
+    @static JETLS_DEV_MODE && @info "Starting $n_workers signature analysis workers"
     resize!(worker_tasks, n_workers)
     for i = 1:n_workers
         worker_tasks[i] = Threads.@spawn :default try
-            analysis_worker(server)
+            signature_analysis_worker(server)
         catch err
-            @error "Critical error happened in analysis worker"
+            @error "Critical error happened in signature analysis worker"
             Base.display_error(stderr, err, catch_backtrace())
         end
     end
     return worker_tasks
 end
 
+function signature_analysis_worker(server::Server)
+    # HACK: Compiler engine reservations are owned by OS thread ID.
+    # Prevent migration only while this job may run inference. This assumes jobs don't
+    # leave sticky child tasks running: stickiness isn't reference-counted, so restoring
+    # it could erase stickiness propagated by a child scheduled during the job.
+    queue = server.state.analysis_manager.signature_queue
+    while true
+        job = @something take!(queue) break
+        task = current_task()
+        was_sticky = task.sticky
+        task.sticky = true
+        try
+            @tryinvokelatest job(server)
+        finally
+            task.sticky = was_sticky
+            notify(signature_analysis_completion(job))
+        end
+        yield()
+    end
+end
+
+function run_signature_analysis_jobs!(
+        server::Server, jobs::Vector{<:AbstractSignatureAnalysisJob}
+    )
+    queue = server.state.analysis_manager.signature_queue
+    foreach(job -> put!(queue, job), jobs)
+    foreach(job -> wait(signature_analysis_completion(job)), jobs)
+    return nothing
+end
+
+function stop_signature_analysis_workers(server::Server)
+    manager = server.state.analysis_manager
+    worker_tasks = manager.signature_worker_tasks
+    for _ in worker_tasks
+        put!(manager.signature_queue, nothing)
+    end
+    foreach(wait, worker_tasks)
+    return nothing
+end
+
+function start_analysis_worker!(server::Server)
+    @static JETLS_DEV_MODE && @info "Starting analysis worker"
+    worker_task = server.state.analysis_manager.worker_task
+    isassigned(worker_task) && error("The server has already started an analysis worker")
+    task = Threads.@spawn :default try
+        analysis_worker(server)
+    catch err
+        @error "Critical error happened in analysis worker"
+        Base.display_error(stderr, err, catch_backtrace())
+    end
+    worker_task[] = task
+    return task
+end
+
 # Analysis queue processing implementation (analysis serialized per AnalysisEntry)
 function analysis_worker(server::Server)
-    # Note: Currently single worker, but designed for future multi-worker scaling.
-    # When multiple workers exist, the per-entry serialization ensures correctness.
     while true
         request = take!(server.state.analysis_manager.queue)
         request === nothing && break
@@ -200,11 +261,14 @@ function analysis_worker(server::Server)
     end
 end
 
-function stop_analysis_workers(server::Server)
-    for _ = 1:length(server.state.analysis_manager.worker_tasks)
-        put!(server.state.analysis_manager.queue, nothing)
-    end
-    waitall(server.state.analysis_manager.worker_tasks)
+function stop_analysis_worker(server::Server)
+    manager = server.state.analysis_manager
+    worker_task = manager.worker_task
+    isassigned(worker_task) || return nothing
+    task = worker_task[]
+    istaskdone(task) || put!(manager.queue, nothing)
+    wait(task)
+    return nothing
 end
 
 # Analysis worker pipeline
@@ -317,7 +381,7 @@ function schedule_analysis!(
                 # Cancel existing timer if any
                 debounce_timer, debounce_completion = debounced[request.entry]
                 close(debounce_timer)
-                JETLS_DEV_MODE && @info "Cancelled analysis debounce timer:" entry=progress_title(request.entry) uri generation
+                @static JETLS_DEV_MODE && @info "Cancelled analysis debounce timer:" entry=progress_title(request.entry) uri generation
                 notify(debounce_completion)
             end
             local new_debounced = copy(debounced)
@@ -350,7 +414,7 @@ function queue_request!(server::Server, request::AnalysisRequest)
             local new_analyses = copy(analyses)
             new_analyses[request.entry] = request
             if old_request !== nothing # replaced by the new request i.e. cancelled
-                JETLS_DEV_MODE && @info "Cancelled duplicated pending analysis request:" entry=progress_title(request.entry) uri=request.uri generation=get_generation(manager,request.entry)
+                @static JETLS_DEV_MODE && @info "Cancelled duplicated pending analysis request:" entry=progress_title(request.entry) uri=request.uri generation=get_generation(manager,request.entry)
                 notify(old_request.completion)
             end
             return new_analyses, false
@@ -371,12 +435,12 @@ function resolve_analysis_request(server::Server, request::AnalysisRequest)
 
     if is_generation_analyzed(manager, request)
         # Skip if this generation was already analyzed (no new changes since last analysis)
-        JETLS_DEV_MODE && @info "Skipped analysis for unchanged analysis unit" entry=progress_title(request.entry) uri=request.uri generation=get_generation(manager,request.entry)
+        @static JETLS_DEV_MODE && @info "Skipped analysis for unchanged analysis unit" entry=progress_title(request.entry) uri=request.uri generation=get_generation(manager,request.entry)
         @goto next_request
     end
 
     if is_abandoned_request(server, request)
-        JETLS_DEV_MODE && @info "Skipped analysis for closed editor-managed document" entry=progress_title(request.entry) uri=request.uri
+        @static JETLS_DEV_MODE && @info "Skipped analysis for closed editor-managed document" entry=progress_title(request.entry) uri=request.uri
         @goto next_request
     end
 
@@ -384,7 +448,7 @@ function resolve_analysis_request(server::Server, request::AnalysisRequest)
     prev_result = execution.prev_result
 
     if has_any_parse_errors(server, execution)
-        JETLS_DEV_MODE && @info "Requested analysis unit has parse errors" entry=progress_title(request.entry) uri=request.uri generation=get_generation(manager,request.entry)
+        @static JETLS_DEV_MODE && @info "Requested analysis unit has parse errors" entry=progress_title(request.entry) uri=request.uri generation=get_generation(manager,request.entry)
         @goto next_request
     end
 
@@ -394,7 +458,7 @@ function resolve_analysis_request(server::Server, request::AnalysisRequest)
     end
 
     s = time()
-    JETLS_DEV_MODE && @info "Executing analysis for:" entry=progress_title(request.entry) uri=request.uri generation=get_generation(manager,request.entry)
+    @static JETLS_DEV_MODE && @info "Executing analysis for:" entry=progress_title(request.entry) uri=request.uri generation=get_generation(manager,request.entry)
     local cleanup::Bool = local failed::Bool = false
     analysis_result = try
         result, cleanup = execute_analysis(server, execution)
@@ -419,7 +483,7 @@ function resolve_analysis_request(server::Server, request::AnalysisRequest)
     @assert !(analysis_result isa Bool)
 
     tm = round(time() - s, digits=2)
-    JETLS_DEV_MODE && @info "Analysis completed in $tm seconds:" entry=progress_title(request.entry) uri=request.uri generation=get_generation(manager,request.entry)
+    @static JETLS_DEV_MODE && @info "Analysis completed in $tm seconds:" entry=progress_title(request.entry) uri=request.uri generation=get_generation(manager,request.entry)
 
     if is_abandoned_request(server, request)
         # Document was closed mid-analysis. `file_cache`/`notebook_cache`
@@ -427,7 +491,7 @@ function resolve_analysis_request(server::Server, request::AnalysisRequest)
         # `cleanup_analysis_state!` is taking care of
         # `manager.cache`/generations/debounced + the OLD prev_result's methods.
         # We just need to drop the methods this analysis just defined and skip the cache write.
-        JETLS_DEV_MODE && @info "Discarding analysis result for closed editor-managed document" entry=progress_title(request.entry) uri=request.uri
+        @static JETLS_DEV_MODE && @info "Discarding analysis result for closed editor-managed document" entry=progress_title(request.entry) uri=request.uri
         cleanup_prev_methods(analysis_result)
         @goto next_request
     end
@@ -527,8 +591,8 @@ function cleanup_prev_methods(prev_result::AnalysisResult)
         try
             Base.delete_method(m)
         catch e
-            JETLS_DEV_MODE && @warn "Failed to delete method $m" disabled=is_method_disabled(m)
-            JETLS_DEV_MODE && Base.showerror(stderr, e, catch_backtrace())
+            @static JETLS_DEV_MODE && @warn "Failed to delete method $m" disabled=is_method_disabled(m)
+            @static JETLS_DEV_MODE && Base.showerror(stderr, e, catch_backtrace())
         end
     end
 end
@@ -820,14 +884,32 @@ struct SigAnalysisResult
     codeinst::CC.CodeInstance
 end
 
-if JETLS_DEV_MODE
+@static if JETLS_DEV_MODE
 # Revise is currently only loaded in JETLS_DEV_MODE
 struct SigWorkItem
     file::String
     mod::Module
     rex::Revise.RelocatableExpr
+    siginfo::Revise.SigInfo
     siginfos::Vector{Union{Revise.SigInfo,Revise.TypeInfo}}
     index::Int
+end
+
+function cache_sig_analysis!(workitem::SigWorkItem, result::SigAnalysisResult)
+    @lock Revise.revise_lock begin
+        checkbounds(Bool, workitem.siginfos, workitem.index) || return nothing
+        current = workitem.siginfos[workitem.index]
+        # Make sure the entry still holds the analyzed signature: attaching the result to a
+        # different signature's entry would let it be reused for the wrong signature, which
+        # the read-side validation cannot detect. On the other hand a stale result for the
+        # same signature is fine since the read-side world range validation rejects it.
+        if (current isa Revise.SigInfo &&
+            current.mt === workitem.siginfo.mt && current.sig === workitem.siginfo.sig)
+            workitem.siginfos[workitem.index] =
+                Revise.replace_extended_data(current, :JETLS, result)
+        end
+    end
+    return nothing
 end
 
 struct MethodDefinitionInfo
@@ -850,9 +932,116 @@ mutable struct ReviseAnalysisProgress
     end
 end
 
-end # if JETLS_DEV_MODE
+struct ReviseSignatureAnalysisJob <: AbstractSignatureAnalysisJob
+    workitem::SigWorkItem
+    analyzer::LSAnalyzer
+    progress::ReviseAnalysisProgress
+    inf_world::UInt
+    cancellable_token::Union{Nothing,CancellableToken}
+    n_sigs::Int
+    completion::Base.Event
+end
+
+function (job::ReviseSignatureAnalysisJob)(server::Server)
+    (; workitem, analyzer, progress, inf_world, cancellable_token, n_sigs) = job
+    siginfo = workitem.siginfo
+    try
+        if cancellable_token !== nothing && is_cancelled(cancellable_token.cancel_flag)
+            return
+        end
+        ext = Revise.get_extended_data(siginfo, :JETLS)
+        local reports::Vector{JET.InferenceErrorReport}
+        if ext !== nothing && ext.data isa SigAnalysisResult
+            prev_result = ext.data::SigAnalysisResult
+            if (CC.cache_owner(analyzer) === prev_result.codeinst.owner &&
+                prev_result.codeinst.max_world ≥ inf_world ≥ prev_result.codeinst.min_world)
+                @atomic progress.cached += 1
+                reports = prev_result.reports
+                @goto gotreports
+            end
+        end
+        # Create a new analyzer with fresh local caches (`inf_cache` and `analysis_results`)
+        # to avoid data races between concurrent signature analysis tasks
+        task_analyzer = JET.AbstractAnalyzer(analyzer,
+            JET.AnalyzerState(JET.AnalyzerState(analyzer), #=refresh_local_cache=#true))
+        match = signature_analysis_match(task_analyzer, siginfo.sig, inf_world)
+        if match !== nothing
+            task_analyzer, result = JET.analyze_method_signature!(task_analyzer,
+                match.method, match.spec_types, match.sparams)
+            @atomic progress.analyzed += 1
+            reports = JET.get_reports(task_analyzer, result)
+            # Cache the result if CodeInstance is available
+            if isdefined(result, :ci)
+                cache_sig_analysis!(workitem, SigAnalysisResult(reports, result.ci))
+            else
+                @static JETLS_DEV_MODE && @warn "Missing CodeInstance for method analysis instance for" siginfo.sig
+            end
+        else
+            @static JETLS_DEV_MODE && @warn "Couldn't find a single matching method for the signature" siginfo.sig
+            reports = JET.InferenceErrorReport[]
+        end
+        @label gotreports
+        isempty(reports) || @lock progress.reports_lock append!(progress.reports, reports)
+    catch err
+        @error "Error analyzing method signature" siginfo.sig
+        Base.showerror(stderr, err, catch_backtrace())
+    finally
+        done = (@atomic progress.done += 1)
+        if cancellable_token !== nothing
+            current_next = @atomic progress.next_interval
+            if done >= current_next
+                @atomicreplace progress.next_interval current_next =>
+                    current_next + progress.interval
+                percentage = min(round(Int, (done / n_sigs) * 100), 100)
+                send_progress(server, cancellable_token.token,
+                    WorkDoneProgressReport(;
+                        cancellable = true,
+                        message = "$done / $n_sigs [signature analysis]",
+                        percentage))
+            end
+        end
+    end
+end
+
+end # @static if JETLS_DEV_MODE
 
 const empty_lines_range = typemax(Int) => typemin(Int)
+
+function signature_method_slurps_keywords(m::Method)
+    for name in Base.kwarg_decl(m)
+        endswith(String(name), "...") && return true
+    end
+    return false
+end
+
+function abstract_kwsorter_signature(@nospecialize sig)
+    sig′ = Base.unwrap_unionall(sig)
+    sig′ isa DataType || return nothing
+    sig′ <: Tuple || return nothing
+    isempty(sig′.parameters) && return nothing
+    kwsig = Tuple{typeof(Core.kwcall), NamedTuple, sig′.parameters...}
+    return Base.rewrap_unionall(kwsig, sig)
+end
+
+# A keyword-forwarding method like `f(; kws...) = g(; kws...)` has the user-facing
+# signature `Tuple{typeof(f)}`, at which inference specializes `kws` to the *empty* set.
+# The forwarded call then looks like it omits `g`'s required keywords, producing spurious
+# `inference/undef-keyword` reports even though the keyword comes from `f`'s own caller.
+# Analyze the keyword sorter `Core.kwcall(::NamedTuple, ::typeof(f), ...)` instead, so `kws`
+# is an abstract `NamedTuple` ("any keywords") — the keyword analogue of how a positional
+# `args::T...` stays `Vararg{T}` rather than collapsing to zero arguments.
+function redirect_keyword_slurp_match(@nospecialize(analyzer), match::Core.MethodMatch, world::UInt)
+    signature_method_slurps_keywords(match.method) || return match
+    kwsig = @something abstract_kwsorter_signature(match.spec_types) return match
+    method_table = CC.method_table(analyzer)
+    return @something Base._which(kwsig; method_table, world, raise=false) match
+end
+
+function signature_analysis_match(@nospecialize(analyzer), @nospecialize(sig), world::UInt)
+    method_table = CC.method_table(analyzer)
+    match = @something Base._which(sig; method_table, world, raise=false) return nothing
+    return redirect_keyword_slurp_match(analyzer, match, world)
+end
 
 get_lines_in_ex(filepath::AbstractString, ex::Expr) = _get_lines_in_ex(empty_lines_range, filepath, ex)
 
@@ -888,93 +1077,72 @@ function analyze_package_with_revise(
         activation_done::Union{Nothing,Base.Event} = nothing
     )
     pkgmod = get(Base.loaded_modules, pkgid, nothing)
-    if pkgmod === nothing
-        pkgmod = try
-            Base.require(pkgid)
-        catch e
-            show_error_message(server, "Failed to load package $(pkgid.name): $(sprint(Base.showerror, e))")
-            error(lazy"Package $(pkgid.name) is not loadable") # TODO
-        finally
-            isnothing(activation_done) || notify(activation_done)
-        end
+    pkgmod = try
+        pkgmod === nothing ? Base.require(pkgid)::Module : pkgmod
+    catch e
+        show_error_message(server, "Failed to load package $(pkgid.name): $(sprint(Base.showerror, e))")
+        error(lazy"Package $(pkgid.name) is not loadable") # TODO Make this top-level diagnostic?
+    finally
+        isnothing(activation_done) || notify(activation_done)
     end
 
-    haskey(Revise.pkgdatas, pkgid) || Revise.watch_package(pkgid)
-    haskey(Revise.pkgdatas, pkgid) || error(lazy"Package $(pkgid.name) is not analyzable by Revise")
+    Revise.getpkgdata(pkgid) === nothing && Revise.watch_package(pkgid)
     revise_now!()
 
-    # If Revise hasn't instantiated signatures yet, populate that cache here
-    pkgdata = Revise.pkgdatas[pkgid]
-    for file in Revise.srcfiles(pkgdata)
-        # fi = try
-        #     Revise.maybe_parse_from_cache!(pkgdata, file)
-        # catch
-        #     # Fallback: read source directly from file (e.g., for newly created packages)
-        #     # See https://github.com/JuliaLang/julia/issues/42404
-        #     fi = Revise.fileinfo(pkgdata, file)
-        #     if isempty(fi.mod_exs_infos) && (!isempty(fi.cachefile) || !isempty(fi.cacheexprs))
-        #         filep = joinpath(Revise.basedir(pkgdata), file)
-        #         src = read(filep, String)
-        #         topmod = first(keys(fi.mod_exs_infos))
-        #         if Revise.parse_source!(fi.mod_exs_infos, src, filep, topmod) === nothing
-        #             @error "failed to parse source text for $filep"
-        #         end
-        #         Revise.add_modexs!(fi, fi.cacheexprs)
-        #         empty!(fi.cacheexprs)
-        #         fi.parsed[] = true
-        #     end
-        #     fi
-        # end
-        fi = Revise.maybe_parse_from_cache!(pkgdata, file)
-        Revise.maybe_extract_sigs!(fi)
-    end
+    local world, analyzed_file_infos, basedir, report_target_modules, workitems
+    @lock Revise.revise_lock begin
+        pkgdata = @something Revise.getpkgdata(pkgid) error(lazy"Package $(pkgid.name) is not analyzable by Revise")
+        # If Revise hasn't instantiated signatures yet, populate that cache here
+        for (file, fi) in zip(Revise.srcfiles(pkgdata), pkgdata.fileinfos)
+            Revise.maybe_parse_from_cache!(pkgdata, file, fi)
+            Revise.maybe_extract_sigs!(fi)
+        end
+        # Signature extraction may advance the world age, so capture it afterward
+        world = Base.get_world_counter()
 
-    analyzed_file_infos = Dict{URI,JET.AnalyzedFileInfo}()
-    basedir = Revise.basedir(pkgdata)
-    report_target_modules = Set{Module}()
-    for (i, file) in enumerate(Revise.srcfiles(pkgdata))
-        filepath = joinpath(basedir, file)
-        uri = filepath2uri(filepath)
-        # Build module range info from Revise's tracked modules
-        # TODO This is pretty incorrect module context mapping
-        filemod, _ = last(pkgdata.fileinfos[i].mod_exs_infos)
-        module_range_infos = Pair{UnitRange{Int},Module}[(1:typemax(Int)) => filemod]
-        analyzed_file_infos[uri] = JET.AnalyzedFileInfo(module_range_infos)
-        push!(report_target_modules, filemod)
+        analyzed_file_infos = Dict{URI,JET.AnalyzedFileInfo}()
+        basedir = Revise.basedir(pkgdata)
+        report_target_modules = Set{Module}()
+        workitems = SigWorkItem[]
+        for (file, fi) in zip(Revise.srcfiles(pkgdata), pkgdata.fileinfos)
+            filepath = joinpath(basedir, file)
+            uri = filepath2uri(filepath)
+            # Build module range info from Revise's tracked modules
+            # TODO This is pretty incorrect module context mapping
+            filemod, _ = last(fi.mod_exs_infos)
+            module_range_infos = Pair{UnitRange{Int},Module}[(1:typemax(Int)) => filemod]
+            analyzed_file_infos[uri] = JET.AnalyzedFileInfo(module_range_infos)
+            push!(report_target_modules, filemod)
+
+            for (mod, exs_infos) in fi.mod_exs_infos, (rex, exinfos) in exs_infos
+                isnothing(exinfos) && continue
+                for (i, exinfo) in enumerate(exinfos)
+                    if exinfo isa Revise.SigInfo
+                        push!(workitems, SigWorkItem(file, mod, rex, exinfo, exinfos, i))
+                    end
+                end
+            end
+        end
     end
 
     analyzer = let analyzer # avoid captured boxes
         analyzer = LSAnalyzer(request.entry; report_target_modules) # TODO Revisit (submodules)
-        # Revise's signature population may execute code, which can increment the world age,
-        # so we update to the latest world age here
-        newstate = JET.AnalyzerState(JET.AnalyzerState(analyzer); world = Base.get_world_counter())
+        newstate = JET.AnalyzerState(JET.AnalyzerState(analyzer); world)
         JET.AbstractAnalyzer(analyzer, newstate)
-    end
-
-    workitems = SigWorkItem[]
-    for (file, fi) in zip(Revise.CodeTracking.srcfiles(pkgdata), pkgdata.fileinfos),
-        (mod, exs_infos) in fi.mod_exs_infos,
-        (rex, exinfos) in exs_infos
-        isnothing(exinfos) && continue
-        for (i, exinfo) in enumerate(exinfos)
-            if exinfo isa Revise.SigInfo
-                push!(workitems, SigWorkItem(file, mod, rex, exinfos, i))
-            end
-        end
     end
 
     # Detect method overwrites
     warning_reports = ToplevelWarningReport[]
     seen_sigs = IdDict{Revise.MethodInfoKey,MethodDefinitionInfo}()
     for workitem in workitems
-        siginfo = workitem.siginfos[workitem.index]::Revise.SigInfo
+        siginfo = workitem.siginfo
         key = Revise.MethodInfoKey(siginfo.mt, siginfo.sig)
         (; file, mod, rex) = workitem
         if haskey(seen_sigs, key)
-            filepath = joinpath(Revise.CodeTracking.basedir(pkgdata), file)
+            filepath = joinpath(basedir, file)
             lines = get_lines_in_ex(filepath, rex.ex)
             original_definition = seen_sigs[key]
-            original_filepath = joinpath(Revise.CodeTracking.basedir(pkgdata), original_definition.file)
+            original_filepath = joinpath(basedir, original_definition.file)
             original_lines = get_lines_in_ex(original_filepath, original_definition.rex.ex)
             push!(warning_reports, MethodOverwriteReport(mod, siginfo.sig, filepath, lines, original_filepath, original_lines))
         else
@@ -998,69 +1166,12 @@ function analyze_package_with_revise(
         yield_to_endpoint()
     end
 
-    tasks = let analyzer=analyzer, progress=progress; map(workitems) do workitem
-        (; siginfos, index) = workitem
-        siginfo = siginfos[index]::Revise.SigInfo
-        Threads.@spawn :default try
-            if cancellable_token !== nothing && is_cancelled(cancellable_token.cancel_flag)
-                return
-            end
-            ext = Revise.get_extended_data(siginfo, :JETLS)
-            local reports::Vector{JET.InferenceErrorReport}
-            if ext !== nothing && ext.data isa SigAnalysisResult
-                prev_result = ext.data::SigAnalysisResult
-                if (CC.cache_owner(analyzer) === prev_result.codeinst.owner &&
-                    prev_result.codeinst.max_world ≥ inf_world ≥ prev_result.codeinst.min_world)
-                    @atomic progress.cached += 1
-                    reports = prev_result.reports
-                    @goto gotreports
-                end
-            end
-            # Create a new analyzer with fresh local caches (`inf_cache` and `analysis_results`)
-            # to avoid data races between concurrent signature analysis tasks
-            task_analyzer = JET.AbstractAnalyzer(analyzer,
-                JET.AnalyzerState(JET.AnalyzerState(analyzer), #=refresh_local_cache=#true))
-            match = Base._which(siginfo.sig;
-                method_table = CC.method_table(task_analyzer),
-                world = inf_world,
-                raise = false)
-            if match !== nothing
-                task_analyzer, result = JET.analyze_method_signature!(task_analyzer,
-                    match.method, match.spec_types, match.sparams)
-                @atomic progress.analyzed += 1
-                reports = JET.get_reports(task_analyzer, result)
-                # Cache the result if CodeInstance is available
-                if isdefined(result, :ci)
-                    siginfos[index] = Revise.replace_extended_data(siginfo, :JETLS, SigAnalysisResult(reports, result.ci))
-                else
-                    JETLS_DEV_MODE && @warn "Missing CodeInstance for method analysis instance for" siginfo.sig
-                end
-            else
-                JETLS_DEV_MODE && @warn "Couldn't find a single matching method for the signature" siginfo.sig
-                reports = JET.InferenceErrorReport[]
-            end
-            @label gotreports
-            isempty(reports) || @lock progress.reports_lock append!(progress.reports, reports)
-        catch err
-            @error "Error analyzing method signature" siginfo.sig
-            Base.showerror(stderr, err, catch_backtrace())
-        finally
-            done = (@atomic progress.done += 1)
-            if cancellable_token !== nothing
-                current_next = @atomic progress.next_interval
-                if done >= current_next
-                    @atomicreplace progress.next_interval current_next => current_next + progress.interval
-                    percentage = min(round(Int, (done / n_sigs) * 100), 100)
-                    send_progress(server, cancellable_token.token,
-                        WorkDoneProgressReport(;
-                            cancellable = true,
-                            message = "$done / $n_sigs [signature analysis]",
-                            percentage))
-                end
-            end
-        end
-    end; end
-    waitall(tasks)
+    jobs = ReviseSignatureAnalysisJob[]
+    for workitem in workitems
+        push!(jobs, ReviseSignatureAnalysisJob(
+            workitem, analyzer, progress, inf_world, cancellable_token, n_sigs, Base.Event()))
+    end
+    run_signature_analysis_jobs!(server, jobs)
 
     @label completed
 
@@ -1082,8 +1193,13 @@ end
 function collect_displayable_reports(
         reports::Vector{JET.InferenceErrorReport}, target_uris
     )
-    filter(reports) do report::JET.InferenceErrorReport
+    filter(reports) do report
         stk = inference_error_report_stack(report)
+        # An empty stack means the report was never re-rooted to a caller — e.g. an
+        # `UndefKeywordErrorReport` from a required-keyword definition analyzed by its
+        # positional signature, which has no call site to display. Suppressing it at
+        # creation would leak `sv`'s context into the callee cache, so it is dropped here.
+        isempty(stk) && return false
         topframe = report.vst[first(stk)]
         uri = @something jet_frame_to_uri(topframe) return false
         return uri in target_uris
@@ -1343,9 +1459,9 @@ function ensure_instantiated!(server::Server, env_path::String)
     if get_config(server, :full_analysis, :auto_instantiate)
         io = IOBuffer()
         try
-            JETLS_DEV_MODE && @info "Resolving package environment" env_path
+            @static JETLS_DEV_MODE && @info "Resolving package environment" env_path
             Pkg.resolve(; io)
-            JETLS_DEV_MODE && @info "Instantiating package environment" env_path
+            @static JETLS_DEV_MODE && @info "Instantiating package environment" env_path
             Pkg.instantiate(; io)
         catch e
             @error """Failed to instantiate package environment;

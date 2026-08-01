@@ -189,7 +189,7 @@ end
 end
 
 function encode_host(io::IO, s::AbstractString)
-    if is_ipv4address(s) || is_ipliteral(s)
+    if is_ipv4address(s) # || is_ipliteral(s)
         print(io, s)
     else
         # The host must be a reg-name

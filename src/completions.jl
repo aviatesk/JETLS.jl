@@ -105,7 +105,7 @@ mutable struct CompletionCtx
 
     # Eagerly populated by the constructor.
     const offset::Int
-    const st0_top::SyntaxTreeC
+    const st0_top::SyntaxTree
     const context_module::Module
     const world::UInt
     const postprocessor::LSPostProcessor
@@ -114,7 +114,7 @@ mutable struct CompletionCtx
     # Lazily populated. `isdefiend` check distinguishes "not yet computed" from
     # "computed but the underlying build returned `nothing`".
     inferred_ctx::Union{Nothing,InferredTreeContext}
-    cursor_bindings::Union{Nothing,Vector{Tuple{JL.BindingInfo,SyntaxTreeC,Int}}}
+    cursor_bindings::Union{Nothing,Vector{Tuple{JL.BindingInfo,SyntaxTree,Int}}}
 
     function CompletionCtx(
             state::ServerState, uri::URI, fi::FileInfo, pos::Position,
@@ -149,7 +149,7 @@ end
 # source where the cursor's incomplete `.partial` accessor is removed, instead of
 # teaching generic AST repair every parser-recovery shape around `prefix.│`.
 function get_dotprefix_inferred_ctx(
-        comp_ctx::CompletionCtx, dotprefix::SyntaxTreeC; caller::AbstractString
+        comp_ctx::CompletionCtx, dotprefix::SyntaxTree; caller::AbstractString
     )
     hole_start = JS.last_byte(dotprefix) + 1
     hole_end = property_completion_hole_end(comp_ctx.fi, comp_ctx.offset, hole_start)
@@ -176,8 +176,8 @@ end
 function get_cursor_bindings_cached!(comp_ctx::CompletionCtx)
     isdefined(comp_ctx, :cursor_bindings) && return comp_ctx.cursor_bindings
     return comp_ctx.cursor_bindings = cursor_bindings(
-        comp_ctx.st0_top, comp_ctx.offset, comp_ctx.context_module;
-            soft_scope=comp_ctx.soft_scope)
+        comp_ctx.st0_top, comp_ctx.offset, comp_ctx.context_module, comp_ctx.world;
+        soft_scope=comp_ctx.soft_scope)
 end
 
 # Typical completion UI
@@ -208,27 +208,30 @@ end
 # =================
 
 function to_completion(
-        binding::JL.BindingInfo, st::SyntaxTreeC, sort_offset::Int,
+        binding::JL.BindingInfo, st::SyntaxTree, sort_offset::Int,
         uri::URI, fi::FileInfo
     )
     label_kind = CompletionItemKind.Variable
     label_detail = label_desc = nothing
 
+    # `:typevar` is defensive; current completion scopes expose `:static_parameter`.
     if binding.is_const
         label_kind = CompletionItemKind.Constant
-    elseif binding.kind === :static_parameter
+    elseif binding.kind in (:typevar, :static_parameter)
         label_kind = CompletionItemKind.TypeParameter
     end
 
-    if binding.kind in [:argument, :local, :global]
+    if binding.kind in (:argument, :local, :global)
         label_desc = String(binding.kind)
+    elseif binding.kind === :typevar
+        label_desc = "typevar"
     elseif binding.kind === :static_parameter
         label_desc = "sparam"
     end
 
-    typeid = binding.type
-    if !isnothing(typeid)
-        label_detail = "::" * JS.sourcetext(SyntaxTreeC(JS.syntax_graph(st), typeid))
+    typenode = binding.type
+    if !isnothing(typenode)
+        label_detail = "::" * JS.sourcetext(typenode)
     end
 
     io = IOBuffer()
@@ -338,7 +341,7 @@ function global_completions!(
         # A `Union{}` prefix type is uninformative (the prefix throws or is dead code);
         # treat it like `nothing` so module/const prefixes such as `Base.` still complete.
         if prefixtyp === nothing || prefixtyp === Union{}
-            prefixtyp = resolve_global_const(context_module, dotprefix, world)
+            prefixtyp = resolve_global_const(context_module, world, dotprefix)
         end
         # Module prefix → enumerate that module's globals below.
         # Otherwise → property completion (abstract-call
@@ -668,7 +671,7 @@ end
 # call completions (method signatures and keyword arguments)
 # ==========================================================
 
-function extract_param_text(p::SyntaxTreeC)
+function extract_param_text(p::SyntaxTree)
      k = JS.kind(p)
     if k === JS.K"Identifier"
         return get_name_val(p)
@@ -748,7 +751,7 @@ function cursor_equals_position(ca::CallArgs, b::Int)
     return nothing
 end
 
-function extract_kwarg_name_str(p::SyntaxTreeC)
+function extract_kwarg_name_str(p::SyntaxTree)
     node = @something extract_kwarg_name(p; sig=true) return nothing
     return get_name_val(node)
 end
@@ -795,7 +798,7 @@ function call_completions!(
     ctx = get_inferred_ctx!(comp_ctx; caller="call_completions!")
     fntyp = ctx === nothing ? nothing : get_type_for_range(ctx, JS.byte_range(call[1]))
     if fntyp === nothing
-        fntyp = resolve_global_const(context_module, call[1], world)
+        fntyp = resolve_global_const(context_module, world, call[1])
     end
     fntyp isa Core.Const || return nothing
 

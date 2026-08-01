@@ -257,6 +257,20 @@ function cglobal_query_chain(x)
 end
 @test @interpret(cglobal_query_str(0)) === cglobal_query_str(0) === Union{}
 @test @interpret(cglobal_query_chain(0)) === cglobal_query_chain(0) === Union{}
+# On Julia ≥ 1.14, `cglobal` name lookups lower to `Expr(:foreignglobal, spec)`
+# (JuliaLang/julia#61709), which the interpreter must evaluate itself (issue #734).
+cglobal_foreignglobal() = cglobal(:jl_options)
+@test @interpret(cglobal_foreignglobal()) == cglobal_foreignglobal() != C_NULL
+# The argument may also be a runtime value rather than a (quoted)
+# symbol/string/tuple literal, in which case it must already be a pointer:
+# `cglobal(p)` is then a typechecked cast to `Ptr{Cvoid}`, and a non-pointer
+# argument is a `TypeError`, matching the compiled semantics.
+cglobal_ptr_passthrough(p) = cglobal(p)
+let p = cglobal(:jl_options)
+    @test @interpret(cglobal_ptr_passthrough(p)) === cglobal_ptr_passthrough(p) === p
+    @test_throws TypeError @interpret(cglobal_ptr_passthrough(1))
+end
+@test @interpret(Base.JLOptions()) == Base.JLOptions()
 # Issue #354: an `llvmcall` argument computed from a function argument cannot be
 # interpreted directly. `build_compiled_llvmcall!` runs a mini-interpreter (with
 # no arguments) over the statements feeding the call's type parameters; here the
@@ -553,6 +567,60 @@ locs = JuliaInterpreter.locals(JuliaInterpreter.enter_call(foo, ""))
 @test JuliaInterpreter.Variable("", :x, false) in locs
 @test JuliaInterpreter.Variable(String, :T, true) in locs
 
+# Subtyping envout markers from newer Julia versions must not leak into
+# interpreted static-parameter values.
+function envout_marker_optional_sparam(::Type{<:Tuple{Vararg{E}}}) where E
+    return E
+end
+function envout_marker_required_sparam(::Type{<:Tuple{E}}) where E
+    return E
+end
+let m = first(methods(envout_marker_optional_sparam)),
+    argtypes = (Tuple{typeof(envout_marker_optional_sparam), Type{Tuple{Vararg{Int,N}}}} where N),
+    ret = JuliaInterpreter.prepare_framecode(m, argtypes)
+
+    if ret isa Tuple
+        framecode, lenv = ret
+        if lenv[1] isa Core.SimpleVector
+            @test lenv[1][2] === false
+            frame = JuliaInterpreter.prepare_frame(framecode,
+                Any[envout_marker_optional_sparam, Tuple{Vararg{Int}}], lenv)
+            err = try
+                JuliaInterpreter.finish_and_return!(frame, true)
+            catch err
+                err
+            end
+            @test err isa UndefVarError
+            @test err.var === :E
+        end
+    end
+end
+let m = first(methods(envout_marker_required_sparam)),
+    argtypes = Tuple{typeof(envout_marker_required_sparam), Type{Tuple{Int}}},
+    ret = JuliaInterpreter.prepare_framecode(m, argtypes)
+
+    if ret isa Tuple
+        framecode, lenv = ret
+        if lenv[1] isa Core.SimpleVector
+            @test lenv[1][2] === true
+            frame = JuliaInterpreter.prepare_frame(framecode,
+                Any[envout_marker_required_sparam, Tuple{Int}], lenv)
+            @test JuliaInterpreter.finish_and_return!(frame, true) === Int
+        end
+    end
+end
+
+# A failed generator must use native dispatch rather than return its call result as frame metadata.
+@generated function unavailable_generated_code(::Val{T}) where T
+    error("generated code unavailable")
+end
+let args = Any[unavailable_generated_code, Val(:test)],
+    ret = JuliaInterpreter.prepare_call(unavailable_generated_code, args)
+
+    @test ret[1] isa JuliaInterpreter.Compiled
+    @test_throws ErrorException unavailable_generated_code(Val(:test))
+end
+
 # Test interpreting subtypes finishes in a reasonable time
 @test @interpret subtypes(Integer) == subtypes(Integer)
 @test @interpret subtypes(Main, Integer) == subtypes(Main, Integer)
@@ -567,12 +635,17 @@ line_g = @__LINE__
 
 _contractuser = Base.contractuser
 
+# On 1.14-DEV, method selection currently picks `error(s...)` over
+# `error(s::AbstractString)` for a `String` argument, so the innermost frame shows the
+# packed vararg tuple. Accept both until upstream method specificity settles.
+is_error_frame(line) = occursin(r"\[1\] error\(s::(String|Tuple\{String\})\)", line)
+
 try
     break_on(:error)
     local frame, bp = @interpret g_1(2.0)
     stacktrace_lines = split(sprint(Base.display_error, bp.err, leaf(frame)), '\n')
     @test occursin(string("ERROR: ", sprint(showerror, ErrorException("foo"))), stacktrace_lines[1])
-    @test occursin("[1] error(s::String)", stacktrace_lines[3])
+    @test is_error_frame(stacktrace_lines[3])
     @test occursin("[2] g_3(x::Float64)", stacktrace_lines[5])
     thefile = _contractuser(@__FILE__)
     @test occursin("$thefile:$(line_g - 1)", stacktrace_lines[6])
@@ -594,7 +667,7 @@ try
     frame, bp = JuliaInterpreter.debug_command(frame, :c, true)
     stacktrace_lines = split(sprint(Base.display_error, bp.err, leaf(frame)), '\n')
     @test occursin(string("ERROR: ", sprint(showerror, ErrorException("foo"))), stacktrace_lines[1])
-    @test occursin("[1] error(s::String)", stacktrace_lines[3])
+    @test is_error_frame(stacktrace_lines[3])
     thefile = _contractuser(@__FILE__)
     @test occursin("[2] g_3(x::Float64)", stacktrace_lines[5])
     @test occursin("$thefile:$(line_g - 1)", stacktrace_lines[6])
@@ -773,6 +846,31 @@ frame = JuliaInterpreter.enter_call(f_345)
         @test Base.StackTraces.StackFrame(frame) isa Base.StackTraces.StackFrame
     end
     @test JuliaInterpreter.getfirstline(frame) isa Integer
+end
+
+# issue #228: nested `@interpret` must not recursively interpret the interpreter itself
+# (the frame pools are global state shared between the meta and object levels; the inner
+# interpreter runs compiled via `compiled_modules`).
+@testset "nested @interpret" begin
+    f_228() = @interpret(1 + 1)
+    @test @interpret(f_228()) == 2
+    g_228() = f_228() + @interpret(2 + 2)
+    @test @interpret(g_228()) == 6
+end
+
+# issue #573: a frame's recorded argument values may not match the method signature
+# (e.g. while displaying a MethodError); building a `StackFrame` must not throw on
+# the resulting empty type intersection.
+@testset "StackFrame with mismatched argument types" begin
+    f_573(x::Int) = x
+    frame = JuliaInterpreter.enter_call(f_573, 1)
+    frame.framedata.locals[2] = Some{Any}("not an Int")
+    sf = Base.StackTraces.StackFrame(frame)
+    @test sf isa Base.StackTraces.StackFrame
+    @test sf.linfo isa Method
+    io = IOBuffer()
+    Base.show_backtrace(io, frame)
+    @test !isempty(take!(io))
 end
 
 @testset "issue #701 LineNumberNode with `nothing` file" begin
@@ -1271,4 +1369,327 @@ end
         # framecode there, so the compiled wrapper bakes in the new `sub` IR (issue #617).
         @test (@interpret world=w3 WrapperDepTest.llvmadd(Int32(30), Int32(12))) == 18
     end
+end
+
+@testset "Empty varargs are visible to locals" begin
+    empty_vararg(x...) = x
+    fr = JuliaInterpreter.enter_call(empty_vararg)
+    @test only(filter(v -> v.name === :x, JuliaInterpreter.locals(fr))).value === ()
+end
+
+@testset "Variable equality is total" begin
+    v = JuliaInterpreter.Variable(missing, :x)
+    @test isequal(v, v) === true
+    @test hash(v) isa UInt
+    @test isequal(hash(v), hash(JuliaInterpreter.Variable(missing, :x)))
+end
+
+@testset "determine_method_for_expr does not mutate the caller's AST" begin
+    kwfunc_ast(x; y=2) = x + y
+    ex = Expr(:call, kwfunc_ast, Expr(:parameters, Expr(:kw, :y, 2)), 1)
+    before = deepcopy(ex)
+    JuliaInterpreter.determine_method_for_expr(ex)
+    @test ex == before
+end
+
+@testset "Foreigncall values that look like ASTs are passed as data" begin
+    astval = :(1 + 2)
+    frame = Frame(Main, :(ccall(:jl_typeof, Any, (Any,), $(QuoteNode(astval)))))
+    @test finish_and_return!(frame, true) === Expr
+end
+
+@static if VERSION >= v"1.12-"
+@testset "invoke(f, ::Method, args...)" begin
+    invoke_by_method(x::Real) = x + 1
+    m = only(methods(invoke_by_method))
+    invoke_by_method_wrap(f, m, x) = invoke(f, m, x)
+    @test (@interpret invoke_by_method_wrap(invoke_by_method, m, 1)) == 2
+end
+end
+
+@testset "NewvarNode undefines a reused slot" begin
+    function newvar_reuse(flags)
+        out = Bool[]
+        for flag in flags
+            flag && (x = 1)
+            push!(out, @isdefined(x))
+        end
+        out
+    end
+    fr = JuliaInterpreter.enter_call(newvar_reuse, [true, false])
+    @test finish_and_return!(fr) == newvar_reuse([true, false]) == [true, false]
+end
+
+@testset "Nested OpaqueClosure calls" begin
+    oc = Base.Experimental.@opaque (x, y) -> x + y
+    oc_wrapper(f, x, y) = f(x, y)
+    @test (@interpret oc_wrapper(oc, 1, 2)) == 3
+    @test (@interpret interp=NonRecursiveInterpreter() oc_wrapper(oc, 1, 2)) == 3
+end
+
+@static if VERSION >= v"1.12-"
+@testset "Calling convention is part of the compiled-ccall wrapper key" begin
+    ccall_plain() = @ccall jl_gc_safepoint()::Cvoid
+    ccall_gcsafe() = @ccall gc_safe=true jl_gc_safepoint()::Cvoid
+    @interpret ccall_plain()
+    @interpret ccall_gcsafe()
+    ccs = [k for k in keys(JuliaInterpreter.compiled_calls) if occursin("jl_gc_safepoint", string(k[1]))]
+    # the two ccalls differ only in the calling-convention field and must not share a wrapper
+    @test length(unique(last.(ccs))) >= 2
+end
+end
+
+@testset "rethrow() from a callee of a catch block" begin
+    rethrow_callee() = rethrow()
+    rethrow_caller() = try; error("boom"); catch; rethrow_callee(); end
+    @test_throws ErrorException("boom") finish_and_return!(JuliaInterpreter.enter_call(rethrow_caller))
+end
+
+@testset "applicable respects the frame world" begin
+    @eval module ApplicableWorld
+    function target end
+    probe() = applicable(target, 1)
+    end
+    w = Base.get_world_counter()
+    @eval ApplicableWorld target(::Int) = 1
+    @test Base.invoke_in_world(w, ApplicableWorld.probe) == false
+    @test finish_and_return!(JuliaInterpreter.enter_call(ApplicableWorld.probe; world=w)) == false
+end
+
+@testset "@interpret compiled fallback stays in the caller's world" begin
+    @eval world_fallback(::Any) = 1
+    m_fb = which(world_fallback, Tuple{Any})
+    push!(JuliaInterpreter.compiled_methods, m_fb)
+    try
+        function world_fallback_root()
+            @eval world_fallback(::Int) = 2
+            (@interpret(world_fallback(1)), world_fallback(1))
+        end
+        a, b = world_fallback_root()
+        @test a == b
+    finally
+        delete!(JuliaInterpreter.compiled_methods, m_fb)
+    end
+end
+
+@testset "invoke selects its method in the frame world" begin
+    @eval module InvokeWorld
+    function target end
+    probe(x) = invoke(target, Tuple{Real}, x)
+    end
+    w = Base.get_world_counter()
+    @eval InvokeWorld target(::Real) = :too_new
+    @test_throws MethodError Base.invoke_in_world(w, InvokeWorld.probe, 1)
+    @test_throws MethodError finish_and_return!(JuliaInterpreter.enter_call(InvokeWorld.probe, 1; world=w))
+    # the resolved form still works at the current world
+    @test finish_and_return!(JuliaInterpreter.enter_call(InvokeWorld.probe, 1)) === :too_new
+end
+
+@testset "pop_exception restores the active-exception stack" begin
+    function nested_rethrow()
+        try
+            error("outer")
+        catch
+            try
+                error("inner")
+            catch
+            end
+            rethrow()
+        end
+    end
+    native = try nested_rethrow() catch err; err.msg end
+    interp = try finish_and_return!(JuliaInterpreter.enter_call(nested_rethrow)) catch err; (err::ErrorException).msg end
+    @test native == interp == "outer"
+
+    # rethrow() from a callee, after an inner catch completed first
+    popexc_callee() = rethrow()
+    function popexc_caller()
+        try
+            error("outer")
+        catch
+            try error("inner") catch end
+            popexc_callee()
+        end
+    end
+    @test_throws ErrorException("outer") finish_and_return!(JuliaInterpreter.enter_call(popexc_caller))
+end
+
+@testset "invoke builtin dispatches in the frame's world" begin
+    w_before = Base.get_world_counter()
+    @eval invoke_wtarget(::Real) = :ok
+    @eval invoke_wprobe(x) = invoke(invoke_wtarget, Tuple{Real}, x)
+    fr = JuliaInterpreter.enter_call(invoke_wprobe, 1)
+    # The task runs in a world predating the target method; the builtin must
+    # nevertheless dispatch `invoke` in the frame's (newer) world.
+    res = Base.invoke_in_world(w_before, JuliaInterpreter.finish_and_return!, NonRecursiveInterpreter(), fr)
+    @test res === :ok
+end
+
+@testset "UndefVarError carries the scope for unbound sparams and locals" begin
+    unbound_sp_g(x::T, y::T) where {S,T>:S} = T
+    expected_sp = VERSION >= v"1.11" ? UndefVarError(:T, :static_parameter) : UndefVarError(:T)
+    @test_throws expected_sp @interpret unbound_sp_g(1, 1)
+    function undef_local_f(c)
+        c && (x = 1)
+        return x
+    end
+    expected_local = VERSION >= v"1.11" ? UndefVarError(:x, :local) : UndefVarError(:x)
+    @test_throws expected_local @interpret undef_local_f(false)
+end
+
+@testset "current_exceptions sees interpreted handlers" begin
+    function curexc_f()
+        try
+            error("boom")
+        catch
+            Base.current_exceptions()
+        end
+    end
+    stack = @interpret curexc_f()
+    @test length(stack) == 1
+    @test stack[end].exception == ErrorException("boom")
+    function curexc_nested()
+        try
+            error("outer")
+        catch
+            try
+                error("inner")
+            catch
+                length(Base.current_exceptions())
+            end
+        end
+    end
+    @test (@interpret curexc_nested()) == curexc_nested() == 2
+    curexc_callee() = length(Base.current_exceptions())
+    curexc_caller() = try; error("x"); catch; curexc_callee(); end
+    @test (@interpret curexc_caller()) == curexc_caller() == 1
+    @test isempty(@interpret (() -> Base.current_exceptions())())
+end
+
+@static if hasfield(Core.CodeInfo, :nargs)
+@testset "generated function returning another method's CodeInfo" begin
+    overdubbee54341(a, b) = a + b
+    overdubbee_ci = code_lowered(overdubbee54341, Tuple{Any,Any})[1]
+    overdub_gen54341(world::UInt, source::Method, selftype, fargtypes) = copy(overdubbee_ci)
+    @eval function overdub54341(args...)
+        $(Expr(:meta, :generated, overdub_gen54341))
+        $(Expr(:meta, :generated_only))
+    end
+    # the returned CodeInfo's nargs/isva (2 args, not vararg) differ from the
+    # generated method's signature; the frame must follow the CodeInfo
+    @test (@interpret overdub54341(1, 2)) == 3
+end
+end
+
+@testset "cglobal loaded through getproperty" begin
+    # Core.io_pointer fetches the cglobal intrinsic via getproperty, so the call's
+    # function position is an SSA reference rather than a literal
+    @test (@interpret Core.io_pointer(Core.stdout)) == Core.io_pointer(Core.stdout)
+    buf = IOBuffer()
+    @test sprint(io -> (@interpret Base.println(io, "x"))) == "x\n"
+end
+
+@testset "callback-taking builtins dispatch op in the frame's world" begin
+    w_before = Base.get_world_counter()
+    @eval cbworld_swap(a, b) = b
+    @eval function cbworld_ptrmodify()
+        r = Ref{Int}(1)
+        GC.@preserve r begin
+            p = Base.unsafe_convert(Ptr{Int}, r)
+            Core.Intrinsics.atomic_pointermodify(p, cbworld_swap, 42, :sequentially_consistent)
+        end
+    end
+    fr = JuliaInterpreter.enter_call(cbworld_ptrmodify)
+    res = Base.invoke_in_world(w_before, JuliaInterpreter.finish_and_return!, NonRecursiveInterpreter(), fr)
+    @test res == (1 => 42)
+    @eval cbworld_op(a, b) = a + b
+    @eval mutable struct CBWorldMF; @atomic x::Int; end
+    @eval cbworld_mf(m) = modifyfield!(m, :x, cbworld_op, 5, :sequentially_consistent)
+    fr = JuliaInterpreter.enter_call(Main.cbworld_mf, Main.CBWorldMF(2))
+    res = Base.invoke_in_world(w_before, JuliaInterpreter.finish_and_return!, NonRecursiveInterpreter(), fr)
+    @test res == (2 => 7)
+end
+
+@testset "ccall with a library referenced through a global" begin
+    # `libjulia` (not `libjulia-internal`): Windows' GetProcAddress does not search a
+    # module's dependencies, so the symbol must be exported by the named library itself
+    @eval const resolvefc_lib = "libjulia"
+    @eval resolvefc_f() = ccall((:jl_ver_major, resolvefc_lib), Cint, ())
+    # the (name, lib) tuple lowers with the tuple constructor as a GlobalRef
+    @test (@interpret Main.resolvefc_f()) == Main.resolvefc_f()
+end
+
+@testset "rethrow does not duplicate active-exception entries" begin
+    function fin_count()
+        local a, b
+        try
+            try
+                error("A")
+            finally
+                a = length(Base.current_exceptions())
+            end
+        catch
+            b = length(Base.current_exceptions())
+        end
+        (a, b)
+    end
+    @test (@interpret fin_count()) == fin_count() == (1, 1)
+    function throw_same()  # a fresh `throw` of the same object does push
+        try
+            try
+                error("A")
+            catch err
+                throw(err)
+            end
+        catch
+            length(Base.current_exceptions())
+        end
+    end
+    @test (@interpret throw_same()) == throw_same() == 2
+    function rethrow_other()  # `rethrow(exc)` replaces the current exception
+        try
+            try
+                error("A")
+            catch
+                rethrow(ErrorException("B"))
+            end
+        catch exc
+            (exc, Base.current_exceptions()[end].exception)
+        end
+    end
+    @test (@interpret rethrow_other()) == rethrow_other() ==
+          (ErrorException("B"), ErrorException("B"))
+end
+
+@testset "is_global_ref_egal tolerates bindings newer than the world" begin
+    w_before = Base.get_world_counter()
+    @eval module GREgalTest end
+    @eval GREgalTest using Base: llvmcall
+    g = GlobalRef(GREgalTest, :llvmcall)
+    @test JuliaInterpreter.is_global_ref_egal(g, :llvmcall, Base.llvmcall, Base.get_world_counter())
+    # probing in a world predating the import must not throw; only world-partitioned
+    # bindings (1.12+) can also see that the binding did not exist back then
+    @static if VERSION >= v"1.12-"
+        @test !JuliaInterpreter.is_global_ref_egal(g, :llvmcall, Base.llvmcall, w_before)
+    else
+        @test JuliaInterpreter.is_global_ref_egal(g, :llvmcall, Base.llvmcall, w_before)
+    end
+end
+
+@testset "opaque closure creation in interpreted code" begin
+    oc_maker(x) = Base.Experimental.@opaque (y) -> x + y
+    oc = @interpret oc_maker(2)
+    @test oc isa Core.OpaqueClosure
+    @test oc(3) == 5
+    @test (@interpret (f -> f(3))(oc)) == 5
+    oc2 = @interpret (() -> Base.Experimental.@opaque (a, b) -> a * b)()
+    @test oc2(6, 7) == 42
+    # the raw Expr form with an unevaluated :opaque_closure_method (opaque_closure.jl style);
+    # the `allow_partial` boolean operand only exists on 1.12+
+    ci = code_lowered(() -> 1)[1]
+    ocm = Expr(:opaque_closure_method, nothing, 0, false, LineNumberNode(1, :none), ci)
+    ocex = VERSION >= v"1.12-" ? Expr(:new_opaque_closure, Tuple{}, Union{}, Any, true, ocm) :
+                                 Expr(:new_opaque_closure, Tuple{}, Union{}, Any, ocm)
+    @eval oc_from_raw_expr() = $ocex
+    @test (@interpret Main.oc_from_raw_expr())() == 1
 end

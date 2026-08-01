@@ -178,7 +178,7 @@ function optimize!(code::CodeInfo, scope, world::UInt)
                 # Check for :llvmcall
                 arg1 = stmt.args[1]
                 larg1 = lookup_stmt(code.code, arg1, world)
-                if (arg1 === :llvmcall || larg1 === Base.llvmcall || is_global_ref_egal(larg1, :llvmcall, Core.Intrinsics.llvmcall)) && isempty(sparams) && scope isa Method
+                if (arg1 === :llvmcall || larg1 === Base.llvmcall || is_global_ref_egal(larg1, :llvmcall, Core.Intrinsics.llvmcall, world)) && isempty(sparams) && scope isa Method
                     # Call via `invokelatest` to avoid compiling it until we need it
                     @invokelatest build_compiled_llvmcall!(stmt, code, idx, evalmod, world, world_deps)
                     methodtables[idx] = Compiled()
@@ -309,7 +309,12 @@ function build_compiled_foreigncall!(stmt::Expr, code::CodeInfo, sparams::Vector
     end
     args = stmt.args[6:end]
     # When the ccall is dynamic we pass the pointer as an argument so can reuse the function
-    cc_key = ((dynamic_ccall ? :ptr : @something(cfunc_resolved, cfunc)), RetType, ArgType, evalmod, length(sparams), length(args))  # compiled call key
+    # `stmt.args[4]` (nreq) and `stmt.args[5]` (calling convention, including e.g. the
+    # `gc_safe` flag) are baked into the wrapper body, so they must be part of the key:
+    # otherwise two ccalls to the same function differing only in those would share
+    # whichever wrapper was built first.
+    cc_key = ((dynamic_ccall ? :ptr : @something(cfunc_resolved, cfunc)), RetType, ArgType,
+              evalmod, length(sparams), length(args), stmt.args[4], stmt.args[5])  # compiled call key
     f = get(compiled_calls, cc_key, nothing)
     if f === nothing
         ArgType = Expr(:tuple, Any[parametric_type_to_expr(t) for t in ArgType::SimpleVector]...)

@@ -4,6 +4,7 @@ export Endpoint, Server, runserver
 
 const JETLS_VERSION = let
     version_file = joinpath(dirname(@__DIR__), "JETLS_VERSION")
+    include_dependency(version_file)
     isfile(version_file) ? strip(read(version_file, String)) : "unknown"
 end
 
@@ -41,13 +42,13 @@ call_in_server_world(@nospecialize(f), args...; kwargs...) =
 
 push_init_hook!(advance_server_world!)
 
-if JETLS_DEV_MODE
+@static if JETLS_DEV_MODE
     using Revise: Revise
 else
     const Revise = nothing
 end
 
-revise_now!() = JETLS_DEV_MODE && Revise.revise()
+revise_now!() = @static JETLS_DEV_MODE && Revise.revise()
 
 using LSP
 using LSP: LSP
@@ -57,7 +58,8 @@ using LSP.Communication: Endpoint
 const MessageId = Union{String, Int}
 
 using Pkg
-using JET: CC, JET
+using Compiler: Compiler as CC
+using JET: JET
 using JuliaSyntax: JuliaSyntax as JS
 using JuliaLowering: JuliaLowering as JL
 using REPL: REPL # loading REPL is necessary to make `Base.Docs.doc(::Base.Docs.Binding)` work
@@ -71,16 +73,15 @@ abstract type AnalysisEntry end # used by `Analyzer.LSAnalyzer`
 
 include("AtomicContainers/AtomicContainers.jl")
 using .AtomicContainers
-# const SWStats  = JETLS_DEV_MODE ? AtomicContainers.SWStats  : Nothing
-# const LWStats  = JETLS_DEV_MODE ? AtomicContainers.LWStats  : Nothing
-# const CASStats = JETLS_DEV_MODE ? AtomicContainers.CASStats : Nothing
+# const SWStats  = @static JETLS_DEV_MODE ? AtomicContainers.SWStats  : Nothing
+# const LWStats  = @static JETLS_DEV_MODE ? AtomicContainers.LWStats  : Nothing
+# const CASStats = @static JETLS_DEV_MODE ? AtomicContainers.CASStats : Nothing
 const SWStats  = Nothing
 const LWStats  = Nothing
 const CASStats = Nothing
 
-const AttrsC = Dict{Symbol, Dict{Int64, Any}}
-const SyntaxTreeC = JS.SyntaxTree{AttrsC}
-const SyntaxListC = JS.SyntaxList{AttrsC,Vector{Int}}
+const SyntaxTree = JS.SyntaxTree
+const SyntaxList = JS.SyntaxList
 
 include("analysis/Analyzer.jl")
 using .Analyzer
@@ -216,11 +217,11 @@ function runserver(
     )
     initialize_requested = shutdown_requested = false
     local exit_code::Int = 1
-    JETLS_DEV_MODE && @info "Running JETLS server loop"
+    @static JETLS_DEV_MODE && @info "Running JETLS server loop"
     seq_queue, seq_task = start_sequential_message_worker(server)
     con_queue, con_task = start_concurrent_message_worker(server)
     if !isnothing(client_process_id)
-        JETLS_DEV_MODE && @info "Monitoring client process ID" client_process_id
+        @static JETLS_DEV_MODE && @info "Monitoring client process ID" client_process_id
         Threads.@spawn while true
             # To handle cases where the client crashes and cannot execute the normal
             # server shutdown process, check every 60 seconds whether the `processId`
@@ -287,13 +288,14 @@ function runserver(
         @error "Message handling loop failed"
         Base.display_error(stderr, err, catch_backtrace())
     finally
-        stop_analysis_workers(server)
+        stop_analysis_worker(server)
+        stop_signature_analysis_workers(server)
         put!(seq_queue, nothing); put!(con_queue, nothing);
         close(seq_queue); close(con_queue);
         waitall((seq_task, con_task))
         close(server.endpoint)
     end
-    JETLS_DEV_MODE && @info "Exited JETLS server loop"
+    @static JETLS_DEV_MODE && @info "Exited JETLS server loop"
     return exit_code
 end
 
@@ -349,7 +351,7 @@ function handle_sequential_message(server::Server, @nospecialize msg)
         handle_DidCloseNotebookDocumentNotification(server, msg)
     elseif msg isa DidSaveNotebookDocumentNotification
         handle_DidSaveNotebookDocumentNotification(server, msg)
-    elseif JETLS_DEV_MODE
+    elseif @static JETLS_DEV_MODE ? true : false
         if isdefined(msg, :method)
             _id = getfield(msg, :method)
         else
@@ -389,7 +391,7 @@ function handler_concurrent_message(server::Server, @nospecialize msg)
                     get!(()->CancelFlag(false), server.state.currently_handled, token)
                 Threads.@spawn :default @tryinvokelatest handle_response_message(server, msg, request_caller, cancel_flag)
             end
-        elseif JETLS_DEV_MODE
+        elseif @static JETLS_DEV_MODE ? true : false
             # Not a response to our request, or untyped message - log if in dev mode
             _id = get(()->get(msg, :id, nothing), msg, :method)
             @warn "[handler_concurrent_message] Unhandled message" msg _id=_id maxlog=1
@@ -518,7 +520,7 @@ function handle_request_message(server::Server, @nospecialize(msg), cancel_flag:
         handle_ExecuteCommandRequest(server, msg)
     elseif msg isa TextDocumentContentRequest
         handle_TextDocumentContentRequest(server, msg)
-    elseif JETLS_DEV_MODE
+    elseif @static JETLS_DEV_MODE ? true : false
         if isdefined(msg, :method)
             _id = getfield(msg, :method)
         else
@@ -534,7 +536,7 @@ function handle_notification_message(server::Server, @nospecialize msg)
         handle_DidChangeWatchedFilesNotification(server, msg)
     elseif msg isa DidChangeConfigurationNotification
         handle_DidChangeConfigurationNotification(server, msg)
-    elseif JETLS_DEV_MODE
+    elseif @static JETLS_DEV_MODE ? true : false
         if isdefined(msg, :method)
             _id = getfield(msg, :method)
         else

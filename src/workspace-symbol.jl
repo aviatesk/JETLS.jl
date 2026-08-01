@@ -172,7 +172,7 @@ function flatten_document_symbols!(
             # Namespace symbols (if/let/for/while/@static if blocks) are introduced for
             # hierarchical structure in document outline, not representing actual definitions.
             # Exclude them from workspace symbols to reduce noise.
-        elseif doc_sym.kind == SymbolKind.Boolean && doc_sym.kind == SymbolKind.Event
+        elseif doc_sym.kind == SymbolKind.Boolean || doc_sym.kind == SymbolKind.Event
             # Ignore `@test` and `@testset` symbols
         elseif doc_sym.name != " " # Just a safe guard
             push!(workspace_symbols, WorkspaceSymbol(;

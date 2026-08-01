@@ -196,9 +196,9 @@ else
 end
 
 @static if VERSION ≥ v"1.12.0-DEV.173"
-function pushuniquefiles!(unique_files::Set{Symbol}, lt)
+function pushuniquefiles!(unique_files::Set{Symbol}, lt::Core.DebugInfo)
     for edge in lt.edges
-        pushuniquefiles!(unique_files, edge)
+        pushuniquefiles!(unique_files, edge::Core.DebugInfo)
     end
     linetable = lt.linetable
     if linetable === nothing
@@ -306,13 +306,21 @@ Important fields:
   the value of `T` given the particular input `x`.
 - `exception_frames`: a list of indexes to `catch` blocks for handling exceptions within
   the current frame. The active handler is the last one on the list.
-- `last_exception`: the exception `throw`n by this frame or one of its callees.
+- `exception_scopes`: parallel to `exception_frames`, the depth of `current_scopes` when
+  each handler was entered, so unwinding an exception can restore the scope stack.
+- `exceptions`: the stack of exceptions currently being handled by this frame (innermost
+  last), mirroring the task's exception stack in native execution. A handler entry pushes;
+  `Expr(:pop_exception, token)` restores the depth recorded at the corresponding `:enter`.
+- `last_exception`: the exception currently being handled by this frame or one of its
+  callees (the top of `exceptions` while nonempty).
 """
 struct FrameData
     locals::Vector{Union{Nothing,Some{Any}}}
     ssavalues::Vector{Any}
     sparams::Vector{Any}
     exception_frames::Vector{Int}
+    exception_scopes::Vector{Int}
+    exceptions::Vector{Any}
     current_scopes::Vector{Scope}
     last_exception::Base.RefValue{Any}
     caller_will_catch_err::Bool
@@ -362,6 +370,7 @@ function Frame(framecode::FrameCode, framedata::FrameData, pc=1, caller=nothing,
                world::UInt=default_world())
     if length(junk_frames) > 0
         frame = pop!(junk_frames)
+        delete!(pooled_frames, frame)
         frame.framecode = framecode
         frame.framedata = framedata
         frame.pc = pc
@@ -376,11 +385,13 @@ function Frame(framecode::FrameCode, framedata::FrameData, pc=1, caller=nothing,
     end
 end
 """
-    frame = Frame(mod::Module, src::CodeInfo; world=get_world_counter(), kwargs...)
+    frame = Frame(mod::Module, src::CodeInfo; world=JuliaInterpreter.default_world(), kwargs...)
 
-Construct a `Frame` to evaluate `src` in module `mod`. `world` sets the world
-age used for dispatch (defaults to the latest committed world). Additional
-keyword arguments (`generator`, `optimize`) are forwarded to [`FrameCode`](@ref).
+Construct a `Frame` to evaluate `src` in module `mod`. `world` sets the world age used for
+dispatch; it defaults to the calling task's current world, matching the semantics of an
+ordinary (non-`invokelatest`) call. Pass `world=Base.get_world_counter()` to instead resolve
+methods and bindings in the latest committed world. Additional keyword arguments
+(`generator`, `optimize`) are forwarded to [`FrameCode`](@ref).
 """
 function Frame(mod::Module, src::CodeInfo; world::UInt=default_world(), kwargs...)
     framecode = FrameCode(mod, src; world, kwargs...)
@@ -390,7 +401,7 @@ end
 # `:toplevel`/`:module` body. Such a frame is stepped statement-by-statement by `step_toplevel!`,
 # which lowers ordinary statements to child frames and handles `:module`/`:using`/... directly.
 function toplevel_codeinfo(mod::Module, stmts::Vector{Any})
-    ci = (Meta.lower(mod, :(1 + 1)).args[1])::CodeInfo   # a throwaway skeleton; we overwrite its body
+    ci = ((Meta.lower(mod, :(1 + 1))::Expr).args[1])::CodeInfo   # a throwaway skeleton; we overwrite its body
     code = copy(stmts)
     lastreal = findlast(s -> !isa(s, LineNumberNode), code)
     push!(code, Core.ReturnNode(lastreal === nothing ? nothing : Core.SSAValue(lastreal)))
@@ -437,13 +448,26 @@ function Frame(mod::Module, ex::Expr; world::UInt=default_world())
     lwr = Meta.lower(mod, ex)
     isexpr(lwr, :thunk, 1) && return Frame(mod, (lwr.args[1])::CodeInfo; world)
     if isexpr(lwr, :error) || isexpr(lwr, :incomplete)
+        if isexpr(ex, :block)
+            # `ExprSplitter` wraps each split statement in a block carrying its
+            # LineNumberNode. A macrocall that expands to a declaration (e.g. a macro
+            # returning `global x`, as issue #28833's test does) only lowers at true
+            # top level, so the wrapper block itself fails with 'misplaced
+            # declaration'. Retry the block's statements as toplevel-surface
+            # statements, which are lowered individually in toplevel context.
+            return toplevel_frame(mod, ex.args; world)
+        end
         throw(ArgumentError("lowering returned an error, $lwr"))
     end
     # `macroexpand` inside lowering can surface a `:toplevel`/`:module` (lowering leaves these intact)
     if isexpr(lwr, (:toplevel, :module))
         return Frame(mod, lwr::Expr; world)
     end
-    throw(ArgumentError("lowering did not return a `:thunk` expression, got $lwr"))
+    # Lowering is the identity on bare declarations (`global x`, `public x`, `using`/
+    # `import`/`export`, ...) and returns a literal (e.g. `nothing`) for expressions
+    # without effects. Wrap the original expression in a single-statement
+    # toplevel-surface frame, whose driver evaluates such statements directly.
+    return toplevel_frame(mod, Any[ex]; world)
 end
 
 caller(frame) = frame.caller
@@ -509,9 +533,11 @@ Variable(value, name) = Variable(value, name, false, false)
 Variable(value, name, isparam) = Variable(value, name, isparam, false)
 Base.show(io::IO, var::Variable) = (print(io, var.name, " = "); show(io,var.value))
 Base.isequal(var1::Variable, var2::Variable) =
-    var1.value == var2.value && var1.name === var2.name && var1.isparam == var2.isparam &&
+    isequal(var1.value, var2.value) && var1.name === var2.name && var1.isparam == var2.isparam &&
     var1.is_captured_closure == var2.is_captured_closure
 Base.:(==)(var1::Variable, var2::Variable) = isequal(var1, var2)
+Base.hash(var::Variable, h::UInt) =
+    hash(var.value, hash(var.name, hash(var.isparam, hash(var.is_captured_closure, hash(:Variable, h)))))
 
 # A type that is unique to this package for which there are no valid operations
 struct Unassigned end
@@ -574,7 +600,7 @@ same_location(::AbstractBreakpoint, ::AbstractBreakpoint) = false
 
 function print_bp_condition(io::IO, cond::Condition)
     if cond !== nothing
-        if isa(cond, Tuple{Module, Expr}) && (expr = expr[2])
+        if isa(cond, Tuple{Module, Expr})
             cond = (cond[1], Base.remove_linenums!(copy(cond[2])))
         elseif isa(cond, Expr)
             cond = Base.remove_linenums!(copy(cond))

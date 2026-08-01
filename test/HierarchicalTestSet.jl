@@ -6,19 +6,17 @@ using Test
 # `testsettype` propagation.
 struct HierarchicalTestSet <: Test.AbstractTestSet
     __hierarchical_testset_inner__::Test.DefaultTestSet
+    __hierarchical_testset_path__::Vector{String}
 end
-HierarchicalTestSet(desc::AbstractString; kws...) =
-    HierarchicalTestSet(Test.DefaultTestSet(desc; kws...))
 
 # Duck-typed description lookup for the failure path renderer.
 # `Test.AbstractTestSet`'s public protocol is just `record` / `finish` —
 # `description` is an internal detail of `DefaultTestSet`, so we can't assume it on
 # arbitrary testsets (e.g. `TestRunner.TestRunnerTestSet`).
 #
-# `HierarchicalTestSet` is detected by the `:__hierarchical_testset_inner__` field name
-# rather than by type, because `setup.jl` is included by both `runtests.jl` (in `Main`) and
-# each `test_XXX.jl` (inside `module test_XXX`), so `HierarchicalTestSet` ends up defined as
-# distinct types per each test module and a single dispatch wouldn't cover both.
+# `HierarchicalTestSet` is detected by its field names rather than by type, because
+# `setup.jl` is included by both `runtests.jl` (in `Main`) and each `test_XXX.jl`
+# (inside `module test_XXX`), so it ends up defined as distinct types per test module.
 # Anything else falls back to the type name so the renderer never crashes on an
 # unrecognized wrapping testset.
 function ts_description(ts::Test.AbstractTestSet)
@@ -30,14 +28,31 @@ function ts_description(ts::Test.AbstractTestSet)
     return string(typeof(ts))
 end
 
+function ts_path(ts::Test.AbstractTestSet)
+    if hasfield(typeof(ts), :__hierarchical_testset_path__) && isdefined(ts, :__hierarchical_testset_path__)
+        path = getfield(ts, :__hierarchical_testset_path__)
+        path isa Vector{String} && return path
+    end
+    return String[ts_description(ts)]
+end
+
+function HierarchicalTestSet(desc::AbstractString; kws...)
+    path = String[]
+    if Test.get_testset_depth() != 0
+        append!(path, ts_path(Test.get_testset()))
+    end
+    push!(path, String(desc))
+    return HierarchicalTestSet(Test.DefaultTestSet(desc; kws...), path)
+end
+
 function Test.record(ts::HierarchicalTestSet, t::Union{Test.Fail, Test.Error};
                      print_result::Bool = Test.TESTSET_PRINT_ENABLE[])
     if print_result
-        stack = get(task_local_storage(), :__BASETESTNEXT__, Test.AbstractTestSet[])::Vector{Test.AbstractTestSet}
+        path = ts.__hierarchical_testset_path__
         printstyled(stdout, "[Testset Path] "; bold=true, color=:light_black)
-        n = length(stack)
-        for (i,s) in enumerate(stack)
-            printstyled(stdout, ts_description(s); bold=true)
+        n = length(path)
+        for (i, desc) in enumerate(path)
+            printstyled(stdout, desc; bold=true)
             i == n || printstyled(stdout, " > "; color=:light_black)
         end
         println(stdout)
@@ -53,9 +68,7 @@ function Test.record(ts::HierarchicalTestSet, t::Union{Test.Fail, Test.Error};
             end
         end
     end
-    push!(ts.__hierarchical_testset_inner__.results, t)
-    (Test.FAIL_FAST[] || ts.__hierarchical_testset_inner__.failfast) && throw(Test.FailFastError())
-    return t
+    return Test.record(ts.__hierarchical_testset_inner__, t; print_result=false)
 end
 Test.record(ts::HierarchicalTestSet, t) = Test.record(ts.__hierarchical_testset_inner__, t)
 Test.finish(ts::HierarchicalTestSet) = Test.finish(ts.__hierarchical_testset_inner__)

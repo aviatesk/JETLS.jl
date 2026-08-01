@@ -3,7 +3,8 @@ module Interpreter
 export LSInterpreter
 
 using JuliaSyntax: JuliaSyntax as JS
-using JET: CC, JET, JuliaInterpreter
+using Compiler: Compiler as CC
+using JET: JET, JuliaInterpreter
 using ..JETLS: AnalysisExecution, JETLS, JETLS_DEV_MODE, Server,
     get_source_text, is_cancelled, send_progress, yield_to_endpoint
 using ..JETLS.URIs2
@@ -98,6 +99,71 @@ mutable struct SignatureAnalysisProgress
     end
 end
 
+struct InterpreterSignatureAnalysisJob <: JETLS.AbstractSignatureAnalysisJob
+    interp::LSInterpreter
+    res::JET.VirtualProcessResult
+    progress::SignatureAnalysisProgress
+    index::Int
+    entrypoint::Union{Bool,Symbol}
+    cancellable_token::Union{Nothing,JETLS.CancellableToken}
+    n_sigs::Int
+    completion::Base.Event
+end
+
+function (job::InterpreterSignatureAnalysisJob)(server::Server)
+    (; interp, res, progress, index, entrypoint, cancellable_token, n_sigs) = job
+    try
+        if cancellable_token !== nothing && is_cancelled(cancellable_token.cancel_flag)
+            return
+        end
+        (; tt) = res.signature_infos[index]
+        # Create a new analyzer with fresh local caches (`inf_cache` and `analysis_results`)
+        # to avoid data races between concurrent signature analysis tasks
+        analyzer = JET.ToplevelAbstractAnalyzer(interp, JET.non_toplevel_concretized;
+            reset_report_target_modules = false,
+            refresh_local_cache = true)
+        inf_world = CC.get_inference_world(analyzer)
+        match = Base._which(tt;
+            # NOTE use the latest world counter with `method_table(analyzer)` unwrapped,
+            # otherwise it may use a world counter when this method isn't defined yet
+            method_table = CC.method_table(analyzer),
+            world = inf_world,
+            raise = false)
+        if (match !== nothing &&
+            (!(entrypoint isa Symbol) || # implies `analyze_from_definitions===true`
+             match.method.name === entrypoint))
+            # redirect keyword-slurping forwarders to the abstract keyword sorter,
+            # but only after the `entrypoint` check above sees the original method name
+            match = JETLS.redirect_keyword_slurp_match(analyzer, match, inf_world)
+            analyzer, result = JET.analyze_method_signature!(analyzer,
+                match.method, match.spec_types, match.sparams)
+            reports = JET.get_reports(analyzer, result)
+            isempty(reports) || @lock progress.reports_lock append!(
+                progress.reports, reports)
+        else
+            @static JETLS_DEV_MODE && @warn "Couldn't find a single method matching the signature" tt
+        end
+        done = (@atomic progress.done += 1)
+        if cancellable_token !== nothing
+            current_next = @atomic progress.next_interval
+            if done >= current_next
+                # Try to update next_interval (may race with other tasks)
+                @atomicreplace progress.next_interval current_next =>
+                    current_next + progress.interval
+                percentage = compute_percentage(done, n_sigs, 50) + 50
+                send_progress(server, cancellable_token.token,
+                    WorkDoneProgressReport(;
+                        cancellable = true,
+                        message = "$done / $n_sigs [signature analysis]",
+                        percentage))
+            end
+        end
+    catch err
+        @error "Error during signature analysis"
+        Base.showerror(stderr, err, catch_backtrace())
+    end
+end
+
 function compute_percentage(count, total, max=100)
     return min(round(Int, (count / total) * max), max)
 end
@@ -139,9 +205,9 @@ function JET.analyze_from_definitions!(interp::LSInterpreter, config::JET.Toplev
             original_definition = seen_sigs[tt]
             original_filename = original_definition.filename
             original_src = original_definition.src
-            original_lines = if src isa Core.CodeInfo
+            original_lines = if original_src isa Core.CodeInfo
                 JETLS.get_lines_in_src(original_filename, original_src)
-            elseif src isa Expr
+            elseif original_src isa Expr
                 JETLS.get_lines_in_ex(original_filename, original_src)
             else
                 @warn "Unsupported source type found" original_filename typeof(original_src)
@@ -171,60 +237,14 @@ function JET.analyze_from_definitions!(interp::LSInterpreter, config::JET.Toplev
 
     progress = SignatureAnalysisProgress(n_sigs)
 
-    tasks = map(1:n_sigs) do i
-        Threads.@spawn :default try
-            if cancellable_token !== nothing && is_cancelled(cancellable_token.cancel_flag)
-                return
-            end
-            (; tt) = res.signature_infos[i]
-            # Create a new analyzer with fresh local caches (`inf_cache` and `analysis_results`)
-            # to avoid data races between concurrent signature analysis tasks
-            analyzer = JET.ToplevelAbstractAnalyzer(interp, JET.non_toplevel_concretized;
-                reset_report_target_modules = false,
-                refresh_local_cache = true)
-            match = Base._which(tt;
-                # NOTE use the latest world counter with `method_table(analyzer)` unwrapped,
-                # otherwise it may use a world counter when this method isn't defined yet
-                method_table = CC.method_table(analyzer),
-                world = CC.get_inference_world(analyzer),
-                raise = false)
-            if (match !== nothing &&
-                (!(entrypoint isa Symbol) || # implies `analyze_from_definitions===true`
-                 match.method.name === entrypoint))
-                analyzer, result = JET.analyze_method_signature!(analyzer,
-                    match.method, match.spec_types, match.sparams)
-                reports = JET.get_reports(analyzer, result)
-                isempty(reports) || @lock progress.reports_lock append!(progress.reports, reports)
-            else
-                JETLS_DEV_MODE && @warn "Couldn't find a single method matching the signature" tt
-            end
-            done = (@atomic progress.done += 1)
-            if cancellable_token !== nothing
-                current_next = @atomic progress.next_interval
-                if done >= current_next
-                    # Try to update next_interval (may race with other tasks)
-                    @atomicreplace progress.next_interval current_next => current_next + progress.interval
-                    percentage = compute_percentage(done, n_sigs, 50) + 50
-                    send_progress(interp.server, cancellable_token.token,
-                        WorkDoneProgressReport(;
-                            cancellable = true,
-                            message = "$done / $n_sigs [signature analysis]",
-                            percentage))
-                end
-            end
-            yield() # Give other tasks a chance to run
-        catch e
-            @error "Error during signature analysis"
-            Base.showerror(stderr, e, catch_backtrace())
-        end
+    jobs = InterpreterSignatureAnalysisJob[]
+    for i = 1:n_sigs
+        push!(jobs, InterpreterSignatureAnalysisJob(
+            interp, res, progress, i, entrypoint,
+            cancellable_token, n_sigs, Base.Event()))
     end
 
-    for task in tasks
-        wait(task)
-        if cancellable_token !== nothing && is_cancelled(cancellable_token.cancel_flag)
-            break
-        end
-    end
+    JETLS.run_signature_analysis_jobs!(interp.server, jobs)
 
     append!(res.inference_error_reports, progress.reports)
 end

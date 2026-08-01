@@ -60,6 +60,16 @@ end
 instantiate_type_in_env(arg, spsig::UnionAll, spvals::Vector{Any}) =
     ccall(:jl_instantiate_type_in_env, Any, (Any, Any, Ptr{Any}), arg, spsig, spvals)
 
+# Native `UndefVarError`s carry the scope of the missing binding (`:local`,
+# `:static_parameter`, ...) since Julia 1.11; match that so `@test_throws` and other
+# field-wise comparisons against natively-thrown errors succeed.
+@static if VERSION >= v"1.11"
+    undef_var_error(sym::Symbol, scope::Symbol) = UndefVarError(sym, scope)
+else
+    undef_var_error(sym::Symbol, scope::Symbol) = UndefVarError(sym)
+end
+undef_sparam_error(sym::Symbol) = undef_var_error(sym, :static_parameter)
+
 function sparam_syms(meth::Method)
     s = Symbol[]
     sig = meth.sig
@@ -157,16 +167,32 @@ Tests whether `g` is equal to `GlobalRef(mod, name)`.
 """
 is_global_ref(@nospecialize(g), mod::Module, name::Symbol) = isa(g, GlobalRef) && g.mod === mod && g.name == name
 
-function is_global_ref_egal(@nospecialize(g), name::Symbol, @nospecialize(ref))
+function is_global_ref_egal(@nospecialize(g), name::Symbol, @nospecialize(ref), world::UInt=default_world())
     # Identifying GlobalRefs regardless of how the caller scopes them
     isa(g, GlobalRef) || return false
     g.name === name || return false
-    gref = getglobal(g.mod, g.name)
+    # Resolve in `world`, not the ambient task world (which may predate the binding),
+    # and treat an unresolvable binding as not-equal rather than throwing.
+    invoke_in_world(world, isdefinedglobal, g.mod, g.name) || return false
+    gref = invoke_in_world(world, getglobal, g.mod, g.name)
     return gref === ref
 end
 
 is_quotenode(@nospecialize(q), @nospecialize(val)) = isa(q, QuoteNode) && q.value == val
 is_quotenode_egal(@nospecialize(q), @nospecialize(val)) = isa(q, QuoteNode) && q.value === val
+
+function is_define_method_call(@nospecialize(stmt))
+    @static isdefinedglobal(Core, :define_method) || return false
+    isexpr(stmt, :call) || return false
+    f = stmt.args[1]
+    return f === Core.define_method || is_global_ref(f, Core, :define_method) ||
+           is_quotenode_egal(f, Core.define_method)
+end
+
+is_methoddef1(@nospecialize(stmt)) = isexpr(stmt, :method, 1) ||
+                                      (is_define_method_call(stmt) && length(stmt.args) == 3)
+is_methoddef3(@nospecialize(stmt)) = isexpr(stmt, :method, 3) ||
+                                      (is_define_method_call(stmt) && length(stmt.args) == 5)
 
 function is_quoted_type(@nospecialize(a), name::Symbol)
     if isa(a, QuoteNode)
@@ -469,7 +495,7 @@ getfile(frame::Frame, pc=frame.pc) = getfile(frame.framecode, pc)
 function codelocation(code::CodeInfo, idx::Int)
     idx′ = idx
     # look ahead if we are on a meta line
-    while idx′ < length(code.code)
+    while idx′ <= length(code.code)
         codeloc = codelocs(code, idx′)
         codeloc == 0 || return codeloc
         ex = code.code[idx′]
@@ -744,6 +770,17 @@ function extract_usage!(s::Set{Symbol}, @nospecialize expr)
     return s
 end
 
+function flatten_toplevel!(args::Vector{Any}, @nospecialize(ex))
+    if isexpr(ex, :toplevel)
+        for a in (ex::Expr).args
+            flatten_toplevel!(args, a)
+        end
+    else
+        push!(args, ex)
+    end
+    return args
+end
+
 function eval_code(frame::Frame, command::AbstractString)
     expr = Base.parse_input_line(command)
     expr === nothing && return nothing
@@ -752,10 +789,11 @@ end
 function eval_code(frame::Frame, expr::Expr)
     code = frame.framecode
     data = frame.framedata
-    isexpr(expr, :toplevel) && (expr = expr.args[end])
-
     if isexpr(expr, :toplevel)
-        expr = Expr(:block, expr.args...)
+        # Flatten (possibly nested) `:toplevel` wrappers into a single block:
+        # `parse_input_line` wraps multi-statement input in a nested `:toplevel`, and an
+        # embedded `:toplevel` cannot be lowered inside the `let` built below.
+        expr = Expr(:block, flatten_toplevel!(Any[], expr)...)
     end
 
     used_symbols = Set{Symbol}((Symbol("#self#"),))
@@ -775,11 +813,13 @@ function eval_code(frame::Frame, expr::Expr)
             Expr(:tuple, res, Expr(:tuple, [v.name for v in vars]...))
         ))
     eval_res, res = Core.eval(moduleof(frame), eval_expr)
-    j = 1
     for (i, v) in enumerate(vars)
         if v.isparam
-            data.sparams[j] = res[i]
-            j += 1
+            # `vars` only holds the variables used by `expr`, so look the static parameter
+            # up by name; a running counter would write into the wrong slot whenever an
+            # earlier sparam is not referenced.
+            j = findfirst(==(v.name), sparam_syms(code.scope::Method))
+            j === nothing || (data.sparams[j] = res[i])
         elseif v.is_captured_closure
             selfidx = findfirst(v -> v.name === Symbol("#self#"), vars)
             @assert selfidx !== nothing
@@ -794,7 +834,14 @@ function eval_code(frame::Frame, expr::Expr)
             idx = argmax(data.last_reference[slot_indices])
             slot_idx = slot_indices[idx]
             data.last_reference[slot_idx] = (frame.assignment_counter += 1)
-            data.locals[slot_idx] = Some{Any}(v.value isa Core.Box ? Core.Box(res[i]) : res[i])
+            if v.value isa Core.Box
+                # Mutate the existing Box in place: closures that captured the variable
+                # hold a reference to this same Box and must observe the new value.
+                v.value.contents = res[i]
+                data.locals[slot_idx] = Some{Any}(v.value)
+            else
+                data.locals[slot_idx] = Some{Any}(res[i])
+            end
         end
     end
     eval_res
@@ -830,7 +877,14 @@ function Base.StackTraces.StackFrame(frame::Frame)
         argt = Tuple{mapany(_Typeof, method_args)...}
         sig = method.sig
         atype, sparams = ccall(:jl_type_intersection_with_env, Any, (Any, Any), argt, sig)::SimpleVector
-        mi = Core.Compiler.specialize_method(method, atype, sparams::SimpleVector)
+        if atype === Union{}
+            # The recorded argument values may not match the method signature
+            # (e.g. while displaying a MethodError); `specialize_method` would
+            # throw on an empty intersection (issue #573).
+            mi = method
+        else
+            mi = Core.Compiler.specialize_method(method, atype, sparams::SimpleVector)
+        end
         fname = method.name
     else
         mi = frame.framecode.src

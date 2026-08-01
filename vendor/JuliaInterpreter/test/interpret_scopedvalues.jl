@@ -61,4 +61,16 @@ let frame = JuliaInterpreter.enter_call(symarg_func)
     @test "abcsym" == @with sval1 => 2 JuliaInterpreter.finish_and_return!(NonRecursiveInterpreter(), frame)
 end
 
+# ScopedValue state must not leak when an exception unwinds out of an @with block
+const sval_leak = ScopedValue(1)
+sval_leak_f() = try
+    @with sval_leak => 2 begin
+        error("boom")
+    end
+catch
+    sval_leak[]
+end
+@test sval_leak_f() == 1
+@test 1 == @interpret sval_leak_f()
+
 end # module interpret_scopedvalues

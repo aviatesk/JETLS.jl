@@ -1,14 +1,13 @@
 module Closure2Opaque
 
-using ..JETLS: JL, JS, SyntaxTreeC, TraversalReturn, get_name_val, is_core_svec_call,
-    traverse, var_id
+using ..JETLS: JL, JS, SyntaxTree, get_name_val, var_id
 
 export rewrite_local_closures_to_opaque
 
 """
     rewrite_local_closures_to_opaque(
-            ctx::JL.VariableAnalysisContext, st3::SyntaxTreeC
-        ) -> SyntaxTreeC
+            ctx::JL.VariableAnalysisContext, st3::SyntaxTree
+        ) -> SyntaxTree
 
 Pre-lowering rewrite that turns single-method local closure definitions
 (`K"function_decl"` paired with a sibling `K"method_defs"`) into the equivalent
@@ -21,72 +20,88 @@ into inference context module (which the regular conversion would require).
 
 # Limitations
 
-- Multi-method bindings (a single name with multiple `K"method_defs"` anywhere in `st3`)
-  can't be represented as a single OC, so they fall through to the regular synthetic-struct
-  path. A whole-tree pre-pass (`collect_multi_method_bindings`) identifies these so the
-  per-block rewrite can skip every method definition for such bindings.
-- Bodies whose `K"method_defs"` shape doesn't match the expected
-  `(block (block (= sig_ssa svec_call) (method ...) (removable ...)))`
-  template (e.g. generated functions) are likewise left untouched.
+- Local closures with multiple `K"method"` nodes for one `ClosureKey` can't be
+  represented as a single OC, so they fall through to the regular synthetic-struct
+  path. A whole-tree pre-pass (`collect_multi_method_bindings`) counts methods per
+  key so the per-block rewrite can skip every definition of that closure.
+- Bodies whose `K"method_defs"` shape doesn't contain exactly one method, or whose
+  method declares its own static parameters (e.g. generated or generic local methods),
+  are likewise left untouched.
 
 # Usage
 
-Designed to be called by `TypeAnnotation.infer_toplevel_tree` against a `K"toplevel"` /
-`K"block"` `SyntaxTreeC` produced by `JL.resolve_scopes`, before `JL.convert_closures` runs.
+Designed to be called by `TypeAnnotation.infer_toplevel_tree` against the `K"lambda"`
+root produced by `JL.resolve_scopes` (its `lambda_bindings` seeds the enclosing-lambda
+tracking), before `JL.convert_closures` runs.
 The rewrite is non-destructive: nodes that don't match are returned unchanged, so the
 pipeline downstream sees an equivalent tree with only the eligible closures swapped.
 """
-function rewrite_local_closures_to_opaque(ctx::JL.VariableAnalysisContext, st3::SyntaxTreeC)
-    multis = collect_multi_method_bindings(ctx, st3)
-    return _rewrite_local_closures_to_opaque(ctx, st3, multis)
+function rewrite_local_closures_to_opaque(ctx::JL.VariableAnalysisContext, st3::SyntaxTree)
+    lambda_scope_id = JL.lambda_bindings(st3[1]).scope_id
+    multis = collect_multi_method_bindings(ctx, st3, lambda_scope_id)
+    return _rewrite_local_closures_to_opaque(ctx, st3, multis, lambda_scope_id)
 end
 
-function _rewrite_local_closures_to_opaque(ctx::JL.VariableAnalysisContext, st3::SyntaxTreeC, multis::Set{Int})
-    if JS.kind(st3) === JS.K"block"
-        return rewrite_closure_block(ctx, st3, multis)
+function _rewrite_local_closures_to_opaque(
+        ctx::JL.VariableAnalysisContext, st3::SyntaxTree,
+        multis::Set{JL.ClosureKey}, lambda_scope_id::Int
+    )
+    k = JS.kind(st3)
+    if k === JS.K"block"
+        return rewrite_closure_block(ctx, st3, multis, lambda_scope_id)
+    elseif k === JS.K"lambda"
+        lambda_scope_id = JL.lambda_bindings(st3[1]).scope_id
     end
-    return JS.mapchildren(c::SyntaxTreeC -> _rewrite_local_closures_to_opaque(ctx, c, multis), ctx, st3)
+    let lambda_scope_id=lambda_scope_id
+        return JS.mapchildren(st3) do c::SyntaxTree
+            _rewrite_local_closures_to_opaque(ctx, c, multis, lambda_scope_id)
+        end
+    end
 end
 
 function rewrite_closure_block(
-        ctx::JL.VariableAnalysisContext, blk3::SyntaxTreeC, multis::Set{Int}
+        ctx::JL.VariableAnalysisContext, blk3::SyntaxTree,
+        multis::Set{JL.ClosureKey}, lambda_scope_id::Int
     )
     children_old = JS.children(blk3)
     n = length(children_old)
-    new_children = JS.SyntaxList(JS.syntax_graph(ctx))
+    new_children = JS.SyntaxList()
     consumed = falses(n)
     for i = 1:n
         consumed[i] && continue
         child = children_old[i]
-        if JS.kind(child) === JS.K"function_decl" && is_local_closure_decl(ctx, child)
-            func_name = child[1]
-            md_idx = find_matching_method_defs(children_old, i, var_id(func_name), consumed)
-            if md_idx !== nothing && !(var_id(func_name) in multis)
+        func_key = JS.kind(child) === JS.K"function_decl" ?
+            local_closure_key(ctx, child, lambda_scope_id) : nothing
+        if func_key !== nothing
+            md_idx = find_matching_method_defs(
+                children_old, i, func_key.binding, consumed)
+            if md_idx !== nothing && func_key ∉ multis
                 method_defs = children_old[md_idx]
                 oc = try_build_oc_assignment(ctx, child, method_defs)
                 if oc !== nothing
-                    push!(new_children, _rewrite_local_closures_to_opaque(ctx, oc, multis))
+                    push!(new_children,
+                        _rewrite_local_closures_to_opaque(ctx, oc, multis, lambda_scope_id))
                     consumed[md_idx] = true
                     continue
                 end
             end
         end
-        push!(new_children, _rewrite_local_closures_to_opaque(ctx, child, multis))
+        push!(new_children,
+            _rewrite_local_closures_to_opaque(ctx, child, multis, lambda_scope_id))
     end
     return JL.@ast ctx blk3 [JS.K"block" new_children...]
 end
 
-# Collect `var_id`s that resolve to more than one method, plus any helper closure
-# bindings reachable from multi-method *closure* wrappers.
+# Collect closure keys that resolve to more than one method, plus any helper
+# closures reachable from multi-method *closure* wrappers.
 #
-# Multi-method detection counts `K"method"` nodes per `var_id` across the whole
-# tree. JL has two ways to express multi-method bindings — multiple sibling
+# Multi-method detection counts `K"method"` nodes per `ClosureKey` across the
+# whole tree. JL has two ways to express multi-method bindings — multiple sibling
 # `K"method_defs"` (e.g. kwarg wrappers, `f(::T1)` + `f(::T2)`) or a single
 # `K"method_defs"` packing multiple methods (e.g. default-positional-arg) — and
-# both reduce to the same `K"method"` count once flattened. `K"method"` is JL-
-# specific to method-definition bodies, so a whole-tree count is unambiguous;
-# nested closures' methods are tagged under their own (inner) `var_id` and don't
-# bleed into outer counts.
+# both reduce to the same `K"method"` count once flattened. The enclosing lambda
+# in `ClosureKey` prevents definitions of the same binding in nested lambdas from
+# bleeding into each other's counts.
 #
 # The reachability propagation handles kwarg closures: JL splits `f = (x; kw=1) -> ...`
 # into a multi-method wrapper `f` (positional dispatch + kwsorter) plus a single-method
@@ -99,68 +114,98 @@ end
 # top-level function with default positional args or kwargs) never goes through
 # synthetic-struct closure conversion, so single-method closures inside its bodies are
 # still safely rewritable to OCs and must not be tagged.
-function collect_multi_method_bindings(ctx::JL.VariableAnalysisContext, st3::SyntaxTreeC)
-    method_defs_by_vid = Dict{Int,Vector{SyntaxTreeC}}()
-    methods_per_vid = Dict{Int,Int}()
-    multis = Set{Int}()
-    stack = SyntaxTreeC[st3]
+function collect_multi_method_bindings(
+        ctx::JL.VariableAnalysisContext, st3::SyntaxTree, root_scope_id::Int
+    )
+    method_defs_by_key = Dict{JL.ClosureKey,Vector{SyntaxTree}}()
+    methods_per_key = Dict{JL.ClosureKey,Int}()
+    multis = Set{JL.ClosureKey}()
+    stack = Tuple{SyntaxTree,Int}[(st3, root_scope_id)]
     while !isempty(stack)
-        node = pop!(stack)
+        node, lambda_scope_id = pop!(stack)
         k = JS.kind(node)
-        if ((k === JS.K"method" || k === JS.K"method_defs") &&
-            JS.numchildren(node) >= 1 && JS.kind(node[1]) === JS.K"BindingId")
-            vid = var_id(node[1])
+        if k === JS.K"lambda"
+            lambda_scope_id = JL.lambda_bindings(node[1]).scope_id
+        elseif ((k === JS.K"method" || k === JS.K"method_defs") &&
+                JS.numchildren(node) >= 1 && JS.kind(node[1]) === JS.K"BindingId")
+            key = JL.ClosureKey(var_id(node[1]), lambda_scope_id)
             if k === JS.K"method"
-                n = (methods_per_vid[vid] = get(methods_per_vid, vid, 0) + 1)
-                n == 2 && push!(multis, vid) # fires exactly once per binding
+                n = (methods_per_key[key] = get(methods_per_key, key, 0) + 1)
+                n == 2 && push!(multis, key)
             else
-                push!(get!(() -> SyntaxTreeC[], method_defs_by_vid, vid), node)
+                push!(get!(() -> SyntaxTree[], method_defs_by_key, key), node)
             end
         end
         if !JS.is_leaf(node)
             for c in JS.children(node)
-                push!(stack, c)
+                push!(stack, (c, lambda_scope_id))
             end
         end
     end
-    worklist = Int[vid for vid in multis if haskey(ctx.closure_bindings, vid)]
+    worklist = JL.ClosureKey[key for key in multis if haskey(ctx.closure_bindings, key)]
+    candidate_bids = Set{Int}(key.binding for key in keys(method_defs_by_key))
     while !isempty(worklist)
-        vid = pop!(worklist)
-        for md in method_defs_by_vid[vid]
-            collect_referenced_closures!(md, multis, worklist, method_defs_by_vid)
+        key = pop!(worklist)
+        for md in method_defs_by_key[key]
+            collect_referenced_closures!(
+                ctx, md, key.lam, multis, worklist, method_defs_by_key, candidate_bids)
         end
     end
     return multis
 end
 
 function collect_referenced_closures!(
-        root::SyntaxTreeC, multis::Set{Int}, worklist::Vector{Int},
-        method_defs_by_vid::Dict{Int,Vector{SyntaxTreeC}}
+        ctx::JL.VariableAnalysisContext, root::SyntaxTree, lambda_scope_id::Int,
+        multis::Set{JL.ClosureKey}, worklist::Vector{JL.ClosureKey},
+        method_defs_by_key::Dict{JL.ClosureKey,Vector{SyntaxTree}},
+        candidate_bids::Set{Int}
     )
-    stack = SyntaxTreeC[root]
+    stack = Tuple{SyntaxTree,Int}[(c, lambda_scope_id) for c in JS.children(root)]
     while !isempty(stack)
-        node = pop!(stack)
-        if JS.kind(node) === JS.K"BindingId"
-            id = var_id(node)
-            if id ∉ multis && haskey(method_defs_by_vid, id)
-                push!(multis, id)
-                push!(worklist, id)
+        node, lambda_scope_id = pop!(stack)
+        k = JS.kind(node)
+        if k === JS.K"function_decl" || k === JS.K"method_defs"
+            # Nested definitions need no descent: their sibling `[local]`/`[removable]`
+            # BindingId occurrences tag them, and tagged ones are walked via the worklist.
+            continue
+        elseif k === JS.K"lambda"
+            lambda_scope_id = JL.lambda_bindings(node[1]).scope_id
+        elseif k === JS.K"BindingId" && var_id(node) in candidate_bids
+            key = find_enclosing_closure_key(ctx, var_id(node), lambda_scope_id)
+            if key !== nothing && key ∉ multis && haskey(method_defs_by_key, key)
+                push!(multis, key)
+                push!(worklist, key)
             end
         end
         if !JS.is_leaf(node)
             for c in JS.children(node)
-                push!(stack, c)
+                push!(stack, (c, lambda_scope_id))
             end
         end
     end
     return nothing
 end
 
-function is_local_closure_decl(ctx::JL.VariableAnalysisContext, fd::SyntaxTreeC)
-    JS.numchildren(fd) >= 1 || return false
+function find_enclosing_closure_key(
+        ctx::JL.VariableAnalysisContext, binding_id::Int, lambda_scope_id::Int
+    )
+    while true
+        key = JL.ClosureKey(binding_id, lambda_scope_id)
+        haskey(ctx.closure_bindings, key) && return key
+        parent = @something JL.parent(ctx, ctx.scopes[lambda_scope_id]) return nothing
+        lambda_scope_id = JL.enclosing_lambda(ctx, parent).id
+    end
+end
+
+# Returns the `ClosureKey` for a `function_decl` of a local closure, `nothing` otherwise.
+function local_closure_key(
+        ctx::JL.VariableAnalysisContext, fd::SyntaxTree, lambda_scope_id::Int
+    )
+    JS.numchildren(fd) >= 1 || return nothing
     func_name = fd[1]
-    return JS.kind(func_name) === JS.K"BindingId" &&
-        haskey(ctx.closure_bindings, var_id(func_name))
+    JS.kind(func_name) === JS.K"BindingId" || return nothing
+    key = JL.ClosureKey(var_id(func_name), lambda_scope_id)
+    return haskey(ctx.closure_bindings, key) ? key : nothing
 end
 
 function find_matching_method_defs(
@@ -182,34 +227,38 @@ function find_matching_method_defs(
     return nothing
 end
 
-function is_method_defs_for(c::SyntaxTreeC, target_var_id::Int)
-    return JS.kind(c) === JS.K"method_defs" && JS.numchildren(c) >= 2 &&
+function is_method_defs_for(c::SyntaxTree, target_var_id::Int)
+    return JS.kind(c) === JS.K"method_defs" && JS.numchildren(c) == 3 &&
         JS.kind(c[1]) === JS.K"BindingId" && var_id(c[1]) == target_var_id
 end
 
-# `method_defs[2]` is shaped like
-#   (block (block (= sig_ssa (call core.svec inner_argtypes_svec sparams_svec functionloc))
-#                 (method func_name sig_ssa lambda)
-#                 (removable sig_ssa)))
-# Returns `nothing` if the structure doesn't match (e.g. generated functions).
+# `method_defs` is shaped like
+#   (method_defs func_name (block typevar_setup...)
+#     (block (block (method func_name inner_argtypes_svec lambda))))
+# Returns `nothing` for non-single-method scaffolding and methods with their own
+# static parameters.
 function try_build_oc_assignment(
-        ctx::JL.VariableAnalysisContext, fd::SyntaxTreeC, method_defs::SyntaxTreeC
+        ctx::JL.VariableAnalysisContext, fd::SyntaxTree, method_defs::SyntaxTree
     )
     func_name = fd[1]
-    method_node, sig_call = find_method_and_sig_call(method_defs[2], var_id(func_name))
-    method_node === nothing && return nothing
-    sig_call === nothing && return nothing
-    JS.numchildren(sig_call) >= 4 || return nothing
-    inner_argtypes = sig_call[2]
-    functionloc = sig_call[4]
+    typevars = method_defs[2]
+    JS.kind(typevars) === JS.K"block" || return nothing
+    JS.numchildren(typevars) == 0 || return nothing
+
+    method_node = @something find_single_method_node(
+        method_defs[3], var_id(func_name)) return nothing
+    inner_argtypes = method_node[2]
     JS.kind(inner_argtypes) === JS.K"call" || return nothing
     # `core.svec` callee + at least the function-type arg
     JS.numchildren(inner_argtypes) >= 2 || return nothing
+    callee = inner_argtypes[1]
+    JS.kind(callee) === JS.K"core" && get_name_val(callee) == "svec" || return nothing
+    functionloc = JL.@ast ctx method_node (::JS.K"SourceLocation")
 
     # The inner argtypes svec is `core.svec(function_type, user_arg_types...)`.
     # Skip the `core.svec` callee (idx 1) and the function-type marker (idx 2);
     # the rest are the user-visible argtypes.
-    user_argtypes = JS.SyntaxList(JS.syntax_graph(ctx))
+    user_argtypes = JS.SyntaxList()
     for i = 3:JS.numchildren(inner_argtypes)
         push!(user_argtypes, inner_argtypes[i])
     end
@@ -248,42 +297,21 @@ function try_build_oc_assignment(
     return JL.@ast ctx method_defs [JS.K"=" func_name oc]
 end
 
-# `sig_call` must be matched by `var_id` (not "first svec_call DFS finds"):
-# nested closures embed the inner OC's `method_defs` inside the outer OC's lambda body,
-# so an unconstrained DFS attributes the inner's user-argtypes to the outer OC.
-function find_method_and_sig_call(root::SyntaxTreeC, target_var_id::Int)
-    method_node = @something find_method_node(root, target_var_id) return (nothing, nothing)
-    JS.numchildren(method_node) >= 2 || return (method_node, nothing)
-    sig_ref = method_node[2]
-    JS.kind(sig_ref) === JS.K"BindingId" || return (method_node, nothing)
-    sig_call = find_sig_call_for(root, var_id(sig_ref))
-    return (method_node, sig_call)
-end
-
-function find_method_node(root::SyntaxTreeC, target_var_id::Int)
-    return traverse(root) do node::SyntaxTreeC
-        if (JS.kind(node) === JS.K"method" && JS.numchildren(node) == 3 &&
-            JS.kind(node[1]) === JS.K"BindingId" && var_id(node[1]) == target_var_id)
-            return TraversalReturn(node; terminate=true)
-        end
-        nothing
+function find_single_method_node(root::SyntaxTree, target_var_id::Int)
+    node = root
+    while JS.kind(node) === JS.K"block" && JS.numchildren(node) == 1
+        node = node[1]
     end
-end
-
-function find_sig_call_for(root::SyntaxTreeC, sig_var_id::Int)
-    return traverse(root) do node::SyntaxTreeC
-        if (JS.kind(node) === JS.K"=" && JS.numchildren(node) == 2 &&
-            JS.kind(node[1]) === JS.K"BindingId" && var_id(node[1]) == sig_var_id &&
-            JS.kind(node[2]) === JS.K"call" && is_core_svec_call(node[2]))
-            return TraversalReturn(node[2]; terminate=true)
-        end
-        nothing
+    if (JS.kind(node) === JS.K"method" && JS.numchildren(node) == 3 &&
+        JS.kind(node[1]) === JS.K"BindingId" && var_id(node[1]) == target_var_id)
+        return node
     end
+    return nothing
 end
 
 # Detect a vararg-typed entry in the user-argtypes svec. JL lowers both `(xs...)`
 # and `(xs::T...)` to `(call core.apply_type core.Vararg <type-arg>)`.
-function argtype_is_vararg(t::SyntaxTreeC)
+function argtype_is_vararg(t::SyntaxTree)
     JS.kind(t) === JS.K"call" && JS.numchildren(t) >= 2 || return false
     callee = t[1]
     JS.kind(callee) === JS.K"core" && get_name_val(callee) == "apply_type" || return false

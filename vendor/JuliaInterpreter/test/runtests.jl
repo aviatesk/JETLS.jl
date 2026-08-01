@@ -10,6 +10,10 @@ Aqua.test_all(JuliaInterpreter; deps_compat=(
     check_extras=(ignore=[:Dates, :Distributed, :LinearAlgebra, :Logging, :Mmap, :SHA, :SparseArrays, :Test],),
 ))
 
+if isdefined(Test, :detect_closure_boxes)
+    @test isempty(Test.detect_closure_boxes(JuliaInterpreter))
+end
+
 @testset "ExplicitImports" begin
     # #Internal is dynamically included and cannot be statically analyzed.
     # The package uses non-public Core/Base/Compiler internals throughout, so the
@@ -17,6 +21,11 @@ Aqua.test_all(JuliaInterpreter; deps_compat=(
     # Four Core.Compiler.X accesses (Val, getindex, iterate, specialize_method) refer
     # to distinct objects on Julia 1.10 vs 1.12, so all_qualified_accesses_via_owners
     # is suppressed rather than scattering @static VERSION guards through the source.
+    # On 1.14-DEV nightlies `Some(Core.TypeofBottom)` currently throws a MethodError
+    # (fallout of the JuliaLang/julia#61915 `Type{}` refactor), which crashes
+    # ExplicitImports' `trygetproperty` when it probes the `Core.TypeofBottom`
+    # qualified access in src/optimize.jl. Skip until that upstream regression is fixed.
+    VERSION >= v"1.14.0-DEV" ||
     test_explicit_imports(JuliaInterpreter;
                           ignore                            = (JuliaInterpreter.var"#Internal",),
                           all_explicit_imports_are_public   = false,

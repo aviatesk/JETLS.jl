@@ -164,10 +164,10 @@ end
 
 function type_inlay_hints!(
         inlay_hints::Vector{InlayHint}, state::ServerState, fi::FileInfo,
-        st0_top::SyntaxTreeC, uri::URI, range::Range
+        st0_top::SyntaxTree, uri::URI, range::Range
     )
     nontrivia_index = build_nontrivia_byte_index(fi.parsed_stream)
-    iterate_toplevel_tree(st0_top) do st0::SyntaxTreeC
+    iterate_toplevel_tree(st0_top) do st0::SyntaxTree
         # Skip toplevel def whose source is fully outside of the requested visible viewport.
         startpos = offset_to_xy(fi, JS.first_byte(st0))
         endpos = offset_to_xy(fi, JS.last_byte(st0) + 1)
@@ -196,7 +196,7 @@ end
 # traversal doesn't expose parent links. Record role-specific ranges first,
 # then consult them during postorder emission.
 function collect_type_inlay_hints!(
-        inlay_hints::Vector{InlayHint}, st0::SyntaxTreeC, ctx::InferredTreeContext,
+        inlay_hints::Vector{InlayHint}, st0::SyntaxTree, ctx::InferredTreeContext,
         fi::FileInfo, uri::URI, range::Range, postprocessor::LSPostProcessor,
         nontrivia_index::Vector{Int} = build_nontrivia_byte_index(fi.parsed_stream);
         # Keep inline labels glanceable even for deeply nested inferred types.
@@ -215,7 +215,7 @@ function collect_type_inlay_hints!(
     # same source range; avoid duplicate labels like `::String::String`.
     emitted_ranges = Set{UnitRange{Int}}()
     label_cache = IdDict{Any,String}()
-    traverse(st0) do node::SyntaxTreeC
+    traverse(st0) do node::SyntaxTree
         JS.kind(node) === JS.K"Value" && return nothing
         if JS.kind(node) === JS.K"." && JS.numchildren(node) >= 2
             push!(paren_wrap_ranges, JS.byte_range(node[1]))
@@ -230,7 +230,7 @@ function collect_type_inlay_hints!(
             # as `(x::T)^2`), but the rendered text looks visually ambiguous —
             # a reader can mis-group as `x::(T^2)`. Wrap the LHS operand to
             # make the grouping explicit: `(x::T)^2`.
-            if JS.is_infix_op_call(node) && JS.numchildren(node) >= 3
+            if is_source_infix_op_call(node) && JS.numchildren(node) >= 3
                 callee_rng = JS.byte_range(node[1])
                 if length(callee_rng) == 1 &&
                         fi.parsed_stream.textbuf[first(callee_rng)] == UInt8('^')
@@ -331,7 +331,7 @@ function collect_type_inlay_hints!(
         end
     end
 
-    traverse(st0, #=postorder=#true) do node::SyntaxTreeC
+    traverse(st0, #=postorder=#true) do node::SyntaxTree
         k = JS.kind(node)
         k === JS.K"Value" && return nothing
 
@@ -416,15 +416,15 @@ function collect_type_inlay_hints!(
         # or where trailing field/index access must stay outside the assertion.
         is_dp = byterng in paren_wrap_ranges
         is_infix_call = k in JS.KSet"call dotcall" &&
-            (JS.is_infix_op_call(node) || JS.is_postfix_op_call(node) ||
-             JS.is_prefix_op_call(node))
+            (is_source_infix_op_call(node) || is_source_postfix_op_call(node) ||
+             is_source_prefix_op_call(node))
         is_noparen_macro = k === JS.K"macrocall" && noparen_macrocall(node)
         is_logical_or_chained = k in JS.KSet"&& || comparison" ||
             (k === JS.K"if" && is_ternary(node, fi))
         needs_wrap = is_infix_call || is_noparen_macro || is_logical_or_chained || is_open_tuple(node)
         # Reuse decorative source parens when possible; for prefix unary calls,
         # start the wrap at the argument so the operator remains outside.
-        is_prefix_unary = k in JS.KSet"call dotcall" && JS.is_prefix_op_call(node) &&
+        is_prefix_unary = k in JS.KSet"call dotcall" && is_source_prefix_op_call(node) &&
             JS.numchildren(node) >= 2
         paren_start_node = is_prefix_unary ? node[2] : node
         if (needs_wrap || is_dp) && is_decoratively_parenthesized(node, fi)
@@ -453,7 +453,7 @@ end
 
 # Detect function-definition shapes under decorating macrocalls. Unlike
 # `funcdef_call_node`, this accepts user-written return annotations.
-function is_funcdef_decl(node::SyntaxTreeC)
+function is_funcdef_decl(node::SyntaxTree)
     k = JS.kind(node)
     if k === JS.K"function" || k === JS.K"macro"
         return true
@@ -471,14 +471,14 @@ function is_funcdef_decl(node::SyntaxTreeC)
 end
 
 # Locate the `K"="` iteration binding inside a comprehension generator/filter.
-function comprehension_iter_spec(node::SyntaxTreeC)
+function comprehension_iter_spec(node::SyntaxTree)
     JS.numchildren(node) >= 2 || return nothing
     spec = node[2]
     JS.kind(spec) === JS.K"filter" && JS.numchildren(spec) >= 2 && (spec = spec[2])
     return JS.kind(spec) === JS.K"=" ? spec : nothing
 end
 
-function funcdef_call_node(funcdef::SyntaxTreeC)
+function funcdef_call_node(funcdef::SyntaxTree)
     JS.numchildren(funcdef) >= 1 || return nothing
     sig = funcdef[1]
     while JS.kind(sig) === JS.K"where"
@@ -492,14 +492,14 @@ end
 
 # Byte range of the user-written signature, including `where` and return-type
 # wrappers, for suppressing hints inside declaration syntax.
-function funcdef_sig_range(funcdef::SyntaxTreeC)
+function funcdef_sig_range(funcdef::SyntaxTree)
     JS.numchildren(funcdef) >= 1 || return nothing
     sig = funcdef[1]
     JS.kind(unwrap_funcdef_sig(sig)) === JS.K"call" || return nothing
     return JS.byte_range(sig)
 end
 
-function should_annotate_type(node::SyntaxTreeC, @nospecialize(typ))
+function should_annotate_type(node::SyntaxTree, @nospecialize(typ))
     typ isa Core.Const || return true
     val = typ.val
     is_const_literal_node(node, val) && return false
@@ -507,7 +507,7 @@ function should_annotate_type(node::SyntaxTreeC, @nospecialize(typ))
     return true
 end
 
-function is_const_literal_node(node::SyntaxTreeC, @nospecialize(val))
+function is_const_literal_node(node::SyntaxTree, @nospecialize(val))
     k = JS.kind(node)
     JS.is_literal(k) && return true
     k === JS.K"inert" && return true
@@ -530,7 +530,7 @@ is_const_binding_value(@nospecialize val) =
 
 # Register both variables and destructuring wrappers so the regular postorder
 # pass doesn't emit duplicate or wrapper-level iteration hints.
-function register_for_loop_vars!(callee_ranges::Set{UnitRange{Int}}, lhs::SyntaxTreeC)
+function register_for_loop_vars!(callee_ranges::Set{UnitRange{Int}}, lhs::SyntaxTree)
     k = JS.kind(lhs)
     if k === JS.K"Identifier"
         push!(callee_ranges, JS.byte_range(lhs))
@@ -554,7 +554,7 @@ end
 # `Any` entries on simple parameters are skipped (an unrefined slot adds no information
 # over the bare name); user-annotated (`K"::"`) parameters are left untouched.
 function emit_lambda_param_hints!(
-        inlay_hints::Vector{InlayHint}, lambda::SyntaxTreeC,
+        inlay_hints::Vector{InlayHint}, lambda::SyntaxTree,
         ctx::InferredTreeContext, fi::FileInfo, uri::URI, range::Range,
         nontrivia_index::Vector{Int}, postprocessor::LSPostProcessor,
         emitted_ranges::Set{UnitRange{Int}}, label_cache::IdDict{Any,String},
@@ -609,7 +609,7 @@ function emit_lambda_param_hints!(
 end
 
 function emit_lambda_param_hint!(
-        inlay_hints::Vector{InlayHint}, p::SyntaxTreeC, ctx::InferredTreeContext,
+        inlay_hints::Vector{InlayHint}, p::SyntaxTree, ctx::InferredTreeContext,
         fi::FileInfo, uri::URI, range::Range, nontrivia_index::Vector{Int},
         postprocessor::LSPostProcessor, label_cache::IdDict{Any,String},
         maxdepth::Int, maxwidth::Int, lazy_tooltips::Bool
@@ -631,7 +631,7 @@ end
 # and by destructured closure parameters. `K"..."` (slurp) and `K"::"` (user-annotated)
 # components are left untouched.
 function emit_destructure_var_hints!(
-        inlay_hints::Vector{InlayHint}, lhs::SyntaxTreeC,
+        inlay_hints::Vector{InlayHint}, lhs::SyntaxTree,
         ctx::InferredTreeContext, fi::FileInfo, uri::URI, range::Range,
         nontrivia_index::Vector{Int}, postprocessor::LSPostProcessor,
         emitted_ranges::Set{UnitRange{Int}}, label_cache::IdDict{Any,String},
@@ -653,7 +653,7 @@ function emit_destructure_var_hints!(
 end
 
 function emit_destructure_var_hint!(
-        inlay_hints::Vector{InlayHint}, lvar::SyntaxTreeC,
+        inlay_hints::Vector{InlayHint}, lvar::SyntaxTree,
         ctx::InferredTreeContext, fi::FileInfo, uri::URI, range::Range,
         nontrivia_index::Vector{Int}, postprocessor::LSPostProcessor,
         emitted_ranges::Set{UnitRange{Int}}, label_cache::IdDict{Any,String},
@@ -673,7 +673,7 @@ function emit_destructure_var_hint!(
 end
 
 # Ternary and block-form `if` both parse as `K"if"`; distinguish by first token.
-function is_ternary(node::SyntaxTreeC, fi::FileInfo)
+function is_ternary(node::SyntaxTree, fi::FileInfo)
     JS.kind(node) === JS.K"if" || return false
     tc = @something next_nontrivia(fi.parsed_stream, JS.first_byte(node)) return false
     return JS.kind(tc) !== JS.K"if"
@@ -683,12 +683,12 @@ end
 # `x, y::T` parses as `x, (y::T)`. The parser sets `PARENS_FLAG` on
 # `K"tuple"` exactly when it's surrounded by `(` `)` (independent of any
 # nested tuple's parens), so checking the flag is the precise discriminator.
-is_open_tuple(node::SyntaxTreeC) =
-    JS.kind(node) === JS.K"tuple" && !JS.has_flags(node, JS.PARENS_FLAG)
+is_open_tuple(node::SyntaxTree) =
+    JS.kind(node) === JS.K"tuple" && !has_source_flags(node, JS.PARENS_FLAG)
 
 # Recover dropped `K"parens"` nodes from neighboring tokens. A preceding `(` is
 # decorative unless it belongs to a call, index, or chained-call form.
-function is_decoratively_parenthesized(node::SyntaxTreeC, fi::FileInfo)
+function is_decoratively_parenthesized(node::SyntaxTree, fi::FileInfo)
     ps = fi.parsed_stream
     fb = JS.first_byte(node)
     open_tc = @something prev_nontrivia(ps, fb - 1; pass_newlines=true) return false
@@ -708,7 +708,7 @@ end
 
 # Byte position one past the source `)` that follows `node`. Caller must have
 # already verified parenthesization via `is_decoratively_parenthesized`.
-function byte_past_close_paren(node::SyntaxTreeC, fi::FileInfo)
+function byte_past_close_paren(node::SyntaxTree, fi::FileInfo)
     lb = JS.last_byte(node)
     close_tc = next_nontrivia(fi.parsed_stream, lb + 1; pass_newlines=true)
     return JS.last_byte(close_tc) + 1
@@ -719,7 +719,7 @@ in_verbatim_range(byterng::UnitRange{Int}, verbatim_ranges::Set{UnitRange{Int}})
     any(rng -> byterng ⊆ rng, verbatim_ranges)
 
 function emit_type_hint!(
-        inlay_hints::Vector{InlayHint}, node::SyntaxTreeC, @nospecialize(typ), fi::FileInfo,
+        inlay_hints::Vector{InlayHint}, node::SyntaxTree, @nospecialize(typ), fi::FileInfo,
         uri::URI, nontrivia_index::Vector{Int}, endpos::Position,
         postprocessor::LSPostProcessor, label_cache::IdDict{Any,String},
         maxdepth::Int, maxwidth::Int, lazy_tooltips::Bool, type_range::UnitRange{Int};
@@ -727,7 +727,7 @@ function emit_type_hint!(
         close_paren_before_type::Bool = false,
         close_paren_after_type::Bool = false,
         # Prefix unary calls pass the argument so the operator stays outside the wrap.
-        paren_start_node::SyntaxTreeC = node,
+        paren_start_node::SyntaxTree = node,
     )
     if open_paren
         n_parens = max(close_paren_before_type + close_paren_after_type, 1)
@@ -762,7 +762,7 @@ function emit_type_hint!(
 end
 
 # Find the first non-trivia token start at or after the node's byte range.
-function first_token_byte(node::SyntaxTreeC, nontrivia_index::Vector{Int})
+function first_token_byte(node::SyntaxTree, nontrivia_index::Vector{Int})
     fb = JS.first_byte(node)
     idx = searchsortedfirst(nontrivia_index, fb)
     idx > length(nontrivia_index) && return fb

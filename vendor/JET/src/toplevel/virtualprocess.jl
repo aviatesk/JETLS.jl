@@ -989,7 +989,7 @@ function _virtual_process!(interp::ConcreteInterpreter,
         if JS.kind(toplevelnode) === K"toplevel"
             push_vnode_stack!(vnodes, toplevelnode, force_concretize)
         else
-            local blk = toplevelnode[2]
+            local blk = toplevelnode[end]
             @assert JS.kind(blk) === K"block"
             push_vnode_stack!(vnodes, blk, force_concretize)
         end
@@ -1076,11 +1076,16 @@ function _virtual_process!(interp::ConcreteInterpreter,
         lnn = LineNumberNode(state.curline, state.filename)
 
         if isexpr(x, :module)
+            @static if !isdefinedglobal(Base, :set_syntax_version)
+                if length(x.args) == 4 && x.args[1] isa VersionNumber
+                    deleteat!(x.args, 1)
+                end
+            end
             if isexpanded
-                newblk = x.args[3]
+                newblk = x.args[end]
                 @assert isexpr(newblk, :block)
                 overrideex = Expr(:toplevel, newblk.args...)
-                x.args[3] = Expr(:block, lnn) # empty module's code body
+                x.args[end] = Expr(:block, lnn) # empty module's code body
                 newcontext = eval_with_err_handling(state, x)
                 isnothing(newcontext) && continue # error happened, e.g. duplicated naming
                 newcontext = newcontext::Module
@@ -1094,7 +1099,7 @@ function _virtual_process!(interp::ConcreteInterpreter,
                                   force_concretize, overrideex)
             else
                 @assert JS.kind(node) === K"module"
-                x.args[3] = Expr(:block, lnn) # empty module's code body
+                x.args[end] = Expr(:block, lnn) # empty module's code body
                 newcontext = eval_with_err_handling(state, x)
                 isnothing(newcontext) && continue # error happened, e.g. duplicated naming
                 newcontext = newcontext::Module
@@ -1407,8 +1412,10 @@ function select_direct_requirement!(concretize, stmts, edges)
     for (idx, stmt) in enumerate(stmts)
         if (LoweredCodeUtils.ismethod(stmt) ||    # don't abstract away method definitions
             LoweredCodeUtils.istypedef(stmt) ||   # don't abstract away type definitions
-            (isexpr(stmt, :call) && length(stmt.args) ≥ 1 && stmt.args[1] == GlobalRef(Core, :_defaultctors)) ||
-            ismoduleusage(stmt) || # module usages are handled by `ConcreteInterpreter`
+            (isexpr(stmt, :call) && length(stmt.args) ≥ 1 &&
+             (stmt.args[1] == GlobalRef(Core, :_defaultctors) ||
+              stmt.args[1] == GlobalRef(Core, :declare_global))) ||
+            (ismoduleusage(stmt) || is_lowered_module_usage(stmt)) ||
             isexpr(stmt, :globaldecl))
             concretize[idx] = true
             continue
@@ -1704,9 +1711,10 @@ end
 function JuliaInterpreter.step_expr!(interp::ConcreteInterpreter, frame::Frame, @nospecialize(node), istoplevel::Bool)
     @assert istoplevel "ConcreteInterpreter can only work for top-level code"
 
-    if ismoduleusage(node)
+    if ismoduleusage(node) || is_lowered_module_usage(node)
+        moduleusage = ismoduleusage(node) ? node : to_module_usage(node)
         world = frame.world
-        for ex in to_simple_module_usages(node)
+        for ex in to_simple_module_usages(moduleusage)
             if usemodule_with_err_handling(interp, ex, world) === nothing
                 break
             end
@@ -1757,6 +1765,37 @@ function form_method_signature(atype_params::SimpleVector, sparams::SimpleVector
 end
 
 ismoduleusage(@nospecialize(x)) = isexpr(x, (:import, :using, :export, :public))
+
+@static if isdefinedglobal(Core, :_eval_import)
+function is_lowered_module_usage(@nospecialize(x))
+    isexpr(x, :call) || return false
+    f = x.args[1]
+    return (callee_matches(f, Base, :_eval_import) ||
+            callee_matches(f, Base, :_eval_using))
+end
+function to_module_usage(x::Expr)
+    @assert is_lowered_module_usage(x)
+    f = x.args[1]
+    if callee_matches(f, Base, :_eval_using)
+        @assert length(x.args) == 3
+        path = x.args[3]::QuoteNode
+        return Expr(:using, path.value)
+    end
+    @assert callee_matches(f, Base, :_eval_import) && length(x.args) ≥ 5
+    explicit = x.args[2]::Bool
+    from = x.args[4]
+    paths = Any[(x.args[i]::QuoteNode).value for i = 5:length(x.args)]
+    head = explicit ? :import : :using
+    if from === nothing
+        return Expr(head, paths...)
+    end
+    from = (from::QuoteNode).value
+    return Expr(head, Expr(:(:), from, paths...))
+end
+else
+is_lowered_module_usage(@nospecialize(x)) = false
+to_module_usage(x::Expr) = error(lazy"unexpected module usage found: $x")
+end
 
 # assuming `ismoduleusage(x)` holds
 function to_simple_module_usages(x::Expr)

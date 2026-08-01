@@ -42,7 +42,7 @@ function handle_workspace_configuration_response(
         if result isa Vector && !isempty(result)
             config_value = first(result)
             caller.handler(server, config_value)
-        elseif JETLS_DEV_MODE
+        elseif @static JETLS_DEV_MODE ? true : false
             @info "workspace/configuration returned empty result"
         end
     else

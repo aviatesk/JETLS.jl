@@ -58,20 +58,36 @@ function maybe_evaluate_builtin(interp::Interpreter, frame::Frame, call_expr::Ex
 
     if f isa Core.OpaqueClosure
         if expand
-            if !Base.uncompressed_ir(f.source).inferred
-                return Expr(:call, f, args[2:end]...)
-            else
-                @debug "not interpreting opaque closure $f since it contains inferred code"
+            meth = f.source
+            # Don't try to interpret optimized/inferred ir, or closures whose source is
+            # unavailable (e.g. constructed from an `IRCode`); call those natively below.
+            if isa(meth, Method) && (isdefined(meth, :source) || isdefined(meth, :generator))
+                src = Base.uncompressed_ir(meth)
+                isinferred = hasfield(Core.CodeInfo, :inferred) ? src.inferred :
+                    !isa(src.ssavaluetypes, Int)  # inferred code has a type vector here
+                if !isinferred
+                    return Expr(:call, f, args[2:end]...)
+                else
+                    @debug "not interpreting opaque closure $f since it contains inferred code"
+                end
             end
         end
-        return Some{Any}(f(args...))
+        return Some{Any}(f(getargs(interp, args, frame)...))
     end
     if !(supertype(typeof(f)) === Core.Builtin || isa(f, Core.IntrinsicFunction))
         return call_expr
     end
     # By having each call appearing statically in the "switch" block below,
     # each gets call-site optimized.
-    if f === <:
+    if @static isdefinedglobal(Core, :define_method) && f === Core.define_method
+        return Some{Any}(evaluate_methoddef(interp, frame, call_expr))
+    elseif @static isdefinedglobal(Core, :has_free_typevars) && f === Core.has_free_typevars
+        if nargs == 1
+            return Some{Any}(Core.has_free_typevars(lookup(interp, frame, args[2])))
+        else
+            return Some{Any}(Core.has_free_typevars(getargs(interp, args, frame)...))
+        end
+    elseif f === <:
         if nargs == 2
             return Some{Any}(<:(lookup(interp, frame, args[2]), lookup(interp, frame, args[3])))
         else
@@ -91,11 +107,12 @@ function maybe_evaluate_builtin(interp::Interpreter, frame::Frame, call_expr::Ex
             return Some{Any}(invoke_in_world(frame.world, Core._apply_iterate, argswrapped...))
         end
         aw1 = argswrapped[1]::Function
-        @assert aw1 === Core.iterate || aw1 === Core.Compiler.iterate || aw1 === Base.iterate "cannot handle `_apply_iterate` with non iterate as first argument, got $(aw1), $(typeof(aw1))"
+        aw1 === Core.iterate || aw1 === Core.Compiler.iterate || aw1 === Base.iterate ||
+            @invokelatest error("cannot handle `_apply_iterate` with non iterate as first argument, got ", aw1, ", ", typeof(aw1))
         new_expr = Expr(:call, argswrapped[2])
         popfirst!(argswrapped) # pop the iterate
         popfirst!(argswrapped) # pop the function
-        argsflat = invoke_in_world(frame.world, append_any, argswrapped...)
+        argsflat = invoke_in_world(frame.world, append_any, argswrapped...)::Vector{Any}
         for x in argsflat
             push!(new_expr.args, QuoteNode(x))
         end
@@ -104,8 +121,6 @@ function maybe_evaluate_builtin(interp::Interpreter, frame::Frame, call_expr::Ex
         return Some{Any}(Core._call_in_world_total(getargs(interp, args, frame)...))
     elseif f === Core._compute_sparams
         return Some{Any}(Core._compute_sparams(getargs(interp, args, frame)...))
-    elseif @static isdefinedglobal(Core, :_defaultctors) && f === Core._defaultctors
-        return Some{Any}(Core._defaultctors(getargs(interp, args, frame)...))
     elseif f === Core._equiv_typedef
         return Some{Any}(Core._equiv_typedef(getargs(interp, args, frame)...))
     elseif f === Core._expr
@@ -118,6 +133,12 @@ function maybe_evaluate_builtin(interp::Interpreter, frame::Frame, call_expr::Ex
         return Some{Any}(Core._setsuper!(getargs(interp, args, frame)...))
     elseif f === Core._structtype
         return Some{Any}(Core._structtype(getargs(interp, args, frame)...))
+    elseif @static isdefinedglobal(Core, :_svec_len) && f === Core._svec_len
+        if nargs == 1
+            return Some{Any}(Core._svec_len(lookup(interp, frame, args[2])))
+        else
+            return Some{Any}(Core._svec_len(getargs(interp, args, frame)...))
+        end
     elseif f === Core._svec_ref
         if nargs == 2
             return Some{Any}(Core._svec_ref(lookup(interp, frame, args[2]), lookup(interp, frame, args[3])))
@@ -202,9 +223,9 @@ function maybe_evaluate_builtin(interp::Interpreter, frame::Frame, call_expr::Ex
         end
     elseif @static isdefinedglobal(Core, :memoryrefmodify!) && f === Core.memoryrefmodify!
         if nargs == 5
-            return Some{Any}(Core.memoryrefmodify!(lookup(interp, frame, args[2]), lookup(interp, frame, args[3]), lookup(interp, frame, args[4]), lookup(interp, frame, args[5]), lookup(interp, frame, args[6])))
+            return Some{Any}(Base.invoke_in_world(frame.world, Core.memoryrefmodify!, lookup(interp, frame, args[2]), lookup(interp, frame, args[3]), lookup(interp, frame, args[4]), lookup(interp, frame, args[5]), lookup(interp, frame, args[6])))
         else
-            return Some{Any}(Core.memoryrefmodify!(getargs(interp, args, frame)...))
+            return Some{Any}(Base.invoke_in_world(frame.world, Core.memoryrefmodify!, getargs(interp, args, frame)...))
         end
     elseif @static isdefinedglobal(Core, :memoryrefnew) && f === Core.memoryrefnew
         if nargs == 1
@@ -250,6 +271,12 @@ function maybe_evaluate_builtin(interp::Interpreter, frame::Frame, call_expr::Ex
         else
             return Some{Any}(Core.memoryrefswap!(getargs(interp, args, frame)...))
         end
+    elseif @static isdefinedglobal(Core, :memoryrefunset!) && f === Core.memoryrefunset!
+        if nargs == 3
+            return Some{Any}(Core.memoryrefunset!(lookup(interp, frame, args[2]), lookup(interp, frame, args[3]), lookup(interp, frame, args[4])))
+        else
+            return Some{Any}(Core.memoryrefunset!(getargs(interp, args, frame)...))
+        end
     elseif f === Core.sizeof
         if nargs == 1
             return Some{Any}(Core.sizeof(lookup(interp, frame, args[2])))
@@ -261,7 +288,7 @@ function maybe_evaluate_builtin(interp::Interpreter, frame::Frame, call_expr::Ex
     elseif @static isdefinedglobal(Core, :throw_methoderror) && f === Core.throw_methoderror
         return Some{Any}(Core.throw_methoderror(getargs(interp, args, frame)...))
     elseif f === applicable
-        return Some{Any}(applicable(getargs(interp, args, frame)...))
+        return Some{Any}(Base.invoke_in_world(frame.world, applicable, getargs(interp, args, frame)...))
     elseif f === fieldtype
         if nargs == 2
             return Some{Any}(fieldtype(lookup(interp, frame, args[2]), lookup(interp, frame, args[3]))::Type)
@@ -291,7 +318,9 @@ function maybe_evaluate_builtin(interp::Interpreter, frame::Frame, call_expr::Ex
     elseif f === invoke
         if !expand
             argswrapped = getargs(interp, args, frame)
-            return Some{Any}(invoke(argswrapped...))
+            # `invoke` dispatches on its target: pin it to the frame's world rather than
+            # whatever world the interpreter machinery happens to be running in.
+            return Some{Any}(Base.invoke_in_world(frame.world, invoke, argswrapped...))
         end
         # This uses the original arguments to avoid looking them up twice
         # See #442
@@ -326,11 +355,11 @@ function maybe_evaluate_builtin(interp::Interpreter, frame::Frame, call_expr::Ex
         return Some{Any}(Base.invoke_in_world(frame.world, isdefinedglobal, getargs(interp, args, frame)...))
     elseif f === modifyfield!
         if nargs == 4
-            return Some{Any}(modifyfield!(lookup(interp, frame, args[2]), lookup(interp, frame, args[3]), lookup(interp, frame, args[4]), lookup(interp, frame, args[5])))
+            return Some{Any}(Base.invoke_in_world(frame.world, modifyfield!, lookup(interp, frame, args[2]), lookup(interp, frame, args[3]), lookup(interp, frame, args[4]), lookup(interp, frame, args[5])))
         elseif nargs == 5
-            return Some{Any}(modifyfield!(lookup(interp, frame, args[2]), lookup(interp, frame, args[3]), lookup(interp, frame, args[4]), lookup(interp, frame, args[5]), lookup(interp, frame, args[6])))
+            return Some{Any}(Base.invoke_in_world(frame.world, modifyfield!, lookup(interp, frame, args[2]), lookup(interp, frame, args[3]), lookup(interp, frame, args[4]), lookup(interp, frame, args[5]), lookup(interp, frame, args[6])))
         else
-            return Some{Any}(modifyfield!(getargs(interp, args, frame)...))
+            return Some{Any}(Base.invoke_in_world(frame.world, modifyfield!, getargs(interp, args, frame)...))
         end
     elseif @static isdefinedglobal(Core, :modifyglobal!) && f === modifyglobal!
         if nargs == 4
@@ -444,11 +473,16 @@ function maybe_evaluate_builtin(interp::Interpreter, frame::Frame, call_expr::Ex
     elseif f === Base.cglobal
         if nargs == 1
             call_expr = copy(call_expr)
+            # The function position may be an SSA reference (e.g. code that loads the
+            # intrinsic via getproperty, as Core.io_pointer does); it must be a literal
+            # for the `Core.eval` below, since lowering requires cglobal syntax.
+            call_expr.args[1] = GlobalRef(Base, :cglobal)
             args2 = args[2]
             call_expr.args[2] = isa(args2, QuoteNode) ? args2 : lookup(interp, frame, args2)
             return Some{Any}(Core.eval(moduleof(frame), call_expr))
         elseif nargs == 2
             call_expr = copy(call_expr)
+            call_expr.args[1] = GlobalRef(Base, :cglobal)
             args2 = args[2]
             call_expr.args[2] = isa(args2, QuoteNode) ? args2 : lookup(interp, frame, args2)
             call_expr.args[3] = lookup(interp, frame, args[3])
@@ -552,6 +586,8 @@ function maybe_evaluate_builtin(interp::Interpreter, frame::Frame, call_expr::Ex
         end
         return recurse_expanded_builtin_latest(interp, frame, new_expr)
 
+    elseif @static (isdefinedglobal(Core, :_defaultctors) && Core._defaultctors isa Core.Builtin) && f === Core._defaultctors
+        return Some{Any}(Core._defaultctors(getargs(interp, args, frame)...))
     elseif f === Core.Intrinsics.llvmcall
         return Some{Any}(Core.Intrinsics.llvmcall(getargs(interp, args, frame)...))
     end
@@ -559,11 +595,11 @@ function maybe_evaluate_builtin(interp::Interpreter, frame::Frame, call_expr::Ex
         cargs = getargs(interp, args, frame)
         if f === Core.Intrinsics.have_fma && length(cargs) == 1
             cargs1 = cargs[1]
-            if cargs1 == Float64
+            if cargs1 === Float64
                 return Some{Any}(FMA_FLOAT64[])
-            elseif cargs1 == Float32
+            elseif cargs1 === Float32
                 return Some{Any}(FMA_FLOAT32[])
-            elseif cargs1 == Float16
+            elseif cargs1 === Float16
                 return Some{Any}(FMA_FLOAT16[])
             end
         end
@@ -581,10 +617,14 @@ function maybe_evaluate_builtin(interp::Interpreter, frame::Frame, call_expr::Ex
                 f = Core.Intrinsics.fma_float
             end
         end
+        if f === Core.Intrinsics.atomic_pointermodify
+            # its `op` callback dispatches in the calling world; pin it to the frame's
+            return Some{Any}(Base.invoke_in_world(frame.world, f, cargs...))
+        end
         return Some{Any}(ccall(:jl_f_intrinsic_call, Any, (Any, Ptr{Any}, UInt32), f, cargs, length(cargs)))
     end
     if isa(f, typeof(kwinvoke))
-        return Some{Any}(kwinvoke(getargs(interp, args, frame)...))
+        return Some{Any}(Base.invoke_in_world(frame.world, kwinvoke, getargs(interp, args, frame)...))
     end
     return call_expr
 end

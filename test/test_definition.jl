@@ -101,24 +101,23 @@ end
 function definition_test(
         text::AbstractString, expected;
         context_module::Union{Nothing,Module} = nothing,
-        broken::Bool = false
     )
     clean_text, positions = JETLS.get_text_and_positions(text)
     @assert length(positions) == 1
     result = find_definition(clean_text, only(positions); context_module)
     if expected === nothing
-        return @test result === nothing broken=broken
+        return @test result === nothing
     end
     locations, _ = @something result
     if expected isa Int
-        @test length(locations) == 1 broken=broken
+        @test length(locations) == 1
         if length(locations) == 1
-            @test first(locations).range.start.line == expected broken=broken
+            @test first(locations).range.start.line == expected
         end
     elseif expected isa Vector{Int}
-        @test length(locations) == length(expected) broken=broken
+        @test length(locations) == length(expected)
         for line in expected
-            @test any(l -> l.range.start.line == line, locations) broken=broken
+            @test any(l -> l.range.start.line == line, locations)
         end
     else
         error("Unexpected `expected` type: $(typeof(expected))")
@@ -299,7 +298,7 @@ end
                     function say(h::Hel│lo)
                         println("Hello, \$(h.who)")
                     end
-                """, 0)
+                """, [0, 2])
         end
         @testset "function with default arguments aggregates" begin
             definition_test("""

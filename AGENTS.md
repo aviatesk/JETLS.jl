@@ -158,8 +158,11 @@ ask for clarification.
 
 # Git operations
 
-Only perform Git operations when the user explicitly requests them. After any
-Git operation, wait for explicit follow-up instructions before doing more.
+Only perform a Git operation that modifies repository state when the user
+explicitly requests it. Treat each such request as authorization for one write
+operation: after completing it, do not perform another write operation until
+the user explicitly requests one. Read-only Git operations and other
+non-mutating work may continue in the meantime.
 
 If the user provides feedback on a commit, do not automatically amend it or
 create a fixup commit. Explain what could change and wait for explicit

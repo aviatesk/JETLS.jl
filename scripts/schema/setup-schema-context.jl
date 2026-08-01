@@ -69,6 +69,14 @@ function setup_ctx!(ctx::SchemaContext)
         Dict("type" => "string")
     end
 
+    optional!(ctx, JETLS.AnalysisOverride, :full_analysis)
+    override_field!(ctx, JETLS.AnalysisOverride, :full_analysis) do _
+        Dict(
+            "type" => "boolean",
+            "default" => false,
+            "description" => desc["AnalysisOverride"]["full_analysis"])
+    end
+
     optional!(ctx, JETLS.JETLSConfig, :formatter)
 
     # Unlike the struct definition, the actual config file requires a "custom" nesting

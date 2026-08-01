@@ -17,8 +17,7 @@ function parse_diagnostic_severity(
             return severity_value
         else
             throw(DiagnosticConfigError(
-                lazy"Invalid severity value \"$severity_value\" for diagnostic pattern \"$pattern\". " *
-                "Valid integer values are: 0 (off), 1 (error), 2 (warning), 3 (information), 4 (hint)"))
+                lazy"Invalid severity value \"$severity_value\" for diagnostic pattern \"$pattern\". Valid integer values are: 0 (off), 1 (error), 2 (warning), 3 (information), 4 (hint)"))
         end
     elseif severity_value isa String
         severity_str = lowercase(severity_value)
@@ -34,13 +33,11 @@ function parse_diagnostic_severity(
             return DiagnosticSeverity.Hint
         else
             throw(DiagnosticConfigError(
-                lazy"Invalid severity value \"$severity_value\" for diagnostic pattern \"$pattern\". " *
-                "Valid string values are: \"off\", \"error\", \"warning\"/\"warn\", \"information\"/\"info\", \"hint\""))
+                lazy"Invalid severity value \"$severity_value\" for diagnostic pattern \"$pattern\". Valid string values are: \"off\", \"error\", \"warning\"/\"warn\", \"information\"/\"info\", \"hint\""))
         end
     else
         throw(DiagnosticConfigError(
-            lazy"Invalid severity value \"$severity_value\" for diagnostic pattern \"$pattern\". " *
-            "Severity must be an integer (0-4) or string"))
+            lazy"Invalid severity value \"$severity_value\" for diagnostic pattern \"$pattern\". Severity must be an integer (0-4) or string"))
     end
 end
 
@@ -57,8 +54,7 @@ function parse_diagnostic_pattern(x::AbstractDict{String})
     for key in keys(x)
         if key::String ∉ ("pattern", "match_by", "match_type", "severity", "path")
             throw(DiagnosticConfigError(
-                lazy"Unknown field \"$key\" in diagnostic pattern for pattern \"$pattern_value\". " *
-                "Valid fields are: pattern, match_by, match_type, severity, path"))
+                lazy"Unknown field \"$key\" in diagnostic pattern for pattern \"$pattern_value\". Valid fields are: pattern, match_by, match_type, severity, path"))
         end
     end
 
@@ -169,20 +165,28 @@ function calculate_match_specificity(
     return specificity
 end
 
+function diagnostic_code_match_specificity(pattern::Union{Regex,String}, code::String)
+    specificity = calculate_match_specificity(pattern, code, #=is_message_match=#false)
+    for alias in get(DIAGNOSTIC_CODE_ALIASES, code, String[])
+        specificity = max(specificity, calculate_match_specificity(pattern, alias, #=is_message_match=#false))
+    end
+    return specificity
+end
+
 function _apply_diagnostic_config(
         diagnostic::Diagnostic, manager::ConfigManager, uri::URI,
         root_path::Union{Nothing,String}
     )
     code = diagnostic.code
     if !(code isa String)
-        if JETLS_DEV_MODE
+        @static if JETLS_DEV_MODE
             @warn "Diagnostic code must be a string" code code_type = typeof(code)
         elseif JETLS_TEST_MODE
             error(lazy"Diagnostic code must be a string, got $(typeof(code)): $code")
         end
         return diagnostic
     elseif code ∉ ALL_DIAGNOSTIC_CODES
-        if JETLS_DEV_MODE
+        @static if JETLS_DEV_MODE
             @warn "Diagnostic code is not registered" code
         elseif JETLS_TEST_MODE
             error(lazy"Diagnostic code is not registered: $code")
@@ -209,10 +213,13 @@ function _apply_diagnostic_config(
         if globpath !== nothing && !occursin(globpath, path_for_glob)
             continue
         end
-        target = pattern_config.match_by == "message" ? get_raw_message(diagnostic) : code
         is_message_match = pattern_config.match_by == "message"
-        specificity = calculate_match_specificity(
-            pattern_config.pattern, target, is_message_match)
+        specificity = if is_message_match
+            target = get_raw_message(diagnostic)
+            calculate_match_specificity(pattern_config.pattern, target, is_message_match)
+        else
+            diagnostic_code_match_specificity(pattern_config.pattern, code)
+        end
         if specificity != 0 && specificity >= best_specificity
             best_specificity = specificity
             severity = pattern_config.severity
@@ -258,8 +265,9 @@ end
 function apply_markdown_message!(diagnostics::Vector{Diagnostic})
     for i = 1:length(diagnostics)
         diagnostic = diagnostics[i]
-        if diagnostic.message isa String
-            diagnostics[i] = Diagnostic(diagnostic; message = MarkupContent(; kind = MarkupKind.Markdown, value = diagnostic.message))
+        message = diagnostic.message
+        if message isa String
+            diagnostics[i] = Diagnostic(diagnostic; message = MarkupContent(; kind = MarkupKind.Markdown, value = message))
         end
     end
 end
@@ -350,7 +358,7 @@ function jet_result_to_diagnostics!(
         end
         diagnostic = @something jet_toplevel_error_report_to_diagnostic(report, postprocessor) continue
         filename = report.file
-        filename === :none && continue
+        filename == "none" && continue
         uri = to_valid_uri(filename)
         push!(uri2diagnostics[uri], diagnostic)
     end
@@ -406,11 +414,13 @@ function jet_inference_error_report_to_diagnostic(
         Base.invoke_in_world(world, JET.print_report_message, io, report)
     end |> postprocessor
     relatedInformation = DiagnosticRelatedInformation[]
-    for i = 2:length(rstack)
-        frame = report.vst[rstack[i]]
+    for related_frame in inference_error_report_related_frames(report)
+        frame = report.vst[related_frame.idx]
         location = @something jet_frame_to_location(frame) continue
-        local message = postprocessor(Base.invoke_in_world(world,
-            sprint, JET.print_frame_sig, frame, JET.PrintConfig())::String)
+        sig = Base.invoke_in_world(world,
+            sprint, JET.print_frame_sig, frame, JET.PrintConfig())::String
+        label = related_frame_label(related_frame.kind)
+        local message = postprocessor(label * ": " * sig)
         push!(relatedInformation, DiagnosticRelatedInformation(; location, message))
     end
     code = inference_error_report_code(report)
@@ -422,6 +432,13 @@ function jet_inference_error_report_to_diagnostic(
         code,
         codeDescription = diagnostic_code_description(code),
         relatedInformation)
+end
+
+function related_frame_label(kind::RelatedFrameKind)
+    kind === RelatedOriginFrame && return "origin"
+    kind === RelatedViaFrame && return "via"
+    kind === RelatedEntryFrame && return "entry"
+    error(lazy"unknown related frame kind: $kind")
 end
 
 function inference_error_report_code(@nospecialize report::JET.InferenceErrorReport)
@@ -437,8 +454,14 @@ function inference_error_report_code(@nospecialize report::JET.InferenceErrorRep
         return INFERENCE_BOUNDS_ERROR_CODE
     elseif report isa MethodErrorReport
         return INFERENCE_METHOD_ERROR_CODE
+    elseif report isa UndefKeywordErrorReport
+        return INFERENCE_UNDEF_KEYWORD_CODE
+    elseif report isa TypeAssertErrorReport
+        return INFERENCE_TYPE_ERROR_TYPE_ASSERT_CODE
+    elseif report isa KeywordTypeErrorReport
+        return INFERENCE_TYPE_ERROR_KEYWORD_CODE
     elseif report isa NonBooleanCondErrorReport
-        return INFERENCE_NON_BOOLEAN_COND_CODE
+        return INFERENCE_TYPE_ERROR_NON_BOOL_COND_CODE
     end
     error(lazy"No diagnostic code is defined for report: $report")
 end
@@ -538,7 +561,7 @@ end
 # lowering diagnostic
 # ===================
 
-const JL_MACRO_FILE = only(methods(JL.expand_macro, (JL.MacroExpansionContext,SyntaxTreeC,SyntaxListC))).file
+const JL_MACRO_FILE = only(methods(JL.expand_macro, (JL.MacroExpansionContext, SyntaxTree))).file
 function scrub_expand_macro_stacktrace(stacktrace::Vector{Base.StackTraces.StackFrame})
     idx = @something findfirst(stacktrace) do stackframe::Base.StackTraces.StackFrame
         stackframe.func === :expand_macro && stackframe.file === JL_MACRO_FILE
@@ -618,10 +641,10 @@ end
 # sit under a `K"parameters"` node, so we track that during the walk.
 # An explicit stack is used (instead of recursion) so we don't risk overflowing
 # the C stack on pathologically deep user input.
-function compute_kwarg_type_annotation_names(st0::SyntaxTreeC)
+function compute_kwarg_type_annotation_names(st0::SyntaxTree)
     type_names = Dict{Tuple{Int,Int},Set{String}}()
     locations = Set{Tuple{Int,Int}}()
-    stack = Tuple{SyntaxTreeC,Bool}[(st0, false)]
+    stack = Tuple{SyntaxTree,Bool}[(st0, false)]
     while !isempty(stack)
         (node, in_parameters) = pop!(stack)
         k = JS.kind(node)
@@ -678,7 +701,7 @@ function has_matching_argument_binding(
     return false
 end
 
-function is_assignment_expression(st::SyntaxTreeC)
+function is_assignment_expression(st::SyntaxTree)
     k = JS.kind(st)
     k === JS.K"=" && return true
     if k === JS.K"unknown_head"
@@ -688,29 +711,29 @@ function is_assignment_expression(st::SyntaxTreeC)
     return false
 end
 
-same_syntax_range(a::SyntaxTreeC, b::SyntaxTreeC) =
+same_syntax_range(a::SyntaxTree, b::SyntaxTree) =
     JS.kind(a) === JS.kind(b) && JS.byte_range(a) == JS.byte_range(b)
 
-function is_last_child(parent::SyntaxTreeC, child::SyntaxTreeC)
+function is_last_child(parent::SyntaxTree, child::SyntaxTree)
     n = JS.numchildren(parent)
     n == 0 && return false
     return same_syntax_range(parent[n], child)
 end
 
-function is_tail_branch_child(parent::SyntaxTreeC, child::SyntaxTreeC)
+function is_tail_branch_child(parent::SyntaxTree, child::SyntaxTree)
     for i in 2:JS.numchildren(parent)
         same_syntax_range(parent[i], child) && return true
     end
     return false
 end
 
-function assignment_expression_for_prov(st0::SyntaxTreeC, prov::SyntaxTreeC)
+function assignment_expression_for_prov(st0::SyntaxTree, prov::SyntaxTree)
     assignments = byte_ancestors(is_assignment_expression, st0, JS.byte_range(prov))
     isempty(assignments) && return nothing
     return first(assignments)
 end
 
-function is_struct_type_parameter_declaration(st0::SyntaxTreeC, prov::SyntaxTreeC)
+function is_struct_type_parameter_declaration(st0::SyntaxTree, prov::SyntaxTree)
     ancestors = byte_ancestors(st0, JS.byte_range(prov))
     for i = 2:length(ancestors)
         curly = ancestors[i]
@@ -743,7 +766,7 @@ function is_struct_type_parameter_declaration(st0::SyntaxTreeC, prov::SyntaxTree
 end
 
 function tail_returned_assignment_kind(
-        st0::SyntaxTreeC, assignment::Union{Nothing,SyntaxTreeC}
+        st0::SyntaxTree, assignment::Union{Nothing,SyntaxTree}
     )
     isnothing(assignment) && return :none
     ancestors = byte_ancestors(st0, JS.byte_range(assignment))
@@ -784,7 +807,7 @@ function unused_assignment_message(bn::String, tail_kind::Symbol)
 end
 
 function return_insert_data(
-        assignment::SyntaxTreeC, fi::FileInfo, bn::String, tail_kind::Symbol
+        assignment::SyntaxTree, fi::FileInfo, bn::String, tail_kind::Symbol
     )
     tail_kind === :simple || return nothing, nothing
     range = jsobj_to_range(assignment, fi)
@@ -792,62 +815,46 @@ function return_insert_data(
     return range.var"end", "\n$(indent)return $bn"
 end
 
-# `JL.method_def_expr` packages each lowered method's signature metadata as
-# `svec(svec(arg_types...), svec(static_parameters...), source_location)`, where the
-# static parameters are the locals `JL.assign_sparams` binds via `core.TypeVar` calls.
-# Matching that shape covers every method definition form — named, anonymous, callable
-# struct, macro-generated — while quoted code stays inert and never produces it.
-function method_signature_metadata(node::SyntaxTreeC)
-    JS.numchildren(node) == 4 && is_core_svec_call(node) || return nothing
-    arg_types = node[2]
-    sparams = node[3]
-    JS.kind(arg_types) === JS.K"call" && is_core_svec_call(arg_types) || return nothing
-    JS.kind(sparams) === JS.K"call" && is_core_svec_call(sparams) || return nothing
-    JS.kind(node[4]) === JS.K"SourceLocation" || return nothing
-    return arg_types, sparams
-end
-
-function collect_binding_ids!(ids::Set{JL.IdTag}, st::SyntaxTreeC)
-    traverse(st) do node::SyntaxTreeC
-        JS.kind(node) === JS.K"BindingId" && push!(ids, JL._binding_id(node))
+function collect_binding_ids!(ids::Set{JL.IdTag}, st::SyntaxTree)
+    traverse(st) do node::SyntaxTree
+        JS.kind(node) === JS.K"BindingId" && push!(ids, JL.syntax_id(node))
         return nothing
     end
     return ids
 end
 
+function method_typevars(ctx3::JL.VariableAnalysisContext, method::SyntaxTree)
+    JS.kind(method) === JS.K"method" && JS.numchildren(method) == 3 || return nothing
+    arg_types = method[2]
+    is_core_svec_call(arg_types) || return nothing
+    lambda = method[3]
+    JS.kind(lambda) === JS.K"lambda" && JS.numchildren(lambda) >= 3 || return nothing
+    sparams = lambda[3]
+    JS.kind(sparams) === JS.K"block" || return nothing
+    typevar_ids = JL.IdTag[]
+    for sparam in JS.children(sparams)
+        JS.kind(sparam) === JS.K"BindingId" || continue
+        sp_id = JL.syntax_id(sparam)
+        typevar_id = get(ctx3.sp_typevars, sp_id, nothing)
+        typevar_id === nothing || push!(typevar_ids, typevar_id)
+    end
+    isempty(typevar_ids) && return nothing
+    return arg_types, typevar_ids
+end
+
 function analyze_unconstrained_static_parameters!(
         diagnostics::Vector{Diagnostic}, fi::FileInfo, ctx3::JL.VariableAnalysisContext,
-        st3::SyntaxTreeC, reported::Set{LoweringDiagnosticKey}
+        st3::SyntaxTree, reported::Set{LoweringDiagnosticKey}
     )
-    typevar_assignments = Dict{JL.IdTag,SyntaxTreeC}()
-    signature_metadatas = Tuple{SyntaxTreeC,SyntaxTreeC}[]
-    traverse(st3) do node::SyntaxTreeC
-        k = JS.kind(node)
-        if k === JS.K"=" && JS.numchildren(node) == 2 &&
-                JS.kind(node[1]) === JS.K"BindingId"
-            rhs = node[2]
-            if JS.kind(rhs) === JS.K"call" && JS.numchildren(rhs) >= 2 &&
-                    is_core_ref(rhs[1], "TypeVar")
-                typevar_assignments[JL._binding_id(node[1])] = rhs
-            end
-        elseif k === JS.K"call"
-            metadata = method_signature_metadata(node)
-            metadata === nothing || push!(signature_metadatas, metadata)
-        end
+    methods = Tuple{SyntaxTree,Vector{JL.IdTag}}[]
+    traverse(st3) do node::SyntaxTree
+        result = method_typevars(ctx3, node)
+        result === nothing || push!(methods, result)
         return nothing
     end
-    for (arg_types, sparams) in signature_metadatas
-        sparam_ids = JL.IdTag[]
-        for i = 2:JS.numchildren(sparams)
-            sparam = sparams[i]
-            # non-`BindingId` entries are e.g. the placeholder in `where {T,_}`
-            JS.kind(sparam) === JS.K"BindingId" || continue
-            id = JL._binding_id(sparam)
-            haskey(typevar_assignments, id) && push!(sparam_ids, id)
-        end
-        isempty(sparam_ids) && continue
+    for (arg_types, typevar_ids) in methods
         arg_type_ids = collect_binding_ids!(Set{JL.IdTag}(), arg_types)
-        constrained = Bool[id in arg_type_ids for id in sparam_ids]
+        constrained = Bool[id in arg_type_ids for id in typevar_ids]
         # A constrained type variable's bounds also constrain the type variables they
         # reference, but only those declared earlier: in `f(::T) where {T<:S, S}` the
         # `S` bound of `T` resolves to the later declaration without constraining it
@@ -855,23 +862,25 @@ function analyze_unconstrained_static_parameters!(
         todo = findall(constrained)
         while !isempty(todo)
             i = pop!(todo)
-            bound_ids = collect_binding_ids!(Set{JL.IdTag}(), typevar_assignments[sparam_ids[i]])
+            deps = @something get(ctx3.tv_deps, typevar_ids[i], nothing) continue
             for j = 1:i-1
                 constrained[j] && continue
-                sparam_ids[j] in bound_ids || continue
+                typevar_ids[j] in deps || continue
                 constrained[j] = true
                 push!(todo, j)
             end
         end
-        for i = eachindex(sparam_ids)
+        for i = eachindex(typevar_ids)
             constrained[i] && continue
-            binfo = JL.get_binding(ctx3, sparam_ids[i])
+            binfo = JL.get_binding(ctx3, typevar_ids[i])
             binfo.is_internal && continue
             bn = binfo.name
             startswith(bn, "#") && continue
             provs = JS.flattened_provenance(JL.binding_ex(ctx3, binfo.id))
             is_from_user_ast(provs) || continue
-            range = jsobj_to_range(last(provs), fi)
+            source = last(provs)
+            JS.sourcetext(source) == "_" && continue
+            range = jsobj_to_range(source, fi)
             key = LoweringDiagnosticKey(range, :static_parameter, bn)
             key in reported ? continue : push!(reported, key)
             push!(diagnostics, Diagnostic(;
@@ -888,12 +897,13 @@ function analyze_unconstrained_static_parameters!(
 end
 
 function analyze_unused_bindings!(
-        diagnostics::Vector{Diagnostic}, fi::FileInfo, st0::SyntaxTreeC, ctx3::JL.VariableAnalysisContext,
+        diagnostics::Vector{Diagnostic}, fi::FileInfo, st0::SyntaxTree, ctx3::JL.VariableAnalysisContext,
         binding_occurrences::Dict{JL.BindingInfo,Set{BindingOccurrence}},
         has_implicit_args::Bool, reported::Set{LoweringDiagnosticKey},
         kwarg_type_names::Dict{Tuple{Int,Int},Set{String}},
         kwarg_locations::Set{Tuple{Int,Int}};
-        allow_unused_underscore::Bool
+        allow_unused_underscore::Bool,
+        inactive_branch_names::Set{String} = Set{String}()
     )
     for (binfo, occurrences) in binding_occurrences
         bk = binfo.kind
@@ -902,6 +912,10 @@ function analyze_unused_bindings!(
             continue
         end
         bn = binfo.name
+        # A use in a `@static` branch dropped on this platform is absent from the lowered
+        # tree, so the binding looks unused here; don't report it (see
+        # `collect_inactive_branch_names`).
+        bn in inactive_branch_names && continue
         if has_implicit_args && bn in _IMPLICIT_BINDING_NAMES
             continue
         end
@@ -952,16 +966,20 @@ function analyze_unused_bindings!(
 end
 
 function analyze_unused_assignments!(
-        diagnostics::Vector{Diagnostic}, fi::FileInfo, st0::SyntaxTreeC,
+        diagnostics::Vector{Diagnostic}, fi::FileInfo, st0::SyntaxTree,
         dead_store_info::Dict{JL.BindingInfo, DeadStoreInfo},
         reported::Set{LoweringDiagnosticKey};
-        allow_unused_underscore::Bool
+        allow_unused_underscore::Bool,
+        inactive_branch_names::Set{String} = Set{String}()
     )
     for (binfo, dsinfo) in dead_store_info
         binfo.kind === :local || continue
         binfo.is_internal && continue
         startswith(binfo.name, '#') && continue
         bn = binfo.name
+        # See `analyze_unused_bindings!`: a value read only in a `@static` branch dropped
+        # on this platform looks dead here, but isn't on the platform taking that branch.
+        bn in inactive_branch_names && continue
         if allow_unused_underscore && startswith(bn, '_')
             continue
         end
@@ -1020,7 +1038,10 @@ function collect_undef_global_candidates!(
         bk === :global || continue
         binfo.is_internal && continue
         startswith(binfo.name, '#') && continue
-        any(o->o.kind===:def, occurrences) && continue
+        any(is_definition_occurrence, occurrences) && continue
+        # Lowering may create global bindings without source-level uses, such as
+        # struct names. Only actual reads can be undefined-global candidates.
+        any(o -> o.kind === :use, occurrences) || continue
         bmod = binfo.mod
         isnothing(bmod) && continue
         Base.invoke_in_world(world, isdefinedglobal, bmod, Symbol(binfo.name))::Bool && continue
@@ -1116,7 +1137,7 @@ function analyze_undefined_local_bindings!(
 end
 
 function compute_unused_variable_data(
-        assignment::SyntaxTreeC, fi::FileInfo, bn::String, tail_kind::Symbol
+        assignment::SyntaxTree, fi::FileInfo, bn::String, tail_kind::Symbol
     )
     JS.numchildren(assignment) ≥ 2 || return nothing
 
@@ -1155,7 +1176,7 @@ end
 
 function analyze_captured_boxes!(
         diagnostics::Vector{Diagnostic}, uri::URI, fi::FileInfo,
-        ctx4::JL.ClosureConversionCtx, st3::SyntaxTreeC,
+        ctx4::JL.ClosureConversionCtx, st3::SyntaxTree,
         reported::Set{LoweringDiagnosticKey}
     )
     for binfo in ctx4.bindings.info
@@ -1197,7 +1218,7 @@ function is_captured_binding(binfo::JL.BindingInfo, ctx4::JL.ClosureConversionCt
 end
 
 function find_capture_sites(
-        st3::SyntaxTreeC, binfo::JL.BindingInfo, ctx4::JL.ClosureConversionCtx,
+        st3::SyntaxTree, binfo::JL.BindingInfo, ctx4::JL.ClosureConversionCtx,
         uri::URI, fi::FileInfo
     )
     relatedInformation = DiagnosticRelatedInformation[]
@@ -1206,14 +1227,16 @@ function find_capture_sites(
             haskey(lambda.locals_capt, binfo.id) || continue
             lambda.locals_capt[binfo.id] || continue
             # Find the lambda in st3 that has matching lambda_bindings.self
-            traverse(st3) do node3::SyntaxTreeC
+            traverse(st3) do node3::SyntaxTree
                 JS.kind(node3) === JS.K"lambda" || return nothing
-                JS.hasattr(node3, :lambda_bindings) || return nothing
-                lambda_bindings = node3.lambda_bindings::JL.LambdaBindings
+                JS.numchildren(node3) >= 1 || return nothing
+                lbnode = node3[1]
+                JS.kind(lbnode) === JS.K"LambdaBindings" || return nothing
+                lambda_bindings = JL.lambda_bindings(lbnode)
                 lambda_bindings.self == lambda.self || return nothing
                 # Find references to binfo.id inside this lambda
-                traverse(node3) do inner::SyntaxTreeC
-                    if JS.kind(inner) === JS.K"BindingId" && JL._binding_id(inner) == binfo.id
+                traverse(node3) do inner::SyntaxTree
+                    if JS.kind(inner) === JS.K"BindingId" && JL.syntax_id(inner) == binfo.id
                         varprov = last(JL.flattened_provenance(inner))
                         push!(relatedInformation, DiagnosticRelatedInformation(;
                             location = Location(; uri, range = jsobj_to_range(varprov, fi)),
@@ -1263,9 +1286,9 @@ const SORT_IMPORTS_MAX_LINE_LENGTH = 92
 const SORT_IMPORTS_INDENT = "    "
 
 function analyze_unsorted_imports!(
-        diagnostics::Vector{Diagnostic}, fi::FileInfo, st0::SyntaxTreeC
+        diagnostics::Vector{Diagnostic}, fi::FileInfo, st0::SyntaxTree
     )
-    traverse(st0) do st0′::SyntaxTreeC
+    traverse(st0) do st0′::SyntaxTree
         kind = JS.kind(st0′)
         if kind ∉ JS.KSet"import using export public"
             return nothing
@@ -1291,7 +1314,7 @@ function analyze_unsorted_imports!(
 end
 
 function generate_sorted_import_text(
-        node::SyntaxTreeC, sorted_name_keys::Vector{Pair{SyntaxTreeC,String}},
+        node::SyntaxTree, sorted_name_keys::Vector{Pair{SyntaxTree,String}},
         base_indent::String
     )
     kind = JS.kind(node)
@@ -1344,11 +1367,11 @@ end
 # `return f(@goto label); @label label; ...` are correctly recognized as
 # reachable via the goto edge.
 function analyze_unreachable_code!(
-        diagnostics::Vector{Diagnostic}, fi::FileInfo, st3::SyntaxTreeC,
-        unreachable_statements::Set{SyntaxTreeC}
+        diagnostics::Vector{Diagnostic}, fi::FileInfo, st3::SyntaxTree,
+        unreachable_statements::Set{SyntaxTree}
     )
     isempty(unreachable_statements) && return
-    traverse(st3) do st3′::SyntaxTreeC
+    traverse(st3) do st3′::SyntaxTree
         JS.kind(st3′) === JS.K"block" || return nothing
         nchildren = JS.numchildren(st3′)
         first_unreach_idx = 0
@@ -1414,18 +1437,18 @@ end
 # `compile_body` (linear IR pass), which JETLS doesn't run. Mirror that
 # check against `st3` so unresolved gotos still surface as diagnostics.
 function analyze_unresolved_gotos!(
-        diagnostics::Vector{Diagnostic}, fi::FileInfo, st3::SyntaxTreeC
+        diagnostics::Vector{Diagnostic}, fi::FileInfo, st3::SyntaxTree
     )
-    traverse(st3) do st3′::SyntaxTreeC
-        JS.kind(st3′) === JS.K"lambda" || return nothing
-        JS.numchildren(st3′) >= 3 || return nothing
-        check_lambda_gotos!(diagnostics, fi, st3′[3])
+    traverse(st3) do st3′::SyntaxTree
+        JS.kind(st3′) in JS.KSet"lambda toplevel_lambda" || return nothing
+        JS.numchildren(st3′) >= 4 || return nothing
+        check_lambda_gotos!(diagnostics, fi, st3′[4])
         return nothing
     end
 end
 
 function check_lambda_gotos!(
-        diagnostics::Vector{Diagnostic}, fi::FileInfo, body3::SyntaxTreeC
+        diagnostics::Vector{Diagnostic}, fi::FileInfo, body3::SyntaxTree
     )
     gotos, labels = collect_gotos_labels(body3)
     label_names = Set{String}(name for (name, _) in labels)
@@ -1448,15 +1471,9 @@ function check_lambda_gotos!(
         # Skip macro-generated labels — only report user-written ones.
         provs = JL.flattened_provenance(st)
         is_from_user_ast(provs) || continue
-        # The provenance chain ends with the label-name identifier; the
-        # entry immediately above it (`provs[end-1]`) is the user-written
-        # `@label name` macrocall, which is what we want to delete.
-        # Using `first(provs)` would instead pick the outermost source —
-        # and for a `@label` nested inside another macrocall (e.g.
-        # `@testset begin; @label foo; end`) that is the entire enclosing
-        # macrocall, not the `@label` line.
-        delete_obj = length(provs) >= 2 ? provs[end-1] : first(provs)
-        delete_range = line_absorbing_delete_range(delete_obj, fi)
+        label_call = @something JS.macro_prov(st) continue
+        get_macrocall_name(label_call) == "@label" || continue
+        delete_range = line_absorbing_delete_range(label_call, fi)
         push!(diagnostics, Diagnostic(;
             range = jsobj_to_range(st, fi),
             severity = DiagnosticSeverity.Information,
@@ -1469,15 +1486,15 @@ function check_lambda_gotos!(
     end
 end
 
-function collect_gotos_labels(st3::SyntaxTreeC)
-    gotos = Tuple{String,SyntaxTreeC}[]
-    labels = Tuple{String,SyntaxTreeC}[]
+function collect_gotos_labels(st3::SyntaxTree)
+    gotos = Tuple{String,SyntaxTree}[]
+    labels = Tuple{String,SyntaxTree}[]
     collect_gotos_labels!(gotos, labels, st3)
     return gotos, labels
 end
 function collect_gotos_labels!(
-        gotos::Vector{Tuple{String,SyntaxTreeC}}, labels::Vector{Tuple{String,SyntaxTreeC}},
-        st3::SyntaxTreeC
+        gotos::Vector{Tuple{String,SyntaxTree}}, labels::Vector{Tuple{String,SyntaxTree}},
+        st3::SyntaxTree
     )
     traverse(st3) do node
         k = JS.kind(node)
@@ -1511,10 +1528,11 @@ function analyze_lowered_code!(
         analyzer::Union{Nothing,LSAnalyzer}, postprocessor::LSPostProcessor;
         skip_analysis_requiring_context::Bool = false,
         allow_unused_underscore::Bool = true,
-        allow_noreturn_optimization::Vector{Symbol} = Symbol[]
+        allow_noreturn_optimization::Vector{Symbol} = Symbol[],
+        inactive_branch_names::Set{String} = Set{String}()
     )
     (; ctx3, ctx4, st0, st3) = res
-    binding_occurrences = compute_binding_occurrences(ctx3, st3;
+    binding_occurrences = compute_binding_occurrences(ctx3, st3, world;
         include_global_bindings=true)
 
     reported = Set{LoweringDiagnosticKey}() # to prevent duplicate reports for unused default or keyword arguments
@@ -1522,16 +1540,17 @@ function analyze_lowered_code!(
 
     analyze_unconstrained_static_parameters!(diagnostics, fi, ctx3, st3, reported)
 
-    has_implicit_args = is_macro0(st0) || is_generated0(st0)
+    has_implicit_args = is_macro0(st0) || !isempty(generated_method_ids(ctx3, st3))
     analyze_unused_bindings!(
         diagnostics, fi, st0, ctx3, binding_occurrences, has_implicit_args, reported,
         kwarg_type_names, kwarg_locations;
-        allow_unused_underscore)
+        allow_unused_underscore, inactive_branch_names)
 
     (; undef_info, dead_store_info, unreachable_statements) =
         analyze_all_lambdas(ctx3, st3; allow_noreturn_optimization)
     analyze_undefined_local_bindings!(diagnostics, uri, fi, undef_info, reported)
-    analyze_unused_assignments!(diagnostics, fi, st0, dead_store_info, reported; allow_unused_underscore)
+    analyze_unused_assignments!(diagnostics, fi, st0, dead_store_info, reported;
+        allow_unused_underscore, inactive_branch_names)
 
     analyze_captured_boxes!(diagnostics, uri, fi, ctx4, st3, reported)
     analyze_unreachable_code!(diagnostics, fi, st3, unreachable_statements)
@@ -1548,7 +1567,7 @@ end
 
 function per_stmt_diagnostics!(
         diagnostics::Vector{Diagnostic}, candidates::Vector{UndefGlobalCandidate},
-        uri::URI, fi::FileInfo, st0::SyntaxTreeC, context_module::Module, world::UInt,
+        uri::URI, fi::FileInfo, st0::SyntaxTree, context_module::Module, world::UInt,
         analyzer::Union{Nothing,LSAnalyzer}, postprocessor::LSPostProcessor;
         skip_analysis_requiring_context::Bool = false,
         allow_unused_underscore::Bool = true,
@@ -1561,7 +1580,7 @@ function per_stmt_diagnostics!(
     (st0, _) = desugar_main_macrocall(st0)
     macro_diags = MacroDiagnostic[]
     res = Base.ScopedValues.@with MACRO_DIAGNOSTIC_SINK => macro_diags try
-        jl_lower_for_scope_resolution(context_module, st0; world,
+        jl_lower_for_scope_resolution(context_module, world, st0;
             recover_from_macro_errors=false, convert_closures=true, soft_scope)
     catch err
         if err isa JL.LoweringError
@@ -1604,13 +1623,14 @@ function per_stmt_diagnostics!(
                     relatedInformation))
             end
         else
-            JETLS_DEBUG_LOWERING && @warn "Error in lowering (with macrocall nodes)"
-            JETLS_DEBUG_LOWERING && showerror(stderr, err)
-            JETLS_DEBUG_LOWERING && Base.show_backtrace(stderr, catch_backtrace())
+            @static JETLS_DEBUG_LOWERING && @warn "Error in lowering (with macrocall nodes)"
+            @static JETLS_DEBUG_LOWERING && showerror(stderr, err)
+            @static JETLS_DEBUG_LOWERING && Base.show_backtrace(stderr, catch_backtrace())
         end
         nothing # signal primary-attempt failure to the fallback path
     end
-    emit_macro_diagnostics!(diagnostics, fi, macro_diags)
+    skip_analysis_requiring_context || emit_macro_diagnostics!(diagnostics, fi, macro_diags)
+    inactive_branch_names = collect_inactive_branch_names(macro_diags)
 
     if res === nothing
         # Fallback expansion runs *outside* the sink scope: `remove_macrocalls`
@@ -1618,9 +1638,9 @@ function per_stmt_diagnostics!(
         # the sink during the primary attempt would push the same entry again here
         # — emitting twice. With the sink unbound, those `push_macro_*!` calls
         # become no-ops, and stubs that genuinely throw simply re-throw and we bail.
-        st0 = remove_macrocalls(st0)
+        st0 = remove_macrocalls(context_module, world, st0)
         res = try
-            jl_lower_for_scope_resolution(context_module, st0; world,
+            jl_lower_for_scope_resolution(context_module, world, st0;
                 recover_from_macro_errors=false, convert_closures=true, soft_scope)
         catch
             return diagnostics
@@ -1643,7 +1663,39 @@ function per_stmt_diagnostics!(
 
     return analyze_lowered_code!(
         diagnostics, candidates, uri, fi, res, world, analyzer, postprocessor;
-        skip_analysis_requiring_context, allow_unused_underscore, allow_noreturn_optimization)
+        skip_analysis_requiring_context, allow_unused_underscore, allow_noreturn_optimization,
+        inactive_branch_names)
+end
+
+# Names of identifiers appearing in `@static` branches dropped at expansion time — the
+# regions reported as `lowering/inactive-code` via the macro-diagnostic sink. A local
+# binding or argument whose only use lives in such a dropped branch is absent from the
+# lowered tree and would otherwise be misreported as unused. The unused-binding /
+# unused-assignment analyses skip any binding whose name is in this set. Suppressing by
+# name is conservative: it can only hide a genuinely unused warning when the same name
+# happens to recur in a dropped branch, never introduce a false one.
+#
+# Only the dropped branches are walked — uses in the branch taken on this platform
+# survive into the lowered tree, so those bindings are never misreported and need no
+# suppression. `@static` reports *every* dropped branch via `push_inactive_code!`
+# (each arm of an `if`/`elseif`/`else` chain or short-circuit `&&`/`||`, including a
+# dropped `elseif`'s condition), so walking the inactive nodes misses no vanished use.
+let empty_names = Set{String}()
+    global function collect_inactive_branch_names(macro_diags::Vector{MacroDiagnostic})
+        any(d->d.code == LOWERING_INACTIVE_CODE, macro_diags) || return empty_names
+        names = Set{String}()
+        for d in macro_diags
+            d.code == LOWERING_INACTIVE_CODE || continue
+            traverse(d.node) do s
+                if JS.kind(s) === JS.K"Identifier"
+                    nv = get_name_val(s)
+                    nv === nothing || push!(names, nv)
+                end
+                return nothing
+            end
+        end
+        return names
+    end
 end
 
 function compute_unit_def_used_names(
@@ -1667,7 +1719,7 @@ function compute_unit_def_used_names(
         end
         search_st0_top = build_syntax_tree(search_fi)
 
-        iterate_toplevel_tree(search_st0_top) do st0::SyntaxTreeC
+        iterate_toplevel_tree(search_st0_top) do st0::SyntaxTree
             binding_occurrences = @something get_binding_occurrences!(
                 state, search_uri, search_fi, st0) return
             context_module = get_context_module(state, search_uri, offset_to_xy(search_fi, JS.first_byte(st0)))
@@ -1684,6 +1736,7 @@ function merge_def_used_names!(
         dst_names = get!(DefUsedNames, dst, context_module)
         union!(dst_names.def, names.def)
         union!(dst_names.used, names.used)
+        union!(dst_names.method_def, names.method_def)
     end
     return dst
 end
@@ -1694,12 +1747,15 @@ function update_def_used_names!(
     )
     for (binfo_key, occurrences) in binding_occurrences
         binfo_key.kind === :global || continue
+        has_method_def = any(o -> o.kind === :method_def, occurrences)
         if any(o -> o.kind === :use, occurrences)
             def_used_names = get!(DefUsedNames, mod_def_used_names, context_module)
             push!(def_used_names.used, binfo_key.name)
-        elseif any(o -> o.kind === :def, occurrences)
+            has_method_def && push!(def_used_names.method_def, binfo_key.name)
+        elseif any(is_definition_occurrence, occurrences)
             def_used_names = get!(DefUsedNames, mod_def_used_names, context_module)
             push!(def_used_names.def, binfo_key.name)
+            has_method_def && push!(def_used_names.method_def, binfo_key.name)
         end
     end
     return mod_def_used_names
@@ -1750,6 +1806,10 @@ function analyze_unused_imports!(
         for (name, infos) in imported_names
             def_used_names !== nothing && name in def_used_names.used && continue
             for info in infos
+                if (def_used_names !== nothing && info.import_kind === :import &&
+                    name in def_used_names.method_def)
+                    continue
+                end
                 push!(diagnostics, Diagnostic(;
                     range = info.name_range,
                     severity = DiagnosticSeverity.Information,
@@ -1768,7 +1828,7 @@ end
 
 function analyze_unused_imports!(
         diagnostics::Vector{Diagnostic}, def_used_names_cache::DefUsedNamesCache,
-        server::Server, uri::URI, fi::FileInfo, st0_top::SyntaxTreeC;
+        server::Server, uri::URI, fi::FileInfo, st0_top::SyntaxTree;
         skip_context_check::Bool = false # used by tests only
     )
     mod_imported_names = collect_explicit_imports_by_module(server.state, uri, fi, st0_top)
@@ -1778,17 +1838,18 @@ function analyze_unused_imports!(
 end
 
 function collect_explicit_imports_by_module(
-        state::ServerState, uri::URI, fi::FileInfo, st0_top::SyntaxTreeC
+        state::ServerState, uri::URI, fi::FileInfo, st0_top::SyntaxTree
     )
     mod_imported_names = Dict{Module,Dict{String,Vector{ImportInfo}}}()
-    traverse(st0_top) do st0::SyntaxTreeC
+    traverse(st0_top) do st0::SyntaxTree
         JS.kind(st0) ∈ JS.KSet"import using" || return nothing
         context_module = get_context_module(state, uri, offset_to_xy(fi, JS.first_byte(st0)))
         for (name, name_range, delete_range) in collect_explicit_import_names(st0, fi)
             imported_names =
                 get!(Dict{String,Vector{ImportInfo}}, mod_imported_names, context_module)
             push!(get!(Vector{ImportInfo}, imported_names, name),
-                ImportInfo(uri, name_range, delete_range))
+                ImportInfo(uri, name_range, delete_range,
+                    JS.kind(st0) === JS.K"import" ? :import : :using))
         end
         return TraversalNoRecurse()
     end
@@ -1798,7 +1859,7 @@ end
 # Returns tuples of (name, name_range, delete_range).
 # For single imports like `using M: x`, delete_range covers the entire import statement.
 # For multiple imports like `using M: x, y`, delete_range covers the name plus comma/whitespace.
-function collect_explicit_import_names(st0::SyntaxTreeC, fi::FileInfo)
+function collect_explicit_import_names(st0::SyntaxTree, fi::FileInfo)
     kind = JS.kind(st0)
     names = Tuple{String,Range,Range}[]
     kind ∈ JS.KSet"import using" || return names
@@ -1863,7 +1924,7 @@ end
 # `ctx3` is alive. `analyze_unused_imports!` and the cross-file emit step run later in
 # `toplevel_lowering_diagnostics!` because they depend on sibling files in the unit.
 function compute_per_file_diagnostics(
-        server::Server, uri::URI, file_info::FileInfo, st0_top::SyntaxTreeC,
+        server::Server, uri::URI, file_info::FileInfo, st0_top::SyntaxTree,
         cancel_flag::CancelFlag;
         lookup_func = nothing
     )
@@ -1876,7 +1937,7 @@ function compute_per_file_diagnostics(
         collect_explicit_imports_by_module(server.state, uri, file_info, st0_top)
     allow_unused_underscore = get_config(server, :diagnostic, :allow_unused_underscore)
     soft_scope = is_notebook_cell_uri(server.state, uri)
-    iterate_toplevel_tree(st0_top) do st0::SyntaxTreeC
+    iterate_toplevel_tree(st0_top) do st0::SyntaxTree
         is_cancelled(cancel_flag) && return traversal_terminator
         pos = offset_to_xy(file_info, JS.first_byte(st0))
         (; context_module, world, analyzer, postprocessor) =
@@ -1923,7 +1984,7 @@ function get_per_file_diagnostics!(
 end
 
 function get_per_file_diagnostics!(
-        server::Server, uri::URI, file_info::FileInfo, st0_top::SyntaxTreeC,
+        server::Server, uri::URI, file_info::FileInfo, st0_top::SyntaxTree,
         cancel_flag::CancelFlag;
         lookup_func = nothing
     )

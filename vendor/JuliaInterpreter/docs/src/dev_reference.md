@@ -65,6 +65,7 @@ JuliaInterpreter.until_line!
 JuliaInterpreter.maybe_reset_frame!
 JuliaInterpreter.maybe_step_through_wrapper!
 JuliaInterpreter.maybe_step_through_kwprep!
+JuliaInterpreter.maybe_step_through_arg_destructuring!
 JuliaInterpreter.handle_err
 JuliaInterpreter.debug_command
 ```

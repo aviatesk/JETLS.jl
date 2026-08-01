@@ -16,6 +16,11 @@ diagnostic, macro-aware go-to definition and such.
     Not production-ready; APIs and behavior may change.
     Stability and performance are limited. Expect bugs and rough edges.
 
+!!! danger "Security"
+    Do not run JETLS on code you do not trust. To analyze your project it
+    runs your code — including the package dependencies it loads — which can
+    execute arbitrary code.
+
 See the [Features](@ref features) page for a visual overview of the LSP
 features JETLS provides.
 
@@ -26,8 +31,8 @@ You need to install the `jetls` executable separately before using any editor in
 
 ### [Prerequisites](@id index/server-installation/prerequisites)
 
-JETLS requires [Julia v1.12.2](https://julialang.org/downloads) or later.
-It does not support Julia 1.12.1 or earlier, nor Julia 1.13+/nightly.
+JETLS supports [Julia v1.12.2](https://julialang.org/downloads) through Julia 1.13.
+It does not support Julia 1.12.1 or earlier, nor Julia 1.14+/nightly.
 
 ### [Installing the `jetls` executable](@id index/server-installation/install)
 
@@ -41,6 +46,14 @@ julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", 
 
 This will install the `jetls` executable to `~/.julia/bin/`.
 Make sure `~/.julia/bin` is available on the `PATH` environment so the executable is accessible.
+
+!!! note
+    `Pkg.Apps.add` precompiles JETLS and its dependencies during installation,
+    which can take several minutes even on reasonably capable machines. This is
+    a one-time cost per installation; subsequent server startups are fast. Doing
+    it now also avoids precompilation being triggered on the first editor launch,
+    which could otherwise stall the server long enough to trip client
+    `initialize` timeouts.
 
 You can verify the installation by running:
 ```bash
@@ -59,6 +72,11 @@ is properly added to your `PATH`.
     ```bash
     julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="2025-11-25")'
     ```
+
+!!! warning "Julia upgrades"
+    The `jetls` app is pinned to the Julia version used to install it, so after
+    upgrading Julia you must re-run the installation command above to make
+    `jetls` available again (this re-runs precompilation for the new Julia).
 
 ## [Editor setup](@id index/editor-setup)
 
@@ -224,8 +242,16 @@ name = "julia"
 language-servers = [ "jetls" ]
 
 [language-server]
-jetls = { command = "jetls", args = ["serve"] }
+jetls = { command = "jetls", args = ["serve"], timeout = 60 }
 ```
+
+!!! note
+    Helix aborts the `initialize` request if the server does not respond within
+    `timeout` seconds, which defaults to 20
+    (see [Language Server configuration](https://docs.helix-editor.com/languages.html#language-server-configuration)).
+    On the first startup JETLS must load and compile its Julia code, which can
+    exceed that default on slower machines and make Helix report
+    `request 0 timed out`. Setting a larger `timeout` (e.g. `60`) avoids this.
 
 ### [Advanced: using local JETLS checkout](@id index/editor-setup/advanced)
 

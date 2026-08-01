@@ -433,6 +433,22 @@ function format_file(
     return TextEdit[TextEdit(; range = edit_range, newText)]
 end
 
+function log_formatter_failure(
+        cmd::Cmd, proc::Base.Process, input_task::Task, output::Vector{UInt8}
+    )
+    input_error = istaskfailed(input_task) ?
+        sprint(showerror, TaskFailedException(input_task)) : nothing
+    details = (;
+        cmd,
+        exitcode = proc.exitcode,
+        termsignal = proc.termsignal,
+        stdout_bytes = length(output),
+        input_error,
+    )
+    @error "Formatter execution failed" details
+    return nothing
+end
+
 function run_formatter(
         exe::String, text::AbstractString, line_ranges::Union{Nothing,Vector{String}},
         uri::URI, options::FormattingOptions, formatter::FormatterConfig
@@ -441,16 +457,28 @@ function run_formatter(
         String[] : ["--lines=$line_range" for line_range in line_ranges]
     cmd = @something formatter_command(exe, line_args, uri, options, formatter) return nothing
     proc = open(cmd; read = true, write = true)
-    write(proc, text)
-    close(proc.in)
-    wait(proc)
-    if proc.exitcode ≠ 0
-        close(proc)
-        return nothing
+    input_task = @async try
+        write(proc, text)
+    finally
+        close(proc.in)
     end
-    ret = read(proc)
-    close(proc)
-    return String(ret)
+    try
+        ret = read(proc)
+        process_success = success(proc)
+        wait(input_task; throw = false)
+        if !process_success || istaskfailed(input_task)
+            log_formatter_failure(cmd, proc, input_task, ret)
+            return nothing
+        end
+        return String(ret)
+    finally
+        close(proc)
+        if process_running(proc)
+            kill(proc)
+        end
+        wait(proc)
+        wait(input_task; throw = false)
+    end
 end
 
 # Build the formatter command line. `line_args` is a (possibly empty) list of

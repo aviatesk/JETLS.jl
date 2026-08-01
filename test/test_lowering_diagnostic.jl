@@ -9,7 +9,12 @@ using JETLS.LSP.URIs2
 include(normpath(pkgdir(JETLS), "test", "setup.jl"))
 include(normpath(pkgdir(JETLS), "test", "jsjl-utils.jl"))
 
-module lowering_module end
+module lowering_module
+const B = Base
+macro generated_label()
+    return :(@label generated)
+end
+end
 
 function get_lowering_diagnostics(
         text::AbstractString;
@@ -56,6 +61,11 @@ macro gen_unused(x)
     end
 end
 
+macro expect_symbol(x)
+    x isa Symbol || error("expected a Symbol")
+    return x
+end
+
 macro just_return(x)
     :($(esc(x)))
 end
@@ -63,6 +73,11 @@ end
 length_utf16(s::AbstractString) = sum(c::Char -> codepoint(c) < 0x10000 ? 1 : 2, collect(s); init=0)
 
 module EmptyModule end
+
+# A context module where `@static` conditions referencing `DEV_MODE` can be evaluated.
+module static_dev_mode_module
+    const DEV_MODE = false
+end
 
 @testset HierarchicalTestSet "unused binding detection" begin
     let diagnostics = get_lowering_diagnostics("""
@@ -89,6 +104,47 @@ module EmptyModule end
         @test diagnostic.message == "Unused argument `y`"
         @test diagnostic.range.start.line == 0
         @test diagnostic.range.var"end".line == 0
+    end
+
+    @testset "generated quote-local shadowing" begin
+        for src in (
+                """
+                @generated function foo(x)
+                    return :(let x = 1
+                        x
+                    end)
+                end
+                """,
+                """
+                Base.@generated function foo(x)
+                    return :(let x = 1
+                        x
+                    end)
+                end
+                """,
+                """
+                @generated function foo(x)
+                    return :(function inner(x)
+                        x
+                    end)
+                end
+                """,
+                """
+                @generated function foo(x)
+                    return :(map(1:2) do x
+                        x
+                    end)
+                end
+                """,
+                """
+                @generated function foo(x)
+                    return :([x + 1 for x in 1:2])
+                end
+                """)
+            diagnostics = get_lowering_diagnostics(src; code = JETLS.LOWERING_UNUSED_ARGUMENT_CODE)
+            @test length(diagnostics) == 1
+            @test only(diagnostics).message == "Unused argument `x`"
+        end
     end
 
     let diagnostics = get_lowering_diagnostics("""
@@ -243,6 +299,68 @@ module EmptyModule end
         end
     end
 
+    @testset "use in dropped @static branch" begin
+        # `@static` expands to only the platform-selected branch, so a binding whose only
+        # use lives in a branch not taken here is absent from the lowered tree and would
+        # otherwise look unused. It must not be flagged — the use is real on the platform
+        # that takes the branch.
+        let diagnostics = get_lowering_diagnostics("""
+                function f(cond)
+                    x = compute()
+                    @static if Sys.iswindows()
+                        return g(x)
+                    end
+                    return h(cond)
+                end
+                """;
+                code = JETLS.LOWERING_UNUSED_LOCAL_CODE)
+            @test isempty(diagnostics)
+        end
+        # Same for an argument used only in a dropped branch.
+        let diagnostics = get_lowering_diagnostics("""
+                function f(x)
+                    @static if Sys.iswindows()
+                        return use(x)
+                    end
+                    return nothing
+                end
+                """;
+                code = JETLS.LOWERING_UNUSED_ARGUMENT_CODE)
+            @test isempty(diagnostics)
+        end
+        # A debug-only `@warn` guarded by `@static DEV_MODE` (short-circuit `&&` form):
+        # when `DEV_MODE` is `false` the `@warn` is dropped, so the caught `e` — used only
+        # there — must not be flagged unused.
+        let diagnostics = get_lowering_diagnostics("""
+                function f(x)
+                    try
+                        op(x)
+                    catch e
+                        @static DEV_MODE && @warn "error in op" e
+                    end
+                end
+                """;
+                code = JETLS.LOWERING_UNUSED_LOCAL_CODE,
+                context_module = static_dev_mode_module)
+            @test isempty(diagnostics)
+        end
+        # Guard against over-suppression: a genuinely unused binding is still reported even
+        # when the statement also contains a `@static` (its name isn't in any dropped branch).
+        let diagnostics = get_lowering_diagnostics("""
+                function f(cond)
+                    y = 1
+                    @static if Sys.iswindows()
+                        return g()
+                    end
+                    return h(cond)
+                end
+                """;
+                code = JETLS.LOWERING_UNUSED_LOCAL_CODE)
+            @test length(diagnostics) == 1
+            @test only(diagnostics).message == "Unused local binding `y`"
+        end
+    end
+
     @testset "unused inner function" begin
         diagnostics = get_lowering_diagnostics("""
         function foo(x)
@@ -348,6 +466,31 @@ module EmptyModule end
                 diagnostic.message == "Unused argument `kw`" &&
                 diagnostic.range.start.line == 0
             end
+        end
+        # JuliaLowering marks local `#kw_body#f#N` bindings as internal, so
+        # they must not be reported as unused
+        @test isempty(get_lowering_diagnostics("""
+            function outer()
+                g(; kw = 1) = kw
+                return g()
+            end
+            """))
+    end
+
+    @testset "var-string binding with '#' prefix" begin
+        # User-authored `var"#..."` bindings must keep unused reports
+        let diagnostics = get_lowering_diagnostics("""
+            function fx()
+                var"#x" = 1
+                return 2
+            end
+            """)
+            @test length(diagnostics) == 1
+            @test only(diagnostics).message == "Unused local binding `#x`"
+        end
+        let diagnostics = get_lowering_diagnostics("fz(var\"#z\") = 1")
+            @test length(diagnostics) == 1
+            @test only(diagnostics).message == "Unused argument `#z`"
         end
     end
 
@@ -850,27 +993,50 @@ module EmptyModule end
             @test isempty(diagnostics)
         end
 
-        let diagnostics = get_lowering_diagnostics("""
-            @generated function foo(x, unused)
-                return :(x + 1)
-            end
-            """)
+        for generated_macro in ("@generated", "B.@generated")
+            diagnostics = get_lowering_diagnostics("""
+                $generated_macro function foo(x, unused)
+                    return :(x + 1)
+                end
+                """)
             @test length(diagnostics) == 1
             @test only(diagnostics).message == "Unused argument `unused`"
         end
+
+        # Nested interpolation uses the argument in the generated output scope.
+        let diagnostics = get_lowering_diagnostics("""
+            @generated function foo(x)
+                return :( :(\$x) )
+            end
+            """; code = JETLS.LOWERING_UNUSED_ARGUMENT_CODE)
+            @test isempty(diagnostics)
+        end
     end
 
-    @testset "before full-analysis, without macro expansion" begin
+    @testset "before full-analysis" begin
         # `@sprintf` is not available yet for EmptyModule (simulating the lowering analysis behavior before full-analysis complete)
         # https://github.com/aviatesk/JETLS.jl/issues/522
-        diagnostics = get_lowering_diagnostics("""
-            let
-                OLR = SW_in = 0.0
-                @info @sprintf("OLR: %.1f W/m², SW_in: %.1f W/m², net: %.1f W/m²",
-                                OLR, SW_in, SW_in - OLR)
-            end
-            """; context_module=EmptyModule, skip_analysis_requiring_context=true)
-        @test isempty(diagnostics)
+        let diagnostics = get_lowering_diagnostics("""
+                let
+                    OLR = SW_in = 0.0
+                    @info @sprintf("OLR: %.1f W/m², SW_in: %.1f W/m², net: %.1f W/m²",
+                                    OLR, SW_in, SW_in - OLR)
+                end
+                """; context_module=EmptyModule, skip_analysis_requiring_context=true)
+            @test isempty(diagnostics)
+        end
+
+        # The file-local constant has not been loaded into EmptyModule yet, so `@static`
+        # cannot evaluate it during pre-analysis lowering. Suppress that transient error
+        # until full analysis establishes the file context.
+        let diagnostics = get_lowering_diagnostics("""
+                const DEV_MODE = false
+                @static if DEV_MODE
+                    inactive_call()
+                end
+                """; context_module=EmptyModule, skip_analysis_requiring_context=true)
+            @test isempty(diagnostics)
+        end
     end
 end
 
@@ -881,9 +1047,25 @@ macro m_gen_invalid(n)
     :([return i for i in 1:$n])
 end
 
-include(normpath(pkgdir(JETLS), "test", "fixtures", "macros.jl"))
-let filename = normpath(pkgdir(JETLS), "test", "fixtures", "macros-JL.jl")
-    JL.include_string(@__MODULE__, read(filename,String), filename)
+macro m_inner_error(_)
+    error("Error in foo")
+end
+macro m_outer_error(x)
+    :(@m_inner_error( $x ), @m_inner_error( $nothing ))
+end
+
+@static if isdefinedglobal(Core, :define_method)
+    let code = """
+        using JETLS: JL
+        macro m_inner_error_JL(_)
+            error("Error in foo")
+        end
+        macro m_outer_error_JL(x)
+            JL.@legacy_quote_to_syntax(:(@m_inner_error_JL(\$x), @m_inner_error_JL(\$nothing)))
+        end
+        """
+        JL.include_string(@__MODULE__, code)
+    end
 end
 
 @testset HierarchicalTestSet "JuliaLowering error diagnostics" begin
@@ -914,6 +1096,21 @@ end
                 diagnostic.range.var"end".line == 1
             end == 1
         end
+    end
+
+    @testset "docstring signature target" begin
+        diagnostics = get_lowering_diagnostics("""
+            function someinterface end
+
+            someinterface(::Type) = :generic
+            someinterface(::Type{T}) where T<:Integer = :integer
+
+            \"\"\"
+                someinterface(::Type{<:Integer})
+            \"\"\"
+            someinterface(::Type{<:Integer})
+            """; code = JETLS.LOWERING_ERROR_CODE)
+        @test isempty(diagnostics)
     end
 
     @testset "macro not found error diagnostics" begin
@@ -951,6 +1148,41 @@ end
         @test diagnostic.range.var"end".character == sizeof("x = notexisting")
     end
 
+    @testset "old-style macro nested in new-style macro (JuliaLowering.jl#108)" begin
+        diagnostics = get_lowering_diagnostics("""
+            function preserve_symbol_argument()
+                some_data = []
+                GC.@preserve some_data begin
+                    @expect_symbol nothing
+                end
+            end
+            """; context_module=@__MODULE__)
+        @test isempty(diagnostics)
+    end
+
+    @testset "old-style macro nested in new-style macro (Base.Broadcast example)" begin
+        diagnostics = get_lowering_diagnostics("""
+            @inline function copyto!(dest::AbstractArray, bc::Broadcasted{Nothing})
+                axes(dest) == axes(bc) || throwdm(axes(dest), axes(bc))
+                # Performance optimization: broadcast!(identity, dest, A) is equivalent to copyto!(dest, A) if indices match
+                if bc.f === identity && bc.args isa Tuple{AbstractArray} # only a single input argument to broadcast!
+                    A = bc.args[1]
+                    if axes(dest) == axes(A)
+                        return copyto!(dest, A)
+                    end
+                end
+                bc′ = preprocess(dest, bc)
+                # Performance may vary depending on whether `@inbounds` is placed outside the
+                # for loop or not. (cf. https://github.com/JuliaLang/julia/issues/38086)
+                @inbounds @simd for I in eachindex(bc′)
+                    dest[I] = bc′[I]
+                end
+                return dest
+            end
+            """; context_module=Base.Broadcast)
+        @test isempty(diagnostics)
+    end
+
     @testset "macro expansion error diagnostics" begin
         diagnostics = get_lowering_diagnostics("x = @m_throw 42"; context_module=@__MODULE__)
         @test length(diagnostics) == 1
@@ -977,18 +1209,20 @@ end
         @test diagnostic.range.var"end".character == sizeof("    @m_outer_error missing")
     end
 
-    @testset "nested macro expansion error diagnostics (with JL provenance)" begin
-        diagnostics = get_lowering_diagnostics("""let
-            @m_outer_error_JL missing
-        end"""; context_module=@__MODULE__)
-        @test length(diagnostics) == 1
-        diagnostic = only(diagnostics)
-        @test diagnostic.source == JETLS.DIAGNOSTIC_SOURCE_LIVE
-        @test diagnostic.message == "Error expanding macro\nError in foo"
-        @test diagnostic.range.start.line == 1
-        @test diagnostic.range.start.character == 4
-        @test diagnostic.range.var"end".line == 1
-        @test diagnostic.range.var"end".character == sizeof("    @m_outer_error_JL missing")
+    @static if isdefinedglobal(Core, :define_method)
+        @testset "nested macro expansion error diagnostics (with JL provenance)" begin
+            diagnostics = get_lowering_diagnostics("""let
+                @m_outer_error_JL missing
+            end"""; context_module=@__MODULE__)
+            @test length(diagnostics) == 1
+            diagnostic = only(diagnostics)
+            @test diagnostic.source == JETLS.DIAGNOSTIC_SOURCE_LIVE
+            @test diagnostic.message == "Error expanding macro\nError in foo"
+            @test diagnostic.range.start.line == 1
+            @test diagnostic.range.start.character == 4
+            @test diagnostic.range.var"end".line == 1
+            @test diagnostic.range.var"end".character == sizeof("    @m_outer_error_JL missing")
+        end
     end
 
     @testset "lowering error within macro expanded code" begin
@@ -1106,6 +1340,41 @@ end
         @test diagnostic.range.start.character == 2
         @test diagnostic.range.var"end".line == 1
         @test diagnostic.range.var"end".character == 2 + length("undef_doc_interp")
+    end
+
+    let diagnostics = get_lowering_diagnostics(
+            "lazy\"interpolated: \$(undef_lazy_interp)\"";
+            context_module=@__MODULE__)
+        @test length(diagnostics) == 1
+        diagnostic = only(diagnostics)
+        @test diagnostic.code == JETLS.LOWERING_UNDEF_GLOBAL_VAR_CODE
+        @test diagnostic.message == "`$(@__MODULE__).undef_lazy_interp` is not defined"
+        @test diagnostic.range.start.line == 0
+        @test diagnostic.range.start.character == length("lazy\"interpolated: \$(")
+        @test diagnostic.range.var"end".line == 0
+        @test diagnostic.range.var"end".character ==
+            length("lazy\"interpolated: \$(") + length("undef_lazy_interp")
+    end
+
+    let code = join((
+            "let",
+            "    lazy\"\"\"",
+            "    This is",
+            "        \$undef_lazy_triple_interp",
+            "    \"\"\"",
+            "end",
+        ), '\n')
+        diagnostics = get_lowering_diagnostics(code; context_module=@__MODULE__)
+        @test length(diagnostics) == 1
+        diagnostic = only(diagnostics)
+        @test diagnostic.code == JETLS.LOWERING_UNDEF_GLOBAL_VAR_CODE
+        @test diagnostic.message ==
+            "`$(@__MODULE__).undef_lazy_triple_interp` is not defined"
+        @test diagnostic.range.start.line == 3
+        @test diagnostic.range.start.character == length("        \$")
+        @test diagnostic.range.var"end".line == 3
+        @test diagnostic.range.var"end".character ==
+            length("        \$") + length("undef_lazy_triple_interp")
     end
 end
 
@@ -1413,6 +1682,20 @@ end
                 println(z)
             end
             """))
+    end
+
+    @testset "value read only in dropped @static branch" begin
+        # The assignment looks dead here because its only read is in a `@static` branch
+        # not taken on this platform, but it isn't dead on the platform taking the branch.
+        @test isempty(get_lowering_diagnostics("""
+            function f()
+                z = compute()
+                @static if Sys.iswindows()
+                    println(z)
+                end
+                return nothing
+            end
+            """; code = JETLS.LOWERING_UNUSED_ASSIGNMENT_CODE))
     end
 
     @testset "multiple dead stores" begin
@@ -1814,6 +2097,32 @@ end
         @test diagnostic.range.var"end".character == sizeof("using Base: sin, cos")
     end
 
+    # Unqualified method extension needs `import`, so it counts as using the import.
+    let diagnostics = get_unused_import_diagnostics("""
+        import Base: show
+
+        struct IssueUnusedImportShow
+            x::Int
+        end
+
+        show(io::IO, a::IssueUnusedImportShow) = print(io, "A with ", a.x)
+        """)
+        @test isempty(diagnostics)
+    end
+
+    let diagnostics = get_unused_import_diagnostics("""
+        using Base: show
+
+        struct IssueUnusedImportQShow
+            x::Int
+        end
+
+        Base.show(io::IO, a::IssueUnusedImportQShow) = print(io, "A with ", a.x)
+        """)
+        @test length(diagnostics) == 1
+        @test only(diagnostics).message == "Unused import `show`"
+    end
+
     # Macro imports should not be reported as unused when the macro is used
     # + Qualified macro calls (Module.@macro) should track module usage
     let diagnostics = get_unused_import_diagnostics("""
@@ -1858,6 +2167,28 @@ end
         @test isempty(diagnostics)
     end
 
+    # Imports used only inside a `@static` condition should not be reported as unused:
+    # `@static` expands to only the platform-selected branch, dropping the condition.
+    let diagnostics = get_unused_import_diagnostics("""
+        using Base: VERSION
+        @static if VERSION >= v"1.11"
+            nothing
+        end
+        """)
+        @test isempty(diagnostics)
+    end
+
+    # Imports used only inside a `@static` branch not taken on this platform should not be
+    # reported as unused: removing the import would break the platform where it is taken.
+    let diagnostics = get_unused_import_diagnostics("""
+        using Base: VERSION
+        @static if Sys.iswindows()
+            println(VERSION)
+        end
+        """)
+        @test isempty(diagnostics)
+    end
+
     # Imports used inside macro body quoted expressions should not be reported as unused
     let diagnostics = get_unused_import_diagnostics("""
         using Base.Iterators: flatten
@@ -1866,13 +2197,34 @@ end
         @test isempty(diagnostics)
     end
 
-    # Imports used in quoted expressions inside helper functions for macros
+    # A code-shaped helper quote uses construction-site globals without requiring
+    # interprocedural proof that the expression reaches macro output.
     let diagnostics = get_unused_import_diagnostics("""
         using Base.Iterators: flatten
         genfunc(xs) = :(flatten(\$(esc(xs))))
         macro myflatten(xs) genfunc(xs) end
         """)
         @test isempty(diagnostics)
+    end
+
+    # Atomic quoted identifiers remain Symbol data without a syntax-use context.
+    let diagnostics = get_unused_import_diagnostics("""
+        import Base: sin
+        names = (:sin, :cos)
+        """)
+        @test length(diagnostics) == 1
+    end
+
+    # Following Symbol values into an interpolated `@eval` name requires constant
+    # propagation and syntax-provenance analysis.
+    let diagnostics = get_unused_import_diagnostics("""
+        import Base: sin
+        struct MyType end
+        for name in (:sin, :cos)
+            @eval \$name(x::MyType) = nothing
+        end
+        """)
+        @test_broken isempty(diagnostics)
     end
 
     # Imports used in @generated function with interpolation in dot expression
@@ -2640,6 +2992,36 @@ end
         @test d.severity == LSP.DiagnosticSeverity.Information
         @test !isnothing(d.tags) && LSP.DiagnosticTag.Unnecessary in d.tags
         @test d.range.start.line == 1
+    end
+
+    # Qualified calls are still direct user-written labels.
+    let diagnostics = get_lowering_diagnostics("""
+        function f()
+            Base.@label unused
+            return 1
+        end
+        """)
+        ds = filter(d -> d.code == JETLS.LOWERING_UNUSED_LABEL_CODE, diagnostics)
+        @test length(ds) == 1
+        d = only(ds)
+        @test d.message == "Unused label `unused`"
+        @test d.data isa JETLS.DeleteRangeData
+        dr = d.data.delete_range
+        @test dr.start.line == 1
+        @test dr.start.character == 0
+        @test dr.var"end".line == 2
+        @test dr.var"end".character == 0
+    end
+
+    # Macro-generated labels are not user-facing unused labels.
+    let diagnostics = get_lowering_diagnostics("""
+        function f()
+            @generated_label
+            return 1
+        end
+        """)
+        ds = filter(d -> d.code == JETLS.LOWERING_UNUSED_LABEL_CODE, diagnostics)
+        @test isempty(ds)
     end
 
     # referenced label — no diagnostic

@@ -15,10 +15,10 @@ struct TestsetResult
 end
 
 struct TestsetInfo
-    st0::SyntaxTreeC
+    st0::SyntaxTree
     result::TestsetResult
-    TestsetInfo(st0::SyntaxTreeC) = new(st0)
-    TestsetInfo(st0::SyntaxTreeC, result::TestsetResult) = new(st0, result)
+    TestsetInfo(st0::SyntaxTree) = new(st0)
+    TestsetInfo(st0::SyntaxTree, result::TestsetResult) = new(st0, result)
 end
 
 const EMPTY_TESTSETINFOS = TestsetInfo[]
@@ -53,8 +53,22 @@ function build_line_starts(textbuf::Vector{UInt8})
     return starts
 end
 
+# Side tables for the per-node analysis results `TypeAnnotation` records on the
+# inferred tree. A fresh instance is created per inference pass (matching the
+# pre-standard-tree behavior of starting each pass with empty `:type`/`:matches`
+# graph attributes), and the final pass's instance is owned by
+# `InferredTreeContext`, so annotations never outlive the analysis nor mutate
+# nodes shared with other trees.
+struct TreeAnnotations
+    types::Dict{SyntaxTree,Any}
+    matches::Dict{SyntaxTree,Vector{Core.MethodMatch}}
+end
+TreeAnnotations() = TreeAnnotations(
+    Dict{SyntaxTree,Any}(), Dict{SyntaxTree,Vector{Core.MethodMatch}}())
+
 struct InferredTreeContext
-    inferred_tree::SyntaxTreeC
+    inferred_tree::SyntaxTree
+    annotations::TreeAnnotations
     # `byte_range => kind` for the surface node each lowered node was lowered
     # from (first element of `JS.flattened_provenance`). First-write-wins,
     # mirroring a `traverse`-then-pick-first lookup.
@@ -62,7 +76,7 @@ struct InferredTreeContext
     # Every lowered node keyed by its own `byte_range`, in preorder. The
     # preorder property is load-bearing for the "last `K"call"` wins"
     # semantics in `type_for_call`.
-    by_byte_range::Dict{UnitRange{Int}, Vector{SyntaxTreeC}}
+    by_byte_range::Dict{UnitRange{Int}, Vector{SyntaxTree}}
     # Result types from typed `K"call"` nodes whose first provenance is a
     # `K"macrocall"`, keyed by the macrocall's `byte_range`.
     macrocall_types::Dict{UnitRange{Int}, Vector{Any}}
@@ -71,7 +85,7 @@ struct InferredTreeContext
     # User-vs-synthetic classification is derived per-query from
     # `user_return_form_ranges` below — @mlechu's idea.
     return_first_bytes::Vector{Int}
-    return_nodes::Vector{SyntaxTreeC}
+    return_nodes::Vector{SyntaxTree}
     # Byte ranges of every user-written `K"return"` surface form in `st3`
     # (`st3` not `st0` so macro-expansion-introduced `K"return"`s are included).
     # Consumed by `type_for_branching`.
@@ -82,7 +96,7 @@ struct InferredTreeContext
     # only when the OC whose body it's in has the queried byte range — so inner-OC noise
     # inside an outer OC body (e.g. multi-`for` comprehension, closure-of-closure) is
     # filtered when querying at the inner OC's range.
-    oc_body_scope::Dict{Int,UnitRange{Int}}
+    oc_body_scope::Dict{SyntaxTree,UnitRange{Int}}
     # Refined OC argument types keyed by argument binding byte range.
     oc_argument_binding_types::Dict{UnitRange{Int},Any}
 end
@@ -100,15 +114,16 @@ struct FileInfo
     filename::String
     encoding::LSP.PositionEncodingKind.Ty
     testsetinfos::Vector{TestsetInfo}
-    # Pruned `st0` cache for synchronized documents. Access through
-    # `build_syntax_tree`, which returns a copy safe for lowering. Unsynced files
-    # keep this `nothing`; workspace-wide hot paths should rely on summary caches
-    # instead of retaining `st0` for every file.
-    syntax_tree0::Union{Nothing,SyntaxTreeC}
+    # `st0` cache for synchronized documents, built from `parsed_stream` when the
+    # constructor is given `cache_tree0=true`. Access through `build_syntax_tree`,
+    # which returns a copy safe for lowering. Unsynced files keep this `nothing`;
+    # workspace-wide hot paths should rely on summary caches instead of retaining
+    # `st0` for every file.
+    syntax_tree0::Union{Nothing,SyntaxTree}
     # Intentionally unbounded within a `FileInfo`: synced documents usually receive
     # repeated type queries for the same top-level tree. Content updates replace the
     # whole `FileInfo`, and full-analysis updates clear this cache so old analysis
-    # worlds can be released. Unlike the pruned `syntax_tree0` cache, inferred
+    # worlds can be released. Unlike the `syntax_tree0` cache, inferred
     # contexts are several times heavier; e.g. caching them for unsynced workspace
     # files would retain roughly 140 MiB for JETLS' own `src/`, so keep this `nothing`
     # outside synchronized documents.
@@ -123,10 +138,11 @@ struct FileInfo
             version::Int, parsed_stream::JS.ParseStream, filename::AbstractString,
             encoding::LSP.PositionEncodingKind.Ty = LSP.PositionEncodingKind.UTF16,
             testsetinfos::Vector{TestsetInfo} = EMPTY_TESTSETINFOS;
-            syntax_tree0::Union{Nothing,SyntaxTreeC} = nothing,
+            cache_tree0::Bool = false,
             inferred_context_cache::Union{Nothing,InferredContextCache} = nothing
         )
-        syntax_tree0 = syntax_tree0 === nothing ? nothing : JS.prune(syntax_tree0)
+        syntax_tree0 = cache_tree0 ?
+            JS.build_tree(JS.SyntaxTree, parsed_stream; filename) : nothing
         line_starts = build_line_starts(parsed_stream.textbuf)
         new(version, parsed_stream, filename, encoding, testsetinfos, syntax_tree0,
             inferred_context_cache, line_starts)
@@ -322,6 +338,10 @@ struct AnalysisExecution
     prev_result::Union{Nothing,AnalysisResult}
 end
 
+abstract type AbstractSignatureAnalysisJob end
+signature_analysis_completion(job::AbstractSignatureAnalysisJob) =
+    getfield(job, :completion)::Base.Event
+
 const AnalysisCache = LWContainer{Dict{URI,AnalysisInfo}, LWStats}
 const PendingAnalyses = CASContainer{Dict{AnalysisEntry,Union{Nothing,AnalysisRequest}}, CASStats}
 const CurrentGenerations = CASContainer{Dict{AnalysisEntry,Int}, CASStats}
@@ -333,21 +353,25 @@ struct AnalysisManager
     cache::AnalysisCache
     pending_analyses::PendingAnalyses
     queue::Channel{Union{Nothing,AnalysisRequest}}
+    signature_queue::Channel{Union{Nothing,AbstractSignatureAnalysisJob}}
     current_generations::CurrentGenerations
     analyzed_generations::AnalyzedGenerations
     debounced::DebouncedRequests
     instantiated_envs::InstantiatedEnvs
-    worker_tasks::Vector{Task}
+    worker_task::Base.RefValue{Task}
+    signature_worker_tasks::Vector{Task}
     function AnalysisManager()
         return new(
             AnalysisCache(),
             PendingAnalyses(),
             Channel{Union{Nothing,AnalysisRequest}}(Inf),
+            Channel{Union{Nothing,AbstractSignatureAnalysisJob}}(Inf),
             CurrentGenerations(),
             AnalyzedGenerations(),
             DebouncedRequests(),
             InstantiatedEnvs(),
-            Task[], # initialized by start_analysis_workers!
+            Ref{Task}(), # initialized by start_analysis_worker!
+            Task[], # initialized by start_signature_analysis_workers!
         )
     end
 end
@@ -527,7 +551,11 @@ const INFERENCE_UNDEF_STATIC_PARAM_CODE = "inference/undef-static-param" # curre
 const INFERENCE_FIELD_ERROR_CODE = "inference/field-error"
 const INFERENCE_BOUNDS_ERROR_CODE = "inference/bounds-error"
 const INFERENCE_METHOD_ERROR_CODE = "inference/method-error"
-const INFERENCE_NON_BOOLEAN_COND_CODE = "inference/non-boolean-cond"
+const INFERENCE_UNDEF_KEYWORD_CODE = "inference/undef-keyword"
+const INFERENCE_TYPE_ERROR_NON_BOOL_COND_CODE = "inference/type-error/non-bool-cond"
+const INFERENCE_TYPE_ERROR_TYPE_ASSERT_CODE = "inference/type-error/type-assert"
+const INFERENCE_TYPE_ERROR_KEYWORD_CODE = "inference/type-error/keyword"
+const DEPRECATED_INFERENCE_NON_BOOLEAN_COND_CODE = "inference/non-boolean-cond"
 const TESTRUNNER_TEST_FAILURE_CODE = "testrunner/test-failure"
 
 const ALL_DIAGNOSTIC_CODES = Set{String}(String[
@@ -555,9 +583,18 @@ const ALL_DIAGNOSTIC_CODES = Set{String}(String[
     INFERENCE_FIELD_ERROR_CODE,
     INFERENCE_BOUNDS_ERROR_CODE,
     INFERENCE_METHOD_ERROR_CODE,
-    INFERENCE_NON_BOOLEAN_COND_CODE,
+    INFERENCE_UNDEF_KEYWORD_CODE,
+    INFERENCE_TYPE_ERROR_NON_BOOL_COND_CODE,
+    INFERENCE_TYPE_ERROR_TYPE_ASSERT_CODE,
+    INFERENCE_TYPE_ERROR_KEYWORD_CODE,
     TESTRUNNER_TEST_FAILURE_CODE,
 ])
+
+const DIAGNOSTIC_CODE_ALIASES = Dict{String,Vector{String}}(
+    INFERENCE_TYPE_ERROR_NON_BOOL_COND_CODE => String[
+        DEPRECATED_INFERENCE_NON_BOOLEAN_COND_CODE,
+    ],
+)
 
 struct DiagnosticPattern <: ConfigSection
     pattern::Union{Regex,String}
@@ -580,9 +617,10 @@ end
 @define_eq_overloads DiagnosticConfig
 
 # Internal, undocumented configuration for full-analysis module overrides.
-struct AnalysisOverride <: ConfigSection
+@kwdef struct AnalysisOverride <: ConfigSection
     path::Glob.FilenameMatch{String}
-    module_name::Maybe{String}
+    module_name::Maybe{String} = nothing
+    full_analysis::Bool = false
 end
 @define_eq_overloads AnalysisOverride
 merge_key_value(analysis_override::AnalysisOverride) = analysis_override.path
@@ -590,19 +628,16 @@ merge_key_value(analysis_override::AnalysisOverride) = analysis_override.path
 # Static initialization options from `InitializeParams.initializationOptions`.
 # These are set once during the initialize request and remain constant.
 @kwdef struct InitOptions <: ConfigSection
-    n_analysis_workers::Maybe{Int} = nothing
     analysis_overrides::Maybe{Vector{AnalysisOverride}} = nothing
 end
 @define_eq_overloads InitOptions
 function Base.show(io::IO, init_options::InitOptions)
     print(io, "InitOptions(;")
-    n_analysis_workers = init_options.n_analysis_workers
-    n_analysis_workers === nothing || print(io, " n_analysis_workers=", n_analysis_workers)
     analysis_overrides = init_options.analysis_overrides
     analysis_overrides === nothing || print(io, " analysis_overrides=", analysis_overrides)
     print(io, ")")
 end
-const DEFAULT_INIT_OPTIONS = InitOptions(; n_analysis_workers=1, analysis_overrides=AnalysisOverride[])
+const DEFAULT_INIT_OPTIONS = InitOptions(; analysis_overrides=AnalysisOverride[])
 
 @kwdef struct LaTeXEmojiConfig <: ConfigSection
     strip_prefix::Maybe{Union{Missing,Bool}} = nothing # missing is used as sentinel for default setting value
@@ -721,12 +756,12 @@ function ConfigManagerData(
 end
 
 struct BindingOccurrence
-    tree::SyntaxTreeC
+    tree::SyntaxTree
     kind::Symbol
 end
 
 # Types for binding occurrences cache.
-# IMPORTANT: We must not cache full `SyntaxTreeC` or `JL.BindingInfo` objects
+# IMPORTANT: We must not cache full `SyntaxTree` or `JL.BindingInfo` objects
 # as they hold references to large internal structures (syntax graphs, lowering
 # contexts). Instead, we extract only the essential information needed for
 # LSP features, i.e. mainly binding kind and location information.
@@ -743,7 +778,7 @@ end
 
 A lightweight representation of syntax tree location information.
 This struct stores only the byte range and source location, implementing the
-minimum `SyntaxTreeC` API (`first_byte`, `last_byte`, `source_location`)
+minimum `SyntaxTree` API (`first_byte`, `last_byte`, `source_location`)
 required by [`jsobj_to_range`](@ref) that convert syntax tree to LSP `Range` objects.
 """
 struct CachedSyntaxTree
@@ -751,7 +786,7 @@ struct CachedSyntaxTree
     lb::Int
     line::Int
     column::Int
-    function CachedSyntaxTree(st::SyntaxTreeC)
+    function CachedSyntaxTree(st::SyntaxTree)
         return new(JS.first_byte(st), JS.last_byte(st), JS.source_location(st)...)
     end
 end
@@ -779,6 +814,9 @@ struct BindingOccurrencesCacheEntry
 end
 
 const AnyBindingOccurrence = Union{BindingOccurrence,CachedBindingOccurrence}
+
+is_definition_occurrence(occ::AnyBindingOccurrence) = is_definition_occurrence_kind(occ.kind)
+is_definition_occurrence_kind(kind::Symbol) = kind === :def || kind === :method_def
 
 abstract type AbstractCompletionResolverInfo end
 
@@ -831,12 +869,14 @@ end
 struct DefUsedNames
     def::Set{String}
     used::Set{String}
-    DefUsedNames() = new(Set{String}(), Set{String}())
+    method_def::Set{String}
+    DefUsedNames() = new(Set{String}(), Set{String}(), Set{String}())
 end
 struct ImportInfo
     uri::URI
     name_range::Range
     delete_range::Range
+    import_kind::Symbol
 end
 # Undef-global candidate emitted by the per-file phase (with fresh `ctx3`),
 # consumed by the cross-file phase (which only does a cheap def-name lookup).
@@ -943,6 +983,8 @@ end
 struct ServerMessageRecorder
     received_queue::Channel{Any}
     sent_queue::Channel{Any}
+    ServerMessageRecorder() = new(Channel{Any}(Inf), Channel{Any}(Inf))
+    ServerMessageRecorder(received_queue::Channel{Any}, sent_queue::Channel{Any}) = new(received_queue, sent_queue)
 end
 function (callback::ServerMessageRecorder)(s::Symbol, @nospecialize(msg))
     if s === :received

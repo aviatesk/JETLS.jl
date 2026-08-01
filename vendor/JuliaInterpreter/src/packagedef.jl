@@ -36,6 +36,17 @@ end
 
 const isbindingresolved_deprecated = which(Base.isbindingresolved, Tuple{Module, Symbol}).file == Symbol("deprecated.jl")
 
+# On Julia ≥ 1.14 `Type{T}` is its own kind rather than a `DataType`, and accessing
+# `.name` (and `Type.body`) on it is deprecated (JuliaLang/julia#61915); use the new
+# official accessors there. Older versions keep the exact legacy checks.
+@static if isdefined(Base, :type_parameter)
+    const _isType = Base.isType
+    const _Type_parameter = Base.type_parameter
+else
+    _isType(@nospecialize t) = isa(t, DataType) && t.name === Type.body.name
+    _Type_parameter(@nospecialize t) = t.parameters[1]
+end
+
 include("types.jl")
 include("utils.jl")
 include("construct.jl")
@@ -102,11 +113,21 @@ function set_compiled_methods()
     push!(compiled_methods, which(Base.unsafe_pointer_to_objref, (Ptr,)))
     push!(compiled_methods, which(Vector{Int}, (UndefInitializer, Int)))
     push!(compiled_methods, which(fill!, (Vector{Int8}, Int)))
+    @static if isdefinedglobal(Core, :TypeEgal)
+        # Recursive interpretation of this constructor overflows while traversing
+        # the TypeEgal-based type implementation on Julia 1.14 nightlies.
+        push!(compiled_methods, which(Dict, (Pair{Any,Any}, Pair{Any,Any})))
+    end
 
     ###########
     # Modules #
     ###########
     push!(compiled_modules, Base.Threads)
+    # The interpreter must not recursively interpret its own internals: the frame pools
+    # (`junk_frames`/`junk_framedata`) and other globals are shared between the meta and
+    # object levels, so an interpreted interpreter corrupts the running one (issue #228).
+    # Running our own methods compiled makes nested `@interpret` work.
+    push!(compiled_modules, @__MODULE__)
 end
 
 _have_fma_compiled(::Type{T}) where {T} = Core.Intrinsics.have_fma(T)

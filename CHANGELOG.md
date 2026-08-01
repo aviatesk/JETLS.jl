@@ -19,13 +19,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## Unreleased
 
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
-- Diff: [`35c3262...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/35c3262...HEAD)
+- Diff: [`0d67c12...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/0d67c12...HEAD)
 
 ### Announcement
 
 > [!important]
-> JETLS requires Julia 1.12.2 or later.
-> It does not support Julia 1.12.1 or earlier, nor Julia 1.13+/nightly.
+> JETLS supports Julia 1.12.2 through 1.13.
+> It does not support Julia 1.12.1 or earlier, nor Julia 1.14+/nightly.
 
 > [!warning]
 > JETLS currently has a known memory leak issue where memory usage grows with each re-analysis (https://github.com/aviatesk/JETLS.jl/issues/357).
@@ -43,6 +43,111 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > ```
 > This disables analysis for matched files. Basic features like completion still might work, but most LSP features will be unfunctional.
 > Note that `analysis_overrides` is provided as a temporary workaround and may be removed or changed at any time. A proper fix is being worked on.
+
+### Breaking
+
+- Removed the experimental `n_analysis_workers` initialization option. Full-analysis requests are now processed serially, while signature analysis within each request remains parallel based on the available Julia threads. Existing client or `.JETLSConfig.toml` configurations must remove this option.
+
+- `inference/non-boolean-cond` is now reported as [`inference/type-error/non-bool-cond`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/inference/type-error/non-bool-cond). Existing diagnostic pattern configurations that match the old code continue to apply for now, but this compatibility support may be removed in a future release.
+
+### Added
+
+- Added Julia 1.13 compatibility, allowing JETLS to run on Julia 1.13 runtimes. JETLS selects pinned Compiler.jl sources for the active Julia runtime while retaining Julia 1.12 support.
+
+- Added the [`inference/type-error/type-assert`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/inference/type-error/type-assert) diagnostic for type assertions that inference can prove will fail:
+  ```julia
+  let x = rand()
+      x::Int  # TypeError: expected Int64, got Float64 (JETLS inference/type-error/type-assert)
+  end
+  ```
+
+- Added detection of unsupported keyword arguments: a call that passes a keyword argument the called method does not accept is now reported under the [`inference/method-error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/inference/method-error) diagnostic:
+  ```julia
+  kwfunc(; kw1=nothing) = kw1
+  kwfunc(; kw3=42)  # unsupported keyword argument `kw3` (JETLS inference/method-error)
+  ```
+
+- Added the [`inference/undef-keyword`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/inference/undef-keyword) diagnostic: a call that omits a required keyword argument (one declared without a default), which raises `UndefKeywordError` at runtime, is now reported:
+  ```julia
+  required_keyword(pos; key) = (pos, key)
+  required_keyword(42)  # missing keyword argument `key` (JETLS inference/undef-keyword)
+  ```
+
+- Added the [`inference/type-error/keyword`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/inference/type-error/keyword) diagnostic: a call that passes a keyword argument whose value type does not match the keyword's declared type, which raises `TypeError` at runtime, is now reported:
+  ```julia
+  typed_keyword(; key::Int=0) = key
+  typed_keyword(; key=1.0)  # TypeError: expected `Int64`, got `Float64` (JETLS inference/type-error/keyword)
+  ```
+
+### Changed
+
+- Updated JuliaSyntax.jl and JuliaLowering.jl revisions, incorporating JuliaLowering's new standard-tree `SyntaxTree` representation ([JuliaLang/julia#62474](https://github.com/JuliaLang/julia/pull/62474)), which makes lowering — the backbone of most lowering-based LSP features — several times faster and reduces its memory footprint.
+
+- Improved startup latency by precompiling the `initialize` request round-trip, so the first request is less likely to hit strict client `initialize` timeouts (such as Helix's 20-second default). On slower machines, raising the client-side timeout may still be needed. (xref: https://github.com/aviatesk/JETLS.jl/issues/784)
+
+- Updated Compiler.jl API compatibility for the incoming Julia 1.12.7 release while retaining support for Julia pre-1.12.6 Compiler.jl APIs.
+
+- JETLS servers started without a workspace root (i.e., when an LSP `InitializeRequest` specifies neither `workspaceFolders` nor `rootUri`) now analyze opened Julia files as standalone scripts instead of discovering nearby project environments. This avoids automatic environment setup and package-wide analysis in rootless LSP sessions.
+
+- `inference/*` diagnostic related information now labels inference frames as `origin`, `via`, or `entry`, making it clearer where the error originated and which analysis entry reported it.
+
+- `inference/type-error/*` now groups diagnostics for the subset of runtime `TypeError` cases that JETLS can infer, including non-`Bool` conditions and statically failing type assertions. Users can ignore or reconfigure this family together with a regex code match such as `inference/type-error/.*`.
+
+- Reworked the [diagnostics documentation](https://aviatesk.github.io/JETLS.jl/release/diagnostic/): a new [Analysis stages](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/stage) section explains what produces each diagnostic category, which tool powers it, when it runs, and how the stages depend on one another. It also adds a [security caveat](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/stage/toplevel) that full analysis loads and runs your code (so JETLS should not be run on untrusted code), and documents how each [`inference/*` diagnostic](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/inference) corresponds to the Julia runtime error it predicts.
+
+### Fixed
+
+- Fixed false `lowering/macro-expansion-error` diagnostics when an old-style macro is nested inside a new-style macro. The failed expansion could also contaminate enclosing forms and produce repeated lowering diagnostics across a project, as reported for Makie. This incorporates [JuliaLang/julia#62221](https://github.com/JuliaLang/julia/pull/62221) and addresses [JuliaLang/JuliaLowering.jl#108](https://github.com/JuliaLang/JuliaLowering.jl/issues/108). (Closed https://github.com/aviatesk/JETLS.jl/issues/554)
+
+- Fixed missing or incorrect references, rename edits, document highlights, and diagnostics around qualified or aliased macros such as `Test.@test`; unrelated user-defined macros with the same name are no longer mistaken for built-in macros.
+
+- Fixed many missing references, rename edits, document highlights, and `lowering/unused-import` diagnostic results for identifiers inside quoted expressions used by helper functions, macros, and generated functions.
+
+- Fixed a false `lowering/error` diagnostic for docstring signatures such as `someinterface(::Type{<:Integer})`.
+
+- Fixed a false `lowering/unused-import` report for a name used only inside a `@static` condition or a branch not selected by the JETLS analysis process:
+  ```julia
+  using Base: VERSION
+  @static if VERSION ≥ v"1.12"
+      # `VERSION` is no longer misreported as an unused import
+  end
+  ```
+
+- Fixed a false `lowering/unused-import` report for names imported only to extend methods without qualification:
+  ```julia
+  import Base: show  # no longer reported as an unused import
+  struct A; x::Int; end
+  show(io::IO, a::A) = print(io, "A with ", a.x)
+  ```
+
+- Document-highlight and rename now also cover identifiers used in `@static` branches not selected by the JETLS analysis process.
+
+- Fixed false `lowering/unused-local`, `lowering/unused-argument`, and `lowering/unused-assignment` reports for a binding whose only use is in a `@static` branch not selected by the JETLS analysis process.
+
+- Fixed `inference/field-error` diagnostics for direct transparent custom `getproperty` implementations that forward to `getfield(o, s)`, so missing-property errors point at the user's property access instead of the forwarding implementation as the primary diagnostic location. (Closed https://github.com/aviatesk/JETLS.jl/issues/469)
+
+- Fixed missing diagnostics, references, rename, and document-highlight support for identifiers interpolated into `lazy"..."` strings.
+
+- Fixed `textDocument/references` with `includeDeclaration=false` incorrectly including a `struct` definition as a reference.
+
+- Fixed references, definition lookup, document highlights, and rename not recognizing `struct` inner constructor names as definitions of the struct binding.
+
+- Fixed generated helpers and temporary bindings in new-style `@something`, `lazy"..."`, and `@assert` expansions resolving in the caller's scope, where shadowing could change macro behavior or capture user variables.
+
+- Fixed `@static` conditions generated by another new-style macro resolving names in the generating macro's module instead of the caller's module.
+
+- Fixed `@static false && expr` and `@static true || expr` expanding to `nothing` instead of `false` and `true`, respectively.
+
+- Fixed document formatting and TestRunner execution hanging on large documents or test output. TestRunner cancellation now also waits for the child process to stop cleanly, and formatter and TestRunner failures include process exit details in the server log.
+
+## 2026-06-26
+
+- Commit: [`0d67c12`](https://github.com/aviatesk/JETLS.jl/commit/0d67c12)
+- Diff: [`35c3262...0d67c12`](https://github.com/aviatesk/JETLS.jl/compare/35c3262...0d67c12)
+- Installation:
+  ```bash
+  julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="2026-06-26")'
+  ```
 
 ### Changed
 

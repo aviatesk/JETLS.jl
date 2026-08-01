@@ -6,12 +6,12 @@ lookup_var(frame::Frame, ref::GlobalRef) = invoke_in_world(frame.world, getgloba
 function lookup_var(frame::Frame, slot::SlotNumber)
     val = frame.framedata.locals[slot.id]
     val !== nothing && return val.value
-    throw(UndefVarError(frame.framecode.src.slotnames[slot.id]))
+    throw(undef_var_error(frame.framecode.src.slotnames[slot.id], :local))
 end
 function lookup_var(frame::Frame, arg::Core.Argument)
     val = frame.framedata.locals[arg.n]
     val !== nothing && return val.value
-    throw(UndefVarError(frame.framecode.src.slotnames[arg.n]))
+    throw(undef_var_error(frame.framecode.src.slotnames[arg.n], :local))
 end
 
 """
@@ -59,16 +59,42 @@ end
 function lookup_expr(interp::Interpreter, frame::Frame, e::Expr)
     head = e.head
     head === :the_exception && return frame.framedata.last_exception[]
+    head === :new_opaque_closure && return eval_new_opaque_closure(interp, frame, e)
     if head === :static_parameter
         arg = e.args[1]::Int
         if isassigned(frame.framedata.sparams, arg)
             return frame.framedata.sparams[arg]
         else
             syms = sparam_syms(frame.framecode.scope::Method)
-            throw(UndefVarError(syms[arg]))
+            throw(undef_sparam_error(syms[arg]))
         end
     end
     head === :boundscheck && length(e.args) == 0 && return true
+    if head === :foreignglobal
+        # On Julia ≥ 1.14, `cglobal` lowers to `Expr(:foreignglobal, spec)`
+        # (JuliaLang/julia#61709). Mirror the runtime interpreter's syntactic
+        # dispatch (`eval_expr` in src/interpreter.c): a (possibly quoted) symbol,
+        # string, or `(name, lib)` tuple resolves through the foreign-symbol
+        # lookup; any other argument must evaluate to a pointer, which is
+        # returned as a raw `Ptr{Cvoid}` (issue #734).
+        fptr = e.args[1]
+        if isa(fptr, QuoteNode) && (isa(fptr.value, String) || isa(fptr.value, Tuple))
+            fptr = fptr.value
+        end
+        if isexpr(fptr, :tuple)
+            # The `(name, lib)` elements may themselves be `getproperty` chains
+            # (e.g. `Base.Math.libm`), which `lookup_nested` resolves.
+            spec = Core.tuple(Any[lookup_nested(interp, frame, arg) for arg in (fptr::Expr).args]...)
+            return ccall(:jl_cglobal_auto, Any, (Any,), spec)
+        elseif isa(fptr, Tuple) || isa(fptr, String)
+            return ccall(:jl_cglobal_auto, Any, (Any,), fptr)
+        elseif isa(fptr, QuoteNode) && isa(fptr.value, Symbol)
+            return ccall(:jl_cglobal_auto, Any, (Any,), fptr.value)
+        end
+        v = lookup(interp, frame, fptr)
+        isa(v, Ptr) || throw(TypeError(:cglobal, Ptr, v))
+        return convert(Ptr{Cvoid}, v)
+    end
     if head === :call
         f = lookup(interp, frame, e.args[1])
         if (@static VERSION < v"1.11.0-DEV.1180" && true) && f === Core.svec
@@ -145,7 +171,11 @@ function resolvefc(frame::Frame, @nospecialize(expr))
     isexpr(expr, :tuple) && return expr
     if isexpr(expr, :call)
         a = (expr::Expr).args[1]
-        (isa(a, QuoteNode) && a.value === Core.tuple) || error("unexpected ccall to ", expr)
+        # the tuple constructor may appear as a QuoteNode, a GlobalRef, or the function itself
+        istuple = a === Core.tuple ||
+                  (isa(a, QuoteNode) && a.value === Core.tuple) ||
+                  (isa(a, GlobalRef) && a.mod === Core && a.name === :tuple)
+        istuple || @invokelatest error("unexpected ccall to ", expr)
         return Expr(:call, GlobalRef(Core, :tuple), (expr::Expr).args[2:end]...)
     end
     @invokelatest error("unexpected ccall to ", expr)
@@ -165,6 +195,15 @@ function collect_args(interp::Interpreter, frame::Frame, call_expr::Expr; isfc::
     return args
 end
 
+function instantiate_sparam_types(argtypes::SimpleVector, spsig::UnionAll, sparams::Vector{Any})
+    n = length(argtypes)
+    inst = Vector{Any}(undef, n)
+    for i = 1:n
+        inst[i] = instantiate_type_in_env(argtypes[i], spsig, sparams)
+    end
+    return Core.svec(inst...)
+end
+
 """
     ret = evaluate_foreigncall(interp, frame::Frame, call_expr)
 
@@ -175,7 +214,15 @@ function evaluate_foreigncall(interp::Interpreter, frame::Frame, call_expr::Expr
     args = collect_args(interp, frame, call_expr; isfc = head === :foreigncall)
     for i = 2:length(args)
         arg = args[i]
-        args[i] = isa(arg, Symbol) ? QuoteNode(arg) : arg
+        if head === :foreigncall && i >= 6
+            # args[2:5] are metadata (return type, argument types, nreq, calling convention);
+            # args[6:end] are the evaluated argument values (plus GC roots). The rebuilt
+            # expression is passed to `Core.eval`, which re-evaluates raw `Expr`/`Symbol`/
+            # `QuoteNode`/`GlobalRef` values as code, so quote every value unconditionally.
+            args[i] = QuoteNode(arg)
+        else
+            args[i] = isa(arg, Symbol) ? QuoteNode(arg) : arg
+        end
     end
     head === :cfunction && (args[2] = QuoteNode(args[2]))
     if head === :foreigncall && !isa(args[5], QuoteNode)
@@ -184,18 +231,15 @@ function evaluate_foreigncall(interp::Interpreter, frame::Frame, call_expr::Expr
     scope = frame.framecode.scope
     data = frame.framedata
     if !isempty(data.sparams) && scope isa Method
-        sig = scope.sig
+        # a method with static parameters always has a `UnionAll` signature
+        sig = scope.sig::UnionAll
         args[2] = instantiate_type_in_env(args[2], sig, data.sparams)
         arg3 = args[3]
         if head === :foreigncall
-            args[3] = Core.svec(map(arg3) do arg
-                instantiate_type_in_env(arg, sig, data.sparams)
-            end...)
+            args[3] = instantiate_sparam_types(arg3::SimpleVector, sig, data.sparams)
         else
             args[3] = instantiate_type_in_env(arg3, sig, data.sparams)
-            args[4] = Core.svec(map(args[4]::Core.SimpleVector) do arg
-                instantiate_type_in_env(arg, sig, data.sparams)
-            end...)
+            args[4] = instantiate_sparam_types(args[4]::SimpleVector, sig, data.sparams)
         end
     end
     # A `:foreigncall`/`:cfunction` is a C call with no Julia method dispatch of its own:
@@ -212,7 +256,7 @@ function bypass_builtins(interp::Interpreter, frame::Frame, call_expr::Expr, pc:
         if isa(tme, Compiled)
             fargs = collect_args(interp, frame, call_expr)
             f = to_function(fargs[1], frame.world)
-            fmod = parentmodule(f)::Module
+            fmod = invoke_in_world(frame.world, parentmodule, f)::Module
             if fmod === CompiledCalls || fmod === Core.Compiler
                 # These wrappers are generated by JuliaInterpreter itself (for llvmcall/foreigncall),
                 # so they must be called in the latest world rather than the frame's world.
@@ -225,6 +269,11 @@ function bypass_builtins(interp::Interpreter, frame::Frame, call_expr::Expr, pc:
     end
     return nothing
 end
+
+# Set by the `rethrow` interception just before re-raising, so handler entry can
+# distinguish a re-raise (which must not push a duplicate active-exception entry)
+# from a fresh `throw` of the same object.
+const _rethrow_inflight = Ref{Any}(nothing)
 
 function native_call(fargs::Vector{Any}, frame::Frame)
     f = popfirst!(fargs)
@@ -281,15 +330,79 @@ function evaluate_call!(interp::Interpreter, frame::Frame, fargs::Vector{Any}, e
     if fargs[1] === Core.eval
         return Core.eval(fargs[2], fargs[3])  # not a builtin, but worth treating specially
     elseif fargs[1] === Base.rethrow
-        err = length(fargs) > 1 ? fargs[2] : frame.framedata.last_exception[]
-        throw(err)
+        if length(fargs) > 1
+            exc = fargs[2]
+            # `rethrow(exc)` replaces the exception currently being handled; find it in
+            # the frame chain (native `jl_rethrow_other` replaces the stack top).
+            fr = frame
+            while fr !== nothing
+                exs = fr.framedata.exceptions
+                if !isempty(exs)
+                    exs[end] = exc
+                    fr.framedata.last_exception[] = exc
+                    _rethrow_inflight[] = exc
+                    throw(exc)
+                end
+                fr = fr.caller
+            end
+            throw(exc)
+        end
+        # `rethrow()` rethrows the task's innermost exception being handled, which may live
+        # in a caller's frame when it is reached from a function called inside a `catch`
+        # block. Each frame tracks its own active-exception stack, so walk the caller chain
+        # for the innermost frame with a nonempty stack.
+        fr = frame
+        while fr !== nothing
+            exs = fr.framedata.exceptions
+            if !isempty(exs)
+                _rethrow_inflight[] = exs[end]
+                throw(exs[end])
+            end
+            fr = fr.caller
+        end
+        # No interpreted frame is handling an exception; fall back to the native rethrow
+        # (interpreted code may be running inside a native `catch` block).
+        rethrow()
+    elseif fargs[1] === Base.current_exceptions && length(fargs) == 1
+        # Exceptions caught by interpreted handlers never reach the task's native
+        # exception stack; they live in the frames' modeled stacks. Merge the native
+        # stack (outermost) with the caller chain's entries. The interpreter does not
+        # record per-exception backtraces, so those entries carry an empty backtrace.
+        stack = Any[entry for entry in invoke_in_world(frame.world, Base.current_exceptions)]
+        blocks = Vector{Any}[]
+        fr = frame
+        while fr !== nothing
+            exs = fr.framedata.exceptions
+            isempty(exs) || pushfirst!(blocks, exs)
+            fr = fr.caller
+        end
+        bt = Union{Ptr{Nothing},Base.InterpreterIP}[]
+        for exs in blocks, exc in exs
+            push!(stack, (exception = exc, backtrace = bt))
+        end
+        return Base.ExceptionStack(stack)
     end
     if fargs[1] === Core.invoke # invoke needs special handling
-        f_invoked = which(fargs[2], fargs[3])::Method
+        argtypes = fargs[3]
         fargs_pruned = [fargs[2]; fargs[4:end]]
         sig = Tuple{mapany(_Typeof, fargs_pruned)...}
+        if isa(argtypes, Method)
+            # `invoke(f, method::Method, args...)` (Julia 1.12+)
+            f_invoked = argtypes
+            # An inapplicable method is an error; defer to the native `invoke` to raise it.
+            sig <: f_invoked.sig || return invoke(fargs[2:end]...)
+        elseif isa(argtypes, Core.CodeInstance)
+            # `invoke(f, ci::CodeInstance, args...)` requests that specific compiled code:
+            # run it natively.
+            return invoke(fargs[2:end]...)
+        else
+            # Select the method in the frame's world; plain `which` would use the task's
+            # (possibly newer) world.
+            f_invoked = whichtt(Base.signature_type(fargs[2], argtypes); world=frame.world)
+            f_invoked === nothing && throw(MethodError(fargs[2], argtypes, frame.world))
+        end
         ret = prepare_framecode(f_invoked, sig; enter_generated, world=frame.world)
-        isa(ret, Compiled) && return invoke(fargs[2:end]...)
+        isa(ret, Compiled) && return invoke_in_world(frame.world, invoke, fargs[2:end]...)
         @assert ret !== nothing
         framecode, lenv = ret
         lenv === nothing && return framecode  # this was a Builtin
@@ -304,6 +417,12 @@ function evaluate_call!(interp::Interpreter, frame::Frame, fargs::Vector{Any}, e
             end
             return framecode  # this was a Builtin
         end
+    end
+    if enter_generated && isa(framecode, FrameCode) && framecode.generator
+        # The generator runs on argument *types*. `prepare_call` performs this conversion
+        # but `get_call_framecode` discards the converted arguments, so redo it here
+        # (issue #161).
+        fargs = Any[_Typeof(a) for a in fargs]
     end
     newframe = prepare_frame_caller(frame, framecode, fargs, lenv)
     npc = newframe.pc
@@ -321,15 +440,30 @@ end
     ret = evaluate_call!(frame::Frame, call_expr::Expr, enter_generated::Bool=false)
 
 Evaluate a `:call` expression `call_expr` in the context of `frame`.
-The first causes it to be executed using Julia's normal dispatch (compiled code),
-whereas the second recurses in via the interpreter.
-`interp` has a default value of [`RecursiveInterpreter`](@ref).
+How the call is executed depends on `interp`: with `NonRecursiveInterpreter()` the call
+runs natively via Julia's normal dispatch (compiled code), whereas the default
+[`RecursiveInterpreter`](@ref) constructs a child frame and interprets the callee's
+lowered code recursively.
 """
 evaluate_call!(frame::Frame, call_expr::Expr, enter_generated::Bool=false) =
     evaluate_call!(RecursiveInterpreter(), frame, call_expr, enter_generated)
 
 # The following come up only when evaluating toplevel code
 function evaluate_methoddef(interp::Interpreter, frame::Frame, node::Expr)
+    if is_define_method_call(node)
+        mod = lookup(interp, frame, node.args[2])::Module
+        targetarg = node.args[3]
+        target = targetarg isa Expr ? Core.eval(moduleof(frame), targetarg) :
+                                      lookup(interp, frame, targetarg)
+        @static if isdefinedglobal(Core, :define_method)
+            length(node.args) == 3 &&
+                return invoke_in_world(frame.world, Core.define_method, mod, target)
+            length(node.args) == 5 || error("invalid define_method call")
+            sig = lookup(interp, frame, node.args[4])::SimpleVector
+            body = lookup(interp, frame, node.args[5])::Union{CodeInfo, Expr}
+            return invoke_in_world(frame.world, Core.define_method, mod, target, sig, body)
+        end
+    end
     mt = extract_method_table(frame, node)
     mt !== nothing && return evaluate_overlayed_methoddef(interp, frame, node, mt)
     f = node.args[1]
@@ -365,8 +499,8 @@ function evaluate_overlayed_methoddef(interp::Interpreter, frame::Frame, node::E
 end
 
 function extract_method_table(frame::Frame, node::Expr; eval = true)
-    isexpr(node, :method, 3) || return nothing
-    arg = node.args[1]
+    is_methoddef3(node) || return nothing
+    arg = is_define_method_call(node) ? node.args[3] : node.args[1]
     isa(arg, MethodTable) && return arg
     if !isa(arg, Symbol) && !isa(arg, GlobalRef)
         eval || return nothing
@@ -444,8 +578,29 @@ function eval_rhs(interp::Interpreter, frame::Frame, node::Expr)
         return nothing
     elseif head === :method && length(node.args) == 1
         return @invokelatest evaluate_methoddef(interp, frame, node)
+    elseif head === :new_opaque_closure
+        return eval_new_opaque_closure(interp, frame, node)
     end
     return lookup_expr(interp, frame, node)
+end
+
+# `(argt, rt_lb, rt_ub, [allow_partial::Bool,] method, captures...)`; mirror the runtime
+# interpreter (src/interpreter.c) via the exported jlcall wrapper, which consumes the
+# argument list in the same layout.
+function eval_new_opaque_closure(interp::Interpreter, frame::Frame, node::Expr)
+    if any(a -> isexpr(a, :opaque_closure_method), node.args)
+        # The method is an unevaluated `:opaque_closure_method` (its constructor is not
+        # exported); rebuild the construction with every other operand as a literal and
+        # let lowering evaluate it, exactly like a hand-written `@eval` of this form.
+        resolved = Any[isexpr(a, :opaque_closure_method) ? a :
+                       QuoteNode(lookup(interp, frame, a)) for a in node.args]
+        fex = Expr(:->, Expr(:tuple), Expr(:block, Expr(:new_opaque_closure, resolved...)))
+        f = Core.eval(moduleof(frame), fex)
+        return Base.invokelatest(f)
+    end
+    args = Any[lookup(interp, frame, arg) for arg in node.args]
+    return GC.@preserve args ccall(:jl_new_opaque_closure_jlcall, Any,
+                                   (Any, Ptr{Any}, UInt32), nothing, args, length(args))
 end
 
 function check_isdefined(frame::Frame, @nospecialize(node))
@@ -614,13 +769,17 @@ function step_expr!(interp::Interpreter, frame::Frame, @nospecialize(node), isto
                 isa(rhs, BreakpointRef) && return rhs
                 do_assignment!(frame, lhs, rhs)
             elseif node.head === :enter
-                rhs = node.args[1]::Int
-                push!(data.exception_frames, rhs)
+                push!(data.exception_frames, node.args[1]::Int)
+                push!(data.exception_scopes, length(data.current_scopes))
+                # The enter's SSA value is the token consumed by `:pop_exception`: the
+                # active-exception stack depth to restore.
+                rhs = length(data.exceptions)
             elseif node.head === :leave
                 if length(node.args) == 1 && isa(node.args[1], Int)
                     arg = node.args[1]::Int
                     for _ = 1:arg
                         pop!(data.exception_frames)
+                        pop!(data.exception_scopes)
                     end
                 else
                     for i = 1:length(node.args)
@@ -629,14 +788,22 @@ function step_expr!(interp::Interpreter, frame::Frame, @nospecialize(node), isto
                         enterstmt = frame.framecode.src.code[(targ::SSAValue).id]
                         enterstmt === nothing && continue
                         pop!(data.exception_frames)
+                        pop!(data.exception_scopes)
                         if isdefined(enterstmt, :scope)
                             pop!(data.current_scopes)
                         end
                     end
                 end
             elseif node.head === :pop_exception
-                # TODO: This needs to handle the exception stack properly
-                # (https://github.com/JuliaDebug/JuliaInterpreter.jl/issues/591)
+                # Restore the active-exception stack to its depth at the corresponding
+                # `:enter` (recorded as that statement's SSA value); this runs at the
+                # normal exit of a `catch` block (issue #591).
+                depth = lookup(interp, frame, node.args[1])::Int
+                if depth < length(data.exceptions)
+                    resize!(data.exceptions, depth)
+                    data.last_exception[] = isempty(data.exceptions) ?
+                        _INACTIVE_EXCEPTION.instance : data.exceptions[end]
+                end
             elseif istoplevel
                 # This branch handles `:module`/`:toplevel` reached from a *lowered* `:thunk`.
                 # `step_toplevel!` handles the same heads reached from *unlowered* surface
@@ -651,7 +818,7 @@ function step_expr!(interp::Interpreter, frame::Frame, @nospecialize(node), isto
                     isa(ret, BreakpointRef) && return ret
                     return_from(newframe)
                     rhs = newmod
-                elseif node.head === :using || node.head === :import || node.head === :export
+                elseif node.head === :using || node.head === :import || node.head === :export || node.head === :public
                     Core.eval(moduleof(frame), node)
                 elseif node.head === :const || node.head === :globaldecl
                     g = node.args[1]
@@ -702,13 +869,23 @@ function step_expr!(interp::Interpreter, frame::Frame, @nospecialize(node), isto
         elseif isa(node, ReturnNode)
             return nothing
         elseif isa(node, NewvarNode)
-            # FIXME: undefine the slot?
+            # A `NewvarNode` marks the (re-)entry of a variable's scope: the slot must be
+            # reset to undefined, e.g. so a value from a previous loop iteration does not
+            # remain visible (native code would throw `UndefVarError`).
+            id = node.slot.id
+            data.locals[id] = nothing
+            data.last_reference[id] = 0
         elseif istoplevel && isa(node, LineNumberNode)
         elseif istoplevel && isa(node, Symbol)
             rhs = invoke_in_world(frame.world, getfield, moduleof(frame), node)
         elseif @static (isdefinedglobal(Core.IR, :EnterNode) && true) && isa(node, Core.IR.EnterNode)
-            rhs = node.catch_dest
-            push!(data.exception_frames, rhs)
+            push!(data.exception_frames, node.catch_dest)
+            # Record the scope depth at handler entry (before any scope introduced by this
+            # `EnterNode`), so exception unwinding can restore `current_scopes`.
+            push!(data.exception_scopes, length(data.current_scopes))
+            # The enter's SSA value is the token consumed by `:pop_exception`: the
+            # active-exception stack depth to restore.
+            rhs = length(data.exceptions)
             if isdefined(node, :scope)
                 push!(data.current_scopes, lookup(interp, frame, node.scope))
             end
@@ -781,10 +958,32 @@ function handle_err(::Interpreter, frame::Frame, @nospecialize(err))
         end
         rethrow(err)
     end
-    data.last_exception[] = err
-    pc = @static VERSION >= v"1.11-" ? pop!(data.exception_frames) : data.exception_frames[end] # implicit :leave after https://github.com/JuliaLang/julia/pull/52245
+    pc = enter_exception_handler!(data, err)
     @assert is_leaf(frame)
     frame.pc = pc
+    return pc
+end
+
+# Land a frame in its innermost active exception handler for `err`: restore the
+# dynamic-scope stack to its depth at handler entry (native `jl_eh_restore_state`),
+# pop the handler (on Julia 1.11+, where lowering no longer emits an explicit `:leave`
+# at the catch entry), record `err` on the frame's active-exception stack, and return
+# the catch-destination pc. Shared by `handle_err` and the debugger's
+# `unwind_exception` so both unwind paths have identical semantics.
+function enter_exception_handler!(data::FrameData, @nospecialize(err))
+    scope_depth = data.exception_scopes[end]
+    scope_depth < length(data.current_scopes) && resize!(data.current_scopes, scope_depth)
+    data.last_exception[] = err
+    if _rethrow_inflight[] === err && !isempty(data.exceptions) && data.exceptions[end] === err
+        # A `rethrow()` re-raise of this frame's in-flight exception (e.g. a `finally`
+        # block re-raising during unwinding): native `jl_rethrow` does not push a new
+        # entry onto the task's exception stack, so neither do we.
+        _rethrow_inflight[] = nothing
+    else
+        push!(data.exceptions, err)
+    end
+    pc = @static VERSION >= v"1.11-" ? pop!(data.exception_frames) : data.exception_frames[end] # implicit :leave after https://github.com/JuliaLang/julia/pull/52245
+    @static VERSION >= v"1.11-" && pop!(data.exception_scopes)
     return pc
 end
 

@@ -152,6 +152,11 @@ a package, or improve the accuracy of base abstract interpretation analysis.
 # getting rid of the false positive error from `getindex((), i)`.
 @overlay JET_METHOD_TABLE Base.iterate(::Tuple{}, ::Int) = nothing
 
+# `include` is concretely handled by `ConcreteInterpreter`; analyzing Base's file-loading
+# machinery only adds noise. Keep its unmodeled return value abstract.
+@overlay JET_METHOD_TABLE Base.include(::Module, ::AbstractString) = Base.inferencebarrier(nothing)
+@overlay JET_METHOD_TABLE Base.include(::Function, ::Module, ::AbstractString) = Base.inferencebarrier(nothing)
+
 # analysis injections
 # ===================
 
@@ -180,11 +185,28 @@ function CC.finish!(analyzer::JETAnalyzer, caller::InferenceState, validation_wo
     return @invoke CC.finish!(analyzer::ToplevelAbstractAnalyzer, caller::InferenceState, validation_world::UInt, time_before::UInt64)
 end
 
+@static if ABSTRACT_CALL_USES_VTYPES
 function CC.abstract_call_gf_by_type(analyzer::JETAnalyzer,
-    @nospecialize(func), arginfo::ArgInfo, si::StmtInfo, @nospecialize(atype), sv::InferenceState,
-    max_methods::Int)
+    @nospecialize(func), arginfo::ArgInfo, si::StmtInfo, @nospecialize(atype),
+    vtypes::Union{VarTable,Nothing}, sv::InferenceState, max_methods::Int)
     ret = @invoke CC.abstract_call_gf_by_type(analyzer::ToplevelAbstractAnalyzer,
-        func::Any, arginfo::ArgInfo, si::StmtInfo, atype::Any, sv::InferenceState, max_methods::Int)
+        func::Any, arginfo::ArgInfo, si::StmtInfo, atype::Any,
+        vtypes::Union{VarTable,Nothing}, sv::InferenceState, max_methods::Int)
+    return postprocess_abstract_call_gf_by_type!(analyzer, ret, arginfo, atype, sv)
+end
+else
+function CC.abstract_call_gf_by_type(analyzer::JETAnalyzer,
+    @nospecialize(func), arginfo::ArgInfo, si::StmtInfo, @nospecialize(atype),
+    sv::InferenceState, max_methods::Int)
+    ret = @invoke CC.abstract_call_gf_by_type(analyzer::ToplevelAbstractAnalyzer,
+        func::Any, arginfo::ArgInfo, si::StmtInfo, atype::Any, sv::InferenceState,
+        max_methods::Int)
+    return postprocess_abstract_call_gf_by_type!(analyzer, ret, arginfo, atype, sv)
+end
+end
+
+function postprocess_abstract_call_gf_by_type!(analyzer::JETAnalyzer, ret::Future,
+    arginfo::ArgInfo, @nospecialize(atype), sv::InferenceState)
     atype′ = Ref{Any}(atype)
     function after_abstract_call_gf_by_type(analyzer′::JETAnalyzer, sv′::InferenceState)
         ret′ = ret[]
@@ -200,10 +222,25 @@ function CC.abstract_call_gf_by_type(analyzer::JETAnalyzer,
     return ret
 end
 
+@static if ABSTRACT_CALL_USES_VTYPES
+function CC.from_interprocedural!(analyzer::JETAnalyzer,
+    @nospecialize(rt), sv::InferenceState, arginfo::ArgInfo,
+    @nospecialize(maybecondinfo), vtypes::Union{VarTable,Nothing})
+    ret = @invoke CC.from_interprocedural!(analyzer::ToplevelAbstractAnalyzer,
+        rt::Any, sv::InferenceState, arginfo::ArgInfo, maybecondinfo::Any,
+        vtypes::Union{VarTable,Nothing})
+    return postprocess_from_interprocedural(analyzer, ret)
+end
+else
 function CC.from_interprocedural!(analyzer::JETAnalyzer,
     @nospecialize(rt), sv::InferenceState, arginfo::ArgInfo, @nospecialize(maybecondinfo))
     ret = @invoke CC.from_interprocedural!(analyzer::ToplevelAbstractAnalyzer,
         rt::Any, sv::InferenceState, arginfo::ArgInfo, maybecondinfo::Any)
+    return postprocess_from_interprocedural(analyzer, ret)
+end
+end
+
+function postprocess_from_interprocedural(analyzer::JETAnalyzer, @nospecialize(ret))
     if JETAnalyzerConfig(analyzer).ignore_missing_comparison
         # Widen the return type of comparison operator calls to ignore the possibility of
         # they returning `missing` when analyzing from top-level.
@@ -295,8 +332,24 @@ function concrete_eval_eligible_ignoring_overlay(result::MethodCallResult, argin
 end
 end # @static if VERSION ≥ v"1.13.0-DEV.1350"
 
-function CC.abstract_invoke(analyzer::JETAnalyzer, arginfo::ArgInfo, si::StmtInfo, sv::InferenceState)
-    ret = @invoke CC.abstract_invoke(analyzer::ToplevelAbstractAnalyzer, arginfo::ArgInfo, si::StmtInfo, sv::InferenceState)
+@static if ABSTRACT_CALL_USES_VTYPES
+function CC.abstract_invoke(analyzer::JETAnalyzer, arginfo::ArgInfo, si::StmtInfo,
+    vtypes::Union{VarTable,Nothing}, sv::InferenceState)
+    ret = @invoke CC.abstract_invoke(analyzer::ToplevelAbstractAnalyzer,
+        arginfo::ArgInfo, si::StmtInfo, vtypes::Union{VarTable,Nothing}, sv::InferenceState)
+    return postprocess_abstract_invoke!(analyzer, ret, arginfo, sv)
+end
+else
+function CC.abstract_invoke(analyzer::JETAnalyzer, arginfo::ArgInfo, si::StmtInfo,
+    sv::InferenceState)
+    ret = @invoke CC.abstract_invoke(analyzer::ToplevelAbstractAnalyzer,
+        arginfo::ArgInfo, si::StmtInfo, sv::InferenceState)
+    return postprocess_abstract_invoke!(analyzer, ret, arginfo, sv)
+end
+end
+
+function postprocess_abstract_invoke!(analyzer::JETAnalyzer, ret::Future, arginfo::ArgInfo,
+    sv::InferenceState)
     function after_abstract_invoke(analyzer′::JETAnalyzer, sv′::InferenceState)
         ret′ = ret[]
         report_invalid_invoke!(analyzer′, sv′, ret′, arginfo.argtypes)
@@ -1377,6 +1430,11 @@ function handle_invalid_builtins!(analyzer::JETAnalyzer, sv::InferenceState, @no
 end
 
 function _report_builtin_error_sound!(analyzer::JETAnalyzer, sv::InferenceState, @nospecialize(f), argtypes::Argtypes, @nospecialize(rt))
+    @static if isdefinedglobal(Core, :declare_global)
+        # `Core.declare_global` is always concretized, so any failure has already been
+        # reported by `ConcreteInterpreter`.
+        f === Core.declare_global && isconcretized(analyzer, sv) && return false
+    end
     if isa(f, IntrinsicFunction)
         nothrow = CC.intrinsic_nothrow(f, argtypes)
     else

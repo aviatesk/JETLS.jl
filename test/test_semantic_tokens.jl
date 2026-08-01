@@ -82,9 +82,9 @@ end
         @test length(type_params) == 3
         # `T` in `::T` (use)
         @test any(t -> t.line == 0 && t.char == 6  && t.len == 1 && t.mod == 0, type_params)
-        # `T` in `where T` carries both `:def` and `:decl`
+        # `T` in `where T` is a definition
         @test any(t -> t.line == 0 && t.char == 15 && t.len == 1 &&
-                       t.mod == (MOD_DEFINITION | MOD_DECLARATION), type_params)
+                       t.mod == MOD_DEFINITION, type_params)
         # `T` in `zero(T)` (use)
         @test any(t -> t.line == 0 && t.char == 32 && t.len == 1 && t.mod == 0, type_params)
     end
@@ -146,7 +146,7 @@ end
             @test any(t -> t.line == 1 && t.char == 7  && t.len == 1 && t.mod == 0, type_params) # x::T
             @test any(t -> t.line == 2 && t.char == 6  && t.len == 1 && t.mod == 0, type_params) # A{T}(x)
             @test any(t -> t.line == 2 && t.char == 18 && t.len == 1 &&
-                           t.mod == (MOD_DEFINITION | MOD_DECLARATION), type_params)             # where T
+                           t.mod == MOD_DEFINITION, type_params)                                 # where T
             @test any(t -> t.line == 2 && t.char == 26 && t.len == 1 && t.mod == 0, type_params) # new{T}
             @test any(t -> t.line == 2 && t.char == 37 && t.len == 1 && t.mod == 0, type_params) # convert(T, x)
         end
