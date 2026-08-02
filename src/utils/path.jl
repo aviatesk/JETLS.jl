@@ -26,28 +26,13 @@ function traverse_dir(f, dir::AbstractString)
     return nothing
 end
 
-function _normalize_path(path::AbstractString)
-    path = normpath(path)
-    dir, name = splitdir(path)
-    return isempty(name) && dir != path ? dir : path
-end
+"""
+    issubdir(dir1::AbstractString, dir2::AbstractString) -> Bool
 
-function _matching_path_ancestor(path::AbstractString, root::AbstractString)
-    path = _normalize_path(path)
-    root = _normalize_path(root)
-    @static if Sys.iswindows()
-        root = lowercase(root)
-    end
-    return traverse_dir(path) do candidate
-        candidate_match = candidate
-        @static if Sys.iswindows()
-            candidate_match = lowercase(candidate_match)
-        end
-        return candidate_match == root ? candidate : nothing
-    end
-end
-
-# check if `dir1` is a subdirectory of `dir2`
+Return whether `dir1` is lexically equal to or contained within `dir2`. Both paths must
+be absolute or both relative; mixed paths return `false`. Comparisons are case-insensitive
+on Windows. This function does not access the file system or resolve symbolic links.
+"""
 function issubdir(dir1::AbstractString, dir2::AbstractString)
     return _matching_path_ancestor(dir1, dir2) !== nothing
 end
@@ -74,6 +59,28 @@ function glob_candidate_path(filepath::AbstractString, root_path::Union{Nothing,
     end
     return filepath
 end
+
+# Return the ancestor of `path` that lexically matches `root`, or `nothing` when
+# `path` is outside `root`. Both paths must either be absolute or relative. On
+# Windows, comparison is case-insensitive, while the returned ancestor preserves
+# its spelling from `path` so it can be passed safely to `relpath`.
+function _matching_path_ancestor(path::AbstractString, root::AbstractString)
+    path = _normalize_path(path)
+    root = _normalize_path(root)
+    isabspath(path) == isabspath(root) || return nothing
+    return traverse_dir(path) do candidate
+        return _paths_equal(candidate, root) ? candidate : nothing
+    end
+end
+
+function _normalize_path(path::AbstractString)
+    path = normpath(path)
+    dir, name = splitdir(path)
+    return isempty(name) && dir != path ? dir : path
+end
+
+_paths_equal(a::AbstractString, b::AbstractString) =
+    @static Sys.iswindows() ? lowercase(a) == lowercase(b) : a == b
 
 """
     fix_build_path(path::AbstractString) -> fixed_path::AbstractString
