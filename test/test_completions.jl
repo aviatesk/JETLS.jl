@@ -1140,6 +1140,7 @@ end
             @test !any(items) do item
                 item.label == "function"
             end
+            @test result.isIncomplete
             cnt[] += 1
         end
         @test cnt[] == 1
@@ -1164,6 +1165,135 @@ end
                 item.label == "α"   || # should not include local completions
                 item.label == "β"   || # should not include local completions
                 item.label == "alpha" # should not even include LaTeX completions
+            end
+            @test result.isIncomplete
+            cnt[] += 1
+        end
+        @test cnt[] == 1
+    end
+
+    # server-side prefix filtering (aviatesk/JETLS.jl#821): clients like Zed/Helix
+    # build their filter query from word characters only, so keys containing
+    # `\`/`^`/`:` must be narrowed down by the server
+    let text = """
+        function foo(α, β)
+            \\^│
+        end
+        """
+        context = CompletionContext(;
+            triggerKind = CompletionTriggerKind.TriggerCharacter,
+            triggerCharacter = "^")
+        cnt = Ref(0)
+        with_completion_items(text; context) do (; result)
+            items = result.items
+            @test any(items) do item
+                item.label == "\\^a"
+            end
+            @test !any(items) do item
+                item.label == "\\alpha" # `\alpha` does not contain the typed `^`
+            end
+            @test result.isIncomplete
+            cnt[] += 1
+        end
+        @test cnt[] == 1
+    end
+
+    # filtering is case-insensitive and subsequence-based, so missing characters
+    # are tolerated as long as the typed characters appear in order
+    let text = """
+        function foo(α, β)
+            \\gama│
+        end
+        """
+        context = CompletionContext(;
+            triggerKind = CompletionTriggerKind.TriggerForIncompleteCompletions)
+        cnt = Ref(0)
+        with_completion_items(text; context) do (; result)
+            labels = Set(item.label for item in result.items)
+            @test "\\gamma" in labels
+            @test "\\Gamma" in labels
+            @test result.isIncomplete
+            cnt[] += 1
+        end
+        @test cnt[] == 1
+    end
+
+    let text = """
+        function foo(α, β)
+            \\alp│
+        end
+        """
+        context = CompletionContext(;
+            triggerKind = CompletionTriggerKind.TriggerForIncompleteCompletions)
+        cnt = Ref(0)
+        with_completion_items(text; context) do (; result)
+            items = result.items
+            @test any(items) do item
+                item.label == "\\alpha"
+            end
+            @test !any(items) do item
+                item.label == "\\beta" ||
+                item.label == "\\:pizza:"
+            end
+            @test result.isIncomplete
+            cnt[] += 1
+        end
+        @test cnt[] == 1
+    end
+
+    let text = """
+        function foo(α, β)
+            \\:piz│
+        end
+        """
+        context = CompletionContext(;
+            triggerKind = CompletionTriggerKind.TriggerForIncompleteCompletions)
+        cnt = Ref(0)
+        with_completion_items(text; context) do (; result)
+            items = result.items
+            @test any(items) do item
+                item.label == "\\:pizza:"
+            end
+            @test !any(items) do item
+                item.label == "\\:smile:"
+            end
+            @test result.isIncomplete
+            cnt[] += 1
+        end
+        @test cnt[] == 1
+    end
+
+    # `^` outside a backslash context (e.g. the exponentiation operator) should
+    # not pop up any completions
+    let text = """
+        function foo(α, β)
+            α^│
+        end
+        """
+        context = CompletionContext(;
+            triggerKind = CompletionTriggerKind.TriggerCharacter,
+            triggerCharacter = "^")
+        cnt = Ref(0)
+        with_completion_items(text; context) do (; result)
+            @test isempty(result.items)
+            @test !result.isIncomplete
+            cnt[] += 1
+        end
+        @test cnt[] == 1
+    end
+
+    # ... but a manual invocation right after `^` still gives normal completions
+    let text = """
+        function foo(α, β)
+            α^│
+        end
+        """
+        context = CompletionContext(;
+            triggerKind = CompletionTriggerKind.Invoked)
+        cnt = Ref(0)
+        with_completion_items(text; context) do (; result)
+            @test any(result.items) do item
+                item.label == "β"
             end
             cnt[] += 1
         end
