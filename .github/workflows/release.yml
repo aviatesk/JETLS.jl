@@ -24,6 +24,8 @@ jobs:
   test_app:
     if: github.event_name == 'pull_request' && github.event.action != 'closed'
     uses: ./.github/workflows/test-app.yml
+    with:
+      release-installation: true
 
   check_schemas:
     if: github.event_name == 'pull_request' && github.event.action != 'closed'

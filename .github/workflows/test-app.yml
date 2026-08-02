@@ -2,8 +2,49 @@ name: Test app commands
 
 on:
   workflow_call:
+    inputs:
+      release-installation:
+        description: Test installation of the release app
+        type: boolean
+        required: false
+        default: false
 
 jobs:
+  test_release_installation:
+    name: Test release installation
+    if: inputs.release-installation
+    runs-on: ubuntu-latest
+    env:
+      JULIA_DEPOT_PATH: /tmp/jetls-depot
+    steps:
+      - uses: actions/checkout@v4
+      - uses: julia-actions/setup-julia@v1
+        with:
+          version: "1"
+          arch: x64
+      - name: Install current checkout
+        shell: julia --color=yes --startup-file=no {0}
+        run: |
+          using Pkg
+          Pkg.Registry.add("General")
+          Pkg.Apps.add(; path=pwd())
+          open(ENV["GITHUB_PATH"], "a") do io
+              println(io, joinpath(first(DEPOT_PATH), "bin"))
+          end
+      - name: Test installed configuration
+        shell: julia --color=yes --startup-file=no {0}
+        run: |
+          using Pkg
+          app_project = joinpath(first(DEPOT_PATH), "environments", "apps", "JETLS")
+          Pkg.activate(app_project)
+          using JETLS
+          @assert !JETLS.JETLS_DEV_MODE
+          @assert !JETLS.JETLS_TEST_MODE
+          @assert JETLS.PrecompileTools.workload_enabled(JETLS)
+      - name: Test installed executable
+        run: |
+          test "$(jetls --version)" = "JETLS version $(cat JETLS_VERSION)"
+
   test_jetls_serve:
     name: Test jetls serve
     runs-on: ubuntu-latest
@@ -11,7 +52,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: julia-actions/setup-julia@v1
         with:
-          version: "1.12" # most stable version
+          version: "1" # most stable version
           arch: x64
       - uses: julia-actions/cache@v2
       - uses: julia-actions/julia-buildpkg@latest
@@ -26,7 +67,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: julia-actions/setup-julia@v1
         with:
-          version: "1.12" # most stable version
+          version: "1" # most stable version
           arch: x64
       - uses: julia-actions/cache@v2
       - uses: julia-actions/julia-buildpkg@latest
@@ -41,7 +82,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: julia-actions/setup-julia@v1
         with:
-          version: "1.12" # most stable version
+          version: "1" # most stable version
           arch: x64
       - uses: julia-actions/cache@v2
       - uses: julia-actions/julia-buildpkg@latest
