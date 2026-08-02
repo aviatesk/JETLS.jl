@@ -6,6 +6,7 @@ const METHOD_COMPLETION_TRIGGER_CHARACTERS = ("(", ",", " ")
 const COMPLETION_TRIGGER_CHARACTERS = [
     "@",  # macro completion
     "\\", # LaTeX completion
+    "^",  # LaTeX superscript completion (e.g. `\^a`)
     ":",  # emoji completion
     ";",  # keyword argument completion
     ".",  # property / module-member completion
@@ -551,8 +552,8 @@ function get_backslash_offset(fi::FileInfo, pos::Position)
     end
 end
 
-# Add LaTeX and emoji completions to the items dictionary and return boolean indicating
-# whether any completions were added.
+# Add LaTeX and emoji completions to the items dictionary. Returns `nothing` when
+# the cursor is not in a backslash context, otherwise the `isIncomplete` flag.
 function add_emoji_latex_completions!(
         items::Dict{String,CompletionItem}, comp_ctx::CompletionCtx,
     )
@@ -562,6 +563,14 @@ function add_emoji_latex_completions!(
     edit_range, _ = unadjust_range(state, uri, Range(;
         start = backslash_pos,
         var"end" = pos))
+
+    # Filter server-side by the text typed since the backslash: non-VSCode clients
+    # (Zed, Helix) build their completion filter query from word characters before
+    # the cursor only, so keys containing `\`/`^`/`:` can never be matched by
+    # client-side filtering (aviatesk/JETLS.jl#821). Returning a filtered list with
+    # `isIncomplete = true` moves the filtering to the server; clients re-request
+    # it on each keystroke.
+    typed = String(fi.parsed_stream.textbuf[backslash_offset:comp_ctx.offset-1])
 
     # HACK Some clients (e.g., Zed) don't properly use `sortText` for completion items
     # containing `\\` or `:`, falling back to `label`-based sorting. For these clients,
@@ -590,13 +599,44 @@ function add_emoji_latex_completions!(
     end
 
     emojionly || foreach(REPL.REPLCompletions.latex_symbols) do (key, val)
+        is_subsequence(typed, key) || return
         items[key] = create_ci(key, val, false)
     end
     foreach(REPL.REPLCompletions.emoji_symbols) do (key, val)
+        is_subsequence(typed, key) || return
         items[key] = create_ci(key, val, true)
     end
 
-    # if we reached here, we have added all emoji and latex completions
+    # the list is filtered server-side, so further typing must recompute it
+    return #=isIncomplete=#true
+end
+
+# Subsequence predicate matching what client-side fuzzy matchers (VSCode, nucleo)
+# use as their filter condition: every character of `typed` must appear in `key`
+# in order (e.g. `\lpha` matches `\alpha`). Matching is case-insensitive so the
+# server retains every candidate accepted by clients such as Helix. This only
+# decides which candidates survive; ranking is left to the client's own scoring.
+function is_subsequence(typed::String, key::String)
+    next = @something iterate(typed) return true
+    for c in key
+        (tc, ts) = next
+        if lowercase(c) == lowercase(tc)
+            next = @something iterate(typed, ts) return true
+        end
+    end
+    return false
+end
+
+# `^` is registered as a trigger character solely so that clients reopen the
+# completion menu right after `\^` (LaTeX superscript completion): most clients
+# dismiss the menu when `^` is typed since it is not an identifier character.
+# When a `^`-triggered request was not consumed by `add_emoji_latex_completions!`,
+# the cursor is after a plain `^` (e.g. `x^│`): suppress the remaining completion
+# kinds so that typing the exponentiation operator doesn't pop up an unrelated menu.
+function suppress_plain_caret_trigger(context::Union{Nothing,CompletionContext})
+    context === nothing && return nothing
+    context.triggerKind == CompletionTriggerKind.TriggerCharacter || return nothing
+    context.triggerCharacter == "^" || return nothing
     return #=isIncomplete=#false
 end
 
@@ -1105,6 +1145,7 @@ function get_completion_items(
     # order matters; see local_completions!
     isIncomplete = @something(
         add_emoji_latex_completions!(items, comp_ctx),
+        suppress_plain_caret_trigger(context),
         call_completions!(items, comp_ctx),
         global_completions!(items, comp_ctx),
         local_completions!(items, comp_ctx),
