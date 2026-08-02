@@ -341,6 +341,14 @@ Both scripts support a `--check` flag that exits with an error
 if the output is out of date. CI runs them in this mode to
 ensure the generated files are kept in sync.
 
+Additionally, the TOML schema block shown in
+[`docs/src/configuration.md`](./docs/src/configuration.md)
+is generated during the docs build by
+[`docs/config-schema-block.jl`](./docs/config-schema-block.jl)
+, which asserts that its entries stay in sync with the config structs.
+When you add or remove config fields, update its entries as well,
+otherwise the docs build fails.
+
 ## Updating Compiler.jl snapshots
 
 JET and JETLS use the local [`Compiler`](./Compiler/) package. Its

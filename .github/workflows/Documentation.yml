@@ -5,11 +5,13 @@ on:
     branches:
       - master
     paths:
+      - "src/**"
       - "docs/**"
       - "CHANGELOG.md"
       - ".github/workflows/Documentation.yml"
   pull_request:
     paths:
+      - "src/**"
       - "docs/**"
       - "CHANGELOG.md"
       - ".github/workflows/Documentation.yml"

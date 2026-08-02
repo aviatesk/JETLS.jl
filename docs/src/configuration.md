@@ -7,45 +7,19 @@ JSON Schema files for all configuration surfaces are [also available](@ref confi
 
 ## [Configuration schema](@id config/schema)
 
-```toml
-formatter = "Runic"                # String preset: "Runic" (default) or "JuliaFormatter"
+The following schema lists all the available options.
+An entry that is not commented out shows the option's default value, while a
+commented-out entry is a form without a default value (an alternative form,
+an array entry, or an option whose default is unset), shown with an example
+value.
 
-[full_analysis]
-debounce = 1.0                     # number (seconds), default: 1.0
-auto_instantiate = true            # boolean, default: true
+The leading `#:schema` directive is honored by TOML language servers such as
+[tombi](https://github.com/tombi-toml/tombi), which use it to validate and
+complete `.JETLSConfig.toml` against the [JSON Schema](@ref config/schema-cli).
 
-[formatter.custom]                 # Or custom formatter configuration
-executable = ""                    # string (path), optional
-executable_range = ""              # string (path), optional
-
-[diagnostic]
-enabled = true                     # boolean, default: true
-all_files = true                   # boolean, default: true
-allow_unused_underscore = true     # boolean, default: true
-
-[[diagnostic.patterns]]
-pattern = ""                       # string, required
-match_by = ""                      # string, required, "code" or "message"
-match_type = ""                    # string, required, "literal" or "regex"
-severity = ""                      # string or number, required, "error"/"warning"/"warn"/"information"/"info"/"hint"/"off" or 0/1/2/3/4
-path = ""                          # string (optional), glob pattern for file paths
-
-[completion.latex_emoji]
-strip_prefix = false               # boolean, default: (unset) auto-detect
-
-[code_lens]
-references = false                 # boolean, default: false
-testrunner = true                  # boolean, default: true
-
-[inlay_hint.block_end]
-enabled = true                     # boolean, default: true
-min_lines = 25                     # integer, default: 25
-
-[inlay_hint.types]
-enabled = true                     # boolean, default: true
-
-[testrunner]
-executable = "testrunner"          # string, default: "testrunner" (or "testrunner.bat" on Windows)
+```@eval
+using JETLS
+Base.include(@__MODULE__, joinpath(pkgdir(JETLS), "docs", "config-schema-block.jl"))
 ```
 
 ## [Configuration reference](@id config/reference)
