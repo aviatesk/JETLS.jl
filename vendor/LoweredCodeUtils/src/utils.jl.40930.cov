@@ -1,0 +1,473 @@
+        - const AnySSAValue = Union{Core.IR.SSAValue,JuliaInterpreter.SSAValue}
+        - const AnySlotNumber = Union{Core.IR.SlotNumber,JuliaInterpreter.SlotNumber}
+        - 
+        - # to circumvent https://github.com/JuliaLang/julia/issues/37342, we inline these `isa`
+        - # condition checks at surface AST level
+        - # https://github.com/JuliaLang/julia/pull/38905 will get rid of the need of these hacks
+        3 macro isssa(stmt)
+        3     :($(GlobalRef(Core, :isa))($(esc(stmt)), $(GlobalRef(Core.IR, :SSAValue))) ||
+        -       $(GlobalRef(Core, :isa))($(esc(stmt)), $(GlobalRef(JuliaInterpreter, :SSAValue))))
+        - end
+        7 macro issslotnum(stmt)
+        7     :($(GlobalRef(Core, :isa))($(esc(stmt)), $(GlobalRef(Core.IR, :SlotNumber))) ||
+        -       $(GlobalRef(Core, :isa))($(esc(stmt)), $(GlobalRef(JuliaInterpreter, :SlotNumber))))
+        - end
+        - 
+        - """
+        -     iscallto(stmt, name, src)
+        - 
+        - Returns `true` is `stmt` is a call expression to `name`.
+        - """
+        0 function iscallto(@nospecialize(stmt), mod::Module, name::GlobalRef, src)
+        1     if isa(stmt, Expr)
+        1         if stmt.head === :call
+        1             a = stmt.args[1]
+        2             if isa(a, SSAValue) || isa(a, Core.SSAValue)
+        0                 a = src.code[a.id]
+        -             end
+        1             normalize_defsig(a, mod) === name && return true
+        0             is_global_ref(a, Core, :_apply) && normalize_defsig(stmt.args[2], mod) === name && return true
+        0             is_global_ref(a, Core, :_apply_iterate) && normalize_defsig(stmt.args[3], mod) === name && return true
+        -         end
+        -     end
+        0     return false
+        - end
+        - 
+        - """
+        -     getcallee(stmt)
+        - 
+        - Returns the function (or Symbol) being called in a :call expression.
+        - """
+        0 function getcallee(@nospecialize(stmt))
+        0     if isa(stmt, Expr)
+        0         if stmt.head === :call
+        0             a = stmt.args[1]
+        0             is_global_ref(a, Core, :_apply) && return stmt.args[2]
+        0             is_global_ref(a, Core, :_apply_iterate) && return stmt.args[3]
+        0             return a
+        -         end
+        -     end
+        0     error(stmt, " is not a call expression")
+        - end
+        - 
+        0 function callee_matches(f, mod, sym)
+      908     is_global_ref(f, mod, sym) && return true
+      908     if isdefined(mod, sym) && isa(f, QuoteNode)
+        0         f.value === getfield(mod, sym) && return true  # a consequence of JuliaInterpreter.optimize!
+        -     end
+      908     return false
+        - end
+        - 
+        - # Recognize the default-constructor call emitted when lowering a struct definition.
+        0 function is_defaultctors_call(@nospecialize(stmt))
+     1066     isexpr(stmt, :call) || return false
+      234     f = stmt.args[1]
+      234     is_global_ref(f, Core, :_defaultctors) && return true
+      234     is_global_ref(f, Base, :_defaultctors) && return true
+        0     @static if isdefined(Core, :_defaultctors)
+        -         is_quotenode_egal(f, Core._defaultctors) && return true
+        -     end
+        0     @static if isdefined(Base, :_defaultctors)
+        -         is_quotenode_egal(f, Base._defaultctors) && return true
+        -     end
+      234     return false
+        - end
+        - 
+        0 function getrhs(@nospecialize(stmt))
+      770     lhs_rhs = get_lhs_rhs(stmt)
+      920     return lhs_rhs === nothing ? stmt : lhs_rhs[2]
+        - end
+        - 
+        0 ismethod(frame::Frame)  = ismethod(pc_expr(frame))
+        0 ismethod3(frame::Frame) = ismethod3(pc_expr(frame))
+        - 
+        - # Check if a call argument refers to Core.define_method
+        0 function is_define_method_ref(@nospecialize(f))
+       19     is_global_ref(f, Core, :define_method) && return true
+        0     @static if isdefined(Core, :define_method)
+        -         is_quotenode_egal(f, Core.define_method) && return true
+        -     end
+       19     return false
+        - end
+        - 
+        - # define_method(mod, name) — 2-arg form creates generic function binding
+        0 function is_define_method_call_2arg(@nospecialize(stmt))
+      140     isexpr(stmt, :call) || return false
+       59     length(stmt.args) == 3 || return false
+       34     return is_define_method_ref(stmt.args[1])
+        - end
+        - 
+        - # define_method(mod, name_or_mt, sigdata, codeinfo) — 4-arg form defines a method
+        0 function is_define_method_call_4arg(@nospecialize(stmt))
+      143     isexpr(stmt, :call) || return false
+       76     length(stmt.args) == 5 || return false
+        4     return is_define_method_ref(stmt.args[1])
+        - end
+        - 
+        0 ismethod(stmt)  = isexpr(stmt, :method) || is_define_method_call_2arg(stmt) || is_define_method_call_4arg(stmt)
+       54 ismethod1(stmt) = isexpr(stmt, :method, 1) || is_define_method_call_2arg(stmt)
+       47 ismethod3(stmt) = isexpr(stmt, :method, 3) || is_define_method_call_4arg(stmt)
+        - 
+        - # Extract the "name" argument from a method-definition statement.
+        - # For Expr(:method, name, ...) it's args[1]; for define_method(mod, name, ...) it's args[3].
+        0 function method_name(@nospecialize(stmt))
+       16     if is_define_method_call_2arg(stmt) || is_define_method_call_4arg(stmt)
+        0         return stmt.args[3]
+        -     else
+        8         return stmt.args[1]
+        -     end
+        - end
+        - 
+        - # Extract the module from a define_method call, or nothing for :method expressions.
+        0 function method_module(@nospecialize(stmt))
+       14     if is_define_method_call_2arg(stmt) || is_define_method_call_4arg(stmt)
+        0         return stmt.args[2]  # define_method(mod, name, ...)
+        -     end
+        7     return nothing
+        - end
+        - 
+        - # Extract the CodeInfo body from a method3 statement.
+        - # For Expr(:method, name, sig, body) it's args[3]; for define_method(mod, name, sigdata, body) it's args[5].
+        0 function method_body(@nospecialize(stmt))
+        4     if is_define_method_call_4arg(stmt)
+        0         return stmt.args[5]
+        -     else
+        4         return stmt.args[3]
+        -     end
+        - end
+        - 
+        - function ismethod_with_name(src, stmt, target::AbstractString; reentrant::Bool=false)
+        -     if reentrant
+        -         name = stmt
+        -     else
+        -         ismethod3(stmt) || return false
+        -         name = method_name(stmt)
+        -         if name === nothing && isexpr(stmt, :method)
+        -             name = stmt.args[2]
+        -         end
+        -     end
+        -     isdone = false
+        -     while !isdone
+        -         if name isa AnySSAValue || name isa AnySlotNumber
+        -             name = src.code[name.id]
+        -         elseif isexpr(name, :call) && is_quotenode_egal(name.args[1], Core.svec)
+        -             name = name.args[2]
+        -         elseif isexpr(name, :call) && is_quotenode_egal(name.args[1], Core.Typeof)
+        -             name = name.args[2]
+        -         elseif isexpr(name, :call) && is_quotenode_egal(name.args[1], Core.apply_type)
+        -             for arg in name.args[2:end]
+        -                 ismethod_with_name(src, arg, target; reentrant=true) && return true
+        -             end
+        -             isdone = true
+        -         elseif isexpr(name, :call) && is_quotenode_egal(name.args[1], UnionAll)
+        -             for arg in name.args[2:end]
+        -                 ismethod_with_name(src, arg, target; reentrant=true) && return true
+        -             end
+        -             isdone = true
+        -         else
+        -             isdone = true
+        -         end
+        -     end
+        -     # On Julia 1.6 we have to add escaping (CBinding makes function names like "(S)")
+        -     target = escape_string(target, "()")
+        -     return match(Regex("(^|#)$target(\$|#)"), isa(name, GlobalRef) ? string(name.name) : string(name)) !== nothing
+        - end
+        - 
+        - # anonymous function types are defined in a :thunk expr with a characteristic CodeInfo
+      601 function isanonymous_typedef(@nospecialize stmt)
+      601     if isa(stmt, Expr)
+     1028         stmt.head === :thunk || return false
+        0         stmt = stmt.args[1]
+        -     end
+       87     if isa(stmt, CodeInfo)
+        0         src = stmt    # just for naming consistency
+        0         length(src.code) >= 4 || return false
+        0         stmt = src.code[end-1]
+        0         isexpr(stmt, :call) || return false
+        0         is_global_ref(stmt.args[1], Core, :_typebody!) || return false
+        0         stmt = isa(stmt.args[3], Core.SSAValue) ? src.code[end-3] : src.code[end-2]
+        0         lhs_rhs = get_lhs_rhs(stmt)
+        0         lhs_rhs === nothing && return false
+        0         lhs, _ = lhs_rhs
+        0         if isa(lhs, GlobalRef)
+        0             lhs = lhs.name
+        -         else
+        0             isa(lhs, Symbol) || return false
+        -         end
+        0         return startswith(String(lhs), "#")
+        -     end
+       87     return false
+        - end
+        - 
+        - # Recognize the `Core.resolve_typegroup` call that creates the types of a type
+        - # group. On Julia versions where `struct` definitions lower through the
+        - # typegroup mechanism, ordinary structs also produce this form (with a
+        - # single-element group); `typegroup` blocks produce multi-element groups.
+        0 function is_resolve_typegroup_call(@nospecialize(stmt))
+      290     isexpr(stmt, :call) || return false
+      250     f = (stmt::Expr).args[1]
+      250     is_global_ref(f, Core, :resolve_typegroup) && return true
+        0     @static if isdefined(Core, :resolve_typegroup)
+        -         is_quotenode_egal(f, Core.resolve_typegroup) && return true
+        -     end
+      250     return false
+        - end
+        - 
+        0 function istypedef(stmt)
+      730     isa(stmt, Expr) || return false
+      270     stmt = getrhs(stmt)
+      270     isa(stmt, Expr) || return false
+        3     @static if all(s->isdefined(Core,s), structdecls)
+      270         if stmt.head === :call
+      250             f = stmt.args[1]
+      250             if isa(f, GlobalRef)
+      200                 f.mod === Core && f.name ∈ structdecls && return true
+        -             end
+      250             if isa(f, QuoteNode)
+        0                 (f.value === Core._structtype || f.value === Core._abstracttype ||
+        -                  f.value === Core._primitivetype) && return true
+        -             end
+        -         end
+        -     end
+      520     is_resolve_typegroup_call(stmt) && return true
+      270     isanonymous_typedef(stmt) && return true
+      270     return false
+        - end
+        - 
+        - # Check if stmt is a Core.declare_global(...) call
+        0 function is_declare_global(@nospecialize(stmt))
+        0     isexpr(stmt, :call) || return false
+        0     f = stmt.args[1]
+        0     @static if isdefined(Core, :declare_global)
+        -         is_global_ref(f, Core, :declare_global) && return true
+        -         is_quotenode_egal(f, Core.declare_global) && return true
+        -     end
+        0     return false
+        - end
+        - 
+        - # Check if stmt is a Core.declare_const(...) call
+        0 function is_declare_const(@nospecialize(stmt))
+        0     isexpr(stmt, :call) || return false
+        0     f = stmt.args[1]
+        0     @static if isdefined(Core, :declare_const)
+        -         is_global_ref(f, Core, :declare_const) && return true
+        -         is_quotenode_egal(f, Core.declare_const) && return true
+        -     end
+        0     return false
+        - end
+        - 
+        - # Given a typedef at `src.code[idx]`, return the range of statement indices that encompass the typedef.
+        - # The range does not include any constructor methods.
+        0 function typedef_range(src::CodeInfo, idx)
+        0     stmt = src.code[idx]
+        0     istypedef(stmt) || error(stmt, " is not a typedef")
+        0     stmt = stmt::Expr
+        0     isanonymous_typedef(stmt) && return idx:idx
+        -     # Search backwards to the previous :global or Core.declare_global
+        0     istart = idx
+        0     while istart >= 1
+        0         s = src.code[istart]
+        0         isexpr(s, :global) && break
+        0         is_declare_global(s) && break
+        0         istart -= 1
+        0     end
+        0     if is_resolve_typegroup_call(getrhs(stmt))
+        -         # Typegroup form: `TypeVar` bindings and struct-info svecs, then
+        -         # `resolve_typegroup(mod, typevars, infos, olds)`, then `getfield`
+        -         # extractions and one `declare_const` per type, closed by `latestworld`.
+        -         # Ordinary struct definitions open with a `global` marker; `typegroup`
+        -         # blocks do not, so if none was found fall back to extending the range
+        -         # backwards to the previous statement that cannot be part of the group.
+        0         if istart < 1
+        0             istart = idx
+        0             for j = idx-1:-1:1
+        0                 s = src.code[j]
+        0                 (isexpr(s, :latestworld) || isexpr(s, :method) || isexpr(s, :thunk) ||
+        -                  is_return(s)) && break
+        0                 istart = j
+        0             end
+        -         end
+        0         iend, n = idx, length(src.code)
+        0         while iend <= n
+        0             s = src.code[iend]
+        0             (isexpr(s, :latestworld) || isexpr(s, :global) || is_return(s)) && break
+        0             iend += 1
+        0         end
+        0         iend <= n || error("no final latestworld found for typegroup")
+        0         return istart:iend-1
+        -     end
+        0     istart >= 1 || error("no initial :global or declare_global found")
+        0     iend, n = idx, length(src.code)
+        0     have_typebody = have_equivtypedef = false
+        0     while iend <= n
+        0         stmt = src.code[iend]
+        0         if isa(stmt, Expr)
+        0             stmt.head === :global && break
+        0             stmt.head === :latestworld && break
+        -             # New lowering uses Core.declare_const for the final binding
+        0             is_declare_const(stmt) && break
+        -             # Unwrap assignments (e.g. `_1 = Core._typebody!(...)`) to find the call
+        0             callstmt = stmt.head === :(=) ? getrhs(stmt) : stmt
+        0             if isa(callstmt, Expr) && callstmt.head === :call
+        0                 if (is_global_ref(callstmt.args[1], Core, :_typebody!) || is_quotenode_egal(callstmt.args[1], Core._typebody!))
+        0                     have_typebody = true
+        0                 elseif (is_global_ref(callstmt.args[1], Core, :_equiv_typedef) || is_quotenode_egal(callstmt.args[1], Core._equiv_typedef))
+        0                     have_equivtypedef = true
+        -                     # Advance to the type-assignment (or declare_const call)
+        0                     while iend <= n
+        0                         stmt = src.code[iend]
+        0                         get_lhs_rhs(stmt) !== nothing && break
+        0                         is_declare_const(stmt) && break
+        0                         iend += 1
+        0                     end
+        -                 end
+        0                 if have_typebody && have_equivtypedef
+        0                     iend += 1   # compensate for the `iend-1` in the return
+        0                     break
+        -                 end
+        -             end
+        -         end
+        0         is_return(stmt) && break
+        0         iend += 1
+        0     end
+        0     iend <= n || (@show src; error("no final :global or declare_const found"))
+        0     return istart:iend-1
+        - end
+        - 
+        - function sparam_ub(meth::Method)
+        -     typs = []
+        -     sig = meth.sig
+        -     while sig isa UnionAll
+        -         push!(typs, Symbol(sig.var.ub))
+        -         sig = sig.body
+        -     end
+        -     return Core.svec(typs...)
+        - end
+        - 
+      106 showempty(list) = isempty(list) ? '∅' : list
+        - 
+        - # Smooth the transition between CC and Base (not requried for v1.12 and above)
+        - rng(bb::BasicBlock) = (r = bb.stmts; return CC.first(r):CC.last(r))
+        - 
+      302 function pushall!(dest, src)
+      302     for item in src
+      304         push!(dest, item)
+      304     end
+      302     return dest
+        - end
+        - 
+        - # computes strongly connected components of a control flow graph `cfg`
+        - # NOTE adapted from https://github.com/JuliaGraphs/Graphs.jl/blob/5878e7be4d68b2a1c179d1367aea670db115ebb5/src/connectivity.jl#L265-L357
+        - # since to load an entire Graphs.jl is a bit cost-ineffective in terms of a trade-off of latency vs. maintainability
+        - function strongly_connected_components(g::CFG)
+        -     T = Int
+        -     zero_t = zero(T)
+        -     one_t = one(T)
+        -     nvg = nv(g)
+        -     count = one_t
+        - 
+        -     index = zeros(T, nvg)         # first time in which vertex is discovered
+        -     stack = Vector{T}()           # stores vertices which have been discovered and not yet assigned to any component
+        -     onstack = zeros(Bool, nvg)    # false if a vertex is waiting in the stack to receive a component assignment
+        -     lowlink = zeros(T, nvg)       # lowest index vertex that it can reach through back edge (index array not vertex id number)
+        -     parents = zeros(T, nvg)       # parent of every vertex in dfs
+        -     components = Vector{Vector{T}}()    # maintains a list of scc (order is not guaranteed in API)
+        - 
+        -     dfs_stack = Vector{T}()
+        - 
+        -     @inbounds for s in vertices(g)
+        -         if index[s] == zero_t
+        -             index[s] = count
+        -             lowlink[s] = count
+        -             onstack[s] = true
+        -             parents[s] = s
+        -             push!(stack, s)
+        -             count = count + one_t
+        - 
+        -             # start dfs from 's'
+        -             push!(dfs_stack, s)
+        - 
+        -             while !isempty(dfs_stack)
+        -                 v = dfs_stack[end] # end is the most recently added item
+        -                 u = zero_t
+        -                 @inbounds for v_neighbor in outneighbors(g, v)
+        -                     if index[v_neighbor] == zero_t
+        -                         # unvisited neighbor found
+        -                         u = v_neighbor
+        -                         break
+        -                         # GOTO A push u onto DFS stack and continue DFS
+        -                     elseif onstack[v_neighbor]
+        -                         # we have already seen n, but can update the lowlink of v
+        -                         # which has the effect of possibly keeping v on the stack until n is ready to pop.
+        -                         # update lowest index 'v' can reach through out neighbors
+        -                         lowlink[v] = min(lowlink[v], index[v_neighbor])
+        -                     end
+        -                 end
+        -                 if u == zero_t
+        -                     # All out neighbors already visited or no out neighbors
+        -                     # we have fully explored the DFS tree from v.
+        -                     # time to start popping.
+        -                     popped = pop!(dfs_stack)
+        -                     lowlink[parents[popped]] = min(
+        -                         lowlink[parents[popped]], lowlink[popped]
+        -                     )
+        - 
+        -                     if index[v] == lowlink[v]
+        -                         # found a cycle in a completed dfs tree.
+        -                         component = Vector{T}()
+        - 
+        -                         while !isempty(stack) # break when popped == v
+        -                             # drain stack until we see v.
+        -                             # everything on the stack until we see v is in the SCC rooted at v.
+        -                             popped = pop!(stack)
+        -                             push!(component, popped)
+        -                             onstack[popped] = false
+        -                             # popped has been assigned a component, so we will never see it again.
+        -                             if popped == v
+        -                                 # we have drained the stack of an entire component.
+        -                                 break
+        -                             end
+        -                         end
+        - 
+        -                         reverse!(component)
+        -                         push!(components, component)
+        -                     end
+        - 
+        -                 else # LABEL A
+        -                     # add unvisited neighbor to dfs
+        -                     index[u] = count
+        -                     lowlink[u] = count
+        -                     onstack[u] = true
+        -                     parents[u] = v
+        -                     count = count + one_t
+        - 
+        -                     push!(stack, u)
+        -                     push!(dfs_stack, u)
+        -                     # next iteration of while loop will expand the DFS tree from u.
+        -                 end
+        -             end
+        -         end
+        -     end
+        - 
+        -     # # assert with the original implementation
+        -     # oracle_components = oracle_scc(cfg_to_sdg(g))
+        -     # @assert Set(Set.(components)) == Set(Set.(oracle_components))
+        - 
+        -     return components
+        - end
+        - 
+        - # compatibility with Graphs.jl interfaces
+        - @inline nv(cfg::CFG) = length(cfg.blocks)
+        - @inline vertices(cfg::CFG) = 1:nv(cfg)
+        - @inline outneighbors(cfg::CFG, v) = cfg.blocks[v].succs
+        - 
+        - # using Graphs: SimpleDiGraph, add_edge!, strongly_connected_components as oracle_scc
+        - # function cfg_to_sdg(cfg::CFG)
+        - #     g = SimpleDiGraph(length(cfg.blocks))
+        - #     for (v, block) in enumerate(cfg.blocks)
+        - #         for succ in block.succs
+        - #             add_edge!(g, v, succ)
+        - #         end
+        - #     end
+        - #     return g
+        - # end

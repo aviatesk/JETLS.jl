@@ -1,14 +1,16 @@
 #!/bin/bash
-#
-# Regenerate all schema files and update package.json.
-#
-# Usage:
-#     ./scripts/schema/regenerate.sh [--check]
-#
-# Options:
-#     --check    Verify that all generated files are up to date
-#                instead of regenerating them.
-#
+
+print_help() {
+    cat <<'EOF'
+Usage: ./scripts/schema/regenerate.sh [OPTIONS]
+
+Regenerate all JETLS configuration schemas and update package.json.
+
+Options:
+  -h, --help    Show this help message and exit
+  --check       Verify that all generated files are up to date
+EOF
+}
 
 set -euo pipefail
 
@@ -16,9 +18,19 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 CHECK_FLAG=""
-if [[ "${1:-}" == "--check" ]]; then
-    CHECK_FLAG="--check"
-fi
+for arg in "$@"; do
+    case "$arg" in
+        -h|--help)
+            print_help
+            exit 0
+            ;;
+        --check)
+            CHECK_FLAG="--check"
+            ;;
+        *)
+            ;;
+    esac
+done
 
 julia --startup-file=no --project="$SCRIPT_DIR" \
     "$SCRIPT_DIR/generate.jl" --config-toml "$PROJECT_ROOT/schemas/config-toml.schema.json" $CHECK_FLAG

@@ -1,0 +1,759 @@
+        - """
+        -     sig = signature(sigsv::SimpleVector)
+        - 
+        - Compute a method signature from a suitable `SimpleVector`: `sigsv[1]` holds the signature
+        - and `sigsv[2]` the `TypeVar`s.
+        - 
+        - # Example:
+        - 
+        - For `f(x::AbstractArray{T}) where T`, the corresponding `sigsv` is constructed as
+        - 
+        -     T = TypeVar(:T)
+        -     sig1 = Core.svec(typeof(f), AbstractArray{T})
+        -     sig2 = Core.svec(T)
+        -     sigsv = Core.svec(sig1, sig2)
+        -     sig = signature(sigsv)
+        - """
+        0 function signature(sigsv::SimpleVector)
+        0     sigp::SimpleVector, sigtv::SimpleVector = sigsv
+        0     sig = Tuple{sigp...}
+        0     for i = length(sigtv):-1:1
+        0         sig = UnionAll(sigtv[i], sig)
+        0     end
+        0     return sig::Union{DataType,UnionAll}
+        - end
+        - 
+        0 function resolve_method_table(interp::Interpreter, frame::Frame, @nospecialize(arg))
+        0     value = try
+        0         lookup(interp, frame, arg)
+        -     catch
+        0         arg isa Expr || return nothing
+        0         try
+        0             Core.eval(moduleof(frame), arg)
+        -         catch
+        0             nothing
+        -         end
+        -     end
+        0     return value isa Core.MethodTable ? value : nothing
+        - end
+        - 
+        - """
+        -     (mt, sigt), lastpc = signature([interp::Interpreter=RecursiveInterpreter()], frame::Frame, pc::Int)
+        - 
+        - Compute the method table `mt` and signature-type `sigt` of a method whose definition in `frame` starts at `pc`.
+        - Generally, `pc` should point to the `Expr(:method, methname)` statement, in which case
+        - `lastpc` is the final statement number in `frame` that is part of the signature
+        - (i.e, the line above the 3-argument `:method` expression).
+        - Alternatively, `pc` can point to the 3-argument `:method` expression,
+        - as long as all the relevant SSAValues have been assigned.
+        - In this case, `lastpc == pc`.
+        - 
+        - If no 3-argument `:method` expression is found, `nothing` will be returned in place of `(mt, sigt)`.
+        - """
+        1 function signature(interp::Interpreter, frame::Frame, @nospecialize(stmt), pc::Int)
+        1     mod = moduleof(frame)
+        1     lastpc = frame.pc = pc
+        1     while !ismethod3(stmt)  # wait for the 3-arg :method or 4-arg define_method
+        1         if isanonymous_typedef(stmt)
+        0             lastpc = pc = step_through_methoddef(interp, frame, stmt)   # define an anonymous function
+        1         elseif is_Typeof_for_anonymous_methoddef(stmt, frame.framecode.src.code, mod)
+        1             return nothing, pc
+        -         else
+        0             lastpc = pc
+        0             pc = step_expr!(interp, frame, stmt, true)
+        0             pc === nothing && return nothing, lastpc
+        -         end
+        0         stmt = pc_expr(frame, pc)
+        0     end
+        0     isa(stmt, Expr) || return nothing, pc
+        0     if is_define_method_call_4arg(stmt)
+        0         mt = resolve_method_table(interp, frame, stmt.args[3])
+        -     else
+        0         mt = extract_method_table(frame, stmt)
+        -     end
+        0     if is_define_method_call_4arg(stmt)
+        -         # define_method(mod, name, sigdata, codeinfo): sigdata is a svec(types, sparams, lnn)
+        0         sigdata = lookup(interp, frame, stmt.args[4])::SimpleVector
+        0         sigsv = Core.svec(sigdata[1], sigdata[2])
+        -     else
+        0         sigsv = lookup(interp, frame, stmt.args[2])::SimpleVector
+        -     end
+        0     sigt = signature(sigsv)
+        0     return MethodInfoKey(mt, sigt), lastpc
+        - end
+        1 signature(interp::Interpreter, frame::Frame, pc::Int) = signature(interp, frame, pc_expr(frame, pc), pc)
+        - signature(frame::Frame, pc::Int) = signature(RecursiveInterpreter(), frame, pc)
+        - 
+        0 function is_Typeof_for_anonymous_methoddef(@nospecialize(stmt), code::Vector{Any}, mod::Module)
+        1     isexpr(stmt, :call) || return false
+        1     f = stmt.args[1]
+        1     isa(f, QuoteNode) || return false
+        1     f.value === Core.Typeof || return false
+        1     arg1 = stmt.args[2]
+        1     if isa(arg1, SSAValue)
+        0         arg1 = code[arg1.id]
+        -     end
+        1     arg1 isa Symbol || return false
+        1     return !isdefined(mod, arg1)
+        - end
+        - 
+       15 function minid(@nospecialize(node), stmts, id)
+       15     if isa(node, SSAValue)
+        4         id = min(id, node.id)
+        4         stmt = stmts[node.id]
+        4         return minid(stmt, stmts, id)
+       11     elseif isa(node, Expr)
+        4         for a in node.args
+       10             id = minid(a, stmts, id)
+       10         end
+        -     end
+       11     return id
+        - end
+        - 
+        0 function signature_top(frame, stmt::Expr, pc)
+        1     @assert ismethod3(stmt)
+        1     if is_define_method_call_4arg(stmt)
+        0         return minid(stmt.args[4], frame.framecode.src.code, pc)
+        -     end
+        1     return minid(stmt.args[2], frame.framecode.src.code, pc)
+        - end
+        - 
+        0 function step_through_methoddef(interp::Interpreter, frame::Frame, @nospecialize(stmt))
+        0     while !ismethod(stmt)
+        0         pc = step_expr!(interp, frame, stmt, true)
+        0         stmt = pc_expr(frame, pc)
+        0     end
+        0     return step_expr!(interp, frame, stmt, true)  # also define the method
+        - end
+        - 
+        - """
+        -     MethodInfo(start, stop, refs)
+        - 
+        - Given a frame and its CodeInfo, `start` is the line of the first `Expr(:method, name)`,
+        - whereas `stop` is the line of the last `Expr(:method, name, sig, src)` expression for `name`.
+        - `refs` is a vector of line numbers of other references.
+        - Some of these will be the location of the "declaration" of a method,
+        - the `:thunk` expression containing a CodeInfo that just returns a 1-argument `:method` expression.
+        - Others may be `:global` declarations.
+        - 
+        - In some cases there may be more than one method with the same name in the `start:stop` range.
+        - """
+        - mutable struct MethodInfo
+        5     start::Int
+        -     stop::Int
+        -     refs::Vector{Int}
+        - end
+        5 MethodInfo(start) = MethodInfo(start, -1, Int[])
+        - 
+        - struct SelfCall
+        2     linetop::Int
+        -     linebody::Int
+        -     callee::GlobalRef
+        -     caller::Union{GlobalRef,Bool,Nothing}
+        - end
+        - 
+        - """
+        -     methodinfos::Dict{GlobalRef,MethodInfo}, selfcalls::Vector{SelfCall} = identify_framemethod_calls(frame::Frame)
+        - 
+        - Analyze the code in `frame` to locate method definitions and "self-calls," i.e., calls
+        - to methods defined in `frame` that occur within `frame`.
+        - 
+        - `methodinfos` is a Dict of `name=>info` pairs, where `info` is a [`MethodInfo`](@ref).
+        - 
+        - `selfcalls` is a list of `SelfCall(linetop, linebody, callee, caller)` that holds the location of
+        - calls the methods defined in `frame`. `linetop` is the line in `frame` (top meaning "top level"),
+        - which will correspond to a 3-argument `:method` expression containing a `CodeInfo` body.
+        - `linebody` is the line within the `CodeInfo` body from which the call is made.
+        - `callee` is the Symbol of the called method.
+        - """
+        1 function identify_framemethod_calls(frame::Frame)
+        1     refs = Pair{GlobalRef,Int}[]
+        1     methodinfos = Dict{GlobalRef,MethodInfo}()
+        1     selfcalls = SelfCall[]
+        1     for (i, stmt) in enumerate(frame.framecode.src.code)
+       28         isa(stmt, Expr) || continue
+       25         if stmt.head === :global && length(stmt.args) == 1
+        0             key = normalize_defsig(stmt.args[1], frame)
+        0             if isa(key, GlobalRef)
+        -                 # We don't know for sure if this is a reference to a method, but let's
+        -                 # tentatively cue it
+        0                 push!(refs, key=>i)
+        -             end
+       25         elseif stmt.head === :thunk && stmt.args[1] isa CodeInfo
+        2             tsrc = stmt.args[1]::CodeInfo
+        2             if length(tsrc.code) == 1
+        2                 tstmt = tsrc.code[1]
+        2                 if is_return(tstmt)
+        2                     tex = tstmt.val
+        2                     if isa(tex, Expr)
+        4                         if tex.head === :method && (methname = tex.args[1]; isa(methname, Union{Symbol, GlobalRef}))
+        2                             push!(refs, normalize_defsig(methname, frame)=>i)
+        -                         end
+        -                     end
+        -                 end
+        -             end
+       42         elseif ismethod1(stmt)
+        8             key = method_name(stmt)
+        8             mmod = method_module(stmt)
+        4             key = normalize_defsig(key, mmod !== nothing ? mmod : moduleof(frame))
+        4             key = key::GlobalRef
+        6             mi = get(methodinfos, key, nothing)
+        4             if mi === nothing
+        2                 methodinfos[key] = MethodInfo(i)
+        -             else
+        2                 mi.stop == -1 && (mi.start = i) # advance the statement # unless we've seen the method3
+        -             end
+       35         elseif ismethod3(stmt)
+        6             key = method_name(stmt)
+        6             mmod = method_module(stmt)
+        3             key = normalize_defsig(key, mmod !== nothing ? mmod : moduleof(frame))
+        3             if key isa GlobalRef
+        -                 # XXX A temporary hack to fix https://github.com/JuliaDebug/LoweredCodeUtils.jl/issues/80
+        -                 #     We should revisit it.
+        6                 mi = get(methodinfos, key, MethodInfo(1))
+        3                 mi.stop = i
+        0             elseif key isa Expr   # this is a module-scoped call. We don't have to worry about these because they are named
+        0                 continue
+        -             end
+        6             msrc = method_body(stmt)
+        3             if msrc isa CodeInfo
+        -                 # XXX: Properly support interpolated `Core.MethodTable`. This will require using
+        -                 # `stmt.args[2]` instead of `stmt.args[1]` to identify the parent function.
+        3                 isa(key, Union{GlobalRef,Bool,Nothing}) || continue
+        3                 for (j, mstmt) in enumerate(msrc.code)
+       29                     isa(mstmt, Expr) || continue
+        0                     jj = j
+       17                     if mstmt.head === :call
+       13                         mkey = normalize_defsig(mstmt.args[1], frame)
+       26                         if isa(mkey, SSAValue) || isa(mkey, Core.SSAValue)
+        0                             refstmt = msrc.code[mkey.id]
+        0                             if isa(refstmt, Union{Symbol, GlobalRef})
+        0                                 jj = mkey.id
+        0                                 mkey = normalize_defsig(refstmt, frame)
+        -                             end
+        -                         end
+       13                         if is_global_ref(mkey, Core, :_apply_iterate)
+        0                             ssaref = mstmt.args[end-1]
+        0                             if isa(ssaref, JuliaInterpreter.SSAValue)
+        0                                 id = ssaref.id
+        0                                 has_self_call(msrc, msrc.code[id]) || continue
+        -                             end
+        0                             mkey = normalize_defsig(mstmt.args[end-2], frame)
+        0                             if isa(mkey, GlobalRef)
+        0                                 haskey(methodinfos, mkey) && push!(selfcalls, SelfCall(i, jj, mkey, key))
+        -                             end
+       13                         elseif isa(mkey, GlobalRef)
+       13                             haskey(methodinfos, mkey) && push!(selfcalls, SelfCall(i, jj, mkey, key))
+        -                         end
+        4                     elseif mstmt.head === :meta && mstmt.args[1] === :generated
+        0                         newex = mstmt.args[2]
+        0                         if isa(newex, Expr)
+        0                             if newex.head === :new && length(newex.args) >= 2 && is_global_ref(newex.args[1], Core, :GeneratedFunctionStub)
+        0                                 mkey = newex.args[2]
+        0                                 if isa(mkey, Symbol)
+        0                                     mkey = GlobalRef(moduleof(frame), mkey)
+        -                                 end
+        0                                 haskey(methodinfos, mkey) && push!(selfcalls, SelfCall(i, jj, mkey, key))
+        -                             end
+        -                         end
+        -                     end
+       29                 end
+        -             end
+        -         end
+       55     end
+        1     for r in refs
+        4         mi = get(methodinfos, r.first, nothing)
+        4         mi === nothing || push!(mi.refs, r.second)
+        2     end
+        1     return methodinfos, selfcalls
+        - end
+        - 
+        - # try to normalize `def` to `GlobalRef` representation
+       22 function normalize_defsig(@nospecialize(def), mod::Module)
+       22     if def isa QuoteNode
+        -         # A quoted Symbol (e.g. the callee of `:foo(x)`) is already a name; only
+        -         # other wrapped values (functions, types, modules) need `nameof`.
+        0         def = def.value isa Symbol ? def.value : nameof(def.value)
+        -     end
+       24     if def isa Symbol
+       14         def = GlobalRef(mod, def)
+        -     end
+       24     return def
+        - end
+       16 normalize_defsig(@nospecialize(def), frame::Frame) = normalize_defsig(def, moduleof(frame))
+        - 
+        - const CalledBy = Dict{GlobalRef,Union{GlobalRef,Bool,Nothing}}
+        - 
+        1 function callchain(selfcalls)
+        1     calledby = CalledBy()
+        1     for sc in selfcalls
+        2         startswith(String(sc.callee.name), '#') || continue
+        3         caller = get(calledby, sc.callee, nothing)
+        2         if caller === nothing
+        2             calledby[sc.callee] = sc.caller
+        2         elseif caller == sc.caller
+        -         else
+        0             error("unexpected multiple callers, ", caller, " and ", sc.caller)
+        -         end
+        2     end
+        1     return calledby
+        - end
+        - 
+        1 function set_to_running_name!(interp::Interpreter, replacements::Dict{GlobalRef,GlobalRef}, frame::Frame,
+        -                               methodinfos::Dict{GlobalRef,MethodInfo}, selfcall::SelfCall,
+        -                               calledby::CalledBy, callee::GlobalRef, @nospecialize caller#=::Union{GlobalRef,Bool,Nothing}=#)
+        1     if isa(caller, GlobalRef) && startswith(String(caller.name), '#')
+        0         rep = get(replacements, caller, nothing)
+        0         if rep === nothing
+        0             parentcaller = get(calledby, caller, nothing)
+        0             if parentcaller !== nothing
+        0                 set_to_running_name!(interp, replacements, frame, methodinfos, selfcall, calledby, caller, parentcaller)
+        -             end
+        -         else
+        0             caller = rep
+        -         end
+        -     end
+        -     # Back up to the beginning of the signature
+        1     pc = selfcall.linetop
+        1     stmt = pc_expr(frame, pc)
+       11     while pc > 1 && !ismethod1(stmt)
+        5         pc -= 1
+        5         stmt = pc_expr(frame, pc)
+        5     end
+        1     @assert ismethod1(stmt)
+        1     cname, _pc, _ = try
+        1         get_running_name(interp, frame, pc+1, callee)
+        -     catch err
+        0         if isa(err, UndefVarError)
+        -             # The function may not be defined, in which case there is nothing to replace
+        0             return replacements
+        -         end
+        1         throw(err)
+        -     end
+        1     replacements[callee] = cname
+        1     mi = methodinfos[cname] = methodinfos[callee]
+        1     src = frame.framecode.src
+        1     replacename!(src, callee=>cname) # the method itself
+        1     return replacements
+        - end
+        - 
+        - """
+        -     methranges = rename_framemethods!([interp::Interpreter=RecursiveInterpreter()], frame::Frame)
+        - 
+        - Rename the gensymmed methods in `frame` to match those that are currently active.
+        - The issues are described in https://github.com/JuliaLang/julia/issues/30908.
+        - `frame` will be modified in-place as needed.
+        - 
+        - Returns a vector of `name=>start:stop` pairs specifying the range of lines in `frame`
+        - at which method definitions occur. In some cases there may be more than one method with
+        - the same name in the `start:stop` range.
+        - """
+        - function rename_framemethods! end
+        - 
+        1 function _rename_framemethods!(interp::Interpreter, frame::Frame,
+        -                                methodinfos::Dict{GlobalRef,MethodInfo}, selfcalls::Vector{SelfCall}, calledby::CalledBy)
+        1     src = frame.framecode.src
+        1     replacements = Dict{GlobalRef,GlobalRef}()
+        2     for (callee, caller) in calledby
+        2         (!startswith(String(callee.name), '#') || haskey(replacements, callee)) && continue
+        3         idx = findfirst(sc->sc.callee === callee && sc.caller === caller, selfcalls)
+        1         idx === nothing && continue
+        1         try
+        1             set_to_running_name!(interp, replacements, frame, methodinfos, selfcalls[idx], calledby, callee, caller)
+        -         catch err
+        0             @warn "skipping callee $callee (called by $caller) due to $err"
+        -         end
+        1     end
+        1     for sc in selfcalls
+        2         linetop, linebody, callee, caller = sc.linetop, sc.linebody, sc.callee, sc.caller
+        4         cname = get(replacements, callee, nothing)
+        2         if cname !== nothing && cname !== callee
+        0             replacename!(method_body(src.code[linetop])::CodeInfo, callee=>cname)
+        -         end
+        2     end
+        1     return methodinfos
+        - end
+        - 
+        0 function rename_framemethods!(interp::Interpreter, frame::Frame)
+        1     pc0 = frame.pc
+        1     methodinfos, selfcalls = identify_framemethod_calls(frame)
+        1     calledby = callchain(selfcalls)
+        1     _rename_framemethods!(interp, frame, methodinfos, selfcalls, calledby)
+        1     frame.pc = pc0
+        0     return methodinfos
+        - end
+        1 rename_framemethods!(frame::Frame) = rename_framemethods!(RecursiveInterpreter(), frame)
+        - 
+        - """
+        -     pctop, isgen = find_name_caller_sig(interp::Interpreter, frame::Frame, pc::Int, name::GlobalRef)
+        - 
+        - Scans forward from `pc` in `frame` until a method is found that calls `name`.
+        - `pctop` points to the beginning of that method's signature.
+        - `isgen` is true if `name` corresponds to sa GeneratedFunctionStub.
+        - 
+        - Alternatively, this returns `nothing` if `pc` does not appear to point to either
+        - a keyword or generated method.
+        - """
+        1 function find_name_caller_sig(interp::Interpreter, frame::Frame, pc::Int, name::GlobalRef)
+        1     stmt = pc_expr(frame, pc)
+        1     while true
+        0         pc0 = pc
+        5         while !ismethod3(stmt)
+        4             pc = next_or_nothing(interp, frame, pc)
+        4             pc === nothing && return nothing
+        4             stmt = pc_expr(frame, pc)
+        4         end
+        2         body = method_body(stmt)
+        1         if normalize_defsig(method_name(stmt), frame) !== name && isa(body, CodeInfo)
+        -             # This might be the GeneratedFunctionStub for a @generated method
+        1             for (i, bodystmt) in enumerate(body.code)
+        2                 if isexpr(bodystmt, :meta) && (bodystmt::Expr).args[1] === :generated
+        0                     return signature_top(frame, stmt, pc), true
+        -                 end
+        2                 i >= 5 && break  # we should find this early
+        2             end
+        1             if length(body.code) > 1
+        1                 bodystmt = body.code[end-1]  # the line before the final return
+        1                 iscallto(bodystmt, moduleof(frame), name, body) && return signature_top(frame, stmt, pc), false
+        -             end
+        -         end
+        0         pc = next_or_nothing(interp, frame, pc)
+        0         pc === nothing && return nothing
+        0         stmt = pc_expr(frame, pc)
+        0     end
+        - end
+        - 
+        - """
+        -     replacename!(stmts, oldname=>newname)
+        - 
+        - Replace a Symbol `oldname` with GlobalRef `newname` in `stmts`.
+        - """
+        0 function replacename!(ex::Expr, pr)
+       44     replacename!(ex.args, pr)
+        0     return ex
+        - end
+        - 
+        1 replacename!(src::CodeInfo, pr) = replacename!(src.code, pr)
+        - 
+       50 function replacename!(args::AbstractVector, pr)
+       50     oldname, newname = pr
+       50     for i = 1:length(args)
+      169         a = args[i]
+      169         if isa(a, Expr)
+       42             replacename!(a, pr)
+      127         elseif isa(a, CodeInfo)
+        5             replacename!(a.code, pr)
+      122         elseif isa(a, QuoteNode) && a.value === oldname
+        0             args[i] = QuoteNode(newname)
+      122         elseif isa(a, QuoteNode) && a.value === oldname.name
+        0             args[i] = QuoteNode(newname.name)
+      122         elseif isa(a, Vector{Any})
+        0             replacename!(a, pr)
+      122         elseif isa(a, ReturnNode) && isdefined(a, :val) && a.val isa Expr
+        -             # there is something like `ReturnNode(Expr(:method, Symbol(...)))`
+        2             replacename!(a.val::Expr, pr)
+      120         elseif a === oldname
+        0             args[i] = newname
+      240         elseif a == oldname.name
+        6             args[i] = newname.name
+        -         end
+      288     end
+       50     return args
+        - end
+        - 
+        1 function get_running_name(interp::Interpreter, frame::Frame, pc::Int, name::GlobalRef)
+        1     nameinfo = find_name_caller_sig(interp, frame, pc, name)
+        1     if nameinfo === nothing
+        0         pc = skip_until(@nospecialize(stmt)->ismethod3(stmt), frame, pc)
+        0         pc = next_or_nothing(interp, frame, pc)
+        0         return name, pc, nothing
+        -     end
+        1     pctop, isgen = nameinfo
+        -     # Sometimes signature_top---which follows SSAValue links backwards to find the first
+        -     # line needed to define the signature---misses out on a SlotNumber assignment.
+        -     # Fix https://github.com/timholy/Revise.jl/issues/422
+        1     stmt = pc_expr(frame, pctop)
+        1     while pctop > 1 && isa(stmt, SlotNumber) && !isassigned(frame.framedata.locals, pctop)
+        0         pctop -= 1
+        0         stmt = pc_expr(frame, pctop)
+        0     end   # end fix
+        1     methinfo, lastpcparent = signature(interp, frame, pctop)
+        1     methinfo === nothing && return name, pc, lastpcparent
+        0     mt, sigtparent = methinfo
+        -     # Resolve against the live method tables at the latest committed world, not `whichtt`'s
+        -     # default (caller task) world, which may be older than the world this method was defined in.
+        0     methparent = whichtt(sigtparent, mt; world=Base.get_world_counter())
+        0     methparent === nothing && return name, pc, lastpcparent  # caller isn't defined, no correction is needed
+        0     if isgen
+        0         cname = GlobalRef(moduleof(frame), nameof(methparent.generator.gen))
+        -     else
+        0         bodyparent = Base.uncompressed_ast(methparent)
+        0         bodystmt = bodyparent.code[end-1]
+        0         @assert isexpr(bodystmt, :call)
+        0         ref = getcallee(bodystmt)
+        0         if isa(ref, SSAValue) || isa(ref, Core.SSAValue)
+        0             ref = bodyparent.code[ref.id]
+        -         end
+        0         isa(ref, GlobalRef) || @show ref typeof(ref)
+        0         @assert isa(ref, GlobalRef)
+        0         @assert ref.mod == moduleof(frame)
+        0         cname = ref
+        -     end
+        0     return cname, pc, lastpcparent
+        - end
+        - 
+        - """
+        -     nextpc = next_or_nothing([interp::Interpreter=RecursiveInterpreter()], frame::Frame, pc::Int)
+        -     nextpc = next_or_nothing!([interp::Interpreter=RecursiveInterpreter()], frame::Frame)
+        - 
+        - Advance the program counter without executing the corresponding line.
+        - If `frame` is finished, `nextpc` will be `nothing`.
+        - """
+        - next_or_nothing(frame::Frame, pc::Int) = next_or_nothing(RecursiveInterpreter(), frame, pc)
+        4 next_or_nothing(::Interpreter, frame::Frame, pc::Int) = pc < nstatements(frame.framecode) ? pc+1 : nothing
+        - next_or_nothing!(frame::Frame) = next_or_nothing!(RecursiveInterpreter(), frame)
+        - function next_or_nothing!(::Interpreter, frame::Frame)
+        -     pc = frame.pc
+        -     if pc < nstatements(frame.framecode)
+        -         return frame.pc = pc + 1
+        -     end
+        -     return nothing
+        - end
+        - 
+        - """
+        -     nextpc = skip_until(predicate, [interp::Interpreter=RecursiveInterpreter()], frame, pc)
+        -     nextpc = skip_until!(predicate, [interp::Interpreter=RecursiveInterpreter()], frame)
+        - 
+        - Advance the program counter until `predicate(stmt)` return `true`.
+        - """
+        0 skip_until(predicate, frame::Frame, pc::Int) = skip_until(predicate, RecursiveInterpreter(), frame, pc)
+        0 function skip_until(predicate::F, interp::Interpreter, frame::Frame, pc::Int) where F
+        0     stmt = pc_expr(frame, pc)
+        0     while !predicate(stmt)
+        0         pc = next_or_nothing(interp, frame, pc)
+        0         pc === nothing && return nothing
+        0         stmt = pc_expr(frame, pc)
+        0     end
+        0     return pc
+        - end
+        - skip_until!(predicate, frame::Frame) = skip_until!(predicate, RecursiveInterpreter(), frame)
+        - function skip_until!(predicate::F, interp::Interpreter, frame::Frame) where F
+        -     pc = frame.pc
+        -     stmt = pc_expr(frame, pc)
+        -     while !predicate(stmt)
+        -         pc = next_or_nothing!(interp, frame)
+        -         pc === nothing && return nothing
+        -         stmt = pc_expr(frame, pc)
+        -     end
+        -     return pc
+        - end
+        - 
+        - """
+        -     ret = methoddef!([interp::Interpreter=RecursiveInterpreter()], signatures, frame; define=true)
+        - 
+        - Compute the method table/signature pair of a method definition. `frame.pc` should point to a
+        - `:method` expression. Upon exit, the new method table/signature pair will be added to `signatures`.
+        - 
+        - There are several possible return values:
+        - 
+        -     pc, pc3 = ret
+        - 
+        - is the typical return. `pc` will point to the next statement to be executed, or be `nothing`
+        - if there are no further statements in `frame`. `pc3` will point to the 3-argument `:method`
+        - expression.
+        - 
+        - Alternatively,
+        - 
+        -     pc = ret
+        - 
+        - occurs for "empty method" expressions, e.g., `:(function foo end)`. `pc` will be `nothing`.
+        - 
+        - By default the method will be defined (evaluated). You can prevent this by setting `define=false`.
+        - This is recommended if you are simply extracting signatures from code that has already been evaluated.
+        - """
+        - function methoddef!(interp::Interpreter, signatures::Vector{MethodInfoKey}, frame::Frame, @nospecialize(stmt), pc::Int; define::Bool=true)
+        -     framecode, pcin = frame.framecode, pc
+        -     if ismethod3(stmt)
+        -         pc3 = pc
+        -         arg1 = method_name(stmt)
+        -         (mt, sigt), pc = signature(interp, frame, stmt, pc)
+        -         # Resolve the signature against the live method tables at the latest committed world.
+        -         # `whichtt`'s default world is the caller's task world, which is too old here: the method
+        -         # may have just been defined by `step_expr!` (advancing the world past `frame.world`), and
+        -         # a caller may be driving this in a task pinned to an older world (e.g. Revise revising).
+        -         meth = whichtt(sigt, mt; world=Base.get_world_counter())
+        -         if isa(meth, Method) && (meth.sig <: sigt && sigt <: meth.sig)
+        -             pc = define ? step_expr!(interp, frame, stmt, true) : next_or_nothing!(interp, frame)
+        -         elseif define
+        -             pc = step_expr!(interp, frame, stmt, true)
+        -             meth = whichtt(sigt, mt; world=Base.get_world_counter())
+        -         end
+        -         if isa(meth, Method) && (meth.sig <: sigt && sigt <: meth.sig)
+        -             push!(signatures, MethodInfoKey(mt, meth.sig))
+        -         else
+        -             if arg1 === false || arg1 === nothing || isa(mt, MethodTable)
+        -                 # If it's anonymous and not defined, define it
+        -                 pc = step_expr!(interp, frame, stmt, true)
+        -                 meth = whichtt(sigt, mt; world=Base.get_world_counter())
+        -                 isa(meth, Method) && push!(signatures, MethodInfoKey(mt, meth.sig))
+        -                 return pc, pc3
+        -             else
+        -                 # guard against busted lookup, e.g., https://github.com/JuliaLang/julia/issues/31112
+        -                 code = framecode.src
+        -                 codeloc = codelocation(code, pc)
+        -                 loc = linetable(code, codeloc)
+        -                 ft = Base.unwrap_unionall((Base.unwrap_unionall(sigt)::DataType).parameters[1])
+        -                 if !startswith(String((ft.name::Core.TypeName).name), "##")
+        -                     @warn "file $(loc.file), line $(loc.line): no method found for $sigt"
+        -                 end
+        -                 if pc == pc3
+        -                     pc = next_or_nothing!(interp, frame)
+        -                 end
+        -             end
+        -         end
+        -         frame.pc = pc
+        -         return pc, pc3
+        -     end
+        -     ismethod1(stmt) || Base.invokelatest(error, "expected method opening, got ", stmt)
+        -     mmod = method_module(stmt)
+        -     name = normalize_defsig(method_name(stmt), mmod !== nothing ? mmod : moduleof(frame))
+        -     if isa(name, Bool)
+        -         error("not valid for anonymous methods")
+        -     elseif name === missing
+        -         Base.invokelatest(error, "given invalid definition: ", stmt)
+        -     end
+        -     name = name::GlobalRef
+        -     # Is there a 3-arg method definition that completes this opening? If not, avoid the
+        -     # risk of executing code that we shouldn't (fixes https://github.com/timholy/Revise.jl/issues/758).
+        -     # A bare `function foo end` only forward-declares `foo`; its real definition (if any)
+        -     # may be separated by unrelated top-level code. Marching to a far-away method via the
+        -     # loop below would execute that intervening code, which is wrong when we are only
+        -     # extracting signatures (https://github.com/timholy/Revise.jl/issues/706). So accept
+        -     # the opening only when its matching `:method` is reached before any unrelated
+        -     # top-level definition. Anonymous and gensymmed (`#…`) methods are the helper/inner
+        -     # methods of this definition (closures, keyword bodies, generator stubs); a method
+        -     # with an ordinary user-level name marks the start of an unrelated definition.
+        -     found = false
+        -     for i = pc+1:length(framecode.src.code)
+        -         newstmt = framecode.src.code[i]
+        -         if ismethod3(newstmt)
+        -             if ismethod_with_name(framecode.src, newstmt, string(name.name))
+        -                 found = true
+        -                 break
+        -             end
+        -             othermod = method_module(newstmt)
+        -             othername = normalize_defsig(method_name(newstmt),
+        -                 othermod !== nothing ? othermod : moduleof(frame))
+        -             if isa(othername, GlobalRef) && !startswith(String(othername.name), '#')
+        -                 break
+        -             end
+        -         end
+        -     end
+        -     found || return nothing
+        -     while true  # methods containing inner methods may need multiple trips through this loop
+        -         methinfo, pc = signature(interp, frame, stmt, pc)
+        -         stmt = pc_expr(frame, pc)
+        -         while !ismethod3(stmt)
+        -             pc = next_or_nothing(interp, frame, pc)  # this should not check define, we've probably already done this once
+        -             pc === nothing && return nothing   # this was just `function foo end`, signal "no def"
+        -             stmt = pc_expr(frame, pc)
+        -         end
+        -         pc3 = pc
+        -         stmt = stmt::Expr
+        -         mmod3 = method_module(stmt)
+        -         name3 = normalize_defsig(method_name(stmt), mmod3 !== nothing ? mmod3 : moduleof(frame))
+        -         methinfo === nothing && (error("expected a signature"); return next_or_nothing(interp, frame, pc)), pc3
+        -         mt, sigt = methinfo
+        -         # Methods like f(x::Ref{<:Real}) that use gensymmed typevars will not have the *exact*
+        -         # signature of the active method. So let's get the active signature.
+        -         frame.pc = pc
+        -         pc = define ? step_expr!(interp, frame, stmt, true) : next_or_nothing!(interp, frame)
+        -         meth = whichtt(sigt, mt; world=Base.get_world_counter())
+        -         isa(meth, Method) && push!(signatures, MethodInfoKey(mt, meth.sig)) # inner methods are not visible
+        -         name === name3 && return pc, pc3     # if this was an inner method we should keep going
+        -         stmt = pc_expr(frame, pc)  # there *should* be more statements in this frame
+        -     end
+        - end
+        - methoddef!(interp::Interpreter, signatures::Vector{MethodInfoKey}, frame::Frame, pc::Int; define::Bool=true) =
+        -     methoddef!(interp, signatures, frame, pc_expr(frame, pc), pc; define)
+        - function methoddef!(interp::Interpreter, signatures::Vector{MethodInfoKey}, frame::Frame; define::Bool=true)
+        -     pc = frame.pc
+        -     stmt = pc_expr(frame, pc)
+        -     if !ismethod(stmt)
+        -         pc = next_until!(ismethod, interp, frame, true)
+        -     end
+        -     pc === nothing && error("pc at end of frame without finding a method")
+        -     methoddef!(interp, signatures, frame, pc; define)
+        - end
+        - methoddef!(signatures::Vector{MethodInfoKey}, frame::Frame, pc::Int; define::Bool=true) =
+        -     methoddef!(RecursiveInterpreter(), signatures, frame, pc_expr(frame, pc), pc; define)
+        - methoddef!(signatures::Vector{MethodInfoKey}, frame::Frame; define::Bool=true) =
+        -     methoddef!(RecursiveInterpreter(), signatures, frame; define)
+        - 
+        - function methoddefs!(interp::Interpreter, signatures::Vector{MethodInfoKey}, frame::Frame, pc::Int; define::Bool=true)
+        -     ret = methoddef!(interp, signatures, frame, pc; define)
+        -     pc = ret === nothing ? ret : ret[1]
+        -     return _methoddefs!(interp, signatures, frame, pc; define)
+        - end
+        - function methoddefs!(interp::Interpreter, signatures::Vector{MethodInfoKey}, frame::Frame; define::Bool=true)
+        -     ret = methoddef!(interp, signatures, frame; define)
+        -     pc = ret === nothing ? ret : ret[1]
+        -     return _methoddefs!(interp, signatures, frame, pc; define)
+        - end
+        - methoddefs!(signatures::Vector{MethodInfoKey}, frame::Frame, pc::Int; define::Bool=true) =
+        -     methoddefs!(RecursiveInterpreter(), signatures, frame, pc; define)
+        - methoddefs!(signatures::Vector{MethodInfoKey}, frame::Frame; define::Bool=true) =
+        -     methoddefs!(RecursiveInterpreter(), signatures, frame; define)
+        - 
+        - function _methoddefs!(interp::Interpreter, signatures::Vector{MethodInfoKey}, frame::Frame, pc::Int; define::Bool=define)
+        -     while pc !== nothing
+        -         stmt = pc_expr(frame, pc)
+        -         if !ismethod(stmt)
+        -             pc = next_until!(ismethod, interp, frame, true)
+        -         end
+        -         pc === nothing && break
+        -         ret = methoddef!(interp, signatures, frame, pc; define)
+        -         pc = ret === nothing ? ret : ret[1]
+        -     end
+        -     return pc
+        - end
+        - 
+        0 function is_self_call(@nospecialize(stmt), slotnames, argno::Integer=1)
+        0     if isa(stmt, Expr)
+        0         if stmt.head == :call
+        0             a = stmt.args[argno]
+        0             if isa(a, SlotNumber) || isa(a, Core.SlotNumber)
+        0                 sn = slotnames[a.id]
+        0                 if sn == Symbol("#self#") || sn == Symbol("") # allow empty to fix https://github.com/timholy/CodeTracking.jl/pull/48
+        0                     return true
+        -                 end
+        -             end
+        -         end
+        -     end
+        0     return false
+        - end
+        - 
+        0 function has_self_call(src, stmt::Expr)
+        -     # Check that it has a #self# call
+        0     hasself = false
+        0     for i = 2:length(stmt.args)
+        0         hasself |= is_self_call(stmt, src.slotnames, i)
+        0     end
+        0     return hasself
+        - end
+        - 
+        - """
+        -     mbody = bodymethod(m::Method)
+        - 
+        - Return the "body method" for a method `m`. `mbody` contains the code of the function body
+        - when `m` was defined.
+        - """
+        - function bodymethod(mkw::Method)
+        -     Base.unwrap_unionall(mkw.sig).parameters[1] !== typeof(Core.kwcall) && isempty(Base.kwarg_decl(mkw)) && return mkw
+        -     mths = methods(Base.bodyfunction(mkw))
+        -     if length(mths) != 1
+        -         @show mkw
+        -         display(mths)
+        -     end
+        -     return only(mths)
+        - end

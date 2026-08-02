@@ -19,7 +19,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## Unreleased
 
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
-- Diff: [`0d67c12...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/0d67c12...HEAD)
+- Diff: [`f64faec...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/f64faec...HEAD)
 
 ### Announcement
 
@@ -43,6 +43,38 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > ```
 > This disables analysis for matched files. Basic features like completion still might work, but most LSP features will be unfunctional.
 > Note that `analysis_overrides` is provided as a temporary workaround and may be removed or changed at any time. A proper fix is being worked on.
+>
+> Note: Path glob patterns use `/` as the separator on all platforms, including Windows; backslashes are not supported as separators.
+
+### Changed
+
+- Function-definition hover now shows return types inferred from declared signature types alongside the source signature. For example, hovering over `pair` in:
+  ```julia
+  function pair(x::Int, y::AbstractString)
+      return x => y
+  end
+  ```
+  shows:
+  ```julia
+  pair(x::Int, y::AbstractString) :: Pair{Int64, <:AbstractString}
+  ```
+
+### Fixed
+
+- Fixed diagnostic path patterns and `analysis_overrides` on Windows, allowing forward-slash glob patterns to match files under the workspace root.
+
+- Fixed LaTeX/emoji completion in clients such as Zed and Helix whose completion filtering cannot handle the `\`/`^`/`:` characters: e.g. Unicode superscript completion like `\^a` now works (Closed https://github.com/aviatesk/JETLS.jl/issues/821).
+
+- Fixed Go to Definition jumping to stale line positions when unsaved edits move method definitions in synchronized documents.
+
+## 2026-08-01
+
+- Commit: [`f64faec`](https://github.com/aviatesk/JETLS.jl/commit/f64faec)
+- Diff: [`0d67c12...f64faec`](https://github.com/aviatesk/JETLS.jl/compare/0d67c12...f64faec)
+- Installation:
+  ```bash
+  julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="2026-08-01")'
+  ```
 
 ### Breaking
 

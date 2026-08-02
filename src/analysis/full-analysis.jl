@@ -125,6 +125,7 @@ struct InstantiationProgressCaller <: RequestCaller
     ins_request::InstantiationRequest
     invalidate::Bool
     notify_diagnostics::Bool
+    debounce::Float64
     token::ProgressToken
 end
 
@@ -133,36 +134,43 @@ struct AnalysisProgressCaller <: RequestCaller
     invalidate::Bool
     entry::AnalysisEntry
     notify_diagnostics::Bool
+    debounce::Float64
     token::ProgressToken
 end
 cancellable_token_impl(rc::AnalysisProgressCaller) = rc.token
 
 function request_instantiation_progress!(
         server::Server, uri::URI, ins_request::InstantiationRequest,
-        invalidate::Bool, notify_diagnostics::Bool
+        invalidate::Bool, notify_diagnostics::Bool, debounce::Float64
     )
     id = String(gensym(:WorkDoneProgressCreateRequest_instantiation))
     token = String(gensym(:InstantiationProgress))
-    addrequest!(server, id => InstantiationProgressCaller(uri, ins_request, invalidate, notify_diagnostics, token))
+    caller = InstantiationProgressCaller(
+        uri, ins_request, invalidate, notify_diagnostics, debounce, token)
+    addrequest!(server, id => caller)
     params = WorkDoneProgressCreateParams(; token)
     send(server, WorkDoneProgressCreateRequest(; id, params))
 end
 
-function handle_instantiation_progress_response(server::Server, caller::InstantiationProgressCaller)
-    (; uri, ins_request, invalidate, notify_diagnostics, token) = caller
+function handle_instantiation_progress_response(
+        server::Server, caller::InstantiationProgressCaller
+    )
+    (; uri, ins_request, invalidate, notify_diagnostics, debounce, token) = caller
     entry = do_instantiation_with_progress(server, uri, ins_request, token)
     # Now request a new progress token for the analysis phase
-    request_analysis_progress!(server, uri, invalidate, entry, notify_diagnostics)
+    request_analysis_progress!(
+        server, uri, invalidate, entry, notify_diagnostics, debounce)
 end
 
 function request_analysis_progress!(
         server::Server, uri::URI, invalidate::Bool, @nospecialize(entry::AnalysisEntry),
-        notify_diagnostics::Bool
+        notify_diagnostics::Bool, debounce::Float64
     )
     id = String(gensym(:WorkDoneProgressCreateRequest_analysis))
     token = String(gensym(:AnalysisProgress))
-    addrequest!(server, id => AnalysisProgressCaller(
-        uri, invalidate, entry, notify_diagnostics, token))
+    caller = AnalysisProgressCaller(
+        uri, invalidate, entry, notify_diagnostics, debounce, token)
+    addrequest!(server, id => caller)
     params = WorkDoneProgressCreateParams(; token)
     send(server, WorkDoneProgressCreateRequest(; id, params))
 end
@@ -170,10 +178,10 @@ end
 function handle_analysis_progress_response(
         server::Server, caller::AnalysisProgressCaller, cancel_flag::CancelFlag
     )
-    (; uri, invalidate, entry, notify_diagnostics, token) = caller
+    (; uri, invalidate, entry, notify_diagnostics, debounce, token) = caller
     cancellable_token = CancellableToken(token, cancel_flag)
     schedule_analysis!(server, uri, entry, invalidate;
-        cancellable_token, notify_diagnostics)
+        cancellable_token, notify_diagnostics, debounce)
 end
 
 # Analysis workers
@@ -320,7 +328,8 @@ function request_analysis!(
             return nothing
         elseif phase1_result isa InstantiationRequest
             if !wait && supports(server, :window, :workDoneProgress)
-                request_instantiation_progress!(server, uri, phase1_result, invalidate, notify_diagnostics)
+                request_instantiation_progress!(
+                    server, uri, phase1_result, invalidate, notify_diagnostics, debounce)
                 return nothing
             else
                 entry = do_instantiation(server, uri, phase1_result)
@@ -331,7 +340,8 @@ function request_analysis!(
     end
 
     if !wait && supports(server, :window, :workDoneProgress)
-        request_analysis_progress!(server, uri, invalidate, entry, notify_diagnostics)
+        request_analysis_progress!(
+            server, uri, invalidate, entry, notify_diagnostics, debounce)
     else
         completion = Base.Event()
         schedule_analysis!(server, uri, entry, invalidate;
