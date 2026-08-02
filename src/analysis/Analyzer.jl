@@ -1166,15 +1166,15 @@ function LSAnalyzer(
         report_target_modules = missing,
         jetconfigs...
     )
-    jetconfigs = JET.kwargs_dict(jetconfigs)
-    jetconfigs[:aggressive_constant_propagation] = true
-    # Enable the `assume_bindings_static` option to terminate analysis a bit earlier when
-    # there are undefined bindings detected. Note that this option will cause inference
-    # cache inconsistency until JuliaLang/julia#40399 is merged. But the analysis cache of
-    # LSAnalyzer has the same problem already anyway, so enabling this option does not
-    # make the situation worse.
-    jetconfigs[:assume_bindings_static] = true
-    state = AnalyzerState(world; jetconfigs...)
+    inf_params = CC.InferenceParams(;
+        aggressive_constant_propagation = true,
+        # Enable the `assume_bindings_static` option to terminate analysis a bit earlier when
+        # there are undefined bindings detected. Note that this option will cause inference
+        # cache inconsistency until JuliaLang/julia#40399 is merged. But the analysis cache of
+        # LSAnalyzer has the same problem already anyway, so enabling this option does not
+        # make the situation worse.
+        assume_bindings_static = true)
+    state = AnalyzerState(world; inf_params, jetconfigs...)
     return LSAnalyzer(entry, state; report_target_modules)
 end
 
