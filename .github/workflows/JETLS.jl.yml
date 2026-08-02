@@ -43,8 +43,10 @@ jobs:
       - uses: julia-actions/cache@v2
       - name: enable JETLS_DEV_MODE for tests
         run: |
-          sed -i 's/JETLS_DEV_MODE = false/JETLS_DEV_MODE = true/' \
-            test/LocalPreferences.toml
+          echo '
+          [JETLS]
+          JETLS_DEV_MODE = true
+          ' > test/LocalPreferences.toml
       - uses: julia-actions/julia-buildpkg@latest
       - uses: julia-actions/julia-runtest@latest
 

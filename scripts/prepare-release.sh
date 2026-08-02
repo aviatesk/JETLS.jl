@@ -145,6 +145,7 @@ PR_BODY="This PR releases version \`$JETLS_VERSION\`.
 - [ ] \`release / test_app / Test jetls serve\`
 - [ ] \`release / test_app / Test jetls check\`
 - [ ] \`release / test_app / Test jetls schema\`
+- [ ] \`release / test_app / Test release installation\`
 - [ ] \`release / check_schemas / Check schemas are up to date\`
 
 ## Post-merge
