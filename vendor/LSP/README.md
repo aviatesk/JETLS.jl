@@ -48,7 +48,7 @@ To regenerate `specification.md` from the upstream LSP sources, run this
 from the repository root:
 
 ```sh
-python3 scripts/update-lsp-specification.py \
+julia --startup-file=no scripts/update-lsp-specification.jl \
   --version 3.18 \
   --output LSP/specification.md
 ```

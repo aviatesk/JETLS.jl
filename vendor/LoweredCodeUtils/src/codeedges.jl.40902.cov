@@ -1,0 +1,1276 @@
+        - ## Phase 1: direct links
+        - 
+        - # There are 3 types of entities to track: ssavalues (line/statement numbers), slots, and named objects.
+        - # Each entity can have a number of "predecessors" (forward edges), which can be any combination of these
+        - # three entity types. Likewise, each entity can have a number of "successors" (backward edges), also any
+        - # combination of these entity types.
+        - struct Links
+      174     ssas::Vector{Int}
+        -     slots::Vector{Int}
+        -     names::Vector{GlobalRef}
+        - end
+      174 Links() = Links(Int[], Int[], GlobalRef[])
+        - 
+        - function Base.show(io::IO, l::Links)
+        -     print(io, "ssas: ", showempty(l.ssas),
+        -               ", slots: ", showempty(l.slots),
+        -               ", names: ")
+        -     print(IOContext(io, :typeinfo=>Vector{GlobalRef}), showempty(l.names))
+        -     print(io, ';')
+        - end
+        - 
+        - struct CodeLinks
+       18     thismod::Module
+        -     ssapreds::Vector{Links}
+        -     ssasuccs::Vector{Links}
+        -     slotpreds::Vector{Links}
+        -     slotsuccs::Vector{Links}
+        -     slotassigns::Vector{Vector{Int}}
+        -     namepreds::Dict{GlobalRef,Links}
+        -     namesuccs::Dict{GlobalRef,Links}
+        -     nameassigns::Dict{GlobalRef,Vector{Int}}
+        - end
+       18 function CodeLinks(thismod::Module, nlines::Int, nslots::Int)
+       72     makelinks(n) = [Links() for _ = 1:n]
+        - 
+       18     return CodeLinks(thismod,
+        -                      makelinks(nlines),
+        -                      makelinks(nlines),
+        -                      makelinks(nslots),
+        -                      makelinks(nslots),
+        -                      [Int[] for _ = 1:nslots],
+        -                      Dict{GlobalRef,Links}(),
+        -                      Dict{GlobalRef,Links}(),
+        -                      Dict{GlobalRef,Vector{Int}}())
+        - end
+       12 function CodeLinks(thismod::Module, src::CodeInfo)
+       18     cl = CodeLinks(thismod, length(src.code), length(src.slotnames))
+       18     direct_links!(cl, src)
+        - end
+        - 
+        - function Base.show(io::IO, cl::CodeLinks)
+        -     print(io, "CodeLinks:")
+        -     print_slots(io, cl)
+        -     print_names(io, cl)
+        -     nstmts = length(cl.ssapreds)
+        -     nd = ndigits(nstmts)
+        -     print(io, "\nCode:")
+        -     for i = 1:nstmts
+        -         print(io, '\n', lpad(i, nd), " preds: ")
+        -         show(io, cl.ssapreds[i])
+        -         print(io, '\n', lpad(i, nd), " succs: ")
+        -         show(io, cl.ssasuccs[i])
+        -     end
+        - end
+        - 
+        - function print_slots(io::IO, cl::CodeLinks)
+        -     nslots = length(cl.slotpreds)
+        -     nd = ndigits(nslots)
+        -     for i = 1:nslots
+        -         print(io, "\nslot ", lpad(i, nd), ':')
+        -         print(io, "\n  preds: ")
+        -         show(io, cl.slotpreds[i])
+        -         print(io, "\n  succs: ")
+        -         show(io, cl.slotsuccs[i])
+        -         print(io, "\n  assign @: ")
+        -         show(io, cl.slotassigns[i])
+        -     end
+        - end
+        - 
+        - function print_names(io::IO, cl::CodeLinks)
+        -     ukeys = namedkeys(cl)
+        -     for key in ukeys
+        -         print(io, '\n', key, ':')
+        -         if haskey(cl.namepreds, key)
+        -             print(io, "\n  preds: ")
+        -             show(io, cl.namepreds[key])
+        -         end
+        -         if haskey(cl.namesuccs, key)
+        -             print(io, "\n  succs: ")
+        -             show(io, cl.namesuccs[key])
+        -         end
+        -         if haskey(cl.nameassigns, key)
+        -             print(io, "\n  assign @: ")
+        -             show(io, cl.nameassigns[key])
+        -         end
+        -     end
+        - end
+        - 
+        - function print_with_code(preprint, postprint, io::IO, src::CodeInfo)
+        -     src = copy(src)
+        -     JuliaInterpreter.replace_coretypes!(src; rev=true)
+        -     JuliaInterpreter.reverse_lookup_globalref!(src.code)
+        -     io = IOContext(io,
+        -         :displaysize=>displaysize(io),
+        -         :SOURCE_SLOTNAMES => Base.sourceinfo_slotnames(src))
+        -     used = BitSet()
+        -     cfg = compute_basic_blocks(src.code)
+        -     for stmt in src.code
+        -         CC.scan_ssa_use!(push!, used, stmt)
+        -     end
+        -     @static if isdefined(Base, :__has_internal_change) && Base.__has_internal_change(v"1.12-alpha", :printcodeinfocalls)
+        -         sptypes = let parent = src.parent
+        -             parent isa MethodInstance ?
+        -                 CC.sptypes_from_meth_instance(parent) :
+        -                 CC.EMPTY_SPTYPES
+        -         end
+        -     end
+        -     line_info_preprinter = IRShow.lineinfo_disabled
+        -     line_info_postprinter = IRShow.default_expr_type_printer
+        -     preprint(io)
+        -     bb_idx_prev = bb_idx = 1
+        -     for idx = 1:length(src.code)
+        -         preprint(io, idx)
+        -         @static if isdefined(Base, :__has_internal_change) && Base.__has_internal_change(v"1.12-alpha", :printcodeinfocalls)
+        -             bb_idx = IRShow.show_ir_stmt(io, src, idx, line_info_preprinter, line_info_postprinter, sptypes, used, cfg, bb_idx)
+        -         else
+        -             bb_idx = IRShow.show_ir_stmt(io, src, idx, line_info_preprinter, line_info_postprinter, used, cfg, bb_idx)
+        -         end
+        -         postprint(io, idx, bb_idx != bb_idx_prev)
+        -         bb_idx_prev = bb_idx
+        -     end
+        -     max_bb_idx_size = ndigits(length(cfg.blocks))
+        -     line_info_preprinter(io, " "^(max_bb_idx_size + 2), 0)
+        -     postprint(io)
+        -     return nothing
+        - end
+        - 
+        - """
+        -     print_with_code(io, src::CodeInfo, cl::CodeLinks)
+        - 
+        - Interweave display of code and links.
+        - 
+        - !!! compat "Julia 1.6"
+        -     This function produces dummy output if suitable support is missing in your version of Julia.
+        - 
+        - """
+        - function print_with_code(io::IO, src::CodeInfo, cl::CodeLinks)
+        -     function preprint(io::IO)
+        -         print(io, "Slots:")
+        -         print_slots(io, cl)
+        -         print(io, "\nNames:")
+        -         print_names(io, cl)
+        -         println(io)
+        -     end
+        -     preprint(::IO, ::Int) = nothing
+        -     postprint(::IO) = nothing
+        -     postprint(io::IO, idx::Int, bbchanged::Bool) = postprint_linelinks(io, idx, src, cl, bbchanged)
+        - 
+        -     print_with_code(preprint, postprint, io, src)
+        - end
+        - 
+        - function postprint_linelinks(io::IO, idx::Int, src::CodeInfo, cl::CodeLinks, bbchanged::Bool)
+        -     printstyled(io, bbchanged ? " " : "│", color=:light_black)
+        -     printstyled(io, "             # ", color=:yellow)
+        -     stmt = src.code[idx]
+        -     lhs_rhs = get_lhs_rhs(stmt)
+        -     if lhs_rhs !== nothing
+        -         lhs, _ = lhs_rhs
+        -         lhs = normalize_defsig(lhs, cl.thismod)
+        -         if @issslotnum(lhs)
+        -             # id = lhs.id
+        -             # preds, succs = cl.slotpreds[id], cl.slotsuccs[id]
+        -             printstyled(io, "see slot ", lhs.id, '\n', color=:yellow)
+        -         else
+        -             # preds, succs = cl.namepreds[lhs], cl.namesuccs[lhs]
+        -             printstyled(io, "see name ", lhs, '\n', color=:yellow)
+        -         end
+        -     else
+        -         preds, succs = cl.ssapreds[idx], cl.ssasuccs[idx]
+        -         printstyled(io, "preds: ", preds, " succs: ", succs, '\n', color=:yellow)
+        -     end
+        -     return nothing
+        - end
+        - 
+        - struct CFGShortCut
+        0     from::Int # pc of GotoIfNot with inactive 𝑰𝑵𝑭𝑳 blocks
+        -     to::Int   # pc of the entry of the nearest common post-dominator of the GotoIfNot's successors
+        - end
+        - 
+        - """
+        -     controller::SelectiveEvalController
+        - 
+        - When this object is passed as the `recurse` argument of `selective_eval!`,
+        - the selective execution is adjusted as follows:
+        - 
+        - - **Termination point**: In Julia's IR representation (`CodeInfo`), a terminal
+        -   basic block may contain a statement that is outside the slice but should still
+        -   terminate selective execution when reached. `controller.termination_points`
+        -   records the PCs of such statements, and `selective_eval!` will return when
+        -   reaching them.
+        - 
+        - - **CFG short-cut**: When the successors of a conditional branch are inactive, and it is
+        -   safe to move the program counter from the conditional branch to the nearest common
+        -   post-dominator of those successors, this short-cut is taken.
+        -   This short-cut is not merely an optimization but is actually essential for the correctness
+        -   of the selective execution. This is because, in `CodeInfo`, even if we simply fall-through
+        -   dead blocks (i.e., increment the program counter without executing the statements of those
+        -   blocks), it does not necessarily lead to the nearest common post-dominator block.
+        - 
+        - These adjustments are necessary for performing selective execution correctly.
+        - [`lines_required`](@ref) or [`lines_required!`](@ref) will update the `SelectiveEvalController`
+        - passed as an argument to be appropriate for the program slice generated.
+        - """
+        - struct SelectiveEvalController
+        6     termination_points::BitSet # inactive PCs where selective execution terminates
+        -     shortcuts::Vector{CFGShortCut}
+        - end
+       12 SelectiveEvalController() = SelectiveEvalController(BitSet(), CFGShortCut[])
+        - 
+        - """
+        -     struct SelectiveInterpreter{S<:Interpreter,T<:AbstractVector{Bool}} <: Interpreter
+        -         inner::S
+        -         isrequired::T
+        -         controller::SelectiveEvalController
+        -     end
+        - 
+        - An `JuliaInterpreter.Interpreter` that executes only the statements marked `true` in `isrequired`.
+        - Note that this interpreter does not recurse into callee frames.
+        - That is, when `JuliaInterpreter.finish!(interp::SelectiveInterpreter, frame, ...)` is
+        - performed, the `frame` will be executed selectively according to `interp.isrequired`, but
+        - any callee frames within it will be executed by `interp.inner::Interpreter`, not by `interp`.
+        - """
+        - struct SelectiveInterpreter{S<:Interpreter,T<:AbstractVector{Bool}} <: Interpreter
+        -     inner::S
+        -     isrequired::T
+        -     controller::SelectiveEvalController
+        - end
+        - 
+        6 function namedkeys(cl::CodeLinks)
+        6     ukeys = Set{GlobalRef}()
+        6     for c in (cl.namepreds, cl.namesuccs, cl.nameassigns)
+       24         for k in keys(c)
+       24             push!(ukeys, k)
+       30         end
+       24     end
+        6     return ukeys
+        - end
+        - 
+        - # Required by Revise, but otherwise deprecated
+        - # The depwarn is currently disabled because Revise's tests check for empty warning logs
+        - function is_assignment_like(@nospecialize stmt)
+        -     # Base.depwarn("is_assignment_like is deprecated, switch to `LoweredCodeUtils.get_lhs_rhs`", :is_assignment_like)
+        -     return isexpr(stmt, :(=)) || isexpr(stmt, :const, 2)
+        - end
+        - 
+      228 function get_lhs_rhs(@nospecialize stmt)
+      228     if isexpr(stmt, :(=))
+        0         return Pair{Any,Any}(stmt.args[1], stmt.args[2])
+      228     elseif isexpr(stmt, :const) && length(stmt.args) == 2
+        -         # TODO: remove lowered :const when Julia min compat >= 1.13
+        0         return Pair{Any,Any}(stmt.args[1], stmt.args[2])
+      228     elseif isexpr(stmt, :call) && length(stmt.args) == 4
+       30         f = stmt.args[1]
+        -         # TODO: remove isdefined when Julia min compat >= 1.13
+       60         if is_global_ref_egal(f, :setglobal!, Core.setglobal!) || @static isdefined(Core, :declare_const) && is_global_ref_egal(f, :declare_const,  Core.declare_const)
+        0             mod = stmt.args[2]
+        0             mod isa Module || return nothing
+        0             name = stmt.args[3]
+        0             if name isa QuoteNode
+        0                 name = name.value
+        -             end
+        0             name isa Symbol || return nothing
+        0             lhs = GlobalRef(mod, name)
+        0             return Pair{Any,Any}(lhs, stmt.args[4])
+        -         end
+        -     end
+      228     return nothing
+        - end
+        - 
+       18 function direct_links!(cl::CodeLinks, src::CodeInfo)
+        -     # Utility for when a stmt itself contains a CodeInfo
+       12     function add_inner!(cl::CodeLinks, icl::CodeLinks, idx)
+       12         for (name, _) in icl.nameassigns
+        0             assigns = get!(Vector{Int}, cl.nameassigns, name)
+        0             push!(assigns, idx)
+        0         end
+       18         for (name, _) in icl.namesuccs
+        6             succs = get!(Links, cl.namesuccs, name)
+        6             push!(succs.ssas, idx)
+        6         end
+        -     end
+        - 
+        0     P = Pair{Union{SSAValue,SlotNumber,GlobalRef},Links}
+        - 
+       18     for (i, stmt) in enumerate(src.code)
+       66         if isexpr(stmt, :thunk) && (arg1 = stmt.args[1]; arg1 isa CodeInfo)
+        6             icl = CodeLinks(cl.thismod, arg1)
+        6             add_inner!(cl, icl, i)
+        6             continue
+       96         elseif isexpr(stmt, :method) || is_define_method_call_2arg(stmt) || is_define_method_call_4arg(stmt)
+       18             if ismethod1(stmt)
+        -                 # A function with no methods was defined. Associate its new binding to it.
+       12                 name = method_name(stmt)
+        6                 if isa(name, Symbol) || isa(name, QuoteNode)
+       12                     name = isa(name, QuoteNode) ? name.value : name
+       12                     mmod = method_module(stmt)
+        6                     name = GlobalRef(mmod !== nothing ? mmod : cl.thismod, name::Symbol)
+        -                 end
+        6                 if isa(name, GlobalRef)
+        6                     assign = get!(Vector{Int}, cl.nameassigns, name)
+        6                     push!(assign, i)
+        6                     targetstore = get!(Links, cl.namepreds, name)
+        6                     target = P(name, targetstore)
+        6                     add_links!(target, stmt, cl)
+        -                 end
+       18             elseif ismethod3(stmt) && (mbody = method_body(stmt); mbody isa CodeInfo) # method definition
+        -                 # A method was defined for an existing function.
+        6                 icl = CodeLinks(cl.thismod, mbody)
+        6                 add_inner!(cl, icl, i)
+        -             end
+       12             rhs = stmt
+       12             target = P(SSAValue(i), cl.ssapreds[i])
+       84         elseif (lhs_rhs = get_lhs_rhs(stmt); lhs_rhs !== nothing)
+        -             # An assignment
+        0             stmt = stmt::Expr
+        0             lhs, rhs = lhs_rhs
+        0             if @issslotnum(lhs)
+        0                 lhs = lhs::AnySlotNumber
+        0                 id = lhs.id
+        0                 target = P(SlotNumber(id), cl.slotpreds[id])
+        0                 push!(cl.slotassigns[id], i)
+        0             elseif isa(lhs, GlobalRef) || isa(lhs, Symbol)
+        0                 if isa(lhs, Symbol)
+        0                     lhs = GlobalRef(cl.thismod, lhs)
+        -                 end
+        0                 targetstore = get!(Links, cl.namepreds, lhs)
+        0                 target = P(lhs, targetstore)
+        0                 assign = get(cl.nameassigns, lhs, nothing)
+        0                 if assign === nothing
+        0                     cl.nameassigns[lhs] = assign = Int[]
+        -                 end
+        0                 push!(assign, i)
+        -             else
+        0                 error("lhs ", lhs, " not recognized")
+        -             end
+        -         else
+        0             rhs = stmt
+       42             target = P(SSAValue(i), cl.ssapreds[i])
+        -         end
+       54         add_links!(target, rhs, cl)
+      102     end
+       18     return cl
+        - end
+        - 
+      150 function add_links!(target::Pair{Union{SSAValue,SlotNumber,GlobalRef},Links}, @nospecialize(stmt), cl::CodeLinks)
+      150     _targetid, targetstore = target
+        0     targetid = _targetid::Union{SSAValue,SlotNumber,GlobalRef}
+        -     # Adds bidirectional edges
+      300     if @isssa(stmt)
+       24         stmt = stmt::AnySSAValue
+       30         push!(targetstore, SSAValue(stmt.id))    # forward edge
+       24         push!(cl.ssasuccs[stmt.id], targetid)    # backward edge
+      252     elseif @issslotnum(stmt)
+        0         stmt = stmt::AnySlotNumber
+        0         push!(targetstore, SlotNumber(stmt.id))
+        0         push!(cl.slotsuccs[stmt.id], targetid)
+      252     elseif isa(stmt, GlobalRef) || isa(stmt, Symbol)
+       42         if isa(stmt, Symbol)
+       42             stmt = GlobalRef(cl.thismod, stmt)
+        -         end
+       42         push!(targetstore, stmt)
+       42         namestore = get!(Links, cl.namesuccs, stmt)
+       42         push!(namestore, targetid)
+       84     elseif isa(stmt, Expr)
+       48         if stmt.head === :globaldecl
+        0             for i = 1:length(stmt.args)
+        0                 a = stmt.args[i]
+        0                 if a isa GlobalRef
+        0                     namestore = get!(Links, cl.namepreds, a) # TODO should this information be tracked in the separate `cl.namedecls` store?
+        0                     push!(namestore, targetid)
+        0                     if targetid isa SSAValue
+        0                         push!(namestore, SSAValue(targetid.id+1)) # +1 for :latestworld
+        -                     end
+        -                 else
+        0                     add_links!(target, a, cl)
+        -                 end
+        0             end
+       48         elseif stmt.head !== :copyast
+       48             stmt = stmt::Expr
+       48             arng = 1:length(stmt.args)
+       48             if stmt.head === :call
+       24                 f = stmt.args[1]
+       48                 if !@isssa(f) && !@issslotnum(f)
+        -                     # Avoid putting named callees on the namestore
+       24                     arng = 2:length(stmt.args)
+        -                 end
+       24                 if f isa GlobalRef && f == GlobalRef(Core, :declare_global) && 3 <= length(stmt.args) <= 5
+        -                     # Core.declare_global(module::Module, name::Symbol, strong::Bool=false, [ty::Type])
+        0                     m = stmt.args[2]
+        0                     s = stmt.args[3]
+        0                     strong = length(stmt.args) >= 4 ? stmt.args[4] === true : false
+        0                     if strong && m isa Module && s isa QuoteNode && s.value isa Symbol
+        0                         a = GlobalRef(m, s.value::Symbol)
+        0                         namestore = get!(Links, cl.namepreds, a) # TODO should this information be tracked in the separate `cl.namedecls` store?
+        0                         push!(namestore, targetid)
+        0                         if targetid isa SSAValue
+        0                             push!(namestore, SSAValue(targetid.id+1)) # +1 for :latestworld
+        -                         end
+        -                     end
+        0                     arng = 4:length(stmt.args)
+        -                 end
+        -             end
+       48             for i in arng
+       72                 add_links!(target, stmt.args[i], cl)
+       72             end
+        -         end
+        0     elseif (@static @isdefined(EnterNode) ? stmt isa EnterNode : false)
+        0         isdefined(stmt, :scope) && add_links!(target, stmt.scope, cl)
+       36     elseif stmt isa GotoIfNot
+        0         add_links!(target, stmt.cond, cl)
+       36     elseif stmt isa ReturnNode
+       18         add_links!(target, stmt.val, cl)
+        -     end
+      150     return nothing
+        - end
+        - 
+        0 function Base.push!(l::Links, id)
+        0     if isa(id, SSAValue)
+       60         k = id.id
+      150         k ∉ l.ssas && push!(l.ssas, k)
+        0     elseif isa(id, SlotNumber)
+        0         k = id.id
+        0         k ∉ l.slots && push!(l.slots, k)
+        -     else
+        0         id = id::GlobalRef
+       48         id ∉ l.names && push!(l.names, id)
+        -     end
+      132     return id
+        - end
+        - 
+        - ## Phase 2: replacing slot-links with statement-links (and adding name-links to statement-links)
+        - 
+        - # Now that we know the full set of dependencies, we can safely replace references to names
+        - # by references to the relevant line numbers.
+        - 
+        - """
+        - `Variable` holds information about named variables.
+        - Unlike SSAValues, a single Variable can be assigned from multiple code locations.
+        - 
+        - If `v` is a `Variable`, then
+        - - `v.assigned` is a list of statement numbers on which it is assigned
+        - - `v.preds` is the set of statement numbers upon which this assignment depends
+        - - `v.succs` is the set of statement numbers which make use of this variable
+        - 
+        - `preds` and `succs` are short for "predecessors" and "successors," respectively.
+        - These are meant in the sense of execution order, not statement number; depending on control-flow,
+        - a variable may have entries in `preds` that are larger than the smallest entry in `assigned`.
+        - """
+        - struct Variable
+       12     assigned::Vector{Int}
+        -     preds::Vector{Int}
+        -     succs::Vector{Int}
+        - end
+        - 
+        - function Base.show(io::IO, v::Variable)
+        -     print(io, "assigned on ", showempty(v.assigned))
+        -     print(io, ", depends on ", showempty(v.preds))
+        -     print(io, ", and used by ", showempty(v.succs))
+        - end
+        - 
+        - # This will be documented below at the "user-level" constructor.
+        - # preds[i] is the list of predecessors for the `i`th statement in the CodeInfo
+        - # succs[i] is the list of successors for the `i`th statement in the CodeInfo
+        - # byname[name] summarizes this CodeInfo's dependence on Variable `name`.
+        - struct CodeEdges
+        6     preds::Vector{Vector{Int}}
+        -     succs::Vector{Vector{Int}}
+        -     byname::Dict{GlobalRef,Variable}
+        - end
+        6 CodeEdges(n::Integer) = CodeEdges([Int[] for i = 1:n], [Int[] for i = 1:n], Dict{GlobalRef,Variable}())
+        - 
+        - function Base.show(io::IO, edges::CodeEdges)
+        -     println(io, "CodeEdges:")
+        -     for (name, v) in edges.byname
+        -         print(io, "  ", name, ": ")
+        -         show(io, v)
+        -         println(io)
+        -     end
+        -     n = length(edges.preds)
+        -     nd = ndigits(n)
+        -     for i = 1:n
+        -         println(io, "  statement ", lpad(i, nd), " depends on ", showempty(edges.preds[i]), " and is used by ", showempty(edges.succs[i]))
+        -     end
+        -     return nothing
+        - end
+        - 
+        - """
+        -     edges = CodeEdges(src::CodeInfo)
+        - 
+        - Analyze `src` and determine the chain of dependencies.
+        - 
+        - - `edges.preds[i]` lists the preceding statements that statement `i` depends on.
+        - - `edges.succs[i]` lists the succeeding statements that depend on statement `i`.
+        - - `edges.byname[v]` returns information about the predecessors, successors, and assignment statements
+        -   for an object `v::GlobalRef`.
+        - """
+        0 function CodeEdges(mod::Module, src::CodeInfo)
+        6     cl = CodeLinks(mod, src)
+        6     CodeEdges(src, cl)
+        - end
+        - 
+        6 function CodeEdges(src::CodeInfo, cl::CodeLinks)
+        -     # The main task here is to elide the slot-dependencies and convert
+        -     # everything to just ssas & names.
+        - 
+        -     # Replace/add named intermediates (slot & named-variable references) with statement numbers
+        6     nstmts, nslots = length(src.code), length(src.slotnames)
+        6     marked, slothandled = BitSet(), fill(false, nslots)  # working storage during resolution
+        6     edges = CodeEdges(nstmts)
+        6     emptylink = Links()
+        6     emptylist = Int[]
+        6     for (i, stmt) in enumerate(src.code)
+        -         # Identify line predecents for slots and named variables
+       96         if (lhs_rhs = get_lhs_rhs(stmt); lhs_rhs !== nothing)
+        0             stmt = stmt::Expr
+        0             lhs, _ = lhs_rhs
+        -             # Mark predecessors and successors of this line by following ssas & named assignments
+        0             if @issslotnum(lhs)
+        0                 lhs = lhs::AnySlotNumber
+        -                 # This line assigns a slot. Mark all predecessors.
+        0                 id = lhs.id
+        0                 linkpreds, linksuccs, listassigns = cl.slotpreds[id], cl.slotsuccs[id], cl.slotassigns[id]
+        -             else
+        0                 lhs = lhs::Union{GlobalRef,Symbol}
+        0                 if lhs isa Symbol
+        0                     lhs = GlobalRef(cl.thismod, lhs)
+        -                 end
+        0                 linkpreds = get(cl.namepreds, lhs, emptylink)
+        0                 linksuccs = get(cl.namesuccs, lhs, emptylink)
+        0                 listassigns = get(cl.nameassigns, lhs, emptylist)
+        -             end
+        -         else
+       48             linkpreds, linksuccs, listassigns = cl.ssapreds[i], cl.ssasuccs[i], emptylist
+        -         end
+        -         # Assign the predecessors
+        -         # For "named" predecessors, we depend only on their assignments
+       48         empty!(marked)
+       48         fill!(slothandled, false)
+       48         follow_links!(marked, linkpreds, cl.slotpreds, cl.slotassigns, slothandled)
+       48         pushall!(marked, listassigns)
+       48         for key in linkpreds.names
+       54             pushall!(marked, get(cl.nameassigns, key, emptylist))
+       30         end
+       84         delete!(marked, i)
+       48         append!(edges.preds[i], marked)
+        -         # Similarly for successors
+       48         empty!(marked)
+       48         fill!(slothandled, false)
+       48         follow_links!(marked, linksuccs, cl.slotsuccs, cl.slotassigns, slothandled)
+       48         pushall!(marked, listassigns)
+       48         for key in linksuccs.names
+        0             pushall!(marked, get(cl.nameassigns, key, emptylist))
+        0         end
+       72         delete!(marked, i)
+       48         append!(edges.succs[i], marked)
+       90     end
+        -     # Add named variables
+        6     ukeys = namedkeys(cl)
+       12     for key in ukeys
+       18         assigned = get(cl.nameassigns, key, Int[])
+       12         empty!(marked)
+       18         linkpreds = get(cl.namepreds, key, emptylink)
+       12         pushall!(marked, linkpreds.ssas)
+       12         for j in linkpreds.slots
+        0             pushall!(marked, cl.slotassigns[j])
+        0         end
+       12         for key in linkpreds.names
+       12             pushall!(marked, get(cl.nameassigns, key, emptylist))
+        6         end
+       12         preds = append!(Int[], marked)
+       12         empty!(marked)
+       24         linksuccs = get(cl.namesuccs, key, emptylink)
+       12         pushall!(marked, linksuccs.ssas)
+       12         for j in linksuccs.slots
+        0             pushall!(marked, cl.slotassigns[j])
+        0             pushall!(marked, cl.slotsuccs[j].ssas)
+        0         end
+       12         for key in linksuccs.names
+       12             pushall!(marked, get(cl.nameassigns, key, emptylist))
+        6         end
+       12         succs = append!(Int[], marked)
+       12         edges.byname[key] = Variable(assigned, preds, succs)
+       24     end
+        - 
+        6     return edges
+        - end
+        - 
+        - # Follow slot links to their non-slot leaves
+       96 function follow_links!(marked, l::Links, slotlinks, slotassigns, slothandled)
+       96     pushall!(marked, l.ssas)
+       96     for id in l.slots
+        0         slothandled[id] && continue
+        0         slothandled[id] = true
+        0         pushall!(marked, slotassigns[id])
+        0         follow_links!(marked, slotlinks[id], slotlinks, slotassigns, slothandled)
+        0     end
+       96     return marked
+        - end
+        - 
+        - """
+        -     print_with_code(io, src::CodeInfo, edges::CodeEdges)
+        - 
+        - Interweave display of code and edges.
+        - 
+        - !!! compat "Julia 1.6"
+        -     This function produces dummy output if suitable support is missing in your version of Julia.
+        - 
+        - """
+        - function print_with_code(io::IO, src::CodeInfo, edges::CodeEdges)
+        -     function preprint(io::IO)
+        -         printstyled(io, "Names:", color=:yellow)
+        -         for (name, var) in edges.byname
+        -             print(io, '\n', name, ": ")
+        -             show(io, var)
+        -         end
+        -         printstyled(io, "\nCode:\n", color=:yellow)
+        -     end
+        -     preprint(::IO, ::Int) = nothing
+        -     postprint(::IO) = nothing
+        -     postprint(io::IO, idx::Int, bbchanged::Bool) = postprint_lineedges(io, idx, edges, bbchanged)
+        - 
+        -     print_with_code(preprint, postprint, io, src)
+        - end
+        - 
+        - function postprint_lineedges(io::IO, idx::Int, edges::CodeEdges, bbchanged::Bool)
+        -     printstyled(io, bbchanged ? " " : "│", color=:light_black)
+        -     printstyled(io, "             # ", color=:yellow)
+        -     preds, succs = edges.preds[idx], edges.succs[idx]
+        -     printstyled(io, "preds: ", showempty(preds), ", succs: ", showempty(succs), '\n', color=:yellow)
+        -     return nothing
+        - end
+        - 
+        0 function terminal_preds(i::Int, edges::CodeEdges)
+        0     s, covered = BitSet(), BitSet()
+        0     push!(covered, i)
+        0     for p in edges.preds[i]
+        0         terminal_preds!(s, p, edges, covered)
+        0     end
+        0     return s
+        - end
+        0 function terminal_preds!(s, j, edges, covered)  # can't be an inner function because it calls itself (Core.Box)
+        0     j ∈ covered && return s
+        0     push!(covered, j)
+        0     preds = edges.preds[j]
+        0     if isempty(preds)
+        0         push!(s, j)
+        -     else
+        0         for p in preds
+        0             terminal_preds!(s, p, edges, covered)
+        0         end
+        -     end
+        0     return s
+        - end
+        - 
+        - """
+        -     isrequired = lines_required(obj::GlobalRef, src::CodeInfo, edges::CodeEdges, [controller::SelectiveEvalController])
+        -     isrequired = lines_required(idx::Int,       src::CodeInfo, edges::CodeEdges, [controller::SelectiveEvalController])
+        - 
+        - Determine which lines might need to be executed to evaluate `obj` or the statement indexed by `idx`.
+        - If `isrequired[i]` is `false`, the `i`th statement is *not* required.
+        - In some circumstances all statements marked `true` may be needed, in others control-flow
+        - will end up skipping a subset of such statements, perhaps while repeating others multiple times.
+        - 
+        - See also [`lines_required!`](@ref) and [`selective_eval!`](@ref).
+        - """
+        - function lines_required(obj::GlobalRef, src::CodeInfo, edges::CodeEdges,
+        -                         controller::SelectiveEvalController=SelectiveEvalController();
+        -                         kwargs...)
+        -     isrequired = falses(length(edges.preds))
+        -     objs = Set{GlobalRef}([obj])
+        -     return lines_required!(isrequired, objs, src, edges, controller; kwargs...)
+        - end
+        - 
+        - function lines_required(idx::Int, src::CodeInfo, edges::CodeEdges,
+        -                         controller::SelectiveEvalController=SelectiveEvalController();
+        -                         kwargs...)
+        -     isrequired = falses(length(edges.preds))
+        -     isrequired[idx] = true
+        -     objs = Set{GlobalRef}()
+        -     return lines_required!(isrequired, objs, src, edges, controller; kwargs...)
+        - end
+        - 
+        - """
+        -     lines_required!(isrequired::AbstractVector{Bool}, src::CodeInfo, edges::CodeEdges,
+        -                     [controller::SelectiveEvalController];
+        -                     norequire = ())
+        - 
+        - Like `lines_required`, but where `isrequired[idx]` has already been set to `true` for all statements
+        - that you know you need to evaluate. All other statements should be marked `false` at entry.
+        - On return, the complete set of required statements will be marked `true`.
+        - 
+        - `norequire` keyword argument specifies statements (represented as iterator of `Int`s) that
+        - should _not_ be marked as a requirement.
+        - For example, use `norequire = LoweredCodeUtils.exclude_named_typedefs(src, edges)` if you're
+        - extracting method signatures and not evaluating new definitions.
+        - """
+       12 function lines_required!(isrequired::AbstractVector{Bool}, src::CodeInfo, edges::CodeEdges,
+        -                          controller::SelectiveEvalController=SelectiveEvalController();
+        -                          kwargs...)
+        6     objs = Set{GlobalRef}()
+        6     return lines_required!(isrequired, objs, src, edges, controller; kwargs...)
+        - end
+        - 
+        - function exclude_named_typedefs(src::CodeInfo, edges::CodeEdges)
+        -     norequire = BitSet()
+        -     i = 1
+        -     nstmts = length(src.code)
+        -     while i <= nstmts
+        -         stmt = getrhs(src.code[i])
+        -         if istypedef(stmt) && !isanonymous_typedef(stmt::Expr)
+        -             r = typedef_range(src, i)
+        -             pushall!(norequire, r)
+        -             i = last(r)+1
+        -         else
+        -             i += 1
+        -         end
+        -     end
+        -     return norequire
+        - end
+        - 
+       12 function lines_required!(isrequired::AbstractVector{Bool}, objs, src::CodeInfo, edges::CodeEdges,
+        -                          controller::SelectiveEvalController=SelectiveEvalController();
+        -                          norequire = ())
+        -     # Mark any requested objects (their lines of assignment)
+        6     objs = add_requests!(isrequired, objs, edges, norequire)
+        - 
+        -     # Compute basic blocks, which we'll use to make sure we mark necessary control-flow
+        6     cfg = compute_basic_blocks(src.code)  # needed for control-flow analysis
+        6     postdomtree = construct_postdomtree(cfg.blocks)
+        - 
+        -     # We'll mostly use generic graph traversal to discover all the lines we need,
+        -     # but structs are in a bit of a different category (especially on Julia 1.5+).
+        -     # It's easiest to discover these at the beginning.
+        6     typedefs = find_typedefs(src)
+        - 
+        0     changed = true
+        0     iter = 0
+       18     while changed
+        0         changed = false
+        - 
+        -         # Handle ssa predecessors
+       96         changed |= add_ssa_preds!(isrequired, src, edges, norequire)
+        - 
+        -         # Handle named dependencies
+       12         changed |= add_named_dependencies!(isrequired, edges, objs, norequire)
+        - 
+        -         # Add control-flow
+       12         changed |= add_control_flow!(isrequired, src, cfg, postdomtree)
+        - 
+        -         # So far, everything is generic graph traversal. Now we add some domain-specific information
+       12         changed |= add_typedefs!(isrequired, src, edges, typedefs, norequire)
+       12         changed |= add_inplace!(isrequired, src, edges, norequire)
+        - 
+       12         iter += 1  # just for diagnostics
+       12     end
+        - 
+        -     # now mark the active goto nodes
+        6     add_active_gotos!(isrequired, src, cfg, postdomtree, controller)
+        - 
+        -     # check if there are any termination points
+        6     record_termination_points!(controller, isrequired, cfg)
+        - 
+        6     return isrequired
+        - end
+        - 
+        6 function add_requests!(isrequired, objs, edges::CodeEdges, norequire)
+        6     objsnew = Set{GlobalRef}()
+       12     for obj in objs
+        0         add_obj!(isrequired, objsnew, obj, edges, norequire)
+        0     end
+        6     return objsnew
+        - end
+        - 
+        0 function add_ssa_preds!(isrequired, src::CodeInfo, edges::CodeEdges, norequire)
+        0     changed = false
+       12     for idx = 1:length(src.code)
+       96         if isrequired[idx]
+       60             changed |= add_preds!(isrequired, idx, edges, norequire)
+        -         end
+      180     end
+       12     return changed
+        - end
+        - 
+       12 function add_named_dependencies!(isrequired, edges::CodeEdges, objs, norequire)
+        0     changed = false
+       24     for (obj, uses) in edges.byname
+       24         obj ∈ objs && continue
+       12         if any(view(isrequired, uses.succs))
+       12             changed |= add_obj!(isrequired, objs, obj, edges, norequire)
+        -         end
+       36     end
+       12     return changed
+        - end
+        - 
+       84 function add_preds!(isrequired, idx, edges::CodeEdges, norequire)
+        0     chngd = false
+       84     preds = edges.preds[idx]
+       84     for p in preds
+       72         isrequired[p] && continue
+        0         p ∈ norequire && continue
+       24         isrequired[p] = true
+        0         chngd = true
+       24         add_preds!(isrequired, p, edges, norequire)
+       72     end
+       84     return chngd
+        - end
+        - function add_succs!(isrequired, idx, edges::CodeEdges, succs, norequire)
+        -     chngd = false
+        -     for p in succs
+        -         isrequired[p] && continue
+        -         p ∈ norequire && continue
+        -         isrequired[p] = true
+        -         chngd = true
+        -         add_succs!(isrequired, p, edges, edges.succs[p], norequire)
+        -     end
+        -     return chngd
+        - end
+       12 function add_obj!(isrequired, objs, obj::GlobalRef, edges::CodeEdges, norequire)
+        0     chngd = false
+       12     for p in edges.byname[obj].preds
+        0         p ∈ norequire && continue
+        6         isrequired[p] && continue
+        0         isrequired[p] = true
+        0         chngd = true
+        6     end
+       12     for d in edges.byname[obj].assigned
+        0         d ∈ norequire && continue
+        6         isrequired[d] && continue
+        0         isrequired[d] || add_preds!(isrequired, d, edges, norequire)
+        0         isrequired[d] = true
+        0         chngd = true
+        6     end
+       12     push!(objs, obj)
+       12     return chngd
+        - end
+        - 
+        - ## Add control-flow
+        - 
+        - # The goal of this function is to request concretization of the minimal necessary control
+        - # flow to evaluate statements whose concretization have already been requested.
+        - # The basic algorithm is based on what was proposed in [^Wei84]. If there is even one active
+        - # block in the blocks reachable from a conditional branch up to its successors' nearest
+        - # common post-dominator (referred to as 𝑰𝑵𝑭𝑳 in the paper), it is necessary to follow
+        - # that conditional branch and execute the code. Otherwise, execution can be short-cut
+        - # from the conditional branch to the nearest common post-dominator.
+        - #
+        - # It is important to note that in Julia's intermediate code representation (`CodeInfo`),
+        - # "short-cutting" a specific code region is not a simple task. Simply incrementing the
+        - # program counter without executing the statements of 𝑰𝑵𝑭𝑳 blocks does not guarantee that
+        - # the program counter fall-throughs to the post-dominator.
+        - # To handle such cases, `selective_eval!` needs to use `SelectiveInterpreter`.
+        - #
+        - # [Wei84]: M. Weiser, "Program Slicing," IEEE Transactions on Software Engineering, 10, pages 352-357, July 1984.
+       12 function add_control_flow!(isrequired, src::CodeInfo, cfg::CFG, postdomtree)
+        0     changed = Ref(false)
+        0     function mark_isrequired!(idx::Int)
+        0         if !isrequired[idx]
+        0             changed[] |= isrequired[idx] = true
+        0             return true
+        -         end
+        0         return false
+        -     end
+       12     for bbidx = 1:length(cfg.blocks) # forward traversal
+       12         bb = cfg.blocks[bbidx]
+       12         nsuccs = length(bb.succs)
+       12         if nsuccs == 0
+       12             continue
+        0         elseif nsuccs == 1
+        0             continue # leave a fall-through terminator unmarked: `GotoNode`s are marked later
+        0         elseif nsuccs == 2
+        0             termidx = bb.stmts[end]
+        0             @assert is_conditional_terminator(src.code[termidx]) "invalid IR"
+        0             if is_conditional_block_active(isrequired, bb, cfg, postdomtree)
+        0                 mark_isrequired!(termidx)
+        0             else
+        -                 # fall-through to the post dominator block (by short-circuiting all statements between)
+        -             end
+        -         end
+       12     end
+       12     return changed[]
+        - end
+        - 
+        0 is_conditional_terminator(@nospecialize stmt) = stmt isa GotoIfNot ||
+        -     (@static @isdefined(EnterNode) ? stmt isa EnterNode : isexpr(stmt, :enter))
+        - 
+        0 function is_conditional_block_active(isrequired, bb::BasicBlock, cfg::CFG, postdomtree)
+        0     return visit_𝑰𝑵𝑭𝑳_blocks(bb, cfg, postdomtree) do postdominator::Int, 𝑰𝑵𝑭𝑳::BitSet
+        0         for blk in 𝑰𝑵𝑭𝑳
+        0             if blk == postdominator
+        0                 continue # skip the post-dominator block and continue to a next infl block
+        -             end
+        0             if any(@view isrequired[cfg.blocks[blk].stmts])
+        0                 return true
+        -             end
+        0         end
+        0         return false
+        -     end
+        - end
+        - 
+        0 function visit_𝑰𝑵𝑭𝑳_blocks(func, bb::BasicBlock, cfg::CFG, postdomtree)
+        0     succ1, succ2 = bb.succs
+        0     postdominator = nearest_common_dominator(postdomtree, succ1, succ2)
+        0     𝑰𝑵𝑭𝑳 = reachable_blocks(cfg, succ1, postdominator) ∪ reachable_blocks(cfg, succ2, postdominator)
+        0     return func(postdominator, 𝑰𝑵𝑭𝑳)
+        - end
+        - 
+        0 function reachable_blocks(cfg, from_bb::Int, to_bb::Int)
+        0     worklist = Int[from_bb]
+        0     visited = BitSet(from_bb)
+        0     if to_bb == from_bb
+        0         return visited
+        -     end
+        0     push!(visited, to_bb)
+        0     function visit!(bb::Int)
+        0         if bb ∉ visited
+        0             push!(visited, bb)
+        0             push!(worklist, bb)
+        -         end
+        -     end
+        0     while !isempty(worklist)
+        0         foreach(visit!, cfg.blocks[pop!(worklist)].succs)
+        0     end
+        0     return visited
+        - end
+        - 
+        6 function add_active_gotos!(isrequired, src::CodeInfo, cfg::CFG, postdomtree, controller::SelectiveEvalController)
+        6     dead_blocks = compute_dead_blocks!(isrequired, src, cfg, postdomtree, controller)
+        0     changed = false
+        6     for bbidx = 1:length(cfg.blocks)
+       12         if bbidx ∉ dead_blocks
+        6             bb = cfg.blocks[bbidx]
+        6             nsuccs = length(bb.succs)
+        6             if nsuccs == 1
+        0                 termidx = bb.stmts[end]
+        0                 if src.code[termidx] isa GotoNode
+        0                     changed |= isrequired[termidx] = true
+        -                 end
+        -             end
+        -         end
+        6     end
+        6     return changed
+        - end
+        - 
+        - # find dead blocks using the same approach as `add_control_flow!`, for the converged `isrequired`
+        6 function compute_dead_blocks!(isrequired, src::CodeInfo, cfg::CFG, postdomtree, controller::SelectiveEvalController)
+       12     dead_blocks = BitSet()
+        6     for bbidx = 1:length(cfg.blocks)
+        6         bb = cfg.blocks[bbidx]
+        6         nsuccs = length(bb.succs)
+        6         if nsuccs == 2
+        0             termidx = bb.stmts[end]
+        0             @assert is_conditional_terminator(src.code[termidx]) "invalid IR"
+        0             visit_𝑰𝑵𝑭𝑳_blocks(bb, cfg, postdomtree) do postdominator::Int, 𝑰𝑵𝑭𝑳::BitSet
+        0                 is_𝑰𝑵𝑭𝑳_active = false
+        0                 for blk in 𝑰𝑵𝑭𝑳
+        0                     if blk == postdominator
+        0                         continue # skip the post-dominator block and continue to a next infl block
+        -                     end
+        0                     if any(@view isrequired[cfg.blocks[blk].stmts])
+        0                         is_𝑰𝑵𝑭𝑳_active |= true
+        0                         break
+        -                     end
+        0                 end
+        0                 if !is_𝑰𝑵𝑭𝑳_active
+        0                     union!(dead_blocks, delete!(𝑰𝑵𝑭𝑳, postdominator))
+        0                     if postdominator ≠ 0
+        0                         postdominator_bb = cfg.blocks[postdominator]
+        0                         postdominator_entryidx = postdominator_bb.stmts[begin]
+        0                         push!(controller.shortcuts, CFGShortCut(termidx, postdominator_entryidx))
+        -                     end
+        -                 end
+        -             end
+        -         end
+        6     end
+        6     return dead_blocks
+        - end
+        - 
+        6 function record_termination_points!(controller::SelectiveEvalController, isrequired, cfg::CFG)
+        6     for bbidx = 1:length(cfg.blocks)
+        6         bb = cfg.blocks[bbidx]
+        6         if isempty(bb.succs) && !isempty(bb.stmts)
+       30             last_required = findlast(idx::Int->isrequired[idx], bb.stmts)
+       12             i = isnothing(last_required) ? firstindex(bb.stmts) : last_required + 1
+        6             if i <= lastindex(bb.stmts)
+        6                 push!(controller.termination_points, bb.stmts[i])
+        -             end
+        -         end
+        6     end
+        0     nothing
+        - end
+        - 
+        - # Do a traveral of "numbered" predecessors and find statement ranges and names of type definitions
+        6 function find_typedefs(src::CodeInfo)
+        6     typedef_blocks, typedef_names = UnitRange{Int}[], Symbol[]
+        0     i = 1
+        6     nstmts = length(src.code)
+       54     while i <= nstmts
+       48         stmt = getrhs(src.code[i])
+       72         if istypedef(stmt) && !isanonymous_typedef(stmt::Expr)
+        0             stmt = stmt::Expr
+        0             r = typedef_range(src, i)
+        0             if is_resolve_typegroup_call(stmt)
+        -                 # A typegroup defines one type per `declare_const` in the block;
+        -                 # record each name against the same statement range.
+        0                 for j in r
+        0                     s = src.code[j]
+        0                     is_declare_const(s) || continue
+        0                     name = (s::Expr).args[3]
+        0                     if isa(name, QuoteNode)
+        0                         name = name.value
+        -                     end
+        0                     isa(name, Symbol) || continue
+        0                     push!(typedef_blocks, r)
+        0                     push!(typedef_names, name)
+        0                 end
+        -             else
+        0                 push!(typedef_blocks, r)
+        0                 name = stmt.head === :call ? stmt.args[3] : stmt.args[1]
+        0                 if isa(name, QuoteNode)
+        0                     name = name.value
+        -                 end
+        0                 isa(name, Symbol) || @show src i r stmt
+        0                 push!(typedef_names, name::Symbol)
+        -             end
+        0             i = last(r)+1
+        -         else
+       48             i += 1
+        -         end
+       48     end
+        6     return typedef_blocks, typedef_names
+        - end
+        - 
+        - # New struct definitions, including their constructors, get spread out over many
+        - # statements. If we're evaluating any of them, it's important to evaluate *all* of them.
+       12 function add_typedefs!(isrequired, src::CodeInfo, edges::CodeEdges, (typedef_blocks, typedef_names), norequire)
+       12     changed = false
+       12     stmts = src.code
+       12     defaultctors = Tuple{Int,BitSet}[]
+       24     for (i, stmt) in pairs(stmts)
+      144         is_defaultctors_call(stmt) || continue
+        0         push!(defaultctors, (i, terminal_preds(i, edges)))
+      180     end
+        0     idx = 1
+       96     while idx < length(stmts)
+       84         stmt = stmts[idx]
+       84         isrequired[idx] || (idx += 1; continue)
+       84         for (typedefr, typedefn) in zip(typedef_blocks, typedef_names)
+        0             if idx ∈ typedefr
+        0                 ireq = view(isrequired, typedefr)
+        0                 if !all(ireq)
+        0                     changed = true
+        0                     ireq .= true
+        -                     # Also mark any by-type constructor(s) associated with this typedef
+        0                     var = get(edges.byname, typedefn, nothing)
+        0                     if var !== nothing
+        0                         for s in var.succs
+        0                             s ∈ norequire && continue
+        0                             stmt2 = stmts[s]
+        0                             if ismethod(stmt2) && (fname = method_name(stmt2::Expr); fname === false || fname === nothing)
+        0                                 isrequired[s] = true
+        -                             end
+        0                         end
+        -                     end
+        -                 end
+        0                 for (ctor, preds) in defaultctors
+        0                     ctor ∈ norequire && continue
+        0                     any(p -> p ∈ typedefr, preds) || continue
+        0                     changed |= !isrequired[ctor]
+        0                     isrequired[ctor] = true
+        0                 end
+        0                 idx = last(typedefr) + 1
+        0                 continue
+        -             end
+        0         end
+        -         # Anonymous functions may not yet include the method definition
+       84         if isanonymous_typedef(stmt)
+        0             i = idx + 1
+        0             while i <= length(stmts) && !ismethod3(stmts[i])
+        0                 i += 1
+        0             end
+        0             if i <= length(stmts) && method_name(stmts[i]::Expr) == false
+        0                 tpreds = terminal_preds(i, edges)
+        0                 if minimum(tpreds) == idx && i ∉ norequire
+        0                     changed |= !isrequired[i]
+        0                     isrequired[i] = true
+        -                 end
+        -             end
+        -         end
+       84         idx += 1
+       84     end
+       12     return changed
+        - end
+        - 
+        - # For arrays, add any `push!`, `pop!`, `empty!` or `setindex!` statements
+        - # This is needed for the "Modify @enum" test in Revise
+       12 function add_inplace!(isrequired, src, edges, norequire)
+        0     function mark_if_inplace(stmt, j)
+        0         _changed = false
+       24         fname = stmt.args[1]
+       48         if (callee_matches(fname, Base, :push!) ||
+        -             callee_matches(fname, Base, :pop!) ||
+        -             callee_matches(fname, Base, :empty!) ||
+        -             callee_matches(fname, Base, :setindex!))
+        0             _changed = !isrequired[j]
+        0             isrequired[j] = true
+        -         end
+       24         return _changed
+        -     end
+        - 
+        0     changed = false
+       24     for (i, isreq) in pairs(isrequired)
+       96         isreq || continue
+       84         for j in edges.succs[i]
+        0             j ∈ norequire && continue
+       48             stmt = src.code[j]
+       48             if isexpr(stmt, :call) && length(stmt.args) >= 2
+       36                 arg = stmt.args[2]
+       72                 if @isssa(arg) && arg.id == i
+       48                     changed |= mark_if_inplace(stmt, j)
+       24                 elseif @issslotnum(arg)
+        0                     id = arg.id
+        -                     # Check to see if we use this slot
+        0                     for k in edges.preds[j]
+        0                         isrequired[k] || continue
+        0                         predstmt = src.code[k]
+        0                         if (lhs_rhs = get_lhs_rhs(predstmt); lhs_rhs !== nothing)
+        0                             lhs, _ = lhs_rhs
+        0                             if @issslotnum(lhs) && lhs.id == id
+        0                                 changed |= mark_if_inplace(stmt, j)
+        0                                 break
+        -                             end
+        -                         end
+        0                     end
+        -                 end
+        -             end
+       48         end
+      180     end
+       12     return changed
+        - end
+        - 
+        - function JuliaInterpreter.step_expr!(interp::SelectiveInterpreter, frame::Frame, istoplevel::Bool)
+        -     pc = frame.pc
+        -     if pc in interp.controller.termination_points
+        -         return nothing
+        -     elseif pc_expr(frame) isa GotoIfNot
+        -         for shortcut in interp.controller.shortcuts
+        -             if shortcut.from == pc
+        -                 return frame.pc = shortcut.to
+        -             end
+        -         end
+        -     end
+        -     if interp.isrequired[pc]
+        -         step_expr!(interp.inner, frame, istoplevel)
+        -     else
+        -         next_or_nothing!(interp, frame)
+        -     end
+        - end
+        - function JuliaInterpreter.get_return(interp::SelectiveInterpreter, frame::Frame)
+        -     pc = frame.pc
+        -     node = pc_expr(frame, pc)
+        -     if is_return(node)
+        -         if interp.isrequired[pc]
+        -             return lookup_return(interp.inner, frame, node)
+        -         end
+        -     else
+        -         if isassigned(frame.framedata.ssavalues, pc)
+        -             return frame.framedata.ssavalues[pcexec]
+        -         end
+        -     end
+        -     return nothing
+        - end
+        - 
+        - """
+        -     selective_eval!([interp::Interpreter=RecursiveInterpreter()], frame::Frame, isrequired::AbstractVector{Bool}, istoplevel=false)
+        -     selective_eval!([interp::Interpreter=RecursiveInterpreter()], frame::Frame, isrequired::AbstractVector{Bool}, controller::SelectiveEvalController, istoplevel=false)
+        - 
+        - Execute the code in `frame` in the manner of `JuliaInterpreter.finish_and_return!`,
+        - but skipping all statements that are marked `false` in `isrequired`.
+        - See [`lines_required`](@ref). Upon entry, if needed the caller must ensure that `frame.pc` is
+        - set to the correct statement, typically `findfirst(isrequired)`.
+        - See [`selective_eval_fromstart!`](@ref) to have that performed automatically.
+        - 
+        - `isrequired` pertains only to `frame` itself, not any of its callees.
+        - 
+        - By default `selective_eval!` runs with an empty [`SelectiveEvalController`](@ref), which
+        - reproduces the historical behavior. That is correct for most top-level code, but not for
+        - every possible Julia program: when the slice omits a `return` reached by fall-through, or
+        - omits a branch whose dead region does not simply fall through to its post-dominator, the
+        - interpreter can execute the wrong statements (see
+        - https://github.com/JuliaDebug/LoweredCodeUtils.jl/pull/99 for details). For full correctness,
+        - pass a [`SelectiveEvalController`](@ref) to [`lines_required`](@ref)/[`lines_required!`](@ref)
+        - and reuse that same controller, together with the `isrequired` it produced, when calling
+        - `selective_eval!`. Drawing both from the same call is what keeps `isrequired` and the
+        - controller synchronized.
+        - 
+        - Note that the interpreter does not recurse into callees, so there is currently no
+        - interprocedural selective evaluation.
+        - 
+        - This will return either a `BreakpointRef`, the value obtained from the last executed statement
+        - (if stored to `frame.framedata.ssavlues`), or `nothing`.
+        - Typically, assignment to a variable binding does not result in an ssa store by JuliaInterpreter.
+        - """
+        - function selective_eval!(
+        -         interp::Interpreter, frame::Frame, isrequired::AbstractVector{Bool},
+        -         controller::SelectiveEvalController,
+        -         istoplevel::Bool=false
+        -     )
+        -     interp = SelectiveInterpreter(interp, isrequired, controller)
+        -     JuliaInterpreter.finish_and_return!(interp, frame, istoplevel)
+        - end
+        - function selective_eval!(
+        -         interp::Interpreter, frame::Frame, isrequired::AbstractVector{Bool},
+        -         istoplevel::Bool=false
+        -     )
+        -     return selective_eval!(interp, frame, isrequired, SelectiveEvalController(), istoplevel)
+        - end
+        - selective_eval!(args...) = selective_eval!(RecursiveInterpreter(), args...)
+        - 
+        - """
+        -     selective_eval_fromstart!([interp::Interpreter=RecursiveInterpreter()], frame, isrequired, istoplevel=false)
+        -     selective_eval_fromstart!([interp::Interpreter=RecursiveInterpreter()], frame, isrequired, controller::SelectiveEvalController, istoplevel=false)
+        - 
+        - Like [`selective_eval!`](@ref), except it sets `frame.pc` to the first `true` statement in `isrequired`.
+        - """
+        - function selective_eval_fromstart!(
+        -         interp::Interpreter, frame, isrequired, controller::SelectiveEvalController,
+        -         istoplevel::Bool=false
+        -     )
+        -     pc = findfirst(isrequired)
+        -     pc === nothing && return nothing
+        -     frame.pc = pc
+        -     return selective_eval!(interp, frame, isrequired, controller, istoplevel)
+        - end
+        - function selective_eval_fromstart!(
+        -         interp::Interpreter, frame, isrequired, istoplevel::Bool=false
+        -     )
+        -     return selective_eval_fromstart!(
+        -         interp, frame, isrequired, SelectiveEvalController(), istoplevel)
+        - end
+        - selective_eval_fromstart!(args...) = selective_eval_fromstart!(RecursiveInterpreter(), args...)
+        - 
+        - """
+        -     print_with_code(io, src::CodeInfo, isrequired::AbstractVector{Bool})
+        - 
+        - Mark each line of code with its requirement status.
+        - 
+        - !!! compat "Julia 1.6"
+        -     This function produces dummy output if suitable support is missing in your version of Julia.
+        - 
+        - """
+        - function print_with_code(io::IO, src::CodeInfo, isrequired::AbstractVector{Bool})
+        -     nd = ndigits(length(isrequired))
+        -     preprint(::IO) = nothing
+        -     preprint(io::IO, idx::Int) = (c = isrequired[idx]; printstyled(io, lpad(idx, nd), ' ', c ? "t " : "f "; color = c ? :cyan : :plain))
+        -     postprint(::IO) = nothing
+        -     postprint(::IO, idx::Int, bbchanged::Bool) = nothing
+        - 
+        -     print_with_code(preprint, postprint, io, src)
+        - end
+        - 
+        - function print_with_code(io::IO, frame::Frame, obj)
+        -     src = frame.framecode.src
+        -     src = copy(src)
+        -     JuliaInterpreter.reverse_lookup_globalref!(src.code)
+        -     print_with_code(io, src, obj)
+        - end
