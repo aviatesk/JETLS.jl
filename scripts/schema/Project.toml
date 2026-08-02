@@ -6,7 +6,7 @@ Struct2JSONSchema = "6b9a66ba-ce23-4e49-9189-ad500babf267"
 TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
 
 [sources]
-Struct2JSONSchema = {rev = "avi/allow-OrderedCollection-v2", url = "https://github.com/aviatesk/Struct2JSONSchema.jl"}
+Struct2JSONSchema = {rev = "avi/JS-compatibility", url = "https://github.com/aviatesk/Struct2JSONSchema.jl"}
 
 [compat]
-Struct2JSONSchema = "0.5.1"
+Struct2JSONSchema = "0.6"

@@ -83,7 +83,7 @@ end
 
 function (@main)(args::Vector{String})
     file_path, check_mode = parse_arguments(args)
-    gen_ctx = SchemaContext()
+    gen_ctx = SchemaContext(; javascript_safe_numbers = true)
     setup_ctx!(gen_ctx)
 
     setting_schema, init_options_schema = generate_vscode_schemas(gen_ctx)

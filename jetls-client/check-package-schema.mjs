@@ -1,28 +1,47 @@
-import fs from 'node:fs';
-import { URL } from 'node:url';
-import Ajv from 'ajv';
+import fs from "node:fs";
+import { URL } from "node:url";
+import Ajv from "ajv";
 
-const packageJson = JSON.parse(
-    fs.readFileSync(new URL('package.json', import.meta.url), 'utf8'));
+const packageJsonText = fs.readFileSync(
+  new URL("package.json", import.meta.url),
+  "utf8",
+);
+const packageJson = JSON.parse(packageJsonText);
 const contributedConfiguration = packageJson.contributes?.configuration;
 const configurationEntries = Array.isArray(contributedConfiguration)
-    ? contributedConfiguration
-    : [contributedConfiguration];
+  ? contributedConfiguration
+  : [contributedConfiguration];
 const ajv = new Ajv({ allErrors: true, strict: false });
 const errors = [];
+const canonicalPackageJson = `${JSON.stringify(packageJson, null, 2)}\n`;
+
+if (packageJsonText !== canonicalPackageJson) {
+  errors.push(
+    "package.json is not stable under Node.js JSON round-tripping; " +
+      "npm/vsce would rewrite it",
+  );
+}
 
 for (const configuration of configurationEntries) {
-    for (const [name, schema] of Object.entries(configuration?.properties ?? {})) {
-        if (schema === null || typeof schema !== 'object' || Array.isArray(schema)) {
-            errors.push(`${name}: schema must be an object`);
-            continue;
-        }
-        if (!ajv.validateSchema(schema)) {
-            errors.push(`${name}:\n${ajv.errorsText(ajv.errors, { separator: '\n' })}`);
-        }
+  for (const [name, schema] of Object.entries(
+    configuration?.properties ?? {},
+  )) {
+    if (
+      schema === null ||
+      typeof schema !== "object" ||
+      Array.isArray(schema)
+    ) {
+      errors.push(`${name}: schema must be an object`);
+      continue;
     }
+    if (!ajv.validateSchema(schema)) {
+      errors.push(
+        `${name}:\n${ajv.errorsText(ajv.errors, { separator: "\n" })}`,
+      );
+    }
+  }
 }
 
 if (errors.length > 0) {
-    throw new Error(`Invalid VS Code configuration schemas:\n${errors.join('\n')}`);
+  throw new Error(`Extension package validation failed:\n${errors.join("\n")}`);
 }

@@ -62,7 +62,7 @@ end
 
 function (@main)(args::Vector{String})
     target_arg, file_path, check_mode = parse_arguments(args)
-    gen_ctx = SchemaContext()
+    gen_ctx = SchemaContext(; javascript_safe_numbers = true)
     setup_ctx!(gen_ctx)
     schema_dict = generate_schema_dict(target_arg, gen_ctx)
 

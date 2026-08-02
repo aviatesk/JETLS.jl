@@ -329,7 +329,7 @@
                   "type": "boolean"
                 },
                 "debounce": {
-                  "default": 1.0,
+                  "default": 1,
                   "markdownDescription": "Debounce time in seconds before triggering full analysis after a file save. Higher values reduce analysis frequency but may delay diagnostic updates.",
                   "type": "number"
                 }
@@ -353,8 +353,6 @@
                     "min_lines": {
                       "default": 25,
                       "markdownDescription": "Minimum number of lines a block must span before its `end`-tag inlay hint is displayed.",
-                      "maximum": 9223372036854775807,
-                      "minimum": -9223372036854775808,
                       "type": "integer"
                     }
                   },
