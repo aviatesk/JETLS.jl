@@ -65,6 +65,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Fixed LaTeX/emoji completion in clients such as Zed and Helix whose completion filtering cannot handle the `\`/`^`/`:` characters: e.g. Unicode superscript completion like `\^a` now works (Closed https://github.com/aviatesk/JETLS.jl/issues/821).
 
+- Fixed Go to Definition jumping to stale line positions when unsaved edits move method definitions in synchronized documents.
+
 ## 2026-08-01
 
 - Commit: [`f64faec`](https://github.com/aviatesk/JETLS.jl/commit/f64faec)

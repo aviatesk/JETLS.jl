@@ -40,6 +40,27 @@ function locations_from_methods(state::ServerState, uri::URI, methods::Vector{Me
     return Location[unadjust_location(state, uri, Location(m)) for m in methods]
 end
 
+function location_uri_counts(state::ServerState, locations::Vector{Location})
+    counts = Dict{URI,Int}()
+    for loc in locations
+        target_uri = canonical_cache_uri(state, loc.uri)
+        counts[target_uri] = get(counts, target_uri, 0) + 1
+    end
+    return counts
+end
+
+function synchronized_search_target_uri_counts(
+        server::Server, origin_uri::URI, locations::Vector{Location}
+    )
+    state = server.state
+    counts = location_uri_counts(state, locations)
+    all(target_uri -> is_synchronized(state, target_uri), keys(counts)) || return nothing
+    search_uris = Set(canonical_cache_uri(state, search_uri)
+        for search_uri in collect_search_uris(server, origin_uri))
+    issubset(keys(counts), search_uris) || return nothing
+    return counts
+end
+
 # Get the range of a method via reflection.
 # For now, it just returns the first line of the method
 function LSP.Location(m::Method)
@@ -160,7 +181,22 @@ function find_definition(
     # short-circuiting to all of `func`'s workspace `:def`s.
     if node !== nothing && ctx !== nothing
         call_locations = find_call_dispatch_definitions(state, uri, st0, node, ctx)
-        call_locations === nothing || return call_locations, node
+        if call_locations !== nothing
+            # Reflection locations belong to the pinned analysis world and may lag the
+            # synchronized editor source. Until Revise-backed relocation is available,
+            # use Phase 2's current ranges only when every target is searchable and the
+            # per-URI counts agree; otherwise retain Phase 1's dispatch-narrowed locations.
+            call_uri_counts = synchronized_search_target_uri_counts(server, uri, call_locations)
+            if call_uri_counts !== nothing
+                binding_jump = find_binding_definitions(
+                    server, uri, fi, st0, offset, context_module, world; soft_scope)
+                if binding_jump !== nothing &&
+                        location_uri_counts(state, binding_jump[1]) == call_uri_counts
+                    return binding_jump
+                end
+            end
+            return call_locations, node
+        end
     end
 
     # Phase 2: source-level binding pass.

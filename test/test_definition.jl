@@ -27,10 +27,9 @@ const LINE_TestModuleDefinitionRange = (@__LINE__) - 3
     @test loc.range.start.line == LINE_TestModuleDefinitionRange-1
 end
 
-# Full-analysis helper — reserved for the single end-to-end
-# request/response sanity testset below. Every other testset in this
-# file uses the lightweight `definition_test` (which skips the LSP
-# roundtrip and the workspace full-analysis).
+# Full-analysis helper for end-to-end request/response tests. Most testsets in
+# this file use the lightweight `definition_test` (which skips the LSP roundtrip
+# and the workspace full-analysis).
 function with_definition_request(tester, text::AbstractString; kwargs...)
     clean_code, positions = JETLS.get_text_and_positions(text; kwargs...)
     withscript(clean_code) do script_path
@@ -57,8 +56,7 @@ end
 @testset "request/response sanity" begin
     # Round-trip sanity check that covers DidOpen → analysis →
     # `DefinitionRequest` → `DefinitionResponse`, exercising the full LSP
-    # path that the lightweight `definition_test` skips. Every other
-    # testset in this file uses the lightweight helpers.
+    # path that the lightweight `definition_test` skips.
     @test with_definition_request("""
                 func(x) = 1
                 fu│nc(1.0)
@@ -69,6 +67,31 @@ end
         @test first(result).range.start.line == 0
         return 1
     end == 1
+end
+
+@testset "request uses synchronized definition location" begin
+    initial_code = "func(x) = 1\nfunc(1.0)\n"
+    edited_code, positions = JETLS.get_text_and_positions(
+        "\n\nfunc(x) = 1\nfu│nc(1.0)\n")
+    withscript(initial_code) do script_path
+        uri = filepath2uri(script_path)
+        withserver() do (; server, writemsg, writereadmsg, id_counter)
+            (; raw_res) = writereadmsg(
+                make_DidOpenTextDocumentNotification(uri, initial_code))
+            @test raw_res isa PublishDiagnosticsNotification
+            writemsg(make_DidChangeTextDocumentNotification(uri, edited_code, #=version=#2))
+            wait_for_file_cache_version(server.state, uri, 2)
+            (; raw_res) = writereadmsg(DefinitionRequest(;
+                id = id_counter[] += 1,
+                params = DefinitionParams(;
+                    textDocument = TextDocumentIdentifier(; uri),
+                    position = only(positions))))
+            @test raw_res.result isa Vector{Location}
+            @test length(raw_res.result) == 1
+            @test first(raw_res.result).uri == uri
+            @test first(raw_res.result).range.start.line == 2
+        end
+    end
 end
 
 # Single-cursor `find_definition` wrapper that skips the LSP roundtrip and the workspace
@@ -135,6 +158,11 @@ module M_call_narrowing
     const LINE_FLOAT = (@__LINE__) - 1
 end
 
+module M_unsynchronized_target
+    func(::Int) = 1
+    const LINE_INT = (@__LINE__) - 1
+end
+
 module M_target_node
     m_func(_) = 1
     const LINE_M_FUNC = (@__LINE__) - 1
@@ -189,6 +217,13 @@ end
             definition_test("func│",
                 [M_call_narrowing.LINE_INT - 1, M_call_narrowing.LINE_FLOAT - 1];
                 context_module = M_call_narrowing)
+        end
+        @testset "keeps an unsynchronized reflection target" begin
+            definition_test("""
+                    func(::String) = 2
+                    fu│nc(1)
+                """, M_unsynchronized_target.LINE_INT - 1;
+                context_module = M_unsynchronized_target)
         end
     end
 
