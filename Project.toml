@@ -7,7 +7,7 @@ JuliaSyntax = "master"
 authors = ["Shuhei Kadowaki <aviatesk@gmail.com>"]
 
 [workspace]
-projects = ["docs", "test", "scripts"]
+projects = ["docs", "test", "scripts", "scripts/schema"]
 
 [deps]
 CodeTracking = "29b28462-3302-58bb-873a-3f58224955cc"

@@ -6,6 +6,9 @@
     "Core.Float64": {
       "type": "number"
     },
+    "Core.Int64": {
+      "type": "integer"
+    },
     "Core.String": {
       "type": "string"
     },
@@ -93,7 +96,7 @@
                   },
                   "path": {
                     "$ref": "#/$defs/Glob.FilenameMatch{Core.String}",
-                    "description": "Optional glob pattern to restrict this configuration to specific files (e.g., `test/**/*.jl`). Patterns are matched against file paths relative to the workspace root. Supports globstar (`**`) for matching directories recursively. If omitted, the pattern applies to all files."
+                    "description": "Optional glob pattern to restrict this configuration to specific files (e.g., `test/**/*.jl`). Patterns are matched against file paths relative to the workspace root. Use `/` as the path separator on all platforms, including Windows; backslashes are not interpreted as path separators. Supports globstar (`**`) for matching directories recursively. If omitted, the pattern applies to all files."
                   },
                   "pattern": {
                     "anyOf": [
@@ -193,7 +196,7 @@
             },
             "debounce": {
               "$ref": "#/$defs/Core.Float64",
-              "default": 1.0,
+              "default": 1,
               "description": "Debounce time in seconds before triggering full analysis after a file save. Higher values reduce analysis frequency but may delay diagnostic updates."
             }
           },
@@ -213,11 +216,9 @@
                   "description": "Enable or disable inlay hints displayed at block `end` keywords (e.g., `end # module Foo`). Supports: `module`, `function`, `macro`, `struct`, `if`, `let`, `for`, `while`, `@testset`."
                 },
                 "min_lines": {
+                  "$ref": "#/$defs/Core.Int64",
                   "default": 25,
-                  "description": "Minimum number of lines a block must span before its `end`-tag inlay hint is displayed.",
-                  "maximum": 9223372036854775807,
-                  "minimum": -9223372036854775808,
-                  "type": "integer"
+                  "description": "Minimum number of lines a block must span before its `end`-tag inlay hint is displayed."
                 }
               },
               "type": "object"

@@ -26,26 +26,61 @@ function traverse_dir(f, dir::AbstractString)
     return nothing
 end
 
-# check if `dir1` is a subdirectory of `dir2`
+"""
+    issubdir(dir1::AbstractString, dir2::AbstractString) -> Bool
+
+Return whether `dir1` is lexically equal to or contained within `dir2`. Both paths must
+be absolute or both relative; mixed paths return `false`. Comparisons are case-insensitive
+on Windows. This function does not access the file system or resolve symbolic links.
+"""
 function issubdir(dir1::AbstractString, dir2::AbstractString)
-    dir1 = rstrip(dir1, '/')
-    dir2 = rstrip(dir2, '/')
-    @static if Sys.iswindows()
-        # Windows file systems are case-insensitive, and paths reaching here
-        # may have come from different sources (e.g. `pwd()` vs URI round-trip)
-        # whose drive letter casing differs. Normalize before comparison.
-        dir2 = lowercase(dir2)
-    end
-    something(traverse_dir(dir1) do dir
-        @static if Sys.iswindows()
-            dir = lowercase(dir)
-        end
-        if dir == dir2
-            return true
-        end
-        return nothing
-    end, false)
+    return _matching_path_ancestor(dir1, dir2) !== nothing
 end
+
+"""
+    glob_candidate_path(
+            filepath::AbstractString, root_path::Union{Nothing,AbstractString}
+        ) -> String
+
+Return a normalized path suitable for matching with `Glob.FilenameMatch`. When `filepath`
+is contained by `root_path`, return a path relative to that root. On Windows, use `/` as
+the path separator expected by Glob path matching.
+"""
+function glob_candidate_path(filepath::AbstractString, root_path::Union{Nothing,AbstractString})
+    filepath = _normalize_path(filepath)
+    if root_path !== nothing
+        root = _matching_path_ancestor(filepath, root_path)
+        if root !== nothing
+            filepath = relpath(filepath, root)
+        end
+    end
+    @static if Sys.iswindows()
+        filepath = replace(filepath, '\\' => '/')
+    end
+    return filepath
+end
+
+# Return the ancestor of `path` that lexically matches `root`, or `nothing` when
+# `path` is outside `root`. Both paths must either be absolute or relative. On
+# Windows, comparison is case-insensitive, while the returned ancestor preserves
+# its spelling from `path` so it can be passed safely to `relpath`.
+function _matching_path_ancestor(path::AbstractString, root::AbstractString)
+    path = _normalize_path(path)
+    root = _normalize_path(root)
+    isabspath(path) == isabspath(root) || return nothing
+    return traverse_dir(path) do candidate
+        return _paths_equal(candidate, root) ? candidate : nothing
+    end
+end
+
+function _normalize_path(path::AbstractString)
+    path = normpath(path)
+    dir, name = splitdir(path)
+    return isempty(name) && dir != path ? dir : path
+end
+
+_paths_equal(a::AbstractString, b::AbstractString) =
+    @static Sys.iswindows() ? lowercase(a) == lowercase(b) : a == b
 
 """
     fix_build_path(path::AbstractString) -> fixed_path::AbstractString

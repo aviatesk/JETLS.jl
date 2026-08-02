@@ -232,6 +232,21 @@ end
             context_module = @__MODULE__)
     end
 
+    @testset "definition name promotes header to inferred signature" begin
+        hover_test("""
+            function expand_path!│(
+                    expander::Vector{String}, path::String, strip_front_matter::Bool,
+                )
+                metadata = Dict{String, String}()
+                return metadata, path
+            end
+        """, strip("""
+            expand_path!(
+                    expander::Vector{String}, path::String, strip_front_matter::Bool,
+                ) :: Tuple{Dict{String, String}, String}
+        """))
+    end
+
     @testset "extended lattice detail" begin
         text = """
             let x = 42

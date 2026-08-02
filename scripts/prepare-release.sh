@@ -1,19 +1,24 @@
 #!/bin/bash
-#
-# Prepare a new JETLS release.
-#
-# Usage:
-#     ./scripts/prepare-release.sh YYYY-MM-DD [--local]
-#
-# Example:
-#     ./scripts/prepare-release.sh 2025-11-27
-#     ./scripts/prepare-release.sh 2025-11-27 --local  # skip push and PR creation
-#
-# This script automates the release procedure documented in DEVELOPMENT.md:
-# 1. Creates a release branch from `release` and merges `master`
-# 2. Vendors dependency packages
-# 3. Commits and pushes
-# 4. Creates a pull request to `release`
+
+print_help() {
+    cat <<'EOF'
+Usage: ./scripts/prepare-release.sh [OPTIONS] VERSION
+
+Prepare a JETLS release branch, vendor dependencies, create commits, and open a
+pull request against the release branch.
+
+Arguments:
+  VERSION       Release version in YYYY-MM-DD format
+
+Options:
+  -h, --help    Show this help message and exit
+  --local       Prepare the release locally without pushing or opening a pull
+                request
+
+Example:
+  ./scripts/prepare-release.sh --local 2026-08-01
+EOF
+}
 
 set -euo pipefail
 
@@ -21,13 +26,17 @@ LOCAL_MODE=false
 
 while [[ $# -gt 0 ]]; do
     case $1 in
+        -h|--help)
+            print_help
+            exit 0
+            ;;
         --local)
             LOCAL_MODE=true
             shift
             ;;
         -*)
             echo "Unknown option: $1"
-            echo "Usage: $0 YYYY-MM-DD [--local]"
+            echo "Usage: $0 [OPTIONS] VERSION"
             exit 1
             ;;
         *)
@@ -35,7 +44,7 @@ while [[ $# -gt 0 ]]; do
                 JETLS_VERSION="$1"
             else
                 echo "Error: Unexpected argument: $1"
-                echo "Usage: $0 YYYY-MM-DD [--local]"
+                echo "Usage: $0 [OPTIONS] VERSION"
                 exit 1
             fi
             shift
@@ -44,7 +53,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ -z "${JETLS_VERSION:-}" ]]; then
-    echo "Usage: $0 YYYY-MM-DD [--local]"
+    echo "Usage: $0 [OPTIONS] VERSION"
     echo "Example: $0 2025-11-27"
     exit 1
 fi

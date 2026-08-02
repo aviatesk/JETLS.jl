@@ -694,7 +694,7 @@ end
             r = only(reports)
             @test r isa TypeAssertErrorReport
             @test r.expected === Int && r.actual === Float64
-            @test sprint(JETLS.JET.print_report_message, r) == "TypeError: in `typeassert`, expected `Int64`, got a value of type `Float64`"
+            @test sprint(JETLS.JET.print_report_message, r) == "TypeError: in `typeassert`, expected `$Int`, got a value of type `Float64`"
         end
 
         let result = analyze_call() do
@@ -705,7 +705,7 @@ end
             r = only(reports)
             @test r isa TypeAssertErrorReport
             @test r.expected === String && r.actual === Type{Int}
-            @test sprint(JETLS.JET.print_report_message, r) == "TypeError: in `typeassert`, expected `String`, got Type{Int64}"
+            @test sprint(JETLS.JET.print_report_message, r) == "TypeError: in `typeassert`, expected `String`, got Type{$Int}"
         end
 
         let result = analyze_call((Union{Int,Float64},)) do x

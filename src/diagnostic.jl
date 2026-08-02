@@ -201,11 +201,7 @@ function _apply_diagnostic_config(
     end
 
     filepath = uri2filename(uri)
-    if root_path !== nothing && startswith(filepath, root_path)
-        path_for_glob = relpath(filepath, root_path)
-    else
-        path_for_glob = filepath
-    end
+    path_for_glob = glob_candidate_path(filepath, root_path)
     severity = nothing
     best_specificity = 0
     for pattern_config in patterns

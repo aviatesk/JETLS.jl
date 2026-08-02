@@ -102,6 +102,10 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: release
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: "1.12"
+          arch: x64
 
       - name: Extract release info
         id: release_info
@@ -124,7 +128,7 @@ jobs:
           VERSION="${{ steps.release_info.outputs.version }}"
           COMMIT="${{ steps.release_info.outputs.commit }}"
           PREV_COMMIT="${{ steps.release_info.outputs.prev_commit }}"
-          NOTES=$(python3 scripts/update-changelog.py --extract-unreleased "$VERSION" "$COMMIT" "$PREV_COMMIT")
+          NOTES=$(julia --startup-file=no scripts/update-changelog.jl --extract-unreleased "$VERSION" "$COMMIT" "$PREV_COMMIT")
           # Use heredoc to handle multiline content
           {
             echo 'content<<EOF'
@@ -162,7 +166,7 @@ jobs:
           # Get current release notes
           PREV_NOTES=$(gh release view "$PREV_TAG" --json body --jq '.body')
           # Strip announcement section
-          NEW_NOTES=$(echo "$PREV_NOTES" | python3 scripts/update-changelog.py --strip-announcement)
+          NEW_NOTES=$(echo "$PREV_NOTES" | julia --startup-file=no scripts/update-changelog.jl --strip-announcement)
           # Update the release if notes changed
           if [ "$PREV_NOTES" != "$NEW_NOTES" ]; then
             gh release edit "$PREV_TAG" --notes "$NEW_NOTES"
@@ -183,6 +187,10 @@ jobs:
         with:
           ref: master
           fetch-depth: 0
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: "1.12"
+          arch: x64
 
       - name: Extract release info
         id: release_info
@@ -203,7 +211,7 @@ jobs:
 
       - name: Update CHANGELOG.md
         run: |
-          python3 scripts/update-changelog.py \
+          julia --startup-file=no scripts/update-changelog.jl \
             "${{ steps.release_info.outputs.version }}" \
             "${{ steps.release_info.outputs.commit }}" \
             "${{ steps.release_info.outputs.prev_commit }}"

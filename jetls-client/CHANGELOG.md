@@ -8,7 +8,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Unreleased
 
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
-- Diff: [`d4f7fe9b...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/d4f7fe9b...HEAD)
+- Diff: [`8cfd8fed7...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/8cfd8fed7...HEAD)
+
+## v0.7.0
+
+- Commit: [`8cfd8fed7`](https://github.com/aviatesk/JETLS.jl/commit/8cfd8fed7)
+- Diff: [`803b00834...8cfd8fed7`](https://github.com/aviatesk/JETLS.jl/compare/803b00834...8cfd8fed7)
+
+### Fixed
+
+- Fixed auto-completion for `jetls-client.initializationOptions` in VS Code `settings.json`. The `analysis_overrides` option is now suggested instead of JSON Schema keywords such as `properties` and `required`.
+  The client checks all contributed setting schemas during development and publishing to prevent malformed schemas from being released.
+
+## v0.6.0
+
+- Commit: [`803b00834`](https://github.com/aviatesk/JETLS.jl/commit/803b00834)
+- Diff: [`d4f7fe9b...803b00834`](https://github.com/aviatesk/JETLS.jl/compare/d4f7fe9b...803b00834)
 
 ### Removed
 

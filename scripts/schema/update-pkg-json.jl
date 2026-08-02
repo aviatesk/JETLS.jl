@@ -2,19 +2,20 @@ include("setup-schema-context.jl")
 include("utils.jl")
 
 const HELP_MSG = """
-Usage: julia update-pkg-json.jl FILE [--check]
-Generates VSCode configuration schema and updates package.json.
+Usage: julia --project=scripts/schema scripts/schema/update-pkg-json.jl
+       [OPTIONS] FILE
+
+Generate VS Code configuration schemas and update package.json.
 
 Arguments:
-  FILE              Path to package.json file to update (or check against with --check)
+  FILE              package.json file to update, or verify when using --check
 
 Options:
-  --check           Check if FILE matches the generated content instead of writing to it
-  --help            Show this help message
-"""
+  -h, --help        Show this help message and exit
+  --check           Verify that FILE matches the generated content"""
 
 function parse_arguments(args::Vector{String})
-    if "--help" in args
+    if "-h" in args || "--help" in args
         println(HELP_MSG)
         exit(0)
     end
@@ -75,14 +76,14 @@ function update_package_json(
     result = deepcopy(package_json)
     result["contributes"]["configuration"]["properties"]["jetls-client.settings"]["properties"] =
         setting_schema
-    result["contributes"]["configuration"]["properties"]["jetls-client.initializationOptions"]["properties"] =
-        init_options_schema
+    init_options_config = result["contributes"]["configuration"]["properties"]["jetls-client.initializationOptions"]
+    merge!(init_options_config, init_options_schema)
     return result
 end
 
 function (@main)(args::Vector{String})
     file_path, check_mode = parse_arguments(args)
-    gen_ctx = SchemaContext()
+    gen_ctx = SchemaContext(; javascript_safe_numbers = true)
     setup_ctx!(gen_ctx)
 
     setting_schema, init_options_schema = generate_vscode_schemas(gen_ctx)

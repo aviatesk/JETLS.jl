@@ -75,6 +75,8 @@ end
         touch(source_file)
         touch(project_file)
         uri = JETLS.filepath2uri(source_file)
+        normalized_project_file =
+            JETLS.uri2filepath(JETLS.filepath2uri(project_file))::String
 
         let state = JETLS.ServerState()
             @test JETLS.find_analysis_env_path(state, uri) === nothing
@@ -82,7 +84,16 @@ end
 
         let state = JETLS.ServerState()
             state.root_path = project_dir
-            @test JETLS.find_analysis_env_path(state, uri) == project_file
+            @test JETLS.find_analysis_env_path(state, uri) == normalized_project_file
+        end
+
+        let state = JETLS.ServerState()
+            state.root_path = project_dir
+            state.init_options = JETLS.InitOptions(; analysis_overrides=[
+                JETLS.AnalysisOverride(;
+                    path=JETLS.Glob.FilenameMatch("src/**/*.jl", "dp"))
+            ])
+            @test JETLS.find_analysis_env_path(state, uri) isa JETLS.OutOfScope
         end
 
         let state = JETLS.ServerState()
@@ -92,7 +103,7 @@ end
 
         let state = JETLS.ServerState(; cli_mode=true)
             state.root_path = workspace_dir
-            @test JETLS.find_analysis_env_path(state, uri) == project_file
+            @test JETLS.find_analysis_env_path(state, uri) == normalized_project_file
         end
     end
 end
@@ -120,6 +131,11 @@ end
 end
 
 @testset "issubdir" begin
+    let parent = "project",
+        child = joinpath(parent, "src", "file.jl")
+        @test JETLS.issubdir(child, parent)
+    end
+
     if Sys.isunix()
         # Test with absolute paths
         @test JETLS.issubdir("/home/user/project/src", "/home/user/project")
@@ -141,21 +157,45 @@ end
         @test JETLS.issubdir("C:\\Users\\foo\\bar", "c:\\Users\\foo")
         @test JETLS.issubdir("C:\\Users\\Foo", "c:\\users\\foo")
         @test !JETLS.issubdir("C:\\Users\\other", "c:\\Users\\foo")
+        @test !JETLS.issubdir(
+            "D:\\Users\\Foo\\Project\\file.jl", "c:/users/foo/project")
     end
 
     # Test with relative paths using temporary directories
     mktempdir() do temp_root
         parent = joinpath(temp_root, "parent")
         child = joinpath(parent, "child")
+        nested = joinpath(parent, "src", "subdir", "..", "file.jl")
         sibling = joinpath(temp_root, "sibling")
+        prefix_sibling = joinpath(temp_root, "parent-other", "file.jl")
 
         mkpath(child)
         mkpath(sibling)
 
         @test JETLS.issubdir(child, parent)
         @test JETLS.issubdir(child, temp_root)
+        @test JETLS.issubdir(nested, parent)
         @test !JETLS.issubdir(parent, child)
         @test !JETLS.issubdir(sibling, parent)
+        @test !JETLS.issubdir(prefix_sibling, parent)
+        @test !JETLS.issubdir(nested, relpath(parent))
+        @test !JETLS.issubdir(relpath(nested), parent)
+    end
+end
+
+@testset "glob_candidate_path" begin
+    mktempdir() do temp_root
+        root = joinpath(temp_root, "project")
+        nested = joinpath(root, "src", "subdir", "file.jl")
+        outside = joinpath(temp_root, "project-other", "src", "file.jl")
+        @test JETLS.glob_candidate_path(nested, root) == "src/subdir/file.jl"
+        @test JETLS.glob_candidate_path(outside, root) == replace(normpath(outside), '\\' => '/')
+        @test JETLS.glob_candidate_path(nested, nothing) == replace(normpath(nested), '\\' => '/')
+    end
+    @static if Sys.iswindows()
+        @test JETLS.glob_candidate_path(
+            "C:\\Users\\Foo\\Project\\src\\file.jl",
+            "c:/users/foo/project") == "src/file.jl"
     end
 end
 

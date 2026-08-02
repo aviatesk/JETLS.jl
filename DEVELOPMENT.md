@@ -547,5 +547,6 @@ cd jetls-client
 vsce publish [patch|minor|major] -m "jetls-client: vX.Y.Z"
 ```
 
-This will bump the version in `package.json`, create a git commit and tag with
-the specified message, and publish to the marketplace in one step.
+This will bump the version in `package.json` and `package-lock.json`, create a
+git commit with the specified message, and publish to the marketplace in one
+step. It does not create a git tag.
