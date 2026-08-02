@@ -15,19 +15,11 @@ on:
 
 jobs:
   test:
-    name: Test JETLS.jl with release environment
     if: github.event_name == 'pull_request' && github.event.action != 'closed'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: julia-actions/setup-julia@v2
-        with:
-          version: "1.12" # most stable version
-          arch: x64
-      - uses: julia-actions/cache@v2
-
-      - uses: julia-actions/julia-buildpkg@latest
-      - uses: julia-actions/julia-runtest@latest
+    uses: ./.github/workflows/test-matrix.yml
+    with:
+      coverage: false # coverage tracking is a master CI concern
+      include-nightly: false # an unreleased Julia must not block a release
 
   test_app:
     if: github.event_name == 'pull_request' && github.event.action != 'closed'
