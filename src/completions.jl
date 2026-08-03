@@ -1052,6 +1052,12 @@ function resolve_global_completion_item(
     if isnothing(detail) || isnothing(kind)
         if Base.invoke_in_world(world, isdefinedglobal, context_module, name)::Bool
             obj = Base.invoke_in_world(world, getglobal, context_module, name)
+            if obj isa JET.AbstractBindingState
+                # Classify by the analyzed const value when available; otherwise fall
+                # through to the `isconst` branch (these placeholders are always `const`).
+                statetyp = abstract_binding_state_typ(obj)
+                obj = statetyp isa Core.Const ? statetyp.val : nothing
+            end
             if obj isa Type
                 if obj in builtin_types
                     detail = "[builtin type]"

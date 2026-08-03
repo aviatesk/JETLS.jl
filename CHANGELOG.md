@@ -50,6 +50,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Hover and completion no longer append Base's auto-generated type summary for global bindings, matching how local bindings have always been rendered.
 
+- Fixed hover for script globals whose values full-analysis only tracks abstractly: hover no longer leaks the internal `JET.AbstractBindingState` placeholder and now shows the analyzed binding type (e.g. `release_commit :: String`) and any attached docstring.
+
+- Fixed the same placeholder leaking into resolved completion items for such globals: completion documentation, kind, and detail now reflect the analyzed binding. Signature help, goto-definition, and dot-prefix completion also resolve these bindings now.
+
 ## 2026-08-02
 
 - Commit: [`b74025b`](https://github.com/aviatesk/JETLS.jl/commit/b74025b)
