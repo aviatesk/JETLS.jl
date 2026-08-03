@@ -46,6 +46,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 >
 > Note: Path glob patterns use `/` as the separator on all platforms, including Windows; backslashes are not supported as separators.
 
+### Fixed
+
+- Hover and completion no longer append Base's auto-generated type summary for global bindings, matching how local bindings have always been rendered.
+
 ## 2026-08-02
 
 - Commit: [`b74025b`](https://github.com/aviatesk/JETLS.jl/commit/b74025b)

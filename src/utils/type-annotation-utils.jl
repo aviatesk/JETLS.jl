@@ -74,6 +74,28 @@ function closure_argnames(po::Core.PartialOpaque, nargs::Int)
 end
 
 """
+    global_binding_typ(binfo::JL.BindingInfo, world::UInt) ->
+        lattice element or nothing
+
+Type to display for a resolved global binding when a byte-range type query
+can't supply one — most notably at an assignment LHS, which is a store and so
+carries no inferred type, and whose `K"BindingId"` node
+[`resolve_global_const`](@ref) doesn't accept either.
+
+Mirrors what inference reports at a *reference* to the same binding: the
+constant value for a `const` binding, and the declared binding type otherwise.
+"""
+function global_binding_typ(binfo::JL.BindingInfo, world::UInt)
+    mod = @something binfo.mod return nothing
+    name = Symbol(binfo.name)
+    Base.invoke_in_world(world, isdefinedglobal, mod, name) || return nothing
+    if Base.invoke_in_world(world, isconst, mod, name)
+        return Core.Const(Base.invoke_in_world(world, getglobal, mod, name))
+    end
+    return Base.invoke_in_world(world, Core.get_binding_type, mod, name)
+end
+
+"""
     resolve_global_const(context_module::Module, world::UInt, node::SyntaxTree) ->
         Core.Const | nothing
 

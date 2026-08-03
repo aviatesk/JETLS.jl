@@ -147,7 +147,10 @@ Returns `nothing` when the binding is undefined or when lookup throws.
 When the binding exists but has no docstring, [`lookup_doc_stripped`](@ref) strips
 the "No documentation found for ..." placeholder paragraph so the
 auto-generated method/type summary still surfaces without the placeholder
-noise.
+noise. That summary is only kept for the [`is_doc_binding_value`](@ref) kinds
+`lookup_doc_for_value` also accepts; for other values it merely restates the
+type already shown in the hover header, so those bindings return their stored
+docstrings alone.
 """
 function lookup_doc_for_binding(
         parentmod::Module, name::Symbol, @nospecialize(sig), world::UInt
@@ -158,6 +161,11 @@ function lookup_doc_for_binding(
     end
     try
         if sig === nothing
+            value = Base.invoke_in_world(world, getglobal, binding.mod, binding.var)
+            # Covers `JET.AbstractBindingState` placeholders too: script analysis
+            # virtualizes bindings into values that are never documentable, so their
+            # internal summary must not leak here.
+            is_doc_binding_value(value) || return narrow_doc_lookup(binding, Union{}, world)
             return lookup_doc_stripped(binding, world)
         end
         return narrow_doc_lookup(binding, sig, world)
