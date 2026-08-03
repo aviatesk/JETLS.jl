@@ -1044,8 +1044,7 @@ function resolve_global_completion_item(
 
     (; context_module, world, postprocessor) = completion_resolver_info
     name = Symbol(data.name)
-    docs = postprocessor(Base.invoke_in_world(world,
-        Base.Docs.doc, Base.Docs.Binding(context_module, name))::Markdown.MD)
+    doc = lookup_doc_for_binding(context_module, name, #=sig=#nothing, world)
     (; labelDetails, detail) = item
     # This `kind` doesn't have much meaning in itself, but at least by setting `kind`,
     # we enable tree-sitter-based highlighting of the `label` in zed-julia
@@ -1087,8 +1086,9 @@ function resolve_global_completion_item(
     end
     supports_kind || (kind = item.kind)
     supports_detail || (detail = item.detail)
-    documentation = supports_documentation ?
-        MarkupContent(; kind = MarkupKind.Markdown, value = docs) : item.documentation
+    documentation = supports_documentation && doc !== nothing ?
+        MarkupContent(; kind = MarkupKind.Markdown, value = postprocessor(doc)) :
+        item.documentation
 
     return CompletionItem(item; labelDetails, kind, detail, documentation)
 end

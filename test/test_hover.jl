@@ -126,6 +126,10 @@ end
 module M_undoc_binding
     const undocumented_binding = 42
 end
+module M_mutable_global
+    mutable_global = 42
+    global typed_mutable_global::Int = 42
+end
 module M_doc_func
     """Documented method."""
     func(x::Int) = x
@@ -205,6 +209,23 @@ end
         hover_test("undocumented_binding│", "undocumented_binding";
             context_module = M_undoc_binding,
             notpat = "No documentation found")
+        # A plain value's auto-generated summary only restates the header type.
+        hover_test("undocumented_binding│", "(global) undocumented_binding :: $Int";
+            context_module = M_undoc_binding,
+            notpat = "Supertype Hierarchy")
+    end
+
+    # An assignment LHS carries no inferred type of its own, so a definition site
+    # shows the type a reference to the same binding shows.
+    @testset "global definition site" begin
+        hover_test("const undocumented_binding│ = 42", "(global) undocumented_binding :: $Int";
+            context_module = M_undoc_binding)
+        hover_test("const documented_binding│ = 42", "Documented binding.";
+            context_module = M_doc_binding)
+        hover_test("mutable_global│ = 42", "(global) mutable_global :: Any";
+            context_module = M_mutable_global)
+        hover_test("typed_mutable_global│ = 42", "(global) typed_mutable_global :: $Int";
+            context_module = M_mutable_global)
     end
 
     @testset "non-existent identifier" begin
