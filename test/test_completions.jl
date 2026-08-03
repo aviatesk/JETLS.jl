@@ -833,6 +833,44 @@ end
     end
 end
 
+# Script analysis materializes non-concretized global `const`s as
+# `JET.AbstractBindingState` placeholders in the analyzed module's namespace;
+# completion resolution must classify and document the analyzed binding instead
+# of leaking the placeholder's auto-generated summary.
+module completion_binding_state_fixture end
+Core.eval(completion_binding_state_fixture, Expr(:const, :virtualized_str_const,
+    JETLS.JET.AbstractBindingState(true, false, String)))
+Core.eval(completion_binding_state_fixture, Expr(:const, :virtualized_func_alias,
+    JETLS.JET.AbstractBindingState(true, false, Core.Const(cos))))
+Core.eval(completion_binding_state_fixture, Expr(:const, :virtualized_documented,
+    JETLS.JET.AbstractBindingState(true, false, String)))
+Core.eval(completion_binding_state_fixture,
+    :(Base.@doc "Virtualized binding docs." virtualized_documented))
+
+@testset "global completion with script-analysis binding state" begin
+    cnt = Ref(0)
+    with_completion_items("virtualized_│";
+            context_module = completion_binding_state_fixture) do (; result, state)
+        function resolve_label(label::String)
+            item = only(filter(it -> it.label == label, result.items))
+            return JETLS.resolve_completion_item(state, item)
+        end
+        resolved = resolve_label("virtualized_str_const")
+        @test resolved.detail == "[constant variable]"
+        @test resolved.kind == CompletionItemKind.Constant
+        @test resolved.documentation === nothing
+        resolved = resolve_label("virtualized_func_alias")
+        @test resolved.detail == "[function]"
+        @test resolved.kind == CompletionItemKind.Function
+        resolved = resolve_label("virtualized_documented")
+        @test resolved.documentation isa MarkupContent
+        @test occursin("Virtualized binding docs.", resolved.documentation.value)
+        @test !occursin("AbstractBindingState", resolved.documentation.value)
+        cnt[] += 1
+    end
+    @test cnt[] == 1
+end
+
 @testset "macro completion" begin
     # `@`-mark should trigger completion of macro names
     let text = """
