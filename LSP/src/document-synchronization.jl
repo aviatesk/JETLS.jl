@@ -18,6 +18,23 @@ Defines how the host (editor) should sync document changes to the language serve
     Incremental = 2
 end
 
+@interface TextDocumentSyncClientCapabilities begin
+    "Whether text document synchronization supports dynamic registration."
+    dynamicRegistration::Union{Nothing, Bool} = nothing
+
+    "The client supports sending will save notifications."
+    willSave::Union{Nothing, Bool} = nothing
+
+    """
+    The client supports sending a will save request and waits for a response
+    providing text edits which will be applied to the document before it is saved.
+    """
+    willSaveWaitUntil::Union{Nothing, Bool} = nothing
+
+    "The client supports did save notifications."
+    didSave::Union{Nothing, Bool} = nothing
+end
+
 # Open
 # ----
 
@@ -118,6 +135,11 @@ end
 @interface SaveOptions begin
     "The client is supposed to include the content on save."
     includeText::Union{Bool, Nothing} = nothing
+end
+
+@interface TextDocumentSaveRegistrationOptions @extends TextDocumentRegistrationOptions begin
+    "The client is supposed to include the content on save."
+    includeText::Union{Nothing, Bool} = nothing
 end
 
 @interface DidSaveTextDocumentParams begin
