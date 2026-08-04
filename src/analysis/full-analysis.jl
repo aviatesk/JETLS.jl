@@ -407,41 +407,67 @@ function schedule_analysis!(
             return new_debounced, nothing
         end
     else
+        invalidate && cancel_debounced_request!(manager, request)
         queue_request!(server, request)
+    end
+end
+
+function cancel_debounced_request!(manager::AnalysisManager, request::AnalysisRequest)
+    return store!(manager.debounced) do debounced
+        haskey(debounced, request.entry) || return debounced, nothing
+        debounce_timer, debounce_completion = debounced[request.entry]
+        close(debounce_timer)
+        @static JETLS_DEV_MODE && @info "Cancelled analysis debounce timer:" entry=progress_title(request.entry) uri=request.uri generation=request.generation
+        notify(debounce_completion)
+        new_debounced = copy(debounced)
+        delete!(new_debounced, request.entry)
+        return new_debounced, nothing
     end
 end
 
 function queue_request!(server::Server, request::AnalysisRequest)
     manager = server.state.analysis_manager
+    if is_superseded_request(manager, request)
+        @static JETLS_DEV_MODE && @info "Skipped superseded analysis request before queueing" entry=progress_title(request.entry) uri=request.uri generation=request.generation
+        notify(request.completion)
+        return nothing
+    end
     # Check if already analyzing and handle pending requests.
     # This check must happen here (after debounce) rather than in request_analysis!,
     # otherwise multiple debounced requests for the same entry could all pass the check
     # and end up in the queue, causing duplicate analyses with multiple workers.
-    should_queue = store!(manager.pending_analyses) do analyses
+    should_queue, cancelled_request = store!(manager.pending_analyses) do analyses
         if haskey(analyses, request.entry)
             # Already analyzing - store as pending (replaces any existing pending request)
             old_request = analyses[request.entry]
+            if old_request !== nothing && old_request.generation > request.generation
+                return analyses, (false, request)
+            end
             local new_analyses = copy(analyses)
             new_analyses[request.entry] = request
-            if old_request !== nothing # replaced by the new request i.e. cancelled
-                @static JETLS_DEV_MODE && @info "Cancelled duplicated pending analysis request:" entry=progress_title(request.entry) uri=request.uri generation=get_generation(manager,request.entry)
-                notify(old_request.completion)
-            end
-            return new_analyses, false
+            return new_analyses, (false, old_request)
         else
             # Not analyzing - mark as analyzing and queue
             local new_analyses = copy(analyses)
             new_analyses[request.entry] = nothing
-            return new_analyses, true
+            return new_analyses, (true, nothing)
         end
     end
-    if should_queue
-        put!(manager.queue, request)
+    if cancelled_request !== nothing
+        @static JETLS_DEV_MODE && @info "Cancelled duplicated pending analysis request:" entry=progress_title(cancelled_request.entry) uri=cancelled_request.uri generation=cancelled_request.generation
+        notify(cancelled_request.completion)
     end
+    should_queue && put!(manager.queue, request)
+    return nothing
 end
 
 function resolve_analysis_request(server::Server, request::AnalysisRequest)
     manager = server.state.analysis_manager
+
+    if is_superseded_request(manager, request)
+        @static JETLS_DEV_MODE && @info "Skipped superseded analysis request" entry=progress_title(request.entry) uri=request.uri generation=request.generation
+        @goto next_request
+    end
 
     if is_generation_analyzed(manager, request)
         # Skip if this generation was already analyzed (no new changes since last analysis)
@@ -553,6 +579,9 @@ end
 
 get_generation(manager::AnalysisManager, @nospecialize entry::AnalysisEntry) =
     get(load(manager.current_generations), entry, 0)
+
+is_superseded_request(manager::AnalysisManager, request::AnalysisRequest) =
+    request.generation < get_generation(manager, request.entry)
 
 function is_generation_analyzed(manager::AnalysisManager, request::AnalysisRequest)
     analyzed_generation = get(load(manager.analyzed_generations), request.entry, -1)
