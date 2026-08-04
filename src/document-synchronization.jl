@@ -81,7 +81,7 @@ function handle_DidOpenTextDocumentNotification(server::Server, msg::DidOpenText
     uri = textDocument.uri
     is_text_document_content_uri(uri) &&
         return mark_text_document_content_opened!(server, uri) # turn on the `opened` flag
-    @assert textDocument.languageId == "julia"
+    textDocument.languageId == "julia" || return nothing
     parsed_stream = ParseStream!(textDocument.text)
     cache_file_info!(server, uri, textDocument.version, parsed_stream)
     cache_saved_file_info!(server.state, uri, parsed_stream)
@@ -94,10 +94,11 @@ function handle_DidChangeTextDocumentNotification(server::Server, msg::DidChange
     uri = textDocument.uri
     # Read-only `jetls-*:` virtual documents never carry user edits to sync, so just ignore it.
     is_text_document_content_uri(uri) && return nothing
+    text = last(contentChanges).text
+    is_synchronized(server.state, uri) || return nothing
     for contentChange in contentChanges
         @assert contentChange.range === contentChange.rangeLength === nothing # since `change = TextDocumentSyncKind.Full`
     end
-    text = last(contentChanges).text
     cache_file_info!(server, uri, textDocument.version, text)
     # Unsaved buffers (untitled: scheme) never receive didSave, so trigger analysis
     # on every content change with a longer debounce to avoid excessive re-analysis.
@@ -107,13 +108,7 @@ end
 function handle_DidSaveTextDocumentNotification(server::Server, msg::DidSaveTextDocumentNotification)
     uri = msg.params.textDocument.uri
     cache = load(server.state.saved_file_cache)
-    if !haskey(cache, uri)
-        # Some language client implementations (in this case Zed) appear to be
-        # sending `textDocument/didSave` notifications for arbitrary text documents,
-        # so we add a save guard for such cases.
-        @static JETLS_DEV_MODE && @warn "Received textDocument/didSave for unopened or unsupported document" uri
-        return nothing
-    end
+    haskey(cache, uri) || return nothing
     text = msg.params.text
     if !(text isa String)
         @warn """
@@ -131,6 +126,7 @@ function handle_DidCloseTextDocumentNotification(server::Server, msg::DidCloseTe
     uri = msg.params.textDocument.uri
     is_text_document_content_uri(uri) &&
         return mark_text_document_content_closed!(server, uri) # turn off the `opened` flag
+    is_synchronized(server.state, uri) || return nothing
     store!(server.state.file_cache) do cache
         Base.delete(cache, uri), nothing
     end

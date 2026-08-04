@@ -37,6 +37,7 @@ end
     @testset "config" include("test_config.jl")
     @testset "URIs2" include("test_URIs2.jl")
     @testset "registration" include("test_registration.jl")
+    @testset "document synchronization" include("test_document_synchronization.jl")
     @testset "completions" include("test_completions.jl")
     @testset "signature help" include("test_signature_help.jl")
     @testset "declaration" include("test_declaration.jl")
