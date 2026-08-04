@@ -544,6 +544,49 @@ end
         @test pattern_config["path"] == path
     end
 
+    @testset "inline concretization pattern arrays are extended" begin
+        configs = String[
+            """
+            [full_analysis]
+            concretization_patterns = []
+            """,
+            """
+            [full_analysis]
+            concretization_patterns = [{ pattern = "OLD = x_" }]
+            """,
+            "note = '''concretization_patterns = []'''\n" *
+                "[full_analysis]\n" *
+                "concretization_patterns = [\n" *
+                "    { pattern = \"OLD = x_\", path = \"old.jl\" },\n" *
+                "]\n",
+            """
+            full_analysis = { concretization_patterns = [] }
+            """,
+            """
+            [full_analysis]
+            "concretization_patterns" = []
+            """,
+        ]
+        for original in configs
+            before = TOML.parse(original)
+            old_patterns = before["full_analysis"]["concretization_patterns"]
+            edit = JETLS.jetls_config_inline_array_edit(
+                original, "USE_PULSE = x_", "src/config.jl",
+                PositionEncodingKind.UTF16)::TextEdit
+            updated = JETLS.apply_text_change(
+                original, edit.range, edit.newText, PositionEncodingKind.UTF16)
+            parsed = TOML.parse(updated)
+            patterns = parsed["full_analysis"]["concretization_patterns"]
+            @test length(patterns) == length(old_patterns) + 1
+            @test any(patterns) do config
+                config["pattern"] == "USE_PULSE = x_" && config["path"] == "src/config.jl"
+            end
+            if haskey(before, "note")
+                @test parsed["note"] == before["note"]
+            end
+        end
+    end
+
     @testset "`jetls_config_append_text` skips already configured patterns" begin
         text = """
             [[full_analysis.concretization_patterns]]
@@ -585,6 +628,34 @@ end
                 updated_dirty = JETLS.apply_text_change(
                     dirty, edit.range, edit.newText, server.state.encoding)
                 @test occursin("# unsaved\n", updated_dirty)
+            end
+        end
+    end
+
+    @testset "existing config: edit inline array" begin
+        mktempdir() do dir
+            assignment_path = joinpath(dir, "config.jl")
+            config_path = joinpath(dir, ".JETLSConfig.toml")
+            original = """
+                [full_analysis]
+                concretization_patterns = []
+                """
+            write(assignment_path, "USE_PULSE = false\n")
+            write(config_path, original)
+            rootUri = filepath2uri(dir)
+            withserver(; rootUri) do (; server)
+                code_actions = Union{CodeAction,Command}[]
+                JETLS.missing_concretization_code_actions!(
+                    code_actions, server,
+                    Diagnostic[missing_concretization_diagnostic(assignment_path)])
+                action = only(code_actions)
+                edit = only(action.edit.changes[filepath2uri(config_path)])
+                updated = JETLS.apply_text_change(
+                    original, edit.range, edit.newText, server.state.encoding)
+                pattern_config = only(
+                    TOML.parse(updated)["full_analysis"]["concretization_patterns"])
+                @test pattern_config["pattern"] == "USE_PULSE = x_"
+                @test pattern_config["path"] == "config.jl"
             end
         end
     end

@@ -167,13 +167,14 @@ end
     @testset "diagnostic reported for unconcretized global" begin
         mktempdir() do dir
             script_path = joinpath(dir, "issue464.jl")
+            expected_path = uri2filename(filepath2uri(script_path))
             write(script_path, issue464_code)
             diagnostics = get_open_diagnostics(dir, script_path, issue464_code)
             diag = only(filter(d -> d.code == JETLS.TOPLEVEL_MISSING_CONCRETIZATION_CODE, diagnostics))
             @test diag.data isa MissingConcretizationData
             @test diag.data.name == "USE_PULSE"
             @test diag.data.pattern == "USE_PULSE = x_"
-            @test diag.data.assignment_file == script_path
+            @test diag.data.assignment_file == expected_path
         end
     end
 
@@ -182,6 +183,7 @@ end
     @testset "no `data` when no pattern can be derived" begin
         mktempdir() do dir
             script_path = joinpath(dir, "nested.jl")
+            expected_path = uri2filename(filepath2uri(script_path))
             code = """
                 let
                     global USE_PULSE = rand(Bool)
@@ -199,7 +201,7 @@ end
             @test diag.data === nothing
             @test occursin("could not derive one from the statement holding that", diag.message)
             # the `let` statement, while the diagnostic is anchored at the use site
-            @test occursin("the assignment at $script_path:1", diag.message)
+            @test occursin("the assignment at $expected_path:1", diag.message)
             @test diag.range.start.line == 4
         end
     end

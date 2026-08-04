@@ -22,6 +22,7 @@ end
         @testset "path" include("utils/test_path.jl")
         @testset "markdown" include("utils/test_markdown.jl")
         @testset "string" include("utils/test_string.jl")
+        @testset "toml" include("utils/test_toml.jl")
         @testset "jl-syntax-macros" include("utils/test_jl_syntax_macros.jl")
         @testset "native-inference" include("utils/test_native_inference.jl")
     end

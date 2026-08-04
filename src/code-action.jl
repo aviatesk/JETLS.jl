@@ -388,16 +388,22 @@ function jetls_config_workspace_edit(
     config_uri = filepath2uri(config_path)
     if isfile(config_path)
         text = read(config_path, String)
-        new_text = @something jetls_config_append_text(text, pattern, path) return nothing
-        position = _offset_to_xy(Vector{UInt8}(text), sizeof(text) + 1, server.state.encoding)
-        # TODO: This EOF position is based on disk content and may be stale when
+        appended = jetls_config_append_text(text, pattern, path)
+        if appended === nothing
+            text_edit = @something jetls_config_inline_array_edit(
+                text, pattern, path, server.state.encoding) return nothing
+        else
+            position = _offset_to_xy(
+                Vector{UInt8}(text), sizeof(text) + 1, server.state.encoding)
+            text_edit = TextEdit(;
+                range = Range(; start=position, var"end"=position),
+                newText = appended)
+        end
+        # TODO: These positions are based on disk content and may be stale when
         # `.JETLSConfig.toml` has unsaved changes. Synchronize the config document
         # and use its live contents and version for a versioned edit.
         return WorkspaceEdit(;
-            changes = Dict{URI,Vector{TextEdit}}(
-                config_uri => TextEdit[TextEdit(;
-                    range = Range(; start=position, var"end"=position),
-                    newText = new_text)]))
+            changes = Dict{URI,Vector{TextEdit}}(config_uri => TextEdit[text_edit]))
     end
     supports_create_file_workspace_edit(server) || return nothing
     text_edit = TextEdit(;
@@ -417,6 +423,15 @@ function jetls_config_workspace_edit(
 end
 
 function jetls_config_append_text(text::String, pattern::String, path::String)
+    configured = @something parse_configured_concretization_patterns(text) return nothing
+    has_concretization_pattern(configured, pattern, path) && return nothing
+    sep = isempty(text) ? "" : endswith(text, '\n') ? "\n" : "\n\n"
+    appended = sep * format_jetls_concretization_pattern(pattern, path)
+    added_concretization_pattern(configured, text * appended, pattern, path) || return nothing
+    return appended
+end
+
+function parse_configured_concretization_patterns(text::String)
     parsed = TOML.tryparse(text)
     parsed isa TOML.ParserError && return nothing
     validated = try
@@ -428,17 +443,19 @@ function jetls_config_append_text(text::String, pattern::String, path::String)
     full_analysis isa Dict{String,Any} || return nothing
     configured = get(full_analysis, "concretization_patterns", Any[])
     configured isa Vector || return nothing
-    for pattern_config in configured
-        pattern_config isa Dict{String,Any} || return nothing
-        if (get(pattern_config, "pattern", nothing) == pattern &&
-            get(pattern_config, "path", nothing) == path)
-            return nothing
-        end
+    all(@nospecialize(pattern_config) -> pattern_config isa Dict{String,Any},
+        configured) || return nothing
+    return configured
+end
+
+function has_concretization_pattern(
+        configured::Vector, pattern::String, path::String
+    )
+    return any(configured) do @nospecialize pattern_config
+        pattern_config = pattern_config::Dict{String,Any}
+        return isequal(get(pattern_config, "pattern", nothing), pattern) &&
+            isequal(get(pattern_config, "path", nothing), path)
     end
-    sep = isempty(text) ? "" : endswith(text, '\n') ? "\n" : "\n\n"
-    appended = sep * format_jetls_concretization_pattern(pattern, path)
-    TOML.tryparse(text * appended) isa TOML.ParserError && return nothing
-    return appended
 end
 
 function format_jetls_concretization_pattern(pattern::String, path::String)
@@ -447,6 +464,42 @@ function format_jetls_concretization_pattern(pattern::String, path::String)
     TOML.print(io, Dict("pattern" => pattern))
     TOML.print(io, Dict("path" => path))
     return String(take!(io))
+end
+
+function added_concretization_pattern(
+        old_configured::Vector, updated_text::String, pattern::String, path::String
+    )
+    updated = @something parse_configured_concretization_patterns(updated_text) return false
+    return length(updated) == length(old_configured) + 1 &&
+        has_concretization_pattern(updated, pattern, path)
+end
+
+const CONCRETIZATION_PATTERNS_ARRAY_REGEX = Regex(
+    "(?:\"concretization_patterns\"|'concretization_patterns'|" *
+    "concretization_patterns)[ \\t]*=[ \\t]*\\[")
+
+function jetls_config_inline_array_edit(
+        text::String, pattern::String, path::String, encoding::PositionEncodingKind.Ty
+    )
+    configured = @something parse_configured_concretization_patterns(text) return nothing
+    has_concretization_pattern(configured, pattern, path) && return nothing
+    entry = format_toml_inline_table(Dict("pattern" => pattern, "path" => path))
+    bytes = Vector{UInt8}(text)
+    for m in eachmatch(CONCRETIZATION_PATTERNS_ARRAY_REGEX, text)
+        relative_open = findlast(==('['), m.match)::Int
+        start_offset = m.offset + relative_open
+        end_offset, new_text = toml_array_entry_insertion(
+            text, start_offset, entry, isempty(configured))
+        start_position = _offset_to_xy(bytes, start_offset, encoding)
+        end_position = _offset_to_xy(bytes, end_offset, encoding)
+        text_edit = TextEdit(;
+            range = Range(; start=start_position, var"end"=end_position),
+            newText = new_text)
+        updated = apply_text_change(text, text_edit.range, text_edit.newText, encoding)
+        added_concretization_pattern(configured, updated, pattern, path) || continue
+        return text_edit
+    end
+    return nothing
 end
 
 function supports_create_file_workspace_edit(server::Server)
