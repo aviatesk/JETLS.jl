@@ -200,6 +200,7 @@ function get_file_info(
     start = time()
     request_id = objectid(cancel_flag) # Each request uses a unique `cancel_flag`, so this objectid can be used as a request-unique ID
     while true
+        may_have_file_info(s, uri) || return nothing
         is_cancelled(cancel_flag) && return request_cancelled_error(;
             data = cancelled_error_data)
         cache = get(load(s.file_cache), uri, nothing)
@@ -228,11 +229,12 @@ get_file_info(s::ServerState, t::TextDocumentIdentifier, cancel_flag::AbstractCa
 
 Return `true` if `uri` could ever be backed by a `FileInfo`, i.e. it is a saved (`file:`)
 or unsaved (`untitled:`/`buffer:`) document, or an already-registered notebook cell.
-Any other URI (e.g. server-provided `jetls:` virtual documents, or requests from clients
-that ignore the registered document selectors) can never receive a `FileInfo`, so the
-polling [`get_file_info`](@ref) returns early instead of blocking until its timeout.
+Text documents explicitly rejected by `textDocument/didOpen` and any other URI that cannot
+receive a `FileInfo` return `false`, so polling [`get_file_info`](@ref) exits without
+waiting for its timeout.
 """
 function may_have_file_info(s::ServerState, uri::URI)
+    is_rejected_text_document(s, uri) && return false
     uri.scheme == "file" && return true
     isunsaveduri(uri) && return true
     return get_notebook_uri_for_cell(s, uri) !== nothing

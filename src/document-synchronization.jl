@@ -76,12 +76,33 @@ function cache_saved_file_info!(state::ServerState, uri::URI, parsed_stream::JS.
     end
 end
 
+is_rejected_text_document(state::ServerState, uri::URI) =
+    haskey(load(state.rejected_text_documents), uri)
+
+function mark_text_document_rejected!(state::ServerState, uri::URI)
+    store!(state.rejected_text_documents) do documents
+        Base.PersistentDict(documents, uri => nothing), nothing
+    end
+    return nothing
+end
+
+function delete_rejected_text_document!(state::ServerState, uri::URI)
+    return store!(state.rejected_text_documents) do documents
+        haskey(documents, uri) || return documents, false
+        return Base.delete(documents, uri), true
+    end
+end
+
 function handle_DidOpenTextDocumentNotification(server::Server, msg::DidOpenTextDocumentNotification)
     textDocument = msg.params.textDocument
     uri = textDocument.uri
     is_text_document_content_uri(uri) &&
         return mark_text_document_content_opened!(server, uri) # turn on the `opened` flag
-    textDocument.languageId == "julia" || return nothing
+    if textDocument.languageId != "julia"
+        mark_text_document_rejected!(server.state, uri)
+        return nothing
+    end
+    delete_rejected_text_document!(server.state, uri)
     parsed_stream = ParseStream!(textDocument.text)
     cache_file_info!(server, uri, textDocument.version, parsed_stream)
     cache_saved_file_info!(server.state, uri, parsed_stream)
@@ -126,6 +147,7 @@ function handle_DidCloseTextDocumentNotification(server::Server, msg::DidCloseTe
     uri = msg.params.textDocument.uri
     is_text_document_content_uri(uri) &&
         return mark_text_document_content_closed!(server, uri) # turn off the `opened` flag
+    delete_rejected_text_document!(server.state, uri) && return nothing
     is_synchronized(server.state, uri) || return nothing
     store!(server.state.file_cache) do cache
         Base.delete(cache, uri), nothing

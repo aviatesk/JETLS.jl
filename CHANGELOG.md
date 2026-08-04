@@ -50,6 +50,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Fixed crashes and incorrect synchronization state when language clients send text-document notifications for unsupported files, such as unrelated TOML files.
 
+- Fixed delays when clients send `textDocument/*` requests for unsupported files. Such requests now return promptly once JETLS determines that the document is not supported for synchronization.
+
 - Hover and completion no longer append Base's auto-generated type summary for global bindings, matching how local bindings have always been rendered.
 
 - Fixed hover for script globals whose values full-analysis only tracks abstractly: hover no longer leaks the internal `JET.AbstractBindingState` placeholder and now shows the analyzed binding type (e.g. `release_commit :: String`) and any attached docstring.
