@@ -34,6 +34,7 @@ executable_range = "Path to custom formatter executable for range formatting. Sh
 
 [InitOptions]
 analysis_overrides = "Override full analysis behavior for specific file patterns. Primarily used as a temporary workaround to disable analysis for files affected by memory leak issues. Each override specifies a glob pattern, optionally a module name, and can opt back into full analysis. Note: This is an experimental feature that may be removed or changed in future versions."
+reuse_native_inference = "Reuse results from Julia's native inference cache for calls to methods defined outside the modules being analyzed, instead of analyzing them recursively. This can substantially speed up analysis of packages with large dependency surfaces, but analysis results may change slightly, which can change the diagnostics that are reported. See [`reuse_native_inference`](https://aviatesk.github.io/JETLS.jl/release/launching/#init-options/reuse_native_inference). Note: This is an experimental feature that may be removed or changed in future versions."
 
 [AnalysisOverride]
 path = "Glob pattern to match files for which analysis should be overridden (e.g., `src/**/*.jl`, `test/**/*.jl`). Patterns are matched against file paths relative to the workspace root. Use `/` as the path separator on all platforms, including Windows; backslashes are not interpreted as path separators. Supports globstar (`**`) for matching directories recursively."

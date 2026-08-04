@@ -211,3 +211,32 @@ Configure initialization options in Zed's `settings.json`:
   }
 }
 ```
+
+### [Options reference](@id init-options/reference)
+
+#### [`reuse_native_inference`](@id init-options/reuse_native_inference)
+
+- **Type**: boolean
+- **Default**: `false`
+
+When enabled, calls to methods defined outside the modules being analyzed reuse
+results from Julia's native inference cache instead of being analyzed
+recursively.
+
+This may substantially speed up full analysis of packages with large
+dependencies. The reused results come from the dependencies' precompiled
+images, so the speedup requires those dependencies to be precompiled, and grows
+with how much of their code precompilation covers. Packages whose analysis time
+is dominated by their own code see little change, while those that spend much of
+it in dependencies can become several times faster.
+
+```toml
+[initialization_options]
+reuse_native_inference = true
+```
+
+Analysis results may change slightly when this option is enabled, since the
+reused results come from Julia's compiler rather than the JETLS analyzer, and
+that can change the diagnostics that are reported. Diagnostics for the modules
+being analyzed are unaffected in practice, but this remains an experimental
+option that may be removed or changed in future releases.

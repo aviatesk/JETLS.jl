@@ -629,15 +629,20 @@ merge_key_value(analysis_override::AnalysisOverride) = analysis_override.path
 # These are set once during the initialize request and remain constant.
 @kwdef struct InitOptions <: ConfigSection
     analysis_overrides::Maybe{Vector{AnalysisOverride}} = nothing
+    reuse_native_inference::Maybe{Bool} = nothing
 end
 @define_eq_overloads InitOptions
 function Base.show(io::IO, init_options::InitOptions)
     print(io, "InitOptions(;")
     analysis_overrides = init_options.analysis_overrides
     analysis_overrides === nothing || print(io, " analysis_overrides=", analysis_overrides)
+    reuse_native_inference = init_options.reuse_native_inference
+    reuse_native_inference === nothing ||
+        print(io, " reuse_native_inference=", reuse_native_inference)
     print(io, ")")
 end
-const DEFAULT_INIT_OPTIONS = InitOptions(; analysis_overrides=AnalysisOverride[])
+const DEFAULT_INIT_OPTIONS = InitOptions(;
+    analysis_overrides=AnalysisOverride[], reuse_native_inference=false)
 
 @kwdef struct LaTeXEmojiConfig <: ConfigSection
     strip_prefix::Maybe{Union{Missing,Bool}} = nothing # missing is used as sentinel for default setting value

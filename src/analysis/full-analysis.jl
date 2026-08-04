@@ -1165,7 +1165,10 @@ function analyze_package_with_revise(
     end
 
     analyzer = let analyzer # avoid captured boxes
-        analyzer = LSAnalyzer(request.entry; report_target_modules) # TODO Revisit (submodules)
+        reuse_native_inference =
+            get_init_option(server.state.init_options, :reuse_native_inference)
+        # TODO Revisit (submodules)
+        analyzer = LSAnalyzer(request.entry; report_target_modules, reuse_native_inference)
         newstate = JET.AnalyzerState(JET.AnalyzerState(analyzer); world)
         JET.AbstractAnalyzer(analyzer, newstate)
     end
