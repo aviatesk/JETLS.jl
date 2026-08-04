@@ -1,7 +1,7 @@
 # Configuration
 # =============
 
-function parse_analysis_override(x::AbstractDict{String})
+function parse_analysis_override(x::Dict{String,Any})
     haskey(x, "path") ||
         error(lazy"Missing required field `path` in analysis_override")
     path_value = x["path"]

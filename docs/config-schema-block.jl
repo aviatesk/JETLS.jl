@@ -126,7 +126,8 @@ function toml_keys!(acc::Set{String}, dict::AbstractDict{String}, prefix::String
 end
 
 function assert_valid_config(toml_text::String)
-    result = JETLS.parse_config_dict(TOML.parse(toml_text))
+    config_dict = JETLS.validate_config_data(TOML.parse(toml_text))
+    result = JETLS.parse_config_dict(config_dict)
     result isa JETLS.JETLSConfig ||
         error("the schema block is not a valid configuration: ", result)
     return result

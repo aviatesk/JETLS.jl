@@ -4,12 +4,13 @@ end
 
 function parse_init_options(server::Server, @nospecialize init_options)
     init_options === nothing && return DEFAULT_INIT_OPTIONS
-    init_options isa AbstractDict || return DEFAULT_INIT_OPTIONS
     parsed = try
-        parse_config_from_dict(InitOptions, init_options)
+        init_options_dict = validate_config_data(init_options)
+        parse_config_from_dict(InitOptions, init_options_dict)
     catch err
+        error_message = sprint(showerror, err)
         show_warning_message(server,
-            "Failed to parse initializationOptions, using defaults: $err")
+            "Failed to parse initializationOptions, using defaults: $error_message")
         @error "Failed to parse initializationOptions, using defaults"
         Base.showerror(stderr, err, catch_backtrace())
         return DEFAULT_INIT_OPTIONS
@@ -31,16 +32,18 @@ function load_file_init_options(server::Server, filepath::AbstractString)
     end
     init_options_dict = get(parsed, "initialization_options", nothing)
     init_options_dict === nothing && return nothing
-    if !(init_options_dict isa AbstractDict)
+    if !(init_options_dict isa Dict{String,Any})
         show_error_message(server,
             "Invalid `[initialization_options]` in $filepath: expected a table, but got $(typeof(init_options_dict))")
         return nothing
     end
     try
+        validate_config_data(init_options_dict)
         return parse_config_from_dict(InitOptions, init_options_dict)
     catch err
+        error_message = sprint(showerror, err)
         show_error_message(server,
-            "Failed to parse `[initialization_options]` in $filepath: $err")
+            "Failed to parse `[initialization_options]` in $filepath: $error_message")
         return nothing
     end
 end

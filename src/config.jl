@@ -166,8 +166,61 @@ function Base.showerror(io::IO, e::InvalidKeyError)
           ", expected one of: ", join((string('`', k, '`') for k in e.expected_keys), ", "))
 end
 
+struct InvalidConfigDataError <: Exception
+    path::String
+    expected_type::String
+    actual_type::String
+end
+function Base.showerror(io::IO, e::InvalidConfigDataError)
+    print(io, "Invalid configuration data")
+    isempty(e.path) || print(io, " at `", e.path, "`")
+    print(io, ": expected `", e.expected_type, "`, got `", e.actual_type, "`")
+end
+
+config_data_path(path::String, key::String) =
+    isempty(path) ? key : string(path, '.', key)
+config_data_path(path::String, index::Int) = string(path, '[', index, ']')
+
+function invalid_config_data(path::String, expected_type::String, @nospecialize(value))
+    throw(InvalidConfigDataError(path, expected_type, string(typeof(value))))
+end
+
+function validate_config_data(@nospecialize(value), path::String)
+    if value isa Dict{String,Any}
+        for (key, child) in value
+            validate_config_data(child, config_data_path(path, key))
+        end
+    elseif value isa AbstractDict
+        invalid_config_data(path, "Dict{String,Any}", value)
+    elseif value isa Vector
+        for (index, child) in pairs(value)
+            validate_config_data(child, config_data_path(path, index))
+        end
+    elseif value isa AbstractVector
+        invalid_config_data(path, "Vector", value)
+    elseif value isa String
+    elseif value isa AbstractString
+        invalid_config_data(path, "String", value)
+    end
+    return nothing
+end
+
 """
-    parse_config_from_dict(::Type{T}, d::AbstractDict{String}, path=String[])
+    validate_config_data(config_data) -> Dict{String,Any}
+
+Validate that untyped configuration data uses the concrete container and string
+representations produced by `JSON3` and `TOML`. Returns the original dictionary,
+or throws [`InvalidConfigDataError`](@ref) with the path of the invalid value.
+"""
+function validate_config_data(@nospecialize(config_data))
+    config_data isa Dict{String,Any} ||
+        invalid_config_data("", "Dict{String,Any}", config_data)
+    validate_config_data(config_data, "")
+    return config_data
+end
+
+"""
+    parse_config_from_dict(::Type{T}, d::Dict{String,Any}, path=String[])
         where T<:ConfigSection -> T
 
 Recursively populate a [`ConfigSection`](@ref) struct from a config dict (typically
@@ -178,10 +231,10 @@ so any error surfaced downstream knows where in the dict it originated; callers
 typically leave it at the default.
 """
 function parse_config_from_dict(
-        ::Type{T}, d::AbstractDict{String}, path::Vector{String} = String[]
+        ::Type{T}, d::Dict{String,Any}, path::Vector{String} = String[]
     ) where T<:ConfigSection
     valid_keys = String[String(name) for name in fieldnames(T)]
-    for key::String in keys(d)
+    for key in keys(d)
         key in valid_keys || throw(InvalidKeyError(String[path; key], valid_keys))
     end
     kwargs = Pair{Symbol,Any}[]
@@ -226,9 +279,9 @@ function parse_config_dict_value(
         # string and an alias-tagged option type. Hard-code it rather than building a
         # general alias dispatch.
         if String <: T && CustomFormatterConfig <: T
-            if x isa AbstractString
+            if x isa String
                 return convert(String, x)
-            elseif x isa AbstractDict{String}
+            elseif x isa Dict{String,Any}
                 haskey(x, CUSTOM_FORMATTER_ALIAS) ||
                     parse_dict_error(path, "expected formatter table key `$(CUSTOM_FORMATTER_ALIAS)`, got keys $(collect(keys(x)))")
                 return parse_config_from_dict(
@@ -249,13 +302,14 @@ function parse_config_dict_value(
         parse_dict_error(path, "expected $T, got $(typeof(x))")
     end
     if T <: ConfigSection
-        x isa AbstractDict{String} || parse_dict_error(path, "expected a table for $T, got $(typeof(x))")
+        x isa Dict{String,Any} ||
+            parse_dict_error(path, "expected a table for $T, got $(typeof(x))")
         T === DiagnosticPattern && return parse_diagnostic_pattern(x)
         T === AnalysisOverride && return parse_analysis_override(x)
         return parse_config_from_dict(T, x, path)
     end
-    if T <: AbstractVector
-        x isa AbstractVector || parse_dict_error(path, "expected an array for $T, got $(typeof(x))")
+    if T <: Vector
+        x isa Vector || parse_dict_error(path, "expected a vector for $T, got $(typeof(x))")
         E = eltype(T)
         return E[parse_config_dict_value(E, e, path) for e in x]
     end
@@ -268,16 +322,18 @@ function parse_config_dict_value(
 end
 
 """
-    parse_config_dict(config_dict::AbstractDict{String}, filepath=nothing)
+    parse_config_dict(config_dict::Dict{String,Any}, filepath=nothing)
         -> Union{JETLSConfig,String}
 
-Parse a raw `JETLSConfig` dict from `workspace/configuration` (`filepath=nothing`)
-or `.JETLSConfig.toml` (`filepath` set). Returns the parsed config on success, or a
-user-facing error message string on failure — covering unknown keys (with the full
-dotted path), invalid `[diagnostic]` patterns, and any other parse error.
+Parse a validated raw `JETLSConfig` dict from `workspace/configuration`
+(`filepath=nothing`) or `.JETLSConfig.toml` (`filepath` set). Returns the parsed
+config on success, or a user-facing error message string on failure — covering
+unknown keys (with the full dotted path), invalid `[diagnostic]` patterns, and any
+other parse error.
 """
 function parse_config_dict(
-        config_dict::AbstractDict{String}, filepath::Union{Nothing,AbstractString} = nothing
+        config_dict::Dict{String,Any},
+        filepath::Union{Nothing,AbstractString} = nothing
     )
     try
         return parse_config_from_dict(JETLSConfig, config_dict)
@@ -298,12 +354,13 @@ function parse_config_dict(
                 """
             end
         end
+        error_message = sprint(showerror, e)
         if isnothing(filepath)
-            return "Failed to parse LSP configuration: $(e)"
+            return "Failed to parse LSP configuration: $error_message"
         else
             return """
             Failed to load configuration file at $filepath:
-            $(e)
+            $error_message
             """
         end
     end
@@ -402,7 +459,7 @@ unmatched_key_msg(header_msg::AbstractString, path::Vector{String}) =
 # The struct schema only knows the current key paths, so callers must invoke
 # this *before* parsing. Already-migrated values win over the legacy alias.
 function migrate_deprecated_config_keys!(
-        config_dict::AbstractDict,
+        config_dict::Dict{String,Any},
         deprecated_configs::Vector{Pair{Vector{String},Union{Nothing,Vector{String}}}} = deprecated_configurations
     )
     warnings = String[]
@@ -426,38 +483,28 @@ function migrate_deprecated_config_keys!(
     return warnings
 end
 
-# Follow `path` into `d`; return the dict at the end, or `nothing` if any step
-# is missing or non-dict-shaped.
-function walk_nested_dict(d::AbstractDict, path)
-    for k in path
-        d = get(d, k, nothing)
-        d isa AbstractDict || return nothing
-    end
-    return d
-end
-
 # Pop `path[end]` from the nested location in `d`. Empty parent dicts along the
 # walk are pruned bottom-up so the schema doesn't reject leftover table headers
 # (e.g. an empty `[completion.method_signature]` after removing its only key).
 # Returns `Some(value)` on success, or `nothing` if any step is missing.
-function pop_nested!(d::AbstractDict, path)
+function pop_nested!(d::Dict{String,Any}, path)
     isempty(path) && return nothing
     if length(path) == 1
         return haskey(d, path[1]) ? Some(pop!(d, path[1])) : nothing
     end
     child = get(d, path[1], nothing)
-    child isa AbstractDict || return nothing
+    child isa Dict{String,Any} || return nothing
     result = pop_nested!(child, @view path[2:end])
     isempty(child) && pop!(d, path[1])
     return result
 end
 
-# Like `walk_nested_dict` but creates missing intermediate dicts.
-# Returns `nothing` only if a non-dict value blocks the path.
-function ensure_nested_dict!(d::AbstractDict, path)
+# Follow `path` into `d`, creating missing intermediate dicts. Returns `nothing`
+# if an existing non-dict value blocks the path.
+function ensure_nested_dict!(d::Dict{String,Any}, path)
     for k in path
         d = get!(() -> Dict{String,Any}(), d, k)
-        d isa AbstractDict || return nothing
+        d isa Dict{String,Any} || return nothing
     end
     return d
 end
