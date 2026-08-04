@@ -29,7 +29,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 > [!warning]
 > JETLS currently has a known memory leak issue where memory usage grows with each re-analysis (https://github.com/aviatesk/JETLS.jl/issues/357).
-> As a temporary workaround, you can disable full-analysis for specific files using the `analysis_overrides` [initialization option](https://aviatesk.github.io/JETLS.jl/release/launching/#init-options):
+> As a temporary workaround, you can disable full-analysis for specific files using the [`analysis_overrides` initialization option](https://aviatesk.github.io/JETLS.jl/release/launching/#init-options/analysis_overrides):
 > ```jsonc
 > // VSCode settings.json example
 > {
