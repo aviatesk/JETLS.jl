@@ -107,7 +107,7 @@ end
                 duration = 1.0)
             expected = JETLS.TestRunnerResult(;
                 filename = "test.jl", stats, logs = repeat("x", 1_200_000))
-            source = String(LSP.JSON3.write(expected))
+            source = LSP.JSON.json(expected)
             result = JETLS.read_testrunner_result(server, `/bin/cat`, source)
             result = result::JETLS.TestRunnerResult
             @test result.filename == expected.filename

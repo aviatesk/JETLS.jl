@@ -574,7 +574,7 @@ function read_testrunner_result(
     end
 
     try
-        return LSP.JSON3.read(output, TestRunnerResult)
+        return LSP.JSON.parse(output, TestRunnerResult)
     catch err
         parse_error = sprint(Base.showerror, err, catch_backtrace())
         log_testrunner_failure(cmd, testrunnerproc, output, :invalid_output; parse_error)
