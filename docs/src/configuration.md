@@ -88,11 +88,16 @@ auto_instantiate = false  # Disable automatic instantiation
 - **Type**: array of tables
 - **Default**: `[]`
 
-JETLS normally analyzes top-level code without evaluating every expression. If
-it needs the value of a global binding to define a later type or method, it may
-report `toplevel/missing-concretization`.
+During script-mode analysis, JETLS analyzes top-level code without evaluating
+every expression. If it needs the value of a global binding to define a later
+type or method, JETLS may report `toplevel/missing-concretization`.
 
-For example, suppose `src/random-type.jl` contains:
+By contrast, when analyzing package source code under `src/`, JETLS uses the
+catch-all concretization pattern `:(x_)` and evaluates all top-level code.
+Additional concretization patterns are therefore needed only for script-mode
+analysis.
+
+For example, suppose `scripts/random-type.jl` contains:
 
 ```julia
 RandomType = rand((Bool, Int))
@@ -115,11 +120,11 @@ to `.JETLSConfig.toml`:
 ```toml
 [[full_analysis.concretization_patterns]]
 pattern = "RandomType = x_"
-path = "src/random-type.jl"
+path = "scripts/random-type.jl"
 ```
 
 This tells JETLS to evaluate an assignment to `RandomType` while processing
-`src/random-type.jl`. In the pattern, `x_` matches any right-hand-side
+`scripts/random-type.jl`. In the pattern, `x_` matches any right-hand-side
 expression, including `rand((Bool, Int))` in this example.
 
 Each table contains:

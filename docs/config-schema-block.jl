@@ -149,7 +149,7 @@ let rows = Union{Nothing, SchemaRow}[
         nothing,
         array_header("full_analysis.concretization_patterns"; comment = "table, an entry of the concretization patterns array above"),
         example_entry("full_analysis.concretization_patterns.pattern", "\"RandomType = x_\""; comment = "Julia expression pattern, required"),
-        example_entry("full_analysis.concretization_patterns.path", "\"src/random-type.jl\""; comment = "string (glob), optional"),
+        example_entry("full_analysis.concretization_patterns.path", "\"scripts/random-type.jl\""; comment = "string (glob), optional"),
         nothing,
         table_header("diagnostic"),
         default_entry(:diagnostic, :enabled; comment = "boolean"),

@@ -175,6 +175,12 @@ end
             @test diag.data.name == "USE_PULSE"
             @test diag.data.pattern == "USE_PULSE = x_"
             @test diag.data.assignment_file == expected_path
+            @test occursin("assignment at $expected_path:1", diag.message)
+            @test occursin("`full_analysis.concretization_patterns`", diag.message)
+            @test occursin("`.JETLSConfig.toml`", diag.message)
+            @test occursin("preferred quick fix", diag.message)
+            @test occursin("derived pattern `USE_PULSE = x_`", diag.message)
+            @test !occursin("report_file", diag.message)
         end
     end
 
@@ -199,9 +205,10 @@ end
             diagnostics = get_open_diagnostics(dir, script_path, code)
             diag = only(filter(d -> d.code == JETLS.TOPLEVEL_MISSING_CONCRETIZATION_CODE, diagnostics))
             @test diag.data === nothing
-            @test occursin("could not derive one from the statement holding that", diag.message)
+            @test occursin("`.JETLSConfig.toml` manually", diag.message)
+            @test occursin("could not derive a safe pattern", diag.message)
             # the `let` statement, while the diagnostic is anchored at the use site
-            @test occursin("the assignment at $expected_path:1", diag.message)
+            @test occursin("assignment at $expected_path:1", diag.message)
             @test diag.range.start.line == 4
         end
     end
