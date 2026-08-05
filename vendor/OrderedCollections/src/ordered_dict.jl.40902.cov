@@ -1,0 +1,523 @@
+        - # These can be changed, to trade off better performance for space
+        - const global maxallowedprobe = isdefined(Base, :maxallowedprobe) ? Base.maxallowedprobe : 16
+        - const global maxprobeshift   = isdefined(Base, :maxprobeshift) ? Base.maxprobeshift : 6
+        - 
+        - """
+        -     OrderedDict
+        - 
+        - `OrderedDict`s are simply dictionaries whose entries have a particular order. The order
+        - refers to insertion order, which allows deterministic iteration over the dictionary.
+        - """
+        - mutable struct OrderedDict{K,V} <: AbstractDict{K,V}
+       40     slots::Vector{Int32}
+        -     keys::Vector{K}
+        -     vals::Vector{V}
+        -     live::Vector{Bool}
+        -     ndel::Int
+        -     maxprobe::Int
+        -     dirty::Bool
+        -     firstlive::Int
+        -     lastlive::Int
+        - end
+        - 
+       40 function OrderedDict{K,V}() where {K,V}
+       40     OrderedDict{K,V}(zeros(Int32,16), Vector{K}(), Vector{V}(), Vector{Bool}(), 0, 0, false, 1, 0)
+        - end
+        - 
+        - function OrderedDict{K,V}(kv) where {K,V}
+        -     h = OrderedDict{K,V}()
+        -     for (k,v) in kv
+        -         h[k] = v
+        -     end
+        -     return h
+        - end
+        - 
+       20 OrderedDict{K,V}(p::Pair) where {K,V} = setindex!(OrderedDict{K,V}(), p.second, p.first)
+        - 
+        - function OrderedDict{K,V}(ps::Pair...) where {K,V}
+        -     h = OrderedDict{K,V}()
+        -     sizehint!(h, length(ps))
+        -     for p in ps
+        -         h[p.first] = p.second
+        -     end
+        -     return h
+        - end
+        - 
+        - function OrderedDict{K,V}(d::OrderedDict{K,V}) where {K,V}
+        -     # Copy the representation verbatim (holes included) so copying never mutates `d`.
+        -     OrderedDict{K,V}(copy(d.slots), copy(d.keys), copy(d.vals), copy(d.live), d.ndel, d.maxprobe, d.dirty, d.firstlive, d.lastlive)
+        - end
+        - 
+        - OrderedDict() = OrderedDict{Any,Any}()
+        - OrderedDict(kv::Tuple{}) = OrderedDict()
+        - copy(d::OrderedDict) = OrderedDict(d)
+        - 
+        - # TODO: this can probably be simplified using `eltype` as a THT (Tim Holy trait)
+        - # OrderedDict{K,V}(kv::Tuple{Vararg{Tuple{K,V}}})     = OrderedDict{K,V}(kv)
+        - # OrderedDict{K  }(kv::Tuple{Vararg{Tuple{K,Any}}})   = OrderedDict{K,Any}(kv)
+        - # OrderedDict{V  }(kv::Tuple{Vararg{Tuple{Any,V}}})   = OrderedDict{Any,V}(kv)
+        - OrderedDict(kv::Tuple{Vararg{Pair{K,V}}}) where {K,V}  = OrderedDict{K,V}(kv)
+        - 
+        - OrderedDict(kv::AbstractArray{Tuple{K,V}}) where {K,V} = OrderedDict{K,V}(kv)
+        - OrderedDict(kv::AbstractArray{Pair{K,V}}) where {K,V}  = OrderedDict{K,V}(kv)
+        - OrderedDict(kv::AbstractDict{K,V}) where {K,V}         = OrderedDict{K,V}(kv)
+        - 
+        - OrderedDict(ps::Pair{K,V}...) where {K,V} = OrderedDict{K,V}(ps)
+        - OrderedDict(ps::Pair...)                  = OrderedDict(ps)
+        - 
+        - @static if VERSION >= v"1.11"
+        -     # see JuliaLang/julia#53151
+        -     OrderedDict(kv) = dict_with_eltype((K, V) -> OrderedDict{K, V}, kv, eltype(kv))
+        - else
+        -     function OrderedDict(kv)
+        -         try
+        -             dict_with_eltype((K, V) -> OrderedDict{K, V}, kv, eltype(kv))
+        -         catch e
+        -             if isempty(methods(iterate, (typeof(kv),))) ||
+        -                 !all(x->isa(x, Union{Tuple,Pair}), kv)
+        -                 throw(ArgumentError("OrderedDict(kv): kv needs to be an iterator of tuples or pairs"))
+        -             else
+        -                 rethrow(e)
+        -             end
+        -         end
+        -     end
+        - end
+        - 
+        - empty(d::OrderedDict{K,V}) where {K,V} = OrderedDict{K,V}()
+        - empty(d::OrderedDict, ::Type{K}, ::Type{V}) where {K, V} = OrderedDict{K, V}()
+        - 
+        0 length(d::OrderedDict) = length(d.keys) - d.ndel
+        0 isempty(d::OrderedDict) = (length(d) == 0)
+        - 
+        - """
+        -     isordered(::Type)
+        - 
+        - Property of associative containers, that is `true` if the container type has a
+        - defined order (such as `OrderedDict` and `SortedDict`), and `false` otherwise.
+        - """
+        - isordered(::Type{T}) where {T<:AbstractDict} = false
+        - isordered(::Type{T}) where {T<:OrderedDict} = true
+        - 
+        - # conversion between OrderedDict types
+        0 function convert(::Type{OrderedDict{K,V}}, d::AbstractDict) where {K,V}
+        0     d isa OrderedDict{K, V} && return d
+        0     if !isordered(typeof(d))
+        0         throw(ArgumentError("Cannot convert unordered `AbstractDict`s into `OrderedDicts`"))
+        -     end
+        0     h = OrderedDict{K,V}()
+        0     for (k,v) in d
+        0         ck = convert(K,k)
+        0         if !haskey(h,ck)
+        0             h[ck] = convert(V,v)
+        -         else
+        0             error("key collision during dictionary conversion")
+        -         end
+        0     end
+        0     return h
+        - end
+        - 
+       34 isslotempty(slot_value::Integer) = slot_value == 0
+        0 isslotfilled(slot_value::Integer) = slot_value > 0
+       10 isslotmissing(slot_value::Integer) = slot_value < 0
+        - 
+        0 function rehash!(h::OrderedDict{K,V}, newsz::Integer = length(h.slots)) where {K,V}
+        0     keys = h.keys
+        0     vals = h.vals
+        0     newsz = _tablesz(newsz)
+        0     h.dirty = true
+        0     count0 = length(h)
+        0     if count0 == 0
+        0         resize!(h.slots, newsz)
+        0         fill!(h.slots, 0)
+        0         resize!(h.keys, 0)
+        0         resize!(h.vals, 0)
+        0         resize!(h.live, 0)
+        0         h.ndel = 0
+        0         h.firstlive = 1
+        0         h.lastlive = 0
+        0         return h
+        -     end
+        - 
+        0     slots = zeros(Int32, newsz)
+        0     maxprobe = 0
+        - 
+        0     if h.ndel > 0
+        0         ndel0 = h.ndel
+        0         to = 1
+        -         # TODO: to get the best performance we need to avoid reallocating these.
+        -         # This algorithm actually works in place, unless the dict is modified
+        -         # due to GC during this process.
+        0         newkeys = similar(keys, count0)
+        0         newvals = similar(vals, count0)
+        0         @inbounds for from = 1:length(keys)
+        -             # `live` is the source of truth for which entries are deleted holes;
+        -             # a live entry is always assigned, so reading `keys[from]` is safe.
+        0             if h.live[from]
+        0                 k = keys[from]
+        0                 index0 = index = hashindex(k, newsz)
+        0                 while slots[index] != 0
+        0                     index = (index & (newsz-1)) + 1
+        0                 end
+        0                 probe = (index - index0) & (newsz-1)
+        0                 probe > maxprobe && (maxprobe = probe)
+        0                 slots[index] = to
+        0                 newkeys[to] = k
+        0                 newvals[to] = vals[from]
+        0                 to += 1
+        -             end
+        0             if h.ndel != ndel0
+        -                 # if items are removed by finalizers, retry
+        0                 return rehash!(h, newsz)
+        -             end
+        0         end
+        0         h.keys = newkeys
+        0         h.vals = newvals
+        0         resize!(h.live, length(newkeys))
+        0         fill!(h.live, true)
+        0         h.ndel = 0
+        -     else
+        0         @inbounds for i = 1:count0
+        0             k = keys[i]
+        0             index0 = index = hashindex(k, newsz)
+        0             while slots[index] != 0
+        0                 index = (index & (newsz-1)) + 1
+        0             end
+        0             probe = (index - index0) & (newsz-1)
+        0             probe > maxprobe && (maxprobe = probe)
+        0             slots[index] = i
+        0             if h.ndel > 0
+        -                 # if items are removed by finalizers, retry
+        0                 return rehash!(h, newsz)
+        -             end
+        0         end
+        -     end
+        - 
+        0     h.slots = slots
+        0     h.maxprobe = maxprobe
+        -     # after compaction there are no holes
+        0     h.firstlive = 1
+        0     h.lastlive = length(h.keys)
+        0     return h
+        - end
+        - 
+        - function sizehint!(d::OrderedDict, newsz::Integer)
+        -     slotsz = (newsz*3)>>1
+        -     oldsz = length(d.slots)
+        -     if slotsz <= oldsz
+        -         # todo: shrink
+        -         # be careful: rehash!() assumes everything fits. it was only designed
+        -         # for growing.
+        -         return d
+        -     end
+        -     # grow at least 25%
+        -     slotsz = max(slotsz, (oldsz*5)>>2)
+        -     rehash!(d, slotsz)
+        - end
+        - 
+        - function empty!(h::OrderedDict{K,V}) where {K,V}
+        -     fill!(h.slots, 0)
+        -     empty!(h.keys)
+        -     empty!(h.vals)
+        -     empty!(h.live)
+        -     h.ndel = 0
+        -     h.firstlive = 1
+        -     h.lastlive = 0
+        -     h.dirty = true
+        -     return h
+        - end
+        - 
+        - # get the index where a key is stored, or -1 if not present
+        0 function ht_keyindex(h::OrderedDict{K,V}, key, direct) where {K,V}
+        0     slots = h.slots
+        0     sz = length(slots)
+        0     iter = 0
+        0     maxprobe = h.maxprobe
+        0     index = hashindex(key, sz)
+        0     keys = h.keys
+        - 
+        0     @inbounds while true
+        0         si = slots[index]
+        0         isslotempty(si) && break
+        0         if isslotfilled(si) && isequal(key, keys[si])
+        0             return ifelse(direct, oftype(index, si), index)
+        -         end
+        - 
+        0         index = (index & (sz-1)) + 1
+        0         iter += 1
+        0         iter > maxprobe && break
+        0     end
+        - 
+        0     return -1
+        - end
+        - 
+        - # get the index where a key is stored, or -pos if not present
+        - # and the key would be inserted at pos
+        - # This version is for use by setindex! and get!
+       34 function ht_keyindex2(h::OrderedDict{K,V}, key) where {K,V}
+       34     slots = h.slots
+       34     sz = length(slots)
+        0     iter = 0
+       34     maxprobe = h.maxprobe
+       34     index = hashindex(key, sz)
+       34     keys = h.keys
+        0     avail = 0
+        - 
+       34     @inbounds while true
+       34         si = slots[index]
+       34         if isslotempty(si)
+       24             avail < 0 && return avail
+       24             return -index
+        -         end
+        - 
+       10         if isslotmissing(si)
+        0             avail == 0 && (avail = -index)
+       10         elseif key === keys[si] || isequal(key, keys[si])
+       10             return oftype(index, si)
+        -         end
+        - 
+        0         index = (index & (sz-1)) + 1
+        0         iter += 1
+        0         iter > maxprobe && break
+        0     end
+        - 
+        0     avail < 0 && return avail
+        - 
+        -     # If key is not present, may need to keep searching to find slot
+        0     maxallowed = max(maxallowedprobe, sz>>maxprobeshift)
+        0     @inbounds while iter < maxallowed
+        0         if !isslotfilled(slots[index])
+        0             h.maxprobe = iter
+        0             return -index
+        -         end
+        0         index = (index & (sz-1)) + 1
+        0         iter += 1
+        0     end
+        - 
+        0     rehash!(h, length(h) > 64000 ? sz*2 : sz*4)
+        - 
+        0     return ht_keyindex2(h, key)
+        - end
+        - 
+       24 function _setindex!(h::OrderedDict, v, key, index)
+       24     hk, hv = h.keys, h.vals
+       24     push!(hk, key)
+       24     push!(hv, v)
+       24     push!(h.live, true)
+       24     nk = length(hk)
+       24     @inbounds h.slots[index] = nk
+       24     h.lastlive = nk
+       24     h.dirty = true
+        - 
+       24     sz = length(h.slots)
+       24     cnt = nk - h.ndel
+        -     # Rehash now if necessary
+       48     if h.ndel >= ((3*nk)>>2) > 4 || cnt*3 > sz*2
+        -         # > 3/4 deleted or > 2/3 full
+        0         rehash!(h, cnt > 64000 ? cnt*2 : cnt*4)
+        -     end
+        - end
+        - 
+       10 function setindex!(h::OrderedDict{K,V}, v0, key0) where {K,V}
+        0     key = convert(K, key0)
+       30     if !isequal(key, key0)
+        0         throw(ArgumentError("$key0 is not a valid key for type $K"))
+        -     end
+        0     v = convert(V, v0)
+        - 
+       30     index = ht_keyindex2(h, key)
+        - 
+       30     if index > 0
+        6         @inbounds h.keys[index] = key
+        6         @inbounds h.vals[index] = v
+        -     else
+       24         _setindex!(h, v, key, -index)
+        -     end
+        - 
+       30     return h
+        - end
+        - 
+        - function get!(h::OrderedDict{K,V}, key0, default) where {K,V}
+        -     key = convert(K, key0)
+        -     if !isequal(key, key0)
+        -         throw(ArgumentError("$key0 is not a valid key for type $K"))
+        -     end
+        - 
+        -     index = ht_keyindex2(h, key)
+        - 
+        -     index > 0 && return h.vals[index]
+        - 
+        -     v = convert(V,  default)
+        -     _setindex!(h, v, key, -index)
+        -     return v
+        - end
+        - 
+        4 function get!(default::Base.Callable, h::OrderedDict{K,V}, key0) where {K,V}
+        0     key = convert(K, key0)
+        4     if !isequal(key, key0)
+        0         throw(ArgumentError("$key0 is not a valid key for type $K"))
+        -     end
+        - 
+        4     index = ht_keyindex2(h, key)
+        - 
+        4     index > 0 && return h.vals[index]
+        - 
+        0     h.dirty = false
+        0     v = convert(V,  default())
+        0     if h.dirty  # calling default could have dirtied h
+        0         index = ht_keyindex2(h, key)
+        -     end
+        0     if index > 0
+        0         h.keys[index] = key
+        0         h.vals[index] = v
+        -     else
+        0         _setindex!(h, v, key, -index)
+        -     end
+        0     return v
+        - end
+        - 
+        - function getindex(h::OrderedDict{K,V}, key) where {K,V}
+        -     index = ht_keyindex(h, key, true)
+        -     return (index<0) ? throw(KeyError(key)) : h.vals[index]::V
+        - end
+        - 
+        0 function get(h::OrderedDict{K,V}, key, default) where {K,V}
+        0     index = ht_keyindex(h, key, true)
+        0     return (index<0) ? default : h.vals[index]::V
+        - end
+        - 
+        - function get(default::Base.Callable, h::OrderedDict{K,V}, key) where {K,V}
+        -     index = ht_keyindex(h, key, true)
+        -     return (index<0) ? default() : h.vals[index]::V
+        - end
+        - 
+        0 haskey(h::OrderedDict, key) = (ht_keyindex(h, key, true) >= 0)
+        - in(key, v::Base.KeySet{K,T}) where {K,T<:OrderedDict{K}} = (ht_keyindex(v.dict, key, true) >= 0)
+        - 
+        - function getkey(h::OrderedDict{K,V}, key, default) where {K,V}
+        -     index = ht_keyindex(h, key, true)
+        -     return (index<0) ? default : h.keys[index]::K
+        - end
+        - 
+        - function _pop!(h::OrderedDict, index)
+        -     @inbounds val = h.vals[h.slots[index]]
+        -     _delete!(h, index)
+        -     return val
+        - end
+        - 
+        - function _lastlive(h::OrderedDict)
+        -     i = h.lastlive
+        -     @inbounds while i >= 1 && !h.live[i]
+        -         i -= 1
+        -     end
+        -     return i
+        - end
+        - function _firstlive(h::OrderedDict)
+        -     n = length(h.keys)
+        -     i = h.firstlive
+        -     @inbounds while i <= n && !h.live[i]
+        -         i += 1
+        -     end
+        -     return i > n ? 0 : i
+        - end
+        - 
+        - function pop!(h::OrderedDict)
+        -     i = _lastlive(h)
+        -     i == 0 && throw(ArgumentError("dict must be non-empty"))
+        -     h.lastlive = i
+        -     key = @inbounds h.keys[i]
+        -     index = ht_keyindex(h, key, false)
+        -     return key => _pop!(h, index)
+        - end
+        - 
+        - function popfirst!(h::OrderedDict)
+        -     i = _firstlive(h)
+        -     i == 0 && throw(ArgumentError("dict must be non-empty"))
+        -     h.firstlive = i
+        -     key = @inbounds h.keys[i]
+        -     index = ht_keyindex(h, key, false)
+        -     return key => _pop!(h, index)
+        - end
+        - 
+        - function pop!(h::OrderedDict, key)
+        -     index = ht_keyindex(h, key, false)
+        -     index > 0 ? _pop!(h, index) : throw(KeyError(key))
+        - end
+        - 
+        - function pop!(h::OrderedDict, key, default)
+        -     index = ht_keyindex(h, key, false)
+        -     index > 0 ? _pop!(h, index) : default
+        - end
+        - 
+        - function _delete!(h::OrderedDict, index)
+        -     @inbounds ki = h.slots[index]
+        -     @inbounds h.slots[index] = -ki
+        -     @inbounds h.live[ki] = false
+        -     @inbounds Base._unsetindex!(h.keys, Int(ki))
+        -     @inbounds Base._unsetindex!(h.vals, Int(ki))
+        -     h.ndel += 1
+        -     h.dirty = true
+        -     return h
+        - end
+        - 
+        - function delete!(h::OrderedDict, key)
+        -     index = ht_keyindex(h, key, false)
+        -     if index > 0; _delete!(h, index); end
+        -     return h
+        - end
+        - 
+        4 function iterate(t::OrderedDict{K,V}, i::Int = 1) where {K,V}
+       60     n = length(t.keys)
+       36     @inbounds while i <= n
+       26         t.live[i] && return (Pair{K,V}(t.keys[i], t.vals[i]), i + 1)
+        0         i += 1
+        0     end
+       16     return nothing
+        - end
+        - 
+        - # lazy reverse iteration
+        - function iterate(rt::Iterators.Reverse{<:OrderedDict{K,V}}, i::Int = length(rt.itr.keys)) where {K,V}
+        -     t = rt.itr
+        -     @inbounds while i >= 1
+        -         t.live[i] && return (Pair{K,V}(t.keys[i], t.vals[i]), i - 1)
+        -         i -= 1
+        -     end
+        -     return nothing
+        - end
+        - 
+        - 
+        - function _merge_kvtypes(d, others...)
+        -     K, V = keytype(d), valtype(d)
+        -     for other in others
+        -         K = promote_type(K, keytype(other))
+        -         V = promote_type(V, valtype(other))
+        -     end
+        -     return (K,V)
+        - end
+        - 
+        - function merge(d::OrderedDict, others::AbstractDict...)
+        -     K,V = _merge_kvtypes(d, others...)
+        -     merge!(OrderedDict{K,V}(), d, others...)
+        - end
+        - 
+        - function mergewith(combine, d::OrderedDict, others::AbstractDict...)
+        -     K,V = _merge_kvtypes(d, others...)
+        -     mergewith!(combine, OrderedDict{K,V}(), d, others...)
+        - end
+        - 
+        - merge(combine::Function, d::OrderedDict, others::AbstractDict...) = mergewith(combine, d, others...)
+        - 
+        - function Base.map!(f, iter::Base.ValueIterator{<:OrderedDict})
+        -     dict = iter.dict
+        -     vals = dict.vals
+        -     live = dict.live
+        -     @inbounds for i in 1:length(vals)
+        -         live[i] && (vals[i] = f(vals[i]))
+        -     end
+        -     return iter
+        - end
+        - 
+        - function last(h::OrderedDict)
+        -     i = _lastlive(h)
+        -     i == 0 && throw(ArgumentError("collection must be non-empty"))
+        -     @inbounds return h.keys[i] => h.vals[i]
+        - end

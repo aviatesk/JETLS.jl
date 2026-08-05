@@ -423,7 +423,6 @@ If you're interested in how JET selects "top-level definitions", please see [`JE
 
 ```@docs
 JET.report_file
-JET.watch_file
 JET.report_package
 JET.report_text
 ```
@@ -445,5 +444,5 @@ JET.test_text
 In addition to the [general configurations](@ref), the error analysis can take the
 following specific configurations:
 ```@docs
-JET.JETAnalyzer
+JET.JETAnalyzerConfig
 ```

@@ -1,0 +1,983 @@
+## Analyzing lowered code
+
+function assign_this!(frame::Frame, @nospecialize value)
+    frame.framedata.ssavalues[frame.pc] = value
+end
+
+# The callee of a lowered statement may be a `GlobalRef`, or the function itself: JuliaInterpreter
+# resolves some `GlobalRef`s to their values (as a `QuoteNode`) when it builds a `FrameCode`.
+function is_getproperty(@nospecialize(f))
+    isa(f, QuoteNode) && (f = f.value)
+    isa(f, GlobalRef) && return f.name === :getproperty
+    return f === getproperty
+end
+
+function is_some_include(@nospecialize(f))
+    @assert !isa(f, Core.SSAValue) && !isa(f, JuliaInterpreter.SSAValue)
+    if isa(f, GlobalRef)
+        return f.name === :include
+    elseif isa(f, Symbol)
+        return f === :include
+    elseif isa(f, Expr)
+        # A qualified `Mod.include` (e.g. `Base.include(mapexpr, mod, path)`) lowers to a
+        # `getproperty` call, so the callee of the `include` call is that expression rather
+        # than a `GlobalRef`. Whether it really resolves to an `include` function is settled
+        # by identity when the call is reached; here it need only be a candidate.
+        isexpr(f, :call) && length(f.args) == 3 || return false
+        is_getproperty(f.args[1]) || return false
+        name = f.args[3]
+        isa(name, QuoteNode) && (name = name.value)
+        return name === :include
+    else
+        if isa(f, QuoteNode)
+            f = f.value
+        end
+        if isa(f, Function)
+            if @static isdefined(Base, :IncludeInto) && isa(f, Base.IncludeInto)
+                return true
+            end
+            mod = Base.typename(typeof(f)).module
+            return isdefined(mod, :include) && f === (@isdefined(getglobal) ? getglobal(mod, :include) : getfield(mod, :include))
+        end
+    end
+    return false
+end
+
+function is_defaultctors(@nospecialize(f))
+    @assert !isa(f, Core.SSAValue) && !isa(f, JuliaInterpreter.SSAValue)
+    if isa(f, GlobalRef)
+        return (f.mod === Core || f.mod === Base) && f.name === :_defaultctors
+    else
+        if isa(f, QuoteNode)
+            f = f.value
+        end
+        if isdefined(Core, :_defaultctors) && f === Core._defaultctors
+            return true
+        elseif isdefined(Base, :_defaultctors) && f === Base._defaultctors
+            return true
+        end
+    end
+    return false
+end
+
+is_define_method_ref(@nospecialize(f)) = isdefined(LoweredCodeUtils, :is_define_method_ref) &&
+    getfield(LoweredCodeUtils, :is_define_method_ref)(f)
+is_methoddef(@nospecialize(stmt)) = isdefined(LoweredCodeUtils, :ismethod) ?
+    getfield(LoweredCodeUtils, :ismethod)(stmt) : isexpr(stmt, :method)
+is_methoddef1(@nospecialize(stmt)) = isdefined(LoweredCodeUtils, :ismethod1) ?
+    getfield(LoweredCodeUtils, :ismethod1)(stmt) : isexpr(stmt, :method, 1)
+is_define_method_call_4arg(@nospecialize(stmt)) =
+    isdefined(LoweredCodeUtils, :is_define_method_call_4arg) &&
+    getfield(LoweredCodeUtils, :is_define_method_call_4arg)(stmt)
+
+function matches_eval(stmt::Expr)
+    stmt.head === :call || return false
+    f = stmt.args[1]
+    return f === :eval ||
+           (callee_matches(f, Base, :getproperty) && is_quotenode_egal(stmt.args[end], :eval)) ||
+           (isa(f, GlobalRef) && f.name === :eval) || is_quotenode_egal(f, Core.eval)
+end
+
+function categorize_stmt(@nospecialize(stmt), code::Vector{Any})
+    ismeth, haseval, isinclude, isnamespace, istoplevel = false, false, false, false, false
+    if isa(stmt, Expr)
+        haseval = matches_eval(stmt)
+        ismeth = stmt.head === :method || (stmt.head === :thunk && defines_function(only(stmt.args)))
+        istoplevel = stmt.head === :toplevel
+        isnamespace = stmt.head === :export || stmt.head === :import || stmt.head === :using
+        isinclude = false
+        if stmt.head === :call && length(stmt.args) >= 1
+            callee = stmt.args[1]
+            while isa(callee, Core.SSAValue) || isa(callee, JuliaInterpreter.SSAValue)
+                callee = code[callee.id]
+            end
+            isinclude = is_some_include(callee)
+            ismeth = is_defaultctors(callee) || is_define_method_ref(callee)
+        end
+    end
+    return ismeth, haseval, isinclude, isnamespace, istoplevel
+end
+# Check for thunks that define functions (fixes #792)
+function defines_function(@nospecialize(ci))
+    isa(ci, CodeInfo) || return false
+    if length(ci.code) == 1
+        stmt = ci.code[1]
+        if isa(stmt, Core.ReturnNode)
+            val = stmt.val
+            isexpr(val, :method) && return true
+        end
+    end
+    return false
+end
+
+"""
+    isrequired, evalassign = minimal_evaluation!([predicate,] src::Core.CodeInfo, mode::Symbol)
+
+Mark required statements in `src`: `isrequired[i]` is `true` if `src.code[i]` should be evaluated.
+Statements are analyzed by `isreq, haseval = predicate(stmt)`.
+`haseval` is true if the statement came from `@eval` or `eval(...)` call.
+Since the contents of such expression are difficult to analyze, it is generally
+safest to execute all such evals.
+"""
+function minimal_evaluation!(@nospecialize(predicate), mod::Module, src::Core.CodeInfo, mode::Symbol)
+    edges = CodeEdges(mod, src)
+    # LoweredCodeUtils.print_with_code(stdout, src, edges)
+    isrequired = fill(false, length(src.code))
+    namedconstassigned = Dict{GlobalRef,Bool}()
+    evalassign = false
+    for (i, stmt) in enumerate(src.code)
+        if !isrequired[i]
+            isrequired[i], haseval = predicate(stmt, src.code)::Tuple{Bool,Bool}
+            if haseval                              # line `i` may be the equivalent of `f = Core.eval`, so...
+                isrequired[edges.succs[i]] .= true  # ...require each stmt that calls `eval` via `f(expr)`
+                isrequired[i] = true
+            end
+        end
+        if isexpr(stmt, :const)
+            name = stmt.args[1]
+            if isa(name, Symbol)
+                name = GlobalRef(mod, name)
+            end
+            namedconstassigned[name::GlobalRef] = false
+        elseif (lhs_rhs = LoweredCodeUtils.get_lhs_rhs(stmt); lhs_rhs !== nothing)
+            lhs, _ = lhs_rhs
+            if isa(lhs, Symbol)
+                lhs = GlobalRef(mod, lhs)
+            end
+            if isa(lhs, GlobalRef)
+                if haskey(namedconstassigned, lhs)
+                    namedconstassigned[lhs] = true
+                end
+            end
+            if mode === :evalassign
+                evalassign = isrequired[i] = true
+                if isa(lhs, GlobalRef)
+                    isrequired[edges.byname[lhs].succs] .= true  # mark any `const` statements or other "uses" in this block
+                end
+            end
+        end
+    end
+    if mode === :sigs
+        for (name, isassigned) in namedconstassigned
+            isassigned || continue
+            if isdefined(name.mod, name.name)
+                empty!(edges.byname[name].succs)   # avoid redefining `consts` in `:sigs` mode (fixes #789)
+            end
+        end
+    end
+    # Check for docstrings
+    if length(src.code) > 1 && mode !== :sigs
+        stmt = src.code[end-1]
+        if isexpr(stmt, :call) && (stmt::Expr).args[1] === Base.Docs.doc!
+            isrequired[end-1] = true
+        end
+    end
+    # All tracked expressions are marked. Now add their dependencies.
+    # LoweredCodeUtils.print_with_code(stdout, src, isrequired)
+    lines_required!(isrequired, src, edges;)
+                    # norequire = mode === :sigs ? LoweredCodeUtils.exclude_named_typedefs(src, edges) : ())
+    # LoweredCodeUtils.print_with_code(stdout, src, isrequired)
+    return isrequired, evalassign
+end
+@noinline minimal_evaluation!(@nospecialize(predicate), frame::Frame, mode::Symbol) =
+    minimal_evaluation!(predicate, moduleof(frame), frame.framecode.src, mode)
+
+function minimal_evaluation!(frame::Frame, mode::Symbol)
+    minimal_evaluation!(frame, mode) do @nospecialize(stmt), code::Vector{Any}
+        ismeth, haseval, isinclude, isnamespace, istoplevel = categorize_stmt(stmt, code)
+        isreq = ismeth | isinclude | istoplevel
+        return mode === :sigs ? (isreq, haseval) : (isreq | isnamespace, haseval)
+    end
+end
+
+function methods_by_execution(mod::Module, ex::Expr; kwargs...)
+    exinfo = ExInfo(ex)
+    _, thk = methods_by_execution!(JuliaInterpreter.Compiled(), exinfo, mod, ex; kwargs...)
+    return exinfo, thk
+end
+
+"""
+    methods_by_execution!(
+        [interp::Interpreter=JuliaInterpreter.Compiled(),] exinfo::ExInfo, mod::Module, ex::Expr;
+        mode::Symbol = :eval, disablebp::Bool = true, skip_include::Bool = mode!==:eval, always_rethrow::Bool = false
+    )
+
+Evaluate or analyze `ex` in the context of `mod`.
+Depending on the setting of `mode` (see the Extended help), it supports full evaluation or just the minimal
+evaluation needed to extract method signatures.
+`interp` controls JuliaInterpreter's evaluation of any non-intercepted statement;
+likely choices are `JuliaInterpreter.Compiled()` or `JuliaInterpreter.RecursiveInterpreter()`.
+`exinfo` is a cache for storing information about any method definitions (see [`ExInfo`](@ref)).
+
+# Extended help
+
+The action depends on `mode`:
+
+- `:eval` evaluates the expression in `mod`, similar to `Core.eval(mod, ex)` except that `exinfo`
+  will be populated with information about any signatures. This mode is used to implement `includet`.
+- `:sigs` analyzes `ex` and extracts signatures of methods (specifically, statements flagged by
+  [`Revise.minimal_evaluation!`](@ref)), but does not evaluate `ex` in the traditional sense.
+  It will selectively execute statements needed to form the signatures of defined methods.
+  It will also expand any `@eval`ed expressions, since these might contain method definitions.
+- `:evalmeth` analyzes `ex` and extracts signatures like `:sigs`, but takes the additional step of
+  evaluating any `:method` statements.
+- `:evalassign` acts similarly to `:evalmeth`, and also evaluates assignment statements.
+
+When selectively evaluating an expression, Revise will incorporate required dependencies, even for
+minimal-evaluation modes like `:sigs`. For example, the method definition
+
+    max_values(T::Union{map(X -> Type{X}, Base.BitIntegerSmall_types)...}) = 1 << (8*sizeof(T))
+
+found in `base/abstractset.jl` requires that it create the anonymous function in order to compute the
+signature.
+
+The other keyword arguments are more straightforward:
+
+- `disablebp` controls whether JuliaInterpreter's breakpoints are disabled before stepping through the code.
+  They are restored on exit.
+- `skip_include` prevents execution of `include` statements, instead inserting them into `exinfo`'s
+  cache. This defaults to `true` unless `mode` is `:eval`.
+- `always_rethrow`, if true, causes an error to be thrown if evaluating `ex` triggered an error.
+  If false, the error is logged with `@error`. `InterruptException`s are always rethrown.
+  This is primarily useful for debugging.
+"""
+function methods_by_execution!(
+        interp::Interpreter, exinfo::ExInfo, mod::Module, ex::Expr;
+        mode::Symbol = :eval, disablebp::Bool = true, always_rethrow::Bool = false, kwargs...
+    )
+    mode ∈ (:sigs, :eval, :evalmeth, :evalassign) || error("unsupported mode ", mode)
+    lwr = Meta.lower(mod, ex)
+    isa(lwr, Expr) || return Pair{Any,Union{Nothing,Expr}}(nothing, nothing)
+    if lwr.head === :error || lwr.head === :incomplete
+        throw(LoweringException(lwr))
+    end
+    if lwr.head !== :thunk
+        mode === :sigs && return Pair{Any,Union{Nothing,Expr}}(nothing, nothing)
+        return Pair{Any,Union{Nothing,Expr}}(Core.eval(mod, lwr), nothing)
+    end
+    # Interpret user code at the latest world (JuliaInterpreter dispatches it at `frame.world`),
+    # so that even when Revise's own machinery is pinned to its frozen world (issue #552), new
+    # definitions remain visible within the batch and to the running session.
+    frame = Frame(mod, lwr.args[1]::CodeInfo; world=Base.get_world_counter())
+    mode === :eval || LoweredCodeUtils.rename_framemethods!(interp, frame)
+    # Determine whether we need interpreted mode
+    isrequired, evalassign = minimal_evaluation!(frame, mode)
+    # LoweredCodeUtils.print_with_code(stdout, frame.framecode.src, isrequired)
+    if !any(isrequired) && (mode === :eval || !evalassign)
+        # We can evaluate the entire expression in compiled mode
+        if mode === :eval
+            ret = try
+                Core.eval(mod, ex)
+            catch err
+                (always_rethrow || isa(err, InterruptException)) && rethrow(err)
+                loc = location_string(whereis(frame))
+                bt = trim_toplevel!(catch_backtrace())
+                throw(ReviseEvalException(loc, err, Any[(sf, 1) for sf in stacktrace(bt)]))
+            end
+        else
+            ret = nothing
+        end
+    else
+        # Use the interpreter
+        local active_bp_refs
+        if disablebp
+            # We have to turn off all active breakpoints, https://github.com/timholy/CodeTracking.jl/issues/27
+            bp_refs = JuliaInterpreter.BreakpointRef[]
+            for bp in JuliaInterpreter.breakpoints()
+                append!(bp_refs, bp.instances)
+            end
+            active_bp_refs = filter(bp->bp[].isactive, bp_refs)
+            foreach(disable, active_bp_refs)
+        end
+        ret = try
+            _methods_by_execution!(interp, exinfo, frame, isrequired; mode, kwargs...)
+        catch err
+            (always_rethrow || isa(err, InterruptException)) && (@isdefined(active_bp_refs) && foreach(enable, active_bp_refs); rethrow(err))
+            loc = location_string(whereis(frame))
+            sfs = []  # crafted for interaction with Base.show_backtrace
+            frame = JuliaInterpreter.leaf(frame)
+            while frame !== nothing
+                push!(sfs, (Base.StackTraces.StackFrame(frame), 1))
+                frame = frame.caller
+            end
+            throw(ReviseEvalException(loc, err, sfs))
+        end
+        if @isdefined active_bp_refs
+            foreach(enable, active_bp_refs)
+        end
+    end
+    return Pair{Any,Union{Nothing,Expr}}(ret, lwr)
+end
+methods_by_execution!(exinfo::ExInfo, mod::Module, ex::Expr; kwargs...) =
+    methods_by_execution!(Compiled(), exinfo, mod, ex; kwargs...)
+
+function _methods_by_execution!(
+        interp::Interpreter, exinfo::ExInfo, frame::Frame, isrequired::AbstractVector{Bool};
+        mode::Symbol = :eval, skip_include::Bool = true
+    )
+    isok(lnn::LineTypes) = !iszero(lnn.line) || lnn.file !== :none   # might fail either one, but accept anything
+
+    mod = moduleof(frame)
+    # Hoist this lookup for performance. Don't throw even when `mod` is a baremodule.
+    # Read at the latest world: when `frame` defines a new submodule, that module's
+    # `include` is a `const` created in a newer world than this frame runs in, and a
+    # plain access would be a backdated-const read (warning now, error in future Julia).
+    modinclude = @invokelatest(isdefinedglobal(mod, :include)) ? @invokelatest(getglobal(mod, :include)) : nothing
+    signatures = MethodInfoKey[]  # temporary for method signature storage
+    pc = frame.pc
+    while true
+        JuliaInterpreter.is_leaf(frame) || (@warn("not a leaf"); break)
+        stmt = pc_expr(frame, pc)
+        if !isrequired[pc] && mode !== :eval && !(mode === :evalassign && LoweredCodeUtils.get_lhs_rhs(stmt) !== nothing)
+            if isa(stmt, Core.ReturnNode)
+                # Follow control flow: a `return` terminates this frame. Walking past it
+                # would march into a statically-untaken branch of an `if`/`else` and try
+                # to resolve names that may not exist (issue #954).
+                break
+            end
+            pc = next_or_nothing!(frame)
+            pc === nothing && break
+            continue
+        end
+        if isa(stmt, Expr)
+            head = stmt.head
+            if head === :toplevel
+                local value
+                for ex in stmt.args
+                    ex isa Expr || continue
+                    value, _ = methods_by_execution!(interp, exinfo, mod, ex; mode, disablebp=false, skip_include)
+                end
+                isassign(frame, pc) && @isdefined(value) && assign_this!(frame, value)
+                pc = next_or_nothing!(frame)
+            elseif head === :thunk && defines_function(only(stmt.args))
+                mode !== :sigs && Core.eval(mod, stmt)
+                pc = next_or_nothing!(frame)
+            # elseif head === :thunk && isanonymous_typedef(stmt.args[1])
+            #     # Anonymous functions should just be defined anew, since there does not seem to be a practical
+            #     # way to find them within the already-defined module.
+            #     # They may be needed to define later signatures.
+            #     # Note that named inner methods don't require special treatment.
+            #     pc = step_expr!(interp, frame, stmt, true)
+            elseif is_methoddef(stmt)
+                empty!(signatures)
+                ret = methoddef!(interp, signatures, frame, stmt, pc; define=mode!==:sigs)
+                if ret === nothing
+                    # This was just `function foo end` or similar.
+                    # However, it might have been followed by a thunk that defined a
+                    # method (issue #435), so we still need to check for additions.
+                    if !isempty(signatures)
+                        loc = whereis(frame.framecode, pc)
+                        if loc !== nothing
+                            file, line = loc
+                            lnn = LineNumberNode(Int(line), Symbol(file))
+                            for sig in signatures
+                                add_signature!(exinfo, sig, lnn)
+                            end
+                        end
+                    end
+                    @assert is_methoddef1(stmt)
+                    pc = mode !== :sigs ? step_expr!(interp, frame, stmt, true) :
+                        next_or_nothing!(frame)
+                else
+                    pc, pc3 = ret
+                    # Get the line number from the body
+                    stmt3 = pc_expr(frame, pc3)::Expr
+                    if is_define_method_call_4arg(stmt3)
+                        # define_method(mod, name, sigdata, body): sigdata = svec(types, sparams, lnn)
+                        sigcode = lookup(interp, frame, stmt3.args[4])::Core.SimpleVector
+                    else
+                        sigcode = lookup(interp, frame, stmt3.args[2])::Core.SimpleVector
+                    end
+                    lnn = sigcode[end]
+                    if !isa(lnn, LineNumberNode)
+                        lnn = nothing
+                    end
+                    if lnn === nothing
+                        bodycode = stmt3.args[end]
+                        if !isa(bodycode, CodeInfo)
+                            bodycode = lookup(interp, frame, bodycode)
+                        end
+                        if isa(bodycode, CodeInfo)
+                            lnn = linetable(bodycode, 1)
+                            if !isok(lnn)
+                                lnn = nothing
+                                if length(bodycode.code) > 1
+                                    # This may be a kwarg method. Mimic LoweredCodeUtils.bodymethod,
+                                    # except without having a method
+                                    stmt = bodycode.code[end-1]
+                                    if isa(stmt, Expr) && length(stmt.args) > 1
+                                        stmt = stmt::Expr
+                                        a = stmt.args[1]
+                                        nargs = length(stmt.args)
+                                        hasself = let stmt = stmt, slotnames::Vector{Symbol} = bodycode.slotnames
+                                            any(i->LoweredCodeUtils.is_self_call(stmt, slotnames, i), 2:nargs)
+                                        end
+                                        if isa(a, Core.SlotNumber)
+                                            a = bodycode.slotnames[a.id]
+                                        end
+                                        if hasself && (isa(a, Symbol) || isa(a, GlobalRef))
+                                            thismod, thisname = isa(a, Symbol) ? (mod, a) : (a.mod, a.name)
+                                            if isdefined(thismod, thisname)
+                                                f = getfield(thismod, thisname)
+                                                mths = methods(f)
+                                                if length(mths) == 1
+                                                    mth = first(mths)
+                                                    lnn = LineNumberNode(Int(mth.line), mth.file)
+                                                end
+                                            end
+                                        end
+                                    end
+                                end
+                                if lnn === nothing
+                                    # Just try to find *any* line number
+                                    for lnntmp in linetable(bodycode)
+                                        lnntmp = lnntmp::LineTypes
+                                        if isok(lnntmp)
+                                            lnn = lnntmp
+                                            break
+                                        end
+                                    end
+                                end
+                            end
+                        elseif isexpr(bodycode, :lambda)
+                            bodycode = bodycode::Expr
+                            lnntmp = bodycode.args[end][1]::LineTypes
+                            if isok(lnntmp)
+                                lnn = lnntmp
+                            end
+                        end
+                    end
+                    if lnn === nothing
+                        i = codelocs(frame, pc3)
+                        while i > 0
+                            lnntmp = linetable(frame, i)
+                            if isok(lnntmp)
+                                lnn = lnntmp
+                                break
+                            end
+                            i -= 1
+                        end
+                    end
+                    if lnn !== nothing && isok(lnn)
+                        for sig in signatures
+                            add_signature!(exinfo, sig, lnn)
+                        end
+                    end
+                end
+            elseif LoweredCodeUtils.get_lhs_rhs(stmt) !== nothing
+                if mode === :sigs && stmt.head === :const && (a = stmt.args[1]) isa GlobalRef && @invokelatest(isdefined(mod, a.name))
+                    # avoid redefining types unless we have to
+                    pc = next_or_nothing!(frame)
+                else
+                    # If the RHS is a call, unwrap it and dispatch to the call handler
+                    callstmt = LoweredCodeUtils.getrhs(stmt)
+                    if isa(callstmt, Expr) && callstmt.head === :call
+                        @goto call_dispatch
+                    end
+                    pc = step_expr!(interp, frame, stmt, true)
+                end
+            elseif head === :call
+                callstmt = stmt
+                @label call_dispatch
+                f = lookup(frame, callstmt.args[1])
+                if @static(isdefined(Core, :resolve_typegroup) ? true : false) && f === Core.resolve_typegroup
+                    # The statement that creates the type(s) of a struct definition or
+                    # `typegroup` block. In `:sigs` mode, when every type in the group is
+                    # already defined (e.g., by package loading), reuse the existing types
+                    # rather than re-creating them; the lowered `olds` argument holds
+                    # exactly the currently-bound types. Like `reuse_existing_type!`, no
+                    # structural equivalence check is performed. The subsequent
+                    # `declare_const` calls are skipped by `skip_declare_const`.
+                    pc0 = pc
+                    local groupresult
+                    if mode === :sigs && (existing = existing_typegroup_types(interp, frame, callstmt)) !== nothing
+                        groupresult = existing
+                        assign_this!(frame, existing)
+                        pc = next_or_nothing!(frame)
+                    else
+                        pc = step_expr!(interp, frame, stmt, true)
+                        # (guarded: an assignment form would store to the slot instead)
+                        groupresult = isassigned(frame.framedata.ssavalues, pc0) ?
+                            frame.framedata.ssavalues[pc0] : nothing
+                    end
+                    if __bpart__[]
+                        analyze_typegroup_result!(exinfo, groupresult)
+                    end
+                elseif @static(isdefined(Core, :_typebody!) ? true : false) && f === Core._typebody!
+                    if __bpart__[]
+                        analyze_typebody!(exinfo, interp, frame, callstmt)
+                    end
+                    if mode === :sigs && length(callstmt.args) >= 4 && reuse_existing_type!(interp, frame, callstmt)
+                        # The type is already defined (e.g., by package loading).
+                        # In :sigs mode we just want to extract signatures, so don't
+                        # execute `_typebody!` — that would rebind the type and clear
+                        # methods that aren't redefined here (e.g., outer constructors
+                        # whose `:method` statements are skipped because `define=false`).
+                        pc = next_or_nothing!(frame)
+                    else
+                        pc = step_expr!(interp, frame, stmt, true)
+                    end
+                elseif mode === :sigs && @static(isdefined(Core, :declare_const) ? true : false) && f === Core.declare_const &&
+                       length(callstmt.args) >= 3 && skip_declare_const(interp, frame, callstmt)
+                    # The corresponding `_typebody!` was skipped above; skip the matching
+                    # `declare_const` to avoid creating a new binding partition for an
+                    # already-defined type.
+                    pc = next_or_nothing!(frame)
+                elseif is_defaultctors(f) && length(callstmt.args) == 3
+                    # Create the constructors for a type (i.e., a method definition)
+                    T = lookup(frame, callstmt.args[2])
+                    lnn = lookup(frame, callstmt.args[3])
+                    if T isa Type && lnn isa LineNumberNode
+                        empty!(signatures)
+                        uT = Base.unwrap_unionall(T)::DataType
+                        ft = uT.types
+                        sig1 = Tuple{Base.rewrap_unionall(Type{uT}, T), Any[Any for _ in 1:length(ft)]...}
+                        push!(signatures, MethodInfoKey(nothing, sig1))
+                        sig2 = Base.rewrap_unionall(Tuple{Type{T}, ft...}, T)
+                        while T isa UnionAll
+                            sig2 isa UnionAll || (sig2 = sig1; break) # sig2 doesn't define all parameters, so drop it
+                            T = T.body
+                        end
+                        sig1 == sig2 || push!(signatures, MethodInfoKey(nothing, sig2))
+                        for sig in signatures
+                            add_signature!(exinfo, sig, lnn)
+                        end
+                    end
+                    if mode === :sigs
+                        pc = next_or_nothing!(frame)
+                    else # also execute this call
+                        pc = step_expr!(interp, frame, stmt, true)
+                    end
+                elseif f === Core.eval
+                    # an @eval or eval block: this may contain method definitions, so intercept it.
+                    evalmod = lookup(interp, frame, callstmt.args[2])::Module
+                    evalex = lookup(interp, frame, callstmt.args[3])
+                    local value = nothing
+                    for (newmod, newex) in ExprSplitter(evalmod, evalex)
+                        if is_doc_expr(newex)
+                            newex = newex.args[4]
+                        end
+                        newex = unwrap(newex)
+                        push!(exinfo.exprstack, newex)
+                        value, _ = methods_by_execution!(interp, exinfo, newmod, newex; mode, skip_include, disablebp=false)
+                        pop!(exinfo.exprstack)
+                    end
+                    assign_this!(frame, value)
+                    pc = next_or_nothing!(frame)
+                elseif skip_include && (f === modinclude || f === Core.include || f === Base.include)
+                    # include calls need to be managed carefully from several standpoints, including
+                    # path management and parsing new expressions
+                    handle_include!(exinfo, interp, frame, callstmt)
+                    assign_this!(frame, nothing)  # FIXME: the file might return something different from `nothing`
+                    pc = next_or_nothing!(frame)
+                elseif f === Base.Docs.doc! # && mode !== :eval
+                    fargs = JuliaInterpreter.collect_args(interp, frame, callstmt)
+                    popfirst!(fargs)
+                    length(fargs) == 3 && push!(fargs, Union{})  # add the default sig
+                    dmod::Module, b::Base.Docs.Binding, str::Base.Docs.DocStr, sig = fargs
+                    if @invokelatest(isdefinedglobal(b.mod, b.var))
+                        tmpvar = @invokelatest(getglobal(b.mod, b.var))
+                        if isa(tmpvar, Module)
+                            dmod = tmpvar
+                        end
+                    end
+                    # Workaround for julia#38819 on older Julia versions
+                    if !isdefined(dmod, Base.Docs.META)
+                        Base.Docs.initmeta(dmod)
+                    end
+                    m = get!(Base.Docs.meta(dmod), b, Base.Docs.MultiDoc())::Base.Docs.MultiDoc
+                    if haskey(m.docs, sig)
+                        currentstr = m.docs[sig]::Base.Docs.DocStr
+                        redefine = currentstr.text != str.text
+                    else
+                        push!(m.order, sig)
+                        redefine = true
+                    end
+                    # (Re)assign without the warning
+                    if redefine
+                        m.docs[sig] = str
+                        str.data[:binding] = b
+                        str.data[:typesig] = sig
+                    end
+                    assign_this!(frame, Base.Docs.doc(b, sig))
+                    pc = next_or_nothing!(frame)
+                else
+                    # A :call Expr we don't want to intercept
+                    pc = step_expr!(interp, frame, stmt, true)
+                end
+            else
+                # An Expr we don't want to intercept
+                frame.pc = pc
+                pc = step_expr!(interp, frame, stmt, true)
+            end
+        else
+            # A statement we don't want to intercept
+            pc = step_expr!(interp, frame, stmt, true)
+        end
+        pc === nothing && break
+    end
+    return isrequired[frame.pc] ? get_return(frame) : nothing
+end
+
+function add_signature!(exinfo::ExInfo, mt_sig::MethodInfoKey, ln::LineNumberNode)
+    locdefs = CodeTracking.invoked_get!(Vector{Tuple{LineNumberNode,Expr}}, CodeTracking.method_info, mt_sig)
+    newdef = unwrap(exinfo.exprstack[end])
+    if newdef !== nothing
+        if !any(locdef->locdef[1] == ln && isequal(RelocatableExpr(locdef[2]), RelocatableExpr(newdef)), locdefs)
+            push!(locdefs, (fixpath(ln), newdef))
+        end
+        push!(exinfo.allsigs, SigInfo(mt_sig))
+    end
+    return exinfo
+end
+
+# The path may be a custom AbstractString from interpreted user code (e.g.
+# RelocatableFolders.Path) whose methods are newer than Revise's frozen world;
+# convert at the latest world.
+include_filename(path::String) = path
+include_filename(path::AbstractString) = (@invokelatest String(path))::String
+
+function handle_include!(exinfo::ExInfo, interp::Interpreter, frame::Frame, stmt::Expr)
+    if length(stmt.args) == 2
+        # include(path)
+        local arg2 = lookup(interp, frame, stmt.args[2])
+        if arg2 isa AbstractString
+            push!(exinfo.includes, (moduleof(frame), identity, include_filename(arg2)))
+            return exinfo
+        end
+    elseif length(stmt.args) == 3
+        # include(mod, path) or include(mapexpr, path)
+        local arg2 = lookup(interp, frame, stmt.args[2])
+        local arg3 = lookup(interp, frame, stmt.args[3])
+        if arg3 isa AbstractString
+            if arg2 isa Module
+                push!(exinfo.includes, (arg2, identity, include_filename(arg3)))
+                return exinfo
+            elseif arg2 isa Function
+                push!(exinfo.includes, (moduleof(frame), arg2, include_filename(arg3)))
+                return exinfo
+            end
+        end
+    elseif length(stmt.args) == 4
+        # include(mapexpr, mod, path)
+        local arg2 = lookup(interp, frame, stmt.args[2])
+        local arg3 = lookup(interp, frame, stmt.args[3])
+        local arg4 = lookup(interp, frame, stmt.args[4])
+        if arg2 isa Function && arg3 isa Module && arg4 isa AbstractString
+            push!(exinfo.includes, (arg3, arg2, include_filename(arg4)))
+            return exinfo
+        end
+    end
+    error("Bad include call")
+end
+
+# `_typebody!` comes in two protocols: the older struct protocol
+# `_typebody!(prev, partial[, fieldtypes])`, where `prev` is `false` or the
+# existing type, and the typegroup-era `_typebody!(partial[, fieldtypes])`
+# (emitted at top level only for abstract and primitive type definitions).
+# Identify the partial type structurally so both lowerings are handled: in the
+# newer protocol the first argument is the type, followed by nothing or the
+# field-type `SimpleVector`; in the older one the type sits in second position.
+function typebody_partial(interp::Interpreter, frame::Frame, callstmt::Expr)
+    length(callstmt.args) >= 2 || return nothing
+    arg2 = lookup(interp, frame, callstmt.args[2])
+    if arg2 isa Type &&
+            (length(callstmt.args) == 2 || lookup(interp, frame, callstmt.args[3]) isa Core.SimpleVector)
+        return arg2
+    end
+    length(callstmt.args) >= 3 || return nothing
+    arg3 = lookup(interp, frame, callstmt.args[3])
+    return arg3 isa Type ? arg3 : nothing
+end
+
+function analyze_typebody!(exinfo::ExInfo, interp::Interpreter, frame::Frame, stmt::Expr)
+    typ = typebody_partial(interp, frame, stmt)
+    typ === nothing && return nothing
+    datatype = Base.unwrap_unionall(typ)::DataType
+    push!(exinfo.typeinfos, TypeInfo(datatype.name))
+    return exinfo
+end
+
+# For `resolve_typegroup(mod, typevars, infos, olds)` in `:sigs` mode: return a
+# tuple of the already-existing types for this group (to be assigned as the
+# statement's result in place of executing it), or `nothing` if any group member
+# is not currently defined.
+function existing_typegroup_types(interp::Interpreter, frame::Frame, callstmt::Expr)
+    length(callstmt.args) >= 5 || return nothing
+    olds = lookup(interp, frame, callstmt.args[5])
+    olds isa Core.SimpleVector || return nothing
+    isempty(olds) && return nothing
+    all(o -> o isa Type, olds) || return nothing
+    return (olds...,)
+end
+
+# Record a `TypeInfo` for each type created (or reused) by a `resolve_typegroup`
+# statement, whose result is the tuple of group types.
+function analyze_typegroup_result!(exinfo::ExInfo, @nospecialize(result))
+    result isa Tuple || return nothing
+    for typ in result
+        typ isa Type || continue
+        push!(exinfo.typeinfos, TypeInfo((Base.unwrap_unionall(typ)::DataType).name))
+    end
+    return exinfo
+end
+
+# Look up the existing type that this `_typebody!` call would (re)define. If found,
+# assign it as the result of the SSA statement and return `true`; otherwise return
+# `false` so the caller falls back to executing the call normally.
+#
+# Only call this from `mode=:sigs`, which assumes the in-memory bindings already
+# match the source (the same assumption that lets `:sigs` skip `:method` statements
+# via `define=false`). No structural equivalence check is performed: on Julia 1.12+
+# `_equiv_typedef` is exactly what we're trying to avoid tripping, so a comparison
+# here would defeat the purpose. Genuine struct edits arrive through `revise()` in
+# `:eval`/`:evalmeth` mode, which does not take this path.
+#
+# `_typebody!(arg2, new_partial, fieldtypes_svec [, ...])` where `new_partial` is a
+# fresh `DataType` constructed by `_structtype`; its `.name.module/.name.name` give
+# the destination binding.
+function reuse_existing_type!(interp::Interpreter, frame::Frame, stmt::Expr)
+    new_partial = lookup(interp, frame, stmt.args[3])
+    new_partial isa DataType || return false
+    tn = new_partial.name
+    mod = tn.module
+    name = tn.name
+    @invokelatest(isdefined(mod, name)) || return false
+    existing = @invokelatest getfield(mod, name)
+    existing isa Type || return false
+    assign_this!(frame, existing)
+    return true
+end
+
+# Return `true` if the destination of `Core.declare_const(mod, :name, value)` is
+# already defined; if so, the caller will skip the call. This pairs with
+# `reuse_existing_type!` to avoid generating a new binding partition for a struct
+# whose definition we just skipped.
+function skip_declare_const(interp::Interpreter, frame::Frame, stmt::Expr)
+    mod_arg = lookup(interp, frame, stmt.args[2])
+    mod_arg isa Module || return false
+    name_arg = stmt.args[3]
+    name = name_arg isa QuoteNode ? name_arg.value : name_arg
+    name isa Symbol || return false
+    return @invokelatest isdefined(mod_arg, name)
+end
+
+## Prediction of type preservation (issue #1022)
+#
+# Before deletions are applied, `revise` asks whether the new source re-creates
+# each old type unchanged. If so, the subtype-tree walk in
+# `handle_type_deletion!` is unnecessary. Problems arise from `struct`
+# definitions like those in #1022, which disguise the fact that the type is
+# unchanged and only surrounding code is changed. We fix this with a two-phase
+# evaluation: first, a limited evaluation that reconstructs (from the lowered
+# code) the *proposed* new type (henceforth called the "prediction"). This
+# prediction is compared for type-equivalence against the existing type; if they
+# are equivalent, type-deletion is skipped. Constructing the prediction builds
+# only throwaway objects and never publishes a binding; the point is to determine
+# whether the deletion is necessary, and if not we can trust the ordinary
+# mechanisms to do the right thing.
+#
+# The prediction interprets only the lowered statements that feed
+# `Core._typebody!` calls, plus `eval` calls (whose contents may define types
+# via metaprogramming). This is implemented by mimicking the larger pipeline
+# above: a new set of `isrequired` rules plus a focused line-stepper.
+
+# Resolve the callee of `stmt` (or of the call it wraps as the RHS of an
+# assignment), following SSA chains; `nothing` if `stmt` is not a call.
+function typedef_callee(@nospecialize(stmt), code::Vector{Any})
+    isa(stmt, Expr) || return nothing
+    callstmt = stmt
+    if callstmt.head !== :call
+        LoweredCodeUtils.get_lhs_rhs(callstmt) === nothing && return nothing
+        rhs = LoweredCodeUtils.getrhs(callstmt)
+        isa(rhs, Expr) && rhs.head === :call || return nothing
+        callstmt = rhs
+    end
+    isempty(callstmt.args) && return nothing
+    callee = callstmt.args[1]
+    while isa(callee, Core.SSAValue) || isa(callee, JuliaInterpreter.SSAValue)
+        callee = code[callee.id]
+    end
+    return callee
+end
+
+# `true` when `stmt` is (or wraps, as the RHS of an assignment) a call to
+# `Core._typebody!`, following SSA chains to resolve the callee.
+function is_typebody_stmt(@nospecialize(stmt), code::Vector{Any})
+    callee = typedef_callee(stmt, code)
+    callee === nothing && return false
+    if isa(callee, GlobalRef)
+        return callee.mod === Core && callee.name === :_typebody!
+    end
+    isa(callee, QuoteNode) && (callee = callee.value)
+    return @static(isdefined(Core, :_typebody!) ? true : false) && callee === Core._typebody!
+end
+
+# `true` when `stmt` is (or wraps) a call to `Core.resolve_typegroup`, the
+# statement that creates the types of a struct definition or `typegroup` block.
+function is_resolve_typegroup_stmt(@nospecialize(stmt), code::Vector{Any})
+    callee = typedef_callee(stmt, code)
+    callee === nothing && return false
+    if isa(callee, GlobalRef)
+        return callee.mod === Core && callee.name === :resolve_typegroup
+    end
+    isa(callee, QuoteNode) && (callee = callee.value)
+    return @static(isdefined(Core, :resolve_typegroup) ? true : false) && callee === Core.resolve_typegroup
+end
+
+# Statement filter for the prediction pass: only type-defining calls
+# (`_typebody!`/`resolve_typegroup`), `eval` calls, and `:toplevel` blocks (and,
+# via `lines_required!`, their dependencies) run.
+function predict_predicate(@nospecialize(stmt), code::Vector{Any})
+    isa(stmt, Expr) || return (false, false)
+    haseval = matches_eval(stmt)
+    isreq = haseval | (stmt.head === :toplevel) | is_typebody_stmt(stmt, code) |
+            is_resolve_typegroup_stmt(stmt, code)
+    return (isreq, haseval)
+end
+
+# Execute `Core._typebody!` — its effects are confined to the throwaway partial type
+# created earlier in the frame — and record in `predictions` whether evaluating this
+# definition will preserve the existing binding. Returns the value to assign to the
+# statement's SSA slot.
+#
+# Both `_typebody!` protocols are handled (see `typebody_partial`). The
+# preservation test depends on the form: the older struct protocol passes a `prev`
+# argument (the existing type if `Core._equiv_typedef` judged the headers
+# equivalent, `false` otherwise) along with the field types, and
+# `_typebody!(prev, partial, ftypes)` returns `prev` exactly when evaluation would
+# reuse the existing type — so `result === existing` is the complete test. In every
+# other form (abstract and primitive types on either protocol), the lowering gates
+# the `const` on `Core._equiv_typedef`, so calling that directly replicates the
+# test evaluation would perform.
+function record_typebody_prediction!(predictions::TypePredictions, interp::Interpreter, frame::Frame, callstmt::Expr)
+    partial = typebody_partial(interp, frame, callstmt)
+    partial isa Type || error("unexpected _typebody! call ", callstmt)
+    tn = (Base.unwrap_unionall(partial)::DataType).name
+    existing = @invokelatest(isdefinedglobal(tn.module, tn.name)) ?
+               @invokelatest(getglobal(tn.module, tn.name)) : nothing
+    fargs = Any[lookup(interp, frame, a) for a in callstmt.args[2:end]]
+    result = Core._typebody!(fargs...)
+    oldstructform = length(fargs) >= 3 && partial === fargs[2]
+    preserved = if oldstructform
+        existing isa Type && result === existing
+    else
+        existing isa Type &&
+            @static(isdefined(Core, :_equiv_typedef) ? true : false) &&
+            Core._equiv_typedef(existing, partial)
+    end
+    predictions.preserved[(tn.module, tn.name)] = preserved
+    return result
+end
+
+# Execute `Core.resolve_typegroup` — it creates the group's types (or, per its
+# internal equivalence check, returns the existing ones) without publishing any
+# binding — and record for each group member whether evaluation would preserve
+# the existing binding: `resolve_typegroup` returns the existing type object
+# exactly when the new definition is equivalent to it. Returns the value to
+# assign to the statement's SSA slot.
+function record_typegroup_prediction!(predictions::TypePredictions, interp::Interpreter, frame::Frame, callstmt::Expr)
+    mod = lookup(interp, frame, callstmt.args[2])::Module
+    typevars = lookup(interp, frame, callstmt.args[3])::Core.SimpleVector
+    infos = lookup(interp, frame, callstmt.args[4])::Core.SimpleVector
+    olds = lookup(interp, frame, callstmt.args[5])::Core.SimpleVector
+    result = Core.resolve_typegroup(mod, typevars, infos, olds)
+    for (i, tv) in enumerate(typevars)
+        old = olds[i]
+        preserved = old isa Type && result[i] === old
+        predictions.preserved[(mod, (tv::TypeVar).name)] = preserved
+    end
+    return result
+end
+
+# Record a prediction for every type `ex` would define, without publishing any
+# binding or defining any method. Throws on lowering or execution failure; the
+# caller treats a throw as "no prediction", leaving the pessimistic deletion path
+# in force (correct, just unoptimized).
+function predict_typebodies!(predictions::TypePredictions, mod::Module, ex::Expr)
+    # The walk requires the Julia 1.12+ struct-lowering protocol, in which the
+    # type-defining statement (`_typebody!` with a `prev` argument, or
+    # `resolve_typegroup` on typegroup-based versions) builds only throwaway
+    # objects and the binding is published only by a subsequent
+    # `const`/`declare_const`. Older lowering binds the type through statements
+    # this walk executes, so prediction would not be non-destructive there;
+    # report "no prediction" instead.
+    @static VERSION >= v"1.12.0-DEV.2047" || return predictions
+    lwr = Meta.lower(mod, ex)
+    isa(lwr, Expr) || return predictions
+    if lwr.head === :error || lwr.head === :incomplete
+        throw(LoweringException(lwr))
+    end
+    lwr.head === :thunk || return predictions
+    src = lwr.args[1]::CodeInfo
+    any(stmt -> predict_predicate(stmt, src.code)[1], src.code) || return predictions
+    frame = Frame(mod, src; world=Base.get_world_counter())
+    isrequired, _ = minimal_evaluation!(predict_predicate, frame, :sigs)
+    interp = Compiled()
+    pc = frame.pc
+    while true
+        stmt = pc_expr(frame, pc)
+        if !isrequired[pc]
+            pc = next_or_nothing!(frame)
+        elseif isa(stmt, Expr)
+            head = stmt.head
+            if head === :const || head === :method || head === :thunk
+                # `:const` would publish a binding; `:method`/`:thunk` would define
+                # methods ahead of the deletion phase. None of these feed a
+                # `_typebody!` call, so skipping is safe; if one is nevertheless a
+                # dependency, evaluation fails and the caller falls back to the
+                # pessimistic path.
+                pc = next_or_nothing!(frame)
+            elseif head === :toplevel
+                for a in stmt.args
+                    a isa Expr || continue
+                    predict_typebodies!(predictions, mod, a)
+                end
+                assign_this!(frame, nothing)
+                pc = next_or_nothing!(frame)
+            else
+                callstmt = stmt
+                if head !== :call
+                    rhs = LoweredCodeUtils.get_lhs_rhs(stmt) === nothing ? nothing :
+                          LoweredCodeUtils.getrhs(stmt)
+                    callstmt = isa(rhs, Expr) && rhs.head === :call ? rhs : nothing
+                end
+                if callstmt === nothing
+                    pc = step_expr!(interp, frame, stmt, true)
+                else
+                    f = lookup(frame, callstmt.args[1])
+                    if @static(isdefined(Core, :resolve_typegroup) ? true : false) && f === Core.resolve_typegroup && length(callstmt.args) >= 5
+                        assign_this!(frame, record_typegroup_prediction!(predictions, interp, frame, callstmt))
+                        pc = next_or_nothing!(frame)
+                    elseif @static(isdefined(Core, :_typebody!) ? true : false) && f === Core._typebody! &&
+                           length(callstmt.args) >= 2
+                        assign_this!(frame, record_typebody_prediction!(predictions, interp, frame, callstmt))
+                        pc = next_or_nothing!(frame)
+                    elseif @static(isdefined(Core, :declare_const) ? true : false) && f === Core.declare_const
+                        pc = next_or_nothing!(frame)
+                    elseif f === Core.eval
+                        evalmod = lookup(interp, frame, callstmt.args[2])
+                        evalex = lookup(interp, frame, callstmt.args[3])
+                        if evalmod isa Module && evalex isa Expr
+                            for (newmod, newex) in ExprSplitter(evalmod, evalex)
+                                if is_doc_expr(newex)
+                                    newex = newex.args[4]
+                                end
+                                newex = unwrap(newex)
+                                newex isa Expr && predict_typebodies!(predictions, newmod, newex)
+                            end
+                        end
+                        assign_this!(frame, nothing)
+                        pc = next_or_nothing!(frame)
+                    else
+                        pc = step_expr!(interp, frame, stmt, true)
+                    end
+                end
+            end
+        else
+            pc = step_expr!(interp, frame, stmt, true)
+        end
+        pc === nothing && break
+    end
+    return predictions
+end

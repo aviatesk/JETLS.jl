@@ -1,12 +1,16 @@
 [deps]
-JETLS = "a3b70258-0602-4ee2-b5a6-54c2470400db"
 JSON = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
-OrderedCollections = "bac558e1-5e72-5ebc-8fee-abe8a469f55d"
 Struct2JSONSchema = "6b9a66ba-ce23-4e49-9189-ad500babf267"
+OrderedCollections = "64c61135-0f01-5c34-beb9-07fc02084e85"
+JETLS = "a3b70258-0602-4ee2-b5a6-54c2470400db"
 TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
-
-[sources]
-Struct2JSONSchema = {rev = "avi/JS-compatibility", url = "https://github.com/aviatesk/Struct2JSONSchema.jl"}
 
 [compat]
 Struct2JSONSchema = "0.6"
+
+[sources.Struct2JSONSchema]
+rev = "avi/JS-compatibility"
+url = "https://github.com/aviatesk/Struct2JSONSchema.jl"
+
+[sources.OrderedCollections]
+path = "../vendor/OrderedCollections"
