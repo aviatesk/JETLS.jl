@@ -168,24 +168,7 @@ git push "$REMOTE" "releases/$JETLS_VERSION"
 
 # Step 6: Create pull request
 echo "==> Step 6: Creating pull request"
-PR_BODY="This PR releases version \`$JETLS_VERSION\`.
-
-## Checklist
-- [ ] \`release / test / Julia 1 - ubuntu-latest - x64\`
-- [ ] \`release / test / Julia 1 - ubuntu-latest - x86\`
-- [ ] \`release / test / Julia 1 - windows-latest - x86\`
-- [ ] \`release / test / Julia 1 - windows-latest - x64\`
-- [ ] \`release / test / Julia 1 - macos-latest - x64\`
-- [ ] \`release / test / Julia 1.12 - ubuntu-latest - x64\`
-- [ ] \`release / test_app / Test jetls serve\`
-- [ ] \`release / test_app / Test jetls check\`
-- [ ] \`release / test_app / Test jetls schema\`
-- [ ] \`release / test_app / Test release installation\`
-- [ ] \`release / check_schemas / Check schemas are up to date\`
-
-## Post-merge
-- The \`releases/$JETLS_VERSION\` branch can be deleted after merging
-- CHANGELOG.md will be automatically updated on master"
+PR_BODY="This PR releases version \`$JETLS_VERSION\`."
 
 PR_URL=$(gh pr create \
     --base release \
