@@ -43,7 +43,8 @@ jobs:
           @assert JETLS.PrecompileTools.workload_enabled(JETLS)
       - name: Test installed executable
         run: |
-          test "$(jetls --version)" = "JETLS version $(cat JETLS_VERSION)"
+          julia_version="$(julia --startup-file=no -e 'print(VERSION)')"
+          test "$(jetls --version)" = "JETLS version $(cat JETLS_VERSION) on Julia $julia_version"
 
   test_jetls_serve:
     name: Test jetls serve
