@@ -186,8 +186,9 @@ function withserver(f;
     end
 
     # do the server initialization
+    local initialize_response, initialize_json_response, register_capability_request, register_capability_json_request
     let id = id_counter[] += 1
-        (; raw_msg, raw_res) = writereadmsg(
+        (; raw_msg, raw_res, json_res) = writereadmsg(
             InitializeRequest(;
                 id,
                 params=InitializeParams(;
@@ -197,10 +198,14 @@ function withserver(f;
                     workspaceFolders)))
         @test raw_msg isa InitializeRequest && raw_msg.params.workspaceFolders == workspaceFolders
         @test raw_res isa InitializeResponse && raw_res.id == id
+        initialize_response = raw_res
+        initialize_json_response = json_res
 
-        (; raw_msg, raw_res) = writereadmsg(InitializedNotification())
+        (; raw_msg, raw_res, json_res) = writereadmsg(InitializedNotification())
         @test raw_msg isa InitializedNotification
         @test raw_res isa RegisterCapabilityRequest && raw_res.id isa String
+        register_capability_request = raw_res
+        register_capability_json_request = json_res
 
         # apply initial settings if provided
         # read=1: ShowMessageNotification for config change
@@ -210,7 +215,16 @@ function withserver(f;
         end
     end
 
-    argnt = (; server, writemsg, readmsg, writereadmsg, id_counter)
+    argnt = (;
+        server,
+        writemsg,
+        readmsg,
+        writereadmsg,
+        id_counter,
+        initialize_response,
+        initialize_json_response,
+        register_capability_request,
+        register_capability_json_request)
     try
         # do the main callback
         return f(argnt)
