@@ -299,12 +299,28 @@ Capabilities specific to the notebook document support.
     synchronization::NotebookDocumentSyncClientCapabilities
 end
 
+@interface TextDocumentFilterClientCapabilities begin
+    """
+    The client supports Relative Patterns.
+
+    - `@since` 3.18.0
+    """
+    relativePatternSupport::Union{Nothing, Bool} = nothing
+end
+
 """
 `TextDocumentClientCapabilities` define capabilities the editor / tool provides on text documents.
 """
 @interface TextDocumentClientCapabilities begin
     "Defines which synchronization capabilities the client supports."
     synchronization::Union{Nothing, TextDocumentSyncClientCapabilities} = nothing
+
+    """
+    Defines which filters the client supports.
+
+    - `@since` 3.18.0
+    """
+    filters::Union{Nothing, TextDocumentFilterClientCapabilities} = nothing
 
     """
     Capabilities specific to the `textDocument/completion` request.
