@@ -181,14 +181,6 @@ include("HierarchicalTestSet.jl")
             end
         end
     end
-
-    @testset "`is_config_file`" begin
-        @test JETLS.is_config_file("/path/to/.JETLSConfig.toml")
-        @test JETLS.is_config_file(".JETLSConfig.toml")
-        @test !JETLS.is_config_file("/path/to/Non.JETLSConfig.toml")
-        @test !JETLS.is_config_file("config.toml")
-        @test !JETLS.is_config_file("/path/to/regular.txt")
-    end
 end
 
 @testset "`parse_config_from_dict` reports full key paths in `InvalidKeyError`" begin

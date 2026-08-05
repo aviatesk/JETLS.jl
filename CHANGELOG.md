@@ -69,6 +69,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Fixed the TestRunner integration treating failed or errored tests as an unexpected TestRunner execution failure instead of reporting their results.
 
+- Fixed watched-file registration for clients that do not support relative glob patterns, while keeping handled file events scoped to the workspace root.
+
 ## 2026-08-05
 
 - Commit: [`6dacc52`](https://github.com/aviatesk/JETLS.jl/commit/6dacc52)
