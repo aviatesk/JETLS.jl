@@ -11,18 +11,22 @@ Arguments:
   VERSION       Release version in YYYY-MM-DD format
 
 Options:
-  -h, --help    Show this help message and exit
-  --local       Prepare the release locally without pushing or opening a pull
-                request
+  -h, --help                    Show this help message and exit
+  --no-push                     Prepare without pushing or opening a PR
+  --remote REMOTE               Remote to use (default: origin)
+  --source-branch BRANCH        Source branch to merge (default: master)
 
-Example:
-  ./scripts/prepare-release.sh --local 2026-08-01
+Examples:
+  ./scripts/prepare-release.sh --no-push 2026-08-01
+  ./scripts/prepare-release.sh --source-branch=master 2026-08-01
 EOF
 }
 
 set -euo pipefail
 
-LOCAL_MODE=false
+NO_PUSH=false
+REMOTE=origin
+SOURCE_BRANCH=master
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -30,8 +34,32 @@ while [[ $# -gt 0 ]]; do
             print_help
             exit 0
             ;;
-        --local)
-            LOCAL_MODE=true
+        --no-push)
+            NO_PUSH=true
+            shift
+            ;;
+        --remote)
+            if [[ $# -lt 2 ]]; then
+                echo "Error: --remote requires a value"
+                exit 1
+            fi
+            REMOTE=$2
+            shift 2
+            ;;
+        --remote=*)
+            REMOTE=${1#*=}
+            shift
+            ;;
+        --source-branch)
+            if [[ $# -lt 2 ]]; then
+                echo "Error: --source-branch requires a value"
+                exit 1
+            fi
+            SOURCE_BRANCH=$2
+            shift 2
+            ;;
+        --source-branch=*)
+            SOURCE_BRANCH=${1#*=}
             shift
             ;;
         -*)
@@ -66,6 +94,11 @@ fi
 
 echo "==> Preparing release $JETLS_VERSION"
 
+if ! git remote get-url "$REMOTE" >/dev/null 2>&1; then
+    echo "Error: Git remote '$REMOTE' does not exist"
+    exit 1
+fi
+
 # Check for uncommitted changes
 if ! git diff --quiet || ! git diff --cached --quiet; then
     echo "Error: You have uncommitted changes. Please commit or stash them first."
@@ -78,36 +111,38 @@ if git show-ref --verify --quiet "refs/heads/releases/$JETLS_VERSION"; then
     exit 1
 fi
 
-if git ls-remote --exit-code --heads origin "releases/$JETLS_VERSION" >/dev/null 2>&1; then
+if git ls-remote --exit-code --heads "$REMOTE" "releases/$JETLS_VERSION" >/dev/null 2>&1; then
     echo "Error: Branch releases/$JETLS_VERSION already exists on remote"
     exit 1
 fi
 
-# Step 1: Create release branch from `release` and merge `master`
-echo "==> Step 1: Creating release branch and merging master"
-git fetch origin release master
+# Step 1: Create release branch from `release` and merge the source branch
+echo "==> Step 1: Creating release branch and merging $REMOTE/$SOURCE_BRANCH"
+git fetch "$REMOTE" release "$SOURCE_BRANCH"
+SOURCE_COMMIT=$(git rev-parse "$REMOTE/$SOURCE_BRANCH")
+echo "Source commit SHA: $SOURCE_COMMIT"
 git checkout release
-git pull origin release
+git pull "$REMOTE" release
 git checkout -b "releases/$JETLS_VERSION"
-git merge origin/master -X theirs -m "Merge master into releases/$JETLS_VERSION"
+git merge "$SOURCE_COMMIT" -X theirs -m "Merge $SOURCE_BRANCH into releases/$JETLS_VERSION"
 
 # Step 2: Vendor dependency packages with local paths
 echo "==> Step 2: Vendoring dependencies (local paths)"
-julia --startup-file=no --project=. scripts/vendor-deps.jl --source-branch=master --local
+julia --startup-file=no --project=. scripts/vendor-deps.jl --source-branch="$SOURCE_COMMIT" --local
 
 # Step 3: Commit vendor/ directory
 echo "==> Step 3: Committing vendor/ directory"
 git add -A
 git commit -m "vendor: update vendored dependencies"
-if [[ "$LOCAL_MODE" == false ]]; then
-    git push -u origin "releases/$JETLS_VERSION"
+if [[ "$NO_PUSH" == false ]]; then
+    git push -u "$REMOTE" "releases/$JETLS_VERSION"
 fi
 
 # Step 4: Get the commit SHA and update [sources] to reference it
 echo "==> Step 4: Updating [sources] to reference commit SHA"
 VENDOR_COMMIT=$(git rev-parse HEAD)
 echo "Vendor commit SHA: $VENDOR_COMMIT"
-julia --startup-file=no --project=. scripts/vendor-deps.jl --source-branch=master --rev="$VENDOR_COMMIT"
+julia --startup-file=no --project=. scripts/vendor-deps.jl --source-branch="$SOURCE_COMMIT" --rev="$VENDOR_COMMIT"
 
 # Step 5: Commit the final release
 echo "==> Step 5: Committing release"
@@ -118,18 +153,18 @@ sed "s/^version = \".*\"/version = \"$TOML_VERSION\"/" Project.toml > Project.to
 git add -A
 git commit -m "release: $JETLS_VERSION"
 
-if [[ "$LOCAL_MODE" == true ]]; then
+if [[ "$NO_PUSH" == true ]]; then
     echo ""
-    echo "==> Local mode: skipping push and PR creation"
+    echo "==> Skipping push and PR creation"
     echo ""
     echo "Release branch prepared locally: releases/$JETLS_VERSION"
     echo "To complete the release manually:"
-    echo "  1. git push -u origin releases/$JETLS_VERSION"
+    echo "  1. git push -u $REMOTE releases/$JETLS_VERSION"
     echo "  2. Create a PR from releases/$JETLS_VERSION to release"
     exit 0
 fi
 
-git push origin "releases/$JETLS_VERSION"
+git push "$REMOTE" "releases/$JETLS_VERSION"
 
 # Step 6: Create pull request
 echo "==> Step 6: Creating pull request"
