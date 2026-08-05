@@ -145,6 +145,11 @@ let rows = Union{Nothing, SchemaRow}[
         table_header("full_analysis"),
         default_entry(:full_analysis, :debounce; comment = "number (seconds)"),
         default_entry(:full_analysis, :auto_instantiate; comment = "boolean"),
+        default_entry(:full_analysis, :concretization_patterns; comment = "array of tables", validate = false),
+        nothing,
+        array_header("full_analysis.concretization_patterns"; comment = "table, an entry of the concretization patterns array above"),
+        example_entry("full_analysis.concretization_patterns.pattern", "\"RandomType = x_\""; comment = "Julia expression pattern, required"),
+        example_entry("full_analysis.concretization_patterns.path", "\"scripts/random-type.jl\""; comment = "string (glob), optional"),
         nothing,
         table_header("diagnostic"),
         default_entry(:diagnostic, :enabled; comment = "boolean"),
@@ -183,8 +188,8 @@ let rows = Union{Nothing, SchemaRow}[
     schema_rows = SchemaRow[row for row in rows if row isa SchemaRow]
     # The validation rendering enables all the commented-out entries and drops rows
     # incompatible with them (the string preset form of `formatter` conflicts with
-    # the `[formatter.custom]` table, and `patterns = []` conflicts with the
-    # `[[diagnostic.patterns]]` entry)
+    # the `[formatter.custom]` table, and array defaults conflict with their
+    # corresponding array-of-tables entries)
     validation_text = join((row.code for row in schema_rows if row.validate), '\n')
     validation_dict = TOML.parse(validation_text)
     assert_valid_config(validation_text)

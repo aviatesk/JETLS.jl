@@ -48,6 +48,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- Added a dedicated [`toplevel/missing-concretization`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/toplevel/missing-concretization) diagnostic for top-level bindings whose concrete values JET needs during full analysis.
+  Users can configure now [`full_analysis.concretization_patterns`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/full_analysis/concretization_patterns) through `.JETLSConfig.toml` or LSP settings to evaluate selected top-level assignments in workspace files.
+  The diagnostic offers a quick fix that creates or updates `.JETLSConfig.toml` with a pattern scoped to the assignment file, and JETLS automatically reanalyzes affected analysis units after the setting changes.
+  (Closed https://github.com/aviatesk/JETLS.jl/issues/464)
+
 - Added the experimental `reuse_native_inference` [initialization option](https://aviatesk.github.io/JETLS.jl/release/launching/#init-options) (disabled by default): when enabled, calls to methods defined outside the modules being analyzed reuse results from Julia's native inference cache instead of being analyzed recursively:
   ```toml
   # .JETLSConfig.toml example

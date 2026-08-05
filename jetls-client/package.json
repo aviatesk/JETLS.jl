@@ -333,6 +333,29 @@
                   "markdownDescription": "Automatically run `Pkg.resolve()` and `Pkg.instantiate()` for uninstantiated packages (e.g., freshly cloned repos). Creates versioned manifest if needed.",
                   "type": "boolean"
                 },
+                "concretization_patterns": {
+                  "default": [],
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "path": {
+                        "markdownDescription": "Optional glob pattern to restrict this concretization pattern to matching source file paths, relative to the workspace root when available.",
+                        "type": "string"
+                      },
+                      "pattern": {
+                        "markdownDescription": "Julia expression pattern to force concretization, using JET/MacroTools pattern syntax (for example, `USE_PULSE = x_`).",
+                        "pattern": "\\S",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "pattern"
+                    ],
+                    "type": "object"
+                  },
+                  "markdownDescription": "Additional JET top-level concretization patterns. Each entry requires a Julia expression `pattern` and can use an optional `path` glob to restrict it to specific source files.",
+                  "type": "array"
+                },
                 "debounce": {
                   "default": 1,
                   "markdownDescription": "Debounce time in seconds before triggering full analysis after a file save. Higher values reduce analysis frequency but may delay diagnostic updates.",

@@ -175,6 +175,61 @@ const TESTRUNNER_DEFAULT = JETLS.get_config(JETLS.ConfigManager(JETLS.ConfigMana
     end
 end
 
+@testset "concretization pattern changes trigger reanalysis" begin
+    mktempdir() do tmpdir
+        script_path = joinpath(tmpdir, "script.jl")
+        script_uri = filepath2uri(script_path)
+        write(script_path, "x = 1\n")
+        rootUri = filepath2uri(tmpdir)
+
+        withserver(; rootUri, capabilities=CLIENT_CAPABILITIES) do (; writereadmsg, server)
+            (; raw_res) = writereadmsg(
+                make_DidOpenTextDocumentNotification(script_uri, "x = 1\n"))
+            @test raw_res isa PublishDiagnosticsNotification
+
+            manager = server.state.analysis_manager
+            analysis_info = JETLS.get_analysis_info(manager, script_uri)
+            @test analysis_info isa JETLS.AnalysisResult
+            generation = JETLS.get_generation(manager, analysis_info.entry)
+
+            config_path = joinpath(tmpdir, ".JETLSConfig.toml")
+            write(config_path, """
+                [[full_analysis.concretization_patterns]]
+                pattern = "x = x_"
+                """)
+            notification = DidChangeWatchedFilesNotification(;
+                params = DidChangeWatchedFilesParams(;
+                    changes = [FileEvent(;
+                        uri=filepath2uri(config_path), type=FileChangeType.Created)]))
+            writereadmsg(notification; read=3)
+
+            @test JETLS.get_generation(manager, analysis_info.entry) == generation + 1
+        end
+    end
+end
+
+@testset "config changes requeue initial analysis" begin
+    mktempdir() do tmpdir
+        script_path = joinpath(tmpdir, "script.jl")
+        script_uri = filepath2uri(script_path)
+        write(script_path, "x = 1\n")
+        rootUri = filepath2uri(tmpdir)
+
+        withserver(; rootUri, capabilities=CLIENT_CAPABILITIES) do (; server)
+            JETLS.stop_analysis_worker(server)
+            manager = server.state.analysis_manager
+            entry = JETLS.ScriptAnalysisEntry(script_uri)
+            JETLS.schedule_analysis!(server, script_uri, entry, #=invalidate=#false;
+                debounce=0.0, notify_diagnostics=false)
+
+            @test JETLS.get_analysis_info(manager, script_uri) === nothing
+            generation = JETLS.get_generation(manager, entry)
+            JETLS.request_reanalysis_for_tracked_entries!(server)
+            @test JETLS.get_generation(manager, entry) == generation + 1
+        end
+    end
+end
+
 @testset "DidChangeWatchedFilesNotification without config file" begin
     mktempdir() do tmpdir
         rootUri = filepath2uri(tmpdir)

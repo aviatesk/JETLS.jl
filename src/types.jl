@@ -343,6 +343,7 @@ signature_analysis_completion(job::AbstractSignatureAnalysisJob) =
     getfield(job, :completion)::Base.Event
 
 const AnalysisCache = LWContainer{Dict{URI,AnalysisInfo}, LWStats}
+const TrackedAnalysisEntries = CASContainer{Dict{AnalysisEntry,URI}, CASStats}
 const PendingAnalyses = CASContainer{Dict{AnalysisEntry,Union{Nothing,AnalysisRequest}}, CASStats}
 const CurrentGenerations = CASContainer{Dict{AnalysisEntry,Int}, CASStats}
 const AnalyzedGenerations = CASContainer{Dict{AnalysisEntry,Int}, CASStats}
@@ -357,6 +358,7 @@ struct AnalysisManager
     current_generations::CurrentGenerations
     analyzed_generations::AnalyzedGenerations
     debounced::DebouncedRequests
+    tracked_entries::TrackedAnalysisEntries
     instantiated_envs::InstantiatedEnvs
     worker_task::Base.RefValue{Task}
     signature_worker_tasks::Vector{Task}
@@ -369,6 +371,7 @@ struct AnalysisManager
             CurrentGenerations(),
             AnalyzedGenerations(),
             DebouncedRequests(),
+            TrackedAnalysisEntries(),
             InstantiatedEnvs(),
             Ref{Task}(), # initialized by start_analysis_worker!
             Task[], # initialized by start_signature_analysis_workers!
@@ -488,9 +491,18 @@ const Maybe{T} = Union{Nothing,T}
 
 function merge_key_value end
 
+struct ConcretizationPattern <: ConfigSection
+    pattern::Any
+    path::Maybe{Glob.FilenameMatch{String}}
+    __pattern_value__::String
+end
+@define_eq_overloads ConcretizationPattern
+merge_key_value(pattern::ConcretizationPattern) = (pattern.path, pattern.__pattern_value__)
+
 @kwdef struct FullAnalysisConfig <: ConfigSection
     debounce::Maybe{Float64} = nothing
     auto_instantiate::Maybe{Bool} = nothing
+    concretization_patterns::Maybe{Vector{ConcretizationPattern}} = nothing
 end
 @define_eq_overloads FullAnalysisConfig
 
@@ -544,6 +556,7 @@ const LOWERING_UNREACHABLE_CODE = "lowering/unreachable-code"
 const LOWERING_INACTIVE_CODE = "lowering/inactive-code"
 const LOWERING_AMBIGUOUS_SOFT_SCOPE_CODE = "lowering/ambiguous-soft-scope"
 const TOPLEVEL_ERROR_CODE = "toplevel/error"
+const TOPLEVEL_MISSING_CONCRETIZATION_CODE = "toplevel/missing-concretization"
 const TOPLEVEL_METHOD_OVERWRITE_CODE = "toplevel/method-overwrite"
 const TOPLEVEL_ABSTRACT_FIELD_CODE = "toplevel/abstract-field"
 const INFERENCE_UNDEF_GLOBAL_VAR_CODE = "inference/undef-global-var"
@@ -576,6 +589,7 @@ const ALL_DIAGNOSTIC_CODES = Set{String}(String[
     LOWERING_INACTIVE_CODE,
     LOWERING_AMBIGUOUS_SOFT_SCOPE_CODE,
     TOPLEVEL_ERROR_CODE,
+    TOPLEVEL_MISSING_CONCRETIZATION_CODE,
     TOPLEVEL_METHOD_OVERWRITE_CODE,
     TOPLEVEL_ABSTRACT_FIELD_CODE,
     INFERENCE_UNDEF_GLOBAL_VAR_CODE,
@@ -695,7 +709,8 @@ end
 
 const DEFAULT_CONFIG = JETLSConfig(;
     diagnostic = DiagnosticConfig(true, true, true, DiagnosticPattern[]),
-    full_analysis = FullAnalysisConfig(@static(JETLS_TEST_MODE ? 0.0 : 1.0), true),
+    full_analysis = FullAnalysisConfig(
+        @static(JETLS_TEST_MODE ? 0.0 : 1.0), true, ConcretizationPattern[]),
     testrunner = TestRunnerConfig(@static Sys.iswindows() ? "testrunner.bat" : "testrunner"),
     formatter = "Runic",
     completion = CompletionConfig(LaTeXEmojiConfig(missing)),

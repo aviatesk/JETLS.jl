@@ -179,6 +179,10 @@ function handle_analysis_progress_response(
         server::Server, caller::AnalysisProgressCaller, cancel_flag::CancelFlag
     )
     (; uri, invalidate, entry, notify_diagnostics, debounce, token) = caller
+    if is_abandoned_analysis_target(server, uri, entry)
+        @static JETLS_DEV_MODE && @info "Ignored delayed progress response for closed editor-managed document" entry=progress_title(entry) uri
+        return nothing
+    end
     cancellable_token = CancellableToken(token, cancel_flag)
     schedule_analysis!(server, uri, entry, invalidate;
         cancellable_token, notify_diagnostics, debounce)
@@ -380,6 +384,13 @@ function schedule_analysis!(
     )
     manager = server.state.analysis_manager
 
+    store!(manager.tracked_entries) do entries
+        get(entries, entry, nothing) == uri && return entries, nothing
+        new_entries = copy(entries)
+        new_entries[entry] = uri
+        return new_entries, nothing
+    end
+
     generation = invalidate ? increment_generation!(manager, entry) : get_generation(manager, entry)
 
     request = AnalysisRequest(
@@ -477,6 +488,7 @@ function resolve_analysis_request(server::Server, request::AnalysisRequest)
 
     if is_abandoned_request(server, request)
         @static JETLS_DEV_MODE && @info "Skipped analysis for closed editor-managed document" entry=progress_title(request.entry) uri=request.uri
+        cleanup_analysis_entry_state!(manager, request.entry)
         @goto next_request
     end
 
@@ -529,6 +541,7 @@ function resolve_analysis_request(server::Server, request::AnalysisRequest)
         # We just need to drop the methods this analysis just defined and skip the cache write.
         @static JETLS_DEV_MODE && @info "Discarding analysis result for closed editor-managed document" entry=progress_title(request.entry) uri=request.uri
         cleanup_prev_methods(analysis_result)
+        cleanup_analysis_entry_state!(manager, request.entry)
         @goto next_request
     end
 
@@ -636,24 +649,24 @@ function cleanup_prev_methods(prev_result::AnalysisResult)
     end
 end
 
-# An analysis request is "abandoned" once the document it targets is no longer
+# An analysis target is "abandoned" once its document is no longer
 # editor-managed: `file_cache` empty for an unsaved (`untitled:`/`buffer:`) URI,
-# or `notebook_cache` empty for a notebook entry. In either case the prior
-# analysis state was already evicted by `cleanup_analysis_state!`, so any
-# remaining work would only re-populate caches we just cleaned up.
-function is_abandoned_request(server::Server, request::AnalysisRequest)
+# or `notebook_cache` empty for a notebook entry. Any remaining work would only
+# re-populate caches that `didClose` has cleaned up.
+function is_abandoned_analysis_target(server::Server, uri::URI, entry::AnalysisEntry)
     state = server.state
-    uri = request.uri
     if isunsaveduri(uri)
         return get_file_info(state, uri) === nothing
     end
-    entry = request.entry
     if ((entry isa ScriptAnalysisEntry || entry isa ScriptInEnvAnalysisEntry) &&
         entry.isnotebook)
         return !is_notebook_uri(state, uri)
     end
     return false
 end
+
+is_abandoned_request(server::Server, request::AnalysisRequest) =
+    is_abandoned_analysis_target(server, request.uri, request.entry)
 
 """
     cleanup_analysis_state!(server::Server, uri::URI)
@@ -682,9 +695,9 @@ modules, so `cleanup_prev_methods` would delete the user's live methods.
 Keeping the cache also lets `workspace/diagnostic` keep reporting disk-based
 diagnostics after close.
 
-This only handles state already in the caches. Any in-flight or queued analysis
-for this entry is short-circuited separately by `is_abandoned_request` checks
-in `resolve_analysis_request`.
+This only handles state already known when `didClose` runs. Delayed progress
+responses are ignored, while any in-flight or queued analysis is short-circuited
+and cleaned up by `is_abandoned_request` checks in `resolve_analysis_request`.
 """
 function cleanup_analysis_state!(server::Server, uri::URI)
     manager = server.state.analysis_manager
@@ -702,6 +715,12 @@ function cleanup_analysis_state!(server::Server, uri::URI)
 end
 
 function cleanup_analysis_entry_state!(manager::AnalysisManager, entry::AnalysisEntry)
+    store!(manager.tracked_entries) do entries
+        haskey(entries, entry) || return entries, nothing
+        new_entries = copy(entries)
+        delete!(new_entries, entry)
+        return new_entries, nothing
+    end
     store!(manager.debounced) do debounced
         haskey(debounced, entry) || return debounced, nothing
         timer, completion = debounced[entry]
@@ -913,6 +932,20 @@ function new_analysis_result(interp::LSInterpreter, result::JET.JETToplevelResul
     analysis_result = AnalysisResult(entry, uri2diagnostics, analyzer,
         analyzed_file_infos, actual2virtual, cache_world)
     return analysis_result, replace_analysis_result
+end
+
+function request_reanalysis_for_tracked_entries!(server::Server)
+    for (entry, uri) in load(server.state.analysis_manager.tracked_entries)
+        if supports(server, :window, :workDoneProgress)
+            request_analysis_progress!(
+                server, uri, #=invalidate=#true, entry,
+                #=notify_diagnostics=#true, #=debounce=#0.0)
+        else
+            schedule_analysis!(server, uri, entry, #=invalidate=#true;
+                debounce = 0.0, notify_diagnostics = true)
+        end
+    end
+    return nothing
 end
 
 # Revise-based package analysis

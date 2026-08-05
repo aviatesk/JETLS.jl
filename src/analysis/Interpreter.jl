@@ -66,9 +66,17 @@ function JET.ConcreteInterpreter(interp::LSInterpreter, state::JET.Interpretatio
         interp.activation_done, interp.warning_reports, interp.current_node, state)
 end
 JET.ToplevelAbstractAnalyzer(interp::LSInterpreter) = interp.analyzer
+function JET.concretization_patterns(interp::LSInterpreter, filename::AbstractString)
+    base_patterns = @invoke JET.concretization_patterns(
+        interp::JET.ConcreteInterpreter, filename::AbstractString)
+    configured_patterns = configured_concretization_patterns(interp.server, filename)
+    isempty(configured_patterns) && return base_patterns
+    return Any[base_patterns...; configured_patterns...]
+end
 function JET.ToplevelAbstractAnalyzer(
         interp::LSInterpreter, concretized::BitVector;
         refresh_local_cache::Bool = true,    # This option is used by JET v0.10. TODO We can remove this once we update JET to v0.11.
+        current_toplevel_assignment::Union{Nothing,JET.ToplevelAssignment} = nothing,
         reset_report_target_modules::Bool = true, # LSInterpreter specific option
     )
     if reset_report_target_modules
@@ -76,7 +84,22 @@ function JET.ToplevelAbstractAnalyzer(
     end
     return @invoke JET.ToplevelAbstractAnalyzer(
         interp::JET.ConcreteInterpreter, concretized::BitVector;
-        refresh_local_cache)
+        refresh_local_cache, current_toplevel_assignment)
+end
+
+function configured_concretization_patterns(
+        server::Server, filename::AbstractString
+    )
+    configured = JETLS.get_config(server, :full_analysis, :concretization_patterns)
+    isempty(configured) && return Any[]
+    path_for_glob = @something JETLS.relative_workspace_path_for_config(server, filename) return Any[]
+    patterns = Any[]
+    for pattern_config in configured
+        globpath = pattern_config.path
+        globpath !== nothing && !occursin(globpath, path_for_glob) && continue
+        push!(patterns, pattern_config.pattern)
+    end
+    return patterns
 end
 
 # overloads

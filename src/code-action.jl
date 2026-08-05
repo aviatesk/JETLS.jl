@@ -55,6 +55,7 @@ function handle_CodeActionRequest(
         delete_range_code_actions!(code_actions, uri, diagnostics)
         sort_imports_code_actions!(code_actions, uri, diagnostics)
         ambiguous_soft_scope_code_actions!(code_actions, uri, diagnostics)
+        missing_concretization_code_actions!(code_actions, server, diagnostics)
     end
     if wants_kindless_actions
         result = get_file_info(server.state, uri, cancel_flag)
@@ -343,4 +344,166 @@ function ambiguous_soft_scope_code_actions!(
                         newText = data.indent * "local $(data.name)\n")]))))
     end
     return code_actions
+end
+
+function missing_concretization_code_actions!(
+        code_actions::Vector{Union{CodeAction,Command}}, server::Server,
+        diagnostics::Vector{Diagnostic}
+    )
+    for diagnostic in diagnostics
+        diagnostic.code == TOPLEVEL_MISSING_CONCRETIZATION_CODE || continue
+        data = diagnostic.data
+        data isa MissingConcretizationData || continue
+        config_path = @something jetls_config_path_for_code_action(server) continue
+        path = @something concretization_pattern_path_for_code_action(server, data.assignment_file) continue
+        edit = @something jetls_config_workspace_edit(
+            server, config_path, data.pattern, path) continue
+        action = isfile(config_path) ? "Add" : "Create"
+        title = "$action `.JETLSConfig.toml` concretization pattern for `$(data.name)`"
+        push!(code_actions, CodeAction(;
+            title,
+            kind = CodeActionKind.QuickFix,
+            diagnostics = Diagnostic[diagnostic],
+            isPreferred = true,
+            edit))
+    end
+    return code_actions
+end
+
+function jetls_config_path_for_code_action(server::Server)
+    isdefined(server.state, :root_path) || return nothing
+    return joinpath(server.state.root_path, CONFIG_FILE)
+end
+
+function concretization_pattern_path_for_code_action(
+        server::Server, filename::AbstractString
+    )
+    path = @something relative_workspace_path_for_config(server, filename) return nothing
+    return escape_path_for_glob(path)
+end
+
+function jetls_config_workspace_edit(
+        server::Server, config_path::String, pattern::String, path::String
+    )
+    config_uri = filepath2uri(config_path)
+    if isfile(config_path)
+        text = read(config_path, String)
+        appended = jetls_config_append_text(text, pattern, path)
+        if appended === nothing
+            text_edit = @something jetls_config_inline_array_edit(
+                text, pattern, path, server.state.encoding) return nothing
+        else
+            position = _offset_to_xy(
+                Vector{UInt8}(text), sizeof(text) + 1, server.state.encoding)
+            text_edit = TextEdit(;
+                range = Range(; start=position, var"end"=position),
+                newText = appended)
+        end
+        # TODO: These positions are based on disk content and may be stale when
+        # `.JETLSConfig.toml` has unsaved changes. Synchronize the config document
+        # and use its live contents and version for a versioned edit.
+        return WorkspaceEdit(;
+            changes = Dict{URI,Vector{TextEdit}}(config_uri => TextEdit[text_edit]))
+    end
+    supports_create_file_workspace_edit(server) || return nothing
+    text_edit = TextEdit(;
+        range = Range(;
+            start = Position(; line=0, character=0),
+            var"end" = Position(; line=0, character=0)),
+        newText = format_jetls_concretization_pattern(pattern, path))
+    create_file = CreateFile(; uri = config_uri)
+    text_document = OptionalVersionedTextDocumentIdentifier(;
+        uri = config_uri, version = null)
+    document_edit = TextDocumentEdit(;
+        textDocument = text_document,
+        edits = TextEdit[text_edit])
+    return WorkspaceEdit(;
+        documentChanges = Union{TextDocumentEdit, CreateFile, RenameFile, DeleteFile}[
+            create_file, document_edit])
+end
+
+function jetls_config_append_text(text::String, pattern::String, path::String)
+    configured = @something parse_configured_concretization_patterns(text) return nothing
+    has_concretization_pattern(configured, pattern, path) && return nothing
+    sep = isempty(text) ? "" : endswith(text, '\n') ? "\n" : "\n\n"
+    appended = sep * format_jetls_concretization_pattern(pattern, path)
+    added_concretization_pattern(configured, text * appended, pattern, path) || return nothing
+    return appended
+end
+
+function parse_configured_concretization_patterns(text::String)
+    parsed = TOML.tryparse(text)
+    parsed isa TOML.ParserError && return nothing
+    validated = try
+        validate_config_data(parsed)
+    catch
+        return nothing
+    end
+    full_analysis = get(validated, "full_analysis", Dict{String,Any}())
+    full_analysis isa Dict{String,Any} || return nothing
+    configured = get(full_analysis, "concretization_patterns", Any[])
+    configured isa Vector || return nothing
+    all(@nospecialize(pattern_config) -> pattern_config isa Dict{String,Any},
+        configured) || return nothing
+    return configured
+end
+
+function has_concretization_pattern(
+        configured::Vector, pattern::String, path::String
+    )
+    return any(configured) do @nospecialize pattern_config
+        pattern_config = pattern_config::Dict{String,Any}
+        return isequal(get(pattern_config, "pattern", nothing), pattern) &&
+            isequal(get(pattern_config, "path", nothing), path)
+    end
+end
+
+function format_jetls_concretization_pattern(pattern::String, path::String)
+    io = IOBuffer()
+    println(io, "[[full_analysis.concretization_patterns]]")
+    TOML.print(io, Dict("pattern" => pattern))
+    TOML.print(io, Dict("path" => path))
+    return String(take!(io))
+end
+
+function added_concretization_pattern(
+        old_configured::Vector, updated_text::String, pattern::String, path::String
+    )
+    updated = @something parse_configured_concretization_patterns(updated_text) return false
+    return length(updated) == length(old_configured) + 1 &&
+        has_concretization_pattern(updated, pattern, path)
+end
+
+const CONCRETIZATION_PATTERNS_ARRAY_REGEX = Regex(
+    "(?:\"concretization_patterns\"|'concretization_patterns'|" *
+    "concretization_patterns)[ \\t]*=[ \\t]*\\[")
+
+function jetls_config_inline_array_edit(
+        text::String, pattern::String, path::String, encoding::PositionEncodingKind.Ty
+    )
+    configured = @something parse_configured_concretization_patterns(text) return nothing
+    has_concretization_pattern(configured, pattern, path) && return nothing
+    entry = format_toml_inline_table(Dict("pattern" => pattern, "path" => path))
+    bytes = Vector{UInt8}(text)
+    for m in eachmatch(CONCRETIZATION_PATTERNS_ARRAY_REGEX, text)
+        relative_open = findlast(==('['), m.match)::Int
+        start_offset = m.offset + relative_open
+        end_offset, new_text = toml_array_entry_insertion(
+            text, start_offset, entry, isempty(configured))
+        start_position = _offset_to_xy(bytes, start_offset, encoding)
+        end_position = _offset_to_xy(bytes, end_offset, encoding)
+        text_edit = TextEdit(;
+            range = Range(; start=start_position, var"end"=end_position),
+            newText = new_text)
+        updated = apply_text_change(text, text_edit.range, text_edit.newText, encoding)
+        added_concretization_pattern(configured, updated, pattern, path) || continue
+        return text_edit
+    end
+    return nothing
+end
+
+function supports_create_file_workspace_edit(server::Server)
+    supports(server, :workspace, :workspaceEdit, :documentChanges) || return false
+    operations = getcapability(server, :workspace, :workspaceEdit, :resourceOperations)
+    return operations !== nothing && ResourceOperationKind.Create in operations
 end

@@ -413,3 +413,10 @@ function collect_workspace_uris(server::Server)
     end
     return uris
 end
+
+function relative_workspace_path_for_config(server::Server, filename::AbstractString)
+    isdefined(server.state, :root_path) || return nothing
+    root_path = server.state.root_path
+    issubdir(filename, root_path) || return nothing
+    return glob_candidate_path(filename, root_path)
+end

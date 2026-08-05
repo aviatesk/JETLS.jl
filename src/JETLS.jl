@@ -101,6 +101,7 @@ include("types.jl")
 
 include("utils/jl-syntax-macros.jl")
 include("utils/string.jl")
+include("utils/toml.jl")
 include("utils/path.jl")
 include("utils/pkg.jl")
 include("utils/JETLSTestModule.jl")
