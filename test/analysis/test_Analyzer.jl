@@ -858,4 +858,48 @@ end
     end
 end
 
+module NativeBoundaryModule
+    # these error on the callee frame, and are surfaced at their in-scope call site
+    typeassert_error(x::Int) = x::String
+    getfield_error(x::Pair{Int,Int}) = getfield(x, :nonexistent)
+    # `precompile` puts these specializations into the native inference cache, which is
+    # what makes the regression test below exercise the boundary's cache-hit path
+    precompile(typeassert_error, (Int,))
+    precompile(getfield_error, (Pair{Int,Int},))
+end
+
+call_boundary_typeassert(x::Int) = NativeBoundaryModule.typeassert_error(x)
+call_boundary_getfield(pair::Pair{Int,Int}) = NativeBoundaryModule.getfield_error(pair)
+
+@testset HierarchicalTestSet "reuse_native_inference" begin
+    @testset "analysis cache separation" begin
+        # reports are cached within `CodeInstance`s and the boundary suppresses those of
+        # out-of-target callees, so the two settings must never share analysis results
+        enabled = JETLS.LSAnalyzer(;
+            report_target_modules=(@__MODULE__,), reuse_native_inference=true)
+        disabled = JETLS.LSAnalyzer(;
+            report_target_modules=(@__MODULE__,), reuse_native_inference=false)
+        @test JET.AnalysisToken(enabled) !== JET.AnalysisToken(disabled)
+    end
+
+    @testset "out-of-target callee errors are still reported" begin
+        # Serving an out-of-target callee from the native inference cache would silence
+        # reports created on that callee frame, so definitely erroring callees
+        # (`rt === Union{}`) must keep taking the analyzer path.
+        for reuse_native_inference in (false, true)
+            let result = analyze_call(call_boundary_typeassert, (Int,);
+                    report_target_modules=(@__MODULE__,), reuse_native_inference)
+                r = only(get_reports(result))
+                @test r isa TypeAssertErrorReport
+                @test r.expected === String && r.actual === Int
+            end
+            let result = analyze_call(call_boundary_getfield, (Pair{Int,Int},);
+                    report_target_modules=(@__MODULE__,), reuse_native_inference)
+                r = only(get_reports(result))
+                @test r isa FieldErrorReport && r.field === :nonexistent
+            end
+        end
+    end
+end
+
 end # module test_LSAnalyzer

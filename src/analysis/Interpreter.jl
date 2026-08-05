@@ -6,7 +6,7 @@ using JuliaSyntax: JuliaSyntax as JS
 using Compiler: Compiler as CC
 using JET: JET, JuliaInterpreter
 using ..JETLS: AnalysisExecution, JETLS, JETLS_DEV_MODE, Server,
-    get_source_text, is_cancelled, send_progress, yield_to_endpoint
+    get_init_option, get_source_text, is_cancelled, send_progress, yield_to_endpoint
 using ..JETLS.URIs2
 using ..JETLS.LSP
 using ..JETLS.Analyzer
@@ -52,8 +52,10 @@ function LSInterpreter(
         activation_done::Union{Nothing,Base.Event} = nothing
     )
     request = execution.request
-    return LSInterpreter(
-        server, execution, LSAnalyzer(request.entry), Counter(), activation_done)
+    reuse_native_inference =
+        get_init_option(server.state.init_options, :reuse_native_inference)
+    analyzer = LSAnalyzer(request.entry; reuse_native_inference)
+    return LSInterpreter(server, execution, analyzer, Counter(), activation_done)
 end
 
 # `JET.ConcreteInterpreter` interface
