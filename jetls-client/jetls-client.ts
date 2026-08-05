@@ -529,10 +529,6 @@ async function startLanguageServer() {
     serverOptions,
     clientOptions,
   );
-  // `workspace/textDocumentContent` is still exposed as a proposed
-  // vscode-languageclient feature. JETLS sends the supported `jetls` scheme
-  // in its server capability or dynamic registration.
-  languageClient.registerProposedFeatures();
 
   statusBarItem.text = "$(sync~spin) Loading JETLS ...";
   statusBarItem.tooltip =
