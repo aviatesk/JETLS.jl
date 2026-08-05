@@ -60,13 +60,16 @@ unmatched_key_in_lsp_config_msg(path::Vector{String}) =
     unmatched_key_msg("LSP configuration contains an unknown key:", path)
 
 function store_lsp_config!(tracker::ConfigChangeTracker, server::Server, @nospecialize(config_value), source::AbstractString)
-    if !(config_value isa AbstractDict{String})
-        if config_value !== nothing
-            show_error_message(server, lazy"Unexpected config data of type $(typeof(config_value)) was passed from $source, deleting LSP configuration")
-        end
+    config_value === nothing && return delete_lsp_config!(tracker, server)
+    config_dict = try
+        validate_config_data(config_value)
+    catch err
+        err isa InvalidConfigDataError || rethrow(err)
+        error_message = sprint(showerror, err)
+        show_error_message(server,
+            lazy"Unexpected config data was passed from $source, deleting LSP configuration: $error_message")
         return delete_lsp_config!(tracker, server)
     end
-    config_dict = config_value
     for msg in migrate_deprecated_config_keys!(config_dict)
         show_warning_message(server, msg)
     end

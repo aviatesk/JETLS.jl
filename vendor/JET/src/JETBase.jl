@@ -20,21 +20,18 @@ using Core: Builtin, IntrinsicFunction, Intrinsics, SimpleVector, svec
 
 using Core.IR
 
-using .CC: @nospecs, ⊑,
-    AbsIntState, AbstractInterpreter, AbstractLattice, ArgInfo, Bottom, CFG,
-    CachedMethodTable, CallMeta, ConstCallInfo, Effects, EFFECTS_THROWS, Future,
-    InferenceParams, InferenceResult, InferenceState, InternalMethodTable, InvokeCallInfo,
-    MethodCallResult, MethodMatchInfo, MethodMatches, NOT_FOUND, OptimizationState,
-    OptimizationParams, OverlayMethodTable, RTEffects, StatementState, StmtInfo,
-    UnionSplitInfo, UnionSplitMethodMatches, VarState, VarTable, WorldRange, WorldView,
-    argextype, argtype_by_index, argtypes_to_type, compute_basic_blocks,
-    construct_postdomtree, hasintersect, ignorelimited, instanceof_tfunc,
-    nearest_common_dominator, singleton_type, slot_id, specialize_method, tmeet, tmerge,
-    typeinf_lattice, widenconst, widenlattice
+using .CC: @nospecs, AbstractInterpreter, AbstractLattice, ArgInfo, Bottom,
+    CachedMethodTable, CallMeta, ConstCallInfo, EFFECTS_THROWS, Future, InferenceParams,
+    InferenceResult, InferenceState, InvokeCallInfo, MethodCallResult, MethodMatchInfo,
+    NOT_FOUND, OptimizationParams, OptimizationState, OverlayMethodTable, RTEffects,
+    StatementState, StmtInfo, UnionSplitInfo, VarState, VarTable, WorldRange, WorldView,
+    argextype, argtype_by_index, argtypes_to_type, hasintersect, ignorelimited,
+    instanceof_tfunc, singleton_type, slot_id, specialize_method, tmeet, tmerge,
+    typeinf_lattice, widenconst, widenlattice, ⊑
 
-using Base: IdSet, PkgId, get_world_counter, generating_output
+using Base: PkgId, generating_output, get_world_counter
 
-using Base.Meta: ParseError, isexpr, lower
+using Base.Meta: isexpr, lower
 
 using Base.Experimental: @MethodTable, @overlay
 
@@ -45,13 +42,13 @@ using CodeTracking: CodeTracking
 
 using LoweredCodeUtils: LoweredCodeUtils, add_ssa_preds!, callee_matches
 
-using JuliaInterpreter: _INACTIVE_EXCEPTION, Frame, Interpreter, JuliaInterpreter
+using JuliaInterpreter: Frame, Interpreter, JuliaInterpreter, _INACTIVE_EXCEPTION
 
 using MacroTools: @capture, normalise, striplines
 
-using InteractiveUtils: InteractiveUtils, gen_call_with_extracted_types_and_kwargs
+using InteractiveUtils: gen_call_with_extracted_types_and_kwargs
 
-using Pkg: Pkg, TOML
+using Pkg: Pkg
 
 using Test:
     Broken, DefaultTestSet, Error, Fail, FallbackTestSet, FallbackTestSetException, Pass,
@@ -61,8 +58,6 @@ using Test:
 # ======
 
 const Argtypes = Vector{Any}
-
-const CONFIG_FILE_NAME = ".JET.toml"
 
 # TODO define all interface functions in JETInterface?
 
@@ -164,7 +159,7 @@ macro withmixedhash(typedef)
     push!(hash_body.args, :(return h))
     hash_func = :(function Base.hash(x::$name, h::UInt); $hash_body; end)
     eq_body = foldr(fld2typs; init = true) do (fld, typ), x
-        if typ in _EGAL_TYPES
+        if (typ in _EGAL_TYPES)::Bool
             eq_ex = :(x1.$fld === x2.$fld)
         else
             eq_ex = :((x1.$fld == x2.$fld)::Bool)
@@ -237,7 +232,10 @@ get_slotname((sv, pc)::StateAtPC, slot::Int) = sv.src.slotnames[slot]
 get_slotname(sv::State, slot::Int) = sv.src.slotnames[slot]
 
 # check if we're in a toplevel module
-istoplevelframe(sv::State) = istoplevelframe(CC.frame_instance(sv))
+function istoplevelframe(sv::State)
+    sv isa OptimizationState && error("OptimizationState is not supported at top-level")
+    return istoplevelframe(CC.frame_instance(sv))
+end
 istoplevelframe(mi::MethodInstance) = isa(mi.def, Module)
 
 # we can retrieve program-counter-level slottype during inference
@@ -667,7 +665,7 @@ const JULIA_DIR = let
     ispath(normpath(p1, "base")) ? p1 : p2
 end
 
-struct LazyPrinter; f; end
+struct LazyPrinter; f::Any; end
 Base.show(io::IO, l::LazyPrinter) = l.f(io)
 
 const AnyJETResult = Union{JETCallResult,JETToplevelResult}
@@ -814,23 +812,10 @@ General users should use high-level entry points like [`report_file`](@ref).
 function analyze_and_report_file!(interp::ConcreteInterpreter, filename::AbstractString,
                                   pkgid::Union{Nothing,PkgId} = nothing;
                                   jetconfigs...)
-    jetconfigs = apply_file_config(jetconfigs, filename)
-    entrytext = read(filename, String)
-    return analyze_and_report_text!(interp, entrytext, filename, pkgid; jetconfigs...)
-end
-
-function apply_file_config(jetconfigs, filename::AbstractString)
     isfile(filename) || throw(ArgumentError("$filename doesn't exist"))
     jetconfigs = set_if_missing(jetconfigs, :toplevel_logger, IOContext(stdout, JET_LOGGER_LEVEL => DEFAULT_LOGGER_LEVEL))
-    configfile = find_config_file(dirname(abspath(filename)))
-    if !isnothing(configfile)
-        config = parse_config_file(configfile)
-        merge!(jetconfigs, config) # overwrite configurations
-        toplevel_logger(get(jetconfigs, :toplevel_logger, nothing); filter=≥(JET_LOGGER_LEVEL_INFO)) do @nospecialize(io::IO)
-            println(io, lazy"applied configurations in $configfile")
-        end
-    end
-    return jetconfigs
+    entrytext = read(filename, String)
+    return analyze_and_report_text!(interp, entrytext, filename, pkgid; jetconfigs...)
 end
 
 set_if_missing(configs, args...) = (@nospecialize; set_if_missing!(kwargs_dict(configs), args...))
@@ -847,105 +832,6 @@ function kwargs_dict(@nospecialize configs)
         dict[Symbol(key)] = val
     end
     return dict
-end
-
-function find_config_file(dir::AbstractString)
-    next_dir = dirname(dir)
-    if (next_dir == dir || # ensure to escape infinite recursion
-        isempty(dir))      # reached to the system root
-        return nothing
-    end
-    path = normpath(dir, CONFIG_FILE_NAME)
-    return isfile(path) ? path : find_config_file(next_dir)
-end
-
-"""
-JET.jl offers [`.prettierrc` style](https://prettier.io/docs/en/configuration.html)
-configuration file support.
-This means you can use `$CONFIG_FILE_NAME` configuration file to specify any of configurations
-explained above and share that with others.
-
-When [`report_file`](@ref) or [`watch_file`](@ref) is called, it will look for
-`$CONFIG_FILE_NAME` in the directory of the given file, and search _up_ the file tree until
-a JET configuration file is (or isn't) found.
-When found, the configurations specified in the file will be applied.
-
-A configuration file can specify configurations like:
-```toml
-aggressive_constant_propagation = false # turn off aggressive constant propagation
-... # other configurations
-```
-
-Note that the following configurations should be string(s) of valid Julia code:
-- `context`: string of Julia code, which can be `parse`d and `eval`uated into `Module`
-- `concretization_patterns`: vector of string of Julia code, which can be `parse`d into a
-  Julia expression pattern expected by [`MacroTools.@capture` macro](https://fluxml.ai/MacroTools.jl/stable/pattern-matching/).
-- `toplevel_logger`: string of Julia code, which can be `parse`d and `eval`uated into `Union{IO,Nothing}`
-
-E.g. the configurations below are equivalent:
-- configurations via keyword arguments
-  ```julia
-  report_file(somefile;
-              concretization_patterns = [:(const GLOBAL_CODE_STORE = x_)],
-              toplevel_logger = IOContext(open("toplevel.txt", "w"), :JET_LOGGER_LEVEL => 1))
-  ```
-- configurations via a configuration file
-  $(let
-      text = read(normpath(@__DIR__, "..", "test", "fixtures", "..JET.toml"), String)
-      lines = split(text, '\n')
-      pushfirst!(lines, "```toml"); push!(lines, "```")
-      join(lines, "\n  ")
-  end)
-
-!!! note
-    Configurations specified as keyword arguments have precedence over those specified
-    via a configuration file.
-"""
-parse_config_file(path::AbstractString) = process_config_dict(TOML.parsefile(path))
-
-process_config_dict(configs) = process_config_dict!(kwargs_dict(configs))
-
-function process_config_dict!(config_dict::Dict{Symbol,Any})
-    context = get(config_dict, :context, nothing)
-    if !isnothing(context)
-        isa(context, String) || throw(JETConfigError(
-            "`context` should be string of Julia code", :context, context))
-        context = Core.eval(Main, trymetaparse(context, :context))
-        config_dict[:context] = context
-    end
-    concretization_patterns = get(config_dict, :concretization_patterns, nothing)
-    if !isnothing(concretization_patterns)
-        isa(concretization_patterns, Vector{String}) || throw(JETConfigError(
-            "`concretization_patterns` should be array of string of Julia expression",
-            :concretization_patterns, concretization_patterns))
-        concretization_patterns = Any[
-            trymetaparse(pat, :concretization_patterns)
-            for pat in concretization_patterns]
-        config_dict[:concretization_patterns] = concretization_patterns
-    end
-    toplevel_logger = get(config_dict, :toplevel_logger, nothing)
-    if !isnothing(toplevel_logger)
-        isa(toplevel_logger, String) || throw(JETConfigError(
-            "`toplevel_logger` should be string of Julia code",
-            :toplevel_logger, toplevel_logger))
-        toplevel_logger = Core.eval(Main, trymetaparse(toplevel_logger, :toplevel_logger))
-        config_dict[:toplevel_logger] = toplevel_logger
-    end
-    return config_dict
-end
-
-function trymetaparse(s::String, name::Symbol)
-    s = strip(s)
-    ret = Meta.parse(s; raise=false)
-    if isexpr(ret, :error) || isexpr(ret, :incomplete)
-        err = ret.args[1]
-        msg = lazy"""Failed to parse configuration string.
-          ∘ given: `$s`
-          ∘ error: $err
-        """
-        throw(JETConfigError(msg, name, s))
-    end
-    return ret
 end
 
 """
@@ -1046,59 +932,6 @@ function analyze_and_report_expr!(interp::ConcreteInterpreter, x::Union{JS.Synta
     source = lazy"$analyzername: \"$filename\""
     return JETToplevelResult(analyzer, res, source; jetconfigs...)
 end
-
-"""
-Configurations for "watch" mode.
-The configurations will only be active when used with [`watch_file`](@ref).
-
----
-- `revise_all::Bool = true` \\
-  Redirected to [`Revise.entr`](https://timholy.github.io/Revise.jl/stable/user_reference/#Revise.entr)'s `all` keyword argument.
-  When set to `true`, JET will retrigger analysis as soon as code updates are detected in
-  any module tracked by Revise.
-  Currently when encountering `import/using` statements, JET won't perform analysis, but
-  rather will just load the modules as usual execution (this also means Revise will track
-  those modules).
-  So if you're editing both files analyzed by JET and modules that are used within the files,
-  this configuration should be enabled.
----
-- `revise_modules = nothing` \\
-  Redirected to [`Revise.entr`](https://timholy.github.io/Revise.jl/stable/user_reference/#Revise.entr)'s `modules` positional argument.
-  If a iterator of `Module` is given, JET will retrigger analysis whenever code in `modules` updates.
-
-  !!! tip
-      This configuration is useful when your're also editing files that are not tracked by Revise,
-      e.g. editing functions defined in `Base`:
-      ```julia-repl
-      # re-perform analysis when you make a change to `Base`
-      julia> watch_file(yourfile; revise_modules = [Base])
-      ```
----
-"""
-struct WatchConfig
-    # Revise configurations
-    revise_all::Bool
-    revise_modules
-    function WatchConfig(; revise_all::Bool = true,
-                           revise_modules = nothing,
-                           __jetconfigs...)
-        return new(revise_all, revise_modules)
-    end
-end
-
-function watch_file_with_func(func, args...; jetconfigs...)
-    try
-        return _watch_file_with_func(func, args...; jetconfigs...)
-    catch err
-        if !(err isa MethodError && err.f === _watch_file_with_func)
-            rethrow(err)
-        end
-        error("Revise.jl is not loaded; load Revise and try again.")
-    end
-end
-
-# Stub to be filled out by loading the Revise extension
-function _watch_file_with_func end
 
 # Test.jl integration
 # -------------------
@@ -1271,13 +1104,7 @@ const GENERAL_CONFIGURATIONS = Set{Symbol}((
     :context, :analyze_from_definitions, :concretization_patterns, :virtualize, :toplevel_logger,
     # ui
     :print_toplevel_success, :print_inference_success, :fullpath, :sourceinfo, :stacktrace_types_limit,
-    :vscode_console_output,
-    # watch
-    :revise_all, :revise_modules))
-for (Params, Func) = ((InferenceParams, JETInferenceParams),
-                      (OptimizationParams, JETOptimizationParams))
-    push!(GENERAL_CONFIGURATIONS, Base.kwarg_decl(only(methods(Func, (Params,))))...)
-end
+    :vscode_console_output))
 
 # interface
 # =========

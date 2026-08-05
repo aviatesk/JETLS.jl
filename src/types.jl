@@ -847,6 +847,7 @@ end
 # Type aliases for document-synchronization caches using `SWContainer` (sequential-only updates)
 const FileCache = SWContainer{Base.PersistentDict{URI,FileInfo}, SWStats}
 const SavedFileCache = SWContainer{Base.PersistentDict{URI,SavedFileInfo}, SWStats}
+const RejectedTextDocuments = SWContainer{Base.PersistentDict{URI,Nothing}, SWStats}
 const NotebookCache = SWContainer{Base.PersistentDict{URI,NotebookInfo}, SWStats}
 const CellToNotebookMap = SWContainer{Base.PersistentDict{URI,URI}, SWStats} # cell URI -> notebook URI
 
@@ -917,6 +918,8 @@ end
 mutable struct ServerState
     const file_cache::FileCache # syntactic analysis cache (synced with `textDocument/didChange`)
     const saved_file_cache::SavedFileCache # syntactic analysis cache (synced with `textDocument/didSave`)
+    # Prevent requests for documents rejected by `didOpen` from waiting for a `FileInfo`.
+    const rejected_text_documents::RejectedTextDocuments
     const notebook_cache::NotebookCache # notebook document cache (synced with `notebookDocument/did*`), mapping notebook URIs to their notebook info
     const cell_to_notebook::CellToNotebookMap # maps cell URIs to their notebook URI
     # Cache for files not synced via document-synchronization (unsynced files).
@@ -958,6 +961,7 @@ mutable struct ServerState
         return new(
             #=file_cache=# FileCache(),
             #=saved_file_cache=# SavedFileCache(),
+            #=rejected_text_documents=# RejectedTextDocuments(),
             #=notebook_cache=# NotebookCache(),
             #=cell_to_notebook=# CellToNotebookMap(),
             #=unsynced_file_cache=# UnsyncedFileCache(),

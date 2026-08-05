@@ -185,8 +185,7 @@ using Test
         @test req.params.documentation isa MarkupContent
     end
 
-    test_roundtrip("""
-        {
+    test_roundtrip("""{
             "jsonrpc": "2.0",
             "id": 0,
             "method": "initialize",
@@ -199,8 +198,7 @@ using Test
                 "capabilities": {},
                 "workspaceFolders": []
             }
-        }
-        """) do init_req
+        }""") do init_req
         @test init_req isa InitializeRequest
         @test init_req.jsonrpc == "2.0"
         @test init_req.id == 0

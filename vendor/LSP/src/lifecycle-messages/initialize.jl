@@ -303,7 +303,8 @@ end
 `TextDocumentClientCapabilities` define capabilities the editor / tool provides on text documents.
 """
 @interface TextDocumentClientCapabilities begin
-    # synchronization::Union{TextDocumentSyncClientCapabilities, Nothing} = nothing
+    "Defines which synchronization capabilities the client supports."
+    synchronization::Union{Nothing, TextDocumentSyncClientCapabilities} = nothing
 
     """
     Capabilities specific to the `textDocument/completion` request.

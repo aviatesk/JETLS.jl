@@ -4,6 +4,7 @@ Project.toml.bak
 Manifest.toml
 Manifest-*.toml
 LocalPreferences.toml
+!test/LocalPreferences.toml
 .envrc
 **/.JETLSConfig.toml
 !.JETLSConfig.toml

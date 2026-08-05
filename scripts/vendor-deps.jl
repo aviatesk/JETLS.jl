@@ -333,7 +333,9 @@ end
 function update_workspace_project!(
         workspace_path::AbstractString,
         uuid_mapping::Dict{UUID, UUID},
-        vendor_base_path::AbstractString
+        vendor_dir::AbstractString,
+        use_local_path::Bool,
+        rev::Union{String, Nothing}
     )
     project_path = joinpath(workspace_path, "Project.toml")
     isfile(project_path) || return
@@ -361,8 +363,21 @@ function update_workspace_project!(
         end
 
         for dep_name in vendored_deps
-            project["sources"][dep_name] = Dict("path" => joinpath(vendor_base_path, dep_name))
-            @info "  Added source entry in $(basename(workspace_path))/Project.toml for $dep_name"
+            if use_local_path
+                vendor_base_path = relpath(vendor_dir, workspace_path)
+                project["sources"][dep_name] = Dict{String, Any}(
+                    "path" => joinpath(vendor_base_path, dep_name)
+                )
+                @info "  Added local source for $dep_name in $(basename(workspace_path))"
+            else
+                rev isa String || error("A revision is required for remote vendored sources")
+                project["sources"][dep_name] = Dict{String, Any}(
+                    "url" => "https://github.com/aviatesk/JETLS.jl",
+                    "subdir" => joinpath("vendor", dep_name),
+                    "rev" => rev
+                )
+                @info "  Added remote source for $dep_name in $(basename(workspace_path))"
+            end
         end
     end
 
@@ -373,6 +388,43 @@ function update_workspace_project!(
     end
 end
 
+const DEVELOPMENT_PREFERENCE_KEYS = (
+    "JETLS" => "JETLS_DEV_MODE",
+    "Revise" => "revise_structs",
+)
+
+function remove_development_preferences!(project::Dict{String, Any})::Bool
+    preferences = get(project, "preferences", nothing)
+    preferences isa Dict{String, Any} || return false
+
+    modified = false
+    for (package_name, preference_key) in DEVELOPMENT_PREFERENCE_KEYS
+        package_preferences = get(preferences, package_name, nothing)
+        package_preferences isa Dict{String, Any} || continue
+        if haskey(package_preferences, preference_key)
+            delete!(package_preferences, preference_key)
+            isempty(package_preferences) && delete!(preferences, package_name)
+            modified = true
+        end
+    end
+    modified && isempty(preferences) && delete!(project, "preferences")
+    return modified
+end
+
+function validate_no_development_preferences(project::Dict{String, Any})
+    preferences = get(project, "preferences", nothing)
+    preferences isa Dict{String, Any} || return nothing
+
+    for (package_name, preference_key) in DEVELOPMENT_PREFERENCE_KEYS
+        package_preferences = get(preferences, package_name, nothing)
+        package_preferences isa Dict{String, Any} || continue
+        if haskey(package_preferences, preference_key)
+            error("Development preference $package_name.$preference_key leaked into release Project.toml")
+        end
+    end
+    return nothing
+end
+
 function update_project_with_vendored_deps(
         uuid_mapping::Dict{UUID, UUID},
         all_vendored_packages::Vector{Pair{String, UUID}},
@@ -381,6 +433,7 @@ function update_project_with_vendored_deps(
     )
     project_path = joinpath(CURRENT_DIR, "Project.toml")
     project = TOML.parsefile(project_path)
+    remove_development_preferences!(project)
 
     for (dep_name, dep_uuid_str) in project["deps"]
         dep_uuid = UUID(dep_uuid_str)
@@ -441,7 +494,7 @@ function update_project_with_vendored_deps(
             workspace_path = joinpath(CURRENT_DIR, workspace_name)
             if isdir(workspace_path)
                 @info "Processing workspace: $workspace_name"
-                update_workspace_project!(workspace_path, uuid_mapping, joinpath("..", "vendor"))
+                update_workspace_project!(workspace_path, uuid_mapping, VENDOR_DIR, use_local_path, rev)
             end
         end
     end
@@ -495,6 +548,14 @@ function vendor_dependencies_from_branch(config::Config)
     cp(main_path, backup_path; force=true)
     @info "Backed up Project.toml to $(basename(backup_path))"
 
+    project = TOML.parsefile(main_path)
+    if remove_development_preferences!(project)
+        open(main_path, "w") do io
+            TOML.print(io, project)
+        end
+        @info "Removed development-only preferences from release Project.toml"
+    end
+
     workspace_projects = get_workspace_projects()
     for workspace_name in workspace_projects
         workspace_path = joinpath(CURRENT_DIR, workspace_name)
@@ -545,6 +606,7 @@ function print_help()
     Effects:
       - Replace Project.toml files with versions from BRANCH when available,
         then rewrite their vendored dependency metadata
+      - Remove development-only preferences from the root Project.toml
       - Save fetched project files as Project.toml.bak before rewriting them
       - Run Pkg.update() before rebuilding the vendored dependency set
       - Replace package directories in vendor/ and remove stale directories
@@ -656,6 +718,7 @@ function vendor_loaded_packages(use_local_path::Bool, rev::Union{String, Nothing
     project_path = joinpath(CURRENT_DIR, "Project.toml")
     project = Pkg.Types.read_project(project_path)
     Pkg.Types.write_project(project, project_path)
+    validate_no_development_preferences(TOML.parsefile(project_path))
 
     @info "Vendor isolation complete!"
     @info "Vendored packages are in: $VENDOR_DIR"

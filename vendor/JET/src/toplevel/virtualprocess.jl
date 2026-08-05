@@ -216,7 +216,7 @@ These configurations will be active for all the top-level entries explained in t
       concrete call sites will produce more accurate results than analysis entered from
       (maybe not concrete-typed) method signatures.
 
-  Also see: [`report_file`](@ref), [`watch_file`](@ref), [`report_package`](@ref)
+  Also see: [`report_file`](@ref), [`report_package`](@ref)
 ---
 - `concretization_patterns::Vector{Any} = Any[]` \\
   Specifies a customized top-level code concretization strategy.
@@ -744,9 +744,6 @@ function analyze_from_definitions!(interp::ConcreteInterpreter, config::Toplevel
     succeeded = Ref(0)
     start = time()
     analyzer = ToplevelAbstractAnalyzer(interp, non_toplevel_concretized; refresh_local_cache = false)
-    if analyzer isa BasicJETAnalyzer
-        analyzer = FromDefinitionJETAnalyzer(analyzer.state, analyzer.analysis_token, analyzer.method_table, analyzer.config)
-    end
     entrypoint = config.analyze_from_definitions
     res = InterpretationState(interp).res
     n_sigs = length(res.signature_infos)

@@ -15,27 +15,43 @@ on:
 
 jobs:
   test:
-    name: Test JETLS.jl with release environment
     if: github.event_name == 'pull_request' && github.event.action != 'closed'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: julia-actions/setup-julia@v2
-        with:
-          version: "1.12" # most stable version
-          arch: x64
-      - uses: julia-actions/cache@v2
-
-      - uses: julia-actions/julia-buildpkg@latest
-      - uses: julia-actions/julia-runtest@latest
+    uses: ./.github/workflows/test-matrix.yml
+    with:
+      coverage: false # coverage tracking is a master CI concern
+      include-nightly: false # an unreleased Julia must not block a release
 
   test_app:
     if: github.event_name == 'pull_request' && github.event.action != 'closed'
     uses: ./.github/workflows/test-app.yml
+    with:
+      release-installation: true
 
   check_schemas:
     if: github.event_name == 'pull_request' && github.event.action != 'closed'
     uses: ./.github/workflows/check-schemas.yml
+
+  required_checks:
+    name: Required release checks
+    if: >-
+      always() &&
+      github.event_name == 'pull_request' &&
+      github.event.action != 'closed'
+    needs:
+      - test
+      - test_app
+      - check_schemas
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check results
+        env:
+          TEST_RESULT: ${{ needs.test.result }}
+          TEST_APP_RESULT: ${{ needs.test_app.result }}
+          CHECK_SCHEMAS_RESULT: ${{ needs.check_schemas.result }}
+        run: |
+          test "$TEST_RESULT" = success
+          test "$TEST_APP_RESULT" = success
+          test "$CHECK_SCHEMAS_RESULT" = success
 
   docs:
     name: Documentation

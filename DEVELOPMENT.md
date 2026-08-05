@@ -84,24 +84,29 @@ Note that error handling behavior (whether errors are caught or propagated) is
 controlled by `JETLS_TEST_MODE`, not `JETLS_DEV_MODE`.
 See the "[`JETLS_TEST_MODE`](#jetls_test_mode)" section for details.
 
-You can configure `JETLS_DEV_MODE` using Preferences.jl:
+`JETLS_DEV_MODE` defaults to `false` when no preference is configured. The
+master development project exports `JETLS_DEV_MODE = true` and
+`Revise.revise_structs = true`, so local checkouts automatically enable the
+Revise-based analysis used to develop JETLS. These development-only exported
+preferences are removed by `scripts/vendor-deps.jl` when preparing a release.
+
+You can override `JETLS_DEV_MODE` locally using Preferences.jl:
 ```julia-repl
 julia> using Preferences
 
-julia> Preferences.set_preferences!("JETLS", "JETLS_DEV_MODE" => true; force=true) # enable the dev mode
+julia> Preferences.set_preferences!("JETLS", "JETLS_DEV_MODE" => false; force = true)
 ```
-Alternatively, you can directly edit the LocalPreferences.toml file.
-
-While `JETLS_DEV_MODE` is disabled by default, we _strongly recommend enabling
-it during JETLS development_. For development work, we suggest creating the
-following LocalPreferences.toml file in the root directory of this repository:
-> LocalPreferences.toml
+Alternatively, create a `LocalPreferences.toml` file in the repository root:
 ```toml
 [JETLS]
-JETLS_DEV_MODE = true # enable the dev mode of JETLS
+JETLS_DEV_MODE = false
+```
 
+When testing JETLS with an unreleased Julia version, you may additionally need
+to enable JET's development mode locally:
+```toml
 [JET]
-JET_DEV_MODE = true # additionally, allow JET to be loaded on nightly
+JET_DEV_MODE = true
 ```
 
 ## `JETLS_TEST_MODE`
@@ -111,8 +116,8 @@ When `JETLS_TEST_MODE` is enabled, the server disables the `try`/`catch` error
 recovery in message handling, ensuring that errors are properly raised during
 tests rather than being suppressed.
 
-This mode is configured through LocalPreferences.toml and is automatically
-enabled in the test environment (see [test/LocalPreferences.toml](./test/LocalPreferences.toml)).
+This mode is exported by the test environment and automatically enabled there
+(see [`test/Project.toml`](./test/Project.toml)).
 
 The error handling behavior in `handle_message` follows this logic:
 - When `!JETLS_TEST_MODE`: Errors are caught and logged, allowing the server to continue running
@@ -341,6 +346,14 @@ Both scripts support a `--check` flag that exits with an error
 if the output is out of date. CI runs them in this mode to
 ensure the generated files are kept in sync.
 
+Additionally, the TOML schema block shown in
+[`docs/src/configuration.md`](./docs/src/configuration.md)
+is generated during the docs build by
+[`docs/config-schema-block.jl`](./docs/config-schema-block.jl)
+, which asserts that its entries stay in sync with the config structs.
+When you add or remove config fields, update its entries as well,
+otherwise the docs build fails.
+
 ## Updating Compiler.jl snapshots
 
 JET and JETLS use the local [`Compiler`](./Compiler/) package. Its
@@ -406,7 +419,8 @@ The release process is automated via `scripts/prepare-release.sh`:
 ```
 
 This script performs all the steps below automatically and creates a pull request.
-After the script completes:
+Use `--remote` and `--source-branch` to select a source other than
+`origin/master`. After the script completes:
 
 1. **Merge the pull request using "Create a merge commit" (not squash or rebase).**
    This preserves the merge history from `master`, allowing you to track which
@@ -418,6 +432,8 @@ After the script completes:
 
 After the PR is merged, `CHANGELOG.md` on `master` will be automatically updated
 by the CI workflow.
+
+Use `scripts/update-release.sh` to refresh an existing release pull request.
 
 #### Manual steps
 
@@ -437,6 +453,9 @@ The `prepare-release.sh` script automates the following steps:
    julia --startup-file=no --project=. scripts/vendor-deps.jl --source-branch=master --local
    ```
    This generates `vendor/` with local path references in `[sources]`.
+
+   The vendoring step also removes the development-only `JETLS_DEV_MODE` and
+   `Revise.revise_structs` preferences from the release `Project.toml`.
 
 3. Commit and push the vendor directory
    ```bash

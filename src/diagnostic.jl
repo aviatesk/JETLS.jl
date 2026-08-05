@@ -41,7 +41,7 @@ function parse_diagnostic_severity(
     end
 end
 
-function parse_diagnostic_pattern(x::AbstractDict{String})
+function parse_diagnostic_pattern(x::Dict{String,Any})
     if !haskey(x, "pattern")
         throw(DiagnosticConfigError("Missing required field `pattern` in diagnostic pattern"))
     end
@@ -52,7 +52,7 @@ function parse_diagnostic_pattern(x::AbstractDict{String})
     end
 
     for key in keys(x)
-        if key::String ∉ ("pattern", "match_by", "match_type", "severity", "path")
+        if key ∉ ("pattern", "match_by", "match_type", "severity", "path")
             throw(DiagnosticConfigError(
                 lazy"Unknown field \"$key\" in diagnostic pattern for pattern \"$pattern_value\". Valid fields are: pattern, match_by, match_type, severity, path"))
         end

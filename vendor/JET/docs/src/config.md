@@ -34,14 +34,6 @@ JET.configured_reports
 JET.ToplevelConfig
 ```
 
-## [Configurations for Abstract Interpretation](@id abstractinterpret-config)
-
-```@docs
-JET.JETInferenceParams
-JET.CC.InferenceParams
-JET.CC.OptimizationParams
-```
-
 ## [Print Configurations](@id print-config)
 
 ```@docs
@@ -52,16 +44,4 @@ JET.PrintConfig
 
 ```@docs
 JET.VSCode.VSCodeConfig
-```
-
-## [Watch Configurations](@id watch-config)
-
-```@docs
-JET.WatchConfig
-```
-
-## [Configuration File](@id config-file)
-
-```@docs
-JET.parse_config_file
 ```

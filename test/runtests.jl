@@ -26,6 +26,7 @@ end
         @testset "native-inference" include("utils/test_native_inference.jl")
     end
     @testset "analysis" verbose=true begin
+        @testset "full analysis" include("analysis/test_full_analysis.jl")
         @testset "occurrence" include("analysis/test_occurrence_analysis.jl")
         @testset "cfg" include("analysis/test_cfg_analysis.jl")
         @testset "LSAnalyzer" include("analysis/test_Analyzer.jl")
@@ -36,6 +37,7 @@ end
     @testset "config" include("test_config.jl")
     @testset "URIs2" include("test_URIs2.jl")
     @testset "registration" include("test_registration.jl")
+    @testset "document synchronization" include("test_document_synchronization.jl")
     @testset "completions" include("test_completions.jl")
     @testset "signature help" include("test_signature_help.jl")
     @testset "declaration" include("test_declaration.jl")

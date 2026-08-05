@@ -11,3 +11,7 @@ Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 InteractiveUtils = "1.11"
 Pkg = "1.11.0"
 Test = "1.11.0"
+
+[preferences.JETLS]
+JETLS_DEV_MODE = false
+JETLS_TEST_MODE = true # disable the `try/catch` in `handle_message` when testing

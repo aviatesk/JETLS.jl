@@ -42,5 +42,5 @@ test = ["Aqua", "CassetteOverlay", "DataFrames", "Dates", "DeepDiffs", "Distribu
 
 [sources.CodeTracking]
 subdir = "vendor/CodeTracking"
-rev = "92e754ed987cd20e0db46e0976bd7279bb572c77"
+rev = "ce9d99793f08fecbfa99fe34869dee87436e62ee"
 url = "https://github.com/aviatesk/JETLS.jl"

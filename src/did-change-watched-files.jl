@@ -92,11 +92,21 @@ function load_file_config!(on_difference, server::Server, filepath::AbstractStri
         isfile(filepath) || return old_data, nothing
         parsed = TOML.tryparsefile(filepath)
         parsed isa TOML.ParserError && return old_data, nothing
+        config_dict = try
+            validate_config_data(parsed)
+        catch err
+            err isa InvalidConfigDataError || rethrow(err)
+            show_error_message(server, """
+                Failed to load configuration file at $filepath:
+                $(sprint(showerror, err))
+                """)
+            return old_data, nothing
+        end
 
-        for msg in migrate_deprecated_config_keys!(parsed)
+        for msg in migrate_deprecated_config_keys!(config_dict)
             show_warning_message(server, msg)
         end
-        new_file_config = parse_config_dict(parsed, filepath)
+        new_file_config = parse_config_dict(config_dict, filepath)
         if new_file_config isa AbstractString
             show_error_message(server, new_file_config)
             return old_data, nothing

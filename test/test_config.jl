@@ -3,6 +3,8 @@ module test_config
 using Test
 using JETLS
 
+include("HierarchicalTestSet.jl")
+
 @testset "Configuration utilities" begin
     @testset "`get_default_config`" begin
         @test JETLS.get_default_config(:testrunner, :executable) ==
@@ -175,6 +177,85 @@ end
     end
 end
 
+@testset "`validate_config_data` enforces concrete untyped data" begin
+    let config_data = Dict{Symbol,Any}(:diagnostic => Dict{String,Any}())
+        err = try
+            JETLS.validate_config_data(config_data)
+            nothing
+        catch e; e; end
+        @test err isa JETLS.InvalidConfigDataError
+        message = sprint(showerror, err)
+        @test occursin("expected `Dict{String,Any}`", message)
+        @test occursin("got `Dict{Symbol, Any}`", message)
+    end
+
+    let config_data = Dict{String,Any}("diagnostic" => Dict("enabled" => true))
+        err = try
+            JETLS.validate_config_data(config_data)
+            nothing
+        catch e; e; end
+        @test err isa JETLS.InvalidConfigDataError
+        message = sprint(showerror, err)
+        @test occursin("at `diagnostic`", message)
+        @test occursin("expected `Dict{String,Any}`", message)
+        @test occursin("got `Dict{String, Bool}`", message)
+    end
+
+    let config_data = Dict{String,Any}(
+            "full_analysis" => Dict{String,Any}(
+                "concretization_patterns" => Any[
+                    Dict("pattern" => "USE_PULSE = x_")]))
+        err = try
+            JETLS.validate_config_data(config_data)
+            nothing
+        catch e; e; end
+        @test err isa JETLS.InvalidConfigDataError
+        message = sprint(showerror, err)
+        @test occursin("at `full_analysis.concretization_patterns[1]`", message)
+        @test occursin("expected `Dict{String,Any}`", message)
+    end
+
+    let executable = SubString("jetls", 1, 5),
+        config_data = Dict{String,Any}(
+            "testrunner" => Dict{String,Any}("executable" => executable))
+        err = try
+            JETLS.validate_config_data(config_data)
+            nothing
+        catch e; e; end
+        @test err isa JETLS.InvalidConfigDataError
+        message = sprint(showerror, err)
+        @test occursin("at `testrunner.executable`", message)
+        @test occursin("expected `String`", message)
+        @test occursin("got `SubString{String}`", message)
+    end
+
+    let patterns = @view(Any[Dict{String,Any}()][1:1]),
+        config_data = Dict{String,Any}(
+            "diagnostic" => Dict{String,Any}("patterns" => patterns))
+        err = try
+            JETLS.validate_config_data(config_data)
+            nothing
+        catch e; e; end
+        @test err isa JETLS.InvalidConfigDataError
+        message = sprint(showerror, err)
+        @test occursin("at `diagnostic.patterns`", message)
+        @test occursin("expected `Vector`", message)
+    end
+
+    let config_data = Dict{String,Any}(
+            "testrunner" => Dict{String,Any}("executable" => "jetls"),
+            "full_analysis" => Dict{String,Any}(
+                "concretization_patterns" => String["A = x_"]))
+        @test JETLS.validate_config_data(config_data) === config_data
+    end
+    let config_data = Dict{String,Any}(
+            "testrunner" => Dict{String,Any}("executable" => "jetls"),
+            "full_analysis" => Dict{String,Any}(
+                "concretization_patterns" => Any["A = x_"]))
+        @test JETLS.validate_config_data(config_data) === config_data
+    end
+end
+
 @testset "`parse_dict_value` error messages include the dotted path" begin
     # Wrong leaf type at top level (single-segment path).
     let err = try
@@ -217,7 +298,7 @@ end
         catch e; e; end
         @test err isa ErrorException
         @test occursin("Invalid value at `diagnostic.patterns`", err.msg)
-        @test occursin("expected an array", err.msg)
+        @test occursin("expected a vector", err.msg)
     end
 
     # Formatter field expects a string or `{custom = ...}` table.
@@ -376,9 +457,9 @@ end
     deprecations = Pair{Vector{String},Union{Nothing,Vector{String}}}[
         ["inlay_hint", "block_end_min_lines"] => ["inlay_hint", "block_end", "min_lines"]
     ]
-    d = Dict{String,Any}(
+    d = JETLS.validate_config_data(Dict{String,Any}(
         "inlay_hint" => Dict{String,Any}(
-            "block_end_min_lines" => 7))
+            "block_end_min_lines" => 7)))
     warnings = JETLS.migrate_deprecated_config_keys!(d, deprecations)
     @test length(warnings) == 1
     @test occursin("`inlay_hint.block_end_min_lines` is deprecated", warnings[1])
@@ -391,10 +472,10 @@ end
     deprecations = Pair{Vector{String},Union{Nothing,Vector{String}}}[
         ["completion", "method_signature", "prepend_inference_result"] => nothing
     ]
-    d = Dict{String,Any}(
+    d = JETLS.validate_config_data(Dict{String,Any}(
         "completion" => Dict{String,Any}(
             "method_signature" => Dict{String,Any}(
-                "prepend_inference_result" => true)))
+                "prepend_inference_result" => true))))
     warnings = JETLS.migrate_deprecated_config_keys!(d, deprecations)
     @test length(warnings) == 1
     @test occursin("`completion.method_signature.prepend_inference_result` is deprecated", warnings[1])
