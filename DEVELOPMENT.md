@@ -419,7 +419,8 @@ The release process is automated via `scripts/prepare-release.sh`:
 ```
 
 This script performs all the steps below automatically and creates a pull request.
-After the script completes:
+Use `--remote` and `--source-branch` to select a source other than
+`origin/master`. After the script completes:
 
 1. **Merge the pull request using "Create a merge commit" (not squash or rebase).**
    This preserves the merge history from `master`, allowing you to track which
@@ -431,6 +432,8 @@ After the script completes:
 
 After the PR is merged, `CHANGELOG.md` on `master` will be automatically updated
 by the CI workflow.
+
+Use `scripts/update-release.sh` to refresh an existing release pull request.
 
 #### Manual steps
 
