@@ -1,31 +1,6 @@
 # Document synchronization
 # ========================
 
-const NOTEBOOK_DOCUMENT_SYNC_REGISTRATION_ID = "jetls-notebook-document-sync"
-const NOTEBOOK_DOCUMENT_SYNC_REGISTRATION_METHOD = "notebookDocument/sync"
-
-notebook_document_sync_selector() =
-    NotebookDocumentSyncOptionsNotebookSelectorItem[
-        NotebookDocumentSyncOptionsNotebookSelectorItem(;
-            notebook = "jupyter-notebook",
-            cells = NotebookDocumentSyncOptionsNotebookSelectorCellsItem[
-                NotebookDocumentSyncOptionsNotebookSelectorCellsItem(; language = "julia")])]
-
-function notebook_document_sync_options()
-    return NotebookDocumentSyncOptions(;
-        notebookSelector = notebook_document_sync_selector(),
-        save = true)
-end
-
-function notebook_document_sync_registration()
-    return Registration(;
-        id = NOTEBOOK_DOCUMENT_SYNC_REGISTRATION_ID,
-        method = NOTEBOOK_DOCUMENT_SYNC_REGISTRATION_METHOD,
-        registerOptions = NotebookDocumentSyncRegistrationOptions(;
-            notebookSelector = notebook_document_sync_selector(),
-            save = true))
-end
-
 get_notebook_info(state::ServerState, uri::URI, default=nothing) =
     get(load(state.notebook_cache), uri, default)
 
