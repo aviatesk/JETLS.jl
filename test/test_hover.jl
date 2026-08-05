@@ -126,6 +126,10 @@ end
 module M_undoc_binding
     const undocumented_binding = 42
 end
+module M_mutable_global
+    mutable_global = 42
+    global typed_mutable_global::Int = 42
+end
 module M_doc_func
     """Documented method."""
     func(x::Int) = x
@@ -136,6 +140,13 @@ end
 module M_alias_const
     const mycos = cos
 end
+module M_abstract_binding_state end
+Core.eval(M_abstract_binding_state, Expr(:const, :release_commit,
+    JETLS.JET.AbstractBindingState(true, false, String)))
+Core.eval(M_abstract_binding_state, Expr(:const, :documented_release_commit,
+    JETLS.JET.AbstractBindingState(true, false, String)))
+Core.eval(M_abstract_binding_state,
+    :(Base.@doc "State-backed binding docs." documented_release_commit))
 module M_overloaded
     """Generic doc for `op`."""
     op(x) = x
@@ -205,6 +216,47 @@ end
         hover_test("undocumented_binding│", "undocumented_binding";
             context_module = M_undoc_binding,
             notpat = "No documentation found")
+        # A plain value's auto-generated summary only restates the header type.
+        hover_test("undocumented_binding│", "(global) undocumented_binding :: $Int";
+            context_module = M_undoc_binding,
+            notpat = "Supertype Hierarchy")
+    end
+
+    # An assignment LHS carries no inferred type of its own, so a definition site
+    # shows the type a reference to the same binding shows.
+    @testset "global definition site" begin
+        hover_test("const undocumented_binding│ = 42", "(global) undocumented_binding :: $Int";
+            context_module = M_undoc_binding)
+        hover_test("const documented_binding│ = 42", "Documented binding.";
+            context_module = M_doc_binding)
+        hover_test("mutable_global│ = 42", "(global) mutable_global :: Any";
+            context_module = M_mutable_global)
+        hover_test("typed_mutable_global│ = 42", "(global) typed_mutable_global :: $Int";
+            context_module = M_mutable_global)
+    end
+
+    @testset "script-analysis binding state" begin
+        hover_test("release_commit│", "(global) release_commit :: String";
+            context_module = M_abstract_binding_state,
+            notpat = "AbstractBindingState")
+        hover_test("""
+            const release_commit│ = get(ENV, "DOCUMENTER_RELEASE_COMMIT", "")
+        """, "(global) release_commit :: String";
+            context_module = M_abstract_binding_state,
+            notpat = "AbstractBindingState")
+        hover_test("documented_release_commit│", "State-backed binding docs.";
+            context_module = M_abstract_binding_state,
+            notpat = "AbstractBindingState")
+        # The unused where-var `S` makes the surrounding toplevel fail to lower
+        # (`ctx === nothing`), so the dotted path goes through the
+        # `resolve_global_const` fallback, which must unwrap the placeholder too.
+        hover_test("""
+            function lowerfail(x::T) where {T,S}
+                M_abstract_binding_state.release_commit│
+            end
+            """, "release_commit :: String";
+            context_module = M_abstract_binding_state,
+            notpat = "AbstractBindingState")
     end
 
     @testset "non-existent identifier" begin

@@ -74,21 +74,66 @@ function closure_argnames(po::Core.PartialOpaque, nargs::Int)
 end
 
 """
+    abstract_binding_state_typ(binding_state::JET.AbstractBindingState) ->
+        lattice element or nothing
+
+JET's script analysis materializes non-concretized global `const` bindings as
+`JET.AbstractBindingState` placeholders in the analyzed module's namespace (see
+the "Concretize `AbstractBindingState`" HACK notes in JET). Reflection that
+reads such a binding's value should surface the analysis-inferred binding type
+stored in the state instead of the placeholder itself. Returns `nothing` when
+the state carries no type.
+"""
+abstract_binding_state_typ(binding_state::JET.AbstractBindingState) =
+    isdefined(binding_state, :typ) ? binding_state.typ : nothing
+
+"""
+    global_binding_typ(binfo::JL.BindingInfo, world::UInt) ->
+        lattice element or nothing
+
+Type to display for a resolved global binding when a byte-range type query
+can't supply one — most notably at an assignment LHS, which is a store and so
+carries no inferred type, and whose `K"BindingId"` node
+[`resolve_global_const`](@ref) doesn't accept either.
+
+Mirrors what inference reports at a *reference* to the same binding: the
+constant value for a `const` binding (unwrapping `JET.AbstractBindingState`
+placeholders via [`abstract_binding_state_typ`](@ref)), and the declared
+binding type otherwise.
+"""
+function global_binding_typ(binfo::JL.BindingInfo, world::UInt)
+    mod = @something binfo.mod return nothing
+    name = Symbol(binfo.name)
+    Base.invoke_in_world(world, isdefinedglobal, mod, name) || return nothing
+    if Base.invoke_in_world(world, isconst, mod, name)
+        value = Base.invoke_in_world(world, getglobal, mod, name)
+        value isa JET.AbstractBindingState && return abstract_binding_state_typ(value)
+        return Core.Const(value)
+    end
+    return Base.invoke_in_world(world, Core.get_binding_type, mod, name)
+end
+
+"""
     resolve_global_const(context_module::Module, world::UInt, node::SyntaxTree) ->
-        Core.Const | nothing
+        lattice element or nothing
 
 Best-effort static lookup of a `K"Identifier"` or `K"."` dotted-path node as a
-`Core.Const` value by walking the dotted path against `context_module`. Used as a fallback
-for features (signature help, call completion, definition, …) when the
-[`TypeAnnotation`](@ref) pipeline can't supply a type — either because the
-surrounding toplevel failed to lower (e.g. a method definition with unused
-where-vars), or because the identifier doesn't survive lowering (most notably
-macro names after macroexpansion).
+type-inference lattice element (usually `Core.Const`) by walking the dotted
+path against `context_module`. Used as a fallback for features (signature help,
+call completion, definition, …) when the [`TypeAnnotation`](@ref) pipeline
+can't supply a type — either because the surrounding toplevel failed to lower
+(e.g. a method definition with unused where-vars), or because the identifier
+doesn't survive lowering (most notably macro names after macroexpansion).
 
 Handles plain identifiers (`f`, `@m`), module-qualified macros (`Base.@show`)
 and nested module paths (`Foo.Bar.f`). Returns `nothing` for anything more
 complex (calls in node position, parametric type applications, …) — those
 inputs need real inference, which the caller already attempted.
+
+Script-analysis bindings materialized as `JET.AbstractBindingState` are
+unwrapped to the analysis-inferred binding type via
+[`abstract_binding_state_typ`](@ref), so the result is not necessarily a
+`Core.Const`.
 
 `world` pins the binding lookup so concurrent analysis updates can't make this
 fallback observe a newer world than the rest of the request.
@@ -97,7 +142,9 @@ function resolve_global_const(context_module::Module, world::UInt, node::SyntaxT
     if JS.kind(node) === JS.K"Identifier" && has_name_val(node)
         sym = Symbol(name_val(node))
         Base.invoke_in_world(world, isdefinedglobal, context_module, sym) || return nothing
-        return Core.Const(Base.invoke_in_world(world, getglobal, context_module, sym))
+        val = Base.invoke_in_world(world, getglobal, context_module, sym)
+        val isa JET.AbstractBindingState && return abstract_binding_state_typ(val)
+        return Core.Const(val)
     elseif JS.kind(node) === JS.K"." && JS.numchildren(node) == 2
         prefix = node[1]
         suffix = node[2]

@@ -53,6 +53,10 @@ module M_docs_sample
     undoc(x::String) = x
 
     nodoc(x) = x  # binding with no docstring on any method
+
+    const plainvalue = 42  # non-documentable value, no docstring
+    """Doc for `documented_plainvalue`."""
+    const documented_plainvalue = 42
 end
 
 module M_field_doc_sample
@@ -218,6 +222,17 @@ end
         # The auto-generated summary that follows the placeholder should
         # survive so the hover surface still has something informative.
         @test occursin("nodoc", s)
+    end
+
+    # For values that aren't `is_doc_binding_value`, the auto-generated summary
+    # only restates the value's type, so just the stored docstrings come back.
+    @testset "plain value binding keeps only stored docs" begin
+        @test JETLS.lookup_doc_for_binding(M_docs_sample, :plainvalue, nothing, world) === nothing
+        md = JETLS.lookup_doc_for_binding(M_docs_sample, :documented_plainvalue, nothing, world)
+        @test md isa Markdown.MD
+        s = string(md)
+        @test occursin("Doc for `documented_plainvalue`.", s)
+        @test !occursin("Supertype Hierarchy", s)
     end
 end
 

@@ -27,7 +27,7 @@ const help_message = """
 @doc help_message
 function (@main)(args::Vector{String})::Cint
     if any(arg -> arg in ("-v", "--version", "version"), args)
-        println(stdout, "JETLS version $JETLS_VERSION")
+        println(stdout, "JETLS version $JETLS_VERSION on Julia $VERSION")
         return 0
     end
     if !isempty(args)
