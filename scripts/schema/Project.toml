@@ -13,6 +13,4 @@ rev = "avi/JS-compatibility"
 url = "https://github.com/aviatesk/Struct2JSONSchema.jl"
 
 [sources.OrderedCollections]
-subdir = "vendor/OrderedCollections"
-rev = "f186fa3bd97cc10d1f5bd0707519ad195155b449"
-url = "https://github.com/aviatesk/JETLS.jl"
+path = "../../vendor/OrderedCollections"
