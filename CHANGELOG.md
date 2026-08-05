@@ -61,6 +61,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   ```
   This can substantially speed up full analysis of packages with large dependencies, provided those dependencies are precompiled, since the analysis then reuses the inference results cached in their precompiled images. Packages whose analysis time is dominated by their own code see little change. Note that analysis results may change slightly with this option, which can change the diagnostics that are reported.
 
+### Changed
+
+- Text and notebook document synchronization now use dynamic registration when supported, allowing regular text synchronization to be scoped to supported Julia buffers and server-provided virtual documents. Static fallbacks remain available for other clients.
+
 ## 2026-08-05
 
 - Commit: [`6dacc52`](https://github.com/aviatesk/JETLS.jl/commit/6dacc52)

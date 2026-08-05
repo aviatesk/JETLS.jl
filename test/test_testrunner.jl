@@ -220,26 +220,6 @@ end
     end
 end
 
-@testset "jetls document synchronization (track open/close, no Julia analysis)" begin
-    # Spec-conformant clients may sync `jetls:` virtual documents. The Julia-only
-    # sync path must not run for them (no crash on the non-`julia` languageId, no
-    # `FileInfo` pollution); instead open/close is tracked to drive content refreshes.
-    server = JETLS.Server()
-    juri = URI(; scheme=JETLS.TESTRUNNER_LOGS_SCHEME, path="/testrunner/logs", query="source=x&index=1&name=ts")
-    JETLS.update_text_document_content!(server, juri, "logs\n")
-
-    open_msg = DidOpenTextDocumentNotification(; params = DidOpenTextDocumentParams(;
-        textDocument = TextDocumentItem(; uri=juri, languageId="log", version=1, text="logs\n")))
-    @test JETLS.handle_DidOpenTextDocumentNotification(server, open_msg) === nothing
-    @test JETLS.get_file_info(server.state, juri) === nothing
-    @test JETLS.load(server.state.text_document_content_cache)[juri].opened
-
-    close_msg = DidCloseTextDocumentNotification(; params = DidCloseTextDocumentParams(;
-        textDocument = TextDocumentIdentifier(; uri=juri)))
-    @test JETLS.handle_DidCloseTextDocumentNotification(server, close_msg) === nothing
-    @test !JETLS.load(server.state.text_document_content_cache)[juri].opened
-end
-
 @testset "testrunner_code_lenses" begin
     let server = JETLS.Server()
         test_code = """

@@ -454,6 +454,9 @@ async function startLanguageServer() {
 
 
   const clientOptions: LanguageClientOptions = {
+    // Keep this selector as a static-registration fallback while jetls-client can
+    // connect to independently installed JETLS versions. Once the extension manages
+    // the `jetls` binary, rely only on server-side dynamic registration and remove it.
     documentSelector: [
       {
         scheme: "file",

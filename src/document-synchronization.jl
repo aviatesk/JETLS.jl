@@ -1,3 +1,68 @@
+# TODO: Full analysis for `file:` documents is retriggered by `didSave`. Clients
+# without `textDocument.synchronization.didSave` only update the live cache on
+# `didChange`, leaving analysis stale after edits. Add a change-based fallback.
+
+const DID_OPEN_TEXT_DOCUMENT_REGISTRATION_ID = "jetls-did-open-text-document"
+const DID_OPEN_TEXT_DOCUMENT_REGISTRATION_METHOD = "textDocument/didOpen"
+const DID_CHANGE_TEXT_DOCUMENT_REGISTRATION_ID = "jetls-did-change-text-document"
+const DID_CHANGE_TEXT_DOCUMENT_REGISTRATION_METHOD = "textDocument/didChange"
+const DID_SAVE_TEXT_DOCUMENT_REGISTRATION_ID = "jetls-did-save-text-document"
+const DID_SAVE_TEXT_DOCUMENT_REGISTRATION_METHOD = "textDocument/didSave"
+const DID_CLOSE_TEXT_DOCUMENT_REGISTRATION_ID = "jetls-did-close-text-document"
+const DID_CLOSE_TEXT_DOCUMENT_REGISTRATION_METHOD = "textDocument/didClose"
+
+const JULIA_TEXT_DOCUMENT_SYNC_SELECTOR = DocumentFilter[
+    TextDocumentFilterLanguage(; language = "julia", scheme = "file"),
+    [TextDocumentFilterLanguage(; language = "julia", scheme) for scheme in UNSAVED_DOCUMENT_SCHEMES]...,
+]
+
+function text_document_sync_options(server::Server)
+    return TextDocumentSyncOptions(;
+        openClose = true,
+        change = TextDocumentSyncKind.Full,
+        save = supports(server, :textDocument, :synchronization, :didSave) ?
+            SaveOptions(; includeText = true) : nothing)
+end
+
+function text_document_sync_registrations(server::Server)
+    open_close_selector = copy(JULIA_TEXT_DOCUMENT_SYNC_SELECTOR)
+    if supports_text_document_content(server)
+        append!(open_close_selector,
+            TextDocumentFilterScheme[
+                TextDocumentFilterScheme(; scheme) for scheme in TEXT_DOCUMENT_CONTENT_SCHEMES])
+    end
+
+    registrations = Registration[
+        Registration(;
+            id = DID_OPEN_TEXT_DOCUMENT_REGISTRATION_ID,
+            method = DID_OPEN_TEXT_DOCUMENT_REGISTRATION_METHOD,
+            registerOptions = TextDocumentRegistrationOptions(;
+                documentSelector = open_close_selector)),
+        Registration(;
+            id = DID_CHANGE_TEXT_DOCUMENT_REGISTRATION_ID,
+            method = DID_CHANGE_TEXT_DOCUMENT_REGISTRATION_METHOD,
+            registerOptions = TextDocumentChangeRegistrationOptions(;
+                documentSelector = JULIA_TEXT_DOCUMENT_SYNC_SELECTOR,
+                syncKind = TextDocumentSyncKind.Full)),
+        Registration(;
+            id = DID_CLOSE_TEXT_DOCUMENT_REGISTRATION_ID,
+            method = DID_CLOSE_TEXT_DOCUMENT_REGISTRATION_METHOD,
+            registerOptions = TextDocumentRegistrationOptions(;
+                documentSelector = open_close_selector)),
+    ]
+    if supports(server, :textDocument, :synchronization, :didSave)
+        push!(
+            registrations, Registration(;
+                id = DID_SAVE_TEXT_DOCUMENT_REGISTRATION_ID,
+                method = DID_SAVE_TEXT_DOCUMENT_REGISTRATION_METHOD,
+                registerOptions = TextDocumentSaveRegistrationOptions(;
+                    documentSelector = DocumentFilter[
+                        TextDocumentFilterLanguage(; language = "julia", scheme = "file")],
+                    includeText = true)))
+    end
+    return registrations
+end
+
 function ParseStream!(s::Union{AbstractString,Vector{UInt8}})
     stream = JS.ParseStream(s)
     JS.parse!(stream; rule=:all)
