@@ -115,9 +115,39 @@ end
             @test result.logs == expected.logs
         end
 
+        @testset "test failure result with exit 1" begin
+            server = JETLS.Server()
+            expected = mock_testrunner_result(; n_passed = 1, n_failed = 1)
+            source = String(LSP.JSON3.write(expected))
+            cmd = Cmd(["/bin/sh", "-c", "cat; exit 1"])
+            result = JETLS.read_testrunner_result(server, cmd, source)
+            result = result::JETLS.TestRunnerResult
+            @test result.stats.n_passed == expected.stats.n_passed
+            @test result.stats.n_failed == expected.stats.n_failed
+        end
+
+        @testset "non-test exit 1 remains a process failure" begin
+            server = JETLS.Server()
+            source = String(LSP.JSON3.write(mock_testrunner_result()))
+            cmd = Cmd(["/bin/sh", "-c", "cat; exit 1"])
+            logger = Test.TestLogger()
+            result = with_logger(logger) do
+                JETLS.read_testrunner_result(server, cmd, source)
+            end
+            @test result == "Test execution failed"
+            log = only(logger.logs)
+            @test log.message == "TestRunner execution failed"
+            details = log.kwargs[:details]
+            @test details.exitcode == 1
+            @test details.termsignal == 0
+            @test details.stdout_bytes == ncodeunits(source)
+            @test details.reason === :process
+            @test isnothing(details.parse_error)
+        end
+
         @testset "process failure logs metadata" begin
             server = JETLS.Server()
-            cmd = Cmd(["/bin/sh", "-c", "printf 'testrunner failed\\n'; exit 1"])
+            cmd = Cmd(["/bin/sh", "-c", "cat; printf 'testrunner failed\\n'; exit 1"])
             logger = Test.TestLogger()
             result = with_logger(logger) do
                 JETLS.read_testrunner_result(server, cmd, "")

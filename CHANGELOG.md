@@ -65,6 +65,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Text and notebook document synchronization now use dynamic registration when supported, allowing regular text synchronization to be scoped to supported Julia buffers and server-provided virtual documents. Static fallbacks remain available for other clients.
 
+### Fixed
+
+- Fixed the TestRunner integration treating failed or errored tests as an unexpected TestRunner execution failure instead of reporting their results.
+
 ## 2026-08-05
 
 - Commit: [`6dacc52`](https://github.com/aviatesk/JETLS.jl/commit/6dacc52)

@@ -562,10 +562,17 @@ function read_testrunner_result(
     testrunnerproc = open(pipeline(cmd; stdin = IOBuffer(source)); read = true)
     (; output, process_success, cancelled) =
         read_testrunner_output(testrunnerproc, cancellable_token)
-    if cancelled
-        return "Test execution cancelled by user"
-    elseif !process_success
-        log_testrunner_failure(cmd, testrunnerproc, output, :process)
+    cancelled && return "Test execution cancelled by user"
+
+    result = try
+        LSP.JSON3.read(output, TestRunnerResult)
+    catch err
+        if process_success
+            parse_error = sprint(Base.showerror, err, catch_backtrace())
+            log_testrunner_failure(cmd, testrunnerproc, output, :invalid_output; parse_error)
+        else
+            log_testrunner_failure(cmd, testrunnerproc, output, :process)
+        end
         show_error_message(server, """
         An unexpected error occurred while executing TestRunner.jl:
         See the server log for details.
@@ -573,17 +580,19 @@ function read_testrunner_result(
         return "Test execution failed"
     end
 
-    try
-        return LSP.JSON3.read(output, TestRunnerResult)
-    catch err
-        parse_error = sprint(Base.showerror, err, catch_backtrace())
-        log_testrunner_failure(cmd, testrunnerproc, output, :invalid_output; parse_error)
+    expected_test_failure =
+        testrunnerproc.termsignal == 0 &&
+        testrunnerproc.exitcode == 1 &&
+        (!iszero(result.stats.n_failed) || !iszero(result.stats.n_errored))
+    if !process_success && !expected_test_failure
+        log_testrunner_failure(cmd, testrunnerproc, output, :process)
         show_error_message(server, """
         An unexpected error occurred while executing TestRunner.jl:
         See the server log for details.
         """)
         return "Test execution failed"
     end
+    return result
 end
 
 function _testrunner_run_testset(
