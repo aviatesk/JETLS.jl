@@ -333,7 +333,9 @@ end
 function update_workspace_project!(
         workspace_path::AbstractString,
         uuid_mapping::Dict{UUID, UUID},
-        vendor_base_path::AbstractString
+        vendor_dir::AbstractString,
+        use_local_path::Bool,
+        rev::Union{String, Nothing}
     )
     project_path = joinpath(workspace_path, "Project.toml")
     isfile(project_path) || return
@@ -361,8 +363,21 @@ function update_workspace_project!(
         end
 
         for dep_name in vendored_deps
-            project["sources"][dep_name] = Dict("path" => joinpath(vendor_base_path, dep_name))
-            @info "  Added source entry in $(basename(workspace_path))/Project.toml for $dep_name"
+            if use_local_path
+                vendor_base_path = relpath(vendor_dir, workspace_path)
+                project["sources"][dep_name] = Dict{String, Any}(
+                    "path" => joinpath(vendor_base_path, dep_name)
+                )
+                @info "  Added local source for $dep_name in $(basename(workspace_path))"
+            else
+                rev isa String || error("A revision is required for remote vendored sources")
+                project["sources"][dep_name] = Dict{String, Any}(
+                    "url" => "https://github.com/aviatesk/JETLS.jl",
+                    "subdir" => joinpath("vendor", dep_name),
+                    "rev" => rev
+                )
+                @info "  Added remote source for $dep_name in $(basename(workspace_path))"
+            end
         end
     end
 
@@ -479,7 +494,7 @@ function update_project_with_vendored_deps(
             workspace_path = joinpath(CURRENT_DIR, workspace_name)
             if isdir(workspace_path)
                 @info "Processing workspace: $workspace_name"
-                update_workspace_project!(workspace_path, uuid_mapping, joinpath("..", "vendor"))
+                update_workspace_project!(workspace_path, uuid_mapping, VENDOR_DIR, use_local_path, rev)
             end
         end
     end
