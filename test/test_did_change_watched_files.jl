@@ -15,6 +15,51 @@ const CLIENT_CAPABILITIES = ClientCapabilities(;
 const DEBOUNCE_DEFAULT = JETLS.get_config(JETLS.ConfigManager(JETLS.ConfigManagerData()), :full_analysis, :debounce)
 const TESTRUNNER_DEFAULT = JETLS.get_config(JETLS.ConfigManager(JETLS.ConfigManagerData()), :testrunner, :executable)
 
+@testset "watched-file registration patterns" begin
+    mktempdir() do dir
+        root_uri = filepath2uri(dir)
+        for relative_pattern_support in (false, true)
+            capabilities = ClientCapabilities(;
+                workspace = WorkspaceClientCapabilities(;
+                    didChangeWatchedFiles = DidChangeWatchedFilesClientCapabilities(;
+                        dynamicRegistration = true,
+                        relativePatternSupport = relative_pattern_support)))
+            withserver(; capabilities, rootUri = root_uri) do (;
+                    register_capability_json_request
+                )
+                registration = only(
+                    reg for reg in register_capability_json_request.params.registrations
+                    if reg.method == "workspace/didChangeWatchedFiles")
+                options = registration.registerOptions::Dict{String,Any}
+                patterns = Any[watcher["globPattern"] for watcher in options["watchers"]]
+                expected = if relative_pattern_support
+                    [Dict{String,Any}(
+                        "baseUri" => string(root_uri),
+                        "pattern" => pattern)
+                        for pattern in (JETLS.CONFIG_FILE, JETLS.PROFILE_TRIGGER_FILE, "**/*.jl")
+                    ]
+                else
+                    [
+                        JETLS.CONFIG_FILE_GLOB_PATTERN,
+                        "**/$(JETLS.PROFILE_TRIGGER_FILE)",
+                        "**/*.jl"
+                    ]
+                end
+                @static if JETLS.JETLS_DEV_MODE
+                    revise_pattern = relative_pattern_support ?
+                        Dict{String,Any}(
+                            "baseUri" => string(root_uri),
+                            "pattern" => JETLS.SERVER_REVISE_TRIGGER_FILE
+                        ) :
+                        "**/$(JETLS.SERVER_REVISE_TRIGGER_FILE)"
+                    push!(expected, revise_pattern)
+                end
+                @test patterns == expected
+            end
+        end
+    end
+end
+
 # Test the full cycle of `DidChangeWatchedFilesNotification`:
 # 1. Initialize with `.JETLSConfig.toml` file.
 # 2. Change the keys that require reload
@@ -160,6 +205,20 @@ const TESTRUNNER_DEFAULT = JETLS.get_config(JETLS.ConfigManager(JETLS.ConfigMana
                     return false
                 end
             end
+
+            # nested config file change (should be ignored)
+            nested_dir = joinpath(tmpdir, "nested")
+            mkpath(nested_dir)
+            nested_config = joinpath(nested_dir, JETLS.CONFIG_FILE)
+            write(nested_config, "[testrunner]\nexecutable = \"nested\"\n")
+            let msg = DidChangeWatchedFilesNotification(;
+                    params = DidChangeWatchedFilesParams(;
+                        changes = [FileEvent(;
+                            uri = filepath2uri(nested_config),
+                            type = FileChangeType.Changed)]))
+                writereadmsg(msg; read=0)
+            end
+            @test JETLS.get_config(manager, :testrunner, :executable) == TESTRUNNER_RECREATE
 
             # non-config file change (should be ignored)
             other_file = joinpath(tmpdir, "other.txt")

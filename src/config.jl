@@ -1,6 +1,5 @@
 const CONFIG_FILE = ".JETLSConfig.toml"
-
-is_config_file(filepath::AbstractString) = basename(filepath) == CONFIG_FILE
+const CONFIG_FILE_GLOB_PATTERN = "**/$CONFIG_FILE"
 
 @generated function merge_and_track(
         on_difference,

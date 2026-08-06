@@ -4,32 +4,41 @@ const DID_CHANGE_WATCHED_FILES_REGISTRATION_METHOD = "workspace/didChangeWatched
 const PROFILE_TRIGGER_FILE = ".JETLSProfile"
 const SERVER_REVISE_TRIGGER_FILE = ".JETLS_REVISE"
 
+function watched_file_pattern(
+        root_uri::URI, pattern::String, fallback::String, relative_pattern_support::Bool
+    )
+    relative_pattern_support || return fallback
+    return RelativePattern(; baseUri = root_uri, pattern)
+end
+
 function did_change_watched_files_registration(server::Server)
     state = server.state
     isdefined(state, :root_path) || return nothing
     root_uri = filepath2uri(state.root_path)
+    relative_pattern_support = supports(
+        server, :workspace, :didChangeWatchedFiles, :relativePatternSupport)
     watchers = FileSystemWatcher[
         FileSystemWatcher(;
-            globPattern = RelativePattern(;
-                baseUri = root_uri,
-                pattern = CONFIG_FILE),
+            globPattern = watched_file_pattern(
+                root_uri, CONFIG_FILE, CONFIG_FILE_GLOB_PATTERN,
+                relative_pattern_support),
             kind = WatchKind.Create | WatchKind.Change | WatchKind.Delete),
         FileSystemWatcher(;
-            globPattern = RelativePattern(;
-                baseUri = root_uri,
-                pattern = PROFILE_TRIGGER_FILE),
+            globPattern = watched_file_pattern(
+                root_uri, PROFILE_TRIGGER_FILE, "**/$PROFILE_TRIGGER_FILE",
+                relative_pattern_support),
             kind = WatchKind.Create),
         FileSystemWatcher(;
-            globPattern = RelativePattern(;
-                baseUri = root_uri,
-                pattern = "**/*.jl"),
+            globPattern = watched_file_pattern(
+                root_uri, "**/*.jl", "**/*.jl",
+                relative_pattern_support),
             kind = WatchKind.Create | WatchKind.Change | WatchKind.Delete),
     ]
     @static if JETLS_DEV_MODE
         push!(watchers, FileSystemWatcher(;
-            globPattern = RelativePattern(;
-                baseUri = root_uri,
-                pattern = SERVER_REVISE_TRIGGER_FILE),
+            globPattern = watched_file_pattern(
+                root_uri, SERVER_REVISE_TRIGGER_FILE, "**/$SERVER_REVISE_TRIGGER_FILE",
+                relative_pattern_support),
             kind = WatchKind.Create))
     end
     Registration(;
@@ -138,8 +147,6 @@ function delete_file_config!(on_difference, manager::ConfigManager, filepath::Ab
     end
 end
 
-is_profile_trigger_file(path::AbstractString) = endswith(path, PROFILE_TRIGGER_FILE)
-is_server_revise_trigger_file(path::AbstractString) = endswith(path, SERVER_REVISE_TRIGGER_FILE)
 is_jl_file(path::AbstractString) = endswith(path, ".jl")
 
 function handle_server_revise_trigger!(server::Server, trigger_path::AbstractString)
@@ -153,13 +160,16 @@ end
 function handle_DidChangeWatchedFilesNotification(server::Server, msg::DidChangeWatchedFilesNotification)
     for change in msg.params.changes
         changed_path = @something uri2filepath(change.uri) continue
-        if is_config_file(changed_path)
+        state = server.state
+        if is_workspace_root_file(state, changed_path, CONFIG_FILE)
             handle_config_file_change!(server, changed_path, change.type)
-        elseif is_profile_trigger_file(changed_path) && change.type == FileChangeType.Created
+        elseif is_workspace_root_file(state, changed_path, PROFILE_TRIGGER_FILE) &&
+                change.type == FileChangeType.Created
             trigger_profile!(server, changed_path)
-        elseif is_server_revise_trigger_file(changed_path) && change.type != FileChangeType.Deleted
+        elseif is_workspace_root_file(state, changed_path, SERVER_REVISE_TRIGGER_FILE) &&
+                change.type != FileChangeType.Deleted
             handle_server_revise_trigger!(server, changed_path)
-        elseif is_jl_file(changed_path)
+        elseif is_workspace_file(state, changed_path) && is_jl_file(changed_path)
             handle_jl_file_change!(server, change)
         end
     end

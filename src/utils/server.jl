@@ -224,6 +224,19 @@ end
 get_file_info(s::ServerState, t::TextDocumentIdentifier, cancel_flag::AbstractCancelFlag; kwargs...) =
     get_file_info(s, t.uri, cancel_flag; kwargs...)
 
+function is_workspace_root_file(
+        s::ServerState, filepath::AbstractString, filename::AbstractString
+    )
+    isdefined(s, :root_path) || return false
+    expected = joinpath(s.root_path, filename)
+    return _paths_equal(_normalize_path(filepath), _normalize_path(expected))
+end
+
+function is_workspace_file(s::ServerState, filepath::AbstractString)
+    isdefined(s, :root_path) || return false
+    return issubdir(filepath, s.root_path)
+end
+
 """
     may_have_file_info(s::ServerState, uri::URI) -> Bool
 
