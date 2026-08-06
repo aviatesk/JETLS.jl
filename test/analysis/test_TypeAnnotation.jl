@@ -1183,6 +1183,10 @@ end
             @test widenconst(get_type_for_range(ctx, range_of(code, "Any[1, 2, 3]"))) ===
                 Vector{Any}
         end
+        let code = "Int[(1, 2)...]"
+            _, ctx = type_annotate(code)
+            @test widenconst(get_type_for_range(ctx, range_of(code, code))) === Vector{Int}
+        end
         let code = "[1 2; 3 4]"
             _, ctx = type_annotate(code)
             @test widenconst(get_type_for_range(ctx, range_of(code, code))) === Matrix{Int}
