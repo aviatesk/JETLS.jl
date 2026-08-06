@@ -16,8 +16,10 @@ Use this between `writemsg` (notification) and `writereadmsg` (request) to
 ensure the sequential worker has finished processing the notification before
 the concurrent worker handles the request.
 """
-function wait_for_file_cache_version(state::JETLS.ServerState, uri::URIs2.URI,
-                                     version::Int; timeout::Float64=10.0)
+function wait_for_file_cache_version(
+        state::JETLS.ServerState, uri::URIs2.URI,
+        version::Int; timeout::Float64 = 10.0
+    )
     deadline = time() + timeout
     while time() < deadline
         fi = get(JETLS.load(state.file_cache), uri, nothing)
@@ -27,7 +29,7 @@ function wait_for_file_cache_version(state::JETLS.ServerState, uri::URIs2.URI,
     error("Timed out waiting for file cache version $version for $uri")
 end
 
-function take_with_timeout!(chn::Channel; interval=0.1, limit=600)
+function take_with_timeout!(chn::Channel; interval = 0.1, limit = 600)
     while limit > 0
         if isready(chn)
             return take!(chn)
@@ -38,11 +40,13 @@ function take_with_timeout!(chn::Channel; interval=0.1, limit=600)
     error("Timeout waiting for message")
 end
 
-function withserver(f;
-                    capabilities::ClientCapabilities=ClientCapabilities(),
-                    workspaceFolders::Union{Nothing,Vector{WorkspaceFolder}}=nothing,
-                    rootUri::Union{Nothing,URI}=nothing,
-                    settings::Union{Nothing,AbstractDict}=nothing)
+function withserver(
+        f;
+        capabilities::ClientCapabilities = ClientCapabilities(),
+        workspaceFolders::Union{Nothing, Vector{WorkspaceFolder}} = nothing,
+        rootUri::Union{Nothing, URI} = nothing,
+        settings::Union{Nothing, AbstractDict} = nothing
+    )
     in_pipe = Pipe()
     out_pipe = Pipe()
     Base.link_pipe!(in_pipe; reader_supports_async=true, writer_supports_async=true)
@@ -71,6 +75,14 @@ function withserver(f;
     end
     if workspaceFolders === nothing && rootUri === nothing
         workspaceFolders = WorkspaceFolder[] # initialize empty workspace by default
+    end
+
+    function assert_empty_queues()
+        isempty(received_queue) && isempty(sent_queue) && return
+        @error "Non empty queue found"
+        isempty(received_queue) || @error "received_queue" take!(received_queue)
+        isempty(sent_queue) || @error "sent_queue" take!(sent_queue)
+        error("Unexpected messages remained in the server queues")
     end
 
     """
@@ -111,32 +123,14 @@ function withserver(f;
                 push!(json_res, LSP.readlsp(out))
             end
         end
-        if check
-            if isempty(received_queue) && isempty(sent_queue)
-                @test true
-            else
-                @error "Non empty queue found"
-                isempty(received_queue) || @error "received_queue" take!(received_queue)
-                isempty(sent_queue) || @error "sent_queue" take!(sent_queue)
-                @test false
-            end
-        end
+        check && assert_empty_queues()
         return (; raw_msg, raw_res, json_res)
     end
 
     function writemsg(@nospecialize(msg); check::Bool=true)
         LSP.writelsp(in, msg)
         raw_msg = take_with_timeout!(received_queue)
-        if check
-            if isempty(received_queue) && isempty(sent_queue)
-                @test true
-            else
-                @error "Non empty queue found"
-                isempty(received_queue) || @error "received_queue" take!(received_queue)
-                isempty(sent_queue) || @error "sent_queue" take!(sent_queue)
-                @test false
-            end
-        end
+        check && assert_empty_queues()
         return (; raw_msg)
     end
 
@@ -172,78 +166,75 @@ function withserver(f;
                 push!(json_msg, LSP.readlsp(out))
             end
         end
-        if check
-            if isempty(received_queue) && isempty(sent_queue)
-                @test true
-            else
-                @error "Non empty queue found"
-                isempty(received_queue) || @error "received_queue" take!(received_queue)
-                isempty(sent_queue) || @error "sent_queue" take!(sent_queue)
-                @test false
-            end
-        end
+        check && assert_empty_queues()
         return (; raw_msg, json_msg)
     end
 
-    # do the server initialization
-    local initialize_response, initialize_json_response, register_capability_request, register_capability_json_request
-    let id = id_counter[] += 1
-        (; raw_msg, raw_res, json_res) = writereadmsg(
-            InitializeRequest(;
-                id,
-                params=InitializeParams(;
-                    processId=getpid(),
-                    capabilities,
-                    rootUri,
-                    workspaceFolders)))
-        @test raw_msg isa InitializeRequest && raw_msg.params.workspaceFolders == workspaceFolders
-        @test raw_res isa InitializeResponse && raw_res.id == id
-        initialize_response = raw_res
-        initialize_json_response = json_res
-
-        (; raw_msg, raw_res, json_res) = writereadmsg(InitializedNotification())
-        @test raw_msg isa InitializedNotification
-        @test raw_res isa RegisterCapabilityRequest && raw_res.id isa String
-        register_capability_request = raw_res
-        register_capability_json_request = json_res
-
-        # apply initial settings if provided
-        # read=1: ShowMessageNotification for config change
-        if settings !== nothing
-            writereadmsg(DidChangeConfigurationNotification(;
-                params = DidChangeConfigurationParams(; settings)); read=1)
-        end
-    end
-
-    argnt = (;
-        server,
-        writemsg,
-        readmsg,
-        writereadmsg,
-        id_counter,
-        initialize_response,
-        initialize_json_response,
-        register_capability_request,
-        register_capability_json_request)
+    local initialize_response, initialize_json_response
+    local register_capability_request, register_capability_json_request
+    initialize_completed = false
     try
-        # do the main callback
+        let id = id_counter[] += 1
+            (; raw_msg, raw_res, json_res) = writereadmsg(
+                InitializeRequest(;
+                    id,
+                    params=InitializeParams(;
+                        processId=getpid(),
+                        capabilities,
+                        rootUri,
+                        workspaceFolders));
+                check = false)
+            initialize_completed = true
+            assert_empty_queues()
+            raw_msg = raw_msg::InitializeRequest
+            @assert raw_msg.params.workspaceFolders == workspaceFolders
+            initialize_response = raw_res::InitializeResponse
+            @assert initialize_response.id == id
+            initialize_json_response = json_res::Dict{Symbol,Any}
+
+            (; raw_msg, raw_res, json_res) = writereadmsg(InitializedNotification())
+            raw_msg::InitializedNotification
+            register_capability_request = raw_res::RegisterCapabilityRequest
+            @assert register_capability_request.id isa String
+            register_capability_json_request = json_res::RegisterCapabilityRequest
+            @assert register_capability_json_request.id isa String
+
+            # apply initial settings if provided
+            # read=1: ShowMessageNotification for config change
+            if settings !== nothing
+                writereadmsg(DidChangeConfigurationNotification(;
+                    params = DidChangeConfigurationParams(; settings)); read=1)
+            end
+        end
+
+        argnt = (;
+            server,
+            writemsg,
+            readmsg,
+            writereadmsg,
+            id_counter,
+            initialize_response,
+            initialize_json_response,
+            register_capability_request,
+            register_capability_json_request)
         return f(argnt)
     finally
         try
             Pkg.activate(old_env; io=devnull)
-            let id = id_counter[] += 1
-                (; raw_res, json_res) = writereadmsg(ShutdownRequest(; id))
-                @test raw_res isa ShutdownResponse && raw_res.id == id
-                # make sure the `ShutdownResponse` follows the `ResponseMessage` specification:
-                # https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#responseMessage
-                @test json_res isa Dict{Symbol,Any} &&
-                    haskey(json_res, :result) &&
-                    json_res[:result] === nothing
+            if initialize_completed
+                let id = id_counter[] += 1
+                    (; raw_res, json_res) = writereadmsg(ShutdownRequest(; id))
+                    shutdown_response = raw_res::ShutdownResponse
+                    @assert shutdown_response.id == id
+                    shutdown_json = json_res::Dict{Symbol,Any}
+                    @assert haskey(shutdown_json, :result)
+                    @assert shutdown_json[:result] === nothing
+                end
+                writereadmsg(ExitNotification(); read=0)
+                exit_code = fetch(runserver_task)
+                @assert exit_code == 0
+                @assert !endpoint.isopen
             end
-            writereadmsg(ExitNotification(); read=0)
-            exit_code = fetch(runserver_task)
-            @test exit_code == 0
-            @test !endpoint.isopen
         finally
             close(in)
             close(out)
@@ -253,12 +244,14 @@ function withserver(f;
     end
 end
 
-function withpackage(test_func, pkgname::AbstractString,
-                     pkgcode::AbstractString;
-                     pkg_setup=function ()
-                         Pkg.precompile(; io=devnull)
-                     end,
-                     env_setup=function () end)
+function withpackage(
+        test_func, pkgname::AbstractString,
+        pkgcode::AbstractString;
+        pkg_setup = function ()
+            return Pkg.precompile(; io = devnull)
+        end,
+        env_setup = function () end
+    )
     mktempdir() do tempdir
         pkgpath = normpath(tempdir, pkgname)
         Pkg.activate(pkgpath) do
@@ -275,8 +268,10 @@ function withpackage(test_func, pkgname::AbstractString,
     end
 end
 
-function withscript(test_func, scriptcode::AbstractString;
-                    env_setup=function () end)
+function withscript(
+        test_func, scriptcode::AbstractString;
+        env_setup = function () end
+    )
     mktemp() do scriptpath, _
         Pkg.activate(dirname(scriptpath)) do
             write(scriptpath, scriptcode)
