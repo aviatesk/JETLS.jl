@@ -1543,10 +1543,12 @@ end
 # would drop the query into `tmerge_at_range`, merging loop/closure scaffolding types
 # into the user-visible result.
 const CALL_RESULT_SURFACE_KINDS = JS.KSet"""
-    call dotcall tuple ' do juxtapose vect vcat hcat ncat typed_vcat typed_hcat typed_ncat
+    call dotcall ref tuple ' do juxtapose
+    vect vcat hcat ncat typed_vcat typed_hcat typed_ncat
     """
 const DISPATCH_SURFACE_KINDS = JS.KSet"""
-    function do macro call dotcall macrocall tuple ' juxtapose = comparison && || if ? for while
+    function do macro call dotcall macrocall ref tuple ' juxtapose =
+    comparison && || if ? for while
     vect vcat hcat ncat typed_vcat typed_hcat typed_ncat typed_comprehension row
     """
 
@@ -1822,17 +1824,16 @@ a naive `tmerge` of all matches would pull in synthetic helper types that the us
 wrote. The dispatch picks a per-kind strategy that filters or summarizes the lowered
 nodes appropriately; see the source of each helper for the rationale behind its choice:
 
-| surface kind                                           | strategy                     |
-|:-------------------------------------------------------|:-----------------------------|
-| `K"call"` / `K"dotcall"` / `K"tuple"` / `K"'"` / `K"do"` | `type_for_call`              |
-| array literal kinds                                     | `type_for_call`              |
-| `K"macrocall"`                                         | `type_for_macroexpansion`    |
-| `K"typed_comprehension"`                               | `type_for_array_construct`   |
-| `K"row"`                                               | always `nothing`             |
-| `K"function"` / `K"macro"`                             | `type_for_funcdef`           |
-| `K"comparison"` / `K"&&"` / `K"||"` / `K"if"` / `K"?"` | `type_for_branching`         |
-| `K"for"` / `K"while"`                                  | always `Core.Const(nothing)` |
-| everything else                                        | `tmerge_at_range`            |
+| surface kind                                                                              | strategy                     |
+|:-----------------------------------------------------------------------------------------:|:----------------------------:|
+| `K"call"` / `K"dotcall"` / `K"ref"` / `K"tuple"` / `K"'"` / `K"do"` / array literal kinds | `type_for_call`              |
+| `K"macrocall"`                                                                            | `type_for_macroexpansion`    |
+| `K"typed_comprehension"`                                                                  | `type_for_array_construct`   |
+| `K"row"`                                                                                  | always `nothing`             |
+| `K"function"` / `K"macro"`                                                                | `type_for_funcdef`           |
+| `K"comparison"` / `K"&&"` / `K"||"` / `K"if"` / `K"?"`                                    | `type_for_branching`         |
+| `K"for"` / `K"while"`                                                                     | always `Core.Const(nothing)` |
+| everything else                                                                           | `tmerge_at_range`            |
 """
 function get_type_for_range(ctx::InferredTreeContext, rng::UnitRange{<:Integer})
     binding_typ = get(ctx.oc_argument_binding_types, rng, nothing)

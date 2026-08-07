@@ -465,6 +465,13 @@ end
         @test apply_inlay_hints(code, get_type_inlay_hints(code)) == expected
     end
 
+    @testset "typed vector literals" begin
+        let code = "X = Int[(1, 2)...]\n"
+            expected = "X = Int[(1, 2)::Tuple{$Int, $Int}...]::Vector{$Int}\n"
+            @test apply_inlay_hints(code, get_type_inlay_hints(code)) == expected
+        end
+    end
+
     @testset "matrix literals" begin
         let code = "X = [1 2; 3 4]\n"
             expected = "X = [1 2; 3 4]::Matrix{$Int}\n"
