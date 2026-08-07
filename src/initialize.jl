@@ -5,10 +5,8 @@ server capabilities and server information that should occur during initializati
 
 For server capabilities, it's preferable to register those that support dynamic/static
 registration in the `handle_InitializedNotification` handler using `RegisterCapabilityRequest`.
-On the other hand, basic server capabilities such as `textDocumentSync` must be registered here,
-and features that don't extend and support `StaticRegistrationOptions` like "completion"
-need to be registered in this handler in a case when the client does not support
-dynamic registration.
+When the client does not support dynamic registration, the corresponding static capability
+is returned from this handler instead.
 """
 function handle_InitializeRequest(
         server::Server, msg::InitializeRequest;
@@ -251,22 +249,23 @@ function handle_InitializeRequest(
     end
     state.encoding = positionEncoding
 
+    if supports(server, :textDocument, :synchronization, :dynamicRegistration)
+        textDocumentSync = nothing
+    else
+        textDocumentSync = text_document_sync_options(server)
+    end
+
+    if supports(server, :notebookDocument, :synchronization, :dynamicRegistration)
+        notebookDocumentSync = nothing
+    else
+        notebookDocumentSync = notebook_document_sync_options()
+    end
+
     result = InitializeResult(;
         capabilities = ServerCapabilities(;
             positionEncoding,
-            textDocumentSync = TextDocumentSyncOptions(;
-                openClose = true,
-                change = TextDocumentSyncKind.Full,
-                save = SaveOptions(;
-                    includeText = true)),
-            notebookDocumentSync = NotebookDocumentSyncOptions(;
-                notebookSelector = NotebookDocumentSyncOptionsNotebookSelectorItem[
-                    NotebookDocumentSyncOptionsNotebookSelectorItem(;
-                        notebook = "jupyter-notebook",
-                        cells = NotebookDocumentSyncOptionsNotebookSelectorCellsItem[
-                            NotebookDocumentSyncOptionsNotebookSelectorCellsItem(;
-                                language = "julia")])],
-                save = true),
+            textDocumentSync,
+            notebookDocumentSync,
             completionProvider,
             signatureHelpProvider,
             declarationProvider,
@@ -351,6 +350,16 @@ function handle_InitializedNotification(server::Server)
     load_lsp_config!(server, nothing, "[LSP] initialize"; on_init=true)
 
     registrations = Registration[]
+
+    if supports(server, :textDocument, :synchronization, :dynamicRegistration)
+        append!(registrations, text_document_sync_registrations(server))
+        @static JETLS_DEV_MODE && @info "Dynamically registering text document synchronization"
+    end
+
+    if supports(server, :notebookDocument, :synchronization, :dynamicRegistration)
+        push!(registrations, notebook_document_sync_registration())
+        @static JETLS_DEV_MODE && @info "Dynamically registering notebook synchronization"
+    end
 
     if supports(server, :textDocument, :completion, :dynamicRegistration)
         push!(registrations, completion_registration())

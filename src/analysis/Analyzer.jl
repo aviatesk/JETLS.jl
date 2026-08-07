@@ -113,6 +113,15 @@ struct LSAnalyzer <: ToplevelAbstractAnalyzer
     """
     report_target_modules::Union{Nothing,Set{Module}}
 
+    """
+        `LSAnalyzer.reuse_native_inference::Bool`
+
+    When enabled, calls to methods defined outside `report_target_modules` reuse results
+    from Julia's native inference cache instead of being analyzed recursively.
+    See [`is_native_boundary`](@ref).
+    """
+    reuse_native_inference::Bool
+
     invariable_analysis_hash::UInt
 
     """
@@ -123,11 +132,12 @@ struct LSAnalyzer <: ToplevelAbstractAnalyzer
     """
     function LSAnalyzer(
             state::AnalyzerState, analysis_token::AnalysisToken,
-            report_target_modules::Union{Nothing,Set{Module}},
+            report_target_modules::Union{Nothing,Set{Module}}, reuse_native_inference::Bool,
             invariable_analysis_hash::UInt
         )
         method_table = CC.CachedMethodTable(CC.OverlayMethodTable(state.world, jetls_method_table))
-        return new(state, analysis_token, method_table, report_target_modules, invariable_analysis_hash)
+        return new(state, analysis_token, method_table, report_target_modules,
+            reuse_native_inference, invariable_analysis_hash)
     end
 end
 
@@ -136,7 +146,8 @@ const global_mode_hash = rand(UInt)
 const lagacy_mode_hash = rand(UInt)
 
 """
-    LSAnalyzer(entry::AnalysisEntry, state::AnalyzerState; report_target_modules=missing)
+    LSAnalyzer(entry::AnalysisEntry, state::AnalyzerState;
+               report_target_modules=missing, reuse_native_inference=false)
         -> analyzer::LSAnalyzer
 
 Internal utility constructor for [`analyzer::LSAnalyzer`](@ref), which initializes
@@ -151,7 +162,8 @@ All new analysis entries should construct `LSAnalyzer` through this method.
 """
 function LSAnalyzer(
         @nospecialize(entry::AnalysisEntry), state::AnalyzerState;
-        report_target_modules = missing
+        report_target_modules = missing,
+        reuse_native_inference::Bool = false
     )
     # N.B. Separate the cache by the identity of `report_target_modules`.
     if report_target_modules === missing
@@ -171,10 +183,15 @@ function LSAnalyzer(
             report_target_modules_hash = hash(mod, report_target_modules_hash)
         end
     end
-    invariable_analysis_hash = JET.compute_hash(entry, report_target_modules_hash)
+    # N.B. `reuse_native_inference` participates in the cache key: reports are cached within
+    # `CodeInstance`s, and the boundary suppresses those of out-of-target callees, so
+    # results must never be shared across the two settings.
+    invariable_analysis_hash =
+        JET.compute_hash(entry, report_target_modules_hash, reuse_native_inference)
     analysis_cache_key = JET.compute_hash(state.inf_params, invariable_analysis_hash)
     analysis_token = @lock LS_ANALYZER_CACHE_LOCK get!(AnalysisToken, LS_ANALYZER_CACHE, analysis_cache_key)
-    return LSAnalyzer(state, analysis_token, report_target_modules, invariable_analysis_hash)
+    return LSAnalyzer(state, analysis_token, report_target_modules, reuse_native_inference,
+        invariable_analysis_hash)
 end
 
 # AbstractInterpreter API
@@ -200,7 +217,8 @@ function JETInterface.AbstractAnalyzer(analyzer::LSAnalyzer, state::AnalyzerStat
     analysis_cache_key = JET.compute_hash(state.inf_params, analyzer.invariable_analysis_hash)
     report_target_modules = analyzer.report_target_modules
     analysis_token = @lock LS_ANALYZER_CACHE_LOCK get!(AnalysisToken, LS_ANALYZER_CACHE, analysis_cache_key)
-    return LSAnalyzer(state, analysis_token, report_target_modules, analyzer.invariable_analysis_hash)
+    return LSAnalyzer(state, analysis_token, report_target_modules,
+        analyzer.reuse_native_inference, analyzer.invariable_analysis_hash)
 end
 JETInterface.AnalysisToken(analyzer::LSAnalyzer) = analyzer.analysis_token
 
@@ -327,6 +345,50 @@ function CC.concrete_eval_call(
     return res.rt === Union{} ? nothing : res
 end
 end # @static if VERSION ≥ v"1.12.2"
+
+# Native-interpreter boundary (experimental)
+# ==========================================
+
+"""
+    is_native_boundary(analyzer::LSAnalyzer, method::Method) -> Bool
+
+Whether inference of a call to `method` may be served from Julia's native inference cache
+instead of being analyzed, i.e. whether `analyzer.reuse_native_inference` is enabled and
+`method` sits outside `analyzer.report_target_modules`. Reports are never collected beyond
+that boundary, so it only applies to methods whose reports would be filtered out by
+`report_target_modules` anyway.
+"""
+function is_native_boundary(analyzer::LSAnalyzer, method::Method)
+    analyzer.reuse_native_inference || return false
+    report_target_modules = analyzer.report_target_modules
+    isnothing(report_target_modules) && return false
+    return method.module ∉ report_target_modules
+end
+
+function CC.typeinf_edge(analyzer::LSAnalyzer,
+        method::Method, @nospecialize(atype), sparams::Core.SimpleVector,
+        caller::CC.InferenceState, edgecycle::Bool, edgelimited::Bool
+    )
+    if is_native_boundary(analyzer, method)
+        world = CC.get_inference_world(analyzer)
+        mi = CC.specialize_method(method, atype, sparams)
+        ci = CC.get(CC.WorldView(CC.InternalCodeCache(nothing), world), mi, nothing)
+        if ci isa Core.CodeInstance
+            rt = CC.cached_return_type(ci)
+            # `rt === Union{}` means this callee definitely errors. Let the analyzer infer
+            # it so that reports created on the callee frame (builtin errors, which surface
+            # at their in-scope call site via `collect_callee_reports!`) are not silenced.
+            if rt !== Union{}
+                effects = CC.decode_effects(ci.ipo_purity_bits)
+                return CC.Future(CC.MethodCallResult(
+                    rt, ci.exctype, effects, ci, edgecycle, edgelimited))
+            end
+        end
+    end
+    return @invoke CC.typeinf_edge(analyzer::ToplevelAbstractAnalyzer,
+        method::Method, atype::Any, sparams::Core.SimpleVector,
+        caller::CC.InferenceState, edgecycle::Bool, edgelimited::Bool)
+end
 
 # Analysis injections
 # ===================
@@ -1164,6 +1226,7 @@ end
 function LSAnalyzer(
         @nospecialize(entry::AnalysisEntry), world::UInt = Base.get_world_counter();
         report_target_modules = missing,
+        reuse_native_inference::Bool = false,
         jetconfigs...
     )
     inf_params = CC.InferenceParams(;
@@ -1175,10 +1238,11 @@ function LSAnalyzer(
         # make the situation worse.
         assume_bindings_static = true)
     state = AnalyzerState(world; inf_params, jetconfigs...)
-    return LSAnalyzer(entry, state; report_target_modules)
+    return LSAnalyzer(entry, state; report_target_modules, reuse_native_inference)
 end
 
-const LS_ANALYZER_CONFIGURATIONS = Set{Symbol}((:report_target_modules,))
+const LS_ANALYZER_CONFIGURATIONS =
+    Set{Symbol}((:report_target_modules, :reuse_native_inference))
 
 let valid_keys = JET.GENERAL_CONFIGURATIONS ∪ LS_ANALYZER_CONFIGURATIONS
     @eval JETInterface.valid_configurations(::LSAnalyzer) = $valid_keys

@@ -1,3 +1,85 @@
+# TODO: Full analysis for `file:` documents is retriggered by `didSave`. Clients
+# without `textDocument.synchronization.didSave` only update the live cache on
+# `didChange`, leaving analysis stale after edits. Add a change-based fallback.
+
+const DID_OPEN_TEXT_DOCUMENT_REGISTRATION_ID = "jetls-did-open-text-document"
+const DID_OPEN_TEXT_DOCUMENT_REGISTRATION_METHOD = "textDocument/didOpen"
+const DID_CHANGE_TEXT_DOCUMENT_REGISTRATION_ID = "jetls-did-change-text-document"
+const DID_CHANGE_TEXT_DOCUMENT_REGISTRATION_METHOD = "textDocument/didChange"
+const DID_SAVE_TEXT_DOCUMENT_REGISTRATION_ID = "jetls-did-save-text-document"
+const DID_SAVE_TEXT_DOCUMENT_REGISTRATION_METHOD = "textDocument/didSave"
+const DID_CLOSE_TEXT_DOCUMENT_REGISTRATION_ID = "jetls-did-close-text-document"
+const DID_CLOSE_TEXT_DOCUMENT_REGISTRATION_METHOD = "textDocument/didClose"
+
+const JULIA_TEXT_DOCUMENT_SYNC_SELECTOR = DocumentFilter[
+    TextDocumentFilterLanguage(; language = "julia", scheme = "file"),
+    [TextDocumentFilterLanguage(; language = "julia", scheme) for scheme in UNSAVED_DOCUMENT_SCHEMES]...,
+]
+
+function config_document_sync_filter(server::Server)
+    state = server.state
+    isdefined(state, :root_path) || return nothing
+    pattern = if supports(server, :textDocument, :filters, :relativePatternSupport)
+        RelativePattern(;
+            baseUri = filepath2uri(state.root_path),
+            pattern = CONFIG_FILE)
+    else
+        CONFIG_FILE_GLOB_PATTERN
+    end
+    return TextDocumentFilterPattern(; scheme = "file", pattern)
+end
+
+function text_document_sync_options(server::Server)
+    return TextDocumentSyncOptions(;
+        openClose = true,
+        change = TextDocumentSyncKind.Full,
+        save = supports(server, :textDocument, :synchronization, :didSave) ?
+            SaveOptions(; includeText = true) : nothing)
+end
+
+function text_document_sync_registrations(server::Server)
+    sync_selector = copy(JULIA_TEXT_DOCUMENT_SYNC_SELECTOR)
+    config_filter = config_document_sync_filter(server)
+    config_filter === nothing || push!(sync_selector, config_filter)
+
+    open_close_selector = copy(sync_selector)
+    if supports_text_document_content(server)
+        append!(open_close_selector,
+            TextDocumentFilterScheme[
+                TextDocumentFilterScheme(; scheme) for scheme in TEXT_DOCUMENT_CONTENT_SCHEMES])
+    end
+
+    registrations = Registration[
+        Registration(;
+            id = DID_OPEN_TEXT_DOCUMENT_REGISTRATION_ID,
+            method = DID_OPEN_TEXT_DOCUMENT_REGISTRATION_METHOD,
+            registerOptions = TextDocumentRegistrationOptions(;
+                documentSelector = open_close_selector)),
+        Registration(;
+            id = DID_CHANGE_TEXT_DOCUMENT_REGISTRATION_ID,
+            method = DID_CHANGE_TEXT_DOCUMENT_REGISTRATION_METHOD,
+            registerOptions = TextDocumentChangeRegistrationOptions(;
+                documentSelector = sync_selector,
+                syncKind = TextDocumentSyncKind.Full)),
+        Registration(;
+            id = DID_CLOSE_TEXT_DOCUMENT_REGISTRATION_ID,
+            method = DID_CLOSE_TEXT_DOCUMENT_REGISTRATION_METHOD,
+            registerOptions = TextDocumentRegistrationOptions(;
+                documentSelector = open_close_selector)),
+    ]
+    if supports(server, :textDocument, :synchronization, :didSave)
+        push!(
+            registrations, Registration(;
+                id = DID_SAVE_TEXT_DOCUMENT_REGISTRATION_ID,
+                method = DID_SAVE_TEXT_DOCUMENT_REGISTRATION_METHOD,
+                registerOptions = TextDocumentSaveRegistrationOptions(;
+                    documentSelector = DocumentFilter[
+                        TextDocumentFilterLanguage(; language = "julia", scheme = "file")],
+                    includeText = true)))
+    end
+    return registrations
+end
+
 function ParseStream!(s::Union{AbstractString,Vector{UInt8}})
     stream = JS.ParseStream(s)
     JS.parse!(stream; rule=:all)
@@ -98,6 +180,10 @@ function handle_DidOpenTextDocumentNotification(server::Server, msg::DidOpenText
     uri = textDocument.uri
     is_text_document_content_uri(uri) &&
         return mark_text_document_content_opened!(server, uri) # turn on the `opened` flag
+    if is_config_document_uri(server.state, uri)
+        cache_config_document!(server.state, uri, textDocument.version, textDocument.text)
+        return nothing
+    end
     if textDocument.languageId != "julia"
         mark_text_document_rejected!(server.state, uri)
         return nothing
@@ -116,6 +202,10 @@ function handle_DidChangeTextDocumentNotification(server::Server, msg::DidChange
     # Read-only `jetls-*:` virtual documents never carry user edits to sync, so just ignore it.
     is_text_document_content_uri(uri) && return nothing
     text = last(contentChanges).text
+    if is_config_document_uri(server.state, uri)
+        cache_config_document!(server.state, uri, textDocument.version, text)
+        return nothing
+    end
     is_synchronized(server.state, uri) || return nothing
     for contentChange in contentChanges
         @assert contentChange.range === contentChange.rangeLength === nothing # since `change = TextDocumentSyncKind.Full`
@@ -128,6 +218,7 @@ end
 
 function handle_DidSaveTextDocumentNotification(server::Server, msg::DidSaveTextDocumentNotification)
     uri = msg.params.textDocument.uri
+    is_config_document_uri(server.state, uri) && return nothing
     cache = load(server.state.saved_file_cache)
     haskey(cache, uri) || return nothing
     text = msg.params.text
@@ -147,6 +238,10 @@ function handle_DidCloseTextDocumentNotification(server::Server, msg::DidCloseTe
     uri = msg.params.textDocument.uri
     is_text_document_content_uri(uri) &&
         return mark_text_document_content_closed!(server, uri) # turn off the `opened` flag
+    if is_config_document_uri(server.state, uri)
+        delete_config_document!(server.state, uri)
+        return nothing
+    end
     delete_rejected_text_document!(server.state, uri) && return nothing
     is_synchronized(server.state, uri) || return nothing
     store!(server.state.file_cache) do cache

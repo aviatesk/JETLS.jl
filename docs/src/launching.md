@@ -160,7 +160,6 @@ at your project root:
 ```toml
 [[initialization_options.analysis_overrides]]
 path = "test/fixtures/**"
-full_analysis = false
 ```
 
 This method is client-agnostic and can be easily committed to version control.
@@ -183,8 +182,7 @@ Configure initialization options in VSCode's `settings.json`:
   "jetls-client.initializationOptions": {
     "analysis_overrides": [
       {
-        "path": "test/fixtures/**",
-        "full_analysis": false
+        "path": "test/fixtures/**"
       }
     ]
   }
@@ -202,8 +200,7 @@ Configure initialization options in Zed's `settings.json`:
       "initialization_options": {
         "analysis_overrides": [
           {
-            "path": "test/fixtures/**",
-            "full_analysis": false
+            "path": "test/fixtures/**"
           }
         ]
       }
@@ -211,3 +208,76 @@ Configure initialization options in Zed's `settings.json`:
   }
 }
 ```
+
+### [Options reference](@id init-options/reference)
+
+- [`analysis_overrides`](@ref init-options/analysis_overrides)
+- [`reuse_native_inference`](@ref init-options/reuse_native_inference)
+
+#### [`analysis_overrides`](@id init-options/analysis_overrides)
+
+- **Type**: array of tables
+- **Default**: `[]`
+
+Excludes the matched files from full analysis. This is primarily a workaround
+for the [known memory leak](https://github.com/aviatesk/JETLS.jl/issues/357),
+where memory usage grows with each re-analysis: excluding the files that
+trigger the heaviest analysis keeps the server usable until the leak is fixed.
+
+Each entry requires a `path` field: a glob pattern selecting the files to
+exclude. Patterns are matched against file paths relative to the workspace
+root, and `**` matches directories recursively. Use `/` as the separator on all
+platforms, including Windows; backslashes are not interpreted as separators.
+
+```toml
+# exclude test fixtures entirely
+[[initialization_options.analysis_overrides]]
+path = "test/fixtures/**"
+```
+
+Save-time diagnostics produced by full analysis, including
+[`toplevel` diagnostics](@ref diagnostic/reference/toplevel) and
+[`inference` diagnostics](@ref diagnostic/reference/inference), are unavailable
+for the matched files.
+
+Features that do not require full analysis keep working. These include
+completion, hover, inlay hints, and
+[`syntax` diagnostics](@ref diagnostic/reference/syntax). Context-independent
+[`lowering` diagnostics](@ref diagnostic/reference/lowering) also remain
+available, while context-dependent diagnostics such as
+`lowering/macro-expansion-error` and `lowering/undef-global-var` are
+unavailable.
+Hover and type inlay hints infer the current top-level form on demand, but their
+results may be incomplete because full analysis does not establish a module
+context for the matched files.
+
+!!! warning
+    `analysis_overrides` is provided as a temporary workaround and may be
+    removed or changed at any time.
+
+#### [`reuse_native_inference`](@id init-options/reuse_native_inference)
+
+- **Type**: boolean
+- **Default**: `false`
+
+When enabled, calls to methods defined outside the modules being analyzed reuse
+results from Julia's native inference cache instead of being analyzed
+recursively.
+
+This may substantially speed up full analysis of packages with large
+dependencies. The reused results come from the dependencies' precompiled
+images, so the speedup requires those dependencies to be precompiled, and grows
+with how much of their code precompilation covers. Packages whose analysis time
+is dominated by their own code see little change, while those that spend much of
+it in dependencies can become several times faster.
+
+```toml
+[initialization_options]
+reuse_native_inference = true
+```
+
+Analysis results may change slightly when this option is enabled, since the
+reused results come from Julia's compiler rather than the JETLS analyzer, and
+that can change the diagnostics that are reported. Diagnostics for the modules
+being analyzed are unaffected in practice, but this remains an experimental
+option that may be removed or changed in future releases.

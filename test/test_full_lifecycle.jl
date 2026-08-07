@@ -2,6 +2,30 @@ module test_full_lifecycle
 
 include("setup.jl")
 
+function wait_for_handled_request(
+        state::JETLS.ServerState, id::Union{Int,String}; timeout::Float64 = 10.0
+    )
+    deadline = time() + timeout
+    while time() < deadline
+        if !haskey(state.currently_handled, id) && id in state.handled_history
+            return
+        end
+        sleep(0.01)
+    end
+    error("Timed out waiting for request $id cleanup")
+end
+
+function wait_for_cancellation(
+        cancel_flag::JETLS.CancelFlag; timeout::Float64 = 10.0
+    )
+    deadline = time() + timeout
+    while time() < deadline
+        JETLS.is_cancelled(cancel_flag) && return
+        sleep(0.01)
+    end
+    error("Timed out waiting for request cancellation")
+end
+
 @testset "full completion cycle" begin
 
 let (pkgcode, positions) = JETLS.get_text_and_positions("""
@@ -47,6 +71,7 @@ let (pkgcode, positions) = JETLS.get_text_and_positions("""
                             position = pos1)))
                 @test raw_res isa CompletionResponse
                 @test raw_res.id == id
+                wait_for_handled_request(server.state, id)
                 raw_res.result
             end
             @test result isa CompletionList
@@ -60,11 +85,10 @@ let (pkgcode, positions) = JETLS.get_text_and_positions("""
 
                 let id = id_counter[] += 1, raw_res, result
                     (; raw_res) = writereadmsg(
-                        CompletionResolveRequest(;
-                            id,
-                            params =  item))
+                        CompletionResolveRequest(; id, params =  item))
                     @test raw_res isa CompletionResolveResponse
                     @test raw_res.id == id
+                    wait_for_handled_request(server.state, id)
                     result = raw_res.result
                     @test result isa CompletionItem
                     documentation = result.documentation
@@ -74,12 +98,11 @@ let (pkgcode, positions) = JETLS.get_text_and_positions("""
                 end
             end
 
-            # Test basic cancellation handling functionality
+            # Sending cancellation first deterministically covers a request whose ID
+            # was already cancelled before its handler starts.
             let id = id_counter[] += 1
                 writereadmsg(
-                    CancelRequestNotification(;
-                        params = CancelParams(;
-                            id));
+                    CancelRequestNotification(; params = CancelParams(; id));
                     read = 0)
                 (; raw_res) = writereadmsg(
                     CompletionRequest(;
@@ -92,8 +115,9 @@ let (pkgcode, positions) = JETLS.get_text_and_positions("""
                 @test isnothing(raw_res.result)
                 @test raw_res.error isa ResponseError
                 @test raw_res.error.code == ErrorCodes.RequestCancelled
+                wait_for_handled_request(server.state, id)
+                @test isempty(server.state.currently_handled)
             end
-            @test length(server.state.currently_handled) == 0
 
             # Test dead cancellation request handling (cancelling already completed request)
             let completed_id = id_counter[] += 1
@@ -107,6 +131,7 @@ let (pkgcode, positions) = JETLS.get_text_and_positions("""
                 @test raw_res isa CompletionResponse
                 @test raw_res.id == completed_id
                 @test raw_res.result isa CompletionList
+                wait_for_handled_request(server.state, completed_id)
 
                 # The request is now completed and its ID should be in handled_history
                 @test completed_id in server.state.handled_history
@@ -115,9 +140,7 @@ let (pkgcode, positions) = JETLS.get_text_and_positions("""
                 # Now send a cancellation for the already completed request
                 # This should be ignored and not create a dead entry in currently_handled
                 writereadmsg(
-                    CancelRequestNotification(;
-                        params = CancelParams(;
-                            id = completed_id));
+                    CancelRequestNotification(; params = CancelParams(; id = completed_id));
                     read = 0)
 
                 # Verify no dead entry was created
@@ -135,6 +158,7 @@ let (pkgcode, positions) = JETLS.get_text_and_positions("""
                     @test raw_res isa CompletionResponse
                     @test raw_res.id == new_id
                     @test raw_res.result isa CompletionList
+                    wait_for_handled_request(server.state, new_id)
                 end
             end
             @test length(server.state.currently_handled) == 0
@@ -156,6 +180,50 @@ let (pkgcode, positions) = JETLS.get_text_and_positions("""
 end
 
 end # @testset "full completion cycle" begin
+
+@testset "in-flight request cancellation" begin
+    capabilities = ClientCapabilities(;
+        window = WindowClientCapabilities(; workDoneProgress = true))
+    uri = URI("file:///cancellation.jl")
+
+    withserver(; capabilities) do (; server, writemsg, readmsg, id_counter)
+        # The progress-create handshake keeps the request suspended without relying on
+        # timing. Cancel it in protocol order, then acknowledge the handshake to resume.
+        let id = id_counter[] += 1
+            writemsg(
+                DocumentFormattingRequest(;
+                    id,
+                    params = DocumentFormattingParams(;
+                        textDocument = TextDocumentIdentifier(; uri),
+                        options = FormattingOptions(; tabSize = 4, insertSpaces = true)));
+                check = false)
+            progress_request = readmsg().raw_msg
+            @test progress_request isa WorkDoneProgressCreateRequest
+
+            cancel_flag = server.state.currently_handled[id]
+            @test !JETLS.is_cancelled(cancel_flag)
+            writemsg(
+                CancelRequestNotification(; params = CancelParams(; id));
+                check = false)
+            wait_for_cancellation(cancel_flag)
+            @test JETLS.is_cancelled(cancel_flag)
+
+            writemsg(
+                ResponseMessage(; id = progress_request.id, result = null);
+                check = false)
+            messages = readmsg(; read = 3).raw_msg
+            formatting_response = only(msg for msg in messages if msg isa DocumentFormattingResponse)
+            @test formatting_response.id == id
+            @test isnothing(formatting_response.result)
+            @test formatting_response.error isa ResponseError
+            @test formatting_response.error.code == ErrorCodes.RequestCancelled
+
+            wait_for_handled_request(server.state, id)
+            wait_for_handled_request(server.state, progress_request.params.token)
+            @test isempty(server.state.currently_handled)
+        end
+    end
+end
 
 # Regression test: `textDocument/references` previously returned stale
 # results after script-mode reanalysis because the cached occurrences kept

@@ -15,6 +15,51 @@ const CLIENT_CAPABILITIES = ClientCapabilities(;
 const DEBOUNCE_DEFAULT = JETLS.get_config(JETLS.ConfigManager(JETLS.ConfigManagerData()), :full_analysis, :debounce)
 const TESTRUNNER_DEFAULT = JETLS.get_config(JETLS.ConfigManager(JETLS.ConfigManagerData()), :testrunner, :executable)
 
+@testset "watched-file registration patterns" begin
+    mktempdir() do dir
+        root_uri = filepath2uri(dir)
+        for relative_pattern_support in (false, true)
+            capabilities = ClientCapabilities(;
+                workspace = WorkspaceClientCapabilities(;
+                    didChangeWatchedFiles = DidChangeWatchedFilesClientCapabilities(;
+                        dynamicRegistration = true,
+                        relativePatternSupport = relative_pattern_support)))
+            withserver(; capabilities, rootUri = root_uri) do (;
+                    register_capability_json_request
+                )
+                registration = only(
+                    reg for reg in register_capability_json_request.params.registrations
+                    if reg.method == "workspace/didChangeWatchedFiles")
+                options = registration.registerOptions::Dict{String,Any}
+                patterns = Any[watcher["globPattern"] for watcher in options["watchers"]]
+                expected = if relative_pattern_support
+                    [Dict{String,Any}(
+                        "baseUri" => string(root_uri),
+                        "pattern" => pattern)
+                        for pattern in (JETLS.CONFIG_FILE, JETLS.PROFILE_TRIGGER_FILE, "**/*.jl")
+                    ]
+                else
+                    [
+                        JETLS.CONFIG_FILE_GLOB_PATTERN,
+                        "**/$(JETLS.PROFILE_TRIGGER_FILE)",
+                        "**/*.jl"
+                    ]
+                end
+                @static if JETLS.JETLS_DEV_MODE
+                    revise_pattern = relative_pattern_support ?
+                        Dict{String,Any}(
+                            "baseUri" => string(root_uri),
+                            "pattern" => JETLS.SERVER_REVISE_TRIGGER_FILE
+                        ) :
+                        "**/$(JETLS.SERVER_REVISE_TRIGGER_FILE)"
+                    push!(expected, revise_pattern)
+                end
+                @test patterns == expected
+            end
+        end
+    end
+end
+
 # Test the full cycle of `DidChangeWatchedFilesNotification`:
 # 1. Initialize with `.JETLSConfig.toml` file.
 # 2. Change the keys that require reload
@@ -161,6 +206,20 @@ const TESTRUNNER_DEFAULT = JETLS.get_config(JETLS.ConfigManager(JETLS.ConfigMana
                 end
             end
 
+            # nested config file change (should be ignored)
+            nested_dir = joinpath(tmpdir, "nested")
+            mkpath(nested_dir)
+            nested_config = joinpath(nested_dir, JETLS.CONFIG_FILE)
+            write(nested_config, "[testrunner]\nexecutable = \"nested\"\n")
+            let msg = DidChangeWatchedFilesNotification(;
+                    params = DidChangeWatchedFilesParams(;
+                        changes = [FileEvent(;
+                            uri = filepath2uri(nested_config),
+                            type = FileChangeType.Changed)]))
+                writereadmsg(msg; read=0)
+            end
+            @test JETLS.get_config(manager, :testrunner, :executable) == TESTRUNNER_RECREATE
+
             # non-config file change (should be ignored)
             other_file = joinpath(tmpdir, "other.txt")
             touch(other_file)
@@ -171,6 +230,61 @@ const TESTRUNNER_DEFAULT = JETLS.get_config(JETLS.ConfigManager(JETLS.ConfigMana
             end
             # no effect on config
             @test JETLS.get_config(manager, :testrunner, :executable) == TESTRUNNER_RECREATE
+        end
+    end
+end
+
+@testset "concretization pattern changes trigger reanalysis" begin
+    mktempdir() do tmpdir
+        script_path = joinpath(tmpdir, "script.jl")
+        script_uri = filepath2uri(script_path)
+        write(script_path, "x = 1\n")
+        rootUri = filepath2uri(tmpdir)
+
+        withserver(; rootUri, capabilities=CLIENT_CAPABILITIES) do (; writereadmsg, server)
+            (; raw_res) = writereadmsg(
+                make_DidOpenTextDocumentNotification(script_uri, "x = 1\n"))
+            @test raw_res isa PublishDiagnosticsNotification
+
+            manager = server.state.analysis_manager
+            analysis_info = JETLS.get_analysis_info(manager, script_uri)
+            @test analysis_info isa JETLS.AnalysisResult
+            generation = JETLS.get_generation(manager, analysis_info.entry)
+
+            config_path = joinpath(tmpdir, ".JETLSConfig.toml")
+            write(config_path, """
+                [[full_analysis.concretization_patterns]]
+                pattern = "x = x_"
+                """)
+            notification = DidChangeWatchedFilesNotification(;
+                params = DidChangeWatchedFilesParams(;
+                    changes = [FileEvent(;
+                        uri=filepath2uri(config_path), type=FileChangeType.Created)]))
+            writereadmsg(notification; read=3)
+
+            @test JETLS.get_generation(manager, analysis_info.entry) == generation + 1
+        end
+    end
+end
+
+@testset "config changes requeue initial analysis" begin
+    mktempdir() do tmpdir
+        script_path = joinpath(tmpdir, "script.jl")
+        script_uri = filepath2uri(script_path)
+        write(script_path, "x = 1\n")
+        rootUri = filepath2uri(tmpdir)
+
+        withserver(; rootUri, capabilities=CLIENT_CAPABILITIES) do (; server)
+            JETLS.stop_analysis_worker(server)
+            manager = server.state.analysis_manager
+            entry = JETLS.ScriptAnalysisEntry(script_uri)
+            JETLS.schedule_analysis!(server, script_uri, entry, #=invalidate=#false;
+                debounce=0.0, notify_diagnostics=false)
+
+            @test JETLS.get_analysis_info(manager, script_uri) === nothing
+            generation = JETLS.get_generation(manager, entry)
+            JETLS.request_reanalysis_for_tracked_entries!(server)
+            @test JETLS.get_generation(manager, entry) == generation + 1
         end
     end
 end

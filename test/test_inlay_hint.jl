@@ -465,6 +465,32 @@ end
         @test apply_inlay_hints(code, get_type_inlay_hints(code)) == expected
     end
 
+    @testset "typed vector literals" begin
+        let code = "X = Int[(1, 2)...]\n"
+            expected = "X = Int[(1, 2)::Tuple{$Int, $Int}...]::Vector{$Int}\n"
+            @test apply_inlay_hints(code, get_type_inlay_hints(code)) == expected
+        end
+    end
+
+    @testset "matrix literals" begin
+        let code = "X = [1 2; 3 4]\n"
+            expected = "X = [1 2; 3 4]::Matrix{$Int}\n"
+            @test apply_inlay_hints(code, get_type_inlay_hints(code)) == expected
+        end
+        let code = """
+            function matrix_from_vars(x::Int, y::Int)
+                [x y; y x]
+            end
+            """
+            expected = """
+            function matrix_from_vars(x::Int, y::Int)::Matrix{$Int}
+                [x::$Int y::$Int; y::$Int x::$Int]::Matrix{$Int}
+            end
+            """
+            @test apply_inlay_hints(code, get_type_inlay_hints(code)) == expected
+        end
+    end
+
     @testset "range filtering" begin
         code = "let x = [1, 2, 3]\n" *
             "    sum(x)\n" *

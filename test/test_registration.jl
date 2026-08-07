@@ -19,8 +19,8 @@ let capabilities = ClientCapabilities(;
 
         # test dynamic unregistration
         unregister(server, Unregistration(;
-            id=JETLS.COMPLETION_REGISTRATION_ID,
-            method=JETLS.COMPLETION_REGISTRATION_METHOD))
+            id = JETLS.COMPLETION_REGISTRATION_ID,
+            method = JETLS.COMPLETION_REGISTRATION_METHOD))
         (; raw_msg) = readmsg()
         @test raw_msg isa UnregisterCapabilityRequest
         @test reg ∉ load(state.currently_registered)

@@ -224,6 +224,19 @@ end
 get_file_info(s::ServerState, t::TextDocumentIdentifier, cancel_flag::AbstractCancelFlag; kwargs...) =
     get_file_info(s, t.uri, cancel_flag; kwargs...)
 
+function is_workspace_root_file(
+        s::ServerState, filepath::AbstractString, filename::AbstractString
+    )
+    isdefined(s, :root_path) || return false
+    expected = joinpath(s.root_path, filename)
+    return _paths_equal(_normalize_path(filepath), _normalize_path(expected))
+end
+
+function is_workspace_file(s::ServerState, filepath::AbstractString)
+    isdefined(s, :root_path) || return false
+    return issubdir(filepath, s.root_path)
+end
+
 """
     may_have_file_info(s::ServerState, uri::URI) -> Bool
 
@@ -235,6 +248,7 @@ waiting for its timeout.
 """
 function may_have_file_info(s::ServerState, uri::URI)
     is_rejected_text_document(s, uri) && return false
+    is_config_document_uri(s, uri) && return false
     uri.scheme == "file" && return true
     isunsaveduri(uri) && return true
     return get_notebook_uri_for_cell(s, uri) !== nothing
@@ -412,4 +426,11 @@ function collect_workspace_uris(server::Server)
         end
     end
     return uris
+end
+
+function relative_workspace_path_for_config(server::Server, filename::AbstractString)
+    isdefined(server.state, :root_path) || return nothing
+    root_path = server.state.root_path
+    issubdir(filename, root_path) || return nothing
+    return glob_candidate_path(filename, root_path)
 end
