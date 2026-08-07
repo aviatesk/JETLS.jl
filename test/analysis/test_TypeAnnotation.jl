@@ -1170,9 +1170,8 @@ end
         end
     end
 
-    # `[xs...]` / `T[xs...]` should surface the constructed `Vector{T}` type,
-    # not widen to a union with the synthetic `Base.vect` / `Base.getindex`
-    # callees that lowering plants at the literal's byte range.
+    # Array literals should surface the constructed array type, not widen to a
+    # union with synthetic callees or dimension tuples at the literal's byte range.
     @testset "array literal leaf scaffolding doesn't pollute tmerge range" begin
         let code = "[1, 2, 3]"
             _, ctx = type_annotate(code)
@@ -1183,6 +1182,18 @@ end
             _, ctx = type_annotate(code)
             @test widenconst(get_type_for_range(ctx, range_of(code, "Any[1, 2, 3]"))) ===
                 Vector{Any}
+        end
+        let code = "[1 2; 3 4]"
+            _, ctx = type_annotate(code)
+            @test widenconst(get_type_for_range(ctx, range_of(code, code))) === Matrix{Int}
+        end
+        let code = "Int[1 2; 3 4]"
+            _, ctx = type_annotate(code)
+            @test widenconst(get_type_for_range(ctx, range_of(code, code))) === Matrix{Int}
+        end
+        let code = "[1 2;;; 3 4]"
+            _, ctx = type_annotate(code)
+            @test widenconst(get_type_for_range(ctx, range_of(code, code))) === Array{Int,3}
         end
     end
 

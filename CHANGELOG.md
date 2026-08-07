@@ -67,6 +67,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- Fixed type inlay hints for matrix and multidimensional array literals, which now show the constructed array type without annotations for internal row dimensions. (Closed https://github.com/aviatesk/JETLS.jl/issues/841)
+
 - Fixed the TestRunner integration treating failed or errored tests as an unexpected TestRunner execution failure instead of reporting their results.
 
 - Fixed watched-file registration for clients that do not support relative glob patterns, while keeping handled file events scoped to the workspace root.
