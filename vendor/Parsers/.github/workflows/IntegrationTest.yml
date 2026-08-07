@@ -50,6 +50,12 @@ jobs:
           try
             # Force downstream tests to use this PR's version of the package.
             Pkg.develop(PackageSpec(path="."))  # resolver may fail with main deps
+            if "${{ matrix.package.repo }}" == "ARFFFiles.jl"
+              # ARFFFiles still constructs Tables.DictColumnTable from unordered
+              # Dicts, which OrderedCollections 2 rejects. Keep this downstream
+              # compatibility check useful until ARFFFiles migrates those inputs.
+              Pkg.add(PackageSpec(name="OrderedCollections", version="1"))
+            end
             Pkg.update()
             Pkg.test()  # resolver may fail with test time deps
           catch err

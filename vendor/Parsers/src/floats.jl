@@ -294,7 +294,14 @@ rettype(::Type{T}) where {T} = T === Number ? Nothing : T
 # has been "handled" properly: either applied or in error cases, set to `nothing`
 getx(x, f) = f === nothing ? x : nothing
 
-# if we need to _widen the type due to `digits` overflow, we want a non-inlined version so base case compilation doesn't get out of control
+# if we need to _widen the type due to `digits` overflow, we want a non-inlined version so base case compilation doesn't get out of control.
+# NOTE: the widened recursive calls deliberately do NOT use `Base.inferencebarrier` — the
+# widening ladder is bounded in type space (UInt64 → UInt128 → BigInt, where
+# `overflows(BigInt) == false` ends the recursion), and a barrier makes the widened
+# continuation reachable only through runtime dispatch: fine under the JIT, but in a
+# statically compiled (`juliac --trim`) binary the widened instance doesn't exist, so
+# parsing a wide-digit float would fail at runtime. The `@noinline` wrappers keep each
+# ladder step compiling separately, which is what bounds base-case compilation.
 @noinline _parsedigits(conf::AbstractConf{T}, source, pos, len, b, code, options, digits::IntType, neg::Bool, startpos, overflow_invalid::Bool, ndigits::Int, f::F) where {T, IntType, F} =
     parsedigits(conf, source, pos, len, b, code, options, digits, neg, startpos, overflow_invalid, ndigits, f)::Tuple{rettype(T), ReturnCode, Int}
 
@@ -312,7 +319,7 @@ getx(x, f) = f === nothing ? x : nothing
         while true
             if b <= 0x09
                 if overflows(IntType) && digits > overflowval(IntType)
-                    return _parsedigits(conf, source, pos, len, b + UInt8('0'), code, options, Base.inferencebarrier(_widen(digits)), neg, startpos, overflow_invalid, ndigits, f)::Tuple{rettype(T), ReturnCode, Int}
+                    return _parsedigits(conf, source, pos, len, b + UInt8('0'), code, options, _widen(digits), neg, startpos, overflow_invalid, ndigits, f)::Tuple{rettype(T), ReturnCode, Int}
                 elseif ndigits > maxdigits(T)
                     # if input is way too big, just bail
                     fastseek!(source, startpos - 1)
@@ -393,7 +400,7 @@ getx(x, f) = f === nothing ? x : nothing
     # `digits` still receives any fractional digits, `frac` just keeps track of how many digits
     # were parsed to combine with any "e123" exponent numbers to determine final exponent value
     if overflows(IntType) && digits > overflowval(IntType)
-        x, code, pos = _parsefrac(conf, source, pos, len, b, code, options, Base.inferencebarrier(_widen(digits)), neg, startpos, UInt64(0), overflow_invalid, ndigits, f)::Tuple{rettype(T), ReturnCode, Int}
+        x, code, pos = _parsefrac(conf, source, pos, len, b, code, options, _widen(digits), neg, startpos, UInt64(0), overflow_invalid, ndigits, f)::Tuple{rettype(T), ReturnCode, Int}
     else
         x, code, pos = parsefrac(conf, source, pos, len, b, code, options, digits, neg, startpos, UInt64(0), overflow_invalid, ndigits, f)
     end
@@ -437,7 +444,7 @@ end
             b = peekbyte(source, pos) - UInt8('0')
             b > 0x09 && break
             if overflows(IntType) && digits > overflowval(IntType)
-                return _parsefrac(conf, source, pos, len, b + UInt8('0'), code, options, Base.inferencebarrier(_widen(digits)), neg, startpos, frac, overflow_invalid, ndigits, f)::Tuple{rettype(T), ReturnCode, Int}
+                return _parsefrac(conf, source, pos, len, b + UInt8('0'), code, options, _widen(digits), neg, startpos, frac, overflow_invalid, ndigits, f)::Tuple{rettype(T), ReturnCode, Int}
             end
         end
         b += UInt8('0')
@@ -538,7 +545,7 @@ end
             @goto done
         end
         if overflows(ExpType) && exp > overflowval(ExpType)
-            return _parseexp(conf, source, pos, len, b, code, options, digits, neg, startpos, frac, Base.inferencebarrier(_widen(exp)), negexp, FT, overflow_invalid, ndigits, f)::Tuple{rettype(T), ReturnCode, Int}
+            return _parseexp(conf, source, pos, len, b, code, options, digits, neg, startpos, frac, _widen(exp), negexp, FT, overflow_invalid, ndigits, f)::Tuple{rettype(T), ReturnCode, Int}
         end
     end
 @label done

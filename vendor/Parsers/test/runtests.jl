@@ -854,3 +854,5 @@ end
 end
 
 end # @testset "Parsers"
+
+include("trim_compile_tests.jl")

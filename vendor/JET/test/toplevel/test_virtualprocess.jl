@@ -1945,6 +1945,16 @@ end
     end
 end
 
+function eval_replaced_test_macro(mod::Module, ex::Expr)
+    return Core.eval(mod, JET.replace_test_macrocalls(ex, mod))
+end
+
+function has_globalref(@nospecialize(x), mod::Module, name::Symbol)
+    x isa GlobalRef && return x.mod === mod && x.name === name
+    x isa Expr || return false
+    return any(arg -> has_globalref(arg, mod, name), x.args)
+end
+
 # in this e2e test suite, we just check usage of test macros doesn't lead to (false positive)
 # top-level errors (e.g. world age, etc.)
 # TODO
@@ -1953,6 +1963,245 @@ end
 @testset "@test macros" begin
     vmod = Module()
     Core.eval(vmod, :(using Test))
+
+    @testset "lightweight replacements" begin
+        let mod = Module()
+            Core.eval(mod, :(using Test))
+
+            @test eval_replaced_test_macro(mod, :(@test true)) === nothing
+            @test eval_replaced_test_macro(mod, :(@test false)) === nothing
+            @test eval_replaced_test_macro(mod, :(@test error("x"))) === nothing
+            @test eval_replaced_test_macro(mod, :(Test.@test true)) === nothing
+
+            @test eval_replaced_test_macro(mod, :(@test 1 ≈ 1 atol=0.1)) === nothing
+            @test eval_replaced_test_macro(mod, :(@test true broken=true)) === nothing
+            @test eval_replaced_test_macro(mod, :(@test false broken=true)) === nothing
+
+            Core.eval(mod, :(const conditional_closure_calls = Ref(0)))
+            conditional_closure_calls = @invokelatest getglobal(mod, :conditional_closure_calls)
+            conditional_closure = quote
+                @test true && any((1,)) do _
+                    conditional_closure_calls[] += 1
+                    true
+                end
+            end
+            @test eval_replaced_test_macro(mod, conditional_closure) === nothing
+            @test conditional_closure_calls[] == 1
+
+            for (skip, expected_calls) in ((true, 0), (false, 1))
+                conditional_closure_calls[] = 0
+                conditional_closure = quote
+                    @test any((1,)) do _
+                        conditional_closure_calls[] += 1
+                        true
+                    end skip=$skip
+                end
+                @test eval_replaced_test_macro(mod, conditional_closure) === nothing
+                @test conditional_closure_calls[] == expected_calls
+            end
+
+            # Keep this expression inline so `return` still targets the enclosing function,
+            # even though its conditional closure would otherwise make it a thunk candidate.
+            control_transfer = quote
+                function return_from_test()
+                    @test begin
+                        true && any((1,)) do _
+                            true
+                        end
+                        return 42
+                    end
+                    return 0
+                end
+            end
+            Core.eval(mod, JET.replace_test_macrocalls(control_transfer, mod))
+            return_from_test = @invokelatest getglobal(mod, :return_from_test)
+            @test @invokelatest(return_from_test()) == 42
+
+            Core.eval(mod, :(const test_ran = Ref(false)))
+            skipped = eval_replaced_test_macro(mod, :(@test (test_ran[] = true) skip=true))
+            @test skipped === nothing
+            test_ran = @invokelatest getglobal(mod, :test_ran)
+            @test !test_ran[]
+
+            @test eval_replaced_test_macro(mod, :(@test_broken false)) === nothing
+            @test eval_replaced_test_macro(mod, :(@test_skip error("not evaluated"))) === nothing
+            @test eval_replaced_test_macro(mod, :(@test_throws ErrorException error("x"))) === nothing
+            @test eval_replaced_test_macro(mod, :(@test_throws "x" error("x"))) === nothing
+            @test eval_replaced_test_macro(mod, :(@test_throws ArgumentError error("x"))) === nothing
+            @test eval_replaced_test_macro(mod, :(@test_throws ErrorException 42)) === nothing
+
+            @test eval_replaced_test_macro(mod, :(@test_logs (:info, "message") 42)) == 42
+            Core.eval(mod, :(const logged_value = Ref(0)))
+            @test eval_replaced_test_macro(mod, :(@test_logs logged_value[] = 42)) == 42
+            logged_value = @invokelatest getglobal(mod, :logged_value)
+            @test logged_value[] == 42
+            @test eval_replaced_test_macro(mod, :(@test_warn "warning" 42)) == 42
+            @test eval_replaced_test_macro(mod, :(@test_nowarn 42)) == 42
+            @test eval_replaced_test_macro(mod, :(@test_deprecated 42)) == 42
+            @test eval_replaced_test_macro(mod, :(@inferred identity(42))) == 42
+
+            testset = eval_replaced_test_macro(mod, quote
+                @testset "scope" begin
+                    local_only = 1
+                    @test local_only == 1
+                    @testset "nested" begin
+                        @test local_only == 1
+                    end
+                end
+            end)
+            @test testset === nothing
+            @test !isdefinedglobal(mod, :local_only)
+
+            Core.eval(mod, :(const description_ran = Ref(false)))
+            eval_replaced_test_macro(mod, quote
+                @testset "scope $(description_ran[] = true)" begin
+                    @test true
+                end
+            end)
+            description_ran = @invokelatest getglobal(mod, :description_ran)
+            @test description_ran[]
+
+            Core.eval(mod, :(const loop_values = Int[]))
+            eval_replaced_test_macro(mod, quote
+                @testset "i=$i" for i in 1:2
+                    push!(loop_values, i)
+                    @test i > 0
+                end
+            end)
+            loop_values = @invokelatest getglobal(mod, :loop_values)
+            @test loop_values == [1, 2]
+        end
+
+        let ex = :(pred(x) && any(items) do item
+                    check(item, x)
+                end)
+            @test JET.is_test_expression_thunk_safe(ex)
+            @test JET.should_wrap_test_expression_in_thunk(ex)
+        end
+
+        let ex = :(any(items) do item
+                    check(item)
+                end)
+            @test JET.is_test_expression_thunk_safe(ex)
+            @test !JET.should_wrap_test_expression_in_thunk(ex)
+        end
+
+        let ex = :(pred() && function (value)
+                    assigned_in_function = compute_value(value)
+                    return assigned_in_function
+                end)
+            @test JET.is_test_expression_thunk_safe(ex)
+            @test JET.should_wrap_test_expression_in_thunk(ex)
+        end
+
+        for ex in (:(pred() || any(items) do item
+                            check(item)
+                        end),
+                   :(if pred()
+                        any(items) do item
+                            check(item)
+                        end
+                    else
+                        false
+                    end),
+                   :(lower() < middle() < (any(items) do item
+                            check(item)
+                        end)),
+                   :(pred(Tuple{T} where T) && any(items) do item
+                            check(item)
+                        end))
+            @test JET.is_test_expression_thunk_safe(ex)
+            @test JET.has_conditionally_defined_test_function(ex)
+            @test JET.should_wrap_test_expression_in_thunk(ex)
+        end
+
+        for ex in (:(begin
+                        value = compute_value()
+                        pred() && any(items) do item
+                            check(item, value)
+                        end
+                    end),
+                   :(begin
+                        @unknown_test_helper check(value)
+                        pred() && any(items) do item
+                            check(item)
+                        end
+                    end),
+                   :(begin
+                        function check(value)
+                            return value
+                        end
+                        pred() && any(items) do item
+                            check(item)
+                        end
+                    end))
+            @test JET.has_conditionally_defined_test_function(ex)
+            @test !JET.is_test_expression_thunk_safe(ex)
+            @test !JET.should_wrap_test_expression_in_thunk(ex)
+        end
+
+        let mod = Module()
+            Core.eval(mod, :(using Test))
+            ex = JET.replace_test_macrocalls(quote
+                @testset "nested replacement" begin
+                    @test true
+                    @test_throws ErrorException error("x")
+                end
+            end, mod)
+            expanded = macroexpand(mod, ex)
+            @test has_globalref(expanded, Base, :inferencebarrier)
+            @test !has_globalref(expanded, Test, :do_test)
+            @test !has_globalref(expanded, Test, :do_test_throws)
+        end
+
+        let mod = Module()
+            Core.eval(mod, :(macro test(ex); :(99); end))
+            ex = JET.replace_test_macrocalls(:(@test true), mod)
+            @test Core.eval(mod, ex) == 99
+        end
+
+        let mod = Module()
+            Core.eval(mod, :(using Test))
+            Core.eval(mod, :(macro preserve(ex); QuoteNode(ex); end))
+            ex = JET.replace_test_macrocalls(:(@preserve @test true), mod)
+            preserved = Core.eval(mod, ex)
+            @test preserved isa Expr
+            @test preserved.head === :macrocall
+        end
+    end
+
+    @testset "conditional closures" begin
+        let res = @analyze_toplevel context = vmod virtualize = false begin
+                test_macro_items = [1]
+                @test_broken any(test_macro_items) do _
+                    undefined_in_broken_test
+                end && any(test_macro_items) do _
+                    false
+                end
+            end
+            @test isempty(res.res.toplevel_error_reports)
+            @test any(res.res.inference_error_reports) do report
+                is_global_undef_var(report, :undefined_in_broken_test)
+            end
+        end
+    end
+
+    @testset "testset statement order" begin
+        let res = @analyze_toplevel context = vmod virtualize = false begin
+                consume_test_closure(f::Function) = nothing
+                @testset "local type annotation" begin
+                    Typ = Any
+                    for _ = 1:2
+                        Typ = Tuple{Typ}
+                    end
+                    consume_test_closure() do x::Typ
+                        x
+                    end
+                end
+            end
+            @test isempty(res.res.toplevel_error_reports)
+        end
+    end
 
     let # @test
         res = @analyze_toplevel context = vmod virtualize = false begin
@@ -2053,6 +2302,14 @@ end
             @testset "JET example" begin
                 @test sum("julia") == "julia" # actual errors
             end
+        end
+        @test isempty(res.res.toplevel_error_reports)
+        test_sum_over_string(res)
+    end
+
+    let # nested @test in a value position
+        res = @analyze_toplevel context = vmod virtualize = false begin
+            result = @test sum("julia") == "julia"
         end
         @test isempty(res.res.toplevel_error_reports)
         test_sum_over_string(res)
