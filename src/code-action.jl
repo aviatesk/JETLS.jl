@@ -358,7 +358,9 @@ function missing_concretization_code_actions!(
         path = @something concretization_pattern_path_for_code_action(server, data.assignment_file) continue
         edit = @something jetls_config_workspace_edit(
             server, config_path, data.pattern, path) continue
-        action = isfile(config_path) ? "Add" : "Create"
+        creates_config = edit.documentChanges !== nothing &&
+            any(change -> change isa CreateFile, edit.documentChanges)
+        action = creates_config ? "Create" : "Add"
         title = "$action `.JETLSConfig.toml` concretization pattern for `$(data.name)`"
         push!(code_actions, CodeAction(;
             title,
@@ -386,12 +388,23 @@ function jetls_config_workspace_edit(
         server::Server, config_path::String, pattern::String, path::String
     )
     config_uri = filepath2uri(config_path)
-    if isfile(config_path)
-        text = read(config_path, String)
-        appended = jetls_config_append_text(text, pattern, path)
+    config_document = get_config_document(server.state, config_uri)
+    # The live buffer may hold unsaved changes or outlive a file deleted on disk
+    if config_document !== nothing || isfile(config_path)
+        if config_document === nothing
+            text = read(config_path, String)
+            version = null
+            configured = @something parse_configured_concretization_patterns(text) return nothing
+        else
+            text = config_document.text
+            version = config_document.version
+            config_data = @something config_document.config_data return nothing
+            configured = @something configured_concretization_patterns(config_data) return nothing
+        end
+        appended = jetls_config_append_text(text, configured, pattern, path)
         if appended === nothing
             text_edit = @something jetls_config_inline_array_edit(
-                text, pattern, path, server.state.encoding) return nothing
+                text, configured, pattern, path, server.state.encoding) return nothing
         else
             position = _offset_to_xy(
                 Vector{UInt8}(text), sizeof(text) + 1, server.state.encoding)
@@ -399,9 +412,16 @@ function jetls_config_workspace_edit(
                 range = Range(; start=position, var"end"=position),
                 newText = appended)
         end
-        # TODO: These positions are based on disk content and may be stale when
-        # `.JETLSConfig.toml` has unsaved changes. Synchronize the config document
-        # and use its live contents and version for a versioned edit.
+        if supports(server, :workspace, :workspaceEdit, :documentChanges)
+            text_document = OptionalVersionedTextDocumentIdentifier(;
+                uri = config_uri, version)
+            document_edit = TextDocumentEdit(;
+                textDocument = text_document,
+                edits = TextEdit[text_edit])
+            document_changes =
+                Union{TextDocumentEdit, CreateFile, RenameFile, DeleteFile}[document_edit]
+            return WorkspaceEdit(; documentChanges = document_changes)
+        end
         return WorkspaceEdit(;
             changes = Dict{URI,Vector{TextEdit}}(config_uri => TextEdit[text_edit]))
     end
@@ -424,6 +444,12 @@ end
 
 function jetls_config_append_text(text::String, pattern::String, path::String)
     configured = @something parse_configured_concretization_patterns(text) return nothing
+    return jetls_config_append_text(text, configured, pattern, path)
+end
+
+function jetls_config_append_text(
+        text::String, configured::Vector, pattern::String, path::String
+    )
     has_concretization_pattern(configured, pattern, path) && return nothing
     sep = isempty(text) ? "" : endswith(text, '\n') ? "\n" : "\n\n"
     appended = sep * format_jetls_concretization_pattern(pattern, path)
@@ -432,14 +458,12 @@ function jetls_config_append_text(text::String, pattern::String, path::String)
 end
 
 function parse_configured_concretization_patterns(text::String)
-    parsed = TOML.tryparse(text)
-    parsed isa TOML.ParserError && return nothing
-    validated = try
-        validate_config_data(parsed)
-    catch
-        return nothing
-    end
-    full_analysis = get(validated, "full_analysis", Dict{String,Any}())
+    config_data = @something tryparse_config_data(text) return nothing
+    return configured_concretization_patterns(config_data)
+end
+
+function configured_concretization_patterns(config_data::Dict{String,Any})
+    full_analysis = get(config_data, "full_analysis", Dict{String,Any}())
     full_analysis isa Dict{String,Any} || return nothing
     configured = get(full_analysis, "concretization_patterns", Any[])
     configured isa Vector || return nothing
@@ -482,6 +506,13 @@ function jetls_config_inline_array_edit(
         text::String, pattern::String, path::String, encoding::PositionEncodingKind.Ty
     )
     configured = @something parse_configured_concretization_patterns(text) return nothing
+    return jetls_config_inline_array_edit(text, configured, pattern, path, encoding)
+end
+
+function jetls_config_inline_array_edit(
+        text::String, configured::Vector, pattern::String, path::String,
+        encoding::PositionEncodingKind.Ty
+    )
     has_concretization_pattern(configured, pattern, path) && return nothing
     entry = format_toml_inline_table(Dict("pattern" => pattern, "path" => path))
     bytes = Vector{UInt8}(text)

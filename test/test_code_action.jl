@@ -660,6 +660,68 @@ end
         end
     end
 
+    @testset "existing config: versioned edit for the synced document" begin
+        mktempdir() do dir
+            config_path = joinpath(dir, ".JETLSConfig.toml")
+            config_uri = filepath2uri(config_path)
+            original = """
+                [[full_analysis.concretization_patterns]]
+                pattern = "OLD = x_"
+                """
+            write(config_path, original)
+            rootUri = filepath2uri(dir)
+            capabilities = ClientCapabilities(;
+                workspace = WorkspaceClientCapabilities(;
+                    workspaceEdit = WorkspaceEditClientCapabilities(;
+                        documentChanges = true)))
+            withserver(; rootUri, capabilities) do (; server)
+                JETLS.handle_DidOpenTextDocumentNotification(server,
+                    make_DidOpenTextDocumentNotification(config_uri, original; languageId = "toml", version = 1))
+                config_document = JETLS.get_config_document(server.state, config_uri)
+                @test config_document.version == 1
+                @test config_document.config_data == TOML.parse(original)
+
+                live = original * "# unsaved\n"
+                JETLS.handle_DidChangeTextDocumentNotification(server,
+                    make_DidChangeTextDocumentNotification(config_uri, live, 2))
+                config_document = JETLS.get_config_document(server.state, config_uri)
+                @test config_document.version == 2
+                @test config_document.text == live
+                @test config_document.config_data == TOML.parse(live)
+
+                edit = JETLS.jetls_config_workspace_edit(server, config_path, "USE_PULSE = x_", "issue464.jl")
+                @test edit.changes === nothing
+                document_edit = only(edit.documentChanges)::TextDocumentEdit
+                @test document_edit.textDocument.uri == config_uri
+                @test document_edit.textDocument.version == 2
+                text_edit = only(document_edit.edits)
+                updated = JETLS.apply_text_change(live, text_edit.range, text_edit.newText, server.state.encoding)
+                @test startswith(updated, live)
+                patterns = TOML.parse(updated)["full_analysis"]["concretization_patterns"]
+                @test [config["pattern"] for config in patterns] == ["OLD = x_", "USE_PULSE = x_"]
+
+                # The live document remains the edit target even after the file is
+                # deleted on disk.
+                rm(config_path)
+                edit = JETLS.jetls_config_workspace_edit(server, config_path, "USE_PULSE = x_", "issue464.jl")
+                document_edit = only(edit.documentChanges)::TextDocumentEdit
+                @test document_edit.textDocument.version == 2
+
+                invalid = "[full_analysis"
+                JETLS.handle_DidChangeTextDocumentNotification(server,
+                    make_DidChangeTextDocumentNotification(config_uri, invalid, 3))
+                config_document = JETLS.get_config_document(server.state, config_uri)
+                @test config_document.version == 3
+                @test config_document.config_data === nothing
+                @test JETLS.jetls_config_workspace_edit(server, config_path, "USE_PULSE = x_", "issue464.jl") === nothing
+
+                JETLS.handle_DidCloseTextDocumentNotification(server,
+                    make_DidCloseTextDocumentNotification(config_uri))
+                @test JETLS.get_config_document(server.state, config_uri) === nothing
+            end
+        end
+    end
+
     @testset "missing config: `CreateFile` edit" begin
         mktempdir() do dir
             script_path = joinpath(dir, "issue464.jl")

@@ -1,7 +1,7 @@
 module test_config
 
 using Test
-using JETLS
+using JETLS: JETLS
 
 include("HierarchicalTestSet.jl")
 
@@ -179,6 +179,17 @@ include("HierarchicalTestSet.jl")
             @test any(changes) do (_, _, path)
                 path == (:diagnostic, :patterns)
             end
+        end
+    end
+
+    @testset "`is_config_document_uri`" begin
+        mktempdir() do dir
+            state = JETLS.Server().state
+            state.root_path = dir
+            @test JETLS.is_config_document_uri(state, JETLS.filepath2uri(joinpath(dir, JETLS.CONFIG_FILE)))
+            @test JETLS.is_config_document_uri(state, JETLS.filepath2uri(joinpath(dir, "nested", "..", JETLS.CONFIG_FILE)))
+            @test !JETLS.is_config_document_uri(state, JETLS.filepath2uri(joinpath(dir, "nested", JETLS.CONFIG_FILE)))
+            @test !JETLS.is_config_document_uri(state, JETLS.filepath2uri(joinpath(dir, "config.toml")))
         end
     end
 end

@@ -248,6 +248,7 @@ waiting for its timeout.
 """
 function may_have_file_info(s::ServerState, uri::URI)
     is_rejected_text_document(s, uri) && return false
+    is_config_document_uri(s, uri) && return false
     uri.scheme == "file" && return true
     isunsaveduri(uri) && return true
     return get_notebook_uri_for_cell(s, uri) !== nothing
