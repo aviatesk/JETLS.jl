@@ -63,6 +63,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
+- Full analysis is now substantially faster for test files with many standard `Test` macros such as `@test` and `@testset`, while still analyzing the expressions inside them (https://github.com/aviatesk/JET.jl/pull/856).
+
 - Text and notebook document synchronization now use dynamic registration when supported, allowing regular text synchronization to be scoped to supported Julia buffers and server-provided virtual documents. Static fallbacks remain available for other clients.
 
 ### Fixed
