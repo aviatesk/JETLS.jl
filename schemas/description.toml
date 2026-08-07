@@ -24,6 +24,11 @@ path = "Optional glob pattern to restrict this configuration to specific files (
 [FullAnalysisConfig]
 debounce = "Debounce time in seconds before triggering full analysis after a file save. Higher values reduce analysis frequency but may delay diagnostic updates."
 auto_instantiate = "Automatically run `Pkg.resolve()` and `Pkg.instantiate()` for uninstantiated packages (e.g., freshly cloned repos). Creates versioned manifest if needed."
+concretization_patterns = "Additional JET top-level concretization patterns. Each entry requires a Julia expression `pattern` and can use an optional `path` glob to restrict it to specific source files."
+
+[ConcretizationPattern]
+pattern = "Julia expression pattern to force concretization, using JET/MacroTools pattern syntax (for example, `USE_PULSE = x_`)."
+path = "Optional glob pattern to restrict this concretization pattern to matching source file paths, relative to the workspace root when available."
 
 [TestRunnerConfig]
 executable = "Path to the TestRunner.jl executable. Defaults to `testrunner` (or `testrunner.bat` on Windows)."
@@ -34,6 +39,7 @@ executable_range = "Path to custom formatter executable for range formatting. Sh
 
 [InitOptions]
 analysis_overrides = "Override full analysis behavior for specific file patterns. Primarily used as a temporary workaround to disable analysis for files affected by memory leak issues. Each override specifies a glob pattern, optionally a module name, and can opt back into full analysis. Note: This is an experimental feature that may be removed or changed in future versions."
+reuse_native_inference = "Reuse results from Julia's native inference cache for calls to methods defined outside the modules being analyzed, instead of analyzing them recursively. This can substantially speed up analysis of packages with large dependency surfaces, but analysis results may change slightly, which can change the diagnostics that are reported. See [`reuse_native_inference`](https://aviatesk.github.io/JETLS.jl/release/launching/#init-options/reuse_native_inference). Note: This is an experimental feature that may be removed or changed in future versions."
 
 [AnalysisOverride]
 path = "Glob pattern to match files for which analysis should be overridden (e.g., `src/**/*.jl`, `test/**/*.jl`). Patterns are matched against file paths relative to the workspace root. Use `/` as the path separator on all platforms, including Windows; backslashes are not interpreted as path separators. Supports globstar (`**`) for matching directories recursively."

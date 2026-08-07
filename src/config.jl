@@ -1,5 +1,41 @@
-is_config_file(filepath::AbstractString) =
-    basename(filepath) == ".JETLSConfig.toml"
+const CONFIG_FILE = ".JETLSConfig.toml"
+const CONFIG_FILE_GLOB_PATTERN = "**/$CONFIG_FILE"
+
+function is_config_document_uri(state::ServerState, uri::URI)
+    filepath = @something uri2filepath(uri) return false
+    return is_workspace_root_file(state, filepath, CONFIG_FILE)
+end
+
+get_config_document(state::ServerState, uri::URI) =
+    get(load(state.config_document_cache), uri, nothing)
+
+function tryparse_config_data(text::String)
+    config_data = TOML.tryparse(text)
+    config_data isa TOML.ParserError && return nothing
+    try
+        return validate_config_data(config_data)
+    catch err
+        err isa InvalidConfigDataError || rethrow(err)
+        return nothing
+    end
+end
+
+function cache_config_document!(
+        state::ServerState, uri::URI, version::Int, text::String
+    )
+    info = ConfigDocumentInfo(version, text, tryparse_config_data(text))
+    store!(state.config_document_cache) do cache
+        Base.PersistentDict(cache, uri => info), nothing
+    end
+    return info
+end
+
+function delete_config_document!(state::ServerState, uri::URI)
+    store!(state.config_document_cache) do cache
+        Base.delete(cache, uri), nothing
+    end
+    return nothing
+end
 
 @generated function merge_and_track(
         on_difference,
@@ -261,9 +297,10 @@ end
 # Drives `parse_config_from_dict`'s field-by-field hydration: turns the raw dict value `x`
 # into the field's declared type `T`. Handles the small type tree we actually use — Maybe,
 # nested `ConfigSection`, vectors of `ConfigSection`, the formatter union, and plain
-# `convert`-able leaves. `DiagnosticPattern` / `AnalysisOverride` need bespoke validation
-# and are inlined here for the same reason `Maybe{FormatterConfig}` is — the set of special
-# cases is small and closed, so a dispatch hook would be over-built.
+# `convert`-able leaves. `ConcretizationPattern` / `DiagnosticPattern` /
+# `AnalysisOverride` need bespoke validation and are inlined here for the same reason
+# `Maybe{FormatterConfig}` is — the set of special cases is small and closed, so a
+# dispatch hook would be over-built.
 function parse_config_dict_value(
         T::Type, @nospecialize(x), path::Vector{String} = String[]
     )
@@ -304,6 +341,7 @@ function parse_config_dict_value(
     if T <: ConfigSection
         x isa Dict{String,Any} ||
             parse_dict_error(path, "expected a table for $T, got $(typeof(x))")
+        T === ConcretizationPattern && return parse_concretization_pattern(x, path)
         T === DiagnosticPattern && return parse_diagnostic_pattern(x)
         T === AnalysisOverride && return parse_analysis_override(x)
         return parse_config_from_dict(T, x, path)
@@ -319,6 +357,44 @@ function parse_config_dict_value(
         e isa MethodError || rethrow(e)
         parse_dict_error(path, "expected $T, got $(typeof(x))")
     end
+end
+
+function parse_concretization_pattern(x::Dict{String,Any}, path::Vector{String})
+    valid_keys = ("pattern", "path")
+    for key in keys(x)
+        key in valid_keys || parse_dict_error(
+            path, "unknown field `$key`, expected `pattern` or `path`")
+    end
+    haskey(x, "pattern") || parse_dict_error(path, "missing required field `pattern`")
+    pattern_value = x["pattern"]
+    pattern_value isa String ||
+        parse_dict_error(String[path; "pattern"], "expected String, got $(typeof(pattern_value))")
+    pattern = parse_concretization_pattern_string(pattern_value, String[path; "pattern"])
+    path_glob = if haskey(x, "path")
+        path_value = x["path"]
+        path_value isa String ||
+            parse_dict_error(String[path; "path"], "expected String, got $(typeof(path_value))")
+        try
+            Glob.FilenameMatch(path_value, "dp")
+        catch e
+            parse_dict_error(String[path; "path"],
+                "invalid glob pattern `$path_value`: $(sprint(showerror, e))")
+        end
+    else
+        nothing
+    end
+    return ConcretizationPattern(pattern, path_glob, String(pattern_value))
+end
+
+function parse_concretization_pattern_string(s::String, path::Vector{String})
+    ret = Meta.parse(strip(s); raise=false)
+    ret === nothing &&
+        parse_dict_error(path, "expected a Julia expression pattern, got no expression")
+    if Meta.isexpr(ret, :error) || Meta.isexpr(ret, :incomplete)
+        err = ret.args[1]
+        parse_dict_error(path, "failed to parse Julia expression pattern `$s`: $err")
+    end
+    return ret
 end
 
 """
@@ -398,8 +474,9 @@ end
 mutable struct ConfigChangeTracker
     const changed_settings::Vector{ConfigChange}
     diagnostic_setting_changed::Bool
+    analysis_setting_changed::Bool
 end
-ConfigChangeTracker() = ConfigChangeTracker(ConfigChange[], false)
+ConfigChangeTracker() = ConfigChangeTracker(ConfigChange[], false, false)
 
 function (tracker::ConfigChangeTracker)(old_val, new_val, path::Tuple{Vararg{Symbol}})
     @nospecialize old_val new_val
@@ -408,6 +485,9 @@ function (tracker::ConfigChangeTracker)(old_val, new_val, path::Tuple{Vararg{Sym
         push!(tracker.changed_settings, ConfigChange(path_str, old_val, new_val))
         if !isempty(path) && first(path) === :diagnostic
             tracker.diagnostic_setting_changed = true
+        elseif (length(path) ≥ 2 && path[1] === :full_analysis &&
+                path[2] === :concretization_patterns)
+            tracker.analysis_setting_changed = true
         end
     end
 end

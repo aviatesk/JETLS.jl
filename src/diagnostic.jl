@@ -370,16 +370,68 @@ function jet_toplevel_error_report_to_diagnostic(
         @nospecialize(report::JET.ToplevelErrorReport), postprocessor::JET.PostProcessor
     )
     report isa JET.ParseErrorReport && return nothing # Syntax errors should be reported via `textDocument/diagnostic` or `workspace/diangostic`
-    message = JET.with_bufferring(:limit=>true) do io
-        JET.print_report(io, report)
-    end |> postprocessor
+    if report isa JET.MissingConcretizationErrorReport
+        data = missing_concretization_data(report)
+        message = missing_concretization_message(report, data, postprocessor)
+        code = TOPLEVEL_MISSING_CONCRETIZATION_CODE
+    else
+        data = nothing
+        message = JET.with_bufferring(:limit=>true) do io
+            JET.print_report(io, report)
+        end |> postprocessor
+        code = TOPLEVEL_ERROR_CODE
+    end
     return Diagnostic(;
         range = line_range(report.line),
         severity = DiagnosticSeverity.Error,
         message,
         source = DIAGNOSTIC_SOURCE_SAVE,
-        code = TOPLEVEL_ERROR_CODE,
-        codeDescription = diagnostic_code_description(TOPLEVEL_ERROR_CODE))
+        code,
+        codeDescription = diagnostic_code_description(code),
+        data)
+end
+
+# `nothing` when JET could not derive a pattern for the assignment: any pattern guessed
+# here would be one that never matches, so no quick fix is offered
+function missing_concretization_data(report::JET.MissingConcretizationErrorReport)
+    assignment = @something report.assignment return nothing
+    pattern = @something assignment.pattern return nothing
+    return MissingConcretizationData(
+        String(report.var.name), sprint(Base.show_unquoted, pattern), assignment.file)
+end
+
+function missing_concretization_message(
+        report::JET.MissingConcretizationErrorReport,
+        data::Union{Nothing,MissingConcretizationData},
+        postprocessor::JET.PostProcessor
+    )
+    message = JET.with_bufferring(:limit=>true) do io
+        (; isconst, var, assignment) = report
+        (; mod, name) = var
+        println(io, "`$mod.$name` must have a concrete value for JETLS top-level analysis.")
+        if assignment === nothing
+            println(io, "JETLS could not identify the assignment that defines this binding.")
+        else
+            println(io, "JETLS did not evaluate the assignment at " *
+                "$(assignment.file):$(assignment.line) that defines this binding.")
+        end
+        if !isconst
+            println(io)
+            println(io, "Declaring `$name` as `const` may fix this when JETLS can " *
+                "infer the concrete value of its right-hand side without evaluating it.")
+        end
+        println(io)
+        if data === nothing
+            println(io, "Configure `full_analysis.concretization_patterns` in " *
+                "`.JETLSConfig.toml` manually to evaluate the relevant top-level statement.")
+            print(io, "JETLS could not derive a safe pattern for this assignment.")
+        else
+            println(io, "Configure `full_analysis.concretization_patterns` in " *
+                "`.JETLSConfig.toml` to evaluate this assignment.")
+            print(io, "The preferred quick fix can add the derived pattern `$(data.pattern)`.")
+        end
+    end
+    return postprocessor(message)
 end
 
 # inference diagnostic

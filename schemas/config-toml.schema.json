@@ -182,6 +182,29 @@
           "description": "Automatically run `Pkg.resolve()` and `Pkg.instantiate()` for uninstantiated packages (e.g., freshly cloned repos). Creates versioned manifest if needed.",
           "type": "boolean"
         },
+        "concretization_patterns": {
+          "default": [],
+          "description": "Additional JET top-level concretization patterns. Each entry requires a Julia expression `pattern` and can use an optional `path` glob to restrict it to specific source files.",
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "path": {
+                "description": "Optional glob pattern to restrict this concretization pattern to matching source file paths, relative to the workspace root when available.",
+                "type": "string"
+              },
+              "pattern": {
+                "description": "Julia expression pattern to force concretization, using JET/MacroTools pattern syntax (for example, `USE_PULSE = x_`).",
+                "pattern": "\\S",
+                "type": "string"
+              }
+            },
+            "required": [
+              "pattern"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
         "debounce": {
           "default": 1,
           "description": "Debounce time in seconds before triggering full analysis after a file save. Higher values reduce analysis frequency but may delay diagnostic updates.",
@@ -221,6 +244,11 @@
             "type": "object"
           },
           "type": "array"
+        },
+        "reuse_native_inference": {
+          "default": false,
+          "description": "Reuse results from Julia's native inference cache for calls to methods defined outside the modules being analyzed, instead of analyzing them recursively. This can substantially speed up analysis of packages with large dependency surfaces, but analysis results may change slightly, which can change the diagnostics that are reported. See [`reuse_native_inference`](https://aviatesk.github.io/JETLS.jl/release/launching/#init-options/reuse_native_inference). Note: This is an experimental feature that may be removed or changed in future versions.",
+          "type": "boolean"
         }
       },
       "required": [],

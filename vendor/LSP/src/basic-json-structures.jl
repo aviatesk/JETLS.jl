@@ -711,6 +711,22 @@ struct UnusedVariableData
 end
 export UnusedVariableData
 
+struct MissingConcretizationData
+    name::String
+    pattern::String
+    assignment_file::String
+end
+export MissingConcretizationData
+
+const DiagnosticData = Union{
+    AmbiguousSoftScopeData,
+    DeleteRangeData,
+    UnsortedImportData,
+    UnusedArgumentData,
+    UnusedVariableData,
+    MissingConcretizationData,
+}
+
 """
 Represents a diagnostic, such as a compiler error or warning.
 Diagnostic objects are only valid in the scope of a resource.
@@ -770,7 +786,7 @@ Diagnostic objects are only valid in the scope of a resource.
 
     - `@since` 3.16.0
     """
-    data::Union{AmbiguousSoftScopeData, DeleteRangeData, UnsortedImportData, UnusedArgumentData, UnusedVariableData, Nothing} = nothing
+    data::Union{DiagnosticData, Nothing} = nothing
 end
 
 # Command

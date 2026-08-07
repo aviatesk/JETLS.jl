@@ -1,11 +1,11 @@
 module test_config
 
 using Test
-using JETLS
+using JETLS: JETLS
 
 include("HierarchicalTestSet.jl")
 
-@testset "Configuration utilities" begin
+@testset HierarchicalTestSet "Configuration utilities" begin
     @testset "`get_default_config`" begin
         @test JETLS.get_default_config(:testrunner, :executable) ==
             (@static Sys.iswindows() ? "testrunner.bat" : "testrunner")
@@ -98,6 +98,28 @@ include("HierarchicalTestSet.jl")
                 @test patterns_by_path[test_path].severity == 0  # preserved
             end
         end
+
+        @testset "concretization pattern merge keys" begin
+            src_path = JETLS.Glob.FilenameMatch("src/**/*.jl", "")
+            test_path = JETLS.Glob.FilenameMatch("test/**/*.jl", "")
+            pattern_src = JETLS.ConcretizationPattern(:(USE_PULSE = x_), src_path, "USE_PULSE = x_")
+            pattern_test = JETLS.ConcretizationPattern(:(USE_PULSE = x_), test_path, "USE_PULSE = x_")
+            pattern_src_updated = JETLS.ConcretizationPattern(:(USE_PULSE = y_), src_path, "USE_PULSE = x_")
+
+            let base = JETLS.JETLSConfig(;
+                    full_analysis=JETLS.FullAnalysisConfig(;
+                        concretization_patterns=[pattern_src, pattern_test]))
+                overlay = JETLS.JETLSConfig(;
+                    full_analysis=JETLS.FullAnalysisConfig(;
+                        concretization_patterns=[pattern_src_updated]))
+                merged = JETLS.merge_settings(base, overlay)
+                patterns = JETLS.getobjpath(merged, :full_analysis, :concretization_patterns)
+                @test length(patterns) == 2
+                patterns_by_path = Dict(p.path => p for p in patterns)
+                @test patterns_by_path[src_path].pattern == :(USE_PULSE = y_)
+                @test patterns_by_path[test_path].pattern == :(USE_PULSE = x_)
+            end
+        end
     end
 
     @testset "`track_setting_changes`" begin
@@ -117,6 +139,16 @@ include("HierarchicalTestSet.jl")
                 (:full_analysis, :debounce),
                 (:testrunner, :executable),
             ])
+        end
+
+        @testset "concretization pattern update marks `analysis_setting_changed`" begin
+            pattern1 = JETLS.ConcretizationPattern(:(USE_PULSE = x_), nothing, "USE_PULSE = x_")
+            pattern2 = JETLS.ConcretizationPattern(:(USE_PULSE = y_), nothing, "USE_PULSE = x_")
+            config1 = JETLS.JETLSConfig(; full_analysis=JETLS.FullAnalysisConfig(; concretization_patterns=[pattern1]))
+            config2 = JETLS.JETLSConfig(; full_analysis=JETLS.FullAnalysisConfig(; concretization_patterns=[pattern2]))
+            tracker = JETLS.ConfigChangeTracker()
+            JETLS.track_setting_changes(tracker, config1, config2)
+            @test tracker.analysis_setting_changed
         end
 
         # Test that updating severity of an existing pattern is tracked
@@ -150,12 +182,15 @@ include("HierarchicalTestSet.jl")
         end
     end
 
-    @testset "`is_config_file`" begin
-        @test JETLS.is_config_file("/path/to/.JETLSConfig.toml")
-        @test JETLS.is_config_file(".JETLSConfig.toml")
-        @test !JETLS.is_config_file("/path/to/Non.JETLSConfig.toml")
-        @test !JETLS.is_config_file("config.toml")
-        @test !JETLS.is_config_file("/path/to/regular.txt")
+    @testset "`is_config_document_uri`" begin
+        mktempdir() do dir
+            state = JETLS.Server().state
+            state.root_path = dir
+            @test JETLS.is_config_document_uri(state, JETLS.filepath2uri(joinpath(dir, JETLS.CONFIG_FILE)))
+            @test JETLS.is_config_document_uri(state, JETLS.filepath2uri(joinpath(dir, "nested", "..", JETLS.CONFIG_FILE)))
+            @test !JETLS.is_config_document_uri(state, JETLS.filepath2uri(joinpath(dir, "nested", JETLS.CONFIG_FILE)))
+            @test !JETLS.is_config_document_uri(state, JETLS.filepath2uri(joinpath(dir, "config.toml")))
+        end
     end
 end
 
@@ -320,6 +355,67 @@ end
         @test err isa ErrorException
         @test occursin("Invalid value at `formatter`", err.msg)
         @test occursin("expected formatter table key `custom`", err.msg)
+    end
+end
+
+@testset HierarchicalTestSet "`parse_config_from_dict` concretization patterns" begin
+    @testset "patterns with and without `path`" begin
+        raw_config = Dict{String,Any}(
+            "full_analysis" => Dict{String,Any}(
+                "concretization_patterns" => Any[
+                    Dict{String,Any}("pattern" => "USE_PULSE = x_"),
+                    Dict{String,Any}(
+                        "pattern" => "SIMULATE = x_",
+                        "path" => "examples/**/*.jl")]))
+        config = JETLS.parse_config_from_dict(JETLS.JETLSConfig, raw_config)
+        patterns = config.full_analysis.concretization_patterns
+        @test length(patterns) == 2
+        @test patterns[1].pattern == :(USE_PULSE = x_)
+        @test patterns[1].path === nothing
+        @test patterns[2].pattern == :(SIMULATE = x_)
+        @test occursin(patterns[2].path, "examples/foo.jl")
+    end
+
+    @testset "non-table entry is rejected" begin
+        raw_config = Dict{String,Any}(
+            "full_analysis" => Dict{String,Any}(
+                "concretization_patterns" => Any["USE_PULSE = x_"]))
+        err = try
+            JETLS.parse_config_from_dict(JETLS.JETLSConfig, raw_config)
+            nothing
+        catch e; e; end
+        @test err isa ErrorException
+        @test occursin("expected a table for", err.msg)
+    end
+
+    @testset "incomplete pattern expression is rejected" begin
+        raw_config = Dict{String,Any}(
+            "full_analysis" => Dict{String,Any}(
+                "concretization_patterns" => Any[Dict{String,Any}(
+                    "pattern" => "USE_PULSE =",
+                    "path" => "examples/**/*.jl")]))
+        err = try
+            JETLS.parse_config_from_dict(JETLS.JETLSConfig, raw_config)
+            nothing
+        catch e; e; end
+        @test err isa ErrorException
+        @test occursin("full_analysis.concretization_patterns.pattern", err.msg)
+    end
+
+    @testset "empty or comment-only patterns are rejected" begin
+        for pattern in ("", "  \t\n", "# comment only")
+            raw_config = Dict{String,Any}(
+                "full_analysis" => Dict{String,Any}(
+                    "concretization_patterns" => Any[Dict{String,Any}(
+                        "pattern" => pattern)]))
+            err = try
+                JETLS.parse_config_from_dict(JETLS.JETLSConfig, raw_config)
+                nothing
+            catch e; e; end
+            @test err isa ErrorException
+            @test occursin("full_analysis.concretization_patterns.pattern", err.msg)
+            @test occursin("expected a Julia expression pattern", err.msg)
+        end
     end
 end
 

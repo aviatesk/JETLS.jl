@@ -185,30 +185,6 @@ function hasServerConfigChanged(
   );
 }
 
-function createWorkspaceRootFileWatcher(
-  fileName: string,
-  {
-    ignoreCreateEvents,
-    ignoreChangeEvents,
-    ignoreDeleteEvents,
-  }: {
-    ignoreCreateEvents?: boolean;
-    ignoreChangeEvents?: boolean;
-    ignoreDeleteEvents?: boolean;
-  } = {},
-): vscode.FileSystemWatcher | undefined {
-  const workspaceFolders = vscode.workspace.workspaceFolders;
-  if (!workspaceFolders || workspaceFolders.length !== 1) {
-    return undefined;
-  }
-  return vscode.workspace.createFileSystemWatcher(
-    new vscode.RelativePattern(workspaceFolders[0], fileName),
-    ignoreCreateEvents,
-    ignoreChangeEvents,
-    ignoreDeleteEvents,
-  );
-}
-
 async function startLanguageServer() {
   const serverConfig = getServerConfig();
   currentServerConfig = serverConfig;
@@ -475,22 +451,10 @@ async function startLanguageServer() {
     .getConfiguration("jetls-client")
     .get("initializationOptions", {});
 
-  const fileSystemWatchers = [
-    vscode.workspace.createFileSystemWatcher("**/*.jl"),
-    createWorkspaceRootFileWatcher(".JETLSConfig.toml"),
-    createWorkspaceRootFileWatcher(".JETLSProfile", {
-      ignoreCreateEvents: false,
-      ignoreChangeEvents: true,
-      ignoreDeleteEvents: true,
-    }),
-    createWorkspaceRootFileWatcher(".JETLS_REVISE", {
-      ignoreCreateEvents: false,
-      ignoreChangeEvents: true,
-      ignoreDeleteEvents: true,
-    }),
-  ].filter((watcher): watcher is vscode.FileSystemWatcher => watcher !== undefined);
-
   const clientOptions: LanguageClientOptions = {
+    // Keep this selector as a static-registration fallback while jetls-client can
+    // connect to independently installed JETLS versions. Once the extension manages
+    // the `jetls` binary, rely only on server-side dynamic registration and remove it.
     documentSelector: [
       {
         scheme: "file",
@@ -513,9 +477,6 @@ async function startLanguageServer() {
         scheme: "jetls-testrunner-logs",
       },
     ],
-    synchronize: {
-      fileEvents: fileSystemWatchers,
-    },
     middleware: {
       // `editor.action.showReferences` is a built-in VSCode command that
       // requires actual `vscode.Uri`/`vscode.Position`/`vscode.Location`
@@ -569,10 +530,6 @@ async function startLanguageServer() {
     serverOptions,
     clientOptions,
   );
-  // `workspace/textDocumentContent` is still exposed as a proposed
-  // vscode-languageclient feature. JETLS sends the supported `jetls` scheme
-  // in its server capability or dynamic registration.
-  languageClient.registerProposedFeatures();
 
   statusBarItem.text = "$(sync~spin) Loading JETLS ...";
   statusBarItem.tooltip =

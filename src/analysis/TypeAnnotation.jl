@@ -1542,7 +1542,15 @@ end
 # collapses onto the very expression it wraps, and letting the wrapper claim the range
 # would drop the query into `tmerge_at_range`, merging loop/closure scaffolding types
 # into the user-visible result.
-const DISPATCH_SURFACE_KINDS = JS.KSet"macrocall call dotcall tuple ' do juxtapose typed_comprehension for while function macro = comparison && || if ?"
+const CALL_RESULT_SURFACE_KINDS = JS.KSet"""
+    call dotcall ref tuple ' do juxtapose
+    vect vcat hcat ncat typed_vcat typed_hcat typed_ncat
+    """
+const DISPATCH_SURFACE_KINDS = JS.KSet"""
+    function do macro call dotcall macrocall ref tuple ' juxtapose =
+    comparison && || if ? for while
+    vect vcat hcat ncat typed_vcat typed_hcat typed_ncat typed_comprehension row
+    """
 
 function collect_provenance_indexes(inferred_tree::SyntaxTree, annotations::TreeAnnotations)
     surface_kind_index = Dict{UnitRange{Int},JS.Kind}()
@@ -1816,15 +1824,16 @@ a naive `tmerge` of all matches would pull in synthetic helper types that the us
 wrote. The dispatch picks a per-kind strategy that filters or summarizes the lowered
 nodes appropriately; see the source of each helper for the rationale behind its choice:
 
-| surface kind                                           | strategy                     |
-|:-------------------------------------------------------|:-----------------------------|
-| `K"call"` / `K"dotcall"` / `K"tuple"` / `K"'"` / `K"do"` | `type_for_call`              |
-| `K"macrocall"`                                         | `type_for_macroexpansion`    |
-| `K"typed_comprehension"`                               | `type_for_array_construct`   |
-| `K"function"` / `K"macro"`                             | `type_for_funcdef`           |
-| `K"comparison"` / `K"&&"` / `K"||"` / `K"if"` / `K"?"` | `type_for_branching`         |
-| `K"for"` / `K"while"`                                  | always `Core.Const(nothing)` |
-| everything else                                        | `tmerge_at_range`            |
+| surface kind                                                                              | strategy                     |
+|:-----------------------------------------------------------------------------------------:|:----------------------------:|
+| `K"call"` / `K"dotcall"` / `K"ref"` / `K"tuple"` / `K"'"` / `K"do"` / array literal kinds | `type_for_call`              |
+| `K"macrocall"`                                                                            | `type_for_macroexpansion`    |
+| `K"typed_comprehension"`                                                                  | `type_for_array_construct`   |
+| `K"row"`                                                                                  | always `nothing`             |
+| `K"function"` / `K"macro"`                                                                | `type_for_funcdef`           |
+| `K"comparison"` / `K"&&"` / `K"||"` / `K"if"` / `K"?"`                                    | `type_for_branching`         |
+| `K"for"` / `K"while"`                                                                     | always `Core.Const(nothing)` |
+| everything else                                                                           | `tmerge_at_range`            |
 """
 function get_type_for_range(ctx::InferredTreeContext, rng::UnitRange{<:Integer})
     binding_typ = get(ctx.oc_argument_binding_types, rng, nothing)
@@ -1836,12 +1845,15 @@ function get_type_for_range(ctx::InferredTreeContext, rng::UnitRange{<:Integer})
     surface_kind = surface_kind_at_range(ctx, rng)
     if surface_kind === JS.K"macrocall"
         return type_for_macroexpansion(ctx, rng)
-    elseif surface_kind in JS.KSet"call dotcall tuple ' do juxtapose"
+    elseif surface_kind in CALL_RESULT_SURFACE_KINDS
         # `juxtapose`: parse-tree provenance retains the parser kind for `2x`,
         # which desugars to a `K"call"` in the inferred tree.
         return type_for_call(ctx, rng)
     elseif surface_kind === JS.K"typed_comprehension"
         return type_for_typed_comprehension(ctx, rng)
+    elseif surface_kind === JS.K"row"
+        # Matrix rows carry synthetic `hvcat` dimension arguments, not values.
+        return nothing
     elseif surface_kind in JS.KSet"for while"
         return Core.Const(nothing)
     elseif surface_kind in JS.KSet"function macro"
@@ -1887,6 +1899,8 @@ end
 # - NamedTuple literal `(; a=1, b=2)`: lowered as four calls — names tuple,
 #   `NamedTuple{…}` type apply, values tuple, final constructor — and the
 #   constructor (which produces the NamedTuple value) is emitted last.
+# - Matrix / n-dimensional literals: the dimension tuple is constructed before
+#   the final `hvcat` / `hvncat` call, so the array-producing call wins.
 # - Positional `f(args)` and `(1, 2, 3)`: a single K"call" at the range,
 #   so "last" is just that single entry.
 function type_for_call(ctx::InferredTreeContext, rng::UnitRange{<:Integer})

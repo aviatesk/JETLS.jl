@@ -47,6 +47,12 @@ function setup_ctx!(ctx::SchemaContext)
     # `__pattern_value__` is an internal field and not appeared in the config file
     skip!(ctx, JETLS.DiagnosticPattern, :__pattern_value__)
 
+    skip!(ctx, JETLS.ConcretizationPattern, :__pattern_value__)
+    override_field!(ctx, JETLS.ConcretizationPattern, :pattern) do _
+        # JSON Schema regex requiring at least one non-whitespace character.
+        Dict("type" => "string", "pattern" => raw"\S")
+    end
+
     override_field!(ctx, JETLS.DiagnosticPattern, :match_by) do _
         Dict("type" => "string", "enum" => ["code", "message"])
     end

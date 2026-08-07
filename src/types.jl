@@ -181,6 +181,12 @@ struct SavedFileInfo
     end
 end
 
+struct ConfigDocumentInfo
+    version::Int
+    text::String
+    config_data::Union{Nothing,Dict{String,Any}}
+end
+
 # Notebook document synchronization
 # =================================
 
@@ -343,6 +349,7 @@ signature_analysis_completion(job::AbstractSignatureAnalysisJob) =
     getfield(job, :completion)::Base.Event
 
 const AnalysisCache = LWContainer{Dict{URI,AnalysisInfo}, LWStats}
+const TrackedAnalysisEntries = CASContainer{Dict{AnalysisEntry,URI}, CASStats}
 const PendingAnalyses = CASContainer{Dict{AnalysisEntry,Union{Nothing,AnalysisRequest}}, CASStats}
 const CurrentGenerations = CASContainer{Dict{AnalysisEntry,Int}, CASStats}
 const AnalyzedGenerations = CASContainer{Dict{AnalysisEntry,Int}, CASStats}
@@ -357,6 +364,7 @@ struct AnalysisManager
     current_generations::CurrentGenerations
     analyzed_generations::AnalyzedGenerations
     debounced::DebouncedRequests
+    tracked_entries::TrackedAnalysisEntries
     instantiated_envs::InstantiatedEnvs
     worker_task::Base.RefValue{Task}
     signature_worker_tasks::Vector{Task}
@@ -369,6 +377,7 @@ struct AnalysisManager
             CurrentGenerations(),
             AnalyzedGenerations(),
             DebouncedRequests(),
+            TrackedAnalysisEntries(),
             InstantiatedEnvs(),
             Ref{Task}(), # initialized by start_analysis_worker!
             Task[], # initialized by start_signature_analysis_workers!
@@ -488,9 +497,18 @@ const Maybe{T} = Union{Nothing,T}
 
 function merge_key_value end
 
+struct ConcretizationPattern <: ConfigSection
+    pattern::Any
+    path::Maybe{Glob.FilenameMatch{String}}
+    __pattern_value__::String
+end
+@define_eq_overloads ConcretizationPattern
+merge_key_value(pattern::ConcretizationPattern) = (pattern.path, pattern.__pattern_value__)
+
 @kwdef struct FullAnalysisConfig <: ConfigSection
     debounce::Maybe{Float64} = nothing
     auto_instantiate::Maybe{Bool} = nothing
+    concretization_patterns::Maybe{Vector{ConcretizationPattern}} = nothing
 end
 @define_eq_overloads FullAnalysisConfig
 
@@ -544,6 +562,7 @@ const LOWERING_UNREACHABLE_CODE = "lowering/unreachable-code"
 const LOWERING_INACTIVE_CODE = "lowering/inactive-code"
 const LOWERING_AMBIGUOUS_SOFT_SCOPE_CODE = "lowering/ambiguous-soft-scope"
 const TOPLEVEL_ERROR_CODE = "toplevel/error"
+const TOPLEVEL_MISSING_CONCRETIZATION_CODE = "toplevel/missing-concretization"
 const TOPLEVEL_METHOD_OVERWRITE_CODE = "toplevel/method-overwrite"
 const TOPLEVEL_ABSTRACT_FIELD_CODE = "toplevel/abstract-field"
 const INFERENCE_UNDEF_GLOBAL_VAR_CODE = "inference/undef-global-var"
@@ -576,6 +595,7 @@ const ALL_DIAGNOSTIC_CODES = Set{String}(String[
     LOWERING_INACTIVE_CODE,
     LOWERING_AMBIGUOUS_SOFT_SCOPE_CODE,
     TOPLEVEL_ERROR_CODE,
+    TOPLEVEL_MISSING_CONCRETIZATION_CODE,
     TOPLEVEL_METHOD_OVERWRITE_CODE,
     TOPLEVEL_ABSTRACT_FIELD_CODE,
     INFERENCE_UNDEF_GLOBAL_VAR_CODE,
@@ -629,15 +649,20 @@ merge_key_value(analysis_override::AnalysisOverride) = analysis_override.path
 # These are set once during the initialize request and remain constant.
 @kwdef struct InitOptions <: ConfigSection
     analysis_overrides::Maybe{Vector{AnalysisOverride}} = nothing
+    reuse_native_inference::Maybe{Bool} = nothing
 end
 @define_eq_overloads InitOptions
 function Base.show(io::IO, init_options::InitOptions)
     print(io, "InitOptions(;")
     analysis_overrides = init_options.analysis_overrides
     analysis_overrides === nothing || print(io, " analysis_overrides=", analysis_overrides)
+    reuse_native_inference = init_options.reuse_native_inference
+    reuse_native_inference === nothing ||
+        print(io, " reuse_native_inference=", reuse_native_inference)
     print(io, ")")
 end
-const DEFAULT_INIT_OPTIONS = InitOptions(; analysis_overrides=AnalysisOverride[])
+const DEFAULT_INIT_OPTIONS = InitOptions(;
+    analysis_overrides=AnalysisOverride[], reuse_native_inference=false)
 
 @kwdef struct LaTeXEmojiConfig <: ConfigSection
     strip_prefix::Maybe{Union{Missing,Bool}} = nothing # missing is used as sentinel for default setting value
@@ -690,7 +715,8 @@ end
 
 const DEFAULT_CONFIG = JETLSConfig(;
     diagnostic = DiagnosticConfig(true, true, true, DiagnosticPattern[]),
-    full_analysis = FullAnalysisConfig(@static(JETLS_TEST_MODE ? 0.0 : 1.0), true),
+    full_analysis = FullAnalysisConfig(
+        @static(JETLS_TEST_MODE ? 0.0 : 1.0), true, ConcretizationPattern[]),
     testrunner = TestRunnerConfig(@static Sys.iswindows() ? "testrunner.bat" : "testrunner"),
     formatter = "Runic",
     completion = CompletionConfig(LaTeXEmojiConfig(missing)),
@@ -848,6 +874,7 @@ end
 const FileCache = SWContainer{Base.PersistentDict{URI,FileInfo}, SWStats}
 const SavedFileCache = SWContainer{Base.PersistentDict{URI,SavedFileInfo}, SWStats}
 const RejectedTextDocuments = SWContainer{Base.PersistentDict{URI,Nothing}, SWStats}
+const ConfigDocumentCache = SWContainer{Base.PersistentDict{URI,ConfigDocumentInfo}, SWStats}
 const NotebookCache = SWContainer{Base.PersistentDict{URI,NotebookInfo}, SWStats}
 const CellToNotebookMap = SWContainer{Base.PersistentDict{URI,URI}, SWStats} # cell URI -> notebook URI
 
@@ -920,6 +947,7 @@ mutable struct ServerState
     const saved_file_cache::SavedFileCache # syntactic analysis cache (synced with `textDocument/didSave`)
     # Prevent requests for documents rejected by `didOpen` from waiting for a `FileInfo`.
     const rejected_text_documents::RejectedTextDocuments
+    const config_document_cache::ConfigDocumentCache
     const notebook_cache::NotebookCache # notebook document cache (synced with `notebookDocument/did*`), mapping notebook URIs to their notebook info
     const cell_to_notebook::CellToNotebookMap # maps cell URIs to their notebook URI
     # Cache for files not synced via document-synchronization (unsynced files).
@@ -962,6 +990,7 @@ mutable struct ServerState
             #=file_cache=# FileCache(),
             #=saved_file_cache=# SavedFileCache(),
             #=rejected_text_documents=# RejectedTextDocuments(),
+            #=config_document_cache=# ConfigDocumentCache(),
             #=notebook_cache=# NotebookCache(),
             #=cell_to_notebook=# CellToNotebookMap(),
             #=unsynced_file_cache=# UnsyncedFileCache(),

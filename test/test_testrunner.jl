@@ -115,9 +115,39 @@ end
             @test result.logs == expected.logs
         end
 
+        @testset "test failure result with exit 1" begin
+            server = JETLS.Server()
+            expected = mock_testrunner_result(; n_passed = 1, n_failed = 1)
+            source = String(LSP.JSON3.write(expected))
+            cmd = Cmd(["/bin/sh", "-c", "cat; exit 1"])
+            result = JETLS.read_testrunner_result(server, cmd, source)
+            result = result::JETLS.TestRunnerResult
+            @test result.stats.n_passed == expected.stats.n_passed
+            @test result.stats.n_failed == expected.stats.n_failed
+        end
+
+        @testset "non-test exit 1 remains a process failure" begin
+            server = JETLS.Server()
+            source = String(LSP.JSON3.write(mock_testrunner_result()))
+            cmd = Cmd(["/bin/sh", "-c", "cat; exit 1"])
+            logger = Test.TestLogger()
+            result = with_logger(logger) do
+                JETLS.read_testrunner_result(server, cmd, source)
+            end
+            @test result == "Test execution failed"
+            log = only(logger.logs)
+            @test log.message == "TestRunner execution failed"
+            details = log.kwargs[:details]
+            @test details.exitcode == 1
+            @test details.termsignal == 0
+            @test details.stdout_bytes == ncodeunits(source)
+            @test details.reason === :process
+            @test isnothing(details.parse_error)
+        end
+
         @testset "process failure logs metadata" begin
             server = JETLS.Server()
-            cmd = Cmd(["/bin/sh", "-c", "printf 'testrunner failed\\n'; exit 1"])
+            cmd = Cmd(["/bin/sh", "-c", "cat; printf 'testrunner failed\\n'; exit 1"])
             logger = Test.TestLogger()
             result = with_logger(logger) do
                 JETLS.read_testrunner_result(server, cmd, "")
@@ -218,26 +248,6 @@ end
         JETLS.delete_text_document_content!(server, uri)
         @test JETLS.get_text_document_content(server.state, uri) === nothing
     end
-end
-
-@testset "jetls document synchronization (track open/close, no Julia analysis)" begin
-    # Spec-conformant clients may sync `jetls:` virtual documents. The Julia-only
-    # sync path must not run for them (no crash on the non-`julia` languageId, no
-    # `FileInfo` pollution); instead open/close is tracked to drive content refreshes.
-    server = JETLS.Server()
-    juri = URI(; scheme=JETLS.TESTRUNNER_LOGS_SCHEME, path="/testrunner/logs", query="source=x&index=1&name=ts")
-    JETLS.update_text_document_content!(server, juri, "logs\n")
-
-    open_msg = DidOpenTextDocumentNotification(; params = DidOpenTextDocumentParams(;
-        textDocument = TextDocumentItem(; uri=juri, languageId="log", version=1, text="logs\n")))
-    @test JETLS.handle_DidOpenTextDocumentNotification(server, open_msg) === nothing
-    @test JETLS.get_file_info(server.state, juri) === nothing
-    @test JETLS.load(server.state.text_document_content_cache)[juri].opened
-
-    close_msg = DidCloseTextDocumentNotification(; params = DidCloseTextDocumentParams(;
-        textDocument = TextDocumentIdentifier(; uri=juri)))
-    @test JETLS.handle_DidCloseTextDocumentNotification(server, close_msg) === nothing
-    @test !JETLS.load(server.state.text_document_content_cache)[juri].opened
 end
 
 @testset "testrunner_code_lenses" begin

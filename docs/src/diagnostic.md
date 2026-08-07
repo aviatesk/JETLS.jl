@@ -214,6 +214,7 @@ Here is a summary table of the diagnostics explained in this section:
 | [`lowering/inactive-code`](@ref diagnostic/reference/lowering/inactive-code)                                   | `Hint`                | `JETLS/live`  | Code excluded by `@static` in the current environment  |
 | [`lowering/unsorted-import-names`](@ref diagnostic/reference/lowering/unsorted-import-names)                   | `Hint`                | `JETLS/live`  | Import/export names not sorted alphabetically          |
 | [`toplevel/error`](@ref diagnostic/reference/toplevel/error)                                                   | `Error`               | `JETLS/save`  | Errors during code loading                             |
+| [`toplevel/missing-concretization`](@ref diagnostic/reference/toplevel/missing-concretization)                 | `Error`               | `JETLS/save`  | Top-level code needs a non-concretized binding value   |
 | [`toplevel/method-overwrite`](@ref diagnostic/reference/toplevel/method-overwrite)                             | `Warning`             | `JETLS/save`  | Method definitions that overwrite previous ones        |
 | [`toplevel/abstract-field`](@ref diagnostic/reference/toplevel/abstract-field)                                 | `Information`         | `JETLS/save`  | Struct fields with abstract types                      |
 | [`inference/undef-global-var`](@ref diagnostic/reference/inference/undef-global-var)                           | `Warning`             | `JETLS/save`  | References to undefined global variables               |
@@ -998,10 +999,15 @@ on-save full analysis, at line granularity
 
 **Default severity**: `Error`
 
-Errors that occur when JETLS loads your code for analysis. This diagnostic is
-commonly reported in several scenarios:
+A general wrapper for errors that occur while JETLS loads and evaluates
+top-level code for analysis. This code identifies the phase in which the error
+occurred—top-level code loading—rather than a specific kind of error. The
+diagnostic message describes the underlying error.
 
-- Missing package dependencies (the most frequent cause)
+Common examples include:
+
+- Package-loading failures caused by missing, uninstantiated, or unresolved
+  dependencies (the most frequent cause)
 - Type definition failures
 - References to undefined names at the top level
 - Other errors during module evaluation
@@ -1015,19 +1021,110 @@ struct ToplevelError  # UndefVarError: `Unexisting` not defined in `JETLS`
 end
 
 using UnexistingPkg  # Package JETLS does not have UnexistingPkg in its dependencies:
-                     # - You may have a partially installed environment. Try `Pkg.instantiate()`
-                     # to ensure all packages in the environment are installed.
-                     # - Or, if you have JETLS checked out for development and have
-                     # added UnexistingPkg as a dependency but haven't updated your primary
-                     # environment's manifest file, try `Pkg.resolve()`.
-                     # - Otherwise you may need to report an issue with JETLS (JETLS toplevel/error)
+                     # [...]
+                     # (JETLS toplevel/error)
 ```
 
 These errors prevent JETLS from fully analyzing your code, which means
-[Inference diagnostic](@ref diagnostic/reference/inference) will not be available until
-the top-level errors are resolved. To fix these errors, ensure your package
-environment is properly set up by running `Pkg.instantiate()` in your package
-directory, and verify that your package can be loaded successfully in a Julia REPL.
+[Inference diagnostic](@ref diagnostic/reference/inference) will not be
+available until the top-level errors are resolved.
+
+!!! tip "Check the package environment"
+    A common case is an error indicating that a specific dependency cannot be
+    loaded from the analyzed package's environment. This can happen when the
+    environment has not been instantiated, or when `Project.toml` has changed
+    but `Manifest.toml` has not been resolved. Run `Pkg.instantiate()` for an
+    uninstantiated environment, or `Pkg.resolve()` when the manifest is out of
+    date. Finally, verify that the package can be loaded successfully in a Julia
+    REPL.
+
+#### [Missing concretization (`toplevel/missing-concretization`)](@id diagnostic/reference/toplevel/missing-concretization)
+
+**Default severity**: `Error`
+
+A specialized top-level error reported when JET needs the actual value of a
+top-level binding while loading code for analysis, but the binding was not
+concretized. This often happens when a global binding is used to define a type
+or method and JET cannot determine the binding's concrete value during analysis.
+This diagnostic is specific to script-mode analysis. Package analysis uses the
+catch-all concretization pattern `:(x_)` and evaluates all top-level code.
+
+For example, suppose `scripts/random-type.jl` contains:
+
+```julia
+RandomType = rand((Bool, Int))
+
+struct Container
+    value::RandomType  # `Main.RandomType` must have a concrete value for JETLS top-level analysis.
+                       # [...]
+                       # (JETLS toplevel/missing-concretization)
+end
+```
+
+JETLS needs the actual value of `RandomType` to analyze the definition of
+`Container`. Adding `const` can fix this diagnostic in some cases. However,
+JETLS can treat the value of a `const` binding as concrete only when its
+right-hand side can be inferred as a single concrete value. In this example,
+JETLS cannot infer a single concrete result for `rand((Bool, Int))`, so use the
+[`full_analysis.concretization_patterns`](@ref config/full_analysis/concretization_patterns)
+configuration to allow JETLS to evaluate the assignment during full analysis.
+
+!!! tip "Code action available"
+    Use the "Create `.JETLSConfig.toml` concretization pattern for
+    `RandomType`" code action. If the configuration file already exists, the
+    action starts with "Add" instead. It creates or updates the configuration
+    with this entry:
+
+    ```toml
+    [[full_analysis.concretization_patterns]]
+    pattern = "RandomType = x_"
+    path = "scripts/random-type.jl"
+    ```
+
+    The generated `path` identifies the source file containing the assignment.
+    This may differ from the file containing the diagnostic when the binding is
+    defined in an included file. Scoping the pattern this way prevents it from
+    affecting unrelated files. Here, `x_` matches any right-hand-side
+    expression. See
+    [`full_analysis.concretization_patterns`](@ref config/full_analysis/concretization_patterns)
+    for details, including how patterns are matched and executed.
+
+!!! note "`UndefVarError` can be caused by missing concretization"
+    `toplevel/missing-concretization` is reported when JET can track a required
+    binding and determine that its concrete value is unavailable. An unevaluated
+    top-level call may instead create or import bindings indirectly, for example
+    through `@eval`. If JET cannot track those effects back to the call, it may
+    only observe that the binding is undefined and report
+    [`toplevel/error`](@ref diagnostic/reference/toplevel/error) with
+    `UndefVarError`.
+
+    For example, suppose `scripts/load-types.jl` contains:
+
+    ```julia
+    const type_name = :SomeType
+    load_types() = @eval using SomeModule: $type_name
+    load_types()
+
+    struct Container
+        value::SomeType  # UndefVarError: `SomeType` not defined in `Main`
+                         # [...]
+                         # (JETLS toplevel/error)
+    end
+    ```
+
+    Normal Julia execution calls `load_types()` and imports `SomeType`. During
+    script-mode analysis, however, the call is not evaluated unless selected for
+    concretization. Because the binding would be imported indirectly through
+    `@eval`, JET cannot associate the undefined `SomeType` with the unevaluated
+    call and reports the generic `toplevel/error` instead.
+
+    In this case, manually add the pattern to `.JETLSConfig.toml`:
+
+    ```toml
+    [[full_analysis.concretization_patterns]]
+    pattern = "load_types()"
+    path = "scripts/load-types.jl"
+    ```
 
 #### [Method overwrite (`toplevel/method-overwrite`)](@id diagnostic/reference/toplevel/method-overwrite)
 

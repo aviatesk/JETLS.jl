@@ -19,7 +19,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## Unreleased
 
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
-- Diff: [`b74025b...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/b74025b...HEAD)
+- Diff: [`6dacc52...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/6dacc52...HEAD)
 
 ### Announcement
 
@@ -29,7 +29,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 > [!warning]
 > JETLS currently has a known memory leak issue where memory usage grows with each re-analysis (https://github.com/aviatesk/JETLS.jl/issues/357).
-> As a temporary workaround, you can disable full-analysis for specific files using the `analysis_overrides` [initialization option](https://aviatesk.github.io/JETLS.jl/release/launching/#init-options):
+> As a temporary workaround, you can disable full-analysis for specific files using the [`analysis_overrides` initialization option](https://aviatesk.github.io/JETLS.jl/release/launching/#init-options/analysis_overrides):
 > ```jsonc
 > // VSCode settings.json example
 > {
@@ -45,6 +45,46 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > Note that `analysis_overrides` is provided as a temporary workaround and may be removed or changed at any time. A proper fix is being worked on.
 >
 > Note: Path glob patterns use `/` as the separator on all platforms, including Windows; backslashes are not supported as separators.
+
+### Added
+
+- Added a dedicated [`toplevel/missing-concretization`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/toplevel/missing-concretization) diagnostic for top-level bindings whose concrete values JET needs during full analysis.
+  Users can configure now [`full_analysis.concretization_patterns`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/full_analysis/concretization_patterns) through `.JETLSConfig.toml` or LSP settings to evaluate selected top-level assignments in workspace files.
+  The diagnostic offers a quick fix that creates or updates `.JETLSConfig.toml` with a pattern scoped to the assignment file, and JETLS automatically reanalyzes affected analysis units after the setting changes.
+  (Closed https://github.com/aviatesk/JETLS.jl/issues/464)
+
+- Added the experimental `reuse_native_inference` [initialization option](https://aviatesk.github.io/JETLS.jl/release/launching/#init-options) (disabled by default): when enabled, calls to methods defined outside the modules being analyzed reuse results from Julia's native inference cache instead of being analyzed recursively:
+  ```toml
+  # .JETLSConfig.toml example
+  [initialization_options]
+  reuse_native_inference = true
+  ```
+  This can substantially speed up full analysis of packages with large dependencies, provided those dependencies are precompiled, since the analysis then reuses the inference results cached in their precompiled images. Packages whose analysis time is dominated by their own code see little change. Note that analysis results may change slightly with this option, which can change the diagnostics that are reported.
+
+### Changed
+
+- Full analysis is now substantially faster for test files with many standard `Test` macros such as `@test` and `@testset`, while still analyzing the expressions inside them (https://github.com/aviatesk/JET.jl/pull/856).
+
+- Text and notebook document synchronization now use dynamic registration when supported, allowing regular text synchronization to be scoped to supported Julia buffers and server-provided virtual documents. Static fallbacks remain available for other clients.
+
+### Fixed
+
+- Fixed type inlay hints for typed vector literals with splatted values, which now show the constructed vector type instead of an unrelated union containing tuple types.
+
+- Fixed type inlay hints for matrix and multidimensional array literals, which now show the constructed array type without annotations for internal row dimensions. (Closed https://github.com/aviatesk/JETLS.jl/issues/841)
+
+- Fixed the TestRunner integration treating failed or errored tests as an unexpected TestRunner execution failure instead of reporting their results.
+
+- Fixed watched-file registration for clients that do not support relative glob patterns, while keeping handled file events scoped to the workspace root.
+
+## 2026-08-05
+
+- Commit: [`6dacc52`](https://github.com/aviatesk/JETLS.jl/commit/6dacc52)
+- Diff: [`b74025b...6dacc52`](https://github.com/aviatesk/JETLS.jl/compare/b74025b...6dacc52)
+- Installation:
+  ```bash
+  julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="2026-08-05")'
+  ```
 
 ### Fixed
 

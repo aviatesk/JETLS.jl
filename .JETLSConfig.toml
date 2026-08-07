@@ -66,6 +66,16 @@ match_type = "regex"
 severity = "off"
 path = "src/testrunner/testrunner-types.jl"
 
+[[full_analysis.concretization_patterns]]
+pattern = "const devbranch = x_"
+path = "docs/make.jl"
+[[full_analysis.concretization_patterns]]
+pattern = "const release_date = x_"
+path = "docs/make.jl"
+
+[initialization_options]
+reuse_native_inference = true
+
 [[initialization_options.analysis_overrides]]
 module_name = "JETLS"
 path = "src/**/*.jl"
