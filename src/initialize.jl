@@ -24,9 +24,16 @@ function handle_InitializeRequest(
         state.workspaceFolders = URI[]
         if rootUri !== nothing
             push!(state.workspaceFolders, rootUri)
-        else
-            @warn "No workspaceFolders or rootUri in InitializeRequest - some functionality will be limited"
         end
+    end
+    if isempty(state.workspaceFolders)
+        @warn "No workspace folder in InitializeRequest - some functionality will be limited"
+        show_warning_message(server,
+            """
+            JETLS started without a workspace folder.
+            Workspace analysis and folder-local configuration are unavailable.
+            Open a folder to enable full functionality.
+            """)
     end
 
     # Update root information
@@ -43,9 +50,20 @@ function handle_InitializeRequest(
             end
         else
             @warn "Root URI scheme not supported for workspace analysis" root_uri
+            show_warning_message(server,
+                """
+                JETLS cannot perform workspace analysis for the root URI scheme `$(root_uri.scheme):`.
+                Some language features will be limited.
+                """)
         end
     else
         @warn "Multiple workspaceFolders are not supported - using limited functionality" state.workspaceFolders
+        show_warning_message(server,
+            """
+            JETLS does not support multiple workspace folders in a single server.
+            Workspace analysis and folder-local configuration are unavailable.
+            Configure your editor to start one JETLS server per workspace folder.
+            """)
         # leave Refs undefined
     end
 
@@ -541,6 +559,15 @@ function handle_InitializedNotification(server::Server)
 
     register(server, registrations)
 
-    @static JETLS_DEV_MODE && show_setup_info("Initialized JETLS with the following setup:")
-    @static JETLS_DEV_MODE && @info "JETLS initialization options" init_options=state.init_options
+    @static JETLS_DEV_MODE && show_initialization_info(server, "Initialized JETLS with the following setup:")
+end
+
+function show_initialization_info(server::Server, msg::AbstractString)
+    state = server.state
+    (; init_options, workspaceFolders) = state
+    root_path = isdefined(state, :root_path) ? state.root_path : nothing
+    root_env_path = isdefined(state, :root_env_path) ? state.root_env_path : nothing
+    Base.CoreLogging.with_logger(Base.CoreLogging.ConsoleLogger(stderr; show_limited=false)) do
+        @info msg Sys.BINDIR pkgdir(JETLS) Threads.nthreads() JETLS_VERSION JETLS_DEV_MODE JETLS_TEST_MODE JETLS_DEBUG_LOWERING init_options workspaceFolders root_path root_env_path
+    end
 end
