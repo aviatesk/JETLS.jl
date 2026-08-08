@@ -206,7 +206,7 @@ function handle_InitializeRequest(
     # client merges semantic tokens on top of its syntactic highlighting (i.e.
     # `augmentsSyntaxTokens = true`). For clients without that guarantee, we skip
     # registration entirely so that they fall back to syntactic highlighting alone.
-    if !supports(state, :textDocument, :semanticTokens, :augmentsSyntaxTokens)
+    if !supports(server, :textDocument, :semanticTokens, :augmentsSyntaxTokens)
         semanticTokensProvider = nothing
     elseif supports(server, :textDocument, :semanticTokens, :dynamicRegistration)
         semanticTokensProvider = nothing # will be registered dynamically
@@ -491,7 +491,7 @@ function handle_InitializedNotification(server::Server)
 
     # See the matching capability check in `handle_InitializeRequest` for why we
     # only register semantic tokens when `augmentsSyntaxTokens = true`.
-    if (supports(state, :textDocument, :semanticTokens, :augmentsSyntaxTokens) &&
+    if (supports(server, :textDocument, :semanticTokens, :augmentsSyntaxTokens) &&
         supports(server, :textDocument, :semanticTokens, :dynamicRegistration))
         push!(registrations, semantic_tokens_registration())
         @static JETLS_DEV_MODE && @info "Dynamically registering 'textDocument/semanticTokens' upon `InitializedNotification`"
