@@ -174,7 +174,7 @@ end
             @test diag.data isa MissingConcretizationData
             @test diag.data.name == "USE_PULSE"
             @test diag.data.pattern == "USE_PULSE = x_"
-            @test diag.data.assignment_file == expected_path
+            @test JETLS.paths_equal(diag.data.assignment_file, script_path)
             @test occursin("assignment at $expected_path:1", diag.message)
             @test occursin("`full_analysis.concretization_patterns`", diag.message)
             @test occursin("`.JETLSConfig.toml`", diag.message)
