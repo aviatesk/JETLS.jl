@@ -46,6 +46,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 >
 > Note: Path glob patterns use `/` as the separator on all platforms, including Windows; backslashes are not supported as separators.
 
+### Changed
+
+- JETLS now displays a warning when workspace analysis and folder-local configuration are unavailable because a server was started without a workspace folder, with an unsupported root URI scheme, or with multiple workspace folders. For multi-root workspaces, configure the editor to start one server per top-level folder.
+
 ## 2026-08-07
 
 - Commit: [`29f138d`](https://github.com/aviatesk/JETLS.jl/commit/29f138d)
@@ -190,8 +194,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Updated Compiler.jl API compatibility for the incoming Julia 1.12.7 release while retaining support for Julia pre-1.12.6 Compiler.jl APIs.
 
 - JETLS servers started without a workspace root (i.e., when an LSP `InitializeRequest` specifies neither `workspaceFolders` nor `rootUri`) now analyze opened Julia files as standalone scripts instead of discovering nearby project environments. This avoids automatic environment setup and package-wide analysis in rootless LSP sessions.
-
-- JETLS now displays a warning when workspace analysis and folder-local configuration are unavailable because a server was started without a workspace folder, with an unsupported root URI scheme, or with multiple workspace folders. For multi-root workspaces, configure the editor to start one server per top-level folder.
 
 - `inference/*` diagnostic related information now labels inference frames as `origin`, `via`, or `entry`, making it clearer where the error originated and which analysis entry reported it.
 
