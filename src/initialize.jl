@@ -43,6 +43,9 @@ function handle_InitializeRequest(
         root_uri = only(state.workspaceFolders)
         root_path = uri2filepath(root_uri)
         if root_path !== nothing
+            # Some clients (for example, Zed) send an opened standalone script path as
+            # `workspaceFolders`, so normalize it to a folder here.
+            isfile(root_path) && (root_path = dirname(root_path))
             state.root_path = root_path
             env_path = find_env_path(root_path)
             if env_path !== nothing
