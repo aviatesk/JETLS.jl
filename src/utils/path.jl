@@ -27,6 +27,20 @@ function traverse_dir(f, dir::AbstractString)
 end
 
 """
+    paths_equal(path1::AbstractString, path2::AbstractString) -> Bool
+
+Return whether two paths are lexically equal. Both paths must be absolute or both relative;
+mixed paths return `false`. Comparisons are case-insensitive on Windows. This function does
+not access the file system or resolve symbolic links.
+"""
+function paths_equal(path1::AbstractString, path2::AbstractString)
+    path1 = _normalize_path(path1)
+    path2 = _normalize_path(path2)
+    isabspath(path1) == isabspath(path2) || return false
+    return _paths_equal(path1, path2)
+end
+
+"""
     issubdir(dir1::AbstractString, dir2::AbstractString) -> Bool
 
 Return whether `dir1` is lexically equal to or contained within `dir2`. Both paths must

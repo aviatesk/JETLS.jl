@@ -1124,7 +1124,7 @@ function _get_lines_in_ex(lines::Pair{Int,Int}, filepath::AbstractString, @nospe
         end
     elseif ex isa LineNumberNode
         file = ex.file
-        if file isa Symbol && filepath == String(file)
+        if file isa Symbol && paths_equal(filepath, String(file))
             return min(ex.line,first(lines)) => max(ex.line,last(lines))
         end
     end
@@ -1136,7 +1136,7 @@ function get_lines_in_src(filepath::AbstractString, src::Core.CodeInfo)
     for pc in 1:length(src.code)
         lins = Base.IRShow.buildLineInfoNode(src.debuginfo, nothing, pc)
         for lin in lins
-            if filepath == String(lin.file)
+            if paths_equal(filepath, String(lin.file))
                 lines = min(lin.line,first(lines)) => max(lin.line,last(lines))
             end
         end

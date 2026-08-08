@@ -229,7 +229,7 @@ function is_workspace_root_file(
     )
     isdefined(s, :root_path) || return false
     expected = joinpath(s.root_path, filename)
-    return _paths_equal(_normalize_path(filepath), _normalize_path(expected))
+    return paths_equal(filepath, expected)
 end
 
 function is_workspace_file(s::ServerState, filepath::AbstractString)

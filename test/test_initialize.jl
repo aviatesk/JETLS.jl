@@ -80,18 +80,17 @@ end
 
 @testset "workspace root normalization" begin
     mktempdir() do dir
-        normalized_dir = uri2filepath(filepath2uri(dir))::String
         let script_path = joinpath(dir, "script.jl")
             write(script_path, "")
             workspace_folders = [WorkspaceFolder(; uri = filepath2uri(script_path), name = "script.jl")]
             result = initialize_result(; workspace_folders)
-            @test result.root_path == normalized_dir
+            @test JETLS.paths_equal(result.root_path, dir)
         end
 
         let workspace_path = joinpath(dir, "missing-workspace")
             workspace_folders = [WorkspaceFolder(; uri = filepath2uri(workspace_path), name = "missing-workspace")]
             result = initialize_result(; workspace_folders)
-            @test result.root_path == joinpath(normalized_dir, "missing-workspace")
+            @test JETLS.paths_equal(result.root_path, workspace_path)
         end
     end
 end
