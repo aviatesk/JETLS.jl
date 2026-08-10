@@ -95,7 +95,7 @@ module __demo__ end
             collect_type_inlay_hints!(inlay_hints, st0, ctx, fi, uri, range, postprocessor)
             isempty(inlay_hints) && @warn "textDocument/inlayHint is broken"
 
-            precompile(main, (Vector{String},))
+            precompile(run_command, (Vector{String},))
         end
     end
 end

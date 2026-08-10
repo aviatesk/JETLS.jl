@@ -50,6 +50,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - JETLS now displays a warning when workspace analysis and folder-local configuration are unavailable because a server was started without a workspace folder, with an unsupported root URI scheme, or with multiple workspace folders. For multi-root workspaces, configure the editor to start one server per top-level folder.
 
+- The `jetls version` command now starts faster when precompile workloads are disabled.
+
 ## 2026-08-07
 
 - Commit: [`29f138d`](https://github.com/aviatesk/JETLS.jl/commit/29f138d)

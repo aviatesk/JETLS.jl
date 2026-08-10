@@ -30,6 +30,11 @@ function (@main)(args::Vector{String})::Cint
         println(stdout, "JETLS version $JETLS_VERSION on Julia $VERSION")
         return 0
     end
+    # Keep `jetls --version` fast when `precompile_workload` is disabled.
+    return @invokelatest run_command(args)
+end
+
+function run_command(args::Vector{String})
     if !isempty(args)
         first_arg = args[1]
         if first_arg == "check"
