@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Fixed duplicate watched-file notifications that could cause redundant configuration reloads and diagnostics refreshes.
+- Fixed overlapping JETLS restarts in VS Code by serializing rapid manual and configuration-triggered restart requests and waiting for the replacement server to finish initializing.
 
 ## v0.7.0
 
