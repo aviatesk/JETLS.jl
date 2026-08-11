@@ -14,6 +14,8 @@ import * as path from "path";
 import * as fs from "fs";
 import * as cp from "child_process";
 
+import { CoalescingTaskRunner } from "./CoalescingTaskRunner";
+
 let languageClient: LanguageClient;
 let outputChannel: LogOutputChannel;
 let statusBarItem: vscode.StatusBarItem;
@@ -536,42 +538,43 @@ async function startLanguageServer() {
     "Loading JETLS and attempting to establish communication between client and server.";
   statusBarItem.show();
 
-  languageClient
-    .start()
-    .then(() => {
-      statusBarItem.hide();
+  try {
+    await languageClient.start();
+  } catch (err) {
+    statusBarItem.hide();
+    const error = err instanceof Error ? err : new Error(String(err));
+    handleSpawnError(error, baseCommand);
+    throw error;
+  }
 
-      const serverInfo = languageClient.initializeResult?.serverInfo;
-      if (serverInfo) {
-        outputChannel.appendLine(
-          `[jetls-client] JETLS is ready! (${serverInfo.name} [version: ${serverInfo.version ?? "unknown"}])`,
-        );
-      } else {
-        outputChannel.appendLine("[jetls-client] JETLS is ready!");
-      }
+  statusBarItem.hide();
 
-      // Register handler for workspace/configuration requests after client starts
-      languageClient.onRequest(
-        "workspace/configuration",
-        (params: {
-          items: { scopeUri?: string; section?: string | null }[];
-        }) => {
-          const items = params.items || [];
-          const results = items.map((item) => {
-            const section = "jetls-client.settings";
-            const scope = item.scopeUri
-              ? vscode.Uri.parse(item.scopeUri)
-              : undefined;
-            return vscode.workspace.getConfiguration(section, scope);
-          });
-          return results;
-        },
-      );
-    })
-    .catch((err) => {
-      statusBarItem.hide();
-      handleSpawnError(err, baseCommand);
-    });
+  const serverInfo = languageClient.initializeResult?.serverInfo;
+  if (serverInfo) {
+    outputChannel.appendLine(
+      `[jetls-client] JETLS is ready! (${serverInfo.name} [version: ${serverInfo.version ?? "unknown"}])`,
+    );
+  } else {
+    outputChannel.appendLine("[jetls-client] JETLS is ready!");
+  }
+
+  // Register handler for workspace/configuration requests after client starts
+  languageClient.onRequest(
+    "workspace/configuration",
+    (params: {
+      items: { scopeUri?: string; section?: string | null }[];
+    }) => {
+      const items = params.items || [];
+      const results = items.map((item) => {
+        const section = "jetls-client.settings";
+        const scope = item.scopeUri
+          ? vscode.Uri.parse(item.scopeUri)
+          : undefined;
+        return vscode.workspace.getConfiguration(section, scope);
+      });
+      return results;
+    },
+  );
 }
 
 async function restartLanguageServer() {
@@ -587,6 +590,8 @@ async function restartLanguageServer() {
   }
   await startLanguageServer();
 }
+
+const restartRunner = new CoalescingTaskRunner(restartLanguageServer);
 
 async function checkForUpdates(context: ExtensionContext): Promise<void> {
   const currentVersion = vscode.extensions.getExtension("aviatesk.jetls-client")
@@ -691,7 +696,12 @@ export function activate(context: ExtensionContext) {
           vscode.window.showInformationMessage(
             "JETLS configuration changed. Restarting language server...",
           );
-          restartLanguageServer();
+          void restartRunner.run().catch((err) => {
+            const message = err instanceof Error ? err.message : String(err);
+            outputChannel.appendLine(
+              `[jetls-client] Failed to restart language server: ${message}.`,
+            );
+          });
         }
       }
     }),
@@ -699,9 +709,7 @@ export function activate(context: ExtensionContext) {
   context.subscriptions.push(
     vscode.commands.registerCommand(
       "jetls-client.restartLanguageServer",
-      () => {
-        restartLanguageServer();
-      },
+      () => restartRunner.run(),
     ),
   );
 
