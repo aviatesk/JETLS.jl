@@ -37,6 +37,7 @@ const JETLS_INSTALL_GUIDE_URL =
 const JETLS_CHANGELOG_URL =
   "https://github.com/aviatesk/JETLS.jl/blob/master/jetls-client/CHANGELOG.md";
 const JETLS_MIGRATION_GUIDE_URL = `${JETLS_CHANGELOG_URL}#v020`;
+const LANGUAGE_SERVER_STOP_TIMEOUT_MS = 10_000;
 
 interface ProcessManager {
   process: cp.ChildProcess;
@@ -580,12 +581,13 @@ async function startLanguageServer() {
 async function restartLanguageServer() {
   if (languageClient) {
     try {
-      await languageClient.stop();
+      await languageClient.stop(LANGUAGE_SERVER_STOP_TIMEOUT_MS);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       outputChannel.appendLine(
         `[jetls-client] Failed to stop language client: ${message}.`,
       );
+      throw err;
     }
   }
   await startLanguageServer();
@@ -722,7 +724,7 @@ export function activate(context: ExtensionContext) {
 
 export async function deactivate() {
   if (languageClient) {
-    await languageClient.stop();
+    await languageClient.stop(LANGUAGE_SERVER_STOP_TIMEOUT_MS);
   }
   if (outputChannel) {
     outputChannel.dispose();
