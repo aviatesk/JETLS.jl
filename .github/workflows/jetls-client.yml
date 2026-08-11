@@ -29,10 +29,16 @@ jobs:
           node-version: "lts/*"
       - name: Install dependencies
         working-directory: jetls-client
-        run: npm install
+        run: npm ci
       - name: Run checks
         working-directory: jetls-client
         run: npm run check
+      - name: Run tests
+        working-directory: jetls-client
+        run: npm test
+      - name: Build production bundle
+        working-directory: jetls-client
+        run: npm run build
 
   check_package_json:
     name: Check package.json is up to date
