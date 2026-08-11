@@ -11,9 +11,7 @@ export interface ServerConfig {
 
 export function getServerConfig(): ServerConfig {
   const config = vscode.workspace.getConfiguration("jetls-client");
-  const defaultExecutable = "jetls";
   const executable = config.get<ExecutableConfig>("executable", {
-    path: defaultExecutable,
     threads: "auto",
   });
   return {
@@ -41,6 +39,14 @@ export function hasServerConfigChanged(
     JSON.stringify(oldConfig.initializationOptions) !==
       JSON.stringify(newConfig.initializationOptions)
   );
+}
+
+/**
+ * The object form without `path` selects the managed JETLS installation;
+ * specifying `path` or the array form bypasses it with a custom command.
+ */
+export function isManagedExecutable(executable: ExecutableConfig): boolean {
+  return !Array.isArray(executable) && executable.path === undefined;
 }
 
 export function affectsServerConfig(

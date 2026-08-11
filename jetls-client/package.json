@@ -43,6 +43,10 @@
       {
         "command": "jetls-client.restartLanguageServer",
         "title": "JETLS Client: Restart JETLS Language Server"
+      },
+      {
+        "command": "jetls-client.reinstallServer",
+        "title": "JETLS Client: Reinstall Server"
       }
     ],
     "configuration": {
@@ -54,34 +58,42 @@
           "oneOf": [
             {
               "type": "object",
-              "markdownDescription": "Standard configuration (recommended for most users).",
+              "markdownDescription": "Standard configuration. Omit `path` to use the managed JETLS installation, or specify it to use a custom executable.",
               "properties": {
                 "path": {
                   "type": "string",
-                  "default": "jetls",
-                  "markdownDescription": "Path to the `jetls` executable. Default is `'jetls'` which expects the executable to be in your `PATH`."
+                  "minLength": 1,
+                  "markdownDescription": "Optional path or command for a custom `jetls` executable. Specifying this bypasses managed installation and updates."
                 },
                 "threads": {
                   "type": "string",
                   "default": "auto",
                   "markdownDescription": "Number of Julia threads to use (used as `--threads=` option). Default is `'auto'`."
+                },
+                "env": {
+                  "type": "object",
+                  "default": {},
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "markdownDescription": "Environment variables for installing and launching JETLS. In managed mode, set `JULIA_APPS_JULIA_CMD` to select the Julia executable."
                 }
               },
               "additionalProperties": false
             },
             {
               "type": "array",
-              "markdownDescription": "Advanced: Full command to launch JETLS from a local checkout.",
+              "markdownDescription": "Advanced: Full custom command to launch JETLS from a local checkout. This bypasses managed installation and updates.",
+              "minItems": 1,
               "items": {
                 "type": "string"
               }
             }
           ],
           "default": {
-            "path": "jetls",
             "threads": "auto"
           },
-          "markdownDescription": "JETLS executable configuration. Most users do not need to change this.\n\nUse object form `{path, threads}` to customize the installed JETLS executable path or thread setting.\n\nUse array form `[\"julia\", \"--startup-file=no\", \"--history-file=no\", \"--project=/path/to/JETLS\", \"-m\", \"JETLS\", \"serve\"]` to use a local JETLS checkout instead of globally installed executable.",
+          "markdownDescription": "JETLS executable configuration. Most users should omit `path` and use the managed installation.\n\nUse object form `{threads, env}` for managed JETLS. Set `env.JULIA_APPS_JULIA_CMD` to select Julia. Add `path` to use a custom executable and bypass managed installation.\n\nUse array form `[\"julia\", \"--startup-file=no\", \"--history-file=no\", \"--project=/path/to/JETLS\", \"-m\", \"JETLS\", \"serve\"]` to run a full custom command.",
           "order": 1
         },
         "jetls-client.communicationChannel": {
@@ -440,13 +452,15 @@
     "vscode:prepublish": "npm run check && npm test && npm run build"
   },
   "dependencies": {
-    "vscode-languageclient": "^10.1.0"
+    "vscode-languageclient": "^10.1.0",
+    "which": "^6.0.1"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.0",
     "@stylistic/eslint-plugin": "^5.10.0",
     "@types/node": "^26.1.0",
     "@types/vscode": "^1.96.0",
+    "@types/which": "^3.0.4",
     "@typescript/native": "npm:typescript@^7.0.2",
     "@vscode/vsce": "^3.9.2",
     "ajv": "^8.20.0",

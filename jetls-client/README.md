@@ -32,63 +32,90 @@ diagnostic, macro-aware go-to definition and such.
 ## Requirements
 
 - [VSCode](https://code.visualstudio.com/) v1.96.0 or higher
-- [Julia v1.12.2](https://julialang.org/downloads) through Julia 1.13:
-  Note that JETLS does not support Julia 1.12.1 or earlier, nor Julia 1.14+/nightly.
+- [Julia](https://julialang.org/downloads) v1.12.2 through 1.13.x, with
+  the `julia` command available on `PATH`
+
+JETLS does not support Julia 1.12.1 or earlier, nor Julia 1.14+/nightly.
 
 ## Installation
 
-> [!warning]
-> The `jetls-client` extension does not bundle JETLS.jl itself. You need to
-> install the `jetls` executable separately before using the extension.
+1. Make sure the `julia` command works in a VSCode terminal.
+2. Install `jetls-client` from the Extensions view by searching for
+   `"JETLS Client"`.
+3. Open any Julia file.
 
-1. Install the [`jetls` executable app](https://pkgdocs.julialang.org/dev/apps/),
-   which is the main entry point for running JETLS:
-   ```bash
-   julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="release")'
-   ```
-   This will install the `jetls` executable to `~/.julia/bin/`.
-2. Make sure `~/.julia/bin` is available on the `PATH` environment so the `jetls` executable is accessible.
-   You can verify the installation by running:
-   ```bash
-   jetls --help
-   ```
-   If this displays the help message, the installation was successful and `~/.julia/bin`
-   is properly added to your `PATH`.
-3. Install `jetls-client`:
-   - Open VSCode
-   - Go to Extensions (Invoke the `View: Show Extensions` command)
-   - Search for `"JETLS Client"`
-   - Click `Install`
-4. Open any Julia file
+No separate JETLS installation is required. On first use, the extension
+automatically installs a compatible JETLS server. It updates the server when an
+extension update requires a newer version.
 
-The extension will automatically use the `jetls` executable from your `PATH`.
+The extension stores JETLS separately from packages in your regular Julia
+depot. Different Julia installations and Julia minor versions use separate
+managed copies. You do not need to configure or maintain this storage.
 
-> [!note]
-> To update JETLS to the latest version, re-run the installation command:
->
-> ```bash
-> julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="release")'
-> ```
->
-> To pin a specific version instead, use the release tag `rev="YYYY-MM-DD"`:
->
-> ```bash
-> julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="2025-11-25")'
-> ```
+The first installation and each managed update require network access.
+Once installed, the cached server can start while offline. The status bar shows
+whether managed JETLS is being checked, installed, started, or has failed.
+
+The extension launches only the exact JETLS version its release pins. When
+that version cannot be installed or verified — for example, while offline —
+startup fails with an error notification. The notification offers to retry
+and to show the JETLS output, which records the full details; clicking the
+failed status bar item opens the same output.
+
+To recover from a broken managed installation, run
+`JETLS Client: Reinstall Server` from the Command Palette.
+The command asks for confirmation before deleting the managed storage;
+recreating the installation requires network access.
 
 ## Launching configuration (advanced)
 
-Most users do not need any further configuration beyond the installation steps
-above. The following settings are available for advanced use cases.
+Most users do not need any configuration beyond the installation steps above.
+When the defaults do not fit your setup, adjust how the server is launched
+through the `jetls-client.executable` setting:
 
-### Executable configuration
+- To customize the managed server launch, use the object form with `path`
+  omitted; the optional `threads` and `env` fields control the launch. For
+  example, to select a Julia executable other than the default `julia`
+  command, set `JULIA_APPS_JULIA_CMD`:
 
-Configure the JETLS executable through the `jetls-client.executable` setting:
+  ```jsonc
+  {
+    "jetls-client.executable": {
+      "threads": "1", // the default is "auto"
+      "env": {
+        "JULIA_APPS_JULIA_CMD": "/absolute/path/to/julia"
+      }
+    }
+  }
+  ```
 
-- **Object form** `{"path": string, "threads": string}`: Customize the executable path or thread
-  setting (default: `{"path": "jetls", "threads": "auto"}`)
-- **Array form** `string[]`: Use a local JETLS checkout for development, e.g,
-  (`["julia", "--startup-file=no", "--history-file=no", "--project=/path/to/JETLS", "-m", "JETLS", "serve"]`)
+- To use a JETLS binary you manage yourself, specify its `path`.
+  This bypasses managed installation and updates:
+
+  ```jsonc
+  {
+    "jetls-client.executable": {
+      "path": "/absolute/path/to/jetls"
+    }
+  }
+  ```
+
+- To develop JETLS from a local checkout, provide the full launch command
+  as an array. This also bypasses managed installation:
+
+  ```jsonc
+  {
+    "jetls-client.executable": [
+      "julia",
+      "--startup-file=no",
+      "--history-file=no",
+      "--project=/path/to/JETLS",
+      "-m",
+      "JETLS",
+      "serve"
+    ]
+  }
+  ```
 
 ### Communication channel
 

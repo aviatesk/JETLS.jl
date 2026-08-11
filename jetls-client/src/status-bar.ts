@@ -10,6 +10,11 @@ export type ServerStartupStatus =
   | "restart-failed"
   | "crashed";
 
+const SHOW_OUTPUT_COMMAND: vscode.Command = {
+  command: "jetls-client.showOutput",
+  title: "Show JETLS output",
+};
+
 export class StartupStatusBar {
   private readonly item: vscode.StatusBarItem;
   private hideTimer: NodeJS.Timeout | undefined;
@@ -21,10 +26,7 @@ export class StartupStatusBar {
       100,
     );
     this.item.name = "JETLS server startup status";
-    this.item.command = {
-      command: "jetls-client.showOutput",
-      title: "Show JETLS output",
-    };
+    this.item.command = SHOW_OUTPUT_COMMAND;
   }
 
   show(status: ServerStartupStatus): void {
@@ -34,6 +36,7 @@ export class StartupStatusBar {
     this.clearHideTimer();
 
     this.item.backgroundColor = undefined;
+    this.item.command = SHOW_OUTPUT_COMMAND;
     switch (status) {
       case "checking":
         this.item.text = "$(sync~spin) Checking JETLS...";
@@ -85,6 +88,38 @@ export class StartupStatusBar {
         );
         break;
     }
+    this.item.show();
+  }
+
+  /** Shows a spinner with a managed-installation progress message. */
+  showManagedProgress(message: string): void {
+    if (this.suppressed) {
+      return;
+    }
+    this.clearHideTimer();
+    this.item.backgroundColor = undefined;
+    this.item.command = SHOW_OUTPUT_COMMAND;
+    this.item.text = `$(sync~spin) ${message}`;
+    this.item.tooltip = "Setting up the managed JETLS installation.";
+    this.item.show();
+  }
+
+  /**
+   * Shows a persistent managed-installation failure with a one-line
+   * summary; clicking the item opens the output channel, which holds the
+   * full failure details.
+   */
+  showManagedFailure(summary: string): void {
+    if (this.suppressed) {
+      return;
+    }
+    this.clearHideTimer();
+    this.item.text = "$(error) Managed JETLS failed";
+    this.item.tooltip = `${summary}\nClick to open the JETLS output.`;
+    this.item.backgroundColor = new vscode.ThemeColor(
+      "statusBarItem.errorBackground",
+    );
+    this.item.command = SHOW_OUTPUT_COMMAND;
     this.item.show();
   }
 

@@ -20,8 +20,13 @@ on:
 
 jobs:
   check:
-    name: Check jetls-client
-    runs-on: ubuntu-latest
+    name: Check jetls-client (${{ matrix.os }})
+    strategy:
+      matrix:
+        os:
+          - ubuntu-latest
+          - windows-latest
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -36,7 +41,7 @@ jobs:
       - name: Run tests
         working-directory: jetls-client
         run: npm test
-      - name: Build production bundle
+      - name: Build production extension bundle
         working-directory: jetls-client
         run: npm run build
 
