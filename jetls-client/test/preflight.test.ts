@@ -15,11 +15,14 @@ function createPreflight(
 ): {
   preflight: VersionPreflight;
   spawnCalls: SpawnCall[];
+  groupKills: [number, NodeJS.Signals][];
   logs: string[];
   precompilationCount: () => number;
 } {
   const spawnCalls: SpawnCall[] = [];
+  const groupKills: [number, NodeJS.Signals][] = [];
   const logs: string[] = [];
+  const spawned: FakeChildProcess[] = [];
   let nextChild = 0;
   let precompilationCount = 0;
   const preflight = new VersionPreflight({
@@ -30,7 +33,21 @@ function createPreflight(
       spawnCalls.push({ command, args, options: spawnOptions });
       const child = children[nextChild++];
       assert.ok(child, `Unexpected spawn: ${command}`);
+      spawned.push(child);
       return child.asChildProcess();
+    },
+    // The default group probe and kill would touch real process groups;
+    // fake a group that dies with its leader and route signals to the
+    // fake child instead.
+    isProcessGroupAlive: () => false,
+    killProcessGroup: (pid, signal) => {
+      groupKills.push([pid, signal]);
+      for (let index = spawned.length - 1; index >= 0; index -= 1) {
+        if (spawned[index].pid === pid) {
+          spawned[index].kill(signal);
+          break;
+        }
+      }
     },
     appendLine: (message) => logs.push(message),
     onPrecompiling: () => {
@@ -41,6 +58,7 @@ function createPreflight(
   return {
     preflight,
     spawnCalls,
+    groupKills,
     logs,
     precompilationCount: () => precompilationCount,
   };
@@ -118,7 +136,7 @@ test("runs a successful version preflight", async () => {
     {
       command: "jetls",
       args: ["--", "version"],
-      options: { shell: true },
+      options: { shell: true, detached: true },
     },
   ]);
   assert.ok(
@@ -197,7 +215,7 @@ test("stderr watcher logs lines and detects a split marker once", () => {
 test("terminates a timed-out preflight before rejecting", async () => {
   const child = new FakeChildProcess();
   child.onKill = () => queueMicrotask(() => child.close(null, "SIGTERM"));
-  const { preflight } = createPreflight([child], {
+  const { preflight, spawnCalls, groupKills } = createPreflight([child], {
     timeoutMs: 10,
   });
 
@@ -205,7 +223,10 @@ test("terminates a timed-out preflight before rejecting", async () => {
     preflight.run("jetls", ["version"], {}),
     /JETLS version check timed out after 0\.01 seconds\./,
   );
-  assert.deepEqual(child.killCalls, [undefined]);
+  // Spawned detached (own process group), terminated via a group signal.
+  assert.equal(spawnCalls[0].options.detached, true);
+  assert.deepEqual(groupKills, [[1234, "SIGTERM"]]);
+  assert.deepEqual(child.killCalls, ["SIGTERM"]);
 });
 
 test("shares termination and escalates a stubborn POSIX process", async () => {
@@ -225,7 +246,7 @@ test("shares termination and escalates a stubborn POSIX process", async () => {
   assert.equal(firstTermination, secondTermination);
   await firstTermination;
   await assert.rejects(run, /JETLS version check exited with signal SIGKILL\./);
-  assert.deepEqual(child.killCalls, [undefined, "SIGKILL"]);
+  assert.deepEqual(child.killCalls, ["SIGTERM", "SIGKILL"]);
 });
 
 test("recovers after a failed termination", async () => {
@@ -237,7 +258,7 @@ test("recovers after a failed termination", async () => {
 
   const run = preflight.run("jetls", ["version"], {});
   await assert.rejects(preflight.terminate(), /did not exit after termination/);
-  assert.deepEqual(stubbornChild.killCalls, [undefined, "SIGKILL"]);
+  assert.deepEqual(stubbornChild.killCalls, ["SIGTERM", "SIGKILL"]);
 
   const rerun = preflight.run("jetls", ["version"], {});
   replacementChild.stdout.write("JETLS version 1.0\n");
@@ -284,7 +305,12 @@ test("falls back to kill() when taskkill fails", async () => {
   const run = preflight.run("jetls.bat", ["version"], { shell: true });
   const termination = preflight.terminate();
   taskkillChild.close(1, null);
-  await termination;
+  // The fallback kill() cannot confirm the child tree, so the termination
+  // reports survival even though the direct process closed.
+  await assert.rejects(
+    termination,
+    /did not exit after termination\. taskkill exited with code 1\./,
+  );
   assert.deepEqual(versionChild.killCalls, [undefined]);
   await assert.rejects(run, /JETLS version check exited with signal SIGTERM\./);
 });

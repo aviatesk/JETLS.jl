@@ -540,9 +540,16 @@ To test the extension locally in VSCode:
 2. Press F5 to launch the Extension Development Host
 3. The extension will be loaded in the new VSCode window
 
+Without an explicit `jetls-client.executable` setting, the development
+extension uses the production managed default and installs the release tag
+pinned in
+[`jetls-client/JETLS_VERSION.json`](./jetls-client/JETLS_VERSION.json).
+It does not run the current checkout.
+
 To use a local JETLS.jl checkout with the development extension (see
-[Using local JETLS checkout](#using-local-jetls-checkout)), configure
-`jetls-client.executable` in your `settings.json` using the array form:
+[Using local JETLS checkout](#using-local-jetls-checkout)), explicitly
+configure `jetls-client.executable` in your `settings.json` using the array
+form:
 ```jsonc
 {
   "jetls-client.executable": [
@@ -557,15 +564,44 @@ To use a local JETLS.jl checkout with the development extension (see
 }
 ```
 
+The array form is a full custom command and bypasses managed installation. To
+use an already installed custom executable instead, specify `path` explicitly:
+
+```jsonc
+{
+  "jetls-client.executable": {
+    "path": "/absolute/path/to/jetls",
+    "threads": "auto"
+  }
+}
+```
+
+An object that omits `path` continues to use the managed installation.
+
 ### Publishing
+
+The managed default installs the JETLS release tag pinned in
+[`jetls-client/JETLS_VERSION.json`](./jetls-client/JETLS_VERSION.json),
+which also records the supported Julia version bounds. When updating the
+pin, confirm that the tag exists and the `julia` bounds in `JETLS_VERSION.json`
+match the Julia versions the release actually supports.
+
+Extension versions use the release date as `YYYY.M.D` (e.g. `2026.8.23`),
+mirroring the date-based JETLS server releases the extension pins. The
+Marketplace requires semver, which rejects leading zeros, so the month and
+day are not zero-padded; the version therefore only approximates the
+`YYYY-MM-DD` form of the server pin, and `JETLS_VERSION.json` remains the
+authoritative pairing. Versions released before this scheme used semver
+(`0.8.0` and earlier); the calendar versions sort after them, so updates
+keep flowing.
 
 To publish the extension to the marketplace:
 
 ```bash
 cd jetls-client
-vsce publish [patch|minor|major] -m "jetls-client: vX.Y.Z"
+vsce publish YYYY.M.D -m "jetls-client: vYYYY.M.D"
 ```
 
-This will bump the version in `package.json` and `package-lock.json`, create a
+This will set the version in `package.json` and `package-lock.json`, create a
 git commit with the specified message, and publish to the marketplace in one
 step. It does not create a git tag.

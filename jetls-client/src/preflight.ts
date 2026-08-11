@@ -1,8 +1,10 @@
 import * as cp from "child_process";
 
 import { PRECOMPILING_MARKER, PREFLIGHT_STDOUT_LIMIT } from "./constants";
+import { SpawnProcess, terminateProcess } from "./process-termination";
 
-export type ExecutableConfig = { path?: string; threads?: string } | string[];
+export type ExecutableConfig =
+  { path?: string; threads?: string; env?: Record<string, string> } | string[];
 
 export interface JETLSCommands {
   command: string;
@@ -80,17 +82,13 @@ interface ActivePreflightProcess {
   terminationPromise: Promise<void> | undefined;
 }
 
-type SpawnProcess = (
-  command: string,
-  args: readonly string[],
-  options: cp.SpawnOptions,
-) => cp.ChildProcess;
-
 export interface VersionPreflightOptions {
   timeoutMs: number;
   terminationTimeoutMs: number;
   platform: NodeJS.Platform;
   spawnProcess?: SpawnProcess;
+  killProcessGroup?: (pid: number, signal: NodeJS.Signals) => void;
+  isProcessGroupAlive?: (pid: number) => boolean;
   appendLine: (message: string) => void;
   onPrecompiling: () => void;
 }
@@ -103,86 +101,24 @@ export class VersionPreflight {
     this.spawnProcess = options.spawnProcess ?? cp.spawn;
   }
 
-  private waitForClose(preflight: ActivePreflightProcess): Promise<boolean> {
-    if (preflight.closed) {
-      return Promise.resolve(true);
-    }
-    return new Promise((resolve) => {
-      const timeoutHandle = setTimeout(
-        () => resolve(false),
-        this.options.terminationTimeoutMs,
-      );
-      void preflight.closedPromise.then(() => {
-        clearTimeout(timeoutHandle);
-        resolve(true);
-      });
-    });
-  }
-
-  private async terminateProcessImpl(
+  private terminateProcessImpl(
     preflight: ActivePreflightProcess,
   ): Promise<void> {
-    if (preflight.closed) {
-      return;
-    }
-
-    let terminationError: Error | undefined;
-    const pid = preflight.process.pid;
-    if (this.options.platform === "win32" && pid !== undefined) {
-      try {
-        await new Promise<void>((resolve, reject) => {
-          const taskkill = this.spawnProcess(
-            "taskkill",
-            ["/PID", pid.toString(), "/T", "/F"],
-            { stdio: "ignore", windowsHide: true },
-          );
-          let settled = false;
-          const finish = (error?: Error): void => {
-            if (settled) {
-              return;
-            }
-            settled = true;
-            clearTimeout(timeoutHandle);
-            if (error === undefined) {
-              resolve();
-            } else {
-              reject(error);
-            }
-          };
-          taskkill.once("error", finish);
-          taskkill.once("close", (code) => {
-            if (code === 0) {
-              finish();
-            } else {
-              finish(new Error(`taskkill exited with code ${code}.`));
-            }
-          });
-          const timeoutHandle = setTimeout(() => {
-            taskkill.kill();
-            finish(new Error("taskkill timed out."));
-          }, this.options.terminationTimeoutMs);
-        });
-      } catch (err) {
-        terminationError = err instanceof Error ? err : new Error(String(err));
-        preflight.process.kill();
-      }
-    } else {
-      preflight.process.kill();
-    }
-
-    if (await this.waitForClose(preflight)) {
-      return;
-    }
-    if (this.options.platform !== "win32") {
-      preflight.process.kill("SIGKILL");
-      if (await this.waitForClose(preflight)) {
-        return;
-      }
-    }
-
-    throw (
-      terminationError ??
-      new Error("JETLS version check did not exit after termination.")
+    return terminateProcess(
+      {
+        process: preflight.process,
+        isClosed: () => preflight.closed,
+        closedPromise: preflight.closedPromise,
+      },
+      {
+        platform: this.options.platform,
+        terminationTimeoutMs: this.options.terminationTimeoutMs,
+        spawnProcess: this.spawnProcess,
+        processGroup: this.options.platform !== "win32",
+        killProcessGroup: this.options.killProcessGroup,
+        isProcessGroupAlive: this.options.isProcessGroupAlive,
+        survivalMessage: "JETLS version check did not exit after termination.",
+      },
     );
   }
 
@@ -223,7 +159,13 @@ export class VersionPreflight {
     );
 
     await new Promise<void>((resolve, reject) => {
-      const versionProcess = this.spawnProcess(command, args, spawnOptions);
+      // Own process group on POSIX, so termination can signal the whole
+      // tree (`jetls version` spawns precompile workers). The caller's
+      // options object is shared with the serve spawn, so override locally.
+      const versionProcess = this.spawnProcess(command, args, {
+        ...spawnOptions,
+        detached: this.options.platform !== "win32",
+      });
       let resolveClosed!: () => void;
       const preflight: ActivePreflightProcess = {
         process: versionProcess,

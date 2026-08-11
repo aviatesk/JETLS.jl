@@ -24,22 +24,31 @@ diagnostic, macro-aware go-to definition and such.
 See the [Features](@ref features) page for a visual overview of the LSP
 features JETLS provides.
 
+## [Getting started](@id index/getting-started)
+
+Choose the instructions that match how you plan to use JETLS:
+
+- For VSCode, the `jetls-client` extension manages the server installation
+  automatically. Go directly to [VSCode setup](@ref index/editor-setup/vscode).
+- For other editors, complete
+  [Server installation](@ref index/server-installation), then follow the
+  corresponding instructions under [Editor setup](@ref index/editor-setup).
+- To use JETLS from the command line, first complete
+  [Server installation](@ref index/server-installation).
+
 ## [Server installation](@id index/server-installation)
 
-Editor clients for JETLS generally do not bundle the JETLS server itself.
-You need to install the `jetls` executable separately before using any editor integration.
+The [`jetls` executable app](https://pkgdocs.julialang.org/dev/apps/) is the
+main entry point for running JETLS.
 
 ### [Prerequisites](@id index/server-installation/prerequisites)
 
-JETLS supports [Julia v1.12.2](https://julialang.org/downloads) through Julia 1.13.
-It does not support Julia 1.12.1 or earlier, nor Julia 1.14+/nightly.
+JETLS supports [Julia](https://julialang.org/downloads) v1.12.2 through 1.13.x.
+It does not support Julia 1.12.1 or earlier, nor 1.14+/nightly.
 
 ### [Installing the `jetls` executable](@id index/server-installation/install)
 
-All editor integrations require the [`jetls` executable app](https://pkgdocs.julialang.org/dev/apps/),
-which is the main entry point for running JETLS.
-
-Install it with (make sure your `julia` command runs v1.12.2+):
+Install it with (make sure your `julia` command runs v1.12.2 through v1.13.x):
 ```bash
 julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="release")'
 ```
@@ -70,7 +79,7 @@ is properly added to your `PATH`.
 
     To pin a specific version instead, use the release tag `rev="YYYY-MM-DD"`:
     ```bash
-    julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="2025-11-25")'
+    julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="YYYY-MM-DD")'
     ```
 
 !!! warning "Julia upgrades"
@@ -80,7 +89,7 @@ is properly added to your `PATH`.
 
 ## [Editor setup](@id index/editor-setup)
 
-After installing the `jetls` executable, set up your editor to use it.
+Choose the setup for your editor below.
 
 ### [VSCode](@id index/editor-setup/vscode)
 
@@ -88,11 +97,15 @@ After installing the `jetls` executable, set up your editor to use it.
 is a [VSCode](https://code.visualstudio.com/) client extension for JETLS.
 
 Install the `jetls-client` extension from the VSCode Extensions marketplace
-(search for `"JETLS Client"` from the extensions view), then open any Julia file.
-The extension will automatically use the `jetls` executable from your `PATH`.
+(search for `"JETLS Client"` from the extensions view), then open any Julia
+file. No separate JETLS installation is required.
 
-For advanced launching configurations and JETLS behavior settings, see the
-[jetls-client README](https://github.com/aviatesk/JETLS.jl/blob/master/jetls-client/README.md#advanced-launching-configuration).
+Make sure the `julia` command works in a VSCode terminal. The extension installs
+JETLS automatically on first use, which requires network access.
+
+For choosing a Julia installation, troubleshooting, custom server commands, and
+advanced configuration, see the
+[jetls-client README](https://github.com/aviatesk/JETLS.jl/blob/master/jetls-client/README.md).
 
 !!! note
     Currently, JETLS.jl is not integrated with the
