@@ -338,9 +338,9 @@ async function startLanguageServer() {
           reject(err);
         });
 
-        jetlsProcess.on("exit", (code) => {
+        jetlsProcess.on("exit", (code, signal) => {
           outputChannel.appendLine(
-            `[jetls-client] JETLS process exited with code: ${code}`,
+            `[jetls-client] JETLS process exited (code: ${code}, signal: ${signal})`,
           );
           if (manager.timeoutHandle) {
             clearTimeout(manager.timeoutHandle);
@@ -417,9 +417,9 @@ async function startLanguageServer() {
             reject(err);
           });
 
-          jetlsProcess.on("exit", (code) => {
+          jetlsProcess.on("exit", (code, signal) => {
             outputChannel.appendLine(
-              `[jetls-client] JETLS process exited with code: ${code}`,
+              `[jetls-client] JETLS process exited (code: ${code}, signal: ${signal})`,
             );
             if (manager.timeoutHandle) {
               clearTimeout(manager.timeoutHandle);
