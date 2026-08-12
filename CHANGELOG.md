@@ -55,6 +55,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
+- `inference/method-error` now distinguishes ambiguous calls from calls with no matching method, lists the conflicting or closest candidate methods, and suggests a disambiguating signature when possible.
+
+- `inference/method-error` no longer reports a redundant `Core.kwcall` method error when the unsupported keyword argument diagnostic already explains the failure.
+
 - `inference/field-error` now reports field accesses whose receiver may be a type without the field: `x.regex` where `x::Union{Nothing,Regex}` reports a `FieldError` for the `Nothing` case, and accesses on fieldless receivers like `x.foo` where `x::Nothing` are reported as well.
 
 - Updated JuliaSyntax.jl and JuliaLowering.jl revisions, bringing in JuliaLowering bugfixes for various lowering edge cases found in real-world packages ([JuliaLang/julia#62862](https://github.com/JuliaLang/julia/pull/62862)).
