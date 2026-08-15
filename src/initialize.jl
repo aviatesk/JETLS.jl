@@ -27,7 +27,10 @@ function handle_InitializeRequest(
         end
     end
     if isempty(state.workspaceFolders)
-        @warn "No workspace folder in InitializeRequest - some functionality will be limited"
+        @static if !JETLS_TEST_MODE
+            @warn "No workspace folder in InitializeRequest - " *
+                "some functionality will be limited"
+        end
         show_warning_message(server,
             """
             JETLS started without a workspace folder.
@@ -52,7 +55,9 @@ function handle_InitializeRequest(
                 state.root_env_path = env_path
             end
         else
-            @warn "Root URI scheme not supported for workspace analysis" root_uri
+            @static if !JETLS_TEST_MODE
+                @warn "Root URI scheme not supported for workspace analysis" root_uri
+            end
             show_warning_message(server,
                 """
                 JETLS cannot perform workspace analysis for the root URI scheme `$(root_uri.scheme):`.
@@ -60,7 +65,10 @@ function handle_InitializeRequest(
                 """)
         end
     else
-        @warn "Multiple workspaceFolders are not supported - using limited functionality" state.workspaceFolders
+        @static if !JETLS_TEST_MODE
+            @warn "Multiple workspaceFolders are not supported - " *
+                "using limited functionality" state.workspaceFolders
+        end
         show_warning_message(server,
             """
             JETLS does not support multiple workspace folders in a single server.

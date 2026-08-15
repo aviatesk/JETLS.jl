@@ -43,37 +43,25 @@ function test_initialize_warning(messages::Vector{Any}, expected::AbstractString
     return nothing
 end
 
-@testset "workspace initialization warnings" begin
-    let result = @test_logs(
-            (:warn, r"No workspace folder"),
-            match_mode = :any,
-            initialize_result())
+@testset "workspace initialization warning notifications" begin
+    let result = initialize_result()
         test_initialize_warning(result.messages, "started without a workspace folder")
     end
 
     let workspace_folders = WorkspaceFolder[]
-        result = @test_logs(
-            (:warn, r"No workspace folder"),
-            match_mode = :any,
-            initialize_result(; workspace_folders))
+        result = initialize_result(; workspace_folders)
         test_initialize_warning(result.messages, "started without a workspace folder")
     end
 
     let root_uri = URI("https://example.com/workspace")
-        result = @test_logs(
-            (:warn, r"Root URI scheme not supported"),
-            match_mode = :any,
-            initialize_result(; root_uri))
+        result = initialize_result(; root_uri)
         test_initialize_warning(result.messages, "root URI scheme `https:`")
     end
 
     let workspace_folders = [
             WorkspaceFolder(; uri=URI("file:///workspace-a"), name="workspace-a"),
             WorkspaceFolder(; uri=URI("file:///workspace-b"), name="workspace-b")]
-        result = @test_logs(
-            (:warn, r"Multiple workspaceFolders are not supported"),
-            match_mode = :any,
-            initialize_result(; workspace_folders))
+        result = initialize_result(; workspace_folders)
         test_initialize_warning(result.messages, "one JETLS server per workspace folder")
     end
 end
