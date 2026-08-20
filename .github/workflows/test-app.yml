@@ -44,7 +44,7 @@ jobs:
       - name: Test installed executable
         run: |
           julia_version="$(julia --startup-file=no -e 'print(VERSION)')"
-          test "$(jetls --version)" = "JETLS version $(cat JETLS_VERSION) on Julia $julia_version"
+          test "$(jetls --version)" = "jetls version $(cat JETLS_VERSION), julia version $julia_version"
 
   test_jetls_serve:
     name: Test jetls serve

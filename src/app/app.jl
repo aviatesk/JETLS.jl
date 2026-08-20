@@ -27,7 +27,7 @@ const help_message = """
 @doc help_message
 function (@main)(args::Vector{String})::Cint
     if any(arg -> arg in ("-v", "--version", "version"), args)
-        println(stdout, "JETLS version $JETLS_VERSION on Julia $VERSION")
+        println(stdout, "jetls version $JETLS_VERSION, julia version $VERSION")
         return 0
     end
     # Keep `jetls --version` fast when `precompile_workload` is disabled.
