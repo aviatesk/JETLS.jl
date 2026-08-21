@@ -13,10 +13,19 @@ export class CoalescingTaskRunner {
   }
 
   private async runRequestedTasks(): Promise<void> {
+    let lastFailure: { error: unknown } | undefined;
     try {
       while (this.runRequested) {
         this.runRequested = false;
-        await this.runOnce();
+        try {
+          await this.runOnce();
+          lastFailure = undefined;
+        } catch (error) {
+          lastFailure = { error };
+        }
+      }
+      if (lastFailure !== undefined) {
+        throw lastFailure.error;
       }
     } finally {
       this.activeRun = undefined;

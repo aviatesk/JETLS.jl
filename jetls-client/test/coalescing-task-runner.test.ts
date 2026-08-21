@@ -49,6 +49,29 @@ test("coalesces requests while serializing task runs", async () => {
   assert.deepEqual(events, ["start 1", "end 1", "start 2", "end 2"]);
 });
 
+test("runs a pending task after the active task fails", async () => {
+  const expectedError = new Error("task failed");
+  const releaseFirstRun = deferred();
+  const firstRunStarted = deferred();
+  let runCount = 0;
+  const runner = new CoalescingTaskRunner(async () => {
+    runCount += 1;
+    if (runCount === 1) {
+      firstRunStarted.resolve();
+      await releaseFirstRun.promise;
+      throw expectedError;
+    }
+  });
+
+  const activeRun = runner.run();
+  await firstRunStarted.promise;
+  const pendingRun = runner.run();
+  releaseFirstRun.resolve();
+  await Promise.all([activeRun, pendingRun]);
+
+  assert.equal(runCount, 2);
+});
+
 test("recovers after a failed task", async () => {
   const expectedError = new Error("task failed");
   let runCount = 0;
