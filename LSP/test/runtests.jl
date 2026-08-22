@@ -4,6 +4,20 @@ using LSP: test_roundtrip, to_lsp_json
 using REPL: REPL
 using Test
 
+struct BlockingFailingWriteIO <: IO
+    write_started::Base.Event
+    resume_write::Base.Event
+end
+
+Base.isopen(::BlockingFailingWriteIO) = true
+Base.flush(::BlockingFailingWriteIO) = nothing
+
+function Base.unsafe_write(io::BlockingFailingWriteIO, ::Ptr{UInt8}, ::UInt)
+    notify(io.write_started)
+    wait(io.resume_write)
+    throw(EOFError())
+end
+
 @testset "LSP" begin
     # De/serializing complex LSP objects
     uri = filename2uri(@__FILE__)
@@ -246,5 +260,29 @@ using Test
                        string(REPL.fielddoc(Position, :line)))
         @test occursin("Character offset on a line",
                        string(REPL.fielddoc(Position, :character)))
+    end
+
+    @testset "closed endpoint" begin
+        endpoint = LSP.Endpoint(Returns(nothing), IOBuffer(), IOBuffer())
+        close(endpoint)
+        wait(endpoint.read_task)
+        @test !isopen(endpoint)
+        @test !LSP.send(endpoint, ExitNotification())
+    end
+
+    # A write may fail after shutdown starts; do not report that expected error.
+    @testset "write error during close" begin
+        output = BlockingFailingWriteIO(Base.Event(), Base.Event())
+        errors = Channel{Any}(Inf)
+        endpoint = LSP.Endpoint((args...) -> put!(errors, args), IOBuffer(), output)
+        @test LSP.send(endpoint, ExitNotification())
+        wait(output.write_started)
+
+        close_task = Threads.@spawn close(endpoint)
+        @test timedwait(() -> !isopen(endpoint), 1.0) == :ok
+
+        notify(output.resume_write)
+        wait(close_task); wait(endpoint.read_task)
+        @test isempty(errors)
     end
 end
