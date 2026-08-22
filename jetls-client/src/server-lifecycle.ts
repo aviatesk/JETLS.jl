@@ -7,11 +7,6 @@ import {
   ServerOptions,
   State,
 } from "vscode-languageclient/node";
-import * as net from "net";
-import * as os from "os";
-import * as path from "path";
-import * as fs from "fs";
-import * as cp from "child_process";
 
 import { CoalescingTaskRunner } from "./coalescing-task-runner";
 import {
@@ -28,12 +23,16 @@ import {
   ServerConfig,
 } from "./server-config";
 import {
-  createStderrWatcher,
   JETLSCommands,
   resolveJETLSCommands,
   VersionPreflight,
 } from "./preflight";
 import { StartupStatusBar } from "./status-bar";
+import {
+  connectPipeTransport,
+  connectSocketTransport,
+  TransportOptions,
+} from "./transport";
 
 let languageClient: LanguageClient;
 let outputChannel: LogOutputChannel;
@@ -57,50 +56,6 @@ const versionPreflight = new VersionPreflight({
   appendLine: (message) => outputChannel.appendLine(message),
   onPrecompiling: () => statusBar.show("precompiling"),
 });
-
-interface ProcessManager {
-  timeoutHandle: NodeJS.Timeout | null;
-}
-
-function setupProcessMonitoring(
-  juliaProcess: cp.ChildProcess,
-  onTimeout: () => void,
-): ProcessManager {
-  const manager: ProcessManager = {
-    timeoutHandle: null,
-  };
-  const armTimeout = (timeoutMs: number): void => {
-    manager.timeoutHandle = setTimeout(() => {
-      manager.timeoutHandle = null;
-      onTimeout();
-    }, timeoutMs);
-  };
-
-  juliaProcess.stderr?.on(
-    "data",
-    createStderrWatcher({
-      logPrefix: "[JETLS-stderr]",
-      appendLine: (message) => outputChannel.appendLine(message),
-      onPrecompiling: () => {
-        if (manager.timeoutHandle !== null) {
-          clearTimeout(manager.timeoutHandle);
-          armTimeout(PRECOMPILATION_TIMEOUT_MS);
-          statusBar.show("precompiling");
-        }
-      },
-    }),
-  );
-
-  armTimeout(SERVER_START_TIMEOUT_MS);
-  return manager;
-}
-
-function stopProcessMonitoring(manager: ProcessManager): void {
-  if (manager.timeoutHandle !== null) {
-    clearTimeout(manager.timeoutHandle);
-    manager.timeoutHandle = null;
-  }
-}
 
 // Helper to handle spawn errors with user-friendly messages
 function handleSpawnError(err: Error, command: string): void {
@@ -139,26 +94,6 @@ function handleSpawnError(err: Error, command: string): void {
       `[jetls-client] Failed to start JETLS: ${err.message}`,
     );
   }
-}
-
-// Helper to create timeout handler with cleanup
-function createTimeoutHandler(
-  juliaProcess: cp.ChildProcess,
-  reject: (error: Error) => void,
-  options: {
-    timeoutMessage: string;
-    cleanup?: () => void;
-  },
-): () => void {
-  return () => {
-    const message = options.timeoutMessage;
-    outputChannel.appendLine(`[jetls-client] ${message}`);
-    juliaProcess.kill();
-    if (options.cleanup) {
-      options.cleanup();
-    }
-    reject(new Error(message));
-  };
 }
 
 // The stdio channel has no process-level startup monitoring (the language
@@ -261,6 +196,14 @@ async function startLanguageServer() {
 
   let serverOptions: ServerOptions;
 
+  const transportOptions: TransportOptions = {
+    startTimeoutMs: SERVER_START_TIMEOUT_MS,
+    precompilationTimeoutMs: PRECOMPILATION_TIMEOUT_MS,
+    appendLine: (message) => outputChannel.appendLine(message),
+    onPrecompiling: () => statusBar.show("precompiling"),
+    onProcessError: (error) => handleSpawnError(error, baseCommand),
+  };
+
   if (commChannel === "stdio") {
     serverOptions = {
       run: {
@@ -276,179 +219,24 @@ async function startLanguageServer() {
     };
   } else if (commChannel === "socket") {
     const port = serverConfig.socketPort || 0; // Use 0 for auto-assign
-
-    serverOptions = () => {
-      return new Promise((resolve, reject) => {
-        outputChannel.appendLine(
-          `[jetls-client] Starting JETLS with TCP socket (port: ${port || "auto-assign"})...`,
-        );
-
-        const jetlsProcess = cp.spawn(
-          baseCommand,
-          [...serveArgs, "--socket", port.toString()],
-          spawnOptions,
-        );
-
-        let actualPort: number | null = null;
-
-        const timeoutHandler = createTimeoutHandler(jetlsProcess, reject, {
-          timeoutMessage: "Timeout waiting for JETLS to provide port number",
-        });
-
-        const manager = setupProcessMonitoring(jetlsProcess, () => {
-          if (!actualPort) {
-            timeoutHandler();
-          }
-        });
-
-        // Capture stdout to get the actual port number
-        jetlsProcess.stdout?.on("data", (data: Buffer) => {
-          data
-            .toString()
-            .trimEnd()
-            .split("\n")
-            .forEach((line) => {
-              outputChannel.appendLine(`[JETLS-stdout] ${line}`);
-
-              // Look for the port announcement
-              const portMatch = line.match(/<JETLS-PORT>(\d+)<\/JETLS-PORT>/);
-              if (portMatch && !actualPort) {
-                actualPort = parseInt(portMatch[1]);
-                outputChannel.appendLine(
-                  `[jetls-client] JETLS listening on port: ${actualPort}`,
-                );
-
-                stopProcessMonitoring(manager);
-
-                // Connect to the server
-                const socket = net.createConnection(
-                  actualPort,
-                  "127.0.0.1",
-                  () => {
-                    outputChannel.appendLine(
-                      `[jetls-client] Connected to JETLS on port ${actualPort}!`,
-                    );
-                    resolve({ reader: socket, writer: socket });
-                  },
-                );
-
-                socket.on("error", (err) => {
-                  outputChannel.appendLine(
-                    `[jetls-client] Socket error: ${err.message}`,
-                  );
-                  jetlsProcess.kill();
-                  reject(err);
-                });
-              }
-            });
-        });
-
-        jetlsProcess.on("error", (err) => {
-          handleSpawnError(err, baseCommand);
-          stopProcessMonitoring(manager);
-          reject(err);
-        });
-
-        jetlsProcess.on("exit", (code, signal) => {
-          outputChannel.appendLine(
-            `[jetls-client] JETLS process exited (code: ${code}, signal: ${signal})`,
-          );
-          stopProcessMonitoring(manager);
-          if (!actualPort) {
-            reject(new Error("JETLS exited without providing a port number"));
-          }
-        });
-      });
-    };
-
+    serverOptions = () =>
+      connectSocketTransport(
+        baseCommand,
+        serveArgs,
+        spawnOptions,
+        port,
+        transportOptions,
+      );
     outputChannel.appendLine(`[jetls-client] Using TCP socket mode`);
   } else {
     // Default: pipe communication (Unix domain socket / named pipe)
-    serverOptions = () => {
-      return new Promise((resolve, reject) => {
-        const socketPath =
-          process.platform === "win32"
-            ? `\\\\.\\pipe\\jetls-${process.pid}-${Date.now()}`
-            : path.join(os.tmpdir(), `jetls-${process.pid}-${Date.now()}.sock`);
-
-        if (process.platform !== "win32" && fs.existsSync(socketPath)) {
-          fs.unlinkSync(socketPath);
-        }
-
-        const server = net.createServer();
-
-        server.once("error", (err) => {
-          outputChannel.appendLine(
-            `[jetls-client] Failed to create server: ${err.message}`,
-          );
-          reject(err);
-        });
-
-        server.listen(socketPath, () => {
-          const pipeType =
-            process.platform === "win32" ? "named pipe" : "Unix domain socket";
-          outputChannel.appendLine(
-            `[jetls-client] Server listening on ${pipeType}: ${socketPath}`,
-          );
-
-          outputChannel.appendLine(`[jetls-client] Starting JETLS...`);
-          const jetlsProcess = cp.spawn(
-            baseCommand,
-            [...serveArgs, "--pipe-connect", socketPath],
-            spawnOptions,
-          );
-
-          // Setup monitoring with timeout
-          const manager = setupProcessMonitoring(
-            jetlsProcess,
-            createTimeoutHandler(jetlsProcess, reject, {
-              timeoutMessage: "Timeout waiting for JETLS to connect",
-              cleanup: () => server.close(),
-            }),
-          );
-
-          jetlsProcess.stdout?.on("data", (data: Buffer) => {
-            data
-              .toString()
-              .trimEnd()
-              .split("\n")
-              .forEach((s) => outputChannel.appendLine(`[JETLS-stdout] ${s}`));
-          });
-
-          jetlsProcess.on("error", (err) => {
-            handleSpawnError(err, baseCommand);
-            stopProcessMonitoring(manager);
-            server.close();
-            reject(err);
-          });
-
-          let connected = false;
-
-          jetlsProcess.on("exit", (code, signal) => {
-            outputChannel.appendLine(
-              `[jetls-client] JETLS process exited (code: ${code}, signal: ${signal})`,
-            );
-            stopProcessMonitoring(manager);
-            server.close();
-            if (process.platform !== "win32" && fs.existsSync(socketPath)) {
-              fs.unlinkSync(socketPath);
-            }
-            if (!connected) {
-              reject(new Error("JETLS exited before connecting to the pipe"));
-            }
-          });
-
-          server.once("connection", (socket: net.Socket) => {
-            outputChannel.appendLine(`[jetls-client] JETLS connected!`);
-            connected = true;
-            stopProcessMonitoring(manager);
-
-            server.close(); // Stop accepting new connections
-            resolve({ reader: socket, writer: socket });
-          });
-        });
-      });
-    };
+    serverOptions = () =>
+      connectPipeTransport(
+        baseCommand,
+        serveArgs,
+        spawnOptions,
+        transportOptions,
+      );
   }
 
   const initializationOptions = vscode.workspace
