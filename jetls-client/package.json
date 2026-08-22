@@ -81,7 +81,7 @@
             "path": "jetls",
             "threads": "auto"
           },
-          "markdownDescription": "JETLS executable configuration. Most users do not need to change this.\n\nUse object form `{path, threads}` to customize the installed JETLS executable path or thread setting.\n\nUse array form `[\"julia\", \"--startup-file=no\", \"--history-file=no\", \"--project=/path/to/JETLS\", \"-m\", \"JETLS\"]` to use a local JETLS checkout instead of globally installed executable.",
+          "markdownDescription": "JETLS executable configuration. Most users do not need to change this.\n\nUse object form `{path, threads}` to customize the installed JETLS executable path or thread setting.\n\nUse array form `[\"julia\", \"--startup-file=no\", \"--history-file=no\", \"--project=/path/to/JETLS\", \"-m\", \"JETLS\", \"serve\"]` to use a local JETLS checkout instead of globally installed executable.",
           "order": 1
         },
         "jetls-client.communicationChannel": {
