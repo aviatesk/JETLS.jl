@@ -1,7 +1,7 @@
 import * as assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { CoalescingTaskRunner } from "../CoalescingTaskRunner";
+import { CoalescingTaskRunner } from "../src/CoalescingTaskRunner";
 
 function deferred(): {
   promise: Promise<void>;
@@ -70,6 +70,18 @@ test("runs a pending task after the active task fails", async () => {
   await Promise.all([activeRun, pendingRun]);
 
   assert.equal(runCount, 2);
+});
+
+test("exposes the active run until it settles", async () => {
+  const release = deferred();
+  const runner = new CoalescingTaskRunner(() => release.promise);
+
+  assert.equal(runner.active, undefined);
+  const run = runner.run();
+  assert.equal(runner.active, run);
+  release.resolve();
+  await run;
+  assert.equal(runner.active, undefined);
 });
 
 test("recovers after a failed task", async () => {
