@@ -47,6 +47,7 @@ mutable struct Endpoint
         out_msg_queue = Channel{Any}(Inf)
 
         local endpoint_ref = Ref{Endpoint}()
+        is_endpoint_open() = !isassigned(endpoint_ref) || isopen(endpoint_ref[])
 
         read_task = Threads.@spawn :interactive begin
             while true
@@ -56,7 +57,7 @@ mutable struct Endpoint
                     err_handler(#=isread=#true, err, catch_backtrace())
                     continue
                 end break # terminate this task loop when the stream is closed
-                (!isassigned(endpoint_ref) || isopen(endpoint_ref[])) || break
+                is_endpoint_open() || break
                 put!(in_msg_queue, msg)
                 GC.safepoint()
             end
@@ -69,11 +70,15 @@ mutable struct Endpoint
 
         write_task = Threads.@spawn :interactive for msg in out_msg_queue
             msg === nothing && break # terminate this task loop when taking this special token
+            # The peer may close the transport after `exit`; discard queued output during shutdown.
+            is_endpoint_open() || break
             if isopen(out)
                 try
                     writelsp(out, msg)
                 catch err
-                    err_handler(#=isread=#false, err, catch_backtrace())
+                    if is_endpoint_open()
+                        err_handler(#=isread=#false, err, catch_backtrace())
+                    end
                     continue
                 end
             else
@@ -144,10 +149,11 @@ end
 to_lsp_json(@nospecialize msg) = JSON3.write(msg)
 
 function Base.close(endpoint::Endpoint)
+    isopen(endpoint) || return endpoint
+    @atomic :release endpoint.isopen = false
     put!(endpoint.out_msg_queue, nothing) # send a special token to terminate the write task
     close(endpoint.out_msg_queue)
     wait(endpoint.write_task)
-    @atomic :release endpoint.isopen = false
     close(endpoint.in_msg_queue)
     # TODO we would also like to fetch the read task here, but it may be blocked on
     # `readlsp(in)`. Unclear how to unblock it without closing the socket.
@@ -168,21 +174,25 @@ function Base.iterate(endpoint::Endpoint, _=nothing)
 end
 
 """
-    send(endpoint::Endpoint, msg)
+    send(endpoint::Endpoint, msg) -> sent::Bool
 
 Send a message through the endpoint's output queue.
 
 The message will be asynchronously written to the output stream by the endpoint's write task.
-This function is non-blocking and returns immediately after queueing the message.
+This function is non-blocking and returns `true` after queueing the message, or
+`false` if the endpoint is closed.
 
 # Arguments
 - `endpoint::Endpoint`: The endpoint to send the message through
 - `msg`: The message to send (typically an LSP message structure)
-
-# Throws
-- `ErrorException`: If the endpoint is closed
 """
-function send(endpoint::Endpoint, @nospecialize(msg::Any))
-    put!(endpoint.out_msg_queue, msg)
-    nothing
+function send(endpoint::Endpoint, @nospecialize(msg::Any))::Bool
+    isopen(endpoint) || return false
+    try
+        put!(endpoint.out_msg_queue, msg)
+    catch err
+        err isa InvalidStateException && !isopen(endpoint) || rethrow()
+        return false
+    end
+    return true
 end

@@ -289,12 +289,13 @@ function runserver(
         @error "Message handling loop failed"
         Base.display_error(stderr, err, catch_backtrace())
     finally
+        # The client may close the transport after `exit`; reject output before worker cleanup.
+        close(server.endpoint)
         stop_analysis_worker(server)
         stop_signature_analysis_workers(server)
         put!(seq_queue, nothing); put!(con_queue, nothing);
         close(seq_queue); close(con_queue);
         waitall((seq_task, con_task))
-        close(server.endpoint)
     end
     @static JETLS_DEV_MODE && @info "Exited JETLS server loop"
     return exit_code
