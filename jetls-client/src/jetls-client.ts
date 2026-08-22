@@ -7,6 +7,7 @@ import {
   LanguageClient,
   LanguageClientOptions,
   ServerOptions,
+  State,
 } from "vscode-languageclient/node";
 import * as net from "net";
 import * as os from "os";
@@ -46,7 +47,8 @@ type ServerStartupStatus =
   | "precompiling"
   | "ready"
   | "failed"
-  | "restart-failed";
+  | "restart-failed"
+  | "crashed";
 
 interface ServerConfig {
   executable: ExecutableConfig;
@@ -112,6 +114,14 @@ function showServerStartupStatus(status: ServerStartupStatus): void {
       statusBarItem.text = "$(error) JETLS restart failed";
       statusBarItem.tooltip =
         "JETLS could not be stopped for restart. Click to open the JETLS output.";
+      statusBarItem.backgroundColor = new vscode.ThemeColor(
+        "statusBarItem.errorBackground",
+      );
+      break;
+    case "crashed":
+      statusBarItem.text = "$(error) JETLS stopped";
+      statusBarItem.tooltip =
+        "JETLS stopped unexpectedly. Click to open the JETLS output.";
       statusBarItem.backgroundColor = new vscode.ThemeColor(
         "statusBarItem.errorBackground",
       );
@@ -625,6 +635,26 @@ async function startLanguageServer() {
     serverOptions,
     clientOptions,
   );
+
+  // Status during managed lifecycles (start/restart/shutdown) is driven by
+  // the startup code itself; only mirror state changes the library makes on
+  // its own, i.e. crash-triggered stops and automatic restarts.
+  languageClient.onDidChangeState((event) => {
+    if (deactivating || restartRunner.active !== undefined) {
+      return;
+    }
+    switch (event.newState) {
+      case State.Stopped:
+        showServerStartupStatus("crashed");
+        break;
+      case State.Starting:
+        showServerStartupStatus("restarting");
+        break;
+      case State.Running:
+        showServerStartupStatus("ready");
+        break;
+    }
+  });
 
   try {
     if (commChannel === "stdio") {
