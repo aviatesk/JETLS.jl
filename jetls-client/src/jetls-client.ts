@@ -636,9 +636,13 @@ async function startLanguageServer() {
     clientOptions,
   );
 
-  // Status during managed lifecycles (start/restart/shutdown) is driven by
-  // the startup code itself; only mirror state changes the library makes on
-  // its own, i.e. crash-triggered stops and automatic restarts.
+  // Surface server crashes and vscode-languageclient's automatic restarts in
+  // the status bar. This fires for every state transition, but while the
+  // extension runs its own start/restart/shutdown flow (runner active, or
+  // deactivating) the startup code sets the status directly, so those
+  // transitions are skipped: what remains are the transitions
+  // vscode-languageclient initiated on its own, i.e. a crash-triggered stop
+  // and the restart its error handler performs afterwards.
   languageClient.onDidChangeState((event) => {
     if (deactivating || restartRunner.active !== undefined) {
       return;
