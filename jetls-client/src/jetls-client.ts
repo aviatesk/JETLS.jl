@@ -491,6 +491,8 @@ async function startLanguageServer() {
             reject(err);
           });
 
+          let connected = false;
+
           jetlsProcess.on("exit", (code, signal) => {
             outputChannel.appendLine(
               `[jetls-client] JETLS process exited (code: ${code}, signal: ${signal})`,
@@ -500,10 +502,14 @@ async function startLanguageServer() {
             if (process.platform !== "win32" && fs.existsSync(socketPath)) {
               fs.unlinkSync(socketPath);
             }
+            if (!connected) {
+              reject(new Error("JETLS exited before connecting to the pipe"));
+            }
           });
 
           server.once("connection", (socket: net.Socket) => {
             outputChannel.appendLine(`[jetls-client] JETLS connected!`);
+            connected = true;
             stopProcessMonitoring(manager);
 
             server.close(); // Stop accepting new connections
