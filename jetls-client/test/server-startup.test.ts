@@ -5,6 +5,7 @@ import { PassThrough } from "node:stream";
 import { test } from "node:test";
 
 import {
+  createStderrWatcher,
   resolveJETLSCommands,
   VersionPreflight,
   VersionPreflightOptions,
@@ -98,6 +99,7 @@ test("resolves installed and development commands", () => {
     "--project=/checkout",
     "-m",
     "JETLS",
+    "serve",
   ];
   assert.deepEqual(resolveJETLSCommands(executable), {
     command: "julia",
@@ -108,7 +110,13 @@ test("resolves installed and development commands", () => {
       "JETLS",
       "version",
     ],
-    serveArgs: ["--startup-file=no", "--project=/checkout", "-m", "JETLS"],
+    serveArgs: [
+      "--startup-file=no",
+      "--project=/checkout",
+      "-m",
+      "JETLS",
+      "serve",
+    ],
   });
   assert.deepEqual(executable, [
     "julia",
@@ -116,7 +124,17 @@ test("resolves installed and development commands", () => {
     "--project=/checkout",
     "-m",
     "JETLS",
+    "serve",
   ]);
+
+  assert.throws(
+    () => resolveJETLSCommands(["julia", "-m", "JETLS"]),
+    /expected exactly one `serve` subcommand/,
+  );
+  assert.throws(
+    () => resolveJETLSCommands(["jetls", "serve", "serve"]),
+    /expected exactly one `serve` subcommand/,
+  );
 });
 
 test("runs a successful version preflight", async () => {
@@ -184,6 +202,28 @@ test("detects split precompilation output once", async () => {
   await run;
 
   assert.equal(precompilationCount(), 1);
+});
+
+test("stderr watcher logs lines and detects a split marker once", () => {
+  const logs: string[] = [];
+  let precompilingCount = 0;
+  const watch = createStderrWatcher({
+    logPrefix: "[test-stderr]",
+    appendLine: (message) => logs.push(message),
+    onPrecompiling: () => {
+      precompilingCount += 1;
+    },
+  });
+
+  watch(Buffer.from("Info: loading\nPrecompiling pack"));
+  watch(Buffer.from("ages\n"));
+  watch(Buffer.from("Precompiling packages\n"));
+
+  assert.equal(precompilingCount, 1);
+  assert.deepEqual(logs.slice(0, 2), [
+    "[test-stderr] Info: loading",
+    "[test-stderr] Precompiling pack",
+  ]);
 });
 
 test("terminates a timed-out preflight before rejecting", async () => {

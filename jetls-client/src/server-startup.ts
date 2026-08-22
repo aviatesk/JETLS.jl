@@ -15,9 +15,19 @@ export function resolveJETLSCommands(
 ): JETLSCommands {
   if (Array.isArray(executable)) {
     const [command, ...args] = executable;
+    // Without exactly one `serve`, the server would print the help text and
+    // exit 0, which the preflight cannot distinguish from a working setup.
+    if (args.filter((argument) => argument === "serve").length !== 1) {
+      throw new Error(
+        "Invalid JETLS executable configuration: expected exactly one " +
+          `\`serve\` subcommand, got ${JSON.stringify(executable)}.`,
+      );
+    }
     return {
       command,
-      versionArgs: [...args, "version"],
+      versionArgs: args.map((argument) =>
+        argument === "serve" ? "version" : argument,
+      ),
       serveArgs: args,
     };
   }
@@ -29,6 +39,39 @@ export function resolveJETLSCommands(
     command,
     versionArgs: [...juliaArgs, "version"],
     serveArgs: [...juliaArgs, "serve"],
+  };
+}
+
+const PRECOMPILING_MARKER = "Precompiling packages";
+
+export interface StderrWatcherOptions {
+  logPrefix: string;
+  appendLine: (message: string) => void;
+  onPrecompiling: () => void;
+}
+
+export function createStderrWatcher(
+  options: StderrWatcherOptions,
+): (data: Buffer) => void {
+  let carry = "";
+  let precompilationDetected = false;
+  return (data: Buffer) => {
+    const text = data.toString();
+    text
+      .trimEnd()
+      .split("\n")
+      .forEach((line) => options.appendLine(`${options.logPrefix} ${line}`));
+    if (precompilationDetected) {
+      return;
+    }
+    const searchText = carry + text;
+    if (searchText.includes(PRECOMPILING_MARKER)) {
+      precompilationDetected = true;
+      options.onPrecompiling();
+    } else {
+      // Keep just enough tail to detect a marker split across chunks.
+      carry = searchText.slice(-(PRECOMPILING_MARKER.length - 1));
+    }
   };
 }
 
@@ -188,11 +231,9 @@ export class VersionPreflight {
       this.activeProcess = preflight;
 
       let stdout = "";
-      let stderr = "";
       let settled = false;
       let timedOut = false;
       let processError: Error | undefined;
-      let precompilationDetected = false;
 
       const finish = (error?: Error): void => {
         if (settled) {
@@ -212,25 +253,16 @@ export class VersionPreflight {
           stdout += data.toString();
         }
       });
+      const watchStderr = createStderrWatcher({
+        logPrefix: "[JETLS-version-stderr]",
+        appendLine: this.options.appendLine,
+        onPrecompiling: this.options.onPrecompiling,
+      });
       versionProcess.stderr?.on("data", (data: Buffer) => {
         if (settled) {
           return;
         }
-        const text = data.toString();
-        stderr += text;
-        text
-          .trimEnd()
-          .split("\n")
-          .forEach((line) =>
-            this.options.appendLine(`[JETLS-version-stderr] ${line}`),
-          );
-        if (
-          !precompilationDetected &&
-          stderr.includes("Precompiling packages")
-        ) {
-          precompilationDetected = true;
-          this.options.onPrecompiling();
-        }
+        watchStderr(data);
       });
       versionProcess.once("error", (err) => {
         processError = err;

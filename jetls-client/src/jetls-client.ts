@@ -16,7 +16,9 @@ import * as cp from "child_process";
 
 import { CoalescingTaskRunner } from "./CoalescingTaskRunner";
 import {
+  createStderrWatcher,
   ExecutableConfig,
+  JETLSCommands,
   resolveJETLSCommands,
   VersionPreflight,
 } from "./server-startup";
@@ -132,24 +134,18 @@ function setupProcessMonitoring(
   const manager: ProcessManager = {
     timeoutHandle: null,
   };
-  let precompilationDetected = false;
 
-  juliaProcess.stderr?.on("data", (data: Buffer) =>
-    data
-      .toString()
-      .trimEnd()
-      .split("\n")
-      .forEach((s) => {
-        outputChannel.appendLine(`[JETLS-stderr] ${s}`);
-        if (
-          manager.timeoutHandle !== null &&
-          s.includes("Precompiling packages") &&
-          !precompilationDetected
-        ) {
-          precompilationDetected = true;
+  juliaProcess.stderr?.on(
+    "data",
+    createStderrWatcher({
+      logPrefix: "[JETLS-stderr]",
+      appendLine: (message) => outputChannel.appendLine(message),
+      onPrecompiling: () => {
+        if (manager.timeoutHandle !== null) {
           showServerStartupStatus("precompiling");
         }
-      }),
+      },
+    }),
   );
 
   manager.timeoutHandle = setTimeout(() => {
@@ -263,11 +259,19 @@ async function startLanguageServer() {
   const serverConfig = getServerConfig();
   currentServerConfig = serverConfig;
 
-  const {
-    command: baseCommand,
-    versionArgs,
-    serveArgs,
-  } = resolveJETLSCommands(serverConfig.executable);
+  let resolvedCommands: JETLSCommands;
+  try {
+    resolvedCommands = resolveJETLSCommands(serverConfig.executable);
+  } catch (err) {
+    const error = err instanceof Error ? err : new Error(String(err));
+    if (!deactivating) {
+      showServerStartupStatus("failed");
+      outputChannel.appendLine(`[jetls-client] ${error.message}`);
+      vscode.window.showErrorMessage(error.message);
+    }
+    throw error;
+  }
+  const { command: baseCommand, versionArgs, serveArgs } = resolvedCommands;
 
   let commChannel = serverConfig.communicationChannel;
   if (commChannel === "auto") {
