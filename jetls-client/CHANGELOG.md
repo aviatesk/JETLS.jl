@@ -10,9 +10,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
 - Diff: [`8cfd8fed7...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/8cfd8fed7...HEAD)
 
+### Added
+
+- Added a startup preflight. The status bar now shows when JETLS is being checked, precompiled, started, or restarted, briefly confirms when it is ready, and keeps startup and restart failures visible with a shortcut to the JETLS output.
+
 ### Fixed
 
 - Fixed duplicate watched-file notifications that could cause redundant configuration reloads and diagnostics refreshes.
+
 - Fixed overlapping JETLS restarts in VS Code by serializing rapid manual and configuration-triggered restart requests and waiting for the replacement server to finish initializing.
 
 ## v0.7.0
