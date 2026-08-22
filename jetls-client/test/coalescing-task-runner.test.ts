@@ -1,7 +1,7 @@
 import * as assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { CoalescingTaskRunner } from "../src/CoalescingTaskRunner";
+import { CoalescingTaskRunner } from "../src/coalescing-task-runner";
 
 function deferred(): {
   promise: Promise<void>;

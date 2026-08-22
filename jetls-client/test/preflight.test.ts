@@ -9,7 +9,7 @@ import {
   resolveJETLSCommands,
   VersionPreflight,
   VersionPreflightOptions,
-} from "../src/server-startup";
+} from "../src/preflight";
 
 class FakeChildProcess extends EventEmitter {
   readonly stdout = new PassThrough();
