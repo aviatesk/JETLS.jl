@@ -1,7 +1,4 @@
 import * as assert from "node:assert/strict";
-import type * as cp from "node:child_process";
-import { EventEmitter } from "node:events";
-import { PassThrough } from "node:stream";
 import { test } from "node:test";
 
 import {
@@ -9,37 +6,8 @@ import {
   resolveJETLSCommands,
   VersionPreflight,
   VersionPreflightOptions,
-} from "../src/server-startup";
-
-class FakeChildProcess extends EventEmitter {
-  readonly stdout = new PassThrough();
-  readonly stderr = new PassThrough();
-  readonly killCalls: (NodeJS.Signals | number | undefined)[] = [];
-  pid: number | undefined = 1234;
-  onKill: ((signal?: NodeJS.Signals | number) => void) | undefined;
-
-  kill(signal?: NodeJS.Signals | number): boolean {
-    this.killCalls.push(signal);
-    this.onKill?.(signal);
-    return true;
-  }
-
-  close(code: number | null, signal: NodeJS.Signals | null): void {
-    this.stdout.end();
-    this.stderr.end();
-    this.emit("close", code, signal);
-  }
-
-  asChildProcess(): cp.ChildProcess {
-    return this as unknown as cp.ChildProcess;
-  }
-}
-
-interface SpawnCall {
-  command: string;
-  args: readonly string[];
-  options: cp.SpawnOptions;
-}
+} from "../src/preflight";
+import { FakeChildProcess, SpawnCall } from "./fake-child-process";
 
 function createPreflight(
   children: FakeChildProcess[],
