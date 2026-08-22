@@ -75,6 +75,8 @@ export function createStderrWatcher(
   };
 }
 
+const PREFLIGHT_STDOUT_LIMIT = 64 * 1024;
+
 interface ActivePreflightProcess {
   process: cp.ChildProcess;
   closed: boolean;
@@ -168,6 +170,7 @@ export class VersionPreflight {
         });
       } catch (err) {
         terminationError = err instanceof Error ? err : new Error(String(err));
+        preflight.process.kill();
       }
     } else {
       preflight.process.kill();
@@ -193,7 +196,17 @@ export class VersionPreflight {
     preflight: ActivePreflightProcess,
   ): Promise<void> {
     if (preflight.terminationPromise === undefined) {
-      preflight.terminationPromise = this.terminateProcessImpl(preflight);
+      preflight.terminationPromise = this.terminateProcessImpl(preflight).catch(
+        (err) => {
+          // Drop the failed attempt so termination can be retried and a fresh
+          // preflight is not blocked by a process we already gave up on.
+          preflight.terminationPromise = undefined;
+          if (this.activeProcess === preflight) {
+            this.activeProcess = undefined;
+          }
+          throw err;
+        },
+      );
     }
     return preflight.terminationPromise;
   }
@@ -249,7 +262,7 @@ export class VersionPreflight {
       };
 
       versionProcess.stdout?.on("data", (data: Buffer) => {
-        if (!settled) {
+        if (!settled && stdout.length < PREFLIGHT_STDOUT_LIMIT) {
           stdout += data.toString();
         }
       });

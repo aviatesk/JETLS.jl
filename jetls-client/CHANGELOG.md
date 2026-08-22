@@ -20,6 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Fixed overlapping JETLS restarts in VS Code by serializing rapid manual and configuration-triggered restart requests and waiting for the replacement server to finish initializing.
 
+- Fixed the startup spinner hanging indefinitely when the server process exits before establishing the pipe connection; startup now fails with an error instead.
+
 ## v0.7.0
 
 - Commit: [`8cfd8fed7`](https://github.com/aviatesk/JETLS.jl/commit/8cfd8fed7)

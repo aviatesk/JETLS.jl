@@ -260,6 +260,26 @@ test("shares termination and escalates a stubborn POSIX process", async () => {
   assert.deepEqual(child.killCalls, [undefined, "SIGKILL"]);
 });
 
+test("recovers after a failed termination", async () => {
+  const stubbornChild = new FakeChildProcess();
+  const replacementChild = new FakeChildProcess();
+  const { preflight } = createPreflight([stubbornChild, replacementChild], {
+    terminationTimeoutMs: 5,
+  });
+
+  const run = preflight.run("jetls", ["version"], {});
+  await assert.rejects(preflight.terminate(), /did not exit after termination/);
+  assert.deepEqual(stubbornChild.killCalls, [undefined, "SIGKILL"]);
+
+  const rerun = preflight.run("jetls", ["version"], {});
+  replacementChild.stdout.write("JETLS version 1.0\n");
+  replacementChild.close(0, null);
+  await rerun;
+
+  stubbornChild.close(null, "SIGTERM");
+  await assert.rejects(run, /JETLS version check exited with signal SIGTERM\./);
+});
+
 test("uses taskkill to terminate a Windows preflight", async () => {
   const versionChild = new FakeChildProcess();
   versionChild.pid = 4321;
@@ -281,4 +301,22 @@ test("uses taskkill to terminate a Windows preflight", async () => {
   await termination;
   await assert.rejects(run, /JETLS version check exited with signal SIGTERM\./);
   assert.deepEqual(versionChild.killCalls, []);
+});
+
+test("falls back to kill() when taskkill fails", async () => {
+  const versionChild = new FakeChildProcess();
+  versionChild.pid = 4321;
+  versionChild.onKill = () =>
+    queueMicrotask(() => versionChild.close(null, "SIGTERM"));
+  const taskkillChild = new FakeChildProcess();
+  const { preflight } = createPreflight([versionChild, taskkillChild], {
+    platform: "win32",
+  });
+
+  const run = preflight.run("jetls.bat", ["version"], { shell: true });
+  const termination = preflight.terminate();
+  taskkillChild.close(1, null);
+  await termination;
+  assert.deepEqual(versionChild.killCalls, [undefined]);
+  await assert.rejects(run, /JETLS version check exited with signal SIGTERM\./);
 });

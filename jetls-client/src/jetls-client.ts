@@ -27,7 +27,6 @@ let languageClient: LanguageClient;
 let outputChannel: LogOutputChannel;
 let statusBarItem: vscode.StatusBarItem;
 let statusBarHideTimer: NodeJS.Timeout | undefined;
-let activeLanguageServerLifecycle: Promise<void> | undefined;
 let deactivating = false;
 
 type ServerStartupStatus =
@@ -58,6 +57,7 @@ const LANGUAGE_SERVER_STOP_TIMEOUT_MS = 10_000;
 const PREFLIGHT_TIMEOUT_MS = 300000;
 const PREFLIGHT_TERMINATION_TIMEOUT_MS = 5000;
 const SERVER_START_TIMEOUT_MS = 60000;
+const SERVER_START_PRECOMPILING_TIMEOUT_MS = 300000;
 
 const versionPreflight = new VersionPreflight({
   timeoutMs: PREFLIGHT_TIMEOUT_MS,
@@ -134,6 +134,12 @@ function setupProcessMonitoring(
   const manager: ProcessManager = {
     timeoutHandle: null,
   };
+  const armTimeout = (timeoutMs: number): void => {
+    manager.timeoutHandle = setTimeout(() => {
+      manager.timeoutHandle = null;
+      onTimeout();
+    }, timeoutMs);
+  };
 
   juliaProcess.stderr?.on(
     "data",
@@ -142,16 +148,15 @@ function setupProcessMonitoring(
       appendLine: (message) => outputChannel.appendLine(message),
       onPrecompiling: () => {
         if (manager.timeoutHandle !== null) {
+          clearTimeout(manager.timeoutHandle);
+          armTimeout(SERVER_START_PRECOMPILING_TIMEOUT_MS);
           showServerStartupStatus("precompiling");
         }
       },
     }),
   );
 
-  manager.timeoutHandle = setTimeout(() => {
-    manager.timeoutHandle = null;
-    onTimeout();
-  }, SERVER_START_TIMEOUT_MS);
+  armTimeout(SERVER_START_TIMEOUT_MS);
   return manager;
 }
 
@@ -636,7 +641,12 @@ async function startLanguageServer() {
 }
 
 async function restartLanguageServer() {
-  if (languageClient) {
+  if (deactivating) {
+    return;
+  }
+  // A client that never reached the `Running` state (e.g. `StartFailed`)
+  // cannot be stopped: `stop()` would throw and permanently block restarts.
+  if (languageClient?.needsStop()) {
     showServerStartupStatus("restarting");
     try {
       await languageClient.stop(LANGUAGE_SERVER_STOP_TIMEOUT_MS);
@@ -654,10 +664,13 @@ async function restartLanguageServer() {
 
 const restartRunner = new CoalescingTaskRunner(restartLanguageServer);
 
-function requestLanguageServerRestart(): Promise<void> {
-  const lifecycle = restartRunner.run();
-  activeLanguageServerLifecycle = lifecycle;
-  return lifecycle;
+function requestLanguageServerRestart(): void {
+  void restartRunner.run().catch((err) => {
+    const message = err instanceof Error ? err.message : String(err);
+    outputChannel.appendLine(
+      `[jetls-client] Failed to restart language server: ${message}.`,
+    );
+  });
 }
 
 async function checkForUpdates(context: ExtensionContext): Promise<void> {
@@ -769,12 +782,7 @@ export function activate(context: ExtensionContext) {
           vscode.window.showInformationMessage(
             "JETLS configuration changed. Restarting language server...",
           );
-          void requestLanguageServerRestart().catch((err) => {
-            const message = err instanceof Error ? err.message : String(err);
-            outputChannel.appendLine(
-              `[jetls-client] Failed to restart language server: ${message}.`,
-            );
-          });
+          requestLanguageServerRestart();
         }
       }
     }),
@@ -794,7 +802,23 @@ export function activate(context: ExtensionContext) {
 
   checkForUpdates(context);
 
-  void requestLanguageServerRestart().catch(() => undefined);
+  requestLanguageServerRestart();
+}
+
+function awaitWithTimeout(
+  promise: Promise<void> | undefined,
+  timeoutMs: number,
+): Promise<void> {
+  if (promise === undefined) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    const timeoutHandle = setTimeout(resolve, timeoutMs);
+    void promise.catch(() => undefined).then(() => {
+      clearTimeout(timeoutHandle);
+      resolve();
+    });
+  });
 }
 
 export async function deactivate() {
@@ -807,13 +831,20 @@ export async function deactivate() {
     await versionPreflight.terminate();
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    outputChannel.appendLine(
+    outputChannel?.appendLine(
       `[jetls-client] Failed to terminate JETLS version check: ${message}`,
     );
   }
-  await activeLanguageServerLifecycle?.catch(() => undefined);
-  if (languageClient?.isRunning()) {
-    await languageClient.stop(LANGUAGE_SERVER_STOP_TIMEOUT_MS);
+  await awaitWithTimeout(restartRunner.active, LANGUAGE_SERVER_STOP_TIMEOUT_MS);
+  if (languageClient?.needsStop()) {
+    try {
+      await languageClient.stop(LANGUAGE_SERVER_STOP_TIMEOUT_MS);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      outputChannel?.appendLine(
+        `[jetls-client] Failed to stop language client: ${message}.`,
+      );
+    }
   }
   if (outputChannel) {
     outputChannel.dispose();

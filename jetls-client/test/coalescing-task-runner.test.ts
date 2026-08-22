@@ -72,6 +72,18 @@ test("runs a pending task after the active task fails", async () => {
   assert.equal(runCount, 2);
 });
 
+test("exposes the active run until it settles", async () => {
+  const release = deferred();
+  const runner = new CoalescingTaskRunner(() => release.promise);
+
+  assert.equal(runner.active, undefined);
+  const run = runner.run();
+  assert.equal(runner.active, run);
+  release.resolve();
+  await run;
+  assert.equal(runner.active, undefined);
+});
+
 test("recovers after a failed task", async () => {
   const expectedError = new Error("task failed");
   let runCount = 0;
