@@ -15,28 +15,12 @@ import * as fs from "fs";
 import * as cp from "child_process";
 
 import { CoalescingTaskRunner } from "./CoalescingTaskRunner";
-import {
-  createStderrWatcher,
-  ExecutableConfig,
-  JETLSCommands,
-  resolveJETLSCommands,
-  VersionPreflight,
-} from "./server-startup";
 
 let languageClient: LanguageClient;
 let outputChannel: LogOutputChannel;
 let statusBarItem: vscode.StatusBarItem;
-let statusBarHideTimer: NodeJS.Timeout | undefined;
-let deactivating = false;
 
-type ServerStartupStatus =
-  | "checking"
-  | "starting"
-  | "restarting"
-  | "precompiling"
-  | "ready"
-  | "failed"
-  | "restart-failed";
+type ExecutableConfig = { path?: string; threads?: string } | string[];
 
 interface ServerConfig {
   executable: ExecutableConfig;
@@ -54,117 +38,63 @@ const JETLS_CHANGELOG_URL =
   "https://github.com/aviatesk/JETLS.jl/blob/master/jetls-client/CHANGELOG.md";
 const JETLS_MIGRATION_GUIDE_URL = `${JETLS_CHANGELOG_URL}#v020`;
 const LANGUAGE_SERVER_STOP_TIMEOUT_MS = 10_000;
-const PREFLIGHT_TIMEOUT_MS = 300000;
-const PREFLIGHT_TERMINATION_TIMEOUT_MS = 5000;
-const SERVER_START_TIMEOUT_MS = 60000;
-const SERVER_START_PRECOMPILING_TIMEOUT_MS = 300000;
-
-const versionPreflight = new VersionPreflight({
-  timeoutMs: PREFLIGHT_TIMEOUT_MS,
-  terminationTimeoutMs: PREFLIGHT_TERMINATION_TIMEOUT_MS,
-  platform: process.platform,
-  appendLine: (message) => outputChannel.appendLine(message),
-  onPrecompiling: () => showServerStartupStatus("precompiling"),
-});
-
-function showServerStartupStatus(status: ServerStartupStatus): void {
-  if (deactivating) {
-    return;
-  }
-  if (statusBarHideTimer !== undefined) {
-    clearTimeout(statusBarHideTimer);
-    statusBarHideTimer = undefined;
-  }
-
-  statusBarItem.backgroundColor = undefined;
-  switch (status) {
-    case "checking":
-      statusBarItem.text = "$(sync~spin) Checking JETLS...";
-      statusBarItem.tooltip = "Checking the JETLS executable and version.";
-      break;
-    case "starting":
-      statusBarItem.text = "$(sync~spin) Starting JETLS...";
-      statusBarItem.tooltip = "Starting the JETLS language server.";
-      break;
-    case "restarting":
-      statusBarItem.text = "$(sync~spin) Restarting JETLS...";
-      statusBarItem.tooltip = "Restarting the JETLS language server.";
-      break;
-    case "precompiling":
-      statusBarItem.text = "$(sync~spin) Precompiling JETLS...";
-      statusBarItem.tooltip =
-        "Precompiling JETLS. The first startup may take longer.";
-      break;
-    case "ready":
-      statusBarItem.text = "$(check) JETLS ready";
-      statusBarItem.tooltip = "JETLS started successfully.";
-      statusBarHideTimer = setTimeout(() => {
-        statusBarItem.hide();
-        statusBarHideTimer = undefined;
-      }, 3000);
-      break;
-    case "failed":
-      statusBarItem.text = "$(error) JETLS failed to start";
-      statusBarItem.tooltip =
-        "JETLS failed to start. Click to open the JETLS output.";
-      statusBarItem.backgroundColor = new vscode.ThemeColor(
-        "statusBarItem.errorBackground",
-      );
-      break;
-    case "restart-failed":
-      statusBarItem.text = "$(error) JETLS restart failed";
-      statusBarItem.tooltip =
-        "JETLS could not be stopped for restart. Click to open the JETLS output.";
-      statusBarItem.backgroundColor = new vscode.ThemeColor(
-        "statusBarItem.errorBackground",
-      );
-      break;
-  }
-  statusBarItem.show();
-}
 
 interface ProcessManager {
+  process: cp.ChildProcess;
   timeoutHandle: NodeJS.Timeout | null;
+  isPrecompiling: boolean;
+  timeoutDuration: number;
 }
 
+// Helper to create timeout handler with precompilation detection
 function setupProcessMonitoring(
   juliaProcess: cp.ChildProcess,
-  onTimeout: () => void,
+  onTimeout: (isPrecompiling: boolean) => void,
+  options: { initialTimeout?: number } = {},
 ): ProcessManager {
   const manager: ProcessManager = {
+    process: juliaProcess,
     timeoutHandle: null,
-  };
-  const armTimeout = (timeoutMs: number): void => {
-    manager.timeoutHandle = setTimeout(() => {
-      manager.timeoutHandle = null;
-      onTimeout();
-    }, timeoutMs);
+    isPrecompiling: false,
+    timeoutDuration: options.initialTimeout || 60000, // Default 60 seconds
   };
 
-  juliaProcess.stderr?.on(
-    "data",
-    createStderrWatcher({
-      logPrefix: "[JETLS-stderr]",
-      appendLine: (message) => outputChannel.appendLine(message),
-      onPrecompiling: () => {
-        if (manager.timeoutHandle !== null) {
-          clearTimeout(manager.timeoutHandle);
-          armTimeout(SERVER_START_PRECOMPILING_TIMEOUT_MS);
-          showServerStartupStatus("precompiling");
+  // Monitor stderr for precompilation messages
+  juliaProcess.stderr?.on("data", (data: Buffer) =>
+    data
+      .toString()
+      .trimEnd()
+      .split("\n")
+      .forEach((s) => {
+        outputChannel.appendLine(`[JETLS-stderr] ${s}`);
+
+        // Check for precompilation messages
+        if (s.includes("Precompiling packages") && !manager.isPrecompiling) {
+          manager.isPrecompiling = true;
+          manager.timeoutDuration = 300000; // Extend to 300 seconds
+          outputChannel.appendLine(
+            `[jetls-client] Detected precompilation, extending timeout to 300 seconds`,
+          );
+
+          // Reset the timeout with new duration
+          if (manager.timeoutHandle) {
+            clearTimeout(manager.timeoutHandle);
+          }
+
+          manager.timeoutHandle = setTimeout(
+            () => onTimeout(true),
+            manager.timeoutDuration,
+          );
         }
-      },
-    }),
+      }),
   );
 
-  armTimeout(SERVER_START_TIMEOUT_MS);
-  return manager;
-}
+  manager.timeoutHandle = setTimeout(
+    () => onTimeout(manager.isPrecompiling),
+    manager.timeoutDuration,
+  );
 
-function stopProcessMonitoring(manager: ProcessManager): void {
-  if (manager.timeoutHandle !== null) {
-    clearTimeout(manager.timeoutHandle);
-    manager.timeoutHandle = null;
-  }
+  return manager;
 }
 
 // Helper to handle spawn errors with user-friendly messages
@@ -212,11 +142,14 @@ function createTimeoutHandler(
   reject: (error: Error) => void,
   options: {
     timeoutMessage: string;
+    precompilingMessage: string;
     cleanup?: () => void;
   },
-): () => void {
-  return () => {
-    const message = options.timeoutMessage;
+): (isPrecompiling: boolean) => void {
+  return (isPrecompiling: boolean) => {
+    const message = isPrecompiling
+      ? options.precompilingMessage
+      : options.timeoutMessage;
     outputChannel.appendLine(`[jetls-client] ${message}`);
     juliaProcess.kill();
     if (options.cleanup) {
@@ -256,27 +189,22 @@ function hasServerConfigChanged(
 }
 
 async function startLanguageServer() {
-  if (deactivating) {
-    return;
-  }
-  showServerStartupStatus("checking");
-
   const serverConfig = getServerConfig();
   currentServerConfig = serverConfig;
 
-  let resolvedCommands: JETLSCommands;
-  try {
-    resolvedCommands = resolveJETLSCommands(serverConfig.executable);
-  } catch (err) {
-    const error = err instanceof Error ? err : new Error(String(err));
-    if (!deactivating) {
-      showServerStartupStatus("failed");
-      outputChannel.appendLine(`[jetls-client] ${error.message}`);
-      vscode.window.showErrorMessage(error.message);
-    }
-    throw error;
+  let baseCommand: string;
+  let baseArgs: string[];
+
+  if (Array.isArray(serverConfig.executable)) {
+    const [cmd, ...args] = serverConfig.executable;
+    baseCommand = cmd;
+    baseArgs = args;
+  } else {
+    const defaultExecutable = "jetls";
+    baseCommand = serverConfig.executable.path || defaultExecutable;
+    const threads = serverConfig.executable.threads || "auto";
+    baseArgs = [`--threads=${threads}`, "--", "serve"];
   }
-  const { command: baseCommand, versionArgs, serveArgs } = resolvedCommands;
 
   let commChannel = serverConfig.communicationChannel;
   if (commChannel === "auto") {
@@ -312,34 +240,18 @@ async function startLanguageServer() {
   // On Windows, batch files must be spawned with shell: true
   const spawnOptions = process.platform === "win32" ? { shell: true } : {};
 
-  try {
-    await versionPreflight.run(baseCommand, versionArgs, spawnOptions);
-  } catch (err) {
-    const error = err instanceof Error ? err : new Error(String(err));
-    if (!deactivating) {
-      showServerStartupStatus("failed");
-      handleSpawnError(error, baseCommand);
-    }
-    throw error;
-  }
-
-  if (deactivating) {
-    return;
-  }
-  showServerStartupStatus("starting");
-
   let serverOptions: ServerOptions;
 
   if (commChannel === "stdio") {
     serverOptions = {
       run: {
         command: baseCommand,
-        args: [...serveArgs, "--stdio"],
+        args: [...baseArgs, "--stdio"],
         options: spawnOptions,
       },
       debug: {
         command: baseCommand,
-        args: [...serveArgs, "--stdio"],
+        args: [...baseArgs, "--stdio"],
         options: spawnOptions,
       },
     };
@@ -354,7 +266,7 @@ async function startLanguageServer() {
 
         const jetlsProcess = cp.spawn(
           baseCommand,
-          [...serveArgs, "--socket", port.toString()],
+          [...baseArgs, "--socket", port.toString()],
           spawnOptions,
         );
 
@@ -362,13 +274,18 @@ async function startLanguageServer() {
 
         const timeoutHandler = createTimeoutHandler(jetlsProcess, reject, {
           timeoutMessage: "Timeout waiting for JETLS to provide port number",
+          precompilingMessage:
+            "Timeout waiting for JETLS to provide port number (during precompilation)",
         });
 
-        const manager = setupProcessMonitoring(jetlsProcess, () => {
-          if (!actualPort) {
-            timeoutHandler();
-          }
-        });
+        const manager = setupProcessMonitoring(
+          jetlsProcess,
+          (isPrecompiling) => {
+            if (!actualPort) {
+              timeoutHandler(isPrecompiling);
+            }
+          },
+        );
 
         // Capture stdout to get the actual port number
         jetlsProcess.stdout?.on("data", (data: Buffer) => {
@@ -387,7 +304,11 @@ async function startLanguageServer() {
                   `[jetls-client] JETLS listening on port: ${actualPort}`,
                 );
 
-                stopProcessMonitoring(manager);
+                // Clear timeout since we got the port
+                if (manager.timeoutHandle) {
+                  clearTimeout(manager.timeoutHandle);
+                  manager.timeoutHandle = null;
+                }
 
                 // Connect to the server
                 const socket = net.createConnection(
@@ -414,7 +335,9 @@ async function startLanguageServer() {
 
         jetlsProcess.on("error", (err) => {
           handleSpawnError(err, baseCommand);
-          stopProcessMonitoring(manager);
+          if (manager.timeoutHandle) {
+            clearTimeout(manager.timeoutHandle);
+          }
           reject(err);
         });
 
@@ -422,7 +345,9 @@ async function startLanguageServer() {
           outputChannel.appendLine(
             `[jetls-client] JETLS process exited (code: ${code}, signal: ${signal})`,
           );
-          stopProcessMonitoring(manager);
+          if (manager.timeoutHandle) {
+            clearTimeout(manager.timeoutHandle);
+          }
           if (!actualPort) {
             reject(new Error("JETLS exited without providing a port number"));
           }
@@ -463,7 +388,7 @@ async function startLanguageServer() {
           outputChannel.appendLine(`[jetls-client] Starting JETLS...`);
           const jetlsProcess = cp.spawn(
             baseCommand,
-            [...serveArgs, "--pipe-connect", socketPath],
+            [...baseArgs, "--pipe-connect", socketPath],
             spawnOptions,
           );
 
@@ -472,6 +397,8 @@ async function startLanguageServer() {
             jetlsProcess,
             createTimeoutHandler(jetlsProcess, reject, {
               timeoutMessage: "Timeout waiting for JETLS to connect",
+              precompilingMessage:
+                "Timeout waiting for JETLS to connect (during precompilation)",
               cleanup: () => server.close(),
             }),
           );
@@ -486,31 +413,34 @@ async function startLanguageServer() {
 
           jetlsProcess.on("error", (err) => {
             handleSpawnError(err, baseCommand);
-            stopProcessMonitoring(manager);
+            if (manager.timeoutHandle) {
+              clearTimeout(manager.timeoutHandle);
+            }
             server.close();
             reject(err);
           });
-
-          let connected = false;
 
           jetlsProcess.on("exit", (code, signal) => {
             outputChannel.appendLine(
               `[jetls-client] JETLS process exited (code: ${code}, signal: ${signal})`,
             );
-            stopProcessMonitoring(manager);
+            if (manager.timeoutHandle) {
+              clearTimeout(manager.timeoutHandle);
+            }
             server.close();
             if (process.platform !== "win32" && fs.existsSync(socketPath)) {
               fs.unlinkSync(socketPath);
-            }
-            if (!connected) {
-              reject(new Error("JETLS exited before connecting to the pipe"));
             }
           });
 
           server.once("connection", (socket: net.Socket) => {
             outputChannel.appendLine(`[jetls-client] JETLS connected!`);
-            connected = true;
-            stopProcessMonitoring(manager);
+
+            // Clear timeout since connection succeeded
+            if (manager.timeoutHandle) {
+              clearTimeout(manager.timeoutHandle);
+              manager.timeoutHandle = null;
+            }
 
             server.close(); // Stop accepting new connections
             resolve({ reader: socket, writer: socket });
@@ -604,20 +534,22 @@ async function startLanguageServer() {
     clientOptions,
   );
 
+  statusBarItem.text = "$(sync~spin) Loading JETLS ...";
+  statusBarItem.tooltip =
+    "Loading JETLS and attempting to establish communication between client and server.";
+  statusBarItem.show();
+
   try {
     await languageClient.start();
   } catch (err) {
+    statusBarItem.hide();
     const error = err instanceof Error ? err : new Error(String(err));
-    if (!deactivating) {
-      showServerStartupStatus("failed");
-      handleSpawnError(error, baseCommand);
-    }
+    handleSpawnError(error, baseCommand);
     throw error;
   }
 
-  if (deactivating) {
-    return;
-  }
+  statusBarItem.hide();
+
   const serverInfo = languageClient.initializeResult?.serverInfo;
   if (serverInfo) {
     outputChannel.appendLine(
@@ -630,7 +562,9 @@ async function startLanguageServer() {
   // Register handler for workspace/configuration requests after client starts
   languageClient.onRequest(
     "workspace/configuration",
-    (params: { items: { scopeUri?: string; section?: string | null }[] }) => {
+    (params: {
+      items: { scopeUri?: string; section?: string | null }[];
+    }) => {
       const items = params.items || [];
       const results = items.map((item) => {
         const section = "jetls-client.settings";
@@ -642,22 +576,13 @@ async function startLanguageServer() {
       return results;
     },
   );
-
-  showServerStartupStatus("ready");
 }
 
 async function restartLanguageServer() {
-  if (deactivating) {
-    return;
-  }
-  // A client that never reached the `Running` state (e.g. `StartFailed`)
-  // cannot be stopped: `stop()` would throw and permanently block restarts.
-  if (languageClient?.needsStop()) {
-    showServerStartupStatus("restarting");
+  if (languageClient) {
     try {
       await languageClient.stop(LANGUAGE_SERVER_STOP_TIMEOUT_MS);
     } catch (err) {
-      showServerStartupStatus("restart-failed");
       const message = err instanceof Error ? err.message : String(err);
       outputChannel.appendLine(
         `[jetls-client] Failed to stop language client: ${message}.`,
@@ -669,15 +594,6 @@ async function restartLanguageServer() {
 }
 
 const restartRunner = new CoalescingTaskRunner(restartLanguageServer);
-
-function requestLanguageServerRestart(): void {
-  void restartRunner.run().catch((err) => {
-    const message = err instanceof Error ? err.message : String(err);
-    outputChannel.appendLine(
-      `[jetls-client] Failed to restart language server: ${message}.`,
-    );
-  });
-}
 
 async function checkForUpdates(context: ExtensionContext): Promise<void> {
   const currentVersion = vscode.extensions.getExtension("aviatesk.jetls-client")
@@ -764,16 +680,10 @@ async function checkForUpdates(context: ExtensionContext): Promise<void> {
 }
 
 export function activate(context: ExtensionContext) {
-  deactivating = false;
   statusBarItem = vscode.window.createStatusBarItem(
     vscode.StatusBarAlignment.Left,
     100,
   );
-  statusBarItem.name = "JETLS server startup status";
-  statusBarItem.command = {
-    command: "jetls-client.showOutput",
-    title: "Show JETLS output",
-  };
   context.subscriptions.push(statusBarItem);
 
   context.subscriptions.push(
@@ -788,69 +698,33 @@ export function activate(context: ExtensionContext) {
           vscode.window.showInformationMessage(
             "JETLS configuration changed. Restarting language server...",
           );
-          requestLanguageServerRestart();
+          void restartRunner.run().catch((err) => {
+            const message = err instanceof Error ? err.message : String(err);
+            outputChannel.appendLine(
+              `[jetls-client] Failed to restart language server: ${message}.`,
+            );
+          });
         }
       }
     }),
   );
   context.subscriptions.push(
-    vscode.commands.registerCommand("jetls-client.restartLanguageServer", () =>
-      requestLanguageServerRestart(),
+    vscode.commands.registerCommand(
+      "jetls-client.restartLanguageServer",
+      () => restartRunner.run(),
     ),
   );
 
   outputChannel = vscode.window.createOutputChannel("JETLS", { log: true });
-  context.subscriptions.push(
-    vscode.commands.registerCommand("jetls-client.showOutput", () =>
-      outputChannel.show(),
-    ),
-  );
 
   checkForUpdates(context);
 
-  requestLanguageServerRestart();
-}
-
-function awaitWithTimeout(
-  promise: Promise<void> | undefined,
-  timeoutMs: number,
-): Promise<void> {
-  if (promise === undefined) {
-    return Promise.resolve();
-  }
-  return new Promise((resolve) => {
-    const timeoutHandle = setTimeout(resolve, timeoutMs);
-    void promise.catch(() => undefined).then(() => {
-      clearTimeout(timeoutHandle);
-      resolve();
-    });
-  });
+  startLanguageServer();
 }
 
 export async function deactivate() {
-  deactivating = true;
-  if (statusBarHideTimer !== undefined) {
-    clearTimeout(statusBarHideTimer);
-    statusBarHideTimer = undefined;
-  }
-  try {
-    await versionPreflight.terminate();
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    outputChannel?.appendLine(
-      `[jetls-client] Failed to terminate JETLS version check: ${message}`,
-    );
-  }
-  await awaitWithTimeout(restartRunner.active, LANGUAGE_SERVER_STOP_TIMEOUT_MS);
-  if (languageClient?.needsStop()) {
-    try {
-      await languageClient.stop(LANGUAGE_SERVER_STOP_TIMEOUT_MS);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      outputChannel?.appendLine(
-        `[jetls-client] Failed to stop language client: ${message}.`,
-      );
-    }
+  if (languageClient) {
+    await languageClient.stop(LANGUAGE_SERVER_STOP_TIMEOUT_MS);
   }
   if (outputChannel) {
     outputChannel.dispose();

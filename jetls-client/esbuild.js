@@ -5,7 +5,7 @@ const watch = process.argv.includes('--watch');
 
 async function main() {
     const ctx = await esbuild.context({
-        entryPoints: ['src/jetls-client.ts'],
+        entryPoints: ['jetls-client.ts'],
         bundle: true,
         format: 'cjs',
         minify: production,

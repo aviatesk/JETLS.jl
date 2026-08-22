@@ -4,10 +4,6 @@ export class CoalescingTaskRunner {
 
   constructor(private readonly runOnce: () => Promise<void>) {}
 
-  get active(): Promise<void> | undefined {
-    return this.activeRun;
-  }
-
   run(): Promise<void> {
     this.runRequested = true;
     if (this.activeRun === undefined) {
