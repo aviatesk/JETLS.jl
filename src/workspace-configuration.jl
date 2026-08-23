@@ -133,9 +133,25 @@ function handle_DidChangeConfigurationNotification(server::Server, msg::DidChang
     load_lsp_config!(server, msg.params.settings, source)
 end
 
-function did_change_configuration_registration()
+"""
+    did_change_configuration_registration(server::Server) -> Registration
+    did_change_configuration_registration(init_options::InitOptions) -> Registration
+
+Dynamic registration of `workspace/didChangeConfiguration`. When the client
+declares the configuration section it stores JETLS settings under (via the
+`configuration_section` initialization option), register with that `section`
+so clients honoring `DidChangeConfigurationRegistrationOptions` only send the
+notification when the relevant settings actually change. Without the
+declaration, register without a section filter, i.e. clients are expected to
+send the notification for any configuration change.
+"""
+function did_change_configuration_registration(init_options::InitOptions)
+    section = init_options.configuration_section
     return Registration(;
         id = String(gensym(:DidChangeConfigurationRegistration)),
         method = "workspace/didChangeConfiguration",
-        registerOptions = nothing)
+        registerOptions = section === nothing ? nothing :
+            DidChangeConfigurationRegistrationOptions(; section))
 end
+did_change_configuration_registration(server::Server) =
+    did_change_configuration_registration(server.state.init_options)

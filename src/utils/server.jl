@@ -17,7 +17,7 @@ This function is used by each handler that processes messages sent from the clie
 as well as for sending requests and notifications from the server to the client.
 """
 function send(server::Server, @nospecialize msg)
-    LSP.Communication.send(server.endpoint, msg)
+    LSP.Communication.send(server.endpoint, msg) || return nothing
     server.callback !== nothing && server.callback(:sent, msg)
     # Mark request as handled when sending a response
     if isdefined(msg, :id) && isdefined(msg, :result) && isdefined(msg, :error) # i.e. msg isa ResponseMessage
@@ -229,7 +229,7 @@ function is_workspace_root_file(
     )
     isdefined(s, :root_path) || return false
     expected = joinpath(s.root_path, filename)
-    return _paths_equal(_normalize_path(filepath), _normalize_path(expected))
+    return paths_equal(filepath, expected)
 end
 
 function is_workspace_file(s::ServerState, filepath::AbstractString)

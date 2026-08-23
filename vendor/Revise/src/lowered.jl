@@ -60,6 +60,46 @@ function is_defaultctors(@nospecialize(f))
     return false
 end
 
+# Keep this fallback synchronized until Revise can require the Base implementation.
+function _fieldtypes_constrain_typevars(tvars::Array{Any,1}, fts::Core.SimpleVector)
+    nparams = length(tvars)
+    n = length(fts)
+    i = nparams
+    while i !== 0
+        @inbounds tv = tvars[i]::TypeVar
+        constrained = false
+        j = 1
+        while j !== n + 1
+            ft = fts[j]
+            if Base.has_typevar(ft, tv)
+                constrained = true
+                break
+            end
+            j += 1
+        end
+        if !constrained
+            j = i + 1
+            remaining = nparams - i
+            while remaining !== 0
+                @inbounds tv2 = tvars[j]::TypeVar
+                if Base.has_typevar(tv2.ub, tv)
+                    constrained = true
+                    break
+                end
+                if tv2 === tv
+                    constrained = false
+                    break
+                end
+                j += 1
+                remaining = remaining - 1
+            end
+        end
+        constrained || return false
+        i -= 1
+    end
+    return true
+end
+
 is_define_method_ref(@nospecialize(f)) = isdefined(LoweredCodeUtils, :is_define_method_ref) &&
     getfield(LoweredCodeUtils, :is_define_method_ref)(f)
 is_methoddef(@nospecialize(stmt)) = isdefined(LoweredCodeUtils, :ismethod) ?
@@ -529,16 +569,29 @@ function _methods_by_execution!(
                     lnn = lookup(frame, callstmt.args[3])
                     if T isa Type && lnn isa LineNumberNode
                         empty!(signatures)
-                        uT = Base.unwrap_unionall(T)::DataType
-                        ft = uT.types
+                        @static if isdefinedglobal(Base, :_defaultctor_typeinfo)
+                            uT, tvars, ft = Base._defaultctor_typeinfo(T)
+                        else
+                            uT = Base.unwrap_unionall(T)::DataType
+                            tvars = Any[]
+                            ua = T
+                            while ua isa UnionAll
+                                push!(tvars, ua.var)
+                                ua = ua.body
+                            end
+                            ft = ccall(:jl_get_fieldtypes, Any, (Any,), uT)::Core.SimpleVector
+                        end
                         sig1 = Tuple{Base.rewrap_unionall(Type{uT}, T), Any[Any for _ in 1:length(ft)]...}
                         push!(signatures, MethodInfoKey(nothing, sig1))
-                        sig2 = Base.rewrap_unionall(Tuple{Type{T}, ft...}, T)
-                        while T isa UnionAll
-                            sig2 isa UnionAll || (sig2 = sig1; break) # sig2 doesn't define all parameters, so drop it
-                            T = T.body
+                        @static if isdefinedglobal(Base, :_fieldtypes_constrain_typevars)
+                            constrains_all = Base._fieldtypes_constrain_typevars(tvars, ft)
+                        else
+                            constrains_all = _fieldtypes_constrain_typevars(tvars, ft)
                         end
-                        sig1 == sig2 || push!(signatures, MethodInfoKey(nothing, sig2))
+                        if constrains_all
+                            sig2 = Base.rewrap_unionall(Tuple{Type{T}, ft...}, T)
+                            sig1 == sig2 || push!(signatures, MethodInfoKey(nothing, sig2))
+                        end
                         for sig in signatures
                             add_signature!(exinfo, sig, lnn)
                         end

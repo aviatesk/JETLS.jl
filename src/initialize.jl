@@ -24,9 +24,19 @@ function handle_InitializeRequest(
         state.workspaceFolders = URI[]
         if rootUri !== nothing
             push!(state.workspaceFolders, rootUri)
-        else
-            @warn "No workspaceFolders or rootUri in InitializeRequest - some functionality will be limited"
         end
+    end
+    if isempty(state.workspaceFolders)
+        @static if !JETLS_TEST_MODE
+            @warn "No workspace folder in InitializeRequest - " *
+                "some functionality will be limited"
+        end
+        show_warning_message(server,
+            """
+            JETLS started without a workspace folder.
+            Workspace analysis and folder-local configuration are unavailable.
+            Open a folder to enable full functionality.
+            """)
     end
 
     # Update root information
@@ -36,16 +46,35 @@ function handle_InitializeRequest(
         root_uri = only(state.workspaceFolders)
         root_path = uri2filepath(root_uri)
         if root_path !== nothing
+            # Some clients (for example, Zed) send an opened standalone script path as
+            # `workspaceFolders`, so normalize it to a folder here.
+            isfile(root_path) && (root_path = dirname(root_path))
             state.root_path = root_path
             env_path = find_env_path(root_path)
             if env_path !== nothing
                 state.root_env_path = env_path
             end
         else
-            @warn "Root URI scheme not supported for workspace analysis" root_uri
+            @static if !JETLS_TEST_MODE
+                @warn "Root URI scheme not supported for workspace analysis" root_uri
+            end
+            show_warning_message(server,
+                """
+                JETLS cannot perform workspace analysis for the root URI scheme `$(root_uri.scheme):`.
+                Some language features will be limited.
+                """)
         end
     else
-        @warn "Multiple workspaceFolders are not supported - using limited functionality" state.workspaceFolders
+        @static if !JETLS_TEST_MODE
+            @warn "Multiple workspaceFolders are not supported - " *
+                "using limited functionality" state.workspaceFolders
+        end
+        show_warning_message(server,
+            """
+            JETLS does not support multiple workspace folders in a single server.
+            Workspace analysis and folder-local configuration are unavailable.
+            Configure your editor to start one JETLS server per workspace folder.
+            """)
         # leave Refs undefined
     end
 
@@ -206,7 +235,7 @@ function handle_InitializeRequest(
     # client merges semantic tokens on top of its syntactic highlighting (i.e.
     # `augmentsSyntaxTokens = true`). For clients without that guarantee, we skip
     # registration entirely so that they fall back to syntactic highlighting alone.
-    if !supports(state, :textDocument, :semanticTokens, :augmentsSyntaxTokens)
+    if !supports(server, :textDocument, :semanticTokens, :augmentsSyntaxTokens)
         semanticTokensProvider = nothing
     elseif supports(server, :textDocument, :semanticTokens, :dynamicRegistration)
         semanticTokensProvider = nothing # will be registered dynamically
@@ -491,7 +520,7 @@ function handle_InitializedNotification(server::Server)
 
     # See the matching capability check in `handle_InitializeRequest` for why we
     # only register semantic tokens when `augmentsSyntaxTokens = true`.
-    if (supports(state, :textDocument, :semanticTokens, :augmentsSyntaxTokens) &&
+    if (supports(server, :textDocument, :semanticTokens, :augmentsSyntaxTokens) &&
         supports(server, :textDocument, :semanticTokens, :dynamicRegistration))
         push!(registrations, semantic_tokens_registration())
         @static JETLS_DEV_MODE && @info "Dynamically registering 'textDocument/semanticTokens' upon `InitializedNotification`"
@@ -535,12 +564,21 @@ function handle_InitializedNotification(server::Server)
     end
 
     if supports(server, :workspace, :didChangeConfiguration, :dynamicRegistration)
-        push!(registrations, did_change_configuration_registration())
+        push!(registrations, did_change_configuration_registration(server))
         @static JETLS_DEV_MODE && @info "Dynamically registering 'workspace/didChangeConfiguration' upon `InitializedNotification`"
     end
 
     register(server, registrations)
 
-    @static JETLS_DEV_MODE && show_setup_info("Initialized JETLS with the following setup:")
-    @static JETLS_DEV_MODE && @info "JETLS initialization options" init_options=state.init_options
+    @static JETLS_DEV_MODE && show_initialization_info(server, "Initialized JETLS with the following setup:")
+end
+
+function show_initialization_info(server::Server, msg::AbstractString)
+    state = server.state
+    (; init_options, workspaceFolders) = state
+    root_path = isdefined(state, :root_path) ? state.root_path : nothing
+    root_env_path = isdefined(state, :root_env_path) ? state.root_env_path : nothing
+    Base.CoreLogging.with_logger(Base.CoreLogging.ConsoleLogger(stderr; show_limited=false)) do
+        @info msg Sys.BINDIR pkgdir(JETLS) Threads.nthreads() JETLS_VERSION JETLS_DEV_MODE JETLS_TEST_MODE JETLS_DEBUG_LOWERING init_options workspaceFolders root_path root_env_path
+    end
 end

@@ -10,7 +10,7 @@ using JETLS: JETLS
         @test isabspath(test_file)
         result = JETLS.to_full_path(test_file)
         @test isabspath(result)
-        @test result == test_file
+        @test JETLS.paths_equal(result, test_file)
     end
 
     # Test with Base function paths
@@ -51,9 +51,9 @@ end
         # Test finding Project.toml from various depths
         # find_env_path expects a file path, uses dirname to get the directory
         test_file = joinpath(sub_dir, "test.jl")
-        @test JETLS.find_env_path(test_file) == proj_file
-        @test JETLS.find_env_path(joinpath(src_dir, "file.jl")) == proj_file
-        @test JETLS.find_env_path(joinpath(proj_dir, "file.jl")) == proj_file
+        @test JETLS.paths_equal(JETLS.find_env_path(test_file)::String, proj_file)
+        @test JETLS.paths_equal(JETLS.find_env_path(joinpath(src_dir, "file.jl"))::String, proj_file)
+        @test JETLS.paths_equal(JETLS.find_env_path(joinpath(proj_dir, "file.jl"))::String, proj_file)
 
         # Test when no Project.toml exists above
         no_proj_dir = joinpath(temp_root, "no_project", "deep", "path")
@@ -73,8 +73,6 @@ end
         touch(source_file)
         touch(project_file)
         uri = JETLS.filepath2uri(source_file)
-        normalized_project_file =
-            JETLS.uri2filepath(JETLS.filepath2uri(project_file))::String
 
         let state = JETLS.ServerState()
             @test JETLS.find_analysis_env_path(state, uri) === nothing
@@ -82,7 +80,8 @@ end
 
         let state = JETLS.ServerState()
             state.root_path = project_dir
-            @test JETLS.find_analysis_env_path(state, uri) == normalized_project_file
+            result = JETLS.find_analysis_env_path(state, uri)::String
+            @test JETLS.paths_equal(result, project_file)
         end
 
         let state = JETLS.ServerState()
@@ -101,7 +100,8 @@ end
 
         let state = JETLS.ServerState(; cli_mode=true)
             state.root_path = workspace_dir
-            @test JETLS.find_analysis_env_path(state, uri) == normalized_project_file
+            result = JETLS.find_analysis_env_path(state, uri)::String
+            @test JETLS.paths_equal(result, project_file)
         end
     end
 end
@@ -118,13 +118,25 @@ end
         touch(joinpath(dir1, "middle.txt"))
 
         # Search for files going up the tree
-        @test JETLS.search_up_file(dir2, "middle.txt") == joinpath(dir1, "middle.txt")
-        @test JETLS.search_up_file(dir2, "root.txt") == joinpath(temp_root, "root.txt")
+        @test JETLS.paths_equal(JETLS.search_up_file(dir2, "middle.txt")::String, joinpath(dir1, "middle.txt"))
+        @test JETLS.paths_equal(JETLS.search_up_file(dir2, "root.txt")::String, joinpath(temp_root, "root.txt"))
         @test isnothing(JETLS.search_up_file(dir2, "nonexistent.txt"))
 
         # Test with file in the same directory
         touch(joinpath(dir2, "same.txt"))
-        @test JETLS.search_up_file(joinpath(dir2, "dummy.jl"), "same.txt") == joinpath(dir2, "same.txt")
+        @test JETLS.paths_equal(JETLS.search_up_file(joinpath(dir2, "dummy.jl"), "same.txt")::String, joinpath(dir2, "same.txt"))
+    end
+end
+
+@testset "paths_equal" begin
+    @test JETLS.paths_equal("project", "project")
+    @test JETLS.paths_equal("project", joinpath("project", "src", ".."))
+    @test !JETLS.paths_equal("project", "project-other")
+    @test !JETLS.paths_equal(abspath("project"), "project")
+    @static if Sys.iswindows()
+        @test JETLS.paths_equal("C:\\Users\\Foo", "c:/users/foo/")
+    else
+        @test !JETLS.paths_equal("/home/user/Project", "/home/user/project")
     end
 end
 

@@ -8,11 +8,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Unreleased
 
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
-- Diff: [`8cfd8fed7...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/8cfd8fed7...HEAD)
+- Diff: [`8a6998f1b...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/8a6998f1b...HEAD)
+
+### Fixed
+
+- Fixed changes to `jetls-client.initializationOptions` not taking effect until a manual server restart; the extension now restarts the language server automatically, as it already did for the other launching settings.
+
+## v0.8.0
+
+- Commit: [`8a6998f1b`](https://github.com/aviatesk/JETLS.jl/commit/8a6998f1b)
+- Diff: [`8cfd8fed7...8a6998f1b`](https://github.com/aviatesk/JETLS.jl/compare/8cfd8fed7...8a6998f1b)
+
+### Added
+
+- Added a startup preflight. The status bar now shows when JETLS is being checked, precompiled, started, or restarted, briefly confirms when it is ready, and keeps startup and restart failures visible with a shortcut to the JETLS output.
 
 ### Fixed
 
 - Fixed duplicate watched-file notifications that could cause redundant configuration reloads and diagnostics refreshes.
+
+- Fixed overlapping JETLS restarts in VS Code by serializing rapid manual and configuration-triggered restart requests and waiting for the replacement server to finish initializing.
+
+- Fixed unnecessary configuration syncs: the server is now notified only when `jetls-client.settings` actually changes, instead of on every VS Code configuration change.
+
+- Fixed manual and automatic restarts failing permanently after a failed server startup.
+
+- Fixed startup hanging indefinitely when the server process exits before connecting or never completes its startup; it now fails with an explicit error instead of a stuck spinner.
 
 ## v0.7.0
 

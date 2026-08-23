@@ -7,10 +7,11 @@ using Test
 
 @test isempty(detect_ambiguities(Revise))
 
-using Pkg, Unicode, Distributed, InteractiveUtils, REPL, UUIDs, Dates
+using Dates, Distributed, InteractiveUtils, Pkg, REPL, UUIDs, Unicode
 import LibGit2
 using Revise.OrderedCollections: OrderedSet
 using Test: collect_test_logs
+using Logging: ConsoleLogger, with_logger
 using Base.CoreLogging: Debug,Info
 
 # Some test cases (especially those that redirect stderr during precompilation)
@@ -92,7 +93,7 @@ function lower_and_track(ex::Expr)
     lwr = Meta.lower(TypeInfoTracking, ex)
     frame = Frame(TypeInfoTracking, lwr.args[1])
     exinfo = Revise.ExInfo(ex)
-    ret = Revise._methods_by_execution!(
+    Revise._methods_by_execution!(
         JuliaInterpreter.RecursiveInterpreter(), exinfo, frame, trues(length(frame.framecode.src.code)); mode=:sigs)
     return exinfo
 end
@@ -236,6 +237,35 @@ end
         end
         @test isempty(logs)
         @test isdefined(ReviseTestPrivate, :nolineinfo)
+
+        @static if isdefined(Base, :_defaultctors)
+            let ex = :(struct PartiallyConstrainedCtor{T,S}
+                    value::T
+                end)
+                exinfos, _, _ = Revise.eval_with_signatures(TypeInfoTracking, ex; mode=:eval)
+                siginfos = Revise.SigInfo[x for x in exinfos if x isa Revise.SigInfo]
+                world = Base.get_world_counter()
+                @test length(siginfos) == 1
+                @test all(siginfos) do siginfo
+                    !isempty(Base._methods_by_ftype(siginfo.sig, siginfo.mt, -1, world))
+                end
+            end
+
+            let ex = :(struct TransitivelyConstrainedCtor{T,S<:T}
+                    value::S
+                end)
+                exinfos, _, _ = Revise.eval_with_signatures(TypeInfoTracking, ex; mode=:eval)
+                siginfos = Revise.SigInfo[x for x in exinfos if x isa Revise.SigInfo]
+                world = Base.get_world_counter()
+                # Julia's method matcher chooses `T = S` through the `S <: T` bound, so both
+                # the generic inner constructor (`TransitivelyConstrainedCtor{T}(value)`) and
+                # field-inferred outer constructor (`TransitivelyConstrainedCtor(value::T) where T`) exist.
+                @test length(siginfos) == 2
+                @test all(siginfos) do siginfo
+                    !isempty(Base._methods_by_ftype(siginfo.sig, siginfo.mt, -1, world))
+                end
+            end
+        end
     end
 
     do_test("Comparison and line numbering") && @testset "Comparison and line numbering" begin
@@ -918,7 +948,7 @@ end
         @test Revise.fixpath("/some/bad/path/mydir/myfile.jl"; badpath="/some/bad/path/", goodpath="/good/path") == targetfn
         @test isfile(Revise.fixpath(Base.find_source_file("array.jl")))
         failedfiles = Tuple{String,String}[]
-        for (mod,file) = Base._included_files
+        for (_,file) = Base._included_files
             fixedfile = Revise.fixpath(file)
             if !isfile(fixedfile)
                 push!(failedfiles, (file, fixedfile))
@@ -1085,7 +1115,7 @@ end
         badscript = joinpath(testdir, "mapexpr_bad.jl")
         write(badscript, "# a comment\nfmap634bad() = 2\n")
         sleep(mtimedelay)
-        badmap(ex) = error("bad transform")
+        badmap(_) = error("bad transform")
         err = try
             Revise.track(badmap, badscript)
         catch err
@@ -1745,7 +1775,7 @@ end
         mod_exs_infos_new = parse_source(fn, Base)
         odict = mod_exs_infos_old[Base]
         ndict = mod_exs_infos_new[Base]
-        for (k, v) in odict
+        for (k, _) in odict
             @test haskey(ndict, k)
         end
     end
@@ -2130,7 +2160,7 @@ end
         try
             triggered(true, false)
             @test false
-        catch err
+        catch
             st = stacktrace(catch_backtrace())
             Revise.update_stacktrace_lineno!(st)
             bt = throwing_function(st)
@@ -2153,14 +2183,14 @@ end
         try
             triggered(true, false)
             @test false
-        catch err
+        catch
             bt = throwing_function(Revise.update_stacktrace_lineno!(stacktrace(catch_backtrace())))
             @test bt.file == Symbol(filename) && bt.line == 3
         end
         st = try
             triggered(true, false)
             @test false
-        catch err
+        catch
             stacktrace(catch_backtrace())
         end
         targetstr = basename(filename * ":3")
@@ -2943,11 +2973,22 @@ end
 
         function check_revision_error(rec, ErrorType, msg, line)
             @test rec.message == "Failed to revise $fn"
-            exc = rec.kwargs[:exception]
+            exc, bt = rec.kwargs[:exception]
             if exc isa Revise.ReviseEvalException
-                exc, st = exc.exc, exc.stacktrace
+                @test bt === nothing
+                st = exc.stacktrace
+                io = IOBuffer()
+                let exc=exc
+                    with_logger(ConsoleLogger(io)) do
+                        @error rec.message exception=(exc, nothing)
+                    end
+                end
+                rendered = String(take!(io))
+                @test occursin("Stacktrace:", rendered)
+                frame, _ = only(st)
+                @test occursin("RevisionErrors.jl:$(frame.line)", rendered)
+                exc = exc.exc
             else
-                exc, bt = exc
                 st = stacktrace(bt)
             end
             @test exc isa ErrorType
@@ -3255,10 +3296,9 @@ end
             @test rec.message == "Failed to revise $fn"
             exc = rec.kwargs[:exception]
             if exc isa Revise.ReviseEvalException
-                exc, st = exc.exc, exc.stacktrace
+                exc = exc.exc
             else
-                exc, bt = exc
-                st = stacktrace(bt)
+                exc, _ = exc
             end
             @test exc isa InterruptException
             if length(logs) > 1
@@ -3660,7 +3700,6 @@ end
                 @eval using StructConstUser
                 @eval using StructConstUserUser
                 sleep(mtimedelay)
-                w1 = Base.get_world_counter()
                 f = StructConst.Fixed(5)
                 v1 = hash(f)
                 p = StructConst.Point(5.0)
@@ -3763,6 +3802,100 @@ end
                 rm_precompile("StructConst")
                 rm_precompile("StructConstUser")
                 rm_precompile("StructConstUserUser")
+                pop!(LOAD_PATH)
+            end
+        end
+    end
+
+    if Revise.__bpart__[] && do_test("struct revision (round-trip duplicates)")
+        @testset "struct revision (round-trip duplicates)" begin
+            # A field rename that is later reverted. Methods with keyword or optional
+            # arguments taking the revised type live in a file that never changes, so
+            # they are re-evaluated only through `redefine_bindings!`. That used to
+            # evaluate their defining expression once per method it defines, stacking
+            # shadowed duplicate definitions; the next revision then deleted only the
+            # dispatchable copy, resurrecting a method whose signature referenced the
+            # previous generation of the type.
+            testdir = newtestdir()
+            try
+                dn = joinpath(testdir, "StructRoundTrip", "src")
+                mkpath(dn)
+                pkg_code_v1 = """
+                    module StructRoundTrip
+                    struct State; cache::Dict{Symbol,Int}; end
+                    State() = State(Dict{Symbol,Int}())
+                    getcache(s::State) = s.cache
+                    include("methods.jl")
+                    end
+                    """
+                write(joinpath(dn, "StructRoundTrip.jl"), pkg_code_v1)
+                write(joinpath(dn, "methods.jl"), """
+                    kwfun(s::State, x::Int; skip::Bool=false) = length(getcache(s)) + x
+                    optfun(s::State, x::Int=0) = length(getcache(s)) + x
+                    # Deliberately self-contained: these bodies never dispatch on `State`,
+                    # so a leftover duplicate of them stays executable end-to-end. Calling
+                    # one with an outdated object then silently returns a stale result
+                    # instead of raising the MethodError that flags stale data.
+                    kwtag(s::State; prefix::Symbol=:field) = (prefix, fieldnames(typeof(s))[1])
+                    opttag(s::State, x::Int=1) = (fieldnames(typeof(s))[1], x)
+                    """)
+                sleep(mtimedelay)
+                @eval using StructRoundTrip
+                sleep(mtimedelay)
+                s1 = StructRoundTrip.State()
+                @test StructRoundTrip.kwfun(s1, 1) == 1
+                @test StructRoundTrip.optfun(s1) == 0
+                @test StructRoundTrip.kwtag(s1) == (:field, :cache)
+                @test StructRoundTrip.opttag(s1) == (:cache, 1)
+
+                # Revision 2: rename the field (methods.jl stays untouched)
+                pkg_code_v2 = replace(pkg_code_v1,
+                    "cache::Dict" => "cache2::Dict",
+                    "s.cache" => "s.cache2")
+                write(joinpath(dn, "StructRoundTrip.jl"), pkg_code_v2)
+                @yry()
+                s2 = @invokelatest(StructRoundTrip.State())
+                @test @invokelatest(StructRoundTrip.kwfun(s2, 1)) == 1
+                @test @invokelatest(StructRoundTrip.optfun(s2)) == 0
+                @test @invokelatest(StructRoundTrip.kwtag(s2)) == (:field, :cache2)
+                @test @invokelatest(StructRoundTrip.opttag(s2)) == (:cache2, 1)
+                @test_throws MethodError @invokelatest(StructRoundTrip.kwfun(s1, 1))
+                @test_throws MethodError @invokelatest(StructRoundTrip.kwfun(s1, 1; skip=true))
+                @test_throws MethodError @invokelatest(StructRoundTrip.optfun(s1))
+                @test_throws MethodError @invokelatest(StructRoundTrip.optfun(s1, 1))
+                @test_throws MethodError @invokelatest(StructRoundTrip.kwtag(s1))
+                @test_throws MethodError @invokelatest(StructRoundTrip.opttag(s1))
+                @test length(methods(StructRoundTrip.kwfun)) == 1
+                @test length(methods(StructRoundTrip.optfun)) == 2
+                @test length(methods(StructRoundTrip.kwtag)) == 1
+                @test length(methods(StructRoundTrip.opttag)) == 2
+
+                # Revision 3: revert to the original definition
+                write(joinpath(dn, "StructRoundTrip.jl"), pkg_code_v1)
+                @yry()
+                s3 = @invokelatest(StructRoundTrip.State())
+                @test @invokelatest(StructRoundTrip.kwfun(s3, 1; skip=true)) == 1
+                @test @invokelatest(StructRoundTrip.optfun(s3, 1)) == 1
+                @test @invokelatest(StructRoundTrip.kwtag(s3)) == (:field, :cache)
+                @test @invokelatest(StructRoundTrip.opttag(s3)) == (:cache, 1)
+                # The round-1 generation must be fully retired: no duplicate
+                # definition may survive to serve the outdated type. A survivor of
+                # the self-contained methods would not throw here but silently run
+                # stale code, returning `:cache2` for a field that no longer exists
+                @test_throws MethodError @invokelatest(StructRoundTrip.kwtag(s2))
+                @test_throws MethodError @invokelatest(StructRoundTrip.kwtag(s2; prefix=:x))
+                @test_throws MethodError @invokelatest(StructRoundTrip.opttag(s2))
+                @test_throws MethodError @invokelatest(StructRoundTrip.opttag(s2, 2))
+                @test_throws MethodError @invokelatest(StructRoundTrip.kwfun(s2, 1))
+                @test_throws MethodError @invokelatest(StructRoundTrip.kwfun(s2, 1; skip=true))
+                @test_throws MethodError @invokelatest(StructRoundTrip.optfun(s2))
+                @test_throws MethodError @invokelatest(StructRoundTrip.optfun(s2, 1))
+                @test length(methods(StructRoundTrip.kwfun)) == 1
+                @test length(methods(StructRoundTrip.optfun)) == 2
+                @test length(methods(StructRoundTrip.kwtag)) == 1
+                @test length(methods(StructRoundTrip.opttag)) == 2
+            finally
+                rm_precompile("StructRoundTrip")
                 pop!(LOAD_PATH)
             end
         end
@@ -3997,6 +4130,173 @@ end
         end
     end
 
+    do_test("Rewritten precompile cache") && @testset "Rewritten precompile cache" begin
+        testdir = newtestdir()
+        dn = joinpath(testdir, "RewrittenCache", "src")
+        mkpath(dn)
+        write(joinpath(dn, "RewrittenCache.jl"), """
+            module RewrittenCache
+            include("a.jl")
+            include("b.jl")
+            include("c.jl")
+            end
+            """)
+        write(joinpath(dn, "a.jl"), "afun() = 1\n")
+        write(joinpath(dn, "b.jl"), "bfun() = 1\n")
+        write(joinpath(dn, "c.jl"), "cfun() = 1\n")
+        sleep(mtimedelay)
+        @eval using RewrittenCache
+        @latestworld
+        M = RewrittenCache
+        id = Base.PkgId(M)
+        pkgdata = Revise.pkgdatas[id]
+        @test pkgdata.cachebuildid != 0
+        @test Revise.cache_snapshot_is_valid(pkgdata)
+
+        # Where a handle can be held on the cache, it keeps the snapshot readable across a
+        # rebuild and the rebuild is a non-event. Drop it afterwards to exercise the
+        # platforms that cannot hold one.
+        held = pkgdata.cacheio
+        @test (held !== nothing) == Revise.can_hold_cache()
+        if held !== nothing
+            sleep(mtimedelay)
+            write(joinpath(dn, "a.jl"), "afun() = 2\n")
+            sleep(mtimedelay)
+            # Stands in for a `using` or `Pkg.precompile` in a separate process: the cache
+            # path depends on the project and compile flags, not on the source, so this
+            # replaces the file Revise recorded.
+            Base.compilecache(id)
+            @yry()
+            @test Revise.cache_snapshot_is_valid(pkgdata)   # read through the held handle
+            @test M.afun() == 2
+            @test isempty(Revise.rewritten_caches)
+            pkgdata.cacheio = nothing
+        end
+
+        # A rebuild from unchanged source carries the same snapshot: still a non-event.
+        sleep(mtimedelay)
+        Base.compilecache(id)
+        @test !Revise.cache_snapshot_is_valid(pkgdata)      # the build id did change
+        @test Revise.cached_source_is_current(pkgdata, Revise.fileinfo(pkgdata, joinpath("src", "b.jl")))
+        sleep(mtimedelay)
+        write(joinpath(dn, "b.jl"), "bfun() = 2\n")
+        @yry()
+        @test M.bfun() == 2
+        @test isempty(Revise.rewritten_caches)
+        @test isempty(Revise.queue_errors)
+
+        # An edit that a rebuild sweeps into the cache leaves no baseline for that file:
+        # no revision is attempted, and the loss is reported rather than guessed at.
+        # (A file already revised once holds its baseline in memory and is unaffected;
+        # c.jl has not been revised, so the cache is still its only baseline.)
+        sleep(mtimedelay)
+        write(joinpath(dn, "c.jl"), "cfun() = 2\n")
+        sleep(mtimedelay)
+        Base.compilecache(id)
+        @test !Revise.cached_source_is_current(pkgdata, Revise.fileinfo(pkgdata, joinpath("src", "c.jl")))
+        @test_logs (:warn, r"source it held for one or more edited files is gone") match_mode=:any yry()
+        @latestworld
+        @test M.cfun() == 1                                 # left as the session had it
+        @test id in Revise.rewritten_caches
+        err, _ = Revise.queue_errors[(pkgdata, joinpath("src", "c.jl"))]
+        @test err isa Revise.StaleCacheError
+        @test occursin("cannot be revised", sprint(showerror, err))
+        # a.jl and b.jl kept their baselines, so they still revise normally
+        sleep(mtimedelay)
+        write(joinpath(dn, "a.jl"), "afun() = 42\n")
+        @yry()
+        @test M.afun() == 42
+        empty!(Revise.rewritten_caches)
+        empty!(Revise.queue_errors)
+        rm_precompile("RewrittenCache")
+        pop!(LOAD_PATH)
+    end
+
+    do_test("Queueing when the snapshot is gone") && @testset "Queueing when the snapshot is gone" begin
+        # `stale_load` decides what to revise by comparing each file against the source
+        # snapshot in the cache. A snapshot that is no longer the one the session loaded
+        # says nothing about what needs revising, so the file is queued rather than passed
+        # over for matching a cache the session never ran.
+        testdir = newtestdir()
+        dn = joinpath(testdir, "QueueStale", "src")
+        mkpath(dn)
+        write(joinpath(dn, "QueueStale.jl"), "module QueueStale\nqfun() = 1\nend\n")
+        sleep(mtimedelay)
+        @eval using QueueStale
+        @latestworld
+        id = Base.PkgId(QueueStale)
+        pkgdata = Revise.pkgdatas[id]
+        pkgdata.cacheio = nothing        # as on a platform that cannot hold a handle
+        file = joinpath("src", "QueueStale.jl")
+        try
+            @test !Revise.queue_changed_files!(id)     # nothing differs from the snapshot
+            sleep(mtimedelay)
+            write(joinpath(dn, "QueueStale.jl"), "module QueueStale\nqfun() = 2\nend\n")
+            sleep(mtimedelay)
+            Base.compilecache(id)                      # sweeps the edit into the cache
+            filter!(pr -> first(pr) !== pkgdata, Revise.revision_queue)
+            # The source on disk now matches the cache, so comparing against it would find
+            # nothing to do...
+            @test read(joinpath(dn, "QueueStale.jl"), String) == Revise.read_from_cache(pkgdata, file)
+            # ...but that snapshot is not the one this session loaded, so the file is queued
+            @test Revise.queue_changed_files!(id)
+            @test (pkgdata, file) ∈ Revise.revision_queue
+        finally
+            filter!(pr -> first(pr) !== pkgdata, Revise.revision_queue)
+            rm_precompile("QueueStale")
+            pop!(LOAD_PATH)
+        end
+    end
+
+    # `Revise.hold_cache!` keeps a precompile cache's source snapshot readable by holding a
+    # handle open on the file. That is sound only where replacing the file by rename both
+    # succeeds while the handle is open — otherwise Revise would break the *other* process's
+    # precompilation — and leaves the handle reading the original bytes.
+    # `Revise.can_hold_cache()` records where those two things are known to hold; this
+    # measures them. Where it says no, they are `@test_broken`: an "Unexpected Pass" in CI
+    # means the platform supports the handle after all and the test in `can_hold_cache` can
+    # be relaxed to admit it.
+    do_test("Cache handle across a rebuild") && @testset "Cache handle across a rebuild" begin
+        if VERSION >= v"1.11.0-DEV.683"   # older Julia cannot read a cache through a handle at all
+            testdir = newtestdir()
+            dn = joinpath(testdir, "CacheHandle", "src")
+            mkpath(dn)
+            write(joinpath(dn, "CacheHandle.jl"), "module CacheHandle\nchfun() = 1\nend\n")
+            id = Base.identify_package("CacheHandle")
+            ret = Base.compilecache(id)
+            cachefile = ret isa Tuple ? ret[1] : ret
+            io = open(cachefile, "r")
+            local rebuilt, preserved
+            try
+                srcname = first(Revise.pkg_fileinfo(id, cachefile, io)[2]).filename
+                readsrc() = (seekstart(io); Base.isvalid_cache_header(io);
+                             Base.read_dependency_src(io, cachefile, srcname))
+                before = readsrc()
+                sleep(mtimedelay)
+                write(joinpath(dn, "CacheHandle.jl"), "module CacheHandle\nchfun() = 2\nend\n")
+                sleep(mtimedelay)
+                rebuilt = try
+                    Base.compilecache(id)          # the replacing rename, with our handle open
+                    true
+                catch
+                    false
+                end
+                preserved = rebuilt && (try readsrc() == before catch; false end)
+            finally
+                close(io)
+            end
+            @info "cache handle across a rebuild" Sys.KERNEL rebuilt preserved Revise.can_hold_cache()
+            if Revise.can_hold_cache()
+                @test rebuilt
+                @test preserved
+            else
+                @test_broken rebuilt && preserved
+            end
+            rm_precompile("CacheHandle")
+            pop!(LOAD_PATH)
+        end
+    end
+
     # issue #738
     do_test("stale_load") && @testset "stale_load" begin
         testdir = newtestdir()
@@ -4179,7 +4479,7 @@ end
         @test ex isa Revise.RelocatableExpr
         @test isequal(ex, Revise.RelocatableExpr(:(f(v::AbstractVector{<:Integer}) = 3)))
 
-        st = try GetDef.bar(5.0) catch err stacktrace(catch_backtrace()) end
+        st = try GetDef.bar(5.0) catch _ stacktrace(catch_backtrace()) end
         linfo = st[2].linfo
         m = isa(linfo, Core.CodeInstance) ? linfo.def.def : linfo.def
         def = Revise.RelocatableExpr(definition(m))
@@ -4507,7 +4807,7 @@ end
             @test revise_g() == 2
 
             # issue #257
-            logs, _ = Test.collect_test_logs() do  # just to prevent noisy warning
+            _logs, _ = Test.collect_test_logs() do  # just to prevent noisy warning
                 try include("nonexistent1.jl") catch end
                 yry(expect_revision=false)   # include of a missing file revises nothing
                 try include("nonexistent2.jl") catch end
@@ -4894,22 +5194,29 @@ end
     do_test("Methods at REPL") && @testset "Methods at REPL" begin
         if isdefined(Base, :active_repl) && !isnothing(Base.active_repl)
             hp = Base.active_repl.interface.modes[1].hist
-            # The element type of `hp.history` changed from `String` to
-            # `REPL.History.HistEntry` in Julia 1.14; wrap accordingly.
-            push_hist! = if isdefined(REPL, :History) && isdefined(REPL.History, :HistEntry)
-                (h, s) -> push!(h.history, REPL.History.HistEntry(
-                    :julia, Dates.now(), s, UInt32(length(h.history) + 1)))
+            # REPL history changed from `Vector{String}` to `HistoryFile` in Julia
+            # 1.14. Work with its in-memory records so test entries are not persisted.
+            history = if isdefined(REPL, :History) &&
+                    isdefined(REPL.History, :HistoryFile) &&
+                    hp.history isa REPL.History.HistoryFile
+                hp.history.records
             else
-                (h, s) -> push!(h.history, s)
+                hp.history
+            end
+            push_hist! = if isdefined(REPL, :History) && isdefined(REPL.History, :HistEntry)
+                (h, s) -> push!(h, REPL.History.HistEntry(
+                    :julia, Dates.now(), s, UInt32(length(h) + 1)))
+            else
+                (h, s) -> push!(h, s)
             end
             fstr = "__fREPL__(x::Int16) = 0"
-            histidx = length(hp.history) + 1 - hp.start_idx
+            histidx = length(history) + 1 - hp.start_idx
             ex = Base.parse_input_line(fstr; filename="REPL[$histidx]")
             f = Core.eval(Main, ex)
             if ex.head === :toplevel
                 ex = ex.args[end]
             end
-            push_hist!(hp, fstr)
+            push_hist!(history, fstr)
             m = first(methods(f))
             @test !isempty(signatures_at(String(m.file), m.line))
             @test isequal(Revise.RelocatableExpr(definition(m)), Revise.RelocatableExpr(ex))
@@ -4917,20 +5224,20 @@ end
 
             # Test that revisions work (https://github.com/timholy/CodeTracking.jl/issues/38)
             fstr = "__fREPL__(x::Int16) = 1"
-            histidx = length(hp.history) + 1 - hp.start_idx
+            histidx = length(history) + 1 - hp.start_idx
             ex = Base.parse_input_line(fstr; filename="REPL[$histidx]")
             f = Core.eval(Main, ex)
             if ex.head === :toplevel
                 ex = ex.args[end]
             end
-            push_hist!(hp, fstr)
+            push_hist!(history, fstr)
             m = first(methods(f))
             @test isequal(Revise.RelocatableExpr(definition(m)), Revise.RelocatableExpr(ex))
             @test definition(String, m)[1] == fstr
             @test !isempty(signatures_at(String(m.file), m.line))
 
-            pop!(hp.history)
-            pop!(hp.history)
+            pop!(history)
+            pop!(history)
         else
             @warn "REPL tests skipped"
         end
@@ -5276,11 +5583,43 @@ do_test("Manifest re-extraction errors") && @testset "Manifest re-extraction err
     pkgdata = Revise.PkgData(id, "/nonexistent/Issue706")
     file = "src/Issue706.jl"
     delete!(Revise.queue_errors, (pkgdata, file))
-    # Unguarded extraction throws ...
-    @test_throws Exception Revise.maybe_extract_sigs!(mkfi())
-    # ... but the resilient helper records the error instead of throwing.
+    # Unguarded extraction identifies partial-evaluation failure separately from
+    # an error thrown by normally-evaluated package code.
+    err = try
+        Revise.maybe_extract_sigs!(mkfi())
+        nothing
+    catch err
+        err
+    end
+    @test err isa Revise.SignatureExtractionError
+    @test err.mod === mod
+    @test err.exc isa Revise.ReviseEvalException
+    errmsg = sprint(showerror, err)
+    @test startswith(errmsg, "failed to extract method signatures")
+    @test !occursin("Revise evaluation error", errmsg)
+
+    # Debugging and non-`:sigs` modes preserve their original exception behavior.
+    @test_throws ErrorException Revise.instantiate_sigs!(mkfi().mod_exs_infos; always_rethrow=true)
+    @test_throws Revise.ReviseEvalException Revise.instantiate_sigs!(mkfi().mod_exs_infos; mode=:eval)
+
+    # The resilient helper records the contextual error instead of throwing.
     @test (Revise.maybe_extract_sigs_or_queue_error!(pkgdata, file, mkfi()); true)
     @test haskey(Revise.queue_errors, (pkgdata, file))
+    queued_err, _ = Revise.queue_errors[(pkgdata, file)]
+    @test queued_err isa Revise.SignatureExtractionError
+
+    # Self-rendering exceptions use the standard `(exception, backtrace)` log shape
+    # without appending Revise's internal backtrace.
+    logger = Revise.ReviseLogger()
+    redirect_stderr(devnull) do
+        Base.CoreLogging.with_logger(logger) do
+            Revise.errors([(pkgdata, file)])
+        end
+    end
+    logged_err, logged_bt = only(logger.logs).kwargs[:exception]
+    @test logged_err === queued_err
+    @test logged_bt === nothing
+    @test occursin("failed to extract method signatures", sprint(show, only(logger.logs)))
     delete!(Revise.queue_errors, (pkgdata, file))   # leave global state clean
 end
 
@@ -5297,12 +5636,95 @@ do_test("@require path switch") && @testset "@require path switch" begin
     # empty `mod_exs_infos` plus an unprocessed `cacheexpr` and no cache file, which
     # drives `switch_basepath` into its read-from-disk fallback.
     reqfile = joinpath("src", "Issue678.jl") * Revise.requires_suffix
-    fi = Revise.FileInfo(Revise.ModuleExprsInfos(), identity, "", "",
+    fi = Revise.FileInfo(Revise.ModuleExprsInfos(), identity, "", "", nothing,
                          Tuple{Module,Expr}[(mod, :(g() = 42))], Ref(false), Ref(false))
     push!(pkgdata, reqfile=>fi)
     @test Revise.is_requires_file(reqfile)
     @test (Revise.switch_basepath(pkgdata, newdir); true)   # must not throw
     @test Revise.basedir(pkgdata) == newdir
+end
+
+do_test("Unchanged files across a path switch") && @testset "Unchanged files across a path switch" begin
+    # A package directory can change while most of its files stay as they are: a
+    # `Pkg.develop`ed copy of a release, or a new release that edits only part of its
+    # source. `switch_basepath` revises the files that differ and leaves the rest alone,
+    # because extracting signatures re-executes macro expansions that define types or
+    # constants, which fails once those definitions exist.
+    mod = Module(:PathSwitch)
+    Core.eval(mod, :(using Base))
+    id = Base.PkgId(Base.UUID("00000000-0000-0000-0000-000000000679"), "PathSwitch")
+    olddir, newdir = mktempdir(), mktempdir()
+    mkpath(joinpath(olddir, "src"))
+    mkpath(joinpath(newdir, "src"))
+
+    samefile, changedfile = joinpath("src", "same.jl"), joinpath("src", "changed.jl")
+    write(joinpath(olddir, samefile), "f() = 1\n")
+    write(joinpath(newdir, samefile), "f() = 1\n")
+    write(joinpath(olddir, changedfile), "g() = 1\n")
+    write(joinpath(newdir, changedfile), "g() = 2\n")
+
+    pkgdata = Revise.PkgData(id, olddir)
+    for (file, ex) in ((samefile, :(f() = 1)), (changedfile, :(g() = 1)))
+        mei = Revise.ModuleExprsInfos(mod)
+        mei[mod][Revise.RelocatableExpr(ex)] = nothing
+        push!(pkgdata, file=>Revise.FileInfo(mei))
+    end
+
+    try
+        Revise.switch_basepath(pkgdata, newdir)
+        @test Revise.basedir(pkgdata) == newdir
+        @test (pkgdata, changedfile) ∈ Revise.revision_queue
+        @test (pkgdata, samefile) ∉ Revise.revision_queue
+        # Signatures are extracted only for the file that is queued.
+        @test Revise.fileinfo(pkgdata, changedfile).extracted[]
+        @test !Revise.fileinfo(pkgdata, samefile).extracted[]
+        # Both files are watched at the new location, queued or not.
+        watchlist = Revise.watched_files[joinpath(newdir, "src")]
+        @test haskey(watchlist.trackedfiles, "same.jl")
+        @test haskey(watchlist.trackedfiles, "changed.jl")
+    finally
+        filter!(pr -> first(pr) !== pkgdata, Revise.revision_queue)
+        delete!(Revise.watched_files, joinpath(olddir, "src"))
+        delete!(Revise.watched_files, joinpath(newdir, "src"))
+    end
+end
+
+do_test("Path switch without a baseline") && @testset "Path switch without a baseline" begin
+    # A file whose cached source snapshot is gone has no baseline to compare the new
+    # location against, and the old location's source on disk is not one either. The file
+    # is queued so that `revise` reports the loss, rather than `switch_basepath` adopting
+    # the new source as though the session already held it.
+    mod = Module(:PathSwitchStale)
+    Core.eval(mod, :(using Base))
+    id = Base.PkgId(Base.UUID("00000000-0000-0000-0000-000000001115"), "PathSwitchStale")
+    olddir, newdir = mktempdir(), mktempdir()
+    mkpath(joinpath(olddir, "src"))
+    mkpath(joinpath(newdir, "src"))
+    file = joinpath("src", "stale.jl")
+    write(joinpath(olddir, file), "h() = 1\n")
+    write(joinpath(newdir, file), "h() = 2\n")
+
+    pkgdata = Revise.PkgData(id, olddir)
+    # An unparsed file whose only baseline was a cache that can no longer be read
+    push!(pkgdata, file=>Revise.FileInfo(mod, joinpath(olddir, "nonexistent.ji"), joinpath(olddir, file)))
+    pkgdata.cachebuildid = 0x0123    # nonzero: the session did load from a cache
+
+    try
+        @test !Revise.cached_source_is_current(pkgdata, Revise.fileinfo(pkgdata, file))
+        @test_logs (:warn, r"source it held for one or more edited files is gone") match_mode=:any Revise.switch_basepath(pkgdata, newdir)
+        @test Revise.basedir(pkgdata) == newdir
+        @test (pkgdata, file) ∈ Revise.revision_queue
+        # Nothing was adopted as a baseline
+        @test !Revise.fileinfo(pkgdata, file).parsed[]
+        @test !Revise.fileinfo(pkgdata, file).extracted[]
+        # The file is still watched at the new location
+        @test haskey(Revise.watched_files[joinpath(newdir, "src")].trackedfiles, "stale.jl")
+    finally
+        filter!(pr -> first(pr) !== pkgdata, Revise.revision_queue)
+        delete!(Revise.rewritten_caches, id)
+        delete!(Revise.watched_files, joinpath(olddir, "src"))
+        delete!(Revise.watched_files, joinpath(newdir, "src"))
+    end
 end
 
 do_test("Switching environments") && @testset "Switching environments" begin
@@ -5965,7 +6387,7 @@ do_test("entr with modules") && @testset "entr with modules" begin
             A354_result[] = A354.test()
             error()
         end
-    catch err
+    catch
     end
 
     @test A354_result[] == 2
@@ -6445,7 +6867,7 @@ GC.gc(); GC.gc()
     old_grace = Revise.watch_reappear_grace[]
     Revise.watch_reappear_grace[] = 0.0
     try
-        logs, _ = Test.collect_test_logs() do
+        _logs, _ = Test.collect_test_logs() do
             warnfile = randtmp()
             open(warnfile, "w") do io
                 redirect_stderr(io) do
@@ -6456,7 +6878,7 @@ GC.gc(); GC.gc()
                         catch
                         end
                     end
-                    for i = 1:3
+                    for _ = 1:3
                         yry()
                         GC.gc()
                     end

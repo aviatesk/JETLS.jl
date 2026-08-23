@@ -3,7 +3,7 @@ Base.Experimental.@optlevel 1
 using FileWatching, REPL, UUIDs
 using LibGit2: LibGit2
 using CRC32c: crc32c
-using Base: PkgId, IdSet
+using Base: IdSet, PkgId
 using Base.Meta: isexpr
 using Core: CodeInfo, MethodTable
 
@@ -11,7 +11,7 @@ if !isdefined(Core, :isdefinedglobal)
     isdefinedglobal(m::Module, s::Symbol) = isdefined(m, s)
 end
 
-export revise, includet, @includet, entr, MethodSummary
+export @includet, MethodSummary, entr, includet, revise
 
 ## BEGIN abstract Distributed API
 
@@ -356,6 +356,25 @@ haspkgdata(id::PkgId) = @lock revise_lock haskey(pkgdatas, id)
 allpkgdatas() = @lock revise_lock collect(values(pkgdatas))
 
 """
+    Revise.rewritten_caches
+
+Set of packages that have lost the source snapshot of at least one file because another
+process rebuilt or removed their precompile cache. The path of a cache file is determined
+by the active project and the compile flags rather than by the source, so a `using` or
+`Pkg.precompile` in a separate process overwrites the very file this session recorded.
+
+Revise compares an edit against the source the session loaded, so for a file whose
+snapshot is gone there is nothing to compare against and no revision is attempted: the
+file's definitions stay as they were, and each attempt raises a
+[`Revise.StaleCacheError`](@ref). Only a restart recovers them, so a non-empty
+`rewritten_caches` keeps the prompt yellow for the rest of the session. Files whose source
+was identical in both builds, and every other package, are unaffected; where
+[`Revise.hold_cache!`](@ref) applies, the snapshot survives the rebuild and nothing is
+lost at all.
+"""
+const rewritten_caches = Set{PkgId}()
+
+"""
     Revise.included_files
 
 Global variable, `included_files` gets populated by callbacks we register with `include`.
@@ -665,7 +684,7 @@ function has_pending_type_deletion(mod_exs_infos_new::ModuleExprsInfos, mod_exs_
     end
     return false
 end
-has_pending_type_deletion(@nospecialize(mod_exs_infos_new), mod_exs_infos_old::ModuleExprsInfos) = false
+has_pending_type_deletion(@nospecialize(_), ::ModuleExprsInfos) = false
 
 # Run the type-preservation prediction over every expression the evaluation phase
 # will (re)evaluate, i.e., the new rexes. Best-effort: any error leaves the affected
@@ -810,7 +829,7 @@ end
 
 function eval_rex(rex_new::RelocatableExpr, exs_infos_old::ExprsInfos, mod::Module; mode::Symbol=:eval)
     return with_logger(_debug_logger) do
-        exinfos, includes = nothing, nothing
+        _, includes = nothing, nothing
         rex_old = getkey(exs_infos_old, rex_new, nothing)
         # extract the signatures and update the line info
         if rex_old === nothing
@@ -901,7 +920,22 @@ function instantiate_sigs!(mod_exs_infos::ModuleExprsInfos; mode::Symbol=:sigs, 
     for (mod, exs_infos) in mod_exs_infos
         for rex in keys(exs_infos)
             is_doc_expr(rex.ex) && continue
-            exs_infos[rex], _, _ = eval_with_signatures(mod, rex.ex; mode, kwargs...)
+            try
+                exs_infos[rex], _, _ = eval_with_signatures(mod, rex.ex; mode, kwargs...)
+            catch err
+                if (mode !== :sigs || get(kwargs, :always_rethrow, false) ||
+                    err isa InterruptException || err isa SignatureExtractionError)
+                    rethrow()
+                end
+                loc = if err isa ReviseEvalException && err.loc != "unknown location"
+                    err.loc
+                else
+                    lnn = firstline(rex)
+                    lnn === nothing || lnn.file === nothing || lnn.file === :none ?
+                        "unknown location" : location_string((lnn.file, lnn.line))
+                end
+                throw(SignatureExtractionError(mod, loc, err))
+            end
         end
     end
     return mod_exs_infos
@@ -1247,12 +1281,25 @@ function redefine_bindings!(revision_errors::Vector{Tuple{PkgData,String}}, reev
             end
         end
     end
-    for (; reeval, mod, exs_infos, rex, pkgdata, file) in reeval_infos
+    # Delete every method before evaluating anything: one expression can own several
+    # methods (keyword methods, optional-argument methods, constructors), and
+    # evaluating it once per method would leave shadowed duplicate definitions behind.
+    # Those duplicates keep the pre-revision types in their signatures and become
+    # dispatchable again as soon as a later revision deletes the copy shadowing them.
+    for (; reeval) in reeval_infos
         reeval isa Method || continue
         with_logger(_debug_logger) do
             @debug "ReevalDeleteMethod" _group="Action" time=time() deltainfo=(reeval.sig, MethodSummary(reeval))
             # ensure that "old data" doesn't get run with "old methods"
             try Base.delete_method(reeval) catch end
+        end
+    end
+    evaluated_rexes = Set{Tuple{Module,RelocatableExpr}}()
+    for (; reeval, mod, exs_infos, rex, pkgdata, file) in reeval_infos
+        reeval isa Method || continue
+        (mod, rex) in evaluated_rexes && continue
+        push!(evaluated_rexes, (mod, rex))
+        with_logger(_debug_logger) do
             @debug "ReevalMethod" _group="Action" time=time() deltainfo=(reeval, reeval.module, rex)
             try
                 newexinfos, _, _ = eval_with_signatures(mod, rex.ex; mode=:eval)
@@ -1437,8 +1484,9 @@ function errors(revision_errors=keys(queue_errors))
         pkgdata, file = item
         (err, bt) = queue_errors[(pkgdata, file)]
         fullpath = joinpath(basedir(pkgdata), file)
-        if err isa ReviseEvalException
-            @error "Failed to revise $fullpath" exception=err
+        if (err isa ReviseEvalException || err isa StaleCacheError ||
+            (err isa SignatureExtractionError && captured_stacktrace(err) !== nothing))
+            @error "Failed to revise $fullpath" exception=(err, nothing)
         else
             @error "Failed to revise $fullpath" exception=(err, trim_toplevel!(bt))
         end
@@ -1645,7 +1693,7 @@ function _revise(; throw::Bool=false)
         end
         if pending_type_deletion
             with_logger(_debug_logger) do
-                for (pkgdata, file, idx, mod_exs_infos_new, mod_exs_infos_old, fileok) in parsed
+                for (_pkgdata, _file, _idx, mod_exs_infos_new, mod_exs_infos_old, _fileok) in parsed
                     mod_exs_infos_new isa ModuleExprsInfos || continue
                     predict_changes!(predictions, mod_exs_infos_new, mod_exs_infos_old)
                 end
@@ -1776,7 +1824,10 @@ function _revise(; throw::Bool=false)
         # "Method overwriting is not permitted during Module precompilation" (issue #889).
         dupworld = Base.get_world_counter()
         warn_duplicated_signatures(update_duplicated_signatures!(dupworld), dupworld)
-        if isempty(queue_errors) && isempty(duplicated_signatures)
+        # A package in `rewritten_caches` keeps the prompt yellow for the rest of the
+        # session: revision of such a package is best-effort (see `cache_snapshot_is_valid`)
+        # and only a restart can restore a session that provably matches the source.
+        if isempty(queue_errors) && isempty(duplicated_signatures) && isempty(rewritten_caches)
             maybe_set_prompt_color(:ok)
         else
             maybe_set_prompt_color(:warn)
@@ -2173,7 +2224,9 @@ function get_def(method::Method; modified_files=revision_queue)
 end
 
 function get_def(method, pkgdata, filename)
-    maybe_extract_sigs!(maybe_parse_from_cache!(pkgdata, filename))
+    fi = try_parse_from_cache!(pkgdata, filename)
+    fi === nothing && return nothing
+    maybe_extract_sigs!(fi)
     return get(CodeTracking.method_info, MethodInfoKey(method), nothing)
 end
 
@@ -2197,7 +2250,8 @@ get_tracked_id(mod::Module; modified_files=revision_queue) =
 function get_expressions(id::PkgId, filename)
     get_tracked_id(id)
     pkgdata = @lock revise_lock pkgdatas[id]
-    fi = maybe_parse_from_cache!(pkgdata, filename)
+    fi = try_parse_from_cache!(pkgdata, filename)
+    fi === nothing && return nothing
     maybe_extract_sigs!(fi)
     return fi.mod_exs_infos
 end

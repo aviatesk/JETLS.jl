@@ -19,7 +19,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## Unreleased
 
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
-- Diff: [`6dacc52...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/6dacc52...HEAD)
+- Diff: [`29f138d...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/29f138d...HEAD)
 
 ### Announcement
 
@@ -45,6 +45,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > Note that `analysis_overrides` is provided as a temporary workaround and may be removed or changed at any time. A proper fix is being worked on.
 >
 > Note: Path glob patterns use `/` as the separator on all platforms, including Windows; backslashes are not supported as separators.
+
+### Changed
+
+- JETLS now displays a warning when workspace analysis and folder-local configuration are unavailable because a server was started without a workspace folder, with an unsupported root URI scheme, or with multiple workspace folders. For multi-root workspaces, configure the editor to start one server per top-level folder.
+
+- The `jetls version` command now starts faster even when precompile workloads are disabled.
+
+- The `jetls version` output now uses the lowercase `jetls version ..., julia version ...` format, consistent with other Julia apps such as [`runic`](https://github.com/fredrikekre/Runic.jl) and [`juliac`](https://github.com/JuliaLang/Juliac.jl). (https://github.com/aviatesk/JETLS.jl/pull/830)
+
+## 2026-08-07
+
+- Commit: [`29f138d`](https://github.com/aviatesk/JETLS.jl/commit/29f138d)
+- Diff: [`6dacc52...29f138d`](https://github.com/aviatesk/JETLS.jl/compare/6dacc52...29f138d)
+- Installation:
+  ```bash
+  julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="2026-08-07")'
+  ```
 
 ### Added
 

@@ -25,15 +25,14 @@ end
 let CHANGELOG_md = joinpath(@__DIR__, "..", "CHANGELOG.md")
     CHANGELOG_md_text = read(CHANGELOG_md, String)
     CHANGELOG_md_text = replace(CHANGELOG_md_text,
-        "./DEVELOPMENT.md#profiling" => "https://github.com/aviatesk/JETLS.jl/blob/master/DEVELOPMENT.md#profiling")
+        "./DEVELOPMENT.md" =>
+        "https://github.com/aviatesk/JETLS.jl/blob/master/DEVELOPMENT.md")
+    CHANGELOG_md_text = replace(CHANGELOG_md_text, r"> \[!(.+)\]" => s"!!! \1")
+    CHANGELOG_md_text = replace(CHANGELOG_md_text, r"^\> (.+)$"m  => s"    \1")
+    CHANGELOG_md_text = replace(CHANGELOG_md_text, r"^\>$"m       => s"")
     CHANGELOG_md_text = replace(CHANGELOG_md_text,
-        r"> \[!(.+)\]" => s"!!! \1")
-    CHANGELOG_md_text = replace(CHANGELOG_md_text,
-        r"^\> (.+)$"m=>s"    \1")
-    CHANGELOG_md_text = replace(CHANGELOG_md_text,
-        r"^\>$"m=>s"")
-    CHANGELOG_md_text = replace(CHANGELOG_md_text,
-        r"(https://github\.com/aviatesk/JETLS\.jl/(?:issues|pull)/(\d+))" => s"[aviatesk/JETLS.jl#\2](\1)")
+        r"(?<!\]\()(https://github\.com/([^/\s]+/[^/\s]+)/(?:issues|pull)/(\d+))" =>
+        s"[\2#\3](\1)")
     # Convert GitHub video URLs to Documenter-compatible video embeds
     CHANGELOG_md_text = replace(CHANGELOG_md_text,
         r"^\s*<?(https://github\.com/user-attachments/assets/[a-f0-9-]+)>?\s*$"m =>
