@@ -135,4 +135,73 @@ end
     end
 end
 
+@testset "shutdown rejects scheduling" begin
+    server = JETLS.Server()
+    manager = server.state.analysis_manager
+    script_uri = filepath2uri(joinpath(@__DIR__, "shutdown-scheduling.jl"))
+    entry = JETLS.ScriptAnalysisEntry(script_uri)
+    completion = Base.Event()
+    completion_waiter = Threads.@spawn wait(completion)
+
+    JETLS.begin_analysis_shutdown!(server)
+    JETLS.schedule_analysis!(server, script_uri, entry, #=invalidate=#true;
+        completion, debounce=60.0, notify_diagnostics=false)
+
+    @test timedwait(() -> istaskdone(completion_waiter), 1.0) == :ok
+    @test isempty(JETLS.load(manager.tracked_entries))
+    @test isempty(JETLS.load(manager.current_generations))
+    @test isempty(JETLS.load(manager.debounced))
+    @test isempty(JETLS.load(manager.pending_analyses))
+    @test !isready(manager.queue)
+end
+
+@testset "shutdown rejects late queue admission" begin
+    server = JETLS.Server()
+    manager = server.state.analysis_manager
+    script_uri = filepath2uri(joinpath(@__DIR__, "shutdown-queueing.jl"))
+    entry = JETLS.ScriptAnalysisEntry(script_uri)
+
+    JETLS.schedule_analysis!(server, script_uri, entry, #=invalidate=#false;
+        debounce=0.0, notify_diagnostics=false)
+    take!(manager.queue)
+    @test JETLS.load(manager.pending_analyses)[entry] === nothing
+
+    completion = Base.Event()
+    completion_waiter = Threads.@spawn wait(completion)
+    late_request = JETLS.AnalysisRequest(
+        entry, script_uri, #=generation=#0, nothing, false, completion)
+    JETLS.begin_analysis_shutdown!(server)
+    JETLS.queue_request!(server, late_request)
+
+    @test timedwait(() -> istaskdone(completion_waiter), 1.0) == :ok
+    @test JETLS.load(manager.pending_analyses)[entry] === nothing
+    @test !isready(manager.queue)
+end
+
+@testset "shutdown cancels pending requeue" begin
+    server = JETLS.Server()
+    manager = server.state.analysis_manager
+    script_uri = filepath2uri(joinpath(@__DIR__, "shutdown-pending.jl"))
+    entry = JETLS.ScriptAnalysisEntry(script_uri)
+
+    JETLS.schedule_analysis!(server, script_uri, entry, #=invalidate=#false;
+        debounce=0.0, notify_diagnostics=false)
+    active_request = take!(manager.queue)::JETLS.AnalysisRequest
+    active_waiter = Threads.@spawn wait(active_request.completion)
+
+    pending_completion = Base.Event()
+    pending_waiter = Threads.@spawn wait(pending_completion)
+    JETLS.schedule_analysis!(server, script_uri, entry, #=invalidate=#true;
+        completion=pending_completion, debounce=0.0, notify_diagnostics=false)
+    @test JETLS.load(manager.pending_analyses)[entry] isa JETLS.AnalysisRequest
+
+    JETLS.begin_analysis_shutdown!(server)
+    JETLS.resolve_analysis_request(server, active_request)
+
+    @test timedwait(() -> istaskdone(active_waiter), 1.0) == :ok
+    @test timedwait(() -> istaskdone(pending_waiter), 1.0) == :ok
+    @test !haskey(JETLS.load(manager.pending_analyses), entry)
+    @test !isready(manager.queue)
+end
+
 end # module test_full_analysis

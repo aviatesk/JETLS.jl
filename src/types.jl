@@ -357,6 +357,8 @@ const DebouncedRequests = LWContainer{Dict{AnalysisEntry,Tuple{Timer,Base.Event}
 const InstantiatedEnvs = LWContainer{Dict{String,Union{Nothing,Tuple{Base.PkgId,String}}}, LWStats}
 
 struct AnalysisManager
+    lifecycle_lock::ReentrantLock
+    stopping::Base.RefValue{Bool}
     cache::AnalysisCache
     pending_analyses::PendingAnalyses
     queue::Channel{Union{Nothing,AnalysisRequest}}
@@ -370,6 +372,8 @@ struct AnalysisManager
     signature_worker_tasks::Vector{Task}
     function AnalysisManager()
         return new(
+            ReentrantLock(),
+            Ref(false),
             AnalysisCache(),
             PendingAnalyses(),
             Channel{Union{Nothing,AnalysisRequest}}(Inf),

@@ -195,6 +195,12 @@ end
 # Analysis workers
 # ================
 
+function begin_analysis_shutdown!(server::Server)
+    manager = server.state.analysis_manager
+    @lock manager.lifecycle_lock manager.stopping[] = true
+    return nothing
+end
+
 function start_signature_analysis_workers!(server::Server)
     manager = server.state.analysis_manager
     worker_tasks = manager.signature_worker_tasks
@@ -384,44 +390,65 @@ function schedule_analysis!(
         debounce::Float64 = get_config(server, :full_analysis, :debounce),
     )
     manager = server.state.analysis_manager
+    local cancelled_request::Union{Nothing,AnalysisRequest} = nothing
+    local cancelled_duplicate::Bool = false
 
-    store!(manager.tracked_entries) do entries
-        get(entries, entry, nothing) == uri && return entries, nothing
-        new_entries = copy(entries)
-        new_entries[entry] = uri
-        return new_entries, nothing
-    end
-
-    generation = invalidate ? increment_generation!(manager, entry) : get_generation(manager, entry)
-
-    request = AnalysisRequest(
-        entry, uri, generation, cancellable_token, notify_diagnostics, completion)
-
-    if invalidate && debounce > 0
-        store!(manager.debounced) do debounced
-            if haskey(debounced, request.entry)
-                # Cancel existing timer if any
-                debounce_timer, debounce_completion = debounced[request.entry]
-                close(debounce_timer)
-                @static JETLS_DEV_MODE && @info "Cancelled analysis debounce timer:" entry=progress_title(request.entry) uri generation
-                notify(debounce_completion)
+    accepted = @lock manager.lifecycle_lock begin
+        if manager.stopping[]
+            false
+        else
+            store!(manager.tracked_entries) do entries
+                get(entries, entry, nothing) == uri && return entries, nothing
+                new_entries = copy(entries)
+                new_entries[entry] = uri
+                return new_entries, nothing
             end
-            local new_debounced = copy(debounced)
-            timer = Timer(debounce) do _
-                store!(manager.debounced) do debounced′
-                    local new_debounced′ = copy(debounced′)
-                    delete!(new_debounced′, request.entry)
-                    return new_debounced′, nothing
+
+            generation = invalidate ?
+                increment_generation!(manager, entry) : get_generation(manager, entry)
+            request = AnalysisRequest(
+                entry, uri, generation, cancellable_token, notify_diagnostics, completion)
+
+            if invalidate && debounce > 0
+                store!(manager.debounced) do debounced
+                    if haskey(debounced, request.entry)
+                        # Cancel existing timer if any
+                        debounce_timer, debounce_completion = debounced[request.entry]
+                        close(debounce_timer)
+                        @static JETLS_DEV_MODE && @info "Cancelled analysis debounce timer:" entry=progress_title(request.entry) uri generation
+                        notify(debounce_completion)
+                    end
+                    local new_debounced = copy(debounced)
+                    timer = Timer(debounce) do _
+                        store!(manager.debounced) do debounced′
+                            local new_debounced′ = copy(debounced′)
+                            delete!(new_debounced′, request.entry)
+                            return new_debounced′, nothing
+                        end
+                        queue_request!(server, request)
+                    end
+                    new_debounced[request.entry] = timer, request.completion
+                    return new_debounced, nothing
                 end
-                queue_request!(server, request)
+            else
+                invalidate && cancel_debounced_request!(manager, request)
+                cancelled_request, cancelled_duplicate =
+                    _queue_request_locked!(manager, request)
             end
-            new_debounced[request.entry] = timer, request.completion
-            return new_debounced, nothing
+            true
         end
-    else
-        invalidate && cancel_debounced_request!(manager, request)
-        queue_request!(server, request)
     end
+
+    if !accepted
+        @static JETLS_DEV_MODE && @info "Rejected analysis scheduling during shutdown" entry=progress_title(entry) uri
+        notify(completion)
+    elseif cancelled_request !== nothing
+        if cancelled_duplicate
+            @static JETLS_DEV_MODE && @info "Cancelled duplicated pending analysis request:" entry=progress_title(cancelled_request.entry) uri=cancelled_request.uri generation=cancelled_request.generation
+        end
+        notify(cancelled_request.completion)
+    end
+    return nothing
 end
 
 function cancel_debounced_request!(manager::AnalysisManager, request::AnalysisRequest)
@@ -437,12 +464,20 @@ function cancel_debounced_request!(manager::AnalysisManager, request::AnalysisRe
     end
 end
 
-function queue_request!(server::Server, request::AnalysisRequest)
-    manager = server.state.analysis_manager
+# Admission gate for the full-analysis queue. The caller must hold
+# `manager.lifecycle_lock` so that the stopping check and the queue registration are
+# atomic with the shutdown transition. Returns `(cancelled_request, is_duplicate)`:
+# the caller must notify `cancelled_request.completion` outside the lock, and
+# `is_duplicate` tells whether it was cancelled as a duplicated pending request
+# (as opposed to being rejected by shutdown or supersession; used only for logging).
+function _queue_request_locked!(manager::AnalysisManager, request::AnalysisRequest)
+    if manager.stopping[]
+        @static JETLS_DEV_MODE && @info "Rejected analysis request during shutdown" entry=progress_title(request.entry) uri=request.uri generation=request.generation
+        return request, false
+    end
     if is_superseded_request(manager, request)
         @static JETLS_DEV_MODE && @info "Skipped superseded analysis request before queueing" entry=progress_title(request.entry) uri=request.uri generation=request.generation
-        notify(request.completion)
-        return nothing
+        return request, false
     end
     # Check if already analyzing and handle pending requests.
     # This check must happen here (after debounce) rather than in request_analysis!,
@@ -465,11 +500,21 @@ function queue_request!(server::Server, request::AnalysisRequest)
             return new_analyses, (true, nothing)
         end
     end
+    should_queue && put!(manager.queue, request)
+    return cancelled_request, cancelled_request !== nothing
+end
+
+function queue_request!(server::Server, request::AnalysisRequest)
+    manager = server.state.analysis_manager
+    cancelled_request, cancelled_duplicate = @lock manager.lifecycle_lock begin
+        _queue_request_locked!(manager, request)
+    end
     if cancelled_request !== nothing
-        @static JETLS_DEV_MODE && @info "Cancelled duplicated pending analysis request:" entry=progress_title(cancelled_request.entry) uri=cancelled_request.uri generation=cancelled_request.generation
+        if cancelled_duplicate
+            @static JETLS_DEV_MODE && @info "Cancelled duplicated pending analysis request:" entry=progress_title(cancelled_request.entry) uri=cancelled_request.uri generation=cancelled_request.generation
+        end
         notify(cancelled_request.completion)
     end
-    should_queue && put!(manager.queue, request)
     return nothing
 end
 
@@ -561,21 +606,31 @@ function resolve_analysis_request(server::Server, request::AnalysisRequest)
     notify(request.completion)
 
     # Check for pending request and re-queue if exist
-    pending_request = store!(manager.pending_analyses) do analyses
-        if haskey(analyses, request.entry)
-            new_analyses = copy(analyses)
-            pending = pop!(new_analyses, request.entry)
-            if pending !== nothing
-                # Re-mark as analyzing before queueing the pending request
-                new_analyses[request.entry] = nothing
+    cancelled_pending_request = @lock manager.lifecycle_lock begin
+        stopping = manager.stopping[]
+        pending_request = store!(manager.pending_analyses) do analyses
+            if haskey(analyses, request.entry)
+                new_analyses = copy(analyses)
+                pending = pop!(new_analyses, request.entry)
+                if pending !== nothing && !stopping
+                    # Re-mark as analyzing before queueing the pending request
+                    new_analyses[request.entry] = nothing
+                end
+                return new_analyses, pending
             end
-            return new_analyses, pending
+            return analyses, nothing
         end
-        return analyses, nothing
+        if pending_request === nothing
+            nothing
+        elseif stopping
+            pending_request
+        else
+            put!(manager.queue, pending_request)
+            nothing
+        end
     end
-    if pending_request !== nothing
-        put!(manager.queue, pending_request)
-    end
+    cancelled_pending_request === nothing ||
+        notify(cancelled_pending_request.completion)
 end
 
 function increment_generation!(manager::AnalysisManager, @nospecialize entry::AnalysisEntry)
