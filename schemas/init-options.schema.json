@@ -39,6 +39,11 @@
           },
           "type": "array"
         },
+        "configuration_section": {
+          "$ref": "#/$defs/Core.String",
+          "default": "null",
+          "description": "The client-side configuration section under which the client stores JETLS settings (e.g. `jetls-client.settings` for the VSCode extension). When set, JETLS registers `workspace/didChangeConfiguration` with this section, so clients that honor the registration's section filter only send the notification when the relevant settings actually change. This is normally set programmatically by client extensions rather than by users. See [`configuration_section`](https://aviatesk.github.io/JETLS.jl/release/launching/#init-options/configuration_section)."
+        },
         "reuse_native_inference": {
           "$ref": "#/$defs/Core.Bool",
           "default": false,

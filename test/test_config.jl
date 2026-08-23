@@ -580,4 +580,16 @@ end
     @test config isa JETLS.JETLSConfig
 end
 
+@testset "`did_change_configuration_registration` reflects `configuration_section`" begin
+    let reg = JETLS.did_change_configuration_registration(JETLS.DEFAULT_INIT_OPTIONS)
+        @test reg.registerOptions === nothing
+    end
+    let init_options = JETLS.InitOptions(; configuration_section = "jetls-client.settings")
+        reg = JETLS.did_change_configuration_registration(init_options)
+        registerOptions = reg.registerOptions
+        @test registerOptions isa JETLS.LSP.DidChangeConfigurationRegistrationOptions
+        @test registerOptions.section == "jetls-client.settings"
+    end
+end
+
 end # test_config

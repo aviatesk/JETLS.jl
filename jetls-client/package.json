@@ -137,6 +137,11 @@
               "markdownDescription": "Override full analysis behavior for specific file patterns. Primarily used as a temporary workaround to disable analysis for files affected by memory leak issues. Each override specifies a glob pattern, optionally a module name, and can opt back into full analysis. Note: This is an experimental feature that may be removed or changed in future versions.",
               "type": "array"
             },
+            "configuration_section": {
+              "default": "null",
+              "markdownDescription": "The client-side configuration section under which the client stores JETLS settings (e.g. `jetls-client.settings` for the VSCode extension). When set, JETLS registers `workspace/didChangeConfiguration` with this section, so clients that honor the registration's section filter only send the notification when the relevant settings actually change. This is normally set programmatically by client extensions rather than by users. See [`configuration_section`](https://aviatesk.github.io/JETLS.jl/release/launching/#init-options/configuration_section).",
+              "type": "string"
+            },
             "reuse_native_inference": {
               "default": false,
               "markdownDescription": "Reuse results from Julia's native inference cache for calls to methods defined outside the modules being analyzed, instead of analyzing them recursively. This can substantially speed up analysis of packages with large dependency surfaces, but analysis results may change slightly, which can change the diagnostics that are reported. See [`reuse_native_inference`](https://aviatesk.github.io/JETLS.jl/release/launching/#init-options/reuse_native_inference). Note: This is an experimental feature that may be removed or changed in future versions.",

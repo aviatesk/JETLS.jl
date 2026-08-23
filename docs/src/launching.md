@@ -213,6 +213,7 @@ Configure initialization options in Zed's `settings.json`:
 
 - [`analysis_overrides`](@ref init-options/analysis_overrides)
 - [`reuse_native_inference`](@ref init-options/reuse_native_inference)
+- [`configuration_section`](@ref init-options/configuration_section)
 
 #### [`analysis_overrides`](@id init-options/analysis_overrides)
 
@@ -281,3 +282,21 @@ reused results come from Julia's compiler rather than the JETLS analyzer, and
 that can change the diagnostics that are reported. Diagnostics for the modules
 being analyzed are unaffected in practice, but this remains an experimental
 option that may be removed or changed in future releases.
+
+#### [`configuration_section`](@id init-options/configuration_section)
+
+- **Type**: string
+- **Default**: unset
+
+A contract for language client implementors rather than for users: the
+client declares the configuration section it stores JETLS settings under
+(e.g. `"jetls-client.settings"` for the VSCode extension), and JETLS then
+registers `workspace/didChangeConfiguration` with that `section` so the
+client only sends the notification when the relevant settings actually
+change. When unset, the notification is registered without a section filter.
+
+!!! note "Specification and client support"
+    The `section` registration option is not documented in the prose LSP
+    specification (it is defined only in the machine-readable
+    `metaModel.json`), and in practice only `vscode-languageclient`-based
+    editors honor it; other clients ignore the registration options.
