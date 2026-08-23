@@ -5,10 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v0.8.0
 
-- Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
-- Diff: [`8cfd8fed7...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/8cfd8fed7...HEAD)
+- Commit: [`8a6998f1b`](https://github.com/aviatesk/JETLS.jl/commit/8a6998f1b)
+- Diff: [`8cfd8fed7...8a6998f1b`](https://github.com/aviatesk/JETLS.jl/compare/8cfd8fed7...8a6998f1b)
 
 ### Added
 
@@ -21,6 +21,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed overlapping JETLS restarts in VS Code by serializing rapid manual and configuration-triggered restart requests and waiting for the replacement server to finish initializing.
 
 - Fixed unnecessary configuration syncs: the server is now notified only when `jetls-client.settings` actually changes, instead of on every VS Code configuration change.
+
+- Fixed manual and automatic restarts failing permanently after a failed server startup.
+
+- Fixed startup hanging indefinitely when the server process exits before connecting or never completes its startup; it now fails with an explicit error instead of a stuck spinner.
 
 ## v0.7.0
 
