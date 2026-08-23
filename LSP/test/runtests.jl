@@ -18,6 +18,13 @@ function Base.unsafe_write(io::BlockingFailingWriteIO, ::Ptr{UInt8}, ::UInt)
     throw(EOFError())
 end
 
+module ExternalInterfaceTest
+using LSP
+LSP.@interface OptionalInterface begin
+    value::Union{Nothing,String} = nothing
+end
+end # module ExternalInterfaceTest
+
 @testset "LSP" begin
     # De/serializing complex LSP objects
     uri = filename2uri(@__FILE__)
@@ -284,5 +291,10 @@ end
         notify(output.resume_write)
         wait(close_task); wait(endpoint.read_task)
         @test isempty(errors)
+    end
+
+    @testset "external @interface" begin
+        value = ExternalInterfaceTest.OptionalInterface()
+        @test to_lsp_json(value) == "{}"
     end
 end
