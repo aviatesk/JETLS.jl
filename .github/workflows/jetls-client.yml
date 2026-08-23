@@ -60,3 +60,13 @@ jobs:
       - name: Check package.json is up to date
         run: |
           julia --startup-file=no --project=scripts/schema scripts/schema/update-pkg-json.jl jetls-client/package.json --check
+
+  check_version_pin:
+    name: Check JETLS_VERSION.json matches the pinned release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check the julia bounds against the pinned release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./scripts/check-jetls-client-julia-bounds.sh
