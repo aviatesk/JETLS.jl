@@ -201,6 +201,9 @@ function begin_analysis_shutdown!(server::Server)
     return nothing
 end
 
+is_analysis_stopping(manager::AnalysisManager) =
+    @lock manager.lifecycle_lock manager.stopping[]
+
 function start_signature_analysis_workers!(server::Server)
     manager = server.state.analysis_manager
     worker_tasks = manager.signature_worker_tasks
@@ -520,6 +523,11 @@ end
 
 function resolve_analysis_request(server::Server, request::AnalysisRequest)
     manager = server.state.analysis_manager
+
+    if is_analysis_stopping(manager)
+        @static JETLS_DEV_MODE && @info "Skipped queued analysis request during shutdown" entry=progress_title(request.entry) uri=request.uri generation=request.generation
+        @goto next_request
+    end
 
     if is_superseded_request(manager, request)
         @static JETLS_DEV_MODE && @info "Skipped superseded analysis request" entry=progress_title(request.entry) uri=request.uri generation=request.generation

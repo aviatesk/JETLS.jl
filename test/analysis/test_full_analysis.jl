@@ -2,7 +2,16 @@ module test_full_analysis
 
 using Test
 using JETLS: JETLS
-using JETLS.URIs2: filepath2uri
+using JETLS.URIs2: URI, filepath2uri
+
+struct ShutdownTestEntry <: JETLS.AnalysisEntry end
+
+JETLS.progress_title_impl(::ShutdownTestEntry) = "shutdown test"
+# Tripwire: `is_abandoned_analysis_target` is only reached when `resolve_analysis_request`
+# executes the analysis body, so any queued request that is not skipped during shutdown
+# fails the test with this error.
+JETLS.is_abandoned_analysis_target(::JETLS.Server, ::URI, ::ShutdownTestEntry) =
+    error("queued analysis executed during shutdown")
 
 include(normpath(pkgdir(JETLS), "test", "setup.jl"))
 
@@ -200,6 +209,28 @@ end
 
     @test timedwait(() -> istaskdone(active_waiter), 1.0) == :ok
     @test timedwait(() -> istaskdone(pending_waiter), 1.0) == :ok
+    @test !haskey(JETLS.load(manager.pending_analyses), entry)
+    @test !isready(manager.queue)
+end
+
+@testset "shutdown skips queued analysis" begin
+    server = JETLS.Server()
+    manager = server.state.analysis_manager
+    script_uri = filepath2uri(joinpath(@__DIR__, "shutdown-queued.jl"))
+    entry = ShutdownTestEntry()
+    completion = Base.Event()
+    completion_waiter = Threads.@spawn wait(completion)
+    request = JETLS.AnalysisRequest(
+        entry, script_uri, #=generation=#0, nothing, false, completion)
+
+    JETLS.queue_request!(server, request)
+    @test JETLS.load(manager.pending_analyses)[entry] === nothing
+
+    JETLS.begin_analysis_shutdown!(server)
+    JETLS.start_analysis_worker!(server)
+    JETLS.stop_analysis_worker(server)
+
+    @test timedwait(() -> istaskdone(completion_waiter), 1.0) == :ok
     @test !haskey(JETLS.load(manager.pending_analyses), entry)
     @test !isready(manager.queue)
 end
