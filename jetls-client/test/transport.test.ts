@@ -170,6 +170,50 @@ test("precompilation output re-arms the startup timeout", async () => {
   }
 });
 
+test("socket transport cancels a pending connection attempt", async () => {
+  const child = new FakeChildProcess();
+  let cancel: (() => void) | undefined;
+  const { options } = createTransportContext([child], {
+    registerCancel: (callback) => {
+      cancel = callback;
+    },
+  });
+
+  const connect = connectSocketTransport("jetls", ["serve"], {}, 0, options);
+  assert.ok(cancel);
+  cancel();
+  await assert.rejects(connect, /cancelled by a restart request/);
+  assert.deepEqual(child.killCalls, [undefined]);
+  child.close(null, "SIGTERM");
+});
+
+test("socket transport cancellation is a no-op once connected", async () => {
+  const child = new FakeChildProcess();
+  let cancel: (() => void) | undefined;
+  const { options } = createTransportContext([child], {
+    registerCancel: (callback) => {
+      cancel = callback;
+    },
+  });
+  const { server, port } = await listenOnEphemeralPort();
+  const serverSockets: net.Socket[] = [];
+  server.on("connection", (socket) => serverSockets.push(socket));
+  try {
+    const connect = connectSocketTransport("jetls", ["serve"], {}, 0, options);
+    child.stdout.write(`<JETLS-PORT>${port}</JETLS-PORT>\n`);
+    const streams = await connect;
+    assert.ok(cancel);
+    cancel();
+    assert.deepEqual(child.killCalls, []);
+    streams.reader.destroy();
+  } finally {
+    for (const socket of serverSockets) {
+      socket.destroy();
+    }
+    await closeServer(server);
+  }
+});
+
 test("socket transport surfaces connection failures", async () => {
   const child = new FakeChildProcess();
   const { options } = createTransportContext([child]);
@@ -253,6 +297,54 @@ test("pipe transport times out when the server never connects", async () => {
   if (process.platform !== "win32") {
     assert.ok(!fs.existsSync(socketPath));
   }
+});
+
+test("pipe transport cancels a pending connection attempt", async () => {
+  const child = new FakeChildProcess();
+  let cancel: (() => void) | undefined;
+  const { options, spawnCalls } = createTransportContext([child], {
+    registerCancel: (callback) => {
+      cancel = callback;
+    },
+  });
+
+  const connect = connectPipeTransport("jetls", ["serve"], {}, options);
+  await waitForSpawn(spawnCalls);
+  assert.ok(cancel);
+  cancel();
+  await assert.rejects(connect, /cancelled by a restart request/);
+  assert.deepEqual(child.killCalls, [undefined]);
+
+  // The killed process exits eventually; the exit handler removes the socket
+  // file left behind by the closed pipe server.
+  const socketPath = spawnCalls[0].args.at(-1) as string;
+  child.close(null, "SIGTERM");
+  if (process.platform !== "win32") {
+    assert.ok(!fs.existsSync(socketPath));
+  }
+});
+
+test("pipe transport cancellation is a no-op once connected", async () => {
+  const child = new FakeChildProcess();
+  let cancel: (() => void) | undefined;
+  const { options, spawnCalls } = createTransportContext([child], {
+    registerCancel: (callback) => {
+      cancel = callback;
+    },
+  });
+
+  const connect = connectPipeTransport("jetls", ["serve"], {}, options);
+  const spawnCall = await waitForSpawn(spawnCalls);
+  const socketPath = spawnCall.args.at(-1) as string;
+  const client = net.createConnection(socketPath);
+  const streams = await connect;
+  assert.ok(cancel);
+  cancel();
+  assert.deepEqual(child.killCalls, []);
+
+  streams.reader.destroy();
+  client.destroy();
+  child.close(0, null);
 });
 
 test("pipe transport reports process errors", async () => {

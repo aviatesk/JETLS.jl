@@ -8,6 +8,10 @@ export class CoalescingTaskRunner {
     return this.activeRun;
   }
 
+  get pending(): boolean {
+    return this.runRequested;
+  }
+
   run(): Promise<void> {
     this.runRequested = true;
     if (this.activeRun === undefined) {

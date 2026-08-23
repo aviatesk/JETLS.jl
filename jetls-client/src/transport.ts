@@ -28,6 +28,12 @@ export interface TransportOptions {
   onPrecompiling: () => void;
   /** Invoked when the spawned server process emits an `error` event. */
   onProcessError: (error: Error) => void;
+  /**
+   * Receives a function that cancels the connection attempt: while the
+   * transport is still waiting for the server, it kills the spawned process
+   * and rejects the attempt; once the server has connected it is a no-op.
+   */
+  registerCancel?: (cancel: () => void) => void;
 }
 
 interface ProcessManager {
@@ -116,6 +122,20 @@ export function connectSocketTransport(
     );
 
     let actualPort: number | null = null;
+    let connected = false;
+    let cancelled = false;
+
+    options.registerCancel?.(() => {
+      if (connected || cancelled) {
+        return;
+      }
+      cancelled = true;
+      options.appendLine(
+        "[jetls-client] Cancelling JETLS startup for a new restart request",
+      );
+      jetlsProcess.kill();
+      reject(new Error("JETLS startup was cancelled by a restart request"));
+    });
 
     const timeoutHandler = createTimeoutHandler(
       jetlsProcess,
@@ -156,6 +176,7 @@ export function connectSocketTransport(
               options.appendLine(
                 `[jetls-client] Connected to JETLS on port ${actualPort}!`,
               );
+              connected = true;
               resolve({ reader: socket, writer: socket });
             });
 
@@ -207,6 +228,23 @@ export function connectPipeTransport(
 
     const server = net.createServer();
 
+    let jetlsProcess: cp.ChildProcess | undefined;
+    let connected = false;
+    let cancelled = false;
+
+    options.registerCancel?.(() => {
+      if (connected || cancelled) {
+        return;
+      }
+      cancelled = true;
+      options.appendLine(
+        "[jetls-client] Cancelling JETLS startup for a new restart request",
+      );
+      jetlsProcess?.kill();
+      server.close();
+      reject(new Error("JETLS startup was cancelled by a restart request"));
+    });
+
     server.once("error", (err) => {
       options.appendLine(
         `[jetls-client] Failed to create server: ${err.message}`,
@@ -215,6 +253,9 @@ export function connectPipeTransport(
     });
 
     server.listen(socketPath, () => {
+      if (cancelled) {
+        return;
+      }
       const pipeType =
         process.platform === "win32" ? "named pipe" : "Unix domain socket";
       options.appendLine(
@@ -222,7 +263,7 @@ export function connectPipeTransport(
       );
 
       options.appendLine(`[jetls-client] Starting JETLS...`);
-      const jetlsProcess = spawnProcess(
+      jetlsProcess = spawnProcess(
         command,
         [...serveArgs, "--pipe-connect", socketPath],
         spawnOptions,
@@ -252,8 +293,6 @@ export function connectPipeTransport(
         server.close();
         reject(err);
       });
-
-      let connected = false;
 
       jetlsProcess.on("exit", (code, signal) => {
         options.appendLine(

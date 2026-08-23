@@ -39,6 +39,7 @@ let outputChannel: LogOutputChannel;
 let statusBar: StartupStatusBar;
 let deactivating = false;
 let currentServerConfig: ServerConfig | null = null;
+let cancelServerStartup: (() => void) | undefined;
 
 export function activateServerLifecycle(
   channel: LogOutputChannel,
@@ -182,7 +183,10 @@ async function startLanguageServer() {
     await versionPreflight.run(baseCommand, versionArgs, spawnOptions);
   } catch (err) {
     const error = err instanceof Error ? err : new Error(String(err));
-    if (!deactivating) {
+    // If a restart request is queued, this failure is most likely the
+    // deliberate kill from `requestLanguageServerRestart`; skip the error
+    // surface here and let the rerun repaint the status from "checking".
+    if (!deactivating && !restartRunner.pending) {
       statusBar.show("failed");
       handleSpawnError(error, baseCommand);
     }
@@ -202,6 +206,9 @@ async function startLanguageServer() {
     appendLine: (message) => outputChannel.appendLine(message),
     onPrecompiling: () => statusBar.show("precompiling"),
     onProcessError: (error) => handleSpawnError(error, baseCommand),
+    registerCancel: (cancel) => {
+      cancelServerStartup = cancel;
+    },
   };
 
   if (commChannel === "stdio") {
@@ -355,11 +362,16 @@ async function startLanguageServer() {
     }
   } catch (err) {
     const error = err instanceof Error ? err : new Error(String(err));
-    if (!deactivating) {
+    // If a restart request is queued, this failure is most likely the
+    // deliberate cancellation from `requestLanguageServerRestart`; skip the
+    // error surface here and let the rerun repaint the status from "checking".
+    if (!deactivating && !restartRunner.pending) {
       statusBar.show("failed");
       handleSpawnError(error, baseCommand);
     }
     throw error;
+  } finally {
+    cancelServerStartup = undefined;
   }
 
   if (deactivating) {
@@ -418,7 +430,20 @@ async function restartLanguageServer() {
 const restartRunner = new CoalescingTaskRunner(restartLanguageServer);
 
 export function requestLanguageServerRestart(): void {
-  void restartRunner.run().catch((err) => {
+  const lifecycle = restartRunner.run();
+  // Kill an in-flight version preflight so the rerun queued above can start
+  // immediately; otherwise the rerun would wait for the preflight to finish,
+  // which can take up to `PRECOMPILATION_TIMEOUT_MS` while precompiling.
+  void versionPreflight.terminate().catch((err) => {
+    const message = err instanceof Error ? err.message : String(err);
+    outputChannel.appendLine(
+      `[jetls-client] Failed to terminate JETLS version check: ${message}.`,
+    );
+  });
+  // Likewise kill a spawned server still waiting for its transport
+  // connection; the transport turns this into a no-op once connected.
+  cancelServerStartup?.();
+  void lifecycle.catch((err) => {
     const message = err instanceof Error ? err.message : String(err);
     outputChannel.appendLine(
       `[jetls-client] Failed to restart language server: ${message}.`,

@@ -72,6 +72,29 @@ test("runs a pending task after the active task fails", async () => {
   assert.equal(runCount, 2);
 });
 
+test("exposes whether a rerun is pending", async () => {
+  const releaseFirstRun = deferred();
+  const firstRunStarted = deferred();
+  let runCount = 0;
+  const runner = new CoalescingTaskRunner(async () => {
+    runCount += 1;
+    if (runCount === 1) {
+      firstRunStarted.resolve();
+      await releaseFirstRun.promise;
+    }
+  });
+
+  assert.equal(runner.pending, false);
+  const activeRun = runner.run();
+  await firstRunStarted.promise;
+  assert.equal(runner.pending, false);
+  const pendingRun = runner.run();
+  assert.equal(runner.pending, true);
+  releaseFirstRun.resolve();
+  await Promise.all([activeRun, pendingRun]);
+  assert.equal(runner.pending, false);
+});
+
 test("exposes the active run until it settles", async () => {
   const release = deferred();
   const runner = new CoalescingTaskRunner(() => release.promise);
