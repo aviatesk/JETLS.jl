@@ -52,7 +52,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - The `jetls version` command now starts faster even when precompile workloads are disabled.
 
-- The `jetls --version` output now uses the lowercase `jetls version ..., julia version ...` format, consistent with other Julia apps such as [`runic`](https://github.com/fredrikekre/Runic.jl) and [`juliac`](https://github.com/JuliaLang/Juliac.jl). (https://github.com/aviatesk/JETLS.jl/pull/830)
+- The `jetls version` output now uses the lowercase `jetls version ..., julia version ...` format, consistent with other Julia apps such as [`runic`](https://github.com/fredrikekre/Runic.jl) and [`juliac`](https://github.com/JuliaLang/Juliac.jl). (https://github.com/aviatesk/JETLS.jl/pull/830)
 
 ## 2026-08-07
 
