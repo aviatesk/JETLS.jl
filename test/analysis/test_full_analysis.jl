@@ -6,12 +6,41 @@ using JETLS.URIs2: URI, filepath2uri
 
 struct ShutdownTestEntry <: JETLS.AnalysisEntry end
 
+struct ActiveShutdownTestEntry <: JETLS.AnalysisEntry
+    uri::URI
+    started::Base.Event
+    release::Base.Event
+end
+
 struct ShutdownSignatureJob <: JETLS.AbstractSignatureAnalysisJob
     completion::Base.Event
 end
 
 JETLS.progress_title_impl(::ShutdownTestEntry) = "shutdown test"
+JETLS.progress_title_impl(::ActiveShutdownTestEntry) = "active shutdown test"
 (::ShutdownSignatureJob)(::JETLS.Server) = nothing
+
+function active_shutdown_analysis_result(entry::ActiveShutdownTestEntry)
+    return JETLS.AnalysisResult(
+        entry,
+        JETLS.URI2Diagnostics(entry.uri => JETLS.LSP.Diagnostic[]),
+        JETLS.LSAnalyzer(entry),
+        Dict(entry.uri => JETLS.JET.AnalyzedFileInfo()),
+        Main => Main,
+        Base.get_world_counter())
+end
+
+function JETLS.execute_analysis_impl(
+        server::JETLS.Server, execution::JETLS.AnalysisExecution,
+        entry::ActiveShutdownTestEntry,
+    )
+    analysis_result = active_shutdown_analysis_result(entry)
+    @assert JETLS.cache_intermediate_analysis_result!(
+        server, execution, analysis_result)
+    notify(entry.started)
+    wait(entry.release)
+    return JETLS.CompletedAnalysis(analysis_result, false)
+end
 # Tripwire: `is_abandoned_analysis_target` is only reached when `resolve_analysis_request`
 # executes the analysis body, so any queued request that is not skipped during shutdown
 # fails the test with this error.
@@ -281,6 +310,59 @@ end
     @test timedwait(() -> istaskdone(completion_waiter), 1.0) == :ok
     @test !haskey(JETLS.load(manager.pending_analyses), entry)
     @test !isready(manager.queue)
+end
+
+@testset "shutdown cancels active analysis" begin
+    recorder = JETLS.ServerMessageRecorder()
+    endpoint = JETLS.LSP.Endpoint(IOBuffer(), IOBuffer())
+    server = JETLS.Server(endpoint; callback=recorder)
+    manager = server.state.analysis_manager
+    capabilities = JETLS.LSP.ClientCapabilities(;
+        workspace = JETLS.LSP.WorkspaceClientCapabilities(;
+            diagnostics = JETLS.LSP.DiagnosticWorkspaceClientCapabilities(;
+                refreshSupport = true),
+            codeLens = JETLS.LSP.CodeLensWorkspaceClientCapabilities(;
+                refreshSupport = true)))
+    server.state.init_params = JETLS.LSP.InitializeParams(;
+        processId = nothing, rootUri = nothing, capabilities)
+
+    script_uri = filepath2uri(joinpath(@__DIR__, "shutdown-active.jl"))
+    entry = ActiveShutdownTestEntry(script_uri, Base.Event(), Base.Event())
+    previous_result = active_shutdown_analysis_result(entry)
+    JETLS.update_analysis_cache!(server.state, previous_result)
+    previous_request = JETLS.AnalysisRequest(
+        entry, script_uri, #=generation=#0, nothing, false)
+    JETLS.mark_analyzed_generation!(manager, previous_request)
+
+    completion = Base.Event()
+    completion_waiter = Threads.@spawn wait(completion)
+    request = JETLS.AnalysisRequest(
+        entry, script_uri, #=generation=#1, nothing, true, completion)
+
+    JETLS.queue_request!(server, request)
+    JETLS.start_analysis_worker!(server)
+    wait(entry.started)
+    intermediate_result = JETLS.get_analysis_info(manager, script_uri)
+    @test intermediate_result isa JETLS.AnalysisResult
+    @test intermediate_result !== previous_result
+
+    active_execution = manager.active_analysis[]
+    @test active_execution isa JETLS.AnalysisExecution
+    JETLS.begin_analysis_shutdown!(server)
+    @test JETLS.is_analysis_cancelled(active_execution)
+    @test JETLS.get_analysis_info(manager, script_uri) === previous_result
+
+    notify(entry.release)
+    JETLS.wait_analysis_workers(server)
+
+    @test timedwait(() -> istaskdone(completion_waiter), 1.0) == :ok
+    @test JETLS.get_analysis_info(manager, script_uri) === previous_result
+    @test JETLS.load(manager.analyzed_generations)[entry] == 0
+    @test !haskey(JETLS.load(manager.pending_analyses), entry)
+    @test manager.active_analysis[] === nothing
+    @test isempty(recorder.sent_queue)
+    close(endpoint)
+    wait(endpoint.read_task)
 end
 
 @testset "shutdown joins full analysis before signature workers" begin

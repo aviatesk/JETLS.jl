@@ -194,9 +194,11 @@ function compute_percentage(count, total, max=100)
 end
 
 function cache_intermediate_analysis_result!(interp::LSInterpreter)
-    result = JET.JETToplevelResult(interp.analyzer, interp.state.res, "LSInterpreter (intermediate result)", ())
+    result = JET.JETToplevelResult(interp.analyzer, interp.state.res,
+        "LSInterpreter (intermediate result)", ())
     intermediate_result, _ = JETLS.new_analysis_result(interp, result)
-    JETLS.update_analysis_cache!(interp.server.state, intermediate_result)
+    JETLS.cache_intermediate_analysis_result!(
+        interp.server, interp.execution, intermediate_result)
 end
 
 function JET.analyze_from_definitions!(interp::LSInterpreter, config::JET.ToplevelConfig)
@@ -207,9 +209,12 @@ function JET.analyze_from_definitions!(interp::LSInterpreter, config::JET.Toplev
         notify(activation_done)
     end
 
+    JETLS.is_analysis_cancelled(interp.execution) && return
+
     # Cache intermediate analysis results after file analysis completes
     # This makes module context information available immediately for LS features
-    cache_intermediate_analysis_result!(interp)
+    cache_intermediate_analysis_result!(interp) || return
+    JETLS.is_analysis_cancelled(interp.execution) && return
 
     res = JET.InterpretationState(interp).res
     reset_report_target_modules!(interp.analyzer, res.analyzed_files)
@@ -270,6 +275,7 @@ function JET.analyze_from_definitions!(interp::LSInterpreter, config::JET.Toplev
     end
 
     JETLS.run_signature_analysis_jobs!(interp.server, jobs)
+    JETLS.is_analysis_cancelled(interp.execution) && return
 
     append!(res.inference_error_reports, progress.reports)
 end
@@ -277,6 +283,7 @@ end
 function JET.virtual_process!(interp::LSInterpreter,
                               x::Union{AbstractString,JS.SyntaxNode},
                               overrideex::Union{Nothing,Expr})
+    JETLS.is_analysis_cancelled(interp.execution) && return nothing
     cancellable_token = interp.execution.request.cancellable_token
     if cancellable_token !== nothing
         filename = JET.InterpretationState(interp).filename
