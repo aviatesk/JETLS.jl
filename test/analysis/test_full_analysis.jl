@@ -6,7 +6,12 @@ using JETLS.URIs2: URI, filepath2uri
 
 struct ShutdownTestEntry <: JETLS.AnalysisEntry end
 
+struct ShutdownSignatureJob <: JETLS.AbstractSignatureAnalysisJob
+    completion::Base.Event
+end
+
 JETLS.progress_title_impl(::ShutdownTestEntry) = "shutdown test"
+(::ShutdownSignatureJob)(::JETLS.Server) = nothing
 # Tripwire: `is_abandoned_analysis_target` is only reached when `resolve_analysis_request`
 # executes the analysis body, so any queued request that is not skipped during shutdown
 # fails the test with this error.
@@ -186,6 +191,27 @@ end
     @test isnothing(JETLS.begin_analysis_shutdown!(server))
 end
 
+@testset "shutdown waits without started workers" begin
+    server = JETLS.Server()
+    manager = server.state.analysis_manager
+    script_uri = filepath2uri(joinpath(@__DIR__, "shutdown-without-worker.jl"))
+    entry = ShutdownTestEntry()
+    completion = Base.Event()
+    completion_waiter = Threads.@spawn wait(completion)
+    request = JETLS.AnalysisRequest(
+        entry, script_uri, #=generation=#0, nothing, false, completion)
+
+    JETLS.queue_request!(server, request)
+    @test isnothing(JETLS.wait_analysis_workers(server))
+
+    @test timedwait(() -> istaskdone(completion_waiter), 1.0) == :ok
+    @test !haskey(JETLS.load(manager.pending_analyses), entry)
+    @test !isready(manager.queue)
+    @test !isassigned(manager.worker_task)
+    @test isempty(manager.signature_worker_tasks)
+    @test isnothing(JETLS.wait_analysis_workers(server))
+end
+
 @testset "shutdown rejects late queue admission" begin
     server = JETLS.Server()
     manager = server.state.analysis_manager
@@ -250,11 +276,73 @@ end
 
     JETLS.begin_analysis_shutdown!(server)
     JETLS.start_analysis_worker!(server)
-    JETLS.stop_analysis_worker(server)
+    JETLS.wait_analysis_workers(server)
 
     @test timedwait(() -> istaskdone(completion_waiter), 1.0) == :ok
     @test !haskey(JETLS.load(manager.pending_analyses), entry)
     @test !isready(manager.queue)
+end
+
+@testset "shutdown joins full analysis before signature workers" begin
+    server = JETLS.Server()
+    manager = server.state.analysis_manager
+    release_full_analysis = Base.Event()
+    signature_job = ShutdownSignatureJob(Base.Event())
+
+    signature_task = Threads.@spawn :default JETLS.signature_analysis_worker(server)
+    push!(manager.signature_worker_tasks, signature_task)
+    manager.worker_task[] = Threads.@spawn :default begin
+        wait(release_full_analysis)
+        JETLS.run_signature_analysis_jobs!(server, [signature_job])
+    end
+
+    shutdown_task = Threads.@spawn JETLS.wait_analysis_workers(server)
+    @test timedwait(() -> isready(manager.queue), 1.0) == :ok
+    @test !istaskdone(signature_task)
+
+    notify(release_full_analysis)
+    @test timedwait(() -> istaskdone(shutdown_task), 1.0) == :ok
+    @test fetch(shutdown_task) === nothing
+    @test istaskdone(manager.worker_task[])
+    @test istaskdone(signature_task)
+    @test !isready(manager.queue)
+    @test !isready(manager.signature_queue)
+end
+
+@testset "runserver starts analysis shutdown" begin
+    input_pipe = Pipe()
+    output_pipe = Pipe()
+    Base.link_pipe!(input_pipe; reader_supports_async=true, writer_supports_async=true)
+    Base.link_pipe!(output_pipe; reader_supports_async=true, writer_supports_async=true)
+    recorder = JETLS.ServerMessageRecorder()
+    endpoint = JETLS.LSP.Endpoint(input_pipe.out, output_pipe.in)
+    server = JETLS.Server(endpoint; callback=recorder)
+    server_task = Threads.@spawn :interactive JETLS.runserver(server)
+
+    try
+        JETLS.LSP.writelsp(input_pipe.in, JETLS.LSP.ShutdownRequest(; id=1))
+        @test take!(recorder.received_queue) isa JETLS.LSP.ShutdownRequest
+        @test take!(recorder.sent_queue) isa JETLS.LSP.ShutdownResponse
+        @test timedwait(
+            () -> JETLS.is_analysis_stopping(server.state.analysis_manager), 1.0) == :ok
+
+        JETLS.LSP.writelsp(input_pipe.in, JETLS.LSP.ExitNotification())
+        @test take!(recorder.received_queue) isa JETLS.LSP.ExitNotification
+        @test fetch(server_task) == 0
+    finally
+        close(input_pipe.in)
+        wait(endpoint.read_task)
+        close(input_pipe.out)
+        close(output_pipe.in)
+        close(output_pipe.out)
+    end
+end
+
+@testset "transport EOF starts analysis shutdown" begin
+    server = JETLS.Server()
+    @test JETLS.runserver(server) == 1
+    @test JETLS.is_analysis_stopping(server.state.analysis_manager)
+    wait(server.endpoint.read_task)
 end
 
 end # module test_full_analysis

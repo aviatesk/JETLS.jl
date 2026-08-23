@@ -309,6 +309,32 @@ function stop_analysis_worker(server::Server)
     return nothing
 end
 
+function wait_analysis_workers(server::Server)
+    begin_analysis_shutdown!(server)
+    manager = server.state.analysis_manager
+
+    worker_task = manager.worker_task
+    if isassigned(worker_task)
+        task = worker_task[]
+        istaskdone(task) || put!(manager.queue, nothing)
+        wait(task)
+    end
+
+    # Low-level callers may have stopped the worker before queueing test work.
+    while isready(manager.queue)
+        request = take!(manager.queue)
+        request === nothing || finish_analysis_request!(manager, request)
+    end
+
+    # Active full analysis may still be waiting for signature-analysis jobs.
+    worker_tasks = manager.signature_worker_tasks
+    for task in worker_tasks
+        istaskdone(task) || put!(manager.signature_queue, nothing)
+    end
+    foreach(wait, worker_tasks)
+    return nothing
+end
+
 # Analysis worker pipeline
 # ========================
 
@@ -624,6 +650,10 @@ function resolve_analysis_request(server::Server, request::AnalysisRequest)
 
     @label next_request
 
+    finish_analysis_request!(manager, request)
+end
+
+function finish_analysis_request!(manager::AnalysisManager, request::AnalysisRequest)
     notify(request.completion)
 
     # Check for pending request and re-queue if exist
@@ -652,6 +682,7 @@ function resolve_analysis_request(server::Server, request::AnalysisRequest)
     end
     cancelled_pending_request === nothing ||
         notify(cancelled_pending_request.completion)
+    return nothing
 end
 
 function increment_generation!(manager::AnalysisManager, @nospecialize entry::AnalysisEntry)
