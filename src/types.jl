@@ -370,6 +370,10 @@ struct CancelledAnalysis <: AnalysisOutcome end
 abstract type AbstractSignatureAnalysisJob end
 signature_analysis_completion(job::AbstractSignatureAnalysisJob) =
     getfield(job, :completion)::Base.Event
+function signature_analysis_execution_impl end
+signature_analysis_execution(job::AbstractSignatureAnalysisJob) =
+    signature_analysis_execution_impl(job)::Union{Nothing,AnalysisExecution}
+signature_analysis_execution_impl(::AbstractSignatureAnalysisJob) = nothing
 
 const AnalysisCache = LWContainer{Dict{URI,AnalysisInfo}, LWStats}
 const TrackedAnalysisEntries = CASContainer{Dict{AnalysisEntry,URI}, CASStats}

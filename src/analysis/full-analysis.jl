@@ -283,7 +283,10 @@ function signature_analysis_worker(server::Server)
         was_sticky = task.sticky
         task.sticky = true
         try
-            @tryinvokelatest job(server)
+            execution = signature_analysis_execution(job)
+            if execution === nothing || !is_analysis_cancelled(execution)
+                @tryinvokelatest job(server)
+            end
         finally
             task.sticky = was_sticky
             notify(signature_analysis_completion(job))
@@ -295,9 +298,31 @@ end
 function run_signature_analysis_jobs!(
         server::Server, jobs::Vector{<:AbstractSignatureAnalysisJob}
     )
-    queue = server.state.analysis_manager.signature_queue
-    foreach(job -> put!(queue, job), jobs)
-    foreach(job -> wait(signature_analysis_completion(job)), jobs)
+    isempty(jobs) && return nothing
+    manager = server.state.analysis_manager
+    execution = signature_analysis_execution(first(jobs))
+    @assert all(job -> signature_analysis_execution(job) === execution, jobs)
+
+    accepted = if execution === nothing
+        foreach(job -> put!(manager.signature_queue, job), jobs)
+        true
+    else
+        @lock manager.lifecycle_lock begin
+            if manager.stopping[] || is_analysis_cancelled(execution)
+                cancel!(execution.shutdown_cancel_flag)
+                false
+            else
+                foreach(job -> put!(manager.signature_queue, job), jobs)
+                true
+            end
+        end
+    end
+
+    if accepted
+        foreach(job -> wait(signature_analysis_completion(job)), jobs)
+    else
+        foreach(job -> notify(signature_analysis_completion(job)), jobs)
+    end
     return nothing
 end
 
@@ -1271,6 +1296,7 @@ mutable struct ReviseAnalysisProgress
 end
 
 struct ReviseSignatureAnalysisJob <: AbstractSignatureAnalysisJob
+    execution::AnalysisExecution
     workitem::SigWorkItem
     analyzer::LSAnalyzer
     progress::ReviseAnalysisProgress
@@ -1279,12 +1305,15 @@ struct ReviseSignatureAnalysisJob <: AbstractSignatureAnalysisJob
     n_sigs::Int
     completion::Base.Event
 end
+signature_analysis_execution_impl(job::ReviseSignatureAnalysisJob) = job.execution
 
 function (job::ReviseSignatureAnalysisJob)(server::Server)
-    (; workitem, analyzer, progress, inf_world, cancellable_token, n_sigs) = job
+    (; execution, workitem, analyzer, progress, inf_world,
+        cancellable_token, n_sigs) = job
     siginfo = workitem.siginfo
     try
-        if cancellable_token !== nothing && is_cancelled(cancellable_token.cancel_flag)
+        if (is_analysis_cancelled(execution) ||
+            cancellable_token !== nothing && is_cancelled(cancellable_token.cancel_flag))
             return
         end
         ext = Revise.get_extended_data(siginfo, :JETLS)
@@ -1512,7 +1541,8 @@ function analyze_package_with_revise(
     jobs = ReviseSignatureAnalysisJob[]
     for workitem in workitems
         push!(jobs, ReviseSignatureAnalysisJob(
-            workitem, analyzer, progress, inf_world, cancellable_token, n_sigs, Base.Event()))
+            execution, workitem, analyzer, progress, inf_world,
+            cancellable_token, n_sigs, Base.Event()))
     end
     run_signature_analysis_jobs!(server, jobs)
 

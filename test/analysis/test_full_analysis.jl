@@ -12,15 +12,44 @@ struct ActiveShutdownTestEntry <: JETLS.AnalysisEntry
     release::Base.Event
 end
 
+struct QueuedSignatureShutdownTestEntry <: JETLS.AnalysisEntry
+    uri::URI
+    first_started::Base.Event
+    release_first::Base.Event
+    first_ran::Base.RefValue{Bool}
+    queued_ran::Base.RefValue{Bool}
+end
+
 struct ShutdownSignatureJob <: JETLS.AbstractSignatureAnalysisJob
+    completion::Base.Event
+end
+
+struct CancellableShutdownSignatureJob <: JETLS.AbstractSignatureAnalysisJob
+    execution::JETLS.AnalysisExecution
+    started::Union{Nothing,Base.Event}
+    release::Union{Nothing,Base.Event}
+    ran::Base.RefValue{Bool}
     completion::Base.Event
 end
 
 JETLS.progress_title_impl(::ShutdownTestEntry) = "shutdown test"
 JETLS.progress_title_impl(::ActiveShutdownTestEntry) = "active shutdown test"
+JETLS.progress_title_impl(::QueuedSignatureShutdownTestEntry) =
+    "queued signature shutdown test"
 (::ShutdownSignatureJob)(::JETLS.Server) = nothing
+JETLS.signature_analysis_execution_impl(job::CancellableShutdownSignatureJob) =
+    job.execution
+function (job::CancellableShutdownSignatureJob)(::JETLS.Server)
+    job.ran[] = true
+    job.started === nothing || notify(job.started)
+    job.release === nothing || wait(job.release)
+    return nothing
+end
 
-function active_shutdown_analysis_result(entry::ActiveShutdownTestEntry)
+const ShutdownAnalysisTestEntry =
+    Union{ActiveShutdownTestEntry,QueuedSignatureShutdownTestEntry}
+
+function active_shutdown_analysis_result(entry::ShutdownAnalysisTestEntry)
     return JETLS.AnalysisResult(
         entry,
         JETLS.URI2Diagnostics(entry.uri => JETLS.LSP.Diagnostic[]),
@@ -40,6 +69,21 @@ function JETLS.execute_analysis_impl(
     notify(entry.started)
     wait(entry.release)
     return JETLS.CompletedAnalysis(analysis_result, false)
+end
+
+function JETLS.execute_analysis_impl(
+        server::JETLS.Server, execution::JETLS.AnalysisExecution,
+        entry::QueuedSignatureShutdownTestEntry,
+    )
+    jobs = [
+        CancellableShutdownSignatureJob(
+            execution, entry.first_started, entry.release_first,
+            entry.first_ran, Base.Event()),
+        CancellableShutdownSignatureJob(
+            execution, nothing, nothing, entry.queued_ran, Base.Event()),
+    ]
+    JETLS.run_signature_analysis_jobs!(server, jobs)
+    return JETLS.CompletedAnalysis(active_shutdown_analysis_result(entry), false)
 end
 # Tripwire: `is_abandoned_analysis_target` is only reached when `resolve_analysis_request`
 # executes the analysis body, so any queued request that is not skipped during shutdown
@@ -363,6 +407,65 @@ end
     @test isempty(recorder.sent_queue)
     close(endpoint)
     wait(endpoint.read_task)
+end
+
+@testset "shutdown rejects signature job admission" begin
+    server = JETLS.Server()
+    manager = server.state.analysis_manager
+    script_uri = filepath2uri(joinpath(@__DIR__, "shutdown-signature-admission.jl"))
+    request = JETLS.AnalysisRequest(
+        JETLS.ScriptAnalysisEntry(script_uri), script_uri,
+        #=generation=#0, nothing, false)
+    maybe_execution = JETLS.begin_analysis_execution!(manager, request, nothing)
+    @test maybe_execution isa JETLS.AnalysisExecution
+    execution = maybe_execution::JETLS.AnalysisExecution
+    ran = Ref(false)
+    job = CancellableShutdownSignatureJob(
+        execution, nothing, nothing, ran, Base.Event())
+    completion_waiter = Threads.@spawn wait(job.completion)
+
+    JETLS.begin_analysis_shutdown!(server)
+    JETLS.run_signature_analysis_jobs!(server, [job])
+
+    @test JETLS.is_analysis_cancelled(execution)
+    @test !ran[]
+    @test timedwait(() -> istaskdone(completion_waiter), 1.0) == :ok
+    @test !isready(manager.signature_queue)
+    JETLS.finish_analysis_execution!(manager, execution)
+end
+
+@testset "shutdown skips queued signature jobs" begin
+    server = JETLS.Server()
+    manager = server.state.analysis_manager
+    signature_task = Threads.@spawn :default JETLS.signature_analysis_worker(server)
+    push!(manager.signature_worker_tasks, signature_task)
+
+    script_uri = filepath2uri(joinpath(@__DIR__, "shutdown-signatures.jl"))
+    entry = QueuedSignatureShutdownTestEntry(
+        script_uri, Base.Event(), Base.Event(), Ref(false), Ref(false))
+    completion = Base.Event()
+    completion_waiter = Threads.@spawn wait(completion)
+    request = JETLS.AnalysisRequest(
+        entry, script_uri, #=generation=#0, nothing, false, completion)
+
+    JETLS.queue_request!(server, request)
+    JETLS.start_analysis_worker!(server)
+    wait(entry.first_started)
+    @test entry.first_ran[]
+    @test !entry.queued_ran[]
+
+    JETLS.begin_analysis_shutdown!(server)
+    notify(entry.release_first)
+    JETLS.wait_analysis_workers(server)
+
+    @test timedwait(() -> istaskdone(completion_waiter), 1.0) == :ok
+    @test !entry.queued_ran[]
+    @test JETLS.get_analysis_info(manager, script_uri) === nothing
+    @test !haskey(JETLS.load(manager.analyzed_generations), entry)
+    @test !haskey(JETLS.load(manager.pending_analyses), entry)
+    @test manager.active_analysis[] === nothing
+    @test istaskdone(signature_task)
+    @test !isready(manager.signature_queue)
 end
 
 @testset "shutdown joins full analysis before signature workers" begin
