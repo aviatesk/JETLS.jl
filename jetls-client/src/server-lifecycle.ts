@@ -2,7 +2,6 @@ import * as vscode from "vscode";
 import { LogOutputChannel } from "vscode";
 
 import {
-  DidChangeConfigurationNotification,
   LanguageClient,
   LanguageClientOptions,
   ServerOptions,
@@ -43,49 +42,6 @@ let deactivating = false;
 let currentServerConfig: ServerConfig | null = null;
 let cancelServerStartup: (() => void) | undefined;
 let managedStoragePath: string;
-
-/**
- * Sends `workspace/didChangeConfiguration` when a configuration change
- * affects `jetls-client.settings`, prompting the server to re-pull it via
- * `workspace/configuration`. The extension owns this send: the language
- * client's configuration sync feature cannot see which settings changed
- * (the server registers without a section filter, so it would send on every
- * configuration change) and is therefore suppressed in the middleware below.
- * The send is skipped while a restart is queued or shutdown is underway;
- * the replacement server pulls fresh configuration on initialize anyway.
- *
- * TODO (managed installation): once the extension manages the server binary
- * and a paired server version is guaranteed, declare
- * `configuration_section: JETLS_CLIENT_SETTINGS_SECTION` in the
- * `initializationOptions` instead. The server then registers the
- * notification with that section filter and the library's configuration
- * sync feature takes over, so this function and the middleware suppression
- * below can be deleted. Declaring it today would make older servers reject
- * the whole `initializationOptions` as containing an unknown key.
- */
-export function syncConfigurationChange(
-  event: vscode.ConfigurationChangeEvent,
-): void {
-  if (deactivating || restartRunner.pending) {
-    return;
-  }
-  if (!event.affectsConfiguration(JETLS_CLIENT_SETTINGS_SECTION)) {
-    return;
-  }
-  if (!languageClient?.isRunning()) {
-    return;
-  }
-  void languageClient
-    .sendNotification(DidChangeConfigurationNotification.type, {
-      settings: null,
-    })
-    .catch((err) => {
-      const message = err instanceof Error ? err.message : String(err);
-      outputChannel.appendLine(
-        `[jetls-client] Failed to send workspace/didChangeConfiguration: ${message}.`,
-      );
-    });
-}
 
 export function activateServerLifecycle(
   channel: LogOutputChannel,
@@ -412,6 +368,17 @@ async function startLanguageServer() {
       );
   }
 
+  const initializationOptions = {
+    ...serverConfig.initializationOptions,
+    // Declare the section this extension stores server settings under; the
+    // server registers `workspace/didChangeConfiguration` with it so the
+    // configuration sync feature only sends the notification when that
+    // section actually changes. This requires a server that understands the
+    // `configuration_section` initialization option, which the managed
+    // installation guarantees.
+    configuration_section: JETLS_CLIENT_SETTINGS_SECTION,
+  };
+
   const clientOptions: LanguageClientOptions = {
     // Keep this selector as a static-registration fallback while jetls-client can
     // connect to independently installed JETLS versions. Once the extension manages
@@ -440,10 +407,19 @@ async function startLanguageServer() {
     ],
     middleware: {
       workspace: {
-        // Suppress the configuration sync feature's own sends entirely:
-        // `syncConfigurationChange` owns the notification and only sends it
-        // when `jetls-client.settings` actually changed.
-        didChangeConfiguration: () => Promise.resolve(),
+        // The server registers `workspace/didChangeConfiguration` with the
+        // section declared via `configuration_section` above, so the
+        // configuration sync feature only fires when `jetls-client.settings`
+        // changes. Still skip the send when the same change has queued a
+        // restart or shutdown is underway: it would race the client teardown,
+        // and the replacement server pulls fresh configuration on initialize
+        // anyway.
+        didChangeConfiguration: (sections, next) => {
+          if (deactivating || restartRunner.pending) {
+            return Promise.resolve();
+          }
+          return next(sections);
+        },
       },
       // `editor.action.showReferences` is a built-in VSCode command that
       // requires actual `vscode.Uri`/`vscode.Position`/`vscode.Location`
@@ -487,7 +463,7 @@ async function startLanguageServer() {
         return resolved;
       },
     },
-    initializationOptions: serverConfig.initializationOptions,
+    initializationOptions,
     outputChannel,
   };
 

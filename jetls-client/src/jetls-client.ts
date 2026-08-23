@@ -10,7 +10,6 @@ import {
   reinstallServer,
   restartOnServerConfigChange,
   shutdownServerLifecycle,
-  syncConfigurationChange,
 } from "./server-lifecycle";
 import { StartupStatusBar } from "./status-bar";
 
@@ -26,7 +25,6 @@ export function activate(context: ExtensionContext) {
       if (affectsServerConfig(event)) {
         restartOnServerConfigChange();
       }
-      syncConfigurationChange(event);
     }),
   );
   context.subscriptions.push(
