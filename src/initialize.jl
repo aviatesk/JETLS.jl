@@ -564,7 +564,7 @@ function handle_InitializedNotification(server::Server)
     end
 
     if supports(server, :workspace, :didChangeConfiguration, :dynamicRegistration)
-        push!(registrations, did_change_configuration_registration())
+        push!(registrations, did_change_configuration_registration(server))
         @static JETLS_DEV_MODE && @info "Dynamically registering 'workspace/didChangeConfiguration' upon `InitializedNotification`"
     end
 

@@ -7,6 +7,21 @@
     dynamicRegistration::Union{Nothing, Bool} = nothing
 end
 
+"""
+Registration options of the `workspace/didChangeConfiguration` notification.
+
+Note that this type does not appear in the prose specification document.
+It is defined in the official machine-readable protocol definition
+(`metaModel.json`) as the registration options of the notification, and
+`vscode-languageclient` honors the `section` filter: when registered with
+sections, the client only sends the notification when a configuration change
+affects one of them, and pushes the current values of those sections as the
+`settings` payload.
+"""
+@interface DidChangeConfigurationRegistrationOptions begin
+    section::Union{Nothing, String, Vector{String}} = nothing
+end
+
 @interface ConfigurationItem begin
     """
     The scope to get the configuration section for.

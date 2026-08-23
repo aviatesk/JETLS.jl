@@ -650,6 +650,7 @@ merge_key_value(analysis_override::AnalysisOverride) = analysis_override.path
 @kwdef struct InitOptions <: ConfigSection
     analysis_overrides::Maybe{Vector{AnalysisOverride}} = nothing
     reuse_native_inference::Maybe{Bool} = nothing
+    configuration_section::Maybe{String} = nothing
 end
 @define_eq_overloads InitOptions
 function Base.show(io::IO, init_options::InitOptions)
@@ -659,6 +660,9 @@ function Base.show(io::IO, init_options::InitOptions)
     reuse_native_inference = init_options.reuse_native_inference
     reuse_native_inference === nothing ||
         print(io, " reuse_native_inference=", reuse_native_inference)
+    configuration_section = init_options.configuration_section
+    configuration_section === nothing ||
+        print(io, " configuration_section=", repr(configuration_section))
     print(io, ")")
 end
 const DEFAULT_INIT_OPTIONS = InitOptions(;
