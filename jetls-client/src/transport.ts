@@ -209,6 +209,13 @@ export function connectSocketTransport(
 
 // Pipe communication (Unix domain socket / named pipe): the client listens
 // and the spawned server connects back via `--pipe-connect`.
+//
+// TODO (managed installation): commit ed0de248bb replaces this hand-rolled
+// transport with vscode-languageclient's built-in `TransportKind.pipe`,
+// which spawns the server with `--pipe=<name>` and owns the process. Old
+// `jetls` binaries do not understand that flag and would leave the startup
+// hanging silently, so the replacement ships once managed installation
+// guarantees a paired server version.
 export function connectPipeTransport(
   command: string,
   serveArgs: string[],
