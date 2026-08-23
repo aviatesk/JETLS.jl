@@ -9,6 +9,7 @@ import {
   requestLanguageServerRestart,
   restartOnServerConfigChange,
   shutdownServerLifecycle,
+  syncConfigurationChange,
 } from "./server-lifecycle";
 import { StartupStatusBar } from "./status-bar";
 import { checkForUpdates } from "./update-check";
@@ -25,6 +26,7 @@ export function activate(context: ExtensionContext) {
       if (affectsServerConfig(event)) {
         restartOnServerConfigChange();
       }
+      syncConfigurationChange(event);
     }),
   );
   context.subscriptions.push(

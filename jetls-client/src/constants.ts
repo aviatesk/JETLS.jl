@@ -6,6 +6,13 @@ export const JETLS_CHANGELOG_URL =
   "https://github.com/aviatesk/JETLS.jl/blob/master/jetls-client/CHANGELOG.md";
 export const JETLS_MIGRATION_GUIDE_URL = `${JETLS_CHANGELOG_URL}#v020`;
 
+/**
+ * VS Code configuration section served to the server as its workspace
+ * configuration (`workspace/configuration`), and therefore the only section
+ * whose changes need announcing via `workspace/didChangeConfiguration`.
+ */
+export const JETLS_CLIENT_SETTINGS_SECTION = "jetls-client.settings";
+
 /** Julia stderr substring that signals package precompilation has started. */
 export const PRECOMPILING_MARKER = "Precompiling packages";
 
