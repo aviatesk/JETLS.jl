@@ -2,6 +2,7 @@ import * as vscode from "vscode";
 import { LogOutputChannel } from "vscode";
 
 import {
+  DidChangeConfigurationNotification,
   LanguageClient,
   LanguageClientOptions,
   ServerOptions,
@@ -10,6 +11,7 @@ import {
 
 import { CoalescingTaskRunner } from "./coalescing-task-runner";
 import {
+  JETLS_CLIENT_SETTINGS_SECTION,
   JETLS_INSTALL_COMMAND,
   JETLS_INSTALL_GUIDE_URL,
   LANGUAGE_SERVER_STOP_TIMEOUT_MS,
@@ -40,6 +42,49 @@ let statusBar: StartupStatusBar;
 let deactivating = false;
 let currentServerConfig: ServerConfig | null = null;
 let cancelServerStartup: (() => void) | undefined;
+
+/**
+ * Sends `workspace/didChangeConfiguration` when a configuration change
+ * affects `jetls-client.settings`, prompting the server to re-pull it via
+ * `workspace/configuration`. The extension owns this send: the language
+ * client's configuration sync feature cannot see which settings changed
+ * (the server registers without a section filter, so it would send on every
+ * configuration change) and is therefore suppressed in the middleware below.
+ * The send is skipped while a restart is queued or shutdown is underway;
+ * the replacement server pulls fresh configuration on initialize anyway.
+ *
+ * TODO (managed installation): once the extension manages the server binary
+ * and a paired server version is guaranteed, declare
+ * `configuration_section: JETLS_CLIENT_SETTINGS_SECTION` in the
+ * `initializationOptions` instead. The server then registers the
+ * notification with that section filter and the library's configuration
+ * sync feature takes over, so this function and the middleware suppression
+ * below can be deleted. Declaring it today would make older servers reject
+ * the whole `initializationOptions` as containing an unknown key.
+ */
+export function syncConfigurationChange(
+  event: vscode.ConfigurationChangeEvent,
+): void {
+  if (deactivating || restartRunner.pending) {
+    return;
+  }
+  if (!event.affectsConfiguration(JETLS_CLIENT_SETTINGS_SECTION)) {
+    return;
+  }
+  if (!languageClient?.isRunning()) {
+    return;
+  }
+  void languageClient
+    .sendNotification(DidChangeConfigurationNotification.type, {
+      settings: null,
+    })
+    .catch((err) => {
+      const message = err instanceof Error ? err.message : String(err);
+      outputChannel.appendLine(
+        `[jetls-client] Failed to send workspace/didChangeConfiguration: ${message}.`,
+      );
+    });
+}
 
 export function activateServerLifecycle(
   channel: LogOutputChannel,
@@ -277,6 +322,12 @@ async function startLanguageServer() {
       },
     ],
     middleware: {
+      workspace: {
+        // Suppress the configuration sync feature's own sends entirely:
+        // `syncConfigurationChange` owns the notification and only sends it
+        // when `jetls-client.settings` actually changed.
+        didChangeConfiguration: () => Promise.resolve(),
+      },
       // `editor.action.showReferences` is a built-in VSCode command that
       // requires actual `vscode.Uri`/`vscode.Position`/`vscode.Location`
       // instances, but server-sent command arguments arrive as plain JSON.
@@ -392,7 +443,7 @@ async function startLanguageServer() {
     (params: { items: { scopeUri?: string; section?: string | null }[] }) => {
       const items = params.items || [];
       const results = items.map((item) => {
-        const section = "jetls-client.settings";
+        const section = JETLS_CLIENT_SETTINGS_SECTION;
         const scope = item.scopeUri
           ? vscode.Uri.parse(item.scopeUri)
           : undefined;
