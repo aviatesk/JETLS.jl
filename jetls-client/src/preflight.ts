@@ -2,9 +2,7 @@ import * as cp from "child_process";
 
 import { PRECOMPILING_MARKER, PREFLIGHT_STDOUT_LIMIT } from "./constants";
 
-export type ExecutableConfig =
-  | { path?: string; threads?: string }
-  | string[];
+export type ExecutableConfig = { path?: string; threads?: string } | string[];
 
 export interface JETLSCommands {
   command: string;
@@ -105,9 +103,7 @@ export class VersionPreflight {
     this.spawnProcess = options.spawnProcess ?? cp.spawn;
   }
 
-  private waitForClose(
-    preflight: ActivePreflightProcess,
-  ): Promise<boolean> {
+  private waitForClose(preflight: ActivePreflightProcess): Promise<boolean> {
     if (preflight.closed) {
       return Promise.resolve(true);
     }
@@ -190,9 +186,7 @@ export class VersionPreflight {
     );
   }
 
-  private terminateProcess(
-    preflight: ActivePreflightProcess,
-  ): Promise<void> {
+  private terminateProcess(preflight: ActivePreflightProcess): Promise<void> {
     if (preflight.terminationPromise === undefined) {
       preflight.terminationPromise = this.terminateProcessImpl(preflight).catch(
         (err) => {
