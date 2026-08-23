@@ -197,7 +197,20 @@ end
 
 function begin_analysis_shutdown!(server::Server)
     manager = server.state.analysis_manager
-    @lock manager.lifecycle_lock manager.stopping[] = true
+    debounced_requests = @lock manager.lifecycle_lock begin
+        if manager.stopping[]
+            Tuple{Timer,Base.Event}[]
+        else
+            manager.stopping[] = true
+            store!(manager.debounced) do debounced
+                return empty(debounced), collect(values(debounced))
+            end
+        end
+    end
+    for (timer, completion) in debounced_requests
+        close(timer)
+        notify(completion)
+    end
     return nothing
 end
 

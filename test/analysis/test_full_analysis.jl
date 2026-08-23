@@ -164,6 +164,28 @@ end
     @test !isready(manager.queue)
 end
 
+@testset "shutdown cancels debounced analysis" begin
+    server = JETLS.Server()
+    manager = server.state.analysis_manager
+    script_uri = filepath2uri(joinpath(@__DIR__, "shutdown-debounced.jl"))
+    entry = JETLS.ScriptAnalysisEntry(script_uri)
+    completion = Base.Event()
+    completion_waiter = Threads.@spawn wait(completion)
+
+    JETLS.schedule_analysis!(server, script_uri, entry, #=invalidate=#true;
+        completion, debounce=60.0, notify_diagnostics=false)
+    timer, _ = JETLS.load(manager.debounced)[entry]
+    @test isopen(timer)
+
+    JETLS.begin_analysis_shutdown!(server)
+
+    @test timedwait(() -> istaskdone(completion_waiter), 1.0) == :ok
+    @test !isopen(timer)
+    @test isempty(JETLS.load(manager.debounced))
+    @test !isready(manager.queue)
+    @test isnothing(JETLS.begin_analysis_shutdown!(server))
+end
+
 @testset "shutdown rejects late queue admission" begin
     server = JETLS.Server()
     manager = server.state.analysis_manager
