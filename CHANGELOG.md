@@ -46,6 +46,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 >
 > Note: Path glob patterns use `/` as the separator on all platforms, including Windows; backslashes are not supported as separators.
 
+### Added
+
+- Added `--pipe=<path>` as an alias for `jetls serve --pipe-connect=<path>`, following the flag convention of VSCode's LSP client.
+
 ## 2026-08-23
 
 - Commit: [`26d6318`](https://github.com/aviatesk/JETLS.jl/commit/26d6318)
