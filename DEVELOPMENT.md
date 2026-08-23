@@ -582,9 +582,11 @@ An object that omits `path` continues to use the managed installation.
 
 The managed default installs the JETLS release tag pinned in
 [`jetls-client/JETLS_VERSION.json`](./jetls-client/JETLS_VERSION.json),
-which also records the supported Julia version bounds. When updating the
-pin, confirm that the tag exists and the `julia` bounds in `JETLS_VERSION.json`
-match the Julia versions the release actually supports.
+which also records the supported Julia version bounds. The bounds must
+mirror the pinned release's `julia` compat entry in `Project.toml`, which
+is expected to stay in the `<lower> - <upper.minor>` hyphen-range form;
+the release script and CI check the pinned tag and this correspondence
+automatically.
 
 Extension versions use the release date as `YYYY.M.D` (e.g. `2026.8.23`),
 mirroring the date-based JETLS server releases the extension pins. The
@@ -595,13 +597,45 @@ authoritative pairing. Versions released before this scheme used semver
 (`0.8.0` and earlier); the calendar versions sort after them, so updates
 keep flowing.
 
-To publish the extension to the marketplace:
+To release the extension:
 
-```bash
-cd jetls-client
-vsce publish YYYY.M.D -m "jetls-client: vYYYY.M.D"
-```
+1. Prepare the release branch and pull request:
+   ```bash
+   ./scripts/prepare-jetls-client-release.sh [--pin YYYY-MM-DD] YYYY.M.D
+   ```
+   The script branches `jetls-client-releases/vYYYY.M.D` off
+   `origin/master`, optionally updates the pin in `JETLS_VERSION.json`,
+   validates that the pinned release tag exists, sets the version in
+   `package.json` and `package-lock.json`, renames the CHANGELOG
+   `Unreleased` section to the release version (recording the pinned
+   JETLS release in it and re-creating an empty `Unreleased` section),
+   creates the `jetls-client: vYYYY.M.D` commit, and opens a pull
+   request against `master`. Use `--no-push` to prepare the branch
+   locally without pushing or opening the PR.
 
-This will set the version in `package.json` and `package-lock.json`, create a
-git commit with the specified message, and publish to the marketplace in one
-step. It does not create a git tag.
+   After a JETLS server release, this step runs automatically: the
+   `open-client-release-pr` job in
+   [`release.yml`](./.github/workflows/release.yml) runs the script
+   with `--pin` set to the new server release and the client version
+   derived from its date, so the release PR appears without manual
+   work.
+2. Wait for CI to pass on the pull request. The regular client checks run
+   on it, and
+   [`jetls-client-release.yml`](./.github/workflows/jetls-client-release.yml)
+   verifies the release invariants: the branch name matches
+   `package.json` and the CHANGELOG, the pinned server release exists,
+   and the release tag is not taken yet.
+3. Merge the pull request. The merge triggers the publish workflow, which
+   packages the extension, publishes it to the Marketplace, and pushes
+   the `jetls-client/vYYYY.M.D` tag. There is no GitHub release for the
+   extension: the repository's releases feed is reserved for the JETLS
+   server releases, and the Marketplace serves the extension's changelog
+   and older versions. The release branch can be deleted after merging.
+
+Publishing authenticates with the `VSCE_PAT` repository secret: an Azure
+DevOps personal access token with the Marketplace "Manage" scope. The
+token has an expiry and must be rotated before it lapses. The automated
+PR flow additionally needs the `RELEASE_PR_TOKEN` secret: a GitHub
+personal access token with `contents` and `pull-requests` write access
+to this repository, since pushes and pull requests created with the
+default workflow token do not trigger CI.
