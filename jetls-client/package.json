@@ -4,7 +4,7 @@
   "description": "A new language server for Julia",
   "author": "Shuhei Kadowaki",
   "license": "MIT",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "repository": {
     "type": "git",
     "url": "https://github.com/aviatesk/JETLS.jl",
@@ -81,7 +81,7 @@
             "path": "jetls",
             "threads": "auto"
           },
-          "markdownDescription": "JETLS executable configuration. Most users do not need to change this.\n\nUse object form `{path, threads}` to customize the installed JETLS executable path or thread setting.\n\nUse array form `[\"julia\", \"--startup-file=no\", \"--history-file=no\", \"--project=/path/to/JETLS\", \"-m\", \"JETLS\"]` to use a local JETLS checkout instead of globally installed executable.",
+          "markdownDescription": "JETLS executable configuration. Most users do not need to change this.\n\nUse object form `{path, threads}` to customize the installed JETLS executable path or thread setting.\n\nUse array form `[\"julia\", \"--startup-file=no\", \"--history-file=no\", \"--project=/path/to/JETLS\", \"-m\", \"JETLS\", \"serve\"]` to use a local JETLS checkout instead of globally installed executable.",
           "order": 1
         },
         "jetls-client.communicationChannel": {
@@ -136,6 +136,11 @@
               },
               "markdownDescription": "Override full analysis behavior for specific file patterns. Primarily used as a temporary workaround to disable analysis for files affected by memory leak issues. Each override specifies a glob pattern, optionally a module name, and can opt back into full analysis. Note: This is an experimental feature that may be removed or changed in future versions.",
               "type": "array"
+            },
+            "configuration_section": {
+              "default": "null",
+              "markdownDescription": "The client-side configuration section under which the client stores JETLS settings (e.g. `jetls-client.settings` for the VSCode extension). When set, JETLS registers `workspace/didChangeConfiguration` with this section, so clients that honor the registration's section filter only send the notification when the relevant settings actually change. This is normally set programmatically by client extensions rather than by users. See [`configuration_section`](https://aviatesk.github.io/JETLS.jl/release/launching/#init-options/configuration_section).",
+              "type": "string"
             },
             "reuse_native_inference": {
               "default": false,
@@ -430,8 +435,9 @@
     "check:tsc": "tsc --noEmit",
     "check:lint": "eslint",
     "check:package-schema": "node check-package-schema.mjs",
+    "test": "node test-runner.mjs",
     "clean": "rm -rf out *.vsix",
-    "vscode:prepublish": "npm run check && npm run build"
+    "vscode:prepublish": "npm run check && npm test && npm run build"
   },
   "dependencies": {
     "vscode-languageclient": "^10.1.0"

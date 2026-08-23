@@ -27,8 +27,32 @@ module __demo__ end
             # `ClientCapabilities` dominates time-to-first-response and is otherwise
             # compiled lazily on the first request, which on slow machines can exceed
             # strict client initialize timeouts (e.g. Helix's 20s default). See #784.
+            workspace_uri = string(filepath2uri(dirname(filename)))
             init_json = """
-                {"jsonrpc":"2.0","id":0,"method":"initialize","params":{"processId":null,"rootUri":null,"capabilities":{"textDocument":{"completion":{"dynamicRegistration":true},"hover":{"dynamicRegistration":true}},"general":{"positionEncodings":["utf-8"]}}}}
+                {
+                    "jsonrpc": "2.0",
+                    "id": 0,
+                    "method": "initialize",
+                    "params": {
+                        "processId": null,
+                        "rootUri": null,
+                        "workspaceFolders": [
+                            {
+                                "uri": "$workspace_uri",
+                                "name": "precompile"
+                            }
+                        ],
+                        "capabilities": {
+                            "textDocument": {
+                                "completion": {"dynamicRegistration": true},
+                                "hover": {"dynamicRegistration": true}
+                            },
+                            "general": {
+                                "positionEncodings": ["utf-8"]
+                            }
+                        }
+                    }
+                }
                 """
             init_msg = LSP.to_lsp_object(init_json)
             # Capture the response via the recorder (populated synchronously by `send`)
@@ -37,9 +61,15 @@ module __demo__ end
             Base.CoreLogging.with_logger(Base.CoreLogging.NullLogger()) do
                 recorder = ServerMessageRecorder()
                 init_server = Server(; callback=recorder)
-                handle_InitializeRequest(init_server, init_msg)
-                LSP.to_lsp_json(take!(recorder.sent_queue))
-                close(init_server.endpoint)
+                try
+                    handle_InitializeRequest(init_server, init_msg)
+                    response = take!(recorder.sent_queue)::InitializeResponse
+                    LSP.to_lsp_json(response)
+                finally
+                    stop_analysis_worker(init_server)
+                    stop_signature_analysis_workers(init_server)
+                    close(init_server.endpoint)
+                end
             end
 
             server = Server()
@@ -65,7 +95,7 @@ module __demo__ end
             collect_type_inlay_hints!(inlay_hints, st0, ctx, fi, uri, range, postprocessor)
             isempty(inlay_hints) && @warn "textDocument/inlayHint is broken"
 
-            precompile(main, (Vector{String},))
+            precompile(run_command, (Vector{String},))
         end
     end
 end

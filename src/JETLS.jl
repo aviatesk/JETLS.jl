@@ -24,7 +24,7 @@ using Preferences: Preferences
 const JETLS_DEV_MODE = Preferences.@load_preference("JETLS_DEV_MODE", false)
 const JETLS_TEST_MODE = Preferences.@load_preference("JETLS_TEST_MODE", false)
 const JETLS_DEBUG_LOWERING = Preferences.@load_preference("JETLS_DEBUG_LOWERING", false)
-function show_setup_info(msg)
+function show_setup_info(msg::AbstractString)
     @info msg Sys.BINDIR pkgdir(JETLS) Threads.nthreads() JETLS_VERSION JETLS_DEV_MODE JETLS_TEST_MODE JETLS_DEBUG_LOWERING
 end
 
@@ -289,12 +289,13 @@ function runserver(
         @error "Message handling loop failed"
         Base.display_error(stderr, err, catch_backtrace())
     finally
+        # The client may close the transport after `exit`; reject output before worker cleanup.
+        close(server.endpoint)
         stop_analysis_worker(server)
         stop_signature_analysis_workers(server)
         put!(seq_queue, nothing); put!(con_queue, nothing);
         close(seq_queue); close(con_queue);
         waitall((seq_task, con_task))
-        close(server.endpoint)
     end
     @static JETLS_DEV_MODE && @info "Exited JETLS server loop"
     return exit_code

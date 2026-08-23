@@ -170,26 +170,37 @@ function withserver(
         return (; raw_msg, json_msg)
     end
 
+    function read_initialize_response(id::Int)
+        while true
+            raw_res = take_with_timeout!(sent_queue)
+            json_res = LSP.readlsp(out)
+            if raw_res isa InitializeResponse
+                @assert raw_res.id == id
+                return (; raw_res, json_res)
+            end
+            raw_res isa ShowMessageNotification ||
+                error("Unexpected message before InitializeResponse: $(typeof(raw_res))")
+        end
+    end
+
     local initialize_response, initialize_json_response
     local register_capability_request, register_capability_json_request
     initialize_completed = false
     try
         let id = id_counter[] += 1
-            (; raw_msg, raw_res, json_res) = writereadmsg(
-                InitializeRequest(;
-                    id,
-                    params=InitializeParams(;
-                        processId=getpid(),
-                        capabilities,
-                        rootUri,
-                        workspaceFolders));
-                check = false)
+            LSP.writelsp(in, InitializeRequest(;
+                id,
+                params = InitializeParams(;
+                    processId = getpid(),
+                    capabilities,
+                    rootUri,
+                    workspaceFolders)))
+            raw_msg = take_with_timeout!(received_queue)::InitializeRequest
             initialize_completed = true
+            (; raw_res, json_res) = read_initialize_response(id)
             assert_empty_queues()
-            raw_msg = raw_msg::InitializeRequest
             @assert raw_msg.params.workspaceFolders == workspaceFolders
-            initialize_response = raw_res::InitializeResponse
-            @assert initialize_response.id == id
+            initialize_response = raw_res
             initialize_json_response = json_res::Dict{Symbol,Any}
 
             (; raw_msg, raw_res, json_res) = writereadmsg(InitializedNotification())

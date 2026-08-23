@@ -110,7 +110,8 @@ send error message while leaving current configuration unchanged.
 function load_file_config!(on_difference, server::Server, filepath::AbstractString;
                            reload::Bool = false)
     store!(server.state.config_manager) do old_data::ConfigManagerData
-        if reload && old_data.file_config_path != filepath
+        old_path = old_data.file_config_path
+        if reload && (old_path === nothing || !paths_equal(old_path, filepath))
             show_warning_message(server, "Loading unregistered configuration file: $filepath")
         end
 
@@ -150,7 +151,9 @@ unmatched_key_in_config_file_msg(filepath::AbstractString, path::Vector{String})
 
 function delete_file_config!(on_difference, manager::ConfigManager, filepath::AbstractString)
     store!(manager) do old_data::ConfigManagerData
-        old_data.file_config_path == filepath || return old_data, nothing
+        old_path = old_data.file_config_path
+        old_path === nothing && return old_data, nothing
+        paths_equal(old_path, filepath) || return old_data, nothing
         new_data = ConfigManagerData(old_data;
             file_config=EMPTY_CONFIG,
             file_config_path=nothing
