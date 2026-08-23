@@ -134,11 +134,14 @@ struct InterpreterSignatureAnalysisJob <: JETLS.AbstractSignatureAnalysisJob
     n_sigs::Int
     completion::Base.Event
 end
+JETLS.signature_analysis_execution_impl(job::InterpreterSignatureAnalysisJob) =
+    job.interp.execution
 
 function (job::InterpreterSignatureAnalysisJob)(server::Server)
     (; interp, res, progress, index, entrypoint, cancellable_token, n_sigs) = job
     try
-        if cancellable_token !== nothing && is_cancelled(cancellable_token.cancel_flag)
+        if (JETLS.is_analysis_cancelled(interp.execution) ||
+            cancellable_token !== nothing && is_cancelled(cancellable_token.cancel_flag))
             return
         end
         (; tt) = res.signature_infos[index]
