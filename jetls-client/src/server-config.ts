@@ -6,6 +6,7 @@ export interface ServerConfig {
   executable: ExecutableConfig;
   communicationChannel: string;
   socketPort: number;
+  initializationOptions: object;
 }
 
 export function getServerConfig(): ServerConfig {
@@ -19,6 +20,7 @@ export function getServerConfig(): ServerConfig {
     executable,
     communicationChannel: config.get<string>("communicationChannel", "auto"),
     socketPort: config.get<number>("socketPort", 8080),
+    initializationOptions: config.get<object>("initializationOptions", {}),
   };
 }
 
@@ -33,7 +35,11 @@ export function hasServerConfigChanged(
     JSON.stringify(oldConfig.executable) !==
       JSON.stringify(newConfig.executable) ||
     oldConfig.communicationChannel !== newConfig.communicationChannel ||
-    oldConfig.socketPort !== newConfig.socketPort
+    oldConfig.socketPort !== newConfig.socketPort ||
+    // The server only reads `initializationOptions` on initialize, so a
+    // change can take effect solely through a restart.
+    JSON.stringify(oldConfig.initializationOptions) !==
+      JSON.stringify(newConfig.initializationOptions)
   );
 }
 
@@ -43,6 +49,7 @@ export function affectsServerConfig(
   return (
     event.affectsConfiguration("jetls-client.executable") ||
     event.affectsConfiguration("jetls-client.communicationChannel") ||
-    event.affectsConfiguration("jetls-client.socketPort")
+    event.affectsConfiguration("jetls-client.socketPort") ||
+    event.affectsConfiguration("jetls-client.initializationOptions")
   );
 }

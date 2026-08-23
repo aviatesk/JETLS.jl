@@ -291,10 +291,6 @@ async function startLanguageServer() {
       );
   }
 
-  const initializationOptions = vscode.workspace
-    .getConfiguration("jetls-client")
-    .get("initializationOptions", {});
-
   const clientOptions: LanguageClientOptions = {
     // Keep this selector as a static-registration fallback while jetls-client can
     // connect to independently installed JETLS versions. Once the extension manages
@@ -370,7 +366,7 @@ async function startLanguageServer() {
         return resolved;
       },
     },
-    initializationOptions,
+    initializationOptions: serverConfig.initializationOptions,
     outputChannel,
   };
 

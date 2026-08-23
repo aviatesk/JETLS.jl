@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
+- Diff: [`8a6998f1b...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/8a6998f1b...HEAD)
+
+### Fixed
+
+- Fixed changes to `jetls-client.initializationOptions` not taking effect until a manual server restart; the extension now restarts the language server automatically, as it already did for the other launching settings.
+
 ## v0.8.0
 
 - Commit: [`8a6998f1b`](https://github.com/aviatesk/JETLS.jl/commit/8a6998f1b)
