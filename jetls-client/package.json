@@ -447,6 +447,7 @@
     "@stylistic/eslint-plugin": "^5.10.0",
     "@types/node": "^26.1.0",
     "@types/vscode": "^1.96.0",
+    "@vscode/vsce": "^3.9.2",
     "ajv": "^8.20.0",
     "esbuild": "^0.28.0",
     "eslint": "^10.6.0",
