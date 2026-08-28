@@ -263,7 +263,7 @@ jobs:
       # `RELEASE_PR_TOKEN` (a personal access token) is used instead of the
       # workflow token: pushes and pull requests created with `GITHUB_TOKEN`
       # do not trigger other workflows, so the release PR would get no CI.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: master
           token: ${{ secrets.RELEASE_PR_TOKEN }}
