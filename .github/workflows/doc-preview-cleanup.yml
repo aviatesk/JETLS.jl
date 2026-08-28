@@ -1,0 +1,47 @@
+name: Documentation preview cleanup
+
+on:
+  pull_request:
+    types:
+      - closed
+
+jobs:
+  cleanup:
+    concurrency:
+      group: gh-pages-deployment
+      cancel-in-progress: false
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: gh-pages
+          fetch-depth: 1
+      - name: Remove preview and squash history
+        env:
+          PREVIEW_DIR: previews/PR${{ github.event.pull_request.number }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          if [ ! -d "$PREVIEW_DIR" ]; then
+            echo "No preview found at $PREVIEW_DIR"
+            exit 0
+          fi
+
+          git config user.name "Documenter.jl"
+          git config user.email "documenter@juliadocs.github.io"
+
+          expected_head=$(git rev-parse HEAD)
+          git rm -rf "$PREVIEW_DIR"
+          tree=$(git write-tree)
+          # `commit-tree` without `-p` creates a root commit.
+          commit=$(
+            printf '%s\n\n%s\n%s\n' \
+              "docs: Remove preview for PR $PR_NUMBER" \
+              "Remove the closed pull request preview and reset the generated" \
+              "documentation history." |
+              git commit-tree "$tree"
+          )
+          git push \
+            --force-with-lease="refs/heads/gh-pages:$expected_head" \
+            origin "$commit:refs/heads/gh-pages"
