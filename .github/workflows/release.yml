@@ -68,7 +68,7 @@ jobs:
           ref: release
       - name: Get latest CHANGELOG from master
         run: git fetch origin master && git checkout origin/master -- CHANGELOG.md
-      - uses: julia-actions/setup-julia@v2
+      - uses: julia-actions/setup-julia@v3
         with:
           version: "1"
       - uses: julia-actions/cache@v3
@@ -118,7 +118,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           ref: release
-      - uses: julia-actions/setup-julia@v2
+      - uses: julia-actions/setup-julia@v3
         with:
           version: "1.12"
           arch: x64
@@ -203,7 +203,7 @@ jobs:
         with:
           ref: master
           fetch-depth: 0
-      - uses: julia-actions/setup-julia@v2
+      - uses: julia-actions/setup-julia@v3
         with:
           version: "1.12"
           arch: x64
