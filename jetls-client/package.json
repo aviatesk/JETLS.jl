@@ -58,7 +58,7 @@
           "oneOf": [
             {
               "type": "object",
-              "markdownDescription": "Standard configuration. Omit `path` to use the managed JETLS installation, or specify it to use a custom executable.",
+              "markdownDescription": "Standard configuration: the managed JETLS installation, or a custom `jetls` executable via `path`.",
               "properties": {
                 "path": {
                   "type": "string",
@@ -76,7 +76,7 @@
                   "additionalProperties": {
                     "type": "string"
                   },
-                  "markdownDescription": "Environment variables for installing and launching JETLS. In managed mode, set `JULIA_APPS_JULIA_CMD` to select the Julia executable."
+                  "markdownDescription": "Environment variables for installing and launching JETLS. In managed mode, set `JULIAUP_CHANNEL` to select a juliaup channel, or `JULIA_APPS_JULIA_CMD` to select the Julia executable directly."
                 }
               },
               "additionalProperties": false
