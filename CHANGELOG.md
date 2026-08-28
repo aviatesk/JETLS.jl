@@ -25,7 +25,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 > [!note]
 > The VSCode extension (`jetls-client`) now lives in its own repository, [jetls-vscode](https://github.com/aviatesk/jetls-vscode).
-> Nothing changes for extension users: the extension keeps its Marketplace identity (`aviatesk.jetls-client`) and updates continue as usual.
+> The extension keeps its Marketplace identity (`aviatesk.jetls-client`) and updates continue as usual.
+> Starting with its next release, the extension manages the JETLS installation automatically: it installs and updates the pinned JETLS release on its own, so VSCode users no longer need to run the installation command below or keep `jetls` up to date manually (still needed if you also use the `jetls` CLI, e.g. `jetls check`).
 > Please report extension-specific problems (installation, startup, extension UI) to [jetls-vscode issues](https://github.com/aviatesk/jetls-vscode/issues);
 > language-feature issues belong here as before.
 
