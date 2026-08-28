@@ -28,7 +28,7 @@ jobs:
     name: Check schemas are up to date
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: julia-actions/setup-julia@v1
         with:
           version: "1.12"
