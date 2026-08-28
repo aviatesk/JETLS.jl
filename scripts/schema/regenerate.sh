@@ -4,7 +4,7 @@ print_help() {
     cat <<'EOF'
 Usage: ./scripts/schema/regenerate.sh [OPTIONS]
 
-Regenerate all JETLS configuration schemas and update package.json.
+Regenerate all JETLS configuration schemas.
 
 Options:
   -h, --help    Show this help message and exit
@@ -39,4 +39,4 @@ julia --startup-file=no --project="$SCRIPT_DIR" \
 julia --startup-file=no --project="$SCRIPT_DIR" \
     "$SCRIPT_DIR/generate.jl" --init-options "$PROJECT_ROOT/schemas/init-options.schema.json" $CHECK_FLAG
 julia --startup-file=no --project="$SCRIPT_DIR" \
-    "$SCRIPT_DIR/update-pkg-json.jl" "$PROJECT_ROOT/jetls-client/package.json" $CHECK_FLAG
+    "$SCRIPT_DIR/generate.jl" --vscode-configuration "$PROJECT_ROOT/schemas/vscode-configuration.json" $CHECK_FLAG

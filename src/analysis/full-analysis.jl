@@ -371,9 +371,6 @@ completes. This also provides optimization by coalescing rapid successive reques
 
 The `generation` check (`is_generation_analyzed`) is a related but separate optimization
 that skips analysis when the file content hasn't changed since the last analysis.
-
-See https://publish.obsidian.md/jetls/work/JETLS/Make+JETLS+multithreaded#4.%20Multithreading%20Full-Analysis
-for the details of this concurrent analysis management.
 """
 function schedule_analysis!(
         server::Server, uri::URI, @nospecialize(entry::AnalysisEntry), invalidate::Bool;

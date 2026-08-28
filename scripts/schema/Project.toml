@@ -14,5 +14,5 @@ url = "https://github.com/aviatesk/Struct2JSONSchema.jl"
 
 [sources.OrderedCollections]
 subdir = "vendor/OrderedCollections"
-rev = "558df42bd7449a977ea13f53ddd589cbfa59ecb4"
+rev = "60d90ff9e810aa83bef922dbb418bf6a8429c856"
 url = "https://github.com/aviatesk/JETLS.jl"

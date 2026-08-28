@@ -19,9 +19,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## Unreleased
 
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
-- Diff: [`26d6318...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/26d6318...HEAD)
+- Diff: [`1b45195...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/1b45195...HEAD)
 
 ### Announcement
+
+> [!note]
+> The VSCode extension (`jetls-client`) now lives in its own repository, [jetls-vscode](https://github.com/aviatesk/jetls-vscode).
+> The extension keeps its Marketplace identity (`aviatesk.jetls-client`) and updates continue as usual.
+> Starting with its next release, the extension manages the JETLS installation automatically: it installs and updates the pinned JETLS release on its own, so VSCode users no longer need to run the installation command below or keep `jetls` up to date manually (still needed if you also use the `jetls` CLI, e.g. `jetls check`).
+> Please report extension-specific problems (installation, startup, extension UI) to [jetls-vscode issues](https://github.com/aviatesk/jetls-vscode/issues);
+> language-feature issues belong here as before.
 
 > [!important]
 > JETLS supports Julia 1.12.2 through 1.13.
@@ -45,6 +52,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > Note that `analysis_overrides` is provided as a temporary workaround and may be removed or changed at any time. A proper fix is being worked on.
 >
 > Note: Path glob patterns use `/` as the separator on all platforms, including Windows; backslashes are not supported as separators.
+
+## 2026-08-28
+
+- Commit: [`1b45195`](https://github.com/aviatesk/JETLS.jl/commit/1b45195)
+- Diff: [`26d6318...1b45195`](https://github.com/aviatesk/JETLS.jl/compare/26d6318...1b45195)
+- Installation:
+  ```bash
+  julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="2026-08-28")'
+  ```
 
 ### Added
 

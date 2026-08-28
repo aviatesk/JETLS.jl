@@ -105,7 +105,7 @@ JETLS automatically on first use, which requires network access.
 
 For choosing a Julia installation, troubleshooting, custom server commands, and
 advanced configuration, see the
-[jetls-client README](https://github.com/aviatesk/JETLS.jl/blob/master/jetls-client/README.md).
+[jetls-client README](https://github.com/aviatesk/jetls-vscode).
 
 !!! note
     Currently, JETLS.jl is not integrated with the
