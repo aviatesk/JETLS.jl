@@ -1623,6 +1623,20 @@ async function resolveManagedRuntime(
       options.environment,
       platform,
     );
+    // Managed processes and the managed server launch the resolved
+    // Julia directly, never through a shell: `cmd.exe` would mangle the
+    // unquoted `-e` scripts, and the shell-less server spawn refuses
+    // batch scripts outright. A batch wrapper therefore cannot work and
+    // is rejected as a configuration error instead of failing later
+    // with confusing Julia usage errors.
+    if (needsWindowsBatchShell(juliaPath, platform)) {
+      throw new Error(
+        `The Julia command resolves to a batch script: ${juliaPath}\n` +
+          "The managed installation launches Julia directly and cannot " +
+          "run batch scripts; point the command at the Julia executable " +
+          "itself (e.g. `julia.exe`).",
+      );
+    }
     return { platform, runner, storagePath, juliaPath };
   } catch (error) {
     throw managedError(
