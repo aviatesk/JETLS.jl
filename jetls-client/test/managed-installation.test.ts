@@ -37,6 +37,7 @@ import {
   resolveExecutable,
   runtimeKey,
   serverLaunchEnvironment,
+  touchManagedInstallation,
   type ManagedInstallationOptions,
   type ProcessResult,
   type ProcessRunner,
@@ -1358,6 +1359,61 @@ test("cleanup ages out entries outside the generation layout", async () => {
     await assert.rejects(stat(legacyFile));
     await stat(freshEntry);
     await stat(seeded);
+  });
+});
+
+test("marks the runtime container in use before installing", async () => {
+  await withFixture(async (fixture) => {
+    const fake = fakeRunner(async (call) => {
+      const script = scriptFor(call);
+      if (script?.includes("Pkg.Apps.add")) {
+        return failure(1, "", "network down");
+      }
+      return success("1.12.2\n");
+    });
+
+    await assert.rejects(
+      ensureManagedJETLS({
+        storagePath: fixture.storagePath,
+        environment: fixture.environment,
+        processRunner: fake.runner,
+      }),
+      ManagedJETLSError,
+    );
+
+    // The failed install never settles, so only the up-front marker can
+    // exist: it is what keeps cleanup in another window from removing a
+    // dormant container while a start is still resolving it.
+    const containerPath = managedDepotPath(
+      fixture.storagePath,
+      fixture.juliaPath,
+      "1.12.2",
+    );
+    await stat(lastUsedPath(containerPath));
+  });
+});
+
+test("re-touching an installation refreshes its liveness markers", async () => {
+  await withFixture(async (fixture) => {
+    const generationPath = await seedGeneration(
+      fixture.storagePath,
+      fixture.juliaPath,
+    );
+    const containerPath = path.dirname(generationPath);
+    const dayMs = 24 * 60 * 60 * 1000;
+    await writeFile(lastUsedPath(generationPath), "");
+    await writeFile(lastUsedPath(containerPath), "");
+    await setAgeMs(lastUsedPath(generationPath), 10 * dayMs);
+    await setAgeMs(lastUsedPath(containerPath), 40 * dayMs);
+
+    await touchManagedInstallation(generationPath);
+
+    const generationAge =
+      Date.now() - (await stat(lastUsedPath(generationPath))).mtimeMs;
+    const containerAge =
+      Date.now() - (await stat(lastUsedPath(containerPath))).mtimeMs;
+    assert.ok(generationAge < dayMs);
+    assert.ok(containerAge < dayMs);
   });
 });
 
