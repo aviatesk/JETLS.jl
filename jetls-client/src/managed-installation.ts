@@ -77,6 +77,8 @@ export interface ProcessResult {
    * be running, so resources it can touch must not be treated as reusable.
    */
   processMayBeAlive?: boolean;
+  /** Set when the process was terminated by the caller's abort signal. */
+  cancelled?: boolean;
 }
 
 export interface ProcessRunnerOptions {
@@ -85,6 +87,8 @@ export interface ProcessRunnerOptions {
   timeoutMs: number;
   onStdout?: (chunk: string) => void;
   onStderr?: (chunk: string) => void;
+  /** Terminates the process (with escalation) when aborted. */
+  signal?: AbortSignal;
 }
 
 export type ProcessRunner = (
@@ -106,6 +110,27 @@ export interface ManagedInstallationOptions {
    * for recovering from corruption the verification cannot see.
    */
   forceInstall?: boolean;
+  /**
+   * Cancels the setup when aborted: running managed processes are
+   * terminated and the whole call rejects with
+   * `ManagedInstallationCancelledError`. An installation cancelled
+   * mid-flight only strands its unpublished generation, which cleanup
+   * removes later.
+   */
+  signal?: AbortSignal;
+  /**
+   * Called when the long installation step begins; the returned
+   * callback fires when it ends, regardless of outcome. Lets the UI
+   * scope install-only affordances (e.g. a cancellable notification)
+   * without parsing progress messages.
+   */
+  onInstallStep?: () => () => void;
+  /**
+   * Receives each completed stderr line of the installation process,
+   * sanitized and truncated for direct display, so the UI can show live
+   * evidence of progress alongside the coarse phase messages.
+   */
+  onInstallOutput?: (line: string) => void;
 }
 
 export interface ManagedJETLSInstallation {
@@ -154,6 +179,24 @@ class ManagedStepError extends Error {
     this.stage = stage;
     this.processMayBeAlive = options.processMayBeAlive === true;
     this.retryable = options.retryable;
+  }
+}
+
+/**
+ * Deliberate cancellation of a managed setup (a restart superseding it,
+ * or the extension deactivating). Not a failure: callers suppress the
+ * failure UI for it.
+ */
+export class ManagedInstallationCancelledError extends Error {
+  constructor() {
+    super("The managed JETLS setup was cancelled.");
+    this.name = "ManagedInstallationCancelledError";
+  }
+}
+
+function throwIfCancelled(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) {
+    throw new ManagedInstallationCancelledError();
   }
 }
 
@@ -539,10 +582,22 @@ export function createDefaultProcessRunner(
     overrides.terminationTimeoutMs ?? TIMEOUTS.processTermination;
   return async (command, args, options) => {
     return await new Promise<ProcessResult>((resolve) => {
+      const signal = options.signal;
+      if (signal?.aborted) {
+        resolve({
+          status: null,
+          stdout: "",
+          stderr: "",
+          error: "The process was cancelled.",
+          cancelled: true,
+        });
+        return;
+      }
       let stdout: Buffer = Buffer.alloc(0);
       let stderr: Buffer = Buffer.alloc(0);
       let settled = false;
       let timedOut = false;
+      let aborted = false;
       let closed = false;
       let closeStatus: number | null = null;
       let resolveClosed!: () => void;
@@ -579,26 +634,31 @@ export function createDefaultProcessRunner(
         }
         settled = true;
         clearTimeout(timeoutHandle);
+        signal?.removeEventListener("abort", onAbort);
         const timeoutMessage = timedOut
           ? `Process timed out after ${options.timeoutMs} ms.`
           : undefined;
+        const cancelMessage = aborted
+          ? "The process was cancelled."
+          : undefined;
         const processError =
-          [timeoutMessage, error?.message].filter(Boolean).join(" ") ||
-          undefined;
+          [timeoutMessage, cancelMessage, error?.message]
+            .filter(Boolean)
+            .join(" ") || undefined;
         resolve({
           status,
           stdout: stdout.toString(),
           stderr: stderr.toString(),
           error: processError,
           ...(processMayBeAlive ? { processMayBeAlive } : {}),
+          ...(aborted ? { cancelled: true } : {}),
         });
       };
 
-      const timeoutHandle = setTimeout(() => {
-        timedOut = true;
-        // A process that survives every termination attempt must not leave
-        // this promise pending, but the settled result marks the survival
-        // so failure guidance can note the possibly-live process.
+      // A process that survives every termination attempt must not leave
+      // this promise pending, but the settled result marks the survival
+      // so failure guidance can note the possibly-live process.
+      const terminateAndFinish = (): void => {
         void terminateProcess(
           { process: child, isClosed: () => closed, closedPromise },
           {
@@ -620,13 +680,27 @@ export function createDefaultProcessRunner(
             );
           },
         );
+      };
+
+      const timeoutHandle = setTimeout(() => {
+        timedOut = true;
+        terminateAndFinish();
       }, options.timeoutMs);
 
+      const onAbort = (): void => {
+        if (settled || timedOut) {
+          return;
+        }
+        aborted = true;
+        terminateAndFinish();
+      };
+      signal?.addEventListener("abort", onAbort, { once: true });
+
       child.on("error", (error: Error) => {
-        // Signal-delivery failures after the timeout are owned by the
-        // termination flow, which settles only once the process state is
-        // known.
-        if (timedOut) {
+        // Signal-delivery failures after a timeout or abort are owned by
+        // the termination flow, which settles only once the process state
+        // is known.
+        if (timedOut || aborted) {
           return;
         }
         finish(null, error);
@@ -635,9 +709,10 @@ export function createDefaultProcessRunner(
         closed = true;
         closeStatus = status;
         resolveClosed();
-        // After a timeout only the termination flow settles: the direct
-        // process closing says nothing about surviving group members.
-        if (timedOut) {
+        // After a timeout or abort only the termination flow settles: the
+        // direct process closing says nothing about surviving group
+        // members.
+        if (timedOut || aborted) {
           return;
         }
         finish(status);
@@ -671,8 +746,35 @@ function createLineLogger(
   };
 }
 
+const INSTALL_OUTPUT_LINE_LIMIT = 100;
+
+// Assembles display-ready lines out of raw output chunks: `\r` counts
+// as a line break so in-place progress redraws (e.g. Pkg's precompile
+// bar) surface as fresh lines instead of piling up in one.
+function createInstallOutputLineEmitter(
+  onLine: (line: string) => void,
+): (chunk: string) => void {
+  let pending = "";
+  return (chunk) => {
+    const lines = `${pending}${chunk}`.split(/\r\n|\r|\n/);
+    pending = lines.pop() ?? "";
+    for (const line of lines) {
+      const cleaned = stripVTControlCharacters(line).trim();
+      if (cleaned === "") {
+        continue;
+      }
+      onLine(
+        cleaned.length > INSTALL_OUTPUT_LINE_LIMIT
+          ? `${cleaned.slice(0, INSTALL_OUTPUT_LINE_LIMIT - 1)}…`
+          : cleaned,
+      );
+    }
+  };
+}
+
 function createInstallationOutputObserver(
   progress: ((message: string) => void) | undefined,
+  onOutputLine: ((line: string) => void) | undefined,
 ): ProcessOutputObserver {
   const phases = [
     {
@@ -716,9 +818,17 @@ function createInstallationOutputObserver(
     };
   };
 
+  const stderrObserver = createStreamObserver();
+  const lineEmitter =
+    onOutputLine === undefined
+      ? undefined
+      : createInstallOutputLineEmitter(onOutputLine);
   return {
     onStdout: createStreamObserver(),
-    onStderr: createStreamObserver(),
+    onStderr: (chunk) => {
+      stderrObserver(chunk);
+      lineEmitter?.(chunk);
+    },
   };
 }
 
@@ -797,6 +907,9 @@ async function runCheckedProcess(
     logger,
     outputObserver,
   );
+  if (result.cancelled === true) {
+    throw new ManagedInstallationCancelledError();
+  }
   if (result.status !== 0 || result.error !== undefined) {
     const status =
       result.status === null ? "unavailable" : String(result.status);
@@ -982,6 +1095,7 @@ async function withInstallLock<T>(
   containerPath: string,
   logger: ((message: string) => void) | undefined,
   progress: ((message: string) => void) | undefined,
+  signal: AbortSignal | undefined,
   poll: () => Promise<T | undefined>,
   operation: () => Promise<T>,
 ): Promise<T> {
@@ -991,6 +1105,7 @@ async function withInstallLock<T>(
   let reportedWait = false;
   let locked = false;
   while (!locked && Date.now() < deadline) {
+    throwIfCancelled(signal);
     try {
       await mkdir(lockPath);
       locked = true;
@@ -1099,10 +1214,7 @@ async function cleanupManagedStorage(
       }
     }
   } catch (error) {
-    emit(
-      logger,
-      `Managed storage cleanup was skipped: ${errorMessage(error)}`,
-    );
+    emit(logger, `Managed storage cleanup was skipped: ${errorMessage(error)}`);
   }
 }
 
@@ -1126,6 +1238,7 @@ async function installGeneration(
   platform: NodeJS.Platform,
   logger: ((message: string) => void) | undefined,
   progress: ((message: string) => void) | undefined,
+  onInstallOutput: ((line: string) => void) | undefined,
 ): Promise<string> {
   const generationId = newGenerationId();
   const generationPath = path.join(context.containerPath, generationId);
@@ -1162,7 +1275,7 @@ async function installGeneration(
     runner,
     platform,
     logger,
-    createInstallationOutputObserver(progress),
+    createInstallationOutputObserver(progress, onInstallOutput),
   );
   emit(progress, "Verifying installed JETLS...");
   await verifyPinnedJETLS(
@@ -1193,6 +1306,9 @@ async function resolveGeneration(
   logger: ((message: string) => void) | undefined,
   progress: ((message: string) => void) | undefined,
   forceInstall: boolean,
+  signal: AbortSignal | undefined,
+  onInstallStep: (() => () => void) | undefined,
+  onInstallOutput: ((line: string) => void) | undefined,
 ): Promise<string> {
   const settle = async (generationPath: string): Promise<string> => {
     await touchLastUsed(generationPath);
@@ -1212,6 +1328,7 @@ async function resolveGeneration(
     context.containerPath,
     logger,
     progress,
+    signal,
     // Adopt a generation published by the lock holder instead of
     // duplicating its installation.
     async () =>
@@ -1236,6 +1353,9 @@ async function resolveGeneration(
             await writeInstallStamp(current, context.juliaVersion, logger);
             return await settle(current);
           } catch (error) {
+            if (error instanceof ManagedInstallationCancelledError) {
+              throw error;
+            }
             emit(
               logger,
               "The current managed JETLS installation failed verification " +
@@ -1244,16 +1364,22 @@ async function resolveGeneration(
           }
         }
       }
-      return await settle(
-        await installGeneration(
-          context,
-          baseEnvironment,
-          runner,
-          platform,
-          logger,
-          progress,
-        ),
-      );
+      const endInstallStep = onInstallStep?.();
+      try {
+        return await settle(
+          await installGeneration(
+            context,
+            baseEnvironment,
+            runner,
+            platform,
+            logger,
+            progress,
+            onInstallOutput,
+          ),
+        );
+      } finally {
+        endInstallStep?.();
+      }
     },
   );
 }
@@ -1332,6 +1458,7 @@ async function ensureRuntime(
 ): Promise<string> {
   let containerPath: string | undefined;
   try {
+    throwIfCancelled(options.signal);
     emit(options.progress, "Checking Julia version...");
     const juliaVersion = await queryJuliaVersion(
       juliaPath,
@@ -1357,8 +1484,16 @@ async function ensureRuntime(
       options.logger,
       options.progress,
       options.forceInstall === true,
+      options.signal,
+      options.onInstallStep,
+      options.onInstallOutput,
     );
   } catch (error) {
+    // A cancellation is not a failure; it passes through unclassified so
+    // callers can suppress the failure UI.
+    if (error instanceof ManagedInstallationCancelledError) {
+      throw error;
+    }
     // Untagged errors here come from filesystem steps of the installation
     // machinery itself.
     throw managedError(error, juliaPath, containerPath, "install");
@@ -1372,6 +1507,19 @@ interface ManagedRuntimeSelection {
   juliaPath: string;
 }
 
+// Every managed process observes the setup's abort signal; attaching it
+// to the runner here spares each step from threading it through.
+function attachAbortSignal(
+  runner: ProcessRunner,
+  signal: AbortSignal | undefined,
+): ProcessRunner {
+  if (signal === undefined) {
+    return runner;
+  }
+  return (command, args, options) =>
+    runner(command, args, { ...options, signal });
+}
+
 async function resolveManagedRuntime(
   options: ManagedInstallationOptions,
 ): Promise<ManagedRuntimeSelection> {
@@ -1379,7 +1527,10 @@ async function resolveManagedRuntime(
     throw new Error("storagePath must not be empty.");
   }
   const platform = options.platform ?? process.platform;
-  const runner = options.processRunner ?? defaultProcessRunner;
+  const runner = attachAbortSignal(
+    options.processRunner ?? defaultProcessRunner,
+    options.signal,
+  );
   const storagePath = path.resolve(options.storagePath);
   const requestedJuliaCommand = configuredJuliaCommand(options);
   try {

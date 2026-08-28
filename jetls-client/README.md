@@ -56,7 +56,8 @@ storage.
 
 The first installation and each managed update require network access.
 Once installed, the cached server can start while offline. The status bar shows
-whether managed JETLS is being checked, installed, started, or has failed.
+whether managed JETLS is being checked, installed, started, or has failed, and
+installations show a progress notification from which they can be cancelled.
 
 The extension launches only the exact JETLS version its release pins. When
 that version cannot be installed or verified — for example, while offline —

@@ -18,7 +18,8 @@ and this project uses [calendar versioning](https://calver.org/) (`YYYY.M.D`, th
   Set `jetls-client.executable.env.JULIA_APPS_JULIA_CMD` to select another Julia executable, or specify `jetls-client.executable.path` or a full command array to bypass managed installation.
 
 - Added status bar updates and live process output for managed installation checks, downloads, startup, and failures.
-  Failure notifications offer to retry and to show the JETLS output with the full details; configuration problems additionally offer to open the executable setting.
+  Actual installations additionally show a progress notification ticking with the live installation output, whose `Cancel` button aborts the installation without affecting the previously installed server.
+  Failure notifications offer to show the JETLS output with the full details, plus a retry when retrying can help; configuration problems offer to open the executable setting instead.
 
 - Added the `JETLS Client: Reinstall Server` command for recovering from a broken managed installation.
   The command asks for confirmation and installs a fresh copy, since reinstalling may require network access.
