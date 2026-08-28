@@ -499,17 +499,26 @@ export async function readCurrentGeneration(
   }
 }
 
-// Written through a rename so a concurrent reader never sees a torn
-// pointer; the last concurrent publisher wins, and every published
-// generation is complete, so either winner is valid.
+// Publishes a file through a uniquely named temp file and a rename, so
+// a concurrent reader never sees torn content and concurrent publishers
+// (possible when the install lock was bypassed) cannot write into or
+// rename away each other's temp; the last rename wins.
+async function replaceFile(filePath: string, content: string): Promise<void> {
+  const tempPath = `${filePath}.${randomBytes(4).toString("hex")}.tmp`;
+  await writeFile(tempPath, content);
+  await rename(tempPath, filePath);
+}
+
+// The last concurrent publisher wins; every published generation is
+// complete, so either winner is valid.
 async function writeCurrentGeneration(
   containerPath: string,
   generationId: string,
 ): Promise<void> {
-  const pointerPath = currentPointerPath(containerPath);
-  const tempPath = `${pointerPath}.tmp`;
-  await writeFile(tempPath, JSON.stringify({ generation: generationId }));
-  await rename(tempPath, pointerPath);
+  await replaceFile(
+    currentPointerPath(containerPath),
+    JSON.stringify({ generation: generationId }),
+  );
 }
 
 export function lastUsedPath(basePath: string): string {
@@ -1100,14 +1109,11 @@ async function writeInstallStamp(
   juliaVersion: string,
   logger: ((message: string) => void) | undefined,
 ): Promise<void> {
-  const stampPath = installStampPath(generationPath);
-  const tempPath = `${stampPath}.tmp`;
   try {
-    await writeFile(
-      tempPath,
+    await replaceFile(
+      installStampPath(generationPath),
       JSON.stringify({ revision: JETLS_REVISION, julia: juliaVersion }),
     );
-    await rename(tempPath, stampPath);
   } catch (error) {
     emit(
       logger,
