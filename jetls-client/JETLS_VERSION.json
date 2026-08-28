@@ -2,6 +2,6 @@
   "revision": "2026-08-23",
   "julia": {
     "lower": "1.12.2",
-    "upperMinor": "1.13"
+    "upper": "1.13"
   }
 }

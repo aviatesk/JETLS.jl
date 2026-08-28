@@ -36,7 +36,7 @@ const INSTALL_LOCK_DIR = "install.lock";
 const INSTALL_STAMP_FILE = "install-stamp.json";
 const LAST_USED_FILE = "last-used";
 const JULIA_VERSION_LOWER_BOUND: string = JETLS_VERSION.julia.lower;
-const JULIA_VERSION_UPPER_MINOR: string = JETLS_VERSION.julia.upperMinor;
+const JULIA_VERSION_UPPER_BOUND: string = JETLS_VERSION.julia.upper;
 
 const JULIA_VERSION_SCRIPT = "print(stdout, VERSION)";
 // The installation must go through `Pkg.Apps`: JETLS releases pin their
@@ -355,25 +355,67 @@ function compareJuliaVersions(left: JuliaVersion, right: JuliaVersion): number {
   return left.patch - right.patch;
 }
 
-export function isSupportedJuliaVersion(version: string): boolean {
+interface JuliaVersionBound {
+  major: number;
+  minor?: number;
+  patch?: number;
+}
+
+function parseJuliaVersionBound(bound: string): JuliaVersionBound | undefined {
+  const match = /^(\d+)(?:\.(\d+)(?:\.(\d+))?)?$/.exec(bound.trim());
+  if (match === null) {
+    return undefined;
+  }
+  return {
+    major: Number(match[1]),
+    ...(match[2] === undefined ? {} : { minor: Number(match[2]) }),
+    ...(match[3] === undefined ? {} : { patch: Number(match[3]) }),
+  };
+}
+
+// The bounds carry Julia's `"<lower> - <upper>"` hyphen-range compat
+// semantics: components omitted from the lower bound default to zero,
+// while components omitted from the upper bound act as wildcards, so an
+// upper bound of `1.13` admits every `1.13.x` whereas `1.13.1` rejects
+// `1.13.2`.
+export function isSupportedJuliaVersion(
+  version: string,
+  lowerBound: string = JULIA_VERSION_LOWER_BOUND,
+  upperBound: string = JULIA_VERSION_UPPER_BOUND,
+): boolean {
   const parsed = parseJuliaVersion(version);
   if (parsed === undefined) {
     return false;
   }
-  const lower = parseJuliaVersion(JULIA_VERSION_LOWER_BOUND);
-  const upperMinor = parseJuliaVersion(`${JULIA_VERSION_UPPER_MINOR}.0`);
-  if (lower === undefined || upperMinor === undefined) {
+  const lower = parseJuliaVersionBound(lowerBound);
+  const upper = parseJuliaVersionBound(upperBound);
+  if (lower === undefined || upper === undefined) {
     throw new Error("Invalid Julia version bounds in JETLS_VERSION.json.");
   }
-  const firstUnsupported = {
-    major: upperMinor.major,
-    minor: upperMinor.minor + 1,
-    patch: 0,
+  const lowerVersion = {
+    major: lower.major,
+    minor: lower.minor ?? 0,
+    patch: lower.patch ?? 0,
   };
+  const firstUnsupported =
+    upper.minor === undefined
+      ? { major: upper.major + 1, minor: 0, patch: 0 }
+      : upper.patch === undefined
+        ? { major: upper.major, minor: upper.minor + 1, patch: 0 }
+        : { major: upper.major, minor: upper.minor, patch: upper.patch + 1 };
   return (
-    compareJuliaVersions(parsed, lower) >= 0 &&
+    compareJuliaVersions(parsed, lowerVersion) >= 0 &&
     compareJuliaVersions(parsed, firstUnsupported) < 0
   );
+}
+
+function supportedJuliaRangeDescription(): string {
+  const upper = parseJuliaVersionBound(JULIA_VERSION_UPPER_BOUND);
+  const upperDescription =
+    upper?.patch === undefined
+      ? `${JULIA_VERSION_UPPER_BOUND}.x`
+      : JULIA_VERSION_UPPER_BOUND;
+  return `${JULIA_VERSION_LOWER_BOUND} through ${upperDescription}`;
 }
 
 export function juliaMinorVersion(version: string): string {
@@ -1470,8 +1512,8 @@ async function ensureRuntime(
     containerPath = managedDepotPath(storagePath, juliaPath, juliaVersion);
     if (!isSupportedJuliaVersion(juliaVersion)) {
       throw new ManagedStepError(
-        `JETLS requires Julia ${JULIA_VERSION_LOWER_BOUND} through ` +
-          `${JULIA_VERSION_UPPER_MINOR}.x; found Julia ${juliaVersion}.`,
+        `JETLS requires Julia ${supportedJuliaRangeDescription()}; ` +
+          `found Julia ${juliaVersion}.`,
         "julia-version",
         { retryable: false },
       );
