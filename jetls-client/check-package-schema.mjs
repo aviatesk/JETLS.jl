@@ -15,7 +15,9 @@ const ajv = new Ajv({ allErrors: true, strict: false });
 const errors = [];
 const canonicalPackageJson = `${JSON.stringify(packageJson, null, 2)}\n`;
 
-if (packageJsonText !== canonicalPackageJson) {
+// Windows checkouts may translate line endings (`core.autocrlf`), which git
+// undoes on commit, so the round-trip comparison ignores them.
+if (packageJsonText.replaceAll("\r\n", "\n") !== canonicalPackageJson) {
   errors.push(
     "package.json is not stable under Node.js JSON round-tripping; " +
       "npm/vsce would rewrite it",

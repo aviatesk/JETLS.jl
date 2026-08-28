@@ -54,6 +54,10 @@ Example:
 jetls serve --pipe-connect=/tmp/jetls.sock
 ```
 
+`--pipe=<path>` is accepted as an alias for `--pipe-connect=<path>`. This
+matches the flag convention stock LSP clients use for their pipe transport
+(e.g. `vscode-languageclient` spawns the server with `--pipe=<name>`).
+
 #### `pipe-listen`
 
 Server creates and listens on a socket, then waits for the client to connect.

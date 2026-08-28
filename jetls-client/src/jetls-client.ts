@@ -7,12 +7,11 @@ import { affectsServerConfig } from "./server-config";
 import {
   activateServerLifecycle,
   requestLanguageServerRestart,
+  reinstallServer,
   restartOnServerConfigChange,
   shutdownServerLifecycle,
-  syncConfigurationChange,
 } from "./server-lifecycle";
 import { StartupStatusBar } from "./status-bar";
-import { checkForUpdates } from "./update-check";
 
 let outputChannel: LogOutputChannel;
 let statusBar: StartupStatusBar;
@@ -26,13 +25,22 @@ export function activate(context: ExtensionContext) {
       if (affectsServerConfig(event)) {
         restartOnServerConfigChange();
       }
-      syncConfigurationChange(event);
     }),
   );
   context.subscriptions.push(
     vscode.commands.registerCommand("jetls-client.restartLanguageServer", () =>
       requestLanguageServerRestart(),
     ),
+  );
+  context.subscriptions.push(
+    vscode.commands.registerCommand("jetls-client.reinstallServer", () => {
+      void reinstallServer().catch((err) => {
+        const message = err instanceof Error ? err.message : String(err);
+        outputChannel.appendLine(
+          `[jetls-client] Failed to reinstall the managed JETLS: ${message}.`,
+        );
+      });
+    }),
   );
 
   outputChannel = vscode.window.createOutputChannel("JETLS", { log: true });
@@ -42,9 +50,7 @@ export function activate(context: ExtensionContext) {
     ),
   );
 
-  activateServerLifecycle(outputChannel, statusBar);
-
-  checkForUpdates(context);
+  activateServerLifecycle(outputChannel, statusBar, context);
 
   requestLanguageServerRestart();
 }

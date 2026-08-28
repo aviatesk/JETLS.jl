@@ -37,23 +37,23 @@ jobs:
           - version: "1" # x64 windows
             os: windows-latest
             arch: x64
-          - version: "1" # x64 macOS
+          - version: "1" # macOS
             os: macos-latest
-            arch: x64
+            arch: default
     steps:
-      - uses: actions/checkout@v4
-      - uses: julia-actions/setup-julia@v2
+      - uses: actions/checkout@v7
+      - uses: julia-actions/setup-julia@v3
         with:
           version: ${{ matrix.version }}
           arch: ${{ matrix.arch }}
-      - uses: julia-actions/cache@v2
+      - uses: julia-actions/cache@v3
       - uses: julia-actions/julia-buildpkg@latest
       - uses: julia-actions/julia-runtest@latest
         with:
           coverage: ${{ inputs.coverage }}
       - uses: julia-actions/julia-processcoverage@v1
         if: inputs.coverage
-      - uses: codecov/codecov-action@v5
+      - uses: codecov/codecov-action@v7
         if: inputs.coverage
         with:
           flags: JETLS.jl
@@ -75,12 +75,12 @@ jobs:
           #   os: ubuntu-latest
           #   arch: x64
     steps:
-      - uses: actions/checkout@v4
-      - uses: julia-actions/setup-julia@v2
+      - uses: actions/checkout@v7
+      - uses: julia-actions/setup-julia@v3
         with:
           version: ${{ matrix.version }}
           arch: ${{ matrix.arch }}
-      - uses: julia-actions/cache@v2
+      - uses: julia-actions/cache@v3
       # - name: allow JET to be loaded on nightly
       #   if: matrix.version == 'nightly'
       #   run: |
@@ -94,7 +94,7 @@ jobs:
           coverage: ${{ inputs.coverage }}
       - uses: julia-actions/julia-processcoverage@v1
         if: inputs.coverage
-      - uses: codecov/codecov-action@v5
+      - uses: codecov/codecov-action@v7
         if: inputs.coverage
         with:
           flags: JETLS.jl

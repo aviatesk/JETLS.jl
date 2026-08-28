@@ -16,6 +16,7 @@ To run this test independently:
 
 using Test
 using JETLS
+using Sockets: Sockets
 
 # Test configuration
 const JULIA_CMD = normpath(Sys.BINDIR, "julia")
@@ -202,5 +203,77 @@ withserverprocess() do proc; mktempdir() do root_dir
     end
     @test process_exited(proc) && proc.exitcode == 1
 end; end
+
+# test a normal server lifecycle over the pipe transport, exercising both
+# `--pipe-connect` and its `--pipe` alias, the flag convention that stock
+# LSP clients (e.g. vscode-languageclient) use
+for pipe_flag in ("--pipe-connect", "--pipe")
+    mktempdir() do pipe_dir; mktempdir() do root_dir
+        pipe_name = "jetls-test-$(getpid())-$(lstrip(pipe_flag, '-'))"
+        pipe_path = @static Sys.iswindows() ?
+            "\\\\.\\pipe\\$pipe_name" : joinpath(pipe_dir, "$pipe_name.sock")
+        server_socket = Sockets.listen(pipe_path)
+        cmd = `$JULIA_CMD --project=$JETLS_DIR -m JETLS serve $pipe_flag=$pipe_path`
+        proc = run(cmd; wait=false)
+        conn = nothing
+        try
+            accept_task = @async Sockets.accept(server_socket)
+            conn = with_timeout(#=timeout=#STARTUP_TIMEOUT, "pipe connection") do _
+                process_exited(proc) &&
+                    error("Server exited (code $(proc.exitcode)) before connecting")
+                istaskdone(accept_task) || return nothing
+                return fetch(accept_task)
+            end
+
+            initialize_msg = """{
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "processId": $(getpid()),
+                    "capabilities": {},
+                    "workspaceFolders": [{
+                        "uri": "$(JETLS.LSP.URIs2.filepath2uri(root_dir))",
+                        "name": "test-workspace"
+                    }]
+                }
+            }"""
+            write_lsp_message(conn, initialize_msg)
+            initialization = read_lsp_response(conn, 1)
+            @test occursin("\"id\":1", initialization.response)
+            @test occursin("\"result\"", initialization.response)
+
+            shutdown_msg = """{
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "shutdown",
+                "params": null
+            }"""
+            write_lsp_message(conn, shutdown_msg)
+            shutdown = read_lsp_response(conn, 2)
+            @test occursin("\"result\":null", shutdown.response)
+
+            exit_msg = """{
+                "jsonrpc": "2.0",
+                "method": "exit",
+                "params": null
+            }"""
+            write_lsp_message(conn, exit_msg)
+
+            @test with_timeout(#=timeout=#DEFAULT_TIMEOUT, "server shutdown") do _
+                process_running(proc) && return nothing
+                return true
+            end
+            @test process_exited(proc) && proc.exitcode == 0
+        finally
+            isnothing(conn) || close(conn)
+            close(server_socket)
+            if !process_exited(proc)
+                @error "Server process did not exit gracefully, killing it"
+                kill(proc)
+            end
+        end
+    end; end
+end
 
 end # module test_jetls_serve

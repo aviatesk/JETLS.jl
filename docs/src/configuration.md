@@ -734,7 +734,7 @@ entries from both LSP config and file config are merged rather than one
 completely overriding the other. Entries with same keys are merged with file
 config taking precedence, while entries unique to either source are preserved.
 
-## [JSON Schema](@id config/schema-cli)
+## [JSON schema](@id config/schema-cli)
 
 JETLS ships pre-generated [JSON Schema](https://json-schema.org/) files for
 all configuration surfaces. These can be used to enable IDE validation and
