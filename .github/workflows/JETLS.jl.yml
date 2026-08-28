@@ -40,7 +40,7 @@ jobs:
         with:
           version: "1"
           arch: x64
-      - uses: julia-actions/cache@v2
+      - uses: julia-actions/cache@v3
       - name: enable JETLS_DEV_MODE for tests
         run: |
           echo '
@@ -59,7 +59,7 @@ jobs:
         with:
           version: "1"
           arch: x64
-      - uses: julia-actions/cache@v2
+      - uses: julia-actions/cache@v3
       - name: set LocalPreferences.toml
         working-directory: .
         run: |
@@ -79,7 +79,7 @@ jobs:
         with:
           version: "1"
           arch: x64
-      - uses: julia-actions/cache@v2
+      - uses: julia-actions/cache@v3
       - name: set LocalPreferences.toml
         working-directory: .
         run: |
@@ -99,7 +99,7 @@ jobs:
         with:
           version: "1"
           arch: x64
-      - uses: julia-actions/cache@v2
+      - uses: julia-actions/cache@v3
       - uses: julia-actions/julia-buildpkg@latest
       - uses: julia-actions/julia-runtest@latest
         env:
@@ -128,7 +128,7 @@ jobs:
         with:
           version: "1"
           arch: x64
-      - uses: julia-actions/cache@v2
+      - uses: julia-actions/cache@v3
       - name: set LocalPreferences.toml
         working-directory: .
         run: |
