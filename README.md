@@ -1,7 +1,6 @@
 # JETLS
 
 [![](https://img.shields.io/badge/docs-user_guide-9558B2?logo=julia)](https://aviatesk.github.io/JETLS.jl/)
-[![](https://img.shields.io/badge/docs-dev_notes-7C3AED?logo=obsidian)](https://publish.obsidian.md/jetls)
 [![](https://github.com/aviatesk/JETLS.jl/actions/workflows/JETLS.jl.yml/badge.svg)](https://github.com/aviatesk/JETLS.jl/actions/workflows/JETLS.jl.yml)
 [![](https://codecov.io/gh/aviatesk/JETLS.jl/branch/master/graph/badge.svg?flag=JETLS.jl)](https://codecov.io/gh/aviatesk/JETLS.jl&flags[0]=JETLS.jl)
 
@@ -15,10 +14,6 @@ By leveraging tooling technologies like
 [JuliaLowering.jl](https://github.com/JuliaLang/julia/tree/master/JuliaLowering),
 JETLS aims to offer enhanced language features such as type-sensitive
 diagnostics, macro-aware go-to definition and such.
-
-This repository manages JETLS.jl, a Julia package that implements a language
-server, and [`jetls-client`](https://marketplace.visualstudio.com/items?itemName=aviatesk.jetls-client),
-a sample VSCode extension that serves as a language client for testing JETLS.
 
 > [!warning]
 > **Experimental**: JETLS is under active development.
@@ -34,6 +29,17 @@ a sample VSCode extension that serves as a language client for testing JETLS.
 For end-user documentation including installation instructions, configuration
 options, and feature guides, please visit the **[user guide documentation](https://aviatesk.github.io/JETLS.jl/)**.
 
+### Editor setup
+
+Editor integrations are developed in their own repositories:
+[jetls-vscode](https://github.com/aviatesk/jetls-vscode) provides the
+reference VSCode extension
+([`jetls-client`](https://marketplace.visualstudio.com/items?itemName=aviatesk.jetls-client)),
+and [zed-julia](https://github.com/aviatesk/zed-julia) the Zed extension.
+Setup for these and other editors is covered in the
+[Editor setup](https://aviatesk.github.io/JETLS.jl/release/#index/editor-setup)
+section of the user guide.
+
 ## Development notes
 
 The following documents contain specific items that should be referenced when
@@ -41,9 +47,6 @@ developing JETLS:
 
 - [DEVELOPMENT.md](./DEVELOPMENT.md): Developer notes
 - [AGENTS.md](./AGENTS.md): Specific coding rules (recommended reading for human developers as well)
-
-Meta-level discussions, research, and ideas related to the development of JETLS
-are compiled as [Obsidian](https://obsidian.md/) notes at <https://publish.obsidian.md/jetls>.
 
 ## License
 
