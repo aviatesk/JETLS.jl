@@ -41,4 +41,6 @@ CodeTracking = "2, 3"
 test = ["Aqua", "CassetteOverlay", "DataFrames", "Dates", "DeepDiffs", "Distributed", "ExplicitImports", "FunctionWrappers", "LinearAlgebra", "Logging", "LoopVectorization", "Mmap", "SHA", "SparseArrays", "Test"]
 
 [sources.CodeTracking]
-path = "../CodeTracking"
+subdir = "vendor/CodeTracking"
+rev = "558df42bd7449a977ea13f53ddd589cbfa59ecb4"
+url = "https://github.com/aviatesk/JETLS.jl"
