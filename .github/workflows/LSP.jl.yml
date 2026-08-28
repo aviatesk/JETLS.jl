@@ -26,7 +26,7 @@ jobs:
         with:
           version: "1.12" # most stable version
           arch: x64
-      - uses: julia-actions/cache@v2
+      - uses: julia-actions/cache@v3
       - name: test LSP
         shell: julia --color=yes --project=. {0}    # this is necessary for the next command to work on Windows
         run: 'using Pkg; Pkg.activate(normpath(pwd(), "LSP")); Pkg.instantiate(); Pkg.test(; coverage=true)'

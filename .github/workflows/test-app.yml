@@ -55,7 +55,7 @@ jobs:
         with:
           version: "1" # most stable version
           arch: x64
-      - uses: julia-actions/cache@v2
+      - uses: julia-actions/cache@v3
       - uses: julia-actions/julia-buildpkg@latest
       - name: run test
         run: |
@@ -70,7 +70,7 @@ jobs:
         with:
           version: "1" # most stable version
           arch: x64
-      - uses: julia-actions/cache@v2
+      - uses: julia-actions/cache@v3
       - uses: julia-actions/julia-buildpkg@latest
       - name: run test
         run: |
@@ -85,7 +85,7 @@ jobs:
         with:
           version: "1" # most stable version
           arch: x64
-      - uses: julia-actions/cache@v2
+      - uses: julia-actions/cache@v3
       - uses: julia-actions/julia-buildpkg@latest
       - name: run test
         run: |
