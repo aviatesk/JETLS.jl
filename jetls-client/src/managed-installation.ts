@@ -66,6 +66,11 @@ const GENERATION_RETENTION = 7 * 24 * 60 * 60 * 1000;
 // because reclaiming a runtime the user switches back to costs a full
 // reinstall.
 const RUNTIME_RETENTION = 30 * 24 * 60 * 60 * 1000;
+// The last-used markers only record starts, so a window that keeps a
+// server running without restarting would age past the retentions above
+// while still using its generation; callers re-touch the markers at
+// this interval while their server runs.
+export const LAST_USED_REFRESH_INTERVAL = 60 * 60 * 1000;
 
 export interface ProcessResult {
   status: number | null;
@@ -513,6 +518,19 @@ export function lastUsedPath(basePath: string): string {
 // from.
 async function touchLastUsed(basePath: string): Promise<void> {
   await writeFile(lastUsedPath(basePath), "").catch(() => undefined);
+}
+
+/**
+ * Refreshes the last-used markers of a resolved generation and its
+ * runtime container, so cleanup in other windows keeps both alive while
+ * a long-running session still uses them. Best-effort like the markers
+ * themselves.
+ */
+export async function touchManagedInstallation(
+  depotPath: string,
+): Promise<void> {
+  await touchLastUsed(depotPath);
+  await touchLastUsed(path.dirname(depotPath));
 }
 
 function appsDirectory(depotPath: string): string {
@@ -1352,6 +1370,15 @@ async function resolveGeneration(
   onInstallStep: (() => () => void) | undefined,
   onInstallOutput: ((line: string) => void) | undefined,
 ): Promise<string> {
+  // Mark the container in use before the resolution work: a fresh
+  // install can hold it unresolved for many minutes, during which
+  // cleanup in another window would still judge it by its last start.
+  // Failures fall through to the resolution itself, which reads the
+  // markers only best-effort and surfaces real filesystem problems.
+  await mkdir(context.containerPath, { recursive: true }).catch(
+    () => undefined,
+  );
+  await touchLastUsed(context.containerPath);
   const settle = async (generationPath: string): Promise<string> => {
     await touchLastUsed(generationPath);
     // The container-level marker is what keeps the whole runtime alive

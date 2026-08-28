@@ -13,9 +13,11 @@ import { JETLS_CLIENT_SETTINGS_SECTION, TIMEOUTS } from "./constants";
 import {
   ensureManagedJETLS,
   invalidateInstallStamp,
+  LAST_USED_REFRESH_INTERVAL,
   ManagedInstallationCancelledError,
   ManagedJETLSError,
   managedJETLSCommands,
+  touchManagedInstallation,
 } from "./managed-installation";
 import {
   getServerConfig,
@@ -193,6 +195,9 @@ async function startLanguageServer() {
   if (deactivating) {
     return;
   }
+  // The previous server (whose installation the refresh kept alive) is
+  // already stopped by the time a new start runs.
+  stopManagedLastUsedRefresh();
   statusBar.show("checking");
 
   const serverConfig = getServerConfig();
@@ -613,6 +618,13 @@ async function startLanguageServer() {
     outputChannel.appendLine("[jetls-client] JETLS is ready!");
   }
 
+  if (managedDepotPath !== undefined) {
+    const depotPath = managedDepotPath;
+    managedLastUsedRefresh = setInterval(() => {
+      void touchManagedInstallation(depotPath);
+    }, LAST_USED_REFRESH_INTERVAL);
+  }
+
   // Register handler for workspace/configuration requests after client starts
   languageClient.onRequest(
     "workspace/configuration",
@@ -691,6 +703,18 @@ let forceManagedInstall = false;
 // strands its unpublished generation.
 let managedSetupAbort: AbortController | undefined;
 
+// Re-touches the running managed server's last-used markers: cleanup in
+// other windows judges liveness by them, and they otherwise only record
+// starts, which a long-lived session outlives.
+let managedLastUsedRefresh: NodeJS.Timeout | undefined;
+
+function stopManagedLastUsedRefresh(): void {
+  if (managedLastUsedRefresh !== undefined) {
+    clearInterval(managedLastUsedRefresh);
+    managedLastUsedRefresh = undefined;
+  }
+}
+
 /**
  * Reinstalls the managed JETLS from scratch: after a modal confirmation
  * the server restarts with the next managed setup forced to install a
@@ -760,6 +784,7 @@ function awaitWithTimeout(
 
 export async function shutdownServerLifecycle(): Promise<void> {
   deactivating = true;
+  stopManagedLastUsedRefresh();
   managedSetupAbort?.abort();
   cancelServerStartup?.();
   try {
