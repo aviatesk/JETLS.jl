@@ -56,9 +56,6 @@ jobs:
   docs:
     name: Documentation
     if: github.event_name == 'workflow_dispatch' || github.event_name == 'repository_dispatch'
-    concurrency:
-      group: gh-pages-deployment
-      cancel-in-progress: false
     permissions:
       actions: write
       contents: write

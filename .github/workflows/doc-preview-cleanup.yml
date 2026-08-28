@@ -8,7 +8,7 @@ on:
 jobs:
   cleanup:
     concurrency:
-      group: gh-pages-deployment
+      group: doc-preview-cleanup-${{ github.event.pull_request.number }}
       cancel-in-progress: false
     permissions:
       contents: write
@@ -23,25 +23,38 @@ jobs:
           PREVIEW_DIR: previews/PR${{ github.event.pull_request.number }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          if [ ! -d "$PREVIEW_DIR" ]; then
-            echo "No preview found at $PREVIEW_DIR"
-            exit 0
-          fi
-
           git config user.name "Documenter.jl"
           git config user.email "documenter@juliadocs.github.io"
 
-          expected_head=$(git rev-parse HEAD)
-          git rm -rf "$PREVIEW_DIR"
-          tree=$(git write-tree)
-          # `commit-tree` without `-p` creates a root commit.
-          commit=$(
-            printf '%s\n\n%s\n%s\n' \
-              "docs: Remove preview for PR $PR_NUMBER" \
-              "Remove the closed pull request preview and reset the generated" \
-              "documentation history." |
-              git commit-tree "$tree"
-          )
-          git push \
-            --force-with-lease="refs/heads/gh-pages:$expected_head" \
-            origin "$commit:refs/heads/gh-pages"
+          # Retry against the latest tree if another deployment wins the lease.
+          for attempt in 1 2 3 4 5; do
+            if [ ! -d "$PREVIEW_DIR" ]; then
+              echo "No preview found at $PREVIEW_DIR"
+              exit 0
+            fi
+
+            expected_head=$(git rev-parse HEAD)
+            git rm -rf "$PREVIEW_DIR"
+            tree=$(git write-tree)
+            # `commit-tree` without `-p` creates a root commit.
+            commit=$(
+              printf '%s\n\n%s\n%s\n' \
+                "docs: Remove preview for PR $PR_NUMBER" \
+                "Remove the closed pull request preview and reset the generated" \
+                "documentation history." |
+                git commit-tree "$tree"
+            )
+            if git push \
+              --force-with-lease="refs/heads/gh-pages:$expected_head" \
+              origin "$commit:refs/heads/gh-pages"; then
+              exit 0
+            fi
+
+            if [ "$attempt" -eq 5 ]; then
+              echo "Failed to update gh-pages after $attempt attempts" >&2
+              exit 1
+            fi
+
+            git fetch --depth=1 origin gh-pages
+            git reset --hard FETCH_HEAD
+          done
