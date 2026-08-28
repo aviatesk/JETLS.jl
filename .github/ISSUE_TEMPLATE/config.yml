@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: VSCode extension issues
+    url: https://github.com/aviatesk/jetls-vscode/issues/new/choose
+    about: Problems with the VSCode extension itself (installation, startup, extension UI, packaging) belong to the jetls-vscode repository.
