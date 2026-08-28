@@ -1,5 +1,6 @@
 include("setup-schema-context.jl")
 include("utils.jl")
+include("vscode-schemas.jl")
 
 const HELP_MSG = """
 Usage: julia --project=scripts/schema scripts/schema/generate.jl
@@ -12,6 +13,8 @@ Arguments:
                       --config-toml   Complete .JETLSConfig.toml schema
                       --settings      Settings schema
                       --init-options  Initialization options schema
+                      --vscode-configuration
+                                      VSCode package.json configuration fragments
   FILE              Output file, or file to verify when using --check
 
 Options:
@@ -21,7 +24,8 @@ Options:
 const TARGETS = Dict(
     "--config-toml" => JETLS.JETLSConfig,
     "--settings" => JETLS.JETLSConfig,
-    "--init-options" => JETLS.InitOptions
+    "--init-options" => JETLS.InitOptions,
+    "--vscode-configuration" => JETLS.JETLSConfig
 )
 
 function parse_arguments(args::Vector{String})
@@ -49,6 +53,13 @@ function parse_arguments(args::Vector{String})
 end
 
 function generate_schema_dict(target_arg::String, ctx::SchemaContext)
+    if target_arg == "--vscode-configuration"
+        setting_schema, init_options_schema = generate_vscode_schemas(ctx)
+        return sort_keys(Dict{String, Any}(
+            "settings" => setting_schema,
+            "initializationOptions" => init_options_schema
+        ))
+    end
     target = TARGETS[target_arg]
     if target_arg == "--settings"
         skip!(ctx, JETLS.JETLSConfig, :initialization_options)

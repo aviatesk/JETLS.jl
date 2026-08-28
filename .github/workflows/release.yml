@@ -164,7 +164,8 @@ jobs:
             --notes "$RELEASE_NOTES" \
             schemas/config-toml.schema.json \
             schemas/settings.schema.json \
-            schemas/init-options.schema.json
+            schemas/init-options.schema.json \
+            schemas/vscode-configuration.json
 
       - name: Strip Announcement from previous release
         env:
