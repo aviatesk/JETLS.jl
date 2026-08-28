@@ -17,11 +17,6 @@ differ.[^error_lens]
     information through standard LSP channels, and the inline rendering
     is up to the client.
 
-!!! note
-    JETLS is under active development. This page is not exhaustive and is
-    updated as features mature. For the current status of planned features,
-    see the [roadmap](https://publish.obsidian.md/jetls/work/JETLS/JETLS+roadmap).
-
 #### [Overview](@id features/overview)
 
 ```@contents

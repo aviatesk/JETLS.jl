@@ -17,7 +17,7 @@ body:
       description: |
         The editor and LSP client you are using (e.g., VSCode with jetls-client, Neovim, Zed, etc.).
         If a link to the client implementation is available, please include it
-        (e.g., `https://github.com/aviatesk/JETLS.jl/tree/master/jetls-client#jetls-client`).
+        (e.g., `https://github.com/aviatesk/jetls-vscode`).
       placeholder: "VSCode with jetls-client v0.x.x"
     validations:
       required: true
@@ -53,8 +53,8 @@ body:
       label: Reproduction with the VSCode reference client
       description: |
         To help distinguish between client-side and server-side issues, please check whether the problem
-        also occurs with the [VSCode reference client](https://github.com/aviatesk/JETLS.jl/tree/master/jetls-client#jetls-client)
-        (see [installation instructions](https://github.com/aviatesk/JETLS.jl/tree/master/jetls-client#installation)).
+        also occurs with the [VSCode reference client](https://github.com/aviatesk/jetls-vscode)
+        (see [installation instructions](https://github.com/aviatesk/jetls-vscode#installation)).
       options:
         - label: I have confirmed this issue also reproduces with the VSCode reference client.
         - label: This issue does NOT reproduce with the VSCode reference client, but I believe JETLS-side changes are needed.
