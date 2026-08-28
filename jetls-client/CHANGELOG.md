@@ -8,7 +8,13 @@ and this project uses [calendar versioning](https://calver.org/) (`YYYY.M.D`, th
 ## Unreleased
 
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
-- Diff: [`8a6998f1b...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/8a6998f1b...HEAD)
+- Diff: [`jetls-client/v2026.8.28...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/jetls-client/v2026.8.28...HEAD)
+
+## v2026.8.28
+
+- Commit: [`jetls-client/v2026.8.28`](https://github.com/aviatesk/JETLS.jl/tree/jetls-client/v2026.8.28)
+- Diff: [`8a6998f1b...jetls-client/v2026.8.28`](https://github.com/aviatesk/JETLS.jl/compare/8a6998f1b...jetls-client/v2026.8.28)
+- Pinned JETLS: [`2026-08-28`](https://github.com/aviatesk/JETLS.jl/releases/tag/2026-08-28)
 
 ### Added
 
