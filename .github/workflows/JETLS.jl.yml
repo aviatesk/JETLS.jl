@@ -36,7 +36,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: julia-actions/setup-julia@v1
+      - uses: julia-actions/setup-julia@v3
         with:
           version: "1"
           arch: x64
@@ -55,7 +55,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: julia-actions/setup-julia@v1
+      - uses: julia-actions/setup-julia@v3
         with:
           version: "1"
           arch: x64
@@ -75,7 +75,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: julia-actions/setup-julia@v1
+      - uses: julia-actions/setup-julia@v3
         with:
           version: "1"
           arch: x64
@@ -95,7 +95,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: julia-actions/setup-julia@v1
+      - uses: julia-actions/setup-julia@v3
         with:
           version: "1"
           arch: x64
@@ -113,7 +113,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: julia-actions/setup-julia@v2
+      - uses: julia-actions/setup-julia@v3
         with:
           version: "1"
           arch: x64
@@ -124,7 +124,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: julia-actions/setup-julia@v1
+      - uses: julia-actions/setup-julia@v3
         with:
           version: "1"
           arch: x64
