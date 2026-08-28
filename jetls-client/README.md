@@ -78,13 +78,29 @@ through the `jetls-client.executable` setting:
 
 - To customize the managed server launch, use the object form with `path`
   omitted; the optional `threads` and `env` fields control the launch. For
-  example, to select a Julia executable other than the default `julia`
-  command, set `JULIA_APPS_JULIA_CMD`:
+  example, if you use [juliaup](https://github.com/JuliaLang/juliaup),
+  select the Julia channel by setting `JULIAUP_CHANNEL`:
 
   ```jsonc
   {
     "jetls-client.executable": {
       "threads": "1", // the default is "auto"
+      "env": {
+        "JULIAUP_CHANNEL": "1.13"
+      }
+    }
+  }
+  ```
+
+  This takes effect when the default `julia` command resolves to the
+  juliaup launcher.
+
+  To select a Julia executable other than the default `julia` command,
+  set `JULIA_APPS_JULIA_CMD`:
+
+  ```jsonc
+  {
+    "jetls-client.executable": {
       "env": {
         "JULIA_APPS_JULIA_CMD": "/absolute/path/to/julia"
       }
@@ -94,7 +110,8 @@ through the `jetls-client.executable` setting:
 
   The command must be the Julia executable itself (on Windows,
   `julia.exe` rather than a `.bat`/`.cmd` wrapper), since the managed
-  installation launches it directly.
+  installation launches it directly; `JULIAUP_CHANNEL` is ignored in
+  this case.
 
 - To use a JETLS binary you manage yourself, specify its `path`.
   This bypasses managed installation and updates:
