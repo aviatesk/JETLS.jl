@@ -32,10 +32,10 @@ options, and feature guides, please visit the **[user guide documentation](https
 ### Editor setup
 
 Editor integrations are developed in their own repositories:
-[jetls-vscode](https://github.com/aviatesk/jetls-vscode) provides the
+[aviatesk/jetls-vscode](https://github.com/aviatesk/jetls-vscode) provides the
 reference VSCode extension
-([`jetls-client`](https://marketplace.visualstudio.com/items?itemName=aviatesk.jetls-client)),
-and [zed-julia](https://github.com/aviatesk/zed-julia) the Zed extension.
+([`jetls-client`](https://marketplace.visualstudio.com/items?itemName=aviatesk.jetls-client)), and
+[aviatesk/zed-julia](https://github.com/aviatesk/zed-julia) the Zed extension.
 Setup for these and other editors is covered in the
 [Editor setup](https://aviatesk.github.io/JETLS.jl/release/#index/editor-setup)
 section of the user guide.
