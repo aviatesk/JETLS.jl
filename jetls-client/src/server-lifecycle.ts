@@ -213,6 +213,7 @@ async function startLanguageServer() {
     const setupAbort = new AbortController();
     managedSetupAbort = setupAbort;
     let installProgress: vscode.Progress<{ message?: string }> | undefined;
+    let installPhase: string | undefined;
     try {
       installation = await ensureManagedJETLS({
         storagePath: managedStoragePath,
@@ -221,20 +222,19 @@ async function startLanguageServer() {
           outputChannel.appendLine(`[jetls-client] ${message}`),
         progress: (message) => {
           statusBar.showManagedProgress(message);
-          installProgress?.report({
-            message: message.startsWith("Installing JETLS: ")
-              ? message.slice("Installing JETLS: ".length)
-              : message,
-          });
+          installPhase = message.startsWith("Installing JETLS: ")
+            ? message.slice("Installing JETLS: ".length).replace(/\.\.\.$/, "")
+            : undefined;
+          installProgress?.report({ message: installPhase ?? message });
         },
         forceInstall: forceManagedInstall,
         signal: setupAbort.signal,
-        // Live output lines make a long installation visibly alive: the
-        // status bar keeps the coarse phase while its tooltip and the
-        // progress notification tick with the latest line.
         onInstallOutput: (line) => {
           statusBar.showManagedProgressDetail(line);
-          installProgress?.report({ message: line });
+          installProgress?.report({
+            message:
+              installPhase === undefined ? line : `${installPhase} — ${line}`,
+          });
         },
         // The actual installation (the only open-ended long step) gets a
         // cancellable progress notification for its duration; routine
