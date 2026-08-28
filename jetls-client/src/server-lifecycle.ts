@@ -755,6 +755,7 @@ function awaitWithTimeout(
 export async function shutdownServerLifecycle(): Promise<void> {
   deactivating = true;
   managedSetupAbort?.abort();
+  cancelServerStartup?.();
   try {
     await versionPreflight.terminate();
   } catch (err) {
