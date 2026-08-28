@@ -280,7 +280,7 @@ async function startLanguageServer() {
         // deactivation would have set the flags above): no failure UI,
         // but the status bar must not keep showing progress, and the
         // notification offers the way back in.
-        statusBar.showManagedFailure("The JETLS installation was cancelled.");
+        statusBar.showManagedCancelled();
         const retryButton = "Retry";
         const outputButton = "Show JETLS output";
         void vscode.window

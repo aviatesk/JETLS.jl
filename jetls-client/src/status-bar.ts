@@ -138,6 +138,28 @@ export class StartupStatusBar {
     this.item.show();
   }
 
+  /**
+   * Shows that the managed installation was cancelled: a deliberate
+   * stop rather than a failure, so the item keeps the stopped server
+   * visible without the error styling.
+   */
+  showManagedCancelled(): void {
+    if (this.suppressed) {
+      return;
+    }
+    this.clearHideTimer();
+    this.managedProgress = false;
+    this.item.text = "$(circle-slash) JETLS installation cancelled";
+    this.item.tooltip =
+      "The JETLS installation was cancelled. Restart the language server " +
+      "to retry.\nClick to open the JETLS output.";
+    this.item.backgroundColor = new vscode.ThemeColor(
+      "statusBarItem.warningBackground",
+    );
+    this.item.command = SHOW_OUTPUT_COMMAND;
+    this.item.show();
+  }
+
   /** Ignore further status updates; used once deactivation has started. */
   suppress(): void {
     this.suppressed = true;
