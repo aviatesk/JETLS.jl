@@ -10,10 +10,16 @@ export type ServerStartupStatus =
   | "restart-failed"
   | "crashed";
 
+const SHOW_OUTPUT_COMMAND: vscode.Command = {
+  command: "jetls-client.showOutput",
+  title: "Show JETLS output",
+};
+
 export class StartupStatusBar {
   private readonly item: vscode.StatusBarItem;
   private hideTimer: NodeJS.Timeout | undefined;
   private suppressed = false;
+  private managedProgress = false;
 
   constructor() {
     this.item = vscode.window.createStatusBarItem(
@@ -21,10 +27,7 @@ export class StartupStatusBar {
       100,
     );
     this.item.name = "JETLS server startup status";
-    this.item.command = {
-      command: "jetls-client.showOutput",
-      title: "Show JETLS output",
-    };
+    this.item.command = SHOW_OUTPUT_COMMAND;
   }
 
   show(status: ServerStartupStatus): void {
@@ -32,8 +35,10 @@ export class StartupStatusBar {
       return;
     }
     this.clearHideTimer();
+    this.managedProgress = false;
 
     this.item.backgroundColor = undefined;
+    this.item.command = SHOW_OUTPUT_COMMAND;
     switch (status) {
       case "checking":
         this.item.text = "$(sync~spin) Checking JETLS...";
@@ -85,6 +90,51 @@ export class StartupStatusBar {
         );
         break;
     }
+    this.item.show();
+  }
+
+  /** Shows a spinner with a managed-installation progress message. */
+  showManagedProgress(message: string): void {
+    if (this.suppressed) {
+      return;
+    }
+    this.clearHideTimer();
+    this.managedProgress = true;
+    this.item.backgroundColor = undefined;
+    this.item.command = SHOW_OUTPUT_COMMAND;
+    this.item.text = `$(sync~spin) ${message}`;
+    this.item.tooltip = "Setting up the managed JETLS installation.";
+    this.item.show();
+  }
+
+  /**
+   * Updates only the tooltip with the latest installation output line;
+   * a no-op unless the managed-progress spinner is showing.
+   */
+  showManagedProgressDetail(line: string): void {
+    if (this.suppressed || !this.managedProgress) {
+      return;
+    }
+    this.item.tooltip = `${line}\nClick to open the JETLS output.`;
+  }
+
+  /**
+   * Shows a persistent managed-installation failure with a one-line
+   * summary; clicking the item opens the output channel, which holds the
+   * full failure details.
+   */
+  showManagedFailure(summary: string): void {
+    if (this.suppressed) {
+      return;
+    }
+    this.clearHideTimer();
+    this.managedProgress = false;
+    this.item.text = "$(error) Managed JETLS failed";
+    this.item.tooltip = `${summary}\nClick to open the JETLS output.`;
+    this.item.backgroundColor = new vscode.ThemeColor(
+      "statusBarItem.errorBackground",
+    );
+    this.item.command = SHOW_OUTPUT_COMMAND;
     this.item.show();
   }
 

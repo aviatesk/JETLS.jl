@@ -28,12 +28,12 @@ jobs:
     name: Check schemas are up to date
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: julia-actions/setup-julia@v1
+      - uses: actions/checkout@v7
+      - uses: julia-actions/setup-julia@v3
         with:
           version: "1.12"
           arch: x64
-      - uses: julia-actions/cache@v2
+      - uses: julia-actions/cache@v3
       - name: Instantiate schema project
         run: julia --startup-file=no --project=scripts/schema -e 'using Pkg; Pkg.instantiate()'
       - name: Check schemas

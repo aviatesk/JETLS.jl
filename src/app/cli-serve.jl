@@ -11,6 +11,7 @@ const serve_help_message = """
     Options:
       --stdio                     Use standard input/output (default)
       --pipe-connect=<path>       Connect to client's Unix domain socket/named pipe
+      --pipe=<path>               Alias for --pipe-connect (LSP client convention)
       --pipe-listen=<path>        Listen on Unix domain socket/named pipe
       --socket=<port>             Listen on TCP socket
       --clientProcessId=<pid>     Monitor client process (enables crash detection)
@@ -41,6 +42,18 @@ function run_serve(args::Vector{String})
                 return 1
             end
         elseif (m = match(r"^--pipe-connect=(.+)$", arg); !isnothing(m))
+            pipe_connect_path = m.captures[1]
+        # `--pipe` aliases `--pipe-connect`: stock LSP clients (e.g. vscode-languageclient)
+        # spawn the server with `--pipe=<name>` for their pipe transport
+        elseif occursin(r"^(?:--)?pipe$", arg)
+            if i < length(args)
+                pipe_connect_path = args[i+1]
+                i += 1
+            else
+                @error "--pipe requires a path argument: use --pipe=<path> or --pipe <path>"
+                return 1
+            end
+        elseif (m = match(r"^--pipe=(.+)$", arg); !isnothing(m))
             pipe_connect_path = m.captures[1]
         elseif occursin(r"^(?:--)?pipe-listen$", arg)
             if i < length(args)

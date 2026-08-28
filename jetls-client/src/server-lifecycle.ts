@@ -2,7 +2,6 @@ import * as vscode from "vscode";
 import { LogOutputChannel } from "vscode";
 
 import {
-  DidChangeConfigurationNotification,
   LanguageClient,
   LanguageClientOptions,
   ServerOptions,
@@ -10,18 +9,18 @@ import {
 } from "vscode-languageclient/node";
 
 import { CoalescingTaskRunner } from "./coalescing-task-runner";
+import { JETLS_CLIENT_SETTINGS_SECTION, TIMEOUTS } from "./constants";
 import {
-  JETLS_CLIENT_SETTINGS_SECTION,
-  JETLS_INSTALL_COMMAND,
-  JETLS_INSTALL_GUIDE_URL,
-  LANGUAGE_SERVER_STOP_TIMEOUT_MS,
-  PRECOMPILATION_TIMEOUT_MS,
-  PREFLIGHT_TERMINATION_TIMEOUT_MS,
-  SERVER_START_TIMEOUT_MS,
-} from "./constants";
+  ensureManagedJETLS,
+  invalidateInstallStamp,
+  ManagedInstallationCancelledError,
+  ManagedJETLSError,
+  managedJETLSCommands,
+} from "./managed-installation";
 import {
   getServerConfig,
   hasServerConfigChanged,
+  isManagedExecutable,
   ServerConfig,
 } from "./server-config";
 import {
@@ -42,68 +41,109 @@ let statusBar: StartupStatusBar;
 let deactivating = false;
 let currentServerConfig: ServerConfig | null = null;
 let cancelServerStartup: (() => void) | undefined;
-
-/**
- * Sends `workspace/didChangeConfiguration` when a configuration change
- * affects `jetls-client.settings`, prompting the server to re-pull it via
- * `workspace/configuration`. The extension owns this send: the language
- * client's configuration sync feature cannot see which settings changed
- * (the server registers without a section filter, so it would send on every
- * configuration change) and is therefore suppressed in the middleware below.
- * The send is skipped while a restart is queued or shutdown is underway;
- * the replacement server pulls fresh configuration on initialize anyway.
- *
- * TODO (managed installation): once the extension manages the server binary
- * and a paired server version is guaranteed, declare
- * `configuration_section: JETLS_CLIENT_SETTINGS_SECTION` in the
- * `initializationOptions` instead. The server then registers the
- * notification with that section filter and the library's configuration
- * sync feature takes over, so this function and the middleware suppression
- * below can be deleted. Declaring it today would make older servers reject
- * the whole `initializationOptions` as containing an unknown key.
- */
-export function syncConfigurationChange(
-  event: vscode.ConfigurationChangeEvent,
-): void {
-  if (deactivating || restartRunner.pending) {
-    return;
-  }
-  if (!event.affectsConfiguration(JETLS_CLIENT_SETTINGS_SECTION)) {
-    return;
-  }
-  if (!languageClient?.isRunning()) {
-    return;
-  }
-  void languageClient
-    .sendNotification(DidChangeConfigurationNotification.type, {
-      settings: null,
-    })
-    .catch((err) => {
-      const message = err instanceof Error ? err.message : String(err);
-      outputChannel.appendLine(
-        `[jetls-client] Failed to send workspace/didChangeConfiguration: ${message}.`,
-      );
-    });
-}
+let managedStoragePath: string;
 
 export function activateServerLifecycle(
   channel: LogOutputChannel,
   bar: StartupStatusBar,
+  context: vscode.ExtensionContext,
 ): void {
   outputChannel = channel;
   statusBar = bar;
+  managedStoragePath = context.globalStorageUri.fsPath;
   deactivating = false;
 }
 
+function executableEnvironment(executable: {
+  env?: Record<string, string>;
+}): NodeJS.ProcessEnv {
+  return {
+    ...process.env,
+    ...executable.env,
+  };
+}
+
 const versionPreflight = new VersionPreflight({
-  timeoutMs: PRECOMPILATION_TIMEOUT_MS,
-  terminationTimeoutMs: PREFLIGHT_TERMINATION_TIMEOUT_MS,
+  timeoutMs: TIMEOUTS.precompilation,
+  terminationTimeoutMs: TIMEOUTS.processTermination,
   platform: process.platform,
   appendLine: (message) => outputChannel.appendLine(message),
   onPrecompiling: () => statusBar.show("precompiling"),
 });
 
-// Helper to handle spawn errors with user-friendly messages
+// The one-line notification and tooltip text; the full failure details
+// stay in the output channel. Setup failures always arrive as
+// `ManagedJETLSError`, so the fallback prefix only describes failures of
+// the spawned server itself.
+function managedFailureSummary(err: Error): string {
+  if (err instanceof ManagedJETLSError) {
+    return err.summary;
+  }
+  const newline = err.message.indexOf("\n");
+  const line = newline === -1 ? err.message : err.message.slice(0, newline);
+  return `Failed to start the managed JETLS server: ${line}`;
+}
+
+function showManagedFailureNotification(err: Error): void {
+  const details = err instanceof ManagedJETLSError ? err : undefined;
+  const retryButton = "Retry";
+  const outputButton = "Show JETLS output";
+  const settingsButton = "Open settings";
+  const buttons: string[] = [];
+  // A configuration problem needs a settings change before a retry can
+  // help.
+  if (details === undefined || details.retryable) {
+    buttons.push(retryButton);
+  }
+  buttons.push(outputButton);
+  if (details !== undefined && !details.retryable) {
+    buttons.push(settingsButton);
+  }
+  vscode.window
+    .showErrorMessage(managedFailureSummary(err), ...buttons)
+    .then((selection) => {
+      if (selection === retryButton) {
+        requestLanguageServerRestart();
+      } else if (selection === outputButton) {
+        void vscode.commands.executeCommand("jetls-client.showOutput");
+      } else if (selection === settingsButton) {
+        void vscode.commands.executeCommand(
+          "workbench.action.openSettings",
+          "jetls-client.executable",
+        );
+      }
+    });
+}
+
+// Managed failures take two distinct paths. A setup failure happens before
+// `ensureManagedJETLS` produced a verified installation: nothing new is
+// known about any generation's verified state, so no install stamp is
+// touched. A server failure comes from a process launched out of a
+// verified generation and is the one corruption signal the install stamp
+// cannot see, so the stamp of the generation this lifecycle actually used
+// is dropped: the next start then re-verifies that generation and
+// replaces it with a fresh one if broken.
+function handleManagedSetupFailure(err: Error): void {
+  outputChannel.appendLine(
+    `[jetls-client] Failed to set up the managed JETLS: ${err.message}`,
+  );
+  showManagedFailureNotification(err);
+}
+
+function handleManagedServerFailure(err: Error, depotPath: string): void {
+  outputChannel.appendLine(
+    `[jetls-client] Failed to start the managed JETLS: ${err.message}`,
+  );
+  void invalidateInstallStamp(depotPath).catch((err) => {
+    const message = err instanceof Error ? err.message : String(err);
+    outputChannel.appendLine(
+      `[jetls-client] Failed to invalidate the managed install stamp: ${message}.`,
+    );
+  });
+  showManagedFailureNotification(err);
+}
+
+// Handles spawn errors of custom executable configurations.
 function handleSpawnError(err: Error, command: string): void {
   const errno = err as NodeJS.ErrnoException;
   if (errno.code === "ENOENT") {
@@ -111,30 +151,12 @@ function handleSpawnError(err: Error, command: string): void {
       `[jetls-client] Failed to start JETLS: Command not found: ${command}`,
     );
     outputChannel.appendLine(`[jetls-client] PATH: ${process.env.PATH}`);
-    outputChannel.appendLine(
-      `[jetls-client] Please install JETLS using: ${JETLS_INSTALL_COMMAND}`,
+    void vscode.window.showErrorMessage(
+      `JETLS executable not found: "${command}". Check the ` +
+        "`jetls-client.executable` setting, or remove its `path`/command to " +
+        "use the managed installation. If the command was just installed, " +
+        "restart VS Code to refresh the PATH.",
     );
-    outputChannel.appendLine(
-      `[jetls-client] If JETLS is already installed, try restarting VS Code to refresh the PATH.`,
-    );
-
-    const installButton = "Install JETLS";
-    const docsButton = "View installation guide";
-    vscode.window
-      .showErrorMessage(
-        `JETLS executable not found: "${command}". Please install JETLS or configure the executable path. If you have already installed JETLS, try restarting VS Code to refresh the PATH.`,
-        installButton,
-        docsButton,
-      )
-      .then((selection) => {
-        if (selection === installButton) {
-          const terminal = vscode.window.createTerminal("Install JETLS");
-          terminal.show();
-          terminal.sendText(JETLS_INSTALL_COMMAND, true);
-        } else if (selection === docsButton) {
-          vscode.env.openExternal(vscode.Uri.parse(JETLS_INSTALL_GUIDE_URL));
-        }
-      });
   } else {
     outputChannel.appendLine(
       `[jetls-client] Failed to start JETLS: ${err.message}`,
@@ -175,18 +197,128 @@ async function startLanguageServer() {
 
   const serverConfig = getServerConfig();
   currentServerConfig = serverConfig;
+  const managed = isManagedExecutable(serverConfig.executable);
 
   let resolvedCommands: JETLSCommands;
-  try {
-    resolvedCommands = resolveJETLSCommands(serverConfig.executable);
-  } catch (err) {
-    const error = err instanceof Error ? err : new Error(String(err));
-    if (!deactivating) {
-      statusBar.show("failed");
-      outputChannel.appendLine(`[jetls-client] ${error.message}`);
-      vscode.window.showErrorMessage(error.message);
+  let spawnEnv: NodeJS.ProcessEnv;
+  let managedDepotPath: string | undefined;
+  if (managed) {
+    const executable = serverConfig.executable as {
+      threads?: string;
+      env?: Record<string, string>;
+    };
+    let installation;
+    const setupAbort = new AbortController();
+    managedSetupAbort = setupAbort;
+    let installProgress: vscode.Progress<{ message?: string }> | undefined;
+    try {
+      installation = await ensureManagedJETLS({
+        storagePath: managedStoragePath,
+        environment: executableEnvironment(executable),
+        logger: (message) =>
+          outputChannel.appendLine(`[jetls-client] ${message}`),
+        progress: (message) => {
+          statusBar.showManagedProgress(message);
+          installProgress?.report({
+            message: message.startsWith("Installing JETLS: ")
+              ? message.slice("Installing JETLS: ".length)
+              : message,
+          });
+        },
+        forceInstall: forceManagedInstall,
+        signal: setupAbort.signal,
+        // Live output lines make a long installation visibly alive: the
+        // status bar keeps the coarse phase while its tooltip and the
+        // progress notification tick with the latest line.
+        onInstallOutput: (line) => {
+          statusBar.showManagedProgressDetail(line);
+          installProgress?.report({ message: line });
+        },
+        // The actual installation (the only open-ended long step) gets a
+        // cancellable progress notification for its duration; routine
+        // starts stay on the status bar alone.
+        onInstallStep: () => {
+          let end!: () => void;
+          const done = new Promise<void>((resolve) => {
+            end = resolve;
+          });
+          void vscode.window.withProgress(
+            {
+              location: vscode.ProgressLocation.Notification,
+              title: "Installing JETLS",
+              cancellable: true,
+            },
+            (progress, token) => {
+              installProgress = progress;
+              token.onCancellationRequested(() => setupAbort.abort());
+              return done;
+            },
+          );
+          return () => {
+            installProgress = undefined;
+            end();
+          };
+        },
+      });
+      forceManagedInstall = false;
+    } catch (err) {
+      const error = err instanceof Error ? err : new Error(String(err));
+      if (
+        !deactivating &&
+        !restartRunner.pending &&
+        !(error instanceof ManagedInstallationCancelledError)
+      ) {
+        statusBar.showManagedFailure(managedFailureSummary(error));
+        handleManagedSetupFailure(error);
+      } else if (!deactivating && !restartRunner.pending) {
+        // Cancelled from the installation notification (a restart or
+        // deactivation would have set the flags above): no failure UI,
+        // but the status bar must not keep showing progress, and the
+        // notification offers the way back in.
+        statusBar.showManagedFailure("The JETLS installation was cancelled.");
+        const retryButton = "Retry";
+        const outputButton = "Show JETLS output";
+        void vscode.window
+          .showInformationMessage(
+            "The JETLS installation was cancelled.",
+            retryButton,
+            outputButton,
+          )
+          .then((choice) => {
+            if (choice === retryButton) {
+              requestLanguageServerRestart();
+            } else if (choice === outputButton) {
+              void vscode.commands.executeCommand("jetls-client.showOutput");
+            }
+          });
+      }
+      throw error;
+    } finally {
+      if (managedSetupAbort === setupAbort) {
+        managedSetupAbort = undefined;
+      }
     }
-    throw error;
+    outputChannel.appendLine(
+      `[jetls-client] Using managed JETLS from ${installation.depotPath}`,
+    );
+    managedDepotPath = installation.depotPath;
+    resolvedCommands = managedJETLSCommands(installation, executable.threads);
+    spawnEnv = installation.env;
+  } else {
+    try {
+      resolvedCommands = resolveJETLSCommands(serverConfig.executable);
+    } catch (err) {
+      const error = err instanceof Error ? err : new Error(String(err));
+      if (!deactivating) {
+        statusBar.show("failed");
+        outputChannel.appendLine(`[jetls-client] ${error.message}`);
+        vscode.window.showErrorMessage(error.message);
+      }
+      throw error;
+    }
+    spawnEnv = Array.isArray(serverConfig.executable)
+      ? { ...process.env }
+      : executableEnvironment(serverConfig.executable);
   }
   const { command: baseCommand, versionArgs, serveArgs } = resolvedCommands;
 
@@ -221,21 +353,35 @@ async function startLanguageServer() {
     `[jetls-client] Using communication channel: ${commChannel}`,
   );
 
-  // On Windows, batch files must be spawned with shell: true
-  const spawnOptions = process.platform === "win32" ? { shell: true } : {};
+  // On Windows, custom commands may resolve to batch files (e.g. the
+  // `Pkg.Apps` launcher shim), which must be spawned with shell: true. The
+  // managed server spawns the Julia executable directly and never needs
+  // the shell.
+  const useShell = !managed && process.platform === "win32";
+  const spawnOptions: { env: NodeJS.ProcessEnv; shell?: boolean } = {
+    env: spawnEnv,
+    ...(useShell ? { shell: true } : {}),
+  };
 
-  try {
-    await versionPreflight.run(baseCommand, versionArgs, spawnOptions);
-  } catch (err) {
-    const error = err instanceof Error ? err : new Error(String(err));
-    // If a restart request is queued, this failure is most likely the
-    // deliberate kill from `requestLanguageServerRestart`; skip the error
-    // surface here and let the rerun repaint the status from "checking".
-    if (!deactivating && !restartRunner.pending) {
-      statusBar.show("failed");
-      handleSpawnError(error, baseCommand);
+  // `ensureManagedJETLS` already validates the managed installation
+  // (existence on every start, pinned version via verification or the
+  // install stamp), so the version preflight would only repeat a full JETLS
+  // load. Run it for custom executables only, where nothing else has
+  // checked the command.
+  if (!managed) {
+    try {
+      await versionPreflight.run(baseCommand, versionArgs, spawnOptions);
+    } catch (err) {
+      const error = err instanceof Error ? err : new Error(String(err));
+      // If a restart request is queued, this failure is most likely the
+      // deliberate kill from `requestLanguageServerRestart`; skip the error
+      // surface here and let the rerun repaint the status from "checking".
+      if (!deactivating && !restartRunner.pending) {
+        statusBar.show("failed");
+        handleSpawnError(error, baseCommand);
+      }
+      throw error;
     }
-    throw error;
   }
 
   if (deactivating) {
@@ -246,11 +392,14 @@ async function startLanguageServer() {
   let serverOptions: ServerOptions;
 
   const transportOptions: TransportOptions = {
-    startTimeoutMs: SERVER_START_TIMEOUT_MS,
-    precompilationTimeoutMs: PRECOMPILATION_TIMEOUT_MS,
+    startTimeoutMs: TIMEOUTS.serverStart,
+    precompilationTimeoutMs: TIMEOUTS.precompilation,
     appendLine: (message) => outputChannel.appendLine(message),
     onPrecompiling: () => statusBar.show("precompiling"),
-    onProcessError: (error) => handleSpawnError(error, baseCommand),
+    onProcessError: (error) =>
+      managedDepotPath === undefined
+        ? handleSpawnError(error, baseCommand)
+        : handleManagedServerFailure(error, managedDepotPath),
     registerCancel: (cancel) => {
       cancelServerStartup = cancel;
     },
@@ -291,6 +440,17 @@ async function startLanguageServer() {
       );
   }
 
+  const initializationOptions = {
+    ...serverConfig.initializationOptions,
+    // Declare the section this extension stores server settings under; the
+    // server registers `workspace/didChangeConfiguration` with it so the
+    // configuration sync feature only sends the notification when that
+    // section actually changes. This requires a server that understands the
+    // `configuration_section` initialization option, which the managed
+    // installation guarantees.
+    configuration_section: JETLS_CLIENT_SETTINGS_SECTION,
+  };
+
   const clientOptions: LanguageClientOptions = {
     // Keep this selector as a static-registration fallback while jetls-client can
     // connect to independently installed JETLS versions. Once the extension manages
@@ -319,10 +479,19 @@ async function startLanguageServer() {
     ],
     middleware: {
       workspace: {
-        // Suppress the configuration sync feature's own sends entirely:
-        // `syncConfigurationChange` owns the notification and only sends it
-        // when `jetls-client.settings` actually changed.
-        didChangeConfiguration: () => Promise.resolve(),
+        // The server registers `workspace/didChangeConfiguration` with the
+        // section declared via `configuration_section` above, so the
+        // configuration sync feature only fires when `jetls-client.settings`
+        // changes. Still skip the send when the same change has queued a
+        // restart or shutdown is underway: it would race the client teardown,
+        // and the replacement server pulls fresh configuration on initialize
+        // anyway.
+        didChangeConfiguration: (sections, next) => {
+          if (deactivating || restartRunner.pending) {
+            return Promise.resolve();
+          }
+          return next(sections);
+        },
       },
       // `editor.action.showReferences` is a built-in VSCode command that
       // requires actual `vscode.Uri`/`vscode.Position`/`vscode.Location`
@@ -366,7 +535,7 @@ async function startLanguageServer() {
         return resolved;
       },
     },
-    initializationOptions: serverConfig.initializationOptions,
+    initializationOptions,
     outputChannel,
   };
 
@@ -403,7 +572,7 @@ async function startLanguageServer() {
 
   try {
     if (commChannel === "stdio") {
-      await startWithTimeout(languageClient, SERVER_START_TIMEOUT_MS);
+      await startWithTimeout(languageClient, TIMEOUTS.serverStart);
     } else {
       await languageClient.start();
     }
@@ -413,8 +582,13 @@ async function startLanguageServer() {
     // deliberate cancellation from `requestLanguageServerRestart`; skip the
     // error surface here and let the rerun repaint the status from "checking".
     if (!deactivating && !restartRunner.pending) {
-      statusBar.show("failed");
-      handleSpawnError(error, baseCommand);
+      if (managedDepotPath !== undefined) {
+        statusBar.showManagedFailure(managedFailureSummary(error));
+        handleManagedServerFailure(error, managedDepotPath);
+      } else {
+        statusBar.show("failed");
+        handleSpawnError(error, baseCommand);
+      }
     }
     throw error;
   } finally {
@@ -461,7 +635,7 @@ async function restartLanguageServer() {
   if (languageClient?.needsStop()) {
     statusBar.show("restarting");
     try {
-      await languageClient.stop(LANGUAGE_SERVER_STOP_TIMEOUT_MS);
+      await languageClient.stop(TIMEOUTS.serverStop);
     } catch (err) {
       statusBar.show("restart-failed");
       const message = err instanceof Error ? err.message : String(err);
@@ -480,7 +654,7 @@ export function requestLanguageServerRestart(): void {
   const lifecycle = restartRunner.run();
   // Kill an in-flight version preflight so the rerun queued above can start
   // immediately; otherwise the rerun would wait for the preflight to finish,
-  // which can take up to `PRECOMPILATION_TIMEOUT_MS` while precompiling.
+  // which can take up to `TIMEOUTS.precompilation` while precompiling.
   void versionPreflight.terminate().catch((err) => {
     const message = err instanceof Error ? err.message : String(err);
     outputChannel.appendLine(
@@ -490,12 +664,63 @@ export function requestLanguageServerRestart(): void {
   // Likewise kill a spawned server still waiting for its transport
   // connection; the transport turns this into a no-op once connected.
   cancelServerStartup?.();
+  // And cancel an in-flight managed installation, which can run for
+  // minutes: the rerun queued above starts over from the current state.
+  managedSetupAbort?.abort();
   void lifecycle.catch((err) => {
     const message = err instanceof Error ? err.message : String(err);
     outputChannel.appendLine(
       `[jetls-client] Failed to restart language server: ${message}.`,
     );
   });
+}
+
+// Set by `reinstallServer` and consumed by the next managed setup; it
+// stays set until an installation succeeds, so a Retry after a failed
+// reinstall still installs from scratch.
+let forceManagedInstall = false;
+
+// Aborts the in-flight managed setup, so a restart or deactivation does
+// not wait behind a long installation; the cancelled installation only
+// strands its unpublished generation.
+let managedSetupAbort: AbortController | undefined;
+
+/**
+ * Reinstalls the managed JETLS from scratch: after a modal confirmation
+ * the server restarts with the next managed setup forced to install a
+ * fresh generation, ignoring the verified current one. Nothing is
+ * deleted up front — superseded generations are cleaned up later — so a
+ * failed reinstall leaves the previous installation in place and
+ * surfaces the ordinary failure UI.
+ */
+export async function reinstallServer(): Promise<void> {
+  if (deactivating) {
+    return;
+  }
+  const serverConfig = getServerConfig();
+  if (!isManagedExecutable(serverConfig.executable)) {
+    void vscode.window.showInformationMessage(
+      "JETLS managed installation is disabled by the executable setting.",
+    );
+    return;
+  }
+  const reinstallButton = "Reinstall";
+  const choice = await vscode.window.showWarningMessage(
+    "Reinstall the JETLS language server?",
+    {
+      modal: true,
+      detail:
+        "This reinstalls the pinned JETLS release into fresh managed " +
+        "storage, which may require network access. The previous " +
+        "installation is cleaned up automatically later.",
+    },
+    reinstallButton,
+  );
+  if (choice !== reinstallButton) {
+    return;
+  }
+  forceManagedInstall = true;
+  requestLanguageServerRestart();
 }
 
 export function restartOnServerConfigChange(): void {
@@ -508,26 +733,28 @@ export function restartOnServerConfigChange(): void {
   }
 }
 
+/** Resolves to `false` when the wait timed out before the promise settled. */
 function awaitWithTimeout(
   promise: Promise<void> | undefined,
   timeoutMs: number,
-): Promise<void> {
+): Promise<boolean> {
   if (promise === undefined) {
-    return Promise.resolve();
+    return Promise.resolve(true);
   }
   return new Promise((resolve) => {
-    const timeoutHandle = setTimeout(resolve, timeoutMs);
+    const timeoutHandle = setTimeout(() => resolve(false), timeoutMs);
     void promise
       .catch(() => undefined)
       .then(() => {
         clearTimeout(timeoutHandle);
-        resolve();
+        resolve(true);
       });
   });
 }
 
 export async function shutdownServerLifecycle(): Promise<void> {
   deactivating = true;
+  managedSetupAbort?.abort();
   try {
     await versionPreflight.terminate();
   } catch (err) {
@@ -536,10 +763,10 @@ export async function shutdownServerLifecycle(): Promise<void> {
       `[jetls-client] Failed to terminate JETLS version check: ${message}`,
     );
   }
-  await awaitWithTimeout(restartRunner.active, LANGUAGE_SERVER_STOP_TIMEOUT_MS);
+  await awaitWithTimeout(restartRunner.active, TIMEOUTS.serverStop);
   if (languageClient?.needsStop()) {
     try {
-      await languageClient.stop(LANGUAGE_SERVER_STOP_TIMEOUT_MS);
+      await languageClient.stop(TIMEOUTS.serverStop);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       outputChannel?.appendLine(

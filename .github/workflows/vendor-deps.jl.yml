@@ -29,12 +29,12 @@ jobs:
     name: Test JETLS.jl with vendored environment
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: julia-actions/setup-julia@v2
+      - uses: actions/checkout@v7
+      - uses: julia-actions/setup-julia@v3
         with:
           version: "1.12" # most stable version
           arch: x64
-      - uses: julia-actions/cache@v2
+      - uses: julia-actions/cache@v3
 
       - name: Fetch branch for vendor-deps.jl
         run: |
