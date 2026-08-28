@@ -49,9 +49,12 @@ const JULIA_VERSION_SCRIPT = "print(stdout, VERSION)";
 const INSTALL_SCRIPT = `using Pkg; Pkg.Apps.add(; url="${JETLS_REPOSITORY}", rev="${JETLS_REVISION}")`;
 const JULIA_BASE_ARGS = ["--startup-file=no", "--history-file=no"] as const;
 const LOCK_RETRY_DELAY = 100;
-// A lock older than the whole installation budget belongs to a dead
-// host; a margin absorbs clock skew between hosts.
-const LOCK_STALE_AGE = TIMEOUTS.install + 60 * 1000;
+// A lock older than the longest legitimate hold (a failed
+// re-verification of the current generation followed by a fresh
+// installation with its own verification) belongs to a dead host; a
+// margin absorbs clock skew between hosts.
+const LOCK_STALE_AGE =
+  2 * TIMEOUTS.install + TIMEOUTS.precompilation + 60 * 1000;
 // An unpublished generation may hold an installation still in progress
 // (including one whose process outlived its host), so it is only removed
 // well past any plausible installation lifetime.
@@ -1043,6 +1046,7 @@ export function isPinnedJETLSVersion(output: string): boolean {
 async function verifyPinnedJETLS(
   juliaPath: string,
   environment: NodeJS.ProcessEnv,
+  timeoutMs: number,
   runner: ProcessRunner,
   platform: NodeJS.Platform,
   logger: ((message: string) => void) | undefined,
@@ -1053,7 +1057,7 @@ async function verifyPinnedJETLS(
     environment,
     "JETLS version check",
     "verify",
-    TIMEOUTS.precompilation,
+    timeoutMs,
     runner,
     platform,
     logger,
@@ -1341,6 +1345,9 @@ async function installGeneration(
   await verifyPinnedJETLS(
     context.juliaPath,
     serverLaunchEnvironment(baseEnvironment, generationPath, platform),
+    // The installation above precompiled the generation, so this load
+    // only confirms the pin from warm caches.
+    TIMEOUTS.precompilation,
     runner,
     platform,
     logger,
@@ -1415,6 +1422,14 @@ async function resolveGeneration(
             await verifyPinnedJETLS(
               context.juliaPath,
               serverLaunchEnvironment(baseEnvironment, current, platform),
+              // A stamp mismatch typically means a Julia patch update
+              // invalidated every precompile cache, so this load may
+              // legitimately re-precompile the whole JETLS tree. The
+              // plain precompilation budget can expire mid-compile, and
+              // the resulting fallback install would re-download
+              // everything (breaking offline starts), so give the
+              // re-verification the full installation budget.
+              TIMEOUTS.install,
               runner,
               platform,
               logger,

@@ -19,8 +19,8 @@ export const TIMEOUTS = {
   /**
    * Budget for Julia precompilation: bounds the whole version preflight,
    * re-arms the serve startup countdown when precompilation is detected, and
-   * bounds the managed installation's `jetls version` pin check, which may
-   * re-precompile after a Julia patch update invalidates the caches.
+   * bounds the managed installation's post-install `jetls version` pin check,
+   * which loads from the caches the installation just precompiled.
    */
   precompilation: 5 * 60 * 1000,
   /**
@@ -46,9 +46,11 @@ export const TIMEOUTS = {
    */
   juliaVersion: 1 * 60 * 1000,
   /**
-   * Budget for installing the pinned JETLS release, the only managed step
-   * that legitimately runs long: it downloads and fully precompiles the
-   * JETLS dependency tree. Also reused as the install-lock wait budget.
+   * Budget for installing the pinned JETLS release, which downloads and
+   * fully precompiles the JETLS dependency tree. Also bounds the
+   * re-verification of an existing generation after an install-stamp
+   * mismatch (e.g. a Julia patch update), which may re-precompile that tree
+   * from scratch, and is reused as the install-lock wait budget.
    */
   install: 15 * 60 * 1000,
 } as const;
