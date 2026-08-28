@@ -92,6 +92,10 @@ through the `jetls-client.executable` setting:
   }
   ```
 
+  The command must be the Julia executable itself (on Windows,
+  `julia.exe` rather than a `.bat`/`.cmd` wrapper), since the managed
+  installation launches it directly.
+
 - To use a JETLS binary you manage yourself, specify its `path`.
   This bypasses managed installation and updates:
 

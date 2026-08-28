@@ -1221,6 +1221,33 @@ test("classifies an unresolvable Julia command as a resolution failure", async (
   });
 });
 
+test("rejects a Julia command that resolves to a batch script", async () => {
+  await withFixture(async (fixture) => {
+    const batchPath = path.join(fixture.root, "runtime", "bin", "julia.bat");
+    await writeFile(batchPath, "@echo off\r\n");
+    await chmod(batchPath, 0o755);
+    const fake = fakeRunner(async () => success("1.12.2\n"));
+
+    await assert.rejects(
+      ensureManagedJETLS({
+        storagePath: fixture.storagePath,
+        environment: fixture.environment,
+        juliaCommand: batchPath,
+        platform: "win32",
+        processRunner: fake.runner,
+      }),
+      (error: unknown) => {
+        assert.ok(error instanceof ManagedJETLSError);
+        assert.equal(error.retryable, false);
+        assert.match(error.summary, /resolves to a batch script/);
+        return true;
+      },
+    );
+    // The rejection happens before any managed process runs.
+    assert.equal(fake.calls.length, 0);
+  });
+});
+
 test("force install replaces a verified current generation", async () => {
   await withFixture(async (fixture) => {
     const seeded = await seedGeneration(fixture.storagePath, fixture.juliaPath);
