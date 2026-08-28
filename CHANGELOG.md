@@ -23,6 +23,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Announcement
 
+> [!note]
+> The VSCode extension (`jetls-client`) now lives in its own repository, [jetls-vscode](https://github.com/aviatesk/jetls-vscode).
+> Nothing changes for extension users: the extension keeps its Marketplace identity (`aviatesk.jetls-client`) and updates continue as usual.
+> Please report extension-specific problems (installation, startup, extension UI) to [jetls-vscode issues](https://github.com/aviatesk/jetls-vscode/issues);
+> language-feature issues belong here as before.
+
 > [!important]
 > JETLS supports Julia 1.12.2 through 1.13.
 > It does not support Julia 1.12.1 or earlier, nor Julia 1.14+/nightly.

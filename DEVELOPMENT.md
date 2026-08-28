@@ -166,7 +166,9 @@ With dynamic registration, we can rewrite these activation options and re-enable
 LSP features dynamically, i.e. without restarting the server process.
 
 For example, you can dynamically add `,` as a `triggerCharacter` for
-"completion" as follows. First, [launch `jetls-client` ](#steps) in VSCode[^vscode],
+"completion" as follows. First,
+[launch the development extension](https://github.com/aviatesk/jetls-vscode/blob/master/DEVELOPMENT.md#testing-the-extension-locally)
+in VSCode[^vscode],
 then add the following diff to unregister the already enabled completion feature.
 Make a small edit to the file the language server is currently analyzing to send
 some request from the client to the server. This will allow Revise to apply this
@@ -325,18 +327,17 @@ Use `--top=N` to control how many entries to show (default: 50).
 ## Configuration schema
 
 The configuration schema is generated from the config structs
-in `src/types.jl` by two scripts under `scripts/schema/`:
+in `src/types.jl` by `scripts/schema/generate.jl`, which produces
+standalone schema files under `schemas/`:
 
-- `generate.jl` generates standalone schema files under `schemas/`:
-  - `config-toml.schema.json` (complete schema for `.JETLSConfig.toml`)
-  - `settings.schema.json` (settings only)
-  - `init-options.schema.json` (initialization options only)
-  - `vscode-configuration.json` (VSCode `package.json` configuration
-    fragments, with `$defs` inlined and `description` renamed to
-    `markdownDescription`; published as a release asset)
-- `update-pkg-json.jl` updates VSCode configuration properties inside
-  `jetls-client/package.json` (with `$defs` inlined and `description`
-  renamed to `markdownDescription`).
+- `config-toml.schema.json` (complete schema for `.JETLSConfig.toml`)
+- `settings.schema.json` (settings only)
+- `init-options.schema.json` (initialization options only)
+- `vscode-configuration.json` (VSCode `package.json` configuration
+  fragments, with `$defs` inlined and `description` renamed to
+  `markdownDescription`; published as a release asset, from which the
+  [jetls-vscode](https://github.com/aviatesk/jetls-vscode) extension
+  syncs its `package.json` for the pinned release)
 
 When you modify the config structs, update `schemas/description.toml`
 with descriptions for any new or changed fields, then regenerate all
@@ -345,8 +346,8 @@ schemas by running:
 ./scripts/schema/regenerate.sh
 ```
 
-Both scripts support a `--check` flag that exits with an error
-if the output is out of date. CI runs them in this mode to
+The script supports a `--check` flag that exits with an error
+if the output is out of date. CI runs it in this mode to
 ensure the generated files are kept in sync.
 
 Additionally, the TOML schema block shown in
@@ -511,134 +512,12 @@ URLs, allowing you to test with the locally generated `vendor/` directory.
 
 ## `jetls-client` development
 
-The [`jetls-client`](./jetls-client) directory contains the VSCode language
-client extension for JETLS.
-
-### Development setup
-
-1. Navigate to the `jetls-client` directory:
-   ```bash
-   cd jetls-client
-   ```
-
-2. Install dependencies:
-   ```bash
-   npm install
-   ```
-
-3. Build the extension:
-   ```bash
-   npm run build
-   ```
-   Or for development with watch mode:
-   ```bash
-   npm run build:watch
-   ```
-
-### Testing the extension locally
-
-To test the extension locally in VSCode:
-
-1. Open the `jetls-client` directory in VSCode
-2. Press F5 to launch the Extension Development Host
-3. The extension will be loaded in the new VSCode window
-
-Without an explicit `jetls-client.executable` setting, the development
-extension uses the production managed default and installs the release tag
-pinned in
-[`jetls-client/JETLS_VERSION.json`](./jetls-client/JETLS_VERSION.json).
-It does not run the current checkout.
-
-To use a local JETLS.jl checkout with the development extension (see
-[Using local JETLS checkout](#using-local-jetls-checkout)), explicitly
-configure `jetls-client.executable` in your `settings.json` using the array
-form:
-```jsonc
-{
-  "jetls-client.executable": [
-    "julia",
-    "--startup-file=no",
-    "--history-file=no",
-    "--project=/path/to/JETLS",
-    "-m",
-    "JETLS",
-    "serve"
-  ]
-}
-```
-
-The array form is a full custom command and bypasses managed installation. To
-use an already installed custom executable instead, specify `path` explicitly:
-
-```jsonc
-{
-  "jetls-client.executable": {
-    "path": "/absolute/path/to/jetls",
-    "threads": "auto"
-  }
-}
-```
-
-An object that omits `path` continues to use the managed installation.
-
-### Publishing
-
-The managed default installs the JETLS release tag pinned in
-[`jetls-client/JETLS_VERSION.json`](./jetls-client/JETLS_VERSION.json),
-which also records the supported Julia version bounds. The bounds must
-mirror the pinned release's `julia` compat entry in `Project.toml`, which
-is expected to stay in the `<lower> - <upper>` hyphen-range form;
-the release script and CI check the pinned tag and this correspondence
-automatically.
-
-Extension versions use the release date as `YYYY.M.D` (e.g. `2026.8.23`),
-mirroring the date-based JETLS server releases the extension pins. The
-Marketplace requires semver, which rejects leading zeros, so the month and
-day are not zero-padded; the version therefore only approximates the
-`YYYY-MM-DD` form of the server pin, and `JETLS_VERSION.json` remains the
-authoritative pairing. Versions released before this scheme used semver
-(`0.8.0` and earlier); the calendar versions sort after them, so updates
-keep flowing.
-
-To release the extension:
-
-1. Prepare the release branch and pull request:
-   ```bash
-   ./scripts/prepare-jetls-client-release.sh [--pin YYYY-MM-DD] YYYY.M.D
-   ```
-   The script branches `jetls-client-releases/vYYYY.M.D` off
-   `origin/master`, optionally updates the pin in `JETLS_VERSION.json`,
-   validates that the pinned release tag exists, sets the version in
-   `package.json` and `package-lock.json`, renames the CHANGELOG
-   `Unreleased` section to the release version (recording the pinned
-   JETLS release in it and re-creating an empty `Unreleased` section),
-   creates the `jetls-client: vYYYY.M.D` commit, and opens a pull
-   request against `master`. Use `--no-push` to prepare the branch
-   locally without pushing or opening the PR.
-
-   After a JETLS server release, this step runs automatically: the
-   `open-client-release-pr` job in
-   [`release.yml`](./.github/workflows/release.yml) runs the script
-   with `--pin` set to the new server release and the client version
-   derived from its date, so the release PR appears without manual
-   work.
-2. Wait for CI to pass on the pull request. The regular client checks run
-   on it, and
-   [`jetls-client-release.yml`](./.github/workflows/jetls-client-release.yml)
-   verifies the release invariants: the branch name matches
-   `package.json` and the CHANGELOG, the pinned server release exists,
-   and the release tag is not taken yet.
-3. Merge the pull request. The merge triggers the publish workflow, which
-   packages the extension, publishes it to the Marketplace, and pushes
-   the `jetls-client/vYYYY.M.D` tag. There is no GitHub release for the
-   extension: the repository's releases feed is reserved for the JETLS
-   server releases, and the Marketplace serves the extension's changelog
-   and older versions. The release branch can be deleted after merging.
-
-Publishing authenticates with the `VSCE_PAT` repository secret: an Azure
-DevOps personal access token with the Marketplace "Manage" scope. The
-token has an expiry and must be rotated before it lapses. The automated
-PR flow additionally needs the `RELEASE_PR_TOKEN` secret: a GitHub
-personal access token with `contents` and `pull-requests` write access
-to this repository, since pushes and pull requests created with the
-default workflow token do not trigger CI.
+The VSCode language client extension for JETLS lives in its own
+repository, [jetls-vscode](https://github.com/aviatesk/jetls-vscode);
+see its [DEVELOPMENT.md](https://github.com/aviatesk/jetls-vscode/blob/master/DEVELOPMENT.md)
+for the development and release workflows. The extension pins a JETLS
+release and syncs its `package.json` from the `vscode-configuration.json`
+release asset (see [Configuration schema](#configuration-schema)); after
+each server release, the `dispatch-client-release` job in
+[`release.yml`](./.github/workflows/release.yml) triggers the pin-bump
+release PR over there.
