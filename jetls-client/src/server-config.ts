@@ -11,9 +11,7 @@ export interface ServerConfig {
 
 export function getServerConfig(): ServerConfig {
   const config = vscode.workspace.getConfiguration("jetls-client");
-  const executable = config.get<ExecutableConfig>("executable", {
-    threads: "auto",
-  });
+  const executable = config.get<ExecutableConfig>("executable", {});
   return {
     executable,
     communicationChannel: config.get<string>("communicationChannel", "auto"),
