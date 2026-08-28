@@ -73,10 +73,22 @@
                 "env": {
                   "type": "object",
                   "default": {},
+                  "properties": {
+                    "JULIAUP_CHANNEL": {
+                      "type": "string",
+                      "minLength": 1,
+                      "markdownDescription": "[juliaup](https://github.com/JuliaLang/juliaup) channel used to launch Julia (e.g. `1.13`, `release`, `lts`). Takes effect when the default `julia` command resolves to the juliaup launcher."
+                    },
+                    "JULIA_APPS_JULIA_CMD": {
+                      "type": "string",
+                      "minLength": 1,
+                      "markdownDescription": "Absolute path to the Julia executable used to install and launch the managed JETLS. Must be the Julia executable itself (on Windows, `julia.exe` rather than a `.bat`/`.cmd` wrapper); `JULIAUP_CHANNEL` is ignored when this is set."
+                    }
+                  },
                   "additionalProperties": {
                     "type": "string"
                   },
-                  "markdownDescription": "Environment variables for installing and launching JETLS. In managed mode, set `JULIAUP_CHANNEL` to select a juliaup channel, or `JULIA_APPS_JULIA_CMD` to select the Julia executable directly."
+                  "markdownDescription": "Environment variables for installing and launching JETLS. In managed mode, set `JULIAUP_CHANNEL` to select a [juliaup](https://github.com/JuliaLang/juliaup) channel, or `JULIA_APPS_JULIA_CMD` to select the Julia executable directly."
                 }
               },
               "additionalProperties": false
@@ -91,7 +103,7 @@
             }
           ],
           "default": {},
-          "markdownDescription": "JETLS executable configuration. Most users should omit `path` and use the managed installation.\n\nUse object form `{threads, env}` for managed JETLS. Set `env.JULIAUP_CHANNEL` to select a juliaup channel, or `env.JULIA_APPS_JULIA_CMD` to select a Julia executable directly. Add `path` to use a custom executable and bypass managed installation.\n\nUse array form `[\"julia\", \"--startup-file=no\", \"--history-file=no\", \"--project=/path/to/JETLS\", \"-m\", \"JETLS\", \"serve\"]` to run a full custom command.",
+          "markdownDescription": "JETLS executable configuration. Most users should omit `path` and use the managed installation.\n\nUse object form `{threads, env}` for managed JETLS. Set `env.JULIAUP_CHANNEL` to select a [juliaup](https://github.com/JuliaLang/juliaup) channel, or `env.JULIA_APPS_JULIA_CMD` to select a Julia executable directly. Add `path` to use a custom executable and bypass managed installation.\n\nUse array form `[\"julia\", \"--startup-file=no\", \"--history-file=no\", \"--project=/path/to/JETLS\", \"-m\", \"JETLS\", \"serve\"]` to run a full custom command.",
           "order": 1
         },
         "jetls-client.communicationChannel": {
