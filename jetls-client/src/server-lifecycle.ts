@@ -15,7 +15,6 @@ import {
   invalidateInstallStamp,
   ManagedJETLSError,
   managedJETLSCommands,
-  uninstallManagedJETLS,
 } from "./managed-installation";
 import {
   getServerConfig,
@@ -90,12 +89,9 @@ function showManagedFailureNotification(err: Error): void {
   const outputButton = "Show JETLS output";
   const settingsButton = "Open settings";
   const buttons: string[] = [];
-  // A retry cannot help while a surviving process may still hold the depot
-  // lock, and a configuration problem needs a settings change first.
-  if (
-    details === undefined ||
-    (details.retryable && !details.processMayBeAlive)
-  ) {
+  // A configuration problem needs a settings change before a retry can
+  // help.
+  if (details === undefined || details.retryable) {
     buttons.push(retryButton);
   }
   buttons.push(outputButton);
@@ -120,11 +116,12 @@ function showManagedFailureNotification(err: Error): void {
 
 // Managed failures take two distinct paths. A setup failure happens before
 // `ensureManagedJETLS` produced a verified installation: nothing new is
-// known about any depot's verified state, so no install stamp is touched.
-// A server failure comes from a process launched out of a verified depot
-// and is the one corruption signal the install stamp cannot see, so the
-// stamp of the depot this lifecycle actually used is dropped: the next
-// start then re-verifies that depot and repairs it if needed.
+// known about any generation's verified state, so no install stamp is
+// touched. A server failure comes from a process launched out of a
+// verified generation and is the one corruption signal the install stamp
+// cannot see, so the stamp of the generation this lifecycle actually used
+// is dropped: the next start then re-verifies that generation and
+// replaces it with a fresh one if broken.
 function handleManagedSetupFailure(err: Error): void {
   outputChannel.appendLine(
     `[jetls-client] Failed to set up the managed JETLS: ${err.message}`,
@@ -217,7 +214,9 @@ async function startLanguageServer() {
         logger: (message) =>
           outputChannel.appendLine(`[jetls-client] ${message}`),
         progress: (message) => statusBar.showManagedProgress(message),
+        forceInstall: forceManagedInstall,
       });
+      forceManagedInstall = false;
     } catch (err) {
       const error = err instanceof Error ? err : new Error(String(err));
       if (!deactivating && !restartRunner.pending) {
@@ -600,14 +599,18 @@ export function requestLanguageServerRestart(): void {
   });
 }
 
+// Set by `reinstallServer` and consumed by the next managed setup; it
+// stays set until an installation succeeds, so a Retry after a failed
+// reinstall still installs from scratch.
+let forceManagedInstall = false;
+
 /**
  * Reinstalls the managed JETLS from scratch: after a modal confirmation
- * the managed depot is removed and the server restarts, which installs
- * it anew. The running server is stopped only once the user has
- * confirmed (any in-flight startup attempt is cancelled and awaited,
- * bounded, before the depot is touched), and the restart is requested
- * only when the removal succeeded: a failed removal surfaces the
- * failure UI, whose Retry action restarts explicitly.
+ * the server restarts with the next managed setup forced to install a
+ * fresh generation, ignoring the verified current one. Nothing is
+ * deleted up front — superseded generations are cleaned up later — so a
+ * failed reinstall leaves the previous installation in place and
+ * surfaces the ordinary failure UI.
  */
 export async function reinstallServer(): Promise<void> {
   if (deactivating) {
@@ -620,86 +623,23 @@ export async function reinstallServer(): Promise<void> {
     );
     return;
   }
-  const executable = serverConfig.executable as {
-    env?: Record<string, string>;
-  };
-
-  let serverStopped = false;
-  try {
-    const removedPath = await uninstallManagedJETLS(
-      {
-        storagePath: managedStoragePath,
-        environment: executableEnvironment(executable),
-        logger: (message) =>
-          outputChannel.appendLine(`[jetls-client] ${message}`),
-      },
-      async (depotPath) => {
-        const reinstallButton = "Reinstall";
-        const choice = await vscode.window.showWarningMessage(
-          "Reinstall the JETLS language server?",
-          {
-            modal: true,
-            detail:
-              `This deletes the managed depot at ${depotPath}, including ` +
-              "the cached JETLS server and its precompile caches. " +
-              "Recreating the installation may require network access.",
-          },
-          reinstallButton,
-        );
-        if (choice !== reinstallButton) {
-          return false;
-        }
-        // Stop the server only once the user has confirmed: it still runs
-        // out of the depot that is about to be deleted. A stop that cannot
-        // be confirmed aborts the reinstall by throwing — deleting the
-        // depot under a live server would corrupt the reinstalled state.
-        serverStopped = true;
-        await stopServerForReinstall();
-        statusBar.showManagedProgress("Reinstalling JETLS...");
-        return true;
-      },
-    );
-    if (removedPath === undefined) {
-      return;
-    }
-    void vscode.window.showInformationMessage(
-      `Removed the managed JETLS installation at ${removedPath}.`,
-    );
-  } catch (err) {
-    const error = err instanceof Error ? err : new Error(String(err));
-    // No automatic restart: it would rerun the failing path right away.
-    // The failure notification offers Retry instead. Before the
-    // confirmation the server was never stopped, so the status bar still
-    // reflects its actual state.
-    if (serverStopped) {
-      statusBar.showManagedFailure(managedFailureSummary(error));
-    }
-    handleManagedSetupFailure(error);
+  const reinstallButton = "Reinstall";
+  const choice = await vscode.window.showWarningMessage(
+    "Reinstall the JETLS language server?",
+    {
+      modal: true,
+      detail:
+        "This reinstalls the pinned JETLS release into fresh managed " +
+        "storage, which may require network access. The previous " +
+        "installation is cleaned up automatically later.",
+    },
+    reinstallButton,
+  );
+  if (choice !== reinstallButton) {
     return;
   }
+  forceManagedInstall = true;
   requestLanguageServerRestart();
-}
-
-// Throws when the shutdown cannot be confirmed, so the caller aborts
-// instead of deleting a depot a live server may still be using.
-async function stopServerForReinstall(): Promise<void> {
-  void versionPreflight.terminate().catch(() => undefined);
-  cancelServerStartup?.();
-  if (!(await awaitWithTimeout(restartRunner.active, TIMEOUTS.serverStop))) {
-    throw new Error(
-      "Timed out waiting for the in-flight server lifecycle to settle.",
-    );
-  }
-  if (languageClient?.needsStop()) {
-    try {
-      await languageClient.stop(TIMEOUTS.serverStop);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      throw new Error(`Failed to stop the language client: ${message}`, {
-        cause: err,
-      });
-    }
-  }
 }
 
 export function restartOnServerConfigChange(): void {
