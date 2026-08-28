@@ -243,6 +243,7 @@ async function startLanguageServer() {
         // cancellable progress notification for its duration; routine
         // starts stay on the status bar alone.
         onInstallStep: () => {
+          let ended = false;
           let end!: () => void;
           const done = new Promise<void>((resolve) => {
             end = resolve;
@@ -254,12 +255,22 @@ async function startLanguageServer() {
               cancellable: true,
             },
             (progress, token) => {
-              installProgress = progress;
-              token.onCancellationRequested(() => setupAbort.abort());
+              // VS Code runs this task asynchronously, so a step that
+              // failed immediately may have ended before it: publishing
+              // the progress then would leave a stale reference behind
+              // the cleanup below.
+              if (!ended) {
+                installProgress = progress;
+                const cancellation = token.onCancellationRequested(() =>
+                  setupAbort.abort(),
+                );
+                void done.then(() => cancellation.dispose());
+              }
               return done;
             },
           );
           return () => {
+            ended = true;
             installProgress = undefined;
             end();
           };
