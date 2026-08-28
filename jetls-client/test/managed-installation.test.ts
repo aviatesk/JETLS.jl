@@ -16,6 +16,7 @@ import { test } from "node:test";
 
 import jetlsVersion from "../JETLS_VERSION.json";
 
+import { TIMEOUTS } from "../src/constants";
 import {
   JETLS_REPOSITORY,
   JETLS_REVISION,
@@ -503,7 +504,12 @@ test("re-verifies when the stamp records another Julia patch version", async () 
       processRunner: fake.runner,
     });
 
-    assert.equal(jetlsVersionCalls(fake.calls).length, 1);
+    const verifyCalls = jetlsVersionCalls(fake.calls);
+    assert.equal(verifyCalls.length, 1);
+    // The mismatch may mean every precompile cache went stale, so the
+    // re-verification gets the full installation budget: a timeout here
+    // would force a fresh install, which needs network access.
+    assert.equal(verifyCalls[0].options.timeoutMs, TIMEOUTS.install);
     const stamp = JSON.parse(
       await readFile(installStampPath(generationPath), "utf8"),
     ) as { julia: string };
@@ -567,6 +573,10 @@ test("installs and verifies the exact pin in a private generation depot", async 
     const versionCalls = jetlsVersionCalls(fake.calls);
     assert.equal(installCalls.length, 1);
     assert.equal(versionCalls.length, 1);
+    assert.equal(installCalls[0].options.timeoutMs, TIMEOUTS.install);
+    // The post-install verification loads from freshly precompiled
+    // caches, so it keeps the plain precompilation budget.
+    assert.equal(versionCalls[0].options.timeoutMs, TIMEOUTS.precompilation);
     assert.match(
       scriptFor(installCalls[0]) ?? "",
       new RegExp(`url="${JETLS_REPOSITORY.replaceAll(".", "\\.")}"`),
@@ -1453,8 +1463,12 @@ test("removes a stale install lock by age", async () => {
     );
     const lockPath = path.join(containerPath, "install.lock");
     await mkdir(lockPath, { recursive: true });
-    // Older than the whole installation budget: its holder is dead.
-    await setAgeMs(lockPath, 17 * 60 * 1000);
+    // Older than the longest legitimate hold (re-verification plus a
+    // fresh installation with its verification): its holder is dead.
+    await setAgeMs(
+      lockPath,
+      2 * TIMEOUTS.install + TIMEOUTS.precompilation + 2 * 60 * 1000,
+    );
     const fake = standardRunner(fixture.juliaPath);
 
     await ensureManagedJETLS({
