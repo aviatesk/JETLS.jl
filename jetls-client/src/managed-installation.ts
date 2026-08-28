@@ -1,9 +1,9 @@
 import { spawn } from "node:child_process";
-import { createHash } from "node:crypto";
-import { homedir, uptime } from "node:os";
+import { createHash, randomBytes } from "node:crypto";
+import { homedir } from "node:os";
 import {
-  cp,
   mkdir,
+  readdir,
   readFile,
   rename,
   rm,
@@ -31,7 +31,10 @@ export const JETLS_REPOSITORY = "https://github.com/aviatesk/JETLS.jl";
 // structured data; the values are inlined into the bundle at build time.
 export const JETLS_REVISION: string = JETLS_VERSION.revision;
 const MANAGED_DEPOTS_DIR = "jetls-depots";
+const CURRENT_POINTER_FILE = "current";
+const INSTALL_LOCK_DIR = "install.lock";
 const INSTALL_STAMP_FILE = "install-stamp.json";
+const LAST_USED_FILE = "last-used";
 const JULIA_VERSION_LOWER_BOUND: string = JETLS_VERSION.julia.lower;
 const JULIA_VERSION_UPPER_MINOR: string = JETLS_VERSION.julia.upperMinor;
 
@@ -44,10 +47,25 @@ const JULIA_VERSION_SCRIPT = "print(stdout, VERSION)";
 // packages. The generated launcher shim itself stays unused: the server
 // is launched as `julia -m JETLS` directly.
 const INSTALL_SCRIPT = `using Pkg; Pkg.Apps.add(; url="${JETLS_REPOSITORY}", rev="${JETLS_REVISION}")`;
-const GC_SCRIPT = "using Pkg, Dates; Pkg.gc(; collect_delay=Dates.Day(0))";
 const JULIA_BASE_ARGS = ["--startup-file=no", "--history-file=no"] as const;
 const LOCK_RETRY_DELAY = 100;
-const INCOMPLETE_LOCK_GRACE_PERIOD = 30 * 1000;
+// A lock older than the whole installation budget belongs to a dead
+// host; a margin absorbs clock skew between hosts.
+const LOCK_STALE_AGE = TIMEOUTS.install + 60 * 1000;
+// An unpublished generation may hold an installation still in progress
+// (including one whose process outlived its host), so it is only removed
+// well past any plausible installation lifetime.
+const UNPUBLISHED_GENERATION_GRACE = 24 * 60 * 60 * 1000;
+// A published but unreferenced generation may still be running a server
+// in another window; it is removed only after it has gone unused long
+// enough that no live window plausibly resolved it.
+const GENERATION_RETENTION = 7 * 24 * 60 * 60 * 1000;
+// A whole runtime container goes stale when the user switches Julia
+// (another executable, or another minor version): no start resolves it
+// anymore, so nothing inside it can be in use. The retention is long
+// because reclaiming a runtime the user switches back to costs a full
+// reinstall.
+const RUNTIME_RETENTION = 30 * 24 * 60 * 60 * 1000;
 
 export interface ProcessResult {
   status: number | null;
@@ -67,8 +85,6 @@ export interface ProcessRunnerOptions {
   timeoutMs: number;
   onStdout?: (chunk: string) => void;
   onStderr?: (chunk: string) => void;
-  /** Reports the spawned process id as soon as it is known. */
-  onPid?: (pid: number) => void;
 }
 
 export type ProcessRunner = (
@@ -85,6 +101,11 @@ export interface ManagedInstallationOptions {
   progress?: (message: string) => void;
   processRunner?: ProcessRunner;
   platform?: NodeJS.Platform;
+  /**
+   * Installs a fresh generation even when the current one is verified,
+   * for recovering from corruption the verification cannot see.
+   */
+  forceInstall?: boolean;
 }
 
 export interface ManagedJETLSInstallation {
@@ -100,23 +121,13 @@ export interface JuliaVersion {
 }
 
 /** The processing stage a managed-installation failure originated from. */
-type ManagedStage =
-  | "julia-resolution"
-  | "julia-version"
-  | "lock"
-  | "install"
-  | "repair"
-  | "verify"
-  | "gc"
-  | "uninstall";
+type ManagedStage = "julia-resolution" | "julia-version" | "install" | "verify";
 
 interface RuntimeContext {
-  depotPath: string;
+  containerPath: string;
   juliaPath: string;
   juliaVersion: string;
 }
-
-type InstallationOperation = "Installing" | "Repairing";
 
 interface ProcessOutputObserver {
   onStdout: (chunk: string) => void;
@@ -128,10 +139,6 @@ class ManagedStepError extends Error {
   readonly processMayBeAlive: boolean;
   /** Overrides the stage-derived retryability default when set. */
   readonly retryable?: boolean;
-  /** Overrides the first-line summary default when set. */
-  readonly summary?: string;
-  /** Overrides the stage-derived recovery guidance when set. */
-  readonly recovery?: string;
 
   constructor(
     message: string,
@@ -139,8 +146,6 @@ class ManagedStepError extends Error {
     options: {
       processMayBeAlive?: boolean;
       retryable?: boolean;
-      summary?: string;
-      recovery?: string;
       cause?: unknown;
     } = {},
   ) {
@@ -149,41 +154,31 @@ class ManagedStepError extends Error {
     this.stage = stage;
     this.processMayBeAlive = options.processMayBeAlive === true;
     this.retryable = options.retryable;
-    this.summary = options.summary;
-    this.recovery = options.recovery;
   }
-}
-
-function stepProcessMayBeAlive(error: unknown): boolean {
-  return error instanceof ManagedStepError && error.processMayBeAlive;
 }
 
 /**
  * Terminal managed-installation failure carrying the facts the UI needs
  * to pick guidance without parsing the message: a one-line `summary` for
- * notifications and the status bar tooltip, whether a retry with the same
- * configuration can help (`retryable`), and whether a surviving process
- * may still be mutating the depot (`processMayBeAlive`). The message
- * carries the human-readable details for the output channel.
+ * notifications and the status bar tooltip, and whether a retry with the
+ * same configuration can help (`retryable`). The message carries the
+ * human-readable details for the output channel.
  */
 export class ManagedJETLSError extends Error {
   readonly summary: string;
   readonly retryable: boolean;
-  readonly processMayBeAlive: boolean;
 
   constructor(
     message: string,
     details: {
       summary: string;
       retryable: boolean;
-      processMayBeAlive: boolean;
     },
   ) {
     super(message);
     this.name = "ManagedJETLSError";
     this.summary = details.summary;
     this.retryable = details.retryable;
-    this.processMayBeAlive = details.processMayBeAlive;
   }
 }
 
@@ -346,11 +341,27 @@ export function juliaMinorVersion(version: string): string {
   return `${parsed.major}.${parsed.minor}`;
 }
 
+// The key spells out the Julia minor version and hashes the executable
+// path: different installations of the same Julia version are different
+// builds, whose precompile caches must not share a depot, and the path
+// itself cannot be embedded in a directory name safely. The patch
+// version stays out deliberately: package resolution is stable within a
+// minor, so a patch update only costs a re-verification of the current
+// generation (the install stamp tracks the exact version) instead of a
+// full reinstall into a fresh container.
 export function runtimeKey(juliaPath: string, juliaVersion: string): string {
-  const runtime = `${juliaPath}\n${juliaMinorVersion(juliaVersion)}`;
-  return createHash("sha256").update(runtime).digest("hex").slice(0, 16);
+  const pathHash = createHash("sha256")
+    .update(juliaPath)
+    .digest("hex")
+    .slice(0, 8);
+  return `v${juliaMinorVersion(juliaVersion)}-${pathHash}`;
 }
 
+/**
+ * The per-runtime container. Each installation lives in its own
+ * immutable generation depot directly inside the container, and the
+ * `current` pointer file names the generation launches resolve.
+ */
 export function managedDepotPath(
   storagePath: string,
   juliaPath: string,
@@ -363,20 +374,68 @@ export function managedDepotPath(
   );
 }
 
+export function currentPointerPath(containerPath: string): string {
+  return path.join(containerPath, CURRENT_POINTER_FILE);
+}
+
+// The generation directory is never renamed once the installation ran:
+// precompile caches record absolute source paths, so publication happens
+// by pointing `current` at the directory, not by moving it.
+function newGenerationId(): string {
+  return `${JETLS_REVISION}-${randomBytes(4).toString("hex")}`;
+}
+
+export async function readCurrentGeneration(
+  containerPath: string,
+): Promise<string | undefined> {
+  try {
+    const pointer = JSON.parse(
+      await readFile(currentPointerPath(containerPath), "utf8"),
+    ) as { generation?: unknown };
+    if (
+      typeof pointer.generation !== "string" ||
+      pointer.generation !== path.basename(pointer.generation) ||
+      pointer.generation.startsWith(".")
+    ) {
+      return undefined;
+    }
+    const generationPath = path.join(containerPath, pointer.generation);
+    return (await directoryExists(generationPath)) ? generationPath : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+// Written through a rename so a concurrent reader never sees a torn
+// pointer; the last concurrent publisher wins, and every published
+// generation is complete, so either winner is valid.
+async function writeCurrentGeneration(
+  containerPath: string,
+  generationId: string,
+): Promise<void> {
+  const pointerPath = currentPointerPath(containerPath);
+  const tempPath = `${pointerPath}.tmp`;
+  await writeFile(tempPath, JSON.stringify({ generation: generationId }));
+  await rename(tempPath, pointerPath);
+}
+
+export function lastUsedPath(basePath: string): string {
+  return path.join(basePath, LAST_USED_FILE);
+}
+
+// Records that a start resolved this generation (or runtime container),
+// so cleanup keeps what a still-open window may be running a server
+// from.
+async function touchLastUsed(basePath: string): Promise<void> {
+  await writeFile(lastUsedPath(basePath), "").catch(() => undefined);
+}
+
 function appsDirectory(depotPath: string): string {
   return path.join(depotPath, "environments", "apps");
 }
 
 export function managedEnvironment(depotPath: string): string {
   return path.join(appsDirectory(depotPath), "JETLS");
-}
-
-function appsBackupPath(depotPath: string): string {
-  return path.join(depotPath, "app-env-backup");
-}
-
-export function installPendingPath(depotPath: string): string {
-  return path.join(depotPath, "install-pending.json");
 }
 
 function managedManifest(depotPath: string): string {
@@ -500,9 +559,6 @@ export function createDefaultProcessRunner(
         windowsHide: true,
         detached,
       });
-      if (child.pid !== undefined) {
-        options.onPid?.(child.pid);
-      }
 
       child.stdout?.on("data", (chunk: Buffer) => {
         stdout = appendOutputTail(stdout, chunk);
@@ -542,7 +598,7 @@ export function createDefaultProcessRunner(
         timedOut = true;
         // A process that survives every termination attempt must not leave
         // this promise pending, but the settled result marks the survival
-        // so callers keep the depot lock instead of reusing the depot.
+        // so failure guidance can note the possibly-live process.
         void terminateProcess(
           { process: child, isClosed: () => closed, closedPromise },
           {
@@ -616,7 +672,6 @@ function createLineLogger(
 }
 
 function createInstallationOutputObserver(
-  operation: InstallationOperation,
   progress: ((message: string) => void) | undefined,
 ): ProcessOutputObserver {
   const phases = [
@@ -654,7 +709,7 @@ function createInstallationOutputObserver(
       for (const phase of phases) {
         if (!reported.has(phase.message) && phase.pattern.test(output)) {
           reported.add(phase.message);
-          emit(progress, `${operation} JETLS: ${phase.message}`);
+          emit(progress, `Installing JETLS: ${phase.message}`);
         }
       }
       recentOutput = combined.slice(-4096);
@@ -838,39 +893,42 @@ async function verifyPinnedJETLS(
   }
 }
 
-// The install stamp records the (pin, exact Julia version) pair the depot
-// last verified. While it matches, the per-start `jetls version` probe (a
-// full JETLS load) is skipped. A pin bump or Julia update flips a recorded
-// value; silent depot corruption does not, so managed serve failures drop
-// the stamp (`invalidateInstallStamp`) to restore the verify-and-repair
-// path on the next start.
-export function installStampPath(depotPath: string): string {
-  return path.join(depotPath, INSTALL_STAMP_FILE);
+// The install stamp records the (pin, exact Julia version) pair the
+// generation last verified, and marks the generation complete for
+// cleanup. While it matches, the per-start `jetls version` probe (a full
+// JETLS load) is skipped. A pin bump or Julia update flips a recorded
+// value; silent corruption does not, so managed serve failures drop the
+// stamp (`invalidateInstallStamp`) to restore the verify path on the
+// next start.
+export function installStampPath(generationPath: string): string {
+  return path.join(generationPath, INSTALL_STAMP_FILE);
 }
 
-async function matchesInstallStamp(context: RuntimeContext): Promise<boolean> {
+async function matchesInstallStamp(
+  generationPath: string,
+  juliaVersion: string,
+): Promise<boolean> {
   try {
     const stamp = JSON.parse(
-      await readFile(installStampPath(context.depotPath), "utf8"),
+      await readFile(installStampPath(generationPath), "utf8"),
     ) as { revision?: unknown; julia?: unknown };
-    return (
-      stamp.revision === JETLS_REVISION && stamp.julia === context.juliaVersion
-    );
+    return stamp.revision === JETLS_REVISION && stamp.julia === juliaVersion;
   } catch {
     return false;
   }
 }
 
 async function writeInstallStamp(
-  context: RuntimeContext,
+  generationPath: string,
+  juliaVersion: string,
   logger: ((message: string) => void) | undefined,
 ): Promise<void> {
-  const stampPath = installStampPath(context.depotPath);
+  const stampPath = installStampPath(generationPath);
   const tempPath = `${stampPath}.tmp`;
   try {
     await writeFile(
       tempPath,
-      JSON.stringify({ revision: JETLS_REVISION, julia: context.juliaVersion }),
+      JSON.stringify({ revision: JETLS_REVISION, julia: juliaVersion }),
     );
     await rename(tempPath, stampPath);
   } catch (error) {
@@ -882,12 +940,15 @@ async function writeInstallStamp(
 }
 
 /**
- * Drops the install stamp so the next `ensureManagedJETLS` re-verifies the
- * managed depot and repairs it if broken. Racing a concurrent stamp write is
- * benign: that write records a state that was verified just before.
+ * Drops the install stamp so the next `ensureManagedJETLS` re-verifies
+ * the current generation and replaces it if broken. Racing a concurrent
+ * stamp write is benign: that write records a state that was verified
+ * just before.
  */
-export async function invalidateInstallStamp(depotPath: string): Promise<void> {
-  await rm(installStampPath(depotPath), { force: true });
+export async function invalidateInstallStamp(
+  generationPath: string,
+): Promise<void> {
+  await rm(installStampPath(generationPath), { force: true });
 }
 
 async function isFile(filePath: string): Promise<boolean> {
@@ -902,377 +963,75 @@ function isNodeError(error: unknown, code: string): boolean {
   return (error as NodeJS.ErrnoException).code === code;
 }
 
-function processIsRunning(pid: number): boolean {
+async function pathAgeMs(candidate: string): Promise<number | undefined> {
   try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return isNodeError(error, "EPERM");
-  }
-}
-
-// The owner file is written through a rename so a concurrent reader never
-// sees a torn write. `activeGroup` records the managed process currently
-// (or last known to be) operating on the depot: it is detached from the
-// extension host, so the host's death alone does not prove the depot is
-// no longer being written.
-async function writeLockOwner(
-  lockPath: string,
-  activeGroup?: number,
-): Promise<void> {
-  const ownerPath = path.join(lockPath, "owner.json");
-  const tempPath = `${ownerPath}.tmp`;
-  await writeFile(
-    tempPath,
-    JSON.stringify({
-      pid: process.pid,
-      createdAt: new Date().toISOString(),
-      ...(activeGroup === undefined ? {} : { activeGroup }),
-    }),
-  );
-  await rename(tempPath, ownerPath);
-}
-
-// Marks the lock as ceded to the recorded surviving process: the owner
-// host no longer claims it, so reclaim judges the recorded process alone
-// and a retry — from this host or any other — proceeds as soon as the
-// process is confirmed gone. Without a recorded process the mark is not
-// written: host-PID liveness is then the only safety signal left, and it
-// has to keep blocking until the host exits.
-async function abandonLockToSurvivor(lockPath: string): Promise<void> {
-  const ownerPath = path.join(lockPath, "owner.json");
-  const owner = JSON.parse(await readFile(ownerPath, "utf8")) as {
-    activeGroup?: unknown;
-  };
-  if (typeof owner.activeGroup !== "number") {
-    return;
-  }
-  const tempPath = `${ownerPath}.tmp`;
-  await writeFile(tempPath, JSON.stringify({ ...owner, abandoned: true }));
-  await rename(tempPath, ownerPath);
-}
-
-// Probes the recorded process: a process group on POSIX, the direct
-// process on Windows (where the child tree cannot be enumerated).
-function activeGroupIsRunning(
-  group: number,
-  platform: NodeJS.Platform,
-): boolean {
-  try {
-    process.kill(platform === "win32" ? group : -group, 0);
-    return true;
-  } catch (error) {
-    return isNodeError(error, "EPERM");
-  }
-}
-
-// A reboot is the only event that proves an unconfirmable Windows process
-// tree is gone: `taskkill /T` needs a live parent, so a tree whose direct
-// process already exited can never be confirmed dead while the system
-// stays up.
-function predatesBoot(createdAt: unknown): boolean {
-  if (typeof createdAt !== "string") {
-    return false;
-  }
-  const created = Date.parse(createdAt);
-  return !Number.isNaN(created) && created < Date.now() - uptime() * 1000;
-}
-
-type LockReclaimResult = "reclaimed" | "busy" | "windows-unconfirmable";
-
-// Disposing of a stale lock with a plain `rm` would race concurrent
-// reclaimers: between judging a lock stale and removing it, another
-// waiter can reclaim the lock and re-create it, and the `rm` would then
-// destroy the fresh lock. An atomic `rename` first pins the removal to
-// the one directory that was judged; `verify` re-examines the stolen
-// instance, and a mismatch (a fresh lock created inside the window) is
-// moved back into place.
-let reclaimSequence = 0;
-
-async function stealStaleLock(
-  lockPath: string,
-  verify: (stolenPath: string) => Promise<boolean>,
-): Promise<boolean> {
-  const stolenPath = `${lockPath}.reclaim-${process.pid}-${reclaimSequence++}`;
-  try {
-    await rename(lockPath, stolenPath);
+    return Date.now() - (await stat(candidate)).mtimeMs;
   } catch {
-    // Already released or reclaimed by another waiter.
-    return true;
+    return undefined;
   }
-  if (await verify(stolenPath)) {
-    await rm(stolenPath, { recursive: true, force: true });
-    return true;
-  }
-  // A failed restore (the path was re-taken inside the window) must not
-  // escalate to removing an instance that may be live; leave it aside.
-  await rename(stolenPath, lockPath).catch(() => undefined);
-  return false;
 }
 
-async function reclaimStaleLock(
-  lockPath: string,
-  platform: NodeJS.Platform = process.platform,
-): Promise<LockReclaimResult> {
-  const ownerPath = path.join(lockPath, "owner.json");
-  try {
-    const owner = JSON.parse(await readFile(ownerPath, "utf8")) as {
-      pid?: unknown;
-      createdAt?: unknown;
-      activeGroup?: unknown;
-      abandoned?: unknown;
-    };
-    if (typeof owner.pid === "number") {
-      if (processIsRunning(owner.pid) && owner.abandoned !== true) {
-        // A live PID is treated as an active owner even though it could
-        // be an unrelated process that reused the PID after a crash: the
-        // owner's running Pkg processes cannot be fenced, so reclaiming a
-        // lock that might still be live risks concurrent depot mutation.
-        // The mistaken-identity case instead ends in the lock-wait
-        // timeout and a clear failure. An abandoned lock is exempt: its
-        // owner host has ceded it to the recorded process, which is
-        // judged below.
-        return "busy";
-      }
-      if (typeof owner.activeGroup === "number") {
-        if (activeGroupIsRunning(owner.activeGroup, platform)) {
-          // The dead host recorded a managed process that may still be
-          // writing to the depot after outliving its host.
-          return "busy";
-        }
-        // On Windows the record is only the direct process: its death
-        // says nothing about the child tree, so the lock is reclaimed
-        // only once the record provably predates the current boot.
-        if (platform === "win32" && !predatesBoot(owner.createdAt)) {
-          return "windows-unconfirmable";
-        }
-      }
-      const stolen = await stealStaleLock(lockPath, async (stolenPath) => {
-        try {
-          const current = JSON.parse(
-            await readFile(path.join(stolenPath, "owner.json"), "utf8"),
-          ) as { pid?: unknown; createdAt?: unknown };
-          return (
-            current.pid === owner.pid && current.createdAt === owner.createdAt
-          );
-        } catch {
-          return false;
-        }
-      });
-      return stolen ? "reclaimed" : "busy";
-    }
-  } catch {
-    // No readable owner; fall through to the incomplete-lock handling.
-  }
-  try {
-    const metadata = await stat(lockPath);
-    if (Date.now() - metadata.mtimeMs > INCOMPLETE_LOCK_GRACE_PERIOD) {
-      const stolen = await stealStaleLock(lockPath, async (stolenPath) => {
-        try {
-          await readFile(path.join(stolenPath, "owner.json"), "utf8");
-          // The instance gained an owner inside the window: not the
-          // judged one.
-          return false;
-        } catch {
-          // `rename` preserves the directory's own mtime, so the age
-          // judgment can be repeated on the stolen instance.
-          const current = await stat(stolenPath).catch(() => undefined);
-          return (
-            current === undefined ||
-            Date.now() - current.mtimeMs > INCOMPLETE_LOCK_GRACE_PERIOD
-          );
-        }
-      });
-      return stolen ? "reclaimed" : "busy";
-    }
-  } catch {
-    return "reclaimed";
-  }
-  return "busy";
-}
-
-export async function removeStaleLock(
-  lockPath: string,
-  platform: NodeJS.Platform = process.platform,
-): Promise<boolean> {
-  return (await reclaimStaleLock(lockPath, platform)) === "reclaimed";
-}
-
-async function survivorHint(lockPath: string): Promise<string> {
-  try {
-    const owner = JSON.parse(
-      await readFile(path.join(lockPath, "owner.json"), "utf8"),
-    ) as { activeGroup?: unknown };
-    if (typeof owner.activeGroup === "number") {
-      return (
-        " A JETLS process from a previous session may still be running " +
-        `(process group ${owner.activeGroup}).`
-      );
-    }
-  } catch {
-    // No readable owner; nothing to add.
-  }
-  return "";
-}
-
-interface DepotLockHandle {
-  release: () => Promise<void>;
-  abandon: () => Promise<void>;
-}
-
-async function acquireDepotLock(
-  depotPath: string,
+// The install lock only keeps concurrent hosts from duplicating a long
+// installation; it is not a safety boundary. Generations are immutable
+// and published through an atomic pointer update, so hosts installing
+// concurrently at worst waste work. That tolerance is what keeps the
+// lock simple: staleness is judged by age alone, `poll` lets a waiter
+// adopt a result published by the lock holder, and a waiter that
+// exhausts its budget proceeds without the lock.
+async function withInstallLock<T>(
+  containerPath: string,
+  logger: ((message: string) => void) | undefined,
   progress: ((message: string) => void) | undefined,
-  platform: NodeJS.Platform,
-): Promise<DepotLockHandle> {
-  const lockPath = `${depotPath}.lock`;
-  await mkdir(path.dirname(lockPath), { recursive: true });
-  // The lock holder is at worst running a full installation, so reuse its
-  // budget for the wait.
+  poll: () => Promise<T | undefined>,
+  operation: () => Promise<T>,
+): Promise<T> {
+  const lockPath = path.join(containerPath, INSTALL_LOCK_DIR);
+  await mkdir(containerPath, { recursive: true });
   const deadline = Date.now() + TIMEOUTS.install;
   let reportedWait = false;
-
-  while (true) {
+  let locked = false;
+  while (!locked && Date.now() < deadline) {
     try {
       await mkdir(lockPath);
-      await writeLockOwner(lockPath);
-      return {
-        release: async () => {
-          // Only the recorded owner removes the directory: if a mistaken
-          // reclaim raced this operation, the path may already hold
-          // another host's lock.
-          try {
-            const owner = JSON.parse(
-              await readFile(path.join(lockPath, "owner.json"), "utf8"),
-            ) as { pid?: unknown };
-            if (owner.pid !== process.pid) {
-              return;
-            }
-          } catch {
-            // Missing or unreadable owner: still ours to remove.
-          }
-          await rm(lockPath, { recursive: true, force: true });
-        },
-        abandon: () => abandonLockToSurvivor(lockPath),
-      };
+      locked = true;
     } catch (error) {
       if (!isNodeError(error, "EEXIST")) {
         throw error;
       }
-      const reclaimResult = await reclaimStaleLock(lockPath, platform);
-      if (reclaimResult === "reclaimed") {
+      const age = await pathAgeMs(lockPath);
+      if (age === undefined) {
         continue;
       }
-      if (reclaimResult === "windows-unconfirmable") {
-        throw new ManagedStepError(
-          `The managed depot lock ${lockPath} belongs to a Windows process ` +
-            "tree whose exit cannot be confirmed during the current boot.",
-          "lock",
-          {
-            processMayBeAlive: true,
-            retryable: true,
-            summary: "Restart Windows before retrying managed JETLS.",
-            recovery:
-              "Recovery: restart Windows, then restart the language server. " +
-              "Retry and Reinstall cannot safely reclaim this lock during " +
-              "the current boot.",
-            cause: error,
-          },
-        );
+      if (age > LOCK_STALE_AGE) {
+        await rm(lockPath, { recursive: true, force: true });
+        continue;
+      }
+      const adopted = await poll();
+      if (adopted !== undefined) {
+        return adopted;
       }
       if (!reportedWait) {
-        emit(progress, "Waiting for another JETLS operation...");
+        emit(progress, "Waiting for another JETLS installation...");
         reportedWait = true;
-      }
-      if (Date.now() >= deadline) {
-        throw new Error(
-          `Timed out waiting for managed depot lock ${lockPath}.` +
-            (await survivorHint(lockPath)),
-          { cause: error },
-        );
       }
       await new Promise((resolve) => setTimeout(resolve, LOCK_RETRY_DELAY));
     }
   }
-}
-
-async function withDepotLock<T>(
-  depotPath: string,
-  progress: ((message: string) => void) | undefined,
-  platform: NodeJS.Platform,
-  operation: () => Promise<T>,
-): Promise<T> {
-  let lock: DepotLockHandle;
-  try {
-    lock = await acquireDepotLock(depotPath, progress, platform);
-  } catch (error) {
-    if (error instanceof ManagedStepError) {
-      throw error;
-    }
-    throw new ManagedStepError(errorMessage(error), "lock", { cause: error });
+  if (!locked) {
+    emit(
+      logger,
+      "Proceeding without the managed install lock after waiting out its budget.",
+    );
   }
-  let result: T;
   try {
-    result = await operation();
-  } catch (error) {
-    // A process that survived termination may still be mutating the
-    // depot. The lock is not released but ceded to that process — it was
-    // registered at spawn as the owner's `activeGroup` — so it stays in
-    // force, even after this host exits, exactly until the process is
-    // confirmed gone; then any host, including this one on a retry, can
-    // reclaim it.
-    if (stepProcessMayBeAlive(error)) {
-      await lock.abandon().catch(() => undefined);
-    } else {
-      await lock.release();
+    return await operation();
+  } finally {
+    if (locked) {
+      await rm(lockPath, { recursive: true, force: true }).catch(
+        () => undefined,
+      );
     }
-    throw error;
   }
-  await lock.release();
-  return result;
-}
-
-// Registers each spawned process in the lock owner file while it may be
-// operating on the depot, so a host that dies mid-operation leaves the
-// next host enough information not to reclaim the lock from under a
-// still-running process. The record is cleared only once the process is
-// confirmed gone; registration is best-effort, degrading to the
-// host-PID-only safety level when the owner file cannot be written.
-function registerLockProcesses(
-  runner: ProcessRunner,
-  lockPath: string,
-): ProcessRunner {
-  return async (command, args, options) => {
-    let registered: Promise<void> = Promise.resolve();
-    const result = await runner(command, args, {
-      ...options,
-      onPid: (pid) => {
-        registered = writeLockOwner(lockPath, pid).catch(() => undefined);
-      },
-    });
-    await registered;
-    if (result.processMayBeAlive !== true) {
-      await writeLockOwner(lockPath).catch(() => undefined);
-    }
-    return result;
-  };
-}
-
-function repairFailure(
-  verificationError: unknown,
-  installationError: unknown,
-): ManagedStepError {
-  return new ManagedStepError(
-    `The cached managed JETLS installation failed verification:\n${errorMessage(verificationError)}\n` +
-      `Failed to repair the managed JETLS installation:\n${errorMessage(installationError)}`,
-    "repair",
-    {
-      processMayBeAlive:
-        stepProcessMayBeAlive(installationError) ||
-        stepProcessMayBeAlive(verificationError),
-      summary: "Failed to repair the managed JETLS installation.",
-    },
-  );
 }
 
 async function directoryExists(candidate: string): Promise<boolean> {
@@ -1283,135 +1042,105 @@ async function directoryExists(candidate: string): Promise<boolean> {
   }
 }
 
-async function backupAppEnvironments(depotPath: string): Promise<boolean> {
-  if (!(await directoryExists(appsDirectory(depotPath)))) {
-    return false;
-  }
-  // A leftover backup without a pending marker belongs to a transaction
-  // whose environment was verified afterwards; it is safe to discard.
-  const backupPath = appsBackupPath(depotPath);
-  await rm(backupPath, { recursive: true, force: true });
-  await cp(appsDirectory(depotPath), backupPath, { recursive: true });
-  // The marker is written only once the backup is complete: while it
-  // exists, the environments are suspect and the backup is authoritative.
-  await writeFile(
-    installPendingPath(depotPath),
-    JSON.stringify({ revision: JETLS_REVISION }),
-  );
-  return true;
-}
-
-// Throws when the restore cannot be completed; the pending marker and
-// the backup are removed only on success, so a later start retries the
-// recovery instead of trusting a half-restored state.
-async function restoreAppEnvironments(
-  depotPath: string,
+// Removes what no start can need anymore: unpublished generations old
+// enough that no installation can still be producing them, published
+// generations that have gone unresolved for longer than any live window
+// plausibly stays open, and sibling runtime containers (other Julia
+// executables or minor versions) that no start has resolved for the
+// runtime retention. A container entry that is not a control file is
+// judged as a generation, which also ages out leftovers from older
+// layouts. The current generation and the active container are never
+// touched. Best-effort: a failure only defers cleanup.
+async function cleanupManagedStorage(
+  containerPath: string,
   logger: ((message: string) => void) | undefined,
 ): Promise<void> {
   try {
-    await rm(appsDirectory(depotPath), { recursive: true, force: true });
-    await rename(appsBackupPath(depotPath), appsDirectory(depotPath));
-    await rm(installPendingPath(depotPath), { force: true });
+    const currentGeneration = await readCurrentGeneration(containerPath);
+    for (const entry of await readdir(containerPath)) {
+      if (
+        entry === CURRENT_POINTER_FILE ||
+        entry === INSTALL_LOCK_DIR ||
+        entry === LAST_USED_FILE
+      ) {
+        continue;
+      }
+      const generationPath = path.join(containerPath, entry);
+      if (generationPath === currentGeneration) {
+        continue;
+      }
+      const published = await isFile(installStampPath(generationPath));
+      const age =
+        (await pathAgeMs(lastUsedPath(generationPath))) ??
+        (await pathAgeMs(generationPath));
+      const grace = published
+        ? GENERATION_RETENTION
+        : UNPUBLISHED_GENERATION_GRACE;
+      if (age !== undefined && age > grace) {
+        await rm(generationPath, { recursive: true, force: true });
+        emit(logger, `Removed old managed JETLS generation: ${generationPath}`);
+      }
+    }
+    const depotsPath = path.dirname(containerPath);
+    for (const entry of await readdir(depotsPath)) {
+      const runtimePath = path.join(depotsPath, entry);
+      if (runtimePath === containerPath) {
+        continue;
+      }
+      const age =
+        (await pathAgeMs(lastUsedPath(runtimePath))) ??
+        (await pathAgeMs(runtimePath));
+      if (age !== undefined && age > RUNTIME_RETENTION) {
+        await rm(runtimePath, { recursive: true, force: true });
+        emit(
+          logger,
+          `Removed managed JETLS storage of an unused Julia runtime: ${runtimePath}`,
+        );
+      }
+    }
+  } catch (error) {
     emit(
       logger,
-      "Restored the app environments after the failed installation.",
-    );
-  } catch (error) {
-    throw new ManagedStepError(
-      `Failed to restore the app environments backup: ${errorMessage(error)}`,
-      "install",
-      { cause: error },
+      `Managed storage cleanup was skipped: ${errorMessage(error)}`,
     );
   }
 }
 
-// Recovers from an installation a previous host never finished: the
-// pending marker means the environments may hold a partial write, while
-// the backup still holds the pre-installation state. Restoring first
-// keeps a crashed or surviving-then-killed update from destroying the
-// last known state, which taking a fresh backup would otherwise
-// overwrite.
-async function recoverPendingInstallation(
-  depotPath: string,
-  logger: ((message: string) => void) | undefined,
-): Promise<void> {
-  if (!(await isFile(installPendingPath(depotPath)))) {
-    return;
+async function stampedCurrentGeneration(
+  context: RuntimeContext,
+): Promise<string | undefined> {
+  const generation = await readCurrentGeneration(context.containerPath);
+  if (
+    generation !== undefined &&
+    (await matchesInstallStamp(generation, context.juliaVersion))
+  ) {
+    return generation;
   }
-  if (await directoryExists(appsBackupPath(depotPath))) {
-    await restoreAppEnvironments(depotPath, logger);
-  } else {
-    // An interrupted restore already consumed the backup, so the
-    // environments hold the restored state.
-    await rm(installPendingPath(depotPath), { force: true });
-  }
+  return undefined;
 }
 
-async function ensureInstallation(
+async function installGeneration(
   context: RuntimeContext,
   baseEnvironment: NodeJS.ProcessEnv,
-  launchEnvironment: NodeJS.ProcessEnv,
   runner: ProcessRunner,
   platform: NodeJS.Platform,
   logger: ((message: string) => void) | undefined,
   progress: ((message: string) => void) | undefined,
-): Promise<void> {
-  await recoverPendingInstallation(context.depotPath, logger);
-  const lockedRunner = registerLockProcesses(
-    runner,
-    `${context.depotPath}.lock`,
-  );
-  const installed = await isFile(managedManifest(context.depotPath));
-  if (installed && (await matchesInstallStamp(context))) {
-    return;
-  }
-  let verificationError: unknown;
-
-  if (installed) {
-    emit(progress, "Verifying JETLS...");
-    try {
-      await verifyPinnedJETLS(
-        context.juliaPath,
-        launchEnvironment,
-        lockedRunner,
-        platform,
-        logger,
-      );
-      await writeInstallStamp(context, logger);
-      return;
-    } catch (error) {
-      verificationError = error;
-      emit(
-        logger,
-        `The cached managed JETLS installation needs repair: ${errorMessage(error)}`,
-      );
-    }
-  }
-
-  const operation: InstallationOperation = installed
-    ? "Repairing"
-    : "Installing";
-  emit(progress, `${operation} JETLS...`);
-  await mkdir(context.depotPath, { recursive: true });
-  // The app environments directory (the JETLS environment and Pkg.Apps's
-  // `AppManifest.toml` under `environments/apps`) is the only state a
-  // failed `Pkg.Apps.add` can corrupt: `packages/` is content-addressed
-  // and append-only, and only the post-verify `Pkg.gc` deletes from it.
-  // Backing it up keeps a failed update or repair from changing the
-  // previous known state; the old package bodies it references are still
-  // in the depot, so a restored environment stays startable. The pending
-  // marker makes the transaction crash-safe: the recovery above restores
-  // this backup before anything could overwrite it.
-  const backedUp = await backupAppEnvironments(context.depotPath);
+): Promise<string> {
+  const generationId = newGenerationId();
+  const generationPath = path.join(context.containerPath, generationId);
+  emit(progress, "Installing JETLS...");
+  await mkdir(generationPath, { recursive: true });
   const privateEnvironment = { ...baseEnvironment };
   setEnvironmentValue(
     privateEnvironment,
     "JULIA_DEPOT_PATH",
-    // The trailing empty entry appends the bundled system depots so stdlib
-    // caches are reused, while the user depot stays out of the chain so
-    // the managed manifest only references packages that the user's own
-    // `Pkg.gc` cannot collect.
-    `${context.depotPath}${platformDelimiter(platform)}`,
+    // The trailing empty entry appends the bundled system depots so
+    // stdlib caches are reused, while the user depot stays out of the
+    // chain: the generation stays self-contained, so cleanup can delete
+    // it whole and the user's own `Pkg.gc` cannot collect anything it
+    // references.
+    `${generationPath}${platformDelimiter(platform)}`,
     platform,
   );
   // `Pkg.Apps.add` warns about an "app collision" when `which("jetls")`
@@ -1420,101 +1149,119 @@ async function ensureInstallation(
   // silences the warning.
   prependPathDirectory(
     privateEnvironment,
-    path.join(context.depotPath, "bin"),
+    path.join(generationPath, "bin"),
     platform,
   );
+  await runCheckedProcess(
+    context.juliaPath,
+    juliaScriptArgs(INSTALL_SCRIPT),
+    privateEnvironment,
+    "Managed JETLS installation",
+    "install",
+    TIMEOUTS.install,
+    runner,
+    platform,
+    logger,
+    createInstallationOutputObserver(progress),
+  );
+  emit(progress, "Verifying installed JETLS...");
+  await verifyPinnedJETLS(
+    context.juliaPath,
+    serverLaunchEnvironment(baseEnvironment, generationPath, platform),
+    runner,
+    platform,
+    logger,
+  );
+  await writeInstallStamp(generationPath, context.juliaVersion, logger);
+  await writeCurrentGeneration(context.containerPath, generationId);
+  return generationPath;
+}
 
-  try {
-    try {
-      await runCheckedProcess(
-        context.juliaPath,
-        juliaScriptArgs(INSTALL_SCRIPT),
-        privateEnvironment,
-        "Managed JETLS installation",
-        installed ? "repair" : "install",
-        TIMEOUTS.install,
-        lockedRunner,
-        platform,
-        logger,
-        createInstallationOutputObserver(operation, progress),
+// Resolves the generation to launch: the stamped current generation when
+// it matches, a re-verified current generation after a stamp mismatch
+// (e.g. a Julia patch update or a dropped stamp), and a freshly
+// installed generation otherwise. A failed or crashed installation
+// leaves the previous current generation untouched — even a process that
+// outlives its host only ever writes to the unpublished generation it
+// was producing, which cleanup eventually removes — so nothing needs
+// backups or restore transactions, and a retry can start immediately.
+async function resolveGeneration(
+  context: RuntimeContext,
+  baseEnvironment: NodeJS.ProcessEnv,
+  runner: ProcessRunner,
+  platform: NodeJS.Platform,
+  logger: ((message: string) => void) | undefined,
+  progress: ((message: string) => void) | undefined,
+  forceInstall: boolean,
+): Promise<string> {
+  const settle = async (generationPath: string): Promise<string> => {
+    await touchLastUsed(generationPath);
+    // The container-level marker is what keeps the whole runtime alive
+    // against the stale-runtime sweep.
+    await touchLastUsed(context.containerPath);
+    await cleanupManagedStorage(context.containerPath, logger);
+    return generationPath;
+  };
+  if (!forceInstall) {
+    const stamped = await stampedCurrentGeneration(context);
+    if (stamped !== undefined) {
+      return await settle(stamped);
+    }
+  }
+  return await withInstallLock(
+    context.containerPath,
+    logger,
+    progress,
+    // Adopt a generation published by the lock holder instead of
+    // duplicating its installation.
+    async () =>
+      forceInstall ? undefined : await stampedCurrentGeneration(context),
+    async () => {
+      if (!forceInstall) {
+        const stamped = await stampedCurrentGeneration(context);
+        if (stamped !== undefined) {
+          return await settle(stamped);
+        }
+        const current = await readCurrentGeneration(context.containerPath);
+        if (current !== undefined && (await isFile(managedManifest(current)))) {
+          emit(progress, "Verifying JETLS...");
+          try {
+            await verifyPinnedJETLS(
+              context.juliaPath,
+              serverLaunchEnvironment(baseEnvironment, current, platform),
+              runner,
+              platform,
+              logger,
+            );
+            await writeInstallStamp(current, context.juliaVersion, logger);
+            return await settle(current);
+          } catch (error) {
+            emit(
+              logger,
+              "The current managed JETLS installation failed verification " +
+                `and will be replaced: ${errorMessage(error)}`,
+            );
+          }
+        }
+      }
+      return await settle(
+        await installGeneration(
+          context,
+          baseEnvironment,
+          runner,
+          platform,
+          logger,
+          progress,
+        ),
       );
-    } catch (error) {
-      if (verificationError !== undefined) {
-        throw repairFailure(verificationError, error);
-      }
-      throw error;
-    }
-
-    emit(progress, "Verifying installed JETLS...");
-    await verifyPinnedJETLS(
-      context.juliaPath,
-      launchEnvironment,
-      lockedRunner,
-      platform,
-      logger,
-    );
-  } catch (error) {
-    // A surviving process may still be writing to the environments; leave
-    // the depot alone (the retained lock blocks concurrent use anyway, and
-    // the kept pending marker sends the next start through the recovery).
-    if (backedUp && !stepProcessMayBeAlive(error)) {
-      try {
-        await restoreAppEnvironments(context.depotPath, logger);
-      } catch (restoreError) {
-        // The installation error stays the surfaced one; the marker and
-        // the backup remain, so a later start retries the recovery.
-        emit(logger, errorMessage(restoreError));
-      }
-    }
-    throw error;
-  }
-  // The marker leaves first: the environments were just verified, so a
-  // crash from here on must not send the next start back to the backup.
-  await rm(installPendingPath(context.depotPath), { force: true });
-  await writeInstallStamp(context, logger);
-  // The verified installation must start regardless of backup cleanup.
-  try {
-    await rm(appsBackupPath(context.depotPath), {
-      recursive: true,
-      force: true,
-    });
-  } catch (error) {
-    emit(
-      logger,
-      `Failed to remove the app environments backup: ${errorMessage(error)}`,
-    );
-  }
-
-  emit(progress, "Cleaning up the JETLS depot...");
-  try {
-    await runCheckedProcess(
-      context.juliaPath,
-      juliaScriptArgs(GC_SCRIPT),
-      privateEnvironment,
-      "Managed JETLS depot garbage collection",
-      "gc",
-      TIMEOUTS.gc,
-      lockedRunner,
-      platform,
-      logger,
-    );
-  } catch (error) {
-    // A gc process that survived termination may still be deleting from the
-    // depot; only failures of a completed process are ignorable.
-    if (stepProcessMayBeAlive(error)) {
-      throw error;
-    }
-    emit(
-      logger,
-      `Managed JETLS depot garbage collection failed and was ignored: ${errorMessage(error)}`,
-    );
-  }
+    },
+  );
 }
 
 function managedError(
   error: unknown,
   juliaCommand: string,
-  depotPath: string | undefined,
+  containerPath: string | undefined,
   fallbackStage: ManagedStage,
 ): ManagedJETLSError {
   if (error instanceof ManagedJETLSError) {
@@ -1522,44 +1269,45 @@ function managedError(
   }
   const step = error instanceof ManagedStepError ? error : undefined;
   const stage = step?.stage ?? fallbackStage;
-  const processMayBeAlive = step?.processMayBeAlive === true;
   // A retry with the same configuration can help everywhere except when
   // the configured Julia command itself cannot be resolved; deterministic
   // per-error exceptions (e.g. an unsupported Julia version) override the
   // default at the throw site.
   const retryable = step?.retryable ?? stage !== "julia-resolution";
-  const mayRequireNetwork = stage === "install" || stage === "repair";
-  const summary = step?.summary ?? firstLine(errorMessage(error));
-  // A surviving process may still mutate the depot and the depot lock is
-  // deliberately kept, so a reinstall (which waits on that lock) or a
-  // manual deletion would not help until the process is gone. A
-  // non-retryable failure is a configuration problem that a reinstall
-  // would not fix either, so its hint points at the settings only. The
-  // process output itself is not embedded: the output channel has already
-  // streamed the full log.
-  const recovery =
-    step?.recovery ??
-    (processMayBeAlive
-      ? "Recovery: a managed Julia process may still be running and keeps " +
-        "the depot locked; end that process (or reboot) and retry — the " +
-        "lock is reclaimed once the process is confirmed gone."
-      : retryable
-        ? "Recovery: " +
-          (mayRequireNetwork ? "this step may need network access; " : "") +
-          "retry by restarting the language server. If the managed depot " +
-          "itself is broken, run the 'JETLS Client: Reinstall Server' " +
-          "command, or configure a self-managed server via the " +
-          "`jetls-client.executable` setting."
-        : "Recovery: adjust the `jetls-client.executable` setting (its " +
-          "`env`, or the `julia` installation it resolves) so a supported " +
-          "Julia is found, or point its `path` at a self-managed JETLS " +
-          "executable.");
+  const mayRequireNetwork = stage === "install";
+  const summary = firstLine(errorMessage(error));
+  // A process that survived termination only ever writes to the
+  // unpublished generation it was producing, so it cannot affect a
+  // retry; the note is purely informational. A non-retryable failure is
+  // a configuration problem that a reinstall would not fix either, so
+  // its hint points at the settings only. The process output itself is
+  // not embedded: the output channel has already streamed the full log.
+  const survivorNote =
+    step?.processMayBeAlive === true
+      ? "A managed Julia process may still be running in the background; " +
+        "it cannot affect a new installation attempt, though ending it " +
+        "(or rebooting) frees its resources.\n"
+      : "";
+  const recovery = retryable
+    ? "Recovery: " +
+      (mayRequireNetwork ? "this step may need network access; " : "") +
+      "retry by restarting the language server. If the managed " +
+      "installation itself is broken, run the 'JETLS Client: Reinstall " +
+      "Server' command, or configure a self-managed server via the " +
+      "`jetls-client.executable` setting."
+    : "Recovery: adjust the `jetls-client.executable` setting (its " +
+      "`env`, or the `julia` installation it resolves) so a supported " +
+      "Julia is found, or point its `path` at a self-managed JETLS " +
+      "executable.";
   return new ManagedJETLSError(
     `${errorMessage(error)}\n` +
       `Julia command: ${juliaCommand}\n` +
-      (depotPath === undefined ? "" : `Managed depot: ${depotPath}\n`) +
+      (containerPath === undefined
+        ? ""
+        : `Managed storage: ${containerPath}\n`) +
+      survivorNote +
       recovery,
-    { summary, retryable, processMayBeAlive },
+    { summary, retryable },
   );
 }
 
@@ -1581,8 +1329,8 @@ async function ensureRuntime(
   juliaPath: string,
   platform: NodeJS.Platform,
   runner: ProcessRunner,
-): Promise<RuntimeContext> {
-  let depotPath: string | undefined;
+): Promise<string> {
+  let containerPath: string | undefined;
   try {
     emit(options.progress, "Checking Julia version...");
     const juliaVersion = await queryJuliaVersion(
@@ -1592,7 +1340,7 @@ async function ensureRuntime(
       platform,
       options.logger,
     );
-    depotPath = managedDepotPath(storagePath, juliaPath, juliaVersion);
+    containerPath = managedDepotPath(storagePath, juliaPath, juliaVersion);
     if (!isSupportedJuliaVersion(juliaVersion)) {
       throw new ManagedStepError(
         `JETLS requires Julia ${JULIA_VERSION_LOWER_BOUND} through ` +
@@ -1601,29 +1349,19 @@ async function ensureRuntime(
         { retryable: false },
       );
     }
-
-    const launchEnvironment = serverLaunchEnvironment(
+    return await resolveGeneration(
+      { containerPath, juliaPath, juliaVersion },
       options.environment,
-      depotPath,
+      runner,
       platform,
+      options.logger,
+      options.progress,
+      options.forceInstall === true,
     );
-    const context = { depotPath, juliaPath, juliaVersion };
-    await withDepotLock(depotPath, options.progress, platform, async () => {
-      await ensureInstallation(
-        context,
-        options.environment,
-        launchEnvironment,
-        runner,
-        platform,
-        options.logger,
-        options.progress,
-      );
-    });
-    return context;
   } catch (error) {
     // Untagged errors here come from filesystem steps of the installation
     // machinery itself.
-    throw managedError(error, juliaPath, depotPath, "install");
+    throw managedError(error, juliaPath, containerPath, "install");
   }
 }
 
@@ -1661,6 +1399,11 @@ async function resolveManagedRuntime(
   }
 }
 
+/**
+ * Resolves (installing or verifying as needed) the managed JETLS
+ * installation and returns the launch configuration; `depotPath` is the
+ * generation depot the server launches from.
+ */
 export async function ensureManagedJETLS(
   options: ManagedInstallationOptions,
 ): Promise<ManagedJETLSInstallation> {
@@ -1668,7 +1411,7 @@ export async function ensureManagedJETLS(
   const { platform, runner, storagePath, juliaPath } =
     await resolveManagedRuntime(options);
 
-  const context = await ensureRuntime(
+  const generationPath = await ensureRuntime(
     options,
     storagePath,
     juliaPath,
@@ -1676,54 +1419,8 @@ export async function ensureManagedJETLS(
     runner,
   );
   return {
-    env: serverLaunchEnvironment(
-      options.environment,
-      context.depotPath,
-      platform,
-    ),
-    depotPath: context.depotPath,
-    juliaPath: context.juliaPath,
+    env: serverLaunchEnvironment(options.environment, generationPath, platform),
+    depotPath: generationPath,
+    juliaPath,
   };
-}
-
-/**
- * Removes the managed depot of the current Julia runtime. When `confirm`
- * is given it runs with the resolved depot path before anything is
- * touched (the server processes launched from the depot may still be
- * running at that point); returning `false` cancels the uninstall and
- * the function resolves to `undefined`.
- */
-export async function uninstallManagedJETLS(
-  options: ManagedInstallationOptions,
-  confirm?: (depotPath: string) => boolean | Promise<boolean>,
-): Promise<string | undefined> {
-  const { platform, runner, storagePath, juliaPath } =
-    await resolveManagedRuntime(options);
-
-  let depotPath: string | undefined;
-  try {
-    const juliaVersion = await queryJuliaVersion(
-      juliaPath,
-      options.environment,
-      runner,
-      platform,
-      options.logger,
-    );
-    const resolvedDepot = managedDepotPath(
-      storagePath,
-      juliaPath,
-      juliaVersion,
-    );
-    depotPath = resolvedDepot;
-    if (confirm !== undefined && !(await confirm(resolvedDepot))) {
-      return undefined;
-    }
-    await withDepotLock(resolvedDepot, options.progress, platform, async () => {
-      await rm(resolvedDepot, { recursive: true, force: true });
-    });
-    emit(options.logger, `Removed managed JETLS depot: ${resolvedDepot}`);
-    return resolvedDepot;
-  } catch (error) {
-    throw managedError(error, juliaPath, depotPath, "uninstall");
-  }
 }

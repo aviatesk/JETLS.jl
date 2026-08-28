@@ -50,7 +50,9 @@ extension update requires a newer version.
 
 The extension stores JETLS separately from packages in your regular Julia
 depot. Different Julia installations and Julia minor versions use separate
-managed copies. You do not need to configure or maintain this storage.
+managed copies, and copies for a Julia you stopped using are removed
+automatically after a while. You do not need to configure or maintain this
+storage.
 
 The first installation and each managed update require network access.
 Once installed, the cached server can start while offline. The status bar shows
@@ -64,8 +66,8 @@ failed status bar item opens the same output.
 
 To recover from a broken managed installation, run
 `JETLS Client: Reinstall Server` from the Command Palette.
-The command asks for confirmation before deleting the managed storage;
-recreating the installation requires network access.
+The command asks for confirmation and installs a fresh copy, which
+requires network access; superseded copies are cleaned up automatically.
 
 ## Launching configuration (advanced)
 

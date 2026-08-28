@@ -1,4 +1,3 @@
-import { spawn } from "node:child_process";
 import {
   chmod,
   mkdir,
@@ -22,19 +21,19 @@ import {
   JETLS_REVISION,
   ManagedJETLSError,
   createDefaultProcessRunner,
+  currentPointerPath,
   ensureManagedJETLS,
-  installPendingPath,
   installStampPath,
   invalidateInstallStamp,
   isPinnedJETLSVersion,
   isSupportedJuliaVersion,
+  lastUsedPath,
   managedEnvironment,
   managedDepotPath,
   managedJETLSCommands,
   needsWindowsBatchShell,
   parseJuliaVersion,
-  removeStaleLock,
-  uninstallManagedJETLS,
+  readCurrentGeneration,
   resolveExecutable,
   runtimeKey,
   serverLaunchEnvironment,
@@ -87,7 +86,6 @@ function fakeRunner(
         timeoutMs: options.timeoutMs,
         onStdout: options.onStdout,
         onStderr: options.onStderr,
-        onPid: options.onPid,
       },
     };
     calls.push(call);
@@ -138,7 +136,6 @@ function standardRunner(
   juliaPath: string,
   options: {
     jetlsVersions?: ProcessResult[];
-    gcResult?: ProcessResult;
     installDelay?: number;
     installOutput?: (call: ProcessCall) => void;
     onInstallOutput?: () => void;
@@ -161,9 +158,6 @@ function standardRunner(
       }
       return success("installed\n");
     }
-    if (call.command === juliaPath && script?.includes("Pkg.gc")) {
-      return options.gcResult ?? success();
-    }
     if (call.command === juliaPath && script !== undefined) {
       return success("1.12.2\n");
     }
@@ -179,16 +173,66 @@ function standardRunner(
   });
 }
 
-async function createAppManifest(
+// Seeds a generation the way a completed installation leaves it: a
+// manifest inside the generation depot, the `current` pointer naming it,
+// and (unless disabled) a matching install stamp.
+async function seedGeneration(
   storagePath: string,
   juliaPath: string,
-  juliaVersion = "1.12.2",
+  options: {
+    juliaVersion?: string;
+    stampJuliaVersion?: string;
+    stamped?: boolean;
+    id?: string;
+  } = {},
 ): Promise<string> {
-  const depotPath = managedDepotPath(storagePath, juliaPath, juliaVersion);
-  const manifest = path.join(managedEnvironment(depotPath), "Manifest.toml");
+  const juliaVersion = options.juliaVersion ?? "1.12.2";
+  const containerPath = managedDepotPath(storagePath, juliaPath, juliaVersion);
+  const id = options.id ?? `${JETLS_REVISION}-seeded`;
+  const generationPath = path.join(containerPath, id);
+  const manifest = path.join(
+    managedEnvironment(generationPath),
+    "Manifest.toml",
+  );
   await mkdir(path.dirname(manifest), { recursive: true });
   await writeFile(manifest, "");
-  return manifest;
+  if (options.stamped !== false) {
+    await writeFile(
+      installStampPath(generationPath),
+      JSON.stringify({
+        revision: JETLS_REVISION,
+        julia: options.stampJuliaVersion ?? juliaVersion,
+      }),
+    );
+  }
+  await writeFile(
+    currentPointerPath(containerPath),
+    JSON.stringify({ generation: id }),
+  );
+  return generationPath;
+}
+
+// Creates a generation directory without touching the `current` pointer,
+// for exercising cleanup of unreferenced generations.
+async function seedUnreferencedGeneration(
+  containerPath: string,
+  id: string,
+  stamped: boolean,
+): Promise<string> {
+  const generationPath = path.join(containerPath, id);
+  await mkdir(generationPath, { recursive: true });
+  if (stamped) {
+    await writeFile(
+      installStampPath(generationPath),
+      JSON.stringify({ revision: JETLS_REVISION, julia: "1.12.2" }),
+    );
+  }
+  return generationPath;
+}
+
+async function setAgeMs(target: string, ageMs: number): Promise<void> {
+  const time = new Date(Date.now() - ageMs);
+  await utimes(target, time, time);
 }
 
 function isJETLSVersionCall(call: ProcessCall): boolean {
@@ -235,7 +279,9 @@ test("keys depots by executable and Julia minor version", () => {
   assert.equal(firstPatch, nextPatch);
   assert.notEqual(firstPatch, runtimeKey("/runtime/bin/julia", "1.13.0"));
   assert.notEqual(firstPatch, runtimeKey("/other/bin/julia", "1.12.2"));
-  assert.match(firstPatch, /^[0-9a-f]{16}$/);
+  // The minor version reads in the clear; only the executable path is
+  // hashed.
+  assert.match(firstPatch, /^v1\.12-[0-9a-f]{8}$/);
 });
 
 test("resolves Julia from the supplied PATH and handles explicit paths", async () => {
@@ -345,9 +391,13 @@ test("recognizes only the exact pinned JETLS version", () => {
   );
 });
 
-test("uses a verified cached installation without reinstalling", async () => {
+test("uses a verified current generation without reinstalling", async () => {
   await withFixture(async (fixture) => {
-    await createAppManifest(fixture.storagePath, fixture.juliaPath);
+    const generationPath = await seedGeneration(
+      fixture.storagePath,
+      fixture.juliaPath,
+      { stamped: false },
+    );
     const fake = standardRunner(fixture.juliaPath);
     const environment: NodeJS.ProcessEnv = {
       ...fixture.environment,
@@ -361,6 +411,7 @@ test("uses a verified cached installation without reinstalling", async () => {
     });
 
     assert.equal(installation.juliaPath, fixture.juliaPath);
+    assert.equal(installation.depotPath, generationPath);
     assert.equal(
       installation.env.JULIA_DEPOT_PATH,
       `${installation.depotPath}${path.delimiter}user-depot`,
@@ -384,21 +435,14 @@ test("uses a verified cached installation without reinstalling", async () => {
       `${installation.depotPath}${path.delimiter}user-depot`,
     );
     assert.equal(callsWithScript(fake.calls, "Pkg.Apps.add").length, 0);
-    assert.equal(callsWithScript(fake.calls, "Pkg.gc").length, 0);
   });
 });
 
 test("skips the version probe when the install stamp matches", async () => {
   await withFixture(async (fixture) => {
-    await createAppManifest(fixture.storagePath, fixture.juliaPath);
-    const depotPath = managedDepotPath(
+    const generationPath = await seedGeneration(
       fixture.storagePath,
       fixture.juliaPath,
-      "1.12.2",
-    );
-    await writeFile(
-      installStampPath(depotPath),
-      JSON.stringify({ revision: JETLS_REVISION, julia: "1.12.2" }),
     );
     const fake = standardRunner(fixture.juliaPath);
 
@@ -408,7 +452,7 @@ test("skips the version probe when the install stamp matches", async () => {
       processRunner: fake.runner,
     });
 
-    assert.equal(installation.depotPath, depotPath);
+    assert.equal(installation.depotPath, generationPath);
     assert.equal(fake.calls.length, 1);
     assert.equal(scriptFor(fake.calls[0]), "print(stdout, VERSION)");
   });
@@ -416,7 +460,9 @@ test("skips the version probe when the install stamp matches", async () => {
 
 test("stamps a verified installation for later fast starts", async () => {
   await withFixture(async (fixture) => {
-    await createAppManifest(fixture.storagePath, fixture.juliaPath);
+    await seedGeneration(fixture.storagePath, fixture.juliaPath, {
+      stamped: false,
+    });
     const fake = standardRunner(fixture.juliaPath);
     const options: ManagedInstallationOptions = {
       storagePath: fixture.storagePath,
@@ -438,15 +484,10 @@ test("stamps a verified installation for later fast starts", async () => {
 
 test("re-verifies when the stamp records another Julia patch version", async () => {
   await withFixture(async (fixture) => {
-    await createAppManifest(fixture.storagePath, fixture.juliaPath);
-    const depotPath = managedDepotPath(
+    const generationPath = await seedGeneration(
       fixture.storagePath,
       fixture.juliaPath,
-      "1.12.2",
-    );
-    await writeFile(
-      installStampPath(depotPath),
-      JSON.stringify({ revision: JETLS_REVISION, julia: "1.12.1" }),
+      { stampJuliaVersion: "1.12.1" },
     );
     const fake = standardRunner(fixture.juliaPath);
 
@@ -458,7 +499,7 @@ test("re-verifies when the stamp records another Julia patch version", async () 
 
     assert.equal(jetlsVersionCalls(fake.calls).length, 1);
     const stamp = JSON.parse(
-      await readFile(installStampPath(depotPath), "utf8"),
+      await readFile(installStampPath(generationPath), "utf8"),
     ) as { julia: string };
     assert.equal(stamp.julia, "1.12.2");
   });
@@ -466,7 +507,9 @@ test("re-verifies when the stamp records another Julia patch version", async () 
 
 test("invalidating the stamp restores the version probe", async () => {
   await withFixture(async (fixture) => {
-    await createAppManifest(fixture.storagePath, fixture.juliaPath);
+    await seedGeneration(fixture.storagePath, fixture.juliaPath, {
+      stamped: false,
+    });
     const fake = standardRunner(fixture.juliaPath);
     const options: ManagedInstallationOptions = {
       storagePath: fixture.storagePath,
@@ -483,7 +526,7 @@ test("invalidating the stamp restores the version probe", async () => {
   });
 });
 
-test("installs and verifies the exact pin in a private depot", async () => {
+test("installs and verifies the exact pin in a private generation depot", async () => {
   await withFixture(async (fixture) => {
     const fake = standardRunner(fixture.juliaPath);
     const progress: string[] = [];
@@ -499,11 +542,24 @@ test("installs and verifies the exact pin in a private depot", async () => {
       progress: (message) => progress.push(message),
     });
 
+    const containerPath = managedDepotPath(
+      fixture.storagePath,
+      fixture.juliaPath,
+      "1.12.2",
+    );
+    // The generation lives directly inside the container and is
+    // published through the `current` pointer.
+    assert.equal(path.dirname(installation.depotPath), containerPath);
+    assert.ok(path.basename(installation.depotPath).startsWith(JETLS_REVISION));
+    assert.equal(
+      await readCurrentGeneration(containerPath),
+      installation.depotPath,
+    );
+    await stat(installStampPath(installation.depotPath));
+
     const installCalls = callsWithScript(fake.calls, "Pkg.Apps.add");
-    const gcCalls = callsWithScript(fake.calls, "Pkg.gc");
     const versionCalls = jetlsVersionCalls(fake.calls);
     assert.equal(installCalls.length, 1);
-    assert.equal(gcCalls.length, 1);
     assert.equal(versionCalls.length, 1);
     assert.match(
       scriptFor(installCalls[0]) ?? "",
@@ -513,8 +569,9 @@ test("installs and verifies the exact pin in a private depot", async () => {
       scriptFor(installCalls[0]) ?? "",
       new RegExp(`rev="${JETLS_REVISION}"`),
     );
-    // The depot's own `bin` leads the install PATH, keeping `Pkg.Apps.add`
-    // from warning about a colliding `jetls` elsewhere on `PATH`.
+    // The generation's own `bin` leads the install PATH, keeping
+    // `Pkg.Apps.add` from warning about a colliding `jetls` elsewhere on
+    // `PATH`.
     assert.ok(
       (installCalls[0].options.env.PATH ?? "").startsWith(
         `${path.join(installation.depotPath, "bin")}${path.delimiter}`,
@@ -522,10 +579,6 @@ test("installs and verifies the exact pin in a private depot", async () => {
     );
     assert.equal(
       installCalls[0].options.env.JULIA_DEPOT_PATH,
-      `${installation.depotPath}${path.delimiter}`,
-    );
-    assert.equal(
-      gcCalls[0].options.env.JULIA_DEPOT_PATH,
       `${installation.depotPath}${path.delimiter}`,
     );
     assert.equal(
@@ -537,8 +590,7 @@ test("installs and verifies the exact pin in a private depot", async () => {
       `${installation.depotPath}${path.delimiter}user-depot`,
     );
     assert.ok(progress.some((message) => message.startsWith("Installing")));
-    assert.equal(progress.at(-1), "Cleaning up the JETLS depot...");
-    await assert.rejects(stat(`${installation.depotPath}.lock`));
+    await assert.rejects(stat(path.join(containerPath, "install.lock")));
   });
 });
 
@@ -659,9 +711,15 @@ test("keeps phases from the head of oversized output chunks", async () => {
   });
 });
 
-test("repairs a cached installation after failed verification", async () => {
+test("replaces the current generation after failed verification", async () => {
   await withFixture(async (fixture) => {
-    await createAppManifest(fixture.storagePath, fixture.juliaPath);
+    const seeded = await seedGeneration(
+      fixture.storagePath,
+      fixture.juliaPath,
+      {
+        stamped: false,
+      },
+    );
     const fake = standardRunner(fixture.juliaPath, {
       jetlsVersions: [
         failure(1, "broken stdout\n", "broken stderr\n"),
@@ -680,31 +738,39 @@ test("repairs a cached installation after failed verification", async () => {
     assert.equal(installation.juliaPath, fixture.juliaPath);
     assert.equal(callsWithScript(fake.calls, "Pkg.Apps.add").length, 1);
     assert.equal(jetlsVersionCalls(fake.calls).length, 2);
-    assert.ok(progress.includes("Repairing JETLS: Precompiling..."));
-    // The verified repair stamps the depot and consumes its backup and
-    // pending marker.
+    assert.ok(progress.includes("Installing JETLS: Precompiling..."));
+    // The replacement is a fresh generation; the broken one stays behind
+    // for cleanup instead of being repaired in place.
+    assert.notEqual(installation.depotPath, seeded);
     await stat(installStampPath(installation.depotPath));
-    await assert.rejects(
-      stat(path.join(installation.depotPath, "app-env-backup")),
+    const containerPath = managedDepotPath(
+      fixture.storagePath,
+      fixture.juliaPath,
+      "1.12.2",
     );
-    await assert.rejects(stat(installPendingPath(installation.depotPath)));
+    assert.equal(
+      await readCurrentGeneration(containerPath),
+      installation.depotPath,
+    );
   });
 });
 
-test("fails after one repair when the installed version still mismatches", async () => {
+test("fails when the fresh installation still mismatches the pin", async () => {
   await withFixture(async (fixture) => {
-    const manifest = await createAppManifest(
+    const seeded = await seedGeneration(
       fixture.storagePath,
       fixture.juliaPath,
+      {
+        stamped: false,
+      },
     );
-    await writeFile(manifest, "old manifest\n");
     const oldVersion = success(
       "jetls version 2026-08-05, julia version 1.12.2\n",
     );
     const fake = standardRunner(fixture.juliaPath, {
       jetlsVersions: [oldVersion, oldVersion],
     });
-    const expectedDepot = managedDepotPath(
+    const containerPath = managedDepotPath(
       fixture.storagePath,
       fixture.juliaPath,
       "1.12.2",
@@ -720,45 +786,40 @@ test("fails after one repair when the installed version still mismatches", async
         assert.ok(error instanceof ManagedJETLSError);
         assert.match(error.message, new RegExp(`expected ${JETLS_REVISION}`));
         assert.match(error.message, /Julia command:/);
-        assert.ok(error.message.includes(expectedDepot));
+        assert.ok(error.message.includes(containerPath));
         // The recovery hint speaks in VSCode terms, not internal API names.
         assert.match(error.message, /Reinstall Server/);
-        assert.doesNotMatch(
-          error.message,
-          /resetManagedJETLS|uninstallManagedJETLS/,
-        );
         assert.equal(error.retryable, true);
         assert.match(error.summary, /unexpected version/);
         return true;
       },
     );
     assert.equal(callsWithScript(fake.calls, "Pkg.Apps.add").length, 1);
-    assert.equal(callsWithScript(fake.calls, "Pkg.gc").length, 0);
-    // The failed process has exited, so the depot lock is released.
-    await assert.rejects(stat(`${expectedDepot}.lock`));
-    // The failed verification restores the previous environment and
-    // writes no stamp.
-    assert.equal(await readFile(manifest, "utf8"), "old manifest\n");
-    await assert.rejects(stat(installStampPath(expectedDepot)));
-    await assert.rejects(stat(path.join(expectedDepot, "app-env-backup")));
+    // The failed installation publishes nothing: the pointer still names
+    // the previous generation and the failed one carries no stamp.
+    assert.equal(await readCurrentGeneration(containerPath), seeded);
+    await assert.rejects(stat(path.join(containerPath, "install.lock")));
   });
 });
 
-test("a failed update restores the previous app environment", async () => {
+test("a failed update leaves the current generation untouched", async () => {
   await withFixture(async (fixture) => {
-    const manifest = await createAppManifest(
+    // The current generation carries a stamp for an older pin, as after
+    // an extension update.
+    const seeded = await seedGeneration(
       fixture.storagePath,
       fixture.juliaPath,
+      {
+        stampJuliaVersion: "1.12.2",
+      },
     );
-    await writeFile(manifest, "old manifest\n");
-    const environmentDir = path.dirname(manifest);
-    const appsDir = path.dirname(environmentDir);
-    await writeFile(path.join(environmentDir, "Project.toml"), "old project\n");
     await writeFile(
-      path.join(appsDir, "AppManifest.toml"),
-      "old appmanifest\n",
+      installStampPath(seeded),
+      JSON.stringify({ revision: "2026-08-05", julia: "1.12.2" }),
     );
-    const depotPath = managedDepotPath(
+    const manifest = path.join(managedEnvironment(seeded), "Manifest.toml");
+    await writeFile(manifest, "old manifest\n");
+    const containerPath = managedDepotPath(
       fixture.storagePath,
       fixture.juliaPath,
       "1.12.2",
@@ -766,20 +827,13 @@ test("a failed update restores the previous app environment", async () => {
     const fake = fakeRunner(async (call) => {
       const script = scriptFor(call);
       if (script?.includes("Pkg.Apps.add")) {
-        // A failed update may have partially rewritten the environment
-        // and the app manifest before erroring out.
-        await writeFile(manifest, "clobbered manifest\n");
-        await writeFile(
-          path.join(appsDir, "AppManifest.toml"),
-          "clobbered appmanifest\n",
-        );
         return failure(1, "", "could not download package sources\n");
       }
       if (script !== undefined) {
         return success("1.12.2\n");
       }
       if (isJETLSVersionCall(call)) {
-        // The cached installation still reports the previous pin.
+        // The current installation still reports the previous pin.
         return success("jetls version 2026-08-05, julia version 1.12.2\n");
       }
       throw new Error(`Unexpected process call: ${JSON.stringify(call)}`);
@@ -794,136 +848,22 @@ test("a failed update restores the previous app environment", async () => {
       }),
       (error: unknown) => {
         assert.ok(error instanceof ManagedJETLSError);
-        assert.equal(
-          error.summary,
-          "Failed to repair the managed JETLS installation.",
-        );
+        assert.match(error.summary, /Managed JETLS installation failed/);
         return true;
       },
     );
 
+    // The failed installation went to its own generation: the previous
+    // one, including its environment, is untouched and still current.
     assert.equal(await readFile(manifest, "utf8"), "old manifest\n");
-    assert.equal(
-      await readFile(path.join(environmentDir, "Project.toml"), "utf8"),
-      "old project\n",
-    );
-    assert.equal(
-      await readFile(path.join(appsDir, "AppManifest.toml"), "utf8"),
-      "old appmanifest\n",
-    );
-    await assert.rejects(stat(installStampPath(depotPath)));
-    await assert.rejects(stat(path.join(depotPath, "app-env-backup")));
-    await assert.rejects(stat(installPendingPath(depotPath)));
-    await assert.rejects(stat(`${depotPath}.lock`));
+    assert.equal(await readCurrentGeneration(containerPath), seeded);
+    await assert.rejects(stat(path.join(containerPath, "install.lock")));
   });
 });
 
-test("recovers the pre-crash backup before repairing", async () => {
+test("a surviving installer does not block a retry", async () => {
   await withFixture(async (fixture) => {
-    const manifest = await createAppManifest(
-      fixture.storagePath,
-      fixture.juliaPath,
-    );
-    await writeFile(manifest, "partial manifest\n");
-    const depotPath = managedDepotPath(
-      fixture.storagePath,
-      fixture.juliaPath,
-      "1.12.2",
-    );
-    // A crashed update left the pending marker, the pre-update backup,
-    // and a partially written environment behind.
-    const backupPath = path.join(depotPath, "app-env-backup");
-    await mkdir(path.join(backupPath, "JETLS"), { recursive: true });
-    await writeFile(
-      path.join(backupPath, "JETLS", "Manifest.toml"),
-      "good manifest\n",
-    );
-    await writeFile(
-      installPendingPath(depotPath),
-      JSON.stringify({ revision: JETLS_REVISION }),
-    );
-    const fake = fakeRunner(async (call) => {
-      const script = scriptFor(call);
-      if (script?.includes("Pkg.Apps.add")) {
-        return failure(1, "", "could not download package sources\n");
-      }
-      if (script !== undefined) {
-        return success("1.12.2\n");
-      }
-      if (isJETLSVersionCall(call)) {
-        return success("jetls version 2026-08-05, julia version 1.12.2\n");
-      }
-      throw new Error(`Unexpected process call: ${JSON.stringify(call)}`);
-    });
-
-    await assert.rejects(
-      ensureManagedJETLS({
-        storagePath: fixture.storagePath,
-        environment: fixture.environment,
-        processRunner: fake.runner,
-      }),
-    );
-
-    // The pre-crash state was restored before the fresh backup could
-    // overwrite it, and it survived the failed repair.
-    assert.equal(await readFile(manifest, "utf8"), "good manifest\n");
-    await assert.rejects(stat(installPendingPath(depotPath)));
-    await assert.rejects(stat(backupPath));
-  });
-});
-
-test("discards a stale backup without a pending marker", async () => {
-  await withFixture(async (fixture) => {
-    const manifest = await createAppManifest(
-      fixture.storagePath,
-      fixture.juliaPath,
-    );
-    await writeFile(manifest, "current manifest\n");
-    const depotPath = managedDepotPath(
-      fixture.storagePath,
-      fixture.juliaPath,
-      "1.12.2",
-    );
-    // A backup without a marker comes from a transaction that verified
-    // its environment afterwards; it must not be restored.
-    const backupPath = path.join(depotPath, "app-env-backup");
-    await mkdir(path.join(backupPath, "JETLS"), { recursive: true });
-    await writeFile(
-      path.join(backupPath, "JETLS", "Manifest.toml"),
-      "ancient manifest\n",
-    );
-    const fake = standardRunner(fixture.juliaPath, {
-      jetlsVersions: [
-        failure(1, "", "broken\n"),
-        success(`jetls version ${JETLS_REVISION}, julia version 1.12.2\n`),
-      ],
-    });
-
-    await ensureManagedJETLS({
-      storagePath: fixture.storagePath,
-      environment: fixture.environment,
-      processRunner: fake.runner,
-    });
-
-    assert.equal(await readFile(manifest, "utf8"), "current manifest\n");
-    await assert.rejects(stat(backupPath));
-    await assert.rejects(stat(installPendingPath(depotPath)));
-  });
-});
-
-test("a surviving installer leaves the backup and pending marker", async () => {
-  await withFixture(async (fixture) => {
-    const manifest = await createAppManifest(
-      fixture.storagePath,
-      fixture.juliaPath,
-    );
-    await writeFile(manifest, "old manifest\n");
-    const depotPath = managedDepotPath(
-      fixture.storagePath,
-      fixture.juliaPath,
-      "1.12.2",
-    );
-    const fake = fakeRunner(async (call) => {
+    const surviving = fakeRunner(async (call) => {
       const script = scriptFor(call);
       if (script?.includes("Pkg.Apps.add")) {
         return {
@@ -939,9 +879,6 @@ test("a surviving installer leaves the backup and pending marker", async () => {
       if (script !== undefined) {
         return success("1.12.2\n");
       }
-      if (isJETLSVersionCall(call)) {
-        return failure(1, "", "broken\n");
-      }
       throw new Error(`Unexpected process call: ${JSON.stringify(call)}`);
     });
 
@@ -949,153 +886,42 @@ test("a surviving installer leaves the backup and pending marker", async () => {
       ensureManagedJETLS({
         storagePath: fixture.storagePath,
         environment: fixture.environment,
-        processRunner: fake.runner,
+        processRunner: surviving.runner,
       }),
       (error: unknown) => {
         assert.ok(error instanceof ManagedJETLSError);
-        assert.equal(error.processMayBeAlive, true);
+        // The survivor only writes to its own unpublished generation, so
+        // a retry can help and the message merely notes the process.
+        assert.equal(error.retryable, true);
+        assert.match(error.message, /may still be running in the background/);
         return true;
       },
     );
 
-    // The surviving installer may still write: nothing is restored, and
-    // the kept marker sends the next start through the recovery.
-    await stat(installPendingPath(depotPath));
-    assert.equal(
-      await readFile(
-        path.join(depotPath, "app-env-backup", "JETLS", "Manifest.toml"),
-        "utf8",
-      ),
-      "old manifest\n",
+    // The retry installs into a fresh generation and succeeds while the
+    // survivor's generation stays behind for cleanup.
+    const fake = standardRunner(fixture.juliaPath);
+    const installation = await ensureManagedJETLS({
+      storagePath: fixture.storagePath,
+      environment: fixture.environment,
+      processRunner: fake.runner,
+    });
+    assert.equal(callsWithScript(fake.calls, "Pkg.Apps.add").length, 1);
+    const containerPath = managedDepotPath(
+      fixture.storagePath,
+      fixture.juliaPath,
+      "1.12.2",
     );
-    await stat(`${depotPath}.lock`);
+    assert.equal(
+      await readCurrentGeneration(containerPath),
+      installation.depotPath,
+    );
+    const generations = (await readdir(containerPath)).filter((entry) =>
+      entry.startsWith(JETLS_REVISION),
+    );
+    assert.equal(generations.length, 2);
   });
 });
-
-posixOnlyTest(
-  "aborts the start when the pending recovery cannot restore",
-  async () => {
-    await withFixture(async (fixture) => {
-      const manifest = await createAppManifest(
-        fixture.storagePath,
-        fixture.juliaPath,
-      );
-      const depotPath = managedDepotPath(
-        fixture.storagePath,
-        fixture.juliaPath,
-        "1.12.2",
-      );
-      const backupPath = path.join(depotPath, "app-env-backup");
-      await mkdir(path.join(backupPath, "JETLS"), { recursive: true });
-      await writeFile(
-        path.join(backupPath, "JETLS", "Manifest.toml"),
-        "good manifest\n",
-      );
-      await writeFile(
-        installPendingPath(depotPath),
-        JSON.stringify({ revision: JETLS_REVISION }),
-      );
-      // A read-only parent makes the apps directory undeletable, so the
-      // restore cannot complete.
-      const environmentsDir = path.dirname(
-        path.dirname(path.dirname(manifest)),
-      );
-      await chmod(environmentsDir, 0o555);
-      const fake = standardRunner(fixture.juliaPath);
-
-      try {
-        await assert.rejects(
-          ensureManagedJETLS({
-            storagePath: fixture.storagePath,
-            environment: fixture.environment,
-            processRunner: fake.runner,
-          }),
-          /Failed to restore the app environments backup/,
-        );
-      } finally {
-        await chmod(environmentsDir, 0o755);
-      }
-
-      // The marker and the backup survive, so a later start can retry.
-      await stat(installPendingPath(depotPath));
-      await stat(path.join(backupPath, "JETLS", "Manifest.toml"));
-    });
-  },
-);
-
-posixOnlyTest(
-  "keeps the marker and backup when the rollback cannot restore",
-  async () => {
-    await withFixture(async (fixture) => {
-      const manifest = await createAppManifest(
-        fixture.storagePath,
-        fixture.juliaPath,
-      );
-      await writeFile(manifest, "old manifest\n");
-      const depotPath = managedDepotPath(
-        fixture.storagePath,
-        fixture.juliaPath,
-        "1.12.2",
-      );
-      const environmentsDir = path.dirname(
-        path.dirname(path.dirname(manifest)),
-      );
-      const logs: string[] = [];
-      const fake = fakeRunner(async (call) => {
-        const script = scriptFor(call);
-        if (script?.includes("Pkg.Apps.add")) {
-          // Break the restore before the install failure returns.
-          await chmod(environmentsDir, 0o555);
-          return failure(1, "", "could not download package sources\n");
-        }
-        if (script !== undefined) {
-          return success("1.12.2\n");
-        }
-        if (isJETLSVersionCall(call)) {
-          return failure(1, "", "broken\n");
-        }
-        throw new Error(`Unexpected process call: ${JSON.stringify(call)}`);
-      });
-
-      try {
-        await assert.rejects(
-          ensureManagedJETLS({
-            storagePath: fixture.storagePath,
-            environment: fixture.environment,
-            processRunner: fake.runner,
-            logger: (message) => logs.push(message),
-          }),
-          (error: unknown) => {
-            assert.ok(error instanceof ManagedJETLSError);
-            // The installation error stays the surfaced one.
-            assert.match(
-              error.summary,
-              /Failed to repair the managed JETLS installation/,
-            );
-            return true;
-          },
-        );
-      } finally {
-        await chmod(environmentsDir, 0o755);
-      }
-
-      assert.ok(
-        logs.some((message) =>
-          message.includes("Failed to restore the app environments backup"),
-        ),
-      );
-      // The marker and the backup survive, so a later start can retry.
-      await stat(installPendingPath(depotPath));
-      assert.equal(
-        await readFile(
-          path.join(depotPath, "app-env-backup", "JETLS", "Manifest.toml"),
-          "utf8",
-        ),
-        "old manifest\n",
-      );
-    });
-  },
-);
 
 test("classifies first-install failures as retryable install errors", async () => {
   await withFixture(async (fixture) => {
@@ -1124,7 +950,6 @@ test("classifies first-install failures as retryable install errors", async () =
       (error: unknown) => {
         assert.ok(error instanceof ManagedJETLSError);
         assert.equal(error.retryable, true);
-        assert.equal(error.processMayBeAlive, false);
         assert.equal(
           error.summary,
           "Managed JETLS installation failed with status 1",
@@ -1135,48 +960,8 @@ test("classifies first-install failures as retryable install errors", async () =
       },
     );
 
-    // The failed process has exited, so the lock is released, and a first
-    // install has no previous environment to back up.
-    await assert.rejects(stat(`${expectedDepot}.lock`));
-    await assert.rejects(stat(path.join(expectedDepot, "app-env-backup")));
-    await assert.rejects(stat(installPendingPath(expectedDepot)));
-  });
-});
-
-test("classifies a failed repair of a broken cache as a repair error", async () => {
-  await withFixture(async (fixture) => {
-    await createAppManifest(fixture.storagePath, fixture.juliaPath);
-    const fake = fakeRunner(async (call) => {
-      const script = scriptFor(call);
-      if (script?.includes("Pkg.Apps.add")) {
-        return failure(1, "", "could not download package sources\n");
-      }
-      if (script !== undefined) {
-        return success("1.12.2\n");
-      }
-      if (isJETLSVersionCall(call)) {
-        return failure(1, "", "broken installation\n");
-      }
-      throw new Error(`Unexpected process call: ${JSON.stringify(call)}`);
-    });
-
-    await assert.rejects(
-      ensureManagedJETLS({
-        storagePath: fixture.storagePath,
-        environment: fixture.environment,
-        processRunner: fake.runner,
-      }),
-      (error: unknown) => {
-        assert.ok(error instanceof ManagedJETLSError);
-        assert.equal(error.retryable, true);
-        assert.match(error.message, /may need network access/);
-        assert.equal(
-          error.summary,
-          "Failed to repair the managed JETLS installation.",
-        );
-        return true;
-      },
-    );
+    // The failed process has exited, so the install lock is released.
+    await assert.rejects(stat(path.join(expectedDepot, "install.lock")));
   });
 });
 
@@ -1226,119 +1011,160 @@ test("classifies an unresolvable Julia command as a resolution failure", async (
   });
 });
 
-test("ignores garbage collection failure after a verified install", async () => {
+test("force install replaces a verified current generation", async () => {
   await withFixture(async (fixture) => {
-    const fake = standardRunner(fixture.juliaPath, {
-      gcResult: failure(1, "gc stdout\n", "gc stderr\n"),
-    });
-    const logs: string[] = [];
+    const seeded = await seedGeneration(fixture.storagePath, fixture.juliaPath);
+    const fake = standardRunner(fixture.juliaPath);
 
     const installation = await ensureManagedJETLS({
       storagePath: fixture.storagePath,
       environment: fixture.environment,
       processRunner: fake.runner,
-      logger: (message) => logs.push(message),
+      forceInstall: true,
     });
 
-    assert.equal(installation.juliaPath, fixture.juliaPath);
-    assert.equal(callsWithScript(fake.calls, "Pkg.gc").length, 1);
-    assert.ok(logs.some((message) => message.includes("gc stdout")));
-    assert.ok(
-      logs.some((message) =>
-        message.includes("garbage collection failed and was ignored"),
-      ),
-    );
-  });
-});
-
-test("uninstalls the managed depot for the current Julia runtime", async () => {
-  await withFixture(async (fixture) => {
-    const depotPath = managedDepotPath(
+    assert.equal(callsWithScript(fake.calls, "Pkg.Apps.add").length, 1);
+    assert.notEqual(installation.depotPath, seeded);
+    const containerPath = managedDepotPath(
       fixture.storagePath,
       fixture.juliaPath,
       "1.12.2",
     );
-    await mkdir(depotPath, { recursive: true });
-    await writeFile(path.join(depotPath, "state"), "managed");
-    const fake = standardRunner(fixture.juliaPath);
-
-    const confirmed: string[] = [];
-
-    const removedPath = await uninstallManagedJETLS(
-      {
-        storagePath: fixture.storagePath,
-        environment: fixture.environment,
-        processRunner: fake.runner,
-      },
-      (candidate) => {
-        confirmed.push(candidate);
-        return true;
-      },
-    );
-
-    assert.equal(removedPath, depotPath);
-    // The confirmation sees the exact depot the uninstall then deletes.
-    assert.deepEqual(confirmed, [depotPath]);
-    await assert.rejects(stat(depotPath));
-    await assert.rejects(stat(`${depotPath}.lock`));
-    assert.equal(fake.calls.length, 1);
-    assert.equal(scriptFor(fake.calls[0]), "print(stdout, VERSION)");
-  });
-});
-
-test("a declined uninstall confirmation deletes nothing", async () => {
-  await withFixture(async (fixture) => {
-    const depotPath = managedDepotPath(
-      fixture.storagePath,
-      fixture.juliaPath,
-      "1.12.2",
-    );
-    await mkdir(depotPath, { recursive: true });
-    await writeFile(path.join(depotPath, "state"), "managed");
-    const fake = standardRunner(fixture.juliaPath);
-
-    const removedPath = await uninstallManagedJETLS(
-      {
-        storagePath: fixture.storagePath,
-        environment: fixture.environment,
-        processRunner: fake.runner,
-      },
-      () => false,
-    );
-
-    assert.equal(removedPath, undefined);
     assert.equal(
-      await readFile(path.join(depotPath, "state"), "utf8"),
-      "managed",
+      await readCurrentGeneration(containerPath),
+      installation.depotPath,
     );
-    await assert.rejects(stat(`${depotPath}.lock`));
+    // The previous generation is left for cleanup, not deleted up front:
+    // another window may still be running a server from it.
+    await stat(seeded);
   });
 });
 
-test("filesystem lock serializes concurrent ensures for the same depot", async () => {
+test("cleanup removes aged generations but never the current one", async () => {
   await withFixture(async (fixture) => {
-    // The fake install leaves the manifest behind like the real one, so
-    // the lock-race loser can recognize the winner's finished work.
-    const fake = fakeRunner(async (call) => {
-      const script = scriptFor(call);
-      if (script?.includes("Pkg.Apps.add")) {
-        await new Promise((resolve) => setTimeout(resolve, 150));
-        await createAppManifest(fixture.storagePath, fixture.juliaPath);
-        return success("installed\n");
-      }
-      if (script?.includes("Pkg.gc")) {
-        return success();
-      }
-      if (script !== undefined) {
-        return success("1.12.2\n");
-      }
-      if (isJETLSVersionCall(call)) {
-        return success(
-          `jetls version ${JETLS_REVISION}, julia version 1.12.2\n`,
-        );
-      }
-      throw new Error(`Unexpected process call: ${JSON.stringify(call)}`);
+    const seeded = await seedGeneration(fixture.storagePath, fixture.juliaPath);
+    const containerPath = managedDepotPath(
+      fixture.storagePath,
+      fixture.juliaPath,
+      "1.12.2",
+    );
+    // An old unpublished generation (a crashed or surviving install), an
+    // old published one (long superseded), and a fresh published one.
+    const crashed = await seedUnreferencedGeneration(
+      containerPath,
+      "crashed",
+      false,
+    );
+    await setAgeMs(crashed, 25 * 60 * 60 * 1000);
+    const superseded = await seedUnreferencedGeneration(
+      containerPath,
+      "superseded",
+      true,
+    );
+    await writeFile(lastUsedPath(superseded), "");
+    await setAgeMs(lastUsedPath(superseded), 8 * 24 * 60 * 60 * 1000);
+    const recent = await seedUnreferencedGeneration(
+      containerPath,
+      "recent",
+      true,
+    );
+    await writeFile(lastUsedPath(recent), "");
+    // The current generation is exempt from the age judgment entirely.
+    await writeFile(lastUsedPath(seeded), "");
+    await setAgeMs(lastUsedPath(seeded), 30 * 24 * 60 * 60 * 1000);
+    const fake = standardRunner(fixture.juliaPath);
+
+    const installation = await ensureManagedJETLS({
+      storagePath: fixture.storagePath,
+      environment: fixture.environment,
+      processRunner: fake.runner,
     });
+
+    assert.equal(installation.depotPath, seeded);
+    await assert.rejects(stat(crashed));
+    await assert.rejects(stat(superseded));
+    await stat(recent);
+    await stat(seeded);
+    // The resolution marks both the generation and the runtime container
+    // as used.
+    await stat(lastUsedPath(seeded));
+    await stat(lastUsedPath(containerPath));
+  });
+});
+
+test("cleanup removes runtime containers of Julia versions no longer used", async () => {
+  await withFixture(async (fixture) => {
+    await seedGeneration(fixture.storagePath, fixture.juliaPath);
+    const containerPath = managedDepotPath(
+      fixture.storagePath,
+      fixture.juliaPath,
+      "1.12.2",
+    );
+    const depotsPath = path.dirname(containerPath);
+    // A runtime nothing resolved past the retention, one still in use,
+    // and a marker-less leftover (e.g. a legacy lock directory) judged by
+    // its own mtime.
+    const staleRuntime = path.join(depotsPath, "stale-runtime");
+    await mkdir(staleRuntime, { recursive: true });
+    await writeFile(lastUsedPath(staleRuntime), "");
+    await setAgeMs(lastUsedPath(staleRuntime), 31 * 24 * 60 * 60 * 1000);
+    const liveRuntime = path.join(depotsPath, "live-runtime");
+    await mkdir(liveRuntime, { recursive: true });
+    await writeFile(lastUsedPath(liveRuntime), "");
+    const leftover = path.join(depotsPath, "leftover.lock");
+    await mkdir(leftover, { recursive: true });
+    await setAgeMs(leftover, 31 * 24 * 60 * 60 * 1000);
+    const fake = standardRunner(fixture.juliaPath);
+
+    await ensureManagedJETLS({
+      storagePath: fixture.storagePath,
+      environment: fixture.environment,
+      processRunner: fake.runner,
+    });
+
+    await assert.rejects(stat(staleRuntime));
+    await assert.rejects(stat(leftover));
+    await stat(liveRuntime);
+    await stat(containerPath);
+  });
+});
+
+test("cleanup ages out entries outside the generation layout", async () => {
+  await withFixture(async (fixture) => {
+    const seeded = await seedGeneration(fixture.storagePath, fixture.juliaPath);
+    const containerPath = managedDepotPath(
+      fixture.storagePath,
+      fixture.juliaPath,
+      "1.12.2",
+    );
+    // Leftovers from an older layout are judged like unpublished
+    // generations: removed once aged, kept while fresh.
+    const legacyDir = path.join(containerPath, "environments");
+    await mkdir(path.join(legacyDir, "apps"), { recursive: true });
+    await setAgeMs(legacyDir, 25 * 60 * 60 * 1000);
+    const legacyFile = path.join(containerPath, "install-stamp.json");
+    await writeFile(legacyFile, "{}");
+    await setAgeMs(legacyFile, 25 * 60 * 60 * 1000);
+    const freshEntry = path.join(containerPath, "fresh-entry");
+    await mkdir(freshEntry, { recursive: true });
+    const fake = standardRunner(fixture.juliaPath);
+
+    await ensureManagedJETLS({
+      storagePath: fixture.storagePath,
+      environment: fixture.environment,
+      processRunner: fake.runner,
+    });
+
+    await assert.rejects(stat(legacyDir));
+    await assert.rejects(stat(legacyFile));
+    await stat(freshEntry);
+    await stat(seeded);
+  });
+});
+
+test("the install lock serializes concurrent ensures for the same runtime", async () => {
+  await withFixture(async (fixture) => {
+    const fake = standardRunner(fixture.juliaPath, { installDelay: 150 });
     const options: ManagedInstallationOptions = {
       storagePath: fixture.storagePath,
       environment: fixture.environment,
@@ -1352,379 +1178,38 @@ test("filesystem lock serializes concurrent ensures for the same depot", async (
 
     assert.equal(first.depotPath, second.depotPath);
     // Both callers query the Julia version, but the loser of the lock
-    // race finds the winner's verified installation and stamp.
+    // race adopts the winner's published generation instead of
+    // duplicating the installation.
     assert.equal(
       callsWithScript(fake.calls, "print(stdout, VERSION)").length,
       2,
     );
     assert.equal(callsWithScript(fake.calls, "Pkg.Apps.add").length, 1);
     assert.equal(jetlsVersionCalls(fake.calls).length, 1);
-    assert.equal(callsWithScript(fake.calls, "Pkg.gc").length, 1);
   });
 });
 
-async function seedLock(
-  depotPath: string,
-  owner?: Record<string, unknown>,
-): Promise<string> {
-  const lockPath = `${depotPath}.lock`;
-  await mkdir(lockPath, { recursive: true });
-  if (owner !== undefined) {
-    await writeFile(path.join(lockPath, "owner.json"), JSON.stringify(owner));
-  }
-  return lockPath;
-}
-
-test("reclaims a lock whose owner process is dead", async () => {
+test("removes a stale install lock by age", async () => {
   await withFixture(async (fixture) => {
-    const depotPath = managedDepotPath(
+    const containerPath = managedDepotPath(
       fixture.storagePath,
       fixture.juliaPath,
       "1.12.2",
     );
-    await seedLock(depotPath, {
-      pid: 999999999,
-      createdAt: new Date().toISOString(),
-    });
+    const lockPath = path.join(containerPath, "install.lock");
+    await mkdir(lockPath, { recursive: true });
+    // Older than the whole installation budget: its holder is dead.
+    await setAgeMs(lockPath, 17 * 60 * 1000);
     const fake = standardRunner(fixture.juliaPath);
-
-    const installation = await ensureManagedJETLS({
-      storagePath: fixture.storagePath,
-      environment: fixture.environment,
-      processRunner: fake.runner,
-    });
-
-    assert.equal(installation.depotPath, depotPath);
-    await assert.rejects(stat(`${depotPath}.lock`));
-  });
-});
-
-test("reclaims an incomplete lock after the grace period", async () => {
-  await withFixture(async (fixture) => {
-    const depotPath = managedDepotPath(
-      fixture.storagePath,
-      fixture.juliaPath,
-      "1.12.2",
-    );
-    // A lock directory without a readable owner is a crashed acquisition;
-    // it is reclaimed once its mtime has outlived the grace period.
-    const lockPath = await seedLock(depotPath);
-    const past = new Date(Date.now() - 60 * 1000);
-    await utimes(lockPath, past, past);
-    const fake = standardRunner(fixture.juliaPath);
-
-    const installation = await ensureManagedJETLS({
-      storagePath: fixture.storagePath,
-      environment: fixture.environment,
-      processRunner: fake.runner,
-    });
-
-    assert.equal(installation.depotPath, depotPath);
-    await assert.rejects(stat(`${depotPath}.lock`));
-  });
-});
-
-posixOnlyTest(
-  "keeps a dead host's lock while its surviving process lives",
-  async () => {
-    await withFixture(async (fixture) => {
-      const depotPath = managedDepotPath(
-        fixture.storagePath,
-        fixture.juliaPath,
-        "1.12.2",
-      );
-      // The managed process outlived its extension host: the host PID is
-      // dead, but the recorded process group still runs detached.
-      const survivor = spawn("sleep", ["30"], {
-        detached: true,
-        stdio: "ignore",
-      });
-      const survivorPid = survivor.pid;
-      assert.ok(survivorPid !== undefined);
-      try {
-        const lockPath = await seedLock(depotPath, {
-          pid: 999999999,
-          createdAt: new Date().toISOString(),
-          activeGroup: survivorPid,
-        });
-
-        assert.equal(await removeStaleLock(lockPath), false);
-        await stat(lockPath);
-
-        const exited = new Promise((resolve) => survivor.once("exit", resolve));
-        process.kill(-survivorPid, "SIGKILL");
-        await exited;
-
-        assert.equal(await removeStaleLock(lockPath), true);
-        await assert.rejects(stat(lockPath));
-      } finally {
-        try {
-          process.kill(-survivorPid, "SIGKILL");
-        } catch {
-          // Already gone.
-        }
-      }
-    });
-  },
-);
-
-test("records the active process in the lock owner while it runs", async () => {
-  await withFixture(async (fixture) => {
-    const depotPath = managedDepotPath(
-      fixture.storagePath,
-      fixture.juliaPath,
-      "1.12.2",
-    );
-    const ownerPath = path.join(`${depotPath}.lock`, "owner.json");
-    const fake = fakeRunner(async (call) => {
-      const script = scriptFor(call);
-      if (script?.includes("Pkg.Apps.add")) {
-        call.options.onPid?.(7777);
-        // The registration write races the (fake) process start; poll
-        // briefly for it to land.
-        let owner: { activeGroup?: number } = {};
-        for (let attempt = 0; attempt < 100; attempt += 1) {
-          try {
-            owner = JSON.parse(await readFile(ownerPath, "utf8")) as {
-              activeGroup?: number;
-            };
-            if (owner.activeGroup === 7777) {
-              break;
-            }
-          } catch {
-            // Not written yet.
-          }
-          await new Promise((resolve) => setTimeout(resolve, 10));
-        }
-        assert.equal(owner.activeGroup, 7777);
-        return success("installed\n");
-      }
-      if (script?.includes("Pkg.gc")) {
-        return success();
-      }
-      if (script !== undefined) {
-        return success("1.12.2\n");
-      }
-      if (isJETLSVersionCall(call)) {
-        return success(
-          `jetls version ${JETLS_REVISION}, julia version 1.12.2\n`,
-        );
-      }
-      throw new Error(`Unexpected process call: ${JSON.stringify(call)}`);
-    });
 
     await ensureManagedJETLS({
       storagePath: fixture.storagePath,
       environment: fixture.environment,
       processRunner: fake.runner,
     });
-  });
-});
 
-test("clears the completed process from the lock owner", async () => {
-  await withFixture(async (fixture) => {
-    const depotPath = managedDepotPath(
-      fixture.storagePath,
-      fixture.juliaPath,
-      "1.12.2",
-    );
-    const fake = fakeRunner(async (call) => {
-      const script = scriptFor(call);
-      if (script?.includes("Pkg.Apps.add")) {
-        call.options.onPid?.(7777);
-        return success("installed\n");
-      }
-      if (script !== undefined) {
-        return success("1.12.2\n");
-      }
-      if (isJETLSVersionCall(call)) {
-        // The post-install verification survives termination without ever
-        // reporting a pid, keeping the lock with no recorded process.
-        return {
-          status: null,
-          stdout: "",
-          stderr: "",
-          error:
-            "Process timed out after 10 ms. " +
-            "The process did not exit after termination.",
-          processMayBeAlive: true,
-        };
-      }
-      throw new Error(`Unexpected process call: ${JSON.stringify(call)}`);
-    });
-
-    await assert.rejects(
-      ensureManagedJETLS({
-        storagePath: fixture.storagePath,
-        environment: fixture.environment,
-        processRunner: fake.runner,
-      }),
-    );
-
-    // The installer that completed was cleared from the owner file; only
-    // the host PID remains.
-    const owner = JSON.parse(
-      await readFile(path.join(`${depotPath}.lock`, "owner.json"), "utf8"),
-    ) as { activeGroup?: number };
-    assert.equal(owner.activeGroup, undefined);
-  });
-});
-
-test("keeps a dead Windows host's lock until a reboot confirms the tree", async () => {
-  await withFixture(async (fixture) => {
-    const depotPath = managedDepotPath(
-      fixture.storagePath,
-      fixture.juliaPath,
-      "1.12.2",
-    );
-    // The recorded process is dead, but on Windows its child tree cannot
-    // be confirmed dead while the system stays up.
-    const lockPath = await seedLock(depotPath, {
-      pid: 999999999,
-      createdAt: new Date().toISOString(),
-      activeGroup: 999999998,
-    });
-
-    assert.equal(await removeStaleLock(lockPath, "win32"), false);
-    await stat(lockPath);
-
-    // A record from before the current boot proves the tree is gone.
-    await writeFile(
-      path.join(lockPath, "owner.json"),
-      JSON.stringify({
-        pid: 999999999,
-        createdAt: "2000-01-01T00:00:00.000Z",
-        activeGroup: 999999998,
-      }),
-    );
-    assert.equal(await removeStaleLock(lockPath, "win32"), true);
+    assert.equal(callsWithScript(fake.calls, "Pkg.Apps.add").length, 1);
     await assert.rejects(stat(lockPath));
-  });
-});
-
-test("reclaims an abandoned lock once its recorded survivor is gone", async () => {
-  await withFixture(async (fixture) => {
-    const depotPath = managedDepotPath(
-      fixture.storagePath,
-      fixture.juliaPath,
-      "1.12.2",
-    );
-    // The owner host (this process) is alive but has ceded the lock to a
-    // survivor that is now gone.
-    const lockPath = await seedLock(depotPath, {
-      pid: process.pid,
-      createdAt: new Date().toISOString(),
-      activeGroup: 999999998,
-      abandoned: true,
-    });
-
-    assert.equal(await removeStaleLock(lockPath, "linux"), true);
-    await assert.rejects(stat(lockPath));
-    // The steal-by-rename reclaim leaves no renamed instance behind.
-    const siblings = await readdir(path.dirname(lockPath));
-    assert.ok(siblings.every((entry) => !entry.includes(".reclaim-")));
-  });
-});
-
-test("keeps an abandoned lock while its recorded survivor lives", async () => {
-  await withFixture(async (fixture) => {
-    const depotPath = managedDepotPath(
-      fixture.storagePath,
-      fixture.juliaPath,
-      "1.12.2",
-    );
-    // `activeGroup` is probed directly on win32, so the test process can
-    // stand in for a live survivor; `createdAt` predates the boot so
-    // only the group probe keeps the lock in force.
-    const lockPath = await seedLock(depotPath, {
-      pid: process.pid,
-      createdAt: "2000-01-01T00:00:00.000Z",
-      activeGroup: process.pid,
-      abandoned: true,
-    });
-
-    assert.equal(await removeStaleLock(lockPath, "win32"), false);
-    await stat(lockPath);
-  });
-});
-
-test("keeps an abandoned Windows lock until a reboot confirms the survivor", async () => {
-  await withFixture(async (fixture) => {
-    const depotPath = managedDepotPath(
-      fixture.storagePath,
-      fixture.juliaPath,
-      "1.12.2",
-    );
-    const lockPath = await seedLock(depotPath, {
-      pid: process.pid,
-      createdAt: new Date().toISOString(),
-      activeGroup: 999999998,
-      abandoned: true,
-    });
-
-    assert.equal(await removeStaleLock(lockPath, "win32"), false);
-    await stat(lockPath);
-
-    await writeFile(
-      path.join(lockPath, "owner.json"),
-      JSON.stringify({
-        pid: process.pid,
-        createdAt: "2000-01-01T00:00:00.000Z",
-        activeGroup: 999999998,
-        abandoned: true,
-      }),
-    );
-    assert.equal(await removeStaleLock(lockPath, "win32"), true);
-    await assert.rejects(stat(lockPath));
-  });
-});
-
-test("fails immediately with reboot guidance for an unconfirmable Windows lock", async () => {
-  await withFixture(async (fixture) => {
-    const depotPath = managedDepotPath(
-      fixture.storagePath,
-      fixture.juliaPath,
-      "1.12.2",
-    );
-    const lockPath = await seedLock(depotPath, {
-      pid: 999999999,
-      createdAt: new Date().toISOString(),
-      activeGroup: 999999998,
-    });
-    const fake = standardRunner(fixture.juliaPath);
-    // Keep a regression from waiting for the full installation timeout.
-    const releaseStuckLock = setTimeout(() => {
-      void rm(lockPath, { recursive: true, force: true });
-    }, 500);
-
-    try {
-      await assert.rejects(
-        ensureManagedJETLS({
-          storagePath: fixture.storagePath,
-          environment: fixture.environment,
-          juliaCommand: fixture.juliaPath,
-          processRunner: fake.runner,
-          platform: "win32",
-        }),
-        (error: unknown) => {
-          assert.ok(error instanceof ManagedJETLSError);
-          assert.equal(error.processMayBeAlive, true);
-          assert.equal(error.retryable, true);
-          assert.match(error.summary, /Restart Windows/);
-          assert.match(error.message, /restart Windows/);
-          assert.doesNotMatch(error.message, /Reinstall Server/);
-          return true;
-        },
-      );
-    } finally {
-      clearTimeout(releaseStuckLock);
-    }
-
-    assert.equal(
-      callsWithScript(fake.calls, "print(stdout, VERSION)").length,
-      1,
-    );
-    assert.equal(callsWithScript(fake.calls, "Pkg.Apps.add").length, 0);
   });
 });
 
@@ -1954,117 +1439,6 @@ test("marks survival when group members outlive the closed parent", async () => 
     /Process timed out after 10 ms\. The process did not exit after termination\./,
   );
 });
-
-test("keeps the depot lock when the install process survives termination", async () => {
-  await withFixture(async (fixture) => {
-    const fake = fakeRunner(async (call) => {
-      const script = scriptFor(call);
-      if (
-        call.command === fixture.juliaPath &&
-        script?.includes("Pkg.Apps.add")
-      ) {
-        call.options.onPid?.(4321);
-        return {
-          status: null,
-          stdout: "",
-          stderr: "",
-          error:
-            "Process timed out after 10 ms. " +
-            "The process did not exit after termination.",
-          processMayBeAlive: true,
-        };
-      }
-      if (call.command === fixture.juliaPath && script !== undefined) {
-        return success("1.12.2\n");
-      }
-      throw new Error(`Unexpected process call: ${JSON.stringify(call)}`);
-    });
-    const depotPath = managedDepotPath(
-      fixture.storagePath,
-      fixture.juliaPath,
-      "1.12.2",
-    );
-
-    await assert.rejects(
-      ensureManagedJETLS({
-        storagePath: fixture.storagePath,
-        environment: fixture.environment,
-        processRunner: fake.runner,
-      }),
-      (error: unknown) => {
-        assert.ok(error instanceof ManagedJETLSError);
-        assert.match(error.message, /did not exit after termination/);
-        // The recovery hint must not point at reinstall or manual
-        // deletion, which would wait on or race the surviving process.
-        assert.match(error.message, /end that process \(or reboot\)/);
-        assert.equal(error.processMayBeAlive, true);
-        return true;
-      },
-    );
-
-    // The surviving installer may still write to the depot: the lock
-    // stays, and its owner file still records the process registered at
-    // spawn — marked abandoned, so any host (including this one on a
-    // retry) reclaims the lock exactly once that process group is
-    // confirmed gone.
-    await stat(`${depotPath}.lock`);
-    const owner = JSON.parse(
-      await readFile(path.join(`${depotPath}.lock`, "owner.json"), "utf8"),
-    ) as { activeGroup?: number; abandoned?: boolean };
-    assert.equal(owner.activeGroup, 4321);
-    assert.equal(owner.abandoned, true);
-  });
-});
-
-posixOnlyTest(
-  "retry reclaims the abandoned lock once the survivor is gone",
-  async () => {
-    await withFixture(async (fixture) => {
-      const surviving = fakeRunner(async (call) => {
-        const script = scriptFor(call);
-        if (
-          call.command === fixture.juliaPath &&
-          script?.includes("Pkg.Apps.add")
-        ) {
-          call.options.onPid?.(999999998);
-          return {
-            status: null,
-            stdout: "",
-            stderr: "",
-            error: "The process did not exit after termination.",
-            processMayBeAlive: true,
-          };
-        }
-        if (call.command === fixture.juliaPath && script !== undefined) {
-          return success("1.12.2\n");
-        }
-        throw new Error(`Unexpected process call: ${JSON.stringify(call)}`);
-      });
-      await assert.rejects(
-        ensureManagedJETLS({
-          storagePath: fixture.storagePath,
-          environment: fixture.environment,
-          processRunner: surviving.runner,
-        }),
-        /did not exit after termination/,
-      );
-
-      // The recorded survivor is a dead PID, so the retry reclaims the
-      // abandoned lock even though the abandoning host is this process.
-      const fake = standardRunner(fixture.juliaPath);
-      const installation = await ensureManagedJETLS({
-        storagePath: fixture.storagePath,
-        environment: fixture.environment,
-        processRunner: fake.runner,
-      });
-      assert.equal(
-        installation.depotPath,
-        managedDepotPath(fixture.storagePath, fixture.juliaPath, "1.12.2"),
-      );
-      await assert.rejects(stat(`${installation.depotPath}.lock`));
-    });
-  },
-);
 
 test("terminates timed-out process trees with taskkill on Windows", async () => {
   const child = new FakeChildProcess();

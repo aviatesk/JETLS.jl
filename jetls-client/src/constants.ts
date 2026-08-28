@@ -48,12 +48,7 @@ export const TIMEOUTS = {
   /**
    * Budget for installing the pinned JETLS release, the only managed step
    * that legitimately runs long: it downloads and fully precompiles the
-   * JETLS dependency tree. Also reused as the depot-lock wait budget.
+   * JETLS dependency tree. Also reused as the install-lock wait budget.
    */
   install: 15 * 60 * 1000,
-  /**
-   * Budget for `Pkg.gc` maintenance of the managed depot after an
-   * installation, which fails fast when it hangs.
-   */
-  gc: 2 * 60 * 1000,
 } as const;
