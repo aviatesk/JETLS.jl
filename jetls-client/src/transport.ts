@@ -78,7 +78,6 @@ function stopProcessMonitoring(manager: ProcessManager): void {
   }
 }
 
-// Helper to create timeout handler
 function createTimeoutHandler(
   juliaProcess: cp.ChildProcess,
   appendLine: (message: string) => void,
@@ -140,7 +139,6 @@ export function connectSocketTransport(
       }
     });
 
-    // Capture stdout to get the actual port number
     jetlsProcess.stdout?.on("data", (data: Buffer) => {
       data
         .toString()
@@ -149,7 +147,6 @@ export function connectSocketTransport(
         .forEach((line) => {
           options.appendLine(`[JETLS-stdout] ${line}`);
 
-          // Look for the port announcement
           const portMatch = line.match(/<JETLS-PORT>(\d+)<\/JETLS-PORT>/);
           if (portMatch && !actualPort) {
             actualPort = parseInt(portMatch[1]);
@@ -159,7 +156,6 @@ export function connectSocketTransport(
 
             stopProcessMonitoring(manager);
 
-            // Connect to the server
             const socket = net.createConnection(actualPort, "127.0.0.1", () => {
               options.appendLine(
                 `[jetls-client] Connected to JETLS on port ${actualPort}!`,

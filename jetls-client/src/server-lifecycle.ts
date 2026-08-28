@@ -337,16 +337,13 @@ async function startLanguageServer() {
 
   let commChannel = serverConfig.communicationChannel;
   if (commChannel === "auto") {
-    // Auto-detect best default based on environment
     commChannel = "pipe";
     if (vscode.env.remoteName) {
-      // We're in a remote environment (SSH, WSL, Container, etc.)
       outputChannel.appendLine(
         `[jetls-client] Detected remote environment: ${vscode.env.remoteName}`,
       );
 
-      // For WSL and SSH, pipe still works well
-      // For containers, stdio might be safer
+      // For containers, stdio might be safer than pipe
       if (
         vscode.env.remoteName === "dev-container" ||
         vscode.env.remoteName === "attached-container"
@@ -438,7 +435,7 @@ async function startLanguageServer() {
       },
     };
   } else if (commChannel === "socket") {
-    const port = serverConfig.socketPort || 0; // Use 0 for auto-assign
+    const port = serverConfig.socketPort || 0;
     serverOptions = () =>
       connectSocketTransport(
         baseCommand,
@@ -645,7 +642,6 @@ async function startLanguageServer() {
     }, LAST_USED_REFRESH_INTERVAL);
   }
 
-  // Register handler for workspace/configuration requests after client starts
   languageClient.onRequest(
     "workspace/configuration",
     (params: { items: { scopeUri?: string; section?: string | null }[] }) => {
