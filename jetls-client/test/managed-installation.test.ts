@@ -19,6 +19,7 @@ import jetlsVersion from "../JETLS_VERSION.json";
 import {
   JETLS_REPOSITORY,
   JETLS_REVISION,
+  ManagedInstallationCancelledError,
   ManagedJETLSError,
   createDefaultProcessRunner,
   currentPointerPath,
@@ -86,6 +87,7 @@ function fakeRunner(
         timeoutMs: options.timeoutMs,
         onStdout: options.onStdout,
         onStderr: options.onStderr,
+        signal: options.signal,
       },
     };
     calls.push(call);
@@ -923,6 +925,200 @@ test("a surviving installer does not block a retry", async () => {
   });
 });
 
+test("a cancelled installation rejects without publishing", async () => {
+  await withFixture(async (fixture) => {
+    const abort = new AbortController();
+    const fake = fakeRunner(async (call) => {
+      const script = scriptFor(call);
+      if (script?.includes("Pkg.Apps.add")) {
+        // The runner-level abort settles the process with the
+        // cancellation marker.
+        abort.abort();
+        return {
+          status: null,
+          stdout: "",
+          stderr: "",
+          error: "The process was cancelled.",
+          cancelled: true,
+        };
+      }
+      if (script !== undefined) {
+        return success("1.12.2\n");
+      }
+      throw new Error(`Unexpected process call: ${JSON.stringify(call)}`);
+    });
+
+    await assert.rejects(
+      ensureManagedJETLS({
+        storagePath: fixture.storagePath,
+        environment: fixture.environment,
+        processRunner: fake.runner,
+        signal: abort.signal,
+      }),
+      ManagedInstallationCancelledError,
+    );
+
+    const containerPath = managedDepotPath(
+      fixture.storagePath,
+      fixture.juliaPath,
+      "1.12.2",
+    );
+    assert.equal(await readCurrentGeneration(containerPath), undefined);
+    await assert.rejects(stat(path.join(containerPath, "install.lock")));
+    // The setup attached its signal to every managed process.
+    assert.ok(fake.calls.every((call) => call.options.signal === abort.signal));
+  });
+});
+
+test("an already-aborted setup rejects before any process runs", async () => {
+  await withFixture(async (fixture) => {
+    const abort = new AbortController();
+    abort.abort();
+    const fake = standardRunner(fixture.juliaPath);
+
+    await assert.rejects(
+      ensureManagedJETLS({
+        storagePath: fixture.storagePath,
+        environment: fixture.environment,
+        processRunner: fake.runner,
+        signal: abort.signal,
+      }),
+      ManagedInstallationCancelledError,
+    );
+    assert.equal(fake.calls.length, 0);
+  });
+});
+
+test("reports the installation step boundaries to the caller", async () => {
+  await withFixture(async (fixture) => {
+    const events: string[] = [];
+    const fake = standardRunner(fixture.juliaPath, {
+      onInstallOutput: () => events.push("install"),
+    });
+    const options: ManagedInstallationOptions = {
+      storagePath: fixture.storagePath,
+      environment: fixture.environment,
+      processRunner: fake.runner,
+      onInstallStep: () => {
+        events.push("begin");
+        return () => events.push("end");
+      },
+    };
+
+    await ensureManagedJETLS(options);
+    assert.deepEqual(events, ["begin", "install", "end"]);
+
+    // The stamped fast path never enters the installation step.
+    await ensureManagedJETLS(options);
+    assert.deepEqual(events, ["begin", "install", "end"]);
+  });
+});
+
+test("streams sanitized installation output lines to the caller", async () => {
+  await withFixture(async (fixture) => {
+    const lines: string[] = [];
+    const fake = standardRunner(fixture.juliaPath, {
+      installOutput: (call) => {
+        // A colored line split across chunks, in-place `\r` progress
+        // redraws, an oversized line, and a blank line.
+        call.options.onStderr?.("\u001b[32m  Installed\u001b[39m Cra");
+        call.options.onStderr?.(
+          "yons ─ v4.1.1\nProgress [==>  ]\rProgress [====>]\r\n",
+        );
+        call.options.onStderr?.(`${"x".repeat(150)}\n\n`);
+      },
+    });
+
+    await ensureManagedJETLS({
+      storagePath: fixture.storagePath,
+      environment: fixture.environment,
+      processRunner: fake.runner,
+      onInstallOutput: (line) => lines.push(line),
+    });
+
+    assert.deepEqual(lines.slice(0, 3), [
+      "Installed Crayons ─ v4.1.1",
+      "Progress [==>  ]",
+      "Progress [====>]",
+    ]);
+    assert.equal(lines[3], `${"x".repeat(99)}…`);
+    assert.equal(lines.length, 4);
+
+    // The stamped fast path runs no installation and emits no lines.
+    lines.length = 0;
+    await ensureManagedJETLS({
+      storagePath: fixture.storagePath,
+      environment: fixture.environment,
+      processRunner: standardRunner(fixture.juliaPath).runner,
+      onInstallOutput: (line) => lines.push(line),
+    });
+    assert.deepEqual(lines, []);
+  });
+});
+
+test("the installation step ends when the installation fails", async () => {
+  await withFixture(async (fixture) => {
+    const events: string[] = [];
+    const fake = fakeRunner(async (call) => {
+      const script = scriptFor(call);
+      if (script?.includes("Pkg.Apps.add")) {
+        return failure(1, "", "could not download package sources\n");
+      }
+      if (script !== undefined) {
+        return success("1.12.2\n");
+      }
+      throw new Error(`Unexpected process call: ${JSON.stringify(call)}`);
+    });
+
+    await assert.rejects(
+      ensureManagedJETLS({
+        storagePath: fixture.storagePath,
+        environment: fixture.environment,
+        processRunner: fake.runner,
+        onInstallStep: () => {
+          events.push("begin");
+          return () => events.push("end");
+        },
+      }),
+    );
+    assert.deepEqual(events, ["begin", "end"]);
+  });
+});
+
+test("a cancelled verification does not trigger a replacement install", async () => {
+  await withFixture(async (fixture) => {
+    await seedGeneration(fixture.storagePath, fixture.juliaPath, {
+      stamped: false,
+    });
+    const fake = fakeRunner(async (call) => {
+      const script = scriptFor(call);
+      if (script !== undefined) {
+        return success("1.12.2\n");
+      }
+      if (isJETLSVersionCall(call)) {
+        return {
+          status: null,
+          stdout: "",
+          stderr: "",
+          error: "The process was cancelled.",
+          cancelled: true,
+        };
+      }
+      throw new Error(`Unexpected process call: ${JSON.stringify(call)}`);
+    });
+
+    await assert.rejects(
+      ensureManagedJETLS({
+        storagePath: fixture.storagePath,
+        environment: fixture.environment,
+        processRunner: fake.runner,
+      }),
+      ManagedInstallationCancelledError,
+    );
+    assert.equal(callsWithScript(fake.calls, "Pkg.Apps.add").length, 0);
+  });
+});
+
 test("classifies first-install failures as retryable install errors", async () => {
   await withFixture(async (fixture) => {
     const fake = fakeRunner(async (call) => {
@@ -1438,6 +1634,59 @@ test("marks survival when group members outlive the closed parent", async () => 
     result.error ?? "",
     /Process timed out after 10 ms\. The process did not exit after termination\./,
   );
+});
+
+test("terminates the process group and marks cancellation on abort", async () => {
+  const child = new FakeChildProcess();
+  child.onKill = () => child.close(null, "SIGTERM");
+  const groupSignals: [number, NodeJS.Signals][] = [];
+  const runner = createDefaultProcessRunner({
+    spawnProcess: () => child.asChildProcess(),
+    platform: "darwin",
+    terminationTimeoutMs: 20,
+    killProcessGroup: (pid, signal) => {
+      groupSignals.push([pid, signal]);
+      child.kill(signal);
+    },
+    isProcessGroupAlive: () => false,
+  });
+  const abort = new AbortController();
+
+  const resultPromise = runner("cmd", [], {
+    env: {},
+    shell: false,
+    timeoutMs: 60 * 1000,
+    signal: abort.signal,
+  });
+  abort.abort();
+  const result = await resultPromise;
+
+  assert.equal(result.cancelled, true);
+  assert.match(result.error ?? "", /The process was cancelled\./);
+  assert.deepEqual(groupSignals, [[1234, "SIGTERM"]]);
+  assert.equal(result.processMayBeAlive, undefined);
+});
+
+test("does not spawn when the signal is already aborted", async () => {
+  const abort = new AbortController();
+  abort.abort();
+  const spawnCalls: SpawnCall[] = [];
+  const runner = createDefaultProcessRunner({
+    spawnProcess: (command, args, options) => {
+      spawnCalls.push({ command, args, options });
+      return new FakeChildProcess().asChildProcess();
+    },
+  });
+
+  const result = await runner("cmd", [], {
+    env: {},
+    shell: false,
+    timeoutMs: 1000,
+    signal: abort.signal,
+  });
+
+  assert.equal(result.cancelled, true);
+  assert.equal(spawnCalls.length, 0);
 });
 
 test("terminates timed-out process trees with taskkill on Windows", async () => {

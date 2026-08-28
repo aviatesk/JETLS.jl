@@ -19,6 +19,7 @@ export class StartupStatusBar {
   private readonly item: vscode.StatusBarItem;
   private hideTimer: NodeJS.Timeout | undefined;
   private suppressed = false;
+  private managedProgress = false;
 
   constructor() {
     this.item = vscode.window.createStatusBarItem(
@@ -34,6 +35,7 @@ export class StartupStatusBar {
       return;
     }
     this.clearHideTimer();
+    this.managedProgress = false;
 
     this.item.backgroundColor = undefined;
     this.item.command = SHOW_OUTPUT_COMMAND;
@@ -97,11 +99,23 @@ export class StartupStatusBar {
       return;
     }
     this.clearHideTimer();
+    this.managedProgress = true;
     this.item.backgroundColor = undefined;
     this.item.command = SHOW_OUTPUT_COMMAND;
     this.item.text = `$(sync~spin) ${message}`;
     this.item.tooltip = "Setting up the managed JETLS installation.";
     this.item.show();
+  }
+
+  /**
+   * Updates only the tooltip with the latest installation output line;
+   * a no-op unless the managed-progress spinner is showing.
+   */
+  showManagedProgressDetail(line: string): void {
+    if (this.suppressed || !this.managedProgress) {
+      return;
+    }
+    this.item.tooltip = `${line}\nClick to open the JETLS output.`;
   }
 
   /**
@@ -114,6 +128,7 @@ export class StartupStatusBar {
       return;
     }
     this.clearHideTimer();
+    this.managedProgress = false;
     this.item.text = "$(error) Managed JETLS failed";
     this.item.tooltip = `${summary}\nClick to open the JETLS output.`;
     this.item.backgroundColor = new vscode.ThemeColor(

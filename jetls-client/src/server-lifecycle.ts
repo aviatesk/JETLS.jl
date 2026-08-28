@@ -13,6 +13,7 @@ import { JETLS_CLIENT_SETTINGS_SECTION, TIMEOUTS } from "./constants";
 import {
   ensureManagedJETLS,
   invalidateInstallStamp,
+  ManagedInstallationCancelledError,
   ManagedJETLSError,
   managedJETLSCommands,
 } from "./managed-installation";
@@ -207,23 +208,95 @@ async function startLanguageServer() {
       env?: Record<string, string>;
     };
     let installation;
+    const setupAbort = new AbortController();
+    managedSetupAbort = setupAbort;
+    let installProgress: vscode.Progress<{ message?: string }> | undefined;
     try {
       installation = await ensureManagedJETLS({
         storagePath: managedStoragePath,
         environment: executableEnvironment(executable),
         logger: (message) =>
           outputChannel.appendLine(`[jetls-client] ${message}`),
-        progress: (message) => statusBar.showManagedProgress(message),
+        progress: (message) => {
+          statusBar.showManagedProgress(message);
+          installProgress?.report({
+            message: message.startsWith("Installing JETLS: ")
+              ? message.slice("Installing JETLS: ".length)
+              : message,
+          });
+        },
         forceInstall: forceManagedInstall,
+        signal: setupAbort.signal,
+        // Live output lines make a long installation visibly alive: the
+        // status bar keeps the coarse phase while its tooltip and the
+        // progress notification tick with the latest line.
+        onInstallOutput: (line) => {
+          statusBar.showManagedProgressDetail(line);
+          installProgress?.report({ message: line });
+        },
+        // The actual installation (the only open-ended long step) gets a
+        // cancellable progress notification for its duration; routine
+        // starts stay on the status bar alone.
+        onInstallStep: () => {
+          let end!: () => void;
+          const done = new Promise<void>((resolve) => {
+            end = resolve;
+          });
+          void vscode.window.withProgress(
+            {
+              location: vscode.ProgressLocation.Notification,
+              title: "Installing JETLS",
+              cancellable: true,
+            },
+            (progress, token) => {
+              installProgress = progress;
+              token.onCancellationRequested(() => setupAbort.abort());
+              return done;
+            },
+          );
+          return () => {
+            installProgress = undefined;
+            end();
+          };
+        },
       });
       forceManagedInstall = false;
     } catch (err) {
       const error = err instanceof Error ? err : new Error(String(err));
-      if (!deactivating && !restartRunner.pending) {
+      if (
+        !deactivating &&
+        !restartRunner.pending &&
+        !(error instanceof ManagedInstallationCancelledError)
+      ) {
         statusBar.showManagedFailure(managedFailureSummary(error));
         handleManagedSetupFailure(error);
+      } else if (!deactivating && !restartRunner.pending) {
+        // Cancelled from the installation notification (a restart or
+        // deactivation would have set the flags above): no failure UI,
+        // but the status bar must not keep showing progress, and the
+        // notification offers the way back in.
+        statusBar.showManagedFailure("The JETLS installation was cancelled.");
+        const retryButton = "Retry";
+        const outputButton = "Show JETLS output";
+        void vscode.window
+          .showInformationMessage(
+            "The JETLS installation was cancelled.",
+            retryButton,
+            outputButton,
+          )
+          .then((choice) => {
+            if (choice === retryButton) {
+              requestLanguageServerRestart();
+            } else if (choice === outputButton) {
+              void vscode.commands.executeCommand("jetls-client.showOutput");
+            }
+          });
       }
       throw error;
+    } finally {
+      if (managedSetupAbort === setupAbort) {
+        managedSetupAbort = undefined;
+      }
     }
     outputChannel.appendLine(
       `[jetls-client] Using managed JETLS from ${installation.depotPath}`,
@@ -591,6 +664,9 @@ export function requestLanguageServerRestart(): void {
   // Likewise kill a spawned server still waiting for its transport
   // connection; the transport turns this into a no-op once connected.
   cancelServerStartup?.();
+  // And cancel an in-flight managed installation, which can run for
+  // minutes: the rerun queued above starts over from the current state.
+  managedSetupAbort?.abort();
   void lifecycle.catch((err) => {
     const message = err instanceof Error ? err.message : String(err);
     outputChannel.appendLine(
@@ -603,6 +679,11 @@ export function requestLanguageServerRestart(): void {
 // stays set until an installation succeeds, so a Retry after a failed
 // reinstall still installs from scratch.
 let forceManagedInstall = false;
+
+// Aborts the in-flight managed setup, so a restart or deactivation does
+// not wait behind a long installation; the cancelled installation only
+// strands its unpublished generation.
+let managedSetupAbort: AbortController | undefined;
 
 /**
  * Reinstalls the managed JETLS from scratch: after a modal confirmation
@@ -673,6 +754,7 @@ function awaitWithTimeout(
 
 export async function shutdownServerLifecycle(): Promise<void> {
   deactivating = true;
+  managedSetupAbort?.abort();
   try {
     await versionPreflight.terminate();
   } catch (err) {
