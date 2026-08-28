@@ -33,7 +33,6 @@ import {
   managedDepotPath,
   managedJETLSCommands,
   needsWindowsBatchShell,
-  parseJuliaVersion,
   readCurrentGeneration,
   resolveExecutable,
   runtimeKey,
@@ -247,32 +246,36 @@ function jetlsVersionCalls(calls: ProcessCall[]): ProcessCall[] {
 
 const posixOnlyTest = process.platform === "win32" ? test.skip : test;
 
-test("reads the supported Julia version range from JETLS_VERSION.json", () => {
-  const lower = parseJuliaVersion(jetlsVersion.julia.lower);
-  const upper = /^(\d+)\.(\d+)$/.exec(jetlsVersion.julia.upperMinor);
-  assert.ok(lower !== undefined);
-  assert.ok(upper !== null);
+test("checks Julia versions with hyphen-range compat semantics", () => {
+  assert.equal(isSupportedJuliaVersion("1.12.2", "1.12.2", "1.13"), true);
+  assert.equal(isSupportedJuliaVersion("1.12.1", "1.12.2", "1.13"), false);
+  // A minor-only upper bound admits every patch of that minor.
+  assert.equal(isSupportedJuliaVersion("1.13.999", "1.12.2", "1.13"), true);
+  assert.equal(isSupportedJuliaVersion("1.14.0", "1.12.2", "1.13"), false);
+  // A patch-specified upper bound is an inclusive exact cutoff.
+  assert.equal(isSupportedJuliaVersion("1.13.1", "1.12.2", "1.13.1"), true);
+  assert.equal(isSupportedJuliaVersion("1.13.2", "1.12.2", "1.13.1"), false);
+  // Components omitted from the lower bound default to zero.
+  assert.equal(isSupportedJuliaVersion("1.12.0", "1.12", "1.13"), true);
+  assert.equal(isSupportedJuliaVersion("1.11.9", "1.12", "1.13"), false);
+  // A major-only upper bound admits every minor of that major.
+  assert.equal(isSupportedJuliaVersion("1.99.0", "1.12.2", "1"), true);
+  assert.equal(isSupportedJuliaVersion("2.0.0", "1.12.2", "1"), false);
+  assert.equal(isSupportedJuliaVersion("invalid"), false);
+  assert.throws(() => isSupportedJuliaVersion("1.12.2", "bad", "1.13"));
+});
 
-  assert.equal(isSupportedJuliaVersion(jetlsVersion.julia.lower), true);
-  if (lower.patch > 0) {
-    assert.equal(
-      isSupportedJuliaVersion(
-        `${lower.major}.${lower.minor}.${lower.patch - 1}`,
-      ),
-      false,
-    );
-  }
-  const upperMajor = Number(upper[1]);
-  const upperMinor = Number(upper[2]);
+test("reads the supported Julia version range from JETLS_VERSION.json", () => {
+  const lower = /^(\d+)(?:\.(\d+))?(?:\.(\d+))?$/.exec(
+    jetlsVersion.julia.lower,
+  );
+  assert.ok(lower !== null);
+  // The recorded bounds parse and span a non-empty range: the version
+  // the lower bound completes to is itself supported.
   assert.equal(
-    isSupportedJuliaVersion(`${upperMajor}.${upperMinor}.999`),
+    isSupportedJuliaVersion(`${lower[1]}.${lower[2] ?? 0}.${lower[3] ?? 0}`),
     true,
   );
-  assert.equal(
-    isSupportedJuliaVersion(`${upperMajor}.${upperMinor + 1}.0`),
-    false,
-  );
-  assert.equal(isSupportedJuliaVersion("invalid"), false);
 });
 
 test("keys depots by executable and Julia minor version", () => {

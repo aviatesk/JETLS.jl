@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Checks that the julia bounds in jetls-client/JETLS_VERSION.json mirror
 # the pinned JETLS release's `julia` compat entry, which is required to
-# stay in the `<lower> - <upper.minor>` hyphen-range form this
-# comparison assumes; drift in either direction fails the check.
+# stay in the `<lower> - <upper>` hyphen-range form this comparison
+# assumes; drift in either direction fails the check.
 #
 # Usage: check-jetls-client-julia-bounds.sh [<committish>]
 #
@@ -17,7 +17,7 @@ cd "$(dirname "$0")/.."
 MANIFEST=jetls-client/JETLS_VERSION.json
 REVISION=$(node -p "require('./$MANIFEST').revision")
 JULIA_LOWER=$(node -p "require('./$MANIFEST').julia.lower")
-JULIA_UPPER_MINOR=$(node -p "require('./$MANIFEST').julia.upperMinor")
+JULIA_UPPER=$(node -p "require('./$MANIFEST').julia.upper")
 
 if [[ $# -ge 1 ]]; then
     PROJECT_TOML=$(git show "$1:Project.toml")
@@ -33,8 +33,8 @@ if [[ -z "$COMPAT" ]]; then
     echo "Error: could not read the julia compat entry of the pinned release $REVISION."
     exit 1
 fi
-if [[ "$COMPAT" != "$JULIA_LOWER - $JULIA_UPPER_MINOR" ]]; then
-    echo "Error: julia bounds in $MANIFEST ($JULIA_LOWER - $JULIA_UPPER_MINOR)" \
+if [[ "$COMPAT" != "$JULIA_LOWER - $JULIA_UPPER" ]]; then
+    echo "Error: julia bounds in $MANIFEST ($JULIA_LOWER - $JULIA_UPPER)" \
         "do not match the pinned release's julia compat ($COMPAT)."
     exit 1
 fi

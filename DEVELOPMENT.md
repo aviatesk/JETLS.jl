@@ -584,7 +584,7 @@ The managed default installs the JETLS release tag pinned in
 [`jetls-client/JETLS_VERSION.json`](./jetls-client/JETLS_VERSION.json),
 which also records the supported Julia version bounds. The bounds must
 mirror the pinned release's `julia` compat entry in `Project.toml`, which
-is expected to stay in the `<lower> - <upper.minor>` hyphen-range form;
+is expected to stay in the `<lower> - <upper>` hyphen-range form;
 the release script and CI check the pinned tag and this correspondence
 automatically.
 
