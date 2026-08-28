@@ -331,6 +331,9 @@ in `src/types.jl` by two scripts under `scripts/schema/`:
   - `config-toml.schema.json` (complete schema for `.JETLSConfig.toml`)
   - `settings.schema.json` (settings only)
   - `init-options.schema.json` (initialization options only)
+  - `vscode-configuration.json` (VSCode `package.json` configuration
+    fragments, with `$defs` inlined and `description` renamed to
+    `markdownDescription`; published as a release asset)
 - `update-pkg-json.jl` updates VSCode configuration properties inside
   `jetls-client/package.json` (with `$defs` inlined and `description`
   renamed to `markdownDescription`).

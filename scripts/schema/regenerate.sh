@@ -39,4 +39,6 @@ julia --startup-file=no --project="$SCRIPT_DIR" \
 julia --startup-file=no --project="$SCRIPT_DIR" \
     "$SCRIPT_DIR/generate.jl" --init-options "$PROJECT_ROOT/schemas/init-options.schema.json" $CHECK_FLAG
 julia --startup-file=no --project="$SCRIPT_DIR" \
+    "$SCRIPT_DIR/generate.jl" --vscode-configuration "$PROJECT_ROOT/schemas/vscode-configuration.json" $CHECK_FLAG
+julia --startup-file=no --project="$SCRIPT_DIR" \
     "$SCRIPT_DIR/update-pkg-json.jl" "$PROJECT_ROOT/jetls-client/package.json" $CHECK_FLAG
