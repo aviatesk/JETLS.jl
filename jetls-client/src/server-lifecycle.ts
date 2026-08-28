@@ -396,10 +396,16 @@ async function startLanguageServer() {
     precompilationTimeoutMs: TIMEOUTS.precompilation,
     appendLine: (message) => outputChannel.appendLine(message),
     onPrecompiling: () => statusBar.show("precompiling"),
-    onProcessError: (error) =>
-      managedDepotPath === undefined
-        ? handleSpawnError(error, baseCommand)
-        : handleManagedServerFailure(error, managedDepotPath),
+    onProcessError: (error) => {
+      if (deactivating || restartRunner.active !== undefined) {
+        return;
+      }
+      if (managedDepotPath === undefined) {
+        handleSpawnError(error, baseCommand);
+      } else {
+        handleManagedServerFailure(error, managedDepotPath);
+      }
+    },
     registerCancel: (cancel) => {
       cancelServerStartup = cancel;
     },
