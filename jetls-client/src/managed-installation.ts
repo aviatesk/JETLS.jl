@@ -1288,6 +1288,16 @@ async function cleanupManagedStorage(
   }
 }
 
+// Cleanup runs detached from the start that triggered it: removing an
+// old generation deletes a whole depot tree, which must not add its
+// disk latency to the server launch. The latest run is tracked so
+// tests can await a deterministic state.
+let pendingCleanup: Promise<void> = Promise.resolve();
+
+export function managedCleanupSettled(): Promise<void> {
+  return pendingCleanup;
+}
+
 async function stampedCurrentGeneration(
   context: RuntimeContext,
 ): Promise<string | undefined> {
@@ -1397,7 +1407,7 @@ async function resolveGeneration(
     // The container-level marker is what keeps the whole runtime alive
     // against the stale-runtime sweep.
     await touchLastUsed(context.containerPath);
-    await cleanupManagedStorage(context.containerPath, logger);
+    pendingCleanup = cleanupManagedStorage(context.containerPath, logger);
     return generationPath;
   };
   if (!forceInstall) {
