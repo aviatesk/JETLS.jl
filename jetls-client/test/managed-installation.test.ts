@@ -30,6 +30,7 @@ import {
   isPinnedJETLSVersion,
   isSupportedJuliaVersion,
   lastUsedPath,
+  managedCleanupSettled,
   managedEnvironment,
   managedDepotPath,
   managedJETLSCommands,
@@ -131,6 +132,9 @@ async function withFixture(
       },
     });
   } finally {
+    // A cleanup detached by a `settle` may still be walking the
+    // fixture tree; let it finish before pulling the tree away.
+    await managedCleanupSettled();
     await rm(root, { recursive: true, force: true });
   }
 }
@@ -1318,6 +1322,7 @@ test("cleanup removes aged generations but never the current one", async () => {
     });
 
     assert.equal(installation.depotPath, seeded);
+    await managedCleanupSettled();
     await assert.rejects(stat(crashed));
     await assert.rejects(stat(superseded));
     await stat(recent);
@@ -1359,6 +1364,7 @@ test("cleanup removes runtime containers of Julia versions no longer used", asyn
       processRunner: fake.runner,
     });
 
+    await managedCleanupSettled();
     await assert.rejects(stat(staleRuntime));
     await assert.rejects(stat(leftover));
     await stat(liveRuntime);
@@ -1392,6 +1398,7 @@ test("cleanup ages out entries outside the generation layout", async () => {
       processRunner: fake.runner,
     });
 
+    await managedCleanupSettled();
     await assert.rejects(stat(legacyDir));
     await assert.rejects(stat(legacyFile));
     await stat(freshEntry);
