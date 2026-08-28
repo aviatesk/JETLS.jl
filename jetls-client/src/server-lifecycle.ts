@@ -6,6 +6,7 @@ import {
   LanguageClientOptions,
   ServerOptions,
   State,
+  TransportKind,
 } from "vscode-languageclient/node";
 
 import { CoalescingTaskRunner } from "./coalescing-task-runner";
@@ -31,11 +32,7 @@ import {
   VersionPreflight,
 } from "./preflight";
 import { StartupStatusBar } from "./status-bar";
-import {
-  connectPipeTransport,
-  connectSocketTransport,
-  TransportOptions,
-} from "./transport";
+import { connectSocketTransport, TransportOptions } from "./transport";
 
 let languageClient: LanguageClient;
 let outputChannel: LogOutputChannel;
@@ -166,9 +163,9 @@ function handleSpawnError(err: Error, command: string): void {
   }
 }
 
-// The stdio channel has no process-level startup monitoring (the language
-// client library owns the spawned process), so bound `start()` itself and
-// force-dispose the client on expiry.
+// The stdio and pipe channels have no process-level startup monitoring
+// (the language client library owns the spawned process), so bound
+// `start()` itself and force-dispose the client on expiry.
 function startWithTimeout(
   client: LanguageClient,
   timeoutMs: number,
@@ -452,14 +449,24 @@ async function startLanguageServer() {
       );
     outputChannel.appendLine(`[jetls-client] Using TCP socket mode`);
   } else {
-    // Default: pipe communication (Unix domain socket / named pipe)
-    serverOptions = () =>
-      connectPipeTransport(
-        baseCommand,
-        serveArgs,
-        spawnOptions,
-        transportOptions,
-      );
+    // Default: pipe communication (Unix domain socket / named pipe).
+    // The library generates the pipe name, appends `--pipe=<name>` (which the
+    // server accepts as an alias for `--pipe-connect`), and owns the spawned
+    // process, forwarding its stderr to the output channel.
+    serverOptions = {
+      run: {
+        command: baseCommand,
+        args: [...serveArgs],
+        transport: TransportKind.pipe,
+        options: spawnOptions,
+      },
+      debug: {
+        command: baseCommand,
+        args: [...serveArgs],
+        transport: TransportKind.pipe,
+        options: spawnOptions,
+      },
+    };
   }
 
   const initializationOptions = {
@@ -593,10 +600,12 @@ async function startLanguageServer() {
   });
 
   try {
-    if (commChannel === "stdio") {
-      await startWithTimeout(languageClient, TIMEOUTS.serverStart);
-    } else {
+    // The socket transport bounds (and cancels) its own connection
+    // attempt; the library-owned stdio and pipe starts are bounded here.
+    if (commChannel === "socket") {
       await languageClient.start();
+    } else {
+      await startWithTimeout(languageClient, TIMEOUTS.serverStart);
     }
   } catch (err) {
     const error = err instanceof Error ? err : new Error(String(err));
