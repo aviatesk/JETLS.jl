@@ -124,6 +124,29 @@ function compute_binding_occurrences(
         union!(existing, local_occs)
     end
 
+    # Typedef lowering also emits an explicit `global` decl for the type name
+    # (JuliaLang/julia#62862) that resolves to a binding distinct from the alias
+    # target above. Fold such same-`(mod, name)` global entries into the alias
+    # target, skipping occurrences it already covers at the same range.
+    for (_, global_binfo) in alias_remaps
+        target_occs = occurrences[global_binfo]
+        duplicates = JL.BindingInfo[]
+        for binfo in keys(occurrences)
+            binfo === global_binfo && continue
+            is_matching_global_binding(binfo, global_binfo) || continue
+            push!(duplicates, binfo)
+        end
+        for binfo in duplicates
+            for occ in pop!(occurrences, binfo)
+                any(target_occs) do existing
+                    existing.kind === occ.kind &&
+                        JS.byte_range(existing.tree) == JS.byte_range(occ.tree)
+                end && continue
+                push!(target_occs, occ)
+            end
+        end
+    end
+
     return occurrences
 end
 
