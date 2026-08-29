@@ -1,3 +1,18 @@
+# Like `union!`, but treats occurrences with the same kind and byte range as
+# equal even when they are backed by distinct tree nodes.
+function union_occurrences_by_range!(
+        target::Set{BindingOccurrence}, occurrences::Set{BindingOccurrence}
+    )
+    for occ in occurrences
+        any(target) do existing
+            existing.kind === occ.kind &&
+                JS.byte_range(existing.tree) == JS.byte_range(occ.tree)
+        end && continue
+        push!(target, occ)
+    end
+    return target
+end
+
 """
     compute_binding_occurrences(
             ctx3::JL.VariableAnalysisContext, st3::SyntaxTree, world::UInt;
@@ -92,36 +107,51 @@ function compute_binding_occurrences(
     end
 
     # Re-key `:local (mod=nothing)` aliases introduced by type definitions
-    # (struct / abstract type / primitive type) onto the matching hidden
-    # `:global (is_internal=true)` binding in the same `ctx3`. This normalizes
-    # struct-alias occurrences so they appear under a concrete-module `:global`
-    # entry like ordinary globals, letting downstream consumers match on
-    # `(mod, name, :global)` exactly without a nothing-mod fallback.
+    # (struct / abstract type / primitive type) onto the matching `:global`
+    # binding in the same `ctx3`: the hidden `:global (is_internal=true)`
+    # binding for struct definitions, or — for abstract/primitive types, which
+    # have no hidden global — the `:global` binding anchored at the same name
+    # identifier. Unrelated same-name globals are anchored at distinct
+    # definition sites, so the anchor comparison never conflates them. This
+    # normalizes type-alias occurrences so they appear under a concrete-module
+    # `:global` entry like ordinary globals, letting downstream consumers match
+    # on `(mod, name, :global)` exactly without a nothing-mod fallback.
     alias_remaps = Pair{JL.BindingInfo,JL.BindingInfo}[]
     for binfo in keys(occurrences)
         binfo.kind === :local || continue
         isnothing(binfo.mod) || continue
+        definition_range = JS.byte_range(JL.binding_ex(ctx3, binfo))
+        target = nothing
         for other in ctx3.bindings.info
             other.kind === :global || continue
-            other.is_internal || continue
             other.name == binfo.name || continue
-            push!(alias_remaps, binfo => other)
-            break
+            if other.is_internal
+                target = other
+                break
+            elseif target === nothing &&
+                   JS.byte_range(JL.binding_ex(ctx3, other)) == definition_range
+                target = other
+            end
         end
+        target === nothing || push!(alias_remaps, binfo => target)
     end
     for (local_binfo, global_binfo) in alias_remaps
         local_occs = pop!(occurrences, local_binfo)
         definition_tree = JL.binding_ex(ctx3, local_binfo)
         definition_range = JS.byte_range(definition_tree)
-        # Typegroup lowering assigns this alias twice and reads it in internal
-        # scaffolding at the definition range. Canonicalize that range while
+        # Typedef lowering assigns this alias and reads it in internal
+        # scaffolding at the definition range — and when the target global is
+        # the user-visible one, its entry carries the same scaffolding too.
+        # Canonicalize that range to a single `:def` (plus any `:decl`s) while
         # retaining user-written self-references at distinct ranges.
+        target_occs = get!(Set{BindingOccurrence}, occurrences, global_binfo)
+        union!(local_occs, target_occs)
         filter!(local_occs) do occ
             JS.byte_range(occ.tree) != definition_range || occ.kind ∉ (:def, :use)
         end
         push!(local_occs, BindingOccurrence(definition_tree, :def))
-        existing = get!(Set{BindingOccurrence}, occurrences, global_binfo)
-        union!(existing, local_occs)
+        empty!(target_occs)
+        union_occurrences_by_range!(target_occs, local_occs)
     end
 
     # Typedef lowering also emits an explicit `global` decl for the type name
@@ -137,13 +167,7 @@ function compute_binding_occurrences(
             push!(duplicates, binfo)
         end
         for binfo in duplicates
-            for occ in pop!(occurrences, binfo)
-                any(target_occs) do existing
-                    existing.kind === occ.kind &&
-                        JS.byte_range(existing.tree) == JS.byte_range(occ.tree)
-                end && continue
-                push!(target_occs, occ)
-            end
+            union_occurrences_by_range!(target_occs, pop!(occurrences, binfo))
         end
     end
 
