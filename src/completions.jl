@@ -881,7 +881,8 @@ function call_completions!(
             newText = if isnothing(base_text)
                 ""
             else
-                prefix = (num_existing_args > 0 && context.triggerCharacter == ",") ? " " : ""
+                triggerCharacter = (context::CompletionContext).triggerCharacter
+                prefix = (num_existing_args > 0 && triggerCharacter == ",") ? " " : ""
                 prefix * base_text
             end
             label = String(msig_label)

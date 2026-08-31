@@ -1479,7 +1479,7 @@ end
 # contract.
 function _static_eval_cond(ctx::JL.MacroContext, cond::SyntaxTree)
     sc = (ctx.macrocall::SyntaxTree).context::JS.SyntaxContext
-    base_mod = JS.base_layer(sc).mod
+    base_mod = (JS.base_layer(sc)::JS.ScopeLayer).mod
     eval_cond = JS.fill_context(cond, JS.SyntaxContext(base_mod, sc.version))
     val = try
         JL.eval(base_mod, eval_cond)

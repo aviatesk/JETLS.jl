@@ -321,6 +321,33 @@ non-concrete call sites in a toplevel frame created by `JET.virtual_process`.
 """
 CC.bail_out_toplevel_call(::LSAnalyzer, ::CC.InferenceState) = false
 
+"""
+    bail_out_const_call(analyzer::LSAnalyzer, ...)
+
+The native compiler bails out of constant propagation when the generic inference result is
+already proven to be `Bottom` (i.e. the call always throws), since const-prop' cannot
+improve the return type any further. For error analysis however, const-prop'ing such a call
+is exactly what analyzes the callee frame with the constant arguments and lets it create
+precise error reports (e.g. `FieldError` for an `x.field` access with the concrete field
+name, including each split of a union-split `getproperty` call), which then surface at the
+in-scope call site via `collect_callee_reports!`. This overload keeps const-prop' going in
+that case, while still respecting `@constprop :none` annotations and the
+`ipo_constant_propagation` inference parameter.
+"""
+function CC.bail_out_const_call(
+        analyzer::LSAnalyzer, result::CC.MethodCallResult, si::CC.StmtInfo,
+        match::CC.MethodMatch, sv::CC.InferenceState
+    )
+    ret = @invoke CC.bail_out_const_call(
+        analyzer::ToplevelAbstractAnalyzer, result::CC.MethodCallResult, si::CC.StmtInfo,
+        match::CC.MethodMatch, sv::CC.InferenceState)
+    if (ret && result.rt === Union{} && !CC.is_no_constprop(match.method) &&
+        CC.InferenceParams(analyzer).ipo_constant_propagation)
+        return false
+    end
+    return ret
+end
+
 function CC.concrete_eval_eligible(
         analyzer::LSAnalyzer, @nospecialize(f), result::CC.MethodCallResult,
         arginfo::CC.ArgInfo, sv::CC.InferenceState
