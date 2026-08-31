@@ -321,7 +321,6 @@ non-concrete call sites in a toplevel frame created by `JET.virtual_process`.
 """
 CC.bail_out_toplevel_call(::LSAnalyzer, ::CC.InferenceState) = false
 
-@static if VERSION ≥ v"1.12.2"
 function CC.concrete_eval_eligible(
         analyzer::LSAnalyzer, @nospecialize(f), result::CC.MethodCallResult,
         arginfo::CC.ArgInfo, sv::CC.InferenceState
@@ -344,7 +343,6 @@ function CC.concrete_eval_call(
         sv::CC.InferenceState, invokecall::Union{CC.InvokeCall,Nothing})
     return res.rt === Union{} ? nothing : res
 end
-end # @static if VERSION ≥ v"1.12.2"
 
 # Native-interpreter boundary (experimental)
 # ==========================================
