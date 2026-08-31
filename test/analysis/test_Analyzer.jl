@@ -189,6 +189,67 @@ helper_getproperty_error(o::HelperGetproperty) = o.missing
         r = only(reports)
         @test r isa FieldErrorReport && r.field === :val
     end
+
+    # the report must not depend on inference cache state:
+    # re-analyzing the same call with a warm cache must reproduce it
+    let kernel = function (x)
+            x.regex
+        end
+        for _ = 1:2
+            result = analyze_call(kernel, (Union{Nothing,Regex},))
+            reports = get_reports(result)
+            @test length(reports) == 1
+            r = only(reports)
+            @test r isa FieldErrorReport && r.type === Nothing && r.field === :regex
+        end
+    end
+    let result = analyze_call((Nothing,)) do x
+            x.foo
+        end
+        reports = get_reports(result)
+        @test length(reports) == 1
+        r = only(reports)
+        @test r isa FieldErrorReport && r.type === Nothing && r.field === :foo
+    end
+    let NT = Union{@NamedTuple{regex::Int},@NamedTuple{regex::String}}
+        result = analyze_call((NT,)) do x
+            x.regex
+        end
+        @test isempty(get_reports(result))
+    end
+    let result = analyze_call((Union{@NamedTuple{alias::Int},TransparentGetproperty},)) do x
+            x.alias
+        end
+        @test isempty(get_reports(result))
+    end
+    # an erroring split whose receiver has other fields takes the same const-prop
+    # path as before: exactly one report, no duplicates
+    let result = analyze_call((Union{Some{Int},Regex},)) do x
+            x.value
+        end
+        reports = get_reports(result)
+        @test length(reports) == 1
+        r = only(reports)
+        @test r isa FieldErrorReport && r.type === Regex && r.field === :value
+    end
+    let result = analyze_call((Union{Nothing,Missing},)) do x
+            x.foo
+        end
+        reports = get_reports(result)
+        @test length(reports) == 2
+        @test any(reports) do r
+            r isa FieldErrorReport && r.type === Nothing && r.field === :foo
+        end
+        @test any(reports) do r
+            r isa FieldErrorReport && r.type === Missing && r.field === :foo
+        end
+    end
+    let result = analyze_call((Union{Nothing,Regex},)) do x
+            isnothing(x) && return nothing
+            return x.regex
+        end
+        @test isempty(get_reports(result))
+    end
 end
 
 only_int(x::Int) = 2x

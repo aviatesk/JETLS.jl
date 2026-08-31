@@ -918,6 +918,7 @@ function new_analysis_result(interp::LSInterpreter, result::JET.JETToplevelResul
     prev_result = execution.prev_result
     replace_analysis_result = isempty(result.res.toplevel_error_reports) || isnothing(prev_result)
     if !replace_analysis_result
+        prev_result = prev_result::AnalysisResult
         (; actual2virtual, analyzer, analyzed_file_infos) = prev_result
         cache_world = prev_result.world
     else
