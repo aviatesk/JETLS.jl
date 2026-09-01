@@ -4,8 +4,8 @@ export LSAnalyzer
 export inference_error_report_related_frames, inference_error_report_related_stack,
     inference_error_report_severity, inference_error_report_stack,
     reset_report_target_modules!
-export BoundsErrorReport, FieldErrorReport, KeywordTypeErrorReport, MethodErrorReport,
-    NoMethodMatchReport, NonBooleanCondErrorReport, TypeAssertErrorReport,
+export AmbiguousMethodReport, BoundsErrorReport, FieldErrorReport, KeywordTypeErrorReport,
+    MethodErrorReport, NoMethodMatchReport, NonBooleanCondErrorReport, TypeAssertErrorReport,
     TypeErrorReport, UndefKeywordErrorReport, UndefVarErrorReport,
     UnsupportedKeywordArgReport
 export RelatedEntryFrame, RelatedFrame, RelatedFrameKind, RelatedOriginFrame, RelatedViaFrame
@@ -321,7 +321,35 @@ non-concrete call sites in a toplevel frame created by `JET.virtual_process`.
 """
 CC.bail_out_toplevel_call(::LSAnalyzer, ::CC.InferenceState) = false
 
-@static if VERSION ≥ v"1.12.2"
+"""
+    bail_out_const_call(analyzer::LSAnalyzer, ...)
+
+The native compiler bails out of constant propagation when the generic inference result is
+already proven to be `Bottom` (i.e. the call always throws), since const-prop' cannot
+improve the return type any further. For error analysis however, const-prop'ing such a call
+is exactly what analyzes the callee frame with the constant arguments and lets it create
+precise error reports (e.g. `FieldError` for an `x.field` access with the concrete field
+name, including each split of a union-split `getproperty` call), which then surface at the
+in-scope call site via `collect_callee_reports!`. This overload keeps const-prop' going in
+that case.
+This is currently scoped to `getproperty` methods: only the field-error diagnostics benefit
+from analyzing always-throwing callees currently, while relaxing the bail-out for every
+always-throwing call (`error` etc.) costs roughly +10% of full-analysis time for no
+additional reports.
+"""
+function CC.bail_out_const_call(
+        analyzer::LSAnalyzer, result::CC.MethodCallResult, si::CC.StmtInfo,
+        match::CC.MethodMatch, sv::CC.InferenceState
+    )
+    ret = @invoke CC.bail_out_const_call(
+        analyzer::ToplevelAbstractAnalyzer, result::CC.MethodCallResult, si::CC.StmtInfo,
+        match::CC.MethodMatch, sv::CC.InferenceState)
+    if ret && match.method.name === :getproperty && result.rt === Union{}
+        return false
+    end
+    return ret
+end
+
 function CC.concrete_eval_eligible(
         analyzer::LSAnalyzer, @nospecialize(f), result::CC.MethodCallResult,
         arginfo::CC.ArgInfo, sv::CC.InferenceState
@@ -344,7 +372,6 @@ function CC.concrete_eval_call(
         sv::CC.InferenceState, invokecall::Union{CC.InvokeCall,Nothing})
     return res.rt === Union{} ? nothing : res
 end
-end # @static if VERSION ≥ v"1.12.2"
 
 # Native-interpreter boundary (experimental)
 # ==========================================
@@ -395,19 +422,17 @@ end
 
 function after_abstract_call_gf_by_type(
         analyzer::LSAnalyzer, ret::CC.Future, @nospecialize(func), arginfo::CC.ArgInfo,
-        @nospecialize(atype), sv::CC.InferenceState, max_methods::Int
+        sv::CC.InferenceState, max_methods::Int
     )
     if !should_analyze(analyzer, sv)
         return nothing
     end
-    atype_ref = Ref{Any}(atype)
     func_ref = Ref{Any}(func)
     function _after_abstract_call_gf_by_type(analyzer′::LSAnalyzer, sv′::CC.InferenceState)
         ret′ = ret[]
-        atype′ = atype_ref[]
         func′ = func_ref[]
-        report_method_error!(analyzer′, sv′, ret′, arginfo, atype′)
-        report_unsupported_kwarg_error!(analyzer′, sv′, func′, ret′, arginfo, max_methods)
+        kwarg_reported = report_unsupported_kwarg_error!(analyzer′, sv′, func′, ret′, arginfo, max_methods)
+        report_method_error!(analyzer′, sv′, ret′, arginfo, kwarg_reported, max_methods)
         report_keyword_typeerror!(analyzer′, sv′, func′, ret′, arginfo, max_methods)
         return true
     end
@@ -431,7 +456,7 @@ function CC.abstract_call_gf_by_type(
         analyzer::ToplevelAbstractAnalyzer, func::Any, arginfo::CC.ArgInfo,
         si::CC.StmtInfo, atype::Any, vtypes::Union{Vector{CC.VarState},Nothing},
         sv::CC.InferenceState, max_methods::Int)
-    after_abstract_call_gf_by_type(analyzer, ret, func, arginfo, atype, sv, max_methods)
+    after_abstract_call_gf_by_type(analyzer, ret, func, arginfo, sv, max_methods)
     return ret
 end
 else
@@ -442,7 +467,7 @@ function CC.abstract_call_gf_by_type(
     ret = @invoke CC.abstract_call_gf_by_type(
         analyzer::ToplevelAbstractAnalyzer, func::Any, arginfo::CC.ArgInfo,
         si::CC.StmtInfo, atype::Any, sv::CC.InferenceState, max_methods::Int)
-    after_abstract_call_gf_by_type(analyzer, ret, func, arginfo, atype, sv, max_methods)
+    after_abstract_call_gf_by_type(analyzer, ret, func, arginfo, sv, max_methods)
     return ret
 end
 end
@@ -587,6 +612,7 @@ Subtypes:
 - `BoundsErrorReport`: Out-of-bounds field access by index (corresponding to `BoundsError`)
 - `MethodErrorReport`: Errors that raise `MethodError` at runtime
   * `NoMethodMatchReport`: No matching method for a call (a dispatch failure)
+  * `AmbiguousMethodReport`: Multiple applicable methods without a unique match
   * `UnsupportedKeywordArgReport`: Keyword arguments the method does not accept
     (raised via `Base.kwerr`)
 - `UndefKeywordErrorReport`: Missing required keyword arguments
@@ -876,11 +902,19 @@ end
 @jetreport struct NoMethodMatchReport <: MethodErrorReport
     @nospecialize t # ::Union{Type, Vector{Type}}
     union_split::Int
+    world::UInt
 end
-function JETInterface.print_report_message(io::IO, report::NoMethodMatchReport)
-    print(io, "no matching method found ")
+JETInterface.print_report_message(io::IO, report::NoMethodMatchReport) =
+    print_no_method_match_report(io, report)
+inference_error_report_stack_impl(r::NoMethodMatchReport) = length(r.vst):-1:1
+inference_error_report_severity_impl(::NoMethodMatchReport) = DiagnosticSeverity.Warning
+
+function print_no_method_match_report(io::IO, report::NoMethodMatchReport)
+    print(io, "MethodError: no matching method found ")
     if report.union_split == 0
-        print_callsig(io, report.t)
+        t = report.t
+        print_callsig(io, t)
+        print_no_method_hint(io, t, report.world)
     else
         ts = report.t::Vector{Any}
         nts = length(ts)
@@ -889,63 +923,377 @@ function JETInterface.print_report_message(io::IO, report::NoMethodMatchReport)
             i == nts || print(io, ", ")
         end
         print(io, " (", nts, '/', report.union_split, " union split)")
+        for t in ts
+            print_no_method_hint(io, t, report.world; labeled = nts > 1)
+        end
     end
 end
+
 function print_callsig(io, @nospecialize(t))
     print(io, '`')
     Base.show_tuple_as_call(io, Symbol(""), t)
     print(io, '`')
 end
-inference_error_report_stack_impl(r::NoMethodMatchReport) = length(r.vst):-1:1
-inference_error_report_severity_impl(::NoMethodMatchReport) = DiagnosticSeverity.Warning
+
+# The hint printers feed arbitrary inference signatures into `Base` printing internals
+# that were designed for runtime values, so guard against unexpected inputs here to
+# avoid breaking the whole diagnostics generation.
+function print_no_method_hint(
+        io::IO, @nospecialize(t), world::UInt; labeled::Bool = false
+    )
+    hint = try
+        sprint(print_no_method_hint_impl, t, world, labeled; context=io)
+    catch
+        JETLS_DEV_MODE && rethrow()
+        return
+    end
+    print(io, hint)
+end
+
+function print_no_method_hint_impl(
+        io::IO, @nospecialize(t), world::UInt, labeled::Bool
+    )
+    t′ = Base.unwrap_unionall(t)
+    t′ isa DataType && t′ <: Tuple || return
+    params = t′.parameters
+    isempty(params) && return
+    Base.isvarargtype(params[1]) && return
+    ftype = Base.rewrap_unionall(params[1], t)
+    f = CC.singleton_type(ftype)
+    if f === nothing
+        ftype′ = Base.unwrap_unionall(ftype)
+        if ftype′ isa DataType && CC.isType(ftype)
+            typ = ftype′.parameters[1]
+            typ isa Type && (f = typ)
+        end
+    end
+    argparams = params[2:end]
+    # `Base.show_method_candidates` and `method_candidate_score` cannot handle `Vararg`
+    # in the argument types, so use the fixed-length prefix of the signature
+    if !isempty(argparams) && Base.isvarargtype(argparams[end])
+        argparams = argparams[1:end-1]
+    end
+    arg_types = Base.rewrap_unionall(Tuple{argparams...}, t)
+    f isa Core.Builtin && return
+    # keyword no-match calls surface as `Core.kwcall` signatures, for which candidates
+    # from `kwcall`'s own method table would be meaningless
+    f === Core.kwcall && return
+    if labeled
+        print(io, "\n\nFor ")
+        print_callsig(io, t)
+        print(io, ':')
+    end
+    if f isa Function
+        print(io, "\n\nThe function `", f,
+            "` exists, but no method is defined for this combination of argument types.")
+    elseif f isa Type
+        if f isa DataType && isabstracttype(f) && !has_methods_at_world(f, world)
+            print(io, "\n\nNo constructors have been defined for `", f, "`.")
+            return
+        end
+        print(io, "\n\nThe type `", f,
+            "` exists, but no method is defined for this combination of argument types ",
+            "when trying to construct it.")
+    elseif f === nothing
+        candidates = find_callable_candidate_methods(ftype)
+        if candidates !== nothing && isempty(candidates)
+            print(io, "\n\nObjects of type `", ftype, "` are not callable.")
+            return
+        end
+        print(io, "\n\nThe object of type `", ftype,
+            "` exists, but no method is defined for this combination of argument types ",
+            "when trying to treat it as a callable object.")
+        if candidates !== nothing
+            print_callable_method_candidates(io, candidates, arg_types, world)
+        end
+        return
+    else
+        if !has_methods_at_world(f, world)
+            print(io, "\n\nObjects of type `", typeof(f), "` are not callable.")
+            return
+        end
+        print(io, "\n\nThe object of type `", typeof(f),
+            "` exists, but no method is defined for this combination of argument types ",
+            "when trying to treat it as a callable object.")
+    end
+    exception = MethodError(f, arg_types, world)
+    candidates = sprint(Base.show_method_candidates, exception; context=io)
+    print_bulleted_method_candidates(io, candidates)
+    return nothing
+end
+
+function has_methods_at_world(@nospecialize(f), world::UInt)
+    matches = Base._methods(f, Tuple{Vararg{Any}}, -1, world)::Vector
+    return !isempty(matches)
+end
+
+function print_callable_method_candidates(
+        io::IO, methods::Vector{Method}, @nospecialize(arg_types), world::UInt
+    )
+    arg_types′ = Base.unwrap_unionall(arg_types)
+    arg_types′ isa DataType && arg_types′ <: Tuple || return nothing
+    params = Any[Base.rewrap_unionall(param, arg_types) for param in arg_types′.parameters]
+    scores = Int[method_candidate_score(method, params) for method in methods]
+    order = sortperm(scores)
+    print(io, "\n\nClosest candidates are:")
+    ncandidates = min(3, length(order))
+    for i = 1:ncandidates
+        print(io, '\n')
+        print_method_candidate(io, methods[order[i]]; world)
+    end
+    length(order) > ncandidates && print(io, "\n- ...")
+    return nothing
+end
+
+# Returns `nothing` when the applicable methods cannot be enumerated (too broad a
+# callable type or too many matches), and an empty vector when `ftype` has no methods
+# at all, i.e. its instances are not callable.
+function find_callable_candidate_methods(@nospecialize(ftype))
+    ftype′ = Base.unwrap_unionall(ftype)
+    ftype′ isa DataType || return nothing
+    ftype′ === Any && return nothing
+    ftype′ === Function && return nothing
+    callsig = Tuple{ftype,Vararg{Any}}
+    matches = Base._methods_by_ftype(callsig, nothing, 100, Base.get_world_counter())
+    matches isa Vector || return nothing
+    methods = Method[]
+    for match in matches
+        match = match::Core.MethodMatch
+        match.method ∈ methods || push!(methods, match.method)
+    end
+    return methods
+end
+
+function method_candidate_score(method::Method, arg_types::Vector{Any})
+    sig = Base.unwrap_unionall(method.sig)::DataType
+    sigtypes = sig.parameters[2:end]
+    input_types = copy(arg_types)
+    right_matches = 0
+    for i = 1:min(length(input_types), length(sigtypes))
+        j = Base.isvarargtype(sigtypes[i]) ? length(input_types) : i
+        method_prefix = Base.rewrap_unionall(Tuple{sigtypes[1:i]...}, method.sig)
+        input_prefix = Base.rewrap_unionall(Tuple{input_types[1:j]...}, method.sig)
+        if typeintersect(method_prefix, input_prefix) === Union{}
+            input_types[i] = sigtypes[i]
+        else
+            right_matches += j == i
+        end
+    end
+    if length(input_types) > length(sigtypes) &&
+       !isempty(sigtypes) && Base.isvarargtype(sigtypes[end])
+        vararg_type = Base.rewrap_unionall(Base.unwrapva(Base.unwrap_unionall(sigtypes[end])), method.sig)
+        # iterate the original `arg_types` here: `input_types` may contain `Vararg`
+        # entries written from `sigtypes` above, which `<:` cannot handle
+        for input_type in arg_types[length(sigtypes):end]
+            input_type <: vararg_type && (right_matches += 1)
+        end
+    end
+    return -(right_matches * 2 + (length(arg_types) < 2 ? 1 : 0))
+end
+
+function print_bulleted_method_candidates(io::IO, candidates::String)
+    lines = split(rstrip(candidates, '\n'), '\n'; keepempty=true)
+    for (i, line) in enumerate(lines)
+        if startswith(line, "   @")
+            print(io, "  ", line[4:end])
+        elseif startswith(line, "  ...")
+            print(io, "- ...")
+        elseif startswith(line, "  ") && !startswith(line, "   ")
+            print(io, "- `", line[3:end], '`')
+        else
+            print(io, line)
+        end
+        i == length(lines) || print(io, '\n')
+    end
+    return nothing
+end
+
+# AmbiguousMethodReport
+# ---------------------
+
+@jetreport struct AmbiguousMethodReport <: MethodErrorReport
+    @nospecialize t # ::Union{Type, Vector{Type}}
+    union_split::Int
+    methods::Union{Vector{Method},Vector{Vector{Method}}} # parallel to `t`
+end
+JETInterface.print_report_message(io::IO, report::AmbiguousMethodReport) =
+    print_ambiguous_method_report(io, report)
+inference_error_report_stack_impl(r::AmbiguousMethodReport) = length(r.vst):-1:1
+inference_error_report_severity_impl(::AmbiguousMethodReport) = DiagnosticSeverity.Warning
+
+function print_ambiguous_method_report(io::IO, report::AmbiguousMethodReport)
+    print(io, "MethodError: ")
+    if report.union_split == 0
+        print_callsig(io, report.t)
+        print(io, " is ambiguous.")
+        print_ambiguity_candidates(io, report.methods::Vector{Method}, report.t)
+    else
+        ts = report.t::Vector{Any}
+        nts = length(ts)
+        for i = 1:nts
+            print_callsig(io, ts[i])
+            i == nts || print(io, ", ")
+        end
+        print(io, nts == 1 ? " is" : " are", " ambiguous.")
+        print(io, " (", nts, '/', report.union_split, " union split)")
+        methodss = report.methods::Vector{Vector{Method}}
+        for i = 1:nts
+            if nts > 1
+                print(io, "\n\nFor ")
+                print_callsig(io, ts[i])
+                print(io, ':')
+            end
+            print_ambiguity_candidates(io, methodss[i], ts[i])
+        end
+    end
+    return nothing
+end
+
+function print_ambiguity_candidates(
+        io::IO, methods::Vector{Method}, @nospecialize(t)
+    )
+    print(io, "\n\nCandidates:")
+    for method in methods
+        print(io, '\n')
+        print_method_candidate(io, method)
+    end
+    t′ = Base.unwrap_unionall(t)
+    is_kwcall = t′ isa DataType && !isempty(t′.parameters) &&
+        t′.parameters[1] === typeof(Core.kwcall)
+    sigfix = mapfoldl(m -> m.sig, typeintersect, methods; init=Any)
+    if Base.unwrap_unionall(sigfix) isa DataType && sigfix <: Tuple
+        if !is_kwcall && t <: sigfix && all(m -> Base.morespecific(sigfix, m.sig), methods)
+            print(io, "\n\nPossible fix, define: ")
+            print_callsig(io, sigfix)
+        else
+            print(io, "\n\nTo resolve the ambiguity, try making one of the methods more ",
+                "specific, or adding a new method more specific than any of the existing ",
+                "applicable methods.")
+        end
+    end
+    return nothing
+end
+
+function print_method_candidate(
+        io::IO, method::Method; world::Union{Nothing,UInt} = nothing
+    )
+    description = sprint(method; context=io) do candidate_io, method
+        Base.show_method(candidate_io, method; digit_align_width=0)
+    end
+    parts = split(description, '\n'; limit=2, keepempty=true)
+    print(io, "- `", parts[1], '`')
+    if world !== nothing && world < reinterpret(UInt, method.primary_world)
+        print(io, " (method too new to be called from this world context.)")
+    end
+    if length(parts) == 2
+        print(io, "\n  ", lstrip(parts[2]))
+    end
+    return nothing
+end
 
 function report_method_error!(
-        analyzer::LSAnalyzer, sv::CC.InferenceState, call::CC.CallMeta,
-        arginfo::CC.ArgInfo, @nospecialize(atype)
+        analyzer::LSAnalyzer, sv::CC.InferenceState, call::CC.CallMeta, arginfo::CC.ArgInfo,
+        kwarg_reported::Bool, max_methods::Int
     )
     info = call.info
     if isa(info, CC.ConstCallInfo)
         info = info.call
     end
     if isa(info, CC.MethodMatchInfo)
-        report_method_error!(analyzer, sv, info, atype)
+        report_method_error!(analyzer, sv, info, kwarg_reported)
     elseif isa(info, CC.UnionSplitInfo)
-        report_method_error_for_union_split!(analyzer, sv, info, arginfo)
+        report_method_error_for_union_split!(analyzer, sv, info, arginfo, kwarg_reported,
+            max_methods)
     end
 end
 
 function report_method_error!(
         analyzer::LSAnalyzer, sv::CC.InferenceState, info::CC.MethodMatchInfo,
-        @nospecialize(atype)
+        kwarg_reported::Bool
     )
     if CC.isempty(info.results)
-        report = NoMethodMatchReport(sv, atype, 0)
+        world = CC.get_inference_world(analyzer)
+        atype = info.atype
+        methods = find_ambiguous_methods(atype, CC.method_table(analyzer))
+        if methods !== nothing
+            report = AmbiguousMethodReport(sv, atype, 0, methods)
+        elseif kwarg_reported
+            # the unsupported keyword diagnostic already covers this call site:
+            # `report_unsupported_kwarg_error!` requires the positional signature to have
+            # matching methods, so the raw `Core.kwcall` no-match report is redundant.
+            # For a statically-unknown-length `Vararg` signature the matches may cover
+            # only some arities, but the uncovered arities are below the reporting bar
+            # anyway: their keyword-free analog is not reported either
+            return
+        else
+            report = NoMethodMatchReport(sv, atype, 0, world)
+        end
         add_new_report!(analyzer, sv.result, report)
     end
 end
 
 function report_method_error_for_union_split!(
         analyzer::LSAnalyzer, sv::CC.InferenceState, info::CC.UnionSplitInfo,
-        arginfo::CC.ArgInfo
+        arginfo::CC.ArgInfo, kwarg_reported::Bool, max_methods::Int
     )
-    # check each match for union-split signature
-    split_argtypes = empty_matches = nothing
+    world = CC.get_inference_world(analyzer)
+    union_split = length(info.split)
+    split_argtypes = empty_matches = ambiguous_matches = nothing
     for (i, matchinfo) in enumerate(info.split)
         if CC.isempty(matchinfo.results)
-            if isnothing(split_argtypes)
-                split_argtypes = CC.switchtupleunion(CC.typeinf_lattice(analyzer), arginfo.argtypes)
+            sig_n = matchinfo.atype
+            methods = find_ambiguous_methods(sig_n, CC.method_table(analyzer))
+            if methods === nothing
+                # suppress the raw `Core.kwcall` no-match only for branches whose
+                # positional signature has matching methods, i.e. whose failure the
+                # unsupported keyword diagnostic covers (for the `Vararg` arity caveat,
+                # see the corresponding comment in `report_method_error!`); branches
+                # without any positional method are independent errors and must be kept
+                if kwarg_reported
+                    split_argtypes = @something split_argtypes CC.switchtupleunion(
+                        CC.typeinf_lattice(analyzer), arginfo.argtypes)
+                    argtypes′ = split_argtypes[i]::Vector{Any}
+                    if length(argtypes′) ≥ 3 && find_call_method_matches(
+                            analyzer, CC.widenconst(argtypes′[3]), argtypes′, 4, max_methods
+                        ) !== nothing
+                        continue
+                    end
+                end
+                empty_matches = @something empty_matches (Any[], union_split)
+                push!(empty_matches[1], sig_n)
+            else
+                ambiguous_matches = @something ambiguous_matches (Any[], Vector{Method}[])
+                push!(ambiguous_matches[1], sig_n)
+                push!(ambiguous_matches[2], methods)
             end
-            argtypes′ = split_argtypes[i]::Vector{Any}
-            if empty_matches === nothing
-                empty_matches = (Any[], length(info.split))
-            end
-            sig_n = CC.argtypes_to_type(argtypes′)
-            push!(empty_matches[1], sig_n)
         end
     end
     if empty_matches !== nothing
-        add_new_report!(analyzer, sv.result, NoMethodMatchReport(sv, empty_matches...))
+        report = NoMethodMatchReport(sv, empty_matches..., world)
+        add_new_report!(analyzer, sv.result, report)
     end
+    if ambiguous_matches !== nothing
+        report = AmbiguousMethodReport(sv, ambiguous_matches[1], union_split, ambiguous_matches[2])
+        add_new_report!(analyzer, sv.result, report)
+    end
+end
+
+function find_ambiguous_methods(
+        @nospecialize(t), method_table::CC.MethodTableView
+    )
+    matches = @something CC.findall(t, method_table; include_ambiguous=true) return nothing
+    matches.ambig || return nothing
+    coverage = Union{}
+    methods = Method[]
+    for match in matches
+        match = match::Core.MethodMatch
+        coverage = Union{coverage,match.spec_types}
+        match.method ∈ methods || push!(methods, match.method)
+    end
+    # The ambiguity flag may describe only part of an abstract query signature.
+    # Require the applicable match regions to cover the complete query signature.
+    t <: coverage || return nothing
+    return methods
 end
 
 # UnsupportedKeywordArgReport
@@ -956,16 +1304,24 @@ end
 # `MethodError` via `Base.kwerr` for the surplus keyword. Since this is an explicit
 # `throw` rather than a dispatch failure, `NoMethodMatchReport` does not fire; we detect
 # the statically-determined surplus keyword here instead.
+# When `f` has no keyword-accepting method at all, the `Core.kwcall` dispatch itself
+# fails instead; this report then supersedes the raw no-match report
+# (see `after_abstract_call_gf_by_type`).
 @jetreport struct UnsupportedKeywordArgReport <: MethodErrorReport
     @nospecialize ftype
     posargtypes::Vector{Any}
     @nospecialize kwt
     unsupported::Vector{Symbol}
+    combination::Bool
 end
 function JETInterface.print_report_message(io::IO, r::UnsupportedKeywordArgReport)
     unsupported = r.unsupported
-    print(io, "unsupported keyword argument")
-    isone(length(unsupported)) || print(io, 's')
+    if r.combination
+        print(io, "unsupported combination of keyword arguments")
+    else
+        print(io, "unsupported keyword argument")
+        isone(length(unsupported)) || print(io, 's')
+    end
     print(io, ' ')
     for (i, name) in enumerate(unsupported)
         i == 1 || print(io, ", ")
@@ -1022,19 +1378,27 @@ function report_unsupported_kwarg_error!(
     ftype = CC.widenconst(argtypes[3])
     posargtypes, matches = @something find_call_method_matches(
         analyzer, ftype, argtypes, 4, max_methods) return false
-    supported = Set{Symbol}()
+    world = CC.get_inference_world(analyzer)
+    always_unsupported = trues(length(kwnames))
+    ever_unsupported = falses(length(kwnames))
     for match in matches
-        for name in Base.kwarg_decl(match.method)
-            # a slurping `kwargs...` shows up as a name ending with `...` and accepts anything
-            endswith(String(name), "...") && return false
-            push!(supported, name)
+        decls = kwarg_decl(match.method, world)
+        # a slurping `kwargs...` shows up as a name ending with `...` and accepts anything
+        any(name -> endswith(String(name), "..."), decls) && return false
+        rejects_call = false
+        for i in eachindex(kwnames)
+            unsupported = kwnames[i] ∉ decls
+            always_unsupported[i] &= unsupported
+            ever_unsupported[i] |= unsupported
+            rejects_call |= unsupported
         end
+        rejects_call || return false
     end
 
-    unsupported = Symbol[name for name in kwnames if name ∉ supported]
-    isempty(unsupported) && return false
-
-    report = UnsupportedKeywordArgReport(sv, ftype, posargtypes, kwt, unsupported)
+    combination = !any(always_unsupported)
+    unsupported_flags = combination ? ever_unsupported : always_unsupported
+    unsupported = Symbol[kwnames[i] for i in eachindex(kwnames) if unsupported_flags[i]]
+    report = UnsupportedKeywordArgReport(sv, ftype, posargtypes, kwt, unsupported, combination)
     add_new_report!(analyzer, sv.result, report)
     return true
 end
@@ -1100,18 +1464,23 @@ end
 inference_error_report_stack_impl(r::KeywordTypeErrorReport) = length(r.vst):-1:1
 inference_error_report_severity_impl(::KeywordTypeErrorReport) = DiagnosticSeverity.Warning
 
-# Recover the declared keyword types of `m` as `name => type` pairs (declaration order),
-# skipping the slurp (`kws...`). The keyword sorter forwards the sorted keywords to the body
-# function as leading positional arguments, so the body method's argument types are exactly the
-# declared keyword types in `Base.kwarg_decl` order.
-function keyword_arg_types(m::Method)
-    decls = Base.kwarg_decl(m)
+function kwarg_decl(m::Method, world::UInt)
+    @static if :world in Base.kwarg_decl(only(methods(Base.kwarg_decl, (Method,))))
+        return Base.kwarg_decl(m; world)
+    else
+        return Base.kwarg_decl(m)
+    end
+end
+
+function keyword_arg_types(m::Method, world::UInt)
+    decls = kwarg_decl(m, world)
     isempty(decls) && return nothing
     bf = Base.bodyfunction(m)
     bf === nothing && return nothing
-    bms = methods(bf)
+    bms = Base._methods(bf, Tuple{Vararg{Any}}, -1, world)
+    bms isa Vector || return nothing
     length(bms) == 1 || return nothing
-    bsig = Base.unwrap_unionall((first(bms)).sig)
+    bsig = Base.unwrap_unionall((first(bms)::Core.MethodMatch).method.sig)
     bsig isa DataType || return nothing
     params = bsig.parameters
     length(params) ≥ 1 + length(decls) || return nothing
@@ -1142,21 +1511,37 @@ function report_keyword_typeerror!(
     ftype = CC.widenconst(argtypes[3])
     _, matches = @something find_call_method_matches(
         analyzer, ftype, argtypes, 4, max_methods) return false
+    world = CC.get_inference_world(analyzer)
+    mismatches = Dict{Symbol,Any}[]
     for match in matches
-        kwtypes = @something keyword_arg_types(match.method) continue
+        kwtypes = @something keyword_arg_types(match.method, world) return false
+        mismatch = Dict{Symbol,Any}()
         for (name, expected) in kwtypes
-            idx = findfirst(==(name), names)
-            idx === nothing && continue # this typed keyword was not provided
+            idx = @something findfirst(==(name), names) continue # this typed keyword was not provided
             got = fieldtype(kwt, idx)
             # report only a definite mismatch: no value of `got` can satisfy the keyword's
-            # `isa expected` assertion (the `call.rt === Union{}` gate already ensures the call
-            # always throws, so this picks the offending keyword)
+            # `isa expected` assertion
             typeintersect(got, expected) === Union{} || continue
-            add_new_report!(analyzer, sv.result, KeywordTypeErrorReport(sv, name, expected, got))
-            return true
+            mismatch[name] = expected
         end
+        isempty(mismatch) && return false
+        push!(mismatches, mismatch)
     end
-    return false
+
+    common_names = Set{Symbol}(keys(first(mismatches)))
+    for mismatch in @view mismatches[2:end]
+        intersect!(common_names, keys(mismatch))
+        isempty(common_names) && return false
+    end
+    idx = @something findfirst(∈(common_names), names) return false
+    name = names[idx]
+    expected = Union{}
+    for mismatch in mismatches
+        expected = Union{expected,mismatch[name]}
+    end
+    got = fieldtype(kwt, idx)
+    add_new_report!(analyzer, sv.result, KeywordTypeErrorReport(sv, name, expected, got))
+    return true
 end
 
 # NonBooleanCondErrorReport
@@ -1203,9 +1588,7 @@ function report_non_boolean_cond!(analyzer::LSAnalyzer, sv::CC.InferenceState, @
         uts = Base.uniontypes(t)
         for ut in uts
             if !(check_uncovered ? ut ⊑ Bool : CC.hasintersect(ut, Bool))
-                if info === nothing
-                    info = Any[], length(uts)
-                end
+                info = @something info Any[], length(uts)
                 push!(info[1], ut)
             end
         end

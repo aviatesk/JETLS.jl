@@ -165,12 +165,10 @@ end
 function get_formatter_executable(formatter::FormatterConfig, for_range::Bool)
     if formatter isa String
         # Preset formatter: "Runic" or "JuliaFormatter"
-        executable = default_executable(formatter)
-        executable === nothing &&
-            return request_failed_error(
-                "Unknown formatter preset \"$formatter\". " *
-                "Valid presets are: \"Runic\", \"JuliaFormatter\". " *
-                "For custom formatters, use [formatter.custom] configuration.")
+        executable = @something default_executable(formatter) return request_failed_error(
+            "Unknown formatter preset \"$formatter\". " *
+            "Valid presets are: \"Runic\", \"JuliaFormatter\". " *
+            "For custom formatters, use [formatter.custom] configuration.")
         additional_msg = if formatter == "JuliaFormatter"
             install_instruction_message(executable, JULIAFORMATTER_INSTALLATION_URL)
         elseif formatter == "Runic"
@@ -184,19 +182,13 @@ function get_formatter_executable(formatter::FormatterConfig, for_range::Bool)
     else # Custom formatter
         formatter = formatter::CustomFormatterConfig
         if for_range
-            executable = formatter.executable_range
-            if executable === nothing
-                return request_failed_error(
-                    "Custom formatter does not specify `executable_range`. " *
-                    check_settings_message(:formatter))
-            end
+            executable = @something formatter.executable_range return request_failed_error(
+                "Custom formatter does not specify `executable_range`. " *
+                check_settings_message(:formatter))
         else
-            executable = formatter.executable
-            if executable === nothing
-                return request_failed_error(
-                    "Custom formatter does not specify `executable`. " *
-                    check_settings_message(:formatter))
-            end
+            executable = @something formatter.executable return request_failed_error(
+                "Custom formatter does not specify `executable`. " *
+                check_settings_message(:formatter))
         end
         return executable
     end

@@ -54,6 +54,15 @@ function unpack_pair(pair::Pair{Any,Any})
     return nothing
 end
 
+# Adapted from JuliaLang/julia#61048
+throwconditional61048(c, x) = c ? throw(x isa Int) : throw(x isa Float64)
+function issue61048(c::Bool, x)
+    throwconditional61048(c, x)
+end
+@testset "aviatesk/JETLS#887" begin
+    @test isempty(analyze_signature(issue61048))
+end
+
 # test basic analysis abilities of `LSAnalyzer`
 function report_global_undef()
     return sin(undefvar)
@@ -189,14 +198,156 @@ helper_getproperty_error(o::HelperGetproperty) = o.missing
         r = only(reports)
         @test r isa FieldErrorReport && r.field === :val
     end
+
+    # the report must not depend on inference cache state:
+    # re-analyzing the same call with a warm cache must reproduce it
+    let kernel = function (x)
+            x.regex
+        end
+        for _ = 1:2
+            result = analyze_call(kernel, (Union{Nothing,Regex},))
+            reports = get_reports(result)
+            @test length(reports) == 1
+            r = only(reports)
+            @test r isa FieldErrorReport && r.type === Nothing && r.field === :regex
+        end
+    end
+    let result = analyze_call((Nothing,)) do x
+            x.foo
+        end
+        reports = get_reports(result)
+        @test length(reports) == 1
+        r = only(reports)
+        @test r isa FieldErrorReport && r.type === Nothing && r.field === :foo
+    end
+    let NT = Union{@NamedTuple{regex::Int},@NamedTuple{regex::String}}
+        result = analyze_call((NT,)) do x
+            x.regex
+        end
+        @test isempty(get_reports(result))
+    end
+    let result = analyze_call((Union{@NamedTuple{alias::Int},TransparentGetproperty},)) do x
+            x.alias
+        end
+        @test isempty(get_reports(result))
+    end
+    # an erroring split whose receiver has other fields takes the same const-prop
+    # path as before: exactly one report, no duplicates
+    let result = analyze_call((Union{Some{Int},Regex},)) do x
+            x.value
+        end
+        reports = get_reports(result)
+        @test length(reports) == 1
+        r = only(reports)
+        @test r isa FieldErrorReport && r.type === Regex && r.field === :value
+    end
+    let result = analyze_call((Union{Nothing,Missing},)) do x
+            x.foo
+        end
+        reports = get_reports(result)
+        @test length(reports) == 2
+        @test any(reports) do r
+            r isa FieldErrorReport && r.type === Nothing && r.field === :foo
+        end
+        @test any(reports) do r
+            r isa FieldErrorReport && r.type === Missing && r.field === :foo
+        end
+    end
+    let result = analyze_call((Union{Nothing,Regex},)) do x
+            isnothing(x) && return nothing
+            return x.regex
+        end
+        @test isempty(get_reports(result))
+    end
 end
 
 only_int(x::Int) = 2x
 nested_only_int_inner(x) = only_int(x)
 nested_only_int_outer(x) = nested_only_int_inner(x)
 call_nested_only_int(x) = nested_only_int_outer(x)
+ambiguous_func(x, y::Int) = x + y
+ambiguous_func(x::Int, y) = x - y
+union_ambiguous_func(x::Number, y::Int) = x + y
+union_ambiguous_func(x::Int, y::Number) = x - y
+world_age_func(x::Int) = x
+struct MethodErrorCallable
+    value::Int
+end
+(::MethodErrorCallable)(x::Int) = x
+call_method_error_callable(f::MethodErrorCallable) = f("x")
+function call_captured_method_error()
+    captured = 1
+    f = (x::Int) -> x + captured
+    return f("x")
+end
+struct MethodErrorParametricCallable{T}
+    value::T
+end
+(::MethodErrorParametricCallable)(x::Int) = x
+call_method_error_parametric_callable(f::MethodErrorParametricCallable) = f("x")
+abstract type AbstractMethodErrorCallable end
+(::AbstractMethodErrorCallable)(x::Int) = x
+call_abstract_method_error_callable(f::AbstractMethodErrorCallable) = f("x")
+struct MethodErrorWorldAgeCallable
+    value::Int
+end
+call_method_error_world_age_callable(f::MethodErrorWorldAgeCallable) = f("x")
+struct MethodErrorConstructor{T} end
+MethodErrorConstructor(x::Int) = MethodErrorConstructor{Int}()
+call_method_error_constructor() = MethodErrorConstructor("x")
+abstract type MethodErrorNoConstructor end
+call_method_error_no_constructor() = MethodErrorNoConstructor(1)
+struct MethodErrorNotCallable
+    value::Int
+end
+call_method_error_not_callable(f::MethodErrorNotCallable) = f(1)
+struct MethodErrorNotCallableSingleton end
+call_method_error_not_callable_singleton() = MethodErrorNotCallableSingleton()(1)
+struct MethodErrorVarargCallable
+    value::Int
+end
+(::MethodErrorVarargCallable)(xs::Int...) = xs
+call_method_error_vararg_callable(f::MethodErrorVarargCallable) = f("x", "y")
+vararg_only_int(xs::Int...) = xs
+call_vararg_splat_method_error(xs::Vector{String}) = vararg_only_int("x", xs...)
+nokw_func(x::Int) = x
+call_kwcall_method_error(x::Int) = nokw_func(x; kw=1)
+call_kwcall_no_match_method_error(x::String) = nokw_func(x; kw=1)
+kwambig_func(x, y::Int; a=1) = 1
+kwambig_func(x::Int, y; b=1) = 2
+kwambig_func(x::Int, y::Int) = 3
+call_kwambig_method_error(x::Int, y::Int) = kwambig_func(x, y; z=1)
+kwsplit_func(x::Int; a=1) = x
+call_kwsplit_method_error(x::Union{Int,String}) = kwsplit_func(x; z=1)
+nokw_union_func(x::Int) = x
+nokw_union_func(x::String) = x
+call_kwcall_union_explained(x::Union{Int,String}) = nokw_union_func(x; kw=1)
+vararg_ambiguous_func(x, y::Int) = 1
+vararg_ambiguous_func(x::Int, y) = 2
+call_vararg_ambiguous(xs::Tuple{Vararg{Int}}) = vararg_ambiguous_func(xs...)
+partial_ambiguous_func(x, y::Int, z::Int) = 1
+partial_ambiguous_func(x::Int, y, z::Int) = 2
+call_partial_ambiguous(z::Number) = partial_ambiguous_func(1, 1, z)
+full_vararg_ambiguous_func(x, y::Int, zs::Int...) = 1
+full_vararg_ambiguous_func(x::Int, y, zs::Int...) = 2
+function call_full_vararg_ambiguous(xs::Tuple{Int,Int,Vararg{Int}})
+    return full_vararg_ambiguous_func(xs...)
+end
+changing_vararg_ambiguous_func(x, y::Int, zs::Int...) = 1
+changing_vararg_ambiguous_func(x::Int, y, zs::Int...) = 2
+changing_vararg_ambiguous_func(x::Int, y::Number) = 3
+function call_changing_vararg_ambiguous(xs::Tuple{Int,Int,Vararg{Int}})
+    return changing_vararg_ambiguous_func(xs...)
+end
+
+multi_ambiguous_func(x::Number, y::Int) = x + y
+multi_ambiguous_func(x::Int, y::Number) = x - y
+multi_ambiguous_func(x::AbstractString, y::String) = x * y
+multi_ambiguous_func(x::String, y::AbstractString) = y * x
 
 kwfunc(; code::String="code", message::String="message", data=nothing) = (code, message, data)
+kwdispatch(x::Int; a=1) = x
+kwdispatch(x::String; b=1) = x
 kwslurp(; a=1, kwargs...) = (a, kwargs)
 kwpos(x::Int; y=1) = (x, y)
 kwvaropt(pos...; y=1) = (pos, y) # optional keyword + positional vararg
@@ -214,12 +365,313 @@ struct KwCallable end
 
         # basic method error
         let result = analyze_call() do
-                sin(1, 2)
+                sin('4')
             end
             reports = get_reports(result)
             @test length(reports) == 1
             r = only(reports)
             @test r isa NoMethodMatchReport && r.union_split == 0
+            message = sprint(JET.print_report_message, r)
+            @test startswith(message, "MethodError: no matching method found `sin(::Char)`")
+            @test occursin("The function `sin` exists, but no method is defined", message)
+            @test occursin("Closest candidates are:", message)
+            @test occursin("\n- `sin(!Matched::", message)
+            @test occursin("\n  @ Base", message)
+            @test occursin("\n- ...", message)
+        end
+
+        let result = analyze_call(call_method_error_callable, (MethodErrorCallable,))
+            reports = get_reports(result)
+            @test length(reports) == 1
+            r = only(reports)
+            @test r isa NoMethodMatchReport && r.union_split == 0
+            message = sprint(JET.print_report_message, r)
+            @test startswith(message, "MethodError: no matching method found `(::")
+            @test occursin("MethodErrorCallable)(::String)`", message)
+            @test occursin("The object of type `", message)
+            @test occursin("MethodErrorCallable` exists", message)
+            @test occursin("Closest candidates are:", message)
+            @test occursin("MethodErrorCallable)(x::$Int)`\n  @", message)
+        end
+
+        let result = analyze_call(call_captured_method_error, ())
+            reports = get_reports(result)
+            @test length(reports) == 1
+            r = only(reports)
+            @test r isa NoMethodMatchReport && r.union_split == 0
+            message = sprint(JET.print_report_message, r)
+            @test occursin("The object of type `", message)
+            @test occursin("Closest candidates are:", message)
+            @test occursin("(x::$Int)`\n  @", message)
+        end
+
+        let result = analyze_call(
+                call_method_error_parametric_callable, (MethodErrorParametricCallable,))
+            reports = get_reports(result)
+            @test length(reports) == 1
+            r = only(reports)
+            @test r isa NoMethodMatchReport && r.union_split == 0
+            message = sprint(JET.print_report_message, r)
+            @test occursin("The object of type `", message)
+            @test occursin("Closest candidates are:", message)
+            @test occursin("MethodErrorParametricCallable)(x::$Int)`", message)
+        end
+
+        let result = analyze_call(
+                call_abstract_method_error_callable, (AbstractMethodErrorCallable,))
+            reports = get_reports(result)
+            @test length(reports) == 1
+            r = only(reports)
+            @test r isa NoMethodMatchReport && r.union_split == 0
+            message = sprint(JET.print_report_message, r)
+            @test occursin("The object of type `", message)
+            @test occursin("Closest candidates are:", message)
+            @test occursin("AbstractMethodErrorCallable)(x::$Int)`", message)
+        end
+
+        let result = analyze_call(
+                call_method_error_world_age_callable, (MethodErrorWorldAgeCallable,))
+            reports = get_reports(result)
+            @test length(reports) == 1
+            r = only(reports)
+            @test r isa NoMethodMatchReport && r.union_split == 0
+            @eval (::MethodErrorWorldAgeCallable)(x::String) = x
+            message = sprint(JET.print_report_message, r)
+            @test occursin("Closest candidates are:", message)
+            @test occursin("MethodErrorWorldAgeCallable)(x::String)`", message)
+            @test occursin("method too new to be called from this world context", message)
+        end
+
+        let result = analyze_call(call_method_error_constructor, ())
+            reports = get_reports(result)
+            @test length(reports) == 1
+            r = only(reports)
+            @test r isa NoMethodMatchReport && r.union_split == 0
+            message = sprint(JET.print_report_message, r)
+            @test startswith(message, "MethodError: no matching method found `")
+            @test occursin("MethodErrorConstructor(::String)`", message)
+            @test occursin("The type `", message)
+            @test occursin("MethodErrorConstructor` exists", message)
+            @test occursin("Closest candidates are:", message)
+            @test occursin("MethodErrorConstructor(!Matched::$Int)`", message)
+        end
+
+        # abstract type without any constructor
+        let result = analyze_call(call_method_error_no_constructor, ())
+            reports = get_reports(result)
+            @test length(reports) == 1
+            r = only(reports)
+            @test r isa NoMethodMatchReport && r.union_split == 0
+            @eval MethodErrorNoConstructor(x::Int) = x
+            message = sprint(JET.print_report_message, r)
+            @test occursin("No constructors have been defined for `", message)
+            @test occursin("MethodErrorNoConstructor`.", message)
+            @test !occursin("exists", message)
+            @test !occursin("Closest candidates are:", message)
+        end
+
+        # object without any callable method
+        let result = analyze_call(
+                call_method_error_not_callable, (MethodErrorNotCallable,))
+            reports = get_reports(result)
+            @test length(reports) == 1
+            r = only(reports)
+            @test r isa NoMethodMatchReport && r.union_split == 0
+            message = sprint(JET.print_report_message, r)
+            @test occursin("MethodErrorNotCallable` are not callable.", message)
+            @test !occursin("exists", message)
+            @test !occursin("Closest candidates are:", message)
+        end
+
+        # singleton object without any callable method
+        let result = analyze_call(call_method_error_not_callable_singleton, ())
+            reports = get_reports(result)
+            @test length(reports) == 1
+            r = only(reports)
+            @test r isa NoMethodMatchReport && r.union_split == 0
+            @eval (::MethodErrorNotCallableSingleton)(x::Int) = x
+            message = sprint(JET.print_report_message, r)
+            @test occursin("MethodErrorNotCallableSingleton` are not callable.", message)
+            @test !occursin("exists", message)
+        end
+
+        # vararg method of a callable object: candidate scoring must not crash
+        let result = analyze_call(
+                call_method_error_vararg_callable, (MethodErrorVarargCallable,))
+            reports = get_reports(result)
+            @test length(reports) == 1
+            r = only(reports)
+            @test r isa NoMethodMatchReport && r.union_split == 0
+            message = sprint(JET.print_report_message, r)
+            @test occursin("The object of type `", message)
+            @test occursin("Closest candidates are:", message)
+            @test occursin("(xs::$Int...)`", message)
+            @test !endswith(message, '\n')
+        end
+
+        # splat call with `Vararg` argument types: hint must not crash `Base` printing
+        let result = analyze_call(call_vararg_splat_method_error, (Vector{String},))
+            reports = get_reports(result)
+            @test length(reports) == 1
+            r = only(reports)
+            @test r isa NoMethodMatchReport && r.union_split == 0
+            message = sprint(JET.print_report_message, r)
+            @test startswith(message,
+                "MethodError: no matching method found `vararg_only_int(::String")
+            @test occursin("The function `vararg_only_int` exists", message)
+            @test occursin("Closest candidates are:", message)
+            @test !endswith(message, '\n')
+        end
+
+        # `Core.kwcall` signatures get no misleading candidate hints
+        let result = analyze_call(call_kwcall_no_match_method_error, (String,))
+            reports = get_reports(result)
+            @test length(reports) == 1
+            r = only(reports)
+            @test r isa NoMethodMatchReport && r.union_split == 0
+            message = sprint(JET.print_report_message, r)
+            @test startswith(message, "MethodError: no matching method found `kwcall(")
+            @test !occursin("exists", message)
+            @test !occursin("Closest candidates are:", message)
+        end
+
+        # ambiguous `Core.kwcall` dispatch is reported alongside the keyword diagnostic
+        let result = analyze_call(call_kwambig_method_error, (Int, Int))
+            reports = get_reports(result)
+            @test length(reports) == 2
+            ambiguity = only(r for r in reports if r isa AmbiguousMethodReport)
+            kwarg = only(r for r in reports if r isa UnsupportedKeywordArgReport)
+            @test kwarg.unsupported == [:z]
+            message = sprint(JET.print_report_message, ambiguity)
+            @test startswith(message, "MethodError: `kwcall(")
+            # Defining an internal `Core.kwcall` method is not a source-level fix.
+            @test !occursin("Possible fix, define:", message)
+            @test occursin("To resolve the ambiguity", message)
+        end
+
+        # keyword suppression is per-branch: a union-split branch without any positional
+        # method keeps its no-match report
+        let result = analyze_call(call_kwsplit_method_error, (Union{Int,String},))
+            reports = get_reports(result)
+            @test length(reports) == 2
+            kwarg = only(r for r in reports if r isa UnsupportedKeywordArgReport)
+            no_match = only(r for r in reports if r isa NoMethodMatchReport)
+            @test kwarg.unsupported == [:z]
+            @test no_match.union_split == 2 && length(no_match.t) == 1
+            message = sprint(JET.print_report_message, no_match)
+            @test startswith(message, "MethodError: no matching method found `kwcall(")
+            @test occursin("::String", message)
+        end
+
+        # while branches explained by the keyword diagnostic are still suppressed
+        let result = analyze_call(call_kwcall_union_explained, (Union{Int,String},))
+            reports = get_reports(result)
+            @test length(reports) == 1
+            r = only(reports)
+            @test r isa UnsupportedKeywordArgReport
+            @test r.unsupported == [:kw]
+        end
+
+        # open-ended `Vararg` signatures are not classified by the ambiguity flag alone
+        let result = analyze_call(call_vararg_ambiguous, (Tuple{Vararg{Int}},))
+            r = only(get_reports(result))
+            @test r isa NoMethodMatchReport && r.union_split == 0
+            message = sprint(JET.print_report_message, r)
+            @test startswith(message, "MethodError: no matching method found `vararg_ambiguous_func(")
+            @test occursin("The function `vararg_ambiguous_func` exists", message)
+        end
+
+        # fixed-length abstract signatures can also mix ambiguity and no-match regions
+        let result = analyze_call(call_partial_ambiguous, (Number,))
+            @test only(get_reports(result)) isa NoMethodMatchReport
+        end
+
+        # every arity represented by this open-ended `Vararg` is ambiguous
+        let result = analyze_call(
+                call_full_vararg_ambiguous, (Tuple{Int,Int,Vararg{Int}},))
+            reports = get_reports(result)
+            @test length(reports) == 1
+            r = only(reports)
+            @test r isa AmbiguousMethodReport && r.union_split == 0
+            @test length(r.methods) == 2
+            message = sprint(JET.print_report_message, r)
+            @test startswith(message, "MethodError: `full_vararg_ambiguous_func(")
+            @test occursin("::Vararg{$Int})` is ambiguous.", message)
+        end
+
+        # the conflicting candidates may change between represented arities
+        let result = analyze_call(
+                call_changing_vararg_ambiguous, (Tuple{Int,Int,Vararg{Int}},))
+            reports = get_reports(result)
+            @test length(reports) == 1
+            r = only(reports)
+            @test r isa AmbiguousMethodReport && length(r.methods) == 3
+            message = sprint(JET.print_report_message, r)
+            @test !occursin("Possible fix, define:", message)
+            @test occursin("To resolve the ambiguity", message)
+        end
+
+        # ambiguous method error
+        let result = analyze_call() do
+                ambiguous_func(1, 2)
+            end
+            reports = get_reports(result)
+            @test length(reports) == 1
+            r = only(reports)
+            @test r isa AmbiguousMethodReport && r.union_split == 0
+            @test length(r.methods) == 2
+            message = sprint(JET.print_report_message, r)
+            @test startswith(message, "MethodError: `ambiguous_func(::$Int, ::$Int)` is ambiguous.")
+            @test occursin("\n\nCandidates:\n", message)
+            @test occursin("\n- `ambiguous_func(x::$Int, y)`\n  @", message)
+            @test occursin("\n- `ambiguous_func(x, y::$Int)`\n  @", message)
+            @test occursin("\n\nPossible fix, define: `ambiguous_func(::$Int, ::$Int)`", message)
+        end
+
+        # union split case: ambiguity and no-match branches
+        let result = analyze_call((Union{Int,String},)) do x
+                union_ambiguous_func(x, 1)
+            end
+            reports = get_reports(result)
+            @test length(reports) == 2
+            no_match = only(r for r in reports if r isa NoMethodMatchReport)
+            ambiguity = only(r for r in reports if r isa AmbiguousMethodReport)
+            @test no_match.union_split == ambiguity.union_split == 2
+            @test length(no_match.t) == 1
+            @test length(ambiguity.t::Vector{Any}) == 1
+            @test length(only(ambiguity.methods::Vector{Vector{Method}})) == 2
+            no_match_message = sprint(JET.print_report_message, no_match)
+            ambiguity_message = sprint(JET.print_report_message, ambiguity)
+            @test startswith(no_match_message, "MethodError: no matching method found `union_ambiguous_func(::String, ::$Int)`")
+            @test occursin(" (1/2 union split)\n\nThe function `union_ambiguous_func` exists", no_match_message)
+            @test occursin("Closest candidates are:", no_match_message)
+            @test startswith(ambiguity_message, "MethodError: `union_ambiguous_func(::$Int, ::$Int)` is ambiguous. ")
+            @test occursin("(1/2 union split)\n\nCandidates:\n- `", ambiguity_message)
+            @test !endswith(ambiguity_message, '\n')
+        end
+
+        # union split case: multiple ambiguous branches are aggregated into one report
+        let result = analyze_call((Union{Int,String}, Union{Int,String})) do x, y
+                multi_ambiguous_func(x, y)
+            end
+            reports = get_reports(result)
+            @test length(reports) == 2
+            no_match = only(r for r in reports if r isa NoMethodMatchReport)
+            ambiguity = only(r for r in reports if r isa AmbiguousMethodReport)
+            @test no_match.union_split == ambiguity.union_split == 4
+            @test length(no_match.t) == 2
+            ts = ambiguity.t::Vector{Any}
+            methodss = ambiguity.methods::Vector{Vector{Method}}
+            @test length(ts) == 2 && length(methodss) == 2
+            @test all(methods -> length(methods) == 2, methodss)
+            message = sprint(JET.print_report_message, ambiguity)
+            @test startswith(message, "MethodError: `multi_ambiguous_func(::")
+            @test occursin("` are ambiguous. (2/4 union split)", message)
+            @test occursin("For `multi_ambiguous_func(::$Int, ::$Int)`:", message)
+            @test occursin("For `multi_ambiguous_func(::String, ::String)`:", message)
+            @test length(findall("Candidates:", message)) == 2
+            @test occursin("Possible fix, define: `multi_ambiguous_func(::$Int, ::$Int)`", message)
+            @test occursin("Possible fix, define: `multi_ambiguous_func(::String, ::String)`", message)
         end
 
         # union split case: only one branch fails
@@ -230,6 +682,11 @@ struct KwCallable end
             @test length(reports) == 1
             r = only(reports)
             @test r isa NoMethodMatchReport && r.union_split == 2 && length(r.t) == 1
+            message = sprint(JET.print_report_message, r)
+            @test startswith(message, "MethodError: no matching method found `only_int(::String)`")
+            @test occursin(" (1/2 union split)\n\nThe function `only_int` exists", message)
+            @test occursin("Closest candidates are:", message)
+            @test occursin("\n- `only_int(!Matched::$Int)`", message)
         end
 
         let result = analyze_call(call_nested_only_int, (String,); report_target_modules=(@__MODULE__,))
@@ -255,6 +712,10 @@ struct KwCallable end
             @test length(reports) == 1
             r = only(reports)
             @test r isa NoMethodMatchReport && r.union_split == 2 && length(r.t) == 2
+            message = sprint(JET.print_report_message, r)
+            @test occursin("For `only_int(::String)`:", message)
+            @test occursin("For `only_int(::Symbol)`:", message)
+            @test length(findall("Closest candidates are:", message)) == 2
         end
     end
 
@@ -269,6 +730,17 @@ struct KwCallable end
             @test r isa UnsupportedKeywordArgReport
             @test r.ftype === typeof(kwfunc)
             @test r.unsupported == [:result]
+        end
+
+        # a callee without any keyword-accepting method: the keyword diagnostic
+        # supersedes the no-match report on the raw `Core.kwcall` signature
+        let result = analyze_call(call_kwcall_method_error, (Int,))
+            reports = get_reports(result)
+            @test length(reports) == 1
+            r = only(reports)
+            @test r isa UnsupportedKeywordArgReport
+            @test r.ftype === typeof(nokw_func)
+            @test r.unsupported == [:kw]
         end
 
         # only the unsupported keywords are reported, supported ones are ignored
@@ -286,6 +758,17 @@ struct KwCallable end
                 kwfunc(; code="c", data=42)
             end
             @test isempty(get_reports(result))
+        end
+
+        # every positional branch rejects the keyword combination, but for different names
+        let result = analyze_call((Union{Int,String},)) do x
+                kwdispatch(x; a=1, b=1)
+            end
+            r = only(get_reports(result))
+            @test r isa UnsupportedKeywordArgReport
+            @test r.combination && r.unsupported == [:a, :b]
+            message = sprint(JET.print_report_message, r)
+            @test startswith(message, "unsupported combination of keyword arguments `a`, `b` in `kwdispatch(")
         end
 
         # no report when the method slurps `kwargs...` (accepts any keyword)
@@ -565,6 +1048,8 @@ end
 
 kwtyped(a::Int; kw::Int=42) = a * kw       # typed keyword with a default, plus a positional
 kwtyped2(; x::Int, y::String="s") = (x, y) # required typed x, optional typed y
+kwtyped_dispatch(x::Int; kw::Int=1) = x
+kwtyped_dispatch(x::String; kw::String="s") = x
 kwtypedfwd(; kws...) = kwtyped(1; kws...)   # forwards slurped keywords
 kwtypedbad(; _kws...) = kwtyped(1; kw=2.0)   # slurps but hardcodes a mismatching call
 module KeywordTypeExternalModule
@@ -582,6 +1067,15 @@ end
             r = only(reports)
             @test r isa KeywordTypeErrorReport
             @test r.var === :kw && r.expected === Int && r.got === Float64
+        end
+
+        # expectations from different positional branches are combined deterministically
+        let result = analyze_call((Union{Int,String},)) do x
+                kwtyped_dispatch(x; kw=1.0)
+            end
+            r = only(get_reports(result))
+            @test r isa KeywordTypeErrorReport
+            @test r.var === :kw && r.expected === Union{Int,String} && r.got === Float64
         end
 
         # mismatch on a required typed keyword (routed through the keyword sorter)

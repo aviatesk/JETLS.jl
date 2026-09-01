@@ -1186,6 +1186,40 @@ macro noop(ex) esc(ex) end
         end
     end
 
+    @testset "abstract and primitive types" begin
+        let boccs = get_full_binding_occurrences("""
+                abstract type AbsT end
+                """)
+            sentries = [(b, occs) for (b, occs) in boccs if b.name == "AbsT"]
+            @test !isempty(sentries)
+            occurrences = collect(Iterators.flatten(last.(sentries)))
+            @test count(o -> o.kind === :decl, occurrences) == 1
+            @test count(o -> o.kind === :def, occurrences) == 1
+            @test !any(o -> o.kind === :use, occurrences)
+        end
+
+        let boccs = get_full_binding_occurrences("""
+                primitive type Prim 8 end
+                """)
+            sentries = [(b, occs) for (b, occs) in boccs if b.name == "Prim"]
+            @test !isempty(sentries)
+            occurrences = collect(Iterators.flatten(last.(sentries)))
+            @test count(o -> o.kind === :decl, occurrences) == 1
+            @test count(o -> o.kind === :def, occurrences) == 1
+            @test !any(o -> o.kind === :use, occurrences)
+        end
+
+        with_global_binding_occurrences("""
+            abstract type │Animal│ end
+            struct Dog <: │Animal│ end
+            """, "Animal") do ranges, positions
+            @test length(positions) == 4
+            @test length(ranges) == 2
+            @test Range(; start=positions[1], var"end"=positions[2]) in ranges
+            @test Range(; start=positions[3], var"end"=positions[4]) in ranges
+        end
+    end
+
     @testset "multiple toplevel expressions" begin
         with_global_binding_occurrences("""
             const │global_var│ = 1
