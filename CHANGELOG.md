@@ -53,11 +53,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 >
 > Note: Path glob patterns use `/` as the separator on all platforms, including Windows; backslashes are not supported as separators.
 
-### Added
-
-- Added `inference/field-error` diagnostics for field accesses whose receiver may be a type without the field: `x.regex` where `x::Union{Nothing,Regex}` now reports a `FieldError` for the `Nothing` case, and accesses on fieldless receivers like `x.foo` where `x::Nothing` are now reported as well.
-
 ### Changed
+
+- `inference/field-error` now reports field accesses whose receiver may be a type without the field: `x.regex` where `x::Union{Nothing,Regex}` reports a `FieldError` for the `Nothing` case, and accesses on fieldless receivers like `x.foo` where `x::Nothing` are reported as well.
 
 - Updated JuliaSyntax.jl and JuliaLowering.jl revisions, bringing in JuliaLowering bugfixes for various lowering edge cases found in real-world packages ([JuliaLang/julia#62862](https://github.com/JuliaLang/julia/pull/62862)).
 
