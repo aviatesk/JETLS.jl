@@ -577,12 +577,10 @@ function fixup_argtypes!(argtypes::Vector{Any}, fntyp::Core.Const)
 end
 
 function find_all_matches(
-        argtypes::Vector{Any};
-        world::UInt = Base.get_world_counter(),
-        limit::Int = -1
+        argtypes::Vector{Any}; world::UInt = Base.get_world_counter(), limit::Int = -1
     )
     atype = Tuple{argtypes...}
-    return CC._findall(atype, nothing, world, limit)
+    return CC.findall(atype, CC.InternalMethodTable(world); limit)
 end
 
 function cursor_siginfos(

@@ -1631,6 +1631,10 @@ function per_stmt_diagnostics!(
         jl_lower_for_scope_resolution(context_module, world, st0;
             recover_from_macro_errors=false, convert_closures=true, soft_scope)
     catch err
+        # JL wraps old-style macro invocation failures in `LoadError` (JuliaLang/julia#62862)
+        if err isa LoadError && err.error isa JL.MacroExpansionError
+            err = err.error
+        end
         if err isa JL.LoweringError
             if !err.internal
                 for (st, msg) in zip(err.sts, err.msgs)

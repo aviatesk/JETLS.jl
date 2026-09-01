@@ -15,6 +15,7 @@ To run this test independently:
 
 using Test
 using JETLS
+using JETLS.LSP
 
 const JULIA_CMD = normpath(Sys.BINDIR, "julia")
 const JETLS_DIR = pkgdir(JETLS)
@@ -144,6 +145,34 @@ end
         result = run_jetls_check(["test.jl"]; root=dir)
         @test occursin("lowering/unused-local", result.stdout)
         @test occursin("test.jl", result.stdout)
+    end
+end
+
+@testset "multi-line diagnostic message rendering" begin
+    mktempdir() do dir
+        filepath = write_test_file(dir, "test.jl", "func(1, 2)\n")
+        uri = JETLS.filepath2uri(filepath)
+        message = "MethodError: no matching method found `func(::Int64, ::Int64)`\n\n" *
+            "The function `func` exists.\n\nClosest candidates are:\n- `func(::Int64)`"
+        diagnostic = Diagnostic(;
+            range = Range(;
+                start = Position(; line=0, character=0),
+                var"end" = Position(; line=0, character=10)),
+            severity = DiagnosticSeverity.Warning,
+            message,
+            code = "inference/method-error")
+        uri2diagnostics = JETLS.URI2Diagnostics(uri => [diagnostic])
+        result = capture_jetls_check() do
+            JETLS.print_diagnostics(uri2diagnostics, dir, 1,
+                DiagnosticSeverity.Error, DiagnosticSeverity.Information)
+        end
+        # the summary line carries the severity tag inline
+        @test occursin("`func(::Int64, ::Int64)` [warn:inference/method-error]", result.stdout)
+        # continuation lines form a separate `#`-prefixed block
+        @test occursin("# The function `func` exists.", result.stdout)
+        @test occursin("# Closest candidates are:", result.stdout)
+        @test occursin("# - `func(::Int64)`", result.stdout)
+        @test !occursin("exists. [warn", result.stdout)
     end
 end
 

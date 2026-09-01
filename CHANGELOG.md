@@ -19,15 +19,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## Unreleased
 
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
-- Diff: [`1b45195...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/1b45195...HEAD)
+- Diff: [`8dab3d9...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/8dab3d9...HEAD)
 
 ### Announcement
 
 > [!note]
-> The VSCode extension (`jetls-client`) now lives in its own repository, [jetls-vscode](https://github.com/aviatesk/jetls-vscode).
+> The VSCode extension (`jetls-client`) now lives in its own repository, [aviatesk/jetls-vscode](https://github.com/aviatesk/jetls-vscode).
 > The extension keeps its Marketplace identity (`aviatesk.jetls-client`) and updates continue as usual.
-> Starting with its next release, the extension manages the JETLS installation automatically: it installs and updates the pinned JETLS release on its own, so VSCode users no longer need to run the installation command below or keep `jetls` up to date manually (still needed if you also use the `jetls` CLI, e.g. `jetls check`).
-> Please report extension-specific problems (installation, startup, extension UI) to [jetls-vscode issues](https://github.com/aviatesk/jetls-vscode/issues);
+> Starting with its next release (`v2026.8.29`), the extension manages the JETLS installation automatically: it installs and updates the pinned JETLS release on its own, so VSCode users no longer need to run the installation command below or keep `jetls` up to date manually (still needed if you also use the `jetls` CLI, e.g. `jetls check`).
+> Please report extension-specific problems (installation, startup, extension UI) to [aviatesk/jetls-vscode issues](https://github.com/aviatesk/jetls-vscode/issues);
 > language-feature issues belong here as before.
 
 > [!important]
@@ -52,6 +52,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > Note that `analysis_overrides` is provided as a temporary workaround and may be removed or changed at any time. A proper fix is being worked on.
 >
 > Note: Path glob patterns use `/` as the separator on all platforms, including Windows; backslashes are not supported as separators.
+
+### Changed
+
+- `inference/method-error` now distinguishes ambiguous calls from calls with no matching method, lists the conflicting or closest candidate methods, and suggests a disambiguating signature when possible.
+
+- `inference/method-error` no longer reports a redundant `Core.kwcall` method error when the unsupported keyword argument diagnostic already explains the failure.
+
+- `inference/field-error` now reports field accesses whose receiver may be a type without the field: `x.regex` where `x::Union{Nothing,Regex}` reports a `FieldError` for the `Nothing` case, and accesses on fieldless receivers like `x.foo` where `x::Nothing` are reported as well.
+
+- Updated JuliaSyntax.jl and JuliaLowering.jl revisions, bringing in JuliaLowering bugfixes for various lowering edge cases found in real-world packages ([JuliaLang/julia#62862](https://github.com/JuliaLang/julia/pull/62862)).
+
+## 2026-08-29
+
+- Commit: [`8dab3d9`](https://github.com/aviatesk/JETLS.jl/commit/8dab3d9)
+- Diff: [`1b45195...8dab3d9`](https://github.com/aviatesk/JETLS.jl/compare/1b45195...8dab3d9)
+- Installation:
+  ```bash
+  julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="2026-08-29")'
+  ```
 
 ## 2026-08-28
 

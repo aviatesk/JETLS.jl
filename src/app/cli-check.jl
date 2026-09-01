@@ -518,6 +518,29 @@ end
 count_label(n::Int, singular::AbstractString, plural::AbstractString = singular * "s") =
     string(n, ' ', n == 1 ? singular : plural)
 
+# `JS.highlight`'s `note` rendering assumes a single-line message: continuation lines
+# would be interleaved with the source context lines. Show only the first line inline
+# and print the remaining lines as a separate block after the highlighted snippet.
+function split_diagnostic_message(message::String)
+    nl = findfirst('\n', message)
+    nl === nothing && return message, nothing
+    summary = message[1:prevind(message, nl)]
+    details = strip(message[nl:end], '\n')
+    isempty(details) && return summary, nothing
+    return summary, String(details)
+end
+
+function print_diagnostic_details(io::IO, details::String)
+    printstyled(io, "#\n"; color=:light_black)
+    for line in eachsplit(details, '\n')
+        if isempty(line)
+            printstyled(io, "#\n"; color=:light_black)
+        else
+            printstyled(io, "# ", line, '\n'; color=:light_black)
+        end
+    end
+end
+
 function print_diagnostics(
         uri2diagnostics::URI2Diagnostics, root_path::String,
         context_lines::Int, exit_severity::DiagnosticSeverity.Ty,
@@ -564,7 +587,8 @@ function print_diagnostics(
 
             start_byte = _xy_to_offset(textbuf, diagnostic.range.start, PositionEncodingKind.UTF16, line_starts)
             end_byte = _xy_to_offset(textbuf, diagnostic.range.var"end", PositionEncodingKind.UTF16, line_starts)
-            note = get_raw_message(diagnostic)
+            summary, details = split_diagnostic_message(get_raw_message(diagnostic))
+            note = summary
             if diagnostic.code !== nothing
                 note *= " [$severity_str:$(diagnostic.code)]"
             else
@@ -582,6 +606,7 @@ function print_diagnostics(
                 end
             end
             println(stdout, strip(output, '\n'))
+            details === nothing || print_diagnostic_details(stdout, details)
         end
     end
 
