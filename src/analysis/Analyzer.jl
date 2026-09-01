@@ -331,8 +331,11 @@ is exactly what analyzes the callee frame with the constant arguments and lets i
 precise error reports (e.g. `FieldError` for an `x.field` access with the concrete field
 name, including each split of a union-split `getproperty` call), which then surface at the
 in-scope call site via `collect_callee_reports!`. This overload keeps const-prop' going in
-that case, while still respecting `@constprop :none` annotations and the
-`ipo_constant_propagation` inference parameter.
+that case.
+This is currently scoped to `getproperty` methods: only the field-error diagnostics benefit
+from analyzing always-throwing callees currently, while relaxing the bail-out for every
+always-throwing call (`error` etc.) costs roughly +10% of full-analysis time for no
+additional reports.
 """
 function CC.bail_out_const_call(
         analyzer::LSAnalyzer, result::CC.MethodCallResult, si::CC.StmtInfo,
@@ -341,8 +344,7 @@ function CC.bail_out_const_call(
     ret = @invoke CC.bail_out_const_call(
         analyzer::ToplevelAbstractAnalyzer, result::CC.MethodCallResult, si::CC.StmtInfo,
         match::CC.MethodMatch, sv::CC.InferenceState)
-    if (ret && result.rt === Union{} && !CC.is_no_constprop(match.method) &&
-        CC.InferenceParams(analyzer).ipo_constant_propagation)
+    if ret && match.method.name === :getproperty && result.rt === Union{}
         return false
     end
     return ret
