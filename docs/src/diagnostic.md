@@ -1282,10 +1282,23 @@ Function calls where no unique matching method can be found for the inferred
 argument types. This diagnostic detects potential `MethodError`s that would
 occur at runtime.
 
-When no method matches, the diagnostic includes up to three closest candidates:
+When no method matches, the diagnostic explains that the function exists but
+has no method for the inferred combination of argument types. It also includes
+up to three closest candidates:
 
 ```julia
 sin('4')  # MethodError: no matching method found `sin(::Char)`
+          #
+          # The function `sin` exists, but no method is defined for this combination of argument types.
+          #
+          # Closest candidates are:
+          # - `sin(!Matched::ComplexF16)`
+          #   @ Base math.jl:1527
+          # - `sin(!Matched::BigFloat)`
+          #   @ Base mpfr.jl:946
+          # - `sin(!Matched::Missing)`
+          #   @ Base math.jl:1548
+          # - ...
           # (JETLS inference/method-error)
 ```
 
@@ -1296,8 +1309,13 @@ report all failed signatures:
 only_int(x::Int) = 2x
 
 function union_split_method_error(x::Union{Int,String})
-    return only_int(x)  # MethodError: no matching method found
-                        # `only_int(::String)` (1/2 union split)
+    return only_int(x)  # MethodError: no matching method found `only_int(::String)` (1/2 union split)
+                        #
+                        # The function `only_int` exists, but no method is defined for this combination of argument types.
+                        #
+                        # Closest candidates are:
+                        # - `only_int(!Matched::Int64)`
+                        #   @ Main Untitled-30064817009:1
                         # (JETLS inference/method-error)
 end
 ```
@@ -1313,13 +1331,21 @@ kwfunc(; kw3=42)  # unsupported keyword argument `kw3` in `kwfunc(; kw3::Int64)`
 ```
 
 Ambiguous calls are identified separately and include the conflicting methods
-and a possible disambiguating signature:
+and, when available, a possible disambiguating signature:
 
 ```julia
 ambiguous(x, y::Int) = x + y
 ambiguous(x::Int, y) = x - y
 
 ambiguous(1, 2)  # MethodError: `ambiguous(::Int64, ::Int64)` is ambiguous.
+                 #
+                 # Candidates:
+                 # - `ambiguous(x::Int64, y)`
+                 #   @ Main Untitled-30064817009:7
+                 # - `ambiguous(x, y::Int64)`
+                 #   @ Main Untitled-30064817009:6
+                 #
+                 # Possible fix, define: `ambiguous(::Int64, ::Int64)`
                  # (JETLS inference/method-error)
 ```
 
