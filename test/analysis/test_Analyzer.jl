@@ -54,6 +54,15 @@ function unpack_pair(pair::Pair{Any,Any})
     return nothing
 end
 
+# Adapted from JuliaLang/julia#61048
+throwconditional61048(c, x) = c ? throw(x isa Int) : throw(x isa Float64)
+function issue61048(c::Bool, x)
+    throwconditional61048(c, x)
+end
+@testset "aviatesk/JETLS#887" begin
+    @test isempty(analyze_signature(issue61048))
+end
+
 # test basic analysis abilities of `LSAnalyzer`
 function report_global_undef()
     return sin(undefvar)
