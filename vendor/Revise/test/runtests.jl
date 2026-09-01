@@ -502,6 +502,35 @@ end
         pop!(LOAD_PATH)
     end
 
+    do_test("__revise_mode__ override") && @testset "__revise_mode__ override" begin
+        # `__revise_mode__` bindings postdate Revise's frozen world and must still be
+        # honored when revision runs in that world (issue #1116)
+        testdir = newtestdir()
+        fn = joinpath(testdir, "revisemode.jl")
+        write(fn, """
+            module ReviseModeOverride
+            __revise_mode__ = :evalassign
+            flag = 1
+            end
+            """)
+        sleep(mtimedelay)
+        includet(fn)
+        @latestworld
+        @test ReviseModeOverride.flag == 1
+        sleep(mtimedelay)
+        write(fn, """
+            module ReviseModeOverride
+            __revise_mode__ = :evalassign
+            flag = 2
+            end
+            """)
+        @yry()
+        # Under the default `:evalmeth` mode the assignment would not be re-evaluated
+        @test ReviseModeOverride.flag == 2
+
+        pop!(LOAD_PATH)
+    end
+
     do_test("Display") && @testset "Display" begin
         io = IOBuffer()
         show(io, Revise.RelocatableExpr(:(@inbounds x[2])))
@@ -1001,6 +1030,180 @@ end
         end
 
         rm_precompile("Namespace")
+        pop!(LOAD_PATH)
+    end
+
+    do_test("Revise mode :sigs") && @testset "Revise mode :sigs" begin
+        testdir = newtestdir()
+        # Sibling helper packages, so the test depends on nothing outside `testdir`.
+        # `SigsHelper2` is not loaded until a revision adds a `using` for it.
+        for (helper, def) in (("SigsHelper1", "export dmean\ndmean(x) = sum(x)/length(x)"),
+                              ("SigsHelper2", "export DiagLike\nstruct DiagLike end"))
+            hn = joinpath(testdir, helper, "src")
+            mkpath(hn)
+            write(joinpath(hn, helper*".jl"), "module $helper\n$def\nend\n")
+        end
+        dn = joinpath(testdir, "SigsMode", "src")
+        mkpath(dn)
+        fn = joinpath(dn, "SigsMode.jl")
+        write(fn, """
+            module SigsMode
+            __revise_mode__ = :sigs
+            using SigsHelper1: dmean
+            f(x) = dmean(x)
+            end
+            """)
+        sleep(mtimedelay)
+        @eval using SigsMode
+        @test SigsMode.f([1,2,3]) == 2.0
+        @test whereis(only(methods(SigsMode.f))) == (fn, 4)
+        sleep(mtimedelay)
+        write(fn, """
+            module SigsMode
+            __revise_mode__ = :sigs
+
+            using SigsHelper1: dmean
+            using SigsHelper2: DiagLike
+            export h
+
+            f(x) = dmean(x)
+            h(x::DiagLike) = 1
+            end
+            """)
+        @yry()
+        @test isempty(Revise.queue_errors)
+        # Revised namespace statements take effect before later expressions.
+        @eval using SigsHelper2
+        @test SigsMode.DiagLike === SigsHelper2.DiagLike
+        @test :h ∈ names(SigsMode)
+        # `:sigs` updates signatures without installing method bodies.
+        @test length(methods(getglobal(SigsMode, :h))) == 0
+        @test SigsMode.f([1,2,3]) == 2.0
+        @test whereis(only(methods(SigsMode.f))) == (fn, 8)
+
+        rm_precompile("SigsMode")
+        rm_precompile("SigsHelper1")
+        rm_precompile("SigsHelper2")
+        pop!(LOAD_PATH)
+    end
+
+    do_test("Signature instantiation") && @testset "Signature instantiation" begin
+        # Cataloging loaded source must not execute namespace statements.
+        testdir = newtestdir()
+        dn = joinpath(testdir, "SigsUnloaded", "src")
+        mkpath(dn)
+        write(joinpath(dn, "SigsUnloaded.jl"), """
+            module SigsUnloaded
+            struct Marker end
+            end
+            """)
+        sleep(mtimedelay)
+        host = Core.eval(Main, :(module SigsHost
+                                 q(x::Int) = 1
+                                 end))
+        src = """
+            using SigsUnloaded
+            q(x::Int) = 1
+            """
+        fn = joinpath(testdir, "sigs_host.jl")
+        write(fn, src)
+        mexs = Revise.ModuleExprsInfos(host)
+        parse_source!(mexs, src, fn, host)
+        Revise.instantiate_sigs!(mexs)
+        @test !isdefined(host, :SigsUnloaded)
+        @test !any(id -> id.name == "SigsUnloaded", keys(Base.loaded_modules))
+        @test any(k -> k.sig === Tuple{typeof(host.q),Int}, keys(CodeTracking.method_info))
+
+        pop!(LOAD_PATH)
+    end
+
+    do_test("Retract removed bindings") && isdefined(Base, :delete_binding) &&
+            @testset "Retract removed bindings" begin
+        # Issue #1107: remove the binding with its defining statement.
+        testdir = newtestdir()
+        dn = joinpath(testdir, "RetractGlobals", "src")
+        mkpath(dn)
+        fn = joinpath(dn, "RetractGlobals.jl")
+        write(fn, """
+            module RetractGlobals
+            module Sub
+            export tag
+            tag() = :sub
+            end
+            using .Sub: tag
+            using .Sub
+            const SETTING = 17
+            const CHANGED = 1
+            const MOVING = :was_in_root
+            const view = "shadow"
+            read_setting() = SETTING
+            include("more.jl")
+            end
+            """)
+        write(joinpath(dn, "more.jl"), "\n")
+        sleep(mtimedelay)
+        @eval using RetractGlobals
+        @test RetractGlobals.SETTING == 17
+        @test RetractGlobals.view == "shadow"
+        sleep(mtimedelay)
+        write(fn, """
+            module RetractGlobals
+            module Sub
+            export tag
+            tag() = :sub
+            end
+            using .Sub
+            const CHANGED = 2
+            include("more.jl")
+            end
+            """)
+        write(joinpath(dn, "more.jl"), "const MOVING = :now_in_more\n")
+        @yry()
+        @test isempty(Revise.queue_errors)
+        @test !isdefined(RetractGlobals, :SETTING)
+        @test isempty(methods(RetractGlobals.read_setting))
+        @test RetractGlobals.CHANGED == 2
+        @test RetractGlobals.MOVING === :now_in_more
+        @test RetractGlobals.view === Base.view
+        @test RetractGlobals.tag() === :sub
+
+        rm_precompile("RetractGlobals")
+        pop!(LOAD_PATH)
+    end
+
+    do_test("Import switch (issue #1106)") && isdefined(Base, :delete_binding) &&
+            @testset "Import switch (issue #1106)" begin
+        # Issue #1106: replace a conflicting explicit import.
+        testdir = newtestdir()
+        dn = joinpath(testdir, "ImportSwitch", "src")
+        mkpath(dn)
+        fn = joinpath(dn, "ImportSwitch.jl")
+        importswitch_src(which) = """
+            module ImportSwitch
+            module A
+            export tag
+            tag() = :A
+            end
+            module B
+            export tag
+            tag() = :B
+            end
+            using .$which: tag
+            call_tag() = tag()
+            end
+            """
+        write(fn, importswitch_src("A"))
+        sleep(mtimedelay)
+        @eval using ImportSwitch
+        @test ImportSwitch.call_tag() === :A
+        sleep(mtimedelay)
+        write(fn, importswitch_src("B"))
+        @yry()
+        @test isempty(Revise.queue_errors)
+        @test ImportSwitch.tag === ImportSwitch.B.tag
+        @test ImportSwitch.call_tag() === :B
+
+        rm_precompile("ImportSwitch")
         pop!(LOAD_PATH)
     end
 
@@ -2734,6 +2937,49 @@ end
         rm_precompile("DupWarn")
     end
 
+    do_test("Duplicate rollback (issue #1105)") && @testset "Duplicate rollback (issue #1105)" begin
+        # Removing either duplicate must restore the survivor's body.
+        testdir = newtestdir()
+        dn = joinpath(testdir, "DupRollback", "src"); mkpath(dn)
+        fn = joinpath(dn, "DupRollback.jl")
+        write(fn, "module DupRollback\nanswer() = 1\nend\n")
+        sleep(mtimedelay)
+        @eval using DupRollback
+        sleep(mtimedelay)   # allow watch_file to arm under `watching_files[]`
+        @test DupRollback.answer() == 1
+        key = Revise.MethodInfoKey(nothing, first(methods(DupRollback.answer)).sig)
+
+        # Remove the later definition.
+        write(fn, "module DupRollback\nanswer() = 1\nanswer() = 2\nend\n")
+        sleep(mtimedelay)
+        @test_logs (:warn, r"defined in more than one location") match_mode=:any yry()
+        @latestworld
+        @test DupRollback.answer() == 2
+        write(fn, "module DupRollback\nanswer() = 1\nend\n")
+        sleep(mtimedelay)
+        @yry()
+        @test isempty(Revise.queue_errors)
+        @test DupRollback.answer() == 1
+        @test !haskey(Revise.duplicated_signatures, key)
+        @test length(CodeTracking.method_info[key]) == 1
+
+        # Remove the first definition.
+        write(fn, "module DupRollback\nanswer() = 1\nanswer() = 2\nend\n")
+        sleep(mtimedelay)
+        @test_logs (:warn, r"defined in more than one location") match_mode=:any yry()
+        @latestworld
+        @test DupRollback.answer() == 2
+        write(fn, "module DupRollback\nanswer() = 2\nend\n")
+        sleep(mtimedelay)
+        @yry()
+        @test isempty(Revise.queue_errors)
+        @test DupRollback.answer() == 2
+        @test !haskey(Revise.duplicated_signatures, key)
+        @test length(CodeTracking.method_info[key]) == 1
+
+        rm_precompile("DupRollback")
+    end
+
     do_test("Duplicate method warning exclusions") && @testset "Duplicate method warning exclusions" begin
         # The warning is scoped to precompilable packages: `includet`/`Main` scripts and
         # `__precompile__(false)` packages never precompile, so duplicate methods there are
@@ -3425,7 +3671,7 @@ end
     end
 
     # Struct revision tests require __bpart__[] = true. Enable it based on the Julia version
-    # alone: the LocalPreferences setting (which defaults to false for end users) should not
+    # alone: an ambient LocalPreferences setting of `revise_structs = false` should not
     # suppress these tests on CI.
     if Base.VERSION >= v"1.12.0-DEV.2047"
         Revise.__bpart__[] = true
@@ -4949,8 +5195,11 @@ end
 
         write(joinpath(dn, modname*".jl"), s527_old)
 
-        sleep(mtimedelay)
-        @test !Distributed.remotecall_eval(Main, favorite_proc, :(Revise.revision_queue |> isempty))
+        # The worker's queue fills when its watcher task delivers the event; wait for
+        # it (with `event_timeout` slack for slow FSEvents delivery on macOS CI).
+        @test timedwait(event_timeout; pollint=0.05) do
+            !Distributed.remotecall_eval(Main, favorite_proc, :(Revise.revision_queue |> isempty))
+        end === :ok
         @test Distributed.remotecall_eval(Main, boring_proc, :(Revise.revision_queue |> isempty))
 
         Distributed.remotecall_eval(Main, [favorite_proc, boring_proc], :(Revise.revise()))
@@ -5689,6 +5938,49 @@ do_test("Unchanged files across a path switch") && @testset "Unchanged files acr
     end
 end
 
+do_test("Version switch warning") && @testset "Version switch warning" begin
+    # A Pkg operation can point the manifest of a *loaded* package at a different
+    # registered version (issue #1111: adding PlotlyJS downgraded a loaded JSON from
+    # 1.x to 0.21). Revise follows the switch, but not every cross-version change can
+    # be applied to a running session (e.g., Julia refuses to redeclare a `public`
+    # name as `export`ed), so the switch itself is announced up front to make any
+    # errors that follow attributable.
+    mod = Module(:VersionSwitch)
+    Core.eval(mod, :(using Base))
+    id = Base.PkgId(Base.UUID("00000000-0000-0000-0000-000000001111"), "VersionSwitch")
+    olddir, newdir, patchdir = mktempdir(), mktempdir(), mktempdir()
+    for (dir, version, body) in ((olddir, "1.7.1", "f() = 1\n"),
+                                 (newdir, "0.21.4", "f() = 2\n"),
+                                 (patchdir, "0.21.4", "f() = 3\n"))
+        mkpath(joinpath(dir, "src"))
+        write(joinpath(dir, "Project.toml"), """
+            name = "VersionSwitch"
+            uuid = "00000000-0000-0000-0000-000000001111"
+            version = "$version"
+            """)
+        write(joinpath(dir, "src", "VersionSwitch.jl"), body)
+    end
+    file = joinpath("src", "VersionSwitch.jl")
+    pkgdata = Revise.PkgData(id, olddir)
+    mei = Revise.ModuleExprsInfos(mod)
+    mei[mod][Revise.RelocatableExpr(:(f() = 1))] = nothing
+    push!(pkgdata, file=>Revise.FileInfo(mei))
+    try
+        @test_logs (:warn, r"VersionSwitch changed from version 1\.7\.1 to 0\.21\.4 while loaded") match_mode=:any Revise.switch_basepath(pkgdata, newdir)
+        @test Revise.basedir(pkgdata) == newdir
+        @test (pkgdata, file) ∈ Revise.revision_queue
+        # A switch that keeps the version (e.g., `Pkg.develop` of a copy of the
+        # loaded release) stays quiet.
+        @test_logs min_level=Base.CoreLogging.Warn Revise.switch_basepath(pkgdata, patchdir)
+        @test Revise.basedir(pkgdata) == patchdir
+    finally
+        filter!(pr -> first(pr) !== pkgdata, Revise.revision_queue)
+        for dir in (olddir, newdir, patchdir)
+            delete!(Revise.watched_files, joinpath(dir, "src"))
+        end
+    end
+end
+
 do_test("Path switch without a baseline") && @testset "Path switch without a baseline" begin
     # A file whose cached source snapshot is gone has no baseline to compare the new
     # location against, and the old location's source on disk is not one either. The file
@@ -5941,6 +6233,339 @@ do_test("Missing-file grace") && !Revise.watching_files[] && @testset "Missing-f
         Revise.missing_file_grace[] = old_grace
     end
     rm_precompile("MissingFileGrace")
+    pop!(LOAD_PATH)
+end
+
+## Removing and restoring an `include` (issue #1104)
+do_test("Removed include") && @testset "Removed include" begin
+    testdir = newtestdir()
+    dn = joinpath(testdir, "RemovedInclude", "src")
+    mkpath(dn)
+    write(joinpath(dn, "RemovedInclude.jl"), """
+        module RemovedInclude
+        include("child.jl")
+        include("kept.jl")
+        end
+        """)
+    write(joinpath(dn, "child.jl"), """
+        child() = 1
+        include("grandchild.jl")
+        """)
+    write(joinpath(dn, "grandchild.jl"), "grandchild() = 2")
+    write(joinpath(dn, "kept.jl"), "kept() = 3")
+    sleep(mtimedelay)
+    @eval using RemovedInclude
+    sleep(mtimedelay)
+    @test RemovedInclude.child() == 1
+    @test RemovedInclude.grandchild() == 2
+    @test RemovedInclude.kept() == 3
+    pkgdata = Revise.pkgdatas[Base.PkgId(RemovedInclude)]
+
+    # Drop one `include`. The removal is transitive: "grandchild.jl" was included
+    # only by the file that is also being removed.
+    write(joinpath(dn, "RemovedInclude.jl"), """
+        module RemovedInclude
+        include("kept.jl")
+        end
+        """)
+    logs, _ = Test.collect_test_logs() do
+        yry()
+    end
+    @latestworld
+    @test_throws MethodError RemovedInclude.child()
+    @test_throws MethodError RemovedInclude.grandchild()
+    @test RemovedInclude.kept() == 3
+    @test any(r -> occursin("no longer `include`d into RemovedInclude, deleted its methods", r.message), logs)
+    @test !Revise.hasfile(pkgdata, joinpath("src", "child.jl"))
+    @test !Revise.hasfile(pkgdata, joinpath("src", "grandchild.jl"))
+    @test !Revise.iswatched(pkgdata, joinpath("src", "child.jl"))
+    @test !Revise.iswatched(pkgdata, joinpath("src", "grandchild.jl"))
+    @test Revise.hasfile(pkgdata, joinpath("src", "kept.jl"))
+    @test Revise.iswatched(pkgdata, joinpath("src", "kept.jl"))
+
+    # A file that is no longer included is not revised into the module
+    write(joinpath(dn, "child.jl"), """
+        child() = 10
+        include("grandchild.jl")
+        """)
+    # A per-file watcher (`Revise.watching_files[]`) must not queue it either.
+    sleep(1.0)
+    @test all(((pd, f),) -> Revise.hasfile(pd, f), Revise.revision_queue)
+    @yry(expect_revision=false)
+    @test_throws MethodError RemovedInclude.child()
+
+    # Restoring the `include` brings the file, and what it includes, back
+    write(joinpath(dn, "RemovedInclude.jl"), """
+        module RemovedInclude
+        include("child.jl")
+        include("kept.jl")
+        end
+        """)
+    @yry()
+    @latestworld
+    @test RemovedInclude.child() == 10
+    @test RemovedInclude.grandchild() == 2
+    @test Revise.hasfile(pkgdata, joinpath("src", "child.jl"))
+    @test Revise.hasfile(pkgdata, joinpath("src", "grandchild.jl"))
+    @test Revise.iswatched(pkgdata, joinpath("src", "child.jl"))
+    @test Revise.iswatched(pkgdata, joinpath("src", "grandchild.jl"))
+
+    rm_precompile("RemovedInclude")
+    pop!(LOAD_PATH)
+end
+
+## Removing one of several `(path, module)` inclusions
+do_test("Removed include, still included") && @testset "Removed include, still included" begin
+    testdir = newtestdir()
+    dn = joinpath(testdir, "SharedInclude", "src")
+    mkpath(dn)
+    write(joinpath(dn, "SharedInclude.jl"), """
+        module SharedInclude
+        module A
+        include("shared.jl")
+        end
+        module B
+        include("shared.jl")
+        end
+        end
+        """)
+    write(joinpath(dn, "shared.jl"), "shared() = 2")
+    sleep(mtimedelay)
+    @eval using SharedInclude
+    sleep(mtimedelay)
+    @test SharedInclude.A.shared() == 2
+    @test SharedInclude.B.shared() == 2
+    pkgdata = Revise.pkgdatas[Base.PkgId(SharedInclude)]
+
+    write(joinpath(dn, "SharedInclude.jl"), """
+        module SharedInclude
+        module A
+        end
+        module B
+        include("shared.jl")
+        end
+        end
+        """)
+    @yry()
+    @latestworld
+    @test_throws MethodError SharedInclude.A.shared()
+    @test SharedInclude.B.shared() == 2
+    @test Revise.iswatched(pkgdata, joinpath("src", "shared.jl"))   # B still includes it
+
+    rm_precompile("SharedInclude")
+    pop!(LOAD_PATH)
+end
+
+## Moving an `include` between modules (issues #730, #1104)
+do_test("Moved include") && @testset "Moved include" begin
+    testdir = newtestdir()
+    dn = joinpath(testdir, "MovedInclude", "src")
+    mkpath(dn)
+    write(joinpath(dn, "MovedInclude.jl"), """
+        module MovedInclude
+        module Inner
+        end
+        include("impl.jl")
+        end
+        """)
+    write(joinpath(dn, "impl.jl"), "impl() = 1")
+    sleep(mtimedelay)
+    @eval using MovedInclude
+    sleep(mtimedelay)
+    @test MovedInclude.impl() == 1
+    pkgdata = Revise.pkgdatas[Base.PkgId(MovedInclude)]
+
+    write(joinpath(dn, "MovedInclude.jl"), """
+        module MovedInclude
+        module Inner
+        include("impl.jl")
+        end
+        end
+        """)
+    @yry()
+    @latestworld
+    @test_throws MethodError MovedInclude.impl()
+    @test MovedInclude.Inner.impl() == 1
+    @test Revise.iswatched(pkgdata, joinpath("src", "impl.jl"))
+
+    # The file now belongs to `Inner`, and edits go there
+    write(joinpath(dn, "impl.jl"), "impl() = 2")
+    @yry()
+    @latestworld
+    @test MovedInclude.Inner.impl() == 2
+    @test_throws MethodError MovedInclude.impl()
+
+    rm_precompile("MovedInclude")
+    pop!(LOAD_PATH)
+end
+
+## Computed include paths remain tracked (issue #1104)
+do_test("Computed include path") && @testset "Computed include path" begin
+    testdir = newtestdir()
+    dn = joinpath(testdir, "ComputedInclude", "src")
+    mkpath(dn)
+    write(joinpath(dn, "ComputedInclude.jl"), """
+        module ComputedInclude
+        for f in ("impl.jl",)
+            include(f)
+        end
+        end
+        """)
+    write(joinpath(dn, "impl.jl"), "impl() = 1")
+    sleep(mtimedelay)
+    @eval using ComputedInclude
+    sleep(mtimedelay)
+    @test ComputedInclude.impl() == 1
+    pkgdata = Revise.pkgdatas[Base.PkgId(ComputedInclude)]
+
+    write(joinpath(dn, "ComputedInclude.jl"), """
+        module ComputedInclude
+        const files = ("impl.jl",)
+        for f in files
+            include(f)
+        end
+        end
+        """)
+    @yry()
+    @test ComputedInclude.impl() == 1
+    @test Revise.iswatched(pkgdata, joinpath("src", "impl.jl"))
+
+    rm_precompile("ComputedInclude")
+    pop!(LOAD_PATH)
+end
+
+## Removing an include with a literal destination module (issue #1104)
+do_test("Removed include, module argument") && @testset "Removed include, module argument" begin
+    testdir = newtestdir()
+    dn = joinpath(testdir, "ModArgInclude", "src")
+    mkpath(dn)
+    write(joinpath(dn, "ModArgInclude.jl"), """
+        module ModArgInclude
+        module Sub
+        end
+        Base.include(Sub, "impl.jl")
+        end
+        """)
+    write(joinpath(dn, "impl.jl"), "impl() = 1")
+    sleep(mtimedelay)
+    @eval using ModArgInclude
+    sleep(mtimedelay)
+    @test ModArgInclude.Sub.impl() == 1
+    pkgdata = Revise.pkgdatas[Base.PkgId(ModArgInclude)]
+    @test Revise.hasfile(pkgdata, joinpath("src", "impl.jl"))
+
+    write(joinpath(dn, "ModArgInclude.jl"), """
+        module ModArgInclude
+        module Sub
+        end
+        end
+        """)
+    @yry()
+    @latestworld
+    @test_throws MethodError ModArgInclude.Sub.impl()
+    @test !Revise.hasfile(pkgdata, joinpath("src", "impl.jl"))
+    @test !Revise.iswatched(pkgdata, joinpath("src", "impl.jl"))
+
+    rm_precompile("ModArgInclude")
+    pop!(LOAD_PATH)
+end
+
+## An `include` removed while the file it named is also gone from disk (issue #1104)
+do_test("Removed include, missing file") && @testset "Removed include, missing file" begin
+    testdir = newtestdir()
+    dn = joinpath(testdir, "GoneInclude", "src")
+    mkpath(dn)
+    write(joinpath(dn, "GoneInclude.jl"), """
+        module GoneInclude
+        include("gone.jl")
+        f() = 1
+        end
+        """)
+    write(joinpath(dn, "gone.jl"), "gone() = 2")
+    sleep(mtimedelay)
+    @eval using GoneInclude
+    sleep(mtimedelay)
+    @test GoneInclude.gone() == 2
+    pkgdata = Revise.pkgdatas[Base.PkgId(GoneInclude)]
+
+    rm(joinpath(dn, "gone.jl"))
+    write(joinpath(dn, "GoneInclude.jl"), """
+        module GoneInclude
+        f() = 1
+        end
+        """)
+    # Queue both files as the watcher would on seeing the deletion and the edit,
+    # so that one `revise` both untracks "gone.jl" and finds it queued.
+    sleep(mtimedelay)
+    @lock Revise.revise_lock begin
+        push!(Revise.revision_queue, (pkgdata, joinpath("src", "gone.jl")))
+        push!(Revise.revision_queue, (pkgdata, joinpath("src", "GoneInclude.jl")))
+    end
+    logs, _ = Test.collect_test_logs() do
+        revise()
+    end
+    @latestworld
+    @test_throws MethodError GoneInclude.gone()
+    @test any(r -> occursin("no longer `include`d into GoneInclude", r.message), logs)
+    @test !Revise.hasfile(pkgdata, joinpath("src", "gone.jl"))
+    # A file missing within `missing_file_grace` is normally left queued for the next
+    # `revise`, but an untracked one has nothing to revisit and would break the sort.
+    @test all(((pd, f),) -> Revise.hasfile(pd, f), Revise.revision_queue)
+    @test Revise.pkgfileless((pkgdata, joinpath("src", "GoneInclude.jl")),
+                             (pkgdata, joinpath("src", "gone.jl")))
+    @test !Revise.pkgfileless((pkgdata, joinpath("src", "gone.jl")),
+                              (pkgdata, joinpath("src", "GoneInclude.jl")))
+
+    rm_precompile("GoneInclude")
+    pop!(LOAD_PATH)
+end
+
+## A file missing from disk keeps the files it `include`s (issue #1104)
+do_test("Missing file keeps its includes") && @testset "Missing file keeps its includes" begin
+    testdir = newtestdir()
+    dn = joinpath(testdir, "MissingParent", "src")
+    mkpath(dn)
+    write(joinpath(dn, "MissingParent.jl"), """
+        module MissingParent
+        include("mid.jl")
+        end
+        """)
+    write(joinpath(dn, "mid.jl"), """
+        mid() = 1
+        include("leaf.jl")
+        """)
+    write(joinpath(dn, "leaf.jl"), "leaf() = 2")
+    sleep(mtimedelay)
+    @eval using MissingParent
+    sleep(mtimedelay)
+    @test MissingParent.mid() == 1
+    @test MissingParent.leaf() == 2
+    pkgdata = Revise.pkgdatas[Base.PkgId(MissingParent)]
+
+    old_grace = Revise.missing_file_grace[]
+    Revise.missing_file_grace[] = 0.0
+    try
+        rm(joinpath(dn, "mid.jl"))
+        # Queue the deleted file as the watcher would, so the revision does not
+        # depend on the timing of a filesystem event.
+        sleep(mtimedelay)
+        @lock Revise.revise_lock push!(Revise.revision_queue, (pkgdata, joinpath("src", "mid.jl")))
+        logs, _ = Test.collect_test_logs() do
+            revise()
+        end
+        @latestworld
+        @test_throws MethodError MissingParent.mid()
+        @test any(r -> occursin("no longer exists, deleted all methods", r.message), logs)
+        # A file that vanished has no source, which is not the same as source that
+        # dropped an `include`: what it included stays tracked.
+        @test MissingParent.leaf() == 2
+        @test Revise.hasfile(pkgdata, joinpath("src", "leaf.jl"))
+        @test Revise.iswatched(pkgdata, joinpath("src", "leaf.jl"))
+    finally
+        Revise.missing_file_grace[] = old_grace
+    end
+
+    rm_precompile("MissingParent")
     pop!(LOAD_PATH)
 end
 
@@ -6729,6 +7354,120 @@ do_test("re-watch after reappearance") && !Revise.watching_files[] && Sys.islinu
     finally
         Revise.watch_reappear_grace[] = old_grace
     end
+end
+
+# This test exercises Linux directory-watching behavior.
+do_test("re-arm dropped watch") && !Revise.watching_files[] && Sys.islinux() &&
+        @testset "re-arm dropped watch" begin
+    # Reappearance must restore a relinquished watch and revise missed changes.
+    testdir = newtestdir()
+    dn = joinpath(testdir, "ReArm", "src")
+    subdir = joinpath(dn, "sub")
+    mkpath(subdir)
+    write(joinpath(dn, "ReArm.jl"), """
+        module ReArm
+        include("sub/extra.jl")
+        f() = 1
+        end
+        """)
+    write(joinpath(subdir, "extra.jl"), "g() = 2")
+    sleep(mtimedelay)
+    @eval using ReArm
+    sleep(mtimedelay)
+    @test ReArm.g() == 2
+    @test haskey(Revise.watched_files, subdir)
+
+    old_grace = Revise.watch_reappear_grace[]
+    Revise.watch_reappear_grace[] = 0.0   # give up promptly so the round-trip is quick
+    try
+        rm(subdir; recursive=true)
+        @test timedwait(() -> !haskey(Revise.watched_files, subdir), event_timeout) === :ok
+        @yry
+
+        # The directory returns without a change to its `include`.
+        mkdir(subdir)
+        write(joinpath(subdir, "extra.jl"), "g() = 3")
+        sleep(mtimedelay)
+        revise()
+        @latestworld
+        @test haskey(Revise.watched_files, subdir)
+        @test ReArm.g() == 3
+
+        # The resumed watch detects later edits.
+        write(joinpath(subdir, "extra.jl"), "g() = 99")
+        @yry
+        @test ReArm.g() == 99
+    finally
+        Revise.watch_reappear_grace[] = old_grace
+    end
+    rm_precompile("ReArm")
+end
+
+# This test exercises Linux directory-watching behavior.
+do_test("re-arm skips untracked files") && !Revise.watching_files[] && Sys.islinux() &&
+        @testset "re-arm skips untracked files" begin
+    # Reappearance must not restore a file that was untracked meanwhile.
+    testdir = newtestdir()
+    dn = joinpath(testdir, "ReArmGone", "src")
+    subdir = joinpath(dn, "sub")
+    mkpath(subdir)
+    write(joinpath(dn, "ReArmGone.jl"), """
+        module ReArmGone
+        include("sub/extra.jl")
+        f() = 1
+        end
+        """)
+    write(joinpath(subdir, "extra.jl"), "g() = 2")
+    sleep(mtimedelay)
+    @eval using ReArmGone
+    sleep(mtimedelay)
+    @test ReArmGone.g() == 2
+    pkgdata = Revise.pkgdatas[Base.PkgId(ReArmGone)]
+
+    old_grace = Revise.watch_reappear_grace[]
+    Revise.watch_reappear_grace[] = 0.0   # give up promptly so the round-trip is quick
+    try
+        rm(subdir; recursive=true)
+        @test timedwait(() -> !haskey(Revise.watched_files, subdir), event_timeout) === :ok
+
+        # Remove the `include` while the watch is down.
+        write(joinpath(dn, "ReArmGone.jl"), """
+            module ReArmGone
+            f() = 1
+            end
+            """)
+        logs, _ = Test.collect_test_logs() do
+            yry()
+        end
+        @latestworld
+        @test any(r -> occursin("no longer `include`d into ReArmGone, deleted its methods", r.message), logs)
+        @test_throws MethodError ReArmGone.g()
+        @test !Revise.hasfile(pkgdata, joinpath("src", "sub", "extra.jl"))
+
+        # The untracked file remains unwatched and unrevised.
+        mkdir(subdir)
+        write(joinpath(subdir, "extra.jl"), "g() = 3")
+        sleep(mtimedelay)
+        revise()
+        @latestworld
+        @test !haskey(Revise.watched_files, subdir)
+        @test_throws MethodError ReArmGone.g()
+
+        # Restoring the `include` registers the file again.
+        write(joinpath(dn, "ReArmGone.jl"), """
+            module ReArmGone
+            include("sub/extra.jl")
+            f() = 1
+            end
+            """)
+        @yry()
+        @latestworld
+        @test ReArmGone.g() == 3
+        @test haskey(Revise.watched_files, subdir)
+    finally
+        Revise.watch_reappear_grace[] = old_grace
+    end
+    rm_precompile("ReArmGone")
 end
 
 do_test("Frozen world") && @testset "Frozen world" begin
