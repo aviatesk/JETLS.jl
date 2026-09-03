@@ -55,6 +55,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
+- `workspace/diagnostic` now uses less CPU while the workspace is unchanged, especially in clients that poll workspace diagnostics continuously.
+
 - `full_analysis.auto_instantiate` no longer runs `Pkg.resolve()` and `Pkg.instantiate()` on environments that are already instantiated.
   JETLS now inspects the environment first and leaves it untouched when nothing is missing, so opening a project no longer rewrites its `Manifest.toml` (e.g. when it was written by another Julia version).
   `Pkg.resolve()` is run only when the manifest is missing or `Project.toml` has changed since the manifest was last resolved; otherwise only `Pkg.instantiate()` runs.
