@@ -429,6 +429,15 @@ end
             xs::Vector{<:Integer}
         end
 
+        struct BadStruct3
+            x::Ref{Int}
+        end
+
+        const AbstractRefAlias = Ref{Int}
+        struct BadStruct4
+            x::AbstractRefAlias
+        end
+
         end # module TestAbstractField
         """) do pkg_path
         rootUri = filepath2uri(pkg_path)
@@ -463,6 +472,39 @@ end
                 end
             end
             @test found_diagnostic2
+
+            found_diagnostic3 = false
+            for diag in raw_res.params.diagnostics
+                if (diag.source == JETLS.DIAGNOSTIC_SOURCE_SAVE &&
+                    diag.code == JETLS.TOPLEVEL_ABSTRACT_FIELD_CODE &&
+                    occursin("BadStruct3", diag.message) &&
+                    occursin("x::Ref{$Int}", diag.message))
+                    found_diagnostic3 = true
+                    data = diag.data
+                    @test data isa AbstractRefFieldData
+                    if data isa AbstractRefFieldData
+                        @test data.ref_name_range.start.line == diag.range.start.line
+                        @test data.ref_name_range.var"end".line == diag.range.var"end".line
+                        @test data.ref_name_range.var"end".character -
+                            data.ref_name_range.start.character == 3
+                    end
+                    break
+                end
+            end
+            @test found_diagnostic3
+
+            found_diagnostic4 = false
+            for diag in raw_res.params.diagnostics
+                if (diag.source == JETLS.DIAGNOSTIC_SOURCE_SAVE &&
+                    diag.code == JETLS.TOPLEVEL_ABSTRACT_FIELD_CODE &&
+                    occursin("BadStruct4", diag.message) &&
+                    occursin("x::Ref{$Int}", diag.message))
+                    found_diagnostic4 = true
+                    @test diag.data === nothing
+                    break
+                end
+            end
+            @test found_diagnostic4
         end
     end
 end

@@ -359,7 +359,9 @@ function localize_range(range::Range, concat::ConcatenatedNotebook)
 end
 
 function localize_diagnostic_data(@nospecialize(data), concat::ConcatenatedNotebook)
-    if data isa DeleteRangeData
+    if data isa AbstractRefFieldData
+        return AbstractRefFieldData(localize_range(data.ref_name_range, concat))
+    elseif data isa DeleteRangeData
         return DeleteRangeData(data.kind, localize_range(data.delete_range, concat))
     elseif data isa UnusedVariableData
         assignment_range = data.assignment_range
