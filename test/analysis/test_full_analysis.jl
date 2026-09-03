@@ -4,6 +4,8 @@ using Test
 using JETLS: JETLS
 using JETLS.URIs2: filepath2uri
 
+include(normpath(pkgdir(JETLS), "test", "setup.jl"))
+
 @testset "immediate invalidation supersedes older requests" begin
     server = JETLS.Server()
     manager = server.state.analysis_manager
@@ -53,6 +55,84 @@ using JETLS.URIs2: filepath2uri
     @test JETLS.get_analysis_info(manager, script_uri) === nothing
     @test !haskey(JETLS.load(manager.analyzed_generations), entry)
     @test take!(manager.queue) === immediate_request
+end
+
+@testset "instantiation_needs" begin
+    withpackage("TestInstantiationNeeds", "module TestInstantiationNeeds end";
+                pkg_setup = Returns(nothing)) do pkgpath
+        env_path = joinpath(pkgpath, "Project.toml")
+        manifest_path = joinpath(pkgpath, "Manifest.toml")
+
+        @test !isfile(manifest_path)
+        @test JETLS.instantiation_needs(env_path) == (; resolve=true, instantiate=true)
+
+        withenv("JULIA_PKG_PRECOMPILE_AUTO" => "0") do
+            Pkg.activate(pkgpath) do
+                Pkg.instantiate(; io=devnull)
+            end
+        end
+        @test isfile(manifest_path)
+        @test JETLS.instantiation_needs(env_path) == (; resolve=false, instantiate=false)
+
+        # adding a dependency to `Project.toml` leaves the manifest stale
+        open(env_path, "a") do io
+            println(io, "\n[deps]\nTest = \"8dfed614-e22c-5e08-85e1-65c5234f0b40\"")
+        end
+        @test JETLS.instantiation_needs(env_path) == (; resolve=true, instantiate=true)
+
+        Pkg.activate(pkgpath) do
+            Pkg.resolve(; io=devnull)
+        end
+        @test JETLS.instantiation_needs(env_path) == (; resolve=false, instantiate=false)
+    end
+end
+
+@testset "ensure_instantiated!" begin
+    withpackage("TestEnsureInstantiated", "module TestEnsureInstantiated end";
+                pkg_setup = Returns(nothing)) do pkgpath
+        env_path = joinpath(pkgpath, "Project.toml")
+        manifest_path = joinpath(pkgpath, "Manifest.toml")
+        sent_queue = Channel{Any}(Inf)
+        server = JETLS.Server(;
+            callback = JETLS.ServerMessageRecorder(Channel{Any}(Inf), sent_queue))
+        function set_auto_instantiate!(auto_instantiate)
+            JETLS.store!(server.state.config_manager) do old_data
+                lsp_config = JETLS.JETLSConfig(;
+                    full_analysis = JETLS.FullAnalysisConfig(; auto_instantiate))
+                return JETLS.ConfigManagerData(old_data; lsp_config), nothing
+            end
+        end
+        ensure_instantiated!() = JETLS.activate_do(env_path) do
+            JETLS.ensure_instantiated!(server, env_path)
+        end
+
+        # disabled: only warn, never touch the environment
+        set_auto_instantiate!(false)
+        ensure_instantiated!()
+        @test !isfile(manifest_path)
+        let msg = take!(sent_queue)
+            @test msg isa ShowMessageNotification
+            @test msg.params.type == MessageType.Warning
+        end
+        @test isempty(sent_queue)
+
+        set_auto_instantiate!(true)
+        withenv("JULIA_PKG_PRECOMPILE_AUTO" => "0") do
+            ensure_instantiated!()
+        end
+        @test isfile(manifest_path)
+        @test isempty(sent_queue)
+
+        # An instantiated environment must be left untouched even when its manifest was
+        # written by another Julia version, which `Pkg.resolve` would rewrite.
+        manifest = read(manifest_path, String)
+        tampered = replace(manifest, r"julia_version = \"[^\"]*\"" => "julia_version = \"1.0.0\"")
+        @test tampered != manifest
+        write(manifest_path, tampered)
+        ensure_instantiated!()
+        @test read(manifest_path, String) == tampered
+        @test isempty(sent_queue)
+    end
 end
 
 end # module test_full_analysis
