@@ -115,6 +115,7 @@ function handle_lsp_config_change!(server::Server, tracker::ConfigChangeTracker,
         # and `workspace/didChangeConfiguration` may be handled before the initial `workspace/configuration`.
         notify_config_changes(server, tracker, source)
     end
+    apply_auto_instantiate_change!(server)
     if tracker.diagnostic_setting_changed
         clear_per_file_diagnostics_cache!(server.state)
         notify_diagnostics!(server; ensure_cleared = true)

@@ -411,8 +411,12 @@ function handle_response_message(
         server::Server, msg::Dict{Symbol,Any}, @nospecialize(request_caller::RequestCaller),
         cancel_flag::CancelFlag
     )
-    if request_caller isa InstantiationProgressCaller
+    if request_caller isa InstantiationPromptProgressCaller
+        handle_instantiation_prompt_progress_response(server, msg, request_caller)
+    elseif request_caller isa InstantiationProgressCaller
         handle_instantiation_progress_response(server, request_caller)
+    elseif request_caller isa InstantiationPromptCaller
+        handle_instantiation_prompt_response(server, msg, request_caller)
     elseif request_caller isa AnalysisProgressCaller
         handle_analysis_progress_response(server, request_caller, cancel_flag)
     elseif request_caller isa ShowTextDocumentContentCaller

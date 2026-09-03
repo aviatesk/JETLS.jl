@@ -190,9 +190,14 @@
           "description": "Configuration for full JET analysis. See [Full analysis configuration](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/full_analysis).",
           "properties": {
             "auto_instantiate": {
-              "$ref": "#/$defs/Core.Bool",
-              "default": true,
-              "description": "Automatically run `Pkg.resolve()` and `Pkg.instantiate()` for uninstantiated packages (e.g., freshly cloned repos). Creates versioned manifest if needed."
+              "default": "prompt",
+              "description": "Controls how JETLS instantiates package environments when dependencies are missing, or when the manifest is missing or out of date (e.g., in freshly cloned repositories). `\"always\"` runs `Pkg.resolve()` and `Pkg.instantiate()` automatically. `\"prompt\"` asks for confirmation first. Alternatively, you can instantiate manually while the prompt is open and then choose `\"Skip\"`; JETLS rechecks the environment before analysis. `\"never\"` only warns. Legacy `true` and `false` settings remain supported at runtime for backward compatibility but are excluded from this schema.",
+              "enum": [
+                "always",
+                "prompt",
+                "never"
+              ],
+              "type": "string"
             },
             "concretization_patterns": {
               "default": [],

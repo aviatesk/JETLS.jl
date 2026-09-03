@@ -144,7 +144,7 @@ let rows = Union{Nothing, SchemaRow}[
         nothing,
         table_header("full_analysis"),
         default_entry(:full_analysis, :debounce; comment = "number (seconds)"),
-        default_entry(:full_analysis, :auto_instantiate; comment = "boolean"),
+        default_entry(:full_analysis, :auto_instantiate; comment = "\"always\"/\"prompt\"/\"never\""),
         default_entry(:full_analysis, :concretization_patterns; comment = "array of tables", validate = false),
         nothing,
         array_header("full_analysis.concretization_patterns"; comment = "table, an entry of the concretization patterns array above"),

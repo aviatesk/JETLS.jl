@@ -133,6 +133,16 @@ struct InstantiationProgressCaller <: RequestCaller
     token::ProgressToken
 end
 
+struct InstantiationPromptProgressCaller <: RequestCaller
+    ins_request::InstantiationRequest
+    token::ProgressToken
+end
+
+struct InstantiationPromptCaller <: RequestCaller
+    ins_request::InstantiationRequest
+    progress_token::Union{Nothing,ProgressToken}
+end
+
 struct AnalysisProgressCaller <: RequestCaller
     uri::URI
     invalidate::Bool
@@ -164,6 +174,32 @@ function handle_instantiation_progress_response(
     # Now request a new progress token for the analysis phase
     request_analysis_progress!(
         server, uri, invalidate, entry, notify_diagnostics, debounce)
+end
+
+function request_instantiation_prompt_progress!(
+        server::Server, ins_request::InstantiationRequest
+    )
+    id = String(gensym(:WorkDoneProgressCreateRequest_instantiation_prompt))
+    token = String(gensym(:InstantiationPromptProgress))
+    caller = InstantiationPromptProgressCaller(ins_request, token)
+    addrequest!(server, id => caller)
+    params = WorkDoneProgressCreateParams(; token)
+    send(server, WorkDoneProgressCreateRequest(; id, params))
+end
+
+function handle_instantiation_prompt_progress_response(
+        server::Server, msg::Dict{Symbol,Any}, caller::InstantiationPromptProgressCaller
+    )
+    instantiation_decision(server, caller.ins_request.env_path) === :pending || return nothing
+    progress_token = haskey(msg, :error) ? nothing : caller.token
+    if progress_token !== nothing
+        send_progress(server, progress_token,
+            WorkDoneProgressBegin(;
+                title = "Waiting for environment instantiation",
+                message = instantiation_message_path(caller.ins_request),
+                cancellable = false))
+    end
+    send_instantiation_prompt!(server, caller.ins_request, progress_token)
 end
 
 function request_analysis_progress!(
@@ -335,7 +371,11 @@ function request_analysis!(
             cache_out_of_scope!(manager, uri, phase1_result)
             return nothing
         elseif phase1_result isa InstantiationRequest
-            if !wait && supports(server, :window, :workDoneProgress)
+            if !wait && request_instantiation_prompt!(
+                    server, uri, phase1_result, invalidate, notify_diagnostics, debounce)
+                return nothing
+            elseif (!wait && supports(server, :window, :workDoneProgress) &&
+                    should_request_instantiation_progress(server, phase1_result.env_path))
                 request_instantiation_progress!(
                     server, uri, phase1_result, invalidate, notify_diagnostics, debounce)
                 return nothing
@@ -656,8 +696,9 @@ function is_abandoned_analysis_target(server::Server, uri::URI, entry::AnalysisE
     if isunsaveduri(uri)
         return get_file_info(state, uri) === nothing
     end
-    if ((entry isa ScriptAnalysisEntry || entry isa ScriptInEnvAnalysisEntry) &&
-        entry.isnotebook)
+    if (is_notebook_uri(uri) ||
+        ((entry isa ScriptAnalysisEntry || entry isa ScriptInEnvAnalysisEntry) &&
+         entry.isnotebook))
         return !is_notebook_uri(state, uri)
     end
     return false
@@ -1490,12 +1531,10 @@ end
 function instantiate_package_environment!(server::Server, env_path::String, pkgname::String)
     instantiated_envs = server.state.analysis_manager.instantiated_envs
     activate_do(env_path) do
-        # Check cache inside lock to avoid race conditions
         cached = get(load(instantiated_envs), env_path, missing)
         if cached !== missing
             return cached
         end
-        # Cache miss - perform environment detection
         ensure_instantiated!(server, env_path)
         pkgenv = @lock Base.require_lock @something Base.identify_package_env(pkgname) begin
             @warn "Failed to identify package environment" env_path pkgname
@@ -1525,12 +1564,10 @@ end
 function ensure_instantiated_if_requested!(server::Server, env_path::String)
     instantiated_envs = server.state.analysis_manager.instantiated_envs
     activate_do(env_path) do
-        # Check if already processed (success or failure)
         if haskey(load(instantiated_envs), env_path)
             return
         end
         ensure_instantiated!(server, env_path)
-        # Mark as processed
         store!(instantiated_envs) do cache
             if haskey(cache, env_path)
                 cache, nothing
@@ -1547,19 +1584,21 @@ end
     instantiation_needs(env_path::String) -> (; resolve::Bool, instantiate::Bool)
 
 Inspect the environment at `env_path` without mutating it. `resolve` is `true` when the
-manifest is missing or `Project.toml` has changed since the manifest was last resolved.
-`instantiate` is `true` when `resolve` is, or when some dependency source or artifact has
-not been downloaded yet.
+manifest is missing, has no recorded project hash, is known to be stale, or lacks a direct
+dependency from `Project.toml`. `instantiate` is `true` when `resolve` is, or when some
+dependency source or artifact has not been downloaded yet.
 """
 function instantiation_needs(env_path::String)
     env = Pkg.Types.EnvCache(env_path)
-    resolve = !isfile(env.manifest_file) || Pkg.Operations.is_manifest_current(env) === false
+    manifest_current = Pkg.Operations.is_manifest_current(env)
+    missing_direct_dep = any(uuid->!haskey(env.manifest,uuid), values(env.project.deps))
+    resolve = !isfile(env.manifest_file) || manifest_current !== true || missing_direct_dep
     instantiate = resolve || !Pkg.Operations.is_instantiated(env)
     return (; resolve, instantiate)
 end
 
-function ensure_instantiated!(server::Server, env_path::String)
-    needs = try
+function inspect_instantiation_needs(env_path::String)
+    @lock PKG_ACTIVATION_LOCK try
         instantiation_needs(env_path)
     catch e
         @error "Failed to inspect package environment" env_path
@@ -1568,18 +1607,55 @@ function ensure_instantiated!(server::Server, env_path::String)
     finally
         clear_pkg_registry_cache!()
     end
+end
+
+function instantiation_decision(server::Server, env_path::String)
+    prompts = server.state.analysis_manager.instantiation_prompts
+    prompt = get(load(prompts), env_path, nothing)
+    return prompt === nothing ? nothing : prompt.decision
+end
+
+# `"prompt"` needs a client to ask; `jetls check` has none, so it instantiates like `"always"`.
+function effective_auto_instantiate(server::Server)
+    auto_instantiate = get_config(server, :full_analysis, :auto_instantiate)
+    if auto_instantiate == AUTO_INSTANTIATE_PROMPT && server.state.cli_mode
+        return AUTO_INSTANTIATE_ALWAYS
+    end
+    return auto_instantiate
+end
+
+function should_request_instantiation_progress(server::Server, env_path::String)
+    auto_instantiate = effective_auto_instantiate(server)
+    return auto_instantiate == AUTO_INSTANTIATE_ALWAYS ||
+        (auto_instantiate == AUTO_INSTANTIATE_PROMPT &&
+         instantiation_decision(server, env_path) === :accepted)
+end
+
+function ensure_instantiated!(server::Server, env_path::String)
+    needs = inspect_instantiation_needs(env_path)
     if !needs.instantiate
         @static JETLS_DEV_MODE && @info "Package environment is already instantiated" env_path
         return
     end
-    if get_config(server, :full_analysis, :auto_instantiate)
+    auto_instantiate = effective_auto_instantiate(server)
+    if auto_instantiate == AUTO_INSTANTIATE_PROMPT
+        decision = instantiation_decision(server, env_path)
+        if decision === :accepted
+            auto_instantiate = AUTO_INSTANTIATE_ALWAYS
+        elseif decision === :declined
+            @static JETLS_DEV_MODE && @info "Skipping environment instantiation as requested" env_path
+            return
+        end
+    end
+    if auto_instantiate == AUTO_INSTANTIATE_ALWAYS
+        verbose = server.state.cli_mode || JETLS_DEV_MODE
         io = IOBuffer()
         try
             if needs.resolve
-                @static JETLS_DEV_MODE && @info "Resolving package environment" env_path
+                verbose && @info "Resolving package environment" env_path
                 Pkg.resolve(; io)
             end
-            @static JETLS_DEV_MODE && @info "Instantiating package environment" env_path
+            verbose && @info "Instantiating package environment" env_path
             Pkg.instantiate(; io)
         catch e
             @error """Failed to instantiate package environment;
@@ -1603,10 +1679,165 @@ function ensure_instantiated!(server::Server, env_path::String)
         rerun_hint = server.state.cli_mode ? "re-run `jetls check`" : "restart the language server"
         show_warning_message(server, """
             Package environment at $env_path has not been instantiated or is out of date
-            (`full_analysis.auto_instantiate` is disabled).
+            (`full_analysis.auto_instantiate` is "$auto_instantiate").
             The package will be analyzed as a script, which may result in incomplete diagnostics.
             It is recommended to instantiate your package environment and $rerun_hint.""")
     end
+end
+
+const INSTANTIATE_ACTION_TITLE = "Instantiate"
+const SKIP_INSTANTIATION_ACTION_TITLE = "Skip"
+
+instantiation_message_path(ins_request::InstantiationRequest) =
+    isnothing(ins_request.root_path) ? ins_request.env_path :
+    relpath(ins_request.env_path, dirname(ins_request.root_path))
+
+function upsert_pending_analysis_request(
+        waiters::Vector{PendingAnalysisRequest}, request::PendingAnalysisRequest
+    )
+    new_waiters = copy(waiters)
+    index = findfirst(waiter -> waiter.uri == request.uri, new_waiters)
+    if index === nothing
+        push!(new_waiters, request)
+    else
+        new_waiters[index] = request
+    end
+    return new_waiters
+end
+
+function replay_pending_analysis_requests!(
+        server::Server, waiters::Vector{PendingAnalysisRequest}
+    )
+    state = server.state
+    for waiter in waiters
+        uri = waiter.uri
+        # Documents closed while the prompt was open no longer need analysis
+        is_synchronized(state, uri) || is_notebook_uri(state, uri) || continue
+        request_analysis!(server, uri, waiter.invalidate;
+            notify_diagnostics = waiter.notify_diagnostics, debounce = waiter.debounce)
+    end
+end
+
+# Pending prompts are meaningless once `auto_instantiate` is no longer `"prompt"`: drop
+# them and replay their waiters under the new setting. A dialog that is still open cannot
+# be withdrawn, so `handle_instantiation_prompt_response` ignores its late answer.
+function apply_auto_instantiate_change!(server::Server)
+    effective_auto_instantiate(server) == AUTO_INSTANTIATE_PROMPT && return nothing
+    prompts = server.state.analysis_manager.instantiation_prompts
+    dropped = store!(prompts) do d
+        new_d = copy(d)
+        local dropped = InstantiationPrompt[]
+        for (env_path, prompt) in d
+            prompt.decision === :pending || continue
+            delete!(new_d, env_path)
+            push!(dropped, prompt)
+        end
+        new_d, dropped
+    end
+    for prompt in dropped
+        replay_pending_analysis_requests!(server, prompt.waiters)
+    end
+    return nothing
+end
+
+function send_instantiation_prompt!(
+        server::Server, ins_request::InstantiationRequest,
+        progress_token::Union{Nothing,ProgressToken} = nothing
+    )
+    id = String(gensym(:ShowMessageRequest_instantiation))
+    caller = InstantiationPromptCaller(ins_request, progress_token)
+    addrequest!(server, id => caller)
+    message = """
+        Package environment at $(instantiation_message_path(ins_request)) has not been
+        instantiated or is out of date.
+        Instantiate it now? This runs `Pkg.resolve()` and `Pkg.instantiate()`, which may
+        download packages, run build scripts, and modify the manifest.
+        Alternatively, you can resolve and instantiate it manually while this prompt is
+        open, then choose "Skip" after it finishes. JETLS will recheck the environment before
+        analysis.
+        Choosing "Skip" while the environment still needs instantiation analyzes the
+        code as is, so missing dependencies will be reported as errors."""
+    actions = MessageActionItem[
+        MessageActionItem(; title = INSTANTIATE_ACTION_TITLE)
+        MessageActionItem(; title = SKIP_INSTANTIATION_ACTION_TITLE)
+    ]
+    params = ShowMessageRequestParams(; type = MessageType.Info, message, actions)
+    send(server, ShowMessageRequest(; id, params))
+end
+
+# Returns `true` when the analysis request has been deferred until the user answers the
+# `auto_instantiate = "prompt"` dialog for this environment; the request is then replayed
+# by `handle_instantiation_prompt_response`.
+function request_instantiation_prompt!(
+        server::Server, uri::URI, ins_request::InstantiationRequest,
+        invalidate::Bool, notify_diagnostics::Bool, debounce::Float64
+    )
+    effective_auto_instantiate(server) == AUTO_INSTANTIATE_PROMPT || return false
+    env_path = ins_request.env_path
+    prompts = server.state.analysis_manager.instantiation_prompts
+    haskey(load(prompts), env_path) || inspect_instantiation_needs(env_path).instantiate ||
+        return false
+    pending_request = PendingAnalysisRequest(uri, invalidate, notify_diagnostics, debounce)
+    action = store!(prompts) do d
+        prompt = get(d, env_path, nothing)
+        if prompt === nothing
+            new_d = copy(d)
+            new_d[env_path] = InstantiationPrompt(:pending, PendingAnalysisRequest[pending_request])
+            new_d, :send
+        elseif prompt.decision === :pending
+            new_d = copy(d)
+            waiters = upsert_pending_analysis_request(prompt.waiters, pending_request)
+            new_d[env_path] = InstantiationPrompt(:pending, waiters)
+            new_d, :wait
+        else
+            d, :proceed
+        end
+    end
+    action === :proceed && return false
+    action === :wait && return true
+    if supports(server, :window, :workDoneProgress)
+        request_instantiation_prompt_progress!(server, ins_request)
+    else
+        send_instantiation_prompt!(server, ins_request)
+    end
+    return true
+end
+
+function handle_instantiation_prompt_response(
+        server::Server, msg::Dict{Symbol,Any}, caller::InstantiationPromptCaller
+    )
+    env_path = caller.ins_request.env_path
+    accepted = if handle_response_error(server, msg, "confirm environment instantiation")
+        false
+    else
+        result = get(msg, :result, nothing)
+        result isa Dict && get(result, "title", "") == INSTANTIATE_ACTION_TITLE
+    end
+    prompts = server.state.analysis_manager.instantiation_prompts
+    waiters = store!(prompts) do d
+        prompt = get(d, env_path, nothing)
+        if prompt === nothing || prompt.decision !== :pending
+            return d, nothing
+        end
+        new_d = copy(d)
+        new_d[env_path] =
+            InstantiationPrompt(accepted ? :accepted : :declined, PendingAnalysisRequest[])
+        new_d, prompt.waiters
+    end
+    if caller.progress_token !== nothing
+        message = if waiters === nothing
+            nothing
+        elseif accepted
+            "Environment instantiation approved"
+        elseif inspect_instantiation_needs(env_path).instantiate
+            "Continuing without environment instantiation"
+        else
+            "Using manually instantiated environment"
+        end
+        send_progress(server, caller.progress_token, WorkDoneProgressEnd(; message))
+    end
+    waiters === nothing && return nothing
+    replay_pending_analysis_requests!(server, waiters)
 end
 
 # Resolves the delayed environment instantiation with progress reporting.
@@ -1614,9 +1845,7 @@ end
 function do_instantiation_with_progress(
         server::Server, uri::URI, ins_request::InstantiationRequest, token::ProgressToken
     )
-    root_path = ins_request.root_path
-    message_path = isnothing(root_path) ? ins_request.env_path :
-        relpath(ins_request.env_path, dirname(root_path))
+    message_path = instantiation_message_path(ins_request)
     send_progress(server, token,
         WorkDoneProgressBegin(;
             title = "Instantiating environment",

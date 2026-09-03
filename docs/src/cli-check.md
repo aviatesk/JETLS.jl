@@ -189,6 +189,13 @@ severity = "off"
 path = "test/**/*.jl"
 ```
 
+Package environments that are not instantiated yet (e.g. a fresh clone in CI)
+are resolved and instantiated before analysis. `jetls check` has no client to
+confirm with, so the default
+[`auto_instantiate = "prompt"`](@ref config/full_analysis/auto_instantiate)
+behaves like `"always"` here. Set it to `"never"` in `.JETLSConfig.toml` to
+analyze against the environment as is.
+
 For complete configuration options, see the [JETLS configuration](@ref config/schema) page.
 
 ## [GitHub Actions](@id cli-check/github-actions)

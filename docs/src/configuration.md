@@ -68,19 +68,49 @@ debounce = 2.0  # Wait 2 seconds after save before analyzing
 
 #### [`[full_analysis] auto_instantiate`](@id config/full_analysis/auto_instantiate)
 
-- **Type**: boolean
-- **Default**: `true`
+- **Type**: string (`"always"`, `"prompt"`, or `"never"`)
+- **Default**: `"prompt"`
 
-When enabled, JETLS automatically runs `Pkg.resolve()` and `Pkg.instantiate()` for
-packages that have not been instantiated yet (e.g., freshly cloned repositories).
-This allows full analysis to work immediately upon opening such packages.
-When no manifest file exists, JETLS first creates a
-[versioned manifest](https://pkgdocs.julialang.org/v1/toml-files/#Different-Manifests-for-Different-Julia-versions)
-(e.g., `Manifest-v1.12.toml`).
+Controls what JETLS does when the package environment of an analyzed file needs
+instantiation, i.e. when its manifest is missing or out of date, or some
+dependency has not been downloaded yet (e.g., freshly cloned repositories).
+Environments that are already instantiated with an up-to-date manifest are
+never touched.
+
+- `"prompt"` asks for confirmation before instantiating, once per environment
+  per server session. Clients that support work-done progress show
+  "Waiting for environment instantiation" until the prompt is answered.
+  Full analysis of the files in that environment is deferred until then, so
+  if the notification is left unanswered (e.g. tucked away in VSCode's
+  notification center), those files get no save-time diagnostics until you
+  respond.
+  Alternatively, you can resolve and instantiate the environment manually while
+  the prompt is open, then choose "Skip" after the operation finishes.
+  JETLS rechecks the environment before analysis and uses the updated
+  environment without running `Pkg.resolve()` or `Pkg.instantiate()` itself.
+  Choosing "Skip" while the environment still needs instantiation analyzes the
+  code against it as is, in which case package-loading failures show up as
+  [`toplevel` diagnostics](@ref diagnostic/reference/toplevel).
+- `"always"` runs `Pkg.resolve()` (only when the manifest is missing or out of
+  date) and `Pkg.instantiate()` without asking. This can download packages and
+  artifacts, run build scripts, precompile dependencies, and modify
+  `Manifest.toml`, so enable it only for projects you trust.
+- `"never"` leaves the environment untouched and shows a warning instead.
+
+!!! note "`jetls check`"
+    The CLI has no client to ask, so under `"prompt"` [`jetls check`](@ref cli-check)
+    resolves and instantiates the environment just like `"always"` does. Set
+    `auto_instantiate = "never"` in `.JETLSConfig.toml` to analyze against the
+    environment as is.
+
+For backward compatibility, JETLS still accepts the legacy values `true` and
+`false` at runtime as aliases of `"always"` and `"never"`. Configuration
+schemas intentionally accept only the string values above, so schema validation
+reports legacy booleans as invalid and prompts migration to the new form.
 
 ```toml
 [full_analysis]
-auto_instantiate = false  # Disable automatic instantiation
+auto_instantiate = "always"  # Instantiate without asking
 ```
 
 #### [`[full_analysis] concretization_patterns`](@id config/full_analysis/concretization_patterns)
