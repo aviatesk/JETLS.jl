@@ -356,6 +356,22 @@ const AnalyzedGenerations = CASContainer{Dict{AnalysisEntry,Int}, CASStats}
 const DebouncedRequests = LWContainer{Dict{AnalysisEntry,Tuple{Timer,Base.Event}}, LWStats}
 const InstantiatedEnvs = LWContainer{Dict{String,Union{Nothing,Tuple{Base.PkgId,String}}}, LWStats}
 
+struct PendingAnalysisRequest
+    uri::URI
+    invalidate::Bool
+    notify_diagnostics::Bool
+    debounce::Float64
+end
+
+# `decision` is `:pending` while the `auto_instantiate = "prompt"` dialog is shown for the
+# environment, then `:accepted` or `:declined`; `waiters` retains the latest deferred
+# analysis request for each URI, including the request that opened the prompt.
+struct InstantiationPrompt
+    decision::Symbol
+    waiters::Vector{PendingAnalysisRequest}
+end
+const InstantiationPrompts = LWContainer{Dict{String,InstantiationPrompt}, LWStats}
+
 struct AnalysisManager
     cache::AnalysisCache
     pending_analyses::PendingAnalyses
@@ -366,6 +382,7 @@ struct AnalysisManager
     debounced::DebouncedRequests
     tracked_entries::TrackedAnalysisEntries
     instantiated_envs::InstantiatedEnvs
+    instantiation_prompts::InstantiationPrompts
     worker_task::Base.RefValue{Task}
     signature_worker_tasks::Vector{Task}
     function AnalysisManager()
@@ -379,6 +396,7 @@ struct AnalysisManager
             DebouncedRequests(),
             TrackedAnalysisEntries(),
             InstantiatedEnvs(),
+            InstantiationPrompts(),
             Ref{Task}(), # initialized by start_analysis_worker!
             Task[], # initialized by start_signature_analysis_workers!
         )
@@ -507,10 +525,16 @@ merge_key_value(pattern::ConcretizationPattern) = (pattern.path, pattern.__patte
 
 @kwdef struct FullAnalysisConfig <: ConfigSection
     debounce::Maybe{Float64} = nothing
-    auto_instantiate::Maybe{Bool} = nothing
+    auto_instantiate::Maybe{String} = nothing
     concretization_patterns::Maybe{Vector{ConcretizationPattern}} = nothing
 end
 @define_eq_overloads FullAnalysisConfig
+
+const AUTO_INSTANTIATE_ALWAYS = "always"
+const AUTO_INSTANTIATE_PROMPT = "prompt"
+const AUTO_INSTANTIATE_NEVER = "never"
+const AUTO_INSTANTIATE_VALUES =
+    (AUTO_INSTANTIATE_ALWAYS, AUTO_INSTANTIATE_PROMPT, AUTO_INSTANTIATE_NEVER)
 
 @kwdef struct TestRunnerConfig <: ConfigSection
     executable::Maybe{String} = nothing
@@ -720,7 +744,9 @@ end
 const DEFAULT_CONFIG = JETLSConfig(;
     diagnostic = DiagnosticConfig(true, true, true, DiagnosticPattern[]),
     full_analysis = FullAnalysisConfig(
-        @static(JETLS_TEST_MODE ? 0.0 : 1.0), true, ConcretizationPattern[]),
+        @static(JETLS_TEST_MODE ? 0.0 : 1.0),
+        @static(JETLS_TEST_MODE ? AUTO_INSTANTIATE_ALWAYS : AUTO_INSTANTIATE_PROMPT),
+        ConcretizationPattern[]),
     testrunner = TestRunnerConfig(@static Sys.iswindows() ? "testrunner.bat" : "testrunner"),
     formatter = "Runic",
     completion = CompletionConfig(LaTeXEmojiConfig(missing)),

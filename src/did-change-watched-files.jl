@@ -76,6 +76,7 @@ function handle_config_file_change!(
 
     source = "[.JETLSConfig.toml] $(dirname(changed_path)) ($kind)"
     notify_config_changes(server, tracker, source)
+    apply_auto_instantiate_change!(server)
     if tracker.diagnostic_setting_changed
         clear_per_file_diagnostics_cache!(server.state)
         notify_diagnostics!(server; ensure_cleared = true)

@@ -19,7 +19,11 @@ diagnostic, macro-aware go-to definition and such.
 !!! danger "Security"
     Do not run JETLS on code you do not trust. To analyze your project it
     runs your code — including the package dependencies it loads — which can
-    execute arbitrary code.
+    execute arbitrary code. Instantiating a package environment additionally
+    downloads packages and may run their build scripts; JETLS asks for
+    confirmation before doing so unless
+    [`auto_instantiate`](@ref config/full_analysis/auto_instantiate) says
+    otherwise.
 
 See the [Features](@ref features) page for a visual overview of the LSP
 features JETLS provides.
