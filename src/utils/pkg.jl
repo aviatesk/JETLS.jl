@@ -146,6 +146,14 @@ end
 
 const PKG_ACTIVATION_LOCK = ReentrantLock()
 
+function clear_pkg_registry_cache!()
+    # HACK This is a terrible hack to reduce Pkg.jl's memory footprint.
+    # This behavior should really be implemented as an environment variable that
+    # Pkg.jl understands, or perhaps this cache itself should be optimized.
+    @lock PKG_ACTIVATION_LOCK empty!(Pkg.Registry.REGISTRY_CACHE)
+    return nothing
+end
+
 """
     activate_do(func, env_path::String)
 

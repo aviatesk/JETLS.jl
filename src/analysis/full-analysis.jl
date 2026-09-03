@@ -519,10 +519,7 @@ function resolve_analysis_request(server::Server, request::AnalysisRequest)
         if cleanup && prev_result !== nothing
             cleanup_prev_methods(prev_result)
         end
-        # HACK This is a terrible hack to reduce Pkg.jl's memory footprint:
-        # This behavior should really be implemented as an environment variable that Pkg.jl understands,
-        # or perhaps this cache itself should be optimized.
-        empty!(Pkg.Registry.REGISTRY_CACHE)
+        clear_pkg_registry_cache!()
         failed && @goto next_request
     end
     @assert !(analysis_result isa Bool)
@@ -1565,10 +1562,7 @@ function ensure_instantiated!(server::Server, env_path::String)
         Base.showerror(stderr, e, catch_backtrace())
         (; resolve = true, instantiate = true)
     finally
-        # HACK This is a terrible hack to reduce Pkg.jl's memory footprint:
-        # This behavior should really be implemented as an environment variable that Pkg.jl understands,
-        # or perhaps this cache itself should be optimized.
-        empty!(Pkg.Registry.REGISTRY_CACHE)
+        clear_pkg_registry_cache!()
     end
     if !needs.instantiate
         @static JETLS_DEV_MODE && @info "Package environment is already instantiated" env_path
@@ -1597,7 +1591,7 @@ function ensure_instantiated!(server::Server, env_path::String)
                 See the language server log for details.
                 It is recommended to fix your package environment setup and restart the language server.""")
         finally
-            empty!(Pkg.Registry.REGISTRY_CACHE)
+            clear_pkg_registry_cache!()
         end
     else
         show_warning_message(server, """
