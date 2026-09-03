@@ -338,15 +338,42 @@ baseline result that this analysis run replaces. It is intentionally fixed for
 the whole run: it is not a live view of the latest analysis cache. This keeps
 intermediate and final results consistent even if the run itself updates the
 cache before completion.
+
+`shutdown_cancel_flag` is owned by the server lifecycle and is independent of
+client-request cancellation. `intermediate_result` records any cache value published
+before signature analysis so shutdown can restore `prev_result` when cancellation begins.
 """
 struct AnalysisExecution
     request::AnalysisRequest
     prev_result::Union{Nothing,AnalysisResult}
+    shutdown_cancel_flag::CancelFlag
+    intermediate_result::Base.RefValue{Union{Nothing,AnalysisResult}}
+    function AnalysisExecution(
+            request::AnalysisRequest,
+            prev_result::Union{Nothing,AnalysisResult},
+            shutdown_cancel_flag::CancelFlag = CancelFlag(false),
+        )
+        return new(request, prev_result, shutdown_cancel_flag,
+            Ref{Union{Nothing,AnalysisResult}}(nothing))
+    end
 end
+
+abstract type AnalysisOutcome end
+
+struct CompletedAnalysis <: AnalysisOutcome
+    result::AnalysisResult
+    cleanup_prev_result::Bool
+end
+
+struct CancelledAnalysis <: AnalysisOutcome end
 
 abstract type AbstractSignatureAnalysisJob end
 signature_analysis_completion(job::AbstractSignatureAnalysisJob) =
     getfield(job, :completion)::Base.Event
+function signature_analysis_execution_impl end
+signature_analysis_execution(job::AbstractSignatureAnalysisJob) =
+    signature_analysis_execution_impl(job)::Union{Nothing,AnalysisExecution}
+signature_analysis_execution_impl(::AbstractSignatureAnalysisJob) = nothing
 
 const AnalysisCache = LWContainer{Dict{URI,AnalysisInfo}, LWStats}
 const TrackedAnalysisEntries = CASContainer{Dict{AnalysisEntry,URI}, CASStats}
@@ -357,6 +384,9 @@ const DebouncedRequests = LWContainer{Dict{AnalysisEntry,Tuple{Timer,Base.Event}
 const InstantiatedEnvs = LWContainer{Dict{String,Union{Nothing,Tuple{Base.PkgId,String}}}, LWStats}
 
 struct AnalysisManager
+    lifecycle_lock::ReentrantLock
+    stopping::Base.RefValue{Bool}
+    active_analysis::Base.RefValue{Union{Nothing,AnalysisExecution}}
     cache::AnalysisCache
     pending_analyses::PendingAnalyses
     queue::Channel{Union{Nothing,AnalysisRequest}}
@@ -370,6 +400,9 @@ struct AnalysisManager
     signature_worker_tasks::Vector{Task}
     function AnalysisManager()
         return new(
+            ReentrantLock(),
+            Ref(false),
+            Ref{Union{Nothing,AnalysisExecution}}(nothing),
             AnalysisCache(),
             PendingAnalyses(),
             Channel{Union{Nothing,AnalysisRequest}}(Inf),

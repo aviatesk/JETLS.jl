@@ -248,6 +248,7 @@ function runserver(
             elseif msg isa ShutdownRequest
                 shutdown_requested = true
                 send(server, ShutdownResponse(; id = msg.id, result = null))
+                begin_analysis_shutdown!(server)
             elseif msg isa ExitNotification
                 exit_code = !shutdown_requested
                 break
@@ -291,8 +292,8 @@ function runserver(
     finally
         # The client may close the transport after `exit`; reject output before worker cleanup.
         close(server.endpoint)
-        stop_analysis_worker(server)
-        stop_signature_analysis_workers(server)
+        begin_analysis_shutdown!(server)
+        wait_analysis_workers(server)
         put!(seq_queue, nothing); put!(con_queue, nothing);
         close(seq_queue); close(con_queue);
         waitall((seq_task, con_task))

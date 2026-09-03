@@ -195,6 +195,64 @@ end
 # Analysis workers
 # ================
 
+function begin_analysis_shutdown!(server::Server)
+    manager = server.state.analysis_manager
+    debounced_requests = @lock manager.lifecycle_lock begin
+        if manager.stopping[]
+            Tuple{Timer,Base.Event}[]
+        else
+            manager.stopping[] = true
+            active_execution = manager.active_analysis[]
+            if active_execution !== nothing
+                cancel!(active_execution.shutdown_cancel_flag)
+                rollback_intermediate_analysis_result_locked!(
+                    server.state, active_execution)
+            end
+            store!(manager.debounced) do debounced
+                return empty(debounced), collect(values(debounced))
+            end
+        end
+    end
+    for (timer, completion) in debounced_requests
+        close(timer)
+        notify(completion)
+    end
+    return nothing
+end
+
+is_analysis_stopping(manager::AnalysisManager) =
+    @lock manager.lifecycle_lock manager.stopping[]
+
+is_analysis_cancelled(execution::AnalysisExecution) =
+    is_cancelled(execution.shutdown_cancel_flag)
+
+function begin_analysis_execution!(
+        manager::AnalysisManager, request::AnalysisRequest,
+        prev_result::Union{Nothing,AnalysisResult},
+    )
+    return @lock manager.lifecycle_lock begin
+        if manager.stopping[]
+            nothing
+        else
+            @assert manager.active_analysis[] === nothing
+            execution = AnalysisExecution(request, prev_result, CancelFlag(false))
+            manager.active_analysis[] = execution
+            execution
+        end
+    end
+end
+
+function finish_analysis_execution!(
+        manager::AnalysisManager, execution::AnalysisExecution
+    )
+    @lock manager.lifecycle_lock begin
+        if manager.active_analysis[] === execution
+            manager.active_analysis[] = nothing
+        end
+    end
+    return nothing
+end
+
 function start_signature_analysis_workers!(server::Server)
     manager = server.state.analysis_manager
     worker_tasks = manager.signature_worker_tasks
@@ -225,7 +283,10 @@ function signature_analysis_worker(server::Server)
         was_sticky = task.sticky
         task.sticky = true
         try
-            @tryinvokelatest job(server)
+            execution = signature_analysis_execution(job)
+            if execution === nothing || !is_analysis_cancelled(execution)
+                @tryinvokelatest job(server)
+            end
         finally
             task.sticky = was_sticky
             notify(signature_analysis_completion(job))
@@ -237,9 +298,31 @@ end
 function run_signature_analysis_jobs!(
         server::Server, jobs::Vector{<:AbstractSignatureAnalysisJob}
     )
-    queue = server.state.analysis_manager.signature_queue
-    foreach(job -> put!(queue, job), jobs)
-    foreach(job -> wait(signature_analysis_completion(job)), jobs)
+    isempty(jobs) && return nothing
+    manager = server.state.analysis_manager
+    execution = signature_analysis_execution(first(jobs))
+    @assert all(job -> signature_analysis_execution(job) === execution, jobs)
+
+    accepted = if execution === nothing
+        foreach(job -> put!(manager.signature_queue, job), jobs)
+        true
+    else
+        @lock manager.lifecycle_lock begin
+            if manager.stopping[] || is_analysis_cancelled(execution)
+                cancel!(execution.shutdown_cancel_flag)
+                false
+            else
+                foreach(job -> put!(manager.signature_queue, job), jobs)
+                true
+            end
+        end
+    end
+
+    if accepted
+        foreach(job -> wait(signature_analysis_completion(job)), jobs)
+    else
+        foreach(job -> notify(signature_analysis_completion(job)), jobs)
+    end
     return nothing
 end
 
@@ -284,6 +367,32 @@ function stop_analysis_worker(server::Server)
     task = worker_task[]
     istaskdone(task) || put!(manager.queue, nothing)
     wait(task)
+    return nothing
+end
+
+function wait_analysis_workers(server::Server)
+    begin_analysis_shutdown!(server)
+    manager = server.state.analysis_manager
+
+    worker_task = manager.worker_task
+    if isassigned(worker_task)
+        task = worker_task[]
+        istaskdone(task) || put!(manager.queue, nothing)
+        wait(task)
+    end
+
+    # Low-level callers may have stopped the worker before queueing test work.
+    while isready(manager.queue)
+        request = take!(manager.queue)
+        request === nothing || finish_analysis_request!(manager, request)
+    end
+
+    # Active full analysis may still be waiting for signature-analysis jobs.
+    worker_tasks = manager.signature_worker_tasks
+    for task in worker_tasks
+        istaskdone(task) || put!(manager.signature_queue, nothing)
+    end
+    foreach(wait, worker_tasks)
     return nothing
 end
 
@@ -384,44 +493,65 @@ function schedule_analysis!(
         debounce::Float64 = get_config(server, :full_analysis, :debounce),
     )
     manager = server.state.analysis_manager
+    local cancelled_request::Union{Nothing,AnalysisRequest} = nothing
+    local cancelled_duplicate::Bool = false
 
-    store!(manager.tracked_entries) do entries
-        get(entries, entry, nothing) == uri && return entries, nothing
-        new_entries = copy(entries)
-        new_entries[entry] = uri
-        return new_entries, nothing
-    end
-
-    generation = invalidate ? increment_generation!(manager, entry) : get_generation(manager, entry)
-
-    request = AnalysisRequest(
-        entry, uri, generation, cancellable_token, notify_diagnostics, completion)
-
-    if invalidate && debounce > 0
-        store!(manager.debounced) do debounced
-            if haskey(debounced, request.entry)
-                # Cancel existing timer if any
-                debounce_timer, debounce_completion = debounced[request.entry]
-                close(debounce_timer)
-                @static JETLS_DEV_MODE && @info "Cancelled analysis debounce timer:" entry=progress_title(request.entry) uri generation
-                notify(debounce_completion)
+    accepted = @lock manager.lifecycle_lock begin
+        if manager.stopping[]
+            false
+        else
+            store!(manager.tracked_entries) do entries
+                get(entries, entry, nothing) == uri && return entries, nothing
+                new_entries = copy(entries)
+                new_entries[entry] = uri
+                return new_entries, nothing
             end
-            local new_debounced = copy(debounced)
-            timer = Timer(debounce) do _
-                store!(manager.debounced) do debounced′
-                    local new_debounced′ = copy(debounced′)
-                    delete!(new_debounced′, request.entry)
-                    return new_debounced′, nothing
+
+            generation = invalidate ?
+                increment_generation!(manager, entry) : get_generation(manager, entry)
+            request = AnalysisRequest(
+                entry, uri, generation, cancellable_token, notify_diagnostics, completion)
+
+            if invalidate && debounce > 0
+                store!(manager.debounced) do debounced
+                    if haskey(debounced, request.entry)
+                        # Cancel existing timer if any
+                        debounce_timer, debounce_completion = debounced[request.entry]
+                        close(debounce_timer)
+                        @static JETLS_DEV_MODE && @info "Cancelled analysis debounce timer:" entry=progress_title(request.entry) uri generation
+                        notify(debounce_completion)
+                    end
+                    local new_debounced = copy(debounced)
+                    timer = Timer(debounce) do _
+                        store!(manager.debounced) do debounced′
+                            local new_debounced′ = copy(debounced′)
+                            delete!(new_debounced′, request.entry)
+                            return new_debounced′, nothing
+                        end
+                        queue_request!(server, request)
+                    end
+                    new_debounced[request.entry] = timer, request.completion
+                    return new_debounced, nothing
                 end
-                queue_request!(server, request)
+            else
+                invalidate && cancel_debounced_request!(manager, request)
+                cancelled_request, cancelled_duplicate =
+                    _queue_request_locked!(manager, request)
             end
-            new_debounced[request.entry] = timer, request.completion
-            return new_debounced, nothing
+            true
         end
-    else
-        invalidate && cancel_debounced_request!(manager, request)
-        queue_request!(server, request)
     end
+
+    if !accepted
+        @static JETLS_DEV_MODE && @info "Rejected analysis scheduling during shutdown" entry=progress_title(entry) uri
+        notify(completion)
+    elseif cancelled_request !== nothing
+        if cancelled_duplicate
+            @static JETLS_DEV_MODE && @info "Cancelled duplicated pending analysis request:" entry=progress_title(cancelled_request.entry) uri=cancelled_request.uri generation=cancelled_request.generation
+        end
+        notify(cancelled_request.completion)
+    end
+    return nothing
 end
 
 function cancel_debounced_request!(manager::AnalysisManager, request::AnalysisRequest)
@@ -437,12 +567,20 @@ function cancel_debounced_request!(manager::AnalysisManager, request::AnalysisRe
     end
 end
 
-function queue_request!(server::Server, request::AnalysisRequest)
-    manager = server.state.analysis_manager
+# Admission gate for the full-analysis queue. The caller must hold
+# `manager.lifecycle_lock` so that the stopping check and the queue registration are
+# atomic with the shutdown transition. Returns `(cancelled_request, is_duplicate)`:
+# the caller must notify `cancelled_request.completion` outside the lock, and
+# `is_duplicate` tells whether it was cancelled as a duplicated pending request
+# (as opposed to being rejected by shutdown or supersession; used only for logging).
+function _queue_request_locked!(manager::AnalysisManager, request::AnalysisRequest)
+    if manager.stopping[]
+        @static JETLS_DEV_MODE && @info "Rejected analysis request during shutdown" entry=progress_title(request.entry) uri=request.uri generation=request.generation
+        return request, false
+    end
     if is_superseded_request(manager, request)
         @static JETLS_DEV_MODE && @info "Skipped superseded analysis request before queueing" entry=progress_title(request.entry) uri=request.uri generation=request.generation
-        notify(request.completion)
-        return nothing
+        return request, false
     end
     # Check if already analyzing and handle pending requests.
     # This check must happen here (after debounce) rather than in request_analysis!,
@@ -465,16 +603,31 @@ function queue_request!(server::Server, request::AnalysisRequest)
             return new_analyses, (true, nothing)
         end
     end
+    should_queue && put!(manager.queue, request)
+    return cancelled_request, cancelled_request !== nothing
+end
+
+function queue_request!(server::Server, request::AnalysisRequest)
+    manager = server.state.analysis_manager
+    cancelled_request, cancelled_duplicate = @lock manager.lifecycle_lock begin
+        _queue_request_locked!(manager, request)
+    end
     if cancelled_request !== nothing
-        @static JETLS_DEV_MODE && @info "Cancelled duplicated pending analysis request:" entry=progress_title(cancelled_request.entry) uri=cancelled_request.uri generation=cancelled_request.generation
+        if cancelled_duplicate
+            @static JETLS_DEV_MODE && @info "Cancelled duplicated pending analysis request:" entry=progress_title(cancelled_request.entry) uri=cancelled_request.uri generation=cancelled_request.generation
+        end
         notify(cancelled_request.completion)
     end
-    should_queue && put!(manager.queue, request)
     return nothing
 end
 
 function resolve_analysis_request(server::Server, request::AnalysisRequest)
     manager = server.state.analysis_manager
+
+    if is_analysis_stopping(manager)
+        @static JETLS_DEV_MODE && @info "Skipped queued analysis request during shutdown" entry=progress_title(request.entry) uri=request.uri generation=request.generation
+        @goto next_request
+    end
 
     if is_superseded_request(manager, request)
         @static JETLS_DEV_MODE && @info "Skipped superseded analysis request" entry=progress_title(request.entry) uri=request.uri generation=request.generation
@@ -493,41 +646,80 @@ function resolve_analysis_request(server::Server, request::AnalysisRequest)
         @goto next_request
     end
 
-    execution = AnalysisExecution(request, current_analysis_result(manager, request))
-    prev_result = execution.prev_result
-
-    if has_any_parse_errors(server, execution)
+    prev_result = current_analysis_result(manager, request)
+    if has_any_parse_errors(server, prev_result)
         @static JETLS_DEV_MODE && @info "Requested analysis unit has parse errors" entry=progress_title(request.entry) uri=request.uri generation=get_generation(manager,request.entry)
         @goto next_request
     end
 
-    cancellable_token = request.cancellable_token
-    if cancellable_token !== nothing
-        begin_full_analysis_progress(server, cancellable_token, request.entry, prev_result === nothing)
+    maybe_execution = begin_analysis_execution!(manager, request, prev_result)
+    if maybe_execution === nothing
+        @static JETLS_DEV_MODE && @info "Cancelled analysis before execution during shutdown" entry=progress_title(request.entry) uri=request.uri generation=request.generation
+        @goto next_request
     end
+    execution = maybe_execution::AnalysisExecution
+    progress_started = false
 
+    try
+        cancellable_token = request.cancellable_token
+        if cancellable_token !== nothing
+            begin_full_analysis_progress(
+                server, cancellable_token, request.entry, prev_result === nothing)
+            progress_started = true
+        end
+        execute_active_analysis!(server, execution)
+    finally
+        try
+            try
+                if progress_started
+                    end_full_analysis_progress(
+                        server, request.cancellable_token::CancellableToken)
+                end
+            finally
+                finish_analysis_execution!(manager, execution)
+            end
+        finally
+            finish_analysis_request!(manager, request)
+        end
+    end
+    return nothing
+
+    @label next_request
+
+    finish_analysis_request!(manager, request)
+end
+
+function execute_active_analysis!(server::Server, execution::AnalysisExecution)
+    request = execution.request
+    prev_result = execution.prev_result
+    manager = server.state.analysis_manager
     s = time()
     @static JETLS_DEV_MODE && @info "Executing analysis for:" entry=progress_title(request.entry) uri=request.uri generation=get_generation(manager,request.entry)
-    local cleanup::Bool = local failed::Bool = false
-    analysis_result = try
-        result, cleanup = execute_analysis(server, execution)
-        result
+    outcome = try
+        execute_analysis(server, execution)
     catch err
         @error "Error in `execute_analysis` for " request
         Base.display_error(stderr, err, catch_backtrace())
-        failed = true
+        # Keep any published intermediate result on plain failures so LS features
+        # retain the fresh module context; roll it back only when this analysis
+        # was cancelled by server shutdown.
+        if is_analysis_cancelled(execution)
+            rollback_intermediate_analysis_result!(server.state, execution)
+        end
+        return nothing
     finally
-        if cancellable_token !== nothing
-            end_full_analysis_progress(server, cancellable_token)
-        end
-        if cleanup && prev_result !== nothing
-            cleanup_prev_methods(prev_result)
-        end
         clear_pkg_registry_cache!()
-        failed && @goto next_request
     end
-    @assert !(analysis_result isa Bool)
 
+    if outcome isa CancelledAnalysis
+        @static JETLS_DEV_MODE && @info "Cancelled active analysis during shutdown" entry=progress_title(request.entry) uri=request.uri generation=request.generation
+        rollback_intermediate_analysis_result!(server.state, execution)
+        return nothing
+    end
+
+    completed = outcome::CompletedAnalysis
+    analysis_result = completed.result
+    cleanup_prev_result = completed.cleanup_prev_result
     tm = round(time() - s, digits=2)
     @static JETLS_DEV_MODE && @info "Analysis completed in $tm seconds:" entry=progress_title(request.entry) uri=request.uri generation=get_generation(manager,request.entry)
 
@@ -540,11 +732,19 @@ function resolve_analysis_request(server::Server, request::AnalysisRequest)
         @static JETLS_DEV_MODE && @info "Discarding analysis result for closed editor-managed document" entry=progress_title(request.entry) uri=request.uri
         cleanup_prev_methods(analysis_result)
         cleanup_analysis_entry_state!(manager, request.entry)
-        @goto next_request
+        return nothing
     end
 
-    update_analysis_cache!(server.state, analysis_result)
-    mark_analyzed_generation!(manager, request)
+    if !commit_analysis_result!(server, execution, analysis_result)
+        @static JETLS_DEV_MODE && @info "Discarded completed analysis during shutdown" entry=progress_title(request.entry) uri=request.uri generation=request.generation
+        rollback_intermediate_analysis_result!(server.state, execution)
+        return nothing
+    end
+
+    execution.intermediate_result[] = nothing
+    if cleanup_prev_result && prev_result !== nothing
+        cleanup_prev_methods(prev_result)
+    end
     request.notify_diagnostics && notify_diagnostics!(server)
 
     # Request diagnostic refresh for full-analysis completion.
@@ -555,27 +755,39 @@ function resolve_analysis_request(server::Server, request::AnalysisRequest)
     request_diagnostic_refresh!(server)
     # Also request code lens for references recalculation
     request_codelens_refresh!(server)
+    return nothing
+end
 
-    @label next_request
-
+function finish_analysis_request!(manager::AnalysisManager, request::AnalysisRequest)
     notify(request.completion)
 
     # Check for pending request and re-queue if exist
-    pending_request = store!(manager.pending_analyses) do analyses
-        if haskey(analyses, request.entry)
-            new_analyses = copy(analyses)
-            pending = pop!(new_analyses, request.entry)
-            if pending !== nothing
-                # Re-mark as analyzing before queueing the pending request
-                new_analyses[request.entry] = nothing
+    cancelled_pending_request = @lock manager.lifecycle_lock begin
+        stopping = manager.stopping[]
+        pending_request = store!(manager.pending_analyses) do analyses
+            if haskey(analyses, request.entry)
+                new_analyses = copy(analyses)
+                pending = pop!(new_analyses, request.entry)
+                if pending !== nothing && !stopping
+                    # Re-mark as analyzing before queueing the pending request
+                    new_analyses[request.entry] = nothing
+                end
+                return new_analyses, pending
             end
-            return new_analyses, pending
+            return analyses, nothing
         end
-        return analyses, nothing
+        if pending_request === nothing
+            nothing
+        elseif stopping
+            pending_request
+        else
+            put!(manager.queue, pending_request)
+            nothing
+        end
     end
-    if pending_request !== nothing
-        put!(manager.queue, pending_request)
-    end
+    cancelled_pending_request === nothing ||
+        notify(cancelled_pending_request.completion)
+    return nothing
 end
 
 function increment_generation!(manager::AnalysisManager, @nospecialize entry::AnalysisEntry)
@@ -599,8 +811,10 @@ function is_generation_analyzed(manager::AnalysisManager, request::AnalysisReque
     return analyzed_generation == request.generation
 end
 
-function has_any_parse_errors(server::Server, execution::AnalysisExecution)
-    prev_result = @something execution.prev_result return false
+function has_any_parse_errors(
+        server::Server, prev_result::Union{Nothing,AnalysisResult}
+    )
+    prev_result === nothing && return false
     return any(analyzed_file_uris(prev_result)) do uri::URI
         (; parsed_stream) = @something (isunsaveduri(uri) ?
             get_file_info(server.state, uri) :
@@ -758,6 +972,62 @@ function pop_analysis_info!(manager::AnalysisManager, uri::URI)
     end
 end
 
+function cache_intermediate_analysis_result!(
+        server::Server, execution::AnalysisExecution, analysis_result::AnalysisResult
+    )
+    manager = server.state.analysis_manager
+    return @lock manager.lifecycle_lock begin
+        if (manager.stopping[] || is_analysis_cancelled(execution) ||
+            manager.active_analysis[] !== execution)
+            false
+        else
+            execution.intermediate_result[] = analysis_result
+            update_analysis_cache!(server.state, analysis_result)
+            true
+        end
+    end
+end
+
+function rollback_intermediate_analysis_result!(
+        state::ServerState, execution::AnalysisExecution
+    )
+    manager = state.analysis_manager
+    @lock manager.lifecycle_lock begin
+        rollback_intermediate_analysis_result_locked!(state, execution)
+    end
+    return nothing
+end
+
+function rollback_intermediate_analysis_result_locked!(
+        state::ServerState, execution::AnalysisExecution
+    )
+    intermediate_result = execution.intermediate_result[]
+    intermediate_result === nothing && return nothing
+    prev_result = execution.prev_result
+    prev_uris = prev_result === nothing ? () : analyzed_file_uris(prev_result)
+    reverted_uris = store!(state.analysis_manager.cache) do cache
+        new_cache = copy(cache)
+        reverted = URI[]
+        for uri in analyzed_file_uris(intermediate_result)
+            get(cache, uri, nothing) === intermediate_result || continue
+            if prev_result !== nothing && uri in prev_uris
+                new_cache[uri] = prev_result
+            else
+                delete!(new_cache, uri)
+            end
+            push!(reverted, uri)
+        end
+        return new_cache, reverted
+    end
+    execution.intermediate_result[] = nothing
+    for uri in reverted_uris
+        clear_inferred_context_cache!(state, uri)
+        invalidate_binding_occurrences_cache!(state, uri)
+        invalidate_per_file_diagnostics_cache!(state, uri)
+    end
+    return nothing
+end
+
 function update_analysis_cache!(state::ServerState, analysis_result::AnalysisResult)
     manager = state.analysis_manager
     analyzed_uris = analyzed_file_uris(analysis_result)
@@ -804,20 +1074,42 @@ function mark_analyzed_generation!(manager::AnalysisManager, request::AnalysisRe
     end
 end
 
-function execute_analysis(server::Server, execution::AnalysisExecution)
-    request = execution.request
-    entry = request.entry
+function commit_analysis_result!(
+        server::Server, execution::AnalysisExecution, analysis_result::AnalysisResult
+    )
+    manager = server.state.analysis_manager
+    return @lock manager.lifecycle_lock begin
+        if (manager.stopping[] || is_analysis_cancelled(execution) ||
+            manager.active_analysis[] !== execution)
+            false
+        else
+            update_analysis_cache!(server.state, analysis_result)
+            mark_analyzed_generation!(manager, execution.request)
+            manager.active_analysis[] = nothing
+            true
+        end
+    end
+end
 
+function execute_analysis(server::Server, execution::AnalysisExecution)
+    is_analysis_cancelled(execution) && return CancelledAnalysis()
+    outcome = execute_analysis_impl(server, execution, execution.request.entry)
+    return is_analysis_cancelled(execution) ? CancelledAnalysis() : outcome
+end
+
+function execute_analysis_impl(
+        server::Server, execution::AnalysisExecution, @nospecialize(entry::AnalysisEntry)
+    )
     if entry isa NewAnalysisEntry
         env_path = entry.env_path
         result = if env_path === nothing
-            analyze_package_with_revise(server, request, entry.pkgid)
+            analyze_package_with_revise(server, execution, entry.pkgid)
         else
             activate_with_early_release(env_path) do activation_done::Base.Event
-                analyze_package_with_revise(server, request, entry.pkgid, activation_done)
+                analyze_package_with_revise(server, execution, entry.pkgid, activation_done)
             end::AnalysisResult
         end
-        return result, false
+        return CompletedAnalysis(result, false)
     end
 
     interp, result = if entry isa ScriptAnalysisEntry
@@ -840,7 +1132,7 @@ function execute_analysis(server::Server, execution::AnalysisExecution)
 
     # TODO Request fallback analysis in cases this script was not analyzed by the analysis entry
     # request.uri ∉ analyzed_file_uris(ret)
-    return ret, analysis_result_replaced
+    return CompletedAnalysis(ret, analysis_result_replaced)
 end
 
 function begin_full_analysis_progress(
@@ -1004,6 +1296,7 @@ mutable struct ReviseAnalysisProgress
 end
 
 struct ReviseSignatureAnalysisJob <: AbstractSignatureAnalysisJob
+    execution::AnalysisExecution
     workitem::SigWorkItem
     analyzer::LSAnalyzer
     progress::ReviseAnalysisProgress
@@ -1012,12 +1305,15 @@ struct ReviseSignatureAnalysisJob <: AbstractSignatureAnalysisJob
     n_sigs::Int
     completion::Base.Event
 end
+signature_analysis_execution_impl(job::ReviseSignatureAnalysisJob) = job.execution
 
 function (job::ReviseSignatureAnalysisJob)(server::Server)
-    (; workitem, analyzer, progress, inf_world, cancellable_token, n_sigs) = job
+    (; execution, workitem, analyzer, progress, inf_world,
+        cancellable_token, n_sigs) = job
     siginfo = workitem.siginfo
     try
-        if cancellable_token !== nothing && is_cancelled(cancellable_token.cancel_flag)
+        if (is_analysis_cancelled(execution) ||
+            cancellable_token !== nothing && is_cancelled(cancellable_token.cancel_flag))
             return
         end
         ext = Revise.get_extended_data(siginfo, :JETLS)
@@ -1144,9 +1440,10 @@ function get_lines_in_src(filepath::AbstractString, src::Core.CodeInfo)
 end
 
 function analyze_package_with_revise(
-        server::Server, request::AnalysisRequest, pkgid::Base.PkgId,
+        server::Server, execution::AnalysisExecution, pkgid::Base.PkgId,
         activation_done::Union{Nothing,Base.Event} = nothing
     )
+    request = execution.request
     pkgmod = get(Base.loaded_modules, pkgid, nothing)
     pkgmod = try
         pkgmod === nothing ? Base.require(pkgid)::Module : pkgmod
@@ -1228,10 +1525,11 @@ function analyze_package_with_revise(
     progress = ReviseAnalysisProgress(n_sigs)
     inf_world = CC.get_inference_world(analyzer)
     cancellable_token = request.cancellable_token
+    if (is_analysis_cancelled(execution) ||
+        cancellable_token !== nothing && is_cancelled(cancellable_token.cancel_flag))
+        @goto completed
+    end
     if cancellable_token !== nothing
-        if is_cancelled(cancellable_token.cancel_flag)
-            @goto completed
-        end
         send_progress(server, cancellable_token.token,
             WorkDoneProgressReport(;
                 cancellable = true,
@@ -1243,7 +1541,8 @@ function analyze_package_with_revise(
     jobs = ReviseSignatureAnalysisJob[]
     for workitem in workitems
         push!(jobs, ReviseSignatureAnalysisJob(
-            workitem, analyzer, progress, inf_world, cancellable_token, n_sigs, Base.Event()))
+            execution, workitem, analyzer, progress, inf_world,
+            cancellable_token, n_sigs, Base.Event()))
     end
     run_signature_analysis_jobs!(server, jobs)
 
