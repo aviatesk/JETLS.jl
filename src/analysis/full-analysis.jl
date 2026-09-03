@@ -1356,6 +1356,7 @@ end
 
 struct KnownModule
     mod::Module
+    env_path::Union{Nothing,String}
 end
 
 """
@@ -1374,7 +1375,15 @@ function lookup_analysis_entry(server::Server, uri::URI)
     if result isa OutOfScope
         return result
     elseif result isa KnownModule
-        return NewAnalysisEntry(Base.PkgId(result.mod))
+        pkgid = Base.PkgId(result.mod)
+        env_path = result.env_path
+        if env_path === nothing
+            return NewAnalysisEntry(pkgid)
+        elseif is_env_cached(server, env_path)
+            return NewAnalysisEntry(pkgid, env_path)
+        else
+            return InstantiationRequest(env_path, pkgid, root_path)
+        end
     elseif result isa UserModule
         pkgid = Base.PkgId(Base.UUID(result.pkg_uuid), result.pkg_name)
         if is_env_cached(server, result.env_path)
@@ -1457,7 +1466,12 @@ function do_instantiation(server::Server, uri::URI, ins_request::InstantiationRe
         return ScriptInEnvAnalysisEntry(env_path, uri, isnotebook)
     elseif pkgname isa Base.PkgId
         pkgid = pkgname
-        instantiate_package_environment!(server, env_path, pkgid.name)
+        envpkgname = find_pkg_name(env_path)
+        if envpkgname === nothing
+            ensure_instantiated_if_requested!(server, env_path)
+        else
+            instantiate_package_environment!(server, env_path, envpkgname)
+        end
         return NewAnalysisEntry(pkgid, env_path)
     else
         pkgid, pkgfile = @something(

@@ -79,7 +79,7 @@ function find_analysis_env_path(state::ServerState, uri::URI)
                             path = filepath
                             @info "Full analysis module overridden" module_name=>nameof(mod) path _id=path maxlog=1
                         end
-                        return KnownModule(mod)
+                        return KnownModule(mod, find_env_path(filepath))
                     end
                 end
             end
