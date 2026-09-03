@@ -64,6 +64,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Fixed the "environment has not been instantiated" warning shown when `full_analysis.auto_instantiate` is disabled not appearing for environments without a `Manifest.toml`.
   The warning now also covers environments whose manifest is out of date with respect to `Project.toml`.
 
+- `jetls check` now prints the messages that the language server would show in an editor (e.g. the warning about an uninstantiated environment, or configuration problems) to stderr as log messages instead of silently dropping them.
+  `--quiet` suppresses the info and warning ones, as it does for other log messages.
+
 ## 2026-09-01
 
 - Commit: [`9cebe8b`](https://github.com/aviatesk/JETLS.jl/commit/9cebe8b)
