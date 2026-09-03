@@ -2349,11 +2349,29 @@ end
 # `[diagnostic]` config changes — otherwise the equality check below would still match the
 # client's `previousResultId` and the `request_diagnostic_refresh!` from
 # `handle_lsp_config_change!` would be a no-op.
-function compute_diagnostic_result_id(server::Server, uri::URI)
+const DiagnosticResultIdCache = IdDict{Dict{URI,JET.AnalyzedFileInfo},String}
+
+function compute_diagnostic_result_id(
+        server::Server, uri::URI;
+        result_id_cache::Union{Nothing,DiagnosticResultIdCache} = nothing
+    )
     state = server.state
+    analysis_info = nothing
+    search_uris = if result_id_cache === nothing
+        collect_search_uris(server, uri)
+    else
+        this_uri = get_notebook_uri_for_cell(state, uri, uri)
+        analysis_info = get_analysis_info(state.analysis_manager, this_uri)
+        if analysis_info isa AnalysisResult
+            cached_result_id = get(result_id_cache, analysis_info.analyzed_file_infos, nothing)
+            cached_result_id !== nothing && return cached_result_id
+        end
+        collect_search_uris(this_uri, analysis_info)
+    end
+
     config_hash = hash(get_config(state, :diagnostic))
     file_hash = zero(UInt)
-    for search_uri in collect_search_uris(server, uri)
+    for search_uri in search_uris
         search_fi = @something begin
             get_file_info(state, search_uri)
         end begin
@@ -2361,7 +2379,11 @@ function compute_diagnostic_result_id(server::Server, uri::URI)
         end continue
         file_hash ⊻= hash((search_uri, search_fi.version))
     end
-    return string(hash((file_hash, config_hash)))
+    result_id = string(hash((file_hash, config_hash)))
+    if result_id_cache !== nothing && analysis_info isa AnalysisResult
+        result_id_cache[analysis_info.analyzed_file_infos] = result_id
+    end
+    return result_id
 end
 
 # Computes raw per-file diagnostics for both `textDocument/diagnostic` and
@@ -2408,6 +2430,7 @@ function send_workspace_diagnostics(
     partial_token = msg.params.partialResultToken
     items = WorkspaceDocumentDiagnosticReport[]
     root_path = isdefined(state, :root_path) ? state.root_path : nothing
+    result_id_cache = DiagnosticResultIdCache()
     debuginfo = nothing
     # debuginfo = (; synced = URI[], analyzed = URI[], skipped = URI[], failed = URI[])
     def_used_names_cache = DefUsedNamesCache()
@@ -2428,7 +2451,7 @@ function send_workspace_diagnostics(
             continue
         end
 
-        result_id = compute_diagnostic_result_id(server, uri)
+        result_id = compute_diagnostic_result_id(server, uri; result_id_cache)
         prev_result_id = get(previous_result_ids, uri, nothing)
         if prev_result_id !== nothing && prev_result_id == result_id
             item = WorkspaceUnchangedDocumentDiagnosticReport(;
