@@ -1585,20 +1585,23 @@ function ensure_instantiated!(server::Server, env_path::String)
             It is recommended to fix the problem by referring to the following error""" env_path
             print(stderr, String(take!(io)))
             Base.showerror(stderr, e, catch_backtrace())
-            show_warning_message(server, """
-                Failed to instantiate package environment at $env_path.
-                The package will be analyzed as a script, which may result in incomplete diagnostics.
-                See the language server log for details.
-                It is recommended to fix your package environment setup and restart the language server.""")
+            if !server.state.cli_mode
+                show_warning_message(server, """
+                    Failed to instantiate package environment at $env_path.
+                    The package will be analyzed as a script, which may result in incomplete diagnostics.
+                    See the language server log for details.
+                    It is recommended to fix your package environment setup and restart the language server.""")
+            end
         finally
             clear_pkg_registry_cache!()
         end
     else
+        rerun_hint = server.state.cli_mode ? "re-run `jetls check`" : "restart the language server"
         show_warning_message(server, """
             Package environment at $env_path has not been instantiated or is out of date
             (`full_analysis.auto_instantiate` is disabled).
             The package will be analyzed as a script, which may result in incomplete diagnostics.
-            It is recommended to instantiate your package environment and restart the language server.""")
+            It is recommended to instantiate your package environment and $rerun_hint.""")
     end
 end
 
