@@ -1528,12 +1528,45 @@ function ensure_instantiated_if_requested!(server::Server, env_path::String)
     end
 end
 
+"""
+    instantiation_needs(env_path::String) -> (; resolve::Bool, instantiate::Bool)
+
+Inspect the environment at `env_path` without mutating it. `resolve` is `true` when the
+manifest is missing or `Project.toml` has changed since the manifest was last resolved.
+`instantiate` is `true` when `resolve` is, or when some dependency source or artifact has
+not been downloaded yet.
+"""
+function instantiation_needs(env_path::String)
+    env = Pkg.Types.EnvCache(env_path)
+    resolve = !isfile(env.manifest_file) || Pkg.Operations.is_manifest_current(env) === false
+    instantiate = resolve || !Pkg.Operations.is_instantiated(env)
+    return (; resolve, instantiate)
+end
+
 function ensure_instantiated!(server::Server, env_path::String)
+    needs = try
+        instantiation_needs(env_path)
+    catch e
+        @error "Failed to inspect package environment" env_path
+        Base.showerror(stderr, e, catch_backtrace())
+        (; resolve = true, instantiate = true)
+    finally
+        # HACK This is a terrible hack to reduce Pkg.jl's memory footprint:
+        # This behavior should really be implemented as an environment variable that Pkg.jl understands,
+        # or perhaps this cache itself should be optimized.
+        empty!(Pkg.Registry.REGISTRY_CACHE)
+    end
+    if !needs.instantiate
+        @static JETLS_DEV_MODE && @info "Package environment is already instantiated" env_path
+        return
+    end
     if get_config(server, :full_analysis, :auto_instantiate)
         io = IOBuffer()
         try
-            @static JETLS_DEV_MODE && @info "Resolving package environment" env_path
-            Pkg.resolve(; io)
+            if needs.resolve
+                @static JETLS_DEV_MODE && @info "Resolving package environment" env_path
+                Pkg.resolve(; io)
+            end
             @static JETLS_DEV_MODE && @info "Instantiating package environment" env_path
             Pkg.instantiate(; io)
         catch e
@@ -1550,31 +1583,14 @@ function ensure_instantiated!(server::Server, env_path::String)
                 See the language server log for details.
                 It is recommended to fix your package environment setup and restart the language server.""")
         finally
-            # HACK This is a terrible hack to reduce Pkg.jl's memory footprint:
-            # This behavior should really be implemented as an environment variable that Pkg.jl understands,
-            # or perhaps this cache itself should be optimized.
             empty!(Pkg.Registry.REGISTRY_CACHE)
         end
     else
-        is_instantiated = try
-            Pkg.Operations.is_instantiated(Pkg.Types.EnvCache(env_path))
-        catch e
-            @error "Failed to create cache for package environment" env_path
-            Base.showerror(stderr, e, catch_backtrace())
-            false
-        finally
-            # HACK This is a terrible hack to reduce Pkg.jl's memory footprint:
-            # This behavior should really be implemented as an environment variable that Pkg.jl understands,
-            # or perhaps this cache itself should be optimized.
-            empty!(Pkg.Registry.REGISTRY_CACHE)
-        end
-        if !is_instantiated
-            show_warning_message(server, """
-                Package environment at $env_path has not been instantiated
-                (`full_analysis.auto_instantiate` is disabled).
-                The package will be analyzed as a script, which may result in incomplete diagnostics.
-                It is recommended to instantiate your package environment and restart the language server.""")
-        end
+        show_warning_message(server, """
+            Package environment at $env_path has not been instantiated or is out of date
+            (`full_analysis.auto_instantiate` is disabled).
+            The package will be analyzed as a script, which may result in incomplete diagnostics.
+            It is recommended to instantiate your package environment and restart the language server.""")
     end
 end
 

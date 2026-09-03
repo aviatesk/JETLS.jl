@@ -53,6 +53,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 >
 > Note: Path glob patterns use `/` as the separator on all platforms, including Windows; backslashes are not supported as separators.
 
+### Changed
+
+- `full_analysis.auto_instantiate` no longer runs `Pkg.resolve()` and `Pkg.instantiate()` on environments that are already instantiated.
+  JETLS now inspects the environment first and leaves it untouched when nothing is missing, so opening a project no longer rewrites its `Manifest.toml` (e.g. when it was written by another Julia version).
+  `Pkg.resolve()` is run only when the manifest is missing or `Project.toml` has changed since the manifest was last resolved; otherwise only `Pkg.instantiate()` runs.
+
+### Fixed
+
+- Fixed the "environment has not been instantiated" warning shown when `full_analysis.auto_instantiate` is disabled not appearing for environments without a `Manifest.toml`.
+  The warning now also covers environments whose manifest is out of date with respect to `Project.toml`.
+
 ## 2026-09-01
 
 - Commit: [`9cebe8b`](https://github.com/aviatesk/JETLS.jl/commit/9cebe8b)
