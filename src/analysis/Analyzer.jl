@@ -881,8 +881,7 @@ function transparent_getproperty_slot_id!(
         slot.id ≤ 3 && return slot.id
         slot.id ∈ seen_slots && return nothing
         push!(seen_slots, slot.id)
-        pc_assign = CC.find_dominating_assignment(slot.id, pc, sv)
-        pc_assign === nothing && return nothing
+        pc_assign = @something CC.find_dominating_assignment(slot.id, pc, sv) return nothing
         stmt = sv.src.code[pc_assign]
         if Meta.isexpr(stmt, :(=)) && length(stmt.args) == 2
             lhs, rhs = stmt.args
@@ -1214,7 +1213,8 @@ function report_method_error!(
     if CC.isempty(info.results)
         world = CC.get_inference_world(analyzer)
         atype = info.atype
-        methods = find_ambiguous_methods(atype, CC.method_table(analyzer))
+        mt = CC.method_table(analyzer)
+        methods = find_ambiguous_methods(atype, mt)
         if methods !== nothing
             report = AmbiguousMethodReport(sv, atype, 0, methods)
         elseif kwarg_reported
@@ -1242,7 +1242,8 @@ function report_method_error_for_union_split!(
     for (i, matchinfo) in enumerate(info.split)
         if CC.isempty(matchinfo.results)
             sig_n = matchinfo.atype
-            methods = find_ambiguous_methods(sig_n, CC.method_table(analyzer))
+            mt = CC.method_table(analyzer)
+            methods = find_ambiguous_methods(sig_n, mt)
             if methods === nothing
                 # suppress the raw `Core.kwcall` no-match only for branches whose
                 # positional signature has matching methods, i.e. whose failure the
@@ -1354,8 +1355,8 @@ function find_call_method_matches(
     # than enumerating every applicable method. `findall` returns `nothing` past the limit.
     callsig = CC.argtypes_to_type(Any[ftype; posargtypes])
     callsig === Union{} && return nothing
-    matches = CC.findall(callsig, CC.method_table(analyzer); limit=max_methods)
-    matches === nothing && return nothing
+    mt = CC.method_table(analyzer)
+    matches = @something CC.findall(callsig, mt; limit=max_methods) return nothing
     isempty(matches) && return nothing
     return posargtypes, matches
 end
@@ -1475,12 +1476,11 @@ end
 function keyword_arg_types(m::Method, world::UInt)
     decls = kwarg_decl(m, world)
     isempty(decls) && return nothing
-    bf = Base.bodyfunction(m)
-    bf === nothing && return nothing
+    bf = @something Base.bodyfunction(m) return nothing
     bms = Base._methods(bf, Tuple{Vararg{Any}}, -1, world)
     bms isa Vector || return nothing
     length(bms) == 1 || return nothing
-    bsig = Base.unwrap_unionall((first(bms)::Core.MethodMatch).method.sig)
+    bsig = Base.unwrap_unionall((only(bms)::Core.MethodMatch).method.sig)
     bsig isa DataType || return nothing
     params = bsig.parameters
     length(params) ≥ 1 + length(decls) || return nothing
@@ -1490,7 +1490,7 @@ function keyword_arg_types(m::Method, world::UInt)
         endswith(String(name), "...") && continue # slurp accepts any keyword
         ty = params[1+i]
         ty isa Type || continue
-        push!(kwtypes, name => ty)
+        push!(kwtypes, Pair{Symbol,Any}(name, ty))
     end
     return kwtypes
 end
