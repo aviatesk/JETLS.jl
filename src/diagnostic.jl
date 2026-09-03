@@ -591,6 +591,27 @@ end
 
 toplevel_warning_report_to_uri_impl(report::AbstractFieldReport) = to_valid_uri(report.filepath)
 
+function abstract_ref_field_data(report::AbstractFieldReport, sfi::SavedFileInfo)
+    fieldline = report.fieldline
+    fieldline isa JS.SyntaxNode || return nothing
+    report.ft isa DataType || return nothing
+    report.ft.name === Base.typename(Ref) || return nothing
+
+    field = fieldline
+    if JS.kind(field) === JS.K"const" && JS.numchildren(field) >= 1
+        field = field[1]
+    end
+    JS.kind(field) === JS.K"::" && JS.numchildren(field) >= 2 || return nothing
+    fieldtype_node = field[2]
+    JS.kind(fieldtype_node) === JS.K"curly" || return nothing
+    JS.numchildren(fieldtype_node) == 2 || return nothing
+    ref_name = fieldtype_node[1]
+    JS.kind(ref_name) === JS.K"Identifier" || return nothing
+    ref_name_data = ref_name.data
+    ref_name_data !== nothing && ref_name_data.val === :Ref || return nothing
+    return AbstractRefFieldData(jsobj_to_range(ref_name, sfi))
+end
+
 function toplevel_warning_report_to_diagnostic_impl(report::AbstractFieldReport, sfi::SavedFileInfo, postprocessor::JET.PostProcessor)
     typ_str = postprocessor(sprint(show, report.typ))
     ft_str = postprocessor(sprint(show, report.ft))
@@ -603,7 +624,8 @@ function toplevel_warning_report_to_diagnostic_impl(report::AbstractFieldReport,
         message,
         source = DIAGNOSTIC_SOURCE_SAVE,
         code = TOPLEVEL_ABSTRACT_FIELD_CODE,
-        codeDescription = diagnostic_code_description(TOPLEVEL_ABSTRACT_FIELD_CODE))
+        codeDescription = diagnostic_code_description(TOPLEVEL_ABSTRACT_FIELD_CODE),
+        data = abstract_ref_field_data(report, sfi))
 end
 
 # lowering diagnostic
