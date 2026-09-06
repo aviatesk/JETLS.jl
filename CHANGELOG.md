@@ -55,7 +55,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
-- Added a quick fix for `toplevel/abstract-field` diagnostics on `Ref{T}` fields that replaces `Ref` with `Base.RefValue`.
+- Added a quick fix for [`toplevel/abstract-field`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/toplevel/abstract-field) diagnostics on `Ref{T}` fields that replaces `Ref` with `Base.RefValue`.
 
 ### Changed
 
