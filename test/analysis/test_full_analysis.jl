@@ -366,8 +366,12 @@ end
                     @test isempty(JETLS.load(server.state.analysis_manager.instantiation_prompts))
                     @test isfile(manifest_path) == (mode == JETLS.AUTO_INSTANTIATE_ALWAYS)
 
-                    writereadmsg(ResponseMessage(; id = prompt_request.id,
-                        result = Dict{String,Any}("title" => "Instantiate")); read = 0)
+                    (; raw_res) = writereadmsg(ResponseMessage(;
+                        id = prompt_request.id,
+                        result = Dict{String,Any}("title" => "Instantiate")))
+                    @test raw_res isa ShowMessageNotification
+                    @test raw_res.params.type == MessageType.Info
+                    @test occursin("Your selection was not applied.", raw_res.params.message)
                     @test isfile(manifest_path) == (mode == JETLS.AUTO_INSTANTIATE_ALWAYS)
                 end
             end

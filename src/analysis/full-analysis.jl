@@ -1809,10 +1809,10 @@ function handle_instantiation_prompt_response(
         server::Server, msg::Dict{Symbol,Any}, caller::InstantiationPromptCaller
     )
     env_path = caller.ins_request.env_path
+    result = get(msg, :result, nothing)
     accepted = if handle_response_error(server, msg, "confirm environment instantiation")
         false
     else
-        result = get(msg, :result, nothing)
         result isa Dict && get(result, "title", "") == INSTANTIATE_ACTION_TITLE
     end
     prompts = server.state.analysis_manager.instantiation_prompts
@@ -1838,7 +1838,17 @@ function handle_instantiation_prompt_response(
         end
         send_progress(server, caller.progress_token, WorkDoneProgressEnd(; message))
     end
-    waiters === nothing && return nothing
+    if waiters === nothing
+        if !haskey(msg, :error) && result isa Dict && get(result, "title", nothing) in
+                (INSTANTIATE_ACTION_TITLE, SKIP_INSTANTIATION_ACTION_TITLE)
+            show_info_message(server,
+                """
+                This environment instantiation prompt is no longer active.
+                Your selection was not applied.
+                """)
+        end
+        return nothing
+    end
     replay_pending_analysis_requests!(server, waiters)
 end
 
