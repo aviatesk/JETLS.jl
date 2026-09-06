@@ -277,10 +277,31 @@ function parse_config_from_dict(
     for fname in fieldnames(T)
         sname = String(fname)
         haskey(d, sname) || continue
-        v = parse_config_dict_value(fieldtype(T, fname), d[sname], String[path; sname])
+        v = parse_config_field(T, fname, d[sname], String[path; sname])
         push!(kwargs, fname => v)
     end
     return T(; kwargs...)
+end
+
+function parse_config_field(
+        ::Type{T}, fname::Symbol, @nospecialize(x), path::Vector{String}
+    ) where T<:ConfigSection
+    if T === FullAnalysisConfig && fname === :auto_instantiate
+        return parse_auto_instantiate(x, path)
+    end
+    return parse_config_dict_value(fieldtype(T, fname), x, path)
+end
+
+function parse_auto_instantiate(@nospecialize(x), path::Vector{String})
+    x === nothing && return nothing
+    # `auto_instantiate` used to be a boolean; keep accepting `true`/`false` for
+    # backward compatibility, mapping them to `"always"`/`"never"`.
+    x === true && return AUTO_INSTANTIATE_ALWAYS
+    x === false && return AUTO_INSTANTIATE_NEVER
+    x isa String && x in AUTO_INSTANTIATE_VALUES && return x
+    parse_dict_error(path, string(
+        "expected one of ", join((repr(v) for v in AUTO_INSTANTIATE_VALUES), ", "),
+        " (or `true`/`false`), got ", repr(x)))
 end
 
 # Format an error message rooted at `path` (or unrooted at the top level). Messages
