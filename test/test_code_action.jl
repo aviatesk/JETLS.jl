@@ -514,6 +514,34 @@ end
     end
 end
 
+@testset "abstract Ref field code action" begin
+    _, positions = JETLS.get_text_and_positions("""
+        struct AAA
+            x::│Ref│{Int}
+        end
+        """)
+    ref_name_range = Range(; start = positions[1], var"end" = positions[2])
+    diagnostic = Diagnostic(;
+        range = JETLS.line_range(2),
+        severity = DiagnosticSeverity.Information,
+        message = "`AAA` has abstract field `x::Ref{Int64}`",
+        source = JETLS.DIAGNOSTIC_SOURCE_SAVE,
+        code = JETLS.TOPLEVEL_ABSTRACT_FIELD_CODE,
+        data = AbstractRefFieldData(ref_name_range))
+    uri = filepath2uri(abspath(pkgdir(JETLS), "test", "abstract-ref-field.jl"))
+    code_actions = Union{CodeAction,Command}[]
+    JETLS.abstract_ref_field_code_actions!(code_actions, uri, Diagnostic[diagnostic])
+
+    action = only(code_actions)
+    @test action.title == "Replace `Ref` with `Base.RefValue`"
+    @test action.kind == CodeActionKind.QuickFix
+    @test action.isPreferred === nothing
+    @test only(action.diagnostics) === diagnostic
+    edit = only(action.edit.changes[uri])
+    @test edit.range == ref_name_range
+    @test edit.newText == "Base.RefValue"
+end
+
 function missing_concretization_diagnostic(assignment_file::String)
     return Diagnostic(;
         range = JETLS.line_range(1),

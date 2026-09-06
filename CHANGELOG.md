@@ -19,14 +19,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## Unreleased
 
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
-- Diff: [`8dab3d9...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/8dab3d9...HEAD)
+- Diff: [`9cebe8b...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/9cebe8b...HEAD)
 
 ### Announcement
 
 > [!note]
 > The VSCode extension (`jetls-client`) now lives in its own repository, [aviatesk/jetls-vscode](https://github.com/aviatesk/jetls-vscode).
-> The extension keeps its Marketplace identity (`aviatesk.jetls-client`) and updates continue as usual.
-> Starting with its next release (`v2026.8.29`), the extension manages the JETLS installation automatically: it installs and updates the pinned JETLS release on its own, so VSCode users no longer need to run the installation command below or keep `jetls` up to date manually (still needed if you also use the `jetls` CLI, e.g. `jetls check`).
+> The extension keeps its Marketplace identity ([`aviatesk.jetls-client`](https://marketplace.visualstudio.com/items?itemName=aviatesk.jetls-client)) and updates continue as usual.
+> Since `v2026.8.29`, the extension has managed the JETLS installation automatically: it installs and updates the pinned JETLS release on its own, so VSCode users no longer need to run the installation command below or keep `jetls` up to date manually (still needed if you also use the `jetls` CLI, e.g. `jetls check`).
 > Please report extension-specific problems (installation, startup, extension UI) to [aviatesk/jetls-vscode issues](https://github.com/aviatesk/jetls-vscode/issues);
 > language-feature issues belong here as before.
 
@@ -52,6 +52,44 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > Note that `analysis_overrides` is provided as a temporary workaround and may be removed or changed at any time. A proper fix is being worked on.
 >
 > Note: Path glob patterns use `/` as the separator on all platforms, including Windows; backslashes are not supported as separators.
+
+### Added
+
+- Added a quick fix for [`toplevel/abstract-field`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/toplevel/abstract-field) diagnostics on `Ref{T}` fields that replaces `Ref` with `Base.RefValue`.
+
+### Changed
+
+- [`full_analysis.auto_instantiate`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/full_analysis/auto_instantiate) no longer runs `Pkg.resolve()` and `Pkg.instantiate()` on environments that are already instantiated with an up-to-date manifest.
+  JETLS now inspects the environment first and leaves it untouched when its manifest is up to date and nothing is missing, so opening a project whose `Manifest.toml` was written by a different Julia version no longer rewrites it just to update the recorded `julia_version`.
+  `Pkg.resolve()` is run only when the manifest is missing or out of date; otherwise only `Pkg.instantiate()` runs.
+
+- [`full_analysis.auto_instantiate`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/full_analysis/auto_instantiate) is now a string option taking `"always"`, `"prompt"`, or `"never"`, and its default changed from `true` to `"prompt"`.
+  With `"prompt"`, JETLS asks for confirmation via `window/showMessageRequest` before running `Pkg.resolve()` and `Pkg.instantiate()` on an environment that needs it, once per environment per server session.
+  Alternatively, the environment can be instantiated manually while the prompt is open; after the operation finishes, choosing "Skip" makes JETLS recheck and use the updated environment without running Pkg itself.
+  Choosing "Skip" while the environment is still incomplete analyzes the code with it as is.
+  `"always"` restores the previous behavior of instantiating without asking, and `"never"` only warns.
+  [`jetls check`](https://aviatesk.github.io/JETLS.jl/release/cli-check/) is unaffected: it has no client to ask, so `"prompt"` instantiates like `"always"` there, as the CLI already did before.
+  For backward compatibility, the legacy values `true` and `false` are still accepted at runtime as aliases of `"always"` and `"never"`.
+  Configuration schemas intentionally reject these legacy boolean values to prompt migration to the string form.
+
+- `workspace/diagnostic` now uses less CPU while the workspace is unchanged, especially in clients that poll workspace diagnostics continuously.
+
+### Fixed
+
+- Fixed the "environment has not been instantiated" warning shown when [`full_analysis.auto_instantiate`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/full_analysis/auto_instantiate) is disabled not appearing for environments without a `Manifest.toml`.
+  The warning now also covers environments whose manifest is out of date with respect to `Project.toml`.
+
+- [`jetls check`](https://aviatesk.github.io/JETLS.jl/release/cli-check/) now prints the messages that the language server would show in an editor (e.g. the warning about an uninstantiated environment, or configuration problems) to stderr as log messages instead of silently dropping them.
+  `--quiet` suppresses the info and warning ones, as it does for other log messages.
+
+## 2026-09-01
+
+- Commit: [`9cebe8b`](https://github.com/aviatesk/JETLS.jl/commit/9cebe8b)
+- Diff: [`8dab3d9...9cebe8b`](https://github.com/aviatesk/JETLS.jl/compare/8dab3d9...9cebe8b)
+- Installation:
+  ```bash
+  julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="2026-09-01")'
+  ```
 
 ### Changed
 

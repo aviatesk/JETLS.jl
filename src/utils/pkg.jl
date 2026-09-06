@@ -79,7 +79,7 @@ function find_analysis_env_path(state::ServerState, uri::URI)
                             path = filepath
                             @info "Full analysis module overridden" module_name=>nameof(mod) path _id=path maxlog=1
                         end
-                        return KnownModule(mod)
+                        return KnownModule(mod, find_env_path(filepath))
                     end
                 end
             end
@@ -145,6 +145,14 @@ function parse_project_toml(env_path::AbstractString)
 end
 
 const PKG_ACTIVATION_LOCK = ReentrantLock()
+
+function clear_pkg_registry_cache!()
+    # HACK This is a terrible hack to reduce Pkg.jl's memory footprint.
+    # This behavior should really be implemented as an environment variable that
+    # Pkg.jl understands, or perhaps this cache itself should be optimized.
+    @lock PKG_ACTIVATION_LOCK empty!(Pkg.Registry.REGISTRY_CACHE)
+    return nothing
+end
 
 """
     activate_do(func, env_path::String)

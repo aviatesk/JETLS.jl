@@ -592,4 +592,32 @@ end
     end
 end
 
+@testset "`full_analysis.auto_instantiate` values" begin
+    @test JETLS.get_default_config(:full_analysis, :auto_instantiate) ===
+        (JETLS.JETLS_TEST_MODE ? JETLS.AUTO_INSTANTIATE_ALWAYS : JETLS.AUTO_INSTANTIATE_PROMPT)
+    parse_auto_instantiate(value) = JETLS.parse_config_from_dict(JETLS.JETLSConfig, Dict{String,Any}(
+        "full_analysis" => Dict{String,Any}("auto_instantiate" => value)))
+    for value in JETLS.AUTO_INSTANTIATE_VALUES
+        @test parse_auto_instantiate(value).full_analysis.auto_instantiate === value
+    end
+    # booleans remain accepted as aliases for backward compatibility
+    @test parse_auto_instantiate(true).full_analysis.auto_instantiate === JETLS.AUTO_INSTANTIATE_ALWAYS
+    @test parse_auto_instantiate(false).full_analysis.auto_instantiate === JETLS.AUTO_INSTANTIATE_NEVER
+    @test parse_auto_instantiate(nothing).full_analysis.auto_instantiate === nothing
+    for value in ("yes", 1)
+        err = try
+            parse_auto_instantiate(value)
+            nothing
+        catch e; e; end
+        @test err isa ErrorException
+        @test occursin("Invalid value at `full_analysis.auto_instantiate`", err.msg)
+        @test occursin("expected one of", err.msg)
+    end
+    let manager = JETLS.ConfigManager(JETLS.ConfigManagerData())
+        @test Base.infer_return_type((typeof(manager),)) do manager
+            JETLS.get_config(manager, :full_analysis, :auto_instantiate)
+        end == String
+    end
+end
+
 end # test_config

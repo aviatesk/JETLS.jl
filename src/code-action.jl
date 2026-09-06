@@ -55,6 +55,7 @@ function handle_CodeActionRequest(
         delete_range_code_actions!(code_actions, uri, diagnostics)
         sort_imports_code_actions!(code_actions, uri, diagnostics)
         ambiguous_soft_scope_code_actions!(code_actions, uri, diagnostics)
+        abstract_ref_field_code_actions!(code_actions, uri, diagnostics)
         missing_concretization_code_actions!(code_actions, server, diagnostics)
     end
     if wants_kindless_actions
@@ -209,6 +210,27 @@ function delete_range_code_actions!(
                     uri => TextEdit[TextEdit(;
                         range = data.delete_range,
                         newText = "")]))))
+    end
+    return code_actions
+end
+
+function abstract_ref_field_code_actions!(
+        code_actions::Vector{Union{CodeAction,Command}}, uri::URI,
+        diagnostics::Vector{Diagnostic}
+    )
+    for diagnostic in diagnostics
+        diagnostic.code == TOPLEVEL_ABSTRACT_FIELD_CODE || continue
+        data = diagnostic.data
+        data isa AbstractRefFieldData || continue
+        push!(code_actions, CodeAction(;
+            title = "Replace `Ref` with `Base.RefValue`",
+            kind = CodeActionKind.QuickFix,
+            diagnostics = Diagnostic[diagnostic],
+            edit = WorkspaceEdit(;
+                changes = Dict{URI,Vector{TextEdit}}(
+                    uri => TextEdit[TextEdit(;
+                        range = data.ref_name_range,
+                        newText = "Base.RefValue")]))))
     end
     return code_actions
 end
