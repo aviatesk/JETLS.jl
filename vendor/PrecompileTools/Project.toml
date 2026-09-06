@@ -21,6 +21,4 @@ Preferences = "1"
 test = ["InteractiveUtils", "Pkg", "Test", "UUIDs"]
 
 [sources.Preferences]
-subdir = "vendor/Preferences"
-rev = "4ca61c637ebe89f56fded9b27b49ef242bf08c85"
-url = "https://github.com/aviatesk/JETLS.jl"
+path = "../Preferences"

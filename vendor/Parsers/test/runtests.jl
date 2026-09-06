@@ -2,6 +2,7 @@ using Parsers, Test, Dates
 
 import Parsers: INVALID, OK, SENTINEL, QUOTED, DELIMITED, NEWLINE, EOF, INVALID_QUOTED_FIELD, INVALID_DELIMITER, OVERFLOW, ESCAPED_STRING, SPECIAL_VALUE, INEXACT
 import Aqua
+import Random
 import Serialization
 struct CustomType
     x::String

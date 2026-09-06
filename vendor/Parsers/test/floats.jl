@@ -368,6 +368,200 @@ end
 # discovered from JSON tests
 @test Parsers.tryparse(Float64, "0e+") === nothing
 
+# Mantissas with more than 19 significant digits widen the digit accumulator to
+# UInt128 and then BigInt. These cases exercise each fallback in `_scale`.
+@testset "long mantissa / negative zero" begin
+    oracle(::Type{T}, str) where {T} = setprecision(
+        BigFloat, max(512, 4 * sizeof(str) + 256)) do
+        T(Base.parse(BigFloat, str))
+    end
+
+    function test_float_apis(::Type{T}, str) where {T}
+        expected = oracle(T, str)
+        eof_code = isinf(expected) ? (OK | SPECIAL_VALUE | EOF) : (OK | EOF)
+        delimited_code = isinf(expected) ?
+            (OK | SPECIAL_VALUE | DELIMITED) : (OK | DELIMITED)
+
+        @test Parsers.parse(T, str) === expected
+
+        res = Parsers.xparse2(T, str, 1, sizeof(str))
+        @test res.val === expected
+        @test res.code == eof_code
+        @test res.tlen == sizeof(str)
+
+        res = Parsers.xparse(T, Vector{UInt8}(codeunits(str)))
+        @test res.val === expected
+        @test res.code == eof_code
+        @test res.tlen == sizeof(str)
+
+        res = Parsers.xparse(T, str * ",")
+        @test res.val === expected
+        @test res.code == delimited_code
+        @test res.tlen == sizeof(str) + 1
+        return nothing
+    end
+
+    function terminating_decimal(q::Rational{BigInt})
+        # BigInt is mutable, so copy both fields before reducing the denominator.
+        numerator = BigInt(Base.numerator(q))
+        denominator = BigInt(Base.denominator(q))
+        neg = numerator < 0
+        numerator = abs(numerator)
+        twos = 0
+        fives = 0
+        while iseven(denominator)
+            denominator >>= 1
+            twos += 1
+        end
+        while denominator % 5 == 0
+            denominator ÷= 5
+            fives += 1
+        end
+        @assert denominator == 1
+
+        places = max(twos, fives)
+        scaled = numerator * BigInt(2)^(places - twos) * BigInt(5)^(places - fives)
+        digits = string(scaled)
+        body = if places == 0
+            digits
+        elseif length(digits) <= places
+            "0." * repeat("0", places - length(digits)) * digits
+        else
+            point = length(digits) - places
+            digits[1:point] * "." * digits[point+1:end]
+        end
+        return neg ? "-" * body : body
+    end
+
+    float16_digit_limit_case = "-773185451005006305224330936226383685.195e3"
+    testcases = [
+        # BigInt digits must not be converted back to UInt128 for extreme exponents.
+        ("295574326048237151328925.8099133506971425945276929554326e-440", 0.0, (Float16, Float32, Float64)),
+        ("-645846793726181672171.9101155724413627413656362746354480124e-379", -0.0, (Float16, Float32, Float64)),
+        # A zero scale must not index the power-of-ten table at zero.
+        (float16_digit_limit_case, -7.731854510050064e38, (Float32, Float64)),
+        # The UInt128 product wrapped when it was computed before the bounds check.
+        ("0.72741733550162454424961322208253163690E+61", 7.274173355016246e60, (Float16, Float32, Float64)),
+        ("4503599627370496e23", 4.503599627370496e38, (Float16, Float32, Float64)),
+        # Fixed 256-bit intermediates can double-round longer values.
+        ("100000000000000011102230246251565404236316680908203125000000000000000000000000001e-80", 1.0000000000000002, (Float32, Float64)),
+        # Preserve the sign when a zero takes a non-fast scaling path.
+        ("-0e291", -0.0, (Float16, Float32, Float64)),
+        ("-0e347", -0.0, (Float16, Float32, Float64)),
+        ("-0.0e100", -0.0, (Float16, Float32, Float64)),
+        ("-0e23", -0.0, (Float16, Float32, Float64)),
+        ("-0e-23", -0.0, (Float16, Float32, Float64)),
+    ]
+    for (str, expected64, types) in testcases
+        @test expected64 === oracle(Float64, str)
+        for T in types
+            test_float_apis(T, str)
+        end
+    end
+
+    # Float16 rejects this case before scaling because its 39 significant
+    # digits exceed `maxdigits(Float16) == 29`.
+    @test_throws Parsers.Error Parsers.parse(Float16, float16_digit_limit_case)
+    @test Parsers.invalid(Parsers.xparse2(
+        Float16, float16_digit_limit_case, 1, sizeof(float16_digit_limit_case)).code)
+    @test Parsers.invalid(Parsers.xparse(
+        Float16, Vector{UInt8}(codeunits(float16_digit_limit_case))).code)
+    @test Parsers.invalid(Parsers.xparse(
+        Float16, float16_digit_limit_case * ",").code)
+
+    # Check exact midpoints and one decimal unit on each side. The longest cases
+    # reach each parser's significant-digit limit.
+    midpoint_cases = (
+        (Float16, "1.00048828125", (28,)),
+        (Float32, "1.000000059604644775390625", (100, 153)),
+        (Float64, "1.00000000000000011102230246251565404236316680908203125", (80, 1078)),
+    )
+    for (T, midpoint, fractional_lengths) in midpoint_cases
+        whole, fraction = split(midpoint, '.')
+        midpoint_integer = Base.parse(BigInt, whole * fraction)
+        for fractional_length in fractional_lengths
+            scaled_midpoint = midpoint_integer * BigInt(10)^(fractional_length - length(fraction))
+            for delta in (-1, 0, 1)
+                digits = lpad(string(scaled_midpoint + delta), fractional_length + 1, '0')
+                test_float_apis(T, string(digits[1], '.', digits[2:end]))
+            end
+        end
+    end
+
+    # Exercise the adaptive BigInt precision at the three IEEE rounding edges.
+    @testset "extreme midpoints" begin
+        for T in (Float16, Float32, Float64)
+            rational(x) = Rational{BigInt}(x)
+            zero_midpoint = (rational(zero(T)) + rational(nextfloat(zero(T)))) // 2
+            normal_midpoint =
+                (rational(prevfloat(floatmin(T))) + rational(floatmin(T))) // 2
+            overflow_midpoint = rational(floatmax(T)) +
+                rational(floatmax(T) - prevfloat(floatmax(T))) // 2
+            for midpoint in (zero_midpoint, normal_midpoint, overflow_midpoint)
+                decimal_order = setprecision(BigFloat, 4096) do
+                    value = BigFloat(Base.numerator(midpoint)) /
+                        BigFloat(Base.denominator(midpoint))
+                    floor(Int, log10(value))
+                end
+                unit_exponent = decimal_order - Parsers.maxdigits(T) + 1
+                unit = unit_exponent < 0 ?
+                    1 // BigInt(10)^(-unit_exponent) :
+                    BigInt(10)^unit_exponent // 1
+                for delta in (-1, 0, 1)
+                    test_float_apis(T, terminating_decimal(midpoint + delta * unit))
+                end
+            end
+        end
+    end
+
+    @testset "UInt128 scale boundaries" begin
+        scale_oracle(::Type{T}, v, exp, neg) where {T} = setprecision(BigFloat, 512) do
+            x = BigFloat(v)
+            p = BigFloat(10)^abs(exp)
+            y = exp < 0 ? x / p : x * p
+            T(neg ? -y : y)
+        end
+        for T in (Float16, Float32, Float64)
+            sig = UInt128(Parsers.maxsig(T))
+            for v in (sig - 1, sig, sig + 1),
+                    exp in (-23, -22, 0, 22, 23), neg in (false, true)
+                @test Parsers._scale(T, v, exp, neg) === scale_oracle(T, v, exp, neg)
+            end
+            for exp in (0, 1, 18, 38)
+                p = UInt128(10)^exp
+                largest_exact_product = typemax(UInt128) ÷ p
+                values = exp == 0 ?
+                    (largest_exact_product,) :
+                    (largest_exact_product, largest_exact_product + 1)
+                for v in values, neg in (false, true)
+                    @test Parsers._scale(T, v, exp, neg) === scale_oracle(T, v, exp, neg)
+                end
+            end
+        end
+    end
+
+    function random_decimal(rng, digit_range, exponent_range)
+        digit_count = rand(rng, digit_range)
+        digits = string(
+            rand(rng, '1':'9'), join(rand(rng, '0':'9', digit_count - 1)))
+        point = rand(rng, 0:digit_count)
+        mantissa = point == 0 ?
+            "0." * digits : point == digit_count ?
+            digits : digits[1:point] * "." * digits[point+1:end]
+        return string(
+            rand(rng, ("", "-")), mantissa, "e", rand(rng, exponent_range))
+    end
+
+    # Keep the fixed-seed regression sample, then extend it past 256 bits.
+    rng = Random.MersenneTwister(2024)
+    for _ = 1:300
+        test_float_apis(Float64, random_decimal(rng, 20:60, -400:400))
+    end
+    for _ = 1:100
+        test_float_apis(Float64, random_decimal(rng, 61:300, -500:500))
+    end
+end
+
 @testset "groupmark" begin
     # `parse` is used for parsing inputs with a single value in them,
     # so when delims==groupmarks, we assume what we see are groupmarks

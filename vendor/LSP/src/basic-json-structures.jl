@@ -674,6 +674,11 @@ Structure to capture a description for an error code.
 end
 
 # JETLS specific data structures for `data` field of `Diagnostic`
+struct AbstractRefFieldData
+    ref_name_range::Range
+end
+export AbstractRefFieldData
+
 struct AmbiguousSoftScopeData
     name::String
     indent::String
@@ -719,6 +724,7 @@ end
 export MissingConcretizationData
 
 const DiagnosticData = Union{
+    AbstractRefFieldData,
     AmbiguousSoftScopeData,
     DeleteRangeData,
     UnsortedImportData,
