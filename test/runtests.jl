@@ -28,6 +28,7 @@ end
     end
     @testset "analysis" verbose=true begin
         @testset "full analysis" include("analysis/test_full_analysis.jl")
+        @testset "instantiation progress" include("analysis/test_instantiation_progress.jl")
         @testset "occurrence" include("analysis/test_occurrence_analysis.jl")
         @testset "cfg" include("analysis/test_cfg_analysis.jl")
         @testset "LSAnalyzer" include("analysis/test_Analyzer.jl")

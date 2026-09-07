@@ -134,6 +134,7 @@ using .Interpreter
 
 include("document-synchronization.jl")
 include("notebook.jl")
+include("analysis/instantiation-progress.jl")
 include("analysis/full-analysis.jl")
 include("registration.jl")
 include("apply-edit.jl")
