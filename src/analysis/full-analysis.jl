@@ -1596,23 +1596,26 @@ function should_request_instantiation_progress(server::Server, env_path::String)
          instantiation_decision(server, env_path) === :accepted)
 end
 
-function do_instantiation(server::Server, uri::URI, ins_request::InstantiationRequest)
+function do_instantiation(
+        server::Server, uri::URI, ins_request::InstantiationRequest;
+        progress_io::Union{Nothing,InstantiationProgressIO} = nothing
+    )
     (; env_path, pkgname, filekind, filedir, isnotebook) = ins_request
     if pkgname === nothing
-        ensure_instantiated_if_requested!(server, env_path)
+        ensure_instantiated_if_requested!(server, env_path; progress_io)
         return ScriptInEnvAnalysisEntry(env_path, uri, isnotebook)
     elseif pkgname isa Base.PkgId
         pkgid = pkgname
         envpkgname = find_pkg_name(env_path)
         if envpkgname === nothing
-            ensure_instantiated_if_requested!(server, env_path)
+            ensure_instantiated_if_requested!(server, env_path; progress_io)
         else
-            instantiate_package_environment!(server, env_path, envpkgname)
+            instantiate_package_environment!(server, env_path, envpkgname; progress_io)
         end
         return NewAnalysisEntry(pkgid, env_path)
     else
         pkgid, pkgfile = @something(
-            instantiate_package_environment!(server, env_path, pkgname),
+            instantiate_package_environment!(server, env_path, pkgname; progress_io),
             return ScriptInEnvAnalysisEntry(env_path, uri, isnotebook))
         if filekind === :src
             return PackageSourceAnalysisEntry(env_path, filepath2uri(pkgfile), pkgid)
@@ -1623,13 +1626,16 @@ function do_instantiation(server::Server, uri::URI, ins_request::InstantiationRe
     end
 end
 
-function ensure_instantiated_if_requested!(server::Server, env_path::String)
+function ensure_instantiated_if_requested!(
+        server::Server, env_path::String;
+        progress_io::Union{Nothing,InstantiationProgressIO} = nothing
+    )
     instantiated_envs = server.state.analysis_manager.instantiated_envs
     activate_do(env_path) do
         if haskey(load(instantiated_envs), env_path)
             return
         end
-        ensure_instantiated!(server, env_path)
+        ensure_instantiated!(server, env_path; progress_io)
         store!(instantiated_envs) do cache
             if haskey(cache, env_path)
                 cache, nothing
@@ -1642,14 +1648,17 @@ function ensure_instantiated_if_requested!(server::Server, env_path::String)
     end
 end
 
-function instantiate_package_environment!(server::Server, env_path::String, pkgname::String)
+function instantiate_package_environment!(
+        server::Server, env_path::String, pkgname::String;
+        progress_io::Union{Nothing,InstantiationProgressIO} = nothing
+    )
     instantiated_envs = server.state.analysis_manager.instantiated_envs
     activate_do(env_path) do
         cached = get(load(instantiated_envs), env_path, missing)
         if cached !== missing
             return cached
         end
-        ensure_instantiated!(server, env_path)
+        ensure_instantiated!(server, env_path; progress_io)
         pkgenv = @lock Base.require_lock @something Base.identify_package_env(pkgname) begin
             @warn "Failed to identify package environment" env_path pkgname
             return store!(instantiated_envs) do cache
@@ -1675,7 +1684,10 @@ function instantiate_package_environment!(server::Server, env_path::String, pkgn
     end
 end
 
-function ensure_instantiated!(server::Server, env_path::String)
+function ensure_instantiated!(
+        server::Server, env_path::String;
+        progress_io::Union{Nothing,InstantiationProgressIO} = nothing
+    )
     needs = inspect_instantiation_needs(env_path)
     if !needs.instantiate
         @static JETLS_DEV_MODE && @info "Package environment is already instantiated" env_path
@@ -1693,7 +1705,9 @@ function ensure_instantiated!(server::Server, env_path::String)
     end
     if auto_instantiate == AUTO_INSTANTIATE_ALWAYS
         verbose = server.state.cli_mode || JETLS_DEV_MODE
-        io = IOBuffer()
+        io = @something progress_io IOBuffer()
+        start_time = time_ns()
+        successed = false
         try
             if needs.resolve
                 verbose && @info "Resolving package environment" env_path
@@ -1701,13 +1715,14 @@ function ensure_instantiated!(server::Server, env_path::String)
             end
             verbose && @info "Instantiating package environment" env_path
             Pkg.instantiate(; io)
+            successed = true
         catch e
             @error """Failed to instantiate package environment;
             Unable to instantiate the environment of the target package for analysis,
             so this package will be analyzed as a script instead.
             This may cause various features such as diagnostics to not function properly.
             It is recommended to fix the problem by referring to the following error""" env_path
-            print(stderr, String(take!(io)))
+            println(stderr, String(take!(io)))
             Base.showerror(stderr, e, catch_backtrace())
             if !server.state.cli_mode
                 show_warning_message(server, """
@@ -1717,6 +1732,11 @@ function ensure_instantiated!(server::Server, env_path::String)
                     It is recommended to fix your package environment setup and restart the language server.""")
             end
         finally
+            if successed && verbose
+                elapsed = format_duration((time_ns() - start_time) / 1e9)
+                @info "Package environment instantiation finished" env_path elapsed
+                print(stderr, String(take!(io)))
+            end
             clear_pkg_registry_cache!()
         end
     else
@@ -1858,15 +1878,7 @@ function do_instantiation_with_progress(
         server::Server, uri::URI, ins_request::InstantiationRequest, token::ProgressToken
     )
     message_path = instantiation_message_path(ins_request)
-    send_progress(server, token,
-        WorkDoneProgressBegin(;
-            title = "Instantiating environment",
-            message = message_path,
-            cancellable = false))
-    entry = try
-        do_instantiation(server, uri, ins_request)
-    finally
-        send_progress(server, token, WorkDoneProgressEnd())
+    return with_instantiation_progress(server, token, message_path) do progress_io
+        do_instantiation(server, uri, ins_request; progress_io)
     end
-    return entry
 end

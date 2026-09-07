@@ -197,6 +197,82 @@ end
     end
 end
 
+@testset "do_instantiation_with_progress with offline Pkg" begin
+    offline = Pkg.OFFLINE_MODE[]
+    Pkg.offline(true)
+    try
+        withenv("JULIA_PKG_PRECOMPILE_AUTO" => "0") do
+            @testset "$filekind" for filekind in (:script, :src)
+                pkgname = "TestInstantiationProgress"
+                withpackage(pkgname, "module $pkgname end";
+                    pkg_setup = Returns(nothing)) do pkgpath
+                    env_path = joinpath(pkgpath, "Project.toml")
+                    manifest_path = joinpath(pkgpath, "Manifest.toml")
+                    deps = "\n[deps]\nTest = \"8dfed614-e22c-5e08-85e1-65c5234f0b40\"\n"
+                    if filekind === :script
+                        write(env_path, deps)
+                        script_path = joinpath(pkgpath, "script.jl")
+                        write(script_path, "using Test\n")
+                        uri = filepath2uri(script_path)
+                        request = JETLS.InstantiationRequest(env_path, pkgpath)
+                    else
+                        open(env_path, "a") do io
+                            print(io, deps)
+                        end
+                        uri = filepath2uri(joinpath(pkgpath, "src", "$pkgname.jl"))
+                        request = JETLS.InstantiationRequest(
+                            env_path, pkgname, :src, joinpath(pkgpath, "src"), pkgpath)
+                    end
+                    sent_queue = Channel{Any}(Inf)
+                    server = JETLS.Server(;
+                        callback = JETLS.ServerMessageRecorder(Channel{Any}(Inf), sent_queue))
+                    JETLS.store!(server.state.config_manager) do old_data
+                        lsp_config = JETLS.JETLSConfig(;
+                            full_analysis = JETLS.FullAnalysisConfig(;
+                                auto_instantiate = JETLS.AUTO_INSTANTIATE_ALWAYS))
+                        return JETLS.ConfigManagerData(old_data; lsp_config), nothing
+                    end
+                    token = "pkg-instantiation-$filekind"
+                    @test !isfile(manifest_path)
+                    entry = JETLS.do_instantiation_with_progress(server, uri, request, token)
+                    @test isfile(manifest_path)
+                    @test JETLS.instantiation_needs(env_path) == (; resolve=false, instantiate=false)
+                    @test entry.env_path == env_path
+                    if filekind === :script
+                        @test entry isa JETLS.ScriptInEnvAnalysisEntry
+                        @test entry.uri == uri
+                    else
+                        @test entry isa JETLS.PackageSourceAnalysisEntry
+                        @test entry.pkgfileuri == uri
+                        @test entry.pkgid.name == "TestInstantiationProgress"
+                    end
+                    messages = Any[]
+                    while isready(sent_queue)
+                        push!(messages, take!(sent_queue))
+                    end
+                    @test all(msg -> msg isa ProgressNotification, messages)
+                    @test all(msg -> msg.params.token == token, messages)
+                    @test first(messages).params.value isa WorkDoneProgressBegin
+                    @test last(messages).params.value isa WorkDoneProgressEnd
+                    begin_value = first(messages).params.value
+                    @test begin_value.title == "Instantiating environment"
+                    @test begin_value.message == joinpath("TestInstantiationProgress", "Project.toml")
+                    @test begin_value.cancellable === false
+                    reports = messages[2:end-1]
+                    @test !isempty(reports)
+                    @test all(msg -> msg.params.value isa WorkDoneProgressReport, reports)
+                    @test all(reports) do msg
+                        message = msg.params.value.message
+                        message isa String && !isempty(message)
+                    end
+                end
+            end
+        end
+    finally
+        Pkg.offline(offline)
+    end
+end
+
 @testset "auto_instantiate = \"prompt\"" begin
     settings = Dict{String,Any}(
         "full_analysis" => Dict{String,Any}(
