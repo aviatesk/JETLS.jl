@@ -134,6 +134,7 @@ function cache_file_info!(
     end
 
     invalidate_per_file_caches!(state, uri)
+    mark_workspace_diagnostics_changed!(server)
 
     any_deleted && notify_diagnostics!(server; ensure_cleared=uri)
 

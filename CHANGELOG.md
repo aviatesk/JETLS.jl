@@ -57,6 +57,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Added live Pkg output to progress messages for environment instantiation triggered by [`full_analysis.auto_instantiate`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/full_analysis/auto_instantiate), showing the latest activity while resolving and installing dependencies.
 
+### Changed
+
+- `workspace/diagnostic` now long-polls: when nothing has changed since the client's last pull, the server keeps the request open instead of answering it, and answers as soon as workspace diagnostics may have changed (full-analysis completion, edits, watched-file or configuration changes). Clients that re-pull workspace diagnostics on a fixed interval (Zed, VS Code) no longer make the server rescan the workspace while idle, and diagnostics of unopened files update without waiting for the next poll.
+
+- Pull diagnostics (`textDocument/diagnostic` and `workspace/diagnostic`) are now refreshed as soon as full-analysis has resolved module contexts, before signature analysis finishes, instead of after the whole analysis completes.
+
 ### Fixed
 
 - Fixed a race during background analysis that could cause diagnostics and other language features to use outdated document contents after an edit.
@@ -90,8 +96,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   [`jetls check`](https://aviatesk.github.io/JETLS.jl/release/cli-check/) is unaffected: it has no client to ask, so `"prompt"` instantiates like `"always"` there, as the CLI already did before.
   For backward compatibility, the legacy values `true` and `false` are still accepted at runtime as aliases of `"always"` and `"never"`.
   Configuration schemas intentionally reject these legacy boolean values to prompt migration to the string form.
-
-- `workspace/diagnostic` now uses less CPU while the workspace is unchanged, especially in clients that poll workspace diagnostics continuously.
 
 ### Fixed
 

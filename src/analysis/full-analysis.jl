@@ -575,15 +575,11 @@ function resolve_analysis_request(server::Server, request::AnalysisRequest)
     update_analysis_cache!(server.state, analysis_result)
     mark_analyzed_generation!(manager, request)
     request.notify_diagnostics && notify_diagnostics!(server)
-
-    # Request diagnostic refresh for full-analysis completion.
-    # This ensures that clients using pull diagnostics (textDocument/diagnostic) will
-    # re-request diagnostics now that new module context is available, allowing
-    # lowering/macro-expansion-error and lowering/undef-global-var diagnostics
-    # to be properly reported.
-    request_diagnostic_refresh!(server)
-    # Also request code lens for references recalculation
-    request_codelens_refresh!(server)
+    # Top-level errors can skip signature analysis and its intermediate context refresh.
+    if !execution.context_refreshed
+        request_diagnostic_refresh!(server)
+        request_codelens_refresh!(server)
+    end
 
     @label next_request
 
@@ -841,10 +837,10 @@ function execute_analysis(server::Server, execution::AnalysisExecution)
     if entry isa NewAnalysisEntry
         env_path = entry.env_path
         result = if env_path === nothing
-            analyze_package_with_revise(server, request, entry.pkgid)
+            analyze_package_with_revise(server, execution, entry.pkgid)
         else
             activate_with_early_release(env_path) do activation_done::Base.Event
-                analyze_package_with_revise(server, request, entry.pkgid, activation_done)
+                analyze_package_with_revise(server, execution, entry.pkgid, activation_done)
             end::AnalysisResult
         end
         return result, false
@@ -1174,9 +1170,10 @@ function get_lines_in_src(filepath::AbstractString, src::Core.CodeInfo)
 end
 
 function analyze_package_with_revise(
-        server::Server, request::AnalysisRequest, pkgid::Base.PkgId,
+        server::Server, execution::AnalysisExecution, pkgid::Base.PkgId,
         activation_done::Union{Nothing,Base.Event} = nothing
     )
+    request = execution.request
     pkgmod = get(Base.loaded_modules, pkgid, nothing)
     pkgmod = try
         pkgmod === nothing ? Base.require(pkgid)::Module : pkgmod
@@ -1233,6 +1230,17 @@ function analyze_package_with_revise(
         analyzer = LSAnalyzer(request.entry; report_target_modules, reuse_native_inference)
         newstate = JET.AnalyzerState(JET.AnalyzerState(analyzer); world)
         JET.AbstractAnalyzer(analyzer, newstate)
+    end
+
+    # Module contexts are known at this point, which is all pull diagnostics need, so
+    # expose them before signature analysis, like `cache_intermediate_analysis_result!`.
+    let uri2diagnostics = URI2Diagnostics(uri => Diagnostic[] for uri in keys(analyzed_file_infos))
+        intermediate_result = AnalysisResult(request.entry, uri2diagnostics, analyzer,
+            analyzed_file_infos, pkgmod => pkgmod, world)
+        update_analysis_cache!(server.state, intermediate_result)
+        request_diagnostic_refresh!(server)
+        request_codelens_refresh!(server)
+        execution.context_refreshed = true
     end
 
     # Detect method overwrites
