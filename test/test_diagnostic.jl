@@ -1399,4 +1399,203 @@ end
     end
 end
 
+function wait_for_parked_workspace_diagnostic(
+        state::JETLS.ServerState, id::Union{Int,String}; timeout::Float64 = 10.0
+    )
+    deadline = time() + timeout
+    while time() < deadline
+        parked = @atomic state.workspace_diagnostic_longpoll.parked
+        parked !== nothing && parked.msg.id == id && return parked
+        sleep(0.01)
+    end
+    error("Timed out waiting for workspace/diagnostic request $id to be parked")
+end
+
+function wait_for_no_handled_requests(state::JETLS.ServerState; timeout::Float64 = 10.0)
+    deadline = time() + timeout
+    while time() < deadline
+        isempty(state.currently_handled) && return
+        sleep(0.01)
+    end
+    error("Timed out waiting for `currently_handled` to drain")
+end
+
+@testset "workspace/diagnostic long-polling" begin
+    pkg_code = """
+    module TestWorkspaceDiagnosticLongPoll
+    using Base: sum
+    include("util.jl")
+    end # module TestWorkspaceDiagnosticLongPoll
+    """
+    util_code_initial = ""
+
+    pkg_setup = function ()
+        pkg_dir = dirname(Pkg.project().path)
+        write(normpath(pkg_dir, "src", "util.jl"), util_code_initial)
+    end
+    withpackage("TestWorkspaceDiagnosticLongPoll", pkg_code; pkg_setup) do pkg_path
+        util_uri = filepath2uri(normpath(pkg_path, "src", "util.jl"))
+        main_path = normpath(pkg_path, "src", "TestWorkspaceDiagnosticLongPoll.jl")
+        main_uri = filepath2uri(main_path)
+        stale_uri = filepath2uri(normpath(pkg_path, "src", "gone.jl"))
+        rootUri = filepath2uri(pkg_path)
+        token = "workspace-diagnostic-long-poll"
+        make_request(id, previousResultIds) = WorkspaceDiagnosticRequest(;
+            id,
+            params = WorkspaceDiagnosticParams(;
+                previousResultIds,
+                partialResultToken = token))
+        function partial_items(messages)
+            items = WorkspaceDocumentDiagnosticReport[]
+            for msg in messages
+                msg isa ProgressNotification || continue
+                @test msg.params.token == token
+                append!(items, msg.params.value.items)
+            end
+            return items
+        end
+        find_response(messages) =
+            only(msg for msg in messages if msg isa WorkspaceDiagnosticResponse)
+        has_unused_import(item) =
+            any(d -> d.code == JETLS.LOWERING_UNUSED_IMPORT_CODE, item.items)
+        withserver(; rootUri) do (; server, writemsg, readmsg, writereadmsg, id_counter)
+            longpoll = server.state.workspace_diagnostic_longpoll
+            let (; raw_res) = writereadmsg(
+                    make_DidOpenTextDocumentNotification(util_uri, util_code_initial);
+                    read = 2)
+                @test all(msg -> msg isa PublishDiagnosticsNotification, raw_res)
+            end
+
+            # Initial pull: main.jl streams as a partial result and the stale id is cleared
+            # with an empty report, so the response follows immediately.
+            local main_id::String
+            let id = id_counter[] += 1
+                (; raw_res) = writereadmsg(make_request(id, PreviousResultId[
+                    PreviousResultId(; uri = stale_uri, value = "stale")]); read = 3)
+                items = partial_items(raw_res)
+                main_item = only(item for item in items if item.uri == main_uri)
+                @test main_item isa WorkspaceFullDocumentDiagnosticReport
+                @test has_unused_import(main_item)
+                main_id = main_item.resultId
+                stale_item = only(item for item in items if item.uri == stale_uri)
+                @test stale_item isa WorkspaceFullDocumentDiagnosticReport
+                @test stale_item.resultId === nothing
+                @test isempty(stale_item.items)
+                response = find_response(raw_res)
+                @test response.id == id
+                @test isempty(response.result.items)
+            end
+
+            # Re-pull with the matching id: nothing to report, so the request is parked.
+            let id = id_counter[] += 1
+                writemsg(make_request(id, PreviousResultId[
+                    PreviousResultId(; uri = main_uri, value = main_id)]))
+                parked = wait_for_parked_workspace_diagnostic(server.state, id)
+                @test !JETLS.is_cancelled(parked.cancel_flag)
+                @test haskey(server.state.currently_handled, id)
+
+                # Editing the synchronized sibling resumes it: `sum` is now used, so main.jl
+                # gets a fresh report and the response follows.
+                writemsg(make_DidChangeTextDocumentNotification(
+                    util_uri, "y = sum([1, 2, 3])\n", #=version=#2); check = false)
+                messages = readmsg(; read = 2).raw_msg
+                main_item = only(partial_items(messages))
+                @test main_item isa WorkspaceFullDocumentDiagnosticReport
+                @test main_item.uri == main_uri
+                @test main_item.resultId != main_id
+                @test !has_unused_import(main_item)
+                response = find_response(messages)
+                @test response.id == id
+                @test isempty(response.result.items)
+                main_id = main_item.resultId
+            end
+
+            # A configuration change resumes a parked request as well: with
+            # `diagnostic.all_files` disabled, main.jl is reported with empty items.
+            let id = id_counter[] += 1
+                writemsg(make_request(id, PreviousResultId[
+                    PreviousResultId(; uri = main_uri, value = main_id)]))
+                wait_for_parked_workspace_diagnostic(server.state, id)
+                settings_off = Dict{String,Any}(
+                    "diagnostic" => Dict{String,Any}("all_files" => false))
+                writemsg(DidChangeConfigurationNotification(;
+                    params = DidChangeConfigurationParams(; settings = settings_off));
+                    check = false)
+                messages = readmsg(; read = 4).raw_msg
+                @test count(msg -> msg isa ShowMessageNotification, messages) == 1
+                @test count(msg -> msg isa PublishDiagnosticsNotification, messages) == 1
+                main_item = only(partial_items(messages))
+                @test main_item isa WorkspaceFullDocumentDiagnosticReport
+                @test main_item.uri == main_uri
+                @test main_item.resultId == JETLS.ALL_FILES_DISABLED_RESULT_ID
+                @test isempty(main_item.items)
+                response = find_response(messages)
+                @test response.id == id
+                main_id = main_item.resultId
+            end
+
+            # A second pull arriving while one is parked supersedes it with an empty report,
+            # and `$/cancelRequest` closes a parked request with `RequestCancelled`.
+            let id1 = id_counter[] += 1
+                writemsg(make_request(id1, PreviousResultId[
+                    PreviousResultId(; uri = main_uri, value = main_id)]))
+                wait_for_parked_workspace_diagnostic(server.state, id1)
+                id2 = id_counter[] += 1
+                writemsg(make_request(id2, PreviousResultId[
+                    PreviousResultId(; uri = main_uri, value = main_id)]); check = false)
+                response = readmsg().raw_msg
+                @test response isa WorkspaceDiagnosticResponse
+                @test response.id == id1
+                @test isempty(response.result.items)
+                wait_for_parked_workspace_diagnostic(server.state, id2)
+
+                writemsg(CancelRequestNotification(; params = CancelParams(; id = id2)); check = false)
+                response = readmsg().raw_msg
+                @test response isa WorkspaceDiagnosticResponse
+                @test response.id == id2
+                @test isnothing(response.result)
+                @test response.error isa ResponseError
+                @test response.error.code == ErrorCodes.RequestCancelled
+                @test (@atomic longpoll.parked) === nothing
+                wait_for_no_handled_requests(server.state)
+            end
+        end
+    end
+
+    # A revision bump landing between the revision check and the `parked` store of
+    # `park_workspace_diagnostic_request!` must still leave a wake token in the queue.
+    let server = JETLS.Server()
+        longpoll = server.state.workspace_diagnostic_longpoll
+        msg = WorkspaceDiagnosticRequest(;
+            id = 1,
+            params = WorkspaceDiagnosticParams(;
+                previousResultIds = PreviousResultId[],
+                partialResultToken = "wake-up-token"))
+        @atomic longpoll.current_id = msg.id
+        cancel_flag = JETLS.CancelFlag(false)
+        function drain_wake_tokens!(queue::Channel)
+            woken = false
+            while isready(queue)
+                woken |= take!(queue) isa JETLS.WorkspaceDiagnosticWakeToken
+            end
+            return woken
+        end
+        lost = 0
+        for _ in 1:500
+            @atomic longpoll.parked = nothing
+            drain_wake_tokens!(server.message_queue)
+            request = JETLS.ParkedWorkspaceDiagnosticRequest(msg, cancel_flag, (@atomic longpoll.revision))
+            park = Threads.@spawn JETLS.park_workspace_diagnostic_request!(server, request)
+            mark = Threads.@spawn JETLS.mark_workspace_diagnostics_changed!(server)
+            wait(park); wait(mark)
+            woken = drain_wake_tokens!(server.message_queue)
+            parked = @atomic longpoll.parked
+            if parked !== nothing && parked.revision != (@atomic longpoll.revision) && !woken
+                lost += 1
+            end
+        end
+        @test lost == 0
+    end
+end
+
 end # module test_diagnostics

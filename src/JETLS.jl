@@ -371,6 +371,7 @@ function handler_concurrent_message(server::Server, @nospecialize msg)
             return # Request was already handled, ignore cancellation
         end
         cancel!(get!(()->CancelFlag(true), server.state.currently_handled, msg.params.id))
+        cancel_parked_workspace_diagnostic_request!(server, msg.params.id)
     elseif msg isa WorkDoneProgressCancelNotification
         if msg.params.token in server.state.handled_history
             return # Token was already handled, ignore cancellation
@@ -381,6 +382,10 @@ function handler_concurrent_message(server::Server, @nospecialize msg)
         push!(server.state.handled_history, msg.id) # Add to handled history to prevent dead IDs from accumulating
         # @info "Remaining requests" length(server.state.currently_handled) Base.summarysize(server.state.currently_handled)
         # @info "Handled history" length(server.state.handled_history) Base.summarysize(server.state.handled_history)
+    elseif msg isa WorkspaceDiagnosticParkToken
+        park_workspace_diagnostic_request!(server, msg.request)
+    elseif msg isa WorkspaceDiagnosticWakeToken
+        resume_parked_workspace_diagnostic_request!(server)
     # Handle regular messages concurrently
     elseif msg isa Dict{Symbol,Any} # ResponseMessage or untyped message
         request_caller = let id = get(msg, :id, nothing)
@@ -400,6 +405,7 @@ function handler_concurrent_message(server::Server, @nospecialize msg)
             @warn "[handler_concurrent_message] Unhandled message" msg _id=_id maxlog=1
         end
     elseif isdefined(msg, :id) && (id = msg.id; id isa String || id isa Int)
+        prepare_request_message!(server, msg)
         let cancel_flag = get!(()->CancelFlag(false), server.state.currently_handled, id)
             Threads.@spawn :default @tryinvokelatest handle_request_message(server, msg, cancel_flag)
         end
@@ -460,6 +466,15 @@ function handle_response_message(
         # nothing to do
     else
         error("Unknown request caller type")
+    end
+    nothing
+end
+
+# Runs on the concurrent message worker right before a request is dispatched, for
+# bookkeeping that has to stay serialized with the worker's other state updates.
+function prepare_request_message!(server::Server, @nospecialize(msg))
+    if msg isa WorkspaceDiagnosticRequest
+        begin_workspace_diagnostic_request!(server, msg)
     end
     nothing
 end

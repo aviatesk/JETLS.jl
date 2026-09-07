@@ -81,6 +81,7 @@ function cache_notebook_file_info!(server::Server, notebook_uri::URI, notebook_i
         Base.PersistentDict(cache, notebook_uri => fi), fi
     end
     invalidate_per_file_caches!(state, notebook_uri)
+    mark_workspace_diagnostics_changed!(server)
     return fi
 end
 

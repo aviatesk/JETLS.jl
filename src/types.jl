@@ -339,9 +339,12 @@ the whole run: it is not a live view of the latest analysis cache. This keeps
 intermediate and final results consistent even if the run itself updates the
 cache before completion.
 """
-struct AnalysisExecution
-    request::AnalysisRequest
-    prev_result::Union{Nothing,AnalysisResult}
+mutable struct AnalysisExecution
+    const request::AnalysisRequest
+    const prev_result::Union{Nothing,AnalysisResult}
+    context_refreshed::Bool
+    AnalysisExecution(request::AnalysisRequest, prev_result::Union{Nothing,AnalysisResult}) =
+        new(request, prev_result, false)
 end
 
 abstract type AbstractSignatureAnalysisJob end
@@ -976,6 +979,40 @@ struct HandledToken
     id::MessageId
 end
 
+"""
+    ParkedWorkspaceDiagnosticRequest
+
+A `workspace/diagnostic` request whose last run found nothing to report. Its response
+is withheld (long-polling) until `WorkspaceDiagnosticLongPoll.revision` moves past
+`revision`, at which point the request is re-run with its original parameters.
+"""
+struct ParkedWorkspaceDiagnosticRequest
+    msg::WorkspaceDiagnosticRequest
+    cancel_flag::CancelFlag
+    revision::Int
+end
+
+"""
+    WorkspaceDiagnosticLongPoll
+
+Long-polling state for `workspace/diagnostic`. `revision` is bumped by
+`mark_workspace_diagnostics_changed!` whenever workspace diagnostics may have changed.
+Parking, resumption, cancellation and supersession of `parked` are serialized on the
+concurrent message worker (see `handler_concurrent_message`).
+"""
+mutable struct WorkspaceDiagnosticLongPoll
+    @atomic revision::Int
+    @atomic last_run_time::Float64
+    @atomic parked::Union{Nothing,ParkedWorkspaceDiagnosticRequest}
+    @atomic current_id::Union{Nothing,MessageId}
+    WorkspaceDiagnosticLongPoll() = new(0, 0.0, nothing, nothing)
+end
+
+struct WorkspaceDiagnosticParkToken
+    request::ParkedWorkspaceDiagnosticRequest
+end
+struct WorkspaceDiagnosticWakeToken end
+
 mutable struct ServerState
     const file_cache::FileCache # syntactic analysis cache (synced with `textDocument/didChange`)
     const saved_file_cache::SavedFileCache # syntactic analysis cache (synced with `textDocument/didSave`)
@@ -1002,6 +1039,7 @@ mutable struct ServerState
     const extra_diagnostics::ExtraDiagnostics
     const currently_handled::CurrentlyHandled
     const handled_history::HandledHistory
+    const workspace_diagnostic_longpoll::WorkspaceDiagnosticLongPoll
     const currently_requested::CurrentlyRequested
     const currently_registered::CurrentlyRegistered
     const config_manager::ConfigManager
@@ -1036,6 +1074,7 @@ mutable struct ServerState
             #=extra_diagnostics=# ExtraDiagnostics(),
             #=currently_handled=# CurrentlyHandled(),
             #=handled_history=# HandledHistory(128),
+            #=workspace_diagnostic_longpoll=# WorkspaceDiagnosticLongPoll(),
             #=currently_requested=# CurrentlyRequested(),
             #=currently_registered=# CurrentlyRegistered(),
             #=config_manager=# ConfigManager(),

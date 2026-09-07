@@ -2317,16 +2317,32 @@ end
 
 # workspace/diagnostic
 # ====================
+#
+# Long-polling: a pull that has nothing to report (every file unchanged, nothing to clear)
+# is parked instead of answered. Change points call `mark_workspace_diagnostics_changed!`,
+# which resumes the parked request; it then answers only if something actually changed.
+# Both Zed and VS Code re-pull after every answer (Zed immediately when it has pending
+# edits, otherwise after 2s), so server-driven wakeups replace their fixed-interval polling.
+
+# Workspace scans are spaced by at least this many seconds. Without it every keystroke
+# would rescan through the wake-up path (a bump that turns out to change nothing still
+# costs a full scan), and Zed's immediate re-pull after each answer would do the same
+# through the request path.
+const WORKSPACE_DIAGNOSTIC_MIN_INTERVAL = 1.0
 
 function handle_WorkspaceDiagnosticRequest(
         server::Server, msg::WorkspaceDiagnosticRequest, cancel_flag::CancelFlag
     )
+    longpoll = server.state.workspace_diagnostic_longpoll
+    wait_workspace_diagnostic_interval(longpoll)
+    is_cancelled(cancel_flag) && return send_workspace_diagnostic_cancelled(server, msg.id)
+    revision = @atomic longpoll.revision
     uris_to_search = collect_workspace_uris(server)
     try
         if get_config(server, :diagnostic, :all_files)
-            send_workspace_diagnostics(server, msg, uris_to_search, cancel_flag)
+            send_workspace_diagnostics(server, msg, uris_to_search, cancel_flag, revision)
         else
-            send_empty_workspace_diagnostics(server, msg, uris_to_search, cancel_flag)
+            send_empty_workspace_diagnostics(server, msg, uris_to_search, cancel_flag, revision)
         end
     catch err
         send(server,
@@ -2339,6 +2355,21 @@ function handle_WorkspaceDiagnosticRequest(
                     data = DiagnosticServerCancellationData(; retriggerRequest = true))))
         rethrow(err)
     end
+end
+
+function wait_workspace_diagnostic_interval(longpoll::WorkspaceDiagnosticLongPoll)
+    elapsed = time() - (@atomic longpoll.last_run_time)
+    remaining = WORKSPACE_DIAGNOSTIC_MIN_INTERVAL - elapsed
+    remaining > 0 && sleep(remaining)
+    nothing
+end
+
+function send_workspace_diagnostic_cancelled(server::Server, id::MessageId)
+    return send(server,
+        WorkspaceDiagnosticResponse(;
+            id,
+            result = nothing,
+            error = request_cancelled_error()))
 end
 
 # Derives the `resultId` sent back for `textDocument/diagnostic` and `workspace/diagnostic`.
@@ -2418,28 +2449,103 @@ function postprocess_pull_diagnostics(
     return diagnostics
 end
 
+# Full reports stream as partial results when the client supports them, while unchanged
+# reports only travel in the final response, so a pull that changes nothing sends nothing
+# before it gets parked.
+mutable struct WorkspaceDiagnosticReporter
+    const partial_token::Union{Nothing,ProgressToken}
+    const items::Vector{WorkspaceDocumentDiagnosticReport}
+    changed::Bool
+end
+WorkspaceDiagnosticReporter(partial_token::Union{Nothing,ProgressToken}) =
+    WorkspaceDiagnosticReporter(partial_token, WorkspaceDocumentDiagnosticReport[], false)
+
+function report_unchanged!(
+        reporter::WorkspaceDiagnosticReporter, uri::URI, result_id::String
+    )
+    push!(reporter.items,
+        WorkspaceUnchangedDocumentDiagnosticReport(;
+            uri, version = null, resultId = result_id))
+    nothing
+end
+
+function report_full!(
+        server::Server, reporter::WorkspaceDiagnosticReporter,
+        item::WorkspaceFullDocumentDiagnosticReport
+    )
+    reporter.changed = true
+    partial_token = reporter.partial_token
+    if partial_token === nothing
+        push!(reporter.items, item)
+    else
+        send_partial_result(server, partial_token,
+            WorkspaceDiagnosticReportPartialResult(;
+                items = WorkspaceDocumentDiagnosticReport[item]))
+    end
+    nothing
+end
+
+const empty_diagnostics = Diagnostic[]
+
+# The client holds a result for `uri` but no report can be produced for it anymore
+# (deleted, unreadable, or no longer part of any analysis unit): an empty report without
+# a `resultId` clears its diagnostics and makes the client drop the stale id.
+function report_cleared!(server::Server, reporter::WorkspaceDiagnosticReporter, uri::URI)
+    report_full!(server, reporter,
+        WorkspaceFullDocumentDiagnosticReport(;
+            uri, version = null, items = empty_diagnostics))
+end
+
+function report_stale_results!(
+        server::Server, reporter::WorkspaceDiagnosticReporter,
+        previous_result_ids::Dict{URI,String}, uris_to_search::Set{URI}
+    )
+    state = server.state
+    for uri in keys(previous_result_ids)
+        uri in uris_to_search && continue
+        # Open documents belong to `textDocument/diagnostic`, whose result ids clients may
+        # echo back here; notebook cell ids never originate from this endpoint either.
+        is_synchronized(state, uri) && continue
+        get_notebook_uri_for_cell(state, uri) === nothing || continue
+        report_cleared!(server, reporter, uri)
+    end
+    nothing
+end
+
+function finish_workspace_diagnostics!(
+        server::Server, msg::WorkspaceDiagnosticRequest,
+        reporter::WorkspaceDiagnosticReporter, cancel_flag::CancelFlag, revision::Int
+    )
+    @atomic server.state.workspace_diagnostic_longpoll.last_run_time = time()
+    if reporter.partial_token !== nothing && !reporter.changed
+        enqueue_message!(server, WorkspaceDiagnosticParkToken(
+            ParkedWorkspaceDiagnosticRequest(msg, cancel_flag, revision)))
+        return nothing
+    end
+    return send(server,
+        WorkspaceDiagnosticResponse(;
+            id = msg.id,
+            result = WorkspaceDiagnosticReport(; items = reporter.items)))
+end
+
 function send_workspace_diagnostics(
         server::Server, msg::WorkspaceDiagnosticRequest, uris_to_search::Set{URI},
-        cancel_flag::CancelFlag
+        cancel_flag::CancelFlag, revision::Int
     )
     state = server.state
     previous_result_ids = Dict{URI,String}()
     for prev in msg.params.previousResultIds
         previous_result_ids[prev.uri] = prev.value
     end
-    partial_token = msg.params.partialResultToken
-    items = WorkspaceDocumentDiagnosticReport[]
+    reporter = WorkspaceDiagnosticReporter(msg.params.partialResultToken)
     root_path = isdefined(state, :root_path) ? state.root_path : nothing
     result_id_cache = DiagnosticResultIdCache()
     debuginfo = nothing
     # debuginfo = (; synced = URI[], analyzed = URI[], skipped = URI[], failed = URI[])
     def_used_names_cache = DefUsedNamesCache()
     for uri in uris_to_search
-        is_cancelled(cancel_flag) && return send(server,
-            WorkspaceDiagnosticResponse(;
-                id = msg.id,
-                result = nothing,
-                error = request_cancelled_error()))
+        is_cancelled(cancel_flag) &&
+            return send_workspace_diagnostic_cancelled(server, msg.id)
 
         if is_synchronized(state, uri)
             isnothing(debuginfo) || push!(debuginfo.synced, uri)
@@ -2447,6 +2553,7 @@ function send_workspace_diagnostics(
         end
 
         fi = @something get_unsynced_file_info!(state, uri) begin
+            haskey(previous_result_ids, uri) && report_cleared!(server, reporter, uri)
             isnothing(debuginfo) || push!(debuginfo.failed, uri)
             continue
         end
@@ -2454,99 +2561,148 @@ function send_workspace_diagnostics(
         result_id = compute_diagnostic_result_id(server, uri; result_id_cache)
         prev_result_id = get(previous_result_ids, uri, nothing)
         if prev_result_id !== nothing && prev_result_id == result_id
-            item = WorkspaceUnchangedDocumentDiagnosticReport(;
-                uri,
-                version = null,
-                resultId = result_id)
-            if partial_token !== nothing
-                send_partial_result(server, partial_token,
-                    WorkspaceDiagnosticReportPartialResult(; items = WorkspaceDocumentDiagnosticReport[item]))
-            else
-                push!(items, item)
-            end
+            report_unchanged!(reporter, uri, result_id)
             isnothing(debuginfo) || push!(debuginfo.skipped, uri)
             continue
         end
 
         diagnostics = compute_pull_diagnostics!(def_used_names_cache, server, uri, fi, cancel_flag)
-        is_cancelled(cancel_flag) && return send(server,
-            WorkspaceDiagnosticResponse(;
-                id = msg.id,
-                result = nothing,
-                error = request_cancelled_error()))
+        is_cancelled(cancel_flag) &&
+            return send_workspace_diagnostic_cancelled(server, msg.id)
         diagnostics = postprocess_pull_diagnostics(server, uri, diagnostics, root_path)
 
-        item = WorkspaceFullDocumentDiagnosticReport(;
-            uri,
-            version = null,
-            resultId = result_id,
-            items = diagnostics)
-        if partial_token !== nothing
-            send_partial_result(server, partial_token,
-                WorkspaceDiagnosticReportPartialResult(; items = WorkspaceDocumentDiagnosticReport[item]))
-        else
-            push!(items, item)
-        end
+        report_full!(server, reporter,
+            WorkspaceFullDocumentDiagnosticReport(;
+                uri,
+                version = null,
+                resultId = result_id,
+                items = diagnostics))
         isnothing(debuginfo) || push!(debuginfo.analyzed, uri)
     end
+    report_stale_results!(server, reporter, previous_result_ids, uris_to_search)
 
-    partial_token === nothing ||
-        @assert isempty(items) "The final result should be empty when using partial token"
     if !isnothing(debuginfo)
         debugshow = (x) -> Text(sprint(show, MIME("text/plain"), x; context=:limit=>true))
         @info "workspace/diagnostic" analyzed=debugshow(debuginfo.analyzed) synced=debugshow(debuginfo.synced) skipped=debugshow(debuginfo.skipped) failed=debugshow(debuginfo.failed)
     end
-    return send(server,
-        WorkspaceDiagnosticResponse(;
-            id = msg.id,
-            result = WorkspaceDiagnosticReport(; items)))
+    return finish_workspace_diagnostics!(server, msg, reporter, cancel_flag, revision)
 end
 
 const ALL_FILES_DISABLED_RESULT_ID = "workspace/diagnostic-disabled"
-const empty_diagnostics = Diagnostic[]
 
 function send_empty_workspace_diagnostics(
         server::Server, msg::WorkspaceDiagnosticRequest, uris_to_search::Set{URI},
-        cancel_flag::CancelFlag
+        cancel_flag::CancelFlag, revision::Int
     )
+    state = server.state
     previous_result_ids = Dict{URI,String}()
     for prev in msg.params.previousResultIds
         previous_result_ids[prev.uri] = prev.value
     end
-    partial_token = msg.params.partialResultToken
-    items = WorkspaceDocumentDiagnosticReport[]
+    reporter = WorkspaceDiagnosticReporter(msg.params.partialResultToken)
     for uri in uris_to_search
-        is_cancelled(cancel_flag) && return send(server,
-            WorkspaceDiagnosticResponse(;
-                id = msg.id,
-                result = nothing,
-                error = request_cancelled_error()))
-        is_synchronized(server.state, uri) && continue
+        is_cancelled(cancel_flag) &&
+            return send_workspace_diagnostic_cancelled(server, msg.id)
+        is_synchronized(state, uri) && continue
         if get(previous_result_ids, uri, nothing) == ALL_FILES_DISABLED_RESULT_ID
-            item = WorkspaceUnchangedDocumentDiagnosticReport(;
-                uri,
-                version = null,
-                resultId = ALL_FILES_DISABLED_RESULT_ID)
+            report_unchanged!(reporter, uri, ALL_FILES_DISABLED_RESULT_ID)
         else
-            item = WorkspaceFullDocumentDiagnosticReport(;
-                uri,
-                version = null,
-                resultId = ALL_FILES_DISABLED_RESULT_ID,
-                items = empty_diagnostics)
-        end
-        if partial_token !== nothing
-            send_partial_result(server, partial_token,
-                WorkspaceDiagnosticReportPartialResult(; items = WorkspaceDocumentDiagnosticReport[item]))
-        else
-            push!(items, item)
+            report_full!(server, reporter,
+                WorkspaceFullDocumentDiagnosticReport(;
+                    uri,
+                    version = null,
+                    resultId = ALL_FILES_DISABLED_RESULT_ID,
+                    items = empty_diagnostics))
         end
     end
-    partial_token === nothing ||
-        @assert isempty(items) "The final result should be empty when using partial token"
+    report_stale_results!(server, reporter, previous_result_ids, uris_to_search)
+    return finish_workspace_diagnostics!(server, msg, reporter, cancel_flag, revision)
+end
+
+# Long-polling bookkeeping
+# ------------------------
+#
+# Everything below except `mark_workspace_diagnostics_changed!` runs on the concurrent
+# message worker (`handler_concurrent_message`), which serializes it against
+# `$/cancelRequest` handling and the dispatch of new `workspace/diagnostic` requests.
+
+# Queue the wake token unconditionally: checking `parked` here could miss a revision bump
+# between the park handler's revision check and its store to `parked`. Park and wake
+# handlers run serially on the same concurrent message worker, so a wake queued in that
+# window is handled after the park completes. If a wake is handled before the park,
+# the park handler detects the revision mismatch and re-runs the request instead.
+function mark_workspace_diagnostics_changed!(server::Server)
+    longpoll = server.state.workspace_diagnostic_longpoll
+    @atomic longpoll.revision += 1
+    enqueue_message!(server, WorkspaceDiagnosticWakeToken())
+    nothing
+end
+
+function begin_workspace_diagnostic_request!(
+        server::Server, msg::WorkspaceDiagnosticRequest
+    )
+    close_parked_workspace_diagnostic_request!(server)
+    @atomic server.state.workspace_diagnostic_longpoll.current_id = msg.id
+    nothing
+end
+
+function park_workspace_diagnostic_request!(
+        server::Server, request::ParkedWorkspaceDiagnosticRequest
+    )
+    longpoll = server.state.workspace_diagnostic_longpoll
+    if is_cancelled(request.cancel_flag)
+        send_workspace_diagnostic_cancelled(server, request.msg.id)
+    elseif request.msg.id != (@atomic longpoll.current_id)
+        send_empty_workspace_diagnostic_report(server, request.msg.id)
+    elseif request.revision != (@atomic longpoll.revision)
+        # something changed while this run was computing: re-run instead of parking
+        rerun_workspace_diagnostic_request(server, request)
+    else
+        @atomic longpoll.parked = request
+    end
+    nothing
+end
+
+function resume_parked_workspace_diagnostic_request!(server::Server)
+    longpoll = server.state.workspace_diagnostic_longpoll
+    request = @something (@atomic longpoll.parked) return nothing
+    request.revision == (@atomic longpoll.revision) && return nothing
+    @atomic longpoll.parked = nothing
+    rerun_workspace_diagnostic_request(server, request)
+    nothing
+end
+
+function rerun_workspace_diagnostic_request(
+        server::Server, request::ParkedWorkspaceDiagnosticRequest
+    )
+    Threads.@spawn :default @tryinvokelatest handle_request_message(
+        server, request.msg, request.cancel_flag)
+    nothing
+end
+
+function cancel_parked_workspace_diagnostic_request!(server::Server, id::MessageId)
+    longpoll = server.state.workspace_diagnostic_longpoll
+    request = @something (@atomic longpoll.parked) return nothing
+    request.msg.id == id || return nothing
+    @atomic longpoll.parked = nothing
+    send_workspace_diagnostic_cancelled(server, id)
+    nothing
+end
+
+# A new pull arriving while one is parked (a client that polls without cancelling)
+# supersedes the parked one; an empty report leaves the client's state untouched.
+function close_parked_workspace_diagnostic_request!(server::Server)
+    longpoll = server.state.workspace_diagnostic_longpoll
+    request = @something (@atomic longpoll.parked) return nothing
+    @atomic longpoll.parked = nothing
+    send_empty_workspace_diagnostic_report(server, request.msg.id)
+    nothing
+end
+
+function send_empty_workspace_diagnostic_report(server::Server, id::MessageId)
+    items = WorkspaceDocumentDiagnosticReport[]
     return send(server,
-        WorkspaceDiagnosticResponse(;
-            id = msg.id,
-            result = WorkspaceDiagnosticReport(; items)))
+        WorkspaceDiagnosticResponse(; id, result = WorkspaceDiagnosticReport(; items)))
 end
 
 # workspace/diagnostic/refresh
@@ -2554,13 +2710,13 @@ end
 
 struct DiagnosticRefreshRequestCaller <: RequestCaller end
 
-# This function is currently used to refresh `textDocument/diagnostic`.
-# The LSP specification states that clients receiving `workspace/diagnostic/refresh`
-# should refresh both document and workspace diagnostics, but client implementations
-# vary. As of now (2025-12-19), VSCode refreshes `textDocument/diagnostic` when it
-# receives `workspace/diagnostic/refresh`, but Zed handles this request without
-# refreshing `textDocument/diagnostic`.
+# Resumes a parked `workspace/diagnostic` pull and asks the client to re-pull
+# `textDocument/diagnostic` for its open documents. The refresh request only matters for
+# the latter: VS Code re-pulls open documents and never touches its workspace pull loop,
+# and Zed leaves an in-flight workspace pull open as well (it re-pulls once the server
+# answers), so the parked request has to be resumed on the server side.
 function request_diagnostic_refresh!(server::Server)
+    mark_workspace_diagnostics_changed!(server)
     supports(server, :workspace, :diagnostics, :refreshSupport) || return nothing
     id = String(gensym(:WorkspaceDiagnosticRefreshRequest))
     addrequest!(server, id=>DiagnosticRefreshRequestCaller())
