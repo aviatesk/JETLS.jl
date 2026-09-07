@@ -57,6 +57,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Fixed a race during background analysis that could cause diagnostics and other language features to use outdated document contents after an edit.
 
+- Fixed errors logged when in-flight requests or progress notifications finished during language server shutdown.
+
 ## 2026-09-06
 
 - Commit: [`2b51ac0`](https://github.com/aviatesk/JETLS.jl/commit/2b51ac0)

@@ -220,4 +220,28 @@ end
     end
 end
 
+@testset "completion notifications during shutdown" begin
+    let recorder = JETLS.ServerMessageRecorder(),
+        server = JETLS.Server(; callback = recorder)
+        try
+            response = ResponseMessage(; id = 1, result = null)
+            task = @lock server.message_queue begin
+                # @async and yield run the sender to the blocked put! before queue closure.
+                local task = @async JETLS.send(server, response)
+                yield()
+                @test istaskstarted(task) && !istaskdone(task)
+                @test isready(recorder.sent_queue) && take!(recorder.sent_queue) === response
+                close(server.endpoint)
+                close(server.message_queue)
+                task
+            end
+            @test fetch(task) === nothing
+            @test_nowarn JETLS.send_progress(server, "progress", WorkDoneProgressEnd())
+        finally
+            close(server.endpoint)
+            close(server.message_queue)
+        end
+    end
+end
+
 end # module test_lsp

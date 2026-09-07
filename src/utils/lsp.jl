@@ -179,7 +179,7 @@ end
 function send_progress(server::Server, token::ProgressToken, value::WorkDoneProgressValue)
     send(server, ProgressNotification(; params = ProgressParams(; token, value)))
     if value isa WorkDoneProgressEnd
-        put!(server.message_queue, HandledToken(token))
+        enqueue_message!(server, HandledToken(token))
     end
 end
 

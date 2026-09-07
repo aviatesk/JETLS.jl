@@ -21,9 +21,27 @@ function send(server::Server, @nospecialize msg)
     server.callback !== nothing && server.callback(:sent, msg)
     # Mark request as handled when sending a response
     if isdefined(msg, :id) && isdefined(msg, :result) && isdefined(msg, :error) # i.e. msg isa ResponseMessage
-        put!(server.message_queue, HandledToken(msg.id::MessageId))
+        enqueue_message!(server, HandledToken(msg.id::MessageId))
     end
     nothing
+end
+
+"""
+    enqueue_message!(server::Server, msg) -> Bool
+
+Queue an internal message (e.g. `HandledToken`) for `handler_concurrent_message`.
+Returns `false` if the queue is closed before or during enqueueing, otherwise `true`.
+"""
+function enqueue_message!(server::Server, @nospecialize msg)
+    queue = server.message_queue
+    isopen(queue) || return false
+    try
+        put!(queue, msg)
+    catch err
+        err isa InvalidStateException && !isopen(queue) || rethrow()
+        return false
+    end
+    return true
 end
 
 """
