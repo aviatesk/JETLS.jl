@@ -26,8 +26,10 @@ function load_file_init_options(server::Server, filepath::AbstractString)
     if parsed isa TOML.ParserError
         show_error_message(server,
             "Failed to parse .JETLSConfig.toml file at $filepath: $(sprint(Base.showerror, parsed))")
-        @error "Failed to parse .JETLSConfig.toml file" filepath
-        Base.showerror(stderr, parsed)
+        if !server.state.cli_mode
+            @error "Failed to parse .JETLSConfig.toml file" filepath
+            Base.showerror(stderr, parsed)
+        end
         return nothing
     end
     init_options_dict = get(parsed, "initialization_options", nothing)

@@ -23,7 +23,7 @@ path = "Optional glob pattern to restrict this configuration to specific files (
 
 [FullAnalysisConfig]
 debounce = "Debounce time in seconds before triggering full analysis after a file save. Higher values reduce analysis frequency but may delay diagnostic updates."
-auto_instantiate = "Automatically run `Pkg.resolve()` and `Pkg.instantiate()` for uninstantiated packages (e.g., freshly cloned repos). Creates versioned manifest if needed."
+auto_instantiate = "Controls how JETLS instantiates package environments when dependencies are missing, or when the manifest is missing or out of date (e.g., in freshly cloned repositories). `\"always\"` runs `Pkg.resolve()` and `Pkg.instantiate()` automatically. `\"prompt\"` asks for confirmation first. Alternatively, you can instantiate manually while the prompt is open and then choose `\"Skip\"`; JETLS rechecks the environment before analysis. `\"never\"` only warns. Legacy `true` and `false` settings remain supported at runtime for backward compatibility but are excluded from this schema."
 concretization_patterns = "Additional JET top-level concretization patterns. Each entry requires a Julia expression `pattern` and can use an optional `path` glob to restrict it to specific source files."
 
 [ConcretizationPattern]

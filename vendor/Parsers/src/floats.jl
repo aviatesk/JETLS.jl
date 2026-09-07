@@ -630,12 +630,13 @@ function __scale(::Type{T}, v, exp, neg) where {T}
             return ifelse(neg, -x, x)
         end
     end
-    v == 0 && return zero(T)
+    v == 0 && return ifelse(neg, -zero(T), zero(T))
     if exp > 308 && T != BigFloat
         return T(neg ? -Inf : Inf)
     elseif exp < -326
         # https://github.com/JuliaData/Parsers.jl/issues/83
-        return _scale(T, UInt128(v), exp, neg)
+        # `v` may already be a BigInt (> 38 digits), which can't be converted to UInt128
+        return _scale(T, v isa BigInt ? v : UInt128(v), exp, neg)
     end
     return _scale(T, v, exp, neg)
 end
@@ -704,58 +705,129 @@ function convert_and_apply_neg(::Type{BigFloat}, x::BigFloat, neg)
 end
 
 function _scale(::Type{T}, v::V, exp, neg) where {T, V <: UInt128}
-    if exp == 23
-        # special-case concluded from https://github.com/JuliaLang/julia/issues/38509
-        x = v * V(1e23)
-    elseif 0 <= exp < 290
-        x = v * exp10(exp)
-    elseif exp < -308 || exp > 308 || v > maxsig(T)
-        # if v is too large, we lose precision by just doing
-        # v / exp10(-exp) since that only promotes to Float64
+    # 10^38 is the largest decimal power that fits in UInt128. Apply the scale
+    # as an integer when its product also fits, then convert only once.
+    if 0 <= exp <= 38
+        power = UInt128(10)^Int(exp)
+        if v <= typemax(UInt128) ÷ power
+            x = T(v * power)
+            return ifelse(neg, -x, x)
+        end
+    end
+    if v > maxsig(T) || exp < -22 || exp > 22
+        # if v is too large, or exp10(exp) isn't exactly representable as a Float64,
+        # we lose precision by just doing v * exp10(exp) since that only promotes to Float64
         # so detect and re-route to this branch where we widen v
         y = _widen(v)
         return _scale(T, y, exp, neg)
+    elseif exp >= 0
+        x = v * exp10(exp)
     else
         x = v / exp10(-exp)
     end
     return convert_and_apply_neg(T, x, neg)
 end
 
-const BIGEXP10 = [1 / exp10(BigInt(e)) for e = 309:327]
-const BIGFLOATEXP10 = [exp10(BigFloat(i; precision=256)) for i = 1:308]
+_max_decimal_exponent(::Type{Float16}) = 4
+_max_decimal_exponent(::Type{Float32}) = 38
+_max_decimal_exponent(::Type{Float64}) = 308
+_min_decimal_exponent(::Type{Float16}) = -8
+_min_decimal_exponent(::Type{Float32}) = -46
+_min_decimal_exponent(::Type{Float64}) = -324
+_min_midpoint_exponent(::Type{Float16}) = -25
+_min_midpoint_exponent(::Type{Float32}) = -150
+_min_midpoint_exponent(::Type{Float64}) = -1075
+
+const LOG2_BOUND_DENOMINATOR = 1000
+const LOG2_5_UPPER_NUMERATOR = 2322
+const LOG2_10_UPPER_NUMERATOR = 3322
+const PRODUCT_GUARD_BITS = 2
+const QUOTIENT_GUARD_BITS = 4
+
+const BIGFLOATEXP10 = [
+    exp10(BigFloat(i; precision=BIGFLOAT_FALLBACK_PRECISION)) for i = 1:308
+]
+
+function _scale_workprec(::Type{T}, v::BigInt, exp::Int) where {T}
+    vbits = ndigits(v, base=2)
+    if exp >= 0
+        # 10^exp = 2^exp * 5^exp. The power of two does not use
+        # significand bits. 2.322 is an upper bound for log2(5).
+        power_bits = cld(LOG2_5_UPPER_NUMERATOR * exp, LOG2_BOUND_DENOMINATOR)
+        return vbits + power_bits + PRODUCT_GUARD_BITS
+    end
+
+    power = -exp
+    target_precision = precision(T)
+    # 3.322 is an upper bound for log2(10). Bound the lowest target
+    # midpoint that can affect rounding, including subnormal values.
+    power_bits = cld(LOG2_10_UPPER_NUMERATOR * power, LOG2_BOUND_DENOMINATOR)
+    value_exponent_lower = vbits - 1 - power_bits
+    midpoint_exponent = max(
+        _min_midpoint_exponent(T), value_exponent_lower - target_precision - 1)
+    extra_bits = max(0, -midpoint_exponent - power)
+    return vbits + extra_bits + QUOTIENT_GUARD_BITS
+end
+
+@inline function _certain_extreme(::Type{T}, v::BigInt, exp, neg) where {T}
+    decimal_exponent = ndigits(v) + exp - 1
+    if decimal_exponent > _max_decimal_exponent(T)
+        return T(neg ? -Inf : Inf)
+    elseif decimal_exponent < _min_decimal_exponent(T)
+        return ifelse(neg, -zero(T), zero(T))
+    end
+    return nothing
+end
 
 function _scale(::Type{T}, v::V, exp, neg) where {T, V <: BigInt}
-    x = _get_bigfloats()
+    if exp == 0
+        x = T(v)
+        return ifelse(neg, -x, x)
+    end
 
+    # Avoid constructing an enormous power of ten when the result is certain.
+    if exp < _min_decimal_exponent(T) || exp > _max_decimal_exponent(T)
+        extreme = _certain_extreme(T, v, exp, neg)
+        extreme === nothing || return extreme
+    end
+
+    exp = Int(exp)
+    workprec = _scale_workprec(T, v, exp)
+    use_fixed_precision = workprec <= BIGFLOAT_FALLBACK_PRECISION &&
+        -length(BIGFLOATEXP10) <= exp <= length(BIGFLOATEXP10)
+    # The exponent-only check above skips a digit-count operation on the common
+    # fixed path. Check again when a long mantissa requires adaptive precision.
+    if !use_fixed_precision
+        extreme = _certain_extreme(T, v, exp, neg)
+        extreme === nothing || return extreme
+    end
+    x = use_fixed_precision ? _get_bigfloats() : BigFloat(; precision=workprec)
     ccall((:mpfr_set_z, :libmpfr), Int32,
         (Ref{BigFloat}, Ref{BigInt}, Int32),
         x, v, MPFR.ROUNDING_MODE[])
-    if exp < -308
-        # v * (1 / exp10(-exp))
-        if exp < -327
-            y = 1 / exp10(BigInt(-exp))
+
+    if use_fixed_precision
+        y = @inbounds BIGFLOATEXP10[abs(exp)]
+        if exp < 0
+            ccall((:mpfr_div, :libmpfr), Int32,
+                (Ref{BigFloat}, Ref{BigFloat}, Ref{BigFloat}, Int32),
+                x, x, y, MPFR.ROUNDING_MODE[])
         else
-            y = BIGEXP10[-exp - 308]
+            ccall((:mpfr_mul, :libmpfr), Int32,
+                (Ref{BigFloat}, Ref{BigFloat}, Ref{BigFloat}, Int32),
+                x, x, y, MPFR.ROUNDING_MODE[])
         end
-        ccall((:mpfr_mul, :libmpfr), Int32,
-            (Ref{BigFloat}, Ref{BigFloat}, Ref{BigFloat}, Int32),
-            x, x, y, MPFR.ROUNDING_MODE[])
-    elseif exp < 0
-        # v / exp10(-exp)
-        y = BIGFLOATEXP10[-exp]
-        ccall((:mpfr_div, :libmpfr), Int32,
-            (Ref{BigFloat}, Ref{BigFloat}, Ref{BigFloat}, Int32),
-            x, x, y, MPFR.ROUNDING_MODE[])
     else
-        # v * exp10(V(exp))
-        if exp <= 308
-            y = BIGFLOATEXP10[exp]
+        y = BigInt(10)^abs(exp)
+        if exp < 0
+            ccall((:mpfr_div_z, :libmpfr), Int32,
+                (Ref{BigFloat}, Ref{BigFloat}, Ref{BigInt}, Int32),
+                x, x, y, MPFR.ROUNDING_MODE[])
         else
-            y = exp10(BigFloat(exp; precision=256))
+            ccall((:mpfr_mul_z, :libmpfr), Int32,
+                (Ref{BigFloat}, Ref{BigFloat}, Ref{BigInt}, Int32),
+                x, x, y, MPFR.ROUNDING_MODE[])
         end
-        ccall((:mpfr_mul, :libmpfr), Int32,
-            (Ref{BigFloat}, Ref{BigFloat}, Ref{BigFloat}, Int32),
-            x, x, y, MPFR.ROUNDING_MODE[])
     end
     return convert_and_apply_neg(T, x, neg)
 end

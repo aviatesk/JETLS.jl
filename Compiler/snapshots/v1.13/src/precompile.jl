@@ -58,8 +58,10 @@ function compile_all_tvar_union(methsig)
             tv = tv.ub
         end
 
-        if isa(tv, DataType) && isabstracttype(tv) && !isa(tv, Type)
-            return false  # Any as TypeVar is common and not useful here
+        # Any as TypeVar is common and not useful here to try to analyze further
+        # (matches `jl_is_abstracttype(tv) && !jl_is_type_type(tv)` in the original C code)
+        if isabstracttype(tv) && !isType(tv)
+            return false
         end
 
         env[2*i] = tv
@@ -353,7 +355,9 @@ function compile_and_emit_native(worlds::Vector{UInt},
             f = Core.invoke_in_world(latestworld, getglobal, mod, :__init__)
             # Get module compile setting
             setting = ccall(:jl_get_module_compile, Cint, (Any,), mod)
-            if setting != 0 && setting != 1  # JL_OPTIONS_COMPILE_OFF=0, JL_OPTIONS_COMPILE_MIN=1
+            # When trimming, the entrypoint list is the only thing that keeps `__init__`
+            # alive so keep them regardless of compile option
+            if setting != JL_OPTIONS_COMPILE_OFF && (trim_mode != TRIM_NO || setting != JL_OPTIONS_COMPILE_MIN)
                 tt = Tuple{Core.Typeof(f)}
                 compile_hint(tt)
                 trim_mode == 0x00 || add_entrypoint(tt)
@@ -418,7 +422,7 @@ function compile_and_emit_native(worlds::Vector{UInt},
 
     # Step 4: Perform type inference on tocompile to create codeinfos
     codeinfos = try
-        typeinf_ext_toplevel(tocompile, worlds, trim_mode)
+        typeinf_ext_toplevel(tocompile, worlds, trim_mode, external_linkage)
     catch exc
         # Handle trimming failures
         isa(exc, Core.TrimFailure) || rethrow()

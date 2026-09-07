@@ -197,4 +197,27 @@ end
     @test JETLS.overlap(touch_start, touch_end)
 end
 
+@testset "show_message" begin
+    sent_queue = Channel{Any}(Inf)
+    recorder() = JETLS.ServerMessageRecorder(Channel{Any}(Inf), sent_queue)
+
+    # LSP mode: sent to the client as `window/showMessage`
+    let server = JETLS.Server(; callback = recorder())
+        @test_logs JETLS.show_warning_message(server, "careful")
+        msg = take!(sent_queue)
+        @test msg isa ShowMessageNotification
+        @test msg.params.type == MessageType.Warning
+        @test msg.params.message == "careful"
+        @test isempty(sent_queue)
+    end
+
+    # CLI mode: no client, so the message is logged instead
+    let server = JETLS.Server(; cli_mode = true, callback = recorder())
+        @test_logs (:info, "hello") JETLS.show_info_message(server, "hello")
+        @test_logs (:warn, "careful") JETLS.show_warning_message(server, "careful")
+        @test_logs (:error, "boom") JETLS.show_error_message(server, "boom")
+        @test isempty(sent_queue)
+    end
+end
+
 end # module test_lsp

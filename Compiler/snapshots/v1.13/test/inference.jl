@@ -5076,6 +5076,15 @@ g_max_methods(x) = f_max_methods(x)
 @test only(Base.return_types(g_max_methods, Tuple{Int})) === Int
 @test only(Base.return_types(g_max_methods, Tuple{Any})) === Any
 
+# Test that `Core.TypeName.concrete_only` makes inference give up at call sites with
+# non-concrete argument types while keeping concrete call sites precise
+function f_concrete_only end
+typeof(f_concrete_only).name.concrete_only = true
+f_concrete_only(x) = 1
+g_concrete_only(x) = f_concrete_only(x)
+@test only(Base.return_types(g_concrete_only, Tuple{Int})) === Int
+@test only(Base.return_types(g_concrete_only, Tuple{Integer})) === Any
+
 # Test that a module-wise `@max_methods` works as expected
 module Test43370
 using Test
@@ -6539,7 +6548,7 @@ function tt57873(a::Vector{String}, pref)
     end
     return ret
 end
-let code = Compiler.typeinf_ext_toplevel(Any[Core.svec(Any,Tuple{typeof(tt57873),Vector{String},Tuple{String}})], [Base.get_world_counter()], Base.Compiler.TRIM_NO)
+let code = Compiler.typeinf_ext_toplevel(Any[Core.svec(Any,Tuple{typeof(tt57873),Vector{String},Tuple{String}})], [Base.get_world_counter()], Base.Compiler.TRIM_NO, false)
     @test !isempty(code)
     ## If we were to run trim here, we should fail with:
     #    Verifier error #1: unresolved invoke from statement tt57873(::Vector{String}, ::Tuple{String, String})::Vector{String}
@@ -6610,6 +6619,15 @@ end
 @test Base.infer_return_type() do
     jetls618(1,2,3), jetls618(1,2,3,4)
 end == Tuple{Int,Int}
+
+# `return_type_tfunc` should bail out (rather than crash inference) when the queried
+# signature has no function type to model
+@test Base.infer_return_type() do
+    Compiler.return_type(Tuple{Vararg{Any}})
+end == Type
+@test Base.infer_return_type() do
+    Compiler.return_type(Tuple)
+end == Type
 
 # `return_type_tfunc` must not fold a provisional `Bottom` bestguess from a frame in
 # the currently-active cycle into `Const(Union{})`: the reified bottom cannot be

@@ -53,6 +53,10 @@ function setup_ctx!(ctx::SchemaContext)
         Dict("type" => "string", "pattern" => raw"\S")
     end
 
+    override_field!(ctx, JETLS.FullAnalysisConfig, :auto_instantiate) do _
+        Dict("type" => "string", "enum" => collect(JETLS.AUTO_INSTANTIATE_VALUES))
+    end
+
     override_field!(ctx, JETLS.DiagnosticPattern, :match_by) do _
         Dict("type" => "string", "enum" => ["code", "message"])
     end

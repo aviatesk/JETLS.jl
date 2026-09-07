@@ -125,8 +125,17 @@ function request_cancelled_error(message::AbstractString="Request was cancelled"
         data)
 end
 
-show_message(server::Server, message::AbstractString, type::MessageType.Ty) =
+function show_message(server::Server, message::AbstractString, type::MessageType.Ty)
+    if server.state.cli_mode
+        # `jetls check` has no client to show the message; log it instead, so that `--quiet`
+        # (which disables info and warning logs) applies to it as well.
+        level = type == MessageType.Error ? Base.CoreLogging.Error :
+            type == MessageType.Warning ? Base.CoreLogging.Warn : Base.CoreLogging.Info
+        Base.CoreLogging.@logmsg level message _group=:client_message _file=nothing _line=nothing
+        return nothing
+    end
     send(server, ShowMessageNotification(; params = ShowMessageParams(; type, message)))
+end
 
 """
     show_error_message(server::Server, message::AbstractString)

@@ -11,16 +11,6 @@ function is_tty(io::IO)
     return false
 end
 
-# Progress context that holds mode and io for unified progress handling
-struct ProgressContext{IOTyp<:IO}
-    mode::ProgressMode
-    io::IOTyp
-    function ProgressContext(mode::ProgressMode, io::IOTyp=stderr) where IOTyp<:IO
-        effective_mode = mode == PROGRESS_AUTO ? (is_tty(io) ? PROGRESS_FULL : PROGRESS_SIMPLE) : mode
-        return new{IOTyp}(effective_mode, io)
-    end
-end
-
 # Spinner-based progress (PROGRESS_FULL)
 const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
 const SPINNER_INTERVAL = 0.1
@@ -124,27 +114,54 @@ end
 # Simple line-based progress (PROGRESS_SIMPLE)
 mutable struct SimpleProgress{IOTyp<:IO}
     const io::IOTyp
+    header::String
     last_phase::String
+    line_open::Bool
+    const lock::ReentrantLock
 end
-SimpleProgress(io::IO) = SimpleProgress(io, "")
+SimpleProgress(io::IO) = SimpleProgress(io, "", "", false, ReentrantLock())
+
+function print_simple_header(p::SimpleProgress)
+    printstyled(p.io, p.header; color=:light_cyan)
+    p.line_open = true
+end
 
 function start_simple!(p::SimpleProgress, prefix::AbstractString, name::AbstractString)
-    p.last_phase = ""
-    printstyled(p.io, prefix, " ", name; color=:light_cyan)
+    @lock p.lock begin
+        p.header = string(prefix, " ", name)
+        p.last_phase = ""
+        print_simple_header(p)
+    end
 end
 
 function update_simple!(p::SimpleProgress, phase::AbstractString)
-    if phase != p.last_phase
-        printstyled(p.io, ' ', phase; color=:light_black)
-        p.last_phase = phase
-    else
-        printstyled(p.io, '.'; color=:light_black)
+    @lock p.lock begin
+        p.line_open || print_simple_header(p)
+        if phase != p.last_phase
+            printstyled(p.io, ' ', phase; color=:light_black)
+            p.last_phase = phase
+        else
+            printstyled(p.io, '.'; color=:light_black)
+        end
     end
 end
 
 function stop_simple!(p::SimpleProgress)
-    printstyled(p.io, " done"; color=:light_black)
+    @lock p.lock begin
+        p.line_open || print_simple_header(p)
+        printstyled(p.io, " done"; color=:light_black)
+        println(p.io)
+        p.line_open = false
+    end
+end
+
+# Ends the in-progress line so that other output (e.g. a log record) starts on its own
+# line; the next progress update prints the header again. Callers must hold `p.lock`.
+function interrupt_simple!(p::SimpleProgress)
+    p.line_open || return
     println(p.io)
+    p.line_open = false
+    p.last_phase = ""
 end
 
 struct SimpleProgressToken
@@ -166,24 +183,73 @@ function send_progress(::Server, token::SimpleProgressToken, value::WorkDoneProg
     end
 end
 
+const ActiveProgress{IOTyp} = Union{Nothing,SpinnerProgress{IOTyp},SimpleProgress{IOTyp}}
+
+# Progress context that holds mode and io for unified progress handling. `active` is the
+# progress display currently drawing on `io`, consulted by `ProgressAwareLogger`.
+struct ProgressContext{IOTyp<:IO}
+    mode::ProgressMode
+    io::IOTyp
+    active::Base.RefValue{ActiveProgress{IOTyp}}
+    function ProgressContext(mode::ProgressMode, io::IOTyp=stderr) where IOTyp<:IO
+        effective_mode = mode == PROGRESS_AUTO ? (is_tty(io) ? PROGRESS_FULL : PROGRESS_SIMPLE) : mode
+        return new{IOTyp}(effective_mode, io, Ref{ActiveProgress{IOTyp}}(nothing))
+    end
+end
+
+# Log records share stderr with the progress display, so without coordination they would be
+# appended to the spinner line or the dotted progress line. This logger clears or ends the
+# in-progress line before delegating to the wrapped logger; the display then resumes below.
+struct ProgressAwareLogger{L<:Base.CoreLogging.AbstractLogger,IOTyp<:IO} <: Base.CoreLogging.AbstractLogger
+    parent::L
+    ctx::ProgressContext{IOTyp}
+end
+Base.CoreLogging.min_enabled_level(logger::ProgressAwareLogger) =
+    Base.CoreLogging.min_enabled_level(logger.parent)
+Base.CoreLogging.shouldlog(logger::ProgressAwareLogger, args...) =
+    Base.CoreLogging.shouldlog(logger.parent, args...)
+Base.CoreLogging.catch_exceptions(logger::ProgressAwareLogger) =
+    Base.CoreLogging.catch_exceptions(logger.parent)
+function Base.CoreLogging.handle_message(logger::ProgressAwareLogger, args...; kwargs...)
+    p = logger.ctx.active[]
+    if p isa SpinnerProgress
+        @lock p.lock begin
+            clear_line(p)
+            Base.CoreLogging.handle_message(logger.parent, args...; kwargs...)
+        end
+    elseif p isa SimpleProgress
+        @lock p.lock begin
+            interrupt_simple!(p)
+            Base.CoreLogging.handle_message(logger.parent, args...; kwargs...)
+        end
+    else
+        Base.CoreLogging.handle_message(logger.parent, args...; kwargs...)
+    end
+    return nothing
+end
+
 function with_progress(f::Function, ctx::ProgressContext, prefix::String, name::String)
     if ctx.mode == PROGRESS_FULL
         p = SpinnerProgress(ctx.io)
+        ctx.active[] = p
         start_spinner!(p, "$prefix $name")
         try
             token = SpinnerProgressToken(p)
             return f(CancellableToken(token, DUMMY_CANCEL_FLAG))
         finally
             stop_spinner!(p)
+            ctx.active[] = nothing
         end
     elseif ctx.mode == PROGRESS_SIMPLE
         p = SimpleProgress(ctx.io)
+        ctx.active[] = p
         start_simple!(p, prefix, name)
         try
             token = SimpleProgressToken(p)
             return f(CancellableToken(token, DUMMY_CANCEL_FLAG))
         finally
             stop_simple!(p)
+            ctx.active[] = nothing
         end
     else # PROGRESS_NONE
         return f(nothing)
@@ -314,12 +380,28 @@ function run_check(args::Vector{String})
 
     paths = String[isabspath(p) ? p : joinpath(root_path, p) for p in paths]
 
+    progress_ctx = ProgressContext(progress_mode, stderr)
+    logger = ProgressAwareLogger(Base.CoreLogging.current_logger(), progress_ctx)
+    return let root_path = root_path, paths = paths, skip_analysis = skip_analysis,
+               context_lines = context_lines, exit_severity = exit_severity,
+               show_severity = show_severity
+        Base.CoreLogging.with_logger(logger) do
+            run_check_analysis(root_path, paths, progress_ctx;
+                skip_analysis, context_lines, exit_severity, show_severity)
+        end
+    end
+end
+
+function run_check_analysis(
+        root_path::String, paths::Vector{String}, progress_ctx::ProgressContext;
+        skip_analysis::Bool, context_lines::Int,
+        exit_severity::DiagnosticSeverity.Ty, show_severity::DiagnosticSeverity.Ty
+    )
     server = start_cli_server(root_path)
     if !skip_analysis
         start_signature_analysis_workers!(server)
         start_analysis_worker!(server)
     end
-    progress_ctx = ProgressContext(progress_mode, stderr)
 
     start_time = time()
 
