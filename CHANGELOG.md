@@ -23,16 +23,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Announcement
 
+> [!important]
+> JETLS supports Julia 1.12.2 through 1.13.
+> It does not support Julia 1.12.1 or earlier, nor Julia 1.14+/nightly.
+
 > [!note]
 > The VSCode extension (`jetls-client`) now lives in its own repository, [aviatesk/jetls-vscode](https://github.com/aviatesk/jetls-vscode).
 > The extension keeps its Marketplace identity ([`aviatesk.jetls-client`](https://marketplace.visualstudio.com/items?itemName=aviatesk.jetls-client)) and updates continue as usual.
 > Since `v2026.8.29`, the extension has managed the JETLS installation automatically: it installs and updates the pinned JETLS release on its own, so VSCode users no longer need to run the installation command below or keep `jetls` up to date manually (still needed if you also use the `jetls` CLI, e.g. `jetls check`).
 > Please report extension-specific problems (installation, startup, extension UI) to [aviatesk/jetls-vscode issues](https://github.com/aviatesk/jetls-vscode/issues);
 > language-feature issues belong here as before.
-
-> [!important]
-> JETLS supports Julia 1.12.2 through 1.13.
-> It does not support Julia 1.12.1 or earlier, nor Julia 1.14+/nightly.
 
 > [!warning]
 > JETLS currently has a known memory leak issue where memory usage grows with each re-analysis (https://github.com/aviatesk/JETLS.jl/issues/357).
