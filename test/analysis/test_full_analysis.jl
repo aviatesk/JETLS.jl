@@ -187,8 +187,10 @@ end
         end
         withenv("JULIA_PKG_PRECOMPILE_AUTO" => "0") do
             @test_logs (:info, "Resolving package environment") (:info, "Instantiating package environment") match_mode=:any begin
-                JETLS.activate_do(env_path) do
-                    JETLS.ensure_instantiated!(server, env_path)
+                redirect_stderr(devnull) do
+                    JETLS.activate_do(env_path) do
+                        JETLS.ensure_instantiated!(server, env_path)
+                    end
                 end
             end
         end
