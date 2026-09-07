@@ -904,7 +904,6 @@ struct PropertyCompletionResolverInfo <: AbstractCompletionResolverInfo
 end
 
 # Type aliases for document-synchronization caches using `SWContainer` (sequential-only updates)
-const FileCache = SWContainer{Base.PersistentDict{URI,FileInfo}, SWStats}
 const SavedFileCache = SWContainer{Base.PersistentDict{URI,SavedFileInfo}, SWStats}
 const RejectedTextDocuments = SWContainer{Base.PersistentDict{URI,Nothing}, SWStats}
 const ConfigDocumentCache = SWContainer{Base.PersistentDict{URI,ConfigDocumentInfo}, SWStats}
@@ -918,6 +917,8 @@ const CurrentlyRegistered = CASContainer{Set{Registered}, CASStats}
 const CompletionResolverInfo = CASContainer{Union{Nothing,AbstractCompletionResolverInfo}, CASStats}
 
 # Type aliases for concurrent updates using LWContainer
+# Full-analysis invalidation also replaces FileInfo, outside the document-sync worker.
+const FileCache = LWContainer{Base.PersistentDict{URI,FileInfo}, LWStats}
 const DocumentSymbolCacheData = Base.PersistentDict{URI,Vector{DocumentSymbol}}
 const DocumentSymbolCache = LWContainer{DocumentSymbolCacheData, LWStats}
 const BindingOccurrencesCacheData = Base.PersistentDict{URI,BindingOccurrencesCacheEntry}
