@@ -96,6 +96,20 @@ end
     end
 end
 
+@testset "concretized call reports" begin
+    let analyzer = LSAnalyzer(; report_target_modules=nothing)
+        interp = JET.JETConcreteInterpreter(analyzer)
+        result = JET.analyze_and_report_text!(interp, """
+            struct A{T}
+                x::T
+                A{T}(x) where T = new{T}(x)
+            end
+            """; analyze_from_definitions=true)
+        @test isempty(result.res.toplevel_error_reports)
+        @test isempty(get_reports(result))
+    end
+end
+
 struct Issue392
     property::Int
 end

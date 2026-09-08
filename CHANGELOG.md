@@ -65,6 +65,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- Fixed spurious `FieldError` diagnostics on parametric type definitions with inner constructors in script analysis mode.
+
 - Fixed diagnostics disappearing prematurely during reanalysis.
 
 - Fixed stale diagnostics not being cleared when a file is closed with `diagnostic.all_files=false`.

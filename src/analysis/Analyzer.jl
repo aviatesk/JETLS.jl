@@ -578,6 +578,12 @@ end
 function JET.collect_callee_reports!(analyzer::LSAnalyzer, sv::CC.InferenceState)
     reports = JET.get_report_stash(analyzer)
     if !isempty(reports)
+        if JET.isconcretized(analyzer, sv)
+            # Concrete execution owns diagnostics for this call, but the callee cache
+            # must retain its reports for non-concretized callers.
+            empty!(reports)
+            return nothing
+        end
         vf = JET.get_virtual_frame(sv)
         for report in reports
             offset = scope_offset(report)
