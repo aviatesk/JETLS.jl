@@ -2449,9 +2449,14 @@ function postprocess_pull_diagnostics(
     return diagnostics
 end
 
-# Full reports stream as partial results when the client supports them, while unchanged
-# reports only travel in the final response, so a pull that changes nothing sends nothing
-# before it gets parked.
+# Full reports are streamed as partial results when the client offers a token, so they
+# show up while the scan is still running, and they are repeated in the final response.
+# The repetition matters: Zed clears the request token as soon as the response arrives
+# and drops partial results it processes afterwards, which would leave it with stale
+# result ids and make it re-pull until they converge one file per answer. The spec allows
+# reporting the same URI more than once, with the last report winning. Unchanged reports
+# only travel in the final response, so a pull that changes nothing sends nothing before
+# it gets parked.
 mutable struct WorkspaceDiagnosticReporter
     const partial_token::Union{Nothing,ProgressToken}
     const items::Vector{WorkspaceDocumentDiagnosticReport}
@@ -2474,10 +2479,9 @@ function report_full!(
         item::WorkspaceFullDocumentDiagnosticReport
     )
     reporter.changed = true
+    push!(reporter.items, item)
     partial_token = reporter.partial_token
-    if partial_token === nothing
-        push!(reporter.items, item)
-    else
+    if partial_token !== nothing
         send_partial_result(server, partial_token,
             WorkspaceDiagnosticReportPartialResult(;
                 items = WorkspaceDocumentDiagnosticReport[item]))
@@ -2494,6 +2498,7 @@ function report_cleared!(server::Server, reporter::WorkspaceDiagnosticReporter, 
     report_full!(server, reporter,
         WorkspaceFullDocumentDiagnosticReport(;
             uri, version = null, items = empty_diagnostics))
+    nothing
 end
 
 function report_stale_results!(
