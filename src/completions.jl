@@ -303,6 +303,7 @@ function global_completions!(
 
     prev_token = token_before_offset(fi, pos)
     prev_kind = isnothing(prev_token) ? nothing : JS.kind(prev_token)
+    is_macro_invoke = false
 
     # Case: `@│`
     if prev_kind === JS.K"@"
@@ -311,7 +312,6 @@ function global_completions!(
     # Case `│` (empty program)
     elseif isnothing(prev_token)
         edit_start_pos = Position(; line=0, character=0)
-        is_macro_invoke = false
     elseif JS.is_identifier(prev_kind)
         pprev_token = prev_tok(prev_token)
         if !isnothing(pprev_token) && JS.kind(pprev_token) === JS.K"@"
@@ -320,14 +320,12 @@ function global_completions!(
             is_macro_invoke = true
         else
             edit_start_pos = offset_to_xy(fi, JS.first_byte(prev_token))
-            is_macro_invoke = false
         end
     else
         # When completion is triggered within unknown scope (e.g., comment),
         # it's difficult to properly specify `edit_start_pos`.
         # Simply specify only the `label` and let the client handle it appropriately.
         edit_start_pos = nothing
-        is_macro_invoke = false
     end
 
     # if we are in macro name context, then we don't need the local completions
@@ -390,7 +388,7 @@ function global_completions!(
         end
 
         resolveName = newText = label = s
-        detail = filterText = nothing
+        kind = detail = filterText = nothing
         insertTextFormat = InsertTextFormat.PlainText
         if startswith_at
             if endswith(s, "_str")
@@ -408,6 +406,7 @@ function global_completions!(
             else
                 detail = "[macro]"
             end
+            kind = CompletionItemKind.Function
         end
         if name in prioritized_names
             sortText = max_sort_text1
@@ -430,6 +429,7 @@ function global_completions!(
         items[s] = CompletionItem(;
             label,
             labelDetails,
+            kind,
             detail,
             sortText,
             filterText,
@@ -1047,9 +1047,7 @@ function resolve_global_completion_item(
     name = Symbol(data.name)
     doc = lookup_doc_for_binding(context_module, name, #=sig=#nothing, world)
     (; labelDetails, detail) = item
-    # This `kind` doesn't have much meaning in itself, but at least by setting `kind`,
-    # we enable tree-sitter-based highlighting of the `label` in zed-julia
-    kind = CompletionItemKind.Snippet
+    kind = item.kind
     if isnothing(detail) || isnothing(kind)
         if Base.invoke_in_world(world, isdefinedglobal, context_module, name)::Bool
             obj = Base.invoke_in_world(world, getglobal, context_module, name)
