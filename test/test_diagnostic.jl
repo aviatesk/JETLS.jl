@@ -1454,6 +1454,8 @@ end
             end
             return items
         end
+        full_report_keys(items) = Set((item.uri, item.resultId) for item in items
+            if item isa WorkspaceFullDocumentDiagnosticReport)
         find_response(messages) =
             only(msg for msg in messages if msg isa WorkspaceDiagnosticResponse)
         has_unused_import(item) =
@@ -1466,13 +1468,17 @@ end
                 @test all(msg -> msg isa PublishDiagnosticsNotification, raw_res)
             end
 
-            # Initial pull: main.jl streams as a partial result and the stale id is cleared
-            # with an empty report, so the response follows immediately.
+            # Initial pull: main.jl gets a full report and the stale id is cleared with an
+            # empty report. Both are streamed as partial results and repeated in the
+            # response; see `WorkspaceDiagnosticReporter`.
             local main_id::String
             let id = id_counter[] += 1
                 (; raw_res) = writereadmsg(make_request(id, PreviousResultId[
                     PreviousResultId(; uri = stale_uri, value = "stale")]); read = 3)
-                items = partial_items(raw_res)
+                response = find_response(raw_res)
+                @test response.id == id
+                items = response.result.items
+                @test full_report_keys(partial_items(raw_res)) == full_report_keys(items)
                 main_item = only(item for item in items if item.uri == main_uri)
                 @test main_item isa WorkspaceFullDocumentDiagnosticReport
                 @test has_unused_import(main_item)
@@ -1481,9 +1487,6 @@ end
                 @test stale_item isa WorkspaceFullDocumentDiagnosticReport
                 @test stale_item.resultId === nothing
                 @test isempty(stale_item.items)
-                response = find_response(raw_res)
-                @test response.id == id
-                @test isempty(response.result.items)
             end
 
             # Re-pull with the matching id: nothing to report, so the request is parked.
@@ -1499,14 +1502,14 @@ end
                 writemsg(make_DidChangeTextDocumentNotification(
                     util_uri, "y = sum([1, 2, 3])\n", #=version=#2); check = false)
                 messages = readmsg(; read = 2).raw_msg
-                main_item = only(partial_items(messages))
+                response = find_response(messages)
+                @test response.id == id
+                main_item = only(response.result.items)
+                @test full_report_keys(partial_items(messages)) == full_report_keys([main_item])
                 @test main_item isa WorkspaceFullDocumentDiagnosticReport
                 @test main_item.uri == main_uri
                 @test main_item.resultId != main_id
                 @test !has_unused_import(main_item)
-                response = find_response(messages)
-                @test response.id == id
-                @test isempty(response.result.items)
                 main_id = main_item.resultId
             end
 
@@ -1524,13 +1527,14 @@ end
                 messages = readmsg(; read = 4).raw_msg
                 @test count(msg -> msg isa ShowMessageNotification, messages) == 1
                 @test count(msg -> msg isa PublishDiagnosticsNotification, messages) == 1
-                main_item = only(partial_items(messages))
+                response = find_response(messages)
+                @test response.id == id
+                main_item = only(response.result.items)
+                @test full_report_keys(partial_items(messages)) == full_report_keys([main_item])
                 @test main_item isa WorkspaceFullDocumentDiagnosticReport
                 @test main_item.uri == main_uri
                 @test main_item.resultId == JETLS.ALL_FILES_DISABLED_RESULT_ID
                 @test isempty(main_item.items)
-                response = find_response(messages)
-                @test response.id == id
                 main_id = main_item.resultId
             end
 
