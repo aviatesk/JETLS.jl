@@ -2165,15 +2165,17 @@ function merge_diagnostics!(uri2diagnostics::URI2Diagnostics, other_uri2diagnost
 end
 
 """
-    notify_diagnostics!(server::Server; ensure_cleared::Union{Nothing,URI} = nothing)
+    notify_diagnostics!(server::Server; ensure_cleared::Union{Bool,URI} = false)
 
 Send `textDocument/publishDiagnostics` notifications to the client. This combines
 diagnostics from full-analysis with extra diagnostics provided by sources like the
 test runner.
 
-When `ensure_cleared` is specified, guarantees that a notification is sent for that URI
+When `ensure_cleared` is a URI, guarantees that a notification is sent for that URI
 even if it no longer has any diagnostics, ensuring the client clears any previously
-displayed diagnostics for that URI.
+displayed diagnostics for that URI. With `ensure_cleared=true`, also clears diagnostics
+for unopened files suppressed by `diagnostic.all_files=false`, but skips files whose
+cached diagnostics are empty.
 """
 function notify_diagnostics!(server::Server; ensure_cleared::Union{Bool,URI} = false)
     notify_diagnostics!(server, get_full_diagnostics(server; ensure_cleared); ensure_cleared)
@@ -2185,8 +2187,8 @@ function notify_diagnostics!(server::Server, uri2diagnostics::URI2Diagnostics; e
     root_path = isdefined(state, :root_path) ? state.root_path : nothing
     for (uri, diagnostics) in uri2diagnostics
         if !all_files && !is_synchronized(state, uri)
-            if ((ensure_cleared isa URI && uri == ensure_cleared) ||
-                ensure_cleared === true) && !isempty(diagnostics)
+            if (ensure_cleared isa URI && uri == ensure_cleared) ||
+                (ensure_cleared === true && !isempty(diagnostics))
                 send(server, PublishDiagnosticsNotification(;
                     params = PublishDiagnosticsParams(;
                         uri,
