@@ -951,14 +951,14 @@ function new_analysis_result(
 
     result_world = Base.get_world_counter()
 
-    uri2diagnostics = if intermediate
-        intermediate_analysis_diagnostics(execution, analyzed_file_infos)
+    if intermediate
+        uri2diagnostics = intermediate_analysis_diagnostics(execution, analyzed_file_infos)
     else
-        diagnostics = URI2Diagnostics(uri => Diagnostic[] for uri in keys(analyzed_file_infos))
+        uri2diagnostics = URI2Diagnostics(uri => Diagnostic[] for uri in keys(analyzed_file_infos))
         postprocessor = JET.PostProcessor(result.res.actual2virtual)
-        toplevel_warning_reports_to_diagnostics!(diagnostics, interp.warning_reports, interp.server, postprocessor)
-        jet_result_to_diagnostics!(diagnostics, result, result_world, postprocessor)
-        diagnostics
+        toplevel_warning_reports_to_diagnostics!(uri2diagnostics, interp.warning_reports, interp.server, postprocessor)
+        jet_result_to_diagnostics!(uri2diagnostics, result, result_world, postprocessor)
+        uri2diagnostics
     end
 
     entry = request.entry
