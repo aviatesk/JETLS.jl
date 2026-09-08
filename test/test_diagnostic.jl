@@ -572,7 +572,7 @@ end
                     end
                     success = true
                 catch e
-                    Base.showerror(stderr, e, catch_backtrace())
+                    showerror(stderr, e, catch_backtrace())
                 finally
                     notify(event)
                 end

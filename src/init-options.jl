@@ -12,7 +12,7 @@ function parse_init_options(server::Server, @nospecialize init_options)
         show_warning_message(server,
             "Failed to parse initializationOptions, using defaults: $error_message")
         @error "Failed to parse initializationOptions, using defaults"
-        Base.showerror(stderr, err, catch_backtrace())
+        showerror(stderr, err, catch_backtrace())
         return DEFAULT_INIT_OPTIONS
     end
     return merge_init_options(DEFAULT_INIT_OPTIONS, parsed)
@@ -25,10 +25,10 @@ function load_file_init_options(server::Server, filepath::AbstractString)
     parsed = TOML.tryparsefile(filepath)
     if parsed isa TOML.ParserError
         show_error_message(server,
-            "Failed to parse .JETLSConfig.toml file at $filepath: $(sprint(Base.showerror, parsed))")
+            "Failed to parse .JETLSConfig.toml file at $filepath: $(sprint(showerror, parsed))")
         if !server.state.cli_mode
             @error "Failed to parse .JETLSConfig.toml file" filepath
-            Base.showerror(stderr, parsed)
+            showerror(stderr, parsed)
         end
         return nothing
     end

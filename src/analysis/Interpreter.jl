@@ -185,7 +185,7 @@ function (job::InterpreterSignatureAnalysisJob)(server::Server)
         end
     catch err
         @error "Error during signature analysis"
-        Base.showerror(stderr, err, catch_backtrace())
+        showerror(stderr, err, catch_backtrace())
     end
 end
 

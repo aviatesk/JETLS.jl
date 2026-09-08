@@ -324,7 +324,7 @@ function _store_unsynced_file_info!(state::ServerState, uri::URI; force::Bool=fa
             ParseStream!(read(filename))
         catch e
             @static JETLS_DEV_MODE && @error "Error parsing file $(filename)"
-            @static JETLS_DEV_MODE && Base.showerror(stderr, e, catch_backtrace())
+            @static JETLS_DEV_MODE && showerror(stderr, e, catch_backtrace())
             return cache, nothing
         end
         fi = FileInfo(version, parsed_stream, filename, state.encoding)

@@ -1128,7 +1128,7 @@ function infer_lowered_tree(
         st5
     catch e
         @static JETLS_DEV_MODE && @error "infer_toplevel_tree: Lowering failed" e
-        @static JETLS_DEV_MODE && Base.showerror(stderr, e, catch_backtrace())
+        @static JETLS_DEV_MODE && showerror(stderr, e, catch_backtrace())
         return nothing
     end
     lwr = JL.to_lowered_expr(inferrable_tree)

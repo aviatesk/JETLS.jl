@@ -1678,7 +1678,7 @@ function per_stmt_diagnostics!(
                     msg = "Macro name `$(inner.var)` not found"
                     relatedInformation = nothing
                 else
-                    msg *= "\n" * sprint(Base.showerror, inner)
+                    msg *= "\n" * sprint(showerror, inner)
                     relatedInformation = stacktrace_to_related_information(st)
                 end
                 provs = JS.flattened_provenance(err.ex)

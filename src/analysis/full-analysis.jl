@@ -671,7 +671,7 @@ function cleanup_prev_methods(prev_result::AnalysisResult)
             Base.delete_method(m)
         catch e
             @static JETLS_DEV_MODE && @warn "Failed to delete method $m" disabled=is_method_disabled(m)
-            @static JETLS_DEV_MODE && Base.showerror(stderr, e, catch_backtrace())
+            @static JETLS_DEV_MODE && showerror(stderr, e, catch_backtrace())
         end
     end
 end
@@ -1085,7 +1085,7 @@ function (job::ReviseSignatureAnalysisJob)(server::Server)
         isempty(reports) || @lock progress.reports_lock append!(progress.reports, reports)
     catch err
         @error "Error analyzing method signature" siginfo.sig
-        Base.showerror(stderr, err, catch_backtrace())
+        showerror(stderr, err, catch_backtrace())
     finally
         done = (@atomic progress.done += 1)
         if cancellable_token !== nothing
@@ -1181,7 +1181,7 @@ function analyze_package_with_revise(
     pkgmod = try
         pkgmod === nothing ? Base.require(pkgid)::Module : pkgmod
     catch e
-        show_error_message(server, "Failed to load package $(pkgid.name): $(sprint(Base.showerror, e))")
+        show_error_message(server, "Failed to load package $(pkgid.name): $(sprint(showerror, e))")
         error(lazy"Package $(pkgid.name) is not loadable") # TODO Make this top-level diagnostic?
     finally
         isnothing(activation_done) || notify(activation_done)
@@ -1723,7 +1723,7 @@ function ensure_instantiated!(
             This may cause various features such as diagnostics to not function properly.
             It is recommended to fix the problem by referring to the following error""" env_path
             println(stderr, String(take!(io)))
-            Base.showerror(stderr, e, catch_backtrace())
+            showerror(stderr, e, catch_backtrace())
             if !server.state.cli_mode
                 show_warning_message(server, """
                     Failed to instantiate package environment at $env_path.
@@ -1755,7 +1755,7 @@ function inspect_instantiation_needs(env_path::String)
             instantiation_needs(env_path)
         catch e
             @error "Failed to inspect package environment" env_path
-            Base.showerror(stderr, e, catch_backtrace())
+            showerror(stderr, e, catch_backtrace())
             (; resolve = true, instantiate = true)
         finally
             clear_pkg_registry_cache!()
