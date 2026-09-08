@@ -195,7 +195,7 @@ end
 
 function cache_intermediate_analysis_result!(interp::LSInterpreter)
     result = JET.JETToplevelResult(interp.analyzer, interp.state.res, "LSInterpreter (intermediate result)", ())
-    intermediate_result, _ = JETLS.new_analysis_result(interp, result)
+    intermediate_result, _ = JETLS.new_analysis_result(interp, result; intermediate=true)
     JETLS.update_analysis_cache!(interp.server.state, intermediate_result)
     # Module contexts are complete at this point, which is all pull diagnostics need,
     # so refresh them now rather than after signature analysis.

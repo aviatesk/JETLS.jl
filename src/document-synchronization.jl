@@ -255,9 +255,6 @@ function handle_DidCloseTextDocumentNotification(server::Server, msg::DidCloseTe
     clear_extra_diagnostics!(server, uri)
     # Republish textDocument/publishDiagnostics for cases with `diagnostic.all_files === false`,
     # where diagnostics for this file must be suppressed.
-    # This must run before `cleanup_analysis_state!` below, since the suppression
-    # branch in `notify_diagnostics!` only emits the clearing notification when the
-    # analysis cache still reports non-empty diagnostics for this URI.
     notify_diagnostics!(server; ensure_cleared=uri)
     if isunsaveduri(uri)
         cleanup_analysis_state!(server, uri)

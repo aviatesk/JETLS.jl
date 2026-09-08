@@ -926,7 +926,22 @@ function update_analyzer_world(analyzer::LSAnalyzer, world::UInt = Base.get_worl
     return JET.AbstractAnalyzer(analyzer, newstate)
 end
 
-function new_analysis_result(interp::LSInterpreter, result::JET.JETToplevelResult)
+# Publishing a new context must not discard completed diagnostics while analysis is pending.
+function intermediate_analysis_diagnostics(
+        execution::AnalysisExecution, analyzed_file_infos::Dict{URI,JET.AnalyzedFileInfo}
+    )
+    prev_result = execution.prev_result
+    uri2diagnostics = URI2Diagnostics()
+    for uri in keys(analyzed_file_infos)
+        diagnostics = prev_result === nothing ? nothing : get(prev_result.uri2diagnostics, uri, nothing)
+        uri2diagnostics[uri] = diagnostics === nothing ? Diagnostic[] : copy(diagnostics)
+    end
+    return uri2diagnostics
+end
+
+function new_analysis_result(
+        interp::LSInterpreter, result::JET.JETToplevelResult; intermediate::Bool = false
+    )
     execution = interp.execution
     request = execution.request
     analyzed_file_infos = Dict{URI,JET.AnalyzedFileInfo}(
@@ -936,10 +951,15 @@ function new_analysis_result(interp::LSInterpreter, result::JET.JETToplevelResul
 
     result_world = Base.get_world_counter()
 
-    uri2diagnostics = URI2Diagnostics(uri => Diagnostic[] for uri in keys(analyzed_file_infos))
-    postprocessor = JET.PostProcessor(result.res.actual2virtual)
-    toplevel_warning_reports_to_diagnostics!(uri2diagnostics, interp.warning_reports, interp.server, postprocessor)
-    jet_result_to_diagnostics!(uri2diagnostics, result, result_world, postprocessor)
+    uri2diagnostics = if intermediate
+        intermediate_analysis_diagnostics(execution, analyzed_file_infos)
+    else
+        diagnostics = URI2Diagnostics(uri => Diagnostic[] for uri in keys(analyzed_file_infos))
+        postprocessor = JET.PostProcessor(result.res.actual2virtual)
+        toplevel_warning_reports_to_diagnostics!(diagnostics, interp.warning_reports, interp.server, postprocessor)
+        jet_result_to_diagnostics!(diagnostics, result, result_world, postprocessor)
+        diagnostics
+    end
 
     entry = request.entry
     prev_result = execution.prev_result
@@ -1234,7 +1254,7 @@ function analyze_package_with_revise(
 
     # Module contexts are known at this point, which is all pull diagnostics need, so
     # expose them before signature analysis, like `cache_intermediate_analysis_result!`.
-    let uri2diagnostics = URI2Diagnostics(uri => Diagnostic[] for uri in keys(analyzed_file_infos))
+    let uri2diagnostics = intermediate_analysis_diagnostics(execution, analyzed_file_infos)
         intermediate_result = AnalysisResult(request.entry, uri2diagnostics, analyzer,
             analyzed_file_infos, pkgmod => pkgmod, world)
         update_analysis_cache!(server.state, intermediate_result)
