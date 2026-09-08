@@ -69,7 +69,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Fixed diagnostics disappearing prematurely during reanalysis.
 
-- Fixed stale diagnostics not being cleared when a file is closed with `diagnostic.all_files=false`.
+- Fixed stale diagnostics not being cleared when a file is closed with [`diagnostic.all_files=false`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/diagnostic/all_files).
 
 - Fixed a race during background analysis that could cause diagnostics and other language features to use outdated document contents after an edit.
 
