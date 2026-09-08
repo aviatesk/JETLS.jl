@@ -260,6 +260,13 @@ analysis is usually pretty fast). For `JETLS/save`, full analysis still runs;
 only reporting is suppressed. Disabling this can be useful to reduce noise when
 there are many warnings across the workspace.
 
+Not all clients support live diagnostics for unopened files. Depending on the
+client, changing this setting may require updating
+[`.JETLSConfig.toml`](@ref config/file-based-config) and restarting JETLS.
+Some clients may also retain existing diagnostics after this setting is disabled.
+
+Push-based `JETLS/save` reporting follows setting changes without a restart.
+
 ```toml
 [diagnostic]
 all_files = false  # Disable diagnostics for unopened files

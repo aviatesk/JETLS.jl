@@ -386,6 +386,8 @@ function handler_concurrent_message(server::Server, @nospecialize msg)
         park_workspace_diagnostic_request!(server, msg.request)
     elseif msg isa WorkspaceDiagnosticWakeToken
         resume_parked_workspace_diagnostic_request!(server)
+    elseif msg isa DiagnosticRegistrationUpdateToken
+        update_diagnostic_registration!(server)
     # Handle regular messages concurrently
     elseif msg isa Dict{Symbol,Any} # ResponseMessage or untyped message
         request_caller = let id = get(msg, :id, nothing)

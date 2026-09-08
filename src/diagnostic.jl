@@ -2257,15 +2257,16 @@ end
 const DIAGNOSTIC_REGISTRATION_ID = "jetls-diagnostic"
 const DIAGNOSTIC_REGISTRATION_METHOD = "textDocument/diagnostic"
 
-function diagnostic_options()
+function diagnostic_options(workspace_diagnostics::Bool = true)
     return DiagnosticOptions(;
         identifier = "JETLS/diagnostic",
         interFileDependencies = true,
-        workspaceDiagnostics = true)
+        workspaceDiagnostics = workspace_diagnostics)
 end
 
-function diagnostic_registration()
-    (; identifier, interFileDependencies, workspaceDiagnostics) = diagnostic_options()
+function diagnostic_registration(server::Server)
+    (; identifier, interFileDependencies, workspaceDiagnostics) =
+        diagnostic_options(get_config(server, :diagnostic, :all_files))
     return Registration(;
         id = DIAGNOSTIC_REGISTRATION_ID,
         method = DIAGNOSTIC_REGISTRATION_METHOD,
@@ -2277,11 +2278,32 @@ function diagnostic_registration()
     )
 end
 
-# # For dynamic registrations during development
-# unregister(currently_running, Unregistration(;
-#     id = DIAGNOSTIC_REGISTRATION_ID,
-#     method = DIAGNOSTIC_REGISTRATION_METHOD))
-# register(currently_running, diagnostic_registration())
+struct DiagnosticRegistrationUpdateToken end
+
+function update_diagnostic_registration!(
+        server::Server, tracker::ConfigChangeTracker; on_init::Bool = false
+    )
+    supports(server, :textDocument, :diagnostic, :dynamicRegistration) || return nothing
+    load(server.state.config_manager).initialized || return nothing
+    if !on_init && !any(c -> c.path == "diagnostic.all_files", tracker.changed_settings)
+        return nothing
+    end
+    enqueue_message!(server, DiagnosticRegistrationUpdateToken())
+    nothing
+end
+
+# Run the replacement on the message worker so concurrent config handlers cannot
+# interleave unregister/register. Read the current config, not the queued update's value.
+function update_diagnostic_registration!(server::Server)
+    registered = Registered(DIAGNOSTIC_REGISTRATION_ID, DIAGNOSTIC_REGISTRATION_METHOD)
+    if registered in load(server.state.currently_registered)
+        unregister(server, Unregistration(;
+            id = DIAGNOSTIC_REGISTRATION_ID,
+            method = DIAGNOSTIC_REGISTRATION_METHOD))
+    end
+    register(server, diagnostic_registration(server))
+    nothing
+end
 
 function handle_DocumentDiagnosticRequest(
         server::Server, msg::DocumentDiagnosticRequest, cancel_flag::CancelFlag)
