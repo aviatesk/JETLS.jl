@@ -103,9 +103,14 @@ end
 # Request handlers
 # ================
 
-function handle_TextDocumentContentRequest(server::Server, msg::TextDocumentContentRequest)
+function handle_TextDocumentContentRequest(
+        server::Server, msg::TextDocumentContentRequest, cancel_flag::CancelFlag
+    )
     uri = msg.params.uri
-    if !is_text_document_content_uri(uri)
+    if is_cancelled(cancel_flag)
+        return send(server, TextDocumentContentResponse(;
+            id = msg.id, result = nothing, error = request_cancelled_error()))
+    elseif !is_text_document_content_uri(uri)
         return send(server, TextDocumentContentResponse(;
             id = msg.id,
             result = nothing,
@@ -114,17 +119,21 @@ function handle_TextDocumentContentRequest(server::Server, msg::TextDocumentCont
                 message = "Unsupported text document content URI scheme: $(uri.scheme)")))
     end
     # Code views are computed on demand from the request URI rather than cached.
-    if uri.scheme == MACRO_EXPANSION_SCHEME
-        text = macro_expansion_text(server, uri)
-        return send(server, TextDocumentContentResponse(;
-            id = msg.id, result = TextDocumentContentResult(; text)))
+    text = if uri.scheme == MACRO_EXPANSION_SCHEME
+        macro_expansion_text(server, uri; cancel_flag)
     elseif uri.scheme == TYPE_ANNOTATION_SCHEME
-        text = type_annotation_text(server, uri)
-        return send(server, TextDocumentContentResponse(;
-            id = msg.id, result = TextDocumentContentResult(; text)))
+        type_annotation_text(server, uri; cancel_flag)
+    else
+        # Other schemes (e.g. TestRunner logs) are served from the content cache.
+        get_text_document_content(server.state, uri)
     end
-    # Other schemes (e.g. TestRunner logs) are served from the content cache.
-    text = @something get_text_document_content(server.state, uri) begin
+    if is_cancelled(cancel_flag)
+        return send(server, TextDocumentContentResponse(;
+            id = msg.id, result = nothing, error = request_cancelled_error()))
+    elseif text isa ResponseError
+        return send(server, TextDocumentContentResponse(;
+            id = msg.id, result = nothing, error = text))
+    elseif text === nothing
         return send(server, TextDocumentContentResponse(;
             id = msg.id,
             result = nothing,
@@ -151,14 +160,14 @@ end
 # at that file. These views are read-only snapshots, so the temporary file is an
 # equivalent fallback.
 
-# Wraps a content thunk and pins its return type to `String`, keeping the
+# Wraps a content thunk and pins its return type to `Union{String,ResponseError}`, keeping the
 # abstract callback field out of call sites and the request caller. The thunk
 # defers producing the content until a fallback needs it; the virtual-document
 # path leaves it to the `textDocumentContent` handler to produce on demand.
 struct ProduceText
     callback
 end
-(produce_text::ProduceText)() = produce_text.callback()::String
+(produce_text::ProduceText)() = produce_text.callback()::Union{String,ResponseError}
 
 struct ShowTextDocumentContentCaller <: RequestCaller
     label::String
@@ -176,8 +185,10 @@ end
 function open_text_document_content!(
         server::Server, content_uri::Union{Nothing,URI},
         label::AbstractString, tempfile_name::AbstractString, produce_text::ProduceText;
-        takeFocus::Bool=true
+        takeFocus::Bool=true,
+        cancel_flag::AbstractCancelFlag = DUMMY_CANCEL_FLAG
     )
+    is_cancelled(cancel_flag) && return request_cancelled_error()
     if (content_uri !== nothing && supports_text_document_content(server) &&
         supports(server, :window, :showDocument, :support))
         id = String(gensym(:ShowTextDocumentContentRequest))
@@ -186,18 +197,23 @@ function open_text_document_content!(
         params = ShowDocumentParams(; uri = content_uri, takeFocus)
         return send(server, ShowDocumentRequest(; id, params))
     end
+    text = produce_text()
+    text isa ResponseError && return text
     return open_text_document_content_tempfile!(
-        server, produce_text(), label, tempfile_name; takeFocus)
+        server, text, label, tempfile_name; takeFocus, cancel_flag)
 end
 
 function open_text_document_content_tempfile!(
         server::Server, text::AbstractString,
         label::AbstractString, tempfile_name::AbstractString;
-        takeFocus::Bool=true
+        takeFocus::Bool=true,
+        cancel_flag::AbstractCancelFlag = DUMMY_CANCEL_FLAG
     )
+    is_cancelled(cancel_flag) && return request_cancelled_error()
     saved = @something save_text_document_content_tempfile(
         server, text, label, tempfile_name) return nothing
     (; temp_path, uri) = saved
+    is_cancelled(cancel_flag) && return request_cancelled_error()
     if supports(server, :window, :showDocument, :support)
         id = String(gensym(:ShowTextDocumentContentRequest))
         addrequest!(server, id => ShowTextDocumentContentCaller(
@@ -254,8 +270,10 @@ function handle_show_text_document_content_response(
     if temp_path !== nothing
         return show_text_document_content_path_message(server, label, temp_path, uri)
     elseif produce_text !== nothing && tempfile_name !== nothing
+        text = produce_text()
+        text isa ResponseError && return nothing
         return open_text_document_content_tempfile!(
-            server, produce_text(), label, tempfile_name)
+            server, text, label, tempfile_name)
     end
     return nothing
 end

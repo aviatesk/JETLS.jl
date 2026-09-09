@@ -182,7 +182,11 @@ function format_toplevel_expansion_error_text(
     return String(take!(io))
 end
 
-function macro_expansion_text(server::Server, content_uri::URI)
+function macro_expansion_text(
+        server::Server, content_uri::URI;
+        cancel_flag::AbstractCancelFlag = DUMMY_CANCEL_FLAG
+    )
+    is_cancelled(cancel_flag) && return request_cancelled_error()
     params = parse_text_document_content_query(content_uri)
     source = @something get(params, "source", nothing) begin
         return "Missing `source` parameter.\n"
@@ -195,9 +199,10 @@ function macro_expansion_text(server::Server, content_uri::URI)
     end
     toplevel = get(params, "mode", "call") == "toplevel"
     source_uri = URI(source)
-    fi = @something get_file_info(server.state, source_uri) begin
+    fi = @something get_file_info(server.state, source_uri, cancel_flag) begin
         return "Source document is not available: $(string(source_uri))\n"
     end
+    fi isa ResponseError && return fi
     st0_top = build_syntax_tree(fi)
     node = if toplevel
         @something find_toplevel_tree_by_range(st0_top, start:stop) begin
@@ -212,15 +217,19 @@ function macro_expansion_text(server::Server, content_uri::URI)
     (; context_module) = get_context_info(server.state, source_uri, pos)
     first_line = Int(pos.line) + 1
     ex = macro_expr_from_text(JS.sourcetext(node), fi.filename, first_line)
+    is_cancelled(cancel_flag) && return request_cancelled_error()
     expanded = try
         macroexpand(context_module, ex; recursive=toplevel)
     catch err
+        is_cancelled(cancel_flag) && return request_cancelled_error()
         bt = catch_backtrace()
         return toplevel ?
             format_toplevel_expansion_error_text(fi.filename, first_line, err, bt) :
             format_macro_expansion_error_text(node, err, bt)
     end
+    is_cancelled(cancel_flag) && return request_cancelled_error()
     expanded = simplify_macro_expansion!(expanded, context_module)
+    is_cancelled(cancel_flag) && return request_cancelled_error()
     return toplevel ?
         format_toplevel_expansion_text(fi.filename, first_line, expanded) :
         format_macro_expansion_text(node, expanded)
@@ -229,10 +238,14 @@ end
 # A macro expansion is a read-only snapshot, so it degrades gracefully to a temp
 # file for clients without `workspace/textDocumentContent`; the expansion text is
 # produced lazily, only if a fallback needs it.
-function request_open_macro_expansion(server::Server, content_uri::URI)
+function request_open_macro_expansion(
+        server::Server, content_uri::URI;
+        cancel_flag::AbstractCancelFlag = DUMMY_CANCEL_FLAG
+    )
     return open_text_document_content!(server, content_uri,
         #=label=# "macro expansion", #=tempfile_name=# "macro-expanded.jl",
-        ProduceText(() -> macro_expansion_text(server, content_uri)))
+        ProduceText(() -> macro_expansion_text(server, content_uri; cancel_flag));
+        cancel_flag)
 end
 
 # Type annotation view
@@ -257,14 +270,17 @@ function type_annotation_content_uri(source_uri::URI, tree::SyntaxTree)
 end
 
 function collect_type_annotation_hints(
-        state::ServerState, fi::FileInfo, uri::URI, tree::SyntaxTree
+        state::ServerState, fi::FileInfo, uri::URI, tree::SyntaxTree;
+        cancel_flag::AbstractCancelFlag = DUMMY_CANCEL_FLAG
     )
+    is_cancelled(cancel_flag) && return nothing
     startpos = offset_to_xy(fi, JS.first_byte(tree))
     endpos = offset_to_xy(fi, JS.last_byte(tree) + 1)
     tree_range = Range(; start = startpos, var"end" = endpos)
     (; context_module, postprocessor, world) = get_context_info(state, uri, startpos)
     ctx = @something build_inferred_context_for_tree(tree, context_module;
         world, caller="type_annotation", cache=fi.inferred_context_cache) return nothing
+    is_cancelled(cancel_flag) && return nothing
     hints = InlayHint[]
     # Unlike the glanceable inline hints, a written-out view shows the full
     # inferred type rather than a `…`-clipped one, so truncation is disabled.
@@ -275,7 +291,11 @@ function collect_type_annotation_hints(
     return hints
 end
 
-function type_annotation_text(server::Server, content_uri::URI)
+function type_annotation_text(
+        server::Server, content_uri::URI;
+        cancel_flag::AbstractCancelFlag = DUMMY_CANCEL_FLAG
+    )
+    is_cancelled(cancel_flag) && return request_cancelled_error()
     params = parse_text_document_content_query(content_uri)
     source = @something get(params, "source", nothing) begin
         return "Missing `source` parameter.\n"
@@ -287,9 +307,10 @@ function type_annotation_text(server::Server, content_uri::URI)
         return "Invalid `stop` parameter.\n"
     end
     source_uri = URI(source)
-    fi = @something get_file_info(server.state, source_uri) begin
+    fi = @something get_file_info(server.state, source_uri, cancel_flag) begin
         return "Source document is not available: $(string(source_uri))\n"
     end
+    fi isa ResponseError && return fi
     st0_top = build_syntax_tree(fi)
     tree = @something find_toplevel_tree_by_range(st0_top, start:stop) begin
         return "Top-level form is no longer available: $(string(source_uri))\n"
@@ -297,10 +318,11 @@ function type_annotation_text(server::Server, content_uri::URI)
     line = Int(offset_to_xy(fi, JS.first_byte(tree)).line) + 1
     src = JS.sourcetext(tree)
     hints = @something try
-        collect_type_annotation_hints(server.state, fi, source_uri, tree)
+        collect_type_annotation_hints(server.state, fi, source_uri, tree; cancel_flag)
     catch
         nothing
     end begin
+        is_cancelled(cancel_flag) && return request_cancelled_error()
         io = IOBuffer()
         println(io, "# Failed to infer type annotations at ", fi.filename, ":", line)
         println(io)
@@ -308,6 +330,7 @@ function type_annotation_text(server::Server, content_uri::URI)
         endswith(src, '\n') || println(io)
         return String(take!(io))
     end
+    is_cancelled(cancel_flag) && return request_cancelled_error()
     annotated = apply_inlay_hints(fi, src, JS.first_byte(tree), hints)
     io = IOBuffer()
     println(io, "# Inferred type annotations at ", fi.filename, ":", line)
@@ -317,8 +340,12 @@ function type_annotation_text(server::Server, content_uri::URI)
     return String(take!(io))
 end
 
-function request_open_type_annotation(server::Server, content_uri::URI)
+function request_open_type_annotation(
+        server::Server, content_uri::URI;
+        cancel_flag::AbstractCancelFlag = DUMMY_CANCEL_FLAG
+    )
     return open_text_document_content!(server, content_uri,
         #=label=# "type annotations", #=tempfile_name=# "type-annotated.jl",
-        ProduceText(() -> type_annotation_text(server, content_uri)))
+        ProduceText(() -> type_annotation_text(server, content_uri; cancel_flag));
+        cancel_flag)
 end

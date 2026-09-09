@@ -431,7 +431,7 @@ function handle_test_runner_message_response4(
         (; testset_name, uri, idx, logs) = request_caller
         if title == TESTRUNNER_RERUN_TITLE
             error_msg = testrunner_run_testset_from_uri(server, uri, idx, testset_name)
-            if error_msg !== nothing
+            if error_msg isa String
                 show_error_message(server, error_msg)
             end
         elseif title == TESTRUNNER_OPEN_LOGS_TITLE
@@ -447,7 +447,9 @@ end
 
 function testrunner_run_testset(
         server::Server, uri::URI, fi::FileInfo, idx::Int, tsn::String, filepath::String;
-        cancellable_token::Union{Nothing,CancellableToken} = nothing
+        cancellable_token::Union{Nothing,CancellableToken} = nothing,
+        cancel_flag::AbstractCancelFlag = cancellable_token === nothing ?
+            DUMMY_CANCEL_FLAG : cancellable_token.cancel_flag
     )
     setting_path = (:testrunner, :executable)
     executable = get_config(server, setting_path...)
@@ -474,7 +476,8 @@ function testrunner_run_testset(
 
     local result::String
     try
-        result = _testrunner_run_testset(server, executable, uri, fi, idx, tsn, filepath; cancellable_token)
+        result = _testrunner_run_testset(server, executable, uri, fi, idx, tsn, filepath;
+            cancellable_token, cancel_flag)
     catch err
         result = sprint(showerror, err, catch_backtrace())
         @error "Error from testrunner executor" err
@@ -500,22 +503,24 @@ function is_testsetinfo_valid(server::Server, uri::URI, fi::FileInfo, idx::Int)
 end
 
 function read_testrunner_output(
-        testrunnerproc::Base.Process, cancellable_token::Union{Nothing,CancellableToken}
+        testrunnerproc::Base.Process, cancellable_token::Union{Nothing,CancellableToken};
+        cancel_flag::AbstractCancelFlag = cancellable_token === nothing ?
+            DUMMY_CANCEL_FLAG : cancellable_token.cancel_flag
     )
     cancelled = Ref(false)
-    cancellation_task = if cancellable_token === nothing
+    cancellation_task = if cancel_flag === DUMMY_CANCEL_FLAG
         nothing
     else
         @async begin
             while process_running(testrunnerproc)
-                if is_cancelled(cancellable_token.cancel_flag)
+                if is_cancelled(cancel_flag)
                     cancelled[] = true
                     kill(testrunnerproc)
                     break
                 end
                 sleep(0.1)
             end
-            if is_cancelled(cancellable_token.cancel_flag)
+            if is_cancelled(cancel_flag)
                 cancelled[] = true
             end
         end
@@ -557,11 +562,14 @@ end
 
 function read_testrunner_result(
         server::Server, cmd::Cmd, source::String;
-        cancellable_token::Union{Nothing,CancellableToken} = nothing
+        cancellable_token::Union{Nothing,CancellableToken} = nothing,
+        cancel_flag::AbstractCancelFlag = cancellable_token === nothing ?
+            DUMMY_CANCEL_FLAG : cancellable_token.cancel_flag
     )
+    is_cancelled(cancel_flag) && return "Test execution cancelled by user"
     testrunnerproc = open(pipeline(cmd; stdin = IOBuffer(source)); read = true)
     (; output, process_success, cancelled) =
-        read_testrunner_output(testrunnerproc, cancellable_token)
+        read_testrunner_output(testrunnerproc, cancellable_token; cancel_flag)
     cancelled && return "Test execution cancelled by user"
 
     result = try
@@ -598,7 +606,9 @@ end
 function _testrunner_run_testset(
         server::Server, executable::AbstractString, uri::URI, fi::FileInfo,
         idx::Int, tsn::String, filepath::String;
-        cancellable_token::Union{Nothing, CancellableToken} = nothing
+        cancellable_token::Union{Nothing, CancellableToken} = nothing,
+        cancel_flag::AbstractCancelFlag = cancellable_token === nothing ?
+            DUMMY_CANCEL_FLAG : cancellable_token.cancel_flag
     )
     if !is_testsetinfo_valid(server, uri, fi, idx)
         show_warning_message(server, """
@@ -613,7 +623,7 @@ function _testrunner_run_testset(
     root_path = testrunner_root_path(server.state, uri)
     cmd = testrunner_cmd(executable, filepath, tsn, tsl, test_env_path, root_path)
     source = String(document_text(fi))
-    result = read_testrunner_result(server, cmd, source; cancellable_token)
+    result = read_testrunner_result(server, cmd, source; cancellable_token, cancel_flag)
     result isa String && return result
 
     ret = summary_testrunner_result(result)
@@ -670,7 +680,9 @@ end
 
 function testrunner_run_testcase(
         server::Server, uri::URI, tcl::Int, tct::String, filepath::String, source::String;
-        cancellable_token::Union{Nothing,CancellableToken} = nothing
+        cancellable_token::Union{Nothing,CancellableToken} = nothing,
+        cancel_flag::AbstractCancelFlag = cancellable_token === nothing ?
+            DUMMY_CANCEL_FLAG : cancellable_token.cancel_flag
     )
     setting_path = (:testrunner, :executable)
     executable = get_config(server, setting_path...)
@@ -697,7 +709,8 @@ function testrunner_run_testcase(
 
     local result::String
     try
-        result = _testrunner_run_testcase(server, executable, uri, tcl, tct, filepath, source; cancellable_token)
+        result = _testrunner_run_testcase(server, executable, uri, tcl, tct, filepath, source;
+            cancellable_token, cancel_flag)
     catch err
         result = sprint(showerror, err, catch_backtrace())
         @error "Error from testrunner executor" err
@@ -716,12 +729,14 @@ end
 function _testrunner_run_testcase(
         server::Server, executable::AbstractString, uri::URI, tcl::Int, tct::String,
         filepath::String, source::String;
-        cancellable_token::Union{Nothing,CancellableToken} = nothing
+        cancellable_token::Union{Nothing,CancellableToken} = nothing,
+        cancel_flag::AbstractCancelFlag = cancellable_token === nothing ?
+            DUMMY_CANCEL_FLAG : cancellable_token.cancel_flag
     )
     test_env_path = find_uri_env_path(server.state, uri)
     root_path = testrunner_root_path(server.state, uri)
     cmd = testrunner_cmd(executable, filepath, tcl, test_env_path, root_path)
-    result = read_testrunner_result(server, cmd, source; cancellable_token)
+    result = read_testrunner_result(server, cmd, source; cancellable_token, cancel_flag)
     result isa String && return result
 
     # Show the results of this `@test` case temporarily as diagnostics:
@@ -790,7 +805,8 @@ end
 function open_testsetinfo_logs!(
         server::Server, tsn::String, logs::String;
         source_uri::Union{Nothing,URI} = nothing,
-        testset_index::Union{Nothing,Int} = nothing
+        testset_index::Union{Nothing,Int} = nothing,
+        cancel_flag::AbstractCancelFlag = DUMMY_CANCEL_FLAG
     )
     testset_name = String(rlstrip(tsn, '"'))
     content_uri = source_uri !== nothing && testset_index !== nothing ?
@@ -798,7 +814,7 @@ function open_testsetinfo_logs!(
     return open_text_document_content!(server, content_uri,
         #=label=# "test logs for `$testset_name`",
         #=tempfile_name=# testsetinfo_logs_filename(testset_name),
-        ProduceText(() -> logs))
+        ProduceText(() -> logs); cancel_flag)
 end
 
 struct TestRunnerTestsetProgressCaller <: RequestCaller
@@ -812,16 +828,22 @@ end
 cancellable_token_impl(rc::TestRunnerTestsetProgressCaller) = rc.token
 
 """
-    testrunner_run_testset_from_uri(server::Server, uri::URI, idx::Int) -> Union{Nothing, String}
+    testrunner_run_testset_from_uri(server, uri, idx, tsn; cancel_flag=DUMMY_CANCEL_FLAG)
 
 Run tests for the testset at the given index in the file specified by URI.
 The current editor buffer is piped to TestRunner via stdin, so the file does not need to be saved.
-Returns `nothing` if the test was started successfully, or an error message string otherwise.
+Returns `nothing` after starting the test, a string if the file is unavailable,
+or a `ResponseError` if the request is cancelled.
 """
-function testrunner_run_testset_from_uri(server::Server, uri::URI, idx::Int, tsn::String)
-    fi = @something get_file_info(server.state, uri) begin
+function testrunner_run_testset_from_uri(
+        server::Server, uri::URI, idx::Int, tsn::String;
+        cancel_flag::AbstractCancelFlag = DUMMY_CANCEL_FLAG
+    )
+    is_cancelled(cancel_flag) && return request_cancelled_error()
+    fi = @something get_file_info(server.state, uri, cancel_flag) begin
         return "File is no longer available in the editor"
     end
+    fi isa ResponseError && return fi
     filepath = uri2filename(uri)
 
     if supports(server, :window, :workDoneProgress)
@@ -831,7 +853,8 @@ function testrunner_run_testset_from_uri(server::Server, uri::URI, idx::Int, tsn
         params = WorkDoneProgressCreateParams(; token)
         send(server, WorkDoneProgressCreateRequest(; id, params))
     else
-        testrunner_run_testset(server, uri, fi, idx, tsn, filepath)
+        testrunner_run_testset(server, uri, fi, idx, tsn, filepath; cancel_flag)
+        is_cancelled(cancel_flag) && return request_cancelled_error()
     end
     return nothing
 end
@@ -858,10 +881,15 @@ struct TestRunnerTestcaseProgressCaller <: RequestCaller
 end
 cancellable_token_impl(rc::TestRunnerTestcaseProgressCaller) = rc.token
 
-function testrunner_run_testcase_from_uri(server::Server, uri::URI, tcl::Int, tct::String)
-    fi = @something get_file_info(server.state, uri) begin
+function testrunner_run_testcase_from_uri(
+        server::Server, uri::URI, tcl::Int, tct::String;
+        cancel_flag::AbstractCancelFlag = DUMMY_CANCEL_FLAG
+    )
+    is_cancelled(cancel_flag) && return request_cancelled_error()
+    fi = @something get_file_info(server.state, uri, cancel_flag) begin
         return "File is no longer available in the editor"
     end
+    fi isa ResponseError && return fi
     filepath = uri2filename(uri)
     source = String(document_text(fi))
 
@@ -872,7 +900,8 @@ function testrunner_run_testcase_from_uri(server::Server, uri::URI, tcl::Int, tc
         params = WorkDoneProgressCreateParams(; token)
         send(server, WorkDoneProgressCreateRequest(; id, params))
     else
-        testrunner_run_testcase(server, uri, tcl, tct, filepath, source)
+        testrunner_run_testcase(server, uri, tcl, tct, filepath, source; cancel_flag)
+        is_cancelled(cancel_flag) && return request_cancelled_error()
     end
     return nothing
 end

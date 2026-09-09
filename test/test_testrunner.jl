@@ -181,16 +181,30 @@ end
         end
 
         @testset "cancellation terminates the process" begin
-            server = JETLS.Server()
-            cancel_flag = JETLS.CancelFlag(false)
-            cancellable_token = JETLS.CancellableToken("test", cancel_flag)
-            cancel_task = @async begin
-                sleep(0.2)
-                JETLS.cancel!(cancel_flag)
+            @testset "$cancellation" for cancellation in (:cancel_flag, :cancellable_token)
+                mktempdir() do dir
+                    server = JETLS.Server()
+                    cancel_flag = JETLS.CancelFlag(false)
+                    cmd = Cmd(Cmd(["/bin/sh", "-c", ": > ready; exec /bin/sleep 30"]); dir)
+                    cancel_task = @async begin
+                        status = timedwait(() -> isfile(joinpath(dir, "ready")), 5.0)
+                        JETLS.cancel!(cancel_flag)
+                        status
+                    end
+                    result = try
+                        if cancellation === :cancel_flag
+                            JETLS.read_testrunner_result(server, cmd, ""; cancel_flag)
+                        else
+                            cancellable_token = JETLS.CancellableToken("test", cancel_flag)
+                            JETLS.read_testrunner_result(server, cmd, ""; cancellable_token)
+                        end
+                    finally
+                        wait(cancel_task)
+                    end
+                    @test fetch(cancel_task) === :ok
+                    @test result == "Test execution cancelled by user"
+                end
             end
-            result = JETLS.read_testrunner_result(server, `/bin/sleep 30`, ""; cancellable_token)
-            wait(cancel_task)
-            @test result == "Test execution cancelled by user"
         end
     end
 end

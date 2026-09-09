@@ -146,6 +146,40 @@ end
     end
 end
 
+@testset "code view cancellation while waiting for source" begin
+    source_uri = URI("file:///cancellation.jl")
+    @testset "$scheme" for (scheme, command) in (
+            (JETLS.MACRO_EXPANSION_SCHEME, JETLS.COMMAND_OPEN_MACRO_EXPANSION),
+            (JETLS.TYPE_ANNOTATION_SCHEME, JETLS.COMMAND_OPEN_TYPE_ANNOTATION))
+        uri = URI(; scheme, path = "/view.jl",
+            query = "source=$(URIs2.escapeuri(string(source_uri)))&start=1&stop=1")
+        @testset "$(msg.method)" for msg in (
+                TextDocumentContentRequest(;
+                    id = 1, params = TextDocumentContentParams(; uri)),
+                ExecuteCommandRequest(; id = 1,
+                    params = ExecuteCommandParams(; command, arguments = [string(uri)])))
+            recorder = JETLS.ServerMessageRecorder()
+            server = JETLS.Server(; callback = recorder)
+            cancel_flag = JETLS.CancelFlag(false)
+            # Run past the dispatch guard into the file-cache wait on this task's thread.
+            task = @async JETLS.handle_request_message(server, msg, cancel_flag)
+            yield()
+            @test istaskstarted(task) && !istaskdone(task)
+            JETLS.cancel!(cancel_flag)
+            wait(task)
+
+            response = take_with_timeout!(recorder.sent_queue; limit = 10)
+            response_type = msg isa TextDocumentContentRequest ?
+                TextDocumentContentResponse : ExecuteCommandResponse
+            @test response isa response_type
+            @test response.id == msg.id
+            @test response.result === nothing
+            @test response.error.code == ErrorCodes.RequestCancelled
+            @test isempty(recorder.sent_queue)
+        end
+    end
+end
+
 @testset "save_text_document_content_tempfile" begin
     server = JETLS.Server()
     saved = JETLS.save_text_document_content_tempfile(server, "hello\nworld\n",

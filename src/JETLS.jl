@@ -489,7 +489,7 @@ function handle_request_message(server::Server, @nospecialize(msg), cancel_flag:
     elseif msg isa CompletionRequest
         handle_CompletionRequest(server, msg, cancel_flag)
     elseif msg isa CompletionResolveRequest
-        handle_CompletionResolveRequest(server, msg)
+        handle_CompletionResolveRequest(server, msg, cancel_flag)
     elseif msg isa SignatureHelpRequest
         handle_SignatureHelpRequest(server, msg, cancel_flag)
     elseif msg isa DeclarationRequest
@@ -539,9 +539,9 @@ function handle_request_message(server::Server, @nospecialize(msg), cancel_flag:
     elseif msg isa PrepareRenameRequest
         handle_PrepareRenameRequest(server, msg, cancel_flag)
     elseif msg isa ExecuteCommandRequest
-        handle_ExecuteCommandRequest(server, msg)
+        handle_ExecuteCommandRequest(server, msg, cancel_flag)
     elseif msg isa TextDocumentContentRequest
-        handle_TextDocumentContentRequest(server, msg)
+        handle_TextDocumentContentRequest(server, msg, cancel_flag)
     elseif @static JETLS_DEV_MODE ? true : false
         if isdefined(msg, :method)
             _id = getfield(msg, :method)

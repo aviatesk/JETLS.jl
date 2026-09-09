@@ -38,22 +38,28 @@ end
 #     method = EXECUTE_COMMAND_REGISTRATION_METHOD))
 # register(currently_running, execute_command_registration())
 
-function handle_ExecuteCommandRequest(server::Server, msg::ExecuteCommandRequest)
+function handle_ExecuteCommandRequest(
+        server::Server, msg::ExecuteCommandRequest, cancel_flag::CancelFlag
+    )
+    if is_cancelled(cancel_flag)
+        return send(server, ExecuteCommandResponse(;
+            id = msg.id, result = nothing, error = request_cancelled_error()))
+    end
     command = msg.params.command
     if command == COMMAND_TESTRUNNER_RUN_TESTSET
-        return execute_testrunner_run_testset_command(server, msg)
+        return execute_testrunner_run_testset_command(server, msg, cancel_flag)
     elseif command == COMMAND_TESTRUNNER_RUN_TESTCASE
-        return execute_testrunner_run_testcase_command(server, msg)
+        return execute_testrunner_run_testcase_command(server, msg, cancel_flag)
     elseif command == COMMAND_TESTRUNNER_OPEN_LOGS
-        return execute_testrunner_open_logs_command(server, msg)
+        return execute_testrunner_open_logs_command(server, msg, cancel_flag)
     elseif command == COMMAND_TESTRUNNER_CLEAR_RESULT
         return execute_testrunner_clear_result_command(server, msg)
     elseif command == COMMAND_SHOW_MESSAGE
         return execute_show_message_command(server, msg)
     elseif command == COMMAND_OPEN_MACRO_EXPANSION
-        return execute_open_macro_expansion_command(server, msg)
+        return execute_open_macro_expansion_command(server, msg, cancel_flag)
     elseif command == COMMAND_OPEN_TYPE_ANNOTATION
-        return execute_open_type_annotation_command(server, msg)
+        return execute_open_type_annotation_command(server, msg, cancel_flag)
     end
     return send(server,
         invalid_execute_command_response(msg, "Unknown execution command: $command"))
@@ -94,12 +100,21 @@ macro tryparsearg(server, ex)
     end)
 end
 
-function execute_testrunner_run_testset_command(server::Server, msg::ExecuteCommandRequest)
+function execute_testrunner_run_testset_command(
+        server::Server, msg::ExecuteCommandRequest, cancel_flag::CancelFlag
+    )
     uri = URI(@tryparsearg server msg[1]::String)
     idx = @tryparsearg server msg[2]::Int
     tsn = @tryparsearg server msg[3]::String
-    error_msg = testrunner_run_testset_from_uri(server, uri, idx, tsn)
-    if error_msg !== nothing
+    if is_cancelled(cancel_flag)
+        error_msg = request_cancelled_error()
+    else
+        error_msg = testrunner_run_testset_from_uri(server, uri, idx, tsn; cancel_flag)
+    end
+    if error_msg isa ResponseError
+        return send(server, ExecuteCommandResponse(;
+            id = msg.id, result = nothing, error = error_msg))
+    elseif error_msg !== nothing
         show_error_message(server, error_msg)
         return send(server,
             ExecuteCommandResponse(;
@@ -110,12 +125,21 @@ function execute_testrunner_run_testset_command(server::Server, msg::ExecuteComm
     return send(server, ExecuteCommandResponse(; id = msg.id, result = null))
 end
 
-function execute_testrunner_run_testcase_command(server::Server, msg::ExecuteCommandRequest)
+function execute_testrunner_run_testcase_command(
+        server::Server, msg::ExecuteCommandRequest, cancel_flag::CancelFlag
+    )
     uri = URI(@tryparsearg server msg[1]::String)
     tcl = @tryparsearg server msg[2]::Int
     tct = @tryparsearg server msg[3]::String
-    error_msg = testrunner_run_testcase_from_uri(server, uri, tcl, tct)
-    if error_msg !== nothing
+    if is_cancelled(cancel_flag)
+        error_msg = request_cancelled_error()
+    else
+        error_msg = testrunner_run_testcase_from_uri(server, uri, tcl, tct; cancel_flag)
+    end
+    if error_msg isa ResponseError
+        return send(server, ExecuteCommandResponse(;
+            id = msg.id, result = nothing, error = error_msg))
+    elseif error_msg !== nothing
         show_error_message(server, error_msg)
         return send(server,
             ExecuteCommandResponse(;
@@ -126,7 +150,9 @@ function execute_testrunner_run_testcase_command(server::Server, msg::ExecuteCom
     return send(server, ExecuteCommandResponse(; id = msg.id, result = null))
 end
 
-function execute_testrunner_open_logs_command(server::Server, msg::ExecuteCommandRequest)
+function execute_testrunner_open_logs_command(
+        server::Server, msg::ExecuteCommandRequest, cancel_flag::CancelFlag
+    )
     source_uri = URI(@tryparsearg server msg[1]::String)
     idx = @tryparsearg server msg[2]::Int
     tsn = @tryparsearg server msg[3]::String
@@ -135,7 +161,12 @@ function execute_testrunner_open_logs_command(server::Server, msg::ExecuteComman
         show_warning_message(server,
             "The test result is no longer available. Re-run the testset to view its logs.")
     else
-        open_testsetinfo_logs!(server, tsn, logs; source_uri, testset_index=idx)
+        result = open_testsetinfo_logs!(server, tsn, logs;
+            source_uri, testset_index=idx, cancel_flag)
+        if result isa ResponseError
+            return send(server, ExecuteCommandResponse(;
+                id = msg.id, result = nothing, error = result))
+        end
     end
     return send(server, ExecuteCommandResponse(; id = msg.id, result = null))
 end
@@ -148,15 +179,27 @@ function execute_testrunner_clear_result_command(server::Server, msg::ExecuteCom
     return send(server, ExecuteCommandResponse(; id = msg.id, result = null))
 end
 
-function execute_open_macro_expansion_command(server::Server, msg::ExecuteCommandRequest)
+function execute_open_macro_expansion_command(
+        server::Server, msg::ExecuteCommandRequest, cancel_flag::CancelFlag
+    )
     uri = URI(@tryparsearg server msg[1]::String)
-    request_open_macro_expansion(server, uri)
+    result = request_open_macro_expansion(server, uri; cancel_flag)
+    if result isa ResponseError
+        return send(server, ExecuteCommandResponse(;
+            id = msg.id, result = nothing, error = result))
+    end
     return send(server, ExecuteCommandResponse(; id = msg.id, result = null))
 end
 
-function execute_open_type_annotation_command(server::Server, msg::ExecuteCommandRequest)
+function execute_open_type_annotation_command(
+        server::Server, msg::ExecuteCommandRequest, cancel_flag::CancelFlag
+    )
     uri = URI(@tryparsearg server msg[1]::String)
-    request_open_type_annotation(server, uri)
+    result = request_open_type_annotation(server, uri; cancel_flag)
+    if result isa ResponseError
+        return send(server, ExecuteCommandResponse(;
+            id = msg.id, result = nothing, error = result))
+    end
     return send(server, ExecuteCommandResponse(; id = msg.id, result = null))
 end
 

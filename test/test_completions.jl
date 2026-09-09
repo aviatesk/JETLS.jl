@@ -871,6 +871,28 @@ Core.eval(completion_binding_state_fixture,
     @test cnt[] == 1
 end
 
+@testset "completion resolve cancellation" begin
+    with_completion_items("virtualized_documented│";
+            context_module = completion_binding_state_fixture) do (; result, state)
+        item = only(filter(it -> it.label == "virtualized_documented", result.items))
+        @test JETLS.resolve_completion_item(state, item).documentation isa MarkupContent
+        cancel_flag = JETLS.CancelFlag(true)
+        @test JETLS.resolve_completion_item(state, item; cancel_flag) === item
+
+        recorder = JETLS.ServerMessageRecorder()
+        server = JETLS.Server(; callback = recorder)
+        msg = CompletionResolveRequest(; id = 1, params = item)
+        # Call the handler directly so the dispatcher's guard cannot mask a regression.
+        JETLS.handle_CompletionResolveRequest(server, msg, cancel_flag)
+        response = take_with_timeout!(recorder.sent_queue; limit = 10)
+        @test response isa CompletionResolveResponse
+        @test response.id == msg.id
+        @test response.result === nothing
+        @test response.error.code == ErrorCodes.RequestCancelled
+        @test isempty(recorder.sent_queue)
+    end
+end
+
 @testset "macro completion" begin
     # `@`-mark should trigger completion of macro names
     let text = """

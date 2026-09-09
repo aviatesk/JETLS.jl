@@ -973,21 +973,25 @@ function supports_completion_item_resolve(state::ServerState, property::Abstract
     return property in ("documentation", "detail")
 end
 
-function resolve_completion_item(state::ServerState, item::CompletionItem)
+function resolve_completion_item(
+        state::ServerState, item::CompletionItem;
+        cancel_flag::AbstractCancelFlag = DUMMY_CANCEL_FLAG
+    )
+    is_cancelled(cancel_flag) && return item
     completion_resolver_info = @something load(state.completion_resolver_info) return item
     data = item.data
     if (data isa GlobalCompletionData &&
         completion_resolver_info isa GlobalCompletionResolverInfo &&
         data.resolver_id == completion_resolver_info.id)
-        return resolve_global_completion_item(state, item, data, completion_resolver_info)
+        return resolve_global_completion_item(state, item, data, completion_resolver_info; cancel_flag)
     elseif (data isa MethodSignatureCompletionData &&
             completion_resolver_info isa MethodSignatureCompletionResolverInfo &&
             data.resolver_id == completion_resolver_info.id)
-        return resolve_method_signature_completion_item(state, item, data, completion_resolver_info)
+        return resolve_method_signature_completion_item(state, item, data, completion_resolver_info; cancel_flag)
     elseif (data isa PropertyCompletionData &&
             completion_resolver_info isa PropertyCompletionResolverInfo &&
             data.resolver_id == completion_resolver_info.id)
-        return resolve_property_completion_item(state, item, data, completion_resolver_info)
+        return resolve_property_completion_item(state, item, data, completion_resolver_info; cancel_flag)
     else
         return item
     end
@@ -995,8 +999,10 @@ end
 
 function resolve_property_completion_item(
         state::ServerState, item::CompletionItem, data::PropertyCompletionData,
-        completion_resolver_info::PropertyCompletionResolverInfo,
+        completion_resolver_info::PropertyCompletionResolverInfo;
+        cancel_flag::AbstractCancelFlag = DUMMY_CANCEL_FLAG
     )
+    is_cancelled(cancel_flag) && return item
     supports_labelDetails = supports_completion_item_resolve(state, "labelDetails")
     supports_detail = supports_completion_item_resolve(state, "detail")
     supports_documentation = supports_completion_item_resolve(state, "documentation")
@@ -1009,9 +1015,11 @@ function resolve_property_completion_item(
     name = Core.Const(Symbol(data.label))
     rawtyp = Union{}
     for comp in union_components(prefixtyp)
+        is_cancelled(cancel_flag) && return item
         gp_rt = @something abstract_call_const(getproperty, Any[comp, name], world) continue
         rawtyp = CC.tmerge(rawtyp, gp_rt)
     end
+    is_cancelled(cancel_flag) && return item
     typstr = truncate_typstr(
         postprocessor(sprint(show, rawtyp; context = :compact => true)),
         #=maxdepth=#3, #=maxwidth=#20)
@@ -1019,7 +1027,9 @@ function resolve_property_completion_item(
     full_typstr = postprocessor(string(rawtyp))
     io = IOBuffer()
     print(io, "```julia\n", data.prefix, ".", data.label, " :: ", full_typstr, "\n```")
+    is_cancelled(cancel_flag) && return item
     fdoc = lookup_field_doc(prefixtyp, Symbol(data.label), world)
+    is_cancelled(cancel_flag) && return item
     if fdoc isa Markdown.MD
         print(io, "\n\n---\n\n", postprocessor(fdoc))
     end
@@ -1035,8 +1045,10 @@ end
 
 function resolve_global_completion_item(
         state::ServerState, item::CompletionItem, data::GlobalCompletionData,
-        completion_resolver_info::GlobalCompletionResolverInfo
+        completion_resolver_info::GlobalCompletionResolverInfo;
+        cancel_flag::AbstractCancelFlag = DUMMY_CANCEL_FLAG
     )
+    is_cancelled(cancel_flag) && return item
     supports_labelDetails = supports_completion_item_resolve(state, "labelDetails")
     supports_kind = supports_completion_item_resolve(state, "kind")
     supports_detail = supports_completion_item_resolve(state, "detail")
@@ -1046,6 +1058,7 @@ function resolve_global_completion_item(
     (; context_module, world, postprocessor) = completion_resolver_info
     name = Symbol(data.name)
     doc = lookup_doc_for_binding(context_module, name, #=sig=#nothing, world)
+    is_cancelled(cancel_flag) && return item
     (; labelDetails, detail) = item
     kind = item.kind
     if isnothing(detail) || isnothing(kind)
@@ -1100,8 +1113,10 @@ end
 
 function resolve_method_signature_completion_item(
         state::ServerState, item::CompletionItem, data::MethodSignatureCompletionData,
-        completion_resolver_info::MethodSignatureCompletionResolverInfo
+        completion_resolver_info::MethodSignatureCompletionResolverInfo;
+        cancel_flag::AbstractCancelFlag = DUMMY_CANCEL_FLAG
     )
+    is_cancelled(cancel_flag) && return item
     supports_labelDetails = supports_completion_item_resolve(state, "labelDetails")
     supports_detail = supports_completion_item_resolve(state, "detail")
     supports_documentation = supports_completion_item_resolve(state, "documentation")
@@ -1111,8 +1126,11 @@ function resolve_method_signature_completion_item(
     1 ≤ data.match_idx ≤ length(matches) || return item # just to make sure
     match = matches[data.match_idx]
     doc = @something lookup_doc_for_match(match, world) return item
+    is_cancelled(cancel_flag) && return item
     docstr = postprocessor(string(doc))
+    is_cancelled(cancel_flag) && return item
     _, result = infer_match!(world, match)
+    is_cancelled(cancel_flag) && return item
     resulttyp = @something result.result return item
     rettyp = CC.widenconst(resulttyp)
     # TODO Show effects and exception type?
@@ -1182,9 +1200,14 @@ function handle_CompletionRequest(
             result = CompletionList(; isIncomplete, items)))
 end
 
-function handle_CompletionResolveRequest(server::Server, msg::CompletionResolveRequest)
-    return send(server,
-        CompletionResolveResponse(;
-            id = msg.id,
-            result = resolve_completion_item(server.state, msg.params)))
+function handle_CompletionResolveRequest(
+        server::Server, msg::CompletionResolveRequest, cancel_flag::CancelFlag
+    )
+    result = resolve_completion_item(server.state, msg.params; cancel_flag)
+    if is_cancelled(cancel_flag)
+        return send(server,
+            CompletionResolveResponse(;
+                id = msg.id, result = nothing, error = request_cancelled_error()))
+    end
+    return send(server, CompletionResolveResponse(; id = msg.id, result))
 end
