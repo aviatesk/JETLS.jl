@@ -81,7 +81,8 @@ module __demo__ end
             JET.analyze_and_report_text!(interp, save_text; virtualize=false, context=__demo__, toplevel_logger=nothing)
 
             fi = cache_file_info!(server, uri, #=version=#1, live_text)
-            (items, _) = get_completion_items(server.state, uri, fi, position, nothing; context_module=__demo__)
+            snapshot = get_document_snapshot(server.state, uri)::DocumentSnapshot
+            (items, _) = get_completion_items(server.state, uri, snapshot, position, nothing; context_module=__demo__)
             any(item->item.label=="x", items) || @warn "textDocument/completion is broken (field x)"
             any(item->item.label=="y", items) || @warn "textDocument/completion is broken (field y)"
 

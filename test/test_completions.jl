@@ -374,8 +374,9 @@ function with_completion_items(
     JETLS.store!(state.file_cache) do cache
         Base.PersistentDict(cache, uri => fi), nothing
     end
+    snapshot = JETLS.get_document_snapshot(state, uri)::JETLS.DocumentSnapshot
     for pos in positions
-        items, isIncomplete = JETLS.get_completion_items(state, uri, fi, pos, context;
+        items, isIncomplete = JETLS.get_completion_items(state, uri, snapshot, pos, context;
             context_module)
         tester((; result = (; items, isIncomplete), state, uri))
     end
@@ -1845,6 +1846,129 @@ end
         xs_soft = filter(((bi, _, _),) -> bi.name == "x", cbs_soft)
         @test length(xs_soft) == 1
         @test xs_soft[1][1].kind === :global
+    end
+end
+
+function make_completion_request(id::Int, uri::URI, pos::Position)
+    return CompletionRequest(;
+        id,
+        params = CompletionParams(;
+            textDocument = TextDocumentIdentifier(; uri),
+            position = pos))
+end
+
+@testset "completion snapshot ordering" begin
+    @testset "prior and later didChange" begin
+        with_manual_dispatch_server() do server, recorder
+            uri = filepath2uri(@__FILE__)
+            initial = "let initial_only = 1\n    ini\nend"
+            captured = "let captured_only = 2\n    cap\nend"
+            later = "let later_only = 3\n    lat\nend"
+            JETLS.cache_file_info!(server, uri, 1, initial)
+            pos = Position(; line = 1, character = 7)
+            request = make_completion_request(1, uri, pos)
+            next_request = make_completion_request(2, uri, pos)
+            @test JETLS.is_sequential_msg(request)
+            prepared = queued_snapshot_requests(server, [
+                make_DidChangeTextDocumentNotification(uri, captured, 2), request,
+                make_DidChangeTextDocumentNotification(uri, later, 3), next_request])
+            @test length(prepared) == 2
+            @test prepared[1].msg === request
+            @test prepared[1].snapshot.fi.version == 2
+            @test prepared[1].msg.params.position == pos
+            @test JETLS.adjust_position(prepared[1].snapshot, uri, prepared[1].msg.params.position) == pos
+            @test prepared[1].snapshot.cache_uri == uri
+            @test prepared[1].snapshot.notebook === nothing
+            @test prepared[2].snapshot.fi.version == 3
+            @test JETLS.get_file_info(server.state, uri) === prepared[2].snapshot.fi
+            @test prepared[1].snapshot.fi !== prepared[2].snapshot.fi
+
+            response = dispatch_snapshot_request(server, recorder, prepared[1])
+            @test response isa CompletionResponse
+            @test response.error === nothing
+            cv_has(response.result.items, ["captured_only"]; kind = :local)
+            cv_nhas(response.result.items, ["initial_only", "later_only"])
+            response = dispatch_snapshot_request(server, recorder, prepared[2])
+            @test response.error === nothing
+            cv_has(response.result.items, ["later_only"]; kind = :local)
+            cv_nhas(response.result.items, ["initial_only", "captured_only"])
+        end
+    end
+
+    @testset "macro trigger uses captured text" begin
+        with_manual_dispatch_server() do server, recorder
+            uri = filepath2uri(@__FILE__)
+            JETLS.cache_file_info!(server, uri, 1, "\n")
+            pos = Position(; line = 0, character = 1)
+            request = CompletionRequest(;
+                id = 1,
+                params = CompletionParams(;
+                    textDocument = TextDocumentIdentifier(; uri),
+                    position = pos,
+                    context = CompletionContext(;
+                        triggerKind = CompletionTriggerKind.TriggerCharacter,
+                        triggerCharacter = "@")))
+            prepared = only(queued_snapshot_requests(server, [
+                make_DidChangeTextDocumentNotification(uri, "@", 2), request,
+                make_DidChangeTextDocumentNotification(uri, "x", 3)]))
+            response = dispatch_snapshot_request(server, recorder, prepared)
+            @test response.error === nothing
+            @test !response.result.isIncomplete
+            cv_has(response.result.items, ["@time"])
+            cv_nhas(response.result.items, ["sin"])
+            item = only(filter(item -> item.label == "@time", response.result.items))
+            @test item.textEdit isa TextEdit
+            @test item.textEdit.range == Range(; start = Position(; line = 0, character = 0), var"end" = pos)
+        end
+    end
+
+    @testset "cancellation before prepared dispatch" begin
+        with_manual_dispatch_server() do server, recorder
+            uri = filepath2uri(@__FILE__)
+            JETLS.cache_file_info!(server, uri, 1, "\\alpha")
+            request = make_completion_request(1, uri, Position(; line = 0, character = 6))
+            prepared = only(queued_snapshot_requests(server, [request]))
+            @test prepared.snapshot !== nothing
+            JETLS.handler_concurrent_message(server, CancelRequestNotification(; params = CancelParams(; id = request.id)))
+            @test JETLS.is_cancelled(server.state.currently_handled[request.id])
+            response = dispatch_snapshot_request(server, recorder, prepared)
+            @test response.result === nothing
+            @test response.error isa ResponseError
+            @test response.error.code == ErrorCodes.RequestCancelled
+        end
+    end
+
+    @testset "missing cache is not retried" begin
+        with_manual_dispatch_server() do server, recorder
+            uri = filepath2uri(@__FILE__)
+            request = make_completion_request(1, uri, Position(; line = 0, character = 6))
+            prepared = only(queued_snapshot_requests(server, [request]))
+            @test prepared.snapshot === nothing
+            @test JETLS.get_file_info(server.state, uri) === nothing
+            JETLS.cache_file_info!(server, uri, 1, "\\alpha")
+            @test JETLS.snapshot_request_message(server.state, request, uri).snapshot !== nothing
+            response = dispatch_snapshot_request(server, recorder, prepared)
+            @test response isa ResponseMessage
+            @test response.error === nothing
+            @test response.result === null
+        end
+    end
+
+
+    @testset "request/response routing sanity" begin
+        withserver() do (; server, writemsg, writereadmsg, id_counter)
+            uri = filepath2uri(@__FILE__)
+            JETLS.cache_file_info!(server, uri, 1, "let initial_only = 1\n    ini\nend")
+            writemsg(make_DidChangeTextDocumentNotification(
+                uri, "let captured_only = 2\n    cap\nend", 2))
+            id = id_counter[] += 1
+            pos = Position(; line = 1, character = 7)
+            (; raw_res) = writereadmsg(make_completion_request(id, uri, pos))
+            @test raw_res isa CompletionResponse
+            @test raw_res.error === nothing
+            cv_has(raw_res.result.items, ["captured_only"]; kind = :local)
+            cv_nhas(raw_res.result.items, ["initial_only"])
+        end
     end
 end
 

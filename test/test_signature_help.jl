@@ -398,6 +398,140 @@ end
 
 include("setup.jl")
 
+module M_snapshot
+snapshot_pair(a, b) = nothing
+snapshot_single(x) = nothing
+end
+
+function make_signature_help_request(id::Int, uri::URI, pos::Position)
+    return SignatureHelpRequest(;
+        id,
+        params = SignatureHelpParams(;
+            textDocument = TextDocumentIdentifier(; uri),
+            position = pos))
+end
+
+@testset "signature help snapshot ordering" begin
+    @testset "prior and later didChange" begin
+        with_manual_dispatch_server() do server, recorder
+            uri = filepath2uri(@__FILE__)
+            JETLS.cache_out_of_scope!(server.state.analysis_manager, uri, JETLS.OutOfScope(M_snapshot))
+            JETLS.cache_file_info!(server, uri, 1, "snapshot_single(0)")
+            pos = Position(; line = 0, character = 16)
+            request = make_signature_help_request(1, uri, pos)
+            next_request = make_signature_help_request(2, uri, pos)
+            @test JETLS.is_sequential_msg(request)
+            prepared = queued_snapshot_requests(server, [
+                make_DidChangeTextDocumentNotification(uri, "snapshot_pair(1,)", 2), request,
+                make_DidChangeTextDocumentNotification(uri, "snapshot_single()", 3), next_request])
+            @test length(prepared) == 2
+            @test prepared[1] isa JETLS.SnapshotRequestMessage
+            @test prepared[1].msg isa SignatureHelpRequest
+            @test prepared[1].msg === request
+            @test prepared[2].msg === next_request
+            @test prepared[1].snapshot.fi.version == 2
+            @test prepared[1].msg.params.position == pos
+            @test JETLS.adjust_position(prepared[1].snapshot, uri, prepared[1].msg.params.position) == pos
+            @test prepared[1].snapshot.cache_uri == uri
+            @test prepared[1].snapshot.notebook === nothing
+            @test prepared[2].snapshot.fi.version == 3
+            @test JETLS.get_file_info(server.state, uri) === prepared[2].snapshot.fi
+            @test prepared[1].snapshot.fi !== prepared[2].snapshot.fi
+
+            for (item, (label, parameter)) in zip(prepared, [("snapshot_pair(a, b)", 1), ("snapshot_single(x)", 0)])
+                response = dispatch_snapshot_request(server, recorder, item)
+                @test response isa SignatureHelpResponse
+                @test response.error === nothing
+                signature = only(response.result.signatures)
+                @test signature.label == label
+                @test signature.activeParameter == parameter
+            end
+        end
+    end
+
+    @testset "cancellation before prepared dispatch" begin
+        with_manual_dispatch_server() do server, recorder
+            uri = filepath2uri(@__FILE__)
+            JETLS.cache_file_info!(server, uri, 1, "snapshot_pair(1,)")
+            request = make_signature_help_request(1, uri, Position(; line = 0, character = 16))
+            prepared = only(queued_snapshot_requests(server, [request]))
+            @test prepared.snapshot !== nothing
+            JETLS.handler_concurrent_message(server, CancelRequestNotification(; params = CancelParams(; id = request.id)))
+            @test JETLS.is_cancelled(server.state.currently_handled[request.id])
+            response = dispatch_snapshot_request(server, recorder, prepared)
+            @test response isa ResponseMessage
+            @test response.result === nothing
+            @test response.error isa ResponseError
+            @test response.error.code == ErrorCodes.RequestCancelled
+        end
+    end
+
+    @testset "missing cache is not retried" begin
+        with_manual_dispatch_server() do server, recorder
+            uri = filepath2uri(@__FILE__)
+            pos = Position(; line = 0, character = 16)
+            request = make_signature_help_request(1, uri, pos)
+            prepared = only(queued_snapshot_requests(server, [request]))
+            @test prepared.snapshot === nothing
+            @test JETLS.get_file_info(server.state, uri) === nothing
+            JETLS.cache_file_info!(server, uri, 1, "snapshot_pair(1,)")
+            JETLS.cache_out_of_scope!(server.state.analysis_manager, uri, JETLS.OutOfScope(M_snapshot))
+            current = only(queued_snapshot_requests(server, [make_signature_help_request(2, uri, pos)]))
+            @test current.snapshot !== nothing
+            response = dispatch_snapshot_request(server, recorder, prepared)
+            @test response isa ResponseMessage
+            @test response.error === nothing
+            @test response.result === null
+            response = dispatch_snapshot_request(server, recorder, current)
+            @test response.error === nothing
+            signature = only(response.result.signatures)
+            @test signature.label == "snapshot_pair(a, b)"
+            @test signature.activeParameter == 1
+        end
+    end
+
+
+    @testset "mixed completion and signature requests" begin
+        with_manual_dispatch_server() do server, recorder
+            uri = filepath2uri(@__FILE__)
+            JETLS.cache_out_of_scope!(server.state.analysis_manager, uri, JETLS.OutOfScope(M_snapshot))
+            JETLS.cache_file_info!(server, uri, 1, "\\alpha")
+            completion = CompletionRequest(;
+                id = 1,
+                params = CompletionParams(;
+                    textDocument = TextDocumentIdentifier(; uri),
+                    position = Position(; line = 0, character = 6)))
+            signature = make_signature_help_request(2, uri, Position(; line = 0, character = 16))
+            @test JETLS.is_sequential_msg(completion)
+            @test JETLS.is_sequential_msg(signature)
+            prepared = queued_snapshot_requests(server, [
+                completion, make_DidChangeTextDocumentNotification(uri, "snapshot_pair(1,)", 2),
+                signature, make_DidChangeTextDocumentNotification(uri, "\\beta", 3)])
+            @test length(prepared) == 2
+            @test prepared[1] isa JETLS.SnapshotRequestMessage
+            @test prepared[2] isa JETLS.SnapshotRequestMessage
+            @test prepared[1].msg isa CompletionRequest
+            @test prepared[2].msg isa SignatureHelpRequest
+            @test prepared[1].msg === completion
+            @test prepared[2].msg === signature
+            @test prepared[1].snapshot.fi.version == 1
+            @test prepared[2].snapshot.fi.version == 2
+            @test JETLS.get_file_info(server.state, uri).version == 3
+            response = dispatch_snapshot_request(server, recorder, prepared[1])
+            @test response isa CompletionResponse
+            @test response.error === nothing
+            item = only(filter(item -> item.label == "\\alpha", response.result.items))
+            @test item.textEdit.newText == "α"
+            response = dispatch_snapshot_request(server, recorder, prepared[2])
+            @test response isa SignatureHelpResponse
+            @test response.error === nothing
+            siginfo = only(response.result.signatures)
+            @test siginfo.label == "snapshot_pair(a, b)"
+            @test siginfo.activeParameter == 1
+        end
+    end
+end
+
 function with_signature_help_request(tester, text::AbstractString; kwargs...)
     clean_code, positions = JETLS.get_text_and_positions(text; kwargs...)
 
@@ -471,7 +605,6 @@ end
                     make_DidChangeTextDocumentNotification(uri, edited_code, #=version=#2);
                     read = 0)
 
-                sleep(2.0) # sleep to propagate the document change to the cache (requried for multithreading env)
 
                 let id = id_counter[] += 1
                     (; raw_res) = writereadmsg(SignatureHelpRequest(;

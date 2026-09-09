@@ -65,6 +65,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- Fixed intermittent missing or incorrect completion suggestions and signature help after edits, including macro completions triggered by `@` and requests in notebook cells.
+
 - Fixed spurious `FieldError` diagnostics on parametric type definitions with inner constructors in script analysis mode.
 
 - Fixed diagnostics disappearing prematurely during reanalysis.
