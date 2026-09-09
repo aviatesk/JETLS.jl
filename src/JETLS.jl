@@ -335,7 +335,9 @@ function is_sequential_msg(@nospecialize msg)
            msg isa DidOpenNotebookDocumentNotification ||
            msg isa DidChangeNotebookDocumentNotification ||
            msg isa DidCloseNotebookDocumentNotification ||
-           msg isa DidSaveNotebookDocumentNotification
+           msg isa DidSaveNotebookDocumentNotification ||
+           msg isa CompletionRequest ||
+           msg isa SignatureHelpRequest
 end
 
 function start_sequential_message_worker(server::Server)
@@ -379,6 +381,10 @@ function handle_sequential_message(server::Server, @nospecialize msg)
         handle_DidCloseNotebookDocumentNotification(server, msg)
     elseif msg isa DidSaveNotebookDocumentNotification
         handle_DidSaveNotebookDocumentNotification(server, msg)
+    elseif msg isa CompletionRequest
+        enqueue_message!(server, snapshot_request_message(server.state, msg, msg.params.textDocument.uri))
+    elseif msg isa SignatureHelpRequest
+        enqueue_message!(server, snapshot_request_message(server.state, msg, msg.params.textDocument.uri))
     else
         error(lazy"Unexpected sequential message: $(typeof(msg))")
     end
@@ -433,6 +439,11 @@ function handler_concurrent_message(server::Server, @nospecialize msg)
                     result = nothing,
                     error = method_not_found_error(method)))
             end
+        end
+    elseif (snapshot_msg_id = snapshot_request_message(msg); snapshot_msg_id !== nothing)
+        snapshot_msg, id = snapshot_msg_id
+        let cancel_flag = get!(()->CancelFlag(false), server.state.currently_handled, id)
+            Threads.@spawn :default @tryinvokelatest handle_snapshot_request_message(server, snapshot_msg, id, cancel_flag)
         end
     elseif isdefined(msg, :id) && (id = valid_message_id(getfield(msg, :id)); id !== nothing)
         prepare_request_message!(server, msg)
@@ -500,6 +511,34 @@ function handle_response_message(
     nothing
 end
 
+function snapshot_request_message(@nospecialize snapshot_msg)
+    snapshot_msg isa SnapshotRequestMessage || return nothing
+    id = @something valid_request_message_id(snapshot_msg.msg) return nothing
+    return snapshot_msg, id
+end
+
+function handle_snapshot_request_message(
+        server::Server, snapshot_msg::SnapshotRequestMessage, id::MessageId,
+        cancel_flag::CancelFlag
+    )
+    (; msg, snapshot) = snapshot_msg
+    if is_cancelled(cancel_flag)
+        send(server,
+            ResponseMessage(;
+                id,
+                result = nothing,
+                error = request_cancelled_error()))
+    elseif snapshot === nothing
+        send(server, ResponseMessage(; id, result = null))
+    elseif msg isa CompletionRequest
+        handle_CompletionRequest(server, msg, snapshot, cancel_flag)
+    elseif msg isa SignatureHelpRequest
+        handle_SignatureHelpRequest(server, msg, snapshot, cancel_flag)
+    else
+        error(lazy"Unexpected snapshot request message: $(typeof(msg))")
+    end
+end
+
 # Runs on the concurrent message worker right before a request is dispatched, for
 # bookkeeping that has to stay serialized with the worker's other state updates.
 function prepare_request_message!(server::Server, @nospecialize(msg))
@@ -518,12 +557,8 @@ function handle_request_message(
                 id,
                 result = nothing,
                 error = request_cancelled_error()))
-    elseif msg isa CompletionRequest
-        handle_CompletionRequest(server, msg, cancel_flag)
     elseif msg isa CompletionResolveRequest
         handle_CompletionResolveRequest(server, msg)
-    elseif msg isa SignatureHelpRequest
-        handle_SignatureHelpRequest(server, msg, cancel_flag)
     elseif msg isa DeclarationRequest
         handle_DeclarationRequest(server, msg, cancel_flag)
     elseif msg isa DefinitionRequest

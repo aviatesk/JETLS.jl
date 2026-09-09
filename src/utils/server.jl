@@ -242,6 +242,26 @@ end
 get_file_info(s::ServerState, t::TextDocumentIdentifier, cancel_flag::AbstractCancelFlag; kwargs...) =
     get_file_info(s, t.uri, cancel_flag; kwargs...)
 
+"""
+Capture document state on the document-sync worker, after preceding edits and
+before later ones. Never poll here: this worker also processes `didOpen`/`didChange`,
+so waiting would block the updates that populate the cache. Positions and ranges
+remain request inputs and are converted using the captured notebook layout.
+"""
+function get_document_snapshot(state::ServerState, uri::URI)
+    may_have_file_info(state, uri) || return nothing
+    cache_uri = canonical_cache_uri(state, uri)
+    fi = @something get_file_info(state, cache_uri) return nothing
+    notebook_info = get_notebook_info(state, cache_uri)
+    notebook = notebook_info === nothing ? nothing : notebook_info.concat
+    return DocumentSnapshot(fi, cache_uri, notebook)
+end
+
+function snapshot_request_message(state::ServerState, @nospecialize(msg), uri::URI)
+    snapshot = get_document_snapshot(state, uri)
+    return SnapshotRequestMessage(msg, snapshot)
+end
+
 function is_workspace_root_file(
         s::ServerState, filepath::AbstractString, filename::AbstractString
     )

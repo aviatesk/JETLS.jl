@@ -644,18 +644,17 @@ end
 Some clients, e.g. Eglot (emacs), requests it more frequently.
 """
 function handle_SignatureHelpRequest(
-        server::Server, msg::SignatureHelpRequest, cancel_flag::CancelFlag)
-    state = server.state
-    uri = msg.params.textDocument.uri
-    result = get_file_info(state, uri, cancel_flag)
-    if isnothing(result)
-        return send(server, SignatureHelpResponse(; id = msg.id, result = null))
-    elseif result isa ResponseError
-        return send(server, SignatureHelpResponse(; id = msg.id, result = nothing, error = result))
+        server::Server, msg::SignatureHelpRequest, snapshot::DocumentSnapshot,
+        cancel_flag::CancelFlag,
+    )
+    if is_cancelled(cancel_flag)
+        return send(server, SignatureHelpResponse(;
+            id = msg.id, result = nothing, error = request_cancelled_error()))
     end
-    fi = result
-    pos = adjust_position(state, uri, msg.params.position)
-    (; context_module, world, postprocessor) = get_context_info(state, uri, pos)
+    state = server.state
+    (; fi, cache_uri) = snapshot
+    pos = adjust_position(snapshot, msg.params.textDocument.uri, msg.params.position)
+    (; context_module, world, postprocessor) = get_context_info(state, cache_uri, pos)
     b = xy_to_offset(fi, pos)
     no_active_parameter_support = supports(state,
         :textDocument, :signatureHelp, :signatureInformation, :noActiveParameterSupport)

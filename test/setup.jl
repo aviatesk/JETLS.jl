@@ -255,6 +255,67 @@ function withserver(
     end
 end
 
+"""
+Create a server without starting `runserver`, so tests can advance document
+synchronization and concurrent dispatch independently.
+"""
+function with_manual_dispatch_server(tester)
+    recorder = JETLS.ServerMessageRecorder()
+    server = Server(Endpoint(IOBuffer(), IOBuffer()); callback = recorder)
+    server.state.init_params = InitializeParams(;
+        processId = getpid(), rootUri = nothing, capabilities = ClientCapabilities())
+    try
+        return tester(server, recorder)
+    finally
+        close(server.endpoint)
+        close(server.message_queue)
+    end
+end
+
+function queued_snapshot_requests(server::Server, messages::Vector)
+    queue, worker = JETLS.start_sequential_message_worker(server)
+    try
+        foreach(msg -> put!(queue, msg), messages)
+        put!(queue, nothing)
+        timedwait(() -> istaskdone(worker), 30.0; pollint = 0.01) === :ok ||
+            error("Timed out preparing document snapshots")
+        fetch(worker)
+    finally
+        close(queue)
+    end
+    # Keep concurrent dispatch stopped until every later edit has been applied.
+    prepared = JETLS.SnapshotRequestMessage[]
+    while isready(server.message_queue)
+        msg = take!(server.message_queue)
+        if msg isa JETLS.SnapshotRequestMessage
+            push!(prepared, msg)
+        else
+            @test msg isa JETLS.WorkspaceDiagnosticWakeToken
+        end
+    end
+    return prepared
+end
+
+function dispatch_snapshot_request(
+        server::Server, recorder::JETLS.ServerMessageRecorder,
+        prepared::JETLS.SnapshotRequestMessage
+    )
+    JETLS.handler_concurrent_message(server, prepared)
+    response = take_with_timeout!(recorder.sent_queue; interval = 0.01, limit = 6000)
+    @test response.id == prepared.msg.id
+    token = take_with_timeout!(server.message_queue; interval = 0.01, limit = 3000)
+    while token isa JETLS.WorkspaceDiagnosticWakeToken
+        token = take_with_timeout!(server.message_queue; interval = 0.01, limit = 3000)
+    end
+    @test token isa JETLS.HandledToken
+    @test token.id == prepared.msg.id
+    JETLS.handler_concurrent_message(server, token)
+    @test !haskey(server.state.currently_handled, prepared.msg.id)
+    @test prepared.msg.id in server.state.handled_history
+    @test !isready(recorder.sent_queue)
+    return response
+end
+
 function withpackage(
         test_func::Base.Callable, pkgname::AbstractString,
         pkgcode::AbstractString;

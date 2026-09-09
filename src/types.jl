@@ -222,6 +222,18 @@ struct NotebookInfo
 end
 @define_override_constructor NotebookInfo
 
+# Captured on the document-sync worker before any later document edits are applied.
+struct DocumentSnapshot
+    fi::FileInfo
+    cache_uri::URI
+    notebook::Union{Nothing,ConcatenatedNotebook}
+end
+
+struct SnapshotRequestMessage
+    msg::Any
+    snapshot::Union{Nothing,DocumentSnapshot}
+end
+
 abstract type AbstractCancelFlag end
 function is_cancelled end
 

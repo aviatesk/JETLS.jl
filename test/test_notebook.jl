@@ -98,6 +98,109 @@ function make_RenameRequest(id::Int, uri::URI, position::Position, newName::Abst
             newName = String(newName)))
 end
 
+@testset "document snapshot coordinates" begin
+    @testset "file identity" begin
+        let state = JETLS.ServerState(), uri = filepath2uri(@__FILE__)
+            @test JETLS.get_document_snapshot(state, uri) === nothing
+            fi = JETLS.FileInfo(1, "x = 1\ny = 2", uri, state.encoding)
+            JETLS.store!(state.file_cache) do cache
+                Base.PersistentDict(cache, uri => fi), nothing
+            end
+            snapshot = JETLS.get_document_snapshot(state, uri)
+            @test snapshot isa JETLS.DocumentSnapshot
+            @test snapshot.fi === fi
+            @test snapshot.cache_uri == uri
+            @test snapshot.notebook === nothing
+            pos = Position(; line = 1, character = 3)
+            range = Range(; start = Position(; line = 0, character = 1), var"end" = pos)
+            @test JETLS.adjust_position(snapshot, uri, pos) == pos
+            @test JETLS.unadjust_position(snapshot, uri, pos) == (pos, uri)
+            @test JETLS.adjust_range(snapshot, uri, range) == range
+            @test JETLS.unadjust_range(snapshot, uri, range) == (range, uri)
+        end
+    end
+
+    @testset "reuse across positions and ranges" begin
+        let state = JETLS.ServerState()
+            notebook_uri = URI("file:///snapshot.ipynb")
+            cell1 = URI("vscode-notebook-cell:/snapshot.ipynb#1")
+            cell2 = URI("vscode-notebook-cell:/snapshot.ipynb#2")
+            cells = [
+                JETLS.NotebookCellInfo(cell1, NotebookCellKind.Code, 1, "x = 1\ny = 2"),
+                JETLS.NotebookCellInfo(cell2, NotebookCellKind.Code, 1, "z = 3\nw = 4")]
+            concat = JETLS.concatenate_cells(cells)
+            notebook = JETLS.NotebookInfo(1, "jupyter-notebook", state.encoding, cells, concat)
+            fi = JETLS.FileInfo(1, concat.source, notebook_uri, state.encoding)
+            JETLS.store!(state.file_cache) do cache
+                Base.PersistentDict(cache, notebook_uri => fi), nothing
+            end
+            JETLS.store!(state.notebook_cache) do cache
+                Base.PersistentDict(cache, notebook_uri => notebook), nothing
+            end
+            JETLS.store!(state.cell_to_notebook) do cache
+                for cell in cells
+                    cache = Base.PersistentDict(cache, cell.uri => notebook_uri)
+                end
+                cache, nothing
+            end
+            snapshot = JETLS.get_document_snapshot(state, cell2)
+            @test snapshot isa JETLS.DocumentSnapshot
+            @test snapshot.fi === fi
+            @test snapshot.cache_uri == notebook_uri
+            @test snapshot.notebook === concat
+            positions = Position[
+                Position(; line = 0, character = 1),
+                Position(; line = 1, character = 3)]
+            ranges = Range[
+                Range(; start = positions[1], var"end" = positions[2]),
+                Range(; start = positions[2], var"end" = positions[2])]
+            for (cell_uri, line_offset) in ((cell1, 0), (cell2, 2))
+                global_positions = map(positions) do pos
+                    Position(; line = pos.line + line_offset, character = pos.character)
+                end
+                for (pos, global_pos) in zip(positions, global_positions)
+                    @test JETLS.adjust_position(snapshot, cell_uri, pos) == global_pos
+                    @test JETLS.adjust_position(snapshot, notebook_uri, global_pos) == global_pos
+                    for uri in (cell1, cell2, notebook_uri)
+                        @test JETLS.unadjust_position(snapshot, uri, global_pos) == (pos, cell_uri)
+                    end
+                end
+                global_ranges = (Range(;
+                    start = global_positions[1], var"end" = global_positions[2]),
+                    Range(; start = global_positions[2], var"end" = global_positions[2]))
+                for (range, global_range) in zip(ranges, global_ranges)
+                    @test JETLS.adjust_range(snapshot, cell_uri, range) == global_range
+                    @test JETLS.adjust_range(snapshot, notebook_uri, global_range) == global_range
+                    for uri in (cell1, cell2, notebook_uri)
+                        @test JETLS.unadjust_range(snapshot, uri, global_range) == (range, cell_uri)
+                    end
+                end
+            end
+            unknown_cell = URI("vscode-notebook-cell:/snapshot.ipynb#unknown")
+            @test JETLS.adjust_position(snapshot, unknown_cell, positions[2]) == positions[2]
+            @test JETLS.adjust_range(snapshot, unknown_cell, ranges[1]) == ranges[1]
+        end
+    end
+
+    @testset "empty notebook fallback" begin
+        let notebook_uri = URI("file:///empty-snapshot.ipynb")
+            cell_uri = URI("vscode-notebook-cell:/empty-snapshot.ipynb#1")
+            concat = JETLS.concatenate_cells([JETLS.NotebookCellInfo(cell_uri, NotebookCellKind.Code, 1, "")])
+            @test isempty(concat.cell_ranges)
+            fi = JETLS.FileInfo(1, concat.source, notebook_uri)
+            snapshot = JETLS.DocumentSnapshot(fi, notebook_uri, concat)
+            pos = Position(; line = 0, character = 0)
+            range = Range(; start = pos, var"end" = pos)
+            for uri in (cell_uri, notebook_uri)
+                @test JETLS.adjust_position(snapshot, uri, pos) == pos
+                @test JETLS.unadjust_position(snapshot, uri, pos) == (pos, uri)
+                @test JETLS.adjust_range(snapshot, uri, range) == range
+                @test JETLS.unadjust_range(snapshot, uri, range) == (range, uri)
+            end
+        end
+    end
+end
+
 @testset "notebook end to end" begin
     mktempdir() do tempdir; Pkg.activate(tempdir) do
         Pkg.add("Example"; io=devnull)
