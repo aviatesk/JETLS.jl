@@ -935,9 +935,7 @@ end
     out = (s_pos + 1, s_byte + tc.tokens[s_pos + 1].byte_span)
     return TokenCursor(tc.tokens, out...), out
 end
-Base.IteratorEltype(::Type{TokenCursor}) = Base.HasEltype()
 Base.eltype(::Type{TokenCursor}) = TokenCursor
-Base.IteratorSize(::Type{TokenCursor}) = Base.HasLength()
 Base.length(tc::TokenCursor) = length(tc.tokens)
 function Base.show(io::IO, tc::TokenCursor)
     print(io, "TokenCursor at position ", tc.position, " ")
