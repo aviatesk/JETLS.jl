@@ -233,15 +233,15 @@ function get_local_binding_rename(
             error = ResponseError(;
                 code = ErrorCodes.RequestFailed,
                 message = "Could not compute information for this local binding."))
-    seen_locations = Set{Tuple{URI,Range}}()
+    seen_locations = Set{Location}()
     for occurrence in binding_occurrences[binfo]
         range, adjusted_uri = unadjust_range(state, uri, jsobj_to_range(occurrence.tree, fi))
-        push!(seen_locations, (adjusted_uri, range))
+        push!(seen_locations, Location(; uri = adjusted_uri, range))
     end
     edits_by_uri = Dict{URI,Vector{TextEdit}}()
-    for (loc_uri, range) in seen_locations
-        edit = TextEdit(; range, newText = newName)
-        push!(get!(Vector{TextEdit}, edits_by_uri, loc_uri), edit)
+    for loc in seen_locations
+        edit = TextEdit(; range = loc.range, newText = newName)
+        push!(get!(Vector{TextEdit}, edits_by_uri, loc.uri), edit)
     end
 
     if supports(server, :workspace, :workspaceEdit, :documentChanges)
@@ -341,7 +341,7 @@ function collect_global_rename_edits!(
     )
     state = server.state
     n_files = length(uris_to_search)
-    seen_edits = Set{Tuple{URI,Range,String}}()
+    seen_edits = Set{Tuple{URI,TextEdit}}()
     for (i, uri) in enumerate(uris_to_search)
         if is_cancelled(cancel_flag)
             return false
@@ -370,8 +370,7 @@ function collect_global_rename_edits!(
 
         # Group edits by URI (for notebooks, occurrences may map to different cell URIs)
         edits_by_uri = Dict{URI,Vector{TextEdit}}()
-        for (loc_uri, range, newText) in seen_edits
-            edit = TextEdit(; range, newText)
+        for (loc_uri, edit) in seen_edits
             push!(get!(Vector{TextEdit}, edits_by_uri, loc_uri), edit)
         end
         if changes isa Vector{TextDocumentEdit}
@@ -390,7 +389,7 @@ function collect_global_rename_edits!(
 end
 
 function collect_global_rename_edits_in_file!(
-        seen_edits::Set{Tuple{URI,Range,String}}, state::ServerState, uri::URI, fi::FileInfo,
+        seen_edits::Set{Tuple{URI,TextEdit}}, state::ServerState, uri::URI, fi::FileInfo,
         st0_top::SyntaxTree, binfo::JL.BindingInfo, newName::String
     )
     ismacro = startswith(binfo.name, '@')
@@ -404,7 +403,7 @@ function collect_global_rename_edits_in_file!(
             insert_range, adjusted_uri =
                 unadjust_range(state, uri, Range(; start=full_range.var"end", var"end"=full_range.var"end"))
             newText = ismacro ? " as @$newName" : " as $newName"
-            push!(seen_edits, (adjusted_uri, insert_range, newText))
+            push!(seen_edits, (adjusted_uri, TextEdit(; range = insert_range, newText)))
         elseif classification === :alias && begin
                 collapse = collapse_alias_to_source(st0_top, id_byte_range, fi, newName, ismacro)
                 collapse !== nothing
@@ -412,11 +411,11 @@ function collect_global_rename_edits_in_file!(
             # Renaming an alias back to its source name — drop the ` as <alias>` suffix
             # so the import simplifies to `using M: <source>` instead of `<source> as <source>`.
             collapse_range, adjusted_uri = unadjust_range(state, uri, collapse)
-            push!(seen_edits, (adjusted_uri, collapse_range, ""))
+            push!(seen_edits, (adjusted_uri, TextEdit(; range = collapse_range, newText = "")))
         else
             adjust_first = ismacro && is_macrocall_use_site(fi, occurrence.tree) ? 1 : 0
             range, adjusted_uri = unadjust_range(state, uri, jsobj_to_range(occurrence.tree, fi; adjust_first))
-            push!(seen_edits, (adjusted_uri, range, newName))
+            push!(seen_edits, (adjusted_uri, TextEdit(; range, newText = newName)))
         end
     end
     return seen_edits

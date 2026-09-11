@@ -280,7 +280,7 @@ function find_global_binding_definitions(
     locations = Location[]
     state = server.state
     uris_to_search = collect_search_uris(server, uri)
-    seen_locations = Set{Tuple{URI,Range}}()
+    seen_locations = Set{Location}()
     for search_uri in uris_to_search
         fi = @something begin
             get_file_info(state, search_uri)
@@ -290,13 +290,11 @@ function find_global_binding_definitions(
         for occurrence in find_global_binding_occurrences!(state, search_uri, fi, binfo)
             if is_definition_occurrence(occurrence)
                 range, adjusted_uri = unadjust_range(state, search_uri, jsobj_to_range(occurrence.tree, fi))
-                push!(seen_locations, (adjusted_uri, range))
+                push!(seen_locations, Location(; uri = adjusted_uri, range))
             end
         end
     end
-    for (loc_uri, range) in seen_locations
-        push!(locations, Location(; uri = loc_uri, range))
-    end
+    append!(locations, seen_locations)
     return locations
 end
 

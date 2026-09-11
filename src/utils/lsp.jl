@@ -19,6 +19,12 @@ overlap(rng1::Range, rng2::Range) = max(rng1.start, rng2.start) <= min(rng1.var"
 @define_override_constructor LSP.InlayHint
 @define_override_constructor LSP.TextEdit
 
+# LSP objects compare with `===` by default. `Diagnostic` needs structural equality so
+# recomputed diagnostics of an unchanged file are recognized as such (its `tags` vector
+# defeats egal), and `Location` so `Set{Location}` honors the custom `==`/`hash` of `URI`.
+@define_eq_overloads LSP.Diagnostic
+@define_eq_overloads LSP.Location
+
 const DEFAULT_DOCUMENT_SELECTOR = DocumentFilter[
     TextDocumentFilterLanguage(; language = "julia", scheme = "file"),
     [TextDocumentFilterLanguage(; language = "julia", scheme) for scheme in UNSAVED_DOCUMENT_SCHEMES]...,
