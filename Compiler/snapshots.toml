@@ -3,13 +3,13 @@ repository = "https://github.com/JuliaLang/julia.git"
 subdir = "Compiler"
 
 [snapshots."1.12"]
-commit = "4772d66f0fcfbd5bdb350398a913353250718241"
-source-branch = "avi/JETLS-Compiler-head-v1.12-2026-09-01"
+commit = "6d7250ae04fd2f9ee943b576fa63596beacc72cf"
+source-branch = "avi/JETLS-Compiler-head-v1.12-2026-09-11"
 runtime = { lower = "1.12.2", upper = "1.13-" }
 destination = "snapshots/v1.12"
 
 [snapshots."1.13"]
-commit = "dfbaee4f4b1f134d8c0312405ef9086ad3a28f3f"
-source-branch = "avi/JETLS-Compiler-head-v1.13-2026-09-02"
+commit = "6cfdf95353dec6f7326038d5bb3b4b67977323ca"
+source-branch = "avi/JETLS-Compiler-head-v1.13-2026-09-11"
 runtime = { lower = "1.13-", upper = "1.14-" }
 destination = "snapshots/v1.13"

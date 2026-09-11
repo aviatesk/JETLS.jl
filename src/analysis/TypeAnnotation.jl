@@ -855,7 +855,6 @@ function finish_type_annotation!(frame::CC.InferenceState, interp::ASTTypeAnnota
     return nothing
 end
 
-@static if VERSION ≥ v"1.13.0-DEV.565"
 function CC.finishinfer!(
         frame::CC.InferenceState, interp::ASTTypeAnnotator, cycleid::Int,
         opt_cache::IdDict{Core.MethodInstance,Core.CodeInstance}
@@ -865,14 +864,6 @@ function CC.finishinfer!(
         opt_cache::IdDict{Core.MethodInstance,Core.CodeInstance})
     finish_type_annotation!(frame, interp)
     return ret
-end
-else
-function CC.finishinfer!(frame::CC.InferenceState, interp::ASTTypeAnnotator, cycleid::Int)
-    ret = @invoke CC.finishinfer!(
-        frame::CC.InferenceState, interp::CC.AbstractInterpreter, cycleid::Int)
-    finish_type_annotation!(frame, interp)
-    return ret
-end
 end
 
 # The pending `def` entry marks the dynamic extent of the eager `check=false`
