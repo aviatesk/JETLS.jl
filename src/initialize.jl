@@ -101,6 +101,10 @@ function handle_InitializeRequest(
     if isdefined(state, :root_path)
         config_path = joinpath(state.root_path, ".JETLSConfig.toml")
         load_file_init_options!(server, config_path)
+        # Loaded before the `InitializeResponse` so statically registered capabilities
+        # can reflect file settings; LSP configuration only becomes available after
+        # `InitializedNotification`. Null callback: don't notify initially loaded values.
+        load_file_config!(Returns(nothing), server, config_path)
     end
 
     start_signature_analysis_workers!(server)
@@ -170,9 +174,11 @@ function handle_InitializeRequest(
     end
 
     if supports(server, :textDocument, :diagnostic, :dynamicRegistration)
-        diagnosticProvider = nothing # will be registered dynamically
+        diagnosticProvider = nothing # registered after loading the initial configuration
     else
-        diagnosticProvider = diagnostic_options()
+        # Static clients cannot be re-registered, so only the file configuration
+        # (already loaded above) can disable workspace diagnostics for them.
+        diagnosticProvider = diagnostic_options(get_config(server, :diagnostic, :all_files))
         @static JETLS_DEV_MODE && @info "Registering 'textDocument/diagnostic' with `InitializeResponse`"
     end
 
@@ -364,18 +370,8 @@ function handle_InitializedNotification(server::Server)
 
     isdefined(state, :init_params) || error("Initialization process not completed") # to exit the server loop
 
-    # Load configurations: This needs to be done after the `InitializedNotification` is sent from the client
-    # - Load .JETLSConfig.toml configuration
-    if !isdefined(state, :root_path)
-        @static JETLS_DEV_MODE && @info "`server.state.root_path` is not defined, skip config registration at startup."
-    else
-        config_path = joinpath(state.root_path, ".JETLSConfig.toml")
-        if isfile(config_path)
-            # Null callback: Don't notify even if values different from defaults are loaded initially
-            load_file_config!(Returns(nothing), server, config_path)
-        end
-    end
-    # - Load LSP configuration
+    # Load LSP configuration: This needs to be done after the `InitializedNotification`
+    # is sent from the client (`.JETLSConfig.toml` is loaded in `handle_InitializeRequest`)
     load_lsp_config!(server, nothing, "[LSP] initialize"; on_init=true)
 
     registrations = Registration[]
@@ -458,11 +454,6 @@ function handle_InitializedNotification(server::Server)
         # NOTE If hover's `dynamicRegistration` is not supported,
         # it needs to be registered along with initialization in the `InitializeResponse`,
         # since `HoverRegistrationOptions` does not extend `StaticRegistrationOptions`.
-    end
-
-    if supports(server, :textDocument, :diagnostic, :dynamicRegistration)
-        push!(registrations, diagnostic_registration())
-        @static JETLS_DEV_MODE && @info "Dynamically registering 'textDocument/diagnostic' upon `InitializedNotification`"
     end
 
     if supports(server, :textDocument, :codeLens, :dynamicRegistration)
