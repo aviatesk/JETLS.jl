@@ -97,7 +97,7 @@ function find_global_binding_declarations(
     )
     state = server.state
     uris_to_search = collect_search_uris(server, uri)
-    seen_locations = Set{Tuple{URI,Range}}()
+    seen_locations = Set{Location}()
     for search_uri in uris_to_search
         fi = @something begin
             get_file_info(state, search_uri)
@@ -108,14 +108,10 @@ function find_global_binding_declarations(
             occurrence.kind === :decl || continue
             range, adjusted_uri =
                 unadjust_range(state, search_uri, jsobj_to_range(occurrence.tree, fi))
-            push!(seen_locations, (adjusted_uri, range))
+            push!(seen_locations, Location(; uri = adjusted_uri, range))
         end
     end
-    locations = Location[]
-    for (loc_uri, range) in seen_locations
-        push!(locations, Location(; uri = loc_uri, range))
-    end
-    return locations
+    return collect(seen_locations)
 end
 
 function find_local_binding_declarations(
@@ -125,15 +121,13 @@ function find_local_binding_declarations(
     locations = Location[]
     binding_occurrences = compute_binding_occurrences(ctx3, st3, world)
     haskey(binding_occurrences, binfo) || return locations
-    seen_locations = Set{Tuple{URI,Range}}()
+    seen_locations = Set{Location}()
     for occurrence in binding_occurrences[binfo]
         occurrence.kind === :decl || continue
         range, adjusted_uri =
             unadjust_range(state, uri, jsobj_to_range(occurrence.tree, fi))
-        push!(seen_locations, (adjusted_uri, range))
+        push!(seen_locations, Location(; uri = adjusted_uri, range))
     end
-    for (loc_uri, range) in seen_locations
-        push!(locations, Location(; uri = loc_uri, range))
-    end
+    append!(locations, seen_locations)
     return locations
 end

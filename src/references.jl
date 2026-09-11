@@ -115,7 +115,7 @@ function find_global_references!(
         send_progress(server, token,
             WorkDoneProgressBegin(; title = "Finding references", cancellable = true, percentage = 0))
     end
-    seen_locations = Set{Tuple{URI,Range}}()
+    seen_locations = Set{Location}()
     local completed = errored = false
     try
         completed = collect_global_references!(
@@ -138,14 +138,12 @@ function find_global_references!(
     elseif !completed
         return request_cancelled_error("find_global_references! cancelled")
     end
-    for (loc_uri, range) in seen_locations
-        push!(locations, Location(; uri = loc_uri, range))
-    end
+    append!(locations, seen_locations)
     return nothing
 end
 
 function collect_global_references!(
-        seen_locations::Set{Tuple{URI,Range}}, server::Server,
+        seen_locations::Set{Location}, server::Server,
         uris_to_search::Set{URI}, binfo::JL.BindingInfo;
         include_declaration::Bool = true,
         token::Union{Nothing,ProgressToken} = nothing,
@@ -178,14 +176,14 @@ function collect_global_references!(
 end
 
 function global_find_references_in_file!(
-        seen_locations::Set{Tuple{URI,Range}}, state::ServerState, uri::URI, fi::FileInfo,
+        seen_locations::Set{Location}, state::ServerState, uri::URI, fi::FileInfo,
         binfo::JL.BindingInfo;
         include_declaration::Bool = true,
     )
     for occurrence in find_global_binding_occurrences!(state, uri, fi, binfo)
         if include_declaration || occurrence.kind === :use
             range, adjusted_uri = unadjust_range(state, uri, jsobj_to_range(occurrence.tree, fi))
-            push!(seen_locations, (adjusted_uri, range))
+            push!(seen_locations, Location(; uri = adjusted_uri, range))
         end
     end
     return seen_locations
@@ -196,18 +194,16 @@ function find_local_references!(
         ctx3, st3, binfo::JL.BindingInfo, world::UInt;
         include_declaration::Bool = true,
     )
-    seen_locations = Set{Tuple{URI,Range}}()
+    seen_locations = Set{Location}()
     binding_occurrences = compute_binding_occurrences(ctx3, st3, world)
     if haskey(binding_occurrences, binfo)
         for occurrence in binding_occurrences[binfo]
             if include_declaration || occurrence.kind === :use
                 range, adjusted_uri = unadjust_range(server.state, uri, jsobj_to_range(occurrence.tree, fi))
-                push!(seen_locations, (adjusted_uri, range))
+                push!(seen_locations, Location(; uri = adjusted_uri, range))
             end
         end
     end
-    for (loc_uri, range) in seen_locations
-        push!(locations, Location(; uri = loc_uri, range))
-    end
+    append!(locations, seen_locations)
     return locations
 end
