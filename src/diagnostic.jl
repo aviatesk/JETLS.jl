@@ -2452,20 +2452,25 @@ function postprocess_pull_diagnostics(
 end
 
 # Full reports are streamed as partial results when the client offers a token, so they
-# show up while the scan is still running, and they are repeated in the final response.
-# The repetition matters: Zed clears the request token as soon as the response arrives
-# and drops partial results it processes afterwards, which would leave it with stale
-# result ids and make it re-pull until they converge one file per answer. The spec allows
-# reporting the same URI more than once, with the last report winning. Unchanged reports
-# only travel in the final response, so a pull that changes nothing sends nothing before
-# it gets parked.
+# show up while the scan is still running. The spec then requires the final response to
+# carry no result values, so they are not repeated there, except for Zed: it clears the
+# request token as soon as the response arrives and drops partial results it processes
+# afterwards, which would leave it with stale result ids and make it re-pull until they
+# converge one file per answer. Zed applies the same URI reported twice with the last
+# report winning. Unchanged reports only travel in the final response, so a pull that
+# changes nothing sends nothing before it gets parked.
 mutable struct WorkspaceDiagnosticReporter
     const partial_token::Union{Nothing,ProgressToken}
+    const repeat_full_in_response::Bool
     const items::Vector{WorkspaceDocumentDiagnosticReport}
     changed::Bool
 end
-WorkspaceDiagnosticReporter(partial_token::Union{Nothing,ProgressToken}) =
-    WorkspaceDiagnosticReporter(partial_token, WorkspaceDocumentDiagnosticReport[], false)
+function WorkspaceDiagnosticReporter(server::Server, partial_token::Union{Nothing,ProgressToken})
+    repeat_full_in_response = partial_token === nothing ||
+        getobjpath(server.state, :init_params, :clientInfo, :name) ∈ ("Zed", "Zed Dev")
+    return WorkspaceDiagnosticReporter(
+        partial_token, repeat_full_in_response, WorkspaceDocumentDiagnosticReport[], false)
+end
 
 function report_unchanged!(
         reporter::WorkspaceDiagnosticReporter, uri::URI, result_id::String
@@ -2481,7 +2486,7 @@ function report_full!(
         item::WorkspaceFullDocumentDiagnosticReport
     )
     reporter.changed = true
-    push!(reporter.items, item)
+    reporter.repeat_full_in_response && push!(reporter.items, item)
     partial_token = reporter.partial_token
     if partial_token !== nothing
         send_partial_result(server, partial_token,
@@ -2544,7 +2549,7 @@ function send_workspace_diagnostics(
     for prev in msg.params.previousResultIds
         previous_result_ids[prev.uri] = prev.value
     end
-    reporter = WorkspaceDiagnosticReporter(msg.params.partialResultToken)
+    reporter = WorkspaceDiagnosticReporter(server, msg.params.partialResultToken)
     root_path = isdefined(state, :root_path) ? state.root_path : nothing
     result_id_cache = DiagnosticResultIdCache()
     debuginfo = nothing
@@ -2606,7 +2611,7 @@ function send_empty_workspace_diagnostics(
     for prev in msg.params.previousResultIds
         previous_result_ids[prev.uri] = prev.value
     end
-    reporter = WorkspaceDiagnosticReporter(msg.params.partialResultToken)
+    reporter = WorkspaceDiagnosticReporter(server, msg.params.partialResultToken)
     for uri in uris_to_search
         is_cancelled(cancel_flag) &&
             return send_workspace_diagnostic_cancelled(server, msg.id)

@@ -1454,8 +1454,6 @@ end
             end
             return items
         end
-        full_report_keys(items) = Set((item.uri, item.resultId) for item in items
-            if item isa WorkspaceFullDocumentDiagnosticReport)
         find_response(messages) =
             only(msg for msg in messages if msg isa WorkspaceDiagnosticResponse)
         has_unused_import(item) =
@@ -1469,16 +1467,16 @@ end
             end
 
             # Initial pull: main.jl gets a full report and the stale id is cleared with an
-            # empty report. Both are streamed as partial results and repeated in the
-            # response; see `WorkspaceDiagnosticReporter`.
+            # empty report. Both are streamed as partial results only; see
+            # `WorkspaceDiagnosticReporter`.
             local main_id::String
             let id = id_counter[] += 1
                 (; raw_res) = writereadmsg(make_request(id, PreviousResultId[
                     PreviousResultId(; uri = stale_uri, value = "stale")]); read = 3)
                 response = find_response(raw_res)
                 @test response.id == id
-                items = response.result.items
-                @test full_report_keys(partial_items(raw_res)) == full_report_keys(items)
+                @test isempty(response.result.items)
+                items = partial_items(raw_res)
                 main_item = only(item for item in items if item.uri == main_uri)
                 @test main_item isa WorkspaceFullDocumentDiagnosticReport
                 @test has_unused_import(main_item)
@@ -1504,8 +1502,8 @@ end
                 messages = readmsg(; read = 2).raw_msg
                 response = find_response(messages)
                 @test response.id == id
-                main_item = only(response.result.items)
-                @test full_report_keys(partial_items(messages)) == full_report_keys([main_item])
+                @test isempty(response.result.items)
+                main_item = only(partial_items(messages))
                 @test main_item isa WorkspaceFullDocumentDiagnosticReport
                 @test main_item.uri == main_uri
                 @test main_item.resultId != main_id
@@ -1529,8 +1527,8 @@ end
                 @test count(msg -> msg isa PublishDiagnosticsNotification, messages) == 1
                 response = find_response(messages)
                 @test response.id == id
-                main_item = only(response.result.items)
-                @test full_report_keys(partial_items(messages)) == full_report_keys([main_item])
+                @test isempty(response.result.items)
+                main_item = only(partial_items(messages))
                 @test main_item isa WorkspaceFullDocumentDiagnosticReport
                 @test main_item.uri == main_uri
                 @test main_item.resultId == JETLS.ALL_FILES_DISABLED_RESULT_ID
