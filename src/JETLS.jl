@@ -354,13 +354,8 @@ function handle_sequential_message(server::Server, @nospecialize msg)
         handle_DidCloseNotebookDocumentNotification(server, msg)
     elseif msg isa DidSaveNotebookDocumentNotification
         handle_DidSaveNotebookDocumentNotification(server, msg)
-    elseif @static JETLS_DEV_MODE ? true : false
-        if isdefined(msg, :method)
-            _id = getfield(msg, :method)
-        else
-            _id = typeof(msg)
-        end
-        @warn "[handle_sequential_message] Unhandled message" msg _id=_id maxlog=1
+    else
+        error(lazy"Unexpected sequential message: $(typeof(msg))")
     end
 end
 
@@ -467,7 +462,7 @@ function handle_response_message(
     elseif request_caller isa RegisterCapabilityRequestCaller || request_caller isa UnregisterCapabilityRequestCaller
         # nothing to do
     else
-        error("Unknown request caller type")
+        error(lazy"Unknown request caller type: $(typeof(request_caller))")
     end
     nothing
 end
