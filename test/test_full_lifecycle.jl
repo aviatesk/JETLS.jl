@@ -225,6 +225,43 @@ end # @testset "full completion cycle" begin
     end
 end
 
+@testset "unsupported request methods" begin
+    uri = URI("file:///unsupported.jl")
+
+    withserver() do (; server, writereadmsg, id_counter)
+        # Typed by LSP.jl but not handled by the server
+        let id = id_counter[] += 1
+            (; raw_msg, raw_res) = writereadmsg(FoldingRangeRequest(;
+                id,
+                params = FoldingRangeParams(;
+                    textDocument = TextDocumentIdentifier(; uri))))
+            @test raw_msg isa FoldingRangeRequest
+            @test raw_res isa ResponseMessage
+            @test raw_res.id == id
+            @test isnothing(raw_res.result)
+            @test raw_res.error isa ResponseError
+            @test raw_res.error.code == ErrorCodes.MethodNotFound
+            wait_for_handled_request(server.state, id)
+        end
+
+        # Unknown to LSP.jl, so it arrives untyped
+        let id = id_counter[] += 1
+            (; raw_msg, raw_res) = writereadmsg(Dict{String,Any}(
+                "jsonrpc" => "2.0",
+                "id" => id,
+                "method" => "textDocument/unknownMethod",
+                "params" => Dict{String,Any}()))
+            @test raw_msg isa Dict{Symbol,Any}
+            @test raw_res isa ResponseMessage
+            @test raw_res.id == id
+            @test isnothing(raw_res.result)
+            @test raw_res.error isa ResponseError
+            @test raw_res.error.code == ErrorCodes.MethodNotFound
+            wait_for_handled_request(server.state, id)
+        end
+    end
+end
+
 # Regression test: `textDocument/references` previously returned stale
 # results after script-mode reanalysis because the cached occurrences kept
 # `binfo.mod` from the previous virtual module while the new target binding

@@ -261,7 +261,7 @@ function runserver(
             elseif !initialize_requested
                 if isdefined(msg, :id)
                     send(server, ResponseMessage(;
-                        id = msg.id,
+                        id = getfield(msg, :id),
                         result = nothing,
                         error = ResponseError(;
                             code = ErrorCodes.ServerNotInitialized,
@@ -270,7 +270,7 @@ function runserver(
             elseif shutdown_requested
                 if isdefined(msg, :id)
                     send(server, ResponseMessage(;
-                        id = msg.id,
+                        id = getfield(msg, :id),
                         result = nothing,
                         error = ResponseError(;
                             code = ErrorCodes.InvalidRequest,
@@ -385,9 +385,8 @@ function handler_concurrent_message(server::Server, @nospecialize msg)
         update_diagnostic_registration!(server)
     # Handle regular messages concurrently
     elseif msg isa Dict{Symbol,Any} # ResponseMessage or untyped message
-        request_caller = let id = get(msg, :id, nothing)
-            id !== nothing ? poprequest!(server, id) : nothing
-        end
+        id = get(msg, :id, nothing)
+        request_caller = id !== nothing ? poprequest!(server, id) : nothing
         if request_caller !== nothing
             # NOTE: The `get!` call to `server.state.currently_handled` MUST happen here
             # to avoid race conditions. Only after getting the flag can we spawn the actual dispatcher.
@@ -396,12 +395,21 @@ function handler_concurrent_message(server::Server, @nospecialize msg)
                     get!(()->CancelFlag(false), server.state.currently_handled, token)
                 Threads.@spawn :default @tryinvokelatest handle_response_message(server, msg, request_caller, cancel_flag)
             end
-        elseif @static JETLS_DEV_MODE ? true : false
-            # Not a response to our request, or untyped message - log if in dev mode
-            _id = get(()->get(msg, :id, nothing), msg, :method)
-            @warn "[handler_concurrent_message] Unhandled message" msg _id=_id maxlog=1
+        else
+            method = get(msg, :method, nothing)
+            @static if JETLS_DEV_MODE
+                # Not a response to our request, or untyped message - log if in dev mode
+                _id = something(method, Some(id))
+                @warn "[handler_concurrent_message] Unhandled message" msg _id=_id maxlog=1
+            end
+            if method isa String && (id isa String || id isa Int)
+                send(server, ResponseMessage(;
+                    id,
+                    result = nothing,
+                    error = method_not_found_error(method)))
+            end
         end
-    elseif isdefined(msg, :id) && (id = msg.id; id isa String || id isa Int)
+    elseif isdefined(msg, :id) && (id = getfield(msg, :id); id isa String || id isa Int)
         prepare_request_message!(server, msg)
         let cancel_flag = get!(()->CancelFlag(false), server.state.currently_handled, id)
             Threads.@spawn :default @tryinvokelatest handle_request_message(server, msg, cancel_flag)
@@ -539,13 +547,21 @@ function handle_request_message(server::Server, @nospecialize(msg), cancel_flag:
         handle_ExecuteCommandRequest(server, msg)
     elseif msg isa TextDocumentContentRequest
         handle_TextDocumentContentRequest(server, msg)
-    elseif @static JETLS_DEV_MODE ? true : false
-        if isdefined(msg, :method)
-            _id = getfield(msg, :method)
-        else
-            _id = typeof(msg)
+    else
+        isdefined(msg, :id) || error(lazy"Request message without id: $(typeof(msg))")
+        id = getfield(msg, :id)
+        id isa Int || id isa String || error(lazy"Invalid request id $(repr(id)) in $(typeof(msg))")
+        method = isdefined(msg, :method) ? getfield(msg, :method) : nothing
+        @static if JETLS_DEV_MODE
+            _id = something(method, typeof(msg))
+            @warn "[handle_request_message] Unhandled message" msg _id=_id maxlog=1
         end
-        @warn "[handle_request_message] Unhandled message" msg _id=_id maxlog=1
+        if method isa String
+            send(server, ResponseMessage(;
+                id,
+                result = nothing,
+                error = method_not_found_error(method)))
+        end
     end
     nothing
 end
@@ -555,13 +571,12 @@ function handle_notification_message(server::Server, @nospecialize msg)
         handle_DidChangeWatchedFilesNotification(server, msg)
     elseif msg isa DidChangeConfigurationNotification
         handle_DidChangeConfigurationNotification(server, msg)
-    elseif @static JETLS_DEV_MODE ? true : false
-        if isdefined(msg, :method)
-            _id = getfield(msg, :method)
-        else
-            _id = typeof(msg)
+    else
+        @static if JETLS_DEV_MODE
+            method = isdefined(msg, :method) ? getfield(msg, :method) : nothing
+            _id = something(method, typeof(msg))
+            @warn "[handle_notification_message] Unhandled message" msg _id=_id maxlog=1
         end
-        @warn "[handle_notification_message] Unhandled message" msg _id=_id maxlog=1
     end
     nothing
 end
