@@ -15,12 +15,6 @@ function declaration_registration()
     )
 end
 
-# For dynamic registrations during development
-# unregister(currently_running, Unregistration(;
-#     id = DECLARATION_REGISTRATION_ID,
-#     method = DECLARATION_REGISTRATION_METHOD))
-# register(currently_running, declaration_registration())
-
 function handle_DeclarationRequest(
         server::Server, msg::DeclarationRequest, cancel_flag::CancelFlag)
     state = server.state

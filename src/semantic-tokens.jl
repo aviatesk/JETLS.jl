@@ -63,12 +63,6 @@ function semantic_tokens_registration()
             range = true))
 end
 
-# For dynamic registrations during development
-# unregister(currently_running, Unregistration(;
-#     id = SEMANTIC_TOKENS_REGISTRATION_ID,
-#     method = SEMANTIC_TOKENS_REGISTRATION_METHOD))
-# register(currently_running, semantic_tokens_registration())
-
 function handle_SemanticTokensFullRequest(
         server::Server, msg::SemanticTokensFullRequest, cancel_flag::CancelFlag
     )

@@ -13,12 +13,6 @@ function document_link_registration()
             documentSelector = DEFAULT_DOCUMENT_SELECTOR))
 end
 
-# # For dynamic registrations during development
-# unregister(currently_running, Unregistration(;
-#     id = DOCUMENT_LINK_REGISTRATION_ID,
-#     method = DOCUMENT_LINK_REGISTRATION_METHOD))
-# register(currently_running, document_link_registration())
-
 function handle_DocumentLinkRequest(
         server::Server, msg::DocumentLinkRequest, cancel_flag::CancelFlag
     )

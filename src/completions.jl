@@ -35,12 +35,6 @@ function completion_registration()
             completionItem))
 end
 
-# For dynamic registrations during development
-# unregister(currently_running, Unregistration(;
-#     id = COMPLETION_REGISTRATION_ID,
-#     method = COMPLETION_REGISTRATION_METHOD))
-# register(currently_running, completion_registration())
-
 # completion utils
 # ================
 

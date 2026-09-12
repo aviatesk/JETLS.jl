@@ -15,12 +15,6 @@ function document_highlight_registration()
     )
 end
 
-# For dynamic registrations during development
-# unregister(currently_running, Unregistration(;
-#     id = DOCUMENT_HIGHLIGHT_REGISTRATION_ID,
-#     method = DOCUMENT_HIGHLIGHT_REGISTRATION_METHOD))
-# register(currently_running, document_highlight_registration())
-
 # TODO Add some syntactic highlight feature?
 
 function handle_DocumentHighlightRequest(

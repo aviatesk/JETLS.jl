@@ -43,12 +43,6 @@ function rename_registration(server::Server)
             workDoneProgress = supports(server, :window, :workDoneProgress)))
 end
 
-# # For dynamic registrations during development
-# unregister(currently_running, Unregistration(;
-#     id = RENAME_REGISTRATION_ID,
-#     method = RENAME_REGISTRATION_METHOD))
-# register(currently_running, rename_registration(currently_running))
-
 function handle_PrepareRenameRequest(
         server::Server, msg::PrepareRenameRequest, cancel_flag::CancelFlag)
     state = server.state

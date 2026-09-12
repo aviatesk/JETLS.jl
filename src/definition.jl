@@ -15,12 +15,6 @@ function definition_registration()
     )
 end
 
-# For dynamic registrations during development
-# unregister(currently_running, Unregistration(;
-#     id = DEFINITION_REGISTRATION_ID,
-#     method = DEFINITION_REGISTRATION_METHOD))
-# register(currently_running, definition_registration())
-
 function is_location_unknown(m::Method)
     _, line = Base.updated_methodloc(m)
     line ≤ 0 && return true

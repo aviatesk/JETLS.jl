@@ -68,16 +68,6 @@ function range_formatting_registration(server::Server)
             rangesSupport = ranges_formatting_supported(server) ? true : nothing))
 end
 
-# For dynamic registrations during development
-# unregister(currently_running, Unregistration(;
-#     id = FORMATTING_REGISTRATION_ID,
-#     method = FORMATTING_REGISTRATION_METHOD))
-# register(currently_running, formatting_registration(currently_running))
-# unregister(currently_running, Unregistration(;
-#     id = RANGE_FORMATTING_REGISTRATION_ID,
-#     method = RANGE_FORMATTING_REGISTRATION_METHOD))
-# register(currently_running, range_formatting_registration(currently_running))
-
 function get_cell_text(state::ServerState, cell_uri::URI)
     notebook_uri = @something get_notebook_uri_for_cell(state, cell_uri) return nothing
     notebook_info = @something get_notebook_info(state, notebook_uri) return nothing

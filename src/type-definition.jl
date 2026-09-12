@@ -15,12 +15,6 @@ function type_definition_registration()
     )
 end
 
-# For dynamic registrations during development
-# unregister(currently_running, Unregistration(;
-#     id = TYPE_DEFINITION_REGISTRATION_ID,
-#     method = TYPE_DEFINITION_REGISTRATION_METHOD))
-# register(currently_running, type_definition_registration())
-
 function handle_TypeDefinitionRequest(
         server::Server, msg::TypeDefinitionRequest, cancel_flag::CancelFlag
     )

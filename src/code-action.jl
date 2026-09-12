@@ -19,12 +19,6 @@ function code_action_registration()
             resolveProvider = false))
 end
 
-# For dynamic code lens registrations during development
-# unregister(currently_running, Unregistration(;
-#     id = CODE_ACTION_REGISTRATION_ID,
-#     method = CODE_ACTION_REGISTRATION_METHOD))
-# register(currently_running, code_action_registration())
-
 function code_action_kind_matches(requested::CodeActionKind.Ty, kind::CodeActionKind.Ty)
     requested == CodeActionKind.Empty && return true
     return kind == requested || startswith(kind, requested * ".")

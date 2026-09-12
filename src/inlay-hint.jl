@@ -20,12 +20,6 @@ supports_inlay_hint_resolve(state::ServerState, property::AbstractString) =
     property in @something getcapability(
         state, :textDocument, :inlayHint, :resolveSupport, :properties) return false
 
-# For dynamic registrations during development
-# unregister(currently_running, Unregistration(;
-#     id = INLAY_HINT_REGISTRATION_ID,
-#     method = INLAY_HINT_REGISTRATION_METHOD))
-# register(currently_running, inlay_hint_registration(#=static=#true))
-
 function handle_InlayHintRequest(
         server::Server, msg::InlayHintRequest, cancel_flag::CancelFlag)
     state = server.state

@@ -15,12 +15,6 @@ function hover_registration()
     )
 end
 
-# For dynamic registrations during development
-# unregister(currently_running, Unregistration(;
-#     id = HOVER_REGISTRATION_ID,
-#     method = HOVER_REGISTRATION_METHOD))
-# register(currently_running, hover_registration())
-
 function handle_HoverRequest(
         server::Server, msg::HoverRequest, cancel_flag::CancelFlag
     )
