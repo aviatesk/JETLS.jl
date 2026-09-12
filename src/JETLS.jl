@@ -259,7 +259,7 @@ function runserver(
                 # Handle messages received before initialization (LSP 3.18 spec):
                 # - For requests: respond with error code -32002 (ServerNotInitialized)
                 # - For notifications: drop silently (exit already handled above)
-                id = client_request_id(msg)
+                id = valid_request_message_id(msg)
                 if id !== nothing
                     send(server, ResponseMessage(;
                         id,
@@ -273,7 +273,7 @@ function runserver(
                 # - For requests: respond with error code -32600 (InvalidRequest)
                 # - For notifications and responses to server requests: drop silently
                 #   (exit already handled above)
-                id = client_request_id(msg)
+                id = valid_request_message_id(msg)
                 if id !== nothing
                     send(server, ResponseMessage(;
                         id,
@@ -305,14 +305,24 @@ function runserver(
     return exit_code
 end
 
-function client_request_id(@nospecialize msg)
+function valid_request_message_id(@nospecialize msg)
     if msg isa Dict{Symbol,Any}
         haskey(msg, :method) || return nothing
         id = get(msg, :id, nothing)
-    elseif isdefined(msg, :id)
+    elseif isdefined(msg, :id) && isdefined(msg, :method)
         id = getfield(msg, :id)
     else
         return nothing
+    end
+    return valid_message_id(id)
+end
+
+function valid_message_id(@nospecialize id)
+    @static if Int === Int32
+        # JSON3 parses untyped integers as Int64 even on 32-bit Julia.
+        if id isa Int64 && typemin(Int32) <= id <= typemax(Int32)
+            id = Int32(id)
+        end
     end
     return id isa String || id isa Int ? id : nothing
 end
@@ -400,7 +410,7 @@ function handler_concurrent_message(server::Server, @nospecialize msg)
         update_diagnostic_registration!(server)
     # Handle regular messages concurrently
     elseif msg isa Dict{Symbol,Any} # ResponseMessage or untyped message
-        id = get(msg, :id, nothing)
+        id = valid_message_id(get(msg, :id, nothing))
         request_caller = id !== nothing ? poprequest!(server, id) : nothing
         if request_caller !== nothing
             # NOTE: The `get!` call to `server.state.currently_handled` MUST happen here
@@ -417,14 +427,14 @@ function handler_concurrent_message(server::Server, @nospecialize msg)
                 _id = something(method, Some(id))
                 @warn "[handler_concurrent_message] Unhandled message" msg _id=_id maxlog=1
             end
-            if method isa String && (id isa String || id isa Int)
+            if method isa String && id !== nothing
                 send(server, ResponseMessage(;
                     id,
                     result = nothing,
                     error = method_not_found_error(method)))
             end
         end
-    elseif isdefined(msg, :id) && (id = getfield(msg, :id); id isa String || id isa Int)
+    elseif isdefined(msg, :id) && (id = valid_message_id(getfield(msg, :id)); id !== nothing)
         prepare_request_message!(server, msg)
         let cancel_flag = get!(()->CancelFlag(false), server.state.currently_handled, id)
             Threads.@spawn :default @tryinvokelatest handle_request_message(server, msg, cancel_flag)
@@ -564,8 +574,8 @@ function handle_request_message(server::Server, @nospecialize(msg), cancel_flag:
         handle_TextDocumentContentRequest(server, msg)
     else
         isdefined(msg, :id) || error(lazy"Request message without id: $(typeof(msg))")
-        id = getfield(msg, :id)
-        id isa Int || id isa String || error(lazy"Invalid request id $(repr(id)) in $(typeof(msg))")
+        id = valid_message_id(getfield(msg, :id))
+        id === nothing && error(lazy"Invalid request id in $(typeof(msg))")
         method = isdefined(msg, :method) ? getfield(msg, :method) : nothing
         @static if JETLS_DEV_MODE
             _id = something(method, typeof(msg))
