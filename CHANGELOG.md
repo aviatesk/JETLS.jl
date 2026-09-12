@@ -75,6 +75,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Fixed errors logged when in-flight requests or progress notifications finished during language server shutdown.
 
+- Fixed requests for methods the server does not support being left unanswered; they now receive a `MethodNotFound` error response.
+
 ## 2026-09-06
 
 - Commit: [`2b51ac0`](https://github.com/aviatesk/JETLS.jl/commit/2b51ac0)

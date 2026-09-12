@@ -131,6 +131,12 @@ function request_cancelled_error(message::AbstractString="Request was cancelled"
         data)
 end
 
+function method_not_found_error(method::AbstractString)
+    return ResponseError(;
+        code = ErrorCodes.MethodNotFound,
+        message = "Method not found: $method")
+end
+
 function show_message(server::Server, message::AbstractString, type::MessageType.Ty)
     if server.state.cli_mode
         # `jetls check` has no client to show the message; log it instead, so that `--quiet`
