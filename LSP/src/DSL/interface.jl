@@ -1,4 +1,4 @@
-const _interface_defs_ = Dict{Symbol,Expr}()
+const _interface_defs_ = Dict{DataType,Expr}()
 
 # Register a fallback docstring (with field docs) for `name`, unless a top-level docstring
 # is already registered (e.g. via an outer `@doc`). Without it an `@interface` carrying
@@ -220,7 +220,7 @@ macro interface(exs...)
                                     omittable_fields,
                                     extended_fields,
                                     duplicated_fields,
-                                    extend,
+                                    getglobal(__module__, extend),
                                     __source__)
         end
     end
@@ -287,7 +287,7 @@ function process_interface_def!(toplevelblk::Expr, structbody::Expr,
         push!(toplevelblk.args, :(Base.convert(::Type{$Name}, nt::NamedTuple) = $Name(; nt...)))
     end
     if !is_anon
-        push!(toplevelblk.args, :($(GlobalRef(@__MODULE__, :_interface_defs_))[$(QuoteNode(Name))] = $(QuoteNode(structbody))))
+        push!(toplevelblk.args, :($(GlobalRef(@__MODULE__, :_interface_defs_))[$Name] = $(QuoteNode(structbody))))
     end
     return Name, method
 end
@@ -296,7 +296,7 @@ function add_extended_interface!(toplevelblk::Expr, structbody::Expr,
                                  omittable_fields::Set{Symbol},
                                  extended_fields::Dict{Symbol,Vector{Int}},
                                  duplicated_fields::Vector{Int},
-                                 extend::Symbol,
+                                 extend::DataType,
                                 __source__::LineNumberNode)
     return _process_interface_def!(toplevelblk, structbody,
                                    omittable_fields,
