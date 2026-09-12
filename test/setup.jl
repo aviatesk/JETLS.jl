@@ -41,7 +41,7 @@ function take_with_timeout!(chn::Channel; interval = 0.1, limit = 600)
 end
 
 function withserver(
-        f;
+        f::Base.Callable;
         capabilities::ClientCapabilities = ClientCapabilities(),
         workspaceFolders::Union{Nothing, Vector{WorkspaceFolder}} = nothing,
         rootUri::Union{Nothing, URI} = nothing,
@@ -256,12 +256,12 @@ function withserver(
 end
 
 function withpackage(
-        test_func, pkgname::AbstractString,
+        test_func::Base.Callable, pkgname::AbstractString,
         pkgcode::AbstractString;
-        pkg_setup = function ()
+        pkg_setup::Base.Callable = function ()
             return Pkg.precompile(; io = devnull)
         end,
-        env_setup = function () end
+        env_setup::Base.Callable = function () end
     )
     mktempdir() do tempdir
         pkgpath = normpath(tempdir, pkgname)
@@ -281,7 +281,7 @@ end
 
 function withscript(
         test_func, scriptcode::AbstractString;
-        env_setup = function () end
+        env_setup::Base.Callable = function () end
     )
     mktemp() do scriptpath, _
         Pkg.activate(dirname(scriptpath)) do
@@ -293,16 +293,20 @@ function withscript(
     end
 end
 
-function make_DidOpenTextDocumentNotification(uri, text;
-                                              languageId = "julia",
-                                              version = 1)
+function make_DidOpenTextDocumentNotification(
+        uri::URI, text::AbstractString;
+        languageId::AbstractString = "julia",
+        version::Int = 1
+    )
     return DidOpenTextDocumentNotification(;
         params = DidOpenTextDocumentParams(;
             textDocument = TextDocumentItem(;
                 uri, text, languageId, version)))
 end
 
-function make_DidChangeTextDocumentNotification(uri, text, version)
+function make_DidChangeTextDocumentNotification(
+        uri::URI, text::AbstractString, version::Int
+    )
     return DidChangeTextDocumentNotification(;
         params = DidChangeTextDocumentParams(;
             textDocument = VersionedTextDocumentIdentifier(; uri, version),
