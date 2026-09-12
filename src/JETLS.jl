@@ -255,29 +255,32 @@ function runserver(
             elseif msg === self_shutdown_token
                 exit_code = 1
                 break
-            # Handle messages received before initialization (LSP 3.17 spec):
-            # - For requests: respond with error code -32002 (ServerNotInitialized)
-            # - For notifications: drop silently (exit already handled above)
             elseif !initialize_requested
-                if isdefined(msg, :id)
+                # Handle messages received before initialization (LSP 3.18 spec):
+                # - For requests: respond with error code -32002 (ServerNotInitialized)
+                # - For notifications: drop silently (exit already handled above)
+                id = client_request_id(msg)
+                if id !== nothing
                     send(server, ResponseMessage(;
-                        id = getfield(msg, :id),
+                        id,
                         result = nothing,
                         error = ResponseError(;
                             code = ErrorCodes.ServerNotInitialized,
                             message = "Server has not been initialized")))
                 end
             elseif shutdown_requested
-                if isdefined(msg, :id)
+                # Handle messages received after a shutdown request (LSP 3.18 spec):
+                # - For requests: respond with error code -32600 (InvalidRequest)
+                # - For notifications and responses to server requests: drop silently
+                #   (exit already handled above)
+                id = client_request_id(msg)
+                if id !== nothing
                     send(server, ResponseMessage(;
-                        id = getfield(msg, :id),
+                        id,
                         result = nothing,
                         error = ResponseError(;
                             code = ErrorCodes.InvalidRequest,
                             message = "Received request after a shutdown request requested")))
-                else
-                    # This is the case where some notification was sent.
-                    # In this case, there is no way to inform the client side that it was unexpected.
                 end
             elseif is_sequential_msg(msg)
                 put!(seq_queue, msg)
@@ -300,6 +303,18 @@ function runserver(
     end
     @static JETLS_DEV_MODE && @info "Exited JETLS server loop"
     return exit_code
+end
+
+function client_request_id(@nospecialize msg)
+    if msg isa Dict{Symbol,Any}
+        haskey(msg, :method) || return nothing
+        id = get(msg, :id, nothing)
+    elseif isdefined(msg, :id)
+        id = getfield(msg, :id)
+    else
+        return nothing
+    end
+    return id isa String || id isa Int ? id : nothing
 end
 
 function is_sequential_msg(@nospecialize msg)
