@@ -252,7 +252,7 @@ function process_interface_def!(toplevelblk::Expr, structbody::Expr,
                                 __source__::LineNumberNode,
                                 Name::Union{Symbol,Nothing})
     method = _process_interface_def!(toplevelblk, structbody, omittable_fields, extended_fields, duplicated_fields, defex, __source__)
-    deleteat!(structbody.args, duplicated_fields)
+    deleteat!(structbody.args, sort!(duplicated_fields))
     is_anon = Name === nothing
     if is_anon
         # Name = Symbol("AnonymousInterface", string(__source__)) # XXX this doesn't work probably due to Julia internal bug
