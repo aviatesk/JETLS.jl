@@ -9,7 +9,7 @@ runtime = { lower = "1.12.2", upper = "1.13-" }
 destination = "snapshots/v1.12"
 
 [snapshots."1.13"]
-commit = "6cfdf95353dec6f7326038d5bb3b4b67977323ca"
-source-branch = "avi/JETLS-Compiler-head-v1.13-2026-09-11"
+commit = "7eaea029fea4d9f048b310b0a6bde6d612cc9d6a"
+source-branch = "avi/JETLS-Compiler-head-v1.13-2026-09-12"
 runtime = { lower = "1.13-", upper = "1.14-" }
 destination = "snapshots/v1.13"
