@@ -2710,7 +2710,7 @@ function rerun_workspace_diagnostic_request(
         server::Server, request::ParkedWorkspaceDiagnosticRequest
     )
     Threads.@spawn :default @tryinvokelatest handle_request_message(
-        server, request.msg, request.cancel_flag)
+        server, request.msg, request.msg.id, request.cancel_flag)
     nothing
 end
 

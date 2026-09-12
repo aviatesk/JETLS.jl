@@ -437,7 +437,7 @@ function handler_concurrent_message(server::Server, @nospecialize msg)
     elseif isdefined(msg, :id) && (id = valid_message_id(getfield(msg, :id)); id !== nothing)
         prepare_request_message!(server, msg)
         let cancel_flag = get!(()->CancelFlag(false), server.state.currently_handled, id)
-            Threads.@spawn :default @tryinvokelatest handle_request_message(server, msg, cancel_flag)
+            Threads.@spawn :default @tryinvokelatest handle_request_message(server, msg, id, cancel_flag)
         end
     else
         Threads.@spawn :default @tryinvokelatest handle_notification_message(server, msg)
@@ -509,11 +509,13 @@ function prepare_request_message!(server::Server, @nospecialize(msg))
     nothing
 end
 
-function handle_request_message(server::Server, @nospecialize(msg), cancel_flag::CancelFlag)
+function handle_request_message(
+        server::Server, @nospecialize(msg), id::MessageId, cancel_flag::CancelFlag
+    )
     if is_cancelled(cancel_flag)
         send(server,
             ResponseMessage(;
-                id = msg.id,
+                id,
                 result = nothing,
                 error = request_cancelled_error()))
     elseif msg isa CompletionRequest
@@ -573,9 +575,6 @@ function handle_request_message(server::Server, @nospecialize(msg), cancel_flag:
     elseif msg isa TextDocumentContentRequest
         handle_TextDocumentContentRequest(server, msg)
     else
-        isdefined(msg, :id) || error(lazy"Request message without id: $(typeof(msg))")
-        id = valid_message_id(getfield(msg, :id))
-        id === nothing && error(lazy"Invalid request id in $(typeof(msg))")
         method = isdefined(msg, :method) ? getfield(msg, :method) : nothing
         @static if JETLS_DEV_MODE
             _id = something(method, typeof(msg))
