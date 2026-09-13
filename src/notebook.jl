@@ -594,6 +594,19 @@ function adjust_position(state::ServerState, cell_uri::URI, cell_pos::Position)
     return @something cell_to_global_position(notebook_info.concat, cell_uri, cell_pos) return cell_pos
 end
 
+function adjust_position(snapshot::DocumentSnapshot, uri::URI, pos::Position)
+    notebook = snapshot.notebook
+    notebook === nothing && return pos
+    uri == snapshot.cache_uri && return pos
+    return @something cell_to_global_position(notebook, uri, pos) pos
+end
+
+function adjust_range(snapshot::DocumentSnapshot, uri::URI, range::Range)
+    return Range(;
+        start = adjust_position(snapshot, uri, range.start),
+        var"end" = adjust_position(snapshot, uri, range.var"end"))
+end
+
 """
     unadjust_position(state::ServerState, uri::URI, pos::Position) -> (cell_pos::Position, resolved_cell_uri::URI)
 
@@ -612,6 +625,11 @@ function unadjust_position(state::ServerState, uri::URI, pos::Position)
     return @something global_to_cell_position(notebook_info.concat, pos) return (pos, uri)
 end
 
+function unadjust_position(snapshot::DocumentSnapshot, uri::URI, pos::Position)
+    notebook = @something snapshot.notebook return (pos, uri)
+    return @something global_to_cell_position(notebook, pos) (pos, uri)
+end
+
 """
     unadjust_range(state::ServerState, uri::URI, range::Range) -> (cell_range::Range, resolved_cell_uri::URI)
 
@@ -625,6 +643,13 @@ function unadjust_range(state::ServerState, uri::URI, range::Range)
     start_pos, start_uri = unadjust_position(state, uri, range.start)
     end_pos, _ = unadjust_position(state, uri, range.var"end")
     return Range(; start = start_pos, var"end" = end_pos), start_uri
+end
+
+function unadjust_range(snapshot::DocumentSnapshot, uri::URI, range::Range)
+    notebook = @something snapshot.notebook return (range, uri)
+    result = @something global_to_cell_range(notebook, range) return (range, uri)
+    cell_uri, cell_range = result
+    return cell_range, cell_uri
 end
 
 """

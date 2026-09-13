@@ -98,6 +98,22 @@ function make_RenameRequest(id::Int, uri::URI, position::Position, newName::Abst
             newName = String(newName)))
 end
 
+function make_completion_request(id::Int, uri::URI, pos::Position)
+    return CompletionRequest(;
+        id,
+        params = CompletionParams(;
+            textDocument = TextDocumentIdentifier(; uri),
+            position = pos))
+end
+
+function make_signature_help_request(id::Int, uri::URI, pos::Position)
+    return SignatureHelpRequest(;
+        id,
+        params = SignatureHelpParams(;
+            textDocument = TextDocumentIdentifier(; uri),
+            position = pos))
+end
+
 @testset "notebook end to end" begin
     mktempdir() do tempdir; Pkg.activate(tempdir) do
         Pkg.add("Example"; io=devnull)
@@ -494,6 +510,173 @@ end
                 @test length(tde.edits) == 3
                 @test all(e -> e.newText == "ww", tde.edits)
             end
+        end
+    end
+end
+
+module M_snapshot
+    global x = 1
+    snapshot_pair(a, b) = nothing
+end
+
+@testset "notebook completion snapshot ordering" begin
+    @testset "$change_kind" for change_kind in (:preceding_lines, :remove_preceding, :remove_requested)
+        with_manual_dispatch_server() do server, recorder
+            state = server.state
+            notebook_uri = URI("file:///completion-snapshot.ipynb")
+            cell1 = URI("vscode-notebook-cell:/completion-snapshot.ipynb#1")
+            cell2 = URI("vscode-notebook-cell:/completion-snapshot.ipynb#2")
+            text, positions = JETLS.get_text_and_positions("""
+                for _ in 1:1
+                    x = 2
+                    println(│x)
+                end
+                \\alpha│""")
+            cells = JETLS.NotebookCellInfo[
+                JETLS.NotebookCellInfo(cell1, NotebookCellKind.Code, 1, "prefix = 1\nprefix"),
+                JETLS.NotebookCellInfo(cell2, NotebookCellKind.Code, 1, text)]
+            concat = JETLS.concatenate_cells(cells)
+            notebook = JETLS.NotebookInfo(1, "jupyter-notebook", state.encoding, cells, concat)
+            JETLS.store!(state.notebook_cache) do cache
+                Base.PersistentDict(cache, notebook_uri => notebook), nothing
+            end
+            JETLS.store!(state.cell_to_notebook) do cache
+                for cell in cells
+                    cache = Base.PersistentDict(cache, cell.uri => notebook_uri)
+                end
+                cache, nothing
+            end
+            fi = JETLS.cache_notebook_file_info!(server, notebook_uri, notebook)
+            change = if change_kind === :preceding_lines
+                NotebookDocumentChangeEventCells(;
+                    textContent = [NotebookDocumentChangeEventCellsTextContentItem(;
+                        document = VersionedTextDocumentIdentifier(; uri = cell1, version = 2),
+                        changes = [TextDocumentContentChangeEvent(; text = "prefix = 1")])])
+            else
+                removed_uri = change_kind === :remove_preceding ? cell1 : cell2
+                NotebookDocumentChangeEventCells(;
+                    structure = NotebookDocumentChangeEventCellsStructure(;
+                        array = NotebookCellArrayChange(;
+                            start = UInt(change_kind === :remove_preceding ? 0 : 1),
+                            deleteCount = UInt(1)),
+                        didClose = [TextDocumentIdentifier(; uri = removed_uri)]))
+            end
+            prepared = queued_snapshot_requests(server, [
+                make_completion_request(1, cell2, positions[1]),
+                make_completion_request(2, cell2, positions[2]),
+                make_DidChangeNotebookDocumentNotification(
+                    notebook_uri, NotebookDocumentChangeEvent(; cells = change); version = 2)])
+            @test length(prepared) == 2
+            @test JETLS.get_file_info(state, notebook_uri).version == 2
+            for (i, request) in enumerate(prepared)
+                snapshot = request.snapshot
+                @test snapshot.fi === fi
+                @test snapshot.fi.version == 1
+                @test snapshot.cache_uri == notebook_uri
+                @test snapshot.notebook === concat
+                pos = request.msg.params.position
+                @test pos == positions[i]
+                @test JETLS.adjust_position(snapshot, cell2, pos) ==
+                    Position(; line = positions[i].line + 2, character = positions[i].character)
+            end
+            if change_kind === :remove_requested
+                @test !JETLS.is_notebook_cell_uri(state, cell2)
+            else
+                current = JETLS.snapshot_request_message(state, prepared[2].msg, cell2)
+                pos = prepared[2].msg.params.position
+                @test JETLS.adjust_position(current.snapshot, cell2, pos) !=
+                    JETLS.adjust_position(prepared[2].snapshot, cell2, pos)
+            end
+
+            pos = JETLS.adjust_position(prepared[1].snapshot, cell2, prepared[1].msg.params.position)
+            items, _ = JETLS.get_completion_items(
+                state, cell2, prepared[1].snapshot, pos, nothing;
+                context_module = M_snapshot)
+            @test any(items) do item
+                item.label == "x" && JETLS.completion_is(item, :global)
+            end
+            response = dispatch_snapshot_request(server, recorder, prepared[2])
+            @test response.error === nothing
+            item = only(filter(item -> item.label == "\\alpha", response.result.items))
+            @test item.textEdit isa TextEdit
+            @test item.textEdit.newText == "α"
+            @test item.textEdit.range == Range(;
+                start = Position(; line = 4, character = 0),
+                var"end" = Position(; line = 4, character = 6))
+        end
+    end
+end
+
+@testset "notebook signature help snapshot ordering" begin
+    @testset "$change_kind" for change_kind in (:preceding_lines, :remove_requested)
+        with_manual_dispatch_server() do server, recorder
+            state = server.state
+            notebook_uri = URI("file:///signature-snapshot.ipynb")
+            cell1 = URI("vscode-notebook-cell:/signature-snapshot.ipynb#1")
+            cell2 = URI("vscode-notebook-cell:/signature-snapshot.ipynb#2")
+            pos = Position(; line = 0, character = 16)
+            cells = [
+                JETLS.NotebookCellInfo(cell1, NotebookCellKind.Code, 1, "prefix = 1\nprefix"),
+                JETLS.NotebookCellInfo(cell2, NotebookCellKind.Code, 1, "snapshot_pair(1,)")]
+            concat = JETLS.concatenate_cells(cells)
+            notebook = JETLS.NotebookInfo(1, "jupyter-notebook", state.encoding, cells, concat)
+            JETLS.store!(state.notebook_cache) do cache
+                Base.PersistentDict(cache, notebook_uri => notebook), nothing
+            end
+            JETLS.store!(state.cell_to_notebook) do cache
+                for cell in cells
+                    cache = Base.PersistentDict(cache, cell.uri => notebook_uri)
+                end
+                cache, nothing
+            end
+            fi = JETLS.cache_notebook_file_info!(server, notebook_uri, notebook)
+            change = if change_kind === :preceding_lines
+                NotebookDocumentChangeEventCells(;
+                    textContent = [NotebookDocumentChangeEventCellsTextContentItem(;
+                        document = VersionedTextDocumentIdentifier(; uri = cell1, version = 2),
+                        changes = [TextDocumentContentChangeEvent(; text = "prefix = 1")])])
+            else
+                NotebookDocumentChangeEventCells(;
+                    structure = NotebookDocumentChangeEventCellsStructure(;
+                        array = NotebookCellArrayChange(;
+                            start = UInt(1), deleteCount = UInt(1)),
+                        didClose = [TextDocumentIdentifier(; uri = cell2)]))
+            end
+            request = make_signature_help_request(1, cell2, pos)
+            prepared = only(queued_snapshot_requests(server, [
+                request,
+                make_DidChangeNotebookDocumentNotification(
+                    notebook_uri, NotebookDocumentChangeEvent(; cells = change); version = 2)]))
+            snapshot = prepared.snapshot
+            @test snapshot.fi === fi
+            @test snapshot.fi.version == 1
+            @test snapshot.cache_uri == notebook_uri
+            @test snapshot.notebook === concat
+            @test prepared.msg === request
+            @test prepared.msg.params.position == pos
+            global_pos = JETLS.adjust_position(snapshot, cell2, prepared.msg.params.position)
+            @test global_pos == Position(; line = 2, character = pos.character)
+            @test JETLS.get_file_info(state, notebook_uri).version == 2
+            if change_kind === :remove_requested
+                @test !JETLS.is_notebook_cell_uri(state, cell2)
+                @test JETLS.snapshot_request_message(state, request, cell2).snapshot === nothing
+            else
+                current = JETLS.snapshot_request_message(state, request, cell2)
+                @test JETLS.adjust_position(current.snapshot, cell2, current.msg.params.position) != global_pos
+            end
+
+            # Analysis is not snapshotted; dispatch must use the captured notebook URI.
+            JETLS.cache_out_of_scope!(state.analysis_manager, notebook_uri, JETLS.OutOfScope(M_snapshot))
+            @test JETLS.get_context_info(state, snapshot.cache_uri, global_pos).context_module === M_snapshot
+            if change_kind === :remove_requested
+                @test JETLS.get_context_info(state, cell2, pos).context_module !== M_snapshot
+            end
+            response = dispatch_snapshot_request(server, recorder, prepared)
+            @test response isa SignatureHelpResponse
+            @test response.error === nothing
+            signature = only(response.result.signatures)
+            @test signature.label == "snapshot_pair(a, b)"
+            @test signature.activeParameter == 1
         end
     end
 end
