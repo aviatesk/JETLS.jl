@@ -43,7 +43,7 @@ function collect_include_document_links!(
     traverse(st0_top) do node::SyntaxTree
         string_node = @something include_path_string_node(node) return
         resolved = @something resolve_path_string_literal(string_node, basedir) return
-        range, _ = unadjust_range(state, uri, jsobj_to_range(string_node, fi))
+        _, range = unadjust_range(state, uri, jsobj_to_range(string_node, fi))
         push!(links, DocumentLink(; range, target = filename2uri(resolved.path)))
         return traversal_no_recurse
     end

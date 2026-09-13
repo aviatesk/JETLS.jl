@@ -34,7 +34,7 @@ function handle_DeclarationRequest(
         return send(server, DeclarationResponse(; id = msg.id, result = null))
     end
     if supports(server, :textDocument, :declaration, :linkSupport)
-        originSelectionRange, _ = unadjust_range(state, uri, jsobj_to_range(origin_node, fi))
+        _, originSelectionRange = unadjust_range(state, uri, jsobj_to_range(origin_node, fi))
         result = LocationLink[LocationLink(loc, originSelectionRange) for loc in locations]
     else
         result = locations
@@ -100,7 +100,7 @@ function find_global_binding_declarations(
         end continue
         for occurrence in find_global_binding_occurrences!(state, search_uri, fi, binfo)
             occurrence.kind === :decl || continue
-            range, adjusted_uri =
+            adjusted_uri, range =
                 unadjust_range(state, search_uri, jsobj_to_range(occurrence.tree, fi))
             push!(seen_locations, Location(; uri = adjusted_uri, range))
         end
@@ -118,7 +118,7 @@ function find_local_binding_declarations(
     seen_locations = Set{Location}()
     for occurrence in binding_occurrences[binfo]
         occurrence.kind === :decl || continue
-        range, adjusted_uri =
+        adjusted_uri, range =
             unadjust_range(state, uri, jsobj_to_range(occurrence.tree, fi))
         push!(seen_locations, Location(; uri = adjusted_uri, range))
     end

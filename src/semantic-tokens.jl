@@ -250,7 +250,7 @@ function push_semantic_token!(
     # LSP encoding units like UTF-16 and would mismatch for non-ASCII identifiers).
     occurrence.tree.lb - occurrence.tree.fb + 1 == name_bytes || return
     range = jsobj_to_range(occurrence.tree, fi)
-    range, target_uri = unadjust_range(state, uri, range)
+    target_uri, range = unadjust_range(state, uri, range)
     # For notebooks, `fi` is the concatenated buffer that spans every cell, so
     # `iterate_toplevel_tree` reaches occurrences belonging to other cells. The
     # response is scoped to the cell that issued the request, so drop tokens that

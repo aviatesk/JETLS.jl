@@ -128,7 +128,7 @@ mutable struct CompletionCtx
 end
 
 function completion_edit_range(comp_ctx::CompletionCtx, range::Range)
-    return first(unadjust_range(comp_ctx.snapshot, comp_ctx.request_uri, range))
+    return last(unadjust_range(comp_ctx.snapshot, comp_ctx.request_uri, range))
 end
 
 # Why not query the inferred-context cache with `offset:offset` directly:

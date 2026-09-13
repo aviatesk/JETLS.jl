@@ -217,7 +217,7 @@ function _get_hover(
         end
     end
     contents = MarkupContent(; kind = MarkupKind.Markdown, value = String(take!(io)))
-    range, _ = unadjust_range(state, uri, jsobj_to_range(display_node, fi))
+    _, range = unadjust_range(state, uri, jsobj_to_range(display_node, fi))
     return Hover(; contents, range)
 end
 
@@ -409,6 +409,6 @@ function keyword_hover(state::ServerState, fi::FileInfo, uri::URI, pos::Position
     range = Range(;
         start = offset_to_xy(fi, first(byterng)),
         var"end" = offset_to_xy(fi, last(byterng)+1))
-    range, _ = unadjust_range(state, uri, range)
+    _, range = unadjust_range(state, uri, range)
     return Hover(; contents, range)
 end

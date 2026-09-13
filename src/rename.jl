@@ -84,7 +84,7 @@ function prepare_local_binding_rename(
 
     binfo = JL.get_binding(ctx3, binding)
     if is_local_binding(binfo)
-        range, _ = unadjust_range(state, uri, jsobj_to_range(binding, fi))
+        _, range = unadjust_range(state, uri, jsobj_to_range(binding, fi))
         return (; range, placeholder = binfo.name)
     else
         return nothing
@@ -109,7 +109,7 @@ function prepare_global_binding_rename(
         ismacro = startswith(binfo.name, '@')
         is_macro_use = ismacro && is_macrocall_use_site(fi, binding)
         adjust_first = is_macro_use ? 1 : 0
-        range, _ = unadjust_range(state, uri, jsobj_to_range(binding, fi; adjust_first))
+        _, range = unadjust_range(state, uri, jsobj_to_range(binding, fi; adjust_first))
         placeholder = ismacro ? String(lstrip(binfo.name, '@')) : binfo.name
         return (; range, placeholder)
     else
@@ -128,7 +128,7 @@ function prepare_file_rename(
     resolved = @something(
         resolve_path_string_literal(string_node, dirname(uri2filename(uri))),
         return nothing)
-    range, _ = unadjust_range(state, uri, jsobj_to_range(string_node, fi))
+    _, range = unadjust_range(state, uri, jsobj_to_range(string_node, fi))
     return (; range, placeholder = resolved.value)
 end
 
@@ -229,7 +229,7 @@ function get_local_binding_rename(
                 message = "Could not compute information for this local binding."))
     seen_locations = Set{Location}()
     for occurrence in binding_occurrences[binfo]
-        range, adjusted_uri = unadjust_range(state, uri, jsobj_to_range(occurrence.tree, fi))
+        adjusted_uri, range = unadjust_range(state, uri, jsobj_to_range(occurrence.tree, fi))
         push!(seen_locations, Location(; uri = adjusted_uri, range))
     end
     edits_by_uri = Dict{URI,Vector{TextEdit}}()
@@ -394,7 +394,7 @@ function collect_global_rename_edits_in_file!(
             # Insert ` as <newname>` right after the full identifier (including any
             # leading `@`), keeping the source name intact.
             full_range = jsobj_to_range(occurrence.tree, fi)
-            insert_range, adjusted_uri =
+            adjusted_uri, insert_range =
                 unadjust_range(state, uri, Range(; start=full_range.var"end", var"end"=full_range.var"end"))
             newText = ismacro ? " as @$newName" : " as $newName"
             push!(seen_edits, (adjusted_uri, TextEdit(; range = insert_range, newText)))
@@ -404,11 +404,11 @@ function collect_global_rename_edits_in_file!(
             end
             # Renaming an alias back to its source name — drop the ` as <alias>` suffix
             # so the import simplifies to `using M: <source>` instead of `<source> as <source>`.
-            collapse_range, adjusted_uri = unadjust_range(state, uri, collapse)
+            adjusted_uri, collapse_range = unadjust_range(state, uri, collapse)
             push!(seen_edits, (adjusted_uri, TextEdit(; range = collapse_range, newText = "")))
         else
             adjust_first = ismacro && is_macrocall_use_site(fi, occurrence.tree) ? 1 : 0
-            range, adjusted_uri = unadjust_range(state, uri, jsobj_to_range(occurrence.tree, fi; adjust_first))
+            adjusted_uri, range = unadjust_range(state, uri, jsobj_to_range(occurrence.tree, fi; adjust_first))
             push!(seen_edits, (adjusted_uri, TextEdit(; range, newText = newName)))
         end
     end
@@ -491,7 +491,7 @@ function get_file_rename(
     newUri = filename2uri(newPath)
     renameFile = RenameFile(; oldUri, newUri)
 
-    range, _ = unadjust_range(state, uri, jsobj_to_range(string_node, fi))
+    _, range = unadjust_range(state, uri, jsobj_to_range(string_node, fi))
     textEdit = TextEdit(; range, newText = newName)
 
     if supports(server, :workspace, :workspaceEdit, :documentChanges)
