@@ -1459,11 +1459,15 @@ end
 
 module static_eval_module
 const STATIC_COND_FLAG = true
+const STATIC_BINDINGS = (:Int, :Bool)
 end
 
 module static_macro_module
 using JETLS: JL, JS, SyntaxTree
 const STATIC_COND_FLAG = false
+function var"@static_condition"(ctx::JL.MacroContext)
+    return JL.@ast(ctx, ctx.macrocall, true::JS.K"Value")
+end
 function var"@wrapped_static"(ctx::JL.MacroContext, ex::SyntaxTree)
     mc = ctx.macrocall::SyntaxTree
     src = JS.sourceref(mc)
@@ -1483,7 +1487,7 @@ end
 end
 
 module static_caller_module
-using ..static_macro_module: @generated_static, @wrapped_static
+using ..static_macro_module: @generated_static, @static_condition, @wrapped_static
 const STATIC_COND_FLAG = true
 end
 
@@ -1565,6 +1569,39 @@ end
             st1 = jlexpand(static_caller_module, code)
             @test JS.kind(st1) === JS.K"Value"
             @test st1.value === true
+        end
+    end
+
+    @static if VERSION >= v"1.14-"
+        @testset "new-style condition macros" begin
+            let diags = collect_macro_diagnostics() do
+                    st1 = jlexpand(static_caller_module, "@static if @static_condition(); aaa(); end")
+                    @test JS.kind(st1) === JS.K"block"
+                    @test JS.sourcetext(st1[1]) == "aaa()"
+                end
+                @test isempty(diags)
+            end
+        end
+    end
+
+    @testset "closure conditions" begin
+        # This requires native code execution of conditions for v1.12&v1.13 compatibility
+        for (condition, taken, dropped) in (
+                ("all(s -> isdefined(Core, s), STATIC_BINDINGS)", "aaa()", "bbb()"),
+                ("any(s -> !isdefined(Core, s), STATIC_BINDINGS)", "bbb()", "aaa()"),
+                ("let flag = STATIC_COND_FLAG; any(_ -> flag, STATIC_BINDINGS); end",
+                 "aaa()", "bbb()"),
+            )
+            code = "@static if $condition; aaa(); else; bbb(); end"
+            diags = collect_macro_diagnostics() do
+                st1 = jlexpand(static_eval_module, code)
+                @test JS.kind(st1) === JS.K"block"
+                @test JS.sourcetext(st1[1]) == taken
+                @test JS.byte_range(st1[1]) == source_range(code, taken)
+            end
+            d = only(diags)
+            @test d.code == JETLS.LOWERING_INACTIVE_CODE
+            @test occursin(dropped, JS.sourcetext(d.node))
         end
     end
 
