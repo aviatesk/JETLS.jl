@@ -273,7 +273,7 @@ const check_help_message = """
       --exit-severity=<level>  Minimum severity to exit with error code 1
                                (error, warn, info, hint; default: warn)
       --show-severity=<level>  Minimum severity to display in output
-                               (error, warn, info, hint; default: hint)
+                               (error, warn, info, hint; default: info)
       --root=<path>            Set the root path for configuration and relative paths
                                (default: current working directory)
       --context-lines=<n>      Number of context lines to show (default: 2)
@@ -301,7 +301,7 @@ function run_check(args::Vector{String})
     root_path_opt = nothing
     context_lines = 2
     exit_severity = DiagnosticSeverity.Warning
-    show_severity = DiagnosticSeverity.Hint
+    show_severity = DiagnosticSeverity.Information
     progress_mode = PROGRESS_AUTO
     skip_analysis = false # Undocumented option to skip analysis (only used for test)
     quiet = false
@@ -564,8 +564,7 @@ function print_stats(
     for (_, diagnostics) in uri2diagnostics
         file_has_diagnostics = false
         for d in diagnostics
-            d.severity > show_severity && continue
-            file_has_diagnostics = true
+            file_has_diagnostics |= d.severity <= show_severity
             if d.severity == DiagnosticSeverity.Error
                 n_errors += 1
             elseif d.severity == DiagnosticSeverity.Warning
@@ -578,23 +577,41 @@ function print_stats(
         end
         file_has_diagnostics && (files_with_diagnostics += 1)
     end
-    total_diagnostics = n_errors + n_warnings + n_info + n_hints
+    total_diagnostics = 0
+    parts = String[]
+    hidden_parts = String[]
+    for (severity, n, singular, plural) in (
+            (DiagnosticSeverity.Error, n_errors, "error", "errors"),
+            (DiagnosticSeverity.Warning, n_warnings, "warning", "warnings"),
+            (DiagnosticSeverity.Information, n_info, "info", "info"),
+            (DiagnosticSeverity.Hint, n_hints, "hint", "hints"))
+        n == 0 && continue
+        part = count_label(n, singular, plural)
+        if severity <= show_severity
+            total_diagnostics += n
+            push!(parts, part)
+        else
+            push!(hidden_parts, part)
+        end
+    end
 
     println(stdout, "# Analyzed ", count_label(total_files, "file"),
         " in $(format_duration(elapsed_time))")
     if total_diagnostics == 0
-        println(stdout, "# No diagnostics found")
+        if !isempty(hidden_parts)
+            println(stdout, "# No diagnostics displayed")
+        else
+            println(stdout, "# No diagnostics found")
+        end
     else
         print(stdout, "# Found ", count_label(total_diagnostics, "diagnostic"),
             " in ", count_label(files_with_diagnostics, "file"))
-        parts = String[]
-        n_errors > 0 && push!(parts, count_label(n_errors, "error"))
-        n_warnings > 0 && push!(parts, count_label(n_warnings, "warning"))
-        n_info > 0 && push!(parts, count_label(n_info, "info", "info"))
-        n_hints > 0 && push!(parts, count_label(n_hints, "hint"))
         println(stdout, " (", join(parts, ", "), ")")
-        println(stdout)
     end
+    if !isempty(hidden_parts)
+        println(stdout, "# Hidden: ", join(hidden_parts, ", "))
+    end
+    total_diagnostics > 0 && println(stdout)
 end
 
 count_label(n::Int, singular::AbstractString, plural::AbstractString = singular * "s") =
@@ -629,6 +646,7 @@ function print_diagnostics(
         show_severity::DiagnosticSeverity.Ty
     )
     has_errors = false
+    printed_diagnostic = false
     sorted_uris = sort(collect(keys(uri2diagnostics)); by=string)
 
     for uri in sorted_uris
@@ -647,7 +665,7 @@ function print_diagnostics(
 
         rel_path = relpath(filepath, root_path)
         sorted_diagnostics = sort(diagnostics; by=d->(d.range.start.line, d.range.start.character))
-        for (i, diagnostic) in enumerate(sorted_diagnostics)
+        for diagnostic in sorted_diagnostics
             severity = diagnostic.severity
             if severity <= exit_severity
                 has_errors = true
@@ -678,7 +696,7 @@ function print_diagnostics(
             end
             line = diagnostic.range.start.line + 1
             character = diagnostic.range.start.character + 1
-            i == 1 || println(stdout)
+            printed_diagnostic && println(stdout)
             printstyled(stdout, "# @ $rel_path:$line,$character\n"; color=:light_black)
             output = let note=note, notecolor=color, context_lines=context_lines
                 sprint(; context=IOContext(stdout)) do io
@@ -689,6 +707,7 @@ function print_diagnostics(
             end
             println(stdout, strip(output, '\n'))
             details === nothing || print_diagnostic_details(stdout, details)
+            printed_diagnostic = true
         end
     end
 
