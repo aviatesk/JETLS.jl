@@ -116,13 +116,25 @@ end
         let result = run_jetls_check_process([filepath]; root=dir)
             @test result.exitcode == 0
             @test occursin("lowering/unused-local", result.stdout)
+            @test endswith(result.stdout, "\n\n# Check passed (--exit-severity=warn)\n")
         end
         let result = run_jetls_check_process(
                 ["--exit-severity=info", filepath]; root=dir
             )
             @test result.exitcode == 1
             @test occursin("lowering/unused-local", result.stdout)
+            @test endswith(result.stdout, "\n\n# Check failed (--exit-severity=info)\n")
         end
+    end
+end
+
+@testset "analysis failure" begin
+    mktempdir() do dir
+        filepath = joinpath(dir, "missing.jl")
+        result = run_jetls_check_process([filepath]; root=dir, skip_analysis=false)
+        @test result.exitcode == 1
+        @test occursin("missing.jl", result.stderr)
+        @test !occursin("# Check ", result.stdout)
     end
 end
 
@@ -192,12 +204,24 @@ end
         let result = run_jetls_check([filepath]; root=dir)
             @test result.exitcode == 0
             @test occursin("lowering/unused-local", result.stdout)
+            @test endswith(result.stdout, "\n\n# Check passed (--exit-severity=warn)\n")
         end
 
         # With exit-severity=info, info diagnostic should cause exit 1
         let result = run_jetls_check(["--exit-severity=info", filepath]; root=dir)
             @test result.exitcode == 1
             @test occursin("lowering/unused-local", result.stdout)
+            @test endswith(result.stdout, "\n\n# Check failed (--exit-severity=info)\n")
+        end
+
+        for (level, canonical, exitcode, status) in (
+                ("1", "error", 0, "passed"),
+                ("warning", "warn", 0, "passed"),
+                ("information", "info", 1, "failed"),
+                ("4", "hint", 1, "failed"))
+            result = run_jetls_check(["--exit-severity=$level", filepath]; root=dir)
+            @test result.exitcode == exitcode
+            @test endswith(result.stdout, "\n\n# Check $status (--exit-severity=$canonical)\n")
         end
     end
 end
@@ -223,7 +247,10 @@ end
         let result = run_jetls_check(["--show-severity=warn", filepath]; root=dir)
             @test result.exitcode == 0
             @test !occursin("lowering/unused-local", result.stdout)
-            @test endswith(result.stdout, "# No diagnostics displayed\n# Hidden: 1 info\n")
+            @test endswith(result.stdout,
+                "# No diagnostics displayed\n" *
+                "# Hidden: 1 info (use --show-severity=hint to show all)\n" *
+                "# Check passed (--exit-severity=warn)\n")
         end
 
         for options in (["--exit-severity=info", "--show-severity=warn"],
@@ -231,7 +258,10 @@ end
             result = run_jetls_check([options; filepath]; root=dir)
             @test result.exitcode == 1
             @test !occursin("lowering/unused-local", result.stdout)
-            @test endswith(result.stdout, "# No diagnostics displayed\n# Hidden: 1 info\n")
+            @test endswith(result.stdout,
+                "# No diagnostics displayed\n" *
+                "# Hidden: 1 info (use --show-severity=hint to show all)\n" *
+                "# Check failed (--exit-severity=info)\n")
         end
 
         write_config_file(dir, """
@@ -244,7 +274,10 @@ end
         let result = run_jetls_check(["--show-severity=error", filepath]; root=dir)
             @test result.exitcode == 1
             @test !occursin("lowering/unused-local", result.stdout)
-            @test endswith(result.stdout, "# No diagnostics displayed\n# Hidden: 1 warning\n")
+            @test endswith(result.stdout,
+                "# No diagnostics displayed\n" *
+                "# Hidden: 1 warning (use --show-severity=hint to show all)\n" *
+                "# Check failed (--exit-severity=warn)\n")
         end
     end
 
@@ -261,11 +294,17 @@ end
             end
             """)
 
-        for options in (String[], ["--exit-severity=error"], ["--exit-severity=info"])
+        for (options, exit_severity) in (
+                (String[], "warn"),
+                (["--exit-severity=error"], "error"),
+                (["--exit-severity=info"], "info"))
             result = run_jetls_check([options; filepath]; root=dir)
             @test result.exitcode == 0
             @test !occursin("lowering/inactive-code", result.stdout)
-            @test endswith(result.stdout, "# No diagnostics displayed\n# Hidden: 1 hint\n")
+            @test endswith(result.stdout,
+                "# No diagnostics displayed\n" *
+                "# Hidden: 1 hint (use --show-severity=hint to show all)\n" *
+                "# Check passed (--exit-severity=$exit_severity)\n")
         end
 
         let result = run_jetls_check(["--show-severity=hint", filepath]; root=dir)
@@ -278,7 +317,10 @@ end
         let result = run_jetls_check(["--exit-severity=hint", filepath]; root=dir)
             @test result.exitcode == 1
             @test !occursin("lowering/inactive-code", result.stdout)
-            @test endswith(result.stdout, "# No diagnostics displayed\n# Hidden: 1 hint\n")
+            @test endswith(result.stdout,
+                "# No diagnostics displayed\n" *
+                "# Hidden: 1 hint (use --show-severity=hint to show all)\n" *
+                "# Check failed (--exit-severity=hint)\n")
         end
 
         for options in (["--exit-severity=hint", "--show-severity=info"],
@@ -286,16 +328,22 @@ end
             result = run_jetls_check([options; filepath]; root=dir)
             @test result.exitcode == 1
             @test !occursin("lowering/inactive-code", result.stdout)
-            @test endswith(result.stdout, "# No diagnostics displayed\n# Hidden: 1 hint\n")
+            @test endswith(result.stdout,
+                "# No diagnostics displayed\n" *
+                "# Hidden: 1 hint (use --show-severity=hint to show all)\n" *
+                "# Check failed (--exit-severity=hint)\n")
         end
     end
 
     mktempdir() do dir
         filepath = write_test_file(dir, "test.jl", "module TestModule\nend\n")
-        for options in (String[], ["--show-severity=error"], ["--exit-severity=hint"])
+        for (options, exit_severity) in (
+                (String[], "warn"),
+                (["--show-severity=error"], "warn"),
+                (["--exit-severity=hint"], "hint"))
             result = run_jetls_check([options; filepath]; root=dir)
             @test result.exitcode == 0
-            @test endswith(result.stdout, "# No diagnostics found\n")
+            @test endswith(result.stdout, "# No diagnostics found\n# Check passed (--exit-severity=$exit_severity)\n")
         end
     end
 end
@@ -318,13 +366,13 @@ end
         for (show_severity, summary) in (
                 (DiagnosticSeverity.Error,
                     "# Found 1 diagnostic in 1 file (1 error)\n" *
-                    "# Hidden: 2 warnings, 2 info, 3 hints\n\n"),
+                    "# Hidden: 2 warnings, 2 info, 3 hints (use --show-severity=hint to show all)\n\n"),
                 (DiagnosticSeverity.Warning,
                     "# Found 3 diagnostics in 1 file (1 error, 2 warnings)\n" *
-                    "# Hidden: 2 info, 3 hints\n\n"),
+                    "# Hidden: 2 info, 3 hints (use --show-severity=hint to show all)\n\n"),
                 (DiagnosticSeverity.Information,
                     "# Found 5 diagnostics in 2 files (1 error, 2 warnings, 2 info)\n" *
-                    "# Hidden: 3 hints\n\n"),
+                    "# Hidden: 3 hints (use --show-severity=hint to show all)\n\n"),
                 (DiagnosticSeverity.Hint,
                     "# Found 8 diagnostics in 2 files (1 error, 2 warnings, 2 info, 3 hints)\n\n"))
             result = capture_jetls_check() do
@@ -459,21 +507,25 @@ end
         @test occursin("syntax/parse-error", result.stdout)
         @test occursin("test.jl", result.stdout)
         @test occursin("Found 1 diagnostic in 1 file", result.stdout)
+        @test endswith(result.stdout, "\n\n# Check failed (--exit-severity=warn)\n")
     end
 end
 
 @testset "invalid arguments" begin
     let result = run_jetls_check(["/nonexistent/path/file.jl"])
         @test result.exitcode == 1 || occursin("error", lowercase(result.stderr))
+        @test !occursin("# Check ", result.stdout)
     end
     mktempdir() do dir
         filepath = write_test_file(dir, "test.jl", "x = 1")
         result = run_jetls_check(["--exit-severity=invalid", filepath]; root=dir)
         @test result.exitcode == 1
         @test occursin("Invalid value", result.stderr)
+        @test !occursin("# Check ", result.stdout)
         result = run_jetls_check(["--show-severity=invalid", filepath]; root=dir)
         @test result.exitcode == 1
         @test occursin("Invalid value", result.stderr)
+        @test !occursin("# Check ", result.stdout)
     end
 end
 

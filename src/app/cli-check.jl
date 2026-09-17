@@ -442,6 +442,12 @@ function run_check_analysis(
 
     cleanup_cli_tasks(server)
 
+    exit_severity_str =
+        exit_severity == DiagnosticSeverity.Error ? "error" :
+        exit_severity == DiagnosticSeverity.Warning ? "warn" :
+        exit_severity == DiagnosticSeverity.Information ? "info" : "hint"
+    println(stdout, "# Check ", has_errors ? "failed" : "passed", " (--exit-severity=", exit_severity_str, ")")
+
     return has_errors
 end
 
@@ -609,7 +615,7 @@ function print_stats(
         println(stdout, " (", join(parts, ", "), ")")
     end
     if !isempty(hidden_parts)
-        println(stdout, "# Hidden: ", join(hidden_parts, ", "))
+        println(stdout, "# Hidden: ", join(hidden_parts, ", "), " (use --show-severity=hint to show all)")
     end
     total_diagnostics > 0 && println(stdout)
 end
@@ -710,6 +716,7 @@ function print_diagnostics(
             printed_diagnostic = true
         end
     end
+    printed_diagnostic && println(stdout)
 
     return has_errors
 end

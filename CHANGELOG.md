@@ -59,7 +59,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
-- `jetls check` now defaults to `--show-severity=info`, hiding hint diagnostics. The display threshold remains independent of `--exit-severity`, and the summary includes counts of hidden diagnostics by severity.
+- [`jetls check`](https://aviatesk.github.io/JETLS.jl/release/cli-check) now defaults to [`--show-severity=info`](https://aviatesk.github.io/JETLS.jl/release/cli-check/#cli-check/options/show-severity), hiding hint diagnostics.
+  With default diagnostic severities, this hides:
+  - [`lowering/inactive-code`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/inactive-code): `@static` branches excluded in the current environment.
+  - [`lowering/unsorted-import-names`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/unsorted-import-names): names that are not sorted alphabetically in `import`, `using`, `export`, or `public` statements.
+
+  The display threshold remains independent of [`--exit-severity`](https://aviatesk.github.io/JETLS.jl/release/cli-check/#cli-check/options/exit-severity), and the summary includes counts of hidden diagnostics by severity.
+
+  The output also suggests how to display hidden diagnostics and ends with a pass/fail result based on `--exit-severity`.
 
 - `workspace/diagnostic` now long-polls: when nothing has changed since the client's last pull, the server keeps the request open instead of answering it, and answers as soon as workspace diagnostics may have changed (full-analysis completion, edits, watched-file or configuration changes). Clients that re-pull workspace diagnostics on a fixed interval (Zed, VS Code) no longer make the server rescan the workspace while idle, and diagnostics of unopened files update without waiting for the next poll.
 
@@ -81,9 +88,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Fixed requests for methods the server does not support being left unanswered; they now receive a `MethodNotFound` error response.
 
-- Fixed false `lowering/macro-expansion-error` diagnostics for `@static` conditions containing anonymous functions on Julia 1.12 and 1.13.
+- Fixed false [`lowering/macro-expansion-error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/macro-expansion-error) diagnostics for `@static` conditions containing anonymous functions on Julia 1.12 and 1.13.
 
-- Fixed `toplevel/missing-concretization` diagnostics for ordinary global assignments inside conditional branches in script analysis (aviatesk/JET.jl#866).
+- Fixed [`toplevel/missing-concretization`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/toplevel/missing-concretization) diagnostics for ordinary global assignments inside conditional branches in script analysis (aviatesk/JET.jl#866).
 
 - Fixed a `WARNING: Detected access to binding ... in a world prior to its definition world` message that full analysis could print when analyzing calls with keyword arguments, e.g. during `jetls check`.
 
