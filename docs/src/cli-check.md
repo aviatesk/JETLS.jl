@@ -95,6 +95,9 @@ jetls check --context-lines=0 src/SomePkg.jl
 Sets the minimum severity level that causes a non-zero exit code. This is useful
 for CI pipelines where you want to fail only on certain severity levels.
 
+After analysis completes, the final line reports whether the check passed or
+failed and the exit severity used.
+
 Available levels (from most to least severe):
 
 - `error` - Only errors cause exit code 1
@@ -115,7 +118,8 @@ jetls check --exit-severity=hint src/SomePkg.jl
 Sets the minimum severity level to display in the output. The default is
 `info`, independently of [`--exit-severity`](@ref cli-check/options/exit-severity).
 Diagnostics below the display threshold are hidden but may still affect the
-exit code. The summary includes counts of hidden diagnostics by severity.
+exit code. The summary includes counts of hidden diagnostics by severity
+and indicates how to display them.
 
 Available levels (from most to least severe):
 
