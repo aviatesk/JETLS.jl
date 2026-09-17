@@ -79,23 +79,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Fixed intermittent missing or incorrect completion suggestions and signature help after edits, including macro completions triggered by `@` and requests in notebook cells.
 
-- Fixed spurious `FieldError` diagnostics on parametric type definitions with inner constructors in script analysis mode.
-
-- Fixed diagnostics disappearing prematurely during reanalysis.
+- Fixed spurious [`inference/field-error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/inference/field-error) diagnostics on parametric type definitions with inner constructors in script analysis mode.
 
 - Fixed stale diagnostics not being cleared when a file is closed with [`diagnostic.all_files=false`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/diagnostic/all_files).
-
-- Fixed a race during background analysis that could cause diagnostics and other language features to use outdated document contents after an edit.
-
-- Fixed errors logged when in-flight requests or progress notifications finished during language server shutdown.
-
-- Fixed requests for methods the server does not support being left unanswered; they now receive a `MethodNotFound` error response.
 
 - Fixed false [`lowering/macro-expansion-error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/macro-expansion-error) diagnostics for `@static` conditions containing anonymous functions on Julia 1.12 and 1.13.
 
 - Fixed [`toplevel/missing-concretization`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/toplevel/missing-concretization) diagnostics for ordinary global assignments inside conditional branches in script analysis (aviatesk/JET.jl#866).
 
 - Fixed a `WARNING: Detected access to binding ... in a world prior to its definition world` message that full analysis could print when analyzing calls with keyword arguments, e.g. during `jetls check`.
+
+- Fixed a race during background analysis that could cause diagnostics and other language features to use outdated document contents after an edit.
+
+- Fixed errors logged when in-flight requests or progress notifications finished during language server shutdown.
+
+- Fixed requests for LSP requests the server does not support being left unanswered; they now receive a `MethodNotFound` error response.
 
 ## 2026-09-06
 
