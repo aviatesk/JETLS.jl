@@ -234,7 +234,7 @@ All `jetls check` command-line options are available as action inputs:
 | :----------------- | :-------- | :-------------------------------------------------- |
 | `files` (required) |           | Space-separated list of files to check              |
 | `version`          | `release` | JETLS revision to install                           |
-| `julia-version`    | `1.12`    | Julia version to use                                |
+| `julia-version`    | `1.13`    | Julia version to use                                |
 | `quiet`            | `true`    | Suppress info and warning log messages              |
 | `root`             | `.`       | Root directory for configuration and relative paths |
 | `context-lines`    | `2`       | Number of source context lines                      |
