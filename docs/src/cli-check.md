@@ -112,16 +112,17 @@ jetls check --exit-severity=hint src/SomePkg.jl
 
 ### [`--show-severity=<level>`](@id cli-check/options/show-severity)
 
-Sets the minimum severity level to display in the output. Diagnostics below this
-level are hidden from the output but may still affect the exit code (depending
-on `--exit-severity`).
+Sets the minimum severity level to display in the output. The default is
+`info`, independently of [`--exit-severity`](@ref cli-check/options/exit-severity).
+Diagnostics below the display threshold are hidden but may still affect the
+exit code. The summary includes counts of hidden diagnostics by severity.
 
 Available levels (from most to least severe):
 
 - `error` - Only show errors
 - `warn` - Show warnings and errors
-- `info` - Show information, warnings, and errors
-- `hint` (default) - Show all diagnostics
+- `info` (default) - Show information, warnings, and errors
+- `hint` - Show all diagnostics
 
 ```bash
 # Only display warnings and errors (hide info and hints)
@@ -238,7 +239,7 @@ All `jetls check` command-line options are available as action inputs:
 | `root`             | `.`       | Root directory for configuration and relative paths |
 | `context-lines`    | `2`       | Number of source context lines                      |
 | `exit-severity`    | `warn`    | Minimum severity to trigger non-zero exit           |
-| `show-severity`    | `hint`    | Minimum severity to display                         |
+| `show-severity`    | `info`    | Minimum severity to display                         |
 | `progress`         | `none`    | Progress display mode                               |
 
 See [`.github/actions/check/action.yml`](https://github.com/aviatesk/JETLS.jl/blob/release/.github/actions/check/action.yml)
