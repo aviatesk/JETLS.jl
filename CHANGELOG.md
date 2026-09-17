@@ -81,6 +81,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Fixed false `lowering/macro-expansion-error` diagnostics for `@static` conditions containing anonymous functions on Julia 1.12 and 1.13.
 
+- Fixed `toplevel/missing-concretization` diagnostics for ordinary global assignments inside conditional branches in script analysis (aviatesk/JET.jl#866).
+
 ## 2026-09-06
 
 - Commit: [`2b51ac0`](https://github.com/aviatesk/JETLS.jl/commit/2b51ac0)
