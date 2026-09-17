@@ -12,7 +12,7 @@ inputs:
   julia-version:
     description: "Julia version to use"
     required: false
-    default: "1.12"
+    default: "1.13"
   quiet:
     description: "Suppress info and warning log messages"
     required: false

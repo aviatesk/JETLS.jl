@@ -61,6 +61,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - `jetls check` now defaults to `--show-severity=info`, hiding hint diagnostics. The display threshold remains independent of `--exit-severity`, and the summary includes counts of hidden diagnostics by severity.
 
+- The [`jetls check` GitHub Action](https://aviatesk.github.io/JETLS.jl/release/cli-check/#cli-check/github-actions) now uses Julia 1.13 by default instead of 1.12.
+  Set `julia-version: "1.12"` if you want to keep analyzing your package against Julia 1.12.
+
 - `workspace/diagnostic` now long-polls: when nothing has changed since the client's last pull, the server keeps the request open instead of answering it, and answers as soon as workspace diagnostics may have changed (full-analysis completion, edits, watched-file or configuration changes). Clients that re-pull workspace diagnostics on a fixed interval (Zed, VS Code) no longer make the server rescan the workspace while idle, and diagnostics of unopened files update without waiting for the next poll.
 
 - Pull diagnostics (`textDocument/diagnostic` and `workspace/diagnostic`) are now refreshed as soon as full-analysis has resolved module contexts, before signature analysis finishes, instead of after the whole analysis completes.
