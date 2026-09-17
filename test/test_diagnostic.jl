@@ -92,13 +92,15 @@ function get_open_diagnostics(
     return diagnostics
 end
 
-const issue464_code = """
+# Modified version of the MRE for aviatesk/JETLS.jl#464
+# Type definitions require the branch condition's concrete value, unlike global assignments.
+const missing_concretization_code = """
 USE_PULSE = false
 
 if USE_PULSE
-    SIMULATE = false
+    struct Pulse end
 else
-    SIMULATE = true
+    struct NoPulse end
 end
 """
 
@@ -164,12 +166,45 @@ end
         end
     end
 
+    @testset "conditional global assignments do not require concretization" begin
+        for code in (
+                # # aviatesk/JETLS.jl#464
+                """
+                USE_PULSE = false
+
+                if USE_PULSE
+                    SIMULATE = false
+                else
+                    SIMULATE = true
+                end
+                """,
+                """
+                let
+                    global USE_PULSE = rand(Bool)
+                end
+
+                if USE_PULSE
+                    SIMULATE = false
+                else
+                    SIMULATE = true
+                end
+                """,
+            )
+            mktempdir() do dir
+                script_path = joinpath(dir, "issue464.jl")
+                write(script_path, code)
+                diagnostics = get_open_diagnostics(dir, script_path, code)
+                @test !any(d -> d.code == JETLS.TOPLEVEL_MISSING_CONCRETIZATION_CODE, diagnostics)
+            end
+        end
+    end
+
     @testset "diagnostic reported for unconcretized global" begin
         mktempdir() do dir
-            script_path = joinpath(dir, "issue464.jl")
+            script_path = joinpath(dir, "conditional-types.jl")
             expected_path = uri2filename(filepath2uri(script_path))
-            write(script_path, issue464_code)
-            diagnostics = get_open_diagnostics(dir, script_path, issue464_code)
+            write(script_path, missing_concretization_code)
+            diagnostics = get_open_diagnostics(dir, script_path, missing_concretization_code)
             diag = only(filter(d -> d.code == JETLS.TOPLEVEL_MISSING_CONCRETIZATION_CODE, diagnostics))
             @test diag.data isa MissingConcretizationData
             @test diag.data.name == "USE_PULSE"
@@ -196,9 +231,9 @@ end
                 end
 
                 if USE_PULSE
-                    SIMULATE = false
+                    struct Pulse end
                 else
-                    SIMULATE = true
+                    struct NoPulse end
                 end
                 """
             write(script_path, code)
@@ -215,23 +250,23 @@ end
 
     @testset "suppressed by `.JETLSConfig.toml`" begin
         mktempdir() do dir
-            script_path = joinpath(dir, "issue464.jl")
-            write(script_path, issue464_code)
+            script_path = joinpath(dir, "conditional-types.jl")
+            write(script_path, missing_concretization_code)
             write(joinpath(dir, ".JETLSConfig.toml"), """
                 [[full_analysis.concretization_patterns]]
                 pattern = "USE_PULSE = x_"
                 """)
-            diagnostics = get_open_diagnostics(dir, script_path, issue464_code)
+            diagnostics = get_open_diagnostics(dir, script_path, missing_concretization_code)
             @test !any(d -> d.code == JETLS.TOPLEVEL_MISSING_CONCRETIZATION_CODE, diagnostics)
         end
     end
 
     @testset "suppressed by LSP settings" begin
         mktempdir() do dir
-            script_path = joinpath(dir, "issue464.jl")
-            write(script_path, issue464_code)
-            settings = concretization_settings("issue464.jl")
-            diagnostics = get_open_diagnostics(dir, script_path, issue464_code; settings)
+            script_path = joinpath(dir, "conditional-types.jl")
+            write(script_path, missing_concretization_code)
+            settings = concretization_settings("conditional-types.jl")
+            diagnostics = get_open_diagnostics(dir, script_path, missing_concretization_code; settings)
             @test !any(d -> d.code == JETLS.TOPLEVEL_MISSING_CONCRETIZATION_CODE, diagnostics)
         end
     end
@@ -241,7 +276,7 @@ end
             main_path = joinpath(dir, "main.jl")
             included_path = joinpath(dir, "config.jl")
             write(main_path, "include(\"config.jl\")\n")
-            write(included_path, issue464_code)
+            write(included_path, missing_concretization_code)
 
             @testset "path of the includer does not match" begin
                 diagnostics = get_included_diagnostics(dir, main_path, included_path, concretization_settings("main.jl"))
@@ -262,7 +297,7 @@ end
             main_path = joinpath(workspace, "main.jl")
             included_path = joinpath(dir, "config.jl")
             write(main_path, "include($(repr(included_path)))\n")
-            write(included_path, issue464_code)
+            write(included_path, missing_concretization_code)
             for settings in (
                     concretization_settings(),
                     concretization_settings(replace(included_path, '\\' => '/')),
