@@ -77,6 +77,67 @@ end
     end
 end
 
+@testset HierarchicalTestSet "concretization timeout diagnostic" begin
+    for mode in (:script, :package), timeout in (0.1, "inf")
+        filename = joinpath(@__DIR__, "concretization-timeout.jl")
+        # Each iteration exceeds the timeout, but the loop also terminates if
+        # timeout handling regresses. `@eval` forces the sleep to run concretely.
+        code = """
+            for _ in 1:3
+                @eval begin
+                    sleep(0.2)
+                    timeout_fixture() = nothing
+                end
+            end
+            """
+        server = JETLS.Server()
+        uri = filepath2uri(filename)
+        entry = mode === :script ? JETLS.ScriptAnalysisEntry(uri) :
+            JETLS.PackageSourceAnalysisEntry(dirname(filename), uri, Base.PkgId(@__MODULE__))
+        request = JETLS.AnalysisRequest(
+            entry, uri, #=generation=#1, #=token=#nothing, #=notify=#false)
+        execution = JETLS.AnalysisExecution(request, #=prev_result=#nothing)
+        interp = JETLS.LSInterpreter(server, execution)
+        try
+            @test JETLS.getjetconfigs(server, entry)[:concretization_timeout] == JETLS.JET.DEFAULT_CONCRETIZATION_TIMEOUT
+            settings = Dict{String,Any}(
+                "full_analysis" => Dict{String,Any}(
+                    "concretization_timeout" => timeout))
+            JETLS.store_lsp_config!(JETLS.ConfigChangeTracker(), server, settings, "test")
+            jetconfigs = JETLS.getjetconfigs(server, entry)
+            @test jetconfigs[:concretization_timeout] == (timeout == "inf" ? Inf : timeout)
+            result = JETLS.JET.analyze_and_report_text!(interp, code, filename;
+                jetconfigs...,
+                context = Module(gensym(:ConcretizationTimeout)),
+                virtualize = false,
+                analyze_from_definitions = false)
+            if timeout == "inf"
+                @test isempty(result.res.toplevel_error_reports)
+                continue
+            end
+            report = only(result.res.toplevel_error_reports)
+            @test report isa JETLS.JET.ConcretizationTimeoutErrorReport
+            @test report.timeout == timeout
+            @test report.file == filename
+            @test report.line == 1
+            @test isempty(result.res.inference_error_reports)
+
+            uri2diagnostics = JETLS.URI2Diagnostics(uri => Diagnostic[])
+            postprocessor = JETLS.JET.PostProcessor(result.res.actual2virtual)
+            JETLS.jet_result_to_diagnostics!(uri2diagnostics, result, Base.get_world_counter(), postprocessor)
+            diag = only(uri2diagnostics[uri])
+            @test diag.code == JETLS.TOPLEVEL_CONCRETIZATION_TIMEOUT_CODE
+            @test diag.severity == DiagnosticSeverity.Error
+            @test diag.source == JETLS.DIAGNOSTIC_SOURCE_SAVE
+            @test diag.range == JETLS.line_range(report.line)
+            @test diag.message == postprocessor(sprint(JETLS.JET.print_report, report))
+        finally
+            close(server.endpoint)
+            close(server.message_queue)
+        end
+    end
+end
+
 function get_open_diagnostics(
         root_path::AbstractString, script_path::AbstractString, code::AbstractString;
         settings = nothing

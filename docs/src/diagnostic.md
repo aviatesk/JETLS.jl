@@ -215,6 +215,7 @@ Here is a summary table of the diagnostics explained in this section:
 | [`lowering/unsorted-import-names`](@ref diagnostic/reference/lowering/unsorted-import-names)                   | `Hint`                | `JETLS/live`  | Import/export names not sorted alphabetically          |
 | [`toplevel/error`](@ref diagnostic/reference/toplevel/error)                                                   | `Error`               | `JETLS/save`  | Errors during code loading                             |
 | [`toplevel/missing-concretization`](@ref diagnostic/reference/toplevel/missing-concretization)                 | `Error`               | `JETLS/save`  | Top-level code needs a non-concretized binding value   |
+| [`toplevel/concretization-timeout`](@ref diagnostic/reference/toplevel/concretization-timeout)                 | `Error`               | `JETLS/save`  | Concrete execution of top-level code exceeded its time limit |
 | [`toplevel/method-overwrite`](@ref diagnostic/reference/toplevel/method-overwrite)                             | `Warning`             | `JETLS/save`  | Method definitions that overwrite previous ones        |
 | [`toplevel/abstract-field`](@ref diagnostic/reference/toplevel/abstract-field)                                 | `Information`         | `JETLS/save`  | Struct fields with abstract types                      |
 | [`inference/undef-global-var`](@ref diagnostic/reference/inference/undef-global-var)                           | `Warning`             | `JETLS/save`  | References to undefined global variables               |
@@ -1125,6 +1126,41 @@ configuration to allow JETLS to evaluate the assignment during full analysis.
     pattern = "load_types()"
     path = "scripts/load-types.jl"
     ```
+
+#### [Concretization timeout (`toplevel/concretization-timeout`)](@id diagnostic/reference/toplevel/concretization-timeout)
+
+**Default severity**: `Error`
+
+Reported when concretely executing a single top-level statement exceeds the
+configured time limit (60 seconds by default). JETLS stops execution and skips
+abstract analysis of that statement, so analysis results may be incomplete.
+This is distinct from
+[`toplevel/missing-concretization`](@ref diagnostic/reference/toplevel/missing-concretization):
+the code was being executed, rather than a required binding value being
+unavailable.
+
+JETLS executes top-level code when needed to load method or type definitions,
+handle `@eval`, or perform in-place updates of concretized values. Configured
+concretization patterns also select code for execution; package analysis
+executes all top-level code. A loop around such code may run too long or never
+terminate:
+
+```julia
+while true
+    @eval f() = 1
+end
+```
+
+Move definitions out of loops or slow code where possible, or reduce the work
+performed at the top level. Adjust the limit with
+[`full_analysis.concretization_timeout`](@ref config/full_analysis/concretization_timeout),
+which applies to both script and package full analysis. Disabling the timeout
+with `"inf"` risks hanging analysis indefinitely.
+
+The timeout is checked between interpreted top-level statements: a natively
+executed callee that never returns cannot be interrupted. Time spent loading
+modules or analyzing included files is excluded from the caller's limit; each
+top-level statement in an included file has its own timeout.
 
 #### [Method overwrite (`toplevel/method-overwrite`)](@id diagnostic/reference/toplevel/method-overwrite)
 
