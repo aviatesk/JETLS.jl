@@ -28,6 +28,7 @@ Base.include(@__MODULE__, joinpath(pkgdir(JETLS), "docs", "config-schema-block.j
   - [`[full_analysis] debounce`](@ref config/full_analysis/debounce)
   - [`[full_analysis] auto_instantiate`](@ref config/full_analysis/auto_instantiate)
   - [`[full_analysis] concretization_patterns`](@ref config/full_analysis/concretization_patterns)
+  - [`[full_analysis] concretization_timeout`](@ref config/full_analysis/concretization_timeout)
 - [`formatter`](@ref config/formatter)
 - [`[diagnostic]`](@ref config/diagnostic)
   - [`[diagnostic] enabled`](@ref config/diagnostic/enabled)
@@ -182,6 +183,32 @@ the built-in patterns; they do not replace them.
     processes, or mutating global state, can therefore occur during analysis.
     Full analysis may run again after a file is saved, so these effects may occur
     more than once. Keep both `pattern` and `path` as specific as possible.
+
+#### [`[full_analysis] concretization_timeout`](@id config/full_analysis/concretization_timeout)
+
+- **Type**: positive finite number (seconds) or the exact string `"inf"`
+- **Default**: `60.0`
+
+Limits concrete execution of each top-level statement during full analysis of
+both scripts and packages. This is not a time limit for the overall analysis.
+Positive integers and floating-point values are accepted; `0`, negative values,
+booleans, numeric `NaN`/`Inf`, and strings other than `"inf"` are rejected.
+
+When the limit is exceeded, JETLS reports
+[`toplevel/concretization-timeout`](@ref diagnostic/reference/toplevel/concretization-timeout)
+and skips abstract analysis of that statement, so results may be incomplete.
+Time spent loading modules or analyzing included files is excluded from the
+caller's limit; each top-level statement in an included file has its own timeout.
+
+```toml
+[full_analysis]
+concretization_timeout = 120.0  # Allow up to 120 seconds per statement
+# concretization_timeout = "inf"  # Disable the timeout (risks hangs)
+```
+
+Disabling the timeout with `"inf"` can leave analysis hanging indefinitely.
+Even with a finite timeout, checks occur only between interpreted top-level
+statements: a natively executed callee that never returns cannot be interrupted.
 
 ### [`formatter`](@id config/formatter)
 
