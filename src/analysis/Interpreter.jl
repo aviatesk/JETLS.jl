@@ -333,7 +333,7 @@ function JuliaInterpreter.step_expr!(
         interp::LSInterpreter, frame::JuliaInterpreter.Frame, @nospecialize(node),
         istoplevel::Bool
     )
-    if Meta.isexpr(node, :call) && length(node.args) ≥ 4
+    if istoplevel && Meta.isexpr(node, :call) && length(node.args) ≥ 4
         func = JuliaInterpreter.lookup(frame, node.args[1])
         if func === Core._typebody!
             structtyp = JuliaInterpreter.lookup(frame, node.args[3])

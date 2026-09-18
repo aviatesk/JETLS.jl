@@ -894,7 +894,7 @@ function analyze_parsed_if_exist(
     )
     request = execution.request
     uri = entryuri(request.entry)
-    jetconfigs = getjetconfigs(request.entry)
+    jetconfigs = getjetconfigs(server, request.entry)
     interp = LSInterpreter(server, execution; activation_done)
     if isunsaveduri(uri)
         # Unsaved buffers (`untitled:`/`buffer:`) are never persisted to the
@@ -1343,7 +1343,11 @@ end
 
 entryuri(entry::AnalysisEntry) = entryuri_impl(entry)::URI
 progress_title(entry::AnalysisEntry) = progress_title_impl(entry)::String
-getjetconfigs(entry::AnalysisEntry) = getjetconfigs_impl(entry)::Dict{Symbol,Any}
+function getjetconfigs(server::Server, entry::AnalysisEntry)
+    jetconfigs = copy(getjetconfigs_impl(entry)::Dict{Symbol,Any})
+    jetconfigs[:concretization_timeout] = get_config(server, :full_analysis, :concretization_timeout)
+    return jetconfigs
+end
 
 let default_jetconfigs = Dict{Symbol,Any}(
         :toplevel_logger => nothing,

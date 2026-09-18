@@ -542,6 +542,7 @@ merge_key_value(pattern::ConcretizationPattern) = (pattern.path, pattern.__patte
     debounce::Maybe{Float64} = nothing
     auto_instantiate::Maybe{String} = nothing
     concretization_patterns::Maybe{Vector{ConcretizationPattern}} = nothing
+    concretization_timeout::Maybe{Float64} = nothing
 end
 @define_eq_overloads FullAnalysisConfig
 
@@ -605,6 +606,7 @@ const LOWERING_INACTIVE_CODE = "lowering/inactive-code"
 const LOWERING_AMBIGUOUS_SOFT_SCOPE_CODE = "lowering/ambiguous-soft-scope"
 const TOPLEVEL_ERROR_CODE = "toplevel/error"
 const TOPLEVEL_MISSING_CONCRETIZATION_CODE = "toplevel/missing-concretization"
+const TOPLEVEL_CONCRETIZATION_TIMEOUT_CODE = "toplevel/concretization-timeout"
 const TOPLEVEL_METHOD_OVERWRITE_CODE = "toplevel/method-overwrite"
 const TOPLEVEL_ABSTRACT_FIELD_CODE = "toplevel/abstract-field"
 const INFERENCE_UNDEF_GLOBAL_VAR_CODE = "inference/undef-global-var"
@@ -638,6 +640,7 @@ const ALL_DIAGNOSTIC_CODES = Set{String}(String[
     LOWERING_AMBIGUOUS_SOFT_SCOPE_CODE,
     TOPLEVEL_ERROR_CODE,
     TOPLEVEL_MISSING_CONCRETIZATION_CODE,
+    TOPLEVEL_CONCRETIZATION_TIMEOUT_CODE,
     TOPLEVEL_METHOD_OVERWRITE_CODE,
     TOPLEVEL_ABSTRACT_FIELD_CODE,
     INFERENCE_UNDEF_GLOBAL_VAR_CODE,
@@ -764,7 +767,8 @@ const DEFAULT_CONFIG = JETLSConfig(;
     full_analysis = FullAnalysisConfig(
         @static(JETLS_TEST_MODE ? 0.0 : 1.0),
         @static(JETLS_TEST_MODE ? AUTO_INSTANTIATE_ALWAYS : AUTO_INSTANTIATE_PROMPT),
-        ConcretizationPattern[]),
+        ConcretizationPattern[],
+        JET.DEFAULT_CONCRETIZATION_TIMEOUT),
     testrunner = TestRunnerConfig(@static Sys.iswindows() ? "testrunner.bat" : "testrunner"),
     formatter = "Runic",
     completion = CompletionConfig(LaTeXEmojiConfig(missing)),
