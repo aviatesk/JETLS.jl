@@ -747,6 +747,7 @@ end
                 rename_prep = JETLS.prepare_file_rename(state, furi, fi, pos)
                 @test !isnothing(rename_prep)
                 @test rename_prep.placeholder == target_name
+                @test rename_prep.range == Range(; start=positions[1], var"end"=positions[2])
             end
         end
 
@@ -773,6 +774,7 @@ end
             edits = result.changes[furi]
             @test length(edits) == 1
             @test edits[1].newText == "bar.jl"
+            @test edits[1].range == Range(; start=positions[1], var"end"=positions[2])
         end
     end
 end

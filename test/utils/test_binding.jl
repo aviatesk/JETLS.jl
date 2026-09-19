@@ -240,6 +240,126 @@ end
     end
 end
 
+function macro_definition_bindings(
+        ctx3::JL.VariableAnalysisContext, st3::JS.SyntaxTree, st0::JS.SyntaxTree
+    )
+    matches = Tuple{JS.SyntaxTree,JS.SyntaxTree,Symbol}[]
+    JETLS.traverse_macro_definition_bindings(ctx3, st3, st0) do binding, name, kind
+        push!(matches, (binding, name, kind))
+        return nothing
+    end
+    return matches
+end
+
+@testset "macro definition bindings" begin
+    @testset "cursor selection" begin
+        @test with_target_binding("""
+            macro │fo│o│(│x│)
+                │x│
+            end
+            """) do i, (; ctx3, binding)
+            binfo = JL.get_binding(ctx3, binding)
+            @test binfo.name == (i <= 3 ? "@foo" : "x")
+            @test binfo.kind === (i <= 3 ? :global : :argument)
+            @test binfo.mod === (i <= 3 ? lowering_module : nothing)
+            @test JS.sourcetext(binding) == (i <= 3 ? "foo" : "x")
+            return true
+        end == 7
+
+        for (code, name, source) in (
+                ("macro │fo│o│ end", "@foo", "foo"),
+                ("macro var\"│with │space│\"(x) x end", "@with space", "with space"),
+                ("macro var\"│@fo│o│\" end", "@@foo", "@foo"),
+                ("macro var\"│foo\\\"│bar│\"(x) x end", "@foo\"bar", "foo\\\"bar"),
+                ("if true\nmacro │fo│o│(x) x end\nend", "@foo", "foo"),
+                ("\"Docstring\"\nmacro │fo│o│(x) x end", "@foo", "foo"),
+                ("macro │_│(x) x end", "@_", "_"),
+            )
+            @test with_target_binding(code) do _, (; ctx3, binding)
+                binfo = JL.get_binding(ctx3, binding)
+                @test binfo.name == name
+                @test binfo.kind === :global
+                @test binfo.mod === lowering_module
+                @test JS.sourcetext(binding) == source
+                return true
+            end == count(==('│'), code)
+        end
+
+        for code in ("macro │", "macro │()│ end")
+            @test with_target_binding(code) do _, result
+                @test result === nothing
+                return true
+            end == count(==('│'), code)
+        end
+
+        @test with_target_binding("macro │B│.info(x) x end") do _, (; ctx3, binding)
+            binfo = JL.get_binding(ctx3, binding)
+            @test binfo.name == "B"
+            @test binfo.kind === :global
+            @test binfo.mod === lowering_module
+            return true
+        end == 2
+    end
+
+    @testset "emitted definition targets" begin
+        for (code, target_kind, occurrence_kind) in (
+                ("macro foo(x) x end", JS.K"method_defs", :method_def),
+                ("macro foo end", JS.K"function_decl", :decl),
+            )
+            st0 = jlparse(code; rule=:statement)
+            (; ctx3, st3) = JETLS.jl_lower_for_scope_resolution(
+                lowering_module, Base.get_world_counter(), st0)
+            binding, name, kind = only(macro_definition_bindings(ctx3, st3, st0))
+            emitted = JETLS.traverse(st3) do node
+                JS.kind(node) === target_kind || return nothing
+                return JETLS.TraversalReturn(node[1])
+            end
+            @test binding === emitted
+            copied_st0 = JETLS.copy_syntax_tree(st0)
+            @test only(macro_definition_bindings(ctx3, st3, copied_st0))[1] === binding
+            @test kind === occurrence_kind
+            @test JS.sourcetext(name) == "foo"
+            binfo = JL.get_binding(ctx3, binding)
+            @test binfo.name == "@foo"
+            @test binfo.mod === lowering_module
+            @test binfo.kind === :global
+        end
+    end
+
+    @testset "excluded source forms" begin
+        let st0 = jlparse("""
+                begin
+                    macro info(x) x end
+                    macro B.info(x) x end
+                end
+                """; rule=:statement)
+            (; ctx3, st3) = JETLS.jl_lower_for_scope_resolution(
+                lowering_module, Base.get_world_counter(), st0)
+            binding, name, kind = only(macro_definition_bindings(ctx3, st3, st0))
+            @test JL.get_binding(ctx3, binding).name == "@info"
+            @test JS.byte_range(name) == JS.byte_range(st0[1][1][1])
+            @test kind === :method_def
+            @test isempty(macro_definition_bindings(ctx3, st3, st0[2]))
+        end
+
+        for code in (
+                "quote macro foo(x) x end end",
+                ":(macro foo(x) x end)",
+                "module M; macro foo(x) x end; end",
+            )
+            st0 = jlparse(code; rule=:statement)
+            macro_node = JETLS.traverse(st0) do node
+                JS.kind(node) === JS.K"macro" || return nothing
+                return JETLS.TraversalReturn(node)
+            end
+            (; ctx3, st3) = JETLS.jl_lower_for_scope_resolution(
+                lowering_module, Base.get_world_counter(), macro_node)
+            @test length(macro_definition_bindings(ctx3, st3, macro_node)) == 1
+            @test isempty(macro_definition_bindings(ctx3, st3, st0))
+        end
+    end
+end
+
 function with_target_binding_definitions(f, text::AbstractString; kwargs...)
     clean_code, positions = JETLS.get_text_and_positions(text; kwargs...)
     st0_top = jlparse(clean_code)

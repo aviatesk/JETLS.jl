@@ -1360,6 +1360,22 @@ function resolve_path_string_literal(
     return (; value, path)
 end
 
+"""
+    string_literal_payload_range(string_node::SyntaxTree) -> Union{Nothing, UnitRange{Int}}
+
+Byte range of the content of a non-interpolated `K"String"` literal, excluding its
+delimiters (the byte range of `string_node` itself includes them).
+Returns `nothing` when the literal is malformed, e.g. unterminated.
+"""
+function string_literal_payload_range(string_node::SyntaxTree)
+    source = JS.prov_end(string_node)
+    JS.kind(source) === JS.K"string" && JS.numchildren(source) >= 2 || return nothing
+    opening, closing = source[1], source[end]
+    JS.kind(opening) in JS.KSet"\" \"\"\"" || return nothing
+    JS.kind(closing) === JS.kind(opening) || return nothing
+    return JS.last_byte(opening)+1:JS.first_byte(closing)-1
+end
+
 function select_target_node(filter, selector, st0::SyntaxTree, offset::Integer)
     bas = @somereal byte_ancestors(st0, offset) @goto minus1
     if !filter(bas)
@@ -1455,6 +1471,9 @@ function jsobj_to_range(
         return Range(; start = spos, var"end" = epos)
     end
 end
+
+byte_range_to_range(rng::UnitRange{Int}, fi::Union{FileInfo,SavedFileInfo}) =
+    Range(; start = offset_to_xy(fi, first(rng)), var"end" = offset_to_xy(fi, last(rng)+1))
 
 """
     line_absorbing_delete_range(obj, fi::FileInfo) -> Range

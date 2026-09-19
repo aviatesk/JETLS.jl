@@ -54,6 +54,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 >
 > Note: Path glob patterns use `/` as the separator on all platforms, including Windows; backslashes are not supported as separators.
 
+### Changed
+
+- Bumped JuliaSyntax and JuliaLowering revisions ([`e9d1f89e1c`](https://github.com/JuliaLang/julia/commit/e9d1f89e1c)), bringing several upstream JuliaLowering bug fixes (https://github.com/JuliaLang/julia/pull/63006).
+
 ### Fixed
 
 - Fixed global function definitions such as `global f() = ...` and `global function f() end`, including those inside `let`/`for`/`while` blocks, not appearing in the document outline and workspace symbol search.

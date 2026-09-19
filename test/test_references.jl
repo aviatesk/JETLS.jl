@@ -675,18 +675,23 @@ end
             end
         end
 
-        # includeDeclaration=false from macrocall
-        let code = """
-            macro mymacro(ex)
-                esc(ex)
-            end
-
-            │@mymacro│ println("hello")
-            """
-            clean_code, positions = JETLS.get_text_and_positions(code)
-            for pos in positions
-                refs = find_references(clean_code, pos; include_declaration=false)
-                @test length(refs) == 1
+        @testset "macro declarations are not uses" begin
+            for definition in (
+                    "macro │mymacro│(ex) esc(ex) end",
+                    "macro │mymacro│ end")
+                code = "$definition\n│@mymacro│ println(\"hello\")"
+                clean_code, positions = JETLS.get_text_and_positions(code)
+                @test length(positions) == 4
+                definition_range = Range(; start=positions[1], var"end"=positions[2])
+                call_range = Range(; start=positions[3], var"end"=positions[4])
+                for pos in positions
+                    refs = find_references(clean_code, pos; include_declaration=true)
+                    @test length(refs) == 2
+                    @test any(ref -> ref.range == definition_range, refs)
+                    @test any(ref -> ref.range == call_range, refs)
+                    refs = find_references(clean_code, pos; include_declaration=false)
+                    @test length(refs) == 1 && only(refs).range == call_range
+                end
             end
         end
 
