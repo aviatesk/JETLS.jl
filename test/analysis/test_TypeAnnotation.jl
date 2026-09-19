@@ -942,15 +942,13 @@ end
             @test get_type_for_range(ctx, range_of(code, "sin")) === Core.Const(sin)
             @test get_type_for_range(ctx, range_of(code, "nothing")) === Core.Const(nothing)
         end
-        # String / Symbol / Char literals expose the value at the inner
-        # content node, not at the surrounding surface form that includes
-        # the quotes / colon.
         @testset "string" begin
             code = "println(\"hi\")"
             _, ctx = type_annotate(code)
             @test get_type_for_range(ctx, range_of(code, "println")) === Core.Const(println)
-            @test get_type_for_range(ctx, range_of(code, "hi")) === Core.Const("hi")
+            @test get_type_for_range(ctx, range_of_kind(code, JS.K"String")) === Core.Const("hi")
         end
+        # Symbol / Char literals expose the value at the inner content node.
         @testset "symbol" begin
             code = "sin(:foo)"
             _, ctx = type_annotate(code)
