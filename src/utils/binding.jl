@@ -301,6 +301,10 @@ function select_target_binding(
         @static JETLS_DEBUG_LOWERING && Base.show_backtrace(stderr, catch_backtrace())
         return nothing
     end
+    macro_definition = select_macro_definition_binding(ctx3, st3, st0, offset)
+    if macro_definition !== nothing
+        return (; ctx3, st3, st0, binding=macro_definition)
+    end
     primary = _select_target_binding(ctx3, st3, offset)
     if primary !== nothing
         binding = @something _find_internal_global_binding_at_source(ctx3, primary) primary
@@ -766,6 +770,61 @@ function select_struct_inner_constructor_binding(
         return false
     end
     return binding[]
+end
+
+# Macro names can lower to several internal globals plus an unused noninternal
+# entry. Match only emitted definition targets to their original source token.
+function traverse_macro_definition_bindings(
+        @specialize(callback), ctx3::JL.VariableAnalysisContext,
+        st3::SyntaxTree, st0::SyntaxTree
+    )
+    definitions = IdDict{SyntaxTree,Tuple{SyntaxTree,Symbol}}()
+    traverse(st0) do node::SyntaxTree
+        k = JS.kind(node)
+        k in JS.KSet"quote inert syntaxinert module" && return traversal_no_recurse
+        k === JS.K"macro" || return nothing
+        nc = JS.numchildren(node)
+        nc in (1, 2) || return traversal_no_recurse
+        sig = unwrap_funcdef_sig(node[1])
+        name_node = if nc == 2
+            JS.kind(sig) === JS.K"call" && JS.numchildren(sig) ≥ 1 ||
+                return traversal_no_recurse
+            sig[1]
+        else
+            sig
+        end
+        JS.kind(name_node) in JS.KSet"Identifier Placeholder" || return traversal_no_recurse
+        occurrence_kind = nc == 1 ? :decl : :method_def
+        definitions[JS.prov_end(name_node)] = (name_node, occurrence_kind)
+        return traversal_no_recurse
+    end
+    isempty(definitions) && return nothing
+    return traverse(st3) do node::SyntaxTree
+        k = JS.kind(node)
+        k in JS.KSet"inert syntaxinert module" && return traversal_no_recurse
+        k in JS.KSet"function_decl method_defs" || return nothing
+        JS.numchildren(node) ≥ 1 || return nothing
+        binding = node[1]
+        JS.kind(binding) === JS.K"BindingId" || return nothing
+        name_node, occurrence_kind = @something(
+            get(definitions, JS.prov_end(binding), nothing), return nothing)
+        occurrence_kind === (k === JS.K"function_decl" ? :decl : :method_def) || return nothing
+        binfo = JL.get_binding(ctx3, binding)
+        binfo.kind === :global && binfo.mod !== nothing || return nothing
+        binfo.name == "@" * name_val(name_node) || return nothing
+        binding_is_in_base_layer(ctx3, binfo) || return nothing
+        return callback(binding, name_node, occurrence_kind)
+    end
+end
+
+function select_macro_definition_binding(
+        ctx3::JL.VariableAnalysisContext, st3::SyntaxTree, st0::SyntaxTree, offset::Int
+    )
+    return traverse_macro_definition_bindings(ctx3, st3, st0) do binding, name_node, _
+        range = JS.byte_range(name_node)
+        offset in range || offset-1 in range || return nothing
+        return TraversalReturn(binding; terminate=true)
+    end
 end
 
 function select_macrocall_binding(

@@ -1229,7 +1229,7 @@ function compute_unused_variable_data(
     # lhs_eq_range: from LHS start to actual RHS start in source (exclusive).
     # We scan forward from after the LHS to find the `=` sign and any
     # following whitespace.  This is needed because some node kinds (e.g.
-    # K"String") have a byte range that excludes delimiters, so
+    # K"Char") have a byte range that excludes delimiters, so
     # `first_byte(rhs)` may point past the opening delimiter.
     assignment_range = jsobj_to_range(assignment, fi)
     lhs_eq_range = if JS.kind(assignment) === JS.K"="

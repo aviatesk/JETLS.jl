@@ -32,12 +32,7 @@ end
 testset_name(testsetinfo::TestsetInfo) = testset_name(testsetinfo.st0)
 function testset_name(testset::SyntaxTree)
     desc = testset_description_node(testset)
-    isnothing(desc) && return ""
-    if JS.kind(desc) === JS.K"String"
-        return string('"', JS.sourcetext(desc), '"')
-    else
-        return JS.sourcetext(desc)
-    end
+    return isnothing(desc) ? "" : JS.sourcetext(desc)
 end
 testset_line(testsetinfo::TestsetInfo) = testset_line(testsetinfo.st0)
 function testset_line(testset::SyntaxTree)
@@ -46,8 +41,8 @@ function testset_line(testset::SyntaxTree)
 end
 
 # Find the description string node of a `@testset` macrocall.
-# Returns `K"String"` for simple literals (sourcetext has no quotes)
-# or `K"string"` for interpolated strings (sourcetext includes quotes).
+# Returns `K"String"` for simple literals or `K"string"` for interpolated strings.
+# Both include quotes in their sourcetext.
 function testset_description_node(testset::SyntaxTree)
     for i = 2:JS.numchildren(testset)
         child = testset[i]

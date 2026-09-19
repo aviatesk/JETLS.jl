@@ -530,6 +530,7 @@ function compute_full_binding_occurrences(
         occs = compute_binding_occurrences(ctx3, st3, world;
             include_global_bindings=true, generated_resolutions)
         collect_struct_inner_constructor_occurrences!(occs, ctx3, st0)
+        collect_macro_definition_occurrences!(occs, ctx3, st3, st0)
         collect_macrocall_occurrences!(
             occs, context_module, world, st0; soft_scope)
         # Add generated-body and policy-approved inert occurrences.
@@ -552,6 +553,23 @@ function collect_struct_inner_constructor_occurrences!(
         occ = BindingOccurrence(constructor_node, :method_def)
         push!(boccs, occ)
         return true
+    end
+    return occurrences
+end
+
+function collect_macro_definition_occurrences!(
+        occurrences::Dict{JL.BindingInfo,Set{BindingOccurrence}},
+        ctx3::JL.VariableAnalysisContext, st3::SyntaxTree, st0::SyntaxTree
+    )
+    traverse_macro_definition_bindings(ctx3, st3, st0) do binding, name_node, kind
+        binfo = JL.get_binding(ctx3, binding)
+        target = get!(Set{BindingOccurrence}, occurrences, binfo)
+        any(target) do occurrence
+            occurrence.kind === kind &&
+                JS.byte_range(occurrence.tree) == JS.byte_range(name_node)
+        end && return nothing
+        push!(target, BindingOccurrence(name_node, kind))
+        return nothing
     end
     return occurrences
 end

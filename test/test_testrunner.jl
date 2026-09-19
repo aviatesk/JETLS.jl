@@ -65,6 +65,13 @@ end
         @test JETLS.testset_line(testsets[1]) == 1
     end
 
+    for description in ("\"\"", "\"a\\\"b\"", "\"\"\"foo\"\"\"", "\"\"\"\"\"\"")
+        let st0 = jlparse("@testset " * description * " begin end")
+            testset = only(JETLS.find_executable_testsets(st0))
+            @test JETLS.testset_name(testset) == description
+        end
+    end
+
     let st0 = """
         function test_simple_func()
             @testset "simple" begin

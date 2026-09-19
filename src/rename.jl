@@ -128,7 +128,8 @@ function prepare_file_rename(
     resolved = @something(
         resolve_path_string_literal(string_node, dirname(uri2filename(uri))),
         return nothing)
-    _, range = unadjust_range(state, uri, jsobj_to_range(string_node, fi))
+    payload = @something string_literal_payload_range(string_node) return nothing
+    _, range = unadjust_range(state, uri, byte_range_to_range(payload, fi))
     return (; range, placeholder = resolved.value)
 end
 
@@ -491,7 +492,8 @@ function get_file_rename(
     newUri = filename2uri(newPath)
     renameFile = RenameFile(; oldUri, newUri)
 
-    _, range = unadjust_range(state, uri, jsobj_to_range(string_node, fi))
+    payload = @something string_literal_payload_range(string_node) return nothing
+    _, range = unadjust_range(state, uri, byte_range_to_range(payload, fi))
     textEdit = TextEdit(; range, newText = newName)
 
     if supports(server, :workspace, :workspaceEdit, :documentChanges)
