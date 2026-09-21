@@ -75,7 +75,6 @@ function JET.concretization_patterns(interp::LSInterpreter, filename::AbstractSt
 end
 function JET.ToplevelAbstractAnalyzer(
         interp::LSInterpreter, concretized::BitVector;
-        refresh_local_cache::Bool = true,    # This option is used by JET v0.10. TODO We can remove this once we update JET to v0.11.
         current_toplevel_assignment::Union{Nothing,JET.ToplevelAssignment} = nothing,
         reset_report_target_modules::Bool = true, # LSInterpreter specific option
     )
@@ -84,7 +83,7 @@ function JET.ToplevelAbstractAnalyzer(
     end
     return @invoke JET.ToplevelAbstractAnalyzer(
         interp::JET.ConcreteInterpreter, concretized::BitVector;
-        refresh_local_cache, current_toplevel_assignment)
+        current_toplevel_assignment)
 end
 
 function configured_concretization_patterns(
@@ -145,8 +144,7 @@ function (job::InterpreterSignatureAnalysisJob)(server::Server)
         # Create a new analyzer with fresh local caches (`inf_cache` and `analysis_results`)
         # to avoid data races between concurrent signature analysis tasks
         analyzer = JET.ToplevelAbstractAnalyzer(interp, JET.non_toplevel_concretized;
-            reset_report_target_modules = false,
-            refresh_local_cache = true)
+            reset_report_target_modules = false)
         inf_world = CC.get_inference_world(analyzer)
         match = Base._which(tt;
             # NOTE use the latest world counter with `method_table(analyzer)` unwrapped,
@@ -160,7 +158,7 @@ function (job::InterpreterSignatureAnalysisJob)(server::Server)
             # redirect keyword-slurping forwarders to the abstract keyword sorter,
             # but only after the `entrypoint` check above sees the original method name
             match = JETLS.redirect_keyword_slurp_match(analyzer, match, inf_world)
-            analyzer, result = JET.analyze_method_signature!(analyzer,
+            result = JET.analyze_method_signature!(analyzer,
                 match.method, match.spec_types, match.sparams)
             reports = JET.get_reports(analyzer, result)
             isempty(reports) || @lock progress.reports_lock append!(

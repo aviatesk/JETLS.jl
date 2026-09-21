@@ -29,7 +29,7 @@ Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [sources]
 Compiler = {path = "Compiler"}
-JET = {rev = "0b1fdf0665", url = "https://github.com/aviatesk/JET.jl"}
+JET = {rev = "6626d715b7", url = "https://github.com/aviatesk/JET.jl"}
 JuliaLowering = {rev = "537a4c16f1", subdir = "JuliaLowering", url = "https://github.com/JuliaLang/julia"}
 JuliaSyntax = {rev = "537a4c16f1", subdir = "JuliaSyntax", url = "https://github.com/JuliaLang/julia"}
 LSP = {path = "LSP"}
@@ -37,7 +37,7 @@ LSP = {path = "LSP"}
 [compat]
 Compiler = "0.1.1"
 Glob = "1.4"
-JET = "0.10.6"
+JET = "0.12.1"
 JuliaLowering = "1"
 JuliaSyntax = "2"
 LSP = "0.1"
