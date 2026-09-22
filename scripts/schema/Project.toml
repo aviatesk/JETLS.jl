@@ -6,7 +6,9 @@ JETLS = "a3b70258-0602-4ee2-b5a6-54c2470400db"
 JSON = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
 
 [sources.OrderedCollections]
-path = "../../vendor/OrderedCollections"
+subdir = "vendor/OrderedCollections"
+rev = "9c601c6e0c8e16577b4a315e43cad69ce88a07bd"
+url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.Struct2JSONSchema]
 rev = "avi/JS-compatibility"
