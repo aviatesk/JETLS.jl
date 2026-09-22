@@ -23,28 +23,19 @@ using JETLS.Glob
 
     withscript(script_code) do script_path
         uri = filepath2uri(script_path)
-        withserver() do (; writereadmsg, id_counter)
-            # `textDocument/publishDiagnostics` is notified, but the diagnostics of syntax errors wouldn't be published
-            writereadmsg(make_DidOpenTextDocumentNotification(uri, script_code))
-
-            let id = id_counter[] += 1
-                (; raw_res) = writereadmsg(DocumentDiagnosticRequest(;
-                    id,
-                    params = DocumentDiagnosticParams(;
-                        textDocument = TextDocumentIdentifier(; uri)
-                    )))
-                @test raw_res isa DocumentDiagnosticResponse
-                @test raw_res.result isa RelatedFullDocumentDiagnosticReport
-
-                found_diagnostic = false
-                for diag in raw_res.result.items
-                    if diag.source == JETLS.DIAGNOSTIC_SOURCE_LIVE
-                        found_diagnostic = true
-                        break
-                    end
-                end
-                @test found_diagnostic
+        withserver(; pull_diagnostics = false) do (; server, writereadmsg, readmsg)
+            # full-analysis does not report syntax errors as `JETLS/save` diagnostics
+            (; raw_res) = writereadmsg(
+                make_DidOpenTextDocumentNotification(uri, script_code))
+            @test raw_res isa PublishDiagnosticsNotification
+            @test !any(raw_res.params.diagnostics) do d
+                d.source == JETLS.DIAGNOSTIC_SOURCE_SAVE
             end
+
+            # the live scan pushes them for the open file, tagged with its version
+            params = scan_live_diagnostics!(server, readmsg)[uri]
+            @test params.version == 1
+            @test any(d -> d.source == JETLS.DIAGNOSTIC_SOURCE_LIVE, params.diagnostics)
         end
     end
 end
@@ -713,6 +704,68 @@ end
     end
 end
 
+@testset "live diagnostics push cycle" begin
+    script_code = "func(x) = nothing\n"
+    withscript(script_code) do script_path
+        uri = filepath2uri(script_path)
+        withserver(; pull_diagnostics = false) do (; server, writemsg, writereadmsg, readmsg)
+            published = server.state.workspace_diagnostics_worker.published
+            (; raw_res) = writereadmsg(make_DidOpenTextDocumentNotification(uri, script_code))
+            @test raw_res isa PublishDiagnosticsNotification
+
+            # `func(x) = nothing` has an unused argument, pushed with the document version
+            let params = scan_live_diagnostics!(server, readmsg)[uri]
+                @test params.version == 1
+                @test length(params.diagnostics) == 1
+                @test params.diagnostics[1].code == "lowering/unused-argument"
+            end
+
+            # nothing changed → the scan neither recomputes nor republishes
+            let fingerprint = JETLS.load(published)[uri].fingerprint
+                @test isempty(scan_live_diagnostics!(server, readmsg))
+                @test JETLS.load(published)[uri].fingerprint == fingerprint
+            end
+
+            # editing the document bumps the version; renaming to `_x` makes the
+            # unused-argument diagnostic disappear under the default
+            # `allow_unused_underscore=true` config
+            writemsg(make_DidChangeTextDocumentNotification(uri, "func(_x) = nothing\n", #=version=#2))
+            wait_for_file_cache_version(server.state, uri, 2)
+            let params = scan_live_diagnostics!(server, readmsg)[uri]
+                @test params.version == 2
+                @test isempty(params.diagnostics)
+            end
+            @test isempty(scan_live_diagnostics!(server, readmsg))
+
+            # an edit that leaves the diagnostics as they are still republishes under the
+            # new version: the client may have discarded the previous publish as stale
+            writemsg(make_DidChangeTextDocumentNotification(
+                uri, "func(_x) = nothing # edited\n", #=version=#3))
+            wait_for_file_cache_version(server.state, uri, 3)
+            let params = scan_live_diagnostics!(server, readmsg)[uri]
+                @test params.version == 3
+                @test isempty(params.diagnostics)
+            end
+
+            # a `[diagnostic]` config change recomputes the file: flipping
+            # `allow_unused_underscore` to `false` brings the `_x` diagnostic back
+            let settings = Dict{String,Any}(
+                    "diagnostic" => Dict{String,Any}("allow_unused_underscore" => false))
+                (; raw_res) = writereadmsg(DidChangeConfigurationNotification(;
+                        params = DidChangeConfigurationParams(; settings));
+                    read = 2)
+                @test count(msg -> msg isa ShowMessageNotification, raw_res) == 1
+                @test count(msg -> msg isa PublishDiagnosticsNotification, raw_res) == 1
+            end
+            let params = scan_live_diagnostics!(server, readmsg)[uri]
+                @test params.version == 3
+                @test length(params.diagnostics) == 1
+                @test params.diagnostics[1].code == "lowering/unused-argument"
+            end
+        end
+    end
+end
+
 @testset "File cache error handling" begin
     # Test requesting diagnostics for a file whose cache has not been populated yet
     withscript("# some code") do script_path
@@ -784,7 +837,8 @@ end
     script_code = "func(x) = nothing\n"
     withscript(script_code) do script_path
         uri = filepath2uri(script_path)
-        withserver() do (; server, writemsg, writereadmsg, id_counter)
+        withserver() do (; server, writemsg, writereadmsg, id_counter, initialize_response)
+            @test initialize_response.result.capabilities.diagnosticProvider !== nothing
             (; raw_res) = writereadmsg(make_DidOpenTextDocumentNotification(uri, script_code))
             @test raw_res isa PublishDiagnosticsNotification
 
@@ -903,17 +957,59 @@ end
     end
 end
 
-# Reads server messages one at a time until `pred` accepts one and returns it; messages
-# arriving in between (other publishes, configuration notices) are discarded.
-function read_until(pred, readmsg; limit::Int = 50)
-    for _ in 1:limit
-        msg = readmsg(; check = false).raw_msg
-        pred(msg) && return msg
+@testset "workspace diagnostics push" begin
+    pkg_code = """
+    module TestWorkspaceDiagnosticPull
+    using Base: sum
+    include("util.jl")
+    end # module TestWorkspaceDiagnosticPull
+    """
+    pkg_setup = function ()
+        write(normpath(dirname(Pkg.project().path), "src", "util.jl"), "")
     end
-    error("Gave up waiting for a matching server message")
+    withpackage("TestWorkspaceDiagnosticPull", pkg_code; pkg_setup) do pkg_path
+        util_uri = filepath2uri(normpath(pkg_path, "src", "util.jl"))
+        main_path = normpath(pkg_path, "src", "TestWorkspaceDiagnosticPull.jl")
+        main_uri = filepath2uri(main_path)
+        main_code = read(main_path, String)
+        rootUri = filepath2uri(pkg_path)
+        has_unused_import(params) =
+            any(d -> d.code == JETLS.LOWERING_UNUSED_IMPORT_CODE, params.diagnostics)
+        withserver(; rootUri) do (; server, writereadmsg, readmsg)
+            published = server.state.workspace_diagnostics_worker.published
+            (; raw_res) = writereadmsg(
+                make_DidOpenTextDocumentNotification(util_uri, ""); read = 2)
+            @test all(msg -> msg isa PublishDiagnosticsNotification, raw_res)
+
+            # Only the unopened main.jl is pushed; the open util.jl is left to the pull.
+            let scanned = scan_live_diagnostics!(server, readmsg)
+                @test keys(scanned) == Set((main_uri,))
+                @test has_unused_import(scanned[main_uri])
+            end
+            @test !haskey(JETLS.load(published), util_uri)
+
+            # Opening main.jl hands it over to `textDocument/diagnostic`: the pushed live
+            # diagnostics are forgotten and cleared on the client right away.
+            (; raw_res) = writereadmsg(
+                make_DidOpenTextDocumentNotification(main_uri, main_code))
+            @test raw_res isa PublishDiagnosticsNotification
+            @test raw_res.params.uri == main_uri
+            @test !has_unused_import(raw_res.params)
+            @test !haskey(JETLS.load(published), main_uri)
+            @test isempty(scan_live_diagnostics!(server, readmsg))
+
+            # Closing it brings the push back with the next scan.
+            writereadmsg(make_DidCloseTextDocumentNotification(main_uri); read = 2)
+            let scanned = scan_live_diagnostics!(server, readmsg)
+                @test keys(scanned) == Set((main_uri,))
+                @test has_unused_import(scanned[main_uri])
+                @test scanned[main_uri].version === nothing
+            end
+        end
+    end
 end
 
-@testset "workspace diagnostics push" begin
+@testset "workspace diagnostics push for clients without pull support" begin
     pkg_code = """
     module TestWorkspaceDiagnosticPush
     using Base: sum
@@ -932,161 +1028,149 @@ end
         main_uri = filepath2uri(main_path)
         main_code = read(main_path, String)
         rootUri = filepath2uri(pkg_path)
-        is_main_publish(msg) =
-            msg isa PublishDiagnosticsNotification && msg.params.uri == main_uri
-        has_unused_import(msg) =
-            any(d -> d.code == JETLS.LOWERING_UNUSED_IMPORT_CODE, msg.params.diagnostics)
-        withserver(; rootUri) do (; server, writemsg, readmsg)
+        has_unused_import(params) =
+            any(d -> d.code == JETLS.LOWERING_UNUSED_IMPORT_CODE, params.diagnostics)
+        withserver(; rootUri, pull_diagnostics = false) do (;
+                server, writemsg, writereadmsg, readmsg)
             published = server.state.workspace_diagnostics_worker.published
 
-            # Opening util.jl (not main.jl) analyzes the package; the unopened main.jl
-            # then gets its unused-import on `sum` pushed once module contexts are known.
-            writemsg(make_DidOpenTextDocumentNotification(util_uri, util_code_initial);
-                check = false)
-            read_until(msg -> is_main_publish(msg) && has_unused_import(msg), readmsg)
-            @test haskey(JETLS.load(published), main_uri)
+            # Opening util.jl (not main.jl) analyzes the package, which publishes the
+            # `JETLS/save` diagnostics of both files.
+            (; raw_res) = writereadmsg(
+                make_DidOpenTextDocumentNotification(util_uri, util_code_initial); read = 2)
+            @test all(msg -> msg isa PublishDiagnosticsNotification, raw_res)
 
-            # Opening main.jl hands it over to `textDocument/diagnostic`: the pushed live
-            # diagnostics are forgotten and cleared on the client.
-            writemsg(make_DidOpenTextDocumentNotification(main_uri, main_code);
-                check = false)
-            read_until(msg -> is_main_publish(msg) && !has_unused_import(msg), readmsg)
-            @test !haskey(JETLS.load(published), main_uri)
+            # The scan then pushes the unused-import on `sum` for the unopened main.jl,
+            # and the live diagnostics of the open util.jl tagged with its version.
+            let scanned = scan_live_diagnostics!(server, readmsg)
+                @test has_unused_import(scanned[main_uri])
+                @test scanned[main_uri].version === nothing
+                @test isempty(scanned[util_uri].diagnostics)
+                @test scanned[util_uri].version == 1
+            end
+            @test isempty(scan_live_diagnostics!(server, readmsg))
 
-            # Closing it brings the push back.
-            writemsg(make_DidCloseTextDocumentNotification(main_uri); check = false)
-            read_until(msg -> is_main_publish(msg) && has_unused_import(msg), readmsg)
-            @test haskey(JETLS.load(published), main_uri)
+            # Opening main.jl keeps it pushed, now tagged with the document version
+            # (the package is already analyzed, so no `JETLS/save` publish happens).
+            writemsg(make_DidOpenTextDocumentNotification(main_uri, main_code))
+            wait_for_file_cache_version(server.state, main_uri, 1)
+            let scanned = scan_live_diagnostics!(server, readmsg)
+                @test keys(scanned) == Set((main_uri,))
+                @test has_unused_import(scanned[main_uri])
+                @test scanned[main_uri].version == 1
+            end
 
-            # Disabling `diagnostic.all_files` clears the pushed diagnostics, and
-            # re-enabling it pushes them again.
+            # Closing it drops the version again; the diagnostics stay. (`didClose`
+            # republishes everything so that `all_files=false` clients see it cleared.)
+            (; raw_res) = writereadmsg(
+                make_DidCloseTextDocumentNotification(main_uri); read = 2)
+            let closed = only(filter(msg -> msg.params.uri == main_uri, raw_res))
+                @test has_unused_import(closed.params)
+            end
+            let scanned = scan_live_diagnostics!(server, readmsg)
+                @test keys(scanned) == Set((main_uri,))
+                @test has_unused_import(scanned[main_uri])
+                @test scanned[main_uri].version === nothing
+            end
+
+            # Disabling `diagnostic.all_files` clears the unopened main.jl and makes the
+            # scan forget it; the open util.jl is still scanned (and unchanged).
             settings_off = Dict{String,Any}(
                 "diagnostic" => Dict{String,Any}("all_files" => false))
-            writemsg(DidChangeConfigurationNotification(;
-                params = DidChangeConfigurationParams(; settings = settings_off));
-                check = false)
-            read_until(readmsg) do msg
-                is_main_publish(msg) && isempty(msg.params.diagnostics)
+            (; raw_res) = writereadmsg(DidChangeConfigurationNotification(;
+                params = DidChangeConfigurationParams(; settings = settings_off)); read = 3)
+            @test count(msg -> msg isa ShowMessageNotification, raw_res) == 1
+            let cleared = filter(msg -> msg isa PublishDiagnosticsNotification, raw_res)
+                @test Set(msg.params.uri for msg in cleared) == Set((main_uri, util_uri))
+                @test all(msg -> isempty(msg.params.diagnostics), cleared)
             end
+            @test isempty(scan_live_diagnostics!(server, readmsg))
+            @test !haskey(JETLS.load(published), main_uri)
+            @test haskey(JETLS.load(published), util_uri)
+
+            # Re-enabling it pushes main.jl again.
             settings_on = Dict{String,Any}(
                 "diagnostic" => Dict{String,Any}("all_files" => true))
-            writemsg(DidChangeConfigurationNotification(;
-                params = DidChangeConfigurationParams(; settings = settings_on));
-                check = false)
-            read_until(msg -> is_main_publish(msg) && has_unused_import(msg), readmsg)
+            (; raw_res) = writereadmsg(DidChangeConfigurationNotification(;
+                params = DidChangeConfigurationParams(; settings = settings_on)); read = 3)
+            @test count(msg -> msg isa ShowMessageNotification, raw_res) == 1
+            let scanned = scan_live_diagnostics!(server, readmsg)
+                @test has_unused_import(scanned[main_uri])
+            end
 
-            # Editing the synchronized sibling so that `sum` is used republishes main.jl
-            # without re-running full-analysis.
+            # Editing the open sibling so that `sum` is used republishes main.jl without
+            # re-running full-analysis.
             writemsg(make_DidChangeTextDocumentNotification(
-                util_uri, "y = sum([1, 2, 3])\n", #=version=#2); check = false)
-            read_until(readmsg) do msg
-                is_main_publish(msg) && isempty(msg.params.diagnostics)
+                util_uri, "y = sum([1, 2, 3])\n", #=version=#2))
+            wait_for_file_cache_version(server.state, util_uri, 2)
+            let scanned = scan_live_diagnostics!(server, readmsg)
+                @test isempty(scanned[main_uri].diagnostics)
+                @test scanned[util_uri].version == 2
             end
 
             # A sibling edit that leaves main.jl's diagnostics as they are moves its
-            # result id (so the scan recomputes it) but publishes nothing.
-            main_id = JETLS.load(published)[main_uri].result_id
+            # fingerprint (so the scan recomputes it) but does not republish it.
+            main_fingerprint = JETLS.load(published)[main_uri].fingerprint
             writemsg(make_DidChangeTextDocumentNotification(
-                util_uri, "y = sum([1, 2, 3]) # edited\n", #=version=#3); check = false)
-            @test timedwait(10.0) do
-                JETLS.load(published)[main_uri].result_id != main_id
-            end === :ok
-            sleep(JETLS.WORKSPACE_DIAGNOSTICS_MIN_INTERVAL)
-            while isready(server.callback.sent_queue)
-                @test !is_main_publish(readmsg(; check = false).raw_msg)
-            end
-
-            # Let a possible trailing scan settle before the shutdown handshake.
-            sleep(2 * JETLS.WORKSPACE_DIAGNOSTICS_MIN_INTERVAL)
-            while isready(server.callback.sent_queue)
-                readmsg(; check = false)
+                util_uri, "y = sum([1, 2, 3]) # edited\n", #=version=#3))
+            wait_for_file_cache_version(server.state, util_uri, 3)
+            let scanned = scan_live_diagnostics!(server, readmsg)
+                @test keys(scanned) == Set((util_uri,))
+                @test JETLS.load(published)[main_uri].fingerprint != main_fingerprint
             end
         end
     end
 end
 
-@testset "workspace diagnostics push for clients without pull support" begin
+@testset "workspace diagnostics scan cancellation" begin
+    server = JETLS.Server()
+    worker = server.state.workspace_diagnostics_worker
+    cancel_flag = JETLS.CancelFlag(false)
+    @atomic worker.cancel_flag = cancel_flag
+    # a change point abandons the scan in progress without stopping the worker
+    JETLS.schedule_workspace_diagnostics!(server)
+    @test JETLS.is_cancelled(cancel_flag)
+    @test !JETLS.is_cancelled(worker.shutdown_flag)
+    # an abandoned scan leaves the cache untouched
+    @test JETLS.publish_workspace_diagnostics!(server, cancel_flag) === nothing
+    @test isempty(JETLS.load(worker.published))
+end
+
+@testset "workspace diagnostics worker" begin
     pkg_code = """
-    module TestWorkspaceDiagnosticPushOnly
+    module TestWorkspaceDiagnosticWorker
     using Base: sum
     include("util.jl")
-    end # module TestWorkspaceDiagnosticPushOnly
+    end # module TestWorkspaceDiagnosticWorker
     """
     pkg_setup = function ()
         write(normpath(dirname(Pkg.project().path), "src", "util.jl"), "")
     end
-    withpackage("TestWorkspaceDiagnosticPushOnly", pkg_code; pkg_setup) do pkg_path
+    withpackage("TestWorkspaceDiagnosticWorker", pkg_code; pkg_setup) do pkg_path
         util_uri = filepath2uri(normpath(pkg_path, "src", "util.jl"))
-        main_path = normpath(pkg_path, "src", "TestWorkspaceDiagnosticPushOnly.jl")
+        main_path = normpath(pkg_path, "src", "TestWorkspaceDiagnosticWorker.jl")
         main_uri = filepath2uri(main_path)
-        main_code = read(main_path, String)
         rootUri = filepath2uri(pkg_path)
         is_main_publish(msg) =
             msg isa PublishDiagnosticsNotification && msg.params.uri == main_uri
         has_unused_import(msg) =
             any(d -> d.code == JETLS.LOWERING_UNUSED_IMPORT_CODE, msg.params.diagnostics)
-        withserver(; rootUri, pull_diagnostics = false) do (; server, writemsg, readmsg)
-            published = server.state.workspace_diagnostics_worker.published
+        # The worker runs on its own here: every change point wakes it, and it publishes
+        # once module contexts are known and again when a sibling edit changes the result.
+        withserver(; rootUri, live_diagnostics = true) do (; server, writemsg, readmsg)
             writemsg(make_DidOpenTextDocumentNotification(util_uri, ""); check = false)
-            read_until(msg -> is_main_publish(msg) && has_unused_import(msg), readmsg)
+            msg = read_until(msg -> is_main_publish(msg) && has_unused_import(msg), readmsg)
+            @test msg.params.version === nothing
 
-            # Opening main.jl keeps its live diagnostics pushed: the scan re-keys the
-            # entry on the open document, and no clearing publish is sent.
-            main_id = JETLS.load(published)[main_uri].result_id
-            writemsg(make_DidOpenTextDocumentNotification(main_uri, main_code); check = false)
-            @test timedwait(10.0) do
-                entry = get(JETLS.load(published), main_uri, nothing)
-                entry !== nothing && entry.result_id != main_id
-            end === :ok
-            sleep(JETLS.WORKSPACE_DIAGNOSTICS_MIN_INTERVAL)
-            while isready(server.callback.sent_queue)
-                msg = readmsg(; check = false).raw_msg
-                is_main_publish(msg) && @test has_unused_import(msg)
-            end
-
-            # Editing the open file republishes it, tagged with the document version.
-            edited = replace(main_code, "using Base: sum\n" => "")
-            writemsg(make_DidChangeTextDocumentNotification(main_uri, edited, #=version=#2); check = false)
-            read_until(readmsg) do msg
-                is_main_publish(msg) && !has_unused_import(msg) && msg.params.version == 2
-            end
-
-            # An edit that leaves the diagnostics as they are still republishes under the
-            # new version: the client may have discarded the previous publish as stale.
             writemsg(make_DidChangeTextDocumentNotification(
-                main_uri, edited * "# edited\n", #=version=#3);
-                check = false)
-            read_until(readmsg) do msg
-                is_main_publish(msg) && !has_unused_import(msg) && msg.params.version == 3
-            end
-
-            # `diagnostic.all_files=false` silences unopened files only: the open file
-            # keeps getting its live diagnostics pushed on edit.
-            settings_off = Dict{String,Any}(
-                "diagnostic" => Dict{String,Any}("all_files" => false))
-            writemsg(DidChangeConfigurationNotification(;
-                params = DidChangeConfigurationParams(; settings = settings_off));
-                check = false)
-            writemsg(make_DidChangeTextDocumentNotification(
-                main_uri, main_code, #=version=#4);
-                check = false)
-            read_until(readmsg) do msg
-                is_main_publish(msg) && has_unused_import(msg) && msg.params.version == 4
-            end
-
-            # Closing it turns main.jl into an unopened file, whose diagnostics are cleared.
-            writemsg(make_DidCloseTextDocumentNotification(main_uri); check = false)
+                util_uri, "y = sum([1, 2, 3])\n", #=version=#2); check = false)
             read_until(readmsg) do msg
                 is_main_publish(msg) && isempty(msg.params.diagnostics)
             end
-            @test timedwait(10.0) do
-                !haskey(JETLS.load(published), main_uri)
-            end === :ok
+            @test isempty(JETLS.load(
+                server.state.workspace_diagnostics_worker.published)[main_uri].diagnostics)
 
-            sleep(2 * JETLS.WORKSPACE_DIAGNOSTICS_MIN_INTERVAL)
-            while isready(server.callback.sent_queue)
-                readmsg(; check = false)
-            end
+            settle_live_diagnostics!(server, readmsg)
         end
     end
 end

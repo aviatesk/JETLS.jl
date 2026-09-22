@@ -40,9 +40,51 @@ function take_with_timeout!(chn::Channel; interval = 0.1, limit = 600)
     error("Timeout waiting for message")
 end
 
-# Tests model a client with pull diagnostic support unless they opt out: without the
-# `textDocument.diagnostic` capability the server also pushes live diagnostics of open
-# files, which would interleave with the exact message sequences asserted below.
+# Reads server messages one at a time until `pred` accepts one and returns it; messages
+# arriving in between (other publishes, configuration notices) are discarded.
+function read_until(pred, readmsg; limit::Int = 50)
+    for _ in 1:limit
+        msg = readmsg(; check = false).raw_msg
+        pred(msg) && return msg
+    end
+    error("Gave up waiting for a matching server message")
+end
+
+# Runs one scan of the workspace diagnostics worker synchronously and returns what it
+# published, keyed by URI. With the worker stopped (see `withserver`), this is the only
+# way `JETLS/live` diagnostics reach the client, which keeps the message sequences exact;
+# the queues are expected to be empty when this is called.
+function scan_live_diagnostics!(server::JETLS.Server, readmsg)
+    JETLS.publish_workspace_diagnostics!(server, JETLS.DUMMY_CANCEL_FLAG)
+    published = Dict{URI,PublishDiagnosticsParams}()
+    while isready(server.callback.sent_queue)
+        msg = readmsg(; check = false).raw_msg
+        msg isa PublishDiagnosticsNotification ||
+            error("Unexpected message during a live diagnostics scan: $(typeof(msg))")
+        published[msg.params.uri] = msg.params
+    end
+    return published
+end
+
+# Stops the workspace diagnostics worker once full-analysis has settled and discards
+# whatever was published meanwhile, so that the shutdown handshake sees empty queues.
+function settle_live_diagnostics!(server::JETLS.Server, readmsg)
+    manager = server.state.analysis_manager
+    quiescent() = isempty(JETLS.load(manager.debounced)) &&
+        isempty(JETLS.load(manager.pending_analyses))
+    # a debounce timer hands its request over to `pending_analyses` in two steps
+    timedwait(10.0) do
+        quiescent() || return false
+        sleep(0.1)
+        quiescent()
+    end === :ok || error("Full-analysis did not settle")
+    JETLS.stop_workspace_diagnostics_worker(server)
+    while isready(server.callback.sent_queue)
+        readmsg(; check = false)
+    end
+    return nothing
+end
+
 function with_pull_diagnostics(capabilities::ClientCapabilities)
     textDocument = @something capabilities.textDocument TextDocumentClientCapabilities()
     textDocument.diagnostic === nothing || return capabilities
@@ -52,9 +94,16 @@ function with_pull_diagnostics(capabilities::ClientCapabilities)
     return ClientCapabilities(; fields(capabilities)..., textDocument)
 end
 
+# Tests model a client with pull diagnostic support unless they opt out with
+# `pull_diagnostics = false`, in which case the server pushes the live diagnostics of
+# open files too. The workspace diagnostics worker is stopped right after initialization
+# unless a test opts in with `live_diagnostics = true`: its pushes arrive at their own
+# pace and would interleave with the exact message sequences asserted below. Tests then
+# drive the scans themselves through `scan_live_diagnostics!`.
 function withserver(
         f::Base.Callable;
         capabilities::ClientCapabilities = ClientCapabilities(),
+        live_diagnostics::Bool = false,
         pull_diagnostics::Bool = true,
         workspaceFolders::Union{Nothing, Vector{WorkspaceFolder}} = nothing,
         rootUri::Union{Nothing, URI} = nothing,
@@ -225,6 +274,8 @@ function withserver(
             @assert register_capability_request.id isa String
             register_capability_json_request = json_res::RegisterCapabilityRequest
             @assert register_capability_json_request.id isa String
+
+            live_diagnostics || JETLS.stop_workspace_diagnostics_worker(server)
 
             # apply initial settings if provided
             # read=1: ShowMessageNotification for config change

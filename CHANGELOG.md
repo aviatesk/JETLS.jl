@@ -77,10 +77,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - The [`jetls check` GitHub Action](https://aviatesk.github.io/JETLS.jl/release/cli-check/#cli-check/github-actions) now uses Julia 1.13 by default instead of 1.12.
   Set `julia-version: "1.12"` if you want to keep analyzing your package against Julia 1.12.
 
-- `JETLS/live` diagnostics of unopened files are now pushed via `textDocument/publishDiagnostics` instead of being served through `workspace/diagnostic`, which JETLS no longer advertises.
+- [`JETLS/live`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/source) diagnostics of unopened files are now pushed via [`textDocument/publishDiagnostics`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.18/specification/#textDocument_publishDiagnostics) instead of being served through [`workspace/diagnostic`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.18/specification/#workspace_diagnostic), which JETLS no longer advertises.
   Unopened files are republished as soon as their diagnostics may have changed (full-analysis resolving module contexts, edits in the same analysis unit, watched-file or configuration changes, opening or closing a file), so clients no longer poll the server for workspace diagnostics while idle, and the diagnostics of a closed file are cleared consistently across clients.
 
-- Pull diagnostics (`textDocument/diagnostic`) and the pushed diagnostics of unopened files are now refreshed as soon as full-analysis has resolved module contexts, before signature analysis finishes, instead of after the whole analysis completes.
+- Pull diagnostics ([`textDocument/diagnostic`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.18/specification/#textDocument_diagnostic)) and the pushed diagnostics of unopened files are now refreshed as soon as full-analysis has resolved module contexts, before signature analysis finishes, instead of after the whole analysis completes.
 
 ### Fixed
 
@@ -88,17 +88,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Fixed spurious [`inference/field-error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/inference/field-error) diagnostics on parametric type definitions with inner constructors in script analysis mode.
 
-- Fixed stale diagnostics not being cleared when a file is closed with [`diagnostic.all_files=false`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/diagnostic/all_files).
-
 - Fixed false [`lowering/macro-expansion-error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/macro-expansion-error) diagnostics for `@static` conditions containing anonymous functions on Julia 1.12 and 1.13.
 
 - Fixed [`toplevel/missing-concretization`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/toplevel/missing-concretization) diagnostics for ordinary global assignments inside conditional branches in script analysis (aviatesk/JET.jl#866).
 
 - Fixed a `WARNING: Detected access to binding ... in a world prior to its definition world` message that full analysis could print when analyzing calls with keyword arguments, e.g. during `jetls check`.
 
-- Fixed a race during background analysis that could cause diagnostics and other language features to use outdated document contents after an edit.
+- Fixed [`JETLS/live`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/source) diagnostics that depend on the module context, such as [`lowering/undef-global-var`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/undef-global-var), not appearing for a freshly opened standalone file until it was edited: the refresh after full-analysis resolved the context was answered as unchanged.
 
-- Fixed a race in pull diagnostics (`textDocument/diagnostic`) where an edit arriving while a request was being handled could leave diagnostics computed from the previous document contents displayed until the next edit.
+- Fixed stale diagnostics not being cleared when a file is closed with [`diagnostic.all_files=false`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/diagnostic/all_files).
+
+- Fixed a race in pull diagnostics ([`textDocument/diagnostic`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.18/specification/#textDocument_diagnostic)) where an edit arriving while a request was being handled could leave diagnostics computed from the previous document contents displayed until the next edit.
+
+- Fixed a race during background analysis that could cause diagnostics and other language features to use outdated document contents after an edit.
 
 - Fixed errors logged when in-flight requests or progress notifications finished during language server shutdown.
 

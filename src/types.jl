@@ -998,16 +998,15 @@ end
 """
     WorkspaceLiveDiagnostics
 
-`JETLS/live` diagnostics last pushed for a workspace file, keyed by the `resultId`
-derivation shared with `textDocument/diagnostic` so a rescan can skip files whose
-inputs did not change, and can skip the publish when a recomputation reproduces the
-same diagnostics. `version` is the document version the diagnostics were computed
-from when the file is open (only clients without pull support get open files pushed),
-`nothing` for unopened files. `diagnostics` are raw: `notify_diagnostics!` applies
+`JETLS/live` diagnostics last pushed for a workspace file, keyed by
+`compute_live_diagnostics_fingerprint` so a rescan can skip files whose inputs did not
+change, and can skip the publish when a recomputation reproduces the same diagnostics.
+`version` is the document version the diagnostics were computed from when the file is
+open, `nothing` for unopened files. `diagnostics` are raw: `notify_diagnostics!` applies
 the diagnostic configuration when publishing.
 """
 struct WorkspaceLiveDiagnostics
-    result_id::String
+    fingerprint::String
     version::Union{Nothing,Int}
     diagnostics::Vector{Diagnostic}
 end
@@ -1017,17 +1016,20 @@ const WorkspaceLiveDiagnosticsCache = LWContainer{WorkspaceLiveDiagnosticsData, 
 """
     WorkspaceDiagnosticsWorker
 
-Background worker that pushes `JETLS/live` diagnostics of unopened workspace files via
+Background worker that pushes `JETLS/live` diagnostics via
 `textDocument/publishDiagnostics`. `schedule_workspace_diagnostics!` sets `wakeup`
-whenever those diagnostics may have changed; wake-ups coalesce while a scan is running.
+whenever those diagnostics may have changed and cancels `cancel_flag`, which is created
+anew for each scan, so that a scan started on stale inputs is abandoned and redone.
+`shutdown_flag` is only cancelled to stop the worker.
 """
-struct WorkspaceDiagnosticsWorker
-    wakeup::Base.Event
-    cancel_flag::CancelFlag
-    published::WorkspaceLiveDiagnosticsCache
-    worker_task::Base.RefValue{Task}
+mutable struct WorkspaceDiagnosticsWorker
+    const wakeup::Base.Event
+    const shutdown_flag::CancelFlag
+    @atomic cancel_flag::CancelFlag
+    const published::WorkspaceLiveDiagnosticsCache
+    const worker_task::Base.RefValue{Task}
     WorkspaceDiagnosticsWorker() = new(
-        Base.Event(#=autoreset=#true), CancelFlag(false),
+        Base.Event(#=autoreset=#true), CancelFlag(false), CancelFlag(false),
         WorkspaceLiveDiagnosticsCache(), Ref{Task}())
 end
 
