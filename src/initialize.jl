@@ -170,7 +170,9 @@ function handle_InitializeRequest(
         @static JETLS_DEV_MODE && @info "Registering 'textDocument/hover' with `InitializeResponse`"
     end
 
-    if supports(server, :textDocument, :diagnostic, :dynamicRegistration)
+    if !pull_diagnostics_enabled(server)
+        diagnosticProvider = nothing
+    elseif supports(server, :textDocument, :diagnostic, :dynamicRegistration)
         diagnosticProvider = nothing # will be registered dynamically
     else
         diagnosticProvider = diagnostic_options()
@@ -461,7 +463,8 @@ function handle_InitializedNotification(server::Server)
         # since `HoverRegistrationOptions` does not extend `StaticRegistrationOptions`.
     end
 
-    if supports(server, :textDocument, :diagnostic, :dynamicRegistration)
+    if (pull_diagnostics_enabled(server) &&
+        supports(server, :textDocument, :diagnostic, :dynamicRegistration))
         push!(registrations, diagnostic_registration())
         @static JETLS_DEV_MODE && @info "Dynamically registering 'textDocument/diagnostic' upon `InitializedNotification`"
     end

@@ -61,8 +61,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Added live Pkg output to progress messages for environment instantiation triggered by [`full_analysis.auto_instantiate`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/full_analysis/auto_instantiate), showing the latest activity while resolving and installing dependencies.
 
-- Added `JETLS/live` diagnostics for clients that do not support pull diagnostics (`textDocument/diagnostic`): the syntax and lowering diagnostics of open files are now pushed to them via `textDocument/publishDiagnostics`, tagged with the document version.
-
 ### Changed
 
 - [`jetls check`](https://aviatesk.github.io/JETLS.jl/release/cli-check) now defaults to [`--show-severity=info`](https://aviatesk.github.io/JETLS.jl/release/cli-check/#cli-check/options/show-severity), hiding hint diagnostics.
@@ -77,10 +75,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - The [`jetls check` GitHub Action](https://aviatesk.github.io/JETLS.jl/release/cli-check/#cli-check/github-actions) now uses Julia 1.13 by default instead of 1.12.
   Set `julia-version: "1.12"` if you want to keep analyzing your package against Julia 1.12.
 
-- [`JETLS/live`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/source) diagnostics of unopened files are now pushed via [`textDocument/publishDiagnostics`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.18/specification/#textDocument_publishDiagnostics) instead of being served through [`workspace/diagnostic`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.18/specification/#workspace_diagnostic), which JETLS no longer advertises.
-  Unopened files are republished as soon as their diagnostics may have changed (full-analysis resolving module contexts, edits in the same analysis unit, watched-file or configuration changes, opening or closing a file), so clients no longer poll the server for workspace diagnostics while idle, and the diagnostics of a closed file are cleared consistently across clients.
+- [`JETLS/live`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/source) diagnostics are now pushed via [`textDocument/publishDiagnostics`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.18/specification/#textDocument_publishDiagnostics) for open and unopened files alike; JETLS no longer offers [`workspace/diagnostic`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.18/specification/#workspace_diagnostic), and offers [`textDocument/diagnostic`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.18/specification/#textDocument_diagnostic) only to clients that set the new [`pull_diagnostics`](https://aviatesk.github.io/JETLS.jl/release/launching/#init-options/pull_diagnostics) initialization option (as the VSCode extension does).
+  Open files are republished as you edit, tagged with the document version, and unopened files as soon as their diagnostics may have changed (full-analysis resolving module contexts, edits in the same analysis unit, watched-file or configuration changes, opening or closing a file).
+  Clients no longer poll the server for diagnostics, every client sees the same diagnostics for open and closed files, and clients without pull diagnostics support now get `JETLS/live` diagnostics too.
 
-- Pull diagnostics ([`textDocument/diagnostic`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.18/specification/#textDocument_diagnostic)) and the pushed diagnostics of unopened files are now refreshed as soon as full-analysis has resolved module contexts, before signature analysis finishes, instead of after the whole analysis completes.
+- [`JETLS/live`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/source) diagnostics are now refreshed as soon as full-analysis has resolved module contexts, before signature analysis finishes, instead of after the whole analysis completes.
 
 ### Fixed
 

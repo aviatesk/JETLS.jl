@@ -2164,10 +2164,10 @@ end
 
 # Live diagnostics travel with the rest of the push set, since `publishDiagnostics`
 # replaces everything the server reported for a URI. Open files are left out for a
-# client that pulls them (see `supports_pull_diagnostics`).
+# client that pulls them (see `pull_diagnostics_enabled`).
 function merge_workspace_live_diagnostics!(uri2diagnostics::URI2Diagnostics, server::Server)
     state = server.state
-    pull = supports_pull_diagnostics(server)
+    pull = pull_diagnostics_enabled(server)
     for (uri, live) in load(state.workspace_diagnostics_worker.published)
         pull && is_synchronized(state, uri) && continue
         append!(get!(Vector{Diagnostic}, uri2diagnostics, uri), live.diagnostics)
@@ -2181,7 +2181,7 @@ end
 # and claiming a newer text than the live part was computed for would defeat the check.
 # Notebook cells get no version: their live diagnostics are computed on the notebook.
 function pushed_document_version(server::Server, uri::URI)
-    supports_pull_diagnostics(server) && return nothing
+    pull_diagnostics_enabled(server) && return nothing
     is_synchronized(server.state, uri) || return nothing
     published = load(server.state.workspace_diagnostics_worker.published)
     live = @something get(published, uri, nothing) return nothing
@@ -2430,7 +2430,7 @@ function publish_workspace_diagnostics!(server::Server, cancel_flag::CancelFlag)
     state = server.state
     worker = state.workspace_diagnostics_worker
     published = load(worker.published)
-    pull = supports_pull_diagnostics(server)
+    pull = pull_diagnostics_enabled(server)
     # `all_files=false` silences unopened files only; `handle_lsp_config_change!` already
     # sent their clearing publishes, so the scan just forgets them.
     uris_to_search = get_config(state, :diagnostic, :all_files) ?
@@ -2497,7 +2497,7 @@ end
 # An opened file is served by `textDocument/diagnostic` from now on: forget its pushed
 # live diagnostics and republish it without them so the two sets do not overlap.
 function clear_workspace_live_diagnostics!(server::Server, uri::URI)
-    supports_pull_diagnostics(server) || return nothing
+    pull_diagnostics_enabled(server) || return nothing
     published = server.state.workspace_diagnostics_worker.published
     cleared = store!(published) do data::WorkspaceLiveDiagnosticsData
         haskey(data, uri) || return data, false
@@ -2510,13 +2510,17 @@ end
 # textDocument/diagnostic
 # =======================
 #
-# Serves open documents of clients that advertise `textDocument.diagnostic`. The worker
-# above then leaves open files out, handing a file over on open
-# (`clear_workspace_live_diagnostics!`) and back on close (the next scan), and change
-# points ask the client to re-pull (`request_diagnostic_refresh!`). Clients without
-# pull support get the live diagnostics of open files pushed as well.
+# Offered only when the `pull_diagnostics` initialization option is set. Pulling splits
+# the same diagnostics between a client-managed set (open files) and a server-managed one
+# (unopened files), which cannot be kept consistent across clients in general; a client
+# integration opts in when it is known to manage the pulled set by its editor state,
+# which the VSCode extension does by clearing it when a tab closes, something the server
+# cannot tell from `textDocument/didClose`. The worker above then leaves open files out,
+# handing a file over on open (`clear_workspace_live_diagnostics!`) and back on close (the
+# next scan), and change points ask the client to re-pull (`request_diagnostic_refresh!`).
 
-supports_pull_diagnostics(server::Server) =
+pull_diagnostics_enabled(server::Server) =
+    get_init_option(server.state.init_options, :pull_diagnostics) &&
     getcapability(server, :textDocument, :diagnostic) !== nothing
 
 const DIAGNOSTIC_REGISTRATION_ID = "jetls-diagnostic"
@@ -2559,6 +2563,9 @@ function handle_DocumentDiagnosticRequest(
             DocumentDiagnosticResponse(;
                 id = msg.id,
                 result = RelatedUnchangedDocumentDiagnosticReport(; resultId)))
+    end
+    if is_cancelled(cancel_flag)
+        return send(server, DocumentDiagnosticResponse(; id = msg.id, result = nothing, error = request_cancelled_error()))
     end
     # Re-read the text after taking `resultId` so that an edit in between leaves the id
     # behind the text rather than ahead of it (see `publish_workspace_diagnostics!`).
@@ -2605,6 +2612,7 @@ struct DiagnosticRefreshRequestCaller <: RequestCaller end
 # Reschedules the push and, for a client that pulls open files, asks it to re-pull them.
 function request_diagnostic_refresh!(server::Server)
     schedule_workspace_diagnostics!(server)
+    pull_diagnostics_enabled(server) || return nothing
     supports(server, :workspace, :diagnostics, :refreshSupport) || return nothing
     id = String(gensym(:WorkspaceDiagnosticRefreshRequest))
     addrequest!(server, id=>DiagnosticRefreshRequestCaller())

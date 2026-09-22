@@ -696,6 +696,7 @@ merge_key_value(analysis_override::AnalysisOverride) = analysis_override.path
     analysis_overrides::Maybe{Vector{AnalysisOverride}} = nothing
     reuse_native_inference::Maybe{Bool} = nothing
     configuration_section::Maybe{String} = nothing
+    pull_diagnostics::Maybe{Bool} = nothing
 end
 @define_eq_overloads InitOptions
 function Base.show(io::IO, init_options::InitOptions)
@@ -708,10 +709,13 @@ function Base.show(io::IO, init_options::InitOptions)
     configuration_section = init_options.configuration_section
     configuration_section === nothing ||
         print(io, " configuration_section=", repr(configuration_section))
+    pull_diagnostics = init_options.pull_diagnostics
+    pull_diagnostics === nothing || print(io, " pull_diagnostics=", pull_diagnostics)
     print(io, ")")
 end
 const DEFAULT_INIT_OPTIONS = InitOptions(;
-    analysis_overrides=AnalysisOverride[], reuse_native_inference=false)
+    analysis_overrides=AnalysisOverride[], reuse_native_inference=false,
+    pull_diagnostics=false)
 
 @kwdef struct LaTeXEmojiConfig <: ConfigSection
     strip_prefix::Maybe{Union{Missing,Bool}} = nothing # missing is used as sentinel for default setting value

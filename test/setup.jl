@@ -94,23 +94,26 @@ function with_pull_diagnostics(capabilities::ClientCapabilities)
     return ClientCapabilities(; fields(capabilities)..., textDocument)
 end
 
-# Tests model a client with pull diagnostic support unless they opt out with
-# `pull_diagnostics = false`, in which case the server pushes the live diagnostics of
-# open files too. The workspace diagnostics worker is stopped right after initialization
-# unless a test opts in with `live_diagnostics = true`: its pushes arrive at their own
-# pace and would interleave with the exact message sequences asserted below. Tests then
-# drive the scans themselves through `scan_live_diagnostics!`.
+# The workspace diagnostics worker is stopped right after initialization unless a test
+# opts in with `live_diagnostics = true`: its pushes of `JETLS/live` diagnostics arrive
+# at their own pace and would interleave with the exact message sequences asserted below.
+# Tests then drive the scans themselves through `scan_live_diagnostics!`.
+# `pull_diagnostics = true` models a client that pulls the live diagnostics of open files:
+# it sets the `pull_diagnostics` initialization option and advertises the
+# `textDocument.diagnostic` capability.
 function withserver(
         f::Base.Callable;
         capabilities::ClientCapabilities = ClientCapabilities(),
         live_diagnostics::Bool = false,
-        pull_diagnostics::Bool = true,
+        pull_diagnostics::Bool = false,
         workspaceFolders::Union{Nothing, Vector{WorkspaceFolder}} = nothing,
         rootUri::Union{Nothing, URI} = nothing,
         settings::Union{Nothing, AbstractDict} = nothing
     )
+    initializationOptions = nothing
     if pull_diagnostics
         capabilities = with_pull_diagnostics(capabilities)
+        initializationOptions = Dict{String,Any}("pull_diagnostics" => true)
     end
     in_pipe = Pipe()
     out_pipe = Pipe()
@@ -258,6 +261,7 @@ function withserver(
                 params = InitializeParams(;
                     processId = getpid(),
                     capabilities,
+                    initializationOptions,
                     rootUri,
                     workspaceFolders)))
             raw_msg = take_with_timeout!(received_queue)::InitializeRequest
