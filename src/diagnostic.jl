@@ -1548,11 +1548,12 @@ function check_lambda_gotos!(
         # Skip macro-generated labels — only report user-written ones.
         provs = JL.flattened_provenance(st)
         is_from_user_ast(provs) || continue
-        label_call = @something JS.macro_prov(st) continue
+        label_call = @something provenance_ancestor(st, JS.K"macrocall") continue
         get_macrocall_name(label_call) == "@label" || continue
+        JS.numchildren(label_call) >= 2 || continue
         delete_range = line_absorbing_delete_range(label_call, fi)
         push!(diagnostics, Diagnostic(;
-            range = jsobj_to_range(st, fi),
+            range = jsobj_to_range(label_call[end], fi),
             severity = DiagnosticSeverity.Information,
             message = "Unused label `$name`",
             source = DIAGNOSTIC_SOURCE_LIVE,
@@ -1581,7 +1582,7 @@ function collect_gotos_labels!(
         elseif k === JS.K"symboliclabel"
             push!(labels, (name_val(node), node))
             return traversal_no_recurse
-        elseif k === JS.K"symbolicgoto" || k === JS.K"oldsymbolicgoto"
+        elseif k === JS.K"symbolicgoto"
             push!(gotos, (name_val(node), node))
             return traversal_no_recurse
         elseif k === JS.K"symbolicblock" || k === JS.K"break"
