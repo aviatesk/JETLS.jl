@@ -104,6 +104,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Fixed requests for LSP requests the server does not support being left unanswered; they now receive a `MethodNotFound` error response.
 
+- Fixed the [macro expansion](https://aviatesk.github.io/JETLS.jl/release/features/#features/code-views/macro-expansion) and [type annotation](https://aviatesk.github.io/JETLS.jl/release/features/#features/code-views/type-annotations) code views in notebook cells, which previously failed with a `Source document is not available` message and, in any code cell but the first, were offered for the wrong top-level form.
+
 ## 2026-09-06
 
 - Commit: [`2b51ac0`](https://github.com/aviatesk/JETLS.jl/commit/2b51ac0)
