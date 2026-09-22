@@ -168,6 +168,9 @@ WithRuntimeDispatch(::UInt32) = WithRuntimeDispatch(:UInt32)
 WithRuntimeDispatch(::UInt64) = WithRuntimeDispatch(:UInt64)
 WithRuntimeDispatch(::UInt128) = WithRuntimeDispatch(:UInt128)
 
+const FUNCTION_ARGUMENT_CALL_LINE = (@__LINE__) + 1
+@noinline function_argument_call(f, x) = f(x)
+
 const FNC_F1_DEF_LINE = (@__LINE__)+1
 skip_noncompileable_calls1(f, a) = f(a)
 const FNC_F2_DEF_LINE = (@__LINE__)+1
@@ -216,6 +219,27 @@ end
             test_opt((Vector{Any},); function_filter) do xs
                 WithRuntimeDispatch(xs[1])
             end
+        end
+
+        let reports = get_reports_with_test(report_opt(
+                function_argument_call, (typeof(with_runtime_dispatch), Any)))
+            @test length(reports) == 1
+            report = only(reports)
+            @test report isa RuntimeDispatchReport
+            @test report.sig isa JET.Signature
+            @test report.sig.tt === Tuple{typeof(with_runtime_dispatch), Any}
+            expected = "runtime dispatch detected: f::typeof(" *
+                       string(@__MODULE__) *
+                       ".with_runtime_dispatch)(x::Any)::Any"
+            @test get_msg(report) == expected
+            frame = only(report.vst)
+            @test frame.file === Symbol(@__FILE__)
+            @test frame.line == FUNCTION_ARGUMENT_CALL_LINE
+        end
+        let function_filter(@nospecialize f) = f !== with_runtime_dispatch
+            @test isempty(get_reports(report_opt(
+                function_argument_call, (typeof(with_runtime_dispatch), Any);
+                function_filter)))
         end
     end
 
@@ -282,16 +306,18 @@ end
 # don't report duplicated problems from inlined callees
 issue335_callf(f, args...) = f(args...)
 
+const ISSUE335_PROBLEMATIC_LINE = (@__LINE__) + 2
 @inline function issue335_problematic_callee(val)
     return issue335_undefined_call(val)
 end
 
 let result = @report_opt issue335_callf(issue335_problematic_callee, 42)
     report = only(get_reports_with_test(result))
-    @test any(report.vst) do vsf
-        vsf.line == (@__LINE__)-6 &&
-        vsf.linfo.def.name === :issue335_problematic_callee
-    end
+    @test report isa RuntimeDispatchReport
+    frame = last(report.vst)
+    @test frame.file === Symbol(@__FILE__)
+    @test frame.line == ISSUE335_PROBLEMATIC_LINE
+    @test frame.linfo.def.name === :issue335_problematic_callee
 end
 
 test_opt() do
@@ -304,13 +330,19 @@ test_opt() do
 end
 
 # report runtime dispatches within "noncompileable" but inlineable frames
+const NONCOMPILEABLE_INLINED_LINE = (@__LINE__) + 1
 @inline noncompileable_inlined1(a, b) = a + b
 let result = report_opt((Any,Any)) do a, b
         noncompileable_inlined1(a, b)
     end
-    @test any(get_reports_with_test(result)) do @nospecialize report
-        report isa RuntimeDispatchReport
-    end
+    reports = get_reports_with_test(result)
+    @test length(reports) == 1
+    report = only(reports)
+    @test report isa RuntimeDispatchReport
+    frame = last(report.vst)
+    @test frame.file === Symbol(@__FILE__)
+    @test frame.line == NONCOMPILEABLE_INLINED_LINE
+    @test frame.linfo.def.name === :noncompileable_inlined1
 end
 
 noncompileable_inlined2(a, b) = a + b
@@ -320,6 +352,46 @@ let result = report_opt((Any,Any)) do a, b
     @test_broken any(get_reports_with_test(result)) do @nospecialize report
         report isa RuntimeDispatchReport
     end
+end
+
+const CACHED_RUNTIME_DISPATCH_LINE = (@__LINE__) + 1
+cached_runtime_dispatch(xs::Vector{Any}) = getsomething(xs[1])
+
+@testset "cached runtime dispatch reports" begin
+    reports1 = get_reports_with_test(report_opt(cached_runtime_dispatch, (Vector{Any},)))
+    reports2 = get_reports_with_test(report_opt(cached_runtime_dispatch, (Vector{Any},)))
+    @test length(reports1) == length(reports2) == 1
+    report1, report2 = only(reports1), only(reports2)
+    @test report1 isa RuntimeDispatchReport
+    @test report2 isa RuntimeDispatchReport
+    @test report1.sig == report2.sig
+    @test report1.vst == report2.vst
+    @test get_msg(report1) == get_msg(report2)
+    frame = only(report1.vst)
+    @test frame.file === Symbol(@__FILE__)
+    @test frame.line == CACHED_RUNTIME_DISPATCH_LINE
+end
+
+const CYCLE_RUNTIME_DISPATCH_LINE = (@__LINE__) + 2
+function cycle_runtime_dispatch(xs::Vector{Any}, n::Int)
+    n == 0 && return getsomething(xs[1])
+    return cycle_runtime_dispatch_callee(xs, n - 1)
+end
+cycle_runtime_dispatch_callee(xs::Vector{Any}, n::Int) = cycle_runtime_dispatch(xs, n)
+
+no_optimization(::Int) = nothing
+
+@testset "cycle and no-optimization paths" begin
+    let reports = get_reports_with_test(report_opt(cycle_runtime_dispatch, (Vector{Any}, Int)))
+        report = only(reports)
+        @test report isa RuntimeDispatchReport
+        frame = only(report.vst)
+        @test frame.file === Symbol(@__FILE__)
+        @test frame.line == CYCLE_RUNTIME_DISPATCH_LINE
+        @test frame.linfo.def.name === :cycle_runtime_dispatch
+    end
+
+    @test isempty(get_reports(report_opt(no_optimization, (Int,))))
 end
 
 using StaticArrays
@@ -346,6 +418,33 @@ struct PointArray
 end
 let res = report_opt(JSON3.read, (String,Type{PointArray}))
     @test true
+end
+
+# https://github.com/aviatesk/JET.jl/issues/863
+struct Issue863Callable{F}
+    f::F
+end
+# define more methods than `max_methods` so that the call stays a dynamic `:call`
+(c::Issue863Callable)(x) = c.f(x)
+(c::Issue863Callable)(x::Int) = c.f(x)
+(c::Issue863Callable)(x::String) = c.f(x)
+(c::Issue863Callable)(::Nothing) = nothing
+issue863_callable(xs) = Issue863Callable(identity)(xs[1])
+issue863_mapfoldl(xs) = mapfoldl(last, *, xs)
+@testset "callable object literals in optimized IR" begin
+    # Julia ≥ 1.13 embeds constant callee objects directly in the IR without `QuoteNode`
+    let reports = get_reports_with_test(report_opt(issue863_callable, (Vector{Any},)))
+        @test any(reports) do r
+            r isa JET.RuntimeDispatchReport &&
+            r.sig.tt === Tuple{Issue863Callable{typeof(identity)}, Any}
+        end
+    end
+    let reports = get_reports_with_test(report_opt(issue863_mapfoldl, (Vector{Any},)))
+        @test any(reports) do r
+            r isa JET.RuntimeDispatchReport &&
+            r.sig.tt === Tuple{Base.BottomRF{typeof(*)}, Any, Any}
+        end
+    end
 end
 
 end # module test_optanalyzer

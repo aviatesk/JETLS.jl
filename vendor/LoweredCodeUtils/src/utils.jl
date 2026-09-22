@@ -16,7 +16,7 @@ end
 """
     iscallto(stmt, name, src)
 
-Returns `true` is `stmt` is a call expression to `name`.
+Returns `true` if `stmt` is a call expression to `name`.
 """
 function iscallto(@nospecialize(stmt), mod::Module, name::GlobalRef, src)
     if isa(stmt, Expr)
@@ -78,8 +78,8 @@ function getrhs(@nospecialize(stmt))
     return lhs_rhs === nothing ? stmt : lhs_rhs[2]
 end
 
-ismethod(frame::Frame)  = ismethod(pc_expr(frame))
-ismethod3(frame::Frame) = ismethod3(pc_expr(frame))
+is_frame_at_method(frame::Frame)  = ismethod(pc_expr(frame))
+is_frame_at_method3(frame::Frame) = ismethod3(pc_expr(frame))
 
 # Check if a call argument refers to Core.define_method
 function is_define_method_ref(@nospecialize(f))
@@ -104,9 +104,9 @@ function is_define_method_call_4arg(@nospecialize(stmt))
     return is_define_method_ref(stmt.args[1])
 end
 
-ismethod(stmt)  = isexpr(stmt, :method) || is_define_method_call_2arg(stmt) || is_define_method_call_4arg(stmt)
-ismethod1(stmt) = isexpr(stmt, :method, 1) || is_define_method_call_2arg(stmt)
-ismethod3(stmt) = isexpr(stmt, :method, 3) || is_define_method_call_4arg(stmt)
+ismethod(@nospecialize stmt)  = isexpr(stmt, :method) || is_define_method_call_2arg(stmt) || is_define_method_call_4arg(stmt)
+ismethod1(@nospecialize stmt) = isexpr(stmt, :method, 1) || is_define_method_call_2arg(stmt)
+ismethod3(@nospecialize stmt) = isexpr(stmt, :method, 3) || is_define_method_call_4arg(stmt)
 
 # Extract the "name" argument from a method-definition statement.
 # For Expr(:method, name, ...) it's args[1]; for define_method(mod, name, ...) it's args[3].
@@ -136,7 +136,7 @@ function method_body(@nospecialize(stmt))
     end
 end
 
-function ismethod_with_name(src, stmt, target::AbstractString; reentrant::Bool=false)
+function ismethod_with_name(src::CodeInfo, @nospecialize(stmt), target::AbstractString; reentrant::Bool=false)
     if reentrant
         name = stmt
     else
@@ -168,8 +168,10 @@ function ismethod_with_name(src, stmt, target::AbstractString; reentrant::Bool=f
             isdone = true
         end
     end
-    # On Julia 1.6 we have to add escaping (CBinding makes function names like "(S)")
-    target = escape_string(target, "()")
+    # Escape all regular-expression metacharacters. Function names can themselves
+    # be operators (for example, `+`) or contain punctuation (for example, CBinding's
+    # names like `(S)`).
+    target = escape_string(target, "\\.^\$|?*+()[]{}")
     return match(Regex("(^|#)$target(\$|#)"), isa(name, GlobalRef) ? string(name.name) : string(name)) !== nothing
 end
 
@@ -346,7 +348,7 @@ end
 
 showempty(list) = isempty(list) ? '∅' : list
 
-# Smooth the transition between CC and Base (not requried for v1.12 and above)
+# Smooth the transition between CC and Base (not required for v1.12 and above)
 rng(bb::BasicBlock) = (r = bb.stmts; return CC.first(r):CC.last(r))
 
 function pushall!(dest, src)

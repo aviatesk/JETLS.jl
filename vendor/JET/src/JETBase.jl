@@ -5,8 +5,12 @@ let README = normpath(dirname(@__DIR__), "README.md")
         "> [!NOTE]" => "!!! note",
         "> [!WARNING]" => "!!! warning",
         "> [!IMPORTANT]" => "!!! note",
-        r"^\> (.+)$"m=>s"    \1",
-        r"^\>$"m=>s"")
+        r"^\> (.+)$"m => s"    \1",
+        r"^\>$"m => s"",
+        # drop HTML comments: Julia's Markdown parser has no notion of HTML blocks,
+        # so they would otherwise show up verbatim in `?JET` and in the manual
+        r"^<!-- @doc (.*?) -->$"ms => s"```@docs\n\1\n```\n",
+        r"^<!--.*?-->$"ms => "")
     @doc s JET
     include_dependency(README)
 end
@@ -15,6 +19,8 @@ Base.Experimental.@optlevel 1
 
 # usings
 # ======
+
+using Compiler: Compiler as CC
 
 using Core: Builtin, IntrinsicFunction, Intrinsics, SimpleVector, svec
 
@@ -35,8 +41,7 @@ using Base.Meta: isexpr, lower
 
 using Base.Experimental: @MethodTable, @overlay
 
-using JuliaSyntax: JuliaSyntax as JS
-using .JS: @K_str
+using JuliaSyntax: @K_str, JuliaSyntax as JS
 
 using CodeTracking: CodeTracking
 
@@ -46,9 +51,8 @@ using JuliaInterpreter: Frame, Interpreter, JuliaInterpreter, _INACTIVE_EXCEPTIO
 
 using MacroTools: @capture, normalise, striplines
 
-using InteractiveUtils: gen_call_with_extracted_types_and_kwargs
+using InteractiveUtils: InteractiveUtils
 
-using Pkg: Pkg
 
 using Test:
     Broken, DefaultTestSet, Error, Fail, FallbackTestSet, FallbackTestSetException, Pass,
@@ -68,7 +72,8 @@ function print_signature end
 """
     JETInterface
 
-This `baremodule` exports names that form the APIs of [`AbstractAnalyzer` Framework](@ref AbstractAnalyzer-Framework).
+This `baremodule` exports names that form the APIs of
+[`AbstractAnalyzer` framework](@ref AbstractAnalyzer-framework).
 `using JET.JETInterface` loads all names that are necessary to define a plugin analysis.
 """
 baremodule JETInterface end
@@ -80,7 +85,7 @@ const INIT_HOOKS = Function[]
 push_inithook!(f) = push!(INIT_HOOKS, f)
 __init__() = foreach(@nospecialize(f)->f(), INIT_HOOKS)
 
-global debug_toplevel_logger::IO
+global debug_toplevel_logger::IO = devnull
 push_inithook!() do
     global debug_toplevel_logger = IOContext(stderr, JET_LOGGER_LEVEL=>1)
 end
@@ -153,7 +158,7 @@ macro withmixedhash(typedef)
 
     h_init = UInt === UInt64 ? rand(UInt64) : rand(UInt32)
     hash_body = quote h = $h_init end
-    for (fld, typ) in fld2typs
+    for (fld, _typ) in fld2typs
         push!(hash_body.args, :(h = Base.hash(x.$fld, h)::UInt))
     end
     push!(hash_body.args, :(return h))
@@ -203,14 +208,21 @@ end
 
 # state
 
-const State     = Union{InferenceState,OptimizationState}
+struct OptimizedIRState
+    opt::OptimizationState
+    ir::CC.IRCode
+end
+
+const State     = Union{InferenceState,OptimizedIRState}
 const StateAtPC = Tuple{State,Int}
 const LineTable = Union{Vector{Any},Vector{LineInfoNode}}
 
-get_stmt((sv, pc)::StateAtPC) = sv.src.code[pc]
+get_stmt((sv, pc)::Tuple{InferenceState,Int}) = sv.src.code[pc]
+get_stmt((sv, pc)::Tuple{OptimizedIRState,Int}) = sv.ir.stmts[pc][:stmt]
 get_lin((sv, pc)::StateAtPC) = _get_lin(sv, pc)
-_get_lin(sv, pc) = _get_lin(sv.linfo, sv.src, pc)
-function _get_lin(mi::MethodInstance, src::CodeInfo, pc::Int)
+_get_lin(sv::InferenceState, pc::Int) = _get_lin(sv.linfo, sv.src, pc)
+_get_lin(sv::OptimizedIRState, pc::Int) = _get_lin(sv.opt.linfo, sv.ir, pc)
+function _get_lin(mi::MethodInstance, src::Union{CodeInfo,CC.IRCode}, pc::Int)
     # TODO optimize the allocation here for un-optimized debuginfo
     lins = CC.IRShow.buildLineInfoNode(src.debuginfo, mi, pc)
     if isempty(lins)
@@ -218,24 +230,35 @@ function _get_lin(mi::MethodInstance, src::CodeInfo, pc::Int)
     end
     return first(lins)
 end
-function get_lins((sv, pc)::StateAtPC)
+function get_lins((sv, pc)::Tuple{InferenceState,Int})
     return CC.IRShow.buildLineInfoNode(sv.src.debuginfo, sv.linfo, pc)
 end
-get_ssavaluetype((sv, pc)::StateAtPC) = (sv.src.ssavaluetypes::Vector{Any})[pc]
+function get_lins((sv, pc)::Tuple{OptimizedIRState,Int})
+    return CC.IRShow.buildLineInfoNode(sv.ir.debuginfo, sv.opt.linfo, pc)
+end
+get_ssavaluetype((sv, pc)::Tuple{InferenceState,Int}) =
+    (sv.src.ssavaluetypes::Vector{Any})[pc]
+get_ssavaluetype((sv, pc)::Tuple{OptimizedIRState,Int}) = sv.ir.stmts[pc][:type]
 
 get_slottype(s::Union{StateAtPC,State}, slot) = get_slottype(s, slot_id(slot))
-get_slottype((sv, pc)::StateAtPC, slot::Int) = get_slottype(sv, slot)
-get_slottype(sv::State, slot::Int) = sv.slottypes[slot]
+get_slottype((sv, _pc)::StateAtPC, slot::Int) = get_slottype(sv, slot)
+get_slottype(sv::InferenceState, slot::Int) = sv.slottypes[slot]
+get_slottype(sv::OptimizedIRState, slot::Int) = sv.ir.argtypes[slot]
 
 get_slotname(s::Union{StateAtPC,State}, slot) = get_slotname(s, slot_id(slot))
-get_slotname((sv, pc)::StateAtPC, slot::Int) = sv.src.slotnames[slot]
-get_slotname(sv::State, slot::Int) = sv.src.slotnames[slot]
+get_slotname((sv, _pc)::StateAtPC, slot::Int) = get_slotname(sv, slot)
+get_slotname(sv::InferenceState, slot::Int) = sv.src.slotnames[slot]
+get_slotname(sv::OptimizedIRState, slot::Int) = sv.opt.src.slotnames[slot]
+
+get_sparamtype(sv::InferenceState, i::Int) = sv.sptypes[i].typ
+get_sparamtype(sv::OptimizedIRState, i::Int) = sv.ir.sptypes[i].typ
 
 # check if we're in a toplevel module
-function istoplevelframe(sv::State)
-    sv isa OptimizationState && error("OptimizationState is not supported at top-level")
+function istoplevelframe(sv::InferenceState)
     return istoplevelframe(CC.frame_instance(sv))
 end
+istoplevelframe(::OptimizedIRState) =
+    error("OptimizedIRState is not supported at top-level")
 istoplevelframe(mi::MethodInstance) = isa(mi.def, Module)
 
 # we can retrieve program-counter-level slottype during inference
@@ -258,7 +281,8 @@ function is_compileable_mi(mi::MethodInstance)
     return CC.get_compileable_sig(def, mi.specTypes, mi.sparam_vals) !== nothing
 end
 
-get_linfo(sv::State) = sv.linfo
+get_linfo(sv::InferenceState) = sv.linfo
+get_linfo(sv::OptimizedIRState) = sv.opt.linfo
 get_linfo(result::InferenceResult) = result.linfo
 get_linfo(linfo::MethodInstance) = linfo
 
@@ -323,6 +347,71 @@ Prints a report of the top-level error `report` to the given `io`.
 """
 function print_report end
 
+mutable struct PackageAnalysisProgress
+    const reports::Vector{InferenceErrorReport}
+    const reports_lock::ReentrantLock
+    @atomic done::Int
+    @atomic analyzed::Int
+    @atomic cached::Int
+    const interval::Int
+    @atomic next_interval::Int
+    function PackageAnalysisProgress(n_sigs::Int)
+        interval = max(n_sigs ÷ 25, 1)
+        new(InferenceErrorReport[], ReentrantLock(), 0, 0, 0, interval, interval)
+    end
+end
+
+abstract type AbstractSignatureAnalysisJob end
+signature_analysis_completion(job::AbstractSignatureAnalysisJob) =
+    getfield(job, :completion)::Base.Event
+
+function signature_analysis_worker(
+        queue::Channel{Union{Nothing,AbstractSignatureAnalysisJob}}
+    )
+    # HACK: Compiler engine reservations are owned by OS thread ID.
+    # Prevent migration only while this job may run inference. This assumes jobs don't
+    # leave sticky child tasks running: stickiness isn't reference-counted, so restoring
+    # it could erase stickiness propagated by a child scheduled during the job.
+    while true
+        job = take!(queue)
+        job === nothing && break
+        task = current_task()
+        was_sticky = task.sticky
+        task.sticky = true
+        try
+            job()
+        finally
+            task.sticky = was_sticky
+            notify(signature_analysis_completion(job))
+        end
+        yield()
+    end
+end
+
+function run_signature_analysis_jobs!(
+        jobs::Vector{<:AbstractSignatureAnalysisJob}
+    )
+    isempty(jobs) && return nothing
+    queue = Channel{Union{Nothing,AbstractSignatureAnalysisJob}}(Inf)
+    n_workers = min(length(jobs), max(1, Threads.threadpoolsize(:default)))
+    worker_tasks = Task[]
+    sizehint!(worker_tasks, n_workers)
+    for _ = 1:n_workers
+        worker = Threads.@spawn :default signature_analysis_worker(queue)
+        push!(worker_tasks, worker)
+    end
+    try
+        foreach(job -> put!(queue, job), jobs)
+        foreach(job -> wait(signature_analysis_completion(job)), jobs)
+    finally
+        for _ in worker_tasks
+            put!(queue, nothing)
+        end
+        foreach(wait, worker_tasks)
+    end
+    return nothing
+end
+
 include("toplevel/virtualprocess.jl")
 
 # results
@@ -331,14 +420,20 @@ include("toplevel/virtualprocess.jl")
 """
     res::JETToplevelResult
 
-Represents the result of JET's analysis on a top-level script.
-- `res.analyzer::AbstractAnalyzer`: [`AbstractAnalyzer`](@ref) used for this analysis
-- `res.res::VirtualProcessResult`: [`VirtualProcessResult`](@ref) collected from this analysis
-- `res.source::AbstractString`: the identity key of this analysis
-- `res.jetconfigs`: configurations used for this analysis
+Represents the result of analyzing top-level code, including files, packages, and text.
 
-`JETToplevelResult` implements `show` methods for each different frontend.
-An appropriate `show` method will be automatically chosen and render the analysis result.
+- `res.analyzer::AbstractAnalyzer`: the [`AbstractAnalyzer`](@ref) used for the
+  analysis
+- `res.res::VirtualProcessResult`: the [`VirtualProcessResult`](@ref) produced
+  by the analysis
+- `res.source::AbstractString`: a description of the analysis target that also
+  serves as the identity key of the analysis; e.g. the VS Code integration uses
+  it to replace superseded diagnostics
+- `res.jetconfigs`: the configurations associated with the analysis
+
+`JETToplevelResult` implements `Base.show` methods for JET's supported front ends.
+Julia's display system selects the appropriate method when rendering the
+analysis result.
 """
 struct JETToplevelResult{Analyzer<:AbstractAnalyzer,JETConfigs}
     analyzer::Analyzer
@@ -351,34 +446,22 @@ JETToplevelResult(analyzer::AbstractAnalyzer, res::VirtualProcessResult, source:
 @eval Base.iterate(res::JETToplevelResult, state=1) =
     return state > $(fieldcount(JETToplevelResult)) ? nothing : (getfield(res, state), state+1)
 
-function get_reports(result::JETToplevelResult)
-    res = result.res
-    if !isempty(res.toplevel_error_reports)
-        # non-empty `ret.toplevel_error_reports` means critical errors happened during
-        # the AST transformation, so they always have precedence over `ret.inference_error_reports`
-        return res.toplevel_error_reports
-    else
-        reports = res.inference_error_reports
-        if get(result.jetconfigs, :target_defined_modules, false)
-            target_modules = defined_modules(res)
-        else
-            target_modules = nothing
-        end
-        return configured_reports(reports; target_modules, result.jetconfigs...)
-    end
-end
-
 """
     res::JETCallResult
 
-Represents the result of JET's analysis on a function call.
-- `res.result::InferenceResult`: the result of this analysis
-- `res.analyzer::AbstractAnalyzer`: [`AbstractAnalyzer`](@ref) used for this analysis
-- `res.source::AbstractString`: the identity key of this analysis
-- `res.jetconfigs`: configurations used for this analysis
+Represents the result of analyzing a function call.
 
-`JETCallResult` implements `show` methods for each different frontend.
-An appropriate `show` method will be automatically chosen and render the analysis result.
+- `res.result::InferenceResult`: the `InferenceResult` produced by the analysis
+- `res.analyzer::AbstractAnalyzer`: the [`AbstractAnalyzer`](@ref) used for the
+  analysis
+- `res.source::AbstractString`: a description of the analysis target that also
+  serves as the identity key of the analysis; e.g. the VS Code integration uses
+  it to replace superseded diagnostics
+- `res.jetconfigs`: the configurations associated with the analysis
+
+`JETCallResult` implements `Base.show` methods for JET's supported front ends.
+Julia's display system selects the appropriate method when rendering the
+analysis result.
 """
 struct JETCallResult{Analyzer<:AbstractAnalyzer,JETConfigs}
     result::InferenceResult
@@ -400,62 +483,92 @@ function get_result(result::JETCallResult)
 end
 
 """
-    rpts = JET.get_reports(result::JETCallResult)
+    reports = JET.get_reports(result::JETCallResult)
+    reports = JET.get_reports(result::JETToplevelResult)
 
-Split `result` into a vector of reports, one per issue.
+Return the reports represented by `result`, one per detected issue.
+
+For a [`JETCallResult`](@ref), this returns the inference reports after applying
+report configuration. For a [`JETToplevelResult`](@ref), top-level errors take
+precedence: if any top-level errors were collected, only those errors are
+returned. Otherwise, this returns the configured inference reports.
 """
 function get_reports(result::JETCallResult)
     reports = get_reports(result.analyzer, result.result)
     return configured_reports(reports; result.jetconfigs...)
 end
+function get_reports(result::JETToplevelResult)
+    res = result.res
+    if !isempty(res.toplevel_error_reports)
+        # non-empty `ret.toplevel_error_reports` means critical errors happened during
+        # the AST transformation, so they always have precedence over `ret.inference_error_reports`
+        return res.toplevel_error_reports
+    else
+        return configured_reports(res.inference_error_reports; result.jetconfigs...)
+    end
+end
 
 """
 Configurations for [JET's analysis results](@ref analysis-result).
-These configurations are always active.
+
+The `target_modules` and `ignored_modules` values must be `nothing` or an
+iterator whose elements are any of the following matchers for a
+[`report::InferenceErrorReport`](@ref InferenceErrorReport):
+
+- `m::Module` or `JET.LastFrameModule(m::Module)`: matches when the module of
+  the report's innermost stack frame is `m` or one of its submodules
+- `name::Symbol` or `JET.LastFrameModule(name::Symbol)`: matches when the
+  module of the report's innermost stack frame, or one of that module's
+  parents, is named `name`
+- `JET.AnyFrameModule(m::Module)`: matches when the module of any stack frame
+  is `m` or one of its submodules
+- `JET.AnyFrameModule(name::Symbol)`: matches when the module of any stack
+  frame, or one of that module's parents, is named `name`
+- `JET.LastFrameModuleExact(m::Module)`: matches when the module of the
+  innermost stack frame is exactly `m`
+- `JET.LastFrameModuleExact(name::Symbol)`: matches when the module of the
+  innermost stack frame is named exactly `name`
+- `JET.AnyFrameModuleExact(m::Module)`: matches when the module of any stack
+  frame is exactly `m`
+- `JET.AnyFrameModuleExact(name::Symbol)`: matches when the module of any
+  stack frame is named exactly `name`
+- `JET.LastFrameMethod(meth)`, where `meth` is a `Function`, `Method`, or
+  `Symbol`: matches when the innermost stack frame belongs to the function,
+  is the exact method, or has the method name, respectively
+- `JET.AnyFrameMethod(meth)`, where `meth` is a `Function`, `Method`, or
+  `Symbol`: matches when any stack frame belongs to the function, is the exact
+  method, or has the method name, respectively
+- a user-defined `T <: JET.ReportMatcher`: matches according to an extension
+  of `JET.match_report(::T, report::InferenceErrorReport)`
+
+!!! note "Module containment stops at namespace roots"
+    The non-`Exact` matchers accept a module *and its submodules*, where
+    containment follows lexical nesting but stops at namespace roots: `Base`,
+    `Core`, and package root modules are not considered submodules of `Main`.
+    `target_modules = (Main,)` therefore matches only code defined
+    interactively in the REPL or in an analyzed script, without also matching
+    reports from `Base`.
 
 ---
 - `target_modules = nothing` \\
-  A configuration to filter out reports by specifying module contexts where problems should be reported.
-
-  By default (`target_modules = nothing`), JET reports all detected problems.
-  If specified, a problem is reported if its module context matches any of `target_modules`
-  settings and hidden otherwise. `target_modules` should be an iterator of whose element is
-  either of the data types below that match [`report::InferenceErrorReport`](@ref InferenceErrorReport)'s
-  context module as follows:
-  - `m::Module` or `JET.LastFrameModule(m::Module)`: matches if the module context of `report`'s innermost stack frame is `m` or any of its submodules
-  - `name::Symbol` or `JET.LastFrameModule(name::Symbol)`: matches if the module name of `report`'s innermost stack frame is `name` or any of its parent modules is named `name`
-  - `JET.AnyFrameModule(m::Module)`: matches if the module context of any of `report`'s stack frames is `m` or any of its submodules
-  - `JET.AnyFrameModule(name::Symbol)`: matches if the module name of any of `report`'s stack frames is `name` or any of its parent modules is named `name`
-  - `JET.LastFrameModuleExact(m::Module)`: matches if the module context of `report`'s innermost stack frame is exactly `m`, excluding submodules
-  - `JET.LastFrameModuleExact(name::Symbol)`: matches if the module name of `report`'s innermost stack frame is exactly `name`
-  - `JET.AnyFrameModuleExact(m::Module)`: matches if the module context of any of `report`'s stack frames is exactly `m`, excluding submodules
-  - `JET.AnyFrameModuleExact(name::Symbol)`: matches if the module name of any of `report`'s stack frames is exactly `name`
-  - user-type `T <: JET.ReportMatcher`: matches according to user-definition overload `match_report(::T, report::InferenceErrorReport)`
+  Filters reports by the contexts in which problems should be reported.
+  By default, JET retains all detected problems. When an iterator is supplied,
+  JET retains a report only when at least one matcher matches it.
 ---
 - `ignored_modules = nothing` \\
-  A configuration to filter out reports by specifying module contexts where problems should be ignored.
-
-  By default (`ignored_modules = nothing`), JET reports all detected problems.
-  If specified, a problem is hidden if its module context matches any of `ignored_modules`
-  settings and reported otherwise. `ignored_modules` should be an iterator of whose element is
-  either of the data types below that match [`report::InferenceErrorReport`](@ref InferenceErrorReport)'s
-  context module as follows:
-  - `m::Module` or `JET.LastFrameModule(m::Module)`: matches if the module context of `report`'s innermost stack frame is `m` or any of its submodules
-  - `name::Symbol` or `JET.LastFrameModule(name::Symbol)`: matches if the module name of `report`'s innermost stack frame is `name` or any of its parent modules is named `name`
-  - `JET.AnyFrameModule(m::Module)`: matches if the module context of any of `report`'s stack frames is `m` or any of its submodules
-  - `JET.AnyFrameModule(name::Symbol)`: matches if the module name of any of `report`'s stack frames is `name` or any of its parent modules is named `name`
-  - `JET.LastFrameModuleExact(m::Module)`: matches if the module context of `report`'s innermost stack frame is exactly `m`, excluding submodules
-  - `JET.LastFrameModuleExact(name::Symbol)`: matches if the module name of `report`'s innermost stack frame is exactly `name`
-  - `JET.AnyFrameModuleExact(m::Module)`: matches if the module context of any of `report`'s stack frames is exactly `m`, excluding submodules
-  - `JET.AnyFrameModuleExact(name::Symbol)`: matches if the module name of any of `report`'s stack frames is exactly `name`
-  - user-type `T <: JET.ReportMatcher`: matches according to user-definition overload `match_report(::T, report::InferenceErrorReport)`
+  Filters reports by the contexts in which problems should be ignored.
+  By default, JET ignores no detected problems. When an iterator is supplied,
+  JET removes a report when at least one matcher matches it. This filter is
+  applied after `target_modules`.
 ---
 - `report_config = nothing` \\
-  Additional configuration layer to filter out reports with user-specified strategies.
-  By default (`report_config = nothing`), JET will use the module context based configurations
-  elaborated above and below. If user-type `T` is given, then JET will report problems based
-  on the logic according to an user-overload `configured_reports(::T, reports::Vector{InferenceErrorReport})`,
-  and the `target_modules` and `ignored_modules` configurations are not really active.
+  Selects the report-filtering strategy. With the default `nothing`, JET builds
+  its standard configuration from `target_modules` and `ignored_modules`.
+  With any other value, JET instead calls
+  `JET.configured_reports(report_config, reports)` directly. This completely
+  bypasses `target_modules` and `ignored_modules`, even when they are supplied.
+  Custom configuration types must extend
+  `JET.configured_reports(::T, ::Vector{InferenceErrorReport})`.
 ---
 
 # Examples
@@ -463,11 +576,11 @@ These configurations are always active.
 ```julia-repl
 julia> function foo(a)
            r1 = sum(a)       # => Base: MethodError(+(::Char, ::Char)), MethodError(zero(::Type{Char}))
-           r2 = undefsum(a)  # => @__MODULE__: UndefVarError(:undefsum)
+           r2 = undefsum(a)  # => Main: UndefVarError(:undefsum)
            return r1, r2
        end;
 
-# by default, JET will print all the collected reports:
+# By default, JET prints all collected reports:
 julia> @report_call foo("julia")
 ═════ 3 possible errors found ═════
 ┌ foo(a::String) @ Main ./REPL[14]:2
@@ -495,28 +608,29 @@ julia> @report_call foo("julia")
 ││││││││││││││││ no matching method found `zero(::Type{Char})`: zero(T::Type{Char})
 │││││││││││││││└────────────────────
 ┌ foo(a::String) @ Main ./REPL[14]:3
-│ `Main.undefsum` is not defined: r2 = undefsum(a::String)
+│ `Main.undefsum` is not defined: undefsum
 └────────────────────
 
-# with `target_modules=(@__MODULE__,)`, JET will only report the problems detected within the `@__MODULE__` module:
-julia> @report_call target_modules=(@__MODULE__,) foo("julia")
+# With `target_modules=(Main,)`, JET reports only problems detected in code
+# defined interactively in the REPL:
+julia> @report_call target_modules=(Main,) foo("julia")
 ═════ 1 possible error found ═════
 ┌ foo(a::String) @ Main ./REPL[14]:3
-│ `Main.undefsum` is not defined: r2 = undefsum(a::String)
+│ `Main.undefsum` is not defined: undefsum
 └────────────────────
 
-# with `ignored_modules=(Base,)`, JET will ignore the errors detected within the `Base` module:
+# With `ignored_modules=(Base,)`, JET ignores errors detected in `Base`:
 julia> @report_call ignored_modules=(Base,) foo("julia")
 ═════ 1 possible error found ═════
 ┌ foo(a::String) @ Main ./REPL[14]:3
-│ `Main.undefsum` is not defined: r2 = undefsum(a::String)
+│ `Main.undefsum` is not defined: undefsum
 └────────────────────
 
-# alternatively, you can use Symbol to specify the module name without requiring it as a dependency:
+# Alternatively, use a Symbol to specify the module by name:
 julia> @report_call ignored_modules=(:Base,) foo("julia")
 ═════ 1 possible error found ═════
 ┌ foo(a::String) @ Main ./REPL[14]:3
-│ `Main.undefsum` is not defined: r2 = undefsum(a::String)
+│ `Main.undefsum` is not defined: undefsum
 └────────────────────
 ```
 ---
@@ -550,8 +664,19 @@ struct AnyFrameModuleExact <: ReportMatcher
     mod::Union{Module,Symbol}
 end
 
+struct LastFrameMethod <: ReportMatcher
+    meth::Union{Function,Method,Symbol}
+end
+struct AnyFrameMethod <: ReportMatcher
+    meth::Union{Function,Method,Symbol}
+end
+
+# Module containment follows lexical nesting but stops at namespace roots
+# (`Base.moduleroot` semantics): in particular `Base` is not a submodule of `Main`,
+# so matchers given `Main` only cover interactively- or script-defined code.
 function issubmodule(child::Module, parent::Module)
     child === parent && return true
+    Base.is_root_module(child) && return false
     pm = parentmodule(child)
     pm === child && return false
     return issubmodule(pm, parent)
@@ -559,6 +684,7 @@ end
 
 function issubmoduleof(mod::Module, name::Symbol)
     nameof(mod) === name && return true
+    Base.is_root_module(mod) && return false
     pm = parentmodule(mod)
     pm === mod && return false
     return issubmoduleof(pm, name)
@@ -596,6 +722,28 @@ function match_report(matcher::AnyFrameModuleExact, @nospecialize(report::Infere
         return any(report.vst) do vsf
             nameof(linfomod(vsf.linfo)) === mod
         end
+    end
+end
+function match_report(matcher::LastFrameMethod, @nospecialize(report::InferenceErrorReport))
+    def = last(report.vst).linfo.def
+    meth = matcher.meth
+    if meth isa Symbol
+        return def.name === meth
+    elseif meth isa Method
+        return def === meth
+    else # if meth isa Function
+        return def in methods(meth)
+    end
+end
+function match_report(matcher::AnyFrameMethod, @nospecialize(report::InferenceErrorReport))
+    # check all VirtualFrames in the VirtualStackTrace for a match to the specified method
+    meth = matcher.meth
+    if meth isa Symbol
+        return any(vsf -> vsf.linfo.def.name === meth, report.vst)
+    elseif meth isa Method
+        return any(vsf -> vsf.linfo.def === meth, report.vst)
+    else # if meth isa Function
+        return any(vsf -> vsf.linfo.def in methods(meth), report.vst)
     end
 end
 @noinline match_report(x::ReportMatcher, @nospecialize(_::InferenceErrorReport)) =
@@ -682,14 +830,20 @@ include("ui/vscode.jl")
 # -----------
 
 """
-    analyze_and_report_call!(analyzer::AbstractAnalyzer, f, [types]; jetconfigs...) -> JETCallResult
-    analyze_and_report_call!(analyzer::AbstractAnalyzer, tt::Type{<:Tuple}; jetconfigs...) -> JETCallResult
-    analyze_and_report_call!(analyzer::AbstractAnalyzer, mi::MethodInstance; jetconfigs...) -> JETCallResult
+    analyze_and_report_call!(analyzer::AbstractAnalyzer, f,
+                             types = Base.default_tt(f);
+                             jetconfigs...) -> JETCallResult
+    analyze_and_report_call!(analyzer::AbstractAnalyzer,
+                             tt::Type{<:Tuple};
+                             jetconfigs...) -> JETCallResult
+    analyze_and_report_call!(analyzer::AbstractAnalyzer,
+                             mi::MethodInstance;
+                             jetconfigs...) -> JETCallResult
 
-A generic entry point to analyze a function call with `AbstractAnalyzer`.
-Finally returns the analysis result as [`JETCallResult`](@ref).
-Note that this is intended to be used by developers of `AbstractAnalyzer` only.
-General users should use high-level entry points like [`report_call`](@ref) and [`report_opt`](@ref).
+Analyze a function call with `analyzer` and return the analysis result as a
+[`JETCallResult`](@ref). This generic entry point is intended only for
+developers of `AbstractAnalyzer`. General users should use high-level entry
+points such as [`report_call`](@ref) and [`report_opt`](@ref).
 """
 function analyze_and_report_call!(analyzer::AbstractAnalyzer, @nospecialize(f), @nospecialize(types = Base.default_tt(f));
                                   jetconfigs...)
@@ -702,7 +856,7 @@ end
 function analyze_and_report_call!(analyzer::AbstractAnalyzer, @nospecialize(tt::Type{<:Tuple});
                                   jetconfigs...)
     validate_configs(analyzer, jetconfigs)
-    analyzer, result = analyze_gf_by_type!(analyzer, tt)
+    result = analyze_gf_by_type!(analyzer, tt)
     analyzername = nameof(typeof(analyzer))
     sig = LazyPrinter(io::IO->Base.show_tuple_as_call(io, Symbol(""), tt))
     source = lazy"$analyzername: $sig"
@@ -711,7 +865,7 @@ end
 function analyze_and_report_call!(analyzer::AbstractAnalyzer, mi::MethodInstance;
                                   jetconfigs...)
     validate_configs(analyzer, jetconfigs)
-    analyzer, result = analyze_method_instance!(analyzer, mi)
+    result = analyze_method_instance!(analyzer, mi)
     analyzername = nameof(typeof(analyzer))
     sig = LazyPrinter(io::IO->Base.show_tuple_as_call(io, Symbol(""), mi.specTypes))
     source = lazy"$analyzername: $sig"
@@ -759,7 +913,7 @@ function analyze_and_report_opaque_closure!(analyzer::AbstractAnalyzer, oc::Core
     env = Base.to_tuple_type(Any[Core.Typeof(x) for x in oc.captures])
     tt = Tuple{env, #=sig=#(Base.to_tuple_type(types)::DataType).parameters...}
     mi = specialize_method(oc.source::Method, tt, svec())
-    analyzer, result = analyze_method_instance!(analyzer, mi)
+    result = analyze_method_instance!(analyzer, mi)
     analyzername = nameof(typeof(analyzer))
     sig = LazyPrinter(io->Base.show_tuple_as_call(io, Symbol(""), tt))
     source = lazy"$analyzername: $sig"
@@ -772,11 +926,11 @@ function analyze_method_instance!(analyzer::AbstractAnalyzer, mi::MethodInstance
     frame = InferenceState(result, #=cache_mode=#:global, analyzer)
     if isnothing(frame)
         CC.engine_reject(analyzer, ci)
-        return analyzer, result
+        return result
     end
-    _, result = analyze_frame!(analyzer, frame)
+    result = analyze_frame!(analyzer, frame)
     CC.engine_reject(analyzer, ci)
-    return analyzer, result
+    return result
 end
 
 function CC.InferenceState(result::InferenceResult, cache_mode::UInt8,  analyzer::AbstractAnalyzer)
@@ -792,7 +946,7 @@ function analyze_frame!(analyzer::AbstractAnalyzer, frame::InferenceState)
     else
         Base.invoke_in_world(tworld, CC.typeinf, analyzer, frame)
     end
-    return analyzer, frame.result
+    return frame.result
 end
 
 is_entry(analyzer::AbstractAnalyzer, mi::MethodInstance) = get_entry(analyzer) === mi
@@ -801,13 +955,15 @@ is_entry(analyzer::AbstractAnalyzer, mi::MethodInstance) = get_entry(analyzer) =
 # ---------
 
 """
-    analyze_and_report_file!(interp::ConcreteInterpreter, filename::AbstractString; jetconfigs...) -> JETToplevelResult
+    analyze_and_report_file!(interp::ConcreteInterpreter,
+                             filename::AbstractString,
+                             pkgid::Union{Nothing,PkgId} = nothing;
+                             jetconfigs...) -> JETToplevelResult
 
-A generic entry point to analyze a file with `interp::ConcreteInterpreter`.
-Finally returns the analysis result as [`JETToplevelResult`](@ref).
-Note that this is intended to be used by developers of `AbstractAnalyzer` and
-`ConcreteInterpreter` only.
-General users should use high-level entry points like [`report_file`](@ref).
+Analyze a file with `interp` and return the analysis result as a
+[`JETToplevelResult`](@ref). This generic entry point is intended only for
+developers of `AbstractAnalyzer` and `ConcreteInterpreter`. General users
+should use high-level entry points such as [`report_file`](@ref).
 """
 function analyze_and_report_file!(interp::ConcreteInterpreter, filename::AbstractString,
                                   pkgid::Union{Nothing,PkgId} = nothing;
@@ -834,60 +990,18 @@ function kwargs_dict(@nospecialize configs)
     return dict
 end
 
-"""
-    analyze_and_report_package!(interp::ConcreteInterpreter,
-                                package::Union{AbstractString,Module,Nothing} = nothing;
-                                jetconfigs...) -> JETToplevelResult
-
-A generic entry point to analyze a package with `interp::ConcreteInterpreter`.
-Finally returns the analysis result as [`JETToplevelResult`](@ref).
-Note that this is intended to be used by developers of `AbstractAnalyzer` and
-`ConcreteInterpreter` only.
-General users should use high-level entry points like [`report_package`](@ref).
-"""
-function analyze_and_report_package!(interp::ConcreteInterpreter,
-                                     package::Union{AbstractString,Module,Nothing} = nothing;
-                                     jetconfigs...)
-    (; filename, pkgid) = find_pkg(package)
-    jetconfigs = kwargs_dict(jetconfigs)
-    set_if_missing!(jetconfigs, :analyze_from_definitions, true)
-    set_if_missing!(jetconfigs, :concretization_patterns, [:(x_)]) # concretize all top-level code
-    return analyze_and_report_file!(interp, filename, pkgid; jetconfigs...)
-end
-
-function find_pkg(pkgname::AbstractString)
-    pkgenv = @lock Base.require_lock Base.identify_package_env(pkgname)
-    isnothing(pkgenv) && error(lazy"Unknown package $pkgname.")
-    pkgid, env = pkgenv
-    filename = @lock Base.require_lock Base.locate_package(pkgid, env)
-    isnothing(filename) && error(lazy"Expected $pkgname to have a source file.")
-    return (; pkgid, filename)
-end
-
-function find_pkg(pkgmod::Module)
-    filename = pathof(pkgmod)
-    isnothing(filename) && error(lazy"Cannot analyze a module defined in the REPL.")
-    pkgid = @lock Base.require_lock Base.identify_package(String(nameof(pkgmod)))
-    isnothing(pkgid) && error(lazy"Expected $pkgmod to exist as a package.")
-    return (; pkgid, filename)
-end
-
-function find_pkg(::Nothing)
-    project = Pkg.project()
-    project.ispackage || error(lazy"Active project at $(project.path) is not a package.")
-    return find_pkg(project.name)
-end
 
 """
-    analyze_and_report_text!(interp::ConcreteInterpreter, text::AbstractString,
-                             filename::AbstractString = "top-level";
+    analyze_and_report_text!(interp::ConcreteInterpreter,
+                             text::AbstractString,
+                             filename::AbstractString = "top-level",
+                             pkgid::Union{Nothing,PkgId} = nothing;
                              jetconfigs...) -> JETToplevelResult
 
-A generic entry point to analyze a top-level code with `interp::ConcreteInterpreter`.
-Finally returns the analysis result as [`JETToplevelResult`](@ref).
-Note that this is intended to be used by developers of `AbstractAnalyzer` and
-`ConcreteInterpreter` only.
-General users should use high-level entry points like [`report_text`](@ref).
+Analyze top-level `text` with `interp` and return the analysis result as a
+[`JETToplevelResult`](@ref). This generic entry point is intended only for
+developers of `AbstractAnalyzer` and `ConcreteInterpreter`. General users
+should use high-level entry points such as [`report_text`](@ref).
 """
 function analyze_and_report_text!(interp::ConcreteInterpreter, text::AbstractString,
                                   filename::AbstractString = "top-level",
@@ -994,7 +1108,7 @@ function call_test_ex(funcname::Symbol, testname::Symbol, ex0, __module__, __sou
 end
 
 function _call_test_ex(funcname::Symbol, testname::Symbol, ex0, __module__, __source__)
-    analysis = gen_call_with_extracted_types_and_kwargs(__module__, funcname, ex0)
+    analysis = InteractiveUtils.gen_call_with_extracted_types_and_kwargs(__module__, funcname, ex0)
     orig_expr = QuoteNode(Expr(:macrocall, GlobalRef(@__MODULE__, testname), __source__, ex0...))
     source = QuoteNode(__source__)
     testres = :(try
@@ -1012,10 +1126,9 @@ function _call_test_ex(funcname::Symbol, testname::Symbol, ex0, __module__, __so
 end
 
 """
-    func_test(func, testname::Symbol, args...; jetconfigs...)
+    func_test(func, testname::Symbol, args...; broken::Bool = false, skip::Bool = false, jetconfigs...)
 
-An internal utility function to implement a `test_call`-like function.
-See the implementation of [`test_call`](@ref).
+An internal utility for implementing functions similar to [`test_call`](@ref).
 """
 function func_test(func, testname::Symbol, @nospecialize(args...);
     broken::Bool = false, skip::Bool = false,
@@ -1099,11 +1212,12 @@ end
 
 const GENERAL_CONFIGURATIONS = Set{Symbol}((
     # general
-    :report_config, :target_modules, :ignored_modules, :target_defined_modules,
+    :report_config, :target_modules, :ignored_modules,
     # toplevel
-    :context, :analyze_from_definitions, :concretization_patterns, :virtualize, :toplevel_logger,
+    :context, :analyze_from_definitions, :concretization_patterns,
+    :concretization_timeout, :virtualize, :toplevel_logger,
     # ui
-    :print_toplevel_success, :print_inference_success, :fullpath, :sourceinfo, :stacktrace_types_limit,
+    :print_toplevel_success, :print_inference_success, :sourceinfo, :stacktrace_types_limit,
     :vscode_console_output))
 
 # interface
@@ -1138,7 +1252,7 @@ reexport_as_api!(JETInterface,
     print_report_message, print_signature, report_color,
     # generic entry points,
     analyze_and_report_call!, call_test_ex, func_test,
-    analyze_and_report_file!, analyze_and_report_package!, analyze_and_report_text!,
+    analyze_and_report_file!, analyze_and_report_text!,
     # development utilities
     add_new_report!, var"@jetreport")
 

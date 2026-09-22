@@ -1,0 +1,21 @@
+[[diagnostic.patterns]]
+path = "src/precompile.jl"
+match_type = "literal"
+match_by = "code"
+pattern = "lowering/unused-argument"
+severity = "off"
+
+[[diagnostic.patterns]]
+path = "test/**/*.jl"
+match_type = "literal"
+match_by = "code"
+pattern = "lowering/unused-argument"
+severity = "off"
+
+[[initialization_options.analysis_overrides]]
+path = "bin/generate_builtins.jl"
+full_analysis = false
+
+[[initialization_options.analysis_overrides]]
+path = "test/**/*.jl"
+full_analysis = false

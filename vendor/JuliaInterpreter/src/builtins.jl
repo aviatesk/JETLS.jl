@@ -127,6 +127,8 @@ function maybe_evaluate_builtin(interp::Interpreter, frame::Frame, call_expr::Ex
         return Some{Any}(Core._expr(getargs(interp, args, frame)...))
     elseif @static isdefinedglobal(Core, :_import) && f === Core._import
         return Some{Any}(Core._import(getargs(interp, args, frame)...))
+    elseif @static isdefinedglobal(Core, :_new_cancel_source) && f === Core._new_cancel_source
+        return Some{Any}(Core._new_cancel_source(getargs(interp, args, frame)...))
     elseif f === Core._primitivetype
         return Some{Any}(Core._primitivetype(getargs(interp, args, frame)...))
     elseif f === Core._setsuper!
@@ -145,6 +147,8 @@ function maybe_evaluate_builtin(interp::Interpreter, frame::Frame, call_expr::Ex
         else
             return Some{Any}(Core._svec_ref(getargs(interp, args, frame)...))
         end
+    elseif @static isdefinedglobal(Core, :_task) && f === Core._task
+        return Some{Any}(Core._task(getargs(interp, args, frame)...))
     elseif f === Core._typebody!
         return Some{Any}(Core._typebody!(getargs(interp, args, frame)...))
     elseif f === Core._typevar
@@ -157,6 +161,14 @@ function maybe_evaluate_builtin(interp::Interpreter, frame::Frame, call_expr::Ex
         return Some{Any}(Core._using(getargs(interp, args, frame)...))
     elseif f === Core.apply_type
         return Some{Any}(Core.apply_type(getargs(interp, args, frame)...))
+    elseif @static isdefinedglobal(Core, :bitsizeof) && f === Core.bitsizeof
+        if nargs == 1
+            return Some{Any}(Core.bitsizeof(lookup(interp, frame, args[2])))
+        else
+            return Some{Any}(Core.bitsizeof(getargs(interp, args, frame)...))
+        end
+    elseif @static isdefinedglobal(Core, :cancellation_point!) && f === Core.cancellation_point!
+        return Some{Any}(Core.cancellation_point!(getargs(interp, args, frame)...))
     elseif f === Core.compilerbarrier
         if nargs == 2
             return Some{Any}(Core.compilerbarrier(lookup(interp, frame, args[2]), lookup(interp, frame, args[3])))
@@ -285,6 +297,12 @@ function maybe_evaluate_builtin(interp::Interpreter, frame::Frame, call_expr::Ex
         end
     elseif f === Core.svec
         return Some{Any}(Core.svec(getargs(interp, args, frame)...))
+    elseif @static isdefinedglobal(Core, :task_result_type) && f === Core.task_result_type
+        if nargs == 1
+            return Some{Any}(Core.task_result_type(lookup(interp, frame, args[2])))
+        else
+            return Some{Any}(Core.task_result_type(getargs(interp, args, frame)...))
+        end
     elseif @static isdefinedglobal(Core, :throw_methoderror) && f === Core.throw_methoderror
         return Some{Any}(Core.throw_methoderror(getargs(interp, args, frame)...))
     elseif f === applicable

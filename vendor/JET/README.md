@@ -4,34 +4,80 @@
 [![](https://codecov.io/gh/aviatesk/JET.jl/branch/master/graph/badge.svg)](https://codecov.io/gh/aviatesk/JET.jl)
 [![](https://img.shields.io/badge/%F0%9F%9B%A9%EF%B8%8F_tested_with-JET.jl-233f9a)](https://github.com/aviatesk/JET.jl)
 
-JET employs Julia's type inference system to detect potential bugs and type instabilities.
+JET employs Julia's type inference system to detect potential bugs and type
+instabilities.
 
 > [!NOTE]
-> **The current latest version, v0.10 series, is only compatible with
-> [Julia v1.12](https://julialang.org/downloads/#current_stable_release) only**
+> This is a JETLS-specific branch of JET based on `master`.
+> The Revise-based package analysis APIs (`report_package`, `test_package`,
+> and `analyze_and_report_package!`) are not available, and JET does not depend
+> on Revise in this branch. File, text, and call analysis and the core analyzer
+> functionality remain available.
+
+> [!NOTE]
+> **The latest release series, v0.12, supports full JET functionality
+> on Julia v1.12 and v1.13 only.**
 >
-> The JET version that works with v1.11 is the [v0.9 series](https://github.com/aviatesk/JET.jl/tree/release-0.9),
-> but please note that bug fixes and new features added in the v0.10 series may not necessarily be available.
+> The JET version that works with Julia v1.11 is the
+> [v0.9 series](https://github.com/aviatesk/JET.jl/tree/release-0.9),
+> but note that bug fixes and new features added in later series are not
+> necessarily available there.
 
 > [!WARNING]
-> Please note that due to JET's tight integration with the Julia compiler, the results
-> presented by JET can vary significantly depending on the version of Julia you are using.
-> Additionally, the implementation of the `Base` module and standard libraries bundled with
-> Julia can also affect the results.
+> Please note that due to JET's tight integration with the Julia compiler,
+> the results presented by JET can vary significantly depending on the version
+> of Julia you are using.
+> Additionally, the implementation of the `Base` module and standard libraries
+> bundled with Julia can also affect the results.
 >
-> Moreover, the Julia compiler's plugin system is still unstable and its interface changes
-> frequently, so each version of JET is compatible with only limited versions of Julia.
-> The Julia package manager will automatically select and install the latest version of JET
-> that is compatible with your Julia version. However, if you are using the nightly version
-> of Julia, please note that a compatible version of JET may not have been released yet,
-> and JET installed via the Julia package manager may not function properly.
+> Moreover, Julia's compiler plugin system is unstable and changes frequently.
+> Each JET release therefore supports full functionality on only a limited set
+> of Julia versions. JET may remain installable on newer Julia versions, but
+> loads empty stubs by default when full functionality is unavailable.
+
+## Julia compatibility and versioning
+
+JET distinguishes installation compatibility from functional compatibility.
+
+- The latest JET series keeps its Julia upper compat bound open. This allows
+  packages with JET as a test dependency to instantiate on Julia pre-releases
+  and nightly builds.
+- Full JET functionality is loaded only on explicitly supported Julia
+  versions. On unsupported future Julia versions, JET loads empty stubs and
+  its analysis APIs throw an explanatory error.
+- JET minor versions are bumped for ordinary semantic-versioning reasons and
+  may also mark a new Julia compatibility generation. Patch releases normally
+  stay within the same compatibility generation.
+- When support for a new Julia minor is released, older JET releases are
+  capped in the official [General](https://github.com/JuliaRegistries/General)
+  registry at the last Julia minor they support. This prevents package
+  resolution and lower-bound testing from selecting an old, incompatible JET.
+
+Test environments can remain instantiable on unsupported Julia versions, and
+JET-specific tests can be skipped at runtime using the `JET_AVAILABLE` constant:
+
+```julia
+using JET
+
+if JET.JET_AVAILABLE
+    include("jet_tests.jl")
+end
+```
+
+<!-- @doc JET.JET_AVAILABLE -->
+
+Setting the `JET_DEV_MODE` preference to `true` forces JET to try loading
+full functionality on an unsupported Julia version.
+
+<!-- @doc JET.JET_DEV_MODE -->
 
 ## Quickstart
-See more commands, options and explanations in [the documentation](https://aviatesk.github.io/JET.jl/dev/).
+See more commands, options, and explanations in
+[the documentation](https://aviatesk.github.io/JET.jl/dev/).
 
 ### Installation
-JET is a standard Julia package.
-So you can just install it via Julia's built-in package manager and use it just like any other package:
+JET is a standard Julia package, so you can install it via Julia's built-in
+package manager and use it just like any other package:
 
 ```julia-repl noeval
 julia> using Pkg; Pkg.add("JET")
@@ -41,20 +87,27 @@ julia> using JET
 ```
 
 > [!IMPORTANT]
-> The package manager will install the latest version of JET available for your Julia version.
-> However, depending on the versions of dependency packages already installed
-> in your environment, a working version of JET may not be installed.
+> The package manager installs a JET version allowed by registry metadata and
+> the compatibility constraints of your environment. This does not necessarily
+> mean full JET functionality is supported on your Julia version; check
+> `JET.JET_AVAILABLE` after loading JET.
 >
-> This can particularly occur when the version of [JuliaInterpreter.jl](https://github.com/JuliaDebug/JuliaInterpreter.jl)
+> Existing dependencies may also prevent a working JET version from being
+> installed.
+> This is particularly likely when the version of
+> [JuliaInterpreter.jl](https://github.com/JuliaDebug/JuliaInterpreter.jl)
 > is incompatible with JET, since JuliaInterpreter is also a dependency of the
 > very commonly used package [Revise.jl](https://github.com/timholy/Revise.jl).
->
 > In such cases, the most reliable way to install and use a working JET is to
-> set up a temporary environment (e.g., `Pkg.temp()`) and use JET there.
+> set up a temporary environment (e.g., `Pkg.activate(; temp=true)`) and use
+> JET there.
 
 ### Detect type instability with `@report_opt`
-Type instabilities can be detected in function calls using the `@report_opt` macro, which works similar to the `@code_warntype` macro.
-Note that, because JET relies on Julia's type inference, if a chain of inference is broken due to dynamic dispatch, then all downstream function calls will be unknown to the compiler, and so JET cannot analyze them.
+Type instabilities can be detected in function calls using the `@report_opt`
+macro, which works similarly to the `@code_warntype` macro.
+Note that, because JET relies on Julia's type inference, it cannot see through
+unresolved dynamic dispatch: callees reached only through such calls are not
+analyzed, so problems inside them go unreported.
 
 ```julia-repl
 julia> @report_opt foldl(+, Any[]; init=0)
@@ -76,7 +129,13 @@ julia> @report_opt foldl(+, Any[]; init=0)
 ```
 
 ### Detect type errors with `@report_call`
-This works best on type stable code, so use `@report_opt` liberally before using `@report_call`.
+While `@report_opt` detects performance problems, `@report_call` detects
+potential bugs: calls that may throw at runtime, such as `MethodError`s.
+Since JET cannot see through unresolved dynamic dispatch, fixing the
+instabilities reported by `@report_opt` first lets `@report_call` cover more
+of your code. That said, `@report_call` is often less noisy than `@report_opt`,
+so it is also perfectly reasonable to start with `@report_call` alone.
+
 ```julia-repl
 julia> @report_call foldl(+, Char[])
 ═════ 2 possible errors found ═════
@@ -100,49 +159,95 @@ julia> @report_call foldl(+, Char[])
 ```
 
 ### Analyze packages with `report_package`
-This looks for all method definitions and analyses function calls based on their signatures. Note that this is less accurate than `@report_call`, because the actual input types cannot be known for generic methods.
+This looks for all method definitions and analyzes function calls based on
+their signatures. Note that this is less accurate than `@report_call`, because
+the actual input types cannot be known for generic methods.
 
 ```julia-repl
 julia> using Pkg; Pkg.activate(; temp=true, io=devnull); Pkg.add("AbstractTrees"; io=devnull);
 
 julia> Pkg.status()
 Status `/private/var/folders/xh/6zzly9vx71v05_y67nm_s9_c0000gn/T/jl_h07K2m/Project.toml`
-  [1520ce14] AbstractTrees v0.4.4
+  [1520ce14] AbstractTrees v0.4.5
 
-julia> report_package("AbstractTrees")
-[ some output elided ]
+julia> using AbstractTrees
+
+julia> report_package(AbstractTrees)
+[toplevel-info] Analyzing top-level definition (progress: 256/256)
+[toplevel-info] Analyzed all top-level definitions (all: 256 | analyzed: 256 | cached: 0 | took: 7.116 sec)
+[ Info: tracking Base
 ═════ 7 possible errors found ═════
-┌ isroot(root::Any, x::Any) @ AbstractTrees ~/.julia/packages/AbstractTrees/EUx8s/src/base.jl:102
+┌ isroot(root::Any, x::Any) @ AbstractTrees ~/.julia/packages/AbstractTrees/Ftf8W/src/base.jl:102
 │ no matching method found `parent(::Any, ::Any)`: AbstractTrees.parent(root::Any, x::Any)
 └────────────────────
-┌ AbstractTrees.IndexNode(tree::Any) @ AbstractTrees ~/.julia/packages/AbstractTrees/EUx8s/src/indexing.jl:117
+┌ StableNode{T}(x::T, ch::Any) where T @ AbstractTrees ~/.julia/packages/AbstractTrees/Ftf8W/src/base.jl:260
+│┌ collect(::Type{StableNode{_A}} where _A, itr::Any) @ Base ./array.jl:641
+││┌ _collect(::Type{StableNode{_A}}, itr::Any, isz::Union{Base.HasLength, Base.HasShape}) where _A @ Base ./array.jl:643
+│││┌ _array_for(::Type{StableNode{_A}} where _A, itr::Base.HasLength, isz::Any) @ Base ./array.jl:673
+││││┌ _similar_shape(itr::Base.HasLength, ::Base.HasLength) @ Base ./array.jl:657
+│││││ no matching method found `length(::Base.HasLength)`: length(itr::Base.HasLength)
+││││└────────────────────
+││││┌ _similar_shape(itr::Base.HasLength, ::Base.HasShape) @ Base ./array.jl:658
+│││││┌ axes(A::Base.HasLength) @ Base ./abstractarray.jl:98
+││││││ no matching method found `size(::Base.HasLength)`: size(A::Base.HasLength)
+│││││└────────────────────
+┌ IndexNode(tree::Any) @ AbstractTrees ~/.julia/packages/AbstractTrees/Ftf8W/src/indexing.jl:117
 │ no matching method found `rootindex(::Any)`: rootindex(tree::Any)
 └────────────────────
-┌ parent(idx::AbstractTrees.IndexNode) @ AbstractTrees ~/.julia/packages/AbstractTrees/EUx8s/src/indexing.jl:127
-│ no matching method found `parentindex(::Any, ::Any)`: pidx = parentindex((idx::AbstractTrees.IndexNode).tree::Any, (idx::AbstractTrees.IndexNode).index::Any)
+┌ parent(idx::IndexNode) @ AbstractTrees ~/.julia/packages/AbstractTrees/Ftf8W/src/indexing.jl:127
+│ no matching method found `parentindex(::Any, ::Any)`: pidx = parentindex((idx::IndexNode).tree::Any, (idx::IndexNode).index::Any)
 └────────────────────
-┌ nextsibling(idx::AbstractTrees.IndexNode) @ AbstractTrees ~/.julia/packages/AbstractTrees/EUx8s/src/indexing.jl:132
-│ no matching method found `nextsiblingindex(::Any, ::Any)`: sidx = nextsiblingindex((idx::AbstractTrees.IndexNode).tree::Any, (idx::AbstractTrees.IndexNode).index::Any)
+┌ nextsibling(idx::IndexNode) @ AbstractTrees ~/.julia/packages/AbstractTrees/Ftf8W/src/indexing.jl:132
+│ no matching method found `nextsiblingindex(::Any, ::Any)`: sidx = nextsiblingindex((idx::IndexNode).tree::Any, (idx::IndexNode).index::Any)
 └────────────────────
-┌ prevsibling(idx::AbstractTrees.IndexNode) @ AbstractTrees ~/.julia/packages/AbstractTrees/EUx8s/src/indexing.jl:137
-│ no matching method found `prevsiblingindex(::Any, ::Any)`: sidx = prevsiblingindex((idx::AbstractTrees.IndexNode).tree::Any, (idx::AbstractTrees.IndexNode).index::Any)
+┌ prevsibling(idx::IndexNode) @ AbstractTrees ~/.julia/packages/AbstractTrees/Ftf8W/src/indexing.jl:137
+│ no matching method found `prevsiblingindex(::Any, ::Any)`: sidx = prevsiblingindex((idx::IndexNode).tree::Any, (idx::IndexNode).index::Any)
 └────────────────────
-┌ prevsibling(csr::AbstractTrees.IndexedCursor) @ AbstractTrees ~/.julia/packages/AbstractTrees/EUx8s/src/cursors.jl:234
-│ no matching method found `getindex(::Nothing, ::Int64)` (1/2 union split): (AbstractTrees.parent(csr::AbstractTrees.IndexedCursor)::Union{Nothing, AbstractTrees.IndexedCursor})[idx::Int64]
+
+julia> report_package(AbstractTrees; target_modules=(AbstractTrees,)) # ignore errors that occur outside the AbstractTrees module context
+[toplevel-info] Skipped analysis for cached definition (256/256)
+[toplevel-info] Analyzed all top-level definitions (all: 256 | analyzed: 0 | cached: 256 | took: 0.036 sec)
+═════ 5 possible errors found ═════
+┌ isroot(root::Any, x::Any) @ AbstractTrees ~/.julia/packages/AbstractTrees/Ftf8W/src/base.jl:102
+│ no matching method found `parent(::Any, ::Any)`: AbstractTrees.parent(root::Any, x::Any)
 └────────────────────
-┌ (::AbstractTrees.var"#17#18")(n::Any) @ AbstractTrees ~/.julia/packages/AbstractTrees/EUx8s/src/iteration.jl:323
-│ no matching method found `parent(::Any, ::Any)`: AbstractTrees.parent(getfield(#self#::AbstractTrees.var"#17#18", :tree)::Any, n::Any)
+┌ IndexNode(tree::Any) @ AbstractTrees ~/.julia/packages/AbstractTrees/Ftf8W/src/indexing.jl:117
+│ no matching method found `rootindex(::Any)`: rootindex(tree::Any)
+└────────────────────
+┌ parent(idx::IndexNode) @ AbstractTrees ~/.julia/packages/AbstractTrees/Ftf8W/src/indexing.jl:127
+│ no matching method found `parentindex(::Any, ::Any)`: pidx = parentindex((idx::IndexNode).tree::Any, (idx::IndexNode).index::Any)
+└────────────────────
+┌ nextsibling(idx::IndexNode) @ AbstractTrees ~/.julia/packages/AbstractTrees/Ftf8W/src/indexing.jl:132
+│ no matching method found `nextsiblingindex(::Any, ::Any)`: sidx = nextsiblingindex((idx::IndexNode).tree::Any, (idx::IndexNode).index::Any)
+└────────────────────
+┌ prevsibling(idx::IndexNode) @ AbstractTrees ~/.julia/packages/AbstractTrees/Ftf8W/src/indexing.jl:137
+│ no matching method found `prevsiblingindex(::Any, ::Any)`: sidx = prevsiblingindex((idx::IndexNode).tree::Any, (idx::IndexNode).index::Any)
 └────────────────────
 ```
 
 ## Limitations
-JET explores the functions you call directly as well as their *inferable* callees. However, if the argument types for a call cannot be inferred, JET does not analyze the callee. Consequently, a report of `No errors detected` does not imply that your entire codebase is free of errors. To increase the confidence in JET's results use `@report_opt` to make sure your code is inferrible.
+JET explores the functions you call directly as well as their *inferable* callees.
+However, if the argument types for a call cannot be inferred, JET does not
+analyze the callee. Consequently, a report of `No errors detected` does not
+imply that your entire codebase is free of errors.
+To increase confidence in JET's results, use `@report_opt` to make sure your
+code is inferable.
 
-JET integrates with [SnoopCompile](https://github.com/timholy/SnoopCompile.jl), and you can sometimes use SnoopCompile to collect the data to perform more comprehensive analyses. SnoopCompile's limitation is that it only collects data for calls that have not been previously inferred, so you must perform this type of analysis in a fresh session.
+<!--
+JET integrates with [SnoopCompile](https://github.com/timholy/SnoopCompile.jl),
+and you can sometimes use SnoopCompile to collect the data to perform more
+comprehensive analyses. SnoopCompile's limitation is that it only collects data
+for calls that have not been previously inferred, so you must perform this type
+of analysis in a fresh session.
 
-See [SnoopCompile's JET-integration documentation](https://timholy.github.io/SnoopCompile.jl/stable/jet/) for further details.
+See [SnoopCompile's JET-integration documentation](https://timholy.github.io/SnoopCompile.jl/stable/jet/)
+for further details.
+-->
 
-## Acknowledgement
-This project started as my undergrad thesis project at Kyoto University, supervised by Prof. Takashi Sakuragawa.
-We were heavily inspired by [ruby/typeprof](https://github.com/ruby/typeprof), an experimental type understanding/checking tool for Ruby.
-The grad thesis about this project is published at <https://github.com/aviatesk/grad-thesis>, but currently, it's only available in Japanese.
+## Acknowledgements
+This project started as my undergraduate thesis at Kyoto University,
+supervised by Prof. Takashi Sakuragawa.
+It was heavily inspired by [ruby/typeprof](https://github.com/ruby/typeprof),
+an experimental type understanding/checking tool for Ruby.
+The thesis is published at <https://github.com/aviatesk/grad-thesis>,
+but currently it's only available in Japanese.

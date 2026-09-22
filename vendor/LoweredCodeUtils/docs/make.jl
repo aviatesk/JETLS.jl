@@ -10,5 +10,5 @@ makedocs(
 
 deploydocs(
     repo = "github.com/JuliaDebug/LoweredCodeUtils.jl.git",
-    push_preview = true
+    push_preview = get(ENV, "GITHUB_ACTOR", "") != "dependabot[bot]"
 )

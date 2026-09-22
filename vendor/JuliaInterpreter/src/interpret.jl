@@ -409,18 +409,19 @@ function evaluate_call!(interp::Interpreter, frame::Frame, fargs::Vector{Any}, e
         fargs = fargs_pruned
     else
         mt = method_table(interp)
-        framecode, lenv = get_call_framecode(fargs, frame.framecode, frame.pc;
-                                             enter_generated, world=frame.world, method_table=mt)
-        if lenv === nothing
-            if isa(framecode, Compiled)
-                return native_call(fargs, frame)
-            end
-            return framecode  # this was a Builtin
+        result = get_call_frameinstance(fargs, frame.framecode, frame.pc;
+            enter_generated, world=frame.world, method_table=mt)
+        if result isa Compiled
+            return native_call(fargs, frame)
+        elseif result isa Some{Any}
+            return result.value  # this was a Builtin
         end
+        instance = result::FrameInstance
+        framecode, lenv = instance.framecode, instance.sparam_vals
     end
     if enter_generated && isa(framecode, FrameCode) && framecode.generator
         # The generator runs on argument *types*. `prepare_call` performs this conversion
-        # but `get_call_framecode` discards the converted arguments, so redo it here
+        # but `get_call_frameinstance` discards the converted arguments, so redo it here
         # (issue #161).
         fargs = Any[_Typeof(a) for a in fargs]
     end
@@ -516,7 +517,7 @@ function extract_method_table(frame::Frame, node::Expr; eval = true)
 end
 
 function do_assignment!(frame::Frame, @nospecialize(lhs), @nospecialize(rhs))
-    code, data = frame.framecode, frame.framedata
+    data = frame.framedata
     if isa(lhs, SSAValue)
         data.ssavalues[lhs.id] = rhs
     elseif isa(lhs, SlotNumber)
@@ -736,7 +737,7 @@ function interpret_toplevel_stmt!(interp::Interpreter, frame::Frame, @nospeciali
 end
 
 function step_expr!(interp::Interpreter, frame::Frame, @nospecialize(node), istoplevel::Bool)
-    pc, code, data = frame.pc, frame.framecode, frame.framedata
+    pc, data = frame.pc, frame.framedata
     # if !is_leaf(frame)
     #     show_stackloc(frame)
     #     @show node
@@ -895,12 +896,15 @@ function step_expr!(interp::Interpreter, frame::Frame, @nospecialize(node), isto
     catch err
         return handle_err(interp, frame, err)
     end
-    @isdefined(rhs) && isa(rhs, BreakpointRef) && return rhs
+    if @isdefined(rhs)
+        isa(rhs, BreakpointRef) && return rhs
+    end
     if isassign(frame, pc)
         # if !@isdefined(rhs)
         #     @show frame node
         # end
         lhs = SSAValue(pc)
+        @assert @isdefined rhs
         do_assignment!(frame, lhs, rhs)
     end
     @assert is_leaf(frame)
@@ -978,10 +982,13 @@ function enter_exception_handler!(data::FrameData, @nospecialize(err))
         # A `rethrow()` re-raise of this frame's in-flight exception (e.g. a `finally`
         # block re-raising during unwinding): native `jl_rethrow` does not push a new
         # entry onto the task's exception stack, so neither do we.
-        _rethrow_inflight[] = nothing
     else
         push!(data.exceptions, err)
     end
+    # Whichever handler lands here consumes the in-flight `rethrow()`. A marker left set
+    # would make a later fresh throw of an identical value (e.g. a singleton exception)
+    # look like a rethrow in the frame whose stack top happens to match.
+    _rethrow_inflight[] = nothing
     pc = @static VERSION >= v"1.11-" ? pop!(data.exception_frames) : data.exception_frames[end] # implicit :leave after https://github.com/JuliaLang/julia/pull/52245
     @static VERSION >= v"1.11-" && pop!(data.exception_scopes)
     return pc

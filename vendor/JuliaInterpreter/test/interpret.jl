@@ -714,6 +714,68 @@ call220(x) = ccall(PTR_220, Cint, (Cint,), x)
     @test (@interpret Base.unsafe_convert(Ptr{Int}, [1,2])) isa Ptr{Int}
 end
 
+identity_parametric_pointer(p::Ptr{Cvoid})::Ptr{Cvoid} = p
+const PARAMETRIC_POINTER = @cfunction(identity_parametric_pointer, Ptr{Cvoid}, (Ptr{Cvoid},))
+ccall_parametric_arg(p::Ptr{T}) where T = ccall(PARAMETRIC_POINTER, Ptr{Cvoid}, (Ptr{T},), p)
+ccall_parametric_arg_ret(p::Ptr{T}) where T = ccall(PARAMETRIC_POINTER, Ptr{T}, (Ptr{T},), p)
+ccall_parametric_ref(r::Ref{T}) where T = ccall(PARAMETRIC_POINTER, Ptr{Cvoid}, (Ref{T},), r)
+ccall_parametric_nested_ret(p::Ptr{T}) where T = ccall(PARAMETRIC_POINTER, Ptr{Array{T}}, (Ptr{T},), p)
+ccall_parametric_nested_arg(p::Ptr{Array{T}}) where T = ccall(PARAMETRIC_POINTER, Ptr{Cvoid}, (Ptr{Array{T}},), p)
+ccall_parametric_nested_ref(r::Ref{Array{T}}) where T = ccall(PARAMETRIC_POINTER, Ptr{Cvoid}, (Ref{Array{T}},), r)
+ccall_parametric_nested_ret_only(p::Ptr{Cvoid}, ::Type{T}) where T = ccall(PARAMETRIC_POINTER, Ptr{Array{T}}, (Ptr{Cvoid},), p)
+
+@testset "compiled ccall with parametric argument types" begin
+    function check_compiled_ccall(f, args...)
+        frame = JuliaInterpreter.enter_call(f, args...)
+        code = frame.framecode.src.code
+        # Result checks alone also pass through the much slower Core.eval fallback.
+        @test !any(stmt -> Meta.isexpr(stmt, :foreigncall), code)
+        @test any(eachindex(code)) do pc
+            Meta.isexpr(code[pc], :call) &&
+                isassigned(frame.framecode.methodtables, pc) &&
+                frame.framecode.methodtables[pc] === Compiled()
+        end
+        @test JuliaInterpreter.finish_and_return!(frame) === f(args...)
+    end
+    for T in (UInt8, UInt32, Nothing), f in (ccall_parametric_arg, ccall_parametric_arg_ret)
+        check_compiled_ccall(f, Ptr{T}(UInt(0x1234))) # The callback returns the pointer without dereferencing it.
+    end
+    # Codegen validates `Ref{T}` argument types against the wrapper's own static parameters,
+    # so the wrapper must not embed the original method's `TypeVar`s (issue #536).
+    for T in (UInt8, UInt32)
+        check_compiled_ccall(ccall_parametric_ref, Ref{T}(0x12))
+    end
+    # Nested `UnionAll`s (`Array{T}` is `Array{T,N} where N`) used to be embedded as values,
+    # leaking the original method's `TypeVar` into the wrapper's types.
+    for T in (UInt8, UInt32)
+        check_compiled_ccall(ccall_parametric_nested_ret, Ptr{T}(UInt(0x1234)))
+        check_compiled_ccall(ccall_parametric_nested_arg, Ptr{Array{T}}(UInt(0x1234)))
+        check_compiled_ccall(ccall_parametric_nested_ref, Ref{Array{T}}(T[1]))
+        # With no parametric argument type this never fell back to `Core.eval`, so the leaked
+        # `TypeVar` in the return type used to be a hard codegen error rather than a slow path.
+        check_compiled_ccall(ccall_parametric_nested_ret_only, Ptr{Cvoid}(UInt(0x1234)), T)
+    end
+end
+
+@testset "parametric_type_to_expr" begin
+    T = TypeVar(:T)
+    # `T` is the only free `TypeVar`: evaluating the expression with `T` bound must reproduce
+    # the type with `T` substituted, i.e. no `TypeVar` object may leak into the expression.
+    reproduce(@nospecialize t) = Core.eval(@__MODULE__,
+        :(let T = UInt8; $(JuliaInterpreter.parametric_type_to_expr(t)); end))
+    @test reproduce(Ptr{T}) == Ptr{UInt8}
+    @test reproduce(Ptr{Array{T}}) == Ptr{Array{UInt8}}                     # nested `UnionAll`
+    @test reproduce(Ref{Tuple{Vararg{T}}}) == Ref{Tuple{Vararg{UInt8}}}     # `Vararg`
+    @test reproduce(Ref{Union{T,Nothing}}) == Ref{Union{UInt8,Nothing}}     # `Union`
+    @test reproduce(Ref{Vector{S} where S<:T}) == Ref{Vector{S} where S<:UInt8} # bounded `where`
+    @test reproduce(Base.Iterators.Stateful{T}) == Base.Iterators.Stateful{UInt8} # nested module
+    # A bound `TypeVar` that happens to be named like the free one must not capture it.
+    T2 = TypeVar(:T)
+    @test reproduce(UnionAll(T2, Ref{Tuple{T,Vector{T2}}})) == (Ref{Tuple{UInt8,Vector{S}}} where S)
+    # Types without free `TypeVar`s are embedded as values.
+    @test JuliaInterpreter.parametric_type_to_expr(Ptr{Vector}) === Ptr{Vector}
+end
+
 # ccall with call to get the pointer
 cf = [@cfunction(fcfun, Int, (Int, Int))]
 function call_cf()
@@ -934,7 +996,8 @@ end
 end
 
 @testset "#466 parametric_type_to_expr" begin
-    @test JuliaInterpreter.parametric_type_to_expr(Array) == :(Core.Array{T, N})
+    # must not choke on a `UnionAll`; without free `TypeVar`s it is embedded as it is
+    @test JuliaInterpreter.parametric_type_to_expr(Array) === Array
 end
 
 @testset "#476 isdefined QuoteNode" begin
@@ -1208,6 +1271,28 @@ JuliaInterpreter.method_table(::OverlayInterpreter) = ex_method_table
     @test cos(42.0) == @interpret interp=OverlayInterpreter() call_func_overlay(42.0)
 end
 
+dispatch_cache_func(x::T) where {T} = x
+dispatch_cache_caller(f, x) = f(x)
+function dispatch_cache_hit_allocations(
+        fargs::Vector{Any}, fc::JuliaInterpreter.FrameCode, idx::Int, world::UInt
+    )
+    JuliaInterpreter.get_call_frameinstance(fargs, fc, idx; world)
+    return @allocated JuliaInterpreter.get_call_frameinstance(fargs, fc, idx; world)
+end
+
+@testset "dispatch cache hits do not allocate" begin
+    w = Base.get_world_counter()
+    m = only(methods(dispatch_cache_caller))
+    fc, _ = JuliaInterpreter.prepare_framecode(
+        m, Tuple{typeof(dispatch_cache_caller), typeof(dispatch_cache_func), Int};
+        world=w)
+    idx = findfirst(JuliaInterpreter.is_call, fc.src.code)::Int
+    fargs = Any[dispatch_cache_func, 1]
+    # Measure a warmed monomorphic hit with concrete arguments, not global-variable boxing.
+    dispatch_cache_hit_allocations(fargs, fc, idx, w)
+    @test dispatch_cache_hit_allocations(fargs, fc, idx, w) == 0
+end
+
 module DispatchWorldTest
     inner(::Number) = 1
     helper() = inner(1)
@@ -1294,12 +1379,30 @@ end
         end
         n
     end
-    JuliaInterpreter.get_call_framecode(Any[GenCacheTest.gfun, 1], fc, idx; enter_generated=false, world=w)
+    fargs = Any[GenCacheTest.gfun, 1]
+    body = JuliaInterpreter.get_call_frameinstance(fargs, fc, idx; enter_generated=false, world=w)
+    @test body isa JuliaInterpreter.FrameInstance
+    @test !body.enter_generated
+    @test !body.framecode.generator
+    @test fc.methodtables[idx].frameinstance === body
     @test chainlength(idx) == 1
-    JuliaInterpreter.get_call_framecode(Any[GenCacheTest.gfun, 1], fc, idx; enter_generated=true, world=w)
+    generator = JuliaInterpreter.get_call_frameinstance(fargs, fc, idx; enter_generated=true, world=w)
+    @test generator isa JuliaInterpreter.FrameInstance
+    @test generator.enter_generated
+    @test generator.framecode.generator
+    @test generator !== body
+    @test fc.methodtables[idx].frameinstance === generator
     @test chainlength(idx) == 2
-    JuliaInterpreter.get_call_framecode(Any[GenCacheTest.gfun, 1], fc, idx; enter_generated=false, world=w)
+    @test JuliaInterpreter.get_call_frameinstance(fargs, fc, idx; enter_generated=false, world=w) === body
     @test chainlength(idx) == 2   # body entry still present: pure cache hit, no third entry
+    code, env = JuliaInterpreter.get_call_framecode(fargs, fc, idx; enter_generated=true, world=w)
+    @test code === generator.framecode
+    @test env === generator.sparam_vals
+    @test JuliaInterpreter.get_call_frameinstance(fargs, fc, idx; enter_generated=true, world=w) === generator
+    code, env = JuliaInterpreter.get_call_framecode(fargs, fc, idx; enter_generated=false, world=w)
+    @test code === body.framecode
+    @test env === body.sparam_vals
+    @test chainlength(idx) == 2
     flavors = let d = fc.methodtables[idx], fl = Bool[]
         while d !== nothing
             fi = d.frameinstance
@@ -1344,14 +1447,16 @@ end
         @test !isempty(fcchain.world_deps)   # the `Base.Math.libm` getproperty-chain resolution
 
         # Rebinding the library const (e.g. after dlclosing one library and dlopening another)
-        # invalidates the framecode; the rebuild resolves the new value, so the call fails on the
-        # bogus path instead of silently calling into the stale library.
+        # invalidates the framecode; a rebuild in a world that sees the new value resolves it, so
+        # the call fails on the bogus path instead of silently calling into the stale library.
+        # (In worlds predating the rebinding — like this testset's task world — the old value is
+        # still the correct resolution, matching compiled-code semantics.)
         Core.eval(WrapperDepTest, :(const MYLIB = "/nonexistent_library_path"))
         w2 = Base.get_world_counter()
         @test !JuliaInterpreter.framecode_valid_world(fc, w2)
         fc2, _ = JuliaInterpreter.prepare_framecode(mlib, Tuple{typeof(WrapperDepTest.powf_constlib), Float32, Float32}; world=w2)
         @test fc2 !== fc
-        @test_throws "nonexistent_library_path" @interpret(WrapperDepTest.powf_constlib(2f0, 3f0))
+        @test_throws "nonexistent_library_path" @interpret world=w2 WrapperDepTest.powf_constlib(2f0, 3f0)
         # An unrelated rebinding must not invalidate the chain-library framecode.
         @test JuliaInterpreter.framecode_valid_world(fcchain, w2)
 
@@ -1370,6 +1475,53 @@ end
         @test (@interpret world=w3 WrapperDepTest.llvmadd(Int32(30), Int32(12))) == 18
     end
 end
+
+module ImportedConstSource
+    const XI = 1
+    const XU = 1
+    const LIB = Base.Math.libm
+end
+module ImportedConstConsumer
+    import ..ImportedConstSource: XI, LIB
+    using ..ImportedConstSource: XU
+    fi() = XI
+    fu() = XU
+    powf_importedlib(a, b) = ccall(("powf", LIB), Float32, (Float32, Float32), a, b)
+end
+
+@static if JuliaInterpreter.isbindingresolved_deprecated
+@testset "imported const invalidation" begin
+    # Explicitly imported consts (`import M: x` / `using M: x`) are never folded: the
+    # importing module's binding partition delegates to the source binding and is NOT split
+    # when the source const is rebound (only the source partition is), so a folded value
+    # could go stale without invalidating the framecode. The `GlobalRef` is left in place
+    # and resolved per execution in the frame's world, which is correct in every world.
+    for (f, src_name) in ((ImportedConstConsumer.fi, :XI), (ImportedConstConsumer.fu, :XU))
+        m = only(methods(f))
+        w = Base.get_world_counter()
+        fc, _ = JuliaInterpreter.prepare_framecode(m, Tuple{typeof(f)}; world=w)
+        @test any(x -> isa(x, GlobalRef), fc.src.code)   # not folded
+        Core.eval(ImportedConstSource, :(const $src_name = 2))
+        w2 = Base.get_world_counter()
+        @test JuliaInterpreter.framecode_valid_world(fc, w2)  # nothing baked, still valid
+        @test (@interpret world=w2 f()) == 2  # matches native execution in w2
+        @test (@interpret world=w f()) == 1   # pre-rebinding world sees the old value
+    end
+
+    # KNOWN HOLE: the compiled-ccall wrapper path *bakes* values at build time regardless of
+    # binding kind, and `record_world_dep!` records only the importing partition, which
+    # survives the source rebinding — so the framecode wrongly stays valid. Whether importer
+    # partitions should be split upstream, or the delegation chain recorded in
+    # `record_world_dep!`, is still under discussion.
+    mlib = only(methods(ImportedConstConsumer.powf_importedlib))
+    w = Base.get_world_counter()
+    @test (@interpret world=w ImportedConstConsumer.powf_importedlib(2f0, 3f0)) == 8f0
+    fc, _ = JuliaInterpreter.prepare_framecode(mlib, Tuple{typeof(ImportedConstConsumer.powf_importedlib), Float32, Float32}; world=w)
+    Core.eval(ImportedConstSource, :(const LIB = "/nonexistent_library_path"))
+    w2 = Base.get_world_counter()
+    @test_broken !JuliaInterpreter.framecode_valid_world(fc, w2)
+end
+end # @static if
 
 @testset "Empty varargs are visible to locals" begin
     empty_vararg(x...) = x
@@ -1659,6 +1811,25 @@ end
     end
     @test (@interpret rethrow_other()) == rethrow_other() ==
           (ErrorException("B"), ErrorException("B"))
+end
+
+@testset "rethrow marker is consumed by the handler that catches it" begin
+    # A `rethrow()` caught in another frame left the in-flight marker set, so a later
+    # fresh throw of an identical value was taken for a rethrow and not recorded.
+    consume_rethrow() = try; rethrow(); catch; end
+    function marker_leak_count()
+        try
+            throw(DivideError())
+        catch
+            consume_rethrow()
+            try
+                throw(DivideError())
+            catch
+                length(Base.current_exceptions())
+            end
+        end
+    end
+    @test (@interpret marker_leak_count()) == marker_leak_count() == 2
 end
 
 @testset "is_global_ref_egal tolerates bindings newer than the world" begin

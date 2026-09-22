@@ -79,7 +79,7 @@ julia> lwr = Meta.lower(Main, ex)
 and then extract the edges:
 
 ```julia
-julia> edges = CodeEdges(lwr.args[1])
+julia> edges = CodeEdges(Main, lwr.args[1])
 CodeEdges:
   s: assigned on [1, 16], depends on [15], and used by [12, 15]
   k: assigned on [2, 18], depends on [17], and used by [11, 17]
@@ -188,7 +188,7 @@ Suppose we want to evaluate just the lines needed to compute `s`.
 We can find out which lines these are with
 
 ```julia
-julia> isrequired = lines_required(:s, lwr.args[1], edges)
+julia> isrequired = lines_required(GlobalRef(Main, :s), lwr.args[1], edges)
 24-element BitArray{1}:
  1
  0

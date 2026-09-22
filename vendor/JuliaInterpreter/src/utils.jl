@@ -82,9 +82,9 @@ end
 
 separate_kwargs(args...; kwargs...) = (args, values(kwargs))
 
-pc_expr(src::CodeInfo, pc) = src.code[pc]
-pc_expr(framecode::FrameCode, pc) = pc_expr(framecode.src, pc)
-pc_expr(frame::Frame, pc) = pc_expr(frame.framecode, pc)
+pc_expr(src::CodeInfo, pc::Int) = src.code[pc]
+pc_expr(framecode::FrameCode, pc::Int) = pc_expr(framecode.src, pc)
+pc_expr(frame::Frame, pc::Int) = pc_expr(frame.framecode, pc)
 pc_expr(frame::Frame) = pc_expr(frame, frame.pc)
 
 function find_used(code::CodeInfo)
@@ -138,18 +138,6 @@ function wrap_params(expr, sparams::Vector{Symbol})
         hasarg(isidentical(p), expr.args) && push!(params, p)
     end
     return isempty(params) ? expr : Expr(:where, expr, params...)
-end
-
-function scopename(tn::TypeName)
-    modpath = Base.fullname(tn.module)
-    if isa(modpath, Tuple{Symbol})
-        return Expr(:., modpath[1], QuoteNode(tn.name))
-    end
-    ex = Expr(:., modpath[end-1], QuoteNode(modpath[end]))
-    for i = length(modpath)-2:-1:1
-        ex = Expr(:., modpath[i], ex)
-    end
-    return Expr(:., ex, QuoteNode(tn.name))
 end
 
 ## Predicates
@@ -505,7 +493,6 @@ function codelocation(code::CodeInfo, idx::Int)
     idx′ = idx - 1
     # if zero, look behind until we find where we last might have had a line
     while idx′ > 0
-        ex = code.code[idx′]
         codeloc = codelocs(code, idx′)
         codeloc == 0 || return codeloc
         idx′ -= 1
@@ -599,12 +586,6 @@ function framecode_lines(src::CodeInfo)
         push!(lines, chomp(String(take!(buf))))
     end
     return lines
-    show(buf, src)
-    code = filter!(split(String(take!(buf)), '\n')) do line
-        !(line == "CodeInfo(" || line == ")" || isempty(line) || occursin("within `", line))
-    end
-    code .= replace.(code, Ref(r"\$\(QuoteNode\((.+?)\)\)" => s"\1"))
-    return code
 end
 framecode_lines(framecode::FrameCode) = framecode_lines(framecode.src)
 
@@ -799,7 +780,7 @@ function eval_code(frame::Frame, expr::Expr)
     used_symbols = Set{Symbol}((Symbol("#self#"),))
     extract_usage!(used_symbols, expr)
     # see https://github.com/JuliaLang/julia/issues/31255 for the Symbol("") check
-    vars = filter(v -> v.name != Symbol("") && v.name in used_symbols, locals(frame))
+    vars = filter(v -> v.name !== Symbol("") && v.name in used_symbols, locals(frame))
     defined_ssa    = findall(i -> isassigned(data.ssavalues, i) && Symbol("%$i")  in used_symbols, 1:length(data.ssavalues))
     defined_locals = findall(i-> data.locals[i] isa Some        && Symbol("@_$i") in used_symbols, 1:length(data.locals))
     res = gensym()

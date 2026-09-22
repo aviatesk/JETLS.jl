@@ -20,7 +20,7 @@ See the docstring for `set_preferences!()` for the full details of how to set pr
 Preferences that are accessed during compilation are automatically marked as compile-time preferences, and any change recorded to these preferences will cause the Julia compiler to recompile any cached precompilation `.ji` files for that module.
 This allows preferences to be used to influence code generation.
 When your package sets a compile-time preference, it is usually best to suggest to the user that they should restart Julia, to allow recompilation to occur.
-It is possible to disable this marking by passing `disable_invalidation=true` to `load_preference()`.
+It is possible to opt out of this by passing `force_compiletime_default=true` to `load_preference()`, which will always return the default value during precompilation instead of the actual preference value.
 
 Note that the package can be installed on Julia v1.0+ but is only functional on Julia v1.6+.
 

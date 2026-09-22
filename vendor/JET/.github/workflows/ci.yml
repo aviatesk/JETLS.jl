@@ -10,6 +10,7 @@ jobs:
   arch-test:
     name: Julia ${{ matrix.version }} / ${{ matrix.os }} ${{ matrix.arch }}
     runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.version == 'nightly' }}
     strategy:
       fail-fast: false # don't stop CI even when one of them fails
       matrix:
@@ -20,18 +21,18 @@ jobs:
           - version: "1.12" # minimum version supported
             os: ubuntu-latest
             arch: x64
-          # - version: "1.13-nightly" # next release
-          #   os: ubuntu-latest
-          #   arch: x64
+          - version: "pre" # next release
+            os: ubuntu-latest
+            arch: x64
           - version: "nightly" # nightly
             os: ubuntu-latest
             arch: x64
           - version: "1" # x86 ubuntu
             os: ubuntu-latest
             arch: x86
-          - version: "1" # macos
+          - version: "1" # macOS
             os: macos-latest
-            arch: x64
+            arch: default
           - version: "1" # x86 windows
             os: windows-latest
             arch: x64
@@ -39,12 +40,12 @@ jobs:
             os: windows-latest
             arch: x86
     steps:
-      - uses: actions/checkout@v5
-      - uses: julia-actions/setup-julia@v2
+      - uses: actions/checkout@v7
+      - uses: julia-actions/setup-julia@v3
         with:
           version: ${{ matrix.version }}
           arch: ${{ matrix.arch }}
-      - uses: julia-actions/cache@v2
+      - uses: julia-actions/cache@v3
       - name: set preferences  # needs to happen before precompile_workload
         working-directory: .
         run: |
@@ -53,7 +54,7 @@ jobs:
       - uses: julia-actions/julia-buildpkg@latest
       - uses: julia-actions/julia-runtest@latest
       - uses: julia-actions/julia-processcoverage@v1
-      - uses: codecov/codecov-action@v5
+      - uses: codecov/codecov-action@v7
 
   preference-test:
     name: JET_DEV_MODE=${{ matrix.JET_DEV_MODE }} / use_fixed_world=${{ matrix.use_fixed_world }} / precompile_workload=${{ matrix.precompile_workload }}
@@ -65,12 +66,12 @@ jobs:
         use_fixed_world: [true, false]
         precompile_workload: [true, false]
     steps:
-      - uses: actions/checkout@v5
-      - uses: julia-actions/setup-julia@v2
+      - uses: actions/checkout@v7
+      - uses: julia-actions/setup-julia@v3
         with:
           version: "1"
           arch: x64
-      - uses: julia-actions/cache@v2
+      - uses: julia-actions/cache@v3
       - name: set preferences  # needs to happen before precompile_workload
         working-directory: .
         run: |
@@ -81,16 +82,36 @@ jobs:
       - uses: julia-actions/julia-buildpkg@latest
       - uses: julia-actions/julia-runtest@latest
       - uses: julia-actions/julia-processcoverage@v1
-      - uses: codecov/codecov-action@v5
+      - uses: codecov/codecov-action@v7
+
+  multithreading-test:
+    name: JULIA_NUM_THREADS=4,2
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: julia-actions/setup-julia@v3
+        with:
+          version: "1"
+          arch: x64
+      - uses: julia-actions/cache@v3
+      - name: set preferences
+        working-directory: .
+        run: |
+          echo '[JET]
+          JET_DEV_MODE = true' >  LocalPreferences.toml
+      - uses: julia-actions/julia-buildpkg@latest
+      - uses: julia-actions/julia-runtest@latest
+        env:
+          JULIA_NUM_THREADS: "4,2"
 
   empty-loading-test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-      - uses: julia-actions/setup-julia@v2
+      - uses: actions/checkout@v7
+      - uses: julia-actions/setup-julia@v3
         with:
           version: "nightly"
           arch: x64
-      - uses: julia-actions/cache@v2
+      - uses: julia-actions/cache@v3
       - uses: julia-actions/julia-buildpkg@latest
       - uses: julia-actions/julia-runtest@latest

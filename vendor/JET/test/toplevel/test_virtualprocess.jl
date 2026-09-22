@@ -481,6 +481,24 @@ end
     end
 end
 
+@testset "concretized call reports" begin
+    for _ in 1:2
+        let res = @analyze_toplevel analyze_from_definitions = true begin
+                struct A{T}
+                    x::T
+                    A{T}(x) where T = new{T}(x)
+                end
+            end
+            @test isempty(res.res.toplevel_error_reports)
+            @test isempty(res.res.inference_error_reports)
+        end
+        # Suppressing the top-level call must not erase the cached callee reports.
+        let res = report_call((x, name) -> getproperty(x, name), (Bool, Symbol))
+            @test only(get_reports_with_test(res)) isa BuiltinErrorReport
+        end
+    end
+end
+
 @testset "macro expansions" begin
     let
         vmod, res = @analyze_toplevel2 begin
@@ -1131,6 +1149,24 @@ end
         @test er.file == filename && er.line == 1 # L1
     end
 
+    # JET's own signals are not caught by `try`/`catch` in interpreted callees
+    let context = gen_virtual_module()
+        res = report_text("""
+            x = rand(Int)
+            function g()
+                try
+                    return x
+                catch
+                    return 0
+                end
+            end
+            struct S <: g() end
+            """; context, virtualize=false)
+        report = only(res.res.toplevel_error_reports)
+        @test report isa MissingConcretizationErrorReport
+        @test !(@invokelatest isdefinedglobal(context, :S))
+    end
+
     @testset "stacktrace scrubbing" begin
         # scrub internal frames until (errored) user macro
         mktemp() do filename, io
@@ -1145,6 +1181,30 @@ end
             sf = only(er.st)
             @test sf.file === Symbol(filename) && sf.line == 1
             @test sf.func === Symbol("@badmacro")
+        end
+
+        @testset "documented macro expansion errors" begin
+            for source in (raw"""
+                    macro badmacro(s) throw(s) end
+                    "doc"
+                    @badmacro "hi"
+                    """, raw"""
+                    macro badmacro(s) throw(s) end
+                    "$(@badmacro "hi")"
+                    f() = nothing
+                    """)
+                mktemp() do filename, io
+                    res = report_text(source, filename)
+                    er = only(res.res.toplevel_error_reports)
+                    @test er isa MacroExpansionErrorReport
+                    @test er.err == "hi"
+                    @test er.file == filename && er.line == 2
+                    @test length(er.st) == 1
+                    sf = only(er.st)
+                    @test sf.file === Symbol(filename) && sf.line == 1
+                    @test sf.func === Symbol("@badmacro")
+                end
+            end
         end
 
         # TODO add test for `eval_with_err_handling` and `lower_with_err_handling`
@@ -1163,8 +1223,7 @@ end
             @test isempty(er.st)
         end
 
-        # errors from user functions (i.e. those from `Base.invoke_in_world(frame.world, f, args...)`
-        # in `JuliaInterpreter.evaluate_call!(::ConcreteInterpreter, ::Frame, ...)`)
+        # errors from interpreted user functions carry the interpreted frames
         mktemp() do filename, io
             res = report_text("""
                 foo() = throw("don't call me, pal") # L1
@@ -1176,7 +1235,311 @@ end
             @test er.err == "don't call me, pal"
             @test er.file == filename && er.line == 2
             sf = only(er.st)
+            @test sf.func === :foo
             @test sf.file === Symbol(filename) && sf.line == 1
+        end
+        mktemp() do filename, io
+            res = report_text("""
+                inner() = throw("deep")  # L1
+                outer() = inner()        # L2
+                struct A <: outer() end  # L3
+            """, filename)
+            er = only(res.res.toplevel_error_reports)
+            @test er isa ActualErrorWrapped
+            @test er.err == "deep"
+            @test er.file == filename && er.line == 3
+            @test length(er.st) == 2
+            @test er.st[1].func === :inner && er.st[1].line == 1
+            @test er.st[2].func === :outer && er.st[2].line == 2
+            @test all(sf -> sf.file === Symbol(filename), er.st)
+        end
+
+        @testset "captured exception stack lifecycle" begin
+            mktemp() do filename, io
+                res = report_text("""
+                    firstcall() = throw(DivideError())
+                    secondcall() = throw(DivideError())
+                    function f()
+                        try
+                            firstcall()
+                        catch
+                        end
+                        secondcall()
+                    end
+                    struct A <: f() end
+                    """, filename)
+                er = only(res.res.toplevel_error_reports)
+                @test er isa ActualErrorWrapped
+                @test er.err isa DivideError
+                @test er.file == filename && er.line == 10
+                @test [(sf.func, sf.line) for sf in er.st] == [(:secondcall, 2), (:f, 8)]
+                @test all(sf -> sf.file === Symbol(filename), er.st)
+            end
+
+            @testset "throw from catch: $action" for (action, errtype, stack) in (
+                    ("throw(err)", DivideError, [(:f, 7)]),
+                    ("rethrow()", DivideError, [(:firstcall, 1), (:f, 5)]),
+                    ("propagate()", DivideError, [(:firstcall, 1), (:f, 5)]),
+                    ("rethrow(ArgumentError(\"replacement\"))", ArgumentError, [(:firstcall, 1), (:f, 5)]),
+                )
+                mktemp() do filename, _
+                    res = report_text("""
+                        firstcall() = throw(DivideError())
+                        propagate() = rethrow()
+                        function f()
+                            try
+                                firstcall()
+                            catch err
+                                $action
+                            end
+                        end
+                        struct A <: f() end
+                        """, filename)
+                    er = only(res.res.toplevel_error_reports)
+                    @test er isa ActualErrorWrapped
+                    @test er.err isa errtype
+                    @test er.file == filename && er.line == 10
+                    @test [(sf.func, sf.line) for sf in er.st] == stack
+                    @test all(sf -> sf.file === Symbol(filename), er.st)
+                end
+            end
+
+            @testset "nested catch: $inner_error" for inner_error in (
+                    "DivideError()",
+                    "ArgumentError(\"inner\")",
+                )
+                mktemp() do filename, _
+                    res = report_text("""
+                        firstcall() = throw(DivideError())
+                        secondcall() = throw($inner_error)
+                        function f()
+                            try
+                                firstcall()
+                            catch
+                                try
+                                    secondcall()
+                                catch
+                                end
+                                rethrow()
+                            end
+                        end
+                        struct A <: f() end
+                        """, filename)
+                    er = only(res.res.toplevel_error_reports)
+                    @test er isa ActualErrorWrapped
+                    @test er.err isa DivideError
+                    @test er.file == filename && er.line == 14
+                    @test [(sf.func, sf.line) for sf in er.st] == [(:firstcall, 1), (:f, 5)]
+                    @test all(sf -> sf.file === Symbol(filename), er.st)
+                end
+            end
+
+            @testset "helper-caught rethrow preserves outer origin" begin
+                mktemp() do filename, _
+                    res = report_text("""
+                        firstcall() = throw(DivideError())
+                        secondcall() = throw(DivideError())
+                        function consume_rethrow()
+                            try
+                                rethrow()
+                            catch
+                            end
+                        end
+                        function f()
+                            try
+                                firstcall()
+                            catch
+                                consume_rethrow()
+                                try
+                                    secondcall()
+                                catch
+                                end
+                                rethrow()
+                            end
+                        end
+                        struct A <: f() end
+                        """, filename)
+                    er = only(res.res.toplevel_error_reports)
+                    @test er isa ActualErrorWrapped
+                    @test er.err isa DivideError
+                    @test er.file == filename && er.line == 21
+                    @test [(sf.func, sf.line) for sf in er.st] == [(:firstcall, 1), (:f, 11)]
+                    @test all(sf -> sf.file === Symbol(filename), er.st)
+                end
+            end
+
+            @testset "return from catch before frame reuse" begin
+                mktemp() do filename, _
+                    res = report_text("""
+                        firstcall() = throw(DivideError())
+                        secondcall() = throw(DivideError())
+                        function swallow()
+                            try
+                                firstcall()
+                            catch
+                                return nothing
+                            end
+                        end
+                        function f()
+                            swallow()
+                            secondcall()
+                        end
+                        struct A <: f() end
+                        """, filename)
+                    er = only(res.res.toplevel_error_reports)
+                    @test er isa ActualErrorWrapped
+                    @test er.err isa DivideError
+                    @test er.file == filename && er.line == 14
+                    @test [(sf.func, sf.line) for sf in er.st] == [(:secondcall, 2), (:f, 12)]
+                    @test all(sf -> sf.file === Symbol(filename), er.st)
+                end
+            end
+
+            @testset "finally" begin
+                # an error passing through `finally` keeps its origin
+                mktemp() do filename, _
+                    res = report_text("""
+                        firstcall() = throw(DivideError())  # L1
+                        function f()
+                            try
+                                firstcall()                  # L4
+                            finally
+                                nothing
+                            end
+                        end
+                        struct A <: f() end                  # L9
+                        """, filename)
+                    er = only(res.res.toplevel_error_reports)
+                    @test er isa ActualErrorWrapped
+                    @test er.err isa DivideError
+                    @test er.file == filename && er.line == 9
+                    @test [(sf.func, sf.line) for sf in er.st] == [(:firstcall, 1), (:f, 4)]
+                    @test all(sf -> sf.file === Symbol(filename), er.st)
+                end
+                # a throw inside `finally` replaces the error
+                mktemp() do filename, _
+                    res = report_text("""
+                        firstcall() = throw(DivideError())
+                        function f()
+                            try
+                                firstcall()
+                            finally
+                                throw(ArgumentError("from finally"))  # L6
+                            end
+                        end
+                        struct A <: f() end                           # L9
+                        """, filename)
+                    er = only(res.res.toplevel_error_reports)
+                    @test er isa ActualErrorWrapped
+                    @test er.err isa ArgumentError
+                    @test er.file == filename && er.line == 9
+                    @test [(sf.func, sf.line) for sf in er.st] == [(:f, 6)]
+                end
+                # the do-block resource pattern; closure names vary across Julia versions
+                mktemp() do filename, _
+                    res = report_text("""
+                        firstcall() = throw(DivideError())  # L1
+                        function withresource(g)
+                            r = Ref(0)
+                            try
+                                return g(r)                  # L5
+                            finally
+                                r[] = -1
+                            end
+                        end
+                        function f()
+                            withresource() do r              # L11
+                                firstcall()                  # L12
+                            end
+                        end
+                        struct A <: f() end                  # L15
+                        """, filename)
+                    er = only(res.res.toplevel_error_reports)
+                    @test er isa ActualErrorWrapped
+                    @test er.err isa DivideError
+                    @test er.file == filename && er.line == 15
+                    st = [(sf.func, sf.line) for sf in er.st]
+                    @test length(st) == 4
+                    @test st[1] == (:firstcall, 1)
+                    @test st[2][2] == 12
+                    @test st[3] == (:withresource, 5)
+                    @test st[4] == (:f, 11)
+                    @test all(sf -> sf.file === Symbol(filename), er.st)
+                end
+            end
+        end
+
+        # frames of natively executed user code come before the interpreted frames
+        mktemp() do filename, io
+            res = report_text("""
+                bad() = throw("native")           # L1
+                run_native() = invokelatest(bad)  # L2
+                struct A <: run_native() end      # L3
+            """, filename)
+            er = only(res.res.toplevel_error_reports)
+            @test er isa ActualErrorWrapped
+            @test er.err == "native"
+            @test er.file == filename && er.line == 3
+            @test er.st[1].func === :bad && er.st[1].line == 1
+            @test er.st[end].func === :run_native && er.st[end].line == 2
+        end
+
+        # the native origin survives the handlers of interpreted callees, whose re-raise
+        # replaces the native backtrace
+        @testset "native origin through $kind" for (kind, handler) in (
+                ("finally", "finally\n nothing"),
+                ("rethrow", "catch\n rethrow()"),
+            )
+            mktemp() do filename, _
+                res = report_text("""
+                    nativebad() = throw(DivideError())              # L1
+                    function f()
+                        try
+                            Core.eval(@__MODULE__, :(nativebad()))  # L4
+                        $handler
+                        end
+                    end
+                    struct A <: f() end
+                    """, filename)
+                er = only(res.res.toplevel_error_reports)
+                @test er isa ActualErrorWrapped
+                @test er.err isa DivideError
+                st = [(sf.func, sf.line) for sf in er.st]
+                @test st[1] == (:nativebad, 1)
+                @test st[end] == (:f, 4)
+                @test er.st[1].file === Symbol(filename)
+                @test er.st[end].file === Symbol(filename)
+            end
+        end
+
+        # callees of statements selected by `concretization_patterns` run natively, so
+        # their errors carry native frames (which have an instruction pointer)
+        mktemp() do filename, io
+            res = report_text("""
+                bad() = throw("native")  # L1
+                struct A <: bad() end    # L2
+            """, filename; concretization_patterns=[:x_])
+            er = only(res.res.toplevel_error_reports)
+            @test er isa ActualErrorWrapped
+            @test er.err == "native"
+            @test er.file == filename && er.line == 2
+            sf = only(er.st)
+            @test sf.func === :bad && sf.file === Symbol(filename) && sf.line == 1
+            @test sf.pointer != 0
+        end
+
+        # `try`/`catch` in interpreted callees works as usual
+        let res = @analyze_toplevel begin
+                function guarded()
+                    try
+                        error("boom")
+                    catch
+                        return Integer
+                    end
+                end
+                struct A <: guarded() end
+            end
+            @test isempty(res.res.toplevel_error_reports)
         end
     end
 end
@@ -1240,6 +1603,125 @@ end
         r = only(res.res.inference_error_reports)
         @test r isa UndefVarErrorReport
         @test r.var isa GlobalRef && r.var.name === :foo
+    end
+
+    # Julia 1.13 wraps documented definitions in `if true ... end`, which must neither
+    # make them look conditional nor hide them from `concretization_patterns`
+    let res = @analyze_toplevel begin
+            "doc for x"
+            x = 1
+            "doc for getx"
+            getx() = x
+            getx()
+        end
+        @test isempty(res.res.toplevel_error_reports)
+        # Ignore the unrelated false positive from Base.active_module().
+        reports = filter(res.res.inference_error_reports) do r
+            !is_global_undef_var(r, Base, :active_repl)
+        end
+        @test isempty(reports)
+    end
+
+    @testset "documented binding concretization" begin
+        vmod, res = @analyze_toplevel2 concretization_patterns = [:(const foo = Dict())] begin
+            "doc for foo"
+            const foo = Dict()
+        end
+        @test isempty(res.res.toplevel_error_reports)
+        @test isconcrete(res, vmod, :foo)
+        foo = @invokelatest vmod.foo
+        @test foo isa Dict
+        foo[:key] = 42
+        @test foo[:key] == 42
+    end
+
+    @testset "macro-generated field documentation" begin
+        vmod = gen_virtual_module()
+        res = report_text(raw"""
+            macro make_type()
+                quote
+                    if true
+                        val = "field documentation"
+                    end
+                    Core.@__doc__ struct $(esc(:S))
+                        "$val"
+                        x
+                    end
+                end
+            end
+            "doc for S"
+            @make_type
+            """; context=vmod, virtualize=false, concretization_patterns=[:x_])
+        @test isempty(res.res.toplevel_error_reports)
+        @test isempty(res.res.inference_error_reports)
+        @test isconcrete(res, vmod, :S)
+        docs = @invokelatest Base.Docs.meta(vmod)
+        doc = docs[Base.Docs.Binding(vmod, :S)].docs[Union{}]
+        @test only(doc.text) == "doc for S"
+        @test doc.data[:fields][:x] == "field documentation"
+    end
+
+    @testset "documented macros expand once" begin
+        vmod, res = @analyze_toplevel2 concretization_patterns = [:x_] begin
+            const outer_expansions = Ref(0)
+            const inner_expansions = Ref(0)
+            macro decorate(ex::Expr)
+                outer_expansions[] += 1
+                return esc(ex)
+            end
+            macro body()
+                inner_expansions[] += 1
+                return :(42)
+            end
+            "doc for f"
+            @decorate f() = @body
+        end
+        @test isempty(res.res.toplevel_error_reports)
+        @test isempty(res.res.inference_error_reports)
+        @test (@invokelatest vmod.outer_expansions[]) == 1
+        @test (@invokelatest vmod.inner_expansions[]) == 1
+        @test (@invokelatest vmod.f()) == 42
+        docs = @invokelatest Base.Docs.meta(vmod)
+        doc = docs[Base.Docs.Binding(vmod, :f)].docs[Tuple{}]
+        @test only(doc.text) == "doc for f"
+    end
+
+    @testset "documented macro literals" begin
+        vmod, res = @analyze_toplevel2 concretization_patterns = [:x_] begin
+            "doc for owner"
+            owner() = @__MODULE__
+            "doc for mod"
+            const mod = @__MODULE__
+        end
+        @test isempty(res.res.toplevel_error_reports)
+        @test isempty(res.res.inference_error_reports)
+        @test (@invokelatest vmod.owner()) === vmod
+        @test (@invokelatest vmod.mod) === vmod
+    end
+
+    @testset "documented macro returning nothing" begin
+        vmod = gen_virtual_module()
+        Core.eval(vmod, :(macro no_definition(); nothing; end))
+        ex = Meta.parse("\"doc\"\n@no_definition")
+        expanded = @invokelatest JET.macroexpand_doc(vmod, ex)
+        expected = @invokelatest macroexpand(vmod, ex)
+        @test expanded !== nothing
+        @test expanded == expected
+    end
+
+    @testset "documentation-only method signature" begin
+        vmod, res = @analyze_toplevel2 concretization_patterns = [:x_] begin
+            const calls = Ref(0)
+            f() = (calls[] += 1; nothing)
+            "doc for f"
+            f()
+        end
+        @test isempty(res.res.toplevel_error_reports)
+        @test isempty(res.res.inference_error_reports)
+        @test (@invokelatest vmod.calls[]) == 0
+        docs = @invokelatest Base.Docs.meta(vmod)
+        doc = docs[Base.Docs.Binding(vmod, :f)].docs[Tuple{}]
+        @test only(doc.text) == "doc for f"
     end
 end
 
@@ -1431,9 +1913,9 @@ end
         end
         @test length(res.res.inference_error_reports) ≥ 1
         @test_broken any(res.res.inference_error_reports) do r # report analyzed from `foo`
-            is_global_undef_var(r, :b) && length(err.vst) == 1
+            is_global_undef_var(r, :b) && length(r.vst) == 1
         end &&       any(res.res.inference_error_reports) do r # report analyzed from `bar`
-            is_global_undef_var(r, :b) && length(err.vst) == 2
+            is_global_undef_var(r, :b) && length(r.vst) == 2
         end
     end
 
@@ -1538,6 +2020,17 @@ end
     end # @static if
 end
 
+mutable struct ConcretizationDelayLogger <: IO
+    delayed::Bool
+end
+function Base.unsafe_write(io::ConcretizationDelayLogger, p::Ptr{UInt8}, n::UInt)
+    if occursin("concretization plan", unsafe_string(p, n))
+        sleep(2.0)
+        io.delayed = true
+    end
+    return n
+end
+
 @testset "top-level statement selection" begin
     # simplest example
     let # global function
@@ -1622,6 +2115,291 @@ end
             read(path, String)
         end
         @test isempty(s)
+    end
+
+    @testset "untyped global declarations" begin
+        isdecl(stmt, stmts) = JET.isexpr(stmt, :globaldecl, 1) ||
+            JET.is_known_call(stmt, :declare_global, stmts)
+
+        # declarations under control flow are materialized, hoisted ones are selected
+        let mod = Module()
+            Core.eval(mod, :(global nums::Vector{String}))
+            src = only(Meta.lower(mod, quote
+                while true
+                    global nums = String[]
+                end
+            end).args)::CodeInfo
+            plan = JET.ConcretizationPlan()
+            JET.select_statements!(plan, mod, src)
+            cfg = JET.CC.compute_basic_blocks(src.code)
+            postdomtree = JET.CC.construct_postdomtree(cfg.blocks)
+            unconditional(i) = JET.CC.postdominates(postdomtree, JET.CC.block_for_inst(cfg, i), 1)
+            found_decl = found_latestworld = false
+            for (i, stmt) in enumerate(src.code)
+                if isdecl(stmt, src.code)
+                    found_decl = true
+                    @test plan.selected[i] == unconditional(i)
+                    @test plan.materialized[i] == !unconditional(i)
+                elseif JET.islatestworld(stmt)
+                    found_latestworld = true
+                    @test plan.selected[i] == unconditional(i)
+                    @test plan.materialized[i] == !unconditional(i)
+                elseif stmt isa Core.GotoNode || stmt isa Core.GotoIfNot
+                    @test !plan.concretized[i]
+                end
+            end
+            @test found_decl
+            @test found_latestworld
+            @test !any(i -> plan.selected[i] && !unconditional(i), eachindex(src.code))
+        end
+        @analyze_toplevel begin # this should terminate
+            global nums::Vector{String}
+            while true
+                global nums = String[]
+            end
+        end
+        let (vmod, res) = @analyze_toplevel2 begin # this should terminate
+                while true
+                    global nums = String[]
+                end
+            end
+            @test isempty(res.res.toplevel_error_reports)
+            gr = GlobalRef(vmod, :nums)
+            partition = Base.lookup_binding_partition(Base.get_world_counter(), gr)
+            @test Base.binding_kind(partition) != Base.PARTITION_KIND_GUARD
+        end
+        let res = report_text("""
+            begin
+                global nums::Vector{String}
+                while true
+                    global nums = String[]
+                end
+            end
+            """, "declared_in_block.jl")
+            @test isempty(res.res.toplevel_error_reports)
+        end
+
+        # the enclosing condition is not concretized for the declaration
+        let mod = Module()
+            Core.eval(mod, :(global s::Vector{Int}))
+            src = only(Meta.lower(mod, quote
+                if rand(Bool)
+                    global s = rand(Int, 10)
+                end
+            end).args)::CodeInfo
+            plan = JET.ConcretizationPlan()
+            JET.select_statements!(plan, mod, src)
+            @test !any(plan.selected)
+            @test any(eachindex(src.code)) do i
+                plan.materialized[i] && isdecl(src.code[i], src.code)
+            end
+        end
+        let res = @analyze_toplevel begin
+                global s::Vector{Int} = Int[]
+                n = 3
+                if n > 2
+                    global s = rand(Int, 10)
+                end
+            end
+            @test isempty(res.res.toplevel_error_reports)
+        end
+        let res = @analyze_toplevel begin
+                xs = [1, 2, 3]
+                for x in xs
+                    global acc = x
+                end
+            end
+            @test isempty(res.res.toplevel_error_reports)
+        end
+        # the weak form leaves a later typed declaration intact
+        let res = @analyze_toplevel begin
+                n = 1
+                if n > 2
+                    global x = 1
+                end
+                global x::Int
+            end
+            @test isempty(res.res.toplevel_error_reports)
+        end
+
+        # unconditional and typed declarations keep the concrete processing
+        let mod = Module()
+            src = only(Meta.lower(mod, :(global value = 1)).args)::CodeInfo
+            slice = JET.select_statements(mod, src)
+            idxs = findall(stmt -> isdecl(stmt, src.code), src.code)
+            @test !isempty(idxs)
+            @test all(slice[idxs])
+        end
+        let res = @analyze_toplevel begin
+                global x
+                x = 1
+                global x::Int # errors: `x` is already a global
+            end
+            @test length(res.res.toplevel_error_reports) == 1
+        end
+        let mod = Module()
+            Core.eval(mod, :(global value::Int))
+            src = only(Meta.lower(mod, :(global value::String)).args)::CodeInfo
+            slice = JET.select_statements(mod, src)
+            idx = findfirst(src.code) do stmt
+                return JET.isexpr(stmt, :globaldecl, 2) ||
+                    (JET.is_known_call(stmt, :declare_global, src.code) &&
+                     length(stmt.args) == 5)
+            end
+            @test idx isa Int
+            idx isa Int && @test slice[idx]
+        end
+    end
+
+    @testset "concretization timeout" begin
+        @test JET.ToplevelConfig().concretization_timeout == 10.0
+
+        @testset "preparation time is excluded" begin
+            logger = ConcretizationDelayLogger(false)
+            context = gen_virtual_module()
+            config = JET.ToplevelConfig(; context, virtualize=false,
+                concretization_timeout=1.0,
+                toplevel_logger=IOContext(logger, :JET_LOGGER_LEVEL=>1))
+            interp = JETConcreteInterpreter(JETAnalyzer())
+            # Use the current world so the test logger's IO method is visible.
+            res = JET.virtual_process(interp, "f() = nothing", "top-level", config)
+            @test logger.delayed
+            @test isempty(res.toplevel_error_reports)
+            @test (@invokelatest isdefinedglobal(context, :f))
+        end
+
+        # Finite loops terminate even if the timeout does not work.
+        let res = @analyze_toplevel concretization_timeout=0.1 begin
+                for i in 1:3
+                    @eval begin
+                        sleep(0.2)
+                        f(::Val{$i}) = $i
+                    end
+                end
+            end
+            report = only(res.res.toplevel_error_reports)
+            @test report isa JET.ConcretizationTimeoutErrorReport
+            @test report.timeout == 0.1
+            msg = @invokelatest sprint(JET.print_report, report)
+            @test occursin("concretization_timeout", msg)
+        end
+        # loops that terminate within the timeout are unaffected
+        let (vmod, res) = @analyze_toplevel2 begin
+                for i in 1:3
+                    @eval g(::Val{$i}) = $i
+                end
+            end
+            @test isempty(res.res.toplevel_error_reports)
+            g = @invokelatest getglobal(vmod, :g)
+            @test length(methods(g)) == 3
+        end
+        @testset "runtime still times out" for concretization_patterns in (Any[], [:x_])
+            res = report_text("""
+                begin
+                    @eval sleep(0.2)
+                    @eval h() = 1
+                end
+                """; concretization_timeout=0.1, concretization_patterns)
+            report = only(res.res.toplevel_error_reports)
+            @test report isa JET.ConcretizationTimeoutErrorReport
+            @test isempty(report.st) # stopped in the top-level frame itself
+            msg = sprint(JET.print_report, report)
+            @test !occursin("Stacktrace:", msg)
+            @test sprint(JET.print_report, report; context=:markdown_rendering=>true) == msg
+        end
+        # The time spent in `include`d files does not count: each included statement stays
+        # within the timeout, while the included file as a whole exceeds it.
+        mktempdir() do dir
+            write(joinpath(dir, "included.jl"), "@eval sleep(0.6)\n@eval sleep(0.6)\n")
+            main = joinpath(dir, "main.jl")
+            write(main, """
+                for i in 1:2
+                    i == 1 && include("included.jl")
+                end
+                """)
+            res = report_file2(main; concretization_timeout = 1.0)
+            @test isempty(res.res.toplevel_error_reports)
+        end
+        # The statement's own runtime still counts after the pause for an `include`.
+        mktempdir() do dir
+            write(joinpath(dir, "included.jl"), "@eval sleep(0.6)\n@eval sleep(0.6)\n")
+            main = joinpath(dir, "main.jl")
+            write(main, """
+                for i in 1:1
+                    include("included.jl")
+                    @eval sleep(1.2)
+                    @eval finished = true
+                end
+                """)
+            context = gen_virtual_module()
+            res = report_file2(main; context, virtualize=false, concretization_timeout=1.0)
+            report = only(res.res.toplevel_error_reports)
+            @test report isa JET.ConcretizationTimeoutErrorReport
+            @test report.file == main
+            @test !(@invokelatest isdefinedglobal(context, :finished))
+        end
+        @testset "loops inside callees are stopped" begin
+            context = gen_virtual_module()
+            # The loop body makes no calls, so the timeout always fires in `spin` itself;
+            # otherwise the interpreted frames of callees such as `+` would lead the stack.
+            res = report_text("""
+                function spin()
+                    while true
+                    end
+                end
+                drive() = spin()
+                struct A <: drive() end
+                """; context, virtualize=false, concretization_timeout=0.1)
+            report = only(res.res.toplevel_error_reports)
+            @test report isa JET.ConcretizationTimeoutErrorReport
+            @test report.line == 6
+            @test !(@invokelatest isdefinedglobal(context, :A))
+            # the report shows the interpreted calls that were running, innermost first
+            @test length(report.st) == 2
+            @test report.st[1].func === :spin && 2 ≤ report.st[1].line ≤ 3
+            @test report.st[2].func === :drive && report.st[2].line == 5
+            msg = sprint(JET.print_report, report)
+            @test occursin("spin()", msg)
+            @test occursin(r"raise `concretization_timeout`\.\s+Stacktrace:", msg)
+            @test !occursin("```", msg)
+            msg_md = sprint(JET.print_report, report; context=:markdown_rendering=>true)
+            @test occursin("raise `concretization_timeout`.\n\n```\nStacktrace:", msg_md)
+            @test endswith(msg_md, "\n```\n")
+        end
+        @testset "the timeout bypasses `try`/`catch` in callees" begin
+            context = gen_virtual_module()
+            res = report_text("""
+                function spin_guarded()
+                    try
+                        while true end
+                    catch
+                        return :caught
+                    end
+                end
+                struct B <: spin_guarded() end
+                """; context, virtualize=false, concretization_timeout=0.1)
+            report = only(res.res.toplevel_error_reports)
+            @test report isa JET.ConcretizationTimeoutErrorReport
+            @test only(report.st).func === :spin_guarded
+            @test !(@invokelatest isdefinedglobal(context, :B))
+        end
+        @testset "code selected by `concretization_patterns` runs natively" begin
+            context = gen_virtual_module()
+            # interpreting this loop would take far longer than the timeout
+            res = report_text("""
+                function fillup!(v)
+                    for i in 1:100_000
+                        push!(v, i)
+                    end
+                    return v
+                end
+                const V = fillup!(Int[])
+                """; context, virtualize=false, concretization_timeout=1.0,
+                concretization_patterns=[:(const V = fillup!(Int[]))])
+            @test isempty(res.res.toplevel_error_reports)
+            @test length(@invokelatest getglobal(context, :V)) == 100_000
+        end
+        @test_throws ArgumentError JET.ToplevelConfig(; concretization_timeout=0)
     end
 
     # A more complex test case (xref: https://github.com/JuliaDebug/LoweredCodeUtils.jl/pull/99#issuecomment-2236373067)
@@ -2413,13 +3191,17 @@ end
 end
 
 using Pkg
-function test_report_package(test_func, module_ex;
-                             base_setup=function ()
-                                Pkg.develop(; path=normpath(FIXTURES_DIR, "PkgAnalysisDep"), io=devnull)
-                                Pkg.precompile(; io=devnull)
-                             end,
-                             additional_setup=()->nothing,
-                             jetconfigs...)
+function test_package_file(test_func::Function, module_ex::Expr;
+                           base_setup=function ()
+                               Pkg.develop(; path=normpath(FIXTURES_DIR, "PkgAnalysisDep"), io=devnull)
+                               Pkg.precompile(; io=devnull)
+                           end,
+                           additional_setup=()->nothing,
+                           additional_sources::Vector{Pair{String,String}}=
+                               Pair{String,String}[],
+                           ignore_missing_comparison::Bool=true,
+                           ignore_throws::Bool=true,
+                           jetconfigs...)
     Meta.isexpr(module_ex, :module) || throw(ArgumentError("Expected :module expression"))
     pkgname = String(module_ex.args[2]::Symbol)
     old = Pkg.project().path
@@ -2434,12 +3216,18 @@ function test_report_package(test_func, module_ex;
 
             Pkg.activate(; temp=true, io=devnull)
             Pkg.develop(; path=pkgpath, io=devnull)
-            Pkg.precompile(; io=devnull)
 
             pkgfile = normpath(pkgpath, "src", "$pkgname.jl")
             write(pkgfile, string(pkgcode))
-
-            res = report_package(pkgname; toplevel_logger=nothing, jetconfigs...)
+            for (file, source) in additional_sources
+                write(normpath(pkgpath, "src", file), source)
+            end
+            pkgid = Base.identify_package(pkgname)::Base.PkgId
+            interp = JETConcreteInterpreter(JETAnalyzer(;
+                ignore_missing_comparison, ignore_throws, jetconfigs...))
+            res = JET.analyze_and_report_file!(interp, pkgfile, pkgid;
+                analyze_from_definitions=true, concretization_patterns=[:(x_)],
+                toplevel_logger=nothing, jetconfigs...)
 
             @eval @testset $pkgname $test_func($res)
 
@@ -2451,14 +3239,14 @@ function test_report_package(test_func, module_ex;
 end
 
 @testset "package dependency" begin
-    test_report_package(:(module UsingCore
+    test_package_file(:(module UsingCore
             using Core: Box
             makebox() = Core.Box()
         end)) do res
         @test isempty(res.res.toplevel_error_reports)
         @test isempty(res.res.inference_error_reports)
     end
-    test_report_package(:(module ImportBase
+    test_package_file(:(module ImportBase
             import Base: show
             struct XXX end
             show(io::IO, ::XXX) = xxx
@@ -2468,7 +3256,7 @@ end
         @test isa(r, UndefVarErrorReport) && r.var.name === :xxx
     end
 
-    test_report_package(:(module UsingSimple
+    test_package_file(:(module UsingSimple
             using PkgAnalysisDep
             callfunc1() = func1()
             callfunc3() = func3()
@@ -2477,21 +3265,21 @@ end
         r = only(res.res.inference_error_reports)
         @test isa(r, UndefVarErrorReport) && r.var.name === :func3
     end
-    test_report_package(:(module UsingSpecific
+    test_package_file(:(module UsingSpecific
             using PkgAnalysisDep: func1
             callfunc1() = func1()
         end)) do res
         @test isempty(res.res.toplevel_error_reports)
         @test isempty(res.res.inference_error_reports)
     end
-    test_report_package(:(module UsingAlias
+    test_package_file(:(module UsingAlias
             using PkgAnalysisDep: func1 as func
             callfunc1() = func()
         end)) do res
         @test isempty(res.res.toplevel_error_reports)
         @test isempty(res.res.inference_error_reports)
     end
-    test_report_package(:(module UsingInner
+    test_package_file(:(module UsingInner
             using PkgAnalysisDep.Inner
             callfunc1() = func1()
             callfunc3() = func3()
@@ -2500,7 +3288,7 @@ end
         r = only(res.res.inference_error_reports)
         @test isa(r, UndefVarErrorReport) && r.var.name === :func1
     end
-    test_report_package(:(module UsingBlock
+    test_package_file(:(module UsingBlock
             begin
                 using PkgAnalysisDep
                 callfunc1() = func1()
@@ -2511,7 +3299,7 @@ end
         r = only(res.res.inference_error_reports)
         @test isa(r, UndefVarErrorReport) && r.var.name === :func3
     end
-    test_report_package(:(module UsingBlock
+    test_package_file(:(module UsingBlock
             global truecond::Bool = true
             if truecond
                 using PkgAnalysisDep
@@ -2524,42 +3312,42 @@ end
         @test isa(r, UndefVarErrorReport) && r.var.name === :func3
     end
 
-    test_report_package(:(module ImportSimple
+    test_package_file(:(module ImportSimple
             import PkgAnalysisDep
             callfunc1() = PkgAnalysisDep.func1()
         end)) do res
         @test isempty(res.res.toplevel_error_reports)
         @test isempty(res.res.inference_error_reports)
     end
-    test_report_package(:(module ImportAlias
+    test_package_file(:(module ImportAlias
             import PkgAnalysisDep as PAD
             callfunc1() = PAD.func1()
         end)) do res
         @test isempty(res.res.toplevel_error_reports)
         @test isempty(res.res.inference_error_reports)
     end
-    test_report_package(:(module ImportInnerAlias
+    test_package_file(:(module ImportInnerAlias
             import PkgAnalysisDep.Inner as PADI
             callfunc3() = PADI.func3()
         end)) do res
         @test isempty(res.res.toplevel_error_reports)
         @test isempty(res.res.inference_error_reports)
     end
-    test_report_package(:(module ImportSpecific
+    test_package_file(:(module ImportSpecific
             import PkgAnalysisDep: func1
             callfunc1() = func1()
         end)) do res
         @test isempty(res.res.toplevel_error_reports)
         @test isempty(res.res.inference_error_reports)
     end
-    test_report_package(:(module ImportAlias
+    test_package_file(:(module ImportAlias
             import PkgAnalysisDep: func1 as func
             callfunc1() = func()
         end)) do res
         @test isempty(res.res.toplevel_error_reports)
         @test isempty(res.res.inference_error_reports)
     end
-    test_report_package(:(module ImportInner
+    test_package_file(:(module ImportInner
             import PkgAnalysisDep.Inner
             callfunc1() = Inner.func1()
             callfunc3() = Inner.func3()
@@ -2568,7 +3356,7 @@ end
         r = only(res.res.inference_error_reports)
         @test isa(r, UndefVarErrorReport) && r.var.name === :func1
     end
-    test_report_package(:(module ImportBlock
+    test_package_file(:(module ImportBlock
             begin
                 import PkgAnalysisDep
                 callfunc1() = PkgAnalysisDep.func1()
@@ -2577,7 +3365,7 @@ end
         @test isempty(res.res.toplevel_error_reports)
         @test isempty(res.res.inference_error_reports)
     end
-    test_report_package(:(module ImportBlock
+    test_package_file(:(module ImportBlock
             global truecond::Bool = true
             if truecond
                 import PkgAnalysisDep
@@ -2588,7 +3376,7 @@ end
         @test isempty(res.res.inference_error_reports)
     end
 
-    test_report_package(:(module RelativeDependency
+    test_package_file(:(module RelativeDependency
             import PkgAnalysisDep
             using .PkgAnalysisDep: func2
             callfunc1() = func1()
@@ -2598,7 +3386,7 @@ end
         r = only(res.res.inference_error_reports)
         @test isa(r, UndefVarErrorReport) && r.var.name === :func1
     end
-    test_report_package(:(module RelativeInner
+    test_package_file(:(module RelativeInner
             module Inner
             struct XXX end
             export XXX
@@ -2610,22 +3398,37 @@ end
         r = only(res.res.inference_error_reports)
         @test isa(r, UndefVarErrorReport) && r.var.name === :xxx
     end
-    test_report_package(:(module BadRelativeInner
+
+    test_package_file(:(module MultiModuleInclude
+            module A
+            include("shared.jl")
+            end
+            module B
+            include("shared.jl")
+            end
+        end);
+        base_setup=Returns(nothing),
+        additional_sources=["shared.jl" => "shared() = shared_missing\n"]) do res
+        @test isempty(res.res.toplevel_error_reports)
+        reports = res.res.inference_error_reports
+        @test count(r -> is_global_undef_var(r, :shared_missing), reports) == 2
+    end
+
+    test_package_file(:(module BadRelativeInner
             module Inner end
             using Inner # should be `using .Inner`
         end)) do res
         r = only(res.res.toplevel_error_reports)
         @test isa(r, DependencyError) && r.pkg == "BadRelativeInner" && r.dep == "Inner"
     end
-
-    test_report_package(:(module UninstalledDependency
+    test_package_file(:(module UninstalledDependency
             using UninstalledDep
         end)) do res
         r = only(res.res.toplevel_error_reports)
         @test isa(r, DependencyError) && r.pkg == "UninstalledDependency" && r.dep == "UninstalledDep"
     end
 
-    test_report_package(:(module LoadPreferences
+    test_package_file(:(module LoadPreferences
             using Preferences
 
             @load_preference("LoadRootConfig", false)
@@ -2644,7 +3447,7 @@ end
         @test isempty(res.res.inference_error_reports)
     end
 
-    test_report_package(:(module SelfImport1
+    test_package_file(:(module SelfImport1
             function overload end
             module SubModule
             using SelfImport1
@@ -2657,7 +3460,7 @@ end
         @test isempty(res.res.inference_error_reports)
     end
 
-    test_report_package(:(module SelfImport2
+    test_package_file(:(module SelfImport2
             function overload end
             module SubModule
             using SelfImport2
@@ -2675,7 +3478,7 @@ end
         @test isempty(res.res.inference_error_reports)
     end
 
-    test_report_package(:(module SelfImport5
+    test_package_file(:(module SelfImport5
             function overload end
             module SubModule
             module SubSubModule
@@ -2696,8 +3499,8 @@ end
         @test isempty(res.res.inference_error_reports)
     end
 
-    # ignore_missing_comparison should be turned on by default for `report_package`
-    test_report_package(:(module Issue542_1
+    # Suppress noisy `missing` comparisons when analyzing from broad signatures.
+    test_package_file(:(module Issue542_1
             struct Issue542Typ end
             isa542(x) = x == Issue542Typ() ? true : false
         end);
@@ -2705,7 +3508,7 @@ end
         @test isempty(res.res.toplevel_error_reports)
         @test isempty(res.res.inference_error_reports)
     end
-    test_report_package(:(module Issue542_2
+    test_package_file(:(module Issue542_2
             struct Issue542Typ end
             isa542(x) = x == Issue542Typ() ? true : false
         end);
@@ -2716,7 +3519,7 @@ end
     end
 
     # special cases for `reduce_empty` and `mapreduce_empty`
-    test_report_package(:(module ReduceEmpty
+    test_package_file(:(module ReduceEmpty
             reducer(a::Vector{String}) = maximum(length, a)
         end);
         base_setup=Returns(nothing)) do res
@@ -2724,35 +3527,35 @@ end
         @test isempty(res.res.inference_error_reports)
     end
 
-    test_report_package(:(module Issue554_1
+    test_package_file(:(module Issue554_1
             using PkgAnalysisDep: Inner.func3
             callfunc3() = func3()
         end)) do res
         @test isempty(res.res.toplevel_error_reports)
         @test isempty(res.res.inference_error_reports)
     end
-    test_report_package(:(module Issue554_2
+    test_package_file(:(module Issue554_2
             using PkgAnalysisDep: Inner.func3 as func
             callfunc() = func()
         end)) do res
         @test isempty(res.res.toplevel_error_reports)
         @test isempty(res.res.inference_error_reports)
     end
-    test_report_package(:(module Issue554_3
+    test_package_file(:(module Issue554_3
             import PkgAnalysisDep: Inner.func3
             callfunc3() = func3()
         end)) do res
         @test isempty(res.res.toplevel_error_reports)
         @test isempty(res.res.inference_error_reports)
     end
-    test_report_package(:(module Issue554_4
+    test_package_file(:(module Issue554_4
             import PkgAnalysisDep: Inner.func3 as func
             callfunc() = func()
         end)) do res
         @test isempty(res.res.toplevel_error_reports)
         @test isempty(res.res.inference_error_reports)
     end
-    test_report_package(:(module Issue554
+    test_package_file(:(module Issue554
             using LinearAlgebra: BLAS.BlasFloat
             issue554(x::BlasFloat) = x
         end);
@@ -2764,7 +3567,7 @@ end
     end
 
     # aviatesk/JET.jl#619: allow relative module that is overly deep in a package loading
-    test_report_package(:(module Issue619
+    test_package_file(:(module Issue619
             module Inner
             abstract type AbstractType619 end
             end # module Inner
@@ -2793,7 +3596,8 @@ end
 end
 
 # aviatesk/JET.jl#597: don't try to concrete-interpret `:jl_extern_c`
-let old = Pkg.project().path
+@testset "repeated @ccallable analysis" begin
+    old = Pkg.project().path
     try
         Pkg.activate(; temp=true, io=devnull)
         Pkg.develop(; path=normpath(FIXTURES_DIR, "JET597"), io=devnull)
@@ -2801,11 +3605,16 @@ let old = Pkg.project().path
 
         using JET597
 
-        res = report_package(JET597; toplevel_logger=nothing)
-        @test isempty(res.res.toplevel_error_reports)
-
-        res = report_package(JET597; toplevel_logger=nothing)
-        @test isempty(res.res.toplevel_error_reports)
+        filename = pathof(JET597)::String
+        pkgid = Base.PkgId(JET597)
+        for _ in 1:2
+            interp = JETConcreteInterpreter(JETAnalyzer(;
+                ignore_missing_comparison=true, ignore_throws=true))
+            res = JET.analyze_and_report_file!(interp, filename, pkgid;
+                analyze_from_definitions=true, concretization_patterns=[:(x_)],
+                toplevel_logger=nothing)
+            @test isempty(res.res.toplevel_error_reports)
+        end
     finally
         Pkg.activate(old; io=devnull)
     end

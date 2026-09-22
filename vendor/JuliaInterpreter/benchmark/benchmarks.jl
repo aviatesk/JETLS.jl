@@ -66,3 +66,43 @@ function powf(a, b)
     ccall(("powf", Base.Math.libm), Float32, (Float32,Float32), a, b)
 end
 SUITE["ccall library"] = @benchmarkable @interpret powf(2, 3)
+
+# Global reads in a tight loop: `const` globals can be folded at framecode construction,
+# non-`const` globals must be looked up on every execution
+module BenchGlobals
+const CONSTGLOBAL = 1
+NONCONST = 1
+end
+
+function readconst(n)
+    s = 0
+    for i in 1:n
+        s += BenchGlobals.CONSTGLOBAL
+    end
+    return s
+end
+SUITE["const global read 10_000"] = @benchmarkable @interpret readconst(10_000)
+
+function readnonconst(n)
+    s = 0
+    for i in 1:n
+        s += BenchGlobals.NONCONST
+    end
+    return s
+end
+SUITE["nonconst global read 10_000"] = @benchmarkable @interpret readnonconst(10_000)
+
+# Calls resolved through globals: every call statement's callee is a `GlobalRef`
+function callglobals(x)
+    s = zero(x)
+    for i in 1:1_000
+        s += sin(x) + cos(x) + abs(x) + min(x, one(x))
+    end
+    return s
+end
+SUITE["global callees 1_000"] = @benchmarkable @interpret callglobals(0.5)
+
+# Frame creation: uncached measures the framecode build (including the `optimize!` pass),
+# cached measures the per-call frame setup for an already-built framecode
+SUITE["frame creation uncached"] = @benchmarkable JuliaInterpreter.enter_call(callglobals, 0.5) setup=(JuliaInterpreter.clear_caches()) evals=1
+SUITE["frame creation cached"] = @benchmarkable JuliaInterpreter.enter_call(callglobals, 0.5)

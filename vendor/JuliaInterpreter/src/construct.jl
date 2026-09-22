@@ -35,10 +35,8 @@ const compiled_modules = Set{Module}()
 
 const junk_framedata = FrameData[] # to allow re-use of allocated memory (this is otherwise a bottleneck)
 const junk_frames = Frame[]
-# Tracks which frames are currently pooled, so `recycle` can be idempotent (see below).
-const pooled_frames = Base.IdSet{Frame}()
 debug_mode() = false
-@noinline function _check_frame_not_in_junk(frame)
+@noinline function _check_frame_not_in_junk(frame::Frame)
     @assert frame.framedata ∉ junk_framedata
     @assert frame ∉ junk_frames
 end
@@ -49,9 +47,9 @@ end
     # catch block. `return_from`'s link-clearing is idempotent, but pooling a frame twice
     # lets it be handed out twice, aliasing a live frame into its own caller chain (an
     # infinite loop on the next exception). Pool each frame at most once.
-    frame in pooled_frames && return
+    frame.pooled && return
     debug_mode() && _check_frame_not_in_junk(frame)
-    push!(pooled_frames, frame)
+    frame.pooled = true
     push!(junk_framedata, frame.framedata)
     push!(junk_frames, frame)
 end
@@ -178,7 +176,6 @@ function clear_caches()
     empty!(framedict)
     empty!(genframedict)
     empty!(junk_frames)
-    empty!(pooled_frames)
     for bp in breakpoints()
         empty!(bp.instances)
     end
@@ -259,8 +256,7 @@ function prepare_framecode(method::Method, @nospecialize(argtypes); enter_genera
         return Compiled()
     end
     # Get static parameters
-    (ti, lenv::SimpleVector) = ccall(:jl_type_intersection_with_env, Any, (Any, Any),
-                        argtypes, sig)::SimpleVector
+    (_ti, lenv::SimpleVector) = @ccall jl_type_intersection_with_env(argtypes::Any, sig::Any)::SimpleVector
     enter_generated &= is_generated(method)
     if is_generated(method) && !enter_generated
         framecode = get(genframedict, (method, argtypes::DataType), nothing)
@@ -425,7 +421,6 @@ end
 
 function prepare_framedata(framecode, argvals::Vector{Any}, lenv::SimpleVector=empty_svec, caller_will_catch_err::Bool=false)
     src = framecode.src
-    slotnames = src.slotnames
     ssavt = src.ssavaluetypes
     ng, ns = isa(ssavt, Int) ? ssavt : length(ssavt::Vector{Any}), length(src.slotflags)
     if length(junk_framedata) > 0
@@ -798,7 +793,7 @@ function enter_call_expr(expr::Expr;
                          world::UInt=default_world(),
                          method_table::Union{Nothing,MethodTable}=nothing)
     r = determine_method_for_expr(expr; enter_generated, world, method_table)
-    if r !== nothing && !isa(r[1], Compiled)
+    if r !== nothing && !(r isa Tuple{Compiled,Vararg{Any}})
         return prepare_frame(Base.front(r)...; world)
     end
     nothing
@@ -852,7 +847,7 @@ function enter_call(@nospecialize(finfo), @nospecialize(args...);
         error(f, " is a builtin or intrinsic")
     end
     r = prepare_call(f, allargs; enter_generated, world, method_table)
-    if r !== nothing && !isa(r[1], Compiled)
+    if r !== nothing && !(r isa Tuple{Compiled,Vararg{Any}})
         return prepare_frame(Base.front(r)...; world)
     end
     return nothing

@@ -5,6 +5,7 @@
 ```@docs
 signature
 methoddef!
+methoddefs!
 rename_framemethods!
 bodymethod
 ```

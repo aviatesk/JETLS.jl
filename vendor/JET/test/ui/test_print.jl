@@ -36,6 +36,56 @@ end
     end
 end
 
+@testset "actual error stacktrace rendering" begin
+    @testset "with stacktrace" for err in (
+            ErrorException("execution failed"),
+            LoadError("example.jl", 1, ErrorException("execution failed")),
+            InitError(:Example, ErrorException("execution failed")))
+        st = [Base.StackTraces.StackFrame(:example, Symbol("example.jl"), 1)]
+        report = ActualErrorWrapped(err, st, "example.jl", 1)
+        for color in (false, true)
+            msg = sprint(showerror, err, st; context=:color=>color)
+            @test sprint(JET.print_report, report; context=:color=>color) == msg
+            @test sprint(JET.print_report, report; context=(:color=>color, :markdown_rendering=>false)) == msg
+            msg_md = sprint(JET.print_report, report; context=(:color=>color, :markdown_rendering=>true))
+            @test occursin("execution failed\n\n```\nStacktrace:", msg_md)
+            @test endswith(msg_md, "\n```\n")
+            @test msg_md == replace(msg, "\nStacktrace:"=>"\n\n```\nStacktrace:"; count=1) * "\n```\n"
+        end
+    end
+    @testset "without stacktrace" begin
+        err = ErrorException("execution failed")
+        report = ActualErrorWrapped(err, Base.StackTraces.StackFrame[], "example.jl", 1)
+        msg = sprint(showerror, err, report.st)
+        @test sprint(JET.print_report, report) == msg
+        @test sprint(JET.print_report, report; context=:markdown_rendering=>true) == msg
+        @test !occursin("```", msg)
+    end
+end
+
+@testset "concretization timeout guidance" for with_stacktrace in (false, true),
+                                               markdown_rendering in (false, true)
+    st = with_stacktrace ?
+        Base.StackTraces.StackFrame[
+            Base.StackTraces.StackFrame(:example, Symbol("example.jl"), 1)
+        ] : Base.StackTraces.StackFrame[]
+    report = JET.ConcretizationTimeoutErrorReport(0.1, st, "example.jl", 1)
+    msg = sprint(JET.print_report, report; context=:markdown_rendering=>markdown_rendering)
+    @test occursin("possibly due to interpretation overhead", msg)
+    @test occursin("raise `concretization_timeout`", msg)
+    for guidance in (
+            "If the stacktrace shows code that normally finishes quickly",
+            "Add a `concretization_patterns` entry",
+            "matching the enclosing top-level block",
+            "run its function calls natively",
+            "entire matching block, including any side effects",
+            "`concretization_timeout` cannot interrupt those native calls")
+        @test occursin(guidance, msg) == with_stacktrace
+    end
+    @test occursin("Stacktrace:", msg) == with_stacktrace
+    @test occursin("```", msg) == (with_stacktrace && markdown_rendering)
+end
+
 @testset "print inference errors" begin
     mktemp() do filename, io
         res = report_text("""
@@ -61,6 +111,28 @@ end
             @test occursin("1 possible error found", s)
             @test occursin("$(escape_string(filename)):1", s) # toplevel call site
         end
+    end
+end
+
+@testset "invalid constant declaration messages" begin
+    let res = @analyze_toplevel begin
+            x = 1
+            const x = 2
+        end
+        report = only(res.res.inference_error_reports)
+        @test report isa InvalidConstantDeclarationReport
+        @test occursin("cannot declare `$(report.var.mod).x` constant; it was already declared global", get_msg(report))
+    end
+    let res = @analyze_toplevel begin
+            module Exporter
+                const x = 1
+            end
+            import .Exporter: x
+            const x = 2
+        end
+        report = only(res.res.inference_error_reports)
+        @test report isa InvalidConstantDeclarationReport
+        @test occursin("cannot declare `$(report.var.mod).x` constant; it was already declared as an import", get_msg(report))
     end
 end
 
