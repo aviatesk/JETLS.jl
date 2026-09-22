@@ -77,6 +77,159 @@ end
     end
 end
 
+function analyze_concretization(
+        code::String, filename::String;
+        mode::Symbol = :script,
+        timeout::Union{Float64,String} = JETLS.JET.DEFAULT_CONCRETIZATION_TIMEOUT,
+        pattern::Union{Nothing,String} = nothing
+    )
+    server = JETLS.Server()
+    uri = filepath2uri(filename)
+    entry = mode === :script ? JETLS.ScriptAnalysisEntry(uri) :
+        JETLS.PackageSourceAnalysisEntry(dirname(filename), uri, Base.PkgId(@__MODULE__))
+    request = JETLS.AnalysisRequest(
+        entry, uri, #=generation=#1, #=token=#nothing, #=notify=#false)
+    execution = JETLS.AnalysisExecution(request, #=prev_result=#nothing)
+    interp = JETLS.LSInterpreter(server, execution)
+    try
+        @test JETLS.getjetconfigs(server, entry)[:concretization_timeout] == JETLS.JET.DEFAULT_CONCRETIZATION_TIMEOUT
+        full_analysis = Dict{String,Any}("concretization_timeout" => timeout)
+        if pattern !== nothing
+            server.state.root_path = dirname(filename)
+            full_analysis["concretization_patterns"] = Any[
+                Dict{String,Any}("pattern" => pattern)]
+        end
+        settings = Dict{String,Any}("full_analysis" => full_analysis)
+        JETLS.store_lsp_config!(JETLS.ConfigChangeTracker(), server, settings, "test")
+        jetconfigs = JETLS.getjetconfigs(server, entry)
+        @test jetconfigs[:concretization_timeout] == (timeout == "inf" ? Inf : timeout)
+        context = Module(gensym(:ConcretizationTimeout))
+        result = JETLS.JET.analyze_and_report_text!(interp, code, filename;
+            jetconfigs...,
+            context,
+            virtualize = false,
+            analyze_from_definitions = false)
+        return (; result, context)
+    finally
+        close(server.endpoint)
+        close(server.message_queue)
+    end
+end
+
+@testset HierarchicalTestSet "concretization timeout diagnostic" begin
+    for mode in (:script, :package), timeout in (0.1, "inf")
+        filename = joinpath(@__DIR__, "concretization-timeout.jl")
+        # Each iteration exceeds the timeout, but the loop also terminates if
+        # timeout handling regresses. `@eval` forces the sleep to run concretely.
+        code = """
+            for _ in 1:3
+                @eval begin
+                    sleep(0.2)
+                    timeout_fixture() = nothing
+                end
+            end
+            """
+        (; result) = analyze_concretization(code, filename; mode, timeout)
+        if timeout == "inf"
+            @test isempty(result.res.toplevel_error_reports)
+            continue
+        end
+        report = only(result.res.toplevel_error_reports)
+        @test report isa JETLS.JET.ConcretizationTimeoutErrorReport
+        @test report.timeout == timeout
+        @test isempty(report.st)
+        @test report.file == filename
+        @test report.line == 1
+        @test isempty(result.res.inference_error_reports)
+
+        uri = filepath2uri(filename)
+        uri2diagnostics = JETLS.URI2Diagnostics(uri => Diagnostic[])
+        postprocessor = JETLS.JET.PostProcessor(result.res.actual2virtual)
+        JETLS.jet_result_to_diagnostics!(uri2diagnostics, result, Base.get_world_counter(), postprocessor)
+        diag = only(uri2diagnostics[uri])
+        @test diag.code == JETLS.TOPLEVEL_CONCRETIZATION_TIMEOUT_CODE
+        @test diag.severity == DiagnosticSeverity.Error
+        @test diag.source == JETLS.DIAGNOSTIC_SOURCE_SAVE
+        @test diag.range == JETLS.line_range(report.line)
+        @test occursin(string(timeout), diag.message)
+    end
+
+    @testset "caught error in interpreted callee" begin
+        code = """
+            function guarded()
+                local callee
+                try
+                    callee(1, 2, 3)
+                catch err
+                    err isa UndefVarError || rethrow()
+                    return Any
+                end
+            end
+            struct Guarded <: guarded() end
+            """
+        filename = joinpath(@__DIR__, "concretization-guarded.jl")
+        (; result, context) = analyze_concretization(code, filename)
+        @test isempty(result.res.toplevel_error_reports)
+        @test isdefined(context, :Guarded)
+    end
+
+    @testset "callee timeout stack" begin
+        for (mode, pattern) in ((:script, nothing), (:package, nothing),
+                                (:script, "struct Timed <: drive() end")),
+            timeout in (0.1, "inf")
+
+            filename = joinpath(@__DIR__, "concretization-callee-timeout.jl")
+            # `eval` sleeps natively, but recursive interpretation can stop before
+            # the marker. Pattern-selected calls must finish before timing out.
+            code = """
+                function inner()
+                    Core.eval(@__MODULE__, :(sleep(0.2)))
+                    Core.eval(@__MODULE__, :(completed = true))
+                    return Any
+                end
+                drive() = inner()
+                struct Timed <: drive() end
+                """
+            (; result, context) = analyze_concretization(code, filename; mode, timeout, pattern)
+            native = mode === :package || pattern !== nothing
+            @test Base.invokelatest(isdefined, context, :completed) == (native || timeout == "inf")
+            @test isempty(result.res.inference_error_reports)
+            if timeout == "inf"
+                @test isempty(result.res.toplevel_error_reports)
+                @test isdefined(context, :Timed)
+                continue
+            end
+            report = only(result.res.toplevel_error_reports)
+            @test report isa JETLS.JET.ConcretizationTimeoutErrorReport
+            @test report.timeout == timeout
+            @test report.file == filename
+            @test report.line == 7
+            if native
+                @test isempty(report.st)
+            else
+                @test any(frame -> frame.func === :inner && String(frame.file) == filename, report.st)
+                @test any(frame -> frame.func === :drive && String(frame.file) == filename, report.st)
+            end
+
+            uri = filepath2uri(filename)
+            uri2diagnostics = JETLS.URI2Diagnostics(uri => Diagnostic[])
+            postprocessor = JETLS.JET.PostProcessor(result.res.actual2virtual)
+            JETLS.jet_result_to_diagnostics!(uri2diagnostics, result, Base.get_world_counter(), postprocessor)
+            diag = only(uri2diagnostics[uri])
+            @test diag.code == JETLS.TOPLEVEL_CONCRETIZATION_TIMEOUT_CODE
+            @test diag.severity == DiagnosticSeverity.Error
+            @test diag.source == JETLS.DIAGNOSTIC_SOURCE_SAVE
+            @test diag.range == JETLS.line_range(report.line)
+            @test occursin(string(timeout), diag.message)
+            if !native
+                @test occursin("inner", diag.message)
+                @test occursin("drive", diag.message)
+                @test occursin(basename(filename), diag.message)
+            end
+        end
+    end
+end
+
 function get_open_diagnostics(
         root_path::AbstractString, script_path::AbstractString, code::AbstractString;
         settings = nothing

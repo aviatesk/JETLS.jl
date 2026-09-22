@@ -210,6 +210,22 @@
           },
           "type": "array"
         },
+        "concretization_timeout": {
+          "default": 10,
+          "description": "Time limit in seconds for concrete execution of each top-level statement during script and package full analysis (default: 10 seconds), not for the overall analysis. Accepts a positive finite number or the exact string `\"inf\"` to disable the timeout (risks hangs). Checks cover recursively interpreted callees, but pattern-selected blocks (including package source analysis) run calls natively, with checks only at interpreted top-level statement boundaries. Native calls, including `ccall`, builtins, and `Core.eval`, cannot be interrupted. Time in `include`s and module-loading statements handled by JET is excluded from the caller's limit. See [`concretization_timeout`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/full_analysis/concretization_timeout).",
+          "oneOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "enum": [
+                "inf"
+              ],
+              "type": "string"
+            }
+          ]
+        },
         "debounce": {
           "default": 1,
           "description": "Debounce time in seconds before triggering full analysis after a file save. Higher values reduce analysis frequency but may delay diagnostic updates.",

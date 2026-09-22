@@ -55,6 +55,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- Added [`toplevel/concretization-timeout`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/toplevel/concretization-timeout) diagnostics when concrete execution of a top-level statement exceeds its time limit during full analysis, including a stack trace when available.
+  The limit defaults to 10 seconds and can be adjusted with [`full_analysis.concretization_timeout`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/full_analysis/concretization_timeout), or disabled with `"inf"`.
+  Checks cover recursively interpreted callees, but cannot interrupt native calls, including those in pattern-selected blocks and package source analysis.
+
 - Added live Pkg output to progress messages for environment instantiation triggered by [`full_analysis.auto_instantiate`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/full_analysis/auto_instantiate), showing the latest activity while resolving and installing dependencies.
 
 ### Changed

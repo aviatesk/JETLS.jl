@@ -376,10 +376,11 @@ function jet_toplevel_error_report_to_diagnostic(
         code = TOPLEVEL_MISSING_CONCRETIZATION_CODE
     else
         data = nothing
-        message = JET.with_bufferring(:limit=>true) do io
+        message = JET.with_bufferring(:limit=>true, :markdown_rendering=>true) do io
             JET.print_report(io, report)
         end |> postprocessor
-        code = TOPLEVEL_ERROR_CODE
+        code = report isa JET.ConcretizationTimeoutErrorReport ?
+            TOPLEVEL_CONCRETIZATION_TIMEOUT_CODE : TOPLEVEL_ERROR_CODE
     end
     return Diagnostic(;
         range = line_range(report.line),
