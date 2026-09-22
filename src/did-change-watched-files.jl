@@ -84,7 +84,7 @@ end
 
 # TODO: We may eventually want to separate live config validation from saved config
 # application. Synchronized `.JETLSConfig.toml` buffers could be validated on
-# `textDocument/didChange`, with source-ranged issues exposed through pull diagnostics,
+# `textDocument/didChange`, with source-ranged issues exposed through live diagnostics,
 # while this watched-file path remains the trigger for applying saved settings. Proper
 # ranges for JETLS-specific semantic errors would require a provenance-preserving TOML
 # parser or source map. However, schema-aware external tools such as Tombi can already

@@ -515,7 +515,7 @@ function run_per_file_diagnostics!(
             fi = @something get_file_info(server.state, uri) begin
                 get_unsynced_file_info!(server.state, uri)
             end return
-            # Mirrors `compute_pull_diagnostics`: parse errors short-circuit lowering.
+            # Mirrors `compute_live_diagnostics!`: parse errors short-circuit lowering.
             lookup_func = function ()
                 server_lookup_func = gen_lookup_out_of_scope!(server.state, uri)
                 @something server_lookup_func() OutOfScope(Main)

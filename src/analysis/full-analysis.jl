@@ -1256,7 +1256,7 @@ function analyze_package_with_revise(
         JET.AbstractAnalyzer(analyzer, newstate)
     end
 
-    # Module contexts are known at this point, which is all pull diagnostics need, so
+    # Module contexts are known at this point, which is all live diagnostics need, so
     # expose them before signature analysis, like `cache_intermediate_analysis_result!`.
     let uri2diagnostics = intermediate_analysis_diagnostics(execution, analyzed_file_infos)
         intermediate_result = AnalysisResult(request.entry, uri2diagnostics, analyzer,
