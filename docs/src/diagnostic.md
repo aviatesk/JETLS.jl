@@ -1143,25 +1143,69 @@ unavailable.
 
 JETLS executes top-level code when needed to load method or type definitions,
 handle `@eval`, or perform in-place updates of concretized values. Configured
-concretization patterns also select code for execution; package analysis
-executes all top-level code. A loop around such code may run too long or never
-terminate:
+[concretization patterns](@ref config/full_analysis/concretization_patterns)
+also select code for execution, and package analysis executes all top-level code.
+During script analysis, JETLS interprets the executed code and the functions it
+calls using [JuliaInterpreter.jl](https://github.com/JuliaDebug/JuliaInterpreter.jl),
+so even code that finishes quickly when run normally can exceed the limit.
+
+For example, suppose `scripts/word-lookup.jl` contains:
 
 ```julia
-while true
-    @eval f() = 1
+using Downloads
+
+const WORDS_URL =
+    "https://raw.githubusercontent.com/dwyl/english-words/master/words_alpha.txt"
+
+let # JET stopped the concrete execution of this top-level statement after 10.0 seconds (`concretization_timeout`).
+    # [...]
+    # Stacktrace:
+    #   [...]
+    #  [18] readlines(filename::String)
+    #    @ Base io.jl:727
+    # (JETLS toplevel/concretization-timeout)
+    path = Downloads.download(WORDS_URL; timeout=5.0)
+    words = Set(readlines(path))
+    global is_known_word(word::AbstractString) = word in words
 end
 ```
 
-Move definitions out of loops or slow code where possible, or reduce the work
-performed at the top level. Adjust the limit with
-[`full_analysis.concretization_timeout`](@ref config/full_analysis/concretization_timeout),
-which applies to both script and package full analysis. Disabling the timeout
+`is_known_word` captures the local `words`, so JETLS must execute the whole
+`let` block to load the definition. The download completes within the limit,
+but the stack trace shows that the time went into `readlines`: the word list
+has hundreds of thousands of lines, and reading them in the interpreter takes
+longer than 10 seconds.
+
+To run the calls in this block natively, add a
+[`full_analysis.concretization_patterns`](@ref config/full_analysis/concretization_patterns)
+entry matching the `let` block to `.JETLSConfig.toml` in the workspace root:
+
+```toml
+[[full_analysis.concretization_patterns]]
+pattern = """
+let
+    path = Downloads.download(WORDS_URL; timeout=timeout_)
+    body__
+end
+"""
+path = "scripts/word-lookup.jl"
+```
+
+`timeout_` matches any timeout value and `body__` matches the remaining
+statements, so the pattern keeps matching when those change. With this entry,
+JETLS executes the entire `let` block, including the download, and cannot
+interrupt its calls. Keep network operations bounded in the program itself, as
+the `timeout` keyword does here. Package source analysis already runs calls
+natively and needs no such pattern.
+
+If the code is slow even when run natively, raise
+[`full_analysis.concretization_timeout`](@ref config/full_analysis/concretization_timeout).
+See its configuration reference for timing rules and limitations; disabling it
 with `"inf"` risks hanging analysis indefinitely.
 
-The limit is checked only at interpreted statement boundaries, not during
-native calls; see the configuration reference above for execution-mode details
-and timing exclusions.
+If the code does not terminate, for example a loop that defines methods with
+`@eval` on every iteration, move the definitions out of the loop so that JETLS
+analyzes the loop instead of executing it.
 
 #### [Method overwrite (`toplevel/method-overwrite`)](@id diagnostic/reference/toplevel/method-overwrite)
 
