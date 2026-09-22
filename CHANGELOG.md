@@ -56,7 +56,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
-- Bumped JuliaSyntax and JuliaLowering revisions ([`e9d1f89e1c`](https://github.com/JuliaLang/julia/commit/e9d1f89e1c)), bringing several upstream JuliaLowering bug fixes (https://github.com/JuliaLang/julia/pull/63006).
+- Bumped JuliaSyntax and JuliaLowering revisions ([`c941fbc399`](https://github.com/JuliaLang/julia/commit/c941fbc399)), bringing several upstream JuliaLowering bug fixes (https://github.com/JuliaLang/julia/pull/63006, https://github.com/JuliaLang/julia/pull/63009).
 
 ### Fixed
 
