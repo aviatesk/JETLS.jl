@@ -288,6 +288,8 @@ function parse_config_field(
     ) where T<:ConfigSection
     if T === FullAnalysisConfig && fname === :auto_instantiate
         return parse_auto_instantiate(x, path)
+    elseif T === FullAnalysisConfig && fname === :concretization_timeout
+        return parse_concretization_timeout(x, path)
     end
     return parse_config_dict_value(fieldtype(T, fname), x, path)
 end
@@ -302,6 +304,16 @@ function parse_auto_instantiate(@nospecialize(x), path::Vector{String})
     parse_dict_error(path, string(
         "expected one of ", join((repr(v) for v in AUTO_INSTANTIATE_VALUES), ", "),
         " (or `true`/`false`), got ", repr(x)))
+end
+
+function parse_concretization_timeout(@nospecialize(x), path::Vector{String})
+    x === nothing && return nothing
+    x isa String && x == "inf" && return Inf
+    if x isa Real && !(x isa Bool)
+        timeout = Float64(x)
+        isfinite(timeout) && timeout > 0 && return timeout
+    end
+    parse_dict_error(path, "expected a positive finite number of seconds or \"inf\", got $(repr(x))")
 end
 
 # Format an error message rooted at `path` (or unrooted at the top level). Messages
@@ -507,7 +519,7 @@ function (tracker::ConfigChangeTracker)(old_val, new_val, path::Tuple{Vararg{Sym
         if !isempty(path) && first(path) === :diagnostic
             tracker.diagnostic_setting_changed = true
         elseif (length(path) ≥ 2 && path[1] === :full_analysis &&
-                path[2] === :concretization_patterns)
+                path[2] in (:concretization_patterns, :concretization_timeout))
             tracker.analysis_setting_changed = true
         end
     end

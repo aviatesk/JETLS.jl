@@ -620,4 +620,71 @@ end
     end
 end
 
+@testset HierarchicalTestSet "`full_analysis.concretization_timeout`" begin
+    @testset "parsed values" begin
+        @test JETLS.FullAnalysisConfig().concretization_timeout === nothing
+        @test JETLS.get_default_config(:full_analysis, :concretization_timeout) ===
+            JETLS.JET.DEFAULT_CONCRETIZATION_TIMEOUT
+        for (value, expected) in ((15, 15.0), (0.25, 0.25), (nothing, nothing), ("inf", Inf))
+            raw_config = Dict{String,Any}(
+                "full_analysis" => Dict{String,Any}("concretization_timeout" => value))
+            config = JETLS.parse_config_dict(raw_config)
+            @test config.full_analysis.concretization_timeout === expected
+        end
+        for (value, expected) in (("15", 15.0), ("0.25", 0.25), ("\"inf\"", Inf))
+            raw_config = JETLS.TOML.parse("[full_analysis]\nconcretization_timeout = $value")
+            config = JETLS.parse_config_dict(raw_config, "/project/.JETLSConfig.toml")
+            @test config.full_analysis.concretization_timeout === expected
+        end
+    end
+
+    @testset "invalid values report the setting path" begin
+        message = "Invalid value at `full_analysis.concretization_timeout`: " *
+            "expected a positive finite number of seconds or \"inf\""
+        for value in (0, -1, true, false, Inf, -Inf, NaN, "15", "Inf", " inf ", Any[])
+            raw_config = Dict{String,Any}(
+                "full_analysis" => Dict{String,Any}("concretization_timeout" => value))
+            @test_throws message JETLS.parse_config_from_dict(JETLS.JETLSConfig, raw_config)
+        end
+        let raw_config = JETLS.TOML.parse("[full_analysis]\nconcretization_timeout = inf")
+            @test occursin(message,
+                JETLS.parse_config_dict(raw_config, "/project/.JETLSConfig.toml"))
+        end
+    end
+
+    @testset "file, LSP, and default precedence" begin
+        let manager = JETLS.ConfigManager(JETLS.ConfigManagerData())
+            @test JETLS.get_config(manager, :full_analysis, :concretization_timeout) === JETLS.JET.DEFAULT_CONCRETIZATION_TIMEOUT
+            lsp_config = JETLS.parse_config_dict(Dict{String,Any}(
+                "full_analysis" => Dict{String,Any}("concretization_timeout" => "inf")))
+            store_lsp_config!(manager, lsp_config)
+            @test JETLS.get_config(manager, :full_analysis, :concretization_timeout) === Inf
+
+            file_config = JETLS.parse_config_dict(JETLS.TOML.parse(
+                "[full_analysis]\nconcretization_timeout = 2.5"))
+            store_file_config!(manager, "/project/.JETLSConfig.toml", file_config)
+            @test JETLS.get_config(manager, :full_analysis, :concretization_timeout) === 2.5
+
+            unset_config = JETLS.parse_config_dict(JETLS.TOML.parse("[full_analysis]"))
+            @test unset_config.full_analysis.concretization_timeout === nothing
+            store_file_config!(manager, "/project/.JETLSConfig.toml", unset_config)
+            @test JETLS.get_config(manager, :full_analysis, :concretization_timeout) === Inf
+            store_lsp_config!(manager, JETLS.EMPTY_CONFIG)
+            @test JETLS.get_config(manager, :full_analysis, :concretization_timeout) === JETLS.JET.DEFAULT_CONCRETIZATION_TIMEOUT
+        end
+    end
+
+    @testset "changes and removal mark reanalysis" begin
+        for (old_value, new_value) in ((1.0, 2.5), (2.5, Inf), (Inf, nothing), (2.5, 2.5))
+            old_config = JETLS.JETLSConfig(; full_analysis=JETLS.FullAnalysisConfig(;
+                concretization_timeout=old_value))
+            new_config = JETLS.JETLSConfig(; full_analysis=JETLS.FullAnalysisConfig(;
+                concretization_timeout=new_value))
+            tracker = JETLS.ConfigChangeTracker()
+            JETLS.track_setting_changes(tracker, old_config, new_config)
+            @test tracker.analysis_setting_changed == (old_value !== new_value)
+        end
+    end
+end
+
 end # test_config

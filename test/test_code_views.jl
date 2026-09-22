@@ -2,11 +2,12 @@ module test_code_views
 
 using Test
 using JETLS
+using JETLS: JS
 using JETLS.LSP
 using JETLS.LSP.URIs2
 
-function server_with_show_document_support()
-    server = JETLS.Server()
+function server_with_show_document_support(; kwargs...)
+    server = JETLS.Server(; kwargs...)
     capabilities = ClientCapabilities(;
         window = WindowClientCapabilities(;
             showDocument = ShowDocumentClientCapabilities(; support = true)))
@@ -35,6 +36,31 @@ function toplevel_expansion_testcase(text::AbstractString)
     tree = @something JETLS.lowerable_toplevel_at(st0, 1) error("missing toplevel tree")
     content_uri = JETLS.macro_expansion_content_uri(uri, tree; toplevel=true)
     return (; server, uri, fi, tree, content_uri)
+end
+
+function notebook_testcase(cell_texts::Vector{String})
+    recorder = JETLS.ServerMessageRecorder()
+    server = server_with_show_document_support(; callback = recorder)
+    state = server.state
+    notebook_uri = URI("file:///code-views.ipynb")
+    cells = JETLS.NotebookCellInfo[
+        JETLS.NotebookCellInfo(
+            URI("vscode-notebook-cell:/code-views.ipynb#W$(i)sZmlsZQ%3D%3D"),
+            NotebookCellKind.Code, 1, text)
+        for (i, text) in enumerate(cell_texts)]
+    concat = JETLS.concatenate_cells(cells)
+    notebook = JETLS.NotebookInfo(1, "jupyter-notebook", state.encoding, cells, concat)
+    JETLS.store!(state.notebook_cache) do cache
+        Base.PersistentDict(cache, notebook_uri => notebook), nothing
+    end
+    JETLS.store!(state.cell_to_notebook) do cache
+        for cell in cells
+            cache = Base.PersistentDict(cache, cell.uri => notebook_uri)
+        end
+        cache, nothing
+    end
+    fi = JETLS.cache_notebook_file_info!(server, notebook_uri, notebook)
+    return (; server, recorder, notebook_uri, cells, fi)
 end
 
 function type_annotation_testcase(text::AbstractString; offset::Int = 1)
@@ -280,6 +306,56 @@ end
         JETLS.type_annotation_code_actions!(
             actions, case.server, case.uri, case.fi, full_range())
         @test "Show inferred type annotations" in String[a.title for a in actions]
+    end
+end
+
+@testset "notebook code views" begin
+    case = notebook_testcase(String[
+        "x = 1\ny = 2",
+        "function f(a, b)\n    @assert a > 0\n    return a + b\nend"])
+    (; server, recorder, cells, fi) = case
+    cell2 = cells[2].uri
+    cell2_offset = JETLS.xy_to_offset(fi,
+        JETLS.adjust_position(server.state, cell2, Position(; line = 0, character = 0)))
+    st0 = JETLS.build_syntax_tree(fi)
+    tree = @something JETLS.lowerable_toplevel_at(st0, cell2_offset) error("missing toplevel tree")
+    @test first(JS.byte_range(tree)) == cell2_offset
+
+    # The request range is cell-local; the offered views must target the form in cell 2,
+    # not whatever occupies the same lines at the start of the notebook.
+    msg = CodeActionRequest(; id = 1, params = CodeActionParams(;
+        textDocument = TextDocumentIdentifier(; uri = cell2),
+        range = Range(;
+            start = Position(; line = 0, character = 0),
+            var"end" = Position(; line = 0, character = 0)),
+        context = CodeActionContext(; diagnostics = Diagnostic[])))
+    JETLS.handle_CodeActionRequest(server, msg, JETLS.DUMMY_CANCEL_FLAG)
+    response = take!(recorder.sent_queue)
+    @test response isa CodeActionResponse
+    titles = String[a.title for a in response.result]
+    let action = response.result[findfirst(==("Show inferred type annotations"), titles)]
+        @test only(action.command.arguments) ==
+            string(JETLS.type_annotation_content_uri(cell2, tree))
+    end
+    let action = response.result[findfirst(==("Expand all macros in this top-level form"), titles)]
+        @test only(action.command.arguments) ==
+            string(JETLS.macro_expansion_content_uri(cell2, tree; toplevel=true))
+    end
+
+    # The content is produced from the notebook document the cell belongs to.
+    let content_uri = JETLS.URI(string(JETLS.type_annotation_content_uri(cell2, tree)))
+        params = JETLS.parse_text_document_content_query(content_uri)
+        @test URI(params["source"]) == cell2
+        text = JETLS.type_annotation_text(server, content_uri)
+        @test occursin("Inferred type annotations", text)
+        @test occursin("function f(a, b)", text)
+        @test occursin("::Any", text)
+    end
+    let content_uri = JETLS.URI(string(JETLS.macro_expansion_content_uri(cell2, tree; toplevel=true)))
+        text = JETLS.macro_expansion_text(server, content_uri)
+        @test occursin("All macros expanded", text)
+        @test occursin("AssertionError", text)
+        @test !occursin("@assert", text)
     end
 end
 

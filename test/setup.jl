@@ -40,13 +40,81 @@ function take_with_timeout!(chn::Channel; interval = 0.1, limit = 600)
     error("Timeout waiting for message")
 end
 
+# Reads server messages one at a time until `pred` accepts one and returns it; messages
+# arriving in between (other publishes, configuration notices) are discarded.
+function read_until(pred, readmsg; limit::Int = 50)
+    for _ in 1:limit
+        msg = readmsg(; check = false).raw_msg
+        pred(msg) && return msg
+    end
+    error("Gave up waiting for a matching server message")
+end
+
+# Runs one scan of the workspace diagnostics worker synchronously and returns what it
+# published, keyed by URI. With the worker stopped (see `withserver`), this is the only
+# way `JETLS/live` diagnostics reach the client, which keeps the message sequences exact;
+# the queues are expected to be empty when this is called.
+function scan_live_diagnostics!(server::JETLS.Server, readmsg)
+    JETLS.publish_workspace_diagnostics!(server, JETLS.DUMMY_CANCEL_FLAG)
+    published = Dict{URI,PublishDiagnosticsParams}()
+    while isready(server.callback.sent_queue)
+        msg = readmsg(; check = false).raw_msg
+        msg isa PublishDiagnosticsNotification ||
+            error("Unexpected message during a live diagnostics scan: $(typeof(msg))")
+        published[msg.params.uri] = msg.params
+    end
+    return published
+end
+
+# Stops the workspace diagnostics worker once full-analysis has settled and discards
+# whatever was published meanwhile, so that the shutdown handshake sees empty queues.
+function settle_live_diagnostics!(server::JETLS.Server, readmsg)
+    manager = server.state.analysis_manager
+    quiescent() = isempty(JETLS.load(manager.debounced)) &&
+        isempty(JETLS.load(manager.pending_analyses))
+    # a debounce timer hands its request over to `pending_analyses` in two steps
+    timedwait(10.0) do
+        quiescent() || return false
+        sleep(0.1)
+        quiescent()
+    end === :ok || error("Full-analysis did not settle")
+    JETLS.stop_workspace_diagnostics_worker(server)
+    while isready(server.callback.sent_queue)
+        readmsg(; check = false)
+    end
+    return nothing
+end
+
+function with_pull_diagnostics(capabilities::ClientCapabilities)
+    textDocument = @something capabilities.textDocument TextDocumentClientCapabilities()
+    textDocument.diagnostic === nothing || return capabilities
+    fields(x) = (; (f => getfield(x, f) for f in fieldnames(typeof(x)))...)
+    textDocument = TextDocumentClientCapabilities(;
+        fields(textDocument)..., diagnostic = DiagnosticClientCapabilities())
+    return ClientCapabilities(; fields(capabilities)..., textDocument)
+end
+
+# The workspace diagnostics worker is stopped right after initialization unless a test
+# opts in with `live_diagnostics = true`: its pushes of `JETLS/live` diagnostics arrive
+# at their own pace and would interleave with the exact message sequences asserted below.
+# Tests then drive the scans themselves through `scan_live_diagnostics!`.
+# `pull_diagnostics = true` models a client that pulls the live diagnostics of open files:
+# it sets the `pull_diagnostics` initialization option and advertises the
+# `textDocument.diagnostic` capability.
 function withserver(
-        f;
+        f::Base.Callable;
         capabilities::ClientCapabilities = ClientCapabilities(),
+        live_diagnostics::Bool = false,
+        pull_diagnostics::Bool = false,
         workspaceFolders::Union{Nothing, Vector{WorkspaceFolder}} = nothing,
         rootUri::Union{Nothing, URI} = nothing,
         settings::Union{Nothing, AbstractDict} = nothing
     )
+    initializationOptions = nothing
+    if pull_diagnostics
+        capabilities = with_pull_diagnostics(capabilities)
+        initializationOptions = Dict{String,Any}("pull_diagnostics" => true)
+    end
     in_pipe = Pipe()
     out_pipe = Pipe()
     Base.link_pipe!(in_pipe; reader_supports_async=true, writer_supports_async=true)
@@ -193,6 +261,7 @@ function withserver(
                 params = InitializeParams(;
                     processId = getpid(),
                     capabilities,
+                    initializationOptions,
                     rootUri,
                     workspaceFolders)))
             raw_msg = take_with_timeout!(received_queue)::InitializeRequest
@@ -209,6 +278,8 @@ function withserver(
             @assert register_capability_request.id isa String
             register_capability_json_request = json_res::RegisterCapabilityRequest
             @assert register_capability_json_request.id isa String
+
+            live_diagnostics || JETLS.stop_workspace_diagnostics_worker(server)
 
             # apply initial settings if provided
             # read=1: ShowMessageNotification for config change
@@ -255,13 +326,68 @@ function withserver(
     end
 end
 
+"""
+Create a server without starting `runserver`, so tests can advance document
+synchronization and concurrent dispatch independently.
+"""
+function with_manual_dispatch_server(tester)
+    recorder = JETLS.ServerMessageRecorder()
+    server = Server(Endpoint(IOBuffer(), IOBuffer()); callback = recorder)
+    server.state.init_params = InitializeParams(;
+        processId = getpid(), rootUri = nothing, capabilities = ClientCapabilities())
+    try
+        return tester(server, recorder)
+    finally
+        close(server.endpoint)
+        close(server.message_queue)
+    end
+end
+
+function queued_snapshot_requests(server::Server, messages::Vector)
+    queue, worker = JETLS.start_sequential_message_worker(server)
+    try
+        foreach(msg -> put!(queue, msg), messages)
+        put!(queue, nothing)
+        timedwait(() -> istaskdone(worker), 30.0; pollint = 0.01) === :ok ||
+            error("Timed out preparing document snapshots")
+        fetch(worker)
+    finally
+        close(queue)
+    end
+    # Keep concurrent dispatch stopped until every later edit has been applied.
+    prepared = JETLS.SnapshotRequestMessage[]
+    while isready(server.message_queue)
+        msg = take!(server.message_queue)
+        @test msg isa JETLS.SnapshotRequestMessage
+        push!(prepared, msg)
+    end
+    return prepared
+end
+
+function dispatch_snapshot_request(
+        server::Server, recorder::JETLS.ServerMessageRecorder,
+        prepared::JETLS.SnapshotRequestMessage
+    )
+    JETLS.handler_concurrent_message(server, prepared)
+    response = take_with_timeout!(recorder.sent_queue; interval = 0.01, limit = 6000)
+    @test response.id == prepared.msg.id
+    token = take_with_timeout!(server.message_queue; interval = 0.01, limit = 3000)
+    @test token isa JETLS.HandledToken
+    @test token.id == prepared.msg.id
+    JETLS.handler_concurrent_message(server, token)
+    @test !haskey(server.state.currently_handled, prepared.msg.id)
+    @test prepared.msg.id in server.state.handled_history
+    @test !isready(recorder.sent_queue)
+    return response
+end
+
 function withpackage(
-        test_func, pkgname::AbstractString,
+        test_func::Base.Callable, pkgname::AbstractString,
         pkgcode::AbstractString;
-        pkg_setup = function ()
+        pkg_setup::Base.Callable = function ()
             return Pkg.precompile(; io = devnull)
         end,
-        env_setup = function () end
+        env_setup::Base.Callable = function () end
     )
     mktempdir() do tempdir
         pkgpath = normpath(tempdir, pkgname)
@@ -281,7 +407,7 @@ end
 
 function withscript(
         test_func, scriptcode::AbstractString;
-        env_setup = function () end
+        env_setup::Base.Callable = function () end
     )
     mktemp() do scriptpath, _
         Pkg.activate(dirname(scriptpath)) do
@@ -293,16 +419,20 @@ function withscript(
     end
 end
 
-function make_DidOpenTextDocumentNotification(uri, text;
-                                              languageId = "julia",
-                                              version = 1)
+function make_DidOpenTextDocumentNotification(
+        uri::URI, text::AbstractString;
+        languageId::AbstractString = "julia",
+        version::Int = 1
+    )
     return DidOpenTextDocumentNotification(;
         params = DidOpenTextDocumentParams(;
             textDocument = TextDocumentItem(;
                 uri, text, languageId, version)))
 end
 
-function make_DidChangeTextDocumentNotification(uri, text, version)
+function make_DidChangeTextDocumentNotification(
+        uri::URI, text::AbstractString, version::Int
+    )
     return DidChangeTextDocumentNotification(;
         params = DidChangeTextDocumentParams(;
             textDocument = VersionedTextDocumentIdentifier(; uri, version),

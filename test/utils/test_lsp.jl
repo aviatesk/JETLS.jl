@@ -220,4 +220,51 @@ end
     end
 end
 
+@testset "completion notifications during shutdown" begin
+    let recorder = JETLS.ServerMessageRecorder(),
+        server = JETLS.Server(; callback = recorder)
+        try
+            response = ResponseMessage(; id = 1, result = null)
+            task = @lock server.message_queue begin
+                # @async and yield run the sender to the blocked put! before queue closure.
+                local task = @async JETLS.send(server, response)
+                yield()
+                @test istaskstarted(task) && !istaskdone(task)
+                @test isready(recorder.sent_queue) && take!(recorder.sent_queue) === response
+                close(server.endpoint)
+                close(server.message_queue)
+                task
+            end
+            @test fetch(task) === nothing
+            @test_nowarn JETLS.send_progress(server, "progress", WorkDoneProgressEnd())
+        finally
+            close(server.endpoint)
+            close(server.message_queue)
+        end
+    end
+end
+
+@testset "Diagnostic and Location structural equality" begin
+    make_tagged(character) = Diagnostic(;
+        range = Range(;
+            start = Position(; line = 1, character),
+            var"end" = Position(; line = 1, character = character + 3)),
+        severity = DiagnosticSeverity.Warning,
+        message = "unused argument `xxx`",
+        source = JETLS.DIAGNOSTIC_SOURCE_LIVE,
+        code = JETLS.LOWERING_UNUSED_ARGUMENT_CODE,
+        tags = DiagnosticTag.Ty[DiagnosticTag.Unnecessary])
+    # separately built objects are not egal because of the `tags` vector
+    a = make_tagged(4); b = make_tagged(4)
+    @test a !== b
+    @test a == b && hash(a) == hash(b)
+    @test a != make_tagged(5)
+    @test [a] == [b]
+    uri = filepath2uri(@__FILE__)
+    loc1 = Location(; uri, range = a.range)
+    loc2 = Location(; uri, range = b.range)
+    @test loc1 == loc2 && hash(loc1) == hash(loc2)
+    @test length(Set([loc1, loc2])) == 1
+end
+
 end # module test_lsp

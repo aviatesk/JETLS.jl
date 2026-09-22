@@ -35,7 +35,7 @@ get_analysis_info(f, manager::AnalysisManager, uri::URI) = get(f, load(manager.c
 
 # Collect URIs to search: the current file and all files in the same analysis unit
 function collect_search_uris(server::Server, uri::URI)
-    this_uri = get_notebook_uri_for_cell(server.state, uri, uri)
+    this_uri = canonical_cache_uri(server.state, uri)
     analysis_info = get_analysis_info(server.state.analysis_manager, this_uri)
     return collect_search_uris(this_uri, analysis_info)
 end
@@ -49,6 +49,9 @@ function collect_search_uris(this_uri::URI, analysis_info::Union{Nothing,Analysi
     elseif analysis_info isa OutOfScope && Revise !== nothing
         # TODO: This implementation should be revisited when Revise is integrated into full-analysis
         out_of_scope = analysis_info
+        if out_of_scope.module_context === FallbackAnalysisContext
+            return uris_to_search
+        end
         pkgid = Base.PkgId(something(out_of_scope.module_context, Main))
         @lock Revise.revise_lock begin
             pkgdata = Revise.getpkgdata(pkgid)
@@ -561,29 +564,26 @@ function resolve_analysis_request(server::Server, request::AnalysisRequest)
     @static JETLS_DEV_MODE && @info "Analysis completed in $tm seconds:" entry=progress_title(request.entry) uri=request.uri generation=get_generation(manager,request.entry)
 
     if is_abandoned_request(server, request)
-        # Document was closed mid-analysis. `file_cache`/`notebook_cache`
-        # becoming empty means didClose already ran (or is racing with us) and
-        # `cleanup_analysis_state!` is taking care of
-        # `manager.cache`/generations/debounced + the OLD prev_result's methods.
-        # We just need to drop the methods this analysis just defined and skip the cache write.
         @static JETLS_DEV_MODE && @info "Discarding analysis result for closed editor-managed document" entry=progress_title(request.entry) uri=request.uri
-        cleanup_prev_methods(analysis_result)
-        cleanup_analysis_entry_state!(manager, request.entry)
+        discard_abandoned_analysis!(server, request, analysis_result)
         @goto next_request
     end
 
     update_analysis_cache!(server.state, analysis_result)
+    # `didClose` may have run between the check above and this cache write, in which case
+    # its `cleanup_analysis_state!` found nothing to pop.
+    if is_abandoned_request(server, request)
+        @static JETLS_DEV_MODE && @info "Discarding analysis result stored after its editor-managed document was closed" entry=progress_title(request.entry) uri=request.uri
+        discard_abandoned_analysis!(server, request, analysis_result)
+        @goto next_request
+    end
     mark_analyzed_generation!(manager, request)
     request.notify_diagnostics && notify_diagnostics!(server)
-
-    # Request diagnostic refresh for full-analysis completion.
-    # This ensures that clients using pull diagnostics (textDocument/diagnostic) will
-    # re-request diagnostics now that new module context is available, allowing
-    # lowering/macro-expansion-error and lowering/undef-global-var diagnostics
-    # to be properly reported.
-    request_diagnostic_refresh!(server)
-    # Also request code lens for references recalculation
-    request_codelens_refresh!(server)
+    # Top-level errors can skip signature analysis and its intermediate context refresh.
+    if !execution.context_refreshed
+        request_diagnostic_refresh!(server)
+        request_codelens_refresh!(server)
+    end
 
     @label next_request
 
@@ -671,7 +671,7 @@ function cleanup_prev_methods(prev_result::AnalysisResult)
             Base.delete_method(m)
         catch e
             @static JETLS_DEV_MODE && @warn "Failed to delete method $m" disabled=is_method_disabled(m)
-            @static JETLS_DEV_MODE && Base.showerror(stderr, e, catch_backtrace())
+            @static JETLS_DEV_MODE && showerror(stderr, e, catch_backtrace())
         end
     end
 end
@@ -696,6 +696,22 @@ end
 is_abandoned_request(server::Server, request::AnalysisRequest) =
     is_abandoned_analysis_target(server, request.uri, request.entry)
 
+# Drops what the analysis of a closed editor-managed document leaves behind: the methods
+# it defined and the cache entry it wrote. `cleanup_analysis_state!` on `didClose` only
+# pops what was cached at that time, so the intermediate result written mid-analysis
+# (`cache_intermediate_analysis_result!`) or a final result stored right after the
+# abandonment check would otherwise outlive the close and be published under the
+# notebook URI, never localized to its cells.
+function discard_abandoned_analysis!(
+        server::Server, request::AnalysisRequest, analysis_result::AnalysisResult
+    )
+    manager = server.state.analysis_manager
+    popped = pop_analysis_info!(manager, request.uri)
+    popped isa AnalysisResult && popped !== analysis_result && cleanup_prev_methods(popped)
+    cleanup_prev_methods(analysis_result)
+    cleanup_analysis_entry_state!(manager, request.entry)
+end
+
 """
     cleanup_analysis_state!(server::Server, uri::URI)
 
@@ -712,16 +728,16 @@ properties that make cleanup both safe and necessary:
 
 For notebooks there is the additional motivation that the on-disk `.ipynb` JSON
 is not directly analyzable as Julia source, so leaving the cache entry would
-let `workspace/diagnostic` fall through and emit spurious diagnostics for the
-raw JSON.
+let the workspace diagnostics worker fall through and emit spurious diagnostics
+for the raw JSON.
 
 Saved `.jl` files are intentionally NOT cleaned up here. They violate both
 properties: a `PackageSourceAnalysisEntry` covers every file in the package
 (removing one would tear out siblings' cached analysis), and Revise-based
 package analysis registers `module_range_infos` against the user's real
 modules, so `cleanup_prev_methods` would delete the user's live methods.
-Keeping the cache also lets `workspace/diagnostic` keep reporting disk-based
-diagnostics after close.
+Keeping the cache also lets the workspace diagnostics worker keep reporting
+disk-based diagnostics after close.
 
 This only handles state already known when `didClose` runs. Delayed progress
 responses are ignored, while any in-flight or queued analysis is short-circuited
@@ -841,10 +857,10 @@ function execute_analysis(server::Server, execution::AnalysisExecution)
     if entry isa NewAnalysisEntry
         env_path = entry.env_path
         result = if env_path === nothing
-            analyze_package_with_revise(server, request, entry.pkgid)
+            analyze_package_with_revise(server, execution, entry.pkgid)
         else
             activate_with_early_release(env_path) do activation_done::Base.Event
-                analyze_package_with_revise(server, request, entry.pkgid, activation_done)
+                analyze_package_with_revise(server, execution, entry.pkgid, activation_done)
             end::AnalysisResult
         end
         return result, false
@@ -898,7 +914,7 @@ function analyze_parsed_if_exist(
     )
     request = execution.request
     uri = entryuri(request.entry)
-    jetconfigs = getjetconfigs(request.entry)
+    jetconfigs = getjetconfigs(server, request.entry)
     interp = LSInterpreter(server, execution; activation_done)
     if isunsaveduri(uri)
         # Unsaved buffers (`untitled:`/`buffer:`) are never persisted to the
@@ -930,7 +946,22 @@ function update_analyzer_world(analyzer::LSAnalyzer, world::UInt = Base.get_worl
     return JET.AbstractAnalyzer(analyzer, newstate)
 end
 
-function new_analysis_result(interp::LSInterpreter, result::JET.JETToplevelResult)
+# Publishing a new context must not discard completed diagnostics while analysis is pending.
+function intermediate_analysis_diagnostics(
+        execution::AnalysisExecution, analyzed_file_infos::Dict{URI,JET.AnalyzedFileInfo}
+    )
+    prev_result = execution.prev_result
+    uri2diagnostics = URI2Diagnostics()
+    for uri in keys(analyzed_file_infos)
+        diagnostics = prev_result === nothing ? nothing : get(prev_result.uri2diagnostics, uri, nothing)
+        uri2diagnostics[uri] = diagnostics === nothing ? Diagnostic[] : copy(diagnostics)
+    end
+    return uri2diagnostics
+end
+
+function new_analysis_result(
+        interp::LSInterpreter, result::JET.JETToplevelResult; intermediate::Bool = false
+    )
     execution = interp.execution
     request = execution.request
     analyzed_file_infos = Dict{URI,JET.AnalyzedFileInfo}(
@@ -940,10 +971,16 @@ function new_analysis_result(interp::LSInterpreter, result::JET.JETToplevelResul
 
     result_world = Base.get_world_counter()
 
-    uri2diagnostics = URI2Diagnostics(uri => Diagnostic[] for uri in keys(analyzed_file_infos))
-    postprocessor = JET.PostProcessor(result.res.actual2virtual)
-    toplevel_warning_reports_to_diagnostics!(uri2diagnostics, interp.warning_reports, interp.server, postprocessor)
-    jet_result_to_diagnostics!(uri2diagnostics, result, result_world, postprocessor)
+    if intermediate
+        uri2diagnostics = intermediate_analysis_diagnostics(execution, analyzed_file_infos)
+    else
+        uri2diagnostics = URI2Diagnostics(uri => Diagnostic[] for uri in keys(analyzed_file_infos))
+        postprocessor = JET.PostProcessor(result.res.actual2virtual)
+        toplevel_warning_reports_to_diagnostics!(uri2diagnostics, interp.warning_reports, interp.server, postprocessor)
+        jet_result_to_diagnostics!(uri2diagnostics, result, result_world, postprocessor;
+            markdown_rendering = supports(interp.server, :textDocument, :diagnostic, :markupMessageSupport))
+        uri2diagnostics
+    end
 
     entry = request.entry
     prev_result = execution.prev_result
@@ -1067,7 +1104,7 @@ function (job::ReviseSignatureAnalysisJob)(server::Server)
             JET.AnalyzerState(JET.AnalyzerState(analyzer), #=refresh_local_cache=#true))
         match = signature_analysis_match(task_analyzer, siginfo.sig, inf_world)
         if match !== nothing
-            task_analyzer, result = JET.analyze_method_signature!(task_analyzer,
+            result = JET.analyze_method_signature!(task_analyzer,
                 match.method, match.spec_types, match.sparams)
             @atomic progress.analyzed += 1
             reports = JET.get_reports(task_analyzer, result)
@@ -1085,7 +1122,7 @@ function (job::ReviseSignatureAnalysisJob)(server::Server)
         isempty(reports) || @lock progress.reports_lock append!(progress.reports, reports)
     catch err
         @error "Error analyzing method signature" siginfo.sig
-        Base.showerror(stderr, err, catch_backtrace())
+        showerror(stderr, err, catch_backtrace())
     finally
         done = (@atomic progress.done += 1)
         if cancellable_token !== nothing
@@ -1174,14 +1211,15 @@ function get_lines_in_src(filepath::AbstractString, src::Core.CodeInfo)
 end
 
 function analyze_package_with_revise(
-        server::Server, request::AnalysisRequest, pkgid::Base.PkgId,
+        server::Server, execution::AnalysisExecution, pkgid::Base.PkgId,
         activation_done::Union{Nothing,Base.Event} = nothing
     )
+    request = execution.request
     pkgmod = get(Base.loaded_modules, pkgid, nothing)
     pkgmod = try
         pkgmod === nothing ? Base.require(pkgid)::Module : pkgmod
     catch e
-        show_error_message(server, "Failed to load package $(pkgid.name): $(sprint(Base.showerror, e))")
+        show_error_message(server, "Failed to load package $(pkgid.name): $(sprint(showerror, e))")
         error(lazy"Package $(pkgid.name) is not loadable") # TODO Make this top-level diagnostic?
     finally
         isnothing(activation_done) || notify(activation_done)
@@ -1233,6 +1271,17 @@ function analyze_package_with_revise(
         analyzer = LSAnalyzer(request.entry; report_target_modules, reuse_native_inference)
         newstate = JET.AnalyzerState(JET.AnalyzerState(analyzer); world)
         JET.AbstractAnalyzer(analyzer, newstate)
+    end
+
+    # Module contexts are known at this point, which is all live diagnostics need, so
+    # expose them before signature analysis, like `cache_intermediate_analysis_result!`.
+    let uri2diagnostics = intermediate_analysis_diagnostics(execution, analyzed_file_infos)
+        intermediate_result = AnalysisResult(request.entry, uri2diagnostics, analyzer,
+            analyzed_file_infos, pkgmod => pkgmod, world)
+        update_analysis_cache!(server.state, intermediate_result)
+        request_diagnostic_refresh!(server)
+        request_codelens_refresh!(server)
+        execution.context_refreshed = true
     end
 
     # Detect method overwrites
@@ -1315,7 +1364,11 @@ end
 
 entryuri(entry::AnalysisEntry) = entryuri_impl(entry)::URI
 progress_title(entry::AnalysisEntry) = progress_title_impl(entry)::String
-getjetconfigs(entry::AnalysisEntry) = getjetconfigs_impl(entry)::Dict{Symbol,Any}
+function getjetconfigs(server::Server, entry::AnalysisEntry)
+    jetconfigs = copy(getjetconfigs_impl(entry)::Dict{Symbol,Any})
+    jetconfigs[:concretization_timeout] = get_config(server, :full_analysis, :concretization_timeout)
+    return jetconfigs
+end
 
 let default_jetconfigs = Dict{Symbol,Any}(
         :toplevel_logger => nothing,
@@ -1596,23 +1649,26 @@ function should_request_instantiation_progress(server::Server, env_path::String)
          instantiation_decision(server, env_path) === :accepted)
 end
 
-function do_instantiation(server::Server, uri::URI, ins_request::InstantiationRequest)
+function do_instantiation(
+        server::Server, uri::URI, ins_request::InstantiationRequest;
+        progress_io::Union{Nothing,InstantiationProgressIO} = nothing
+    )
     (; env_path, pkgname, filekind, filedir, isnotebook) = ins_request
     if pkgname === nothing
-        ensure_instantiated_if_requested!(server, env_path)
+        ensure_instantiated_if_requested!(server, env_path; progress_io)
         return ScriptInEnvAnalysisEntry(env_path, uri, isnotebook)
     elseif pkgname isa Base.PkgId
         pkgid = pkgname
         envpkgname = find_pkg_name(env_path)
         if envpkgname === nothing
-            ensure_instantiated_if_requested!(server, env_path)
+            ensure_instantiated_if_requested!(server, env_path; progress_io)
         else
-            instantiate_package_environment!(server, env_path, envpkgname)
+            instantiate_package_environment!(server, env_path, envpkgname; progress_io)
         end
         return NewAnalysisEntry(pkgid, env_path)
     else
         pkgid, pkgfile = @something(
-            instantiate_package_environment!(server, env_path, pkgname),
+            instantiate_package_environment!(server, env_path, pkgname; progress_io),
             return ScriptInEnvAnalysisEntry(env_path, uri, isnotebook))
         if filekind === :src
             return PackageSourceAnalysisEntry(env_path, filepath2uri(pkgfile), pkgid)
@@ -1623,13 +1679,16 @@ function do_instantiation(server::Server, uri::URI, ins_request::InstantiationRe
     end
 end
 
-function ensure_instantiated_if_requested!(server::Server, env_path::String)
+function ensure_instantiated_if_requested!(
+        server::Server, env_path::String;
+        progress_io::Union{Nothing,InstantiationProgressIO} = nothing
+    )
     instantiated_envs = server.state.analysis_manager.instantiated_envs
     activate_do(env_path) do
         if haskey(load(instantiated_envs), env_path)
             return
         end
-        ensure_instantiated!(server, env_path)
+        ensure_instantiated!(server, env_path; progress_io)
         store!(instantiated_envs) do cache
             if haskey(cache, env_path)
                 cache, nothing
@@ -1642,14 +1701,17 @@ function ensure_instantiated_if_requested!(server::Server, env_path::String)
     end
 end
 
-function instantiate_package_environment!(server::Server, env_path::String, pkgname::String)
+function instantiate_package_environment!(
+        server::Server, env_path::String, pkgname::String;
+        progress_io::Union{Nothing,InstantiationProgressIO} = nothing
+    )
     instantiated_envs = server.state.analysis_manager.instantiated_envs
     activate_do(env_path) do
         cached = get(load(instantiated_envs), env_path, missing)
         if cached !== missing
             return cached
         end
-        ensure_instantiated!(server, env_path)
+        ensure_instantiated!(server, env_path; progress_io)
         pkgenv = @lock Base.require_lock @something Base.identify_package_env(pkgname) begin
             @warn "Failed to identify package environment" env_path pkgname
             return store!(instantiated_envs) do cache
@@ -1675,7 +1737,10 @@ function instantiate_package_environment!(server::Server, env_path::String, pkgn
     end
 end
 
-function ensure_instantiated!(server::Server, env_path::String)
+function ensure_instantiated!(
+        server::Server, env_path::String;
+        progress_io::Union{Nothing,InstantiationProgressIO} = nothing
+    )
     needs = inspect_instantiation_needs(env_path)
     if !needs.instantiate
         @static JETLS_DEV_MODE && @info "Package environment is already instantiated" env_path
@@ -1693,7 +1758,9 @@ function ensure_instantiated!(server::Server, env_path::String)
     end
     if auto_instantiate == AUTO_INSTANTIATE_ALWAYS
         verbose = server.state.cli_mode || JETLS_DEV_MODE
-        io = IOBuffer()
+        io = @something progress_io IOBuffer()
+        start_time = time_ns()
+        successed = false
         try
             if needs.resolve
                 verbose && @info "Resolving package environment" env_path
@@ -1701,14 +1768,15 @@ function ensure_instantiated!(server::Server, env_path::String)
             end
             verbose && @info "Instantiating package environment" env_path
             Pkg.instantiate(; io)
+            successed = true
         catch e
             @error """Failed to instantiate package environment;
             Unable to instantiate the environment of the target package for analysis,
             so this package will be analyzed as a script instead.
             This may cause various features such as diagnostics to not function properly.
             It is recommended to fix the problem by referring to the following error""" env_path
-            print(stderr, String(take!(io)))
-            Base.showerror(stderr, e, catch_backtrace())
+            println(stderr, String(take!(io)))
+            showerror(stderr, e, catch_backtrace())
             if !server.state.cli_mode
                 show_warning_message(server, """
                     Failed to instantiate package environment at $env_path.
@@ -1717,6 +1785,11 @@ function ensure_instantiated!(server::Server, env_path::String)
                     It is recommended to fix your package environment setup and restart the language server.""")
             end
         finally
+            if successed && verbose
+                elapsed = format_duration((time_ns() - start_time) / 1e9)
+                @info "Package environment instantiation finished" env_path elapsed
+                print(stderr, String(take!(io)))
+            end
             clear_pkg_registry_cache!()
         end
     else
@@ -1735,7 +1808,7 @@ function inspect_instantiation_needs(env_path::String)
             instantiation_needs(env_path)
         catch e
             @error "Failed to inspect package environment" env_path
-            Base.showerror(stderr, e, catch_backtrace())
+            showerror(stderr, e, catch_backtrace())
             (; resolve = true, instantiate = true)
         finally
             clear_pkg_registry_cache!()
@@ -1858,15 +1931,7 @@ function do_instantiation_with_progress(
         server::Server, uri::URI, ins_request::InstantiationRequest, token::ProgressToken
     )
     message_path = instantiation_message_path(ins_request)
-    send_progress(server, token,
-        WorkDoneProgressBegin(;
-            title = "Instantiating environment",
-            message = message_path,
-            cancellable = false))
-    entry = try
-        do_instantiation(server, uri, ins_request)
-    finally
-        send_progress(server, token, WorkDoneProgressEnd())
+    return with_instantiation_progress(server, token, message_path) do progress_io
+        do_instantiation(server, uri, ins_request; progress_io)
     end
-    return entry
 end

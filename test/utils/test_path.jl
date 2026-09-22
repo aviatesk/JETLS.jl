@@ -84,18 +84,54 @@ end
             @test JETLS.paths_equal(result, project_file)
         end
 
+        for module_name in (nothing, "")
+            state = JETLS.ServerState()
+            state.root_path = project_dir
+            state.init_options = JETLS.InitOptions(; analysis_overrides=[
+                JETLS.AnalysisOverride(;
+                    path=JETLS.Glob.FilenameMatch("src/**/*.jl", "dp"),
+                    full_analysis=false, module_name)
+            ])
+            result = JETLS.find_analysis_env_path(state, uri)::JETLS.OutOfScope
+            @test result.module_context === JETLS.FallbackAnalysisContext
+            @test !JETLS.has_analyzed_context(state, uri;
+                lookup_func=JETLS.gen_lookup_out_of_scope!(state, uri))
+            cached = JETLS.get_analysis_info(state.analysis_manager, uri)::JETLS.OutOfScope
+            @test cached.module_context === JETLS.FallbackAnalysisContext
+            @test !JETLS.has_analyzed_context(state, uri)
+            @test JETLS.collect_search_uris(uri, cached) == Set((uri,))
+        end
+
         let state = JETLS.ServerState()
             state.root_path = project_dir
             state.init_options = JETLS.InitOptions(; analysis_overrides=[
                 JETLS.AnalysisOverride(;
-                    path=JETLS.Glob.FilenameMatch("src/**/*.jl", "dp"))
+                    path=JETLS.Glob.FilenameMatch("src/**/*.jl", "dp"),
+                    full_analysis=false, module_name="Test")
             ])
-            @test JETLS.find_analysis_env_path(state, uri) isa JETLS.OutOfScope
+            result = JETLS.find_analysis_env_path(state, uri)::JETLS.OutOfScope
+            @test result.module_context === Test
+            @test JETLS.has_analyzed_context(state, uri;
+                lookup_func=JETLS.gen_lookup_out_of_scope!(state, uri))
+            @test JETLS.has_analyzed_context(state, uri)
+        end
+
+        let state = JETLS.ServerState()
+            state.root_path = project_dir
+            state.init_options = JETLS.InitOptions(; analysis_overrides=[
+                JETLS.AnalysisOverride(;
+                    path=JETLS.Glob.FilenameMatch("test/**/*.jl", "dp"),
+                    full_analysis=false)
+            ])
+            result = JETLS.find_analysis_env_path(state, uri)::String
+            @test JETLS.paths_equal(result, project_file)
         end
 
         let state = JETLS.ServerState()
             state.root_path = workspace_dir
-            @test JETLS.find_analysis_env_path(state, uri) isa JETLS.OutOfScope
+            result = JETLS.lookup_out_of_scope!(state, uri)::JETLS.OutOfScope
+            @test result.module_context === nothing
+            @test !JETLS.has_analyzed_context(state, uri)
         end
 
         let state = JETLS.ServerState(; cli_mode=true)

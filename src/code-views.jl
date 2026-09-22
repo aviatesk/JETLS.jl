@@ -195,7 +195,8 @@ function macro_expansion_text(server::Server, content_uri::URI)
     end
     toplevel = get(params, "mode", "call") == "toplevel"
     source_uri = URI(source)
-    fi = @something get_file_info(server.state, source_uri) begin
+    cache_uri = canonical_cache_uri(server.state, source_uri)
+    fi = @something get_file_info(server.state, cache_uri) begin
         return "Source document is not available: $(string(source_uri))\n"
     end
     st0_top = build_syntax_tree(fi)
@@ -287,7 +288,8 @@ function type_annotation_text(server::Server, content_uri::URI)
         return "Invalid `stop` parameter.\n"
     end
     source_uri = URI(source)
-    fi = @something get_file_info(server.state, source_uri) begin
+    cache_uri = canonical_cache_uri(server.state, source_uri)
+    fi = @something get_file_info(server.state, cache_uri) begin
         return "Source document is not available: $(string(source_uri))\n"
     end
     st0_top = build_syntax_tree(fi)

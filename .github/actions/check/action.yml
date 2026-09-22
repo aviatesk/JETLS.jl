@@ -12,7 +12,7 @@ inputs:
   julia-version:
     description: "Julia version to use"
     required: false
-    default: "1.12"
+    default: "1.13"
   quiet:
     description: "Suppress info and warning log messages"
     required: false
@@ -28,7 +28,7 @@ inputs:
   exit-severity:
     description: "Minimum severity to trigger non-zero exit (error, warn, info, hint)"
     required: false
-    default: "warn"
+    default: ""
   show-severity:
     description: "Minimum severity to display in output (error, warn, info, hint)"
     required: false
@@ -64,7 +64,9 @@ runs:
         if [[ -n "${{ inputs.context-lines }}" ]]; then
           args+=(--context-lines="${{ inputs.context-lines }}")
         fi
-        args+=(--exit-severity="${{ inputs.exit-severity }}")
+        if [[ -n "${{ inputs.exit-severity }}" ]]; then
+          args+=(--exit-severity="${{ inputs.exit-severity }}")
+        fi
         if [[ -n "${{ inputs.show-severity }}" ]]; then
           args+=(--show-severity="${{ inputs.show-severity }}")
         fi

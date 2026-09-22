@@ -1413,7 +1413,7 @@ end
 
 # New-style implementation of `Base.@static`. Like the real macro, the condition is
 # evaluated at expansion time and only the taken branch survives — but as a new-style
-# macro that branch keeps its fine-grained provenance. The condition is `JL.eval`'d in
+# macro that branch keeps its fine-grained provenance. The condition is evaluated in
 # the base syntax layer's module, matching the `__module__` JuliaLowering hands to
 # old-style macros. A condition that fails to evaluate (or doesn't produce a `Bool`) is
 # reported via the sink and recovered by returning the whole conditional unchanged, so
@@ -1472,17 +1472,22 @@ function Base.var"@static"(__context__::JL.MacroContext, args::SyntaxTree...)
 end
 
 # Returns the condition's value as a `Bool`, or `nothing` (with the issue reported via
-# the sink) when it cannot be statically evaluated. Legacy `@static` discards macro
-# hygiene before calling `Core.eval(__module__, ...)`, so replace all syntax layers with
-# a fresh base context before running the condition through JuliaLowering's pipeline.
+# the sink) when it cannot be statically evaluated. Like legacy `@static`, both paths
+# discard macro hygiene before evaluating in the caller's base module. Native lowering
+# on Julia < 1.14 avoids JuliaLowering's dependency on newer runtime APIs for closures;
+# otherwise, keep JuliaLowering's support for new-style macros in the condition.
 # Base lets evaluation errors propagate out of expansion; we recover per the macro issue
 # contract.
 function _static_eval_cond(ctx::JL.MacroContext, cond::SyntaxTree)
     sc = (ctx.macrocall::SyntaxTree).context::JS.SyntaxContext
     base_mod = (JS.base_layer(sc)::JS.ScopeLayer).mod
-    eval_cond = JS.fill_context(cond, JS.SyntaxContext(base_mod, sc.version))
     val = try
-        JL.eval(base_mod, eval_cond)
+        @static if VERSION >= v"1.14-"
+            eval_cond = JS.fill_context(cond, JS.SyntaxContext(base_mod, sc.version))
+            JL.eval(base_mod, eval_cond)
+        else
+            Core.eval(base_mod, JL.est_to_expr(cond))
+        end
     catch err
         msg = first(split(sprint(showerror, err), '\n'))
         push_macro_error!(cond, "@static: failed to evaluate condition: $msg")

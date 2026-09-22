@@ -9,6 +9,28 @@ include(normpath(pkgdir(JETLS), "test", "setup.jl"))
 using JETLS.JET: CC, JET, get_reports
 using JETLS.Analyzer
 
+# Mimics the signature analysis workers: they are spawned at server startup, so their tasks
+# run in a world age that predates the methods they analyze.
+const analysis_worker_jobs = Channel{Any}(Inf)
+const analysis_worker_task = Threads.@spawn begin
+    current_task().sticky = true
+    for (result, args, kwargs) in analysis_worker_jobs
+        put!(result, try
+            analyze_call(args...; kwargs...)
+        catch err
+            CapturedException(err, catch_backtrace())
+        end)
+    end
+end
+
+function analyze_call_in_worker(args...; kwargs...)
+    result = Channel{Any}(1)
+    put!(analysis_worker_jobs, (result, args, kwargs))
+    res = take!(result)
+    res isa CapturedException && throw(res)
+    return res
+end
+
 related_frame_indices(report) =
     map(frame -> frame.idx, inference_error_report_related_frames(report))
 related_frame_kinds(report) =
@@ -34,7 +56,7 @@ function analyze_signature(f; report_target_modules = nothing)
     world = CC.get_inference_world(analyzer)
     match = JETLS.signature_analysis_match(analyzer, m.sig, world)
     match === nothing && error("No method match for signature analysis")
-    analyzer, result = JET.analyze_method_signature!(analyzer,
+    result = JET.analyze_method_signature!(analyzer,
         match.method, match.spec_types, match.sparams)
     return get_reports(analyzer, result)
 end
@@ -93,6 +115,20 @@ end
         @test length(reports) == 1
         r = only(reports)
         @test r isa UndefVarErrorReport && r.var == GlobalRef(TestTargetModule, :unexisting)
+    end
+end
+
+@testset "concretized call reports" begin
+    let analyzer = LSAnalyzer(; report_target_modules=nothing)
+        interp = JET.JETConcreteInterpreter(analyzer)
+        result = JET.analyze_and_report_text!(interp, """
+            struct A{T}
+                x::T
+                A{T}(x) where T = new{T}(x)
+            end
+            """; analyze_from_definitions=true)
+        @test isempty(result.res.toplevel_error_reports)
+        @test isempty(get_reports(result))
     end
 end
 
@@ -1055,6 +1091,7 @@ kwtypedbad(; _kws...) = kwtyped(1; kw=2.0)   # slurps but hardcodes a mismatchin
 module KeywordTypeExternalModule
     libkwtyped(; kw::Int=1) = kw
 end
+kwtyped_in_worker(a::Int; kw::Int=42) = a * kw
 
 @testset HierarchicalTestSet "TypeErrorReport" begin
     @testset "KeywordTypeErrorReport" begin
@@ -1162,6 +1199,21 @@ end
                 KeywordTypeExternalModule.libkwtyped(; kw=2.0)
             end
             @test isempty(get_reports(result))
+        end
+
+        # the keyword types are resolved in the inference world: resolving them in the stale
+        # world of the worker task makes Julia warn about the binding access on `stderr`
+        mktemp() do path, io
+            result = redirect_stderr(io) do
+                analyze_call_in_worker() do
+                    kwtyped_in_worker(2; kw=42.0)
+                end
+            end
+            r = only(get_reports(result))
+            @test r isa KeywordTypeErrorReport
+            @test r.var === :kw && r.expected === Int && r.got === Float64
+            flush(io)
+            @test !occursin("prior to its definition world", read(path, String))
         end
     end
 
@@ -1395,5 +1447,8 @@ call_boundary_getfield(pair::Pair{Int,Int}) = NativeBoundaryModule.getfield_erro
         end
     end
 end
+
+close(analysis_worker_jobs)
+wait(analysis_worker_task)
 
 end # module test_LSAnalyzer

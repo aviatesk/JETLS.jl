@@ -36,9 +36,7 @@ function any_entry_for(manager::JETLS.AnalysisManager, uri::URI, field::Symbol)
     return any(entry -> JETLS.entryuri(entry) == uri, keys(dict))
 end
 
-# Disable `diagnostic.all_files` so didClose doesn't emit the empty
-# `PublishDiagnosticsNotification` triggered by `notify_diagnostics!(; ensure_cleared=uri)`.
-# Keeps these tests focused on cleanup state.
+# Exercise diagnostic clearing on close with reporting limited to open files.
 const SETTINGS = Dict{String,Any}(
     "diagnostic" => Dict{String,Any}(
         "all_files" => false,
@@ -68,13 +66,7 @@ const SETTINGS = Dict{String,Any}(
         @test JETLS.entryuri(entry) == untitled_uri
         @test haskey(JETLS.load(manager.analyzed_generations), entry)
 
-        # didClose must publish an empty `PublishDiagnosticsNotification` to
-        # clear the previously published `unused-argument` diagnostic, and
-        # then drop the per-entry analysis state. This exercises the ordering
-        # of `notify_diagnostics!` before `cleanup_analysis_state!` in
-        # `handle_DidCloseTextDocumentNotification`: if `cleanup_analysis_state!`
-        # ran first the clearing notification path in `notify_diagnostics!`
-        # would have nothing to publish under `all_files=false`.
+        # Closing the buffer clears its previously published inference diagnostic.
         let (; raw_res) = writereadmsg(make_DidCloseTextDocumentNotification(untitled_uri))
             @test raw_res isa PublishDiagnosticsNotification
             @test raw_res.params.uri == untitled_uri
@@ -96,6 +88,7 @@ end
         let text = "f(x) = x + 1"
             (; raw_res) = writereadmsg(make_DidOpenTextDocumentNotification(untitled_uri, text))
             @test raw_res isa PublishDiagnosticsNotification
+            @test isempty(raw_res.params.diagnostics)
         end
 
         manager = server.state.analysis_manager
@@ -114,11 +107,12 @@ end
         # didClose must cancel the timer along with the rest of the per-entry
         # state. Without the cancellation the timer would fire 3s later and the
         # original "Unsupported URI" error would surface in the analysis worker.
-        # Note: unlike the first @testset, no clearing `PublishDiagnosticsNotification`
-        # is emitted here because the cached diagnostics for `f(x) = x + 1` are empty,
-        # so the `!isempty(diagnostics)` guard in `notify_diagnostics!`'s suppression
-        # branch (under `all_files=false`) skips the send.
-        writemsg(make_DidCloseTextDocumentNotification(untitled_uri))
+        # An explicit clearing notification is sent even when cached diagnostics are empty.
+        let (; raw_res) = writereadmsg(make_DidCloseTextDocumentNotification(untitled_uri))
+            @test raw_res isa PublishDiagnosticsNotification
+            @test raw_res.params.uri == untitled_uri
+            @test isempty(raw_res.params.diagnostics)
+        end
         wait_for_analysis_uncached(manager, untitled_uri)
 
         @test JETLS.get_analysis_info(manager, untitled_uri) === nothing

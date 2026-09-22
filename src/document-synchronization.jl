@@ -134,6 +134,7 @@ function cache_file_info!(
     end
 
     invalidate_per_file_caches!(state, uri)
+    schedule_workspace_diagnostics!(server)
 
     any_deleted && notify_diagnostics!(server; ensure_cleared=uri)
 
@@ -193,6 +194,7 @@ function handle_DidOpenTextDocumentNotification(server::Server, msg::DidOpenText
     cache_file_info!(server, uri, textDocument.version, parsed_stream)
     cache_saved_file_info!(server.state, uri, parsed_stream)
     invalidate_unsynced_file_cache!(server.state, uri)
+    clear_workspace_live_diagnostics!(server, uri)
     request_analysis!(server, uri, #=invalidate=#false)
 end
 
@@ -254,13 +256,10 @@ function handle_DidCloseTextDocumentNotification(server::Server, msg::DidCloseTe
     clear_extra_diagnostics!(server, uri)
     # Republish textDocument/publishDiagnostics for cases with `diagnostic.all_files === false`,
     # where diagnostics for this file must be suppressed.
-    # This must run before `cleanup_analysis_state!` below, since the suppression
-    # branch in `notify_diagnostics!` only emits the clearing notification when the
-    # analysis cache still reports non-empty diagnostics for this URI.
     notify_diagnostics!(server; ensure_cleared=uri)
     if isunsaveduri(uri)
         cleanup_analysis_state!(server, uri)
     end
-    # Retrigger workspace/diagnostic to recalculate diagnostics for this closed file
+    # Reschedule the workspace diagnostics push so this closed file is picked up again
     request_diagnostic_refresh!(server)
 end

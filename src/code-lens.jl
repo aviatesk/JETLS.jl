@@ -16,12 +16,6 @@ function code_lens_registration()
             resolveProvider = true))
 end
 
-# For dynamic code lens registrations during development
-# unregister(currently_running, Unregistration(;
-#     id = CODE_LENS_REGISTRATION_ID,
-#     method = CODE_LENS_REGISTRATION_METHOD))
-# register(currently_running, code_lens_registration())
-
 function handle_CodeLensRequest(server::Server, msg::CodeLensRequest, cancel_flag::CancelFlag)
     uri = msg.params.textDocument.uri
     result = get_file_info(server.state, uri, cancel_flag)

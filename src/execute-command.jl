@@ -32,12 +32,6 @@ function execute_command_registration()
             commands = SUPPORTED_COMMANDS))
 end
 
-# For dynamic registrations during development
-# unregister(currently_running, Unregistration(;
-#     id = EXECUTE_COMMAND_REGISTRATION_ID,
-#     method = EXECUTE_COMMAND_REGISTRATION_METHOD))
-# register(currently_running, execute_command_registration())
-
 function handle_ExecuteCommandRequest(server::Server, msg::ExecuteCommandRequest)
     command = msg.params.command
     if command == COMMAND_TESTRUNNER_RUN_TESTSET

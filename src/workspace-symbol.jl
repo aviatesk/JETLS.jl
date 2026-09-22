@@ -22,12 +22,6 @@ function workspace_symbol_registration(server::Server)
             workDoneProgress = supports(server, :window, :workDoneProgress)))
 end
 
-# For dynamic registrations during development
-# unregister(currently_running, Unregistration(;
-#     id = WORKSPACE_SYMBOL_REGISTRATION_ID,
-#     method = WORKSPACE_SYMBOL_REGISTRATION_METHOD))
-# register(currently_running, workspace_symbol_registration(currently_running))
-
 function handle_WorkspaceSymbolRequest(
         server::Server, msg::WorkspaceSymbolRequest, cancel_flag::CancelFlag)
     params = msg.params

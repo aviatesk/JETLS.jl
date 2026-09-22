@@ -104,6 +104,7 @@ include("utils/string.jl")
 include("utils/toml.jl")
 include("utils/path.jl")
 include("utils/pkg.jl")
+include("utils/FallbackAnalysisContext.jl")
 include("utils/JETLSTestModule.jl")
 include("utils/ast.jl")
 include("utils/binding.jl")
@@ -134,6 +135,7 @@ using .Interpreter
 
 include("document-synchronization.jl")
 include("notebook.jl")
+include("analysis/instantiation-progress.jl")
 include("analysis/full-analysis.jl")
 include("registration.jl")
 include("apply-edit.jl")
@@ -254,29 +256,32 @@ function runserver(
             elseif msg === self_shutdown_token
                 exit_code = 1
                 break
-            # Handle messages received before initialization (LSP 3.17 spec):
-            # - For requests: respond with error code -32002 (ServerNotInitialized)
-            # - For notifications: drop silently (exit already handled above)
             elseif !initialize_requested
-                if isdefined(msg, :id)
+                # Handle messages received before initialization (LSP 3.18 spec):
+                # - For requests: respond with error code -32002 (ServerNotInitialized)
+                # - For notifications: drop silently (exit already handled above)
+                id = valid_request_message_id(msg)
+                if id !== nothing
                     send(server, ResponseMessage(;
-                        id = msg.id,
+                        id,
                         result = nothing,
                         error = ResponseError(;
                             code = ErrorCodes.ServerNotInitialized,
                             message = "Server has not been initialized")))
                 end
             elseif shutdown_requested
-                if isdefined(msg, :id)
+                # Handle messages received after a shutdown request (LSP 3.18 spec):
+                # - For requests: respond with error code -32600 (InvalidRequest)
+                # - For notifications and responses to server requests: drop silently
+                #   (exit already handled above)
+                id = valid_request_message_id(msg)
+                if id !== nothing
                     send(server, ResponseMessage(;
-                        id = msg.id,
+                        id,
                         result = nothing,
                         error = ResponseError(;
                             code = ErrorCodes.InvalidRequest,
                             message = "Received request after a shutdown request requested")))
-                else
-                    # This is the case where some notification was sent.
-                    # In this case, there is no way to inform the client side that it was unexpected.
                 end
             elseif is_sequential_msg(msg)
                 put!(seq_queue, msg)
@@ -293,12 +298,35 @@ function runserver(
         close(server.endpoint)
         stop_analysis_worker(server)
         stop_signature_analysis_workers(server)
+        stop_workspace_diagnostics_worker(server)
         put!(seq_queue, nothing); put!(con_queue, nothing);
         close(seq_queue); close(con_queue);
         waitall((seq_task, con_task))
     end
     @static JETLS_DEV_MODE && @info "Exited JETLS server loop"
     return exit_code
+end
+
+function valid_request_message_id(@nospecialize msg)
+    if msg isa Dict{Symbol,Any}
+        haskey(msg, :method) || return nothing
+        id = get(msg, :id, nothing)
+    elseif isdefined(msg, :id) && isdefined(msg, :method)
+        id = getfield(msg, :id)
+    else
+        return nothing
+    end
+    return valid_message_id(id)
+end
+
+function valid_message_id(@nospecialize id)
+    @static if Int === Int32
+        # JSON3 parses untyped integers as Int64 even on 32-bit Julia.
+        if id isa Int64 && typemin(Int32) <= id <= typemax(Int32)
+            id = Int32(id)
+        end
+    end
+    return id isa String || id isa Int ? id : nothing
 end
 
 function is_sequential_msg(@nospecialize msg)
@@ -309,7 +337,9 @@ function is_sequential_msg(@nospecialize msg)
            msg isa DidOpenNotebookDocumentNotification ||
            msg isa DidChangeNotebookDocumentNotification ||
            msg isa DidCloseNotebookDocumentNotification ||
-           msg isa DidSaveNotebookDocumentNotification
+           msg isa DidSaveNotebookDocumentNotification ||
+           msg isa CompletionRequest ||
+           msg isa SignatureHelpRequest
 end
 
 function start_sequential_message_worker(server::Server)
@@ -353,13 +383,12 @@ function handle_sequential_message(server::Server, @nospecialize msg)
         handle_DidCloseNotebookDocumentNotification(server, msg)
     elseif msg isa DidSaveNotebookDocumentNotification
         handle_DidSaveNotebookDocumentNotification(server, msg)
-    elseif @static JETLS_DEV_MODE ? true : false
-        if isdefined(msg, :method)
-            _id = getfield(msg, :method)
-        else
-            _id = typeof(msg)
-        end
-        @warn "[handle_sequential_message] Unhandled message" msg _id=_id maxlog=1
+    elseif msg isa CompletionRequest
+        enqueue_message!(server, snapshot_request_message(server.state, msg, msg.params.textDocument.uri))
+    elseif msg isa SignatureHelpRequest
+        enqueue_message!(server, snapshot_request_message(server.state, msg, msg.params.textDocument.uri))
+    else
+        error(lazy"Unexpected sequential message: $(typeof(msg))")
     end
 end
 
@@ -382,9 +411,8 @@ function handler_concurrent_message(server::Server, @nospecialize msg)
         # @info "Handled history" length(server.state.handled_history) Base.summarysize(server.state.handled_history)
     # Handle regular messages concurrently
     elseif msg isa Dict{Symbol,Any} # ResponseMessage or untyped message
-        request_caller = let id = get(msg, :id, nothing)
-            id !== nothing ? poprequest!(server, id) : nothing
-        end
+        id = valid_message_id(get(msg, :id, nothing))
+        request_caller = id !== nothing ? poprequest!(server, id) : nothing
         if request_caller !== nothing
             # NOTE: The `get!` call to `server.state.currently_handled` MUST happen here
             # to avoid race conditions. Only after getting the flag can we spawn the actual dispatcher.
@@ -393,14 +421,28 @@ function handler_concurrent_message(server::Server, @nospecialize msg)
                     get!(()->CancelFlag(false), server.state.currently_handled, token)
                 Threads.@spawn :default @tryinvokelatest handle_response_message(server, msg, request_caller, cancel_flag)
             end
-        elseif @static JETLS_DEV_MODE ? true : false
-            # Not a response to our request, or untyped message - log if in dev mode
-            _id = get(()->get(msg, :id, nothing), msg, :method)
-            @warn "[handler_concurrent_message] Unhandled message" msg _id=_id maxlog=1
+        else
+            method = get(msg, :method, nothing)
+            @static if JETLS_DEV_MODE
+                # Not a response to our request, or untyped message - log if in dev mode
+                _id = something(method, Some(id))
+                @warn "[handler_concurrent_message] Unhandled message" msg _id=_id maxlog=1
+            end
+            if method isa String && id !== nothing
+                send(server, ResponseMessage(;
+                    id,
+                    result = nothing,
+                    error = method_not_found_error(method)))
+            end
         end
-    elseif isdefined(msg, :id) && (id = msg.id; id isa String || id isa Int)
+    elseif (snapshot_msg_id = snapshot_request_message(msg); snapshot_msg_id !== nothing)
+        snapshot_msg, id = snapshot_msg_id
         let cancel_flag = get!(()->CancelFlag(false), server.state.currently_handled, id)
-            Threads.@spawn :default @tryinvokelatest handle_request_message(server, msg, cancel_flag)
+            Threads.@spawn :default @tryinvokelatest handle_snapshot_request_message(server, snapshot_msg, id, cancel_flag)
+        end
+    elseif isdefined(msg, :id) && (id = valid_message_id(getfield(msg, :id)); id !== nothing)
+        let cancel_flag = get!(()->CancelFlag(false), server.state.currently_handled, id)
+            Threads.@spawn :default @tryinvokelatest handle_request_message(server, msg, id, cancel_flag)
         end
     else
         Threads.@spawn :default @tryinvokelatest handle_notification_message(server, msg)
@@ -458,24 +500,50 @@ function handle_response_message(
     elseif request_caller isa RegisterCapabilityRequestCaller || request_caller isa UnregisterCapabilityRequestCaller
         # nothing to do
     else
-        error("Unknown request caller type")
+        error(lazy"Unknown request caller type: $(typeof(request_caller))")
     end
     nothing
 end
 
-function handle_request_message(server::Server, @nospecialize(msg), cancel_flag::CancelFlag)
+function snapshot_request_message(@nospecialize snapshot_msg)
+    snapshot_msg isa SnapshotRequestMessage || return nothing
+    id = @something valid_request_message_id(snapshot_msg.msg) return nothing
+    return snapshot_msg, id
+end
+
+function handle_snapshot_request_message(
+        server::Server, snapshot_msg::SnapshotRequestMessage, id::MessageId,
+        cancel_flag::CancelFlag
+    )
+    (; msg, snapshot) = snapshot_msg
     if is_cancelled(cancel_flag)
         send(server,
             ResponseMessage(;
-                id = msg.id,
+                id,
                 result = nothing,
                 error = request_cancelled_error()))
+    elseif snapshot === nothing
+        send(server, ResponseMessage(; id, result = null))
     elseif msg isa CompletionRequest
-        handle_CompletionRequest(server, msg, cancel_flag)
+        handle_CompletionRequest(server, msg, snapshot, cancel_flag)
+    elseif msg isa SignatureHelpRequest
+        handle_SignatureHelpRequest(server, msg, snapshot, cancel_flag)
+    else
+        error(lazy"Unexpected snapshot request message: $(typeof(msg))")
+    end
+end
+
+function handle_request_message(
+        server::Server, @nospecialize(msg), id::MessageId, cancel_flag::CancelFlag
+    )
+    if is_cancelled(cancel_flag)
+        send(server,
+            ResponseMessage(;
+                id,
+                result = nothing,
+                error = request_cancelled_error()))
     elseif msg isa CompletionResolveRequest
         handle_CompletionResolveRequest(server, msg)
-    elseif msg isa SignatureHelpRequest
-        handle_SignatureHelpRequest(server, msg, cancel_flag)
     elseif msg isa DeclarationRequest
         handle_DeclarationRequest(server, msg, cancel_flag)
     elseif msg isa DefinitionRequest
@@ -494,8 +562,6 @@ function handle_request_message(server::Server, @nospecialize(msg), cancel_flag:
         handle_WorkspaceSymbolRequest(server, msg, cancel_flag)
     elseif msg isa DocumentDiagnosticRequest
         handle_DocumentDiagnosticRequest(server, msg, cancel_flag)
-    elseif msg isa WorkspaceDiagnosticRequest
-        handle_WorkspaceDiagnosticRequest(server, msg, cancel_flag)
     elseif msg isa CodeLensRequest
         handle_CodeLensRequest(server, msg, cancel_flag)
     elseif msg isa CodeLensResolveRequest
@@ -526,13 +592,18 @@ function handle_request_message(server::Server, @nospecialize(msg), cancel_flag:
         handle_ExecuteCommandRequest(server, msg)
     elseif msg isa TextDocumentContentRequest
         handle_TextDocumentContentRequest(server, msg)
-    elseif @static JETLS_DEV_MODE ? true : false
-        if isdefined(msg, :method)
-            _id = getfield(msg, :method)
-        else
-            _id = typeof(msg)
+    else
+        method = isdefined(msg, :method) ? getfield(msg, :method) : nothing
+        @static if JETLS_DEV_MODE
+            _id = something(method, typeof(msg))
+            @warn "[handle_request_message] Unhandled message" msg _id=_id maxlog=1
         end
-        @warn "[handle_request_message] Unhandled message" msg _id=_id maxlog=1
+        if method isa String
+            send(server, ResponseMessage(;
+                id,
+                result = nothing,
+                error = method_not_found_error(method)))
+        end
     end
     nothing
 end
@@ -542,13 +613,12 @@ function handle_notification_message(server::Server, @nospecialize msg)
         handle_DidChangeWatchedFilesNotification(server, msg)
     elseif msg isa DidChangeConfigurationNotification
         handle_DidChangeConfigurationNotification(server, msg)
-    elseif @static JETLS_DEV_MODE ? true : false
-        if isdefined(msg, :method)
-            _id = getfield(msg, :method)
-        else
-            _id = typeof(msg)
+    else
+        @static if JETLS_DEV_MODE
+            method = isdefined(msg, :method) ? getfield(msg, :method) : nothing
+            _id = something(method, typeof(msg))
+            @warn "[handle_notification_message] Unhandled message" msg _id=_id maxlog=1
         end
-        @warn "[handle_notification_message] Unhandled message" msg _id=_id maxlog=1
     end
     nothing
 end

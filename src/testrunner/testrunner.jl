@@ -476,7 +476,7 @@ function testrunner_run_testset(
     try
         result = _testrunner_run_testset(server, executable, uri, fi, idx, tsn, filepath; cancellable_token)
     catch err
-        result = sprint(Base.showerror, err, catch_backtrace())
+        result = sprint(showerror, err, catch_backtrace())
         @error "Error from testrunner executor" err
         show_error_message(server, """
             An unexpected error occurred while setting up TestRunner.jl or handling the result:
@@ -568,7 +568,7 @@ function read_testrunner_result(
         LSP.JSON3.read(output, TestRunnerResult)
     catch err
         if process_success
-            parse_error = sprint(Base.showerror, err, catch_backtrace())
+            parse_error = sprint(showerror, err, catch_backtrace())
             log_testrunner_failure(cmd, testrunnerproc, output, :invalid_output; parse_error)
         else
             log_testrunner_failure(cmd, testrunnerproc, output, :process)
@@ -699,7 +699,7 @@ function testrunner_run_testcase(
     try
         result = _testrunner_run_testcase(server, executable, uri, tcl, tct, filepath, source; cancellable_token)
     catch err
-        result = sprint(Base.showerror, err, catch_backtrace())
+        result = sprint(showerror, err, catch_backtrace())
         @error "Error from testrunner executor" err
         show_error_message(server, """
             An unexpected error occurred while setting up TestRunner.jl or handling the result:
