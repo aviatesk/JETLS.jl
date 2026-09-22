@@ -1,10 +1,11 @@
 """
-    ToplevelErrorReport
+    abstract type ToplevelErrorReport end
 
-An interface type of error reports that JET collects while top-level concrete interpration.
-All `ToplevelErrorReport` should have the following fields:
-- `file::String`: the path to the file containing the interpretation context
-- `line::Int`: the line number in the file containing the interpretation context
+An interface type for reports that JET collects during top-level processing,
+including parsing and partial concrete interpretation.
+All concrete subtypes of `ToplevelErrorReport` must have the following fields:
+- `file::String`: the path to the source file associated with the report
+- `line::Int`: the source line associated with the report
 
 See also: [`virtual_process`](@ref), [`ConcreteInterpreter`](@ref)
 """
@@ -93,7 +94,18 @@ struct ActualErrorWrapped <: ToplevelErrorReport
     end
 end
 # TODO: add context information
-print_report(io::IO, report::ActualErrorWrapped) = showerror(io, report.err, report.st)
+function print_report(io::IO, report::ActualErrorWrapped)
+    if get(io, :markdown_rendering, false)::Bool
+        msg = sprint(showerror, report.err, report.st; context=io)
+        parts = split(msg, "\nStacktrace:"; limit=2)
+        print(io, first(parts))
+        if length(parts) == 2
+            println(io, "\n\n```\nStacktrace:", last(parts), "\n```")
+        end
+    else
+        showerror(io, report.err, report.st)
+    end
+end
 
 struct DependencyError <: ToplevelErrorReport
     pkg::String
@@ -125,6 +137,61 @@ function print_report(io::IO, report::RecursiveIncludeErrorReport)
     println(io, "recursive `include` call detected:")
     println(io, " ⚈ duplicated file: ", report.duplicated_file)
     println(io, " ⚈  included files: ", join(report.files, ' '))
+end
+
+# thrown by `JuliaInterpreter.step_expr!(::ConcreteInterpreter, ...)` when the concrete
+# execution of a single top-level statement exceeds `concretization_timeout`
+struct ConcretizationTimeoutError <: Exception
+    timeout::Float64
+end
+
+struct ConcretizationTimeoutErrorReport <: ToplevelErrorReport
+    timeout::Float64
+    st::Base.StackTraces.StackTrace # interpreted calls that were running, innermost first
+    file::String
+    line::Int
+end
+function print_report(io::IO, report::ConcretizationTimeoutErrorReport)
+    print(io, "JET stopped the concrete execution of this top-level statement after")
+    println(io, " $(report.timeout) seconds (`concretization_timeout`).")
+    println(io)
+    println(io, "JET executes top-level code concretely when it contains `function` or")
+    println(io, "`struct` definitions, `@eval` calls, in-place updates of concretized")
+    println(io, "values, or code matching `concretization_patterns`. This statement")
+    println(io, "exceeded the time limit, possibly due to interpretation overhead, a")
+    println(io, "long-running computation, or nontermination. The rest of the statement")
+    println(io, "was not executed, so the definitions it would have made are missing from")
+    println(io, "the rest of the analysis, and the statement itself was not analyzed.")
+    println(io)
+    println(io, "- Move the definitions or `@eval` calls out of the long-running code, so")
+    println(io, "  that JET analyzes the code instead of executing it.")
+    if !isempty(report.st)
+        println(io, "- If the stacktrace shows code that normally finishes quickly, interpretation")
+        println(io, "  overhead may be causing the timeout. Add a `concretization_patterns` entry")
+        println(io, "  matching the enclosing top-level block to run its function calls natively.")
+        println(io, "  This executes the entire matching block, including any side effects, and")
+        println(io, "  `concretization_timeout` cannot interrupt those native calls.")
+    end
+    println(io, "- If the code is expected to run this long, raise `concretization_timeout`.")
+    if !isempty(report.st)
+        markdown_rendering = get(io, :markdown_rendering, false)::Bool
+        markdown_rendering && (println(io); print(io, "```"))
+        Base.show_backtrace(io, report.st) # adds a `Stacktrace:` heading
+        markdown_rendering && println(io, "\n```")
+    end
+end
+
+# An error raised in an interpreted callee frame, with the native backtrace of the throw
+# and the interpreted stack at that point. Both are recorded at the innermost frame: the
+# frames are recycled while the error unwinds toward the top-level frame, and a rethrow
+# from an interpreted handler replaces the native backtrace. The backtrace is kept raw and
+# symbolized only when reported, since interpreted code may catch errors in a loop.
+struct CalleeError
+    err
+    bt::Vector{Union{Ptr{Nothing},Base.InterpreterIP}}
+    st::Base.StackTraces.StackTrace
+    CalleeError(@nospecialize(err), bt::Vector{Union{Ptr{Nothing},Base.InterpreterIP}},
+                st::Base.StackTraces.StackTrace) = new(err, bt, st)
 end
 
 # a special exception type that is supposed to be thrown only by `JuliaInterpreter.lookup(::ConcreteInterpreter)`
@@ -193,106 +260,106 @@ function print_report(io::IO, report::MissingConcretizationErrorReport)
     print(io, "  make analysis slower.")
 end
 
+const DEFAULT_CONCRETIZATION_TIMEOUT = 10.0
+
 """
-Configurations for top-level analysis.
-These configurations will be active for all the top-level entries explained in the
+Configuration options for top-level analysis.
+These options apply to all entry points described in the
 [top-level analysis entry points](@ref jetanalysis-toplevel-entry) section.
 
 ---
 - `context::Module = Main` \\
-  The module context in which the top-level execution will be simulated.
+  The module context in which JET simulates top-level execution.
 
-  This configuration can be useful when you just want to analyze a submodule, without
-  starting entire analysis from the root module.
-  For example, we can analyze `Base.Math` like below:
+  This option is useful for analyzing a submodule's source file without
+  starting analysis from the root module. For example, analyze `Base.Math`
+  with `Base` as its parent module:
   ```julia-repl
   julia> report_file(JET.fullbasepath("math.jl");
-                     context = Base,                  # `Base.Math`'s root module
-                     analyze_from_definitions = true, # there're only definitions in `Base`
-                     )
+                     context = Base,
+                     analyze_from_definitions = true)
   ```
 
-  Note that this module context will be virtualized by default so that JET can repeat analysis
-  in the same session without having "invalid redefinition of constant ..." error etc.
-  In other word, JET virtualizes the module context of `context` and make sure the original
-  module context isn't polluted by JET.
----
-- `target_defined_modules::Bool = false` \\
-  If `true`, automatically set the [`target_modules`](@ref result-config) configuration so that
-  JET filters out errors that are reported within modules that JET doesn't analyze directly.
+  By default, JET virtualizes `context`. This allows repeated analysis in the
+  same session without errors such as `invalid redefinition of constant ...`
+  and prevents analyzed definitions from being written directly into the
+  original module. See [`virtualize_module_context`](@ref) for details.
 ---
 - `analyze_from_definitions::Union{Bool,Symbol} = false` \\
-  If `true`, JET will start analysis using signatures of top-level definitions (e.g. method signatures),
-  after the top-level interpretation has been done (unless no serious top-level error has
-  happened, like errors involved within a macro expansion).
-  This can be handy when you want to analyze a package, which usually contains only definitions
-  but not their usages (i.e. top-level callsites).
-  With this option, JET can enter analysis just with method or type definitions, and we don't
-  need to pass a file that uses the target package.
+  If `true`, after top-level processing completes, JET starts analysis from
+  collected signatures of top-level definitions, such as method signatures.
+  It does so only when no serious top-level error occurred, such as an error
+  during macro expansion.
 
-  When `analyze_from_definitions` is specified as `name::Symbol`, JET starts its analysis
-  using the interpreted method signature whose name is equal to `name` as the analysis entry
-  point. For example, when analyzing a script that uses `@main` to specify the entry point,
-  it would be convenient to specify `analyze_from_definitions = :main`.
+  This is useful for packages that contain definitions but no top-level call
+  sites that exercise them. It allows JET to begin analysis from method or
+  type definitions without requiring a separate driver file that calls the
+  package.
+
+  When set to `name::Symbol`, JET uses the interpreted signatures of methods
+  named `name` as analysis entry points. For example, a script that uses
+  `@main` can set `analyze_from_definitions = :main`.
 
   !!! warning
-      This feature is very experimental at this point, and you may face lots of false positive
-      errors, especially when trying to analyze a big package with lots of dependencies.
-      If a file that contains top-level callsites (e.g. `test/runtests.jl`) is available,
-      JET analysis using the file is generally preferred, since analysis entered from
-      concrete call sites will produce more accurate results than analysis entered from
-      (maybe not concrete-typed) method signatures.
+      This feature is experimental and may produce many false-positive errors,
+      especially for large packages with many dependencies. When a file containing
+      top-level call sites is available, such as `test/runtests.jl`, analyzing that
+      file is generally preferable.
+      Concrete call sites usually produce more accurate results than potentially
+      abstract method signatures.
 
   Also see: [`report_file`](@ref), [`report_package`](@ref)
 ---
-- `concretization_patterns::Vector{Any} = Any[]` \\
-  Specifies a customized top-level code concretization strategy.
+- `concretization_patterns = Any[]` \\
+  Accepts an iterable of surface-syntax expression patterns that customize
+  which top-level code blocks JET concretely executes. JET normalizes each
+  supplied pattern, collects the patterns in a `Vector{Any}`, and combines
+  them with built-in patterns that concretize type-alias assignments.
 
-  When analyzing a top-level code, JET first splits the entire code into appropriate units
-  of code (i.e. "code blocks"), and then iterate a virtual top-level code execution process
-  on each code block in order to simulate Julia's top-level code execution.
-  In the virtual code execution, JET will selectively interpret "top-level definitions"
-  (like a function definition), while it tries to avoid executing any other parts of code
-  including function calls that typically do a main computational task, leaving them to be
-  analyzed by the succeeding abstract interpretation based analysis.
+  JET splits top-level input into code blocks and processes them sequentially
+  to simulate Julia's top-level execution. Within each block, JET concretely
+  interprets statements required to establish top-level definitions and their
+  dependencies. It analyzes the remaining statements abstractly rather than
+  executing application code and its possible side effects.
 
-  However, currently, JET doesn't track "inter-block" level code dependencies, and therefore
-  the selective interpretation of top-level definitions may fail when it needs to use global
-  bindings defined in the other code blocks that have not been selected and actually
-  interpreted (i.e. "concretized") but left for abstract interpretation (i.e. "abstracted").
+  JET does not currently track concrete-value dependencies between separately
+  processed blocks. Concretization can therefore fail when a selected
+  statement needs a global value assigned in another block that JET left for
+  abstract interpretation instead of concretely executing.
 
-  For example, the issue would happen if the expansion of a macro uses a global variable, e.g.:
+  This can occur when macro expansion accesses a global variable, as in:
   > test/fixtures/concretization_patterns.jl
-  $(let
-      text = read(normpath(@__DIR__, "..", "..", "test", "fixtures", "concretization_patterns.jl"), String)
+  $(let path = normpath(
+        @__DIR__, "..", "..", "test", "fixtures", "concretization_patterns.jl")
+      text = read(path, String)
       lines = split(text, '\n')
       pushfirst!(lines, "```julia"); push!(lines, "```")
       join(lines, "\n  ")
   end)
 
-  To circumvent this issue, JET offers this `concretization_patterns::Vector{<:Any}` configuration,
-  which allows us to customize JET's top-level code concretization strategy.
-  `concretization_patterns` specifies the _patterns of code_ that should be concretized.
-  To put in other word, when JET sees a code that matches any of code patterns specified by
-  this configuration, JET will try to interpret and concretize the code, regardless of
-  whether or not JET's default code selection logic decides to concretize it.
+  To work around this limitation, list surface-syntax expression patterns in
+  `concretization_patterns`. Before macro expansion and lowering, JET matches
+  each top-level block against these patterns. When a pattern matches, JET
+  concretely executes the entire block, overriding its default per-statement
+  selection. The calls made by such a block run natively rather than in the
+  interpreter, so they execute at full speed, but `concretization_timeout` can
+  then stop the block only between its own statements.
 
-  JET uses [MacroTools.jl's expression pattern match](https://fluxml.ai/MacroTools.jl/stable/pattern-matching/),
-  and we can specify whatever code pattern expected by `MacroTools.@capture` macro.
-  For example, in order to solve the issue explained above, we can have:
+  JET uses MacroTools.jl [expression patterns](https://fluxml.ai/MacroTools.jl/stable/pattern-matching/),
+  so any pattern accepted by `MacroTools.@capture` can be used. For example:
   ```julia
   concretization_patterns = [:(const GLOBAL_CODE_STORE = Dict())]
   ```
-  Then `GLOBAL_CODE_STORE` will just be concretized and so any top-level error won't happen
-  at the macro expansion.
+  This ensures that the assignment to `GLOBAL_CODE_STORE` is concretely
+  executed before later macro expansion needs its value.
 
-  Since configuring `concretization_patterns` properly can be tricky, JET offers a logging
-  system that allows us to debug 's top-level code concretization plan. With the
-  `toplevel_logger` configuration with specifying the logging level to be above than
-  `$JET_LOGGER_LEVEL_DEBUG` ("debug") level, we can see:
-  - which code is matched with `concretization_patterns` and forcibly concretized
-  - which code is selected to be concretized by JET's default code selection logic:
-    where `t`-annotated statements are concretized while `f`-annotated statements are abstracted
+  To inspect JET's concretization plan, set the `$(repr(JET_LOGGER_LEVEL))` property of
+  `toplevel_logger` to `$JET_LOGGER_LEVEL_DEBUG` ("debug"). Debug output shows:
+  - which blocks match `concretization_patterns` and are concretely executed
+  - which statements JET selects by default, where `t` marks concretely
+    interpreted statements, `m` marks global declarations materialized without
+    concretizing the enclosing control flow, and `f` marks abstractly analyzed
+    statements
   ```julia-repl
   julia> report_file("test/fixtures/concretization_patterns.jl";
                      concretization_patterns = [:(const GLOBAL_CODE_STORE = Dict())],
@@ -343,35 +410,50 @@ These configurations will be active for all the top-level entries explained in t
   [toplevel-debug]  exited from test/fixtures/concretization_patterns.jl (took 0.032 sec)
   ```
 
-  Also see: the `toplevel_logger` section below, [`virtual_process`](@ref).
-
-  !!! note
-      [`report_package`](@ref) automatically sets this configuration as
-      ```julia
-      concretization_patterns = [:(x_)]
-      ```
-      meaning that it will concretize all top-level code included in a package being analyzed.
+  Also see: the `toplevel_logger` section below and [`virtual_process`](@ref).
+---
+- `concretization_timeout::Real = $(DEFAULT_CONCRETIZATION_TIMEOUT)` \\
+  The time in seconds that JET allows for concretely executing a single
+  top-level statement, excluding statement selection and interpreter setup.
+  JET executes top-level code concretely when it contains
+  `function` or `struct` definitions, `@eval` calls or in-place updates of
+  concretized values, and such code may run for a long time or, within a loop,
+  never terminate. When the execution is still running after the timeout, JET
+  stops it at the next interpreted statement, including statements of functions
+  called from the top-level code, reports a `ConcretizationTimeoutErrorReport`
+  showing the calls that were running, and skips the abstract analysis of that
+  top-level statement. Code that runs natively, such as `ccall`s, builtins,
+  code evaluated by `Core.eval` and the calls of blocks selected by
+  `concretization_patterns`, cannot be interrupted. The time spent in
+  `include`d files and in module-loading statements handled by JET is not
+  counted.
+  Set `Inf` to disable the timeout.
 ---
 - `toplevel_logger::Union{Nothing,IO} = nothing` \\
-  If `IO` object is given, it will track JET's toplevel analysis.
-  Logging level can be specified with `$(repr(JET_LOGGER_LEVEL))` `IO` property.
-  Currently supported logging levels are either of $(JET_LOGGER_LEVELS_DESC).
+  If an `IO` object is provided, JET writes top-level analysis logs to it.
+  Set the logging level with the `$(repr(JET_LOGGER_LEVEL))` `IO` property.
+  Supported logging levels are $(JET_LOGGER_LEVELS_DESC).
 
   Examples:
-  * logs into `stdout`
-  ```julia-repl
-  julia> report_file(filename; toplevel_logger = stdout)
-  ```
-  * logs into `io::IOBuffer` with "debug" logger level
-  ```julia-repl
-  julia> report_file(filename; toplevel_logger = IOContext(io, $(repr(JET_LOGGER_LEVEL)) => $JET_LOGGER_LEVEL_DEBUG));
-  ```
+  - Write logs to `stdout` at the default level:
+    ```julia-repl
+    julia> report_file(filename; toplevel_logger = stdout)
+    ```
+  - Write logs to `io::IOBuffer` at the "debug" level:
+    ```julia-repl
+    julia> logger = IOContext(
+               io, $(repr(JET_LOGGER_LEVEL)) => $JET_LOGGER_LEVEL_DEBUG)
+
+    julia> report_file(filename; toplevel_logger = logger)
+    ```
 ---
 - `virtualize::Bool = true` \\
-  When `true`, JET will virtualize the given root module context.
+  When `true`, JET processes input in a virtualized version of the root module context.
 
-  This configuration is supposed to be used only for testing or debugging.
-  See [`virtualize_module_context`](@ref) for the internal.
+  Disabling virtualization is intended mainly for testing or debugging,
+  because top-level processing can mutate `context` and repeated analysis can
+  trigger redefinition errors.
+  See [`virtualize_module_context`](@ref) for implementation details.
 ---
 """
 struct ToplevelConfig
@@ -379,6 +461,7 @@ struct ToplevelConfig
     context::Module
     analyze_from_definitions::Union{Bool,Symbol}
     concretization_patterns::Vector{Any}
+    concretization_timeout::Float64
     virtualize::Bool
     toplevel_logger # ::Union{Nothing,IO}
     function ToplevelConfig(
@@ -386,9 +469,12 @@ struct ToplevelConfig
         context::Module = Main,
         analyze_from_definitions::Union{Bool,Symbol} = false,
         concretization_patterns = Any[],
+        concretization_timeout::Real = DEFAULT_CONCRETIZATION_TIMEOUT,
         virtualize::Bool = true,
         toplevel_logger::Union{Nothing,IO} = nothing,
         __jetconfigs...)
+        concretization_timeout > 0 || throw(ArgumentError(
+            "`concretization_timeout` must be positive, got $concretization_timeout"))
         concretization_patterns = Any[striplines(normalise(x)) for x in concretization_patterns]
         for pat in default_concretization_patterns()
             push!(concretization_patterns, striplines(normalise(pat)))
@@ -401,6 +487,7 @@ struct ToplevelConfig
             context,
             analyze_from_definitions,
             concretization_patterns,
+            Float64(concretization_timeout),
             virtualize,
             toplevel_logger)
     end
@@ -473,15 +560,19 @@ end
 """
     res::VirtualProcessResult
 
-- `res.analyzed_files::Dict{String,AnalyzedFileInfo}`: files that have been analyzed with
-    their corresponding module analyzed_files attached.
-- `res.toplevel_error_reports::Vector{ToplevelErrorReport}`: toplevel errors found during the
-    text parsing or partial (actual) interpretation; these reports are "critical" and should
-    have precedence over `inference_error_reports`
-- `res.inference_error_reports::Vector{InferenceErrorReport}`: possible error reports found
-    by `ToplevelAbstractAnalyzer`
-- `res.signature_infos`: signatures of methods defined within the analyzed files
-- `res.actual2virtual::$Actual2Virtual`: keeps actual and virtual module
+- `res.analyzed_files::Dict{String,AnalyzedFileInfo}`: analyzed files and the
+  source ranges associated with each module in those files.
+- `res.toplevel_error_reports::Vector{ToplevelErrorReport}`: reports produced
+  during top-level processing, including parsing, macro expansion, lowering,
+  and partial concrete interpretation. These critical reports take precedence
+  over `inference_error_reports`.
+- `res.inference_error_reports::Vector{InferenceErrorReport}`: reports of
+  potential errors found by `ToplevelAbstractAnalyzer`.
+- `res.signature_infos::Vector{SignatureInfo}`: method signatures collected
+  for analysis from top-level definitions.
+- `res.actual2virtual::Union{Actual2Virtual,Nothing}`: maps the actual root
+  module to its virtual counterpart, or is `nothing` when module
+  virtualization is disabled.
 """
 struct VirtualProcessResult
     analyzed_files::Dict{String,AnalyzedFileInfo}
@@ -524,6 +615,13 @@ mutable struct InterpretationState
     const pkg_mod_depth::Int
     const files_stack::Vector{String}
     isfailed::Bool
+    concretization_deadline::UInt64 # in `time_ns()`, for the current top-level statement
+    callee_error::Union{Nothing,CalleeError} # currently unwinding
+    # The interpreted stacks of the errors caught in each frame, parallel to the frame's
+    # active exceptions. JuliaInterpreter pools frames for reuse, so an entry must be
+    # removed whenever its frame exits, whether by returning or by unwinding.
+    const caught_callee_errors::IdDict{Frame,Vector{CalleeError}}
+    native_calls::Bool # the current statement was selected by `concretization_patterns`
 end
 function InterpretationState(
         state::InterpretationState;
@@ -539,6 +637,7 @@ function InterpretationState(
     res::VirtualProcessResult = state.res
     files_stack::Vector{String} = state.files_stack
     isfailed = false
+    concretization_deadline = typemax(UInt64)
     return InterpretationState(
         filename,
         curline,
@@ -549,18 +648,26 @@ function InterpretationState(
         res,
         pkg_mod_depth,
         files_stack,
-        isfailed)
+        isfailed,
+        concretization_deadline,
+        #=callee_error=#nothing,
+        #=caught_callee_errors=#IdDict{Frame,Vector{CalleeError}}(),
+        #=native_calls=#false)
 end
 
 """
     abstract type ConcreteInterpreter <: JuliaInterpreter.Interpreter end
 
-An interface to inject code into JET's virtual process via JuliaInterpreter's interpretation.
+An interface for concretely interpreting selected top-level statements during
+[`virtual_process`](@ref) using JuliaInterpreter.
 
-Subtypes are expected to implement:
-- `InterpretationState(interp::T) -> InterpretationState` - return the interpreter state
-- `ConcreteInterpreter(interp::T, state::InterpretationState) -> T` - create new interpreter with state
-- `ToplevelAbstractAnalyzer(interp::T) -> analyzer::ToplevelAbstractAnalyzer` - return the analyzer for this interpreter
+Subtypes must implement:
+- `InterpretationState(interp::T) -> InterpretationState`:
+  return the interpreter state.
+- `ConcreteInterpreter(interp::T, state::InterpretationState) -> T`:
+  return an interpreter of type `T` associated with `state`.
+- `ToplevelAbstractAnalyzer(interp::T) -> ToplevelAbstractAnalyzer`:
+  return the top-level analyzer associated with the interpreter.
 """
 :(ConcreteInterpreter)
 
@@ -592,6 +699,8 @@ end
     JETConcreteInterpreter
 
 The default implementation of ConcreteInterpreter used by JET's virtual process.
+With a built-in analyzer, interpretation can run in JET's fixed world. Custom
+analyzers use the calling world so their interface methods remain visible.
 """
 struct JETConcreteInterpreter{Analyzer<:ToplevelAbstractAnalyzer} <: ConcreteInterpreter
     analyzer::Analyzer
@@ -606,7 +715,10 @@ ConcreteInterpreter(interp::JETConcreteInterpreter, state::InterpretationState) 
 ToplevelAbstractAnalyzer(interp::JETConcreteInterpreter) = interp.analyzer
 
 # `ConcreteInterpreter` optional interface
-interpret_world(::JETConcreteInterpreter) = JET_INTERPRET_WORLD[]
+interpret_world(interp::JETConcreteInterpreter) =
+    (interp.analyzer isa BasicJETAnalyzer ||
+     interp.analyzer isa SoundJETAnalyzer ||
+     interp.analyzer isa TypoJETAnalyzer) ? JET_INTERPRET_WORLD[] : nothing
 
 """
     concretization_patterns(interp::ConcreteInterpreter, filename::AbstractString)
@@ -627,28 +739,38 @@ concretization_patterns(interp::ConcreteInterpreter, ::AbstractString) =
                     config::ToplevelConfig;
                     overrideex::Union{Nothing,Expr}=nothing) -> res::VirtualProcessResult
 
-Simulates Julia's toplevel execution and collects error points, and finally returns `VirtualProcessResult`.
+Simulates Julia's top-level execution, collects error reports, and returns a
+`VirtualProcessResult`.
 
-This function first parses `s::AbstractString` into `toplevelnode::JS.SyntaxNode` and then
-iterate the following steps on each code block (`blk`) of `toplevelnode`:
-1. if `blk` is a `:module` expression, recursively enters analysis into an newly defined
-   virtual module
-2. `lower`s `blk` into `:thunk` expression `lwr` (macros are also expanded in this step)
-3. if the context module is virtualized, replaces self-references of the original context
-   module with virtualized one: see `fix_self_references`
-4. `ConcreteInterpreter` partially interprets some statements in `lwr` that should not be
-   abstracted away (e.g. a `:method` definition); see also [`partially_interpret!`](@ref)
-5. finally, `ToplevelAbstractAnalyzer` analyzes the remaining statements by abstract interpretation
+If `x` is an `AbstractString`, this function first parses it into a `JS.SyntaxNode`.
+The internal `overrideex` keyword may be used only when `x` is a `JS.SyntaxNode`,
+and its value must be an `Expr` with head `:toplevel`.
+The expression is analyzed in place of the syntax represented by `x`.
+`AbstractString` input does not accept this override.
+
+The function processes each top-level code block (`blk`) in the resulting or
+supplied syntax tree as follows:
+1. If `blk` is or expands to a `:module` expression, define the module and
+   recursively analyze its body in that new module.
+2. Otherwise, expand macros and lower `blk`. Skip literal results; a `:thunk`
+   result supplies the lowered `CodeInfo`.
+3. If the context module was virtualized, rewrite self-references from the
+   original module to the virtual module; see `fix_self_references!`.
+4. Use `ConcreteInterpreter` to concretely interpret statements that must not
+   be abstracted, such as `:method` definitions; see
+   [`partially_interpret!`](@ref).
+5. Use `ToplevelAbstractAnalyzer` to analyze the remaining statements
+   abstractly.
 
 !!! warning
-    In order to process the toplevel code sequentially as Julia runtime does, `virtual_process`
-    splits the entire code, and then iterate a simulation process on each code block.
-    With this approach, we can't track the inter-code-block level dependencies, and so a
-    partial interpretation of toplevle definitions will fail if it needs an access to global
-    variables defined in other code blocks that are not interpreted but just abstracted.
-    We can circumvent this issue using JET's `concretization_patterns` configuration, which
-    allows us to customize JET's concretization strategy.
-    See [`ToplevelConfig`](@ref) for more details.
+    To process top-level code sequentially, as the Julia runtime does,
+    `virtual_process` splits the input into code blocks and simulates them one
+    at a time. This approach does not track concrete-value dependencies
+    between separately processed blocks. Consequently, partial interpretation
+    of a top-level definition can fail when it needs a global value defined in
+    another block that was abstractly rather than concretely interpreted. Use
+    `concretization_patterns` to force the relevant blocks to be concretely
+    interpreted. See [`ToplevelConfig`](@ref) for details.
 """
 function virtual_process(interp::ConcreteInterpreter,
                          x::Union{AbstractString,JS.SyntaxNode},
@@ -695,7 +817,9 @@ function virtual_process(interp::ConcreteInterpreter,
     world = Base.get_world_counter()
     state = InterpretationState(
         filename, #=curline=#0, world, #=dependencies=#Set{Symbol}(), context, config,
-        res, #=pkg_mod_depth=#0, #=files_stack=#String[], #=isfailed=#false)
+        res, #=pkg_mod_depth=#0, #=files_stack=#String[], #=isfailed=#false,
+        #=concretization_deadline=#typemax(UInt64), #=callee_error=#nothing,
+        #=caught_callee_errors=#IdDict{Frame,Vector{CalleeError}}(), #=native_calls=#false)
     interp = ConcreteInterpreter(interp, state)
     try
         virtual_process!(interp, x, overrideex)
@@ -724,20 +848,23 @@ end
 """
     virtualize_module_context(actual::Module)
 
-HACK to return a module where the context of `actual` is virtualized.
+Return a fresh virtual module that provides access to the bindings of `actual`.
 
-The virtualization will be done by 2 steps below:
-1. loads the module context of `actual` into a sandbox module, and export the whole context from there
-2. then uses names exported from the sandbox
+Virtualization proceeds in two steps:
+1. Use `using` to make the defined names of `actual` available in a sandbox
+   module, then export those names from the sandbox.
+2. Use `using` in the virtual module to make the sandbox's exported names
+   available.
 
-This way, JET's runtime simulation in the virtual module context will be able to define
-a name that is already defined in `actual` without causing
-"cannot assign a value to variable ... from module ..." error, etc.
-It allows JET to virtualize the context of already-existing module other than `Main`.
+This allows JET to define names in the virtual module even when the same names
+already exist in `actual`, without triggering errors such as `cannot assign a
+value to variable ... from module ...`. It also allows JET to analyze an
+existing module other than `Main` without defining analyzed code directly in
+that module.
 
 !!! warning "TODO"
-    Currently this function relies on `Base.names`, and thus it can't restore the `using`ed
-    names.
+    Because this function relies on `Base.names`, it cannot reproduce names
+    made available through `using`.
 """
 function virtualize_module_context(actual::Module)
     modpath = split_module_path(actual)
@@ -775,50 +902,103 @@ const VIRTUAL_MODULE_NAME = :JETVirtualModule
 gen_virtual_module(parent::Module = Main; name = VIRTUAL_MODULE_NAME) =
     Core.eval(parent, :(module $(gensym(name)) end))::Module
 
+struct VirtualSignatureAnalysisJob{Interpreter<:ConcreteInterpreter} <: AbstractSignatureAnalysisJob
+    interp::Interpreter
+    res::VirtualProcessResult
+    progress::PackageAnalysisProgress
+    index::Int
+    config::ToplevelConfig
+    n_sigs::Int
+    completion::Base.Event
+end
+
 # NOTE when `@generated` function has been defined, signatures of both its entry and
 # generator should have been collected, and we will just analyze them separately
 # if code generation has failed given the entry method signature, the overload of
 # `InferenceState(..., ::AbstractAnalyzer)` will collect `GeneratorErrorReport`
-function analyze_from_definitions!(interp::ConcreteInterpreter, config::ToplevelConfig)
-    succeeded = Ref(0)
-    start = time()
-    analyzer = ToplevelAbstractAnalyzer(interp, non_toplevel_concretized; refresh_local_cache = false)
-    entrypoint = config.analyze_from_definitions
-    res = InterpretationState(interp).res
-    n_sigs = length(res.signature_infos)
-    for i = 1:n_sigs
-        (; tt) = res.signature_infos[i]
+function (job::VirtualSignatureAnalysisJob)()
+    (; interp, res, progress, index, config, n_sigs) = job
+    (; tt) = res.signature_infos[index]
+    try
+        # Create a new analyzer with fresh local caches (`inf_cache` and `analysis_results`)
+        # to avoid data races between concurrent signature analysis tasks
+        analyzer = ToplevelAbstractAnalyzer(interp, non_toplevel_concretized)
+        inf_world = CC.get_inference_world(analyzer)
         match = Base._which(tt;
             # NOTE use the latest world counter with `method_table(analyzer)` unwrapped,
             # otherwise it may use a world counter when this method isn't defined yet
             method_table = CC.method_table(analyzer),
-            world = CC.get_inference_world(analyzer),
+            world = inf_world,
             raise = false)
+        entrypoint = config.analyze_from_definitions
         if (match !== nothing &&
             (!(entrypoint isa Symbol) || # implies `analyze_from_definitions===true`
              match.method.name === entrypoint))
-            succeeded[] += 1
-            toplevel_logger(config; pre=clearline) do @nospecialize(io::IO)
-                print(io, "analyzing from top-level definitions ($(succeeded[])/$n_sigs)")
-            end
-            analyzer, result = analyze_method_signature!(analyzer,
-                match.method, match.spec_types, match.sparams)
+            @atomic progress.analyzed += 1
+            result = analyze_method_signature!(
+                analyzer, match.method, match.spec_types, match.sparams)
             reports = get_reports(analyzer, result)
-            append!(res.inference_error_reports, reports)
+            isempty(reports) || @lock progress.reports_lock append!(progress.reports, reports)
         else
-            # something went wrong
-            toplevel_logger(config; filter=≥(JET_LOGGER_LEVEL_DEBUG), pre=clearline) do @nospecialize(io::IO)
+            toplevel_logger(config; pre=clearline) do @nospecialize(io::IO)
                 println(io, "couldn't find a single method matching the signature `", tt, "`")
             end
         end
+    catch err
+        @error "Error analyzing method signature" tt
+        Base.showerror(stderr, err, catch_backtrace())
+    finally
+        done = (@atomic progress.done += 1)
+        current_next = @atomic progress.next_interval
+        if done >= current_next
+            @atomicreplace progress.next_interval current_next => current_next + progress.interval
+            toplevel_logger(config; pre=clearline) do @nospecialize(io::IO)
+                analyzed = @atomic progress.analyzed
+                print(io, "analyzing from top-level definitions ($analyzed/$n_sigs)")
+            end
+        end
+    end
+end
+
+function analyze_from_definitions!(interp::ConcreteInterpreter, config::ToplevelConfig)
+    start = time()
+    res = InterpretationState(interp).res
+    n_sigs = length(res.signature_infos)
+    n_sigs == 0 && return nothing
+
+    progress = PackageAnalysisProgress(n_sigs)
+
+    toplevel_logger(config) do @nospecialize(io::IO)
+        print(io, "analyzing from top-level definitions (0/$n_sigs)")
+    end
+
+    jobs = VirtualSignatureAnalysisJob[]
+    sizehint!(jobs, n_sigs)
+    for i = 1:n_sigs
+        push!(jobs, VirtualSignatureAnalysisJob(
+            interp, res, progress, i, config, n_sigs, Base.Event()))
+    end
+    run_signature_analysis_jobs!(jobs)
+
+    append!(res.inference_error_reports, progress.reports)
+
+    toplevel_logger(config; pre=clearline) do @nospecialize(io::IO)
+        done = @atomic progress.done
+        print(io, "analyzing from top-level definitions ($done/$n_sigs)")
     end
     toplevel_logger(config; pre=println) do @nospecialize(io::IO)
         sec = round(time() - start; digits = 3)
-        println(io, "analyzed $(succeeded[]) top-level definitions (took $sec sec)")
+        analyzed = @atomic progress.analyzed
+        println(io, "analyzed $analyzed top-level definitions (took $sec sec)")
     end
+
     return nothing
 end
-clearline(io) = print(io, '\r')
+
+# Clear the entire line and return cursor to beginning
+# \e[2K clears the entire line (K=erase line, 2=entire line)
+# \r returns cursor to beginning of line
+clearline(io) = print(io, "\e[2K\r")
 
 function add_toplevel_error_report!(state::InterpretationState, @nospecialize report::ToplevelErrorReport)
     push!(state.res.toplevel_error_reports, report)
@@ -862,6 +1042,39 @@ function _virtual_process!(interp::ConcreteInterpreter,
     end
 
     return state.res
+end
+
+struct ConcretizationPlan
+    # statements selected for concrete execution together with their data and control
+    # dependencies; the control flow of the concrete pass is computed from these alone
+    selected::BitVector
+    # untyped global declarations under control flow, evaluated in their weak form in
+    # program order without selecting the enclosing control flow, and the `:latestworld`s
+    # they make redundant
+    materialized::BitVector
+    # `selected .| materialized`: the statements evaluated by the concrete pass, whose
+    # effects the abstract analysis then treats as already in place
+    concretized::BitVector
+end
+ConcretizationPlan() = ConcretizationPlan(falses(0), falses(0), falses(0))
+
+# Print `src` marking each statement `t` (selected), `m` (materialized) or `f` (abstract).
+function print_concretization_plan(io::IO, src::CodeInfo, plan::ConcretizationPlan)
+    nd = ndigits(length(src.code))
+    preprint(::IO) = nothing
+    function preprint(io::IO, idx::Int)
+        if plan.selected[idx]
+            mark, color = "t ", :cyan
+        elseif plan.materialized[idx]
+            mark, color = "m ", :yellow
+        else
+            mark, color = "f ", :plain
+        end
+        printstyled(io, lpad(idx, nd), ' ', mark; color)
+    end
+    postprint(::IO) = nothing
+    postprint(::IO, ::Int, ::Bool) = nothing
+    LoweredCodeUtils.print_with_code(preprint, postprint, io, src)
 end
 
 # check if all statements of `src` have been concretized
@@ -1016,6 +1229,33 @@ function macroexpand_with_err_handling(state::InterpretationState, x::Expr)
         # but it can lead to invalid macro hygiene escaping because of https://github.com/JuliaLang/julia/issues/20241
         Base.invoke_in_world(state.world, macroexpand, state.context, x; recursive = true)
     end
+end
+
+function macroexpand_doc_with_err_handling(state::InterpretationState, x::Expr)
+    # `scrub_offset = 3`: `macroexpand_doc` -> `macroexpand` -> kwfunc (`macroexpand`)
+    with_err_handling(macro_expansion_err_handler, state; scrub_offset=3) do
+        Base.invoke_in_world(state.world, macroexpand_doc, state.context, x)
+    end
+end
+
+function macroexpand_doc(mod::Module, x::Expr)
+    # Reuse the expanded target so that user macros run only once, including when
+    # falling back to ordinary `@doc` expansion for macro-generated blocks.
+    target = macroexpand(mod, x.args[4]; recursive=true)
+    split = isexpr(target, (:(=), :const, :global, :function, :macro, :struct, :abstract, :primitive))
+    doccall = Expr(:macrocall, x.args[1], x.args[2], x.args[3], split ? copy(target) : target)
+    if split
+        # Base's `define=false` mode registers documentation without redefining the
+        # target or introducing the conditional value wrapper used since Julia 1.13.
+        # Keep modules and `@__doc__` blocks intact to preserve documentation scope.
+        push!(doccall.args, false)
+    end
+    expanded = macroexpand(mod, doccall; recursive=true)
+    if split
+        @assert isexpr(expanded, :block)
+        return Expr(:block, target, expanded.args...)
+    end
+    return expanded
 end
 
 function lower_with_err_handling(interp::ConcreteInterpreter, ::JS.SyntaxNode, xblk::Expr)
@@ -1391,7 +1631,7 @@ function _virtual_process!(interp::ConcreteInterpreter,
     else
         push_vnode_stack!(vnodes, toplevelnode, overrideex, force_concretize)
     end
-    concretized = falses(0)
+    concretization = ConcretizationPlan()
     while !isempty(vnodes)
         local ex = pop!(vnodes)
         (; node, force_concretize) = ex
@@ -1435,7 +1675,12 @@ function _virtual_process!(interp::ConcreteInterpreter,
             # but for now we just ignore that.
             isexpr(x, :var"hygienic-scope"))
 
-            newx = macroexpand_with_err_handling(state, x)
+            isdoc = first(x.args) === GlobalRef(Core, Symbol("@doc"))
+            newx = if isdoc && isexpr(x, :macrocall, 4)
+                macroexpand_doc_with_err_handling(state, x)
+            else
+                macroexpand_with_err_handling(state, x)
+            end
 
             # if any error happened during macro expansion, bail out now and continue
             isnothing(newx) && continue
@@ -1443,7 +1688,7 @@ function _virtual_process!(interp::ConcreteInterpreter,
             # special case and flatten the resulting expression expanded from `@doc` macro
             # the macro expands to a block expression and so it makes it difficult to specify
             # concretization pattern correctly since `@doc` macro is attached implicitly
-            if first(x.args) === GlobalRef(Core, Symbol("@doc"))
+            if isdoc
                 # `@doc` macro usually produces :block expression, but may also produce :toplevel
                 # one when attached to a module expression
                 @assert isexpr(newx, :block) || isexpr(newx, :toplevel)
@@ -1529,22 +1774,28 @@ function _virtual_process!(interp::ConcreteInterpreter,
         fix_self_references!(state.res.actual2virtual, src)
 
         state.isfailed = false
+        state.callee_error = nothing
+        empty!(state.caught_callee_errors)
+        state.native_calls = force_concretize
         if force_concretize
-            JuliaInterpreter.finish!(interp, Frame(state.context, src; world=state.world), true)
+            frame = Frame(state.context, src; world=state.world)
+            start_concretization_timeout!(state)
+            JuliaInterpreter.finish!(interp, frame, true)
             continue
         end
-        partially_interpret!(interp, concretized, state.context, src)
+        partially_interpret!(interp, concretization, state.context, src)
 
-        if bail_out_concretized(concretized, src)
+        if bail_out_concretized(concretization.concretized, src)
             # bail out if nothing to analyze (just a performance optimization)
             continue
         elseif state.isfailed
             continue
         end
 
-        analyzer = ToplevelAbstractAnalyzer(interp, concretized; current_toplevel_assignment)
+        analyzer = ToplevelAbstractAnalyzer(interp, concretization.concretized;
+                                            current_toplevel_assignment)
 
-        (_, result), _ = analyze_toplevel!(analyzer, src, state.context)
+        result = analyze_toplevel!(analyzer, src, state.context)
 
         append!(state.res.inference_error_reports, get_reports(analyzer, result)) # collect error reports
     end
@@ -1681,7 +1932,7 @@ function fix_self_references!((actualmod, virtualmod)::Actual2Virtual, @nospecia
         return ret
     end
 
-    return postwalk_and_transform!(x) do @nospecialize(xx), scope::Vector{Symbol}
+    return postwalk_and_transform!(x) do @nospecialize(xx), _scope::Vector{Symbol}
         if ismoduleusage(xx)
             return fix_self_reference(xx)
         elseif xx === actualmodsym
@@ -1697,7 +1948,7 @@ function postwalk_and_transform!(f, x, scope = Symbol[])
 end
 function prewalk_and_transform!(f, x, scope::Vector{Symbol} = Symbol[])
     inner(@nospecialize(x)) = prewalk_and_transform!(f, x, scope)
-    outer(@nospecialize(x), scope::Vector{Symbol}) = x
+    outer(@nospecialize(x), _scope::Vector{Symbol}) = x
     return walk_and_transform!(f(x, scope), inner, outer, scope)
 end
 
@@ -1723,45 +1974,96 @@ function walk_and_transform!(@nospecialize(x), inner, outer, scope::Vector{Symbo
 end
 
 """
-    partially_interpret!(interp::ConcreteInterpreter, concretize::BitVector, mod::Module, src::CodeInfo)
+    partially_interpret!(interp::ConcreteInterpreter, plan::ConcretizationPlan,
+                         mod::Module, src::CodeInfo) -> plan::ConcretizationPlan
 
-Partially interprets statements in `src` using JuliaInterpreter.jl:
-- concretizes "toplevel definitions", i.e. `:method`, `:struct_type`, `:abstract_type` and
-  `:primitive_type` expressions and their dependencies
-- concretizes user-specified toplevel code (see [`ToplevelConfig`](@ref))
-- directly evaluates module usage expressions and report error of invalid module usages
-  (TODO: enter into the loaded module and keep JET analysis)
-- special-cases `include` calls so that top-level analysis recursively enters the included file
+Fill `plan` with one entry per statement of `src` (see `ConcretizationPlan`), evaluate
+`plan.concretized` using JuliaInterpreter.jl, and return `plan`.
+
+The selection includes:
+- Top-level definitions, including `:method`, `:struct_type`, `:abstract_type`,
+  and `:primitive_type` expressions, together with their dependencies.
+- Module-usage expressions, which are directly evaluated so that invalid
+  usages can be reported. Modules loaded by `import` or `using` are not
+  recursively analyzed.
+- `include` calls, which cause top-level analysis to recursively enter the
+  included file.
+- Untyped global declarations emitted by assignments; ones under control flow
+  are materialized rather than selected.
 """
-function partially_interpret!(interp::ConcreteInterpreter, concretize::BitVector, mod::Module, src::CodeInfo)
+function partially_interpret!(
+        interp::ConcreteInterpreter, plan::ConcretizationPlan, mod::Module, src::CodeInfo
+    )
     state = InterpretationState(interp)
-    fill!(resize!(concretize, length(src.code)), false)
     controller = LoweredCodeUtils.SelectiveEvalController()
-    select_statements!(concretize, mod, src, controller)
+    select_statements!(plan, mod, src, controller)
 
     toplevel_logger(state.config; filter=≥(JET_LOGGER_LEVEL_DEBUG)) do @nospecialize(io::IO)
         println(io, "concretization plan at $(state.filename):$(state.curline):")
-        LoweredCodeUtils.print_with_code(io, src, concretize)
+        print_concretization_plan(io, src, plan)
     end
 
-    # NOTE if `JuliaInterpreter.optimize!` may modify `src`, `src` and `concretize` can be inconsistent
-    # here we create `JuliaInterpreter.Frame` by ourselves disabling the optimization (#277)
-    frame = Frame(mod, src; optimize=false, world=state.world)
-    LoweredCodeUtils.selective_eval_fromstart!(interp, frame, concretize, controller, #=istoplevel=#true)
+    # rewrite the materialized declarations into their weak form in a copy of `src`,
+    # keeping the original for abstract analysis
+    src′ = src
+    for idx in eachindex(src.code)
+        plan.materialized[idx] || continue
+        stmt = src.code[idx]
+        untyped_global_declaration(stmt) === nothing && continue
+        if src′ === src
+            src′ = copy(src)
+        end
+        src′.code[idx] = weak_global_declaration(stmt)
+    end
 
-    return concretize
+    # NOTE if `JuliaInterpreter.optimize!` may modify `src′`, `src′` and `plan` can be
+    # inconsistent; create the frame without optimization (#277).
+    frame = Frame(mod, src′; optimize=false, world=state.world)
+    # The controller's gotos and shortcuts come from `plan.selected` alone, so the loops
+    # and branches enclosing materialized declarations fall through and each declaration
+    # is evaluated once in program order.
+    start_concretization_timeout!(state)
+    LoweredCodeUtils.selective_eval_fromstart!(
+        interp, frame, plan.concretized, controller, #=istoplevel=#true)
+
+    return plan
 end
 
 # select statements that should be concretized, and actually interpreted rather than abstracted
+function select_statements!(
+        plan::ConcretizationPlan, mod::Module, src::CodeInfo,
+        controller::LoweredCodeUtils.SelectiveEvalController =
+            LoweredCodeUtils.SelectiveEvalController()
+    )
+    # the plan is always computed from scratch, so callers need not clear it beforehand
+    nstmts = length(src.code)
+    fill!(resize!(plan.selected, nstmts), false)
+    fill!(resize!(plan.materialized, nstmts), false)
+    resize!(plan.concretized, nstmts)
+    cl = LoweredCodeUtils.CodeLinks(mod, src) # make `CodeEdges` hold `CodeLinks`?
+    edges = LoweredCodeUtils.CodeEdges(src, cl)
+    cfg = CC.compute_basic_blocks(src.code)
+    postdomtree = CC.construct_postdomtree(cfg.blocks)
+    select_direct_requirement!(plan, mod, src, edges, cfg, postdomtree)
+    if any(plan.materialized)
+        add_required_latestworld!(plan.materialized, src, cfg)
+    end
+    select_dependencies!(plan.selected, src, edges, cl, cfg, postdomtree, controller)
+    plan.concretized .= plan.selected .| plan.materialized
+    # the termination points must cover the materialized statements too
+    empty!(controller.termination_points)
+    LoweredCodeUtils.record_termination_points!(controller, plan.concretized, cfg)
+    return plan
+end
+
 function select_statements!(
         concretize::BitVector, mod::Module, src::CodeInfo,
         controller::LoweredCodeUtils.SelectiveEvalController =
             LoweredCodeUtils.SelectiveEvalController()
     )
-    cl = LoweredCodeUtils.CodeLinks(mod, src) # make `CodeEdges` hold `CodeLinks`?
-    edges = LoweredCodeUtils.CodeEdges(src, cl)
-    select_direct_requirement!(concretize, src.code, edges)
-    select_dependencies!(concretize, src, edges, cl, controller)
+    n = length(src.code)
+    plan = ConcretizationPlan(concretize, falses(n), falses(n))
+    select_statements!(plan, mod, src, controller)
     return concretize
 end
 
@@ -1771,9 +2073,10 @@ function select_statements(mod::Module, src::CodeInfo, names::Symbol...)
     idxs = findall(src.code) do @nospecialize stmt
         return any(names) do name
             isexpr(stmt, :call) || return false
-            f = stmt.args[1]
-            (f isa GlobalRef && f.name === :setglobal!) || return false
             length(stmt.args) == 4 || return false
+            f = stmt.args[1]
+            f isa GlobalRef || return false
+            f.name === :setglobal! || return false
             arg3 = stmt.args[3]
             if arg3 isa QuoteNode
                 arg3 = arg3.value
@@ -1792,7 +2095,9 @@ function select_statements(mod::Module, src::CodeInfo, slots::SlotNumber...)
             concretize[d] = true
         end
     end
-    select_dependencies!(concretize, src, edges, cl)
+    cfg = CC.compute_basic_blocks(src.code)
+    postdomtree = CC.construct_postdomtree(cfg.blocks)
+    select_dependencies!(concretize, src, edges, cl, cfg, postdomtree)
     return concretize
 end
 function select_statements(mod::Module, src::CodeInfo, idxs::Int...)
@@ -1802,8 +2107,44 @@ function select_statements(mod::Module, src::CodeInfo, idxs::Int...)
     for idx = idxs
         concretize[idx] |= true
     end
-    select_dependencies!(concretize, src, edges, cl)
+    cfg = CC.compute_basic_blocks(src.code)
+    postdomtree = CC.construct_postdomtree(cfg.blocks)
+    select_dependencies!(concretize, src, edges, cl, cfg, postdomtree)
     return concretize
+end
+
+is_declare_global_call(@nospecialize(stmt)) =
+    isexpr(stmt, :call) && length(stmt.args) ≥ 1 &&
+    stmt.args[1] == GlobalRef(Core, :declare_global)
+
+# Returns the `GlobalRef` declared by an untyped global declaration statement, i.e.
+# `Expr(:globaldecl, gr)` (Julia 1.12) or `Core.declare_global(mod, name, strong)`
+# (Julia 1.13 and later), and `nothing` for typed or unrecognized declarations.
+function untyped_global_declaration(@nospecialize(stmt))
+    if isexpr(stmt, :globaldecl, 1)
+        gr = only(stmt.args)
+        gr isa GlobalRef && return gr
+    elseif is_declare_global_call(stmt) && length(stmt.args) == 4
+        mod, name, strong = stmt.args[2], stmt.args[3], stmt.args[4]
+        if mod isa Module && name isa QuoteNode && name.value isa Symbol && strong isa Bool
+            return GlobalRef(mod, name.value)
+        end
+    end
+    return nothing
+end
+
+# The weak form declares the binding without committing to a strong global, so that a
+# materialized declaration in a branch that would not run at runtime leaves later typed
+# or constant declarations of the same binding intact.
+function weak_global_declaration(@nospecialize(stmt))
+    if isexpr(stmt, :globaldecl, 1)
+        gr = only(stmt.args)::GlobalRef
+        return Expr(:global, gr.name)
+    else
+        @assert is_declare_global_call(stmt) && length(stmt.args) == 4
+        mod, name = stmt.args[2], stmt.args[3]
+        return Expr(:call, GlobalRef(Core, :declare_global), mod, name, false)
+    end
 end
 
 # TODO: Compiler-generated closure setup is selected here like user-visible definitions.
@@ -1813,26 +2154,48 @@ end
 # closure setup without selecting enclosing control flow when its signature and setup have no
 # runtime-value dependencies, and retain the current control-sensitive behavior otherwise.
 # `maybe_wrap_test_expression_in_thunk` is a Test-specific mitigation until then.
-function select_direct_requirement!(concretize, stmts, edges)
+function select_direct_requirement!(
+        plan::ConcretizationPlan, mod::Module, src::CodeInfo,
+        edges::LoweredCodeUtils.CodeEdges, cfg::CC.CFG, postdomtree::CC.PostDomTree
+    )
+    (; selected, materialized) = plan
+    stmts = src.code
     for (idx, stmt) in enumerate(stmts)
+        if isexpr(stmt, :global, 1) && only(stmt.args) isa Symbol
+            # Julia 1.12's weak declarations need no control-flow dependencies.
+            materialized[idx] = true
+            continue
+        end
+        if isexpr(stmt, :globaldecl) || is_declare_global_call(stmt)
+            # An untyped declaration has no data dependencies, so selecting it would only
+            # pull in the enclosing control flow (possibly a nonterminating loop); under
+            # control flow it is materialized instead.
+            gr = untyped_global_declaration(stmt)
+            if (gr !== nothing && gr.mod === mod &&
+                !CC.postdominates(postdomtree, CC.block_for_inst(cfg, idx), 1))
+                materialized[idx] = true
+            else
+                selected[idx] = true
+            end
+            continue
+        end
+
         if (LoweredCodeUtils.ismethod(stmt) ||    # don't abstract away method definitions
             LoweredCodeUtils.istypedef(stmt) ||   # don't abstract away type definitions
             (isexpr(stmt, :call) && length(stmt.args) ≥ 1 &&
-             (stmt.args[1] == GlobalRef(Core, :_defaultctors) ||
-              stmt.args[1] == GlobalRef(Core, :declare_global))) ||
-            (ismoduleusage(stmt) || is_lowered_module_usage(stmt)) ||
-            isexpr(stmt, :globaldecl))
-            concretize[idx] = true
+             stmt.args[1] == GlobalRef(Core, :_defaultctors)) ||
+            (ismoduleusage(stmt) || is_lowered_module_usage(stmt)))
+            selected[idx] = true
             continue
         end
 
         if isexpr(stmt, :(=))
-            lhs, rhs = stmt.args
+            _, rhs = stmt.args
             stmt = rhs
         end
         # `include` calls are special cased
         if is_known_call(stmt, :include, stmts)
-            concretize[idx] = true
+            selected[idx] = true
         elseif is_known_getproperty(stmt, :include, stmts)
             # this is something like:
             # ```
@@ -1841,15 +2204,15 @@ function select_direct_requirement!(concretize, stmts, edges)
             # %x = Expr(:call, %1, ...)
             # ```
             # so require `%x` too
-            concretize[idx] = true
-            concretize[edges.succs[idx]] .= true
+            selected[idx] = true
+            selected[edges.succs[idx]] .= true
         # `eval` calls are difficult to analyze, but since they may contain toplevel
         # definitions, JET just concretizes them always
         elseif is_known_call(stmt, :eval, stmts)
-            concretize[idx] = true
+            selected[idx] = true
         elseif is_known_getproperty(stmt, :eval, stmts)
-            concretize[idx] = true
-            concretize[edges.succs[idx]] .= true
+            selected[idx] = true
+            selected[edges.succs[idx]] .= true
         end
     end
 end
@@ -1884,7 +2247,10 @@ function is_known_getproperty(@nospecialize(stmt), func::Symbol, stmts::Vector{A
     return false
 end
 
-function add_required_inplace!(concretize::BitVector, src::CodeInfo, edges, cl)
+function add_required_inplace!(
+        concretize::BitVector, src::CodeInfo, edges::LoweredCodeUtils.CodeEdges,
+        cl::LoweredCodeUtils.CodeLinks
+    )
     changed = false
     for i = 1:length(src.code)
         stmt = src.code[i]
@@ -1905,7 +2271,10 @@ function add_required_inplace!(concretize::BitVector, src::CodeInfo, edges, cl)
     return changed
 end
 # check if the first argument is requested to be concretized
-function is_arg_requested(@nospecialize(arg), concretize, edges, cl)
+function is_arg_requested(
+        @nospecialize(arg), concretize::BitVector, edges::LoweredCodeUtils.CodeEdges,
+        cl::LoweredCodeUtils.CodeLinks
+    )
     if arg isa SSAValue
         return concretize[arg.id] || any(@view concretize[edges.preds[arg.id]])
     elseif arg isa SlotNumber
@@ -1923,13 +2292,11 @@ end
 # Julia's intermediate code representation.
 function select_dependencies!(
         concretize::BitVector, src::CodeInfo, edges::LoweredCodeUtils.CodeEdges,
-        cl::LoweredCodeUtils.CodeLinks,
+        cl::LoweredCodeUtils.CodeLinks, cfg::CC.CFG, postdomtree::CC.PostDomTree,
         controller::LoweredCodeUtils.SelectiveEvalController =
             LoweredCodeUtils.SelectiveEvalController()
     )
     typedefs = LoweredCodeUtils.find_typedefs(src)
-    cfg = CC.compute_basic_blocks(src.code)
-    postdomtree = CC.construct_postdomtree(cfg.blocks)
 
     while true
         changed = false
@@ -2092,7 +2459,7 @@ function usemodule_with_err_handling(interp::ConcreteInterpreter, ex::Expr, worl
             for i = 1:(topmodidx-1)
                 if topmodsym isa Symbol && isdefined(curmod, topmodsym)
                     modpath = modpath[topmodidx:end]
-                    for j = 1:i
+                    for _ = 1:i
                         pushfirst!(modpath, :.)
                     end
                     fixed_module_usage = ModuleUsage(module_usage; modpath)
@@ -2112,15 +2479,55 @@ function usemodule_with_err_handling(interp::ConcreteInterpreter, ex::Expr, worl
     end; end
 end
 
-function JuliaInterpreter.step_expr!(interp::ConcreteInterpreter, frame::Frame, @nospecialize(node), istoplevel::Bool)
-    @assert istoplevel "ConcreteInterpreter can only work for top-level code"
+function start_concretization_timeout!(state::InterpretationState)
+    timeout_ns = state.config.concretization_timeout * 1e9
+    now = time_ns()
+    state.concretization_deadline = timeout_ns < typemax(UInt64) - now ?
+        now + round(UInt64, timeout_ns) : typemax(UInt64)
+    return state
+end
 
-    if ismoduleusage(node) || is_lowered_module_usage(node)
+function extend_concretization_deadline!(state::InterpretationState, elapsed::UInt64)
+    deadline = state.concretization_deadline
+    state.concretization_deadline =
+        deadline < typemax(UInt64) - elapsed ? deadline + elapsed : typemax(UInt64)
+    return state
+end
+
+# Runs `f` without counting its time against `concretization_timeout`. This is for work
+# that belongs to other code than the current top-level statement: `include`d files,
+# whose statements have their own timeouts, and module loading.
+function pause_concretization_timeout(f, state::InterpretationState)
+    t0 = time_ns()
+    try
+        return f()
+    finally
+        extend_concretization_deadline!(state, time_ns() - t0)
+    end
+end
+
+# This runs for every statement of the top-level frame and of the frames of interpreted
+# callees, so the timeout also stops loops inside functions called from top-level code.
+function JuliaInterpreter.step_expr!(interp::ConcreteInterpreter, frame::Frame, @nospecialize(node), istoplevel::Bool)
+    state = InterpretationState(interp)
+    if time_ns() > state.concretization_deadline
+        # the generic `step_expr!` catches errors only around its own evaluation, so route
+        # this one through `handle_err` here (which needs a caught backtrace)
+        try
+            throw(ConcretizationTimeoutError(state.config.concretization_timeout))
+        catch err
+            return JuliaInterpreter.handle_err(interp, frame, err)
+        end
+    end
+
+    if istoplevel && (ismoduleusage(node) || is_lowered_module_usage(node))
         moduleusage = ismoduleusage(node) ? node : to_module_usage(node)
         world = frame.world
-        for ex in to_simple_module_usages(moduleusage)
-            if usemodule_with_err_handling(interp, ex, world) === nothing
-                break
+        pause_concretization_timeout(state) do
+            for ex in to_simple_module_usages(moduleusage)
+                if usemodule_with_err_handling(interp, ex, world) === nothing
+                    break
+                end
             end
         end
         return frame.pc += 1
@@ -2128,7 +2535,20 @@ function JuliaInterpreter.step_expr!(interp::ConcreteInterpreter, frame::Frame, 
 
     res = @invoke JuliaInterpreter.step_expr!(interp::Interpreter, frame::Frame, node::Any, istoplevel::Bool)
 
-    should_analyze_from_definitions(InterpretationState(interp).config) && collect_toplevel_signature!(interp, frame, node)
+    if node isa ReturnNode
+        delete!(state.caught_callee_errors, frame)
+    elseif isexpr(node, :pop_exception)
+        caught = get(state.caught_callee_errors, frame, nothing)
+        if caught !== nothing
+            n = length(frame.framedata.exceptions)
+            length(caught) > n && resize!(caught, n)
+            isempty(caught) && delete!(state.caught_callee_errors, frame)
+        end
+    end
+
+    if istoplevel && should_analyze_from_definitions(state.config)
+        collect_toplevel_signature!(interp, frame, node)
+    end
 
     return res
 end
@@ -2234,30 +2654,40 @@ function _to_simple_module_usages(x::Expr)
     end
 end
 
-# This overload performs almost the same work as
-# `JuliaInterpreter.evaluate_call!(::JuliaInterpreter.NonRecursiveInterpreter, ...)`
-# but includes a few important adjustments specific to JET's virtual process:
+# Calls are interpreted recursively (JuliaInterpreter's default), so that
+# `concretization_timeout` also stops loops inside callees. Statements selected by
+# `concretization_patterns` are the exception: the user asked for them to be executed, so
+# their calls run natively at full speed, with the timeout checked only between the
+# statements of the top-level frame. This overload also adds a few adjustments specific
+# to JET's virtual process:
 # - Special handling for `include` calls: recursively apply JET analysis to included files.
 # - Ignore C-side function definitions created via `Base._ccallable`. These definitions
 #   are not namespaced in the module and can cause false-positive name conflict errors
 #   when running analysis multiple times (see aviatesk/JET.jl#597).
 function JuliaInterpreter.evaluate_call!(
-        interp::ConcreteInterpreter, frame::Frame, fargs::Vector{Any},
-        _enter_generated::Bool
+        interp::ConcreteInterpreter, frame::Frame, fargs::Vector{Any}, enter_generated::Bool
     )
-    f = popfirst!(fargs)
-    args = fargs # now it's really args
-    isinclude(f) && return handle_include(interp, f, args)
-    if f === Base._ccallable
-        # skip concrete-interpretation of `jl_extern_c`
-        if length(args) == 2 && args[1] isa Type && args[2] isa Type
-            # ignore only if the method dispatch is successful
+    f = fargs[1]
+    if isinclude(f)
+        popfirst!(fargs)
+        return handle_include(interp, f, fargs)
+    elseif f === Base._ccallable
+        # skip concrete-interpretation of `jl_extern_c`, but only when the method dispatch
+        # would succeed; otherwise the call goes through and raises the `MethodError`
+        if length(fargs) == 3 && fargs[2] isa Type && fargs[3] isa Type
             return nothing
-        else
-            # otherwise just call it to trigger a method error
         end
     end
-    return Base.invoke_in_world(frame.world, f, args...)
+    state = InterpretationState(interp)
+    if InterpretationState(interp).native_calls
+        popfirst!(fargs)
+        return Base.invoke_in_world(frame.world, f, fargs...)
+    end
+    if f === Base.rethrow
+        restore_callee_error!(state, frame, fargs)
+    end
+    return @invoke JuliaInterpreter.evaluate_call!(
+        interp::Interpreter, frame::Frame, fargs::Vector{Any}, enter_generated::Bool)
 end
 
 isinclude(@nospecialize f) = f isa Base.IncludeInto || (isa(f, Function) && nameof(f) === :include)
@@ -2317,13 +2747,17 @@ function handle_include(interp::ConcreteInterpreter, @nospecialize(include_func)
                                    curline = 0,
                                    context = include_context)
     newinterp = ConcreteInterpreter(interp, newstate)
-    virtual_process!(newinterp, included)
+    pause_concretization_timeout(state) do
+        virtual_process!(newinterp, included)
+    end
 
     # TODO: actually, here we need to try to get the lastly analyzed result of the `_virtual_process!` call above
     nothing
 end
 
-function try_read_file(interp::ConcreteInterpreter, include_context::Module, include_file::AbstractString)
+function try_read_file(
+        interp::ConcreteInterpreter, _include_context::Module, include_file::AbstractString
+    )
     # `scrub_offset = 1`: `f`
     return with_err_handling(general_err_handler, InterpretationState(interp); scrub_offset=1) do
         return read(include_file, String)
@@ -2331,13 +2765,37 @@ function try_read_file(interp::ConcreteInterpreter, include_context::Module, inc
 end
 
 const JET_VIRTUALPROCESS_FILE = Symbol(@__FILE__)
-const JULIAINTERPRETER_BUILTINS_FILE = let
-    jlfile = pathof(JuliaInterpreter)::String
-    Symbol(normpath(jlfile, "..", "builtins.jl"))
+const INTERPRETER_SRC_DIRS = (
+    normpath(@__DIR__, ".."), # JET
+    dirname(pathof(JuliaInterpreter)::String),
+    dirname(pathof(LoweredCodeUtils)::String))
+
+# Frames of JET's own concrete interpretation or of the interpreter packages; the frames of
+# user code executed natively (e.g. by `Core.eval` or builtins) come before the first of
+# these. The module identifies frames of code cached in a package image, which may carry
+# no source location, and the file identifies inlined frames, which may carry no method.
+function is_interpreter_frame(frame::Base.StackTraces.StackFrame)
+    mod = Base.parentmodule(frame)
+    if mod !== nothing
+        root = Base.moduleroot(mod)
+        if root === JET || root === JuliaInterpreter || root === LoweredCodeUtils
+            return true
+        end
+    end
+    file = String(frame.file)
+    return any(dir -> startswith(file, dir), INTERPRETER_SRC_DIRS)
 end
 
-# handle errors from toplevel user code
-function JuliaInterpreter.handle_err(interp::ConcreteInterpreter, frame::Frame, @nospecialize(err))
+# handle errors from user code
+function JuliaInterpreter.handle_err(
+        interp::ConcreteInterpreter, frame::Frame, @nospecialize(err)
+    )
+    state = InterpretationState(interp)
+    # only the top-level frame of a statement has no caller
+    if frame.caller !== nothing
+        return handle_callee_err(interp, state, frame, err)
+    end
+
     # catch stack trace
     bt = catch_backtrace()
     st = stacktrace(bt)
@@ -2348,44 +2806,100 @@ function JuliaInterpreter.handle_err(interp::ConcreteInterpreter, frame::Frame, 
         rethrow(err)
     end
 
-    # scrub the original stacktrace so that it only contains frames from user code
-    i = 0
-    for (j, frame) in enumerate(st)
-        # if errors happen in `JuliaInterpreter.maybe_evaluate_builtin`, we just discard all
-        # the stacktrace assuming they are enough self-explanatory (corresponding to the last logic below)
-        if frame.file === JULIAINTERPRETER_BUILTINS_FILE && frame.func === :maybe_evaluate_builtin
-            break # keep `i = 0`
-        end
-
-        # if errors happen in `JuliaInterpreter.lookup`, we just discard all the stacktrace
-        # and report `MissingConcretizationErrorReport`
-        if frame.file === JET_VIRTUALPROCESS_FILE && frame.func === :lookup
-            break # keep `i = 0`
-        end
-
-        # find an error frame that happened at `Base.invoke_in_world(frame.world, f, args...)`
-        # in the overload `JuliaInterpreter.evaluate_call!(::ConcreteInterpreter, ::Frame, ...)`
-        if frame.file === JET_VIRTUALPROCESS_FILE && frame.func === :evaluate_call!
-            i = j - 1 # offset: `evaluate_call!`
-            break
-        end
-
-        # other general errors may happen at `JuliaInterpreter.collect_args`, etc.
-        # we don't show any stacktrace for those errors (by keeping the original `i = 0`)
-        # since they are hopefully self-explanatory
-        continue
+    # the record made while `err` unwound through callee frames, if any
+    callee_error = state.callee_error
+    if callee_error !== nothing && callee_error.err !== err
+        callee_error = nothing
     end
-    st = st[1:i]
 
-    state = InterpretationState(interp)
     if err isa MissingConcretizationError
         report = MissingConcretizationErrorReport(err.isconst, err.var, err.assignment, state.filename, state.curline)
+    elseif err isa ConcretizationTimeoutError
+        # raised by `step_expr!` itself, so no natively executed user code is involved
+        callee_st = callee_error === nothing ? Base.StackTraces.StackFrame[] : callee_error.st
+        report = ConcretizationTimeoutErrorReport(err.timeout, callee_st, state.filename, state.curline)
+    elseif callee_error === nothing
+        st = native_user_stacktrace(bt)
+        report = ActualErrorWrapped(err, st, state.filename, state.curline)
     else
+        # the native frames come from the original throw, which the record preserves
+        # across the handlers of interpreted callees
+        st = native_user_stacktrace(callee_error.bt)
+        append!(st, callee_error.st)
         report = ActualErrorWrapped(err, st, state.filename, state.curline)
     end
     add_toplevel_error_report!(state, report)
 
     return nothing # stop further interpretation
+end
+
+# The frames of natively executed user code in `bt`: those before the first frame of the
+# interpreter. Errors raised directly by builtins keep none, since they are hopefully
+# self-explanatory, and so does a backtrace whose interpreter frames cannot be identified.
+function native_user_stacktrace(bt::Vector{Union{Ptr{Nothing},Base.InterpreterIP}})
+    st = stacktrace(bt)
+    i = @something(findfirst(is_interpreter_frame, st), 1) - 1
+    return st[1:i]
+end
+
+# Errors in interpreted callees follow JuliaInterpreter's own handling, so `try`/`catch` in
+# user code works as usual. JET's own signals are the exception: they must not be caught by
+# user code, so they unwind frame by frame up to the top-level frame.
+function handle_callee_err(
+        interp::ConcreteInterpreter, state::InterpretationState, frame::Frame,
+        @nospecialize(err)
+    )
+    callee_error = state.callee_error
+    if callee_error === nothing || callee_error.err !== err
+        callee_error = state.callee_error =
+            CalleeError(err, catch_backtrace(), callee_stacktrace(frame))
+    end
+    if err isa ConcretizationTimeoutError || err isa MissingConcretizationError
+        delete!(state.caught_callee_errors, frame)
+        JuliaInterpreter.return_from(frame)
+        rethrow(err)
+    end
+    if isempty(frame.framedata.exception_frames)
+        delete!(state.caught_callee_errors, frame)
+    end
+    res = @invoke JuliaInterpreter.handle_err(interp::Interpreter, frame::Frame, err::Any)
+    if res isa Int
+        # Keep caught stacks parallel to JuliaInterpreter's active exceptions. A fresh
+        # throw must not reuse them, even when its value is identical to a caught error.
+        caught = get!(Vector{CalleeError}, state.caught_callee_errors, frame)
+        resize!(caught, length(frame.framedata.exceptions))
+        caught[end] = callee_error
+        state.callee_error = nothing
+    end
+    return res
+end
+
+function restore_callee_error!(state::InterpretationState, frame::Frame, fargs::Vector{Any})
+    while true
+        exceptions = frame.framedata.exceptions
+        if !isempty(exceptions)
+            caught = get(state.caught_callee_errors, frame, nothing)
+            # without a recorded stack, the rethrow is reported like a fresh throw
+            if caught === nothing || !isassigned(caught, lastindex(caught))
+                return nothing
+            end
+            err = length(fargs) > 1 ? fargs[2] : exceptions[end]
+            recorded = caught[end]
+            state.callee_error = CalleeError(err, recorded.bt, recorded.st)
+            return nothing
+        end
+        frame = @something frame.caller return nothing
+    end
+end
+
+function callee_stacktrace(frame::Frame)
+    st = Base.StackTraces.StackFrame[]
+    while true
+        caller = @something frame.caller break # the top-level frame is not part of the stack
+        push!(st, Base.StackTraces.StackFrame(frame))
+        frame = caller
+    end
+    return st
 end
 
 @noinline function with_err_handling(f, err_handler, handler_args...; scrub_offset::Int)
@@ -2417,7 +2931,7 @@ function analyze_toplevel!(analyzer::ToplevelAbstractAnalyzer, src::CodeInfo, co
     # `typeinf_edge` won't add "toplevel-to-callee" edges
     frame = InferenceState(result, src, #=cache_mode=#:global, analyzer)::InferenceState
 
-    return analyze_frame!(analyzer, frame), frame
+    return analyze_frame!(analyzer, frame)
 end
 
 function construct_toplevel_mi(src::Core.CodeInfo, context_module::Module)

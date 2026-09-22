@@ -57,6 +57,15 @@ function setup_ctx!(ctx::SchemaContext)
         Dict("type" => "string", "enum" => collect(JETLS.AUTO_INSTANTIATE_VALUES))
     end
 
+    override_field!(ctx, JETLS.FullAnalysisConfig, :concretization_timeout) do _
+        Dict(
+            "oneOf" => [
+                Dict("type" => "number", "exclusiveMinimum" => 0),
+                Dict("type" => "string", "enum" => ["inf"]),
+            ]
+        )
+    end
+
     override_field!(ctx, JETLS.DiagnosticPattern, :match_by) do _
         Dict("type" => "string", "enum" => ["code", "message"])
     end

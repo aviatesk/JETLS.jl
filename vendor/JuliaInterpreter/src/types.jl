@@ -36,7 +36,7 @@ As of JuliaInterpreter v0.10, `Compiled` is now an alias for [`NonRecursiveInter
 This alias remains for backward compatibility. Prefer [`NonRecursiveInterpreter`](@ref) in new code.
 """
 const Compiled = NonRecursiveInterpreter # for backward compatibility
-Base.similar(::Compiled, sz) = Compiled()  # to support similar(stack, 0)
+Base.similar(::Compiled, _sz) = Compiled()  # to support similar(stack, 0)
 
 """
     method_table(interpreter::Interpreter) -> mt::Union{Nothing,MethodTable}
@@ -57,12 +57,6 @@ end
 
 Base.show(io::IO, ssa::SSAValue)    = print(io, "%J", ssa.id)
 Base.show(io::IO, slot::SlotNumber) = print(io, "_J", slot.id)
-
-# Breakpoint support
-truecondition(frame) = true
-falsecondition(frame) = false
-const break_on_error = Ref(false)
-const break_on_throw = Ref(false)
 
 """
     BreakpointState(isactive=true, condition=JuliaInterpreter.truecondition)
@@ -189,11 +183,11 @@ function is_breakpoint_expr(ex::Expr)
     return isa(q, QuoteNode) && q.value === :__BREAKPOINT_MARKER__
 end
 
-@static if isbindingresolved_deprecated
-    is_breakpoint_marker(stmt) = is_global_ref(stmt, JuliaInterpreter, :__BREAK_POINT_MARKER__)
-else
-    is_breakpoint_marker(stmt) = stmt === __BREAK_POINT_MARKER__
-end
+# `@bp` lowers to a `GlobalRef` of the `__BREAK_POINT_MARKER__` const. `optimize!` folds it
+# to its value in method scope (unwrapped from the `QuoteNode` by `lookup_stmt`), while
+# toplevel or unoptimized code keeps the `GlobalRef`, so accept both forms.
+is_breakpoint_marker(@nospecialize(stmt)) =
+    stmt === __BREAK_POINT_MARKER__ || is_global_ref(stmt, JuliaInterpreter, :__BREAK_POINT_MARKER__)
 
 @static if VERSION ≥ v"1.12.0-DEV.173"
 function pushuniquefiles!(unique_files::Set{Symbol}, lt::Core.DebugInfo)
@@ -365,12 +359,15 @@ mutable struct Frame
     # frames refresh it per statement, and `:latestworld` markers advance it after a
     # world-incrementing statement.
     world::UInt
+    # True while the frame sits in the recycling pool (`junk_frames`). Lets `recycle` be
+    # idempotent (see there) with a field load instead of an `IdSet` membership test.
+    pooled::Bool
 end
 function Frame(framecode::FrameCode, framedata::FrameData, pc=1, caller=nothing,
                world::UInt=default_world())
     if length(junk_frames) > 0
         frame = pop!(junk_frames)
-        delete!(pooled_frames, frame)
+        frame.pooled = false
         frame.framecode = framecode
         frame.framedata = framedata
         frame.pc = pc
@@ -381,7 +378,7 @@ function Frame(framecode::FrameCode, framedata::FrameData, pc=1, caller=nothing,
         frame.world = world
         return frame
     else
-        return Frame(framecode, framedata, pc, 1, caller, nothing, 0, world)
+        return Frame(framecode, framedata, pc, 1, caller, nothing, 0, world, false)
     end
 end
 """
@@ -470,12 +467,14 @@ function Frame(mod::Module, ex::Expr; world::UInt=default_world())
     return toplevel_frame(mod, Any[ex]; world)
 end
 
-caller(frame) = frame.caller
-callee(frame) = frame.callee
+caller(frame::Frame) = frame.caller
+callee(frame::Frame) = frame.callee
 
-function traverse(f, frame)
-    while f(frame) !== nothing
-        frame = f(frame)
+function traverse(f, frame::Frame)
+    nextframe = f(frame)
+    while nextframe !== nothing
+        frame = nextframe
+        nextframe = f(frame)
     end
     return frame
 end
@@ -676,3 +675,9 @@ function Base.show(io::IO, bp::BreakpointFileLocation)
         print(io, " [disabled]")
     end
 end
+
+# Breakpoint support
+truecondition(::Frame) = true
+falsecondition(::Frame) = false
+const break_on_error = Ref(false)
+const break_on_throw = Ref(false)

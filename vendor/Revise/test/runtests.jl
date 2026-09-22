@@ -1134,6 +1134,7 @@ end
             using .Sub
             const SETTING = 17
             const CHANGED = 1
+            global TO_CONST::Int = 42
             const MOVING = :was_in_root
             const view = "shadow"
             read_setting() = SETTING
@@ -1144,6 +1145,8 @@ end
         sleep(mtimedelay)
         @eval using RetractGlobals
         @test RetractGlobals.SETTING == 17
+        @test RetractGlobals.TO_CONST == 42
+        @test !isconst(RetractGlobals, :TO_CONST)
         @test RetractGlobals.view == "shadow"
         sleep(mtimedelay)
         write(fn, """
@@ -1154,6 +1157,7 @@ end
             end
             using .Sub
             const CHANGED = 2
+            const TO_CONST = 42
             include("more.jl")
             end
             """)
@@ -1163,11 +1167,61 @@ end
         @test !isdefined(RetractGlobals, :SETTING)
         @test isempty(methods(RetractGlobals.read_setting))
         @test RetractGlobals.CHANGED == 2
+        @test RetractGlobals.TO_CONST == 42
+        @test isconst(RetractGlobals, :TO_CONST)
         @test RetractGlobals.MOVING === :now_in_more
         @test RetractGlobals.view === Base.view
         @test RetractGlobals.tag() === :sub
 
         rm_precompile("RetractGlobals")
+        pop!(LOAD_PATH)
+    end
+
+    do_test("Global binding invalidation") && Base.VERSION >= v"1.14.0-DEV" &&
+            @testset "Global binding invalidation" begin
+        # Julia 1.14 propagates local-inference binding dependencies to compiled callers.
+        # Requires JuliaLang/julia#61756 + JuliaLang/julia#62359
+        testdir = newtestdir()
+        dn = joinpath(testdir, "BindingInvalidation", "src")
+        mkpath(dn)
+        fn = joinpath(dn, "BindingInvalidation.jl")
+        src = """
+            module BindingInvalidation
+            global StringType = String
+            struct Info
+                a::StringType
+                b::String
+                c::AbstractString
+            end
+            struct Container
+                info::Info
+            end
+            observe(x::Info) = begin
+                print(devnull,
+                    x.a, fieldtype(Info, :a),
+                    x.b, fieldtype(Info, :b),
+                    x.c, fieldtype(Info, :c),
+                    StringType)
+                StringType
+            end
+            inner(container::Container) = observe(container.info)
+            outer(x) = inner(Container(Info("a", string(x), "c")))
+            end
+            """
+        write(fn, src)
+        sleep(mtimedelay)
+        @eval using BindingInvalidation
+        @test BindingInvalidation.outer("x") === String
+        sleep(mtimedelay)
+        write(fn, replace(src,
+            "global StringType = String" => "const StringType = AbstractString"))
+        @yry()
+        @test isempty(Revise.queue_errors)
+        @test BindingInvalidation.StringType === AbstractString
+        @test isconst(BindingInvalidation, :StringType)
+        @test BindingInvalidation.outer("x") === AbstractString
+
+        rm_precompile("BindingInvalidation")
         pop!(LOAD_PATH)
     end
 
@@ -5310,6 +5364,10 @@ end
             end
             @yry()
             @test Revise.hasfile(pkgdata, mainjl)
+            # Re-tracking a file already registered replaces its entry rather than duplicating it,
+            # and the package's own module is the parent for files git-tracking parses.
+            @test length(Revise.fileindices(pkgdata, relpath(mainjl, pkgdata))) == 1
+            @test !isdefined(Core.Compiler, Symbol(modname))
             @test startswith(logs[end].message, "skipping src/extra.jl") || startswith(logs[end-1].message, "skipping src/extra.jl")
             rm_precompile("ModuleWithNewFile")
             pop!(LOAD_PATH)
@@ -6515,6 +6573,23 @@ do_test("Removed include, missing file") && @testset "Removed include, missing f
                              (pkgdata, joinpath("src", "gone.jl")))
     @test !Revise.pkgfileless((pkgdata, joinpath("src", "gone.jl")),
                               (pkgdata, joinpath("src", "GoneInclude.jl")))
+    # The per-file watcher (`watching_files[]` mode) finds "gone.jl" untracked and
+    # must end quietly, rather than warning once `watch_reappear_grace` expires
+    # (possibly during a later testset's stderr capture).
+    old_grace = Revise.watch_reappear_grace[]
+    Revise.watch_reappear_grace[] = 0.0
+    warnfile = randtmp()
+    try
+        open(warnfile, "w") do io
+            redirect_stderr(io) do
+                sleep(0.5)
+            end
+        end
+        @test !occursin("is not an existing file", read(warnfile, String))
+    finally
+        Revise.watch_reappear_grace[] = old_grace
+        rm(warnfile; force=true)
+    end
 
     rm_precompile("GoneInclude")
     pop!(LOAD_PATH)
@@ -7249,6 +7324,21 @@ do_test("@includet uses caller's module (issue #682)") && @testset "@includet us
     @test Base.invokelatest(module682.f_682) == 2
 end
 
+do_test("revise(mod) on a tracked submodule of Main") && @testset "revise(mod) on a tracked submodule of Main" begin
+    testdir = newtestdir()
+
+    srcfile = joinpath(testdir, "revise_mod.jl")
+    write(srcfile, "f_revise_mod() = 1")
+
+    mod = @eval module ReviseModTracked end
+    includet(mod, srcfile)
+    @test Base.invokelatest(mod.f_revise_mod) == 1
+
+    write(srcfile, "f_revise_mod() = 2")
+    Revise.revise(mod)
+    @test Base.invokelatest(mod.f_revise_mod) == 2
+end
+
 do_test("misc - coverage") && !isinteractive() && @testset "misc - coverage" begin
     @test Revise.ReviseEvalException("undef", UndefVarError(:foo)).loc isa String
     @test !Revise.throwto_repl(UndefVarError(:foo))   # this causes an error in interactive
@@ -7269,24 +7359,25 @@ do_test("watch reappearance") && @testset "watch reappearance" begin
     dir = mktempdir()
     key = dir
     Revise.watched_files[key] = Revise.WatchList()
+    watched() = haskey(Revise.watched_files, key)
     old_grace = Revise.watch_reappear_grace[]
     try
         # Present: resume immediately.
-        @test Revise.await_watched_path(isdir, dir, key) === :reappeared
+        @test Revise.await_watched_path(isdir, watched, dir) === :reappeared
         # Missing but reappears within the grace period: resume.
         rm(dir; recursive=true)
         recreate = @async (sleep(0.3); mkdir(dir))
         Revise.watch_reappear_grace[] = 5.0
-        @test Revise.await_watched_path(isdir, dir, key) === :reappeared
+        @test Revise.await_watched_path(isdir, watched, dir) === :reappeared
         wait(recreate)
         # Missing past the grace period: give up (and the caller warns).
         rm(dir; recursive=true)
         Revise.watch_reappear_grace[] = 0.2
-        @test Revise.await_watched_path(isdir, dir, key) === :gone
+        @test Revise.await_watched_path(isdir, watched, dir) === :gone
         # Missing and no longer registered (package moved/removed): give up quietly.
         Revise.watch_reappear_grace[] = 5.0
         delete!(Revise.watched_files, key)
-        @test Revise.await_watched_path(isdir, dir, key) === :removed
+        @test Revise.await_watched_path(isdir, watched, dir) === :removed
     finally
         Revise.watch_reappear_grace[] = old_grace
         haskey(Revise.watched_files, key) && delete!(Revise.watched_files, key)
@@ -7491,6 +7582,67 @@ do_test("Frozen world") && @testset "Frozen world" begin
     finally
         Revise.worldage[] = saved
     end
+
+    # The pin protects execution only if it also protects *compilation*: a caller of
+    # `frozen(f, ...)` compiled in the latest world must carry no inference edges into
+    # `f`, or invalidations from later-loaded packages propagate to the caller and
+    # recompiling it re-infers `f`'s entire call graph in the latest world (issue #1134).
+    # Any static call to `f` shows up as an `:invoke` of a Revise method.
+    # Any static call to `f` shows up as an `:invoke` of a Revise method.
+    function invoke_target(stmt)
+        Meta.isexpr(stmt, :invoke) || return nothing
+        target = stmt.args[1]
+        target isa Core.CodeInstance && (target = target.def)
+        isdefined(Core, :ABIOverride) && target isa Core.ABIOverride && (target = target.def)
+        return target isa Core.MethodInstance ? target : nothing
+    end
+    src, _ = only(code_typed(Revise.frozen, (typeof(Revise._revise),); optimize=true))
+    static_revise_calls = [mi.def for mi in filter(!isnothing, map(invoke_target, src.code)) if mi.def.module === Revise]
+    @test isempty(static_revise_calls)
+
+    # The same requirement applies to every entry point that user code or Julia calls in
+    # the latest world: each must reach the revision engine only through `frozen` (or
+    # `invokelatest`). Follow static `:invoke`s transitively through Revise's own methods
+    # from each entry point and check that the closure never reaches engine code.
+    ourmods = (Revise, Revise.JuliaInterpreter, Revise.LoweredCodeUtils, Revise.CodeTracking)
+    function static_invoke_closure!(seen, codes)
+        for (src, _) in codes, stmt in src.code
+            mi = invoke_target(stmt)
+            mi === nothing && continue
+            mi in seen && continue
+            push!(seen, mi)
+            Base.moduleroot(mi.def.module) in ourmods || continue
+            static_invoke_closure!(seen, Base.code_typed_by_type(mi.specTypes; optimize=true))
+        end
+        return seen
+    end
+    engine_names = ("_revise", "_track", "_includet", "_entr", "_add_callback", "_errors", "_retry",
+                    "_add_require", "eval_require_now", "watch_package", "revise_file_now",
+                    "instantiate_sigs!", "methods_by_execution!", "parse_and_maybe_eval_source!",
+                    "init_watching")
+    function is_engine(m::Method)
+        Base.moduleroot(m.module) in (Revise.JuliaInterpreter, Revise.LoweredCodeUtils) && return true
+        name = String(m.name)
+        return any(n -> name == n || startswith(name, "#" * n * "#"), engine_names)
+    end
+    entries = [
+        (revise, ()), (revise, (Module,)),
+        (Revise.track, (Module,)), (Revise.track, (Module, String)), (Revise.track, (String,)),
+        (includet, (String,)), (includet, (typeof(identity), Module, String)),
+        (entr, (typeof(identity), Vector{String})), (entr, (typeof(identity), Vector{String}, Vector{Module})),
+        (Revise.errors, ()), (Revise.retry, ()),
+        (Revise.add_callback, (typeof(identity), Vector{String})), (Revise.remove_callback, (Symbol,)),
+        (Revise.add_require, (String, Module, String, String, Expr)),
+        (Revise.watch_package_callback, (Base.PkgId,)),
+        (Revise.revise_first, (Expr,)),
+    ]
+    leaks = Dict{Any,Vector{Method}}()
+    for (f, argtypes) in entries
+        seen = static_invoke_closure!(Set{Core.MethodInstance}(), code_typed(f, argtypes; optimize=true))
+        leaked = [mi.def for mi in seen if is_engine(mi.def)]
+        isempty(leaked) || (leaks[(f, argtypes)] = leaked)
+    end
+    @test isempty(leaks)
 end
 
 do_test("Frozen world user-code frame") && @testset "Frozen world user-code frame" begin

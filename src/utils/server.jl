@@ -21,9 +21,27 @@ function send(server::Server, @nospecialize msg)
     server.callback !== nothing && server.callback(:sent, msg)
     # Mark request as handled when sending a response
     if isdefined(msg, :id) && isdefined(msg, :result) && isdefined(msg, :error) # i.e. msg isa ResponseMessage
-        put!(server.message_queue, HandledToken(msg.id::MessageId))
+        enqueue_message!(server, HandledToken(msg.id::MessageId))
     end
     nothing
+end
+
+"""
+    enqueue_message!(server::Server, msg) -> Bool
+
+Queue an internal message (e.g. `HandledToken`) for `handler_concurrent_message`.
+Returns `false` if the queue is closed before or during enqueueing, otherwise `true`.
+"""
+function enqueue_message!(server::Server, @nospecialize msg)
+    queue = server.message_queue
+    isopen(queue) || return false
+    try
+        put!(queue, msg)
+    catch err
+        err isa InvalidStateException && !isopen(queue) || rethrow()
+        return false
+    end
+    return true
 end
 
 """
@@ -224,6 +242,26 @@ end
 get_file_info(s::ServerState, t::TextDocumentIdentifier, cancel_flag::AbstractCancelFlag; kwargs...) =
     get_file_info(s, t.uri, cancel_flag; kwargs...)
 
+"""
+Capture document state on the document-sync worker, after preceding edits and
+before later ones. Never poll here: this worker also processes `didOpen`/`didChange`,
+so waiting would block the updates that populate the cache. Positions and ranges
+remain request inputs and are converted using the captured notebook layout.
+"""
+function get_document_snapshot(state::ServerState, uri::URI)
+    may_have_file_info(state, uri) || return nothing
+    cache_uri = canonical_cache_uri(state, uri)
+    fi = @something get_file_info(state, cache_uri) return nothing
+    notebook_info = get_notebook_info(state, cache_uri)
+    notebook = notebook_info === nothing ? nothing : notebook_info.concat
+    return DocumentSnapshot(fi, cache_uri, notebook)
+end
+
+function snapshot_request_message(state::ServerState, @nospecialize(msg), uri::URI)
+    snapshot = get_document_snapshot(state, uri)
+    return SnapshotRequestMessage(msg, snapshot)
+end
+
 function is_workspace_root_file(
         s::ServerState, filepath::AbstractString, filename::AbstractString
     )
@@ -306,7 +344,7 @@ function _store_unsynced_file_info!(state::ServerState, uri::URI; force::Bool=fa
             ParseStream!(read(filename))
         catch e
             @static JETLS_DEV_MODE && @error "Error parsing file $(filename)"
-            @static JETLS_DEV_MODE && Base.showerror(stderr, e, catch_backtrace())
+            @static JETLS_DEV_MODE && showerror(stderr, e, catch_backtrace())
             return cache, nothing
         end
         fi = FileInfo(version, parsed_stream, filename, state.encoding)
@@ -407,12 +445,13 @@ function has_analyzed_context(state::ServerState, uri::URI; lookup_func=nothing)
     return _has_analyzed_context(analysis_info, lookup_uri)
 end
 _has_analyzed_context(::Nothing, ::URI) = false
-# `JETLSTestModule` is a pseudo context with no real analysis behind it, so
-# context-requiring features (e.g. `analyze_unused_imports!`) must be skipped
-# even though `module_context` is set.
-# TODO Remove `JETLSTestModule` entirely and remove all of these hacks.
+# TODO Remove `JETLSTestModule` & `FallbackAnalysisContext` entirely.
+# Pseudo contexts supply imports, not real analysis, so context-requiring features
+# (e.g. `analyze_unused_imports!`) must be skipped even though `module_context` is set.
 _has_analyzed_context(outofscope::OutOfScope, ::URI) =
-    !isnothing(outofscope.module_context) && outofscope.module_context !== JETLSTestModule
+    !isnothing(outofscope.module_context) &&
+    outofscope.module_context !== JETLSTestModule &&
+    outofscope.module_context !== FallbackAnalysisContext
 _has_analyzed_context(analysis_result::AnalysisResult, uri::URI) =
     analyzed_file_info(analysis_result, uri) !== nothing
 

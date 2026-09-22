@@ -17,7 +17,7 @@
 
 using JuliaInterpreter, JET, Test
 using JuliaInterpreter: RecursiveInterpreter, NonRecursiveInterpreter, Frame, FrameCode,
-    finish_and_return!, step_expr!, get_call_framecode, prepare_frame_caller,
+    finish_and_return!, step_expr!, get_call_framecode, get_call_frameinstance, prepare_frame_caller,
     maybe_evaluate_builtin, lookup, do_assignment!, shouldbreak, debug_command
 
 # Entry points that together cover the interpreter engine (statement stepping, call
@@ -27,6 +27,7 @@ const DISPATCH_TARGETS = Any[
     (finish_and_return!, (NonRecursiveInterpreter, Frame, Bool)),
     (step_expr!, (RecursiveInterpreter, Frame, Any, Bool)),
     (get_call_framecode, (Vector{Any}, FrameCode, Int)),
+    (get_call_frameinstance, (Vector{Any}, FrameCode, Int)),
     (prepare_frame_caller, (Frame, FrameCode, Vector{Any}, Core.SimpleVector)),
     (maybe_evaluate_builtin, (RecursiveInterpreter, Frame, Expr, Bool)),
     (lookup, (RecursiveInterpreter, Frame, Any)),

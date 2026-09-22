@@ -90,8 +90,8 @@ end)))
 
 This reveals the *three* methods actually got defined:
 - one method of `f` with a single positional argument (this is the second 3-argument `:method` expression)
-- a keyword-handling method that checks the names of supplied keyword arguments and fills in defaults (this is the third 3-argument `:method` expression).  This method can be obtained from `Core.kwfunc(f)`, which returns a function named `f##kw`.
-- a "keyword-body" method that actually does the work specifies by our function definition. This method gets called by the other two. (This is the first 3-argument `:method` expression.)
+- a keyword-handling method that checks the names of supplied keyword arguments and fills in defaults (this is the third 3-argument `:method` expression). Its keyword-dispatch function can be obtained from `Core.kwfunc(f)` (on supported Julia versions this is `Core.kwcall`).
+- a "keyword-body" method that actually does the work specified by our function definition. This method gets called by the other two. (This is the first 3-argument `:method` expression.)
 
 From examining the lowered code we might guess that this function is called `#f#2`.
 What happens if we try to get it?

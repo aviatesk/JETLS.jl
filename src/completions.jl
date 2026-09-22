@@ -35,12 +35,6 @@ function completion_registration()
             completionItem))
 end
 
-# For dynamic registrations during development
-# unregister(currently_running, Unregistration(;
-#     id = COMPLETION_REGISTRATION_ID,
-#     method = COMPLETION_REGISTRATION_METHOD))
-# register(currently_running, completion_registration())
-
 # completion utils
 # ================
 
@@ -82,7 +76,7 @@ Computes once and caches:
 - syntax tree (`st0`) — feeding multiple routines that each used to call
   `build_syntax_tree(fi)` on their own.
 - `get_context_info` projection — `context_module`, `world`, `postprocessor`.
-- `offset` / `soft_scope` — derived from `pos` / `uri`.
+- `offset` / `soft_scope` — derived from `pos`, `request_uri`, and `snapshot`.
 
 Two heavier pieces are built lazily on first request:
 - `InferredTreeContext` — shared between any routines that actually need
@@ -99,10 +93,10 @@ without disturbing call sites.
 """
 mutable struct CompletionCtx
     const state::ServerState
-    const uri::URI
-    const fi::FileInfo
+    const request_uri::URI
     const pos::Position
     const context::Union{Nothing,CompletionContext}
+    const snapshot::DocumentSnapshot
 
     # Eagerly populated by the constructor.
     const offset::Int
@@ -118,18 +112,23 @@ mutable struct CompletionCtx
     cursor_bindings::Union{Nothing,Vector{Tuple{JL.BindingInfo,SyntaxTree,Int}}}
 
     function CompletionCtx(
-            state::ServerState, uri::URI, fi::FileInfo, pos::Position,
-            context::Union{Nothing,CompletionContext};
+            state::ServerState, request_uri::URI, snapshot::DocumentSnapshot,
+            pos::Position, context::Union{Nothing,CompletionContext};
             context_module::Union{Nothing,Module} = nothing
         )
+        (; fi, cache_uri) = snapshot
         st0_top = build_syntax_tree(fi)
-        info = get_context_info(state, uri, pos)
+        info = get_context_info(state, cache_uri, pos)
         context_mod = something(context_module, info.context_module)
         offset = xy_to_offset(fi, pos)
-        soft_scope = is_notebook_cell_uri(state, uri)
-        return new(state, uri, fi, pos, context,
+        soft_scope = cache_uri != request_uri
+        return new(state, request_uri, pos, context, snapshot,
             offset, st0_top, context_mod, info.world, info.postprocessor, soft_scope)
     end
+end
+
+function completion_edit_range(comp_ctx::CompletionCtx, range::Range)
+    return last(unadjust_range(comp_ctx.snapshot, comp_ctx.request_uri, range))
 end
 
 # Why not query the inferred-context cache with `offset:offset` directly:
@@ -143,7 +142,7 @@ function get_inferred_ctx!(comp_ctx::CompletionCtx; caller::AbstractString)
     toplevel = lowerable_toplevel_at(comp_ctx.st0_top, comp_ctx.offset)
     return comp_ctx.inferred_ctx = toplevel === nothing ? nothing :
         build_inferred_context_for_tree(toplevel, comp_ctx.context_module;
-            world=comp_ctx.world, caller, cache=comp_ctx.fi.inferred_context_cache)
+            world=comp_ctx.world, caller, cache=comp_ctx.snapshot.fi.inferred_context_cache)
 end
 
 # Property completion only needs the prefix type. Build inference from a virtual
@@ -152,13 +151,14 @@ end
 function get_dotprefix_inferred_ctx(
         comp_ctx::CompletionCtx, dotprefix::SyntaxTree; caller::AbstractString
     )
+    fi = comp_ctx.snapshot.fi
     hole_start = JS.last_byte(dotprefix) + 1
-    hole_end = property_completion_hole_end(comp_ctx.fi, comp_ctx.offset, hole_start)
-    textbuf = copy(comp_ctx.fi.parsed_stream.textbuf)
+    hole_end = property_completion_hole_end(fi, comp_ctx.offset, hole_start)
+    textbuf = copy(fi.parsed_stream.textbuf)
     if hole_start ≤ hole_end
         deleteat!(textbuf, hole_start:hole_end)
     end
-    virtual_fi = FileInfo(comp_ctx.fi.version, textbuf, comp_ctx.fi.filename, comp_ctx.fi.encoding)
+    virtual_fi = FileInfo(fi.version, textbuf, fi.filename, fi.encoding)
     virtual_st0_top = build_syntax_tree(virtual_fi)
     virtual_st0 = @something lowerable_toplevel_at(virtual_st0_top, JS.first_byte(dotprefix)) return nothing
     return build_inferred_context_for_tree(virtual_st0, comp_ctx.context_module;
@@ -279,7 +279,7 @@ function local_completions!(
     # so that we can get some completions even for incomplete code
     cbs = @something get_cursor_bindings_cached!(comp_ctx) return nothing
     for (bi, st, dist) in cbs
-        ci = to_completion(bi, st, dist, comp_ctx.uri, comp_ctx.fi)
+        ci = to_completion(bi, st, dist, comp_ctx.request_uri, comp_ctx.snapshot.fi)
         prev_ci = get(items, ci.label, nothing)
         # Name collisions: overrule existing global completions with our own,
         # unless our completion is also a global, in which case the existing
@@ -297,12 +297,14 @@ end
 function global_completions!(
         items::Dict{String,CompletionItem}, comp_ctx::CompletionCtx,
     )
-    (; state, uri, fi, pos, context, st0_top, world, postprocessor) = comp_ctx
+    (; state, pos, context, st0_top, world, postprocessor) = comp_ctx
+    fi = comp_ctx.snapshot.fi
     context_module = comp_ctx.context_module
     should_invoke_auto_completion(context; allow_macro=true, allow_dot=true) || return nothing
 
     prev_token = token_before_offset(fi, pos)
     prev_kind = isnothing(prev_token) ? nothing : JS.kind(prev_token)
+    is_macro_invoke = false
 
     # Case: `@│`
     if prev_kind === JS.K"@"
@@ -311,7 +313,6 @@ function global_completions!(
     # Case `│` (empty program)
     elseif isnothing(prev_token)
         edit_start_pos = Position(; line=0, character=0)
-        is_macro_invoke = false
     elseif JS.is_identifier(prev_kind)
         pprev_token = prev_tok(prev_token)
         if !isnothing(pprev_token) && JS.kind(pprev_token) === JS.K"@"
@@ -320,14 +321,12 @@ function global_completions!(
             is_macro_invoke = true
         else
             edit_start_pos = offset_to_xy(fi, JS.first_byte(prev_token))
-            is_macro_invoke = false
         end
     else
         # When completion is triggered within unknown scope (e.g., comment),
         # it's difficult to properly specify `edit_start_pos`.
         # Simply specify only the `label` and let the client handle it appropriately.
         edit_start_pos = nothing
-        is_macro_invoke = false
     end
 
     # if we are in macro name context, then we don't need the local completions
@@ -378,6 +377,9 @@ function global_completions!(
     all_names = Base.invoke_in_world(world, Base.unsorted_names, context_module;
         all=true, imported=true, usings=true)::Vector{Symbol}
     for name in all_names
+        if context_module === FallbackAnalysisContext && name === :FallbackAnalysisContext
+            continue
+        end
         s = String(name)
         startswith(s, "#") && continue
 
@@ -390,7 +392,7 @@ function global_completions!(
         end
 
         resolveName = newText = label = s
-        detail = filterText = nothing
+        kind = detail = filterText = nothing
         insertTextFormat = InsertTextFormat.PlainText
         if startswith_at
             if endswith(s, "_str")
@@ -408,6 +410,7 @@ function global_completions!(
             else
                 detail = "[macro]"
             end
+            kind = CompletionItemKind.Function
         end
         if name in prioritized_names
             sortText = max_sort_text1
@@ -417,7 +420,7 @@ function global_completions!(
         textEdit = if isnothing(edit_start_pos)
             nothing
         else
-            range, _ = unadjust_range(state, uri, Range(;
+            range = completion_edit_range(comp_ctx, Range(;
                 start = edit_start_pos,
                 var"end" = pos))
             TextEdit(; range, newText)
@@ -430,6 +433,7 @@ function global_completions!(
         items[s] = CompletionItem(;
             label,
             labelDetails,
+            kind,
             detail,
             sortText,
             filterText,
@@ -557,10 +561,11 @@ end
 function add_emoji_latex_completions!(
         items::Dict{String,CompletionItem}, comp_ctx::CompletionCtx,
     )
-    (; state, uri, fi, pos) = comp_ctx
+    (; state, pos) = comp_ctx
+    fi = comp_ctx.snapshot.fi
     backslash_offset, emojionly = @something get_backslash_offset(fi, pos) return nothing
     backslash_pos = offset_to_xy(fi, backslash_offset)
-    edit_range, _ = unadjust_range(state, uri, Range(;
+    edit_range = completion_edit_range(comp_ctx, Range(;
         start = backslash_pos,
         var"end" = pos))
 
@@ -823,7 +828,8 @@ end
 function call_completions!(
         items::Dict{String,CompletionItem}, comp_ctx::CompletionCtx,
     )
-    (; state, fi, pos, context, st0_top, context_module, world, postprocessor) = comp_ctx
+    (; state, pos, context, st0_top, context_module, world, postprocessor) = comp_ctx
+    fi = comp_ctx.snapshot.fi
     b = comp_ctx.offset
     call = @something cursor_call(fi.parsed_stream, st0_top, b) return nothing
     ca = CallArgs(call, b)
@@ -1047,9 +1053,7 @@ function resolve_global_completion_item(
     name = Symbol(data.name)
     doc = lookup_doc_for_binding(context_module, name, #=sig=#nothing, world)
     (; labelDetails, detail) = item
-    # This `kind` doesn't have much meaning in itself, but at least by setting `kind`,
-    # we enable tree-sitter-based highlighting of the `label` in zed-julia
-    kind = CompletionItemKind.Snippet
+    kind = item.kind
     if isnothing(detail) || isnothing(kind)
         if Base.invoke_in_world(world, isdefinedglobal, context_module, name)::Bool
             obj = Base.invoke_in_world(world, getglobal, context_module, name)
@@ -1143,11 +1147,16 @@ end
 # ===============
 
 function get_completion_items(
-        state::ServerState, uri::URI, fi::FileInfo,
+        state::ServerState, uri::URI, snapshot::DocumentSnapshot,
         pos::Position, context::Union{Nothing,CompletionContext};
         context_module::Union{Nothing,Module} = nothing,
     )
-    comp_ctx = CompletionCtx(state, uri, fi, pos, context; context_module)
+    comp_ctx = CompletionCtx(state, uri, snapshot, pos, context; context_module)
+    return get_completion_items(comp_ctx)
+end
+
+function get_completion_items(comp_ctx::CompletionCtx)
+    context = comp_ctx.context
     items = Dict{String,CompletionItem}()
     # order matters; see local_completions!
     isIncomplete = @something(
@@ -1162,18 +1171,15 @@ function get_completion_items(
 end
 
 function handle_CompletionRequest(
-        server::Server, msg::CompletionRequest, cancel_flag::CancelFlag)
-    state = server.state
-    uri = msg.params.textDocument.uri
-    result = get_file_info(state, uri, cancel_flag)
-    if isnothing(result)
-        return send(server, CompletionResponse(; id = msg.id, result = null))
-    elseif result isa ResponseError
-        return send(server, CompletionResponse(; id = msg.id, result = nothing, error = result))
+        server::Server, msg::CompletionRequest, snapshot::DocumentSnapshot, cancel_flag::CancelFlag
+    )
+    if is_cancelled(cancel_flag)
+        return send(server, CompletionResponse(;
+            id = msg.id, result = nothing, error = request_cancelled_error()))
     end
-    fi = result
-    pos = adjust_position(state, uri, msg.params.position)
-    items, isIncomplete = get_completion_items(state, uri, fi, pos, msg.params.context)
+    uri = msg.params.textDocument.uri
+    pos = adjust_position(snapshot, uri, msg.params.position)
+    items, isIncomplete = get_completion_items(server.state, uri, snapshot, pos, msg.params.context)
     # For method signature completions, set `isIncomplete = true` so that when
     # the user continues typing (e.g., an identifier), the client will re-request
     # and trigger global/local completions instead of continuing to filter

@@ -26,8 +26,11 @@ let
         @testset "code coverage" begin
             io = Base.PipeEndpoint()
             filepath = normpath(@__DIR__, "coverage_example.jl")
+            # The reference files check execution counts, not the newer default hit-only mode.
+            coverage_flags = @static hasfield(Base.JLOptions, :code_coverage_mode) ?
+                ["--code-coverage-mode=count"] : String[]
             cmd = `$(Base.julia_cmd()) --startup=no --project=$(dirname(dirname(@__DIR__)))
-                --code-coverage=user $filepath`
+                --code-coverage=user $coverage_flags $filepath`
             p = run(cmd, devnull, io, stderr; wait=false)
             pid = Libc.getpid(p)
             @test read(io, String) == "1 2 fizz 4 "
@@ -38,7 +41,9 @@ let
             i === nothing && error("no coverage files found in $dir: $files")
             cov_file = joinpath(dir, files[i])
             cov_data = read(cov_file, String)
-            expected = "coverage_example.jl.cov"
+            # JuliaLang/julia#62514 added coverage for top-level statements.
+            expected = @static VERSION >= v"1.14.0-DEV.2943" ?
+                "coverage_example.jl.toplevel.cov" : "coverage_example.jl.cov"
             expected = read(joinpath(dir, expected), String)
             if Sys.iswindows()
                 cov_data = replace(cov_data, "\r\n" => "\n")

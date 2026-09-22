@@ -44,6 +44,11 @@
           "default": "null",
           "description": "The client-side configuration section under which the client stores JETLS settings (e.g. `jetls-client.settings` for the VSCode extension). When set, JETLS registers `workspace/didChangeConfiguration` with this section, so clients that honor the registration's section filter only send the notification when the relevant settings actually change. This is normally set programmatically by client extensions rather than by users. See [`configuration_section`](https://aviatesk.github.io/JETLS.jl/release/launching/#init-options/configuration_section)."
         },
+        "pull_diagnostics": {
+          "$ref": "#/$defs/Core.Bool",
+          "default": false,
+          "description": "Serve the `JETLS/live` diagnostics of open files through [`textDocument/diagnostic`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.18/specification/#textDocument_diagnostic) (pull diagnostics) instead of pushing them ([`textDocument/publishDiagnostics`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.18/specification/#textDocument_publishDiagnostics)). Meant for clients that manage pulled diagnostics by their editor state (e.g. the VSCode extension clears them when a tab closes), which the server cannot tell from [`textDocument/didClose`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.18/specification/#textDocument_didClose). This is normally set programmatically by client extensions rather than by users. See [`pull_diagnostics`](https://aviatesk.github.io/JETLS.jl/release/launching/#init-options/pull_diagnostics)."
+        },
         "reuse_native_inference": {
           "$ref": "#/$defs/Core.Bool",
           "default": false,

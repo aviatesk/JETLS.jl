@@ -6,7 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 <!-- links start -->
-[Unreleased]: https://github.com/aviatesk/JET.jl/compare/v0.10.12...HEAD
+[Unreleased]: https://github.com/aviatesk/JET.jl/compare/v0.12.0...HEAD
+[0.12.1]: https://github.com/aviatesk/JET.jl/compare/v0.12.0...v0.12.1
+[0.12.0]: https://github.com/aviatesk/JET.jl/compare/v0.11.6...v0.12.0
+[0.11.6]: https://github.com/aviatesk/JET.jl/compare/v0.11.5...v0.11.6
+[0.11.5]: https://github.com/aviatesk/JET.jl/compare/v0.11.4...v0.11.5
+[0.11.4]: https://github.com/aviatesk/JET.jl/compare/v0.11.3...v0.11.4
+[0.11.3]: https://github.com/aviatesk/JET.jl/compare/v0.11.2...v0.11.3
+[0.11.2]: https://github.com/aviatesk/JET.jl/compare/v0.11.1...v0.11.2
+[0.11.1]: https://github.com/aviatesk/JET.jl/compare/v0.11.0...v0.11.1
+[0.11.0]: https://github.com/aviatesk/JET.jl/compare/v0.10.12...v0.11.0
 [0.10.12]: https://github.com/aviatesk/JET.jl/compare/v0.10.11...v0.10.12
 [0.10.11]: https://github.com/aviatesk/JET.jl/compare/v0.10.10...v0.10.11
 [0.10.10]: https://github.com/aviatesk/JET.jl/compare/v0.10.9...v0.10.10
@@ -52,11 +61,223 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 <!-- links end -->
 
 ## [Unreleased]
-### Fixed
-- Enabled concrete evaluation in `report_call`, reducing false positives in more
-  general cases
+
+### Added
+
+- Added the `concretization_timeout` configuration (10 seconds by default),
+  which bounds the time JET spends concretely executing a single top-level
+  statement. Exceeding it produces a `ConcretizationTimeoutErrorReport` instead
+  of hanging on nonterminating loops that contain top-level definitions.
 
 ### Changed
+
+- Concrete execution of top-level statements now interprets function calls
+  recursively with JuliaInterpreter instead of running them natively. This
+  lets `concretization_timeout` stop nonterminating loops inside functions
+  called from top-level code, and error reports from such calls now include
+  the interpreted stack frames. `ConcretizationTimeoutErrorReport` likewise
+  shows the calls that were running when the timeout hit. Blocks selected by
+  `concretization_patterns` keep executing their calls natively. Code that
+  runs natively, such as `ccall`s, code evaluated by `Core.eval` and those
+  calls, still cannot be interrupted.
+
+### Fixed
+
+- Fixed `report_file` hanging when a nonterminating top-level loop assigns to a
+  global variable. Global declarations emitted by assignments under control
+  flow no longer pull the enclosing loop or branch condition into concrete
+  execution.
+
+- Fixed `@report_opt` crashing when optimized code dynamically calls a callable
+  object literal such as `Base.BottomRF` (aviatesk/JET.jl#863).
+
+- Fixed error reports being dropped when concrete evaluation proves the
+  reported call always throws.
+
+- Fixed spurious field-access errors when analyzing parametric type
+  definitions with inner constructors.
+
+- Fixed `concretization_patterns` not matching global assignments with
+  docstrings on Julia 1.13, and false `UndefVarErrorReport`s for documented
+  global variables.
+
+- Fixed `report_text` crashing instead of reporting an error when declaring an
+  existing non-constant global variable as `const`, as in `x = 1; const x = 2`.
+  Invalid declarations of non-constant globals or explicitly imported bindings
+  now produce an `InvalidConstantDeclarationReport`.
+
+- Fixed `mode = :typo` reporting `IncompatibleGlobalAssignmentError` for
+  incompatible assignments to global variables. These errors remain reported
+  in `:basic` and `:sound` modes.
+
+- Fixed missed error reports after `global x` declarations inside control flow
+  on Julia 1.12.
+
+- Fixed false `UndefVarErrorReport`s after conditionally reassigning an
+  initialized global variable.
+
+- Fixed missing analyzer-interface errors when using custom analyzers with
+  `JETConcreteInterpreter` and `use_fixed_world = true`.
+
+## [0.12.1]
+
+### Changed
+- Improved `report_file` performance on test files that use Test.jl macros
+  while continuing to analyze the user expressions checked by those macros.
+- `MissingConcretizationErrorReport` now identifies the assignment requiring a
+  concrete value and, when safe, suggests a ready-to-use
+  `concretization_patterns` entry. Its guidance also clarifies when `const` is
+  insufficient and avoids patterns that could match unrelated assignments.
+
+## [0.12.0]
+
+### Added
+- Added support for Julia v1.13.
+- Added `JET.JET_AVAILABLE` so test suites can skip JET checks when only
+  empty stubs are available. See the new
+  [Julia compatibility and versioning policy](README.md#julia-compatibility-and-versioning).
+
+### Changed
+- **Breaking**: JET no longer accepts Julia compiler parameter keywords such as
+  `max_methods` and `inlining` as user-facing configuration options for analysis
+  entry points; such keywords now throw `JETConfigError`.
+- Module matchers for the `target_modules`/`ignored_modules` configurations now
+  follow lexical module nesting that stops at namespace roots: `Base` is no
+  longer considered a submodule of `Main`. `target_modules = (Main,)` therefore
+  matches only code defined interactively in the REPL or in an analyzed script,
+  instead of also matching every report from `Base`.
+- JET now loads empty stubs on unsupported future Julia versions while
+  remaining installable as a test dependency.
+- Overhauled JET's documentation across the project.
+- Improved the implementation of optimization analysis to make it more robust.
+
+### Removed
+- **Breaking**: Removed support for `.JET.toml` configuration files, including
+  the parent-directory file lookup that `report_file` performed. A single
+  configuration file could not be shared between analyzers that accept
+  different configuration sets, and some configurations could not even be
+  specified through the file at all. All analysis configurations are now
+  specified via keyword arguments of each entry point.
+- **Breaking**: Removed the experimental `watch_file` entry point.
+  Use [JETLS.jl](https://github.com/aviatesk/JETLS.jl) for interactive
+  diagnostics.
+- **Breaking**: Removed the `report_package(::AbstractString)` and
+  `report_package()` entry points (and the corresponding `test_package`
+  forms), which had been deprecated since v0.11. Load the target package
+  first and pass its module directly, e.g. `report_package(PkgModule)`.
+- **Breaking**: Removed the `target_defined_modules` configuration, which had
+  been deprecated since v0.11. Use the more flexible `target_modules`
+  configuration instead, e.g. `target_modules=(PkgModule,)`.
+- **Breaking**: Removed the `fullpath` printing configuration, which had been
+  deprecated since v0.11. Use `sourceinfo=:full` instead.
+
+### Fixed
+- Fixed a data race in shared top-level binding state (aviatesk/JET.jl#840,
+  thanks [@PatrickHaecker](https://github.com/PatrickHaecker)).
+- Fixed `report_package` to analyze definitions from source files included into
+  multiple modules.
+- Fixed races between `report_package` and concurrent Revise package tracking or
+  revision.
+
+## [0.11.6]
+
+### Added
+- Added support for syntax-versioned top-level script.
+
+### Fixed
+- Fixed virtual-process world tracking with newer JuliaInterpreter releases.
+- Respected the active inference world when analyzing global bindings.
+
+## [0.11.5]
+
+### Changed
+- Julia v1.12.7 compatibility has been updated for newer Compiler.jl
+  releases.
+
+### Fixed
+- Fixed stale diagnostics that could remain after redefining methods involved
+  in a previous report.
+- Fixed false `MissingConcretizationErrorReport`s for top-level loops whose
+  body contains comprehension code and whose iterator is a top-level `const`
+  value (aviatesk/JETLS.jl#555).
+
+## [0.11.4]
+
+### Added
+- Added method-matching report filtering via `LastFrameMethod` and
+  `AnyFrameMethod`.
+
+### Changed
+- `LoweredCodeUtils` compatibility is temporarily restricted to v3.4-v3.5
+  until JET is updated for breaking changes introduced in v3.6.
+
+### Fixed
+- Fixed top-level error report stack traces on Julia v1.12.5.
+- Fixed repeated analysis of multiple standalone files that define `@main` in
+  the same session.
+- Fixed module context information recorded for macro-generated modules, so
+  tooling built on JET resolves macro call sites to the enclosing module.
+
+## [0.11.3]
+### Changed
+- Updated Revise dependency version to v3.13
+
+## [0.11.2]
+### Changed
+- **Parallelized `report_package`**: Method signature analysis in `report_package`
+  is now parallelized using Julia's multithreading, providing significant
+  speedup on multi-core systems.
+
+  > With `--threads=4,2`
+  - Benchmark on `report_package(JET)`: 52.07s → 17.75s (~3x faster)
+  - Benchmark on `report_package(CSV)`: 44.23s → 19.57s (~2x faster)
+
+## [0.11.1]
+### Changed
+- Added CodeTracking v3 as a compatible version.
+
+### Internal
+- Refactored the project file to use the [`[workspace]`](https://pkgdocs.julialang.org/v1/toml-files/#The-%5Bworkspace%5D-section) for the docs/test environment of JET.
+  This allows running e.g. `julia --project=./test test/runtests.jl` or
+  `julia --project=./docs docs/make.jl` successfully.
+
+## [0.11.0]
+### Changed
+- **Major improvement to `report_package`**: Switched to a Revise.jl-based
+  implementation that brings significant improvements (aviatesk/JET.jl#763):
+  - **Incremental analysis**: Analysis results are now cached and reused across
+    multiple runs. When you analyze the same package again, only methods
+    affected by code changes are re-analyzed, while unchanged methods reuse
+    their cached results. This dramatically reduces analysis time for iterative
+    development workflows.
+    > E.g. Incremental analysis on JET itself
+
+    https://github.com/user-attachments/assets/5ba14a46-7d08-4440-a24e-e7ba3540b913
+  - **Improved robustness**: The new implementation leverages Revise's
+    battle-tested infrastructure for tracking package definitions, providing
+    much more reliable analysis coverage across diverse code patterns compared
+    to the previous custom code loading mechanism.
+  - **Breaking change**: `report_package` now requires a `Module` argument
+    instead of accepting a package name as `AbstractString`. Users must now
+    load the target package before analysis. See the deprecated section for
+    more details.
+  - **Limitation**: As a trade-off of the Revise-based approach, `report_package`
+    can no longer analyze packages that fail to load. Previously, `report_package`
+    could atl least report top-level errors for such packages (though it
+    couldn't perform inference-based analysis). Now users must fix loading
+    errors before applying JET analysis via `report_package`. These errors are
+    typically straightforward to fix by examining the error output from
+    `using MyPkg` or `Pkg.precompile()`.
+  - The previous default configurations `analyze_from_definitions=true` and
+    `concretization_patterns=[:(x_)]` are no longer needed or used, as the
+    Revise-based approach does not require JET's own code loading mechanism.
+    These configurations can still be used in other top-level analysis entry
+    points (e.g. `report_file` and `report_text`).
+- Revise.jl is now a required dependency instead of an optional weak
+  dependency. This means `watch_file` no longer requires manually loading
+  Revise with `using Revise` before use.
+- Enabled the [ad-hoc concrete evaluation](https://github.com/JuliaLang/julia/pull/59908)
+  in `JETAnalyzer` for Julia v1.13 and higher, reducing false positives in more general cases
 - **Module filtering behavior change**: `target_modules` and `ignored_modules`
   now include submodules by default (aviatesk/JET.jl#628, aviatesk/JET.jl#772):
   - **Submodule-inclusive filtering**: When a `Module` object is passed to
@@ -94,6 +315,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ```
   All matcher types (`LastFrameModule`, `AnyFrameModule`, `LastFrameModuleExact`,
   `AnyFrameModuleExact`) now accept `Union{Module,Symbol}`.
+
+### Deprecated
+- `report_package(::AbstractString)`, `report_package([::Nothing])`:
+  The old signatures accepting a package name as a string, or no arguments are
+  deprecated. Load the package first and pass the `Module` instead:
+  ```julia-repl
+  # Preferred (v0.11):
+  julia> using MyPackage
+  julia> report_package(MyPackage)
+
+  # Deprecated (v0.10):
+  julia> report_package("MyPackage")
+  julia> report_package()
+  ```
+- `target_defined_modules` configuration: Use the more flexible `target_modules`
+  configuration instead. To limit error reports to your package's module
+  context (filtering out errors from dependencies), use:
+  ```julia
+  report_package(MyPackage; target_modules=(MyPackage,))
+  ```
 
 ## [0.10.12]
 ### Fixed
@@ -224,7 +465,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   their own customized interpretation logic (aviatesk/JET.jl#721).
 ### Added (Internal)
 - Added the ability for external users of JET to customize virtualprocess.jl.
-  Similar to the design of `JuliaInterpreter.Interpreter` and `Base.Compiler.AbstractInterpreter`,
+  Similar to the design of `JuliaInterpreter.Interpreter` and `Compiler.AbstractInterpreter`,
   the new `JET.ConcreteInterpreter <: JuliaInterpreter.Interpreter` interface is designed,
   allowing external packages to subtype it and customize the behavior of `virtual_process(interp::JET.ConcreteInterpreter, ...)`.
   Please note that this is still undocumented and is a highly experimental interface.
@@ -422,7 +663,7 @@ process, JET v0.10.0 was released despite its limitations:
 
 ## [0.9.3]
 ### Added
-- A simple logo badge for JET.jl is now available (thanks to @MilesCranmer!).
+- A simple logo badge for JET.jl is now available (thanks [@MilesCranmer](https://github.com/MilesCranmer)).
   You can add the line `[![](https://img.shields.io/badge/%F0%9F%9B%A9%EF%B8%8F_tested_with-JET.jl-233f9a)](https://github.com/aviatesk/JET.jl)`
   to your package's README to display the logo image [![](https://img.shields.io/badge/%F0%9F%9B%A9%EF%B8%8F_tested_with-JET.jl-233f9a)](https://github.com/aviatesk/JET.jl)
   that shows your package uses JET.jl for code quality checks (aviatesk/JET.jl#635).

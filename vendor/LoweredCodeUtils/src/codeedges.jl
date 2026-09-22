@@ -190,7 +190,7 @@ end
 """
     controller::SelectiveEvalController
 
-When this object is passed as the `recurse` argument of `selective_eval!`,
+When this object is passed as the `controller` argument of `selective_eval!`,
 the selective execution is adjusted as follows:
 
 - **Termination point**: In Julia's IR representation (`CodeInfo`), a terminal
@@ -222,6 +222,7 @@ SelectiveEvalController() = SelectiveEvalController(BitSet(), CFGShortCut[])
         inner::S
         isrequired::T
         controller::SelectiveEvalController
+        last_executed::Base.RefValue{Int}
     end
 
 An `JuliaInterpreter.Interpreter` that executes only the statements marked `true` in `isrequired`.
@@ -234,7 +235,10 @@ struct SelectiveInterpreter{S<:Interpreter,T<:AbstractVector{Bool}} <: Interpret
     inner::S
     isrequired::T
     controller::SelectiveEvalController
+    last_executed::Base.RefValue{Int}
 end
+SelectiveInterpreter(inner::S, isrequired::T, controller::SelectiveEvalController) where {S<:Interpreter,T<:AbstractVector{Bool}} =
+    SelectiveInterpreter(inner, isrequired, controller, Ref(0))
 
 function namedkeys(cl::CodeLinks)
     ukeys = Set{GlobalRef}()
@@ -322,7 +326,6 @@ function direct_links!(cl::CodeLinks, src::CodeInfo)
             target = P(SSAValue(i), cl.ssapreds[i])
         elseif (lhs_rhs = get_lhs_rhs(stmt); lhs_rhs !== nothing)
             # An assignment
-            stmt = stmt::Expr
             lhs, rhs = lhs_rhs
             if @issslotnum(lhs)
                 lhs = lhs::AnySlotNumber
@@ -477,7 +480,7 @@ struct CodeEdges
     succs::Vector{Vector{Int}}
     byname::Dict{GlobalRef,Variable}
 end
-CodeEdges(n::Integer) = CodeEdges([Int[] for i = 1:n], [Int[] for i = 1:n], Dict{GlobalRef,Variable}())
+CodeEdges(n::Integer) = CodeEdges([Int[] for _ = 1:n], [Int[] for _ = 1:n], Dict{GlobalRef,Variable}())
 
 function Base.show(io::IO, edges::CodeEdges)
     println(io, "CodeEdges:")
@@ -495,7 +498,7 @@ function Base.show(io::IO, edges::CodeEdges)
 end
 
 """
-    edges = CodeEdges(src::CodeInfo)
+    edges = CodeEdges(mod::Module, src::CodeInfo)
 
 Analyze `src` and determine the chain of dependencies.
 
@@ -520,9 +523,8 @@ function CodeEdges(src::CodeInfo, cl::CodeLinks)
     emptylink = Links()
     emptylist = Int[]
     for (i, stmt) in enumerate(src.code)
-        # Identify line predecents for slots and named variables
+        # Identify line predecessors for slots and named variables
         if (lhs_rhs = get_lhs_rhs(stmt); lhs_rhs !== nothing)
-            stmt = stmt::Expr
             lhs, _ = lhs_rhs
             # Mark predecessors and successors of this line by following ssas & named assignments
             if @issslotnum(lhs)
@@ -701,7 +703,7 @@ On return, the complete set of required statements will be marked `true`.
 
 `norequire` keyword argument specifies statements (represented as iterator of `Int`s) that
 should _not_ be marked as a requirement.
-For example, use `norequire = LoweredCodeUtils.exclude_named_typedefs(src, edges)` if you're
+For example, use `norequire = LoweredCodeUtils.exclude_named_typedefs(src)` if you're
 extracting method signatures and not evaluating new definitions.
 """
 function lines_required!(isrequired::AbstractVector{Bool}, src::CodeInfo, edges::CodeEdges,
@@ -711,7 +713,7 @@ function lines_required!(isrequired::AbstractVector{Bool}, src::CodeInfo, edges:
     return lines_required!(isrequired, objs, src, edges, controller; kwargs...)
 end
 
-function exclude_named_typedefs(src::CodeInfo, edges::CodeEdges)
+function exclude_named_typedefs(src::CodeInfo)
     norequire = BitSet()
     i = 1
     nstmts = length(src.code)
@@ -728,9 +730,16 @@ function exclude_named_typedefs(src::CodeInfo, edges::CodeEdges)
     return norequire
 end
 
-function lines_required!(isrequired::AbstractVector{Bool}, objs, src::CodeInfo, edges::CodeEdges,
-                         controller::SelectiveEvalController=SelectiveEvalController();
-                         norequire = ())
+function lines_required!(
+        isrequired::AbstractVector{Bool}, objs::Set{GlobalRef}, src::CodeInfo, edges::CodeEdges,
+        controller::SelectiveEvalController=SelectiveEvalController();
+        norequire = ()
+    )
+    # A controller describes one particular slice. Recompute it from scratch so
+    # callers can safely reuse the same object for another slice.
+    empty!(controller.termination_points)
+    empty!(controller.shortcuts)
+
     # Mark any requested objects (their lines of assignment)
     objs = add_requests!(isrequired, objs, edges, norequire)
 
@@ -773,7 +782,10 @@ function lines_required!(isrequired::AbstractVector{Bool}, objs, src::CodeInfo, 
     return isrequired
 end
 
-function add_requests!(isrequired, objs, edges::CodeEdges, norequire)
+function add_requests!(
+        isrequired::AbstractVector{Bool}, objs::Set{GlobalRef}, edges::CodeEdges,
+        norequire
+    )
     objsnew = Set{GlobalRef}()
     for obj in objs
         add_obj!(isrequired, objsnew, obj, edges, norequire)
@@ -781,7 +793,9 @@ function add_requests!(isrequired, objs, edges::CodeEdges, norequire)
     return objsnew
 end
 
-function add_ssa_preds!(isrequired, src::CodeInfo, edges::CodeEdges, norequire)
+function add_ssa_preds!(
+        isrequired::AbstractVector{Bool}, src::CodeInfo, edges::CodeEdges, norequire
+    )
     changed = false
     for idx = 1:length(src.code)
         if isrequired[idx]
@@ -791,18 +805,22 @@ function add_ssa_preds!(isrequired, src::CodeInfo, edges::CodeEdges, norequire)
     return changed
 end
 
-function add_named_dependencies!(isrequired, edges::CodeEdges, objs, norequire)
+function add_named_dependencies!(
+        isrequired::AbstractVector{Bool}, edges::CodeEdges, objs::Set{GlobalRef}, norequire
+    )
     changed = false
     for (obj, uses) in edges.byname
         obj ∈ objs && continue
-        if any(view(isrequired, uses.succs))
+        if any(view(isrequired, uses.succs))::Bool
             changed |= add_obj!(isrequired, objs, obj, edges, norequire)
         end
     end
     return changed
 end
 
-function add_preds!(isrequired, idx, edges::CodeEdges, norequire)
+function add_preds!(
+        isrequired::AbstractVector{Bool}, idx::Int, edges::CodeEdges, norequire
+    )
     chngd = false
     preds = edges.preds[idx]
     for p in preds
@@ -814,18 +832,10 @@ function add_preds!(isrequired, idx, edges::CodeEdges, norequire)
     end
     return chngd
 end
-function add_succs!(isrequired, idx, edges::CodeEdges, succs, norequire)
-    chngd = false
-    for p in succs
-        isrequired[p] && continue
-        p ∈ norequire && continue
-        isrequired[p] = true
-        chngd = true
-        add_succs!(isrequired, p, edges, edges.succs[p], norequire)
-    end
-    return chngd
-end
-function add_obj!(isrequired, objs, obj::GlobalRef, edges::CodeEdges, norequire)
+function add_obj!(
+        isrequired::AbstractVector{Bool}, objs::Set{GlobalRef}, obj::GlobalRef,
+        edges::CodeEdges, norequire
+    )
     chngd = false
     for p in edges.byname[obj].preds
         p ∈ norequire && continue
@@ -999,7 +1009,7 @@ function record_termination_points!(controller::SelectiveEvalController, isrequi
     nothing
 end
 
-# Do a traveral of "numbered" predecessors and find statement ranges and names of type definitions
+# Do a traversal of "numbered" predecessors and find statement ranges and names of type definitions
 function find_typedefs(src::CodeInfo)
     typedef_blocks, typedef_names = UnitRange{Int}[], Symbol[]
     i = 1
@@ -1042,7 +1052,11 @@ end
 
 # New struct definitions, including their constructors, get spread out over many
 # statements. If we're evaluating any of them, it's important to evaluate *all* of them.
-function add_typedefs!(isrequired, src::CodeInfo, edges::CodeEdges, (typedef_blocks, typedef_names), norequire)
+function add_typedefs!(
+        isrequired, src::CodeInfo, edges::CodeEdges,
+        typedefs::Tuple{Vector{UnitRange{Int}},Vector{Symbol}},
+        norequire
+    )
     changed = false
     stmts = src.code
     defaultctors = Tuple{Int,BitSet}[]
@@ -1054,21 +1068,42 @@ function add_typedefs!(isrequired, src::CodeInfo, edges::CodeEdges, (typedef_blo
     while idx < length(stmts)
         stmt = stmts[idx]
         isrequired[idx] || (idx += 1; continue)
-        for (typedefr, typedefn) in zip(typedef_blocks, typedef_names)
+        intypedef = false
+        for (typedefr, typedefn) in zip(typedefs...)
             if idx ∈ typedefr
                 ireq = view(isrequired, typedefr)
                 if !all(ireq)
                     changed = true
                     ireq .= true
-                    # Also mark any by-type constructor(s) associated with this typedef
-                    var = get(edges.byname, typedefn, nothing)
-                    if var !== nothing
-                        for s in var.succs
-                            s ∈ norequire && continue
-                            stmt2 = stmts[s]
-                            if ismethod(stmt2) && (fname = method_name(stmt2::Expr); fname === false || fname === nothing)
-                                isrequired[s] = true
-                            end
+                end
+                # Also mark any by-type constructor(s) associated with this typedef.
+                # Julia 1.12+ emits default constructors as a `_defaultctors` call
+                # that directly consumes the type-body result.
+                for s in edges.succs[last(typedefr)]
+                    s ∈ norequire && continue
+                    if is_defaultctors_call(stmts[s]) && !isrequired[s]
+                        isrequired[s] = true
+                        changed = true
+                    end
+                end
+                # Older lowerings emit anonymous `:method` expressions associated
+                # with the type's global binding.
+                typedefoffset = findfirst(i -> istypedef(getrhs(stmts[i])), typedefr)
+                typedefidx = typedefoffset === nothing ? nothing : first(typedefr) + typedefoffset - 1
+                typedefstmt = typedefidx === nothing ? nothing : getrhs(stmts[typedefidx])
+                typedefmod = isexpr(typedefstmt, :call) && typedefstmt.args[2] isa Module ?
+                    typedefstmt.args[2] : nothing
+                var = typedefmod === nothing ? nothing :
+                    get(edges.byname, GlobalRef(typedefmod, typedefn), nothing)
+                if var !== nothing
+                    for s in var.succs
+                        s ∈ norequire && continue
+                        stmt2 = stmts[s]
+                        if (ismethod(stmt2) &&
+                            (fname = method_name(stmt2::Expr); fname === false || fname === nothing) &&
+                            !isrequired[s])
+                            isrequired[s] = true
+                            changed = true
                         end
                     end
                 end
@@ -1079,9 +1114,11 @@ function add_typedefs!(isrequired, src::CodeInfo, edges::CodeEdges, (typedef_blo
                     isrequired[ctor] = true
                 end
                 idx = last(typedefr) + 1
-                continue
+                intypedef = true
+                break
             end
         end
+        intypedef && continue
         # Anonymous functions may not yet include the method definition
         if isanonymous_typedef(stmt)
             i = idx + 1
@@ -1160,6 +1197,7 @@ function JuliaInterpreter.step_expr!(interp::SelectiveInterpreter, frame::Frame,
         end
     end
     if interp.isrequired[pc]
+        interp.last_executed[] = pc
         step_expr!(interp.inner, frame, istoplevel)
     else
         next_or_nothing!(interp, frame)
@@ -1172,10 +1210,10 @@ function JuliaInterpreter.get_return(interp::SelectiveInterpreter, frame::Frame)
         if interp.isrequired[pc]
             return lookup_return(interp.inner, frame, node)
         end
-    else
-        if isassigned(frame.framedata.ssavalues, pc)
-            return frame.framedata.ssavalues[pcexec]
-        end
+    end
+    pcexec = interp.last_executed[]
+    if pcexec != 0 && isassigned(frame.framedata.ssavalues, pcexec)
+        return frame.framedata.ssavalues[pcexec]
     end
     return nothing
 end
@@ -1207,7 +1245,7 @@ Note that the interpreter does not recurse into callees, so there is currently n
 interprocedural selective evaluation.
 
 This will return either a `BreakpointRef`, the value obtained from the last executed statement
-(if stored to `frame.framedata.ssavlues`), or `nothing`.
+(if stored to `frame.framedata.ssavalues`), or `nothing`.
 Typically, assignment to a variable binding does not result in an ssa store by JuliaInterpreter.
 """
 function selective_eval!(
@@ -1263,7 +1301,7 @@ function print_with_code(io::IO, src::CodeInfo, isrequired::AbstractVector{Bool}
     preprint(::IO) = nothing
     preprint(io::IO, idx::Int) = (c = isrequired[idx]; printstyled(io, lpad(idx, nd), ' ', c ? "t " : "f "; color = c ? :cyan : :plain))
     postprint(::IO) = nothing
-    postprint(::IO, idx::Int, bbchanged::Bool) = nothing
+    postprint(::IO, _idx::Int, _bbchanged::Bool) = nothing
 
     print_with_code(preprint, postprint, io, src)
 end

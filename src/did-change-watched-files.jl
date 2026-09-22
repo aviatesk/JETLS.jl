@@ -47,12 +47,6 @@ function did_change_watched_files_registration(server::Server)
         registerOptions = DidChangeWatchedFilesRegistrationOptions(; watchers))
 end
 
-# For dynamic registrations during development
-# unregister(currently_running, Unregistration(;
-#     id = DID_CHANGE_WATCHED_FILES_REGISTRATION_ID,
-#     method = DID_CHANGE_WATCHED_FILES_REGISTRATION_METHOD))
-# register(currently_running, did_change_watched_files_registration(currently_running))
-
 config_file_created_msg(path::AbstractString) = "JETLS configuration file loaded: $path"
 config_file_deleted_msg(path::AbstractString) = "JETLS configuration file removed: $path"
 
@@ -90,7 +84,7 @@ end
 
 # TODO: We may eventually want to separate live config validation from saved config
 # application. Synchronized `.JETLSConfig.toml` buffers could be validated on
-# `textDocument/didChange`, with source-ranged issues exposed through pull diagnostics,
+# `textDocument/didChange`, with source-ranged issues exposed through live diagnostics,
 # while this watched-file path remains the trigger for applying saved settings. Proper
 # ranges for JETLS-specific semantic errors would require a provenance-preserving TOML
 # parser or source map. However, schema-aware external tools such as Tombi can already

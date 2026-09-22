@@ -19,6 +19,12 @@ overlap(rng1::Range, rng2::Range) = max(rng1.start, rng2.start) <= min(rng1.var"
 @define_override_constructor LSP.InlayHint
 @define_override_constructor LSP.TextEdit
 
+# LSP objects compare with `===` by default. `Diagnostic` needs structural equality so
+# recomputed diagnostics of an unchanged file are recognized as such (its `tags` vector
+# defeats egal), and `Location` so `Set{Location}` honors the custom `==`/`hash` of `URI`.
+@define_eq_overloads LSP.Diagnostic
+@define_eq_overloads LSP.Location
+
 const DEFAULT_DOCUMENT_SELECTOR = DocumentFilter[
     TextDocumentFilterLanguage(; language = "julia", scheme = "file"),
     [TextDocumentFilterLanguage(; language = "julia", scheme) for scheme in UNSAVED_DOCUMENT_SCHEMES]...,
@@ -125,6 +131,12 @@ function request_cancelled_error(message::AbstractString="Request was cancelled"
         data)
 end
 
+function method_not_found_error(method::AbstractString)
+    return ResponseError(;
+        code = ErrorCodes.MethodNotFound,
+        message = "Method not found: $method")
+end
+
 function show_message(server::Server, message::AbstractString, type::MessageType.Ty)
     if server.state.cli_mode
         # `jetls check` has no client to show the message; log it instead, so that `--quiet`
@@ -179,7 +191,7 @@ end
 function send_progress(server::Server, token::ProgressToken, value::WorkDoneProgressValue)
     send(server, ProgressNotification(; params = ProgressParams(; token, value)))
     if value isa WorkDoneProgressEnd
-        put!(server.message_queue, HandledToken(token))
+        enqueue_message!(server, HandledToken(token))
     end
 end
 

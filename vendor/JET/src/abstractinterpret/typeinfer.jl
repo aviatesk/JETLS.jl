@@ -7,6 +7,12 @@ const ABSTRACT_CALL_USES_VTYPES = hasmethod(CC.abstract_call_known,
 function collect_callee_reports!(analyzer::AbstractAnalyzer, sv::InferenceState)
     reports = get_report_stash(analyzer)
     if !isempty(reports)
+        if analyzer isa ToplevelAbstractAnalyzer && isconcretized(analyzer, sv)
+            # Concrete execution owns diagnostics for this call, but the callee cache
+            # must retain its reports for non-concretized callers.
+            empty!(reports)
+            return nothing
+        end
         vf = get_virtual_frame(sv)
         for report in reports
             pushfirst!(report.vst, vf)
@@ -43,7 +49,6 @@ function CC.abstract_call_method(analyzer::AbstractAnalyzer,
         method::Method, sig::Any, sparams::SimpleVector,
         hardlimit::Bool, si::StmtInfo, sv::InferenceState)
     function after_call_method(analyzer′::AbstractAnalyzer, sv′::InferenceState)
-        ret′ = ret[]
         collect_callee_reports!(analyzer′, sv′)
         return true
     end
@@ -86,7 +91,10 @@ function CC.concrete_eval_call(analyzer::AbstractAnalyzer,
         # guaranteed to run (e.g. `const_prop_argument_heuristic` may refuse it), and
         # when it does run, its own lineage filtering (see the `CC.typeinf` and
         # `CC.cache_lookup` overloads) replaces the generic reports at that point.
-        filter_lineages!(analyzer, sv, result.edge.def)
+        edge = result.edge
+        if edge isa CodeInstance
+            filter_lineages!(analyzer, sv, edge.def)
+        end
     end
     return ret
 end
@@ -463,7 +471,7 @@ function finish_frame!(analyzer::AbstractAnalyzer, frame::InferenceState)
     cache_reports!(analyzer, caller, reports)
 end
 
-function cache_reports!(analyzer::AbstractAnalyzer, caller::InferenceResult,
+function cache_reports!(::AbstractAnalyzer, caller::InferenceResult,
                         reports::Vector{InferenceErrorReport})
     cached_reports = InferenceErrorReport[]
     mi = caller.linfo
@@ -509,26 +517,41 @@ function CC.global_assignment_rt_exct(analyzer::ToplevelAbstractAnalyzer, sv::In
     newty′ = Ref{Any}(newty)
     istoplevel = istoplevelframe(sv)
     assignment = istoplevel ? get_current_toplevel_assignment(analyzer) : nothing
-    isconditional = if istoplevel
-        postdomtree = CC.construct_postdomtree(sv.cfg)
+    isconditional = istoplevel ? let postdomtree = CC.construct_postdomtree(sv.cfg)
         !CC.postdominates(postdomtree, sv.currbb, 1)
-    else
-        true
-    end
-    (valid_worlds, ret) = CC.scan_partitions(analyzer, g, sv.world) do analyzer::AbstractAnalyzer, binding::Core.Binding, partition::Core.BindingPartition
-        rte = CC.global_assignment_binding_rt_exct(analyzer, partition, newty′[])
-        if isconcretized
-            # skip the assignment effect if this has been concretized already
-        else
-            # Non-const bindings may be assigned in any call, so it is fundamentally impossible
-            # to track their types precisely.
-            # However, by accurately determining whether a top-level assignment is conditional,
-            # it is possible to track such bindings’ `isdefined` status precisely.
-            get_binding_states(analyzer)[partition] = AbstractBindingState(false, isconditional; assignment)
-        end
-        return rte
+    end : true
+    (valid_worlds, ret) = CC.scan_partitions(analyzer, g, sv.world) do analyzer::AbstractAnalyzer, ::Core.Binding, partition::Core.BindingPartition
+        return CC.global_assignment_binding_rt_exct(analyzer, partition, newty′[])
     end
     CC.update_valid_age!(sv, valid_worlds)
+    rt, _exct = ret
+    if !isconcretized && rt !== Union{}
+        # Historical queries must not update the inference world's binding state.
+        partition = Base.lookup_binding_partition(sv.world.this, g)
+        # Non-const bindings may be assigned in any call, so it is fundamentally impossible
+        # to track their types precisely.
+        # However, by accurately determining whether a top-level assignment is conditional,
+        # it is possible to track such bindings’ `isdefined` status precisely.
+        binding_states = get_binding_states(analyzer)
+        @lock binding_states.lock begin
+            new_state = if haskey(binding_states, partition)
+                old_state = binding_states[partition]
+                if old_state.isconst
+                    # Ordinary assignments to constants throw; `const` redefinitions use
+                    # `const_assignment_rt_exct` instead.
+                    old_state
+                else
+                    maybeundef = old_state.maybeundef & isconditional
+                    same_statement = old_state.assignment === assignment
+                    merged_assignment = same_statement ? assignment : nothing
+                    AbstractBindingState(false, maybeundef; assignment = merged_assignment)
+                end
+            else
+                AbstractBindingState(false, isconditional; assignment)
+            end
+            binding_states[partition] = new_state
+        end
+    end
     return ret
 end
 
@@ -548,7 +571,7 @@ function abstract_eval_declare_const(
     name isa Const && name.val isa Symbol || return nothing
     gr = GlobalRef(mod.val, name.val)
     new_binding_typ = length(argtypes) == 4 ? argtypes[4] : nothing
-    rt, exct = const_assignment_rt_exct(analyzer, sv, si.saw_latestworld, gr, new_binding_typ)
+    ((rt, exct), _isimported) = const_assignment_rt_exct(analyzer, sv, si.saw_latestworld, gr, new_binding_typ)
     if rt !== Union{}
         rt = length(argtypes) == 4 ? new_binding_typ : Nothing
     end
@@ -608,7 +631,7 @@ function abstract_eval_const_stmt(analyzer::ToplevelAbstractAnalyzer, stmt::Expr
                 val = GlobalRef(CC.frame_module(sv), val)
             end
             val isa GlobalRef || return RTEffects(Nothing, ErrorException, EFFECTS_THROWS)
-            rt, exct = const_assignment_rt_exct(analyzer, sv, sstate.saw_latestworld, val, na == 2 ? lastargtype : nothing)
+            ((rt, exct), _isimported) = const_assignment_rt_exct(analyzer, sv, sstate.saw_latestworld, val, na == 2 ? lastargtype : nothing)
             return RTEffects(rt, exct, CC.Effects(EFFECTS_THROWS; nothrow=exct===Union{}))
         else
             return RTEffects(Union{}, ErrorException, EFFECTS_THROWS)
@@ -624,66 +647,66 @@ function const_assignment_rt_exct(analyzer::ToplevelAbstractAnalyzer, sv::Infere
                                   @nospecialize(new_binding_typ))
     @assert istoplevelframe(sv)
     if saw_latestworld
-        return Pair{Any,Any}(Nothing, ErrorException)
+        return Pair{Any,Any}(Nothing, ErrorException), false
     end
-    ⊔ = CC.join(CC.typeinf_lattice(analyzer))
-    new_binding_typ′ = Ref{Any}(new_binding_typ)
-    postdomtree = CC.construct_postdomtree(sv.cfg)
-    isconditional = !CC.postdominates(postdomtree, sv.currbb, 1)
-    assignment = get_current_toplevel_assignment(analyzer)
-    (valid_worlds, ret) = CC.scan_partitions(analyzer, gr, sv.world) do analyzer::ToplevelAbstractAnalyzer, ::Core.Binding, partition::Core.BindingPartition
-        rte = const_assignment_binding_rt_exct(analyzer, partition)
-        rt, _exct = rte
-        if rt !== Union{}
-            if new_binding_typ′[] === nothing
-                Core.eval(gr.mod, Expr(:const, gr.name))
-            else
-                # `:const` assignment destructively overrides the binding type
-                binding_states = get_binding_states(analyzer)
-                binding_state = @lock binding_states.lock begin
-                    if !isconditional
-                        new_state = AbstractBindingState(true, false, new_binding_typ′[]; assignment)
-                    elseif haskey(binding_states, partition)
-                        old_binding_state = binding_states[partition]
-                        @assert old_binding_state.isconst && isdefined(old_binding_state, :typ)
-                        newmaybeundef = old_binding_state.maybeundef & isconditional
-                        newtyp = old_binding_state.typ ⊔ new_binding_typ′[]
-                        # each top-level statement builds its own `ToplevelAssignment`, so
-                        # `===` here means "the same statement"; keep it only then, since
-                        # no single pattern can stand for two conflicting statements
-                        same_statement = old_binding_state.assignment === assignment
-                        merged_assignment = same_statement ? assignment : nothing
-                        new_state = AbstractBindingState(true, newmaybeundef, newtyp; assignment=merged_assignment)
-                    else
-                        new_state = AbstractBindingState(true, true, new_binding_typ′[]; assignment)
-                    end
-                    binding_states[partition] = new_state
-                    new_state
-                end
-                # HACK/FIXME Concretize `AbstractBindingState`
-                # For top-level analysis implementation reasons, we actually define this
-                # `AbstractBindingState` in the analyzed module’s namespace.
-                # This is necessary because binding resolution cannot be accurately tracked
-                # when using `export`/`using`.
-                Core.eval(gr.mod, Expr(:const, gr.name, binding_state))
-            end
-        end
-        return rte
+    (valid_worlds, (ret, isimported)) = CC.scan_partitions(analyzer, gr, sv.world) do analyzer::ToplevelAbstractAnalyzer, _binding::Core.Binding, partition::Core.BindingPartition
+        return const_assignment_binding_rt_exct(analyzer, partition)
     end
     CC.update_valid_age!(sv, valid_worlds)
-    return ret
+    rt, _exct = ret
+    if rt !== Union{}
+        # Historical partitions queried by the scan must not trigger constant declarations.
+        partition = Base.lookup_binding_partition(sv.world.this, gr)
+        if new_binding_typ === nothing
+            Core.eval(gr.mod, Expr(:const, gr.name))
+        else
+            ⊔ = CC.join(CC.typeinf_lattice(analyzer))
+            postdomtree = CC.construct_postdomtree(sv.cfg)
+            isconditional = !CC.postdominates(postdomtree, sv.currbb, 1)
+            assignment = get_current_toplevel_assignment(analyzer)
+            # `:const` assignment destructively overrides the binding type
+            binding_states = get_binding_states(analyzer)
+            binding_state = @lock binding_states.lock begin
+                if !isconditional
+                    new_state = AbstractBindingState(true, false, new_binding_typ; assignment)
+                elseif haskey(binding_states, partition)
+                    old_binding_state = binding_states[partition]
+                    @assert old_binding_state.isconst && isdefined(old_binding_state, :typ)
+                    newmaybeundef = old_binding_state.maybeundef & isconditional
+                    newtyp = old_binding_state.typ ⊔ new_binding_typ
+                    # each top-level statement builds its own `ToplevelAssignment`, so
+                    # `===` here means "the same statement"; keep it only then, since
+                    # no single pattern can stand for two conflicting statements
+                    same_statement = old_binding_state.assignment === assignment
+                    merged_assignment = same_statement ? assignment : nothing
+                    new_state = AbstractBindingState(true, newmaybeundef, newtyp; assignment=merged_assignment)
+                else
+                    new_state = AbstractBindingState(true, true, new_binding_typ; assignment)
+                end
+                binding_states[partition] = new_state
+                new_state
+            end
+            # HACK/FIXME Concretize `AbstractBindingState`
+            # For top-level analysis implementation reasons, we actually define this
+            # `AbstractBindingState` in the analyzed module’s namespace.
+            # This is necessary because binding resolution cannot be accurately tracked
+            # when using `export`/`using`.
+            Core.eval(gr.mod, Expr(:const, gr.name, binding_state))
+        end
+    end
+    return ret, isimported
 end
 
-function const_assignment_binding_rt_exct(interp::ToplevelAbstractAnalyzer, partition::Core.BindingPartition)
+function const_assignment_binding_rt_exct(_interp::ToplevelAbstractAnalyzer, partition::Core.BindingPartition)
     kind = CC.binding_kind(partition)
     if CC.is_some_const_binding(kind) && !CC.is_some_imported(kind)
-        return Pair{Any,Any}(Nothing, Union{})
+        return Pair{Any,Any}(Nothing, Union{}), false
     elseif CC.is_some_explicit_imported(kind)
-        return Pair{Any,Any}(Union{}, ErrorException)
+        return Pair{Any,Any}(Union{}, ErrorException), true
     elseif kind == CC.PARTITION_KIND_GLOBAL
-        return Pair{Any,Any}(Union{}, ErrorException)
+        return Pair{Any,Any}(Union{}, ErrorException), false
     end
-    return Pair{Any,Any}(Nothing, ErrorException)
+    return Pair{Any,Any}(Nothing, ErrorException), false
 end
 
 function CC.abstract_eval_partition_load(analyzer::ToplevelAbstractAnalyzer, binding::Core.Binding, partition::Core.BindingPartition)

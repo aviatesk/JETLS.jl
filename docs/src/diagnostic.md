@@ -81,15 +81,17 @@ Additionally, some editors also allow filtering diagnostics by source.
 
 JETLS uses three diagnostic sources:
 
-- **`JETLS/live`**: Diagnostics available on demand via the pull model
-  diagnostic channels
-  [`textDocument/diagnostic`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.18/specification/#textDocument_diagnostic)
-  (for open files) and
-  [`workspace/diagnostic`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.18/specification/#workspace_diagnostic)
-  (for unopened files when [`diagnostic.all_files`](@ref config/diagnostic/all_files) is enabled).
-  Most clients request these as you edit, providing real-time feedback without
-  requiring a file save. Includes syntax errors and lowering-based analysis
-  (`syntax/*`, `lowering/*`).
+- **`JETLS/live`**: Diagnostics pushed via
+  [`textDocument/publishDiagnostics`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.18/specification/#textDocument_publishDiagnostics)
+  as you edit, providing real-time feedback without requiring a file save.
+  Open files are republished whenever their contents change, and unopened
+  files (when [`diagnostic.all_files`](@ref config/diagnostic/all_files) is
+  enabled) whenever their diagnostics may have changed, such as after an edit
+  in a related file. Clients whose integration sets the
+  [`pull_diagnostics`](@ref init-options/pull_diagnostics) initialization
+  option (such as the VSCode extension) receive the diagnostics of open files
+  through `textDocument/diagnostic` instead. Includes syntax errors and
+  lowering-based analysis (`syntax/*`, `lowering/*`).
 - **`JETLS/save`**: Diagnostics published by JETLS after on-save full analysis
   via the push model channel [`textDocument/publishDiagnostics`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.18/specification/#textDocument_publishDiagnostics).
   These run full analysis including type inference and require loading your
@@ -215,6 +217,7 @@ Here is a summary table of the diagnostics explained in this section:
 | [`lowering/unsorted-import-names`](@ref diagnostic/reference/lowering/unsorted-import-names)                   | `Hint`                | `JETLS/live`  | Import/export names not sorted alphabetically          |
 | [`toplevel/error`](@ref diagnostic/reference/toplevel/error)                                                   | `Error`               | `JETLS/save`  | Errors during code loading                             |
 | [`toplevel/missing-concretization`](@ref diagnostic/reference/toplevel/missing-concretization)                 | `Error`               | `JETLS/save`  | Top-level code needs a non-concretized binding value   |
+| [`toplevel/concretization-timeout`](@ref diagnostic/reference/toplevel/concretization-timeout)                 | `Error`               | `JETLS/save`  | Concrete execution of top-level code exceeded its time limit |
 | [`toplevel/method-overwrite`](@ref diagnostic/reference/toplevel/method-overwrite)                             | `Warning`             | `JETLS/save`  | Method definitions that overwrite previous ones        |
 | [`toplevel/abstract-field`](@ref diagnostic/reference/toplevel/abstract-field)                                 | `Information`         | `JETLS/save`  | Struct fields with abstract types                      |
 | [`inference/undef-global-var`](@ref diagnostic/reference/inference/undef-global-var)                           | `Warning`             | `JETLS/save`  | References to undefined global variables               |
@@ -1125,6 +1128,86 @@ configuration to allow JETLS to evaluate the assignment during full analysis.
     pattern = "load_types()"
     path = "scripts/load-types.jl"
     ```
+
+#### [Concretization timeout (`toplevel/concretization-timeout`)](@id diagnostic/reference/toplevel/concretization-timeout)
+
+**Default severity**: `Error`
+
+Reported when concretely executing a single top-level statement exceeds the
+configured time limit (10 seconds by default). JETLS stops execution and skips
+abstract analysis of that statement. Definitions not reached before the timeout
+may be missing from subsequent analysis, leaving results incomplete. The
+diagnostic includes a stack trace when available.
+This is distinct from
+[`toplevel/missing-concretization`](@ref diagnostic/reference/toplevel/missing-concretization):
+the code was being executed, rather than a required binding value being
+unavailable.
+
+JETLS executes top-level code when needed to load method or type definitions,
+handle `@eval`, or perform in-place updates of concretized values. Configured
+[concretization patterns](@ref config/full_analysis/concretization_patterns)
+also select code for execution, and package analysis executes all top-level code.
+During script analysis, JETLS interprets the executed code and the functions it
+calls using [JuliaInterpreter.jl](https://github.com/JuliaDebug/JuliaInterpreter.jl),
+so even code that finishes quickly when run normally can exceed the limit.
+
+For example, suppose `scripts/word-lookup.jl` contains:
+
+```julia
+using Downloads
+
+const WORDS_URL =
+    "https://raw.githubusercontent.com/dwyl/english-words/master/words_alpha.txt"
+
+let # JET stopped the concrete execution of this top-level statement after 10.0 seconds (`concretization_timeout`).
+    # [...]
+    # Stacktrace:
+    #   [...]
+    #  [18] readlines(filename::String)
+    #    @ Base io.jl:727
+    # (JETLS toplevel/concretization-timeout)
+    path = Downloads.download(WORDS_URL; timeout=5.0)
+    words = Set(readlines(path))
+    global is_known_word(word::AbstractString) = word in words
+end
+```
+
+`is_known_word` captures the local `words`, so JETLS must execute the whole
+`let` block to load the definition. The download completes within the limit,
+but the stack trace shows that the time went into `readlines`: the word list
+has hundreds of thousands of lines, and reading them in the interpreter takes
+longer than 10 seconds.
+
+To run the calls in this block natively, add a
+[`full_analysis.concretization_patterns`](@ref config/full_analysis/concretization_patterns)
+entry matching the `let` block to `.JETLSConfig.toml` in the workspace root:
+
+```toml
+[[full_analysis.concretization_patterns]]
+pattern = """
+let
+    path = Downloads.download(WORDS_URL; timeout=timeout_)
+    body__
+end
+"""
+path = "scripts/word-lookup.jl"
+```
+
+`timeout_` matches any timeout value and `body__` matches the remaining
+statements, so the pattern keeps matching when those change. With this entry,
+JETLS executes the entire `let` block, including the download, and cannot
+interrupt its calls. Keep network operations bounded in the program itself, as
+the `timeout` keyword does here. Package source analysis already runs calls
+natively and needs no such pattern.
+
+If the code is slow even when run natively, raise
+[`full_analysis.concretization_timeout`](@ref config/full_analysis/concretization_timeout).
+See its configuration reference for timing rules and limitations; disabling it
+with `"inf"` risks hanging analysis indefinitely.
+
+If the code does not terminate, for example a loop that defines methods with
+`@eval` on every iteration, move the definitions out of the loop so that JETLS
+analyzes the loop instead of executing it.
 
 #### [Method overwrite (`toplevel/method-overwrite`)](@id diagnostic/reference/toplevel/method-overwrite)
 

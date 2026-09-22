@@ -578,6 +578,12 @@ end
 function JET.collect_callee_reports!(analyzer::LSAnalyzer, sv::CC.InferenceState)
     reports = JET.get_report_stash(analyzer)
     if !isempty(reports)
+        if JET.isconcretized(analyzer, sv)
+            # Concrete execution owns diagnostics for this call, but the callee cache
+            # must retain its reports for non-concretized callers.
+            empty!(reports)
+            return nothing
+        end
         vf = JET.get_virtual_frame(sv)
         for report in reports
             offset = scope_offset(report)
@@ -1476,7 +1482,11 @@ end
 function keyword_arg_types(m::Method, world::UInt)
     decls = kwarg_decl(m, world)
     isempty(decls) && return nothing
-    bf = @something Base.bodyfunction(m) return nothing
+    bf = @something (@static if :world in Base.kwarg_decl(only(methods(Base.bodyfunction)))
+        Base.bodyfunction(m; world)
+    else
+        Base.invoke_in_world(world, Base.bodyfunction, m)
+    end) return nothing
     bms = Base._methods(bf, Tuple{Vararg{Any}}, -1, world)
     bms isa Vector || return nothing
     length(bms) == 1 || return nothing
@@ -1501,7 +1511,7 @@ function report_keyword_typeerror!(
     )
     func === Core.kwcall || return false
     call.rt === Union{} || return false
-    CC.widenconst(call.exct) <: TypeError || return false
+    Union{} !== CC.widenconst(call.exct) <: TypeError || return false
     argtypes = arginfo.argtypes
     # `Core.kwcall(kwnt, f, posargs...)`
     length(argtypes) ≥ 3 || return false

@@ -18,8 +18,8 @@ end
 
 const backend = @load_preference("backend", "OpenCL")
 
-# A compile-time preference that does NOT trigger recompilation when changed
-const backend_noncached = load_preference(@__MODULE__, "backend_noncached", "OpenCL"; disable_invalidation=true)
+# A compile-time preference that always returns the default during precompilation
+const backend_noncached = load_preference(@__MODULE__, "backend_noncached", "OpenCL"; force_compiletime_default=true)
 
 # An example that helps us to prove that things are happening at compile-time
 function do_computation()

@@ -146,6 +146,7 @@ let rows = Union{Nothing, SchemaRow}[
         default_entry(:full_analysis, :debounce; comment = "number (seconds)"),
         default_entry(:full_analysis, :auto_instantiate; comment = "\"always\"/\"prompt\"/\"never\""),
         default_entry(:full_analysis, :concretization_patterns; comment = "array of tables", validate = false),
+        default_entry(:full_analysis, :concretization_timeout; comment = "positive finite number (seconds) or \"inf\""),
         nothing,
         array_header("full_analysis.concretization_patterns"; comment = "table, an entry of the concretization patterns array above"),
         example_entry("full_analysis.concretization_patterns.pattern", "\"RandomType = x_\""; comment = "Julia expression pattern, required"),

@@ -15,12 +15,6 @@ function type_definition_registration()
     )
 end
 
-# For dynamic registrations during development
-# unregister(currently_running, Unregistration(;
-#     id = TYPE_DEFINITION_REGISTRATION_ID,
-#     method = TYPE_DEFINITION_REGISTRATION_METHOD))
-# register(currently_running, type_definition_registration())
-
 function handle_TypeDefinitionRequest(
         server::Server, msg::TypeDefinitionRequest, cancel_flag::CancelFlag
     )
@@ -40,7 +34,7 @@ function handle_TypeDefinitionRequest(
         find_type_definition(server, uri, fi, origin_position),
         return send(server, TypeDefinitionResponse(; id = msg.id, result = null)))
     if supports(server, :textDocument, :typeDefinition, :linkSupport)
-        origin_selection_range, _ =
+        _, origin_selection_range =
             unadjust_range(state, uri, jsobj_to_range(origin_node, fi))
         result = LocationLink[LocationLink(loc, origin_selection_range) for loc in locations]
     else

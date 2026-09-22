@@ -15,41 +15,43 @@ export load_preference, @load_preference,
 include("utils.jl")
 
 """
-    load_preference(uuid_or_module_or_name, key, default = nothing; disable_invalidation = false)
+    load_preference(uuid_or_module_or_name, key, default = nothing; force_compiletime_default = false)
 
 Load a particular preference from the `Preferences.toml` file, shallowly merging keys
 as it walks the hierarchy of load paths, loading preferences from all environments that
 list the given UUID as a direct dependency.
 
-If `disable_invalidation` is `false` (the default) and Julia is currently precompiling,
-the preference is recorded as a compile-time dependency so that the precompiled cache is
-automatically invalidated when the preference changes.  Set `disable_invalidation` to
-`true` to opt out of this: the preference will still be loaded during precompilation, but
-changes to it will **not** cause the package to be recompiled. Be careful when setting
-this. If a preference is somehow cached in the module (e.g. as a global
-variable) changing it will **not** invalidate the precompiled cache.
+If `force_compiletime_default` is `false` (the default) and Julia is currently
+precompiling, the preference is recorded as a compile-time dependency so that the
+precompiled cache is automatically invalidated when the preference changes.  Set
+`force_compiletime_default` to `true` to always return `default` during precompilation
+instead of the actual preference value.  This avoids recording a compile-time dependency
+and is useful for preferences that are only needed at runtime (e.g. paths or usernames).
 
 Most users should use the `@load_preference` convenience macro which auto-determines the
 calling `Module`.
 """
 function load_preference end
-function load_preference(uuid::UUID, key::String, default = nothing; disable_invalidation::Bool = false)
+function load_preference(uuid::UUID, key::String, default = nothing; force_compiletime_default::Bool = false)
+    if force_compiletime_default && currently_compiling()
+        return default
+    end
     # Re-use definition in `base/loading.jl` so as to not repeat code.
     d = Base.get_preferences(uuid)
-    if !disable_invalidation && currently_compiling()
+    if currently_compiling()
         Base.record_compiletime_preference(uuid, key)
     end
     return drop_clears(get(d, key, default))
 end
-function load_preference(m::Module, key::String, default = nothing; disable_invalidation::Bool = false)
-    return load_preference(get_uuid(m), key, default; disable_invalidation)
+function load_preference(m::Module, key::String, default = nothing; force_compiletime_default::Bool = false)
+    return load_preference(get_uuid(m), key, default; force_compiletime_default)
 end
-function load_preference(name::String, key::String, default = nothing; disable_invalidation::Bool = false)
+function load_preference(name::String, key::String, default = nothing; force_compiletime_default::Bool = false)
     uuid = get_uuid(name)
     if uuid === nothing
         package_lookup_error(name)
     end
-    return load_preference(uuid, key, default; disable_invalidation)
+    return load_preference(uuid, key, default; force_compiletime_default)
 end
 
 """
@@ -57,9 +59,10 @@ end
 
 Convenience macro to call `load_preference()` for the current package.
 
-To opt out of compile-time preference tracking, use the function form directly:
+To always return the default value during precompilation (avoiding compile-time
+dependency tracking), use the function form directly:
 
-    load_preference(@__MODULE__, key, default; disable_invalidation = true)
+    load_preference(@__MODULE__, key, default; force_compiletime_default = true)
 """
 macro load_preference(key, default = nothing)
     return quote
@@ -68,26 +71,26 @@ macro load_preference(key, default = nothing)
 end
 
 """
-    has_preference(uuid_or_module_or_name, key; disable_invalidation = false)
+    has_preference(uuid_or_module_or_name, key; force_compiletime_default = false)
 
 Return `true` if the particular preference is found, and `false` otherwise.
 
-See the `load_preference` docstring for details on the `disable_invalidation` keyword.
+See the `load_preference` docstring for details on the `force_compiletime_default` keyword.
 """
 function has_preference end
-function has_preference(uuid::UUID, key::String; disable_invalidation::Bool = false)
-    value = load_preference(uuid, key, nothing; disable_invalidation)
+function has_preference(uuid::UUID, key::String; force_compiletime_default::Bool = false)
+    value = load_preference(uuid, key, nothing; force_compiletime_default)
     return !(value isa Nothing)
 end
-function has_preference(m::Module, key::String; disable_invalidation::Bool = false)
-    return has_preference(get_uuid(m), key; disable_invalidation)
+function has_preference(m::Module, key::String; force_compiletime_default::Bool = false)
+    return has_preference(get_uuid(m), key; force_compiletime_default)
 end
-function has_preference(name::String, key::String; disable_invalidation::Bool = false)
+function has_preference(name::String, key::String; force_compiletime_default::Bool = false)
     uuid = get_uuid(name)
     if uuid === nothing
         package_lookup_error(name)
     end
-    return has_preference(uuid, key; disable_invalidation)
+    return has_preference(uuid, key; force_compiletime_default)
 end
 
 """

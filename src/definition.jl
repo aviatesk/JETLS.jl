@@ -15,12 +15,6 @@ function definition_registration()
     )
 end
 
-# For dynamic registrations during development
-# unregister(currently_running, Unregistration(;
-#     id = DEFINITION_REGISTRATION_ID,
-#     method = DEFINITION_REGISTRATION_METHOD))
-# register(currently_running, definition_registration())
-
 function is_location_unknown(m::Method)
     _, line = Base.updated_methodloc(m)
     line ≤ 0 && return true
@@ -113,7 +107,7 @@ function handle_DefinitionRequest(
         return send(server, DefinitionResponse(; id = msg.id, result = null))
     end
     if supports(server, :textDocument, :definition, :linkSupport)
-        origin_selection_range, _ =
+        _, origin_selection_range =
             unadjust_range(state, uri, jsobj_to_range(origin_node, fi))
         result = LocationLink[LocationLink(loc, origin_selection_range) for loc in locations]
     else
@@ -268,7 +262,7 @@ function find_binding_definitions(
     state = server.state
     locations = Location[]
     for definition in definitions
-        range, def_uri = unadjust_range(state, uri, jsobj_to_range(definition, fi))
+        def_uri, range = unadjust_range(state, uri, jsobj_to_range(definition, fi))
         push!(locations, Location(; uri = def_uri, range))
     end
     return locations, binding
@@ -280,7 +274,7 @@ function find_global_binding_definitions(
     locations = Location[]
     state = server.state
     uris_to_search = collect_search_uris(server, uri)
-    seen_locations = Set{Tuple{URI,Range}}()
+    seen_locations = Set{Location}()
     for search_uri in uris_to_search
         fi = @something begin
             get_file_info(state, search_uri)
@@ -289,14 +283,12 @@ function find_global_binding_definitions(
         end continue
         for occurrence in find_global_binding_occurrences!(state, search_uri, fi, binfo)
             if is_definition_occurrence(occurrence)
-                range, adjusted_uri = unadjust_range(state, search_uri, jsobj_to_range(occurrence.tree, fi))
-                push!(seen_locations, (adjusted_uri, range))
+                adjusted_uri, range = unadjust_range(state, search_uri, jsobj_to_range(occurrence.tree, fi))
+                push!(seen_locations, Location(; uri = adjusted_uri, range))
             end
         end
     end
-    for (loc_uri, range) in seen_locations
-        push!(locations, Location(; uri = loc_uri, range))
-    end
+    append!(locations, seen_locations)
     return locations
 end
 

@@ -48,6 +48,11 @@ function handle_workspace_configuration_response(
     else
         show_error_message(server, "Unexpected response from workspace/configuration request")
     end
+    # Complete initialization with existing settings so a failed or empty response
+    # does not keep later configuration change notifications suppressed.
+    if caller.handler.on_init && !load(server.state.config_manager).initialized
+        handle_lsp_config_change!(server, ConfigChangeTracker(), caller.handler.source, true)
+    end
 end
 
 function load_lsp_config!(server::Server, source::AbstractString; on_init::Bool=false)

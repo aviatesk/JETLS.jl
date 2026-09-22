@@ -6,6 +6,8 @@
 
 Creates a Julia module containing typed constants that correspond to TypeScript `namespace`
 definitions from the LSP specification.
+Constant values are converted to the declared type using Julia's typed global assignment
+semantics. Values that cannot be converted cause an error.
 
 # Type references
 
@@ -53,6 +55,9 @@ macro namespace(exs...)
     modex = Expr(:module, false, Name, modbody)
     push!(toplevelblk.args, modex)
     push!(toplevelblk.args, Expr(:macrocall, GlobalRef(Base, Symbol("@__doc__")), __source__, Name))
+    thismodname = nameof(__module__)
+    push!(modbody.args, :(using ..$thismodname: $Type))
+    push!(modbody.args, :(const Ty = $Type))
     curline = __source__
     for def in defs.args
         if def isa LineNumberNode
@@ -75,14 +80,11 @@ macro namespace(exs...)
         Meta.isexpr(def, :(=)) || error("Invalid `@namespace` syntax: ", def)
         name, val = def.args
         name isa Symbol || error("Invalid `@namespace` syntax: ", def)
-        push!(modbody.args, :(const $name = $val))
+        push!(modbody.args, :(const $name::Ty = $val))
         if doc !== nothing
             push!(modbody.args, Expr(:macrocall, GlobalRef(Core, Symbol("@doc")), curline, doc, name))
         end
     end
-    thismodname = nameof(__module__)
-    push!(modbody.args, :(using ..$thismodname: $Type))
-    push!(modbody.args, :(const Ty = $Type))
 
     push!(toplevelblk.args, :(push!($(GlobalRef(@__MODULE__, :exports)), $(QuoteNode(Name)))))
     push!(toplevelblk.args, :(return $Name))

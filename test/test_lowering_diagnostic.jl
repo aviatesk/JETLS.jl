@@ -810,21 +810,14 @@ end
         """
         withscript(script) do script_path
             uri = filepath2uri(script_path)
-            withserver() do (; writereadmsg, id_counter, server)
+            withserver() do (; readmsg, server)
                 JETLS.cache_file_info!(server, uri, 1, script)
                 JETLS.cache_saved_file_info!(server.state, uri, script)
                 JETLS.request_analysis!(server, uri, #=invalidate=#false; wait=true, notify_diagnostics=false)
 
-                id = id_counter[] += 1
-                (; raw_res) = writereadmsg(DocumentDiagnosticRequest(;
-                    id,
-                    params = DocumentDiagnosticParams(;
-                        textDocument = TextDocumentIdentifier(; uri)
-                    )))
-                @test raw_res isa DocumentDiagnosticResponse
-                @test raw_res.result isa RelatedFullDocumentDiagnosticReport
-                @test length(raw_res.result.items) == 1
-                diagnostic = only(raw_res.result.items)
+                params = scan_live_diagnostics!(server, readmsg)[uri]
+                @test length(params.diagnostics) == 1
+                diagnostic = only(params.diagnostics)
                 @test diagnostic.message == "Unused local binding `x`"
                 @test diagnostic.range.start.line == 1
                 @test diagnostic.range.var"end".line == 1
@@ -2280,20 +2273,13 @@ end
         """
         withscript(script) do script_path
             uri = filepath2uri(script_path)
-            withserver() do (; writereadmsg, id_counter, server)
+            withserver() do (; readmsg, server)
                 JETLS.cache_file_info!(server, uri, 1, script)
                 JETLS.cache_saved_file_info!(server.state, uri, script)
                 JETLS.request_analysis!(server, uri, #=invalidate=#false; wait=true, notify_diagnostics=false)
 
-                id = id_counter[] += 1
-                (; raw_res) = writereadmsg(DocumentDiagnosticRequest(;
-                    id,
-                    params = DocumentDiagnosticParams(;
-                        textDocument = TextDocumentIdentifier(; uri)
-                    )))
-                @test raw_res isa DocumentDiagnosticResponse
-                @test raw_res.result isa RelatedFullDocumentDiagnosticReport
-                unused_import_diags = filter(raw_res.result.items) do d
+                params = scan_live_diagnostics!(server, readmsg)[uri]
+                unused_import_diags = filter(params.diagnostics) do d
                     d.code == JETLS.LOWERING_UNUSED_IMPORT_CODE
                 end
                 @test length(unused_import_diags) == 1

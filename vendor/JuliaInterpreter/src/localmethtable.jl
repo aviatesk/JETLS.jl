@@ -11,13 +11,31 @@ function get_call_framecode(fargs::Vector{Any}, parentframe::FrameCode, idx::Int
                             enter_generated::Bool=false,
                             world::UInt=default_world(),
                             method_table::Union{Nothing,MethodTable}=nothing)
+    result = get_call_frameinstance(fargs, parentframe, idx; enter_generated, world, method_table)
+    if result isa FrameInstance
+        return result.framecode, result.sparam_vals
+    elseif result isa Compiled
+        return result, nothing
+    else
+        return (result::Some{Any}).value, nothing
+    end
+end
+
+# Resolve a call as a `FrameInstance`, `Compiled()`, or `Some{Any}(value)` for an already
+# executed builtin. Unlike [`get_call_framecode`](@ref), a cache hit returns the stored
+# instance directly, without allocating a `(framecode, sparams)` tuple.
+function get_call_frameinstance(
+        fargs::Vector{Any}, parentframe::FrameCode, idx::Int;
+        enter_generated::Bool=false,
+        world::UInt=default_world(),
+        method_table::Union{Nothing,MethodTable}=nothing
+    )
     nargs = length(fargs)  # includes f as the first "argument"
     # Determine whether we can look up the appropriate framecode in the local method table
     if isassigned(parentframe.methodtables, idx)  # if this is the first call, this may not yet be set
         # The case where `methodtables[idx]` is a `Compiled` has already been handled in `bypass_builtins`
         d_meth = d_meth1 = parentframe.methodtables[idx]::DispatchableMethod
-        local d_methprev
-        depth = 1
+        d_methprev = nothing
         while true
             # Reuse a cached dispatch only if it was resolved in the current world and with the same
             # method table. A world advance can change which method applies (e.g. a newly defined,
@@ -47,20 +65,14 @@ function get_call_framecode(fargs::Vector{Any}, parentframe::FrameCode, idx::Int
                 if matches
                     # Rearrange the list to place this method first
                     # (if we're in a loop, we'll likely match this one again on the next iteration)
-                    if depth > 1
+                    if d_methprev !== nothing
                         parentframe.methodtables[idx] = d_meth
                         d_methprev.next = d_meth.next
                         d_meth.next = d_meth1
                     end
-                    if fi isa Compiled
-                        return Compiled(), nothing
-                    else
-                        fi = fi::FrameInstance
-                        return fi.framecode, fi.sparam_vals
-                    end
+                    return fi
                 end
             end
-            depth += 1
             d_methprev = d_meth
             d_meth = d_meth.next
             d_meth === nothing && break
@@ -71,14 +83,13 @@ function get_call_framecode(fargs::Vector{Any}, parentframe::FrameCode, idx::Int
     # cached entry) and need to look it up by dispatch.
     fargs[1] = f = to_function(fargs[1], world)
     ret = prepare_call(f, fargs; enter_generated, world, method_table)
-    ret === nothing && return invoke_in_world(world, f, fargs[2:end]...), nothing
-    is_compiled = isa(ret[1], Compiled)
-    local framecode, env
+    ret === nothing && return Some{Any}(invoke_in_world(world, f, fargs[2:end]...))
+    is_compiled = ret isa Tuple{Compiled,Vararg{Any}}
     if is_compiled
         fi = Compiled()
         argtypes = ret[2]
     else
-        framecode, args, env, argtypes = ret
+        framecode, _, env, argtypes = ret
         fi = FrameInstance(framecode, env, is_generated(scopeof(framecode::FrameCode)::Method) && enter_generated)
     end
     # Store the result of the method lookup in the local method table, stamped with the world in
@@ -109,11 +120,7 @@ function get_call_framecode(fargs::Vector{Any}, parentframe::FrameCode, idx::Int
     else
         parentframe.methodtables[idx] = DispatchableMethod(nothing, fi, argtypes, world, method_table)
     end
-    if is_compiled
-        return Compiled(), nothing
-    else
-        return framecode, env
-    end
+    return fi
 end
 
 # Return the cached entry that stores the same kind of dispatch as `fi`: the (concrete) signature

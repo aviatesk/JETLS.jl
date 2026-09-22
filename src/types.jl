@@ -222,6 +222,18 @@ struct NotebookInfo
 end
 @define_override_constructor NotebookInfo
 
+# Captured on the document-sync worker before any later document edits are applied.
+struct DocumentSnapshot
+    fi::FileInfo
+    cache_uri::URI
+    notebook::Union{Nothing,ConcatenatedNotebook}
+end
+
+struct SnapshotRequestMessage
+    msg::Any
+    snapshot::Union{Nothing,DocumentSnapshot}
+end
+
 abstract type AbstractCancelFlag end
 function is_cancelled end
 
@@ -339,9 +351,12 @@ the whole run: it is not a live view of the latest analysis cache. This keeps
 intermediate and final results consistent even if the run itself updates the
 cache before completion.
 """
-struct AnalysisExecution
-    request::AnalysisRequest
-    prev_result::Union{Nothing,AnalysisResult}
+mutable struct AnalysisExecution
+    const request::AnalysisRequest
+    const prev_result::Union{Nothing,AnalysisResult}
+    context_refreshed::Bool
+    AnalysisExecution(request::AnalysisRequest, prev_result::Union{Nothing,AnalysisResult}) =
+        new(request, prev_result, false)
 end
 
 abstract type AbstractSignatureAnalysisJob end
@@ -527,6 +542,7 @@ merge_key_value(pattern::ConcretizationPattern) = (pattern.path, pattern.__patte
     debounce::Maybe{Float64} = nothing
     auto_instantiate::Maybe{String} = nothing
     concretization_patterns::Maybe{Vector{ConcretizationPattern}} = nothing
+    concretization_timeout::Maybe{Float64} = nothing
 end
 @define_eq_overloads FullAnalysisConfig
 
@@ -590,6 +606,7 @@ const LOWERING_INACTIVE_CODE = "lowering/inactive-code"
 const LOWERING_AMBIGUOUS_SOFT_SCOPE_CODE = "lowering/ambiguous-soft-scope"
 const TOPLEVEL_ERROR_CODE = "toplevel/error"
 const TOPLEVEL_MISSING_CONCRETIZATION_CODE = "toplevel/missing-concretization"
+const TOPLEVEL_CONCRETIZATION_TIMEOUT_CODE = "toplevel/concretization-timeout"
 const TOPLEVEL_METHOD_OVERWRITE_CODE = "toplevel/method-overwrite"
 const TOPLEVEL_ABSTRACT_FIELD_CODE = "toplevel/abstract-field"
 const INFERENCE_UNDEF_GLOBAL_VAR_CODE = "inference/undef-global-var"
@@ -623,6 +640,7 @@ const ALL_DIAGNOSTIC_CODES = Set{String}(String[
     LOWERING_AMBIGUOUS_SOFT_SCOPE_CODE,
     TOPLEVEL_ERROR_CODE,
     TOPLEVEL_MISSING_CONCRETIZATION_CODE,
+    TOPLEVEL_CONCRETIZATION_TIMEOUT_CODE,
     TOPLEVEL_METHOD_OVERWRITE_CODE,
     TOPLEVEL_ABSTRACT_FIELD_CODE,
     INFERENCE_UNDEF_GLOBAL_VAR_CODE,
@@ -678,6 +696,7 @@ merge_key_value(analysis_override::AnalysisOverride) = analysis_override.path
     analysis_overrides::Maybe{Vector{AnalysisOverride}} = nothing
     reuse_native_inference::Maybe{Bool} = nothing
     configuration_section::Maybe{String} = nothing
+    pull_diagnostics::Maybe{Bool} = nothing
 end
 @define_eq_overloads InitOptions
 function Base.show(io::IO, init_options::InitOptions)
@@ -690,10 +709,13 @@ function Base.show(io::IO, init_options::InitOptions)
     configuration_section = init_options.configuration_section
     configuration_section === nothing ||
         print(io, " configuration_section=", repr(configuration_section))
+    pull_diagnostics = init_options.pull_diagnostics
+    pull_diagnostics === nothing || print(io, " pull_diagnostics=", pull_diagnostics)
     print(io, ")")
 end
 const DEFAULT_INIT_OPTIONS = InitOptions(;
-    analysis_overrides=AnalysisOverride[], reuse_native_inference=false)
+    analysis_overrides=AnalysisOverride[], reuse_native_inference=false,
+    pull_diagnostics=false)
 
 @kwdef struct LaTeXEmojiConfig <: ConfigSection
     strip_prefix::Maybe{Union{Missing,Bool}} = nothing # missing is used as sentinel for default setting value
@@ -749,7 +771,8 @@ const DEFAULT_CONFIG = JETLSConfig(;
     full_analysis = FullAnalysisConfig(
         @static(JETLS_TEST_MODE ? 0.0 : 1.0),
         @static(JETLS_TEST_MODE ? AUTO_INSTANTIATE_ALWAYS : AUTO_INSTANTIATE_PROMPT),
-        ConcretizationPattern[]),
+        ConcretizationPattern[],
+        JET.DEFAULT_CONCRETIZATION_TIMEOUT),
     testrunner = TestRunnerConfig(@static Sys.iswindows() ? "testrunner.bat" : "testrunner"),
     formatter = "Runic",
     completion = CompletionConfig(LaTeXEmojiConfig(missing)),
@@ -904,7 +927,6 @@ struct PropertyCompletionResolverInfo <: AbstractCompletionResolverInfo
 end
 
 # Type aliases for document-synchronization caches using `SWContainer` (sequential-only updates)
-const FileCache = SWContainer{Base.PersistentDict{URI,FileInfo}, SWStats}
 const SavedFileCache = SWContainer{Base.PersistentDict{URI,SavedFileInfo}, SWStats}
 const RejectedTextDocuments = SWContainer{Base.PersistentDict{URI,Nothing}, SWStats}
 const ConfigDocumentCache = SWContainer{Base.PersistentDict{URI,ConfigDocumentInfo}, SWStats}
@@ -918,6 +940,8 @@ const CurrentlyRegistered = CASContainer{Set{Registered}, CASStats}
 const CompletionResolverInfo = CASContainer{Union{Nothing,AbstractCompletionResolverInfo}, CASStats}
 
 # Type aliases for concurrent updates using LWContainer
+# Full-analysis invalidation also replaces FileInfo, outside the document-sync worker.
+const FileCache = LWContainer{Base.PersistentDict{URI,FileInfo}, LWStats}
 const DocumentSymbolCacheData = Base.PersistentDict{URI,Vector{DocumentSymbol}}
 const DocumentSymbolCache = LWContainer{DocumentSymbolCacheData, LWStats}
 const BindingOccurrencesCacheData = Base.PersistentDict{URI,BindingOccurrencesCacheEntry}
@@ -975,6 +999,44 @@ struct HandledToken
     id::MessageId
 end
 
+"""
+    WorkspaceLiveDiagnostics
+
+`JETLS/live` diagnostics last pushed for a workspace file, keyed by
+`compute_live_diagnostics_fingerprint` so a rescan can skip files whose inputs did not
+change, and can skip the publish when a recomputation reproduces the same diagnostics.
+`version` is the document version the diagnostics were computed from when the file is
+open, `nothing` for unopened files. `diagnostics` are raw: `notify_diagnostics!` applies
+the diagnostic configuration when publishing.
+"""
+struct WorkspaceLiveDiagnostics
+    fingerprint::String
+    version::Union{Nothing,Int}
+    diagnostics::Vector{Diagnostic}
+end
+const WorkspaceLiveDiagnosticsData = Base.PersistentDict{URI,WorkspaceLiveDiagnostics}
+const WorkspaceLiveDiagnosticsCache = LWContainer{WorkspaceLiveDiagnosticsData, LWStats}
+
+"""
+    WorkspaceDiagnosticsWorker
+
+Background worker that pushes `JETLS/live` diagnostics via
+`textDocument/publishDiagnostics`. `schedule_workspace_diagnostics!` sets `wakeup`
+whenever those diagnostics may have changed and cancels `cancel_flag`, which is created
+anew for each scan, so that a scan started on stale inputs is abandoned and redone.
+`shutdown_flag` is only cancelled to stop the worker.
+"""
+mutable struct WorkspaceDiagnosticsWorker
+    const wakeup::Base.Event
+    const shutdown_flag::CancelFlag
+    @atomic cancel_flag::CancelFlag
+    const published::WorkspaceLiveDiagnosticsCache
+    const worker_task::Base.RefValue{Task}
+    WorkspaceDiagnosticsWorker() = new(
+        Base.Event(#=autoreset=#true), CancelFlag(false), CancelFlag(false),
+        WorkspaceLiveDiagnosticsCache(), Ref{Task}())
+end
+
 mutable struct ServerState
     const file_cache::FileCache # syntactic analysis cache (synced with `textDocument/didChange`)
     const saved_file_cache::SavedFileCache # syntactic analysis cache (synced with `textDocument/didSave`)
@@ -1001,6 +1063,7 @@ mutable struct ServerState
     const extra_diagnostics::ExtraDiagnostics
     const currently_handled::CurrentlyHandled
     const handled_history::HandledHistory
+    const workspace_diagnostics_worker::WorkspaceDiagnosticsWorker
     const currently_requested::CurrentlyRequested
     const currently_registered::CurrentlyRegistered
     const config_manager::ConfigManager
@@ -1035,6 +1098,7 @@ mutable struct ServerState
             #=extra_diagnostics=# ExtraDiagnostics(),
             #=currently_handled=# CurrentlyHandled(),
             #=handled_history=# HandledHistory(128),
+            #=workspace_diagnostics_worker=# WorkspaceDiagnosticsWorker(),
             #=currently_requested=# CurrentlyRequested(),
             #=currently_registered=# CurrentlyRegistered(),
             #=config_manager=# ConfigManager(),

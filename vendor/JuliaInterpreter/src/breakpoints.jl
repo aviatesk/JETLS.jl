@@ -73,15 +73,8 @@ end
 
 function add_breakpoint_if_match!(framecode::FrameCode, bp::BreakpointSignature)
     if framecode_matches_breakpoint(framecode, bp)
-        scope = framecode.scope
-        matching_file = if scope isa Method
-            scope.file
-        else
-            # TODO: make more precise?
-            first(framecode.src.linetable).file
-        end
-        stmtidxs = bp.line === 0 ? [1] : statementnumbers(framecode, bp.line, matching_file::Symbol)
-        stmtidxs === nothing && return
+        matching_file = (framecode.scope::Method).file
+        stmtidxs = bp.line === 0 ? Int[1] : statementnumbers(framecode, bp.line, matching_file)
         breakpoint!(framecode, stmtidxs, bp.condition, bp.enabled[])
         foreach(stmtidx -> push!(bp.instances, BreakpointRef(framecode, stmtidx)), stmtidxs)
         return
@@ -228,8 +221,7 @@ function add_breakpoint_if_match!(framecode::FrameCode, bp::BreakpointFileLocati
     end
     framecode_contains_file || return nothing
 
-    stmtidxs = bp.line === 0 ? [1] : statementnumbers(framecode, bp.line, matching_file::Symbol)
-    stmtidxs === nothing && return
+    stmtidxs = bp.line === 0 ? Int[1] : statementnumbers(framecode, bp.line, matching_file::Symbol)
     breakpoint!(framecode, stmtidxs, bp.condition, bp.enabled[])
     foreach(stmtidx -> push!(bp.instances, BreakpointRef(framecode, stmtidx)), stmtidxs)
     return

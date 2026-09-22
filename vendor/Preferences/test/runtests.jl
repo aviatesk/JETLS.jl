@@ -114,8 +114,8 @@ up_path = joinpath(@__DIR__, "UsesPreferences")
         output = activate_and_run(up_path, cuda_test_didnt_precompile; env=Dict("JULIA_DEBUG" => "loading"))
         @test !did_precompile(output)
 
-        # Test that changing a preference loaded with `disable_invalidation=true` does not
-        # trigger recompilation, even though it was read at module-load time.
+        # Test that changing a preference loaded with `force_compiletime_default=true` does
+        # not trigger recompilation, because the default value was used during precompilation.
         activate_and_run(up_path, """
             using Preferences
             using Base: UUID
@@ -127,7 +127,7 @@ up_path = joinpath(@__DIR__, "UsesPreferences")
         isdefined(Base, :isprecompiled) && @test Base.isprecompiled(Base.identify_package("UsesPreferences"))
         using UsesPreferences
         isdefined(Base, :isprecompiled) && @test Base.isprecompiled(Base.identify_package("UsesPreferences"))
-        @test UsesPreferences.backend_noncached == "OpenCL"  # stale cached value
+        @test UsesPreferences.backend_noncached == "OpenCL"  # default was used at compile time
         """
         output = activate_and_run(up_path, noncached_test; env=Dict("JULIA_DEBUG" => "loading"))
         @test !did_precompile(output)

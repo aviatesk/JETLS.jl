@@ -1,4 +1,4 @@
-using CodeTracking, JuliaInterpreter, Test, InteractiveUtils
+using CodeTracking, InteractiveUtils, JuliaInterpreter, Test
 using JuliaInterpreter: enter_call, enter_call_expr, get_return
 using Base.Meta: isexpr
 include("utils.jl")
@@ -9,7 +9,7 @@ function step_through_command(fr::Frame, cmd::Symbol)
     while true
         ret = JuliaInterpreter.debug_command(fr, cmd)
         ret == nothing && break
-        fr, pc = ret
+        fr, _ = ret
     end
     @test fr.callee === nothing
     @test fr.caller === nothing
@@ -188,7 +188,7 @@ end
             # issue #161: the generator must see the argument *types*, not their values
             cvars = JuliaInterpreter.locals(cframe)
             @test filter(v -> v.name === :T, cvars)[1].value === Int
-            cframe, pc = debug_command(cframe, :finish)
+            cframe, _ = debug_command(cframe, :finish)
             @test JuliaInterpreter.scopeof(cframe).name === :callgenerated
             # Now finish the regular function
             @test debug_command(cframe, :finish) === nothing
@@ -199,13 +199,13 @@ end
         end
 
         # Parametric generated function (see #157)
-        let frame = fr = JuliaInterpreter.enter_call(callgeneratedparams)
+        let fr = JuliaInterpreter.enter_call(callgeneratedparams)
             while fr.pc < JuliaInterpreter.nstatements(fr.framecode) - 1
-                fr, pc = debug_command(fr, :se)
+                fr, _ = debug_command(fr, :se)
             end
-            fr, pc = debug_command(fr, :sg)
+            fr, _ = debug_command(fr, :sg)
             @test JuliaInterpreter.scopeof(fr).name === :generatedparams
-            fr, pc = debug_command(fr, :finish)
+            fr, _ = debug_command(fr, :finish)
             @test debug_command(fr, :finish) === nothing
             @test JuliaInterpreter.get_return(fr) == (Int, 2)
         end
@@ -311,14 +311,14 @@ end
             while pc <= JuliaInterpreter.nstatements(fr.framecode) - 2
                 fr, pc = debug_command(fr, :se)
             end
-            fr, pc = debug_command(frame, :si)
+            debug_command(frame, :si)
             @test stacklength(frame) == 2
             frame = fr = JuliaInterpreter.enter_call(f)
             pc = fr.pc
             while pc <= JuliaInterpreter.nstatements(fr.framecode) - 2
                 fr, pc = debug_command(fr, :se)
             end
-            fr, pc = debug_command(frame, :s)
+            fr, _ = debug_command(frame, :s)
             @test stacklength(frame) > 2
             push!(scopes, JuliaInterpreter.scopeof(fr))
         end
@@ -430,12 +430,12 @@ end
         try
             break_on(:error)
             fr = JuliaInterpreter.enter_call(f_outer)
-            fr, pc = debug_command(fr, :finish)
+            fr, _ = debug_command(fr, :finish)
             @test fr.framecode.scope.name === :error
 
             fundef() = undef_func()
             frame = JuliaInterpreter.enter_call(fundef)
-            fr, pc = debug_command(frame, :s)
+            _, pc = debug_command(frame, :s)
             @test isa(pc, BreakpointRef)
             @test pc.err isa UndefVarError
         finally
@@ -615,7 +615,7 @@ end
         end
         try
             break_on(:error)
-            frame2, pc = @interpret f()
+            frame2, _ = @interpret f()
             @test leaf(frame2).framecode.scope === leaf(frame1).framecode.scope
         finally
             break_off(:error)
@@ -681,6 +681,80 @@ end
     frame, pc = JuliaInterpreter.debug_command(frame, :finish)
     frame, pc = JuliaInterpreter.debug_command(frame, :sl)
     @test JuliaInterpreter.scopeof(frame).name === :h
+
+    rhs(x) = x + 1
+    function indexed_assignment(A, x)
+        A[1] = rhs(x)
+        return A
+    end
+    frame = JuliaInterpreter.enter_call(indexed_assignment, [0], 2)
+    frame, pc = JuliaInterpreter.debug_command(frame, :sl)
+    @test JuliaInterpreter.scopeof(frame).name === :rhs
+end
+
+kwcallee_fuzz(a; b=1, c=2) = a + b + c
+kwcaller_fuzz(a) = kwcallee_fuzz(a; b=10)
+entry_inner_fuzz(x) = x + 1
+entry_middle_fuzz(x) = entry_inner_fuzz(x) + 1
+entry_outer_fuzz(x) = entry_middle_fuzz(x) + 1
+
+@testset "step-in skips keyword preparation" begin
+    frame = JuliaInterpreter.enter_call(kwcaller_fuzz, 1)
+    frame, pc = JuliaInterpreter.debug_command(frame, :s)
+    name = string(JuliaInterpreter.scopeof(frame).name)
+    @test occursin("kwcallee_fuzz", name)
+    @test JuliaInterpreter.moduleof(frame) === @__MODULE__
+end
+
+@testset "step-in starts the callee at an executable call" begin
+    frame = JuliaInterpreter.enter_call(entry_outer_fuzz, 1)
+    frame, pc = JuliaInterpreter.debug_command(frame, :s)
+    @test JuliaInterpreter.scopeof(frame).name === :entry_middle_fuzz
+    @test JuliaInterpreter.is_call_or_return(JuliaInterpreter.pc_expr(frame))
+end
+
+function catch_body_fuzz(x)
+    y = 0
+    try
+        y = sqrt(x)
+    catch
+        y = -1
+    finally
+        y = y + 1
+    end
+    return y
+end
+
+function uncaught_thrower_fuzz(x)
+    y = x + 1
+    z = sqrt(-1.0)
+    return y + z
+end
+
+@testset "stepping over a caught error stops in the catch body" begin
+    frame = JuliaInterpreter.enter_call(catch_body_fuzz, -4.0)
+    frame, pc = JuliaInterpreter.debug_command(frame, :n) # onto `y = sqrt(x)`
+    seen_lines = Int[]
+    while true
+        ret = JuliaInterpreter.debug_command(frame, :n)
+        ret === nothing && break
+        frame, pc = ret
+        pc isa BreakpointRef && break
+        push!(seen_lines, JuliaInterpreter.linenumber(frame))
+    end
+    body_start = first(methods(catch_body_fuzz)).line
+    # the catch body (`y = -1`, 5 lines below the signature) must be displayed
+    @test (body_start + 5) in seen_lines
+end
+
+@testset "uncaught errors leave the frame tree intact" begin
+    frame = JuliaInterpreter.enter_call(uncaught_thrower_fuzz, 1)
+    frame, pc = JuliaInterpreter.debug_command(frame, :n)
+    @test_throws DomainError JuliaInterpreter.debug_command(frame, :n)
+    # the frame is still linked and inspectable: the session can continue
+    @test JuliaInterpreter.leaf(JuliaInterpreter.root(frame)) !== nothing
+    @test any(v -> v.name === :y && v.value == 2, JuliaInterpreter.locals(frame))
+    @test JuliaInterpreter.pc_expr(frame) !== nothing
 end
 
 @testset "step until return" begin

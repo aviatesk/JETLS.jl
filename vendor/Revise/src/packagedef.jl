@@ -179,6 +179,27 @@ function nonnotifying_path(path::AbstractString)
     return fstype == "9p" || fstype == "drvfs"
 end
 
+# Matches the default polling interval of `Base.poll_file`.
+const saved_state_poll_interval = 5.007
+
+"""
+    poll_from_saved_state(file, prev_ctime)
+
+Block until `file`'s ctime differs from `prev_ctime`, the value recorded by
+`init_watching`.
+
+This exists because `poll_file` samples its own baseline when the poll starts: a change
+that landed between `init_watching` and the first poll becomes the baseline, and the poll
+then waits for the *next* change. Seeding the comparison with the recorded ctime leaves no
+window in which a change can be adopted as the starting state.
+"""
+function poll_from_saved_state(file, prev_ctime)
+    while ctime(file) == prev_ctime
+        sleep(saved_state_poll_interval)
+    end
+    return nothing
+end
+
 function wait_changed(file)
     poll = polling_files[] || nonnotifying_path(file)
     try
@@ -490,12 +511,24 @@ const silence_pkgs = Set{String}()
 # so that revising a method Revise itself calls (e.g. via `track(Base)`) cannot invalidate
 # Revise's machinery mid-operation (issue #552). User code is still evaluated at the latest
 # world: JuliaInterpreter threads the latest world through each `Frame`. `worldage[]` is
-# `nothing` until `__init__` runs, in which case `frozen` degrades to a plain call.
+# `nothing` until `__init__` runs, in which case `frozen` degrades to `invokelatest`.
+#
+# Every entry point that user code or Julia itself calls in the latest world (`revise`,
+# `track`, `includet`, `entr`, `errors`, `retry`, `add_callback`, `remove_callback`,
+# `add_require`, `watch_package_callback`) is a thin shim `f(args...) = frozen(_f, args...)`
+# whose `_f` body does the work. Inside a pinned body, anything supplied by user code
+# (callbacks, `mapexpr`, exception display) must be reached via `invokelatest`. The
+# "Frozen world" testset checks that no entry point has static edges into the engine.
 const worldage = Ref{Union{Nothing,UInt}}(nothing)
 
+# Both branches must reach `f` through a runtime dispatch. A direct call `f(args...)` would
+# give the *caller's* compiled code inference edges into everything `f` calls; a package
+# loaded later that invalidates any of that would then invalidate the caller too, and
+# recompiling the caller re-infers `f`'s whole call graph in the latest world -- the very
+# cost the world pin exists to avoid (issue #1134).
 @inline function frozen(f, args...; kwargs...)
     w = worldage[]
-    return w === nothing ? f(args...; kwargs...) : Base.invoke_in_world(w, f, args...; kwargs...)
+    return w === nothing ? Base.invokelatest(f, args...; kwargs...) : Base.invoke_in_world(w, f, args...; kwargs...)
 end
 
 """
@@ -1181,14 +1214,16 @@ init_watching(files) = init_watching((@lock revise_lock pkgdatas[NOPACKAGE]), fi
 const watch_reappear_grace = Ref(5.0)
 
 # Block while a watched path is missing. `exists(path)` reports whether it is
-# currently present; `watchkey` is its entry in `watched_files`. Returns:
+# currently present; `stillwatched()` whether it is still registered in
+# `watched_files`. Returns:
 #   :reappeared — came back within the grace period (resume watching)
-#   :removed    — no longer in the watch list, e.g. the package moved (stop quietly)
+#   :removed    — no longer registered, e.g. the package moved or the file was
+#                 untracked by a `revise` (stop quietly)
 #   :gone       — stayed missing past the grace period (stop and warn)
-function await_watched_path(exists, path::AbstractString, watchkey::AbstractString)
+function await_watched_path(exists, stillwatched, path::AbstractString)
     waited = 0.0
     while !exists(path)
-        @lock revise_lock haskey(watched_files, watchkey) || return :removed
+        stillwatched() || return :removed
         waited ≥ watch_reappear_grace[] && return :gone
         sleep(0.1)
         waited += 0.1
@@ -1267,11 +1302,12 @@ This is generally called via a [`Revise.TaskThunk`](@ref).
 """
 @noinline function revise_dir_queued(dirname::AbstractString)
     @assert isabspath(dirname)
+    dirwatched() = @lock revise_lock haskey(watched_files, dirname)
     try
         stillwatching = true
         while stillwatching
             if !isdir(dirname)
-                status = await_watched_path(isdir, dirname, dirname)
+                status = await_watched_path(isdir, dirwatched, dirname)
                 if status !== :reappeared
                     if status === :gone
                         with_logger(SimpleLogger(stderr)) do
@@ -1324,24 +1360,44 @@ This is generally called via a [`Revise.TaskThunk`](@ref).
 
 This is used only on platforms (like BSD) which cannot use [`Revise.revise_dir_queued`](@ref).
 """
-function revise_file_queued(pkgdata::PkgData, file)
-    if !isabspath(file)
-        file = joinpath(basedir(pkgdata), file)
-    end
+function revise_file_queued(pkgdata::PkgData, filename)
+    # `file` is captured by closures below, so it must be assigned exactly once
+    # (a second assignment would force it into a `Core.Box`).
+    file = isabspath(filename) ? filename : joinpath(basedir(pkgdata), filename)
 
-    dirfull, _ = splitdir(file)
+    dirfull, filebase = splitdir(file)
     fileexists(f) = file_exists(f) || isdir(f)
+    # `init_watching` saved the file's ctime before scheduling this task.
+    # The file may have changed before this task starts. `poll_file` would
+    # then use the changed file as its starting point and wait for another
+    # change, so on the polling path start from the saved value instead.
+    # (The notification path has no such gap: `init_watching` registers a
+    # buffered `watch_folder` that queues changes from that moment on.)
+    stored_ctime() = @lock revise_lock begin
+        wl = get(watched_files, dirfull, nothing)
+        wl === nothing ? nothing : get(wl.file_ctimes, filebase, nothing)
+    end
+    record_ctime!() = @lock revise_lock begin
+        wl = get(watched_files, dirfull, nothing)
+        if wl !== nothing && haskey(wl.trackedfiles, filebase)
+            wl.file_ctimes[filebase] = ctime(file)
+        end
+    end
+    # A `revise` that finds the file's `include` removed untracks it; the watch
+    # then ends without the "not an existing file" warning.
+    filewatched() = @lock revise_lock begin
+        wl = get(watched_files, dirfull, nothing)
+        wl !== nothing && haskey(wl.trackedfiles, filebase)
+    end
     try
         stillwatching = true
         while stillwatching
             if !fileexists(file)
-                status = await_watched_path(fileexists, file, dirfull)
+                status = await_watched_path(fileexists, filewatched, file)
                 if status !== :reappeared
                     if status === :gone
-                        let file=file
-                            with_logger(SimpleLogger(stderr)) do
-                                @warn "$file is not an existing file, Revise is not watching (watching resumes if it reappears)"
-                            end
+                        with_logger(SimpleLogger(stderr)) do
+                            @warn "$file is not an existing file, Revise is not watching (watching resumes if it reappears)"
                         end
                         relinquish_watch(dirfull, file)
                     end
@@ -1349,12 +1405,20 @@ function revise_file_queued(pkgdata::PkgData, file)
                     break
                 end
             end
+            prev = stored_ctime()
             try
-                wait_changed(file)  # will block here until the file changes
+                if (polling_files[] || nonnotifying_path(file)) &&
+                        prev !== nothing && prev != 0.0
+                    poll_from_saved_state(file, prev)
+                else
+                    wait_changed(file)  # will block here until the file changes
+                end
             catch e
                 # issue #459
                 (isa(e, InterruptException) && throwto_repl(e)) || throw(e)
             end
+            # Save the ctime observed after this change so it is not queued again.
+            record_ctime!()
 
             @lock revise_lock begin
                 if file in keys(user_callbacks_by_file)
@@ -1836,7 +1900,9 @@ Report the errors represented in [`Revise.queue_errors`](@ref).
 Errors are automatically reported the first time they are encountered, but this function
 can be used to report errors again.
 """
-function errors(revision_errors=keys(queue_errors))
+errors(revision_errors=keys(queue_errors)) = frozen(_errors, revision_errors)
+
+function _errors(revision_errors)
     printed = Set{eltype(revision_errors)}()
     for item in revision_errors
         item in printed && continue
@@ -1858,7 +1924,9 @@ end
 
 Attempt to perform previously-failed revisions. This can be useful in cases of order-dependent errors.
 """
-function retry()
+retry() = frozen(_retry)
+
+function _retry()
     @lock revise_lock begin
         for k in keys(queue_errors)
             push!(revision_queue, k)
@@ -2245,9 +2313,12 @@ and can lead to long recompilation times.
 """
 revise(mod::Module; force::Bool=true) = frozen(_revise, mod; force)
 
+# The key under which `track(mod, file)` stores `mod` (see #689 for `Main`)
+tracked_pkgid(mod::Module) = Base.moduleroot(mod) == Main ? PkgId(mod, string(mod)) : PkgId(mod)
+
 function _revise(mod::Module; force::Bool=true)
     mod == Main && error("cannot revise(Main)")
-    id = PkgId(mod)
+    id = tracked_pkgid(mod)
     pkgdata = @lock revise_lock pkgdatas[id]
     @lock revise_lock for file in pkgdata.info.files
         push!(revision_queue, (pkgdata, file))
@@ -2309,7 +2380,7 @@ track(mapexpr::Function, file::AbstractString; kwargs...) =
 function _track(mod::Module, file::AbstractString; mode=:sigs, mapexpr::Function=identity, kwargs...)
     isfile(file) || error(file, " is not a file")
     # Determine whether we're already tracking this file
-    id = Base.moduleroot(mod) == Main ? PkgId(mod, string(mod)) : PkgId(mod)  # see #689 for `Main`
+    id = tracked_pkgid(mod)
     pkgdata = getpkgdata(id)
     if pkgdata !== nothing
         relfile = relpath(abspath_no_normalize(file), pkgdata)
@@ -2431,7 +2502,9 @@ they will not be automatically tracked.
 Multi-file code that needs all of its files tracked is better organized as a package loaded with
 `using`/`import`, which Revise tracks recursively and which gives you a proper module namespace.
 """
-function includet(mapexpr::Function, mod::Module, file::AbstractString)
+includet(mapexpr::Function, mod::Module, file::AbstractString) = frozen(_includet, mapexpr, mod, file)
+
+function _includet(mapexpr::Function, mod::Module, file::AbstractString)
     prev = Base.source_path(nothing)
     file = if prev === nothing
         abspath(file)
@@ -2767,9 +2840,11 @@ function revise_first(ex)
 
         if isa(exu, Expr)
             exu.head === :call && length(exu.args) == 1 && exu.args[1] === :exit && return ex
-            lhsrhs = LoweredCodeUtils.get_lhs_rhs(exu)
-            if lhsrhs !== nothing
-                lhs, _ = lhsrhs
+            # `Revise.active[] = ...` must not trigger a revision. This is surface syntax,
+            # so a plain `:(=)` check suffices; using `LoweredCodeUtils.get_lhs_rhs` here
+            # would give this latest-world function static edges into that package.
+            if isexpr(exu, :(=), 2)
+                lhs = exu.args[1]
                 if isexpr(lhs, :ref) && length(lhs.args) == 1
                     arg1 = lhs.args[1]
                     isexpr(arg1, :(.), 2) && arg1.args[1] === :Revise && is_quotenode_egal(arg1.args[2], :active) && return ex

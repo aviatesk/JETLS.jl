@@ -19,9 +19,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## Unreleased
 
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
-- Diff: [`9cebe8b...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/9cebe8b...HEAD)
+- Diff: [`2b51ac0...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/2b51ac0...HEAD)
 
 ### Announcement
+
+> [!important]
+> JETLS supports Julia 1.12.2 through 1.13.
+> It does not support Julia 1.12.1 or earlier, nor Julia 1.14+/nightly.
 
 > [!note]
 > The VSCode extension (`jetls-client`) now lives in its own repository, [aviatesk/jetls-vscode](https://github.com/aviatesk/jetls-vscode).
@@ -29,10 +33,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > Since `v2026.8.29`, the extension has managed the JETLS installation automatically: it installs and updates the pinned JETLS release on its own, so VSCode users no longer need to run the installation command below or keep `jetls` up to date manually (still needed if you also use the `jetls` CLI, e.g. `jetls check`).
 > Please report extension-specific problems (installation, startup, extension UI) to [aviatesk/jetls-vscode issues](https://github.com/aviatesk/jetls-vscode/issues);
 > language-feature issues belong here as before.
-
-> [!important]
-> JETLS supports Julia 1.12.2 through 1.13.
-> It does not support Julia 1.12.1 or earlier, nor Julia 1.14+/nightly.
 
 > [!warning]
 > JETLS currently has a known memory leak issue where memory usage grows with each re-analysis (https://github.com/aviatesk/JETLS.jl/issues/357).
@@ -55,6 +55,74 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- Added [`toplevel/concretization-timeout`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/toplevel/concretization-timeout) diagnostics when concrete execution of a top-level statement exceeds its time limit during full analysis, including a stack trace when available.
+  The limit defaults to 10 seconds and can be adjusted with [`full_analysis.concretization_timeout`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/full_analysis/concretization_timeout), or disabled with `"inf"`.
+  Checks cover recursively interpreted callees, but cannot interrupt native calls, including those in pattern-selected blocks and package source analysis.
+
+- Added live Pkg output to progress messages for environment instantiation triggered by [`full_analysis.auto_instantiate`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/full_analysis/auto_instantiate), showing the latest activity while resolving and installing dependencies.
+
+### Changed
+
+- [`jetls check`](https://aviatesk.github.io/JETLS.jl/release/cli-check) now defaults to [`--show-severity=info`](https://aviatesk.github.io/JETLS.jl/release/cli-check/#cli-check/options/show-severity), hiding hint diagnostics.
+  With default diagnostic severities, this hides:
+  - [`lowering/inactive-code`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/inactive-code): `@static` branches excluded in the current environment.
+  - [`lowering/unsorted-import-names`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/unsorted-import-names): names that are not sorted alphabetically in `import`, `using`, `export`, or `public` statements.
+
+  The display threshold remains independent of [`--exit-severity`](https://aviatesk.github.io/JETLS.jl/release/cli-check/#cli-check/options/exit-severity), and the summary includes counts of hidden diagnostics by severity.
+
+  The output also suggests how to display hidden diagnostics and ends with a pass/fail result based on `--exit-severity`.
+
+- The [`jetls check` GitHub Action](https://aviatesk.github.io/JETLS.jl/release/cli-check/#cli-check/github-actions) now uses Julia 1.13 by default instead of 1.12.
+  Set `julia-version: "1.12"` if you want to keep analyzing your package against Julia 1.12.
+
+- [`JETLS/live`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/source) diagnostics are now pushed via [`textDocument/publishDiagnostics`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.18/specification/#textDocument_publishDiagnostics) for open and unopened files alike; JETLS no longer offers [`workspace/diagnostic`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.18/specification/#workspace_diagnostic), and offers [`textDocument/diagnostic`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.18/specification/#textDocument_diagnostic) only to clients that set the new [`pull_diagnostics`](https://aviatesk.github.io/JETLS.jl/release/launching/#init-options/pull_diagnostics) initialization option (as the [jetls-vscode](https://github.com/aviatesk/jetls-vscode) extension does).
+  Open files are republished as you edit, tagged with the document version, and unopened files as soon as their diagnostics may have changed (full-analysis resolving module contexts, edits in the same analysis unit, watched-file or configuration changes, opening or closing a file).
+  Every client sees the same diagnostics for open and closed files, and clients without pull diagnostics support now get `JETLS/live` diagnostics too.
+
+- JETLS no longer spends CPU while idle on workspace diagnostics.
+  Clients used to poll [`workspace/diagnostic`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.18/specification/#workspace_diagnostic) at a fixed interval, and each poll rescanned the workspace even when nothing had changed; the live diagnostics worker now wakes up only for events that can change the diagnostics and stays asleep otherwise.
+
+- [`JETLS/live`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/source) diagnostics are now refreshed as soon as full-analysis has resolved module contexts, before signature analysis finishes, instead of after the whole analysis completes.
+
+### Fixed
+
+- Fixed intermittent missing or incorrect completion suggestions and signature help after edits, including macro completions triggered by `@` and requests in notebook cells.
+
+- Fixed spurious [`inference/field-error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/inference/field-error) diagnostics on parametric type definitions with inner constructors in script analysis mode.
+
+- Fixed false [`lowering/macro-expansion-error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/macro-expansion-error) diagnostics for `@static` conditions containing anonymous functions on Julia 1.12 and 1.13.
+
+- Fixed [`toplevel/missing-concretization`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/toplevel/missing-concretization) diagnostics for ordinary global assignments inside conditional branches in script analysis (aviatesk/JET.jl#866).
+
+- Fixed a `WARNING: Detected access to binding ... in a world prior to its definition world` message that full analysis could print when analyzing calls with keyword arguments, e.g. during `jetls check`.
+
+- Fixed [`JETLS/live`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/source) diagnostics that depend on the module context, such as [`lowering/undef-global-var`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/undef-global-var), not appearing for a freshly opened standalone file until it was edited: the refresh after full-analysis resolved the context was answered as unchanged.
+
+- Fixed stale diagnostics not being cleared when a file is closed with [`diagnostic.all_files=false`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/diagnostic/all_files).
+
+- Fixed a race in pull diagnostics ([`textDocument/diagnostic`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.18/specification/#textDocument_diagnostic)) where an edit arriving while a request was being handled could leave diagnostics computed from the previous document contents displayed until the next edit.
+
+- Fixed a race during background analysis that could cause diagnostics and other language features to use outdated document contents after an edit.
+
+- Fixed errors logged when in-flight requests or progress notifications finished during language server shutdown.
+
+- Fixed requests for LSP requests the server does not support being left unanswered; they now receive a `MethodNotFound` error response.
+
+- Fixed the [macro expansion](https://aviatesk.github.io/JETLS.jl/release/features/#features/code-views/macro-expansion) and [type annotation](https://aviatesk.github.io/JETLS.jl/release/features/#features/code-views/type-annotations) code views in notebook cells, which previously failed with a `Source document is not available` message and, in any code cell but the first, were offered for the wrong top-level form.
+
+- Fixed diagnostics of a notebook being reported on the `.ipynb` file itself, at line numbers of the concatenated cells, when the notebook was closed while its analysis was still running.
+
+## 2026-09-06
+
+- Commit: [`2b51ac0`](https://github.com/aviatesk/JETLS.jl/commit/2b51ac0)
+- Diff: [`9cebe8b...2b51ac0`](https://github.com/aviatesk/JETLS.jl/compare/9cebe8b...2b51ac0)
+- Installation:
+  ```bash
+  julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="2026-09-06")'
+  ```
+
+### Added
+
 - Added a quick fix for [`toplevel/abstract-field`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/toplevel/abstract-field) diagnostics on `Ref{T}` fields that replaces `Ref` with `Base.RefValue`.
 
 ### Changed
@@ -71,8 +139,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   [`jetls check`](https://aviatesk.github.io/JETLS.jl/release/cli-check/) is unaffected: it has no client to ask, so `"prompt"` instantiates like `"always"` there, as the CLI already did before.
   For backward compatibility, the legacy values `true` and `false` are still accepted at runtime as aliases of `"always"` and `"never"`.
   Configuration schemas intentionally reject these legacy boolean values to prompt migration to the string form.
-
-- `workspace/diagnostic` now uses less CPU while the workspace is unchanged, especially in clients that poll workspace diagnostics continuously.
 
 ### Fixed
 

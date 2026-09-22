@@ -26,6 +26,6 @@ using Test
     stmt = thunk.args[1].code[end]::Core.ReturnNode   # the return
     @test stmt.val isa Core.SSAValue
 
-    @test string(JuliaInterpreter.parametric_type_to_expr(Base.Iterators.Stateful{String})) ∈
-        ("Base.Iterators.Stateful{String, VS}", "(Base.Iterators).Stateful{String, VS}", "Base.Iterators.Stateful{String, VS, N}")
+    # A `UnionAll` without free `TypeVar`s is embedded into compiled wrappers as it is
+    @test JuliaInterpreter.parametric_type_to_expr(Base.Iterators.Stateful{String}) == Base.Iterators.Stateful{String}
 end
