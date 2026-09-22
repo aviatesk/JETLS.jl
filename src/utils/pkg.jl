@@ -45,7 +45,7 @@ function find_analysis_env_path(state::ServerState, uri::URI)
                     if !override.full_analysis
                         if module_name === nothing || module_name == ""
                             @static JETLS_DEV_MODE && @info "Analysis for this file is disabled" path=filepath
-                            return OutOfScope()
+                            return OutOfScope(FallbackAnalysisContext)
                         end
                         mod = @something find_analysis_override_module(module_name) begin
                             @warn "Analysis module override specified but module not found" module_name path=filepath

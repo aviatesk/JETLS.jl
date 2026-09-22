@@ -377,6 +377,9 @@ function global_completions!(
     all_names = Base.invoke_in_world(world, Base.unsorted_names, context_module;
         all=true, imported=true, usings=true)::Vector{Symbol}
     for name in all_names
+        if context_module === FallbackAnalysisContext && name === :FallbackAnalysisContext
+            continue
+        end
         s = String(name)
         startswith(s, "#") && continue
 

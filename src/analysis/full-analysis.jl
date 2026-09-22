@@ -49,6 +49,9 @@ function collect_search_uris(this_uri::URI, analysis_info::Union{Nothing,Analysi
     elseif analysis_info isa OutOfScope && Revise !== nothing
         # TODO: This implementation should be revisited when Revise is integrated into full-analysis
         out_of_scope = analysis_info
+        if out_of_scope.module_context === FallbackAnalysisContext
+            return uris_to_search
+        end
         pkgid = Base.PkgId(something(out_of_scope.module_context, Main))
         @lock Revise.revise_lock begin
             pkgdata = Revise.getpkgdata(pkgid)
