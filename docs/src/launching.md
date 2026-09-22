@@ -218,6 +218,7 @@ Configure initialization options in Zed's `settings.json`:
 - [`analysis_overrides`](@ref init-options/analysis_overrides)
 - [`reuse_native_inference`](@ref init-options/reuse_native_inference)
 - [`configuration_section`](@ref init-options/configuration_section)
+- [`pull_diagnostics`](@ref init-options/pull_diagnostics)
 
 #### [`analysis_overrides`](@id init-options/analysis_overrides)
 
@@ -298,6 +299,24 @@ client declares the configuration section it stores JETLS settings under
 registers `workspace/didChangeConfiguration` with that `section` so the
 client only sends the notification when the relevant settings actually
 change. When unset, the notification is registered without a section filter.
+
+#### [`pull_diagnostics`](@id init-options/pull_diagnostics)
+
+- **Type**: boolean
+- **Default**: `false`
+
+A contract for language client implementors rather than for users: when set,
+JETLS serves the [`JETLS/live`](@ref diagnostic/source) diagnostics of open
+files through
+[`textDocument/diagnostic`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.18/specification/#textDocument_diagnostic)
+(pull diagnostics) instead of pushing them via
+[`textDocument/publishDiagnostics`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.18/specification/#textDocument_publishDiagnostics)
+so the client decides when they are computed and when they go away. This suits
+clients that tie pulled diagnostics to their editor state: the VSCode extension
+sets this option because VSCode clears pulled diagnostics as soon as a tab
+closes, while
+[`textDocument/didClose`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.18/specification/#textDocument_didClose)
+may arrive much later. Unopened files are pushed either way.
 
 !!! note "Specification and client support"
     The `section` registration option is not documented in the prose LSP

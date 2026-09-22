@@ -52,13 +52,6 @@ function make_DidSaveNotebookDocumentNotification(notebook_uri::URI)
             notebookDocument = NotebookDocumentIdentifier(; uri = notebook_uri)))
 end
 
-function make_DocumentDiagnosticRequest(id::Int, uri::URI)
-    return DocumentDiagnosticRequest(;
-        id,
-        params = DocumentDiagnosticParams(;
-            textDocument = TextDocumentIdentifier(; uri)))
-end
-
 function make_DocumentFormattingRequest(id::Int, uri::URI)
     return DocumentFormattingRequest(;
         id,
@@ -120,7 +113,7 @@ end
 
         notebook_uri = filepath2uri(normpath(tempdir, "test.ipynb"))
 
-        withserver() do (; server, writemsg, writereadmsg, id_counter)
+        withserver() do (; server, writemsg, writereadmsg, readmsg)
             cell1_uri = make_cell_uri(tempdir, 1)
             cell2_uri = make_cell_uri(tempdir, 2)
 
@@ -161,13 +154,11 @@ end
             end
             wait_for_file_cache_version(server.state, notebook_uri, 2)
 
-            # 3. Send textDocument/diagnostic for cell 2 -> verify unused `y` diagnostic
-            let id = id_counter[] += 1
-                (; raw_res) = writereadmsg(make_DocumentDiagnosticRequest(id, cell2_uri))
-                @test raw_res isa DocumentDiagnosticResponse
-                @test raw_res.result isa RelatedFullDocumentDiagnosticReport
-                diagnostics = raw_res.result.items
-                found_unused_y = any(diagnostics) do diag
+            # 3. The live scan publishes per code cell -> verify unused `y` diagnostic
+            let scanned = scan_live_diagnostics!(server, readmsg)
+                @test keys(scanned) == Set((cell1_uri, cell2_uri))
+                @test scanned[cell2_uri].version === nothing
+                found_unused_y = any(scanned[cell2_uri].diagnostics) do diag
                     diag.code == JETLS.LOWERING_UNUSED_ARGUMENT_CODE &&
                     occursin("y", diag.message)
                 end
@@ -198,12 +189,9 @@ end
             wait_for_file_cache_version(server.state, notebook_uri, 3)
 
             # 5. Verify diagnostics no longer have unused `y`
-            let id = id_counter[] += 1
-                (; raw_res) = writereadmsg(make_DocumentDiagnosticRequest(id, cell2_uri))
-                @test raw_res isa DocumentDiagnosticResponse
-                @test raw_res.result isa RelatedFullDocumentDiagnosticReport
-                diagnostics = raw_res.result.items
-                has_unused_y = any(diagnostics) do diag
+            let scanned = scan_live_diagnostics!(server, readmsg)
+                @test keys(scanned) == Set((cell1_uri, cell2_uri))
+                has_unused_y = any(scanned[cell2_uri].diagnostics) do diag
                     diag.code == JETLS.LOWERING_UNUSED_ARGUMENT_CODE &&
                     occursin("y", diag.message)
                 end

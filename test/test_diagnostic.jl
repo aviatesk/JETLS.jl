@@ -23,7 +23,7 @@ using JETLS.Glob
 
     withscript(script_code) do script_path
         uri = filepath2uri(script_path)
-        withserver(; pull_diagnostics = false) do (; server, writereadmsg, readmsg)
+        withserver() do (; server, writereadmsg, readmsg)
             # full-analysis does not report syntax errors as `JETLS/save` diagnostics
             (; raw_res) = writereadmsg(
                 make_DidOpenTextDocumentNotification(uri, script_code))
@@ -708,7 +708,9 @@ end
     script_code = "func(x) = nothing\n"
     withscript(script_code) do script_path
         uri = filepath2uri(script_path)
-        withserver(; pull_diagnostics = false) do (; server, writemsg, writereadmsg, readmsg)
+        withserver() do (; server, writemsg, writereadmsg, readmsg, initialize_response)
+            # `textDocument/diagnostic` is offered only on request
+            @test initialize_response.result.capabilities.diagnosticProvider === nothing
             published = server.state.workspace_diagnostics_worker.published
             (; raw_res) = writereadmsg(make_DidOpenTextDocumentNotification(uri, script_code))
             @test raw_res isa PublishDiagnosticsNotification
@@ -770,7 +772,7 @@ end
     # Test requesting diagnostics for a file whose cache has not been populated yet
     withscript("# some code") do script_path
         uri = filepath2uri(script_path)
-        withserver() do (; writereadmsg, id_counter)
+        withserver(; pull_diagnostics = true) do (; writereadmsg, id_counter)
             # Don't send DidOpenTextDocument notification, so no file cache is created
             let id = id_counter[] += 1
                 (; raw_res) = writereadmsg(DocumentDiagnosticRequest(;
@@ -790,7 +792,7 @@ end
     # Test requesting diagnostics for a file whose cache has not been populated yet
     withscript("# some code") do script_path
         uri = filepath2uri(script_path)
-        withserver() do (; writereadmsg, id_counter)
+        withserver(; pull_diagnostics = true) do (; writereadmsg, id_counter)
             # Don't send DidOpenTextDocument notification, so no file cache is created
             event = Base.Event()
             local success::Bool = false
@@ -837,7 +839,8 @@ end
     script_code = "func(x) = nothing\n"
     withscript(script_code) do script_path
         uri = filepath2uri(script_path)
-        withserver() do (; server, writemsg, writereadmsg, id_counter, initialize_response)
+        withserver(; pull_diagnostics = true) do (;
+                server, writemsg, writereadmsg, id_counter, initialize_response)
             @test initialize_response.result.capabilities.diagnosticProvider !== nothing
             (; raw_res) = writereadmsg(make_DidOpenTextDocumentNotification(uri, script_code))
             @test raw_res isa PublishDiagnosticsNotification
@@ -957,7 +960,7 @@ end
     end
 end
 
-@testset "workspace diagnostics push" begin
+@testset "workspace diagnostics push with pull diagnostics" begin
     pkg_code = """
     module TestWorkspaceDiagnosticPull
     using Base: sum
@@ -975,7 +978,7 @@ end
         rootUri = filepath2uri(pkg_path)
         has_unused_import(params) =
             any(d -> d.code == JETLS.LOWERING_UNUSED_IMPORT_CODE, params.diagnostics)
-        withserver(; rootUri) do (; server, writereadmsg, readmsg)
+        withserver(; rootUri, pull_diagnostics = true) do (; server, writereadmsg, readmsg)
             published = server.state.workspace_diagnostics_worker.published
             (; raw_res) = writereadmsg(
                 make_DidOpenTextDocumentNotification(util_uri, ""); read = 2)
@@ -1009,7 +1012,7 @@ end
     end
 end
 
-@testset "workspace diagnostics push for clients without pull support" begin
+@testset "workspace diagnostics push" begin
     pkg_code = """
     module TestWorkspaceDiagnosticPush
     using Base: sum
@@ -1030,8 +1033,7 @@ end
         rootUri = filepath2uri(pkg_path)
         has_unused_import(params) =
             any(d -> d.code == JETLS.LOWERING_UNUSED_IMPORT_CODE, params.diagnostics)
-        withserver(; rootUri, pull_diagnostics = false) do (;
-                server, writemsg, writereadmsg, readmsg)
+        withserver(; rootUri) do (; server, writemsg, writereadmsg, readmsg)
             published = server.state.workspace_diagnostics_worker.published
 
             # Opening util.jl (not main.jl) analyzes the package, which publishes the
