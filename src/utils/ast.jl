@@ -25,10 +25,24 @@ is_source_infix_op_call(st::SyntaxTree) = JS.is_infix_op_call(source_syntax_head
 is_source_prefix_op_call(st::SyntaxTree) = JS.is_prefix_op_call(source_syntax_head(st))
 is_source_postfix_op_call(st::SyntaxTree) = JS.is_postfix_op_call(source_syntax_head(st))
 
+"""
+    provenance_ancestor(st::SyntaxTree, k::JS.Kind) -> Union{Nothing,SyntaxTree}
+
+The nearest node of kind `k` on `st`'s provenance chain, starting from `st` itself.
+"""
+function provenance_ancestor(st::SyntaxTree, k::JS.Kind)
+    while true
+        JS.kind(st) === k && return st
+        source = st.source
+        source isa SyntaxTree || return nothing
+        st = source
+    end
+end
+
 # kinds whose `value` holds the identifier name (see `JL.syntax_name`)
 const NAME_VAL_KINDS = JS.KSet"""
 Identifier Placeholder Symbol core top globalref symboliclabel symbolicgoto
-unknown_head oldsymbolicgoto
+unknown_head
 """
 
 has_name_val(st::SyntaxTree) = JS.kind(st) in NAME_VAL_KINDS

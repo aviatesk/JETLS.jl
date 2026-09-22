@@ -131,7 +131,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - [`JETLS/live`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/source) diagnostics are now refreshed as soon as full-analysis has resolved module contexts, before signature analysis finishes, instead of after the whole analysis completes.
 
-- Bumped JuliaSyntax and JuliaLowering revisions ([`e9d1f89e1c`](https://github.com/JuliaLang/julia/commit/e9d1f89e1c)), bringing several upstream JuliaLowering bug fixes (https://github.com/JuliaLang/julia/pull/63006).
+- Bumped JuliaSyntax and JuliaLowering revisions ([`c941fbc399`](https://github.com/JuliaLang/julia/commit/c941fbc399)), bringing several upstream JuliaLowering bug fixes (https://github.com/JuliaLang/julia/pull/63006, https://github.com/JuliaLang/julia/pull/63009).
 
 ### Fixed
 

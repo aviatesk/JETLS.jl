@@ -350,10 +350,9 @@ function Base.var"@label"(__context__::JL.MacroContext, ex::SyntaxTree)
         # reaches scope analysis. Goto-target semantics are lost.
         return JL.@ast(__context__, __context__.macrocall::SyntaxTree, ex)
     end
-    # Keep the label token's exact range without inheriting its caller context, so
-    # macro expansion records the originating `@label` call in `SyntaxContext`.
-    src = JS.sourceref(ex)
-    return JL.@ast(__context__, ex, [JS.K"symboliclabel"(src; context=nothing) ex])
+    # The `@label` form is the label's provenance; the identifier keeps its own
+    # hygiene layer.
+    return JL.@ast(__context__, __context__.macrocall::SyntaxTree, [JS.K"symboliclabel" ex])
 end
 
 function Base.var"@label"(__context__::JL.MacroContext, args::SyntaxTree...)

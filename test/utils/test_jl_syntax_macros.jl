@@ -406,13 +406,13 @@ end
 end
 
 @testset "@label" begin
-    # Verify that provenance covers the entire macro call
+    # The label form covers the macrocall, and its identifier keeps the
+    # caller's hygiene layer.
     let code = "@label foo", st1 = jlexpand(code)
         @test JS.kind(st1) === JS.K"symboliclabel"
-        @test JS.byte_range(st1) == source_range(code, "foo")
-        label_call = JS.macro_prov(st1)
-        @test label_call !== nothing
-        @test JETLS.is_macrocall_st0(label_call, "@label")
+        @test JS.byte_range(st1) == source_range(code, "@label foo")
+        @test JS.byte_range(st1[1]) == source_range(code, "foo")
+        @test st1.context.layer === st1[1].context.layer
     end
 
     # Non-identifier argument: report via sink, let the expression flow through.
@@ -441,6 +441,18 @@ end
         function f()
             @goto start
             @label start
+        end
+        """) isa NamedTuple
+
+    # JuliaLowering matches gotos and labels by name and hygiene layer when a
+    # `try` has `finally`; a jump within the block must be accepted.
+    @test jlresolve("""
+        function f(c)
+            try
+                c && @goto done
+                @label done
+            finally
+            end
         end
         """) isa NamedTuple
 end
