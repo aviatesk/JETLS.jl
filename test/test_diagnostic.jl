@@ -903,12 +903,22 @@ end
     end
 end
 
-@testset "workspace/diagnostic message cycle" begin
+# Reads server messages one at a time until `pred` accepts one and returns it; messages
+# arriving in between (other publishes, configuration notices) are discarded.
+function read_until(pred, readmsg; limit::Int = 50)
+    for _ in 1:limit
+        msg = readmsg(; check = false).raw_msg
+        pred(msg) && return msg
+    end
+    error("Gave up waiting for a matching server message")
+end
+
+@testset "workspace diagnostics push" begin
     pkg_code = """
-    module TestWorkspaceDiagnostic
+    module TestWorkspaceDiagnosticPush
     using Base: sum
     include("util.jl")
-    end # module TestWorkspaceDiagnostic
+    end # module TestWorkspaceDiagnosticPush
     """
     util_code_initial = ""
 
@@ -916,117 +926,166 @@ end
         pkg_dir = dirname(Pkg.project().path)
         write(normpath(pkg_dir, "src", "util.jl"), util_code_initial)
     end
-    withpackage("TestWorkspaceDiagnostic", pkg_code; pkg_setup) do pkg_path
-        util_path = normpath(pkg_path, "src", "util.jl")
-        util_uri = filepath2uri(util_path)
-        rootUri = filepath2uri(pkg_path)
-        main_path = normpath(pkg_path, "src", "TestWorkspaceDiagnostic.jl")
+    withpackage("TestWorkspaceDiagnosticPush", pkg_code; pkg_setup) do pkg_path
+        util_uri = filepath2uri(normpath(pkg_path, "src", "util.jl"))
+        main_path = normpath(pkg_path, "src", "TestWorkspaceDiagnosticPush.jl")
         main_uri = filepath2uri(main_path)
-        # The lifecycle below relies on `diagnostic.all_files = true` (the schema default),
-        # which is why no initial `settings` are passed. The final step flips it to `false`
-        # to verify that workspace/diagnostic suppresses unsynced files.
-        withserver(; rootUri) do (; server, writemsg, writereadmsg, id_counter)
-            # Open util.jl (NOT main.jl) → triggers package analysis from main.jl entry.
-            # With `diagnostic.all_files = true` (default), publishes happen for both files.
-            let (; raw_res) = writereadmsg(
-                    make_DidOpenTextDocumentNotification(util_uri, util_code_initial);
-                    read = 2)
-                @test all(msg -> msg isa PublishDiagnosticsNotification, raw_res)
-                @test Set(msg.params.uri for msg in raw_res) == Set([main_uri, util_uri])
-            end
+        main_code = read(main_path, String)
+        rootUri = filepath2uri(pkg_path)
+        is_main_publish(msg) =
+            msg isa PublishDiagnosticsNotification && msg.params.uri == main_uri
+        has_unused_import(msg) =
+            any(d -> d.code == JETLS.LOWERING_UNUSED_IMPORT_CODE, msg.params.diagnostics)
+        withserver(; rootUri) do (; server, writemsg, readmsg)
+            published = server.state.workspace_diagnostics_worker.published
 
-            # Initial workspace pull → main.jl carries unused-import on `sum`;
-            # util.jl is skipped (synced).
-            local first_main_id::String
-            let id = id_counter[] += 1
-                (; raw_res) = writereadmsg(WorkspaceDiagnosticRequest(;
-                    id,
-                    params = WorkspaceDiagnosticParams(;
-                        previousResultIds = PreviousResultId[])))
-                @test raw_res isa WorkspaceDiagnosticResponse
-                @test raw_res.result isa WorkspaceDiagnosticReport
-                items = raw_res.result.items
-                @test !any(item -> item.uri == util_uri, items)
-                main_idx = findfirst(item -> item.uri == main_uri, items)
-                @test main_idx !== nothing
-                main_item = items[main_idx]
-                @test main_item isa WorkspaceFullDocumentDiagnosticReport
-                @test any(d -> d.code == JETLS.LOWERING_UNUSED_IMPORT_CODE, main_item.items)
-                first_main_id = main_item.resultId
-            end
+            # Opening util.jl (not main.jl) analyzes the package; the unopened main.jl
+            # then gets its unused-import on `sum` pushed once module contexts are known.
+            writemsg(make_DidOpenTextDocumentNotification(util_uri, util_code_initial);
+                check = false)
+            read_until(msg -> is_main_publish(msg) && has_unused_import(msg), readmsg)
+            @test haskey(JETLS.load(published), main_uri)
 
-            # Repeat pull with matching `previousResultIds` → unchanged report
-            let id = id_counter[] += 1
-                (; raw_res) = writereadmsg(WorkspaceDiagnosticRequest(;
-                    id,
-                    params = WorkspaceDiagnosticParams(;
-                        previousResultIds = PreviousResultId[
-                            PreviousResultId(; uri = main_uri, value = first_main_id)])))
-                @test raw_res isa WorkspaceDiagnosticResponse
-                items = raw_res.result.items
-                main_idx = findfirst(item -> item.uri == main_uri, items)
-                @test main_idx !== nothing
-                main_item = items[main_idx]
-                @test main_item isa WorkspaceUnchangedDocumentDiagnosticReport
-                @test main_item.resultId == first_main_id
-            end
+            # Opening main.jl hands it over to `textDocument/diagnostic`: the pushed live
+            # diagnostics are forgotten and cleared on the client.
+            writemsg(make_DidOpenTextDocumentNotification(main_uri, main_code);
+                check = false)
+            read_until(msg -> is_main_publish(msg) && !has_unused_import(msg), readmsg)
+            @test !haskey(JETLS.load(published), main_uri)
 
-            # Edit util.jl to use `sum`. `analyze_unused_imports!` reads the latest
-            # `FileInfo` of every unit member each pull, so the next `workspace/diagnostic`
-            # picks up the change without needing to re-trigger full-analysis.
-            util_code_updated = "y = sum([1, 2, 3])\n"
-            writemsg(make_DidChangeTextDocumentNotification(util_uri, util_code_updated, #=version=#2))
-            wait_for_file_cache_version(server.state, util_uri, 2)
+            # Closing it brings the push back.
+            writemsg(make_DidCloseTextDocumentNotification(main_uri); check = false)
+            read_until(msg -> is_main_publish(msg) && has_unused_import(msg), readmsg)
+            @test haskey(JETLS.load(published), main_uri)
 
-            # Workspace pull again → main.jl's `resultId` changed (because util.jl's
-            # version is folded into main.jl's hash) and the unused-import is gone.
-            let id = id_counter[] += 1
-                (; raw_res) = writereadmsg(WorkspaceDiagnosticRequest(;
-                    id,
-                    params = WorkspaceDiagnosticParams(;
-                        previousResultIds = PreviousResultId[
-                            PreviousResultId(; uri = main_uri, value = first_main_id)])))
-                @test raw_res isa WorkspaceDiagnosticResponse
-                items = raw_res.result.items
-                main_idx = findfirst(item -> item.uri == main_uri, items)
-                @test main_idx !== nothing
-                main_item = items[main_idx]
-                @test main_item isa WorkspaceFullDocumentDiagnosticReport
-                @test main_item.resultId != first_main_id
-                @test !any(d -> d.code == JETLS.LOWERING_UNUSED_IMPORT_CODE, main_item.items)
-            end
-
-            # Disable `diagnostic.all_files` → workspace/diagnostic suppresses unsynced files.
-            # Expect: 1 `ShowMessageNotification` for the config change + 1
-            # `PublishDiagnosticsNotification` for the synced util.jl (sent by
-            # `notify_diagnostics!`). main.jl's only diagnostic is the lowering
-            # `unused-import` which is computed on demand and not stored in the analysis
-            # cache, so the `ensure_cleared` branch does not emit a clearing publish for it.
+            # Disabling `diagnostic.all_files` clears the pushed diagnostics, and
+            # re-enabling it pushes them again.
             settings_off = Dict{String,Any}(
-                "diagnostic" => Dict{String,Any}("all_files" => false),
-            )
-            let (; raw_res) = writereadmsg(DidChangeConfigurationNotification(;
-                    params = DidChangeConfigurationParams(; settings = settings_off));
-                    read = 2)
-                @test count(msg -> msg isa ShowMessageNotification, raw_res) == 1
-                util_publish = findfirst(msg -> msg isa PublishDiagnosticsNotification, raw_res)
-                @test util_publish !== nothing
-                @test raw_res[util_publish].params.uri == util_uri
+                "diagnostic" => Dict{String,Any}("all_files" => false))
+            writemsg(DidChangeConfigurationNotification(;
+                params = DidChangeConfigurationParams(; settings = settings_off));
+                check = false)
+            read_until(readmsg) do msg
+                is_main_publish(msg) && isempty(msg.params.diagnostics)
+            end
+            settings_on = Dict{String,Any}(
+                "diagnostic" => Dict{String,Any}("all_files" => true))
+            writemsg(DidChangeConfigurationNotification(;
+                params = DidChangeConfigurationParams(; settings = settings_on));
+                check = false)
+            read_until(msg -> is_main_publish(msg) && has_unused_import(msg), readmsg)
+
+            # Editing the synchronized sibling so that `sum` is used republishes main.jl
+            # without re-running full-analysis.
+            writemsg(make_DidChangeTextDocumentNotification(
+                util_uri, "y = sum([1, 2, 3])\n", #=version=#2); check = false)
+            read_until(readmsg) do msg
+                is_main_publish(msg) && isempty(msg.params.diagnostics)
             end
 
-            # Workspace pull → main.jl is returned but with empty items.
-            let id = id_counter[] += 1
-                (; raw_res) = writereadmsg(WorkspaceDiagnosticRequest(;
-                    id,
-                    params = WorkspaceDiagnosticParams(;
-                        previousResultIds = PreviousResultId[])))
-                @test raw_res isa WorkspaceDiagnosticResponse
-                items = raw_res.result.items
-                main_idx = findfirst(item -> item.uri == main_uri, items)
-                @test main_idx !== nothing
-                main_item = items[main_idx]
-                @test main_item isa WorkspaceFullDocumentDiagnosticReport
-                @test isempty(main_item.items)
+            # A sibling edit that leaves main.jl's diagnostics as they are moves its
+            # result id (so the scan recomputes it) but publishes nothing.
+            main_id = JETLS.load(published)[main_uri].result_id
+            writemsg(make_DidChangeTextDocumentNotification(
+                util_uri, "y = sum([1, 2, 3]) # edited\n", #=version=#3); check = false)
+            @test timedwait(10.0) do
+                JETLS.load(published)[main_uri].result_id != main_id
+            end === :ok
+            sleep(JETLS.WORKSPACE_DIAGNOSTICS_MIN_INTERVAL)
+            while isready(server.callback.sent_queue)
+                @test !is_main_publish(readmsg(; check = false).raw_msg)
+            end
+
+            # Let a possible trailing scan settle before the shutdown handshake.
+            sleep(2 * JETLS.WORKSPACE_DIAGNOSTICS_MIN_INTERVAL)
+            while isready(server.callback.sent_queue)
+                readmsg(; check = false)
+            end
+        end
+    end
+end
+
+@testset "workspace diagnostics push for clients without pull support" begin
+    pkg_code = """
+    module TestWorkspaceDiagnosticPushOnly
+    using Base: sum
+    include("util.jl")
+    end # module TestWorkspaceDiagnosticPushOnly
+    """
+    pkg_setup = function ()
+        write(normpath(dirname(Pkg.project().path), "src", "util.jl"), "")
+    end
+    withpackage("TestWorkspaceDiagnosticPushOnly", pkg_code; pkg_setup) do pkg_path
+        util_uri = filepath2uri(normpath(pkg_path, "src", "util.jl"))
+        main_path = normpath(pkg_path, "src", "TestWorkspaceDiagnosticPushOnly.jl")
+        main_uri = filepath2uri(main_path)
+        main_code = read(main_path, String)
+        rootUri = filepath2uri(pkg_path)
+        is_main_publish(msg) =
+            msg isa PublishDiagnosticsNotification && msg.params.uri == main_uri
+        has_unused_import(msg) =
+            any(d -> d.code == JETLS.LOWERING_UNUSED_IMPORT_CODE, msg.params.diagnostics)
+        withserver(; rootUri, pull_diagnostics = false) do (; server, writemsg, readmsg)
+            published = server.state.workspace_diagnostics_worker.published
+            writemsg(make_DidOpenTextDocumentNotification(util_uri, ""); check = false)
+            read_until(msg -> is_main_publish(msg) && has_unused_import(msg), readmsg)
+
+            # Opening main.jl keeps its live diagnostics pushed: the scan re-keys the
+            # entry on the open document, and no clearing publish is sent.
+            main_id = JETLS.load(published)[main_uri].result_id
+            writemsg(make_DidOpenTextDocumentNotification(main_uri, main_code); check = false)
+            @test timedwait(10.0) do
+                entry = get(JETLS.load(published), main_uri, nothing)
+                entry !== nothing && entry.result_id != main_id
+            end === :ok
+            sleep(JETLS.WORKSPACE_DIAGNOSTICS_MIN_INTERVAL)
+            while isready(server.callback.sent_queue)
+                msg = readmsg(; check = false).raw_msg
+                is_main_publish(msg) && @test has_unused_import(msg)
+            end
+
+            # Editing the open file republishes it, tagged with the document version.
+            edited = replace(main_code, "using Base: sum\n" => "")
+            writemsg(make_DidChangeTextDocumentNotification(main_uri, edited, #=version=#2); check = false)
+            read_until(readmsg) do msg
+                is_main_publish(msg) && !has_unused_import(msg) && msg.params.version == 2
+            end
+
+            # An edit that leaves the diagnostics as they are still republishes under the
+            # new version: the client may have discarded the previous publish as stale.
+            writemsg(make_DidChangeTextDocumentNotification(
+                main_uri, edited * "# edited\n", #=version=#3);
+                check = false)
+            read_until(readmsg) do msg
+                is_main_publish(msg) && !has_unused_import(msg) && msg.params.version == 3
+            end
+
+            # `diagnostic.all_files=false` silences unopened files only: the open file
+            # keeps getting its live diagnostics pushed on edit.
+            settings_off = Dict{String,Any}(
+                "diagnostic" => Dict{String,Any}("all_files" => false))
+            writemsg(DidChangeConfigurationNotification(;
+                params = DidChangeConfigurationParams(; settings = settings_off));
+                check = false)
+            writemsg(make_DidChangeTextDocumentNotification(
+                main_uri, main_code, #=version=#4);
+                check = false)
+            read_until(readmsg) do msg
+                is_main_publish(msg) && has_unused_import(msg) && msg.params.version == 4
+            end
+
+            # Closing it turns main.jl into an unopened file, whose diagnostics are cleared.
+            writemsg(make_DidCloseTextDocumentNotification(main_uri); check = false)
+            read_until(readmsg) do msg
+                is_main_publish(msg) && isempty(msg.params.diagnostics)
+            end
+            @test timedwait(10.0) do
+                !haskey(JETLS.load(published), main_uri)
+            end === :ok
+
+            sleep(2 * JETLS.WORKSPACE_DIAGNOSTICS_MIN_INTERVAL)
+            while isready(server.callback.sent_queue)
+                readmsg(; check = false)
             end
         end
     end
@@ -1588,207 +1647,6 @@ end
             @test length(diagnostics) == 1
             @test only(diagnostics).severity == DiagnosticSeverity.Hint
         end
-    end
-end
-
-function wait_for_parked_workspace_diagnostic(
-        state::JETLS.ServerState, id::Union{Int,String}; timeout::Float64 = 10.0
-    )
-    deadline = time() + timeout
-    while time() < deadline
-        parked = @atomic state.workspace_diagnostic_longpoll.parked
-        parked !== nothing && parked.msg.id == id && return parked
-        sleep(0.01)
-    end
-    error("Timed out waiting for workspace/diagnostic request $id to be parked")
-end
-
-function wait_for_no_handled_requests(state::JETLS.ServerState; timeout::Float64 = 10.0)
-    deadline = time() + timeout
-    while time() < deadline
-        isempty(state.currently_handled) && return
-        sleep(0.01)
-    end
-    error("Timed out waiting for `currently_handled` to drain")
-end
-
-@testset "workspace/diagnostic long-polling" begin
-    pkg_code = """
-    module TestWorkspaceDiagnosticLongPoll
-    using Base: sum
-    include("util.jl")
-    end # module TestWorkspaceDiagnosticLongPoll
-    """
-    util_code_initial = ""
-
-    pkg_setup = function ()
-        pkg_dir = dirname(Pkg.project().path)
-        write(normpath(pkg_dir, "src", "util.jl"), util_code_initial)
-    end
-    withpackage("TestWorkspaceDiagnosticLongPoll", pkg_code; pkg_setup) do pkg_path
-        util_uri = filepath2uri(normpath(pkg_path, "src", "util.jl"))
-        main_path = normpath(pkg_path, "src", "TestWorkspaceDiagnosticLongPoll.jl")
-        main_uri = filepath2uri(main_path)
-        stale_uri = filepath2uri(normpath(pkg_path, "src", "gone.jl"))
-        rootUri = filepath2uri(pkg_path)
-        token = "workspace-diagnostic-long-poll"
-        make_request(id, previousResultIds) = WorkspaceDiagnosticRequest(;
-            id,
-            params = WorkspaceDiagnosticParams(;
-                previousResultIds,
-                partialResultToken = token))
-        function partial_items(messages)
-            items = WorkspaceDocumentDiagnosticReport[]
-            for msg in messages
-                msg isa ProgressNotification || continue
-                @test msg.params.token == token
-                append!(items, msg.params.value.items)
-            end
-            return items
-        end
-        find_response(messages) =
-            only(msg for msg in messages if msg isa WorkspaceDiagnosticResponse)
-        has_unused_import(item) =
-            any(d -> d.code == JETLS.LOWERING_UNUSED_IMPORT_CODE, item.items)
-        withserver(; rootUri) do (; server, writemsg, readmsg, writereadmsg, id_counter)
-            longpoll = server.state.workspace_diagnostic_longpoll
-            let (; raw_res) = writereadmsg(
-                    make_DidOpenTextDocumentNotification(util_uri, util_code_initial);
-                    read = 2)
-                @test all(msg -> msg isa PublishDiagnosticsNotification, raw_res)
-            end
-
-            # Initial pull: main.jl gets a full report and the stale id is cleared with an
-            # empty report. Both are streamed as partial results only; see
-            # `WorkspaceDiagnosticReporter`.
-            local main_id::String
-            let id = id_counter[] += 1
-                (; raw_res) = writereadmsg(make_request(id, PreviousResultId[
-                    PreviousResultId(; uri = stale_uri, value = "stale")]); read = 3)
-                response = find_response(raw_res)
-                @test response.id == id
-                @test isempty(response.result.items)
-                items = partial_items(raw_res)
-                main_item = only(item for item in items if item.uri == main_uri)
-                @test main_item isa WorkspaceFullDocumentDiagnosticReport
-                @test has_unused_import(main_item)
-                main_id = main_item.resultId
-                stale_item = only(item for item in items if item.uri == stale_uri)
-                @test stale_item isa WorkspaceFullDocumentDiagnosticReport
-                @test stale_item.resultId === nothing
-                @test isempty(stale_item.items)
-            end
-
-            # Re-pull with the matching id: nothing to report, so the request is parked.
-            let id = id_counter[] += 1
-                writemsg(make_request(id, PreviousResultId[
-                    PreviousResultId(; uri = main_uri, value = main_id)]))
-                parked = wait_for_parked_workspace_diagnostic(server.state, id)
-                @test !JETLS.is_cancelled(parked.cancel_flag)
-                @test haskey(server.state.currently_handled, id)
-
-                # Editing the synchronized sibling resumes it: `sum` is now used, so main.jl
-                # gets a fresh report and the response follows.
-                writemsg(make_DidChangeTextDocumentNotification(
-                    util_uri, "y = sum([1, 2, 3])\n", #=version=#2); check = false)
-                messages = readmsg(; read = 2).raw_msg
-                response = find_response(messages)
-                @test response.id == id
-                @test isempty(response.result.items)
-                main_item = only(partial_items(messages))
-                @test main_item isa WorkspaceFullDocumentDiagnosticReport
-                @test main_item.uri == main_uri
-                @test main_item.resultId != main_id
-                @test !has_unused_import(main_item)
-                main_id = main_item.resultId
-            end
-
-            # A configuration change resumes a parked request as well: with
-            # `diagnostic.all_files` disabled, main.jl is reported with empty items.
-            let id = id_counter[] += 1
-                writemsg(make_request(id, PreviousResultId[
-                    PreviousResultId(; uri = main_uri, value = main_id)]))
-                wait_for_parked_workspace_diagnostic(server.state, id)
-                settings_off = Dict{String,Any}(
-                    "diagnostic" => Dict{String,Any}("all_files" => false))
-                writemsg(DidChangeConfigurationNotification(;
-                    params = DidChangeConfigurationParams(; settings = settings_off));
-                    check = false)
-                messages = readmsg(; read = 4).raw_msg
-                @test count(msg -> msg isa ShowMessageNotification, messages) == 1
-                @test count(msg -> msg isa PublishDiagnosticsNotification, messages) == 1
-                response = find_response(messages)
-                @test response.id == id
-                @test isempty(response.result.items)
-                main_item = only(partial_items(messages))
-                @test main_item isa WorkspaceFullDocumentDiagnosticReport
-                @test main_item.uri == main_uri
-                @test main_item.resultId == JETLS.ALL_FILES_DISABLED_RESULT_ID
-                @test isempty(main_item.items)
-                main_id = main_item.resultId
-            end
-
-            # A second pull arriving while one is parked supersedes it with an empty report,
-            # and `$/cancelRequest` closes a parked request with `RequestCancelled`.
-            let id1 = id_counter[] += 1
-                writemsg(make_request(id1, PreviousResultId[
-                    PreviousResultId(; uri = main_uri, value = main_id)]))
-                wait_for_parked_workspace_diagnostic(server.state, id1)
-                id2 = id_counter[] += 1
-                writemsg(make_request(id2, PreviousResultId[
-                    PreviousResultId(; uri = main_uri, value = main_id)]); check = false)
-                response = readmsg().raw_msg
-                @test response isa WorkspaceDiagnosticResponse
-                @test response.id == id1
-                @test isempty(response.result.items)
-                wait_for_parked_workspace_diagnostic(server.state, id2)
-
-                writemsg(CancelRequestNotification(; params = CancelParams(; id = id2)); check = false)
-                response = readmsg().raw_msg
-                @test response isa WorkspaceDiagnosticResponse
-                @test response.id == id2
-                @test isnothing(response.result)
-                @test response.error isa ResponseError
-                @test response.error.code == ErrorCodes.RequestCancelled
-                @test (@atomic longpoll.parked) === nothing
-                wait_for_no_handled_requests(server.state)
-            end
-        end
-    end
-
-    # A revision bump landing between the revision check and the `parked` store of
-    # `park_workspace_diagnostic_request!` must still leave a wake token in the queue.
-    let server = JETLS.Server()
-        longpoll = server.state.workspace_diagnostic_longpoll
-        msg = WorkspaceDiagnosticRequest(;
-            id = 1,
-            params = WorkspaceDiagnosticParams(;
-                previousResultIds = PreviousResultId[],
-                partialResultToken = "wake-up-token"))
-        @atomic longpoll.current_id = msg.id
-        cancel_flag = JETLS.CancelFlag(false)
-        function drain_wake_tokens!(queue::Channel)
-            woken = false
-            while isready(queue)
-                woken |= take!(queue) isa JETLS.WorkspaceDiagnosticWakeToken
-            end
-            return woken
-        end
-        lost = 0
-        for _ in 1:500
-            @atomic longpoll.parked = nothing
-            drain_wake_tokens!(server.message_queue)
-            request = JETLS.ParkedWorkspaceDiagnosticRequest(msg, cancel_flag, (@atomic longpoll.revision))
-            park = Threads.@spawn JETLS.park_workspace_diagnostic_request!(server, request)
-            mark = Threads.@spawn JETLS.mark_workspace_diagnostics_changed!(server)
-            wait(park); wait(mark)
-            woken = drain_wake_tokens!(server.message_queue)
-            parked = @atomic longpoll.parked
-            if parked !== nothing && parked.revision != (@atomic longpoll.revision) && !woken
-                lost += 1
-            end
-        end
-        @test lost == 0
     end
 end
 

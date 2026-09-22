@@ -26,6 +26,7 @@ function initialize_result(;
     finally
         JETLS.stop_analysis_worker(server)
         JETLS.stop_signature_analysis_workers(server)
+        JETLS.stop_workspace_diagnostics_worker(server)
         close(server.endpoint)
     end
 end

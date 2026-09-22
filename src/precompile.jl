@@ -68,6 +68,7 @@ module __demo__ end
                 finally
                     stop_analysis_worker(init_server)
                     stop_signature_analysis_workers(init_server)
+                    stop_workspace_diagnostics_worker(init_server)
                     close(init_server.endpoint)
                 end
             end

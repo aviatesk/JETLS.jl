@@ -134,7 +134,7 @@ function cache_file_info!(
     end
 
     invalidate_per_file_caches!(state, uri)
-    mark_workspace_diagnostics_changed!(server)
+    schedule_workspace_diagnostics!(server)
 
     any_deleted && notify_diagnostics!(server; ensure_cleared=uri)
 
@@ -194,6 +194,7 @@ function handle_DidOpenTextDocumentNotification(server::Server, msg::DidOpenText
     cache_file_info!(server, uri, textDocument.version, parsed_stream)
     cache_saved_file_info!(server.state, uri, parsed_stream)
     invalidate_unsynced_file_cache!(server.state, uri)
+    clear_workspace_live_diagnostics!(server, uri)
     request_analysis!(server, uri, #=invalidate=#false)
 end
 
@@ -259,6 +260,6 @@ function handle_DidCloseTextDocumentNotification(server::Server, msg::DidCloseTe
     if isunsaveduri(uri)
         cleanup_analysis_state!(server, uri)
     end
-    # Retrigger workspace/diagnostic to recalculate diagnostics for this closed file
+    # Reschedule the workspace diagnostics push so this closed file is picked up again
     request_diagnostic_refresh!(server)
 end

@@ -297,6 +297,7 @@ function runserver(
         close(server.endpoint)
         stop_analysis_worker(server)
         stop_signature_analysis_workers(server)
+        stop_workspace_diagnostics_worker(server)
         put!(seq_queue, nothing); put!(con_queue, nothing);
         close(seq_queue); close(con_queue);
         waitall((seq_task, con_task))
@@ -397,7 +398,6 @@ function handler_concurrent_message(server::Server, @nospecialize msg)
             return # Request was already handled, ignore cancellation
         end
         cancel!(get!(()->CancelFlag(true), server.state.currently_handled, msg.params.id))
-        cancel_parked_workspace_diagnostic_request!(server, msg.params.id)
     elseif msg isa WorkDoneProgressCancelNotification
         if msg.params.token in server.state.handled_history
             return # Token was already handled, ignore cancellation
@@ -408,12 +408,6 @@ function handler_concurrent_message(server::Server, @nospecialize msg)
         push!(server.state.handled_history, msg.id) # Add to handled history to prevent dead IDs from accumulating
         # @info "Remaining requests" length(server.state.currently_handled) Base.summarysize(server.state.currently_handled)
         # @info "Handled history" length(server.state.handled_history) Base.summarysize(server.state.handled_history)
-    elseif msg isa WorkspaceDiagnosticParkToken
-        park_workspace_diagnostic_request!(server, msg.request)
-    elseif msg isa WorkspaceDiagnosticWakeToken
-        resume_parked_workspace_diagnostic_request!(server)
-    elseif msg isa DiagnosticRegistrationUpdateToken
-        update_diagnostic_registration!(server)
     # Handle regular messages concurrently
     elseif msg isa Dict{Symbol,Any} # ResponseMessage or untyped message
         id = valid_message_id(get(msg, :id, nothing))
@@ -446,7 +440,6 @@ function handler_concurrent_message(server::Server, @nospecialize msg)
             Threads.@spawn :default @tryinvokelatest handle_snapshot_request_message(server, snapshot_msg, id, cancel_flag)
         end
     elseif isdefined(msg, :id) && (id = valid_message_id(getfield(msg, :id)); id !== nothing)
-        prepare_request_message!(server, msg)
         let cancel_flag = get!(()->CancelFlag(false), server.state.currently_handled, id)
             Threads.@spawn :default @tryinvokelatest handle_request_message(server, msg, id, cancel_flag)
         end
@@ -539,15 +532,6 @@ function handle_snapshot_request_message(
     end
 end
 
-# Runs on the concurrent message worker right before a request is dispatched, for
-# bookkeeping that has to stay serialized with the worker's other state updates.
-function prepare_request_message!(server::Server, @nospecialize(msg))
-    if msg isa WorkspaceDiagnosticRequest
-        begin_workspace_diagnostic_request!(server, msg)
-    end
-    nothing
-end
-
 function handle_request_message(
         server::Server, @nospecialize(msg), id::MessageId, cancel_flag::CancelFlag
     )
@@ -577,8 +561,6 @@ function handle_request_message(
         handle_WorkspaceSymbolRequest(server, msg, cancel_flag)
     elseif msg isa DocumentDiagnosticRequest
         handle_DocumentDiagnosticRequest(server, msg, cancel_flag)
-    elseif msg isa WorkspaceDiagnosticRequest
-        handle_WorkspaceDiagnosticRequest(server, msg, cancel_flag)
     elseif msg isa CodeLensRequest
         handle_CodeLensRequest(server, msg, cancel_flag)
     elseif msg isa CodeLensResolveRequest

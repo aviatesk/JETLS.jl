@@ -40,13 +40,29 @@ function take_with_timeout!(chn::Channel; interval = 0.1, limit = 600)
     error("Timeout waiting for message")
 end
 
+# Tests model a client with pull diagnostic support unless they opt out: without the
+# `textDocument.diagnostic` capability the server also pushes live diagnostics of open
+# files, which would interleave with the exact message sequences asserted below.
+function with_pull_diagnostics(capabilities::ClientCapabilities)
+    textDocument = @something capabilities.textDocument TextDocumentClientCapabilities()
+    textDocument.diagnostic === nothing || return capabilities
+    fields(x) = (; (f => getfield(x, f) for f in fieldnames(typeof(x)))...)
+    textDocument = TextDocumentClientCapabilities(;
+        fields(textDocument)..., diagnostic = DiagnosticClientCapabilities())
+    return ClientCapabilities(; fields(capabilities)..., textDocument)
+end
+
 function withserver(
         f::Base.Callable;
         capabilities::ClientCapabilities = ClientCapabilities(),
+        pull_diagnostics::Bool = true,
         workspaceFolders::Union{Nothing, Vector{WorkspaceFolder}} = nothing,
         rootUri::Union{Nothing, URI} = nothing,
         settings::Union{Nothing, AbstractDict} = nothing
     )
+    if pull_diagnostics
+        capabilities = with_pull_diagnostics(capabilities)
+    end
     in_pipe = Pipe()
     out_pipe = Pipe()
     Base.link_pipe!(in_pipe; reader_supports_async=true, writer_supports_async=true)
@@ -287,11 +303,8 @@ function queued_snapshot_requests(server::Server, messages::Vector)
     prepared = JETLS.SnapshotRequestMessage[]
     while isready(server.message_queue)
         msg = take!(server.message_queue)
-        if msg isa JETLS.SnapshotRequestMessage
-            push!(prepared, msg)
-        else
-            @test msg isa JETLS.WorkspaceDiagnosticWakeToken
-        end
+        @test msg isa JETLS.SnapshotRequestMessage
+        push!(prepared, msg)
     end
     return prepared
 end
@@ -304,9 +317,6 @@ function dispatch_snapshot_request(
     response = take_with_timeout!(recorder.sent_queue; interval = 0.01, limit = 6000)
     @test response.id == prepared.msg.id
     token = take_with_timeout!(server.message_queue; interval = 0.01, limit = 3000)
-    while token isa JETLS.WorkspaceDiagnosticWakeToken
-        token = take_with_timeout!(server.message_queue; interval = 0.01, limit = 3000)
-    end
     @test token isa JETLS.HandledToken
     @test token.id == prepared.msg.id
     JETLS.handler_concurrent_message(server, token)
