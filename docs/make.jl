@@ -83,6 +83,7 @@ makedocs(;
         prettyurls = get(ENV, "CI", "false") == "true",
         canonical = "https://aviatesk.github.io/JETLS.jl",
         assets = ["assets/extras.css"],
+        size_threshold_ignore = ["diagnostic.md", "CHANGELOG.md"],
     ),
     pages,
     warnonly = [:missing_docs]
