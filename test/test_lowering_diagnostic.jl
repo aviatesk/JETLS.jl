@@ -1444,6 +1444,44 @@ end
     end
 end
 
+module TestLoweringUndefGlobalMacroFirst
+macro use_undeffunc()
+    return :(undeffunc())
+end
+end
+
+@testset HierarchicalTestSet "Undefined global binding report at user-written reads" begin
+    # The same-module macro expansion creates the shared `undeffunc` binding
+    # first, so the report must be anchored at the user-written read.
+    let diagnostics = get_lowering_diagnostics("""
+            function f(x)
+                @use_undeffunc()
+                undeffunc(x)
+            end
+            """; context_module=TestLoweringUndefGlobalMacroFirst)
+        @test length(diagnostics) == 1
+        diagnostic = only(diagnostics)
+        @test diagnostic.code == JETLS.LOWERING_UNDEF_GLOBAL_VAR_CODE
+        @test diagnostic.message == "`$(TestLoweringUndefGlobalMacroFirst).undeffunc` is not defined"
+        @test diagnostic.range.start.line == 2
+        @test diagnostic.range.start.character == 4
+        @test diagnostic.range.var"end".line == 2
+        @test diagnostic.range.var"end".character == 13
+    end
+
+    # Each user-written read is reported
+    let diagnostics = get_lowering_diagnostics("""
+            function f(x)
+                undeffunc(x)
+                undeffunc(x)
+            end
+            """; context_module=TestLoweringUndefGlobalMacroFirst)
+        @test length(diagnostics) == 2
+        @test all(d -> d.code == JETLS.LOWERING_UNDEF_GLOBAL_VAR_CODE, diagnostics)
+        @test [d.range.start.line for d in diagnostics] == [1, 2]
+    end
+end
+
 @testset HierarchicalTestSet "Undefined local binding report" begin
     @testset "sequential assignment then use - no diagnostic" begin
         @test isempty(get_lowering_diagnostics("""

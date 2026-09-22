@@ -116,15 +116,13 @@ function compute_binding_occurrences(
     end
 
     # Re-key `:local (mod=nothing)` aliases introduced by type definitions
-    # (struct / abstract type / primitive type) onto the matching `:global`
-    # binding in the same `ctx3`: the hidden `:global (is_internal=true)`
-    # binding for struct definitions, or — for abstract/primitive types, which
-    # have no hidden global — the `:global` binding anchored at the same name
-    # identifier. Unrelated same-name globals are anchored at distinct
-    # definition sites, so the anchor comparison never conflates them. This
-    # normalizes type-alias occurrences so they appear under a concrete-module
-    # `:global` entry like ordinary globals, letting downstream consumers match
-    # on `(mod, name, :global)` exactly without a nothing-mod fallback.
+    # (struct / abstract type / primitive type) onto the `:global` binding
+    # anchored at the same name identifier in the same `ctx3`. Unrelated
+    # same-name globals are anchored at distinct definition sites, so the
+    # anchor comparison never conflates them. This normalizes type-alias
+    # occurrences so they appear under a concrete-module `:global` entry like
+    # ordinary globals, letting downstream consumers match on
+    # `(mod, name, :global)` exactly without a nothing-mod fallback.
     alias_remaps = Pair{JL.BindingInfo,JL.BindingInfo}[]
     for binfo in keys(occurrences)
         binfo.kind === :local || continue
@@ -134,13 +132,9 @@ function compute_binding_occurrences(
         for other in ctx3.bindings.info
             other.kind === :global || continue
             other.name == binfo.name || continue
-            if other.is_internal
-                target = other
-                break
-            elseif target === nothing &&
-                   JS.byte_range(JL.binding_ex(ctx3, other)) == definition_range
-                target = other
-            end
+            JS.byte_range(JL.binding_ex(ctx3, other)) == definition_range || continue
+            target = other
+            break
         end
         target === nothing || push!(alias_remaps, binfo => target)
     end
@@ -149,10 +143,10 @@ function compute_binding_occurrences(
         definition_tree = JL.binding_ex(ctx3, local_binfo)
         definition_range = JS.byte_range(definition_tree)
         # Typedef lowering assigns this alias and reads it in internal
-        # scaffolding at the definition range — and when the target global is
-        # the user-visible one, its entry carries the same scaffolding too.
-        # Canonicalize that range to a single `:def` (plus any `:decl`s) while
-        # retaining user-written self-references at distinct ranges.
+        # scaffolding at the definition range, and the target global's entry
+        # carries the same scaffolding. Canonicalize that range to a single
+        # `:def` (plus any `:decl`s) while retaining user-written
+        # self-references at distinct ranges.
         target_occs = get!(Set{BindingOccurrence}, occurrences, global_binfo)
         union!(local_occs, target_occs)
         filter!(local_occs) do occ
@@ -161,23 +155,6 @@ function compute_binding_occurrences(
         push!(local_occs, BindingOccurrence(definition_tree, :def))
         empty!(target_occs)
         union_occurrences_by_range!(target_occs, local_occs)
-    end
-
-    # Typedef lowering also emits an explicit `global` decl for the type name
-    # (JuliaLang/julia#62862) that resolves to a binding distinct from the alias
-    # target above. Fold such same-`(mod, name)` global entries into the alias
-    # target, skipping occurrences it already covers at the same range.
-    for (_, global_binfo) in alias_remaps
-        target_occs = occurrences[global_binfo]
-        duplicates = JL.BindingInfo[]
-        for binfo in keys(occurrences)
-            binfo === global_binfo && continue
-            is_matching_global_binding(binfo, global_binfo) || continue
-            push!(duplicates, binfo)
-        end
-        for binfo in duplicates
-            union_occurrences_by_range!(target_occs, pop!(occurrences, binfo))
-        end
     end
 
     return occurrences
@@ -276,7 +253,7 @@ function compute_binding_occurrences!(
             if nc ≥ 1 && may_record_occurrence!(occurrences, occurrence_kind, st[1], ctx3)
                 start_idx = 2
             end
-        elseif k === JS.K"block" && nc ≥ 1 && JS.kind(st[1]) === JS.K"function_decl"
+        elseif k === JS.K"block" && any(i::Int -> JS.kind(st[i]) === JS.K"function_decl", 1:nc)
             # This block wraps a function definition. Each function's own binding
             # appears as BindingId in internal lowering nodes (`method`,
             # `function_type`, `removable`, or as the trailing "return value" of
@@ -530,7 +507,6 @@ function compute_full_binding_occurrences(
         occs = compute_binding_occurrences(ctx3, st3, world;
             include_global_bindings=true, generated_resolutions)
         collect_struct_inner_constructor_occurrences!(occs, ctx3, st0)
-        collect_macro_definition_occurrences!(occs, ctx3, st3, st0)
         collect_macrocall_occurrences!(
             occs, context_module, world, st0; soft_scope)
         # Add generated-body and policy-approved inert occurrences.
@@ -547,29 +523,12 @@ function collect_struct_inner_constructor_occurrences!(
         ctx3::JL.VariableAnalysisContext, st0::SyntaxTree
     )
     foreach_struct_inner_constructor(st0) do name_node::SyntaxTree, constructor_node::SyntaxTree
-        binding = @something _find_internal_global_binding_at_source(ctx3, name_node) return true
+        binding = @something _find_global_binding_at_source(ctx3, name_node) return true
         binfo = JL.get_binding(ctx3, binding)
         boccs = get!(Set{BindingOccurrence}, occurrences, binfo)
         occ = BindingOccurrence(constructor_node, :method_def)
         push!(boccs, occ)
         return true
-    end
-    return occurrences
-end
-
-function collect_macro_definition_occurrences!(
-        occurrences::Dict{JL.BindingInfo,Set{BindingOccurrence}},
-        ctx3::JL.VariableAnalysisContext, st3::SyntaxTree, st0::SyntaxTree
-    )
-    traverse_macro_definition_bindings(ctx3, st3, st0) do binding, name_node, kind
-        binfo = JL.get_binding(ctx3, binding)
-        target = get!(Set{BindingOccurrence}, occurrences, binfo)
-        any(target) do occurrence
-            occurrence.kind === kind &&
-                JS.byte_range(occurrence.tree) == JS.byte_range(name_node)
-        end && return nothing
-        push!(target, BindingOccurrence(name_node, kind))
-        return nothing
     end
     return occurrences
 end
