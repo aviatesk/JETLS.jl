@@ -601,6 +601,12 @@ function adjust_position(snapshot::DocumentSnapshot, uri::URI, pos::Position)
     return @something cell_to_global_position(notebook, uri, pos) pos
 end
 
+function adjust_range(state::ServerState, uri::URI, range::Range)
+    return Range(;
+        start = adjust_position(state, uri, range.start),
+        var"end" = adjust_position(state, uri, range.var"end"))
+end
+
 function adjust_range(snapshot::DocumentSnapshot, uri::URI, range::Range)
     return Range(;
         start = adjust_position(snapshot, uri, range.start),

@@ -58,9 +58,10 @@ function handle_CodeActionRequest(
             return send(server, CodeActionResponse(; id = msg.id, result = nothing, error = result))
         elseif !isnothing(result)
             fi = result
-            testrunner_code_actions!(code_actions, uri, fi, msg.params.range)
-            macro_expansion_code_actions!(code_actions, server, uri, fi, msg.params.range)
-            type_annotation_code_actions!(code_actions, server, uri, fi, msg.params.range)
+            range = adjust_range(server.state, uri, msg.params.range)
+            testrunner_code_actions!(code_actions, uri, fi, range)
+            macro_expansion_code_actions!(code_actions, server, uri, fi, range)
+            type_annotation_code_actions!(code_actions, server, uri, fi, range)
         end
         # When the file info is unavailable (`isnothing(result)`), skip the kindless actions
         # but still return any quickfix actions accumulated above, since those are derived
