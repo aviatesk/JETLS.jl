@@ -52,6 +52,14 @@ function make_DidSaveNotebookDocumentNotification(notebook_uri::URI)
             notebookDocument = NotebookDocumentIdentifier(; uri = notebook_uri)))
 end
 
+function make_DidCloseNotebookDocumentNotification(notebook_uri::URI, cell_uris::Vector{URI})
+    return DidCloseNotebookDocumentNotification(;
+        params = DidCloseNotebookDocumentParams(;
+            notebookDocument = NotebookDocumentIdentifier(; uri = notebook_uri),
+            cellTextDocuments = TextDocumentIdentifier[
+                TextDocumentIdentifier(; uri) for uri in cell_uris]))
+end
+
 function make_DocumentFormattingRequest(id::Int, uri::URI)
     return DocumentFormattingRequest(;
         id,
@@ -667,6 +675,48 @@ end
             @test signature.activeParameter == 1
         end
     end
+end
+
+@testset "analysis result landing after notebook close is discarded" begin
+    mktempdir() do tempdir; Pkg.activate(tempdir) do
+        notebook_uri = filepath2uri(normpath(tempdir, "test.ipynb"))
+        cell_uri = make_cell_uri(tempdir, 1)
+        withserver() do (; server, writereadmsg)
+            cells = NotebookCell[NotebookCell(; kind = NotebookCellKind.Code, document = cell_uri)]
+            cell_texts = Dict{URI,String}(cell_uri => "x = undefvar + 1\n")
+            (; raw_res) = writereadmsg(
+                make_DidOpenNotebookDocumentNotification(notebook_uri, cells, cell_texts))
+            @test raw_res isa PublishDiagnosticsNotification
+            @test raw_res.params.uri == cell_uri
+            @test length(raw_res.params.diagnostics) == 1
+            manager = server.state.analysis_manager
+            result = JETLS.load(manager.cache)[notebook_uri]::JETLS.AnalysisResult
+
+            (; raw_res) = writereadmsg(
+                make_DidCloseNotebookDocumentNotification(notebook_uri, [cell_uri]))
+            @test raw_res isa PublishDiagnosticsNotification
+            @test raw_res.params.uri == cell_uri
+            @test isempty(raw_res.params.diagnostics)
+            # the cells are cleared before `cleanup_analysis_state!` runs
+            @test timedwait(() -> !haskey(JETLS.load(manager.cache), notebook_uri), 10.0) === :ok
+
+            # The cache write of an analysis that was already running when the notebook
+            # was closed (see `cache_intermediate_analysis_result!`) lands after
+            # `cleanup_analysis_state!`; the worker discards it once the analysis finishes.
+            JETLS.update_analysis_cache!(server.state, result)
+            @test haskey(JETLS.load(manager.cache), notebook_uri)
+            request = JETLS.AnalysisRequest(result.entry, notebook_uri, 0, nothing, true)
+            JETLS.discard_abandoned_analysis!(server, request, result)
+            @test !haskey(JETLS.load(manager.cache), notebook_uri)
+
+            # A full publish no longer reports the closed notebook under its own URI:
+            # only the configuration-change message arrives.
+            settings = Dict{String,Any}("diagnostic" => Dict{String,Any}("all_files" => false))
+            (; raw_res) = writereadmsg(DidChangeConfigurationNotification(;
+                params = DidChangeConfigurationParams(; settings)))
+            @test raw_res isa ShowMessageNotification
+        end
+    end end
 end
 
 end # module test_notebook

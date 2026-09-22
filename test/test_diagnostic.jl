@@ -1012,6 +1012,36 @@ end
     end
 end
 
+@testset "live diagnostics of closed files are cleared by the scan" begin
+    script_code = "func(x) = nothing\n"
+    withscript(script_code) do script_path
+        uri = filepath2uri(script_path)
+        settings = Dict{String,Any}("diagnostic" => Dict{String,Any}("all_files" => false))
+        withserver(; settings) do (; server, writereadmsg, readmsg)
+            published = server.state.workspace_diagnostics_worker.published
+            (; raw_res) = writereadmsg(make_DidOpenTextDocumentNotification(uri, script_code))
+            @test raw_res isa PublishDiagnosticsNotification
+            let params = scan_live_diagnostics!(server, readmsg)[uri]
+                @test params.version == 1
+                @test length(params.diagnostics) == 1
+            end
+
+            # `didClose` clears the file; the next scan forgets its entry and clears it
+            # once more, so a scan publish that raced with the close does not survive.
+            (; raw_res) = writereadmsg(make_DidCloseTextDocumentNotification(uri))
+            @test raw_res isa PublishDiagnosticsNotification
+            @test raw_res.params.uri == uri
+            @test isempty(raw_res.params.diagnostics)
+            let params = scan_live_diagnostics!(server, readmsg)[uri]
+                @test params.version === nothing
+                @test isempty(params.diagnostics)
+            end
+            @test !haskey(JETLS.load(published), uri)
+            @test isempty(scan_live_diagnostics!(server, readmsg))
+        end
+    end
+end
+
 @testset "workspace diagnostics push" begin
     pkg_code = """
     module TestWorkspaceDiagnosticPush
@@ -1076,7 +1106,8 @@ end
             end
 
             # Disabling `diagnostic.all_files` clears the unopened main.jl and makes the
-            # scan forget it; the open util.jl is still scanned (and unchanged).
+            # scan forget it (clearing it once more); the open util.jl is still scanned
+            # (and unchanged).
             settings_off = Dict{String,Any}(
                 "diagnostic" => Dict{String,Any}("all_files" => false))
             (; raw_res) = writereadmsg(DidChangeConfigurationNotification(;
@@ -1086,7 +1117,10 @@ end
                 @test Set(msg.params.uri for msg in cleared) == Set((main_uri, util_uri))
                 @test all(msg -> isempty(msg.params.diagnostics), cleared)
             end
-            @test isempty(scan_live_diagnostics!(server, readmsg))
+            let scanned = scan_live_diagnostics!(server, readmsg)
+                @test keys(scanned) == Set((main_uri,))
+                @test isempty(scanned[main_uri].diagnostics)
+            end
             @test !haskey(JETLS.load(published), main_uri)
             @test haskey(JETLS.load(published), util_uri)
 

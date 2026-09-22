@@ -110,6 +110,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Fixed the [macro expansion](https://aviatesk.github.io/JETLS.jl/release/features/#features/code-views/macro-expansion) and [type annotation](https://aviatesk.github.io/JETLS.jl/release/features/#features/code-views/type-annotations) code views in notebook cells, which previously failed with a `Source document is not available` message and, in any code cell but the first, were offered for the wrong top-level form.
 
+- Fixed diagnostics of a notebook being reported on the `.ipynb` file itself, at line numbers of the concatenated cells, when the notebook was closed while its analysis was still running.
+
 ## 2026-09-06
 
 - Commit: [`2b51ac0`](https://github.com/aviatesk/JETLS.jl/commit/2b51ac0)
