@@ -49,7 +49,7 @@ function handle_workspace_configuration_response(
         show_error_message(server, "Unexpected response from workspace/configuration request")
     end
     # Complete initialization with existing settings so a failed or empty response
-    # does not leave diagnostics unregistered.
+    # does not keep later configuration change notifications suppressed.
     if caller.handler.on_init && !load(server.state.config_manager).initialized
         handle_lsp_config_change!(server, ConfigChangeTracker(), caller.handler.source, true)
     end
@@ -121,7 +121,6 @@ function handle_lsp_config_change!(server::Server, tracker::ConfigChangeTracker,
         notify_config_changes(server, tracker, source)
     end
     apply_auto_instantiate_change!(server)
-    update_diagnostic_registration!(server, tracker; on_init)
     if tracker.diagnostic_setting_changed
         clear_per_file_diagnostics_cache!(server.state)
         notify_diagnostics!(server; ensure_cleared = true)

@@ -39,7 +39,7 @@ get_notebook_uri_for_cell(state::ServerState, cell_uri::URI, default=nothing) =
 # both run input through this helper so reads, writes, and invalidations always
 # meet on the same key.
 canonical_cache_uri(state::ServerState, uri::URI) =
-    get_notebook_uri_for_cell(state, uri, uri)
+    something(get_notebook_uri_for_cell(state, uri), uri)
 
 """
     notebook_cell_version(state::ServerState, cell_uri::URI) -> Union{Int,Nothing}
@@ -81,7 +81,7 @@ function cache_notebook_file_info!(server::Server, notebook_uri::URI, notebook_i
         Base.PersistentDict(cache, notebook_uri => fi), fi
     end
     invalidate_per_file_caches!(state, notebook_uri)
-    mark_workspace_diagnostics_changed!(server)
+    schedule_workspace_diagnostics!(server)
     return fi
 end
 

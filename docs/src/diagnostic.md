@@ -82,14 +82,16 @@ Additionally, some editors also allow filtering diagnostics by source.
 JETLS uses three diagnostic sources:
 
 - **`JETLS/live`**: Diagnostics available on demand via the pull model
-  diagnostic channels
+  diagnostic channel
   [`textDocument/diagnostic`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.18/specification/#textDocument_diagnostic)
-  (for open files) and
-  [`workspace/diagnostic`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.18/specification/#workspace_diagnostic)
-  (for unopened files when [`diagnostic.all_files`](@ref config/diagnostic/all_files) is enabled).
-  Most clients request these as you edit, providing real-time feedback without
-  requiring a file save. Includes syntax errors and lowering-based analysis
-  (`syntax/*`, `lowering/*`).
+  for open files. Most clients request these as you edit, providing real-time
+  feedback without requiring a file save. For unopened files (when
+  [`diagnostic.all_files`](@ref config/diagnostic/all_files) is enabled), JETLS
+  pushes the same diagnostics via
+  [`textDocument/publishDiagnostics`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.18/specification/#textDocument_publishDiagnostics)
+  whenever they may have changed; clients that do not support pull diagnostics
+  receive the diagnostics of open files this way too. Includes syntax errors
+  and lowering-based analysis (`syntax/*`, `lowering/*`).
 - **`JETLS/save`**: Diagnostics published by JETLS after on-save full analysis
   via the push model channel [`textDocument/publishDiagnostics`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.18/specification/#textDocument_publishDiagnostics).
   These run full analysis including type inference and require loading your

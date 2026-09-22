@@ -996,38 +996,40 @@ struct HandledToken
 end
 
 """
-    ParkedWorkspaceDiagnosticRequest
+    WorkspaceLiveDiagnostics
 
-A `workspace/diagnostic` request whose last run found nothing to report. Its response
-is withheld (long-polling) until `WorkspaceDiagnosticLongPoll.revision` moves past
-`revision`, at which point the request is re-run with its original parameters.
+`JETLS/live` diagnostics last pushed for a workspace file, keyed by the `resultId`
+derivation shared with `textDocument/diagnostic` so a rescan can skip files whose
+inputs did not change, and can skip the publish when a recomputation reproduces the
+same diagnostics. `version` is the document version the diagnostics were computed
+from when the file is open (only clients without pull support get open files pushed),
+`nothing` for unopened files. `diagnostics` are raw: `notify_diagnostics!` applies
+the diagnostic configuration when publishing.
 """
-struct ParkedWorkspaceDiagnosticRequest
-    msg::WorkspaceDiagnosticRequest
+struct WorkspaceLiveDiagnostics
+    result_id::String
+    version::Union{Nothing,Int}
+    diagnostics::Vector{Diagnostic}
+end
+const WorkspaceLiveDiagnosticsData = Base.PersistentDict{URI,WorkspaceLiveDiagnostics}
+const WorkspaceLiveDiagnosticsCache = LWContainer{WorkspaceLiveDiagnosticsData, LWStats}
+
+"""
+    WorkspaceDiagnosticsWorker
+
+Background worker that pushes `JETLS/live` diagnostics of unopened workspace files via
+`textDocument/publishDiagnostics`. `schedule_workspace_diagnostics!` sets `wakeup`
+whenever those diagnostics may have changed; wake-ups coalesce while a scan is running.
+"""
+struct WorkspaceDiagnosticsWorker
+    wakeup::Base.Event
     cancel_flag::CancelFlag
-    revision::Int
+    published::WorkspaceLiveDiagnosticsCache
+    worker_task::Base.RefValue{Task}
+    WorkspaceDiagnosticsWorker() = new(
+        Base.Event(#=autoreset=#true), CancelFlag(false),
+        WorkspaceLiveDiagnosticsCache(), Ref{Task}())
 end
-
-"""
-    WorkspaceDiagnosticLongPoll
-
-Long-polling state for `workspace/diagnostic`. `revision` is bumped by
-`mark_workspace_diagnostics_changed!` whenever workspace diagnostics may have changed.
-Parking, resumption, cancellation and supersession of `parked` are serialized on the
-concurrent message worker (see `handler_concurrent_message`).
-"""
-mutable struct WorkspaceDiagnosticLongPoll
-    @atomic revision::Int
-    @atomic last_run_time::Float64
-    @atomic parked::Union{Nothing,ParkedWorkspaceDiagnosticRequest}
-    @atomic current_id::Union{Nothing,MessageId}
-    WorkspaceDiagnosticLongPoll() = new(0, 0.0, nothing, nothing)
-end
-
-struct WorkspaceDiagnosticParkToken
-    request::ParkedWorkspaceDiagnosticRequest
-end
-struct WorkspaceDiagnosticWakeToken end
 
 mutable struct ServerState
     const file_cache::FileCache # syntactic analysis cache (synced with `textDocument/didChange`)
@@ -1055,7 +1057,7 @@ mutable struct ServerState
     const extra_diagnostics::ExtraDiagnostics
     const currently_handled::CurrentlyHandled
     const handled_history::HandledHistory
-    const workspace_diagnostic_longpoll::WorkspaceDiagnosticLongPoll
+    const workspace_diagnostics_worker::WorkspaceDiagnosticsWorker
     const currently_requested::CurrentlyRequested
     const currently_registered::CurrentlyRegistered
     const config_manager::ConfigManager
@@ -1090,7 +1092,7 @@ mutable struct ServerState
             #=extra_diagnostics=# ExtraDiagnostics(),
             #=currently_handled=# CurrentlyHandled(),
             #=handled_history=# HandledHistory(128),
-            #=workspace_diagnostic_longpoll=# WorkspaceDiagnosticLongPoll(),
+            #=workspace_diagnostics_worker=# WorkspaceDiagnosticsWorker(),
             #=currently_requested=# CurrentlyRequested(),
             #=currently_registered=# CurrentlyRegistered(),
             #=config_manager=# ConfigManager(),

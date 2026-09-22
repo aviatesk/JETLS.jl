@@ -1865,9 +1865,9 @@ end
 # - Per-file diagnostic summaries for cached files
 # - Binding occurrences caching (see `BindingOccurrencesCache`)
 # - Per-unit used-name memoization via `used_names_cache`, which lets a single
-#   `workspace/diagnostic` pull reuse the expensive `mod_used_names` aggregation
+#   workspace diagnostics scan reuse the expensive `mod_used_names` aggregation
 #   across every import-bearing file in the same analysis unit
-# - Unchanged file skipping in workspace/diagnostic
+# - Unchanged file skipping in the workspace diagnostics worker
 function analyze_unused_imports!(
         diagnostics::Vector{Diagnostic}, def_used_names_cache::DefUsedNamesCache,
         server::Server, uri::URI,
@@ -2147,6 +2147,7 @@ function get_full_diagnostics(server::Server; ensure_cleared::Union{Bool,URI} = 
         end
     end
     merge_extra_diagnostics!(uri2diagnostics, server)
+    merge_workspace_live_diagnostics!(uri2diagnostics, server)
     if ensure_cleared isa URI && !haskey(uri2diagnostics, ensure_cleared)
         uri2diagnostics[ensure_cleared] = Diagnostic[]
     end
@@ -2161,12 +2162,39 @@ function merge_extra_diagnostics!(uri2diagnostics::URI2Diagnostics, server::Serv
     return uri2diagnostics
 end
 
+# Live diagnostics of unopened files travel with the rest of the push set, since
+# `publishDiagnostics` replaces everything the server reported for a URI.
+function merge_workspace_live_diagnostics!(uri2diagnostics::URI2Diagnostics, server::Server)
+    state = server.state
+    pull = supports_pull_diagnostics(server)
+    for (uri, live) in load(state.workspace_diagnostics_worker.published)
+        pull && is_synchronized(state, uri) && continue
+        append!(get!(Vector{Diagnostic}, uri2diagnostics, uri), live.diagnostics)
+    end
+    return uri2diagnostics
+end
+
+# Only clients without pull support receive the live diagnostics of open files pushed;
+# the document version lets them discard or re-anchor a publish that raced with an edit.
+# The version is the one the live diagnostics were computed from, never the current one:
+# the other parts of a publish (`JETLS/save`, `JETLS/extra`) are not tied to a version,
+# and claiming a newer text than the live part was computed for would defeat the check.
+function pushed_document_version(server::Server, uri::URI)
+    supports_pull_diagnostics(server) && return nothing
+    is_synchronized(server.state, uri) || return nothing
+    published = load(server.state.workspace_diagnostics_worker.published)
+    live = @something get(published, uri, nothing) return nothing
+    return live.version
+end
+
 function merge_diagnostics!(uri2diagnostics::URI2Diagnostics, other_uri2diagnostics::URI2Diagnostics)
     for (uri, diagnostics) in other_uri2diagnostics
         append!(get!(Vector{Diagnostic}, uri2diagnostics, uri), diagnostics)
     end
     return uri2diagnostics
 end
+
+const empty_diagnostics = Diagnostic[]
 
 """
     notify_diagnostics!(server::Server; ensure_cleared::Union{Bool,URI} = false)
@@ -2185,6 +2213,16 @@ function notify_diagnostics!(server::Server; ensure_cleared::Union{Bool,URI} = f
     notify_diagnostics!(server, get_full_diagnostics(server; ensure_cleared); ensure_cleared)
 end
 
+# Publishes only `uris`, each with its complete diagnostic set (empty when nothing is left).
+function notify_diagnostics!(server::Server, uris::Set{URI})
+    uri2diagnostics = get_full_diagnostics(server)
+    selected = URI2Diagnostics()
+    for uri in uris
+        selected[uri] = get(uri2diagnostics, uri, empty_diagnostics)
+    end
+    notify_diagnostics!(server, selected)
+end
+
 function notify_diagnostics!(server::Server, uri2diagnostics::URI2Diagnostics; ensure_cleared::Union{Bool,URI} = false)
     state = server.state
     all_files = get_config(state, :diagnostic, :all_files)
@@ -2196,7 +2234,7 @@ function notify_diagnostics!(server::Server, uri2diagnostics::URI2Diagnostics; e
                 send(server, PublishDiagnosticsNotification(;
                     params = PublishDiagnosticsParams(;
                         uri,
-                        diagnostics = Diagnostic[])))
+                        diagnostics = empty_diagnostics)))
             end
             continue
         end
@@ -2207,6 +2245,7 @@ function notify_diagnostics!(server::Server, uri2diagnostics::URI2Diagnostics; e
         send(server, PublishDiagnosticsNotification(;
             params = PublishDiagnosticsParams(;
                 uri,
+                version = pushed_document_version(server, uri),
                 diagnostics)))
     end
 end
@@ -2249,28 +2288,24 @@ end
 # textDocument/diagnostic
 # =======================
 #
-# Algorithmically a subset of `workspace/diagnostic`: both share the same result-ID
-# derivation (`compute_diagnostic_result_id`) and emit the same diagnostics for
-# synchronized files. We still provide this endpoint, rather than only exposing
-# workspace pull, because some clients do not implement `workspace/diagnostic`, and
-# even when they do, clients are allowed to request both `textDocument/diagnostic`
-# and `workspace/diagnostic` at different times. Even if a client declares the
-# `workspace/diagnostic` capability, there is no mechanism in LSP to declare "this
-# client does not send `textDocument/diagnostic`", so we need to support both.
+# Serves open documents. Unopened workspace files receive the same diagnostics through
+# `textDocument/publishDiagnostics` from the workspace diagnostics worker below; both
+# share `compute_diagnostic_result_id` and `compute_pull_diagnostics!`.
 
 const DIAGNOSTIC_REGISTRATION_ID = "jetls-diagnostic"
 const DIAGNOSTIC_REGISTRATION_METHOD = "textDocument/diagnostic"
 
-function diagnostic_options(workspace_diagnostics::Bool = true)
+# Unopened files are covered by `textDocument/publishDiagnostics`, so `workspace/diagnostic`
+# is not advertised; see the workspace diagnostics section below.
+function diagnostic_options()
     return DiagnosticOptions(;
         identifier = "JETLS/diagnostic",
         interFileDependencies = true,
-        workspaceDiagnostics = workspace_diagnostics)
+        workspaceDiagnostics = false)
 end
 
-function diagnostic_registration(server::Server)
-    (; identifier, interFileDependencies, workspaceDiagnostics) =
-        diagnostic_options(get_config(server, :diagnostic, :all_files))
+function diagnostic_registration()
+    (; identifier, interFileDependencies, workspaceDiagnostics) = diagnostic_options()
     return Registration(;
         id = DIAGNOSTIC_REGISTRATION_ID,
         method = DIAGNOSTIC_REGISTRATION_METHOD,
@@ -2282,33 +2317,6 @@ function diagnostic_registration(server::Server)
     )
 end
 
-struct DiagnosticRegistrationUpdateToken end
-
-function update_diagnostic_registration!(
-        server::Server, tracker::ConfigChangeTracker; on_init::Bool = false
-    )
-    supports(server, :textDocument, :diagnostic, :dynamicRegistration) || return nothing
-    load(server.state.config_manager).initialized || return nothing
-    if !on_init && !any(c -> c.path == "diagnostic.all_files", tracker.changed_settings)
-        return nothing
-    end
-    enqueue_message!(server, DiagnosticRegistrationUpdateToken())
-    nothing
-end
-
-# Run the replacement on the message worker so concurrent config handlers cannot
-# interleave unregister/register. Read the current config, not the queued update's value.
-function update_diagnostic_registration!(server::Server)
-    registered = Registered(DIAGNOSTIC_REGISTRATION_ID, DIAGNOSTIC_REGISTRATION_METHOD)
-    if registered in load(server.state.currently_registered)
-        unregister(server, Unregistration(;
-            id = DIAGNOSTIC_REGISTRATION_ID,
-            method = DIAGNOSTIC_REGISTRATION_METHOD))
-    end
-    register(server, diagnostic_registration(server))
-    nothing
-end
-
 function handle_DocumentDiagnosticRequest(
         server::Server, msg::DocumentDiagnosticRequest, cancel_flag::CancelFlag)
     uri = msg.params.textDocument.uri
@@ -2316,11 +2324,10 @@ function handle_DocumentDiagnosticRequest(
     if isnothing(result)
         return send(server, DocumentDiagnosticResponse(;
             id = msg.id,
-            result = RelatedFullDocumentDiagnosticReport(; items = Diagnostic[])))
+            result = RelatedFullDocumentDiagnosticReport(; items = empty_diagnostics)))
     elseif result isa ResponseError
         return send(server, DocumentDiagnosticResponse(; id = msg.id, result = nothing, error = result))
     end
-    file_info = result
     resultId = compute_diagnostic_result_id(server, uri)
     if msg.params.previousResultId == resultId
         return send(server,
@@ -2328,6 +2335,10 @@ function handle_DocumentDiagnosticRequest(
                 id = msg.id,
                 result = RelatedUnchangedDocumentDiagnosticReport(; resultId)))
     end
+    # Re-read the text after taking `resultId` so that an edit in between leaves the id
+    # behind the text rather than ahead of it (see `publish_workspace_diagnostics!`).
+    this_uri = canonical_cache_uri(server.state, uri)
+    file_info = @something get_file_info(server.state, this_uri) result
     def_used_names_cache = DefUsedNamesCache()
     diagnostics = compute_pull_diagnostics!(def_used_names_cache, server, uri, file_info, cancel_flag)
     if is_cancelled(cancel_flag)
@@ -2343,64 +2354,73 @@ function handle_DocumentDiagnosticRequest(
                 items = diagnostics)))
 end
 
-# workspace/diagnostic
-# ====================
+# Workspace diagnostics (unopened files)
+# ======================================
 #
-# Long-polling: a pull that has nothing to report (every file unchanged, nothing to clear)
-# is parked instead of answered. Change points call `mark_workspace_diagnostics_changed!`,
-# which resumes the parked request; it then answers only if something actually changed.
-# Both Zed and VS Code re-pull after every answer (Zed immediately when it has pending
-# edits, otherwise after 2s), so server-driven wakeups replace their fixed-interval polling.
+# `JETLS/live` diagnostics of files that are not open in the editor are pushed via
+# `textDocument/publishDiagnostics` instead of being served through `workspace/diagnostic`.
+# Everything that can change them happens on the server side (full-analysis resolving
+# module contexts, edits of unit siblings, watched-file, configuration and open/close
+# events), and clients differ in how they poll, cancel and retain workspace pull results,
+# so a server-driven push avoids both the polling and the client-specific handling.
+# Open files keep using `textDocument/diagnostic`; a file is handed over on open by
+# republishing it without its live part (`clear_workspace_live_diagnostics!`) and on
+# close by the next scan. Clients without pull support get the live diagnostics of open
+# files pushed the same way, tagged with the document version.
 
-# Workspace scans are spaced by at least this many seconds. Without it every keystroke
-# would rescan through the wake-up path (a bump that turns out to change nothing still
-# costs a full scan), and Zed's immediate re-pull after each answer would do the same
-# through the request path.
-const WORKSPACE_DIAGNOSTIC_MIN_INTERVAL = 1.0
+# Scans are spaced by at least this many seconds: every keystroke in an open file is a
+# change point for its unit siblings, and a scan that turns out to change nothing still
+# costs a walk over the workspace.
+const WORKSPACE_DIAGNOSTICS_MIN_INTERVAL = 1.0
 
-function handle_WorkspaceDiagnosticRequest(
-        server::Server, msg::WorkspaceDiagnosticRequest, cancel_flag::CancelFlag
-    )
-    longpoll = server.state.workspace_diagnostic_longpoll
-    wait_workspace_diagnostic_interval(longpoll)
-    is_cancelled(cancel_flag) && return send_workspace_diagnostic_cancelled(server, msg.id)
-    revision = @atomic longpoll.revision
-    uris_to_search = collect_workspace_uris(server)
-    try
-        if get_config(server, :diagnostic, :all_files)
-            send_workspace_diagnostics(server, msg, uris_to_search, cancel_flag, revision)
-        else
-            send_empty_workspace_diagnostics(server, msg, uris_to_search, cancel_flag, revision)
-        end
+# A client that does not advertise `textDocument.diagnostic` never pulls.
+supports_pull_diagnostics(server::Server) =
+    getcapability(server, :textDocument, :diagnostic) !== nothing
+
+function start_workspace_diagnostics_worker!(server::Server)
+    @static JETLS_DEV_MODE && @info "Starting workspace diagnostics worker"
+    worker_task = server.state.workspace_diagnostics_worker.worker_task
+    isassigned(worker_task) &&
+        error("The server has already started a workspace diagnostics worker")
+    task = Threads.@spawn :default try
+        workspace_diagnostics_worker(server)
     catch err
-        send(server,
-            WorkspaceDiagnosticResponse(;
-                id = msg.id,
-                result = nothing,
-                error = ResponseError(;
-                    code = ErrorCodes.ServerCancelled,
-                    message = "workspace/diagnostic handling failed",
-                    data = DiagnosticServerCancellationData(; retriggerRequest = true))))
-        rethrow(err)
+        @error "Critical error happened in workspace diagnostics worker"
+        Base.display_error(stderr, err, catch_backtrace())
+    end
+    worker_task[] = task
+    return task
+end
+
+function workspace_diagnostics_worker(server::Server)
+    worker = server.state.workspace_diagnostics_worker
+    last_run_time = 0.0
+    while true
+        wait(worker.wakeup)
+        is_cancelled(worker.cancel_flag) && break
+        remaining = WORKSPACE_DIAGNOSTICS_MIN_INTERVAL - (time() - last_run_time)
+        remaining > 0 && sleep(remaining)
+        is_cancelled(worker.cancel_flag) && break
+        @tryinvokelatest publish_workspace_diagnostics!(server)
+        last_run_time = time()
+        GC.safepoint()
     end
 end
 
-function wait_workspace_diagnostic_interval(longpoll::WorkspaceDiagnosticLongPoll)
-    elapsed = time() - (@atomic longpoll.last_run_time)
-    remaining = WORKSPACE_DIAGNOSTIC_MIN_INTERVAL - elapsed
-    remaining > 0 && sleep(remaining)
-    nothing
+function stop_workspace_diagnostics_worker(server::Server)
+    worker = server.state.workspace_diagnostics_worker
+    isassigned(worker.worker_task) || return nothing
+    cancel!(worker.cancel_flag)
+    notify(worker.wakeup)
+    wait(worker.worker_task[])
+    return nothing
 end
 
-function send_workspace_diagnostic_cancelled(server::Server, id::MessageId)
-    return send(server,
-        WorkspaceDiagnosticResponse(;
-            id,
-            result = nothing,
-            error = request_cancelled_error()))
-end
+schedule_workspace_diagnostics!(server::Server) =
+    notify(server.state.workspace_diagnostics_worker.wakeup)
 
-# Derives the `resultId` sent back for `textDocument/diagnostic` and `workspace/diagnostic`.
+# Derives the `resultId` sent back for `textDocument/diagnostic`; the workspace diagnostics
+# worker uses the same key to detect changes of unopened files.
 # Every unit member's version is folded into the key so a sibling edit invalidates this
 # file's cached diagnostics and the cross-file analyses (`analyze_undefined_global_uses_for_file!`,
 # `analyze_unused_imports!`) rerun.
@@ -2419,7 +2439,7 @@ function compute_diagnostic_result_id(
     search_uris = if result_id_cache === nothing
         collect_search_uris(server, uri)
     else
-        this_uri = get_notebook_uri_for_cell(state, uri, uri)
+        this_uri = canonical_cache_uri(state, uri)
         analysis_info = get_analysis_info(state.analysis_manager, this_uri)
         if analysis_info isa AnalysisResult
             cached_result_id = get(result_id_cache, analysis_info.analyzed_file_infos, nothing)
@@ -2445,8 +2465,8 @@ function compute_diagnostic_result_id(
     return result_id
 end
 
-# Computes raw per-file diagnostics for both `textDocument/diagnostic` and
-# `workspace/diagnostic`. Falls back to parsed-stream diagnostics when the file does
+# Computes raw per-file diagnostics for `textDocument/diagnostic` and the workspace
+# diagnostics worker. Falls back to parsed-stream diagnostics when the file does
 # not parse cleanly, otherwise runs the lowering-based analyses.
 function compute_pull_diagnostics!(
         def_used_names_cache::DefUsedNamesCache, server::Server, uri::URI, fi::FileInfo,
@@ -2459,8 +2479,8 @@ function compute_pull_diagnostics!(
     end
 end
 
-# Applies config-based filtering, notebook localization, and markdown rendering
-# shared between `textDocument/diagnostic` and `workspace/diagnostic`.
+# Applies config-based filtering, notebook localization, and markdown rendering for
+# `textDocument/diagnostic` (`notify_diagnostics!` does the same for pushed diagnostics).
 function postprocess_pull_diagnostics(
         server::Server, uri::URI, diagnostics::Vector{Diagnostic},
         root_path::Union{Nothing,String},
@@ -2477,270 +2497,99 @@ function postprocess_pull_diagnostics(
     return diagnostics
 end
 
-# Full reports are streamed as partial results when the client offers a token, so they
-# show up while the scan is still running. The spec then requires the final response to
-# carry no result values, so they are not repeated there, except for Zed: it clears the
-# request token as soon as the response arrives and drops partial results it processes
-# afterwards, which would leave it with stale result ids and make it re-pull until they
-# converge one file per answer. Zed applies the same URI reported twice with the last
-# report winning. Unchanged reports only travel in the final response, so a pull that
-# changes nothing sends nothing before it gets parked.
-mutable struct WorkspaceDiagnosticReporter
-    const partial_token::Union{Nothing,ProgressToken}
-    const repeat_full_in_response::Bool
-    const items::Vector{WorkspaceDocumentDiagnosticReport}
-    changed::Bool
-end
-function WorkspaceDiagnosticReporter(server::Server, partial_token::Union{Nothing,ProgressToken})
-    repeat_full_in_response = partial_token === nothing ||
-        getobjpath(server.state, :init_params, :clientInfo, :name) ∈ ("Zed", "Zed Dev")
-    return WorkspaceDiagnosticReporter(
-        partial_token, repeat_full_in_response, WorkspaceDocumentDiagnosticReport[], false)
-end
-
-function report_unchanged!(
-        reporter::WorkspaceDiagnosticReporter, uri::URI, result_id::String
-    )
-    push!(reporter.items,
-        WorkspaceUnchangedDocumentDiagnosticReport(;
-            uri, version = null, resultId = result_id))
-    nothing
-end
-
-function report_full!(
-        server::Server, reporter::WorkspaceDiagnosticReporter,
-        item::WorkspaceFullDocumentDiagnosticReport
-    )
-    reporter.changed = true
-    reporter.repeat_full_in_response && push!(reporter.items, item)
-    partial_token = reporter.partial_token
-    if partial_token !== nothing
-        send_partial_result(server, partial_token,
-            WorkspaceDiagnosticReportPartialResult(;
-                items = WorkspaceDocumentDiagnosticReport[item]))
-    end
-    nothing
-end
-
-const empty_diagnostics = Diagnostic[]
-
-# The client holds a result for `uri` but no report can be produced for it anymore
-# (deleted, unreadable, or no longer part of any analysis unit): an empty report without
-# a `resultId` clears its diagnostics and makes the client drop the stale id.
-function report_cleared!(server::Server, reporter::WorkspaceDiagnosticReporter, uri::URI)
-    report_full!(server, reporter,
-        WorkspaceFullDocumentDiagnosticReport(;
-            uri, version = null, items = empty_diagnostics))
-    nothing
-end
-
-function report_stale_results!(
-        server::Server, reporter::WorkspaceDiagnosticReporter,
-        previous_result_ids::Dict{URI,String}, uris_to_search::Set{URI}
-    )
+# Rescans the workspace, recomputes the unopened files whose `resultId` moved, and
+# republishes those whose diagnostics actually changed, plus the files whose diagnostics
+# have to go away (deleted, out of every analysis unit, or opened since the last scan).
+# A sibling edit moves the `resultId` of every file in its unit, so most recomputations
+# reproduce the previous diagnostics; the `Diagnostic` equality is far cheaper than
+# serializing the publish and having the client re-merge it. An open file (pushed only
+# to clients without pull support) is republished whenever its document version moved,
+# even with the same diagnostics: the client may have discarded the previous publish
+# as out of date, and the suppression would otherwise never retry it. Each publish
+# carries the file's complete diagnostic set, since `publishDiagnostics` replaces
+# everything the server reported for a URI.
+function publish_workspace_diagnostics!(server::Server)
     state = server.state
-    for uri in keys(previous_result_ids)
-        uri in uris_to_search && continue
-        # Open documents belong to `textDocument/diagnostic`, whose result ids clients may
-        # echo back here; notebook cell ids never originate from this endpoint either.
-        is_synchronized(state, uri) && continue
-        get_notebook_uri_for_cell(state, uri) === nothing || continue
-        report_cleared!(server, reporter, uri)
+    worker = state.workspace_diagnostics_worker
+    cancel_flag = worker.cancel_flag
+    published = load(worker.published)
+    pull = supports_pull_diagnostics(server)
+    # `all_files=false` silences unopened files only; `handle_lsp_config_change!` already
+    # sent their clearing publishes, so the scan just forgets them.
+    uris_to_search = get_config(state, :diagnostic, :all_files) ?
+        collect_workspace_uris(server) : Set{URI}()
+    if !pull
+        # open files outside every analysis unit still get their syntax diagnostics
+        union!(uris_to_search, keys(load(state.file_cache)))
     end
-    nothing
-end
-
-function finish_workspace_diagnostics!(
-        server::Server, msg::WorkspaceDiagnosticRequest,
-        reporter::WorkspaceDiagnosticReporter, cancel_flag::CancelFlag, revision::Int
-    )
-    @atomic server.state.workspace_diagnostic_longpoll.last_run_time = time()
-    if reporter.partial_token !== nothing && !reporter.changed
-        enqueue_message!(server, WorkspaceDiagnosticParkToken(
-            ParkedWorkspaceDiagnosticRequest(msg, cancel_flag, revision)))
-        return nothing
-    end
-    return send(server,
-        WorkspaceDiagnosticResponse(;
-            id = msg.id,
-            result = WorkspaceDiagnosticReport(; items = reporter.items)))
-end
-
-function send_workspace_diagnostics(
-        server::Server, msg::WorkspaceDiagnosticRequest, uris_to_search::Set{URI},
-        cancel_flag::CancelFlag, revision::Int
-    )
-    state = server.state
-    previous_result_ids = Dict{URI,String}()
-    for prev in msg.params.previousResultIds
-        previous_result_ids[prev.uri] = prev.value
-    end
-    reporter = WorkspaceDiagnosticReporter(server, msg.params.partialResultToken)
-    root_path = isdefined(state, :root_path) ? state.root_path : nothing
     result_id_cache = DiagnosticResultIdCache()
-    debuginfo = nothing
-    # debuginfo = (; synced = URI[], analyzed = URI[], skipped = URI[], failed = URI[])
     def_used_names_cache = DefUsedNamesCache()
+    updates = Dict{URI,WorkspaceLiveDiagnostics}()
+    changed = Set{URI}()
+    removals = Set{URI}()
     for uri in uris_to_search
-        is_cancelled(cancel_flag) &&
-            return send_workspace_diagnostic_cancelled(server, msg.id)
-
-        if is_synchronized(state, uri)
-            isnothing(debuginfo) || push!(debuginfo.synced, uri)
-            continue # should now be reported via `textDocument/diagnostic`
-        end
-
-        fi = @something get_unsynced_file_info!(state, uri) begin
-            haskey(previous_result_ids, uri) && report_cleared!(server, reporter, uri)
-            isnothing(debuginfo) || push!(debuginfo.failed, uri)
-            continue
-        end
-
+        is_cancelled(cancel_flag) && return nothing
+        # live diagnostics of notebooks are computed per cell by `textDocument/diagnostic` only
+        is_notebook_uri(uri) && continue
+        synchronized = is_synchronized(state, uri)
+        synchronized && pull && continue # served by `textDocument/diagnostic`
+        # The result id is taken before the inputs it fingerprints. An edit landing in
+        # between then leaves the stored id behind the text, and the next scan (already
+        # scheduled by that edit) recomputes the file; an id taken after the inputs
+        # could instead match that scan and pin the stale diagnostics.
         result_id = compute_diagnostic_result_id(server, uri; result_id_cache)
-        prev_result_id = get(previous_result_ids, uri, nothing)
-        if prev_result_id !== nothing && prev_result_id == result_id
-            report_unchanged!(reporter, uri, result_id)
-            isnothing(debuginfo) || push!(debuginfo.skipped, uri)
+        prev = get(published, uri, nothing)
+        prev !== nothing && prev.result_id == result_id && continue
+        fi = @something if synchronized
+            get_file_info(state, uri)
+        else
+            get_unsynced_file_info!(state, uri)
+        end continue # cleaned up below with the other stale entries
+        diagnostics = compute_pull_diagnostics!(
+            def_used_names_cache, server, uri, fi, cancel_flag)
+        is_cancelled(cancel_flag) && return nothing
+        version = synchronized ? fi.version : nothing
+        updates[uri] = WorkspaceLiveDiagnostics(result_id, version, diagnostics)
+        if prev !== nothing && prev.version == version && prev.diagnostics == diagnostics
             continue
         end
-
-        diagnostics = compute_pull_diagnostics!(def_used_names_cache, server, uri, fi, cancel_flag)
-        is_cancelled(cancel_flag) &&
-            return send_workspace_diagnostic_cancelled(server, msg.id)
-        diagnostics = postprocess_pull_diagnostics(server, uri, diagnostics, root_path)
-
-        report_full!(server, reporter,
-            WorkspaceFullDocumentDiagnosticReport(;
-                uri,
-                version = null,
-                resultId = result_id,
-                items = diagnostics))
-        isnothing(debuginfo) || push!(debuginfo.analyzed, uri)
+        push!(changed, uri)
     end
-    report_stale_results!(server, reporter, previous_result_ids, uris_to_search)
-
-    if !isnothing(debuginfo)
-        debugshow = (x) -> Text(sprint(show, MIME("text/plain"), x; context=:limit=>true))
-        @info "workspace/diagnostic" analyzed=debugshow(debuginfo.analyzed) synced=debugshow(debuginfo.synced) skipped=debugshow(debuginfo.skipped) failed=debugshow(debuginfo.failed)
-    end
-    return finish_workspace_diagnostics!(server, msg, reporter, cancel_flag, revision)
-end
-
-const ALL_FILES_DISABLED_RESULT_ID = "workspace/diagnostic-disabled"
-
-function send_empty_workspace_diagnostics(
-        server::Server, msg::WorkspaceDiagnosticRequest, uris_to_search::Set{URI},
-        cancel_flag::CancelFlag, revision::Int
-    )
-    state = server.state
-    previous_result_ids = Dict{URI,String}()
-    for prev in msg.params.previousResultIds
-        previous_result_ids[prev.uri] = prev.value
-    end
-    reporter = WorkspaceDiagnosticReporter(server, msg.params.partialResultToken)
-    for uri in uris_to_search
-        is_cancelled(cancel_flag) &&
-            return send_workspace_diagnostic_cancelled(server, msg.id)
-        is_synchronized(state, uri) && continue
-        if get(previous_result_ids, uri, nothing) == ALL_FILES_DISABLED_RESULT_ID
-            report_unchanged!(reporter, uri, ALL_FILES_DISABLED_RESULT_ID)
+    for uri in keys(published)
+        gone = if is_synchronized(state, uri)
+            pull || get_file_info(state, uri) === nothing
         else
-            report_full!(server, reporter,
-                WorkspaceFullDocumentDiagnosticReport(;
-                    uri,
-                    version = null,
-                    resultId = ALL_FILES_DISABLED_RESULT_ID,
-                    items = empty_diagnostics))
+            get_unsynced_file_info!(state, uri) === nothing
         end
+        (!(uri in uris_to_search) || gone) && push!(removals, uri)
     end
-    report_stale_results!(server, reporter, previous_result_ids, uris_to_search)
-    return finish_workspace_diagnostics!(server, msg, reporter, cancel_flag, revision)
-end
-
-# Long-polling bookkeeping
-# ------------------------
-#
-# Everything below except `mark_workspace_diagnostics_changed!` runs on the concurrent
-# message worker (`handler_concurrent_message`), which serializes it against
-# `$/cancelRequest` handling and the dispatch of new `workspace/diagnostic` requests.
-
-# Queue the wake token unconditionally: checking `parked` here could miss a revision bump
-# between the park handler's revision check and its store to `parked`. Park and wake
-# handlers run serially on the same concurrent message worker, so a wake queued in that
-# window is handled after the park completes. If a wake is handled before the park,
-# the park handler detects the revision mismatch and re-runs the request instead.
-function mark_workspace_diagnostics_changed!(server::Server)
-    longpoll = server.state.workspace_diagnostic_longpoll
-    @atomic longpoll.revision += 1
-    enqueue_message!(server, WorkspaceDiagnosticWakeToken())
-    nothing
-end
-
-function begin_workspace_diagnostic_request!(
-        server::Server, msg::WorkspaceDiagnosticRequest
-    )
-    close_parked_workspace_diagnostic_request!(server)
-    @atomic server.state.workspace_diagnostic_longpoll.current_id = msg.id
-    nothing
-end
-
-function park_workspace_diagnostic_request!(
-        server::Server, request::ParkedWorkspaceDiagnosticRequest
-    )
-    longpoll = server.state.workspace_diagnostic_longpoll
-    if is_cancelled(request.cancel_flag)
-        send_workspace_diagnostic_cancelled(server, request.msg.id)
-    elseif request.msg.id != (@atomic longpoll.current_id)
-        send_empty_workspace_diagnostic_report(server, request.msg.id)
-    elseif request.revision != (@atomic longpoll.revision)
-        # something changed while this run was computing: re-run instead of parking
-        rerun_workspace_diagnostic_request(server, request)
-    else
-        @atomic longpoll.parked = request
+    isempty(updates) && isempty(removals) && return nothing
+    store!(worker.published) do current::WorkspaceLiveDiagnosticsData
+        for (uri, live) in updates
+            current = WorkspaceLiveDiagnosticsData(current, uri => live)
+        end
+        for uri in removals
+            haskey(current, uri) && (current = Base.delete(current, uri))
+        end
+        current, nothing
     end
+    union!(changed, removals)
+    isempty(changed) || notify_diagnostics!(server, changed)
     nothing
 end
 
-function resume_parked_workspace_diagnostic_request!(server::Server)
-    longpoll = server.state.workspace_diagnostic_longpoll
-    request = @something (@atomic longpoll.parked) return nothing
-    request.revision == (@atomic longpoll.revision) && return nothing
-    @atomic longpoll.parked = nothing
-    rerun_workspace_diagnostic_request(server, request)
+# An opened file is served by `textDocument/diagnostic` from now on: forget its pushed
+# live diagnostics and republish it without them so the two sets do not overlap.
+# Clients without pull support keep receiving them pushed instead.
+function clear_workspace_live_diagnostics!(server::Server, uri::URI)
+    supports_pull_diagnostics(server) || return nothing
+    published = server.state.workspace_diagnostics_worker.published
+    cleared = store!(published) do data::WorkspaceLiveDiagnosticsData
+        haskey(data, uri) || return data, false
+        Base.delete(data, uri), true
+    end
+    cleared && notify_diagnostics!(server, Set{URI}((uri,)))
     nothing
-end
-
-function rerun_workspace_diagnostic_request(
-        server::Server, request::ParkedWorkspaceDiagnosticRequest
-    )
-    Threads.@spawn :default @tryinvokelatest handle_request_message(
-        server, request.msg, request.msg.id, request.cancel_flag)
-    nothing
-end
-
-function cancel_parked_workspace_diagnostic_request!(server::Server, id::MessageId)
-    longpoll = server.state.workspace_diagnostic_longpoll
-    request = @something (@atomic longpoll.parked) return nothing
-    request.msg.id == id || return nothing
-    @atomic longpoll.parked = nothing
-    send_workspace_diagnostic_cancelled(server, id)
-    nothing
-end
-
-# A new pull arriving while one is parked (a client that polls without cancelling)
-# supersedes the parked one; an empty report leaves the client's state untouched.
-function close_parked_workspace_diagnostic_request!(server::Server)
-    longpoll = server.state.workspace_diagnostic_longpoll
-    request = @something (@atomic longpoll.parked) return nothing
-    @atomic longpoll.parked = nothing
-    send_empty_workspace_diagnostic_report(server, request.msg.id)
-    nothing
-end
-
-function send_empty_workspace_diagnostic_report(server::Server, id::MessageId)
-    items = WorkspaceDocumentDiagnosticReport[]
-    return send(server,
-        WorkspaceDiagnosticResponse(; id, result = WorkspaceDiagnosticReport(; items)))
 end
 
 # workspace/diagnostic/refresh
@@ -2748,13 +2597,10 @@ end
 
 struct DiagnosticRefreshRequestCaller <: RequestCaller end
 
-# Resumes a parked `workspace/diagnostic` pull and asks the client to re-pull
-# `textDocument/diagnostic` for its open documents. The refresh request only matters for
-# the latter: VS Code re-pulls open documents and never touches its workspace pull loop,
-# and Zed leaves an in-flight workspace pull open as well (it re-pulls once the server
-# answers), so the parked request has to be resumed on the server side.
+# Reschedules the push of unopened files' diagnostics and asks the client to re-pull
+# `textDocument/diagnostic` for its open documents.
 function request_diagnostic_refresh!(server::Server)
-    mark_workspace_diagnostics_changed!(server)
+    schedule_workspace_diagnostics!(server)
     supports(server, :workspace, :diagnostics, :refreshSupport) || return nothing
     id = String(gensym(:WorkspaceDiagnosticRefreshRequest))
     addrequest!(server, id=>DiagnosticRefreshRequestCaller())

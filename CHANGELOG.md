@@ -61,6 +61,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Added live Pkg output to progress messages for environment instantiation triggered by [`full_analysis.auto_instantiate`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/full_analysis/auto_instantiate), showing the latest activity while resolving and installing dependencies.
 
+- Added `JETLS/live` diagnostics for clients that do not support pull diagnostics (`textDocument/diagnostic`): the syntax and lowering diagnostics of open files are now pushed to them via `textDocument/publishDiagnostics`, tagged with the document version.
+
 ### Changed
 
 - [`jetls check`](https://aviatesk.github.io/JETLS.jl/release/cli-check) now defaults to [`--show-severity=info`](https://aviatesk.github.io/JETLS.jl/release/cli-check/#cli-check/options/show-severity), hiding hint diagnostics.
@@ -75,9 +77,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - The [`jetls check` GitHub Action](https://aviatesk.github.io/JETLS.jl/release/cli-check/#cli-check/github-actions) now uses Julia 1.13 by default instead of 1.12.
   Set `julia-version: "1.12"` if you want to keep analyzing your package against Julia 1.12.
 
-- `workspace/diagnostic` now long-polls: when nothing has changed since the client's last pull, the server keeps the request open instead of answering it, and answers as soon as workspace diagnostics may have changed (full-analysis completion, edits, watched-file or configuration changes). Clients that re-pull workspace diagnostics on a fixed interval (Zed, VS Code) no longer make the server rescan the workspace while idle, and diagnostics of unopened files update without waiting for the next poll.
+- `JETLS/live` diagnostics of unopened files are now pushed via `textDocument/publishDiagnostics` instead of being served through `workspace/diagnostic`, which JETLS no longer advertises.
+  Unopened files are republished as soon as their diagnostics may have changed (full-analysis resolving module contexts, edits in the same analysis unit, watched-file or configuration changes, opening or closing a file), so clients no longer poll the server for workspace diagnostics while idle, and the diagnostics of a closed file are cleared consistently across clients.
 
-- Pull diagnostics (`textDocument/diagnostic` and `workspace/diagnostic`) are now refreshed as soon as full-analysis has resolved module contexts, before signature analysis finishes, instead of after the whole analysis completes.
+- Pull diagnostics (`textDocument/diagnostic`) and the pushed diagnostics of unopened files are now refreshed as soon as full-analysis has resolved module contexts, before signature analysis finishes, instead of after the whole analysis completes.
 
 ### Fixed
 
@@ -94,6 +97,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Fixed a `WARNING: Detected access to binding ... in a world prior to its definition world` message that full analysis could print when analyzing calls with keyword arguments, e.g. during `jetls check`.
 
 - Fixed a race during background analysis that could cause diagnostics and other language features to use outdated document contents after an edit.
+
+- Fixed a race in pull diagnostics (`textDocument/diagnostic`) where an edit arriving while a request was being handled could leave diagnostics computed from the previous document contents displayed until the next edit.
 
 - Fixed errors logged when in-flight requests or progress notifications finished during language server shutdown.
 

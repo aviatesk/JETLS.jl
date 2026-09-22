@@ -35,7 +35,7 @@ get_analysis_info(f, manager::AnalysisManager, uri::URI) = get(f, load(manager.c
 
 # Collect URIs to search: the current file and all files in the same analysis unit
 function collect_search_uris(server::Server, uri::URI)
-    this_uri = get_notebook_uri_for_cell(server.state, uri, uri)
+    this_uri = canonical_cache_uri(server.state, uri)
     analysis_info = get_analysis_info(server.state.analysis_manager, this_uri)
     return collect_search_uris(this_uri, analysis_info)
 end
@@ -708,16 +708,16 @@ properties that make cleanup both safe and necessary:
 
 For notebooks there is the additional motivation that the on-disk `.ipynb` JSON
 is not directly analyzable as Julia source, so leaving the cache entry would
-let `workspace/diagnostic` fall through and emit spurious diagnostics for the
-raw JSON.
+let the workspace diagnostics worker fall through and emit spurious diagnostics
+for the raw JSON.
 
 Saved `.jl` files are intentionally NOT cleaned up here. They violate both
 properties: a `PackageSourceAnalysisEntry` covers every file in the package
 (removing one would tear out siblings' cached analysis), and Revise-based
 package analysis registers `module_range_infos` against the user's real
 modules, so `cleanup_prev_methods` would delete the user's live methods.
-Keeping the cache also lets `workspace/diagnostic` keep reporting disk-based
-diagnostics after close.
+Keeping the cache also lets the workspace diagnostics worker keep reporting
+disk-based diagnostics after close.
 
 This only handles state already known when `didClose` runs. Delayed progress
 responses are ignored, while any in-flight or queued analysis is short-circuited

@@ -428,7 +428,7 @@ function run_check_analysis(
 
     uri2diagnostics = get_full_diagnostics(server)
 
-    # Per-file diagnostics phase (workspace/diagnostic equivalent)
+    # Per-file diagnostics phase (workspace diagnostics worker equivalent)
     total_uris = run_per_file_diagnostics!(uri2diagnostics, analysis_uris, server, root_path, progress_ctx)
 
     for (uri, diagnostics) in uri2diagnostics
