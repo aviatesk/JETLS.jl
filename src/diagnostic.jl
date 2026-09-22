@@ -2431,10 +2431,10 @@ function publish_workspace_diagnostics!(server::Server, cancel_flag::CancelFlag)
     worker = state.workspace_diagnostics_worker
     published = load(worker.published)
     pull = pull_diagnostics_enabled(server)
-    # `all_files=false` silences unopened files only; `handle_lsp_config_change!` already
-    # sent their clearing publishes, so the scan just forgets them.
-    uris_to_search = get_config(state, :diagnostic, :all_files) ?
-        collect_workspace_uris(server) : Set{URI}()
+    # `all_files=false` silences unopened files only; the scan forgets them (and clears
+    # them once more after `handle_lsp_config_change!` did).
+    all_files = get_config(state, :diagnostic, :all_files)
+    uris_to_search = all_files ? collect_workspace_uris(server) : Set{URI}()
     if !pull
         # open files outside every analysis unit still get their syntax diagnostics;
         # notebooks are keyed by the notebook URI, and `notify_diagnostics!` localizes them
@@ -2489,7 +2489,19 @@ function publish_workspace_diagnostics!(server::Server, cancel_flag::CancelFlag)
         end
         current, nothing
     end
-    union!(changed, removals)
+    # A removed entry of a file that `all_files=false` silences is cleared on the client
+    # all the same: a publish of the scan that raced with `didClose` may have landed after
+    # the clearing publish of the close. Any other removal republishes what is left of the
+    # file (`JETLS/save` and `JETLS/extra`), as a file handed over to the client's pull
+    # must keep those.
+    for uri in removals
+        if all_files || is_synchronized(state, canonical_cache_uri(state, uri))
+            push!(changed, uri)
+        else
+            send(server, PublishDiagnosticsNotification(;
+                params = PublishDiagnosticsParams(; uri, diagnostics = empty_diagnostics)))
+        end
+    end
     isempty(changed) || notify_diagnostics!(server, changed)
     nothing
 end

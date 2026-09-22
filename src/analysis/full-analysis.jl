@@ -564,18 +564,19 @@ function resolve_analysis_request(server::Server, request::AnalysisRequest)
     @static JETLS_DEV_MODE && @info "Analysis completed in $tm seconds:" entry=progress_title(request.entry) uri=request.uri generation=get_generation(manager,request.entry)
 
     if is_abandoned_request(server, request)
-        # Document was closed mid-analysis. `file_cache`/`notebook_cache`
-        # becoming empty means didClose already ran (or is racing with us) and
-        # `cleanup_analysis_state!` is taking care of
-        # `manager.cache`/generations/debounced + the OLD prev_result's methods.
-        # We just need to drop the methods this analysis just defined and skip the cache write.
         @static JETLS_DEV_MODE && @info "Discarding analysis result for closed editor-managed document" entry=progress_title(request.entry) uri=request.uri
-        cleanup_prev_methods(analysis_result)
-        cleanup_analysis_entry_state!(manager, request.entry)
+        discard_abandoned_analysis!(server, request, analysis_result)
         @goto next_request
     end
 
     update_analysis_cache!(server.state, analysis_result)
+    # `didClose` may have run between the check above and this cache write, in which case
+    # its `cleanup_analysis_state!` found nothing to pop.
+    if is_abandoned_request(server, request)
+        @static JETLS_DEV_MODE && @info "Discarding analysis result stored after its editor-managed document was closed" entry=progress_title(request.entry) uri=request.uri
+        discard_abandoned_analysis!(server, request, analysis_result)
+        @goto next_request
+    end
     mark_analyzed_generation!(manager, request)
     request.notify_diagnostics && notify_diagnostics!(server)
     # Top-level errors can skip signature analysis and its intermediate context refresh.
@@ -694,6 +695,22 @@ end
 
 is_abandoned_request(server::Server, request::AnalysisRequest) =
     is_abandoned_analysis_target(server, request.uri, request.entry)
+
+# Drops what the analysis of a closed editor-managed document leaves behind: the methods
+# it defined and the cache entry it wrote. `cleanup_analysis_state!` on `didClose` only
+# pops what was cached at that time, so the intermediate result written mid-analysis
+# (`cache_intermediate_analysis_result!`) or a final result stored right after the
+# abandonment check would otherwise outlive the close and be published under the
+# notebook URI, never localized to its cells.
+function discard_abandoned_analysis!(
+        server::Server, request::AnalysisRequest, analysis_result::AnalysisResult
+    )
+    manager = server.state.analysis_manager
+    popped = pop_analysis_info!(manager, request.uri)
+    popped isa AnalysisResult && popped !== analysis_result && cleanup_prev_methods(popped)
+    cleanup_prev_methods(analysis_result)
+    cleanup_analysis_entry_state!(manager, request.entry)
+end
 
 """
     cleanup_analysis_state!(server::Server, uri::URI)
