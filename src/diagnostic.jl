@@ -344,7 +344,8 @@ end
 
 function jet_result_to_diagnostics!(
         uri2diagnostics::URI2Diagnostics, result::JET.JETToplevelResult,
-        world::UInt, postprocessor::JET.PostProcessor
+        world::UInt, postprocessor::JET.PostProcessor;
+        markdown_rendering::Bool = false
     )
     for report in result.res.toplevel_error_reports
         if report isa JET.LoweringErrorReport || report isa JET.MacroExpansionErrorReport
@@ -352,7 +353,8 @@ function jet_result_to_diagnostics!(
             # with more precise location information
             continue
         end
-        diagnostic = @something jet_toplevel_error_report_to_diagnostic(report, postprocessor) continue
+        diagnostic = @something jet_toplevel_error_report_to_diagnostic(
+            report, postprocessor; markdown_rendering) continue
         filename = report.file
         filename == "none" && continue
         uri = to_valid_uri(filename)
@@ -367,7 +369,8 @@ end
 # -------------------
 
 function jet_toplevel_error_report_to_diagnostic(
-        @nospecialize(report::JET.ToplevelErrorReport), postprocessor::JET.PostProcessor
+        @nospecialize(report::JET.ToplevelErrorReport), postprocessor::JET.PostProcessor;
+        markdown_rendering::Bool = false
     )
     report isa JET.ParseErrorReport && return nothing # Syntax errors should be reported via `textDocument/diagnostic` or `workspace/diangostic`
     if report isa JET.MissingConcretizationErrorReport
@@ -376,7 +379,7 @@ function jet_toplevel_error_report_to_diagnostic(
         code = TOPLEVEL_MISSING_CONCRETIZATION_CODE
     else
         data = nothing
-        message = JET.with_bufferring(:limit=>true, :markdown_rendering=>true) do io
+        message = JET.with_bufferring(:limit=>true, :markdown_rendering=>markdown_rendering) do io
             JET.print_report(io, report)
         end |> postprocessor
         code = report isa JET.ConcretizationTimeoutErrorReport ?

@@ -957,7 +957,8 @@ function new_analysis_result(
         uri2diagnostics = URI2Diagnostics(uri => Diagnostic[] for uri in keys(analyzed_file_infos))
         postprocessor = JET.PostProcessor(result.res.actual2virtual)
         toplevel_warning_reports_to_diagnostics!(uri2diagnostics, interp.warning_reports, interp.server, postprocessor)
-        jet_result_to_diagnostics!(uri2diagnostics, result, result_world, postprocessor)
+        jet_result_to_diagnostics!(uri2diagnostics, result, result_world, postprocessor;
+            markdown_rendering = supports(interp.server, :textDocument, :diagnostic, :markupMessageSupport))
         uri2diagnostics
     end
 

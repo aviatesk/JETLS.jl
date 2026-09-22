@@ -143,15 +143,18 @@ end
         @test isempty(result.res.inference_error_reports)
 
         uri = filepath2uri(filename)
-        uri2diagnostics = JETLS.URI2Diagnostics(uri => Diagnostic[])
         postprocessor = JETLS.JET.PostProcessor(result.res.actual2virtual)
-        JETLS.jet_result_to_diagnostics!(uri2diagnostics, result, Base.get_world_counter(), postprocessor)
-        diag = only(uri2diagnostics[uri])
-        @test diag.code == JETLS.TOPLEVEL_CONCRETIZATION_TIMEOUT_CODE
-        @test diag.severity == DiagnosticSeverity.Error
-        @test diag.source == JETLS.DIAGNOSTIC_SOURCE_SAVE
-        @test diag.range == JETLS.line_range(report.line)
-        @test occursin(string(timeout), diag.message)
+        for markdown_rendering in (false, true)
+            uri2diagnostics = JETLS.URI2Diagnostics(uri => Diagnostic[])
+            JETLS.jet_result_to_diagnostics!(uri2diagnostics, result,
+                Base.get_world_counter(), postprocessor; markdown_rendering)
+            diag = only(uri2diagnostics[uri])
+            @test diag.code == JETLS.TOPLEVEL_CONCRETIZATION_TIMEOUT_CODE
+            @test diag.severity == DiagnosticSeverity.Error
+            @test diag.source == JETLS.DIAGNOSTIC_SOURCE_SAVE
+            @test diag.range == JETLS.line_range(report.line)
+            @test occursin(string(timeout), diag.message)
+        end
     end
 
     @testset "caught error in interpreted callee" begin
@@ -221,6 +224,7 @@ end
             @test diag.source == JETLS.DIAGNOSTIC_SOURCE_SAVE
             @test diag.range == JETLS.line_range(report.line)
             @test occursin(string(timeout), diag.message)
+            @test !occursin("```", diag.message)
             if !native
                 @test occursin("inner", diag.message)
                 @test occursin("drive", diag.message)
