@@ -445,12 +445,13 @@ function has_analyzed_context(state::ServerState, uri::URI; lookup_func=nothing)
     return _has_analyzed_context(analysis_info, lookup_uri)
 end
 _has_analyzed_context(::Nothing, ::URI) = false
-# `JETLSTestModule` is a pseudo context with no real analysis behind it, so
-# context-requiring features (e.g. `analyze_unused_imports!`) must be skipped
-# even though `module_context` is set.
-# TODO Remove `JETLSTestModule` entirely and remove all of these hacks.
+# TODO Remove `JETLSTestModule` & `FallbackAnalysisContext` entirely.
+# Pseudo contexts supply imports, not real analysis, so context-requiring features
+# (e.g. `analyze_unused_imports!`) must be skipped even though `module_context` is set.
 _has_analyzed_context(outofscope::OutOfScope, ::URI) =
-    !isnothing(outofscope.module_context) && outofscope.module_context !== JETLSTestModule
+    !isnothing(outofscope.module_context) &&
+    outofscope.module_context !== JETLSTestModule &&
+    outofscope.module_context !== FallbackAnalysisContext
 _has_analyzed_context(analysis_result::AnalysisResult, uri::URI) =
     analyzed_file_info(analysis_result, uri) !== nothing
 

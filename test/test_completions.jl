@@ -382,6 +382,17 @@ function with_completion_items(
     end
 end
 
+@testset "Test macro fallback completions" begin
+    for text in ("Test│", "@test│")
+        with_completion_items(text; context_module=JETLS.FallbackAnalysisContext) do (; result)
+            labels = Set(item.label for item in result.items)
+            @test "@testset" in labels
+            @test "@test_throws" in labels
+            @test "FallbackAnalysisContext" ∉ labels
+        end
+    end
+end
+
 @testset "get_completion_items" begin
     program = """
      module Foo

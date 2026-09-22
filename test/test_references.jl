@@ -72,6 +72,97 @@ end
         end
     end
 
+    @testset "Test macros without full analysis" begin
+        mktempdir() do root_path
+            server = JETLS.Server()
+            server.state.root_path = root_path
+            server.state.init_options = JETLS.InitOptions(; analysis_overrides=[
+                JETLS.AnalysisOverride(;
+                    path=JETLS.Glob.FilenameMatch("*.jl", "dp"), full_analysis=false)
+            ])
+            uri = JETLS.filepath2uri(joinpath(root_path, "test.jl"))
+
+            for (version, (prefix, wrap_module)) in enumerate(
+                    (("", false), ("Test.", false), ("", true), ("Test.", true)))
+                code = """
+                    $(prefix)@testset begin
+                        │frame│ = rand()
+                        while │frame│ < 0
+                            │frame│ = rand()
+                        end
+                        $(prefix)@test │frame│ >= 0
+                    end
+                    $(prefix)@testset begin
+                        │frame│ = 1
+                        $(prefix)@test │frame│ == 1
+                    end
+                    """
+                if wrap_module
+                    code = "module TestCode\nusing Test\n" * code * "end\n"
+                end
+                clean_code, positions = JETLS.get_text_and_positions(code)
+                @test length(positions) == 12
+                fi = JETLS.cache_file_info!(server, uri, version, clean_code)
+                context = JETLS.lookup_out_of_scope!(server.state, uri)::JETLS.OutOfScope
+                @test context.module_context === JETLS.FallbackAnalysisContext
+                @test !JETLS.has_analyzed_context(server.state, uri)
+                @test JETLS.collect_search_uris(server, uri) == Set((uri,))
+                ranges = [Range(; start=positions[i], var"end"=positions[i+1])
+                    for i in 1:2:length(positions)]
+                for (indices, expected) in ((1:8, ranges[1:4]), (9:12, ranges[5:6]))
+                    for pos in positions[indices]
+                        refs = JETLS.find_references(server, uri, fi, pos)
+                        @test length(refs) == length(expected)
+                        @test all(ref -> ref.uri == uri, refs)
+                        @test Set(ref.range for ref in refs) == Set(expected)
+                    end
+                end
+
+                result = JETLS.find_definition(server, uri, fi, positions[7])
+                @test result !== nothing
+                if result !== nothing
+                    locations, _ = result
+                    @test length(locations) == 2
+                    @test all(loc -> loc.uri == uri, locations)
+                    @test Set(loc.range for loc in locations) == Set(ranges[[1, 3]])
+                end
+
+                per_file = JETLS.compute_per_file_diagnostics(
+                    server, uri, fi, JETLS.build_syntax_tree(fi), JETLS.DUMMY_CANCEL_FLAG)
+                @test isempty(per_file.diagnostics)
+                @test isempty(per_file.undef_global_candidates)
+            end
+
+            let code = """
+                    @testset begin
+                        local frame
+                        @test │frame│ >= 0
+                        @test missing_global >= 0
+                    end
+                    @unknown_macro missing_global
+                    @testset
+                    """
+                clean_code, positions = JETLS.get_text_and_positions(code)
+                fi = JETLS.cache_file_info!(server, uri, 5, clean_code)
+                per_file = JETLS.compute_per_file_diagnostics(
+                    server, uri, fi, JETLS.build_syntax_tree(fi), JETLS.DUMMY_CANCEL_FLAG)
+                undef_local = filter(per_file.diagnostics) do diagnostic
+                    diagnostic.code == JETLS.LOWERING_UNDEF_LOCAL_VAR_CODE
+                end
+                @test length(undef_local) == 1
+                @test only(undef_local).range == Range(;
+                    start=positions[1], var"end"=positions[2])
+                @test isempty(per_file.undef_global_candidates)
+                @test !any(per_file.diagnostics) do diagnostic
+                    diagnostic.code in (
+                        JETLS.LOWERING_UNDEF_GLOBAL_VAR_CODE,
+                        JETLS.LOWERING_MACRO_EXPANSION_ERROR_CODE,
+                    )
+                end
+            end
+        end
+    end
+
     @testset "global binding references" begin
         let code = """
             function │myfunc│(x)
