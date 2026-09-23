@@ -26,9 +26,7 @@ Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 InteractiveUtils = "b77e0a4c-d291-57a0-90e8-8db25a27a240"
 
 [sources.CodeTracking]
-subdir = "vendor/CodeTracking"
-rev = "9c601c6e0c8e16577b4a315e43cad69ce88a07bd"
-url = "https://github.com/aviatesk/JETLS.jl"
+path = "../CodeTracking"
 
 [targets]
 test = ["Aqua", "CassetteOverlay", "DataFrames", "Dates", "DeepDiffs", "Distributed", "ExplicitImports", "FunctionWrappers", "LinearAlgebra", "Logging", "LoopVectorization", "Mmap", "SHA", "SparseArrays", "Test"]

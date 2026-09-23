@@ -16,44 +16,28 @@ InteractiveUtils = "b77e0a4c-d291-57a0-90e8-8db25a27a240"
 Preferences = "cc588e5a-7be0-5224-8a6a-549b21958db9"
 
 [sources.Compiler]
-subdir = "vendor/Compiler"
-rev = "9c601c6e0c8e16577b4a315e43cad69ce88a07bd"
-url = "https://github.com/aviatesk/JETLS.jl"
+path = "../Compiler"
 
 [sources.Preferences]
-subdir = "vendor/Preferences"
-rev = "9c601c6e0c8e16577b4a315e43cad69ce88a07bd"
-url = "https://github.com/aviatesk/JETLS.jl"
+path = "../Preferences"
 
 [sources.CodeTracking]
-subdir = "vendor/CodeTracking"
-rev = "9c601c6e0c8e16577b4a315e43cad69ce88a07bd"
-url = "https://github.com/aviatesk/JETLS.jl"
+path = "../CodeTracking"
 
 [sources.JuliaInterpreter]
-subdir = "vendor/JuliaInterpreter"
-rev = "9c601c6e0c8e16577b4a315e43cad69ce88a07bd"
-url = "https://github.com/aviatesk/JETLS.jl"
+path = "../JuliaInterpreter"
 
 [sources.JuliaSyntax]
-subdir = "vendor/JuliaSyntax"
-rev = "9c601c6e0c8e16577b4a315e43cad69ce88a07bd"
-url = "https://github.com/aviatesk/JETLS.jl"
+path = "../JuliaSyntax"
 
 [sources.MacroTools]
-subdir = "vendor/MacroTools"
-rev = "9c601c6e0c8e16577b4a315e43cad69ce88a07bd"
-url = "https://github.com/aviatesk/JETLS.jl"
+path = "../MacroTools"
 
 [sources.LoweredCodeUtils]
-subdir = "vendor/LoweredCodeUtils"
-rev = "9c601c6e0c8e16577b4a315e43cad69ce88a07bd"
-url = "https://github.com/aviatesk/JETLS.jl"
+path = "../LoweredCodeUtils"
 
 [sources.PrecompileTools]
-subdir = "vendor/PrecompileTools"
-rev = "9c601c6e0c8e16577b4a315e43cad69ce88a07bd"
-url = "https://github.com/aviatesk/JETLS.jl"
+path = "../PrecompileTools"
 
 [compat]
 Test = "1.10"

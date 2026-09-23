@@ -13,9 +13,7 @@ FileWatching = "7b1f6079-737a-58dc-b8bc-7a2ca5c1b5ee"
 JuliaSyntax = "02a177f8-2b16-5240-a0b4-02ed40703cda"
 
 [sources.JuliaSyntax]
-subdir = "vendor/JuliaSyntax"
-rev = "9c601c6e0c8e16577b4a315e43cad69ce88a07bd"
-url = "https://github.com/aviatesk/JETLS.jl"
+path = "../JuliaSyntax"
 
 [targets]
 test = ["Test", "FileWatching", "Markdown", "REPL"]
