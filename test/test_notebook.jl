@@ -564,6 +564,12 @@ end
                     notebook_uri, NotebookDocumentChangeEvent(; cells = change); version = 2)])
             @test length(prepared) == 2
             @test JETLS.get_file_info(state, notebook_uri).version == 2
+            if change_kind !== :preceding_lines
+                cleared = take_with_timeout!(recorder.sent_queue)
+                @test cleared isa PublishDiagnosticsNotification
+                @test cleared.params.uri == (change_kind === :remove_preceding ? cell1 : cell2)
+                @test isempty(cleared.params.diagnostics)
+            end
             for (i, request) in enumerate(prepared)
                 snapshot = request.snapshot
                 @test snapshot.fi === fi
@@ -654,6 +660,11 @@ end
             @test global_pos == Position(; line = 2, character = pos.character)
             @test JETLS.get_file_info(state, notebook_uri).version == 2
             if change_kind === :remove_requested
+                let cleared = take_with_timeout!(recorder.sent_queue)
+                    @test cleared isa PublishDiagnosticsNotification
+                    @test cleared.params.uri == cell2
+                    @test isempty(cleared.params.diagnostics)
+                end
                 @test !JETLS.is_notebook_cell_uri(state, cell2)
                 @test JETLS.snapshot_request_message(state, request, cell2).snapshot === nothing
             else
@@ -717,6 +728,106 @@ end
             @test raw_res isa ShowMessageNotification
         end
     end end
+end
+
+@testset "pushed live diagnostics of notebooks are lowered with soft scope" begin
+    mktempdir() do tempdir; Pkg.activate(tempdir) do
+        notebook_uri = filepath2uri(normpath(tempdir, "test.ipynb"))
+        cell_uri = make_cell_uri(tempdir, 1)
+        withserver() do (; server, writereadmsg, readmsg)
+            cells = NotebookCell[NotebookCell(; kind = NotebookCellKind.Code, document = cell_uri)]
+            cell_texts = Dict{URI,String}(cell_uri => """
+                x = 0
+                for i in 1:3
+                    x += i
+                end
+                x
+                """)
+            (; raw_res) = writereadmsg(
+                make_DidOpenNotebookDocumentNotification(notebook_uri, cells, cell_texts))
+            @test raw_res isa PublishDiagnosticsNotification
+            scanned = scan_live_diagnostics!(server, readmsg)
+            @test haskey(scanned, cell_uri)
+            @test !any(scanned[cell_uri].diagnostics) do diag
+                diag.code in (JETLS.LOWERING_UNDEF_LOCAL_VAR_CODE,
+                              JETLS.LOWERING_AMBIGUOUS_SOFT_SCOPE_CODE)
+            end
+        end
+    end end
+end
+
+@testset "live diagnostics of a closed notebook are not published under its URI" begin
+    mktempdir() do tempdir; Pkg.activate(tempdir) do
+        notebook_uri = filepath2uri(normpath(tempdir, "test.ipynb"))
+        cell_uri = make_cell_uri(tempdir, 1)
+        withserver() do (; server, writereadmsg, readmsg)
+            cells = NotebookCell[NotebookCell(; kind = NotebookCellKind.Code, document = cell_uri)]
+            cell_texts = Dict{URI,String}(cell_uri => "func(x, y) = identity(x)\n")
+            (; raw_res) = writereadmsg(
+                make_DidOpenNotebookDocumentNotification(notebook_uri, cells, cell_texts))
+            @test raw_res isa PublishDiagnosticsNotification
+            let scanned = scan_live_diagnostics!(server, readmsg)
+                @test keys(scanned) == Set((cell_uri,))
+                @test !isempty(scanned[cell_uri].diagnostics)
+            end
+
+            (; raw_res) = writereadmsg(
+                make_DidCloseNotebookDocumentNotification(notebook_uri, [cell_uri]))
+            @test raw_res isa PublishDiagnosticsNotification
+            @test raw_res.params.uri == cell_uri
+            @test isempty(raw_res.params.diagnostics)
+            @test !haskey(JETLS.load(server.state.workspace_diagnostics_worker.published), notebook_uri)
+            manager = server.state.analysis_manager
+            @test timedwait(() -> !haskey(JETLS.load(manager.cache), notebook_uri), 10.0) === :ok
+            @test !haskey(JETLS.get_full_diagnostics(server), notebook_uri)
+        end
+    end end
+end
+
+@testset "pushed diagnostics of a cell that stops being a code cell are cleared" begin
+    @testset "$change_kind" for change_kind in (:delete, :markup)
+        mktempdir() do tempdir; Pkg.activate(tempdir) do
+            notebook_uri = filepath2uri(normpath(tempdir, "test.ipynb"))
+            cell1_uri = make_cell_uri(tempdir, 1)
+            cell2_uri = make_cell_uri(tempdir, 2)
+            withserver() do (; server, writereadmsg, readmsg)
+                cells = NotebookCell[
+                    NotebookCell(; kind = NotebookCellKind.Code, document = cell1_uri),
+                    NotebookCell(; kind = NotebookCellKind.Code, document = cell2_uri)]
+                cell_texts = Dict{URI,String}(
+                    cell1_uri => "x = 1\n",
+                    cell2_uri => "func(x, y) = identity(x)\n")
+                (; raw_res) = writereadmsg(
+                    make_DidOpenNotebookDocumentNotification(notebook_uri, cells, cell_texts);
+                    read = 2)
+                @test all(msg -> msg isa PublishDiagnosticsNotification, raw_res)
+                let scanned = scan_live_diagnostics!(server, readmsg)
+                    @test !isempty(scanned[cell2_uri].diagnostics)
+                end
+
+                cells_change = if change_kind === :delete
+                    NotebookDocumentChangeEventCells(;
+                        structure = NotebookDocumentChangeEventCellsStructure(;
+                            array = NotebookCellArrayChange(; start = UInt(1), deleteCount = UInt(1)),
+                            didClose = [TextDocumentIdentifier(; uri = cell2_uri)]))
+                else
+                    NotebookDocumentChangeEventCells(;
+                        data = [NotebookCell(; kind = NotebookCellKind.Markup, document = cell2_uri)])
+                end
+                change = NotebookDocumentChangeEvent(; cells = cells_change)
+                (; raw_res) = writereadmsg(
+                    make_DidChangeNotebookDocumentNotification(notebook_uri, change; version = 2))
+                @test raw_res isa PublishDiagnosticsNotification
+                @test raw_res.params.uri == cell2_uri
+                @test isempty(raw_res.params.diagnostics)
+                wait_for_file_cache_version(server.state, notebook_uri, 2)
+
+                let scanned = scan_live_diagnostics!(server, readmsg)
+                    @test !haskey(scanned, cell2_uri)
+                end
+            end
+        end end
+    end
 end
 
 end # module test_notebook

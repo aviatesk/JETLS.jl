@@ -263,7 +263,10 @@ function apply_markdown_message!(diagnostics::Vector{Diagnostic})
         diagnostic = diagnostics[i]
         message = diagnostic.message
         if message isa String
-            diagnostics[i] = Diagnostic(diagnostic; message = MarkupContent(; kind = MarkupKind.Markdown, value = message))
+            diagnostics[i] = Diagnostic(diagnostic;
+                message = MarkupContent(;
+                    kind = MarkupKind.Markdown,
+                    value = message))
         end
     end
 end
@@ -2014,7 +2017,9 @@ function compute_per_file_diagnostics(
         Dict{Module,Dict{String,Vector{ImportInfo}}}() :
         collect_explicit_imports_by_module(server.state, uri, file_info, st0_top)
     allow_unused_underscore = get_config(server, :diagnostic, :allow_unused_underscore)
-    soft_scope = is_notebook_cell_uri(server.state, uri)
+    soft_scope = is_notebook_cell_uri(server.state, uri) ||
+        # the workspace diagnostics worker computes notebooks on the notebook URI
+        is_notebook_uri(server.state, uri)
     iterate_toplevel_tree(st0_top) do st0::SyntaxTree
         is_cancelled(cancel_flag) && return traversal_terminator
         pos = offset_to_xy(file_info, JS.first_byte(st0))
@@ -2510,13 +2515,16 @@ end
 # live diagnostics and republish it without them so the two sets do not overlap.
 function clear_workspace_live_diagnostics!(server::Server, uri::URI)
     pull_diagnostics_enabled(server) || return nothing
-    published = server.state.workspace_diagnostics_worker.published
-    cleared = store!(published) do data::WorkspaceLiveDiagnosticsData
+    cleared = forget_workspace_live_diagnostics!(server.state, uri)
+    cleared && notify_diagnostics!(server, Set{URI}((uri,)))
+    nothing
+end
+
+function forget_workspace_live_diagnostics!(state::ServerState, uri::URI)
+    return store!(state.workspace_diagnostics_worker.published) do data::WorkspaceLiveDiagnosticsData
         haskey(data, uri) || return data, false
         Base.delete(data, uri), true
     end
-    cleared && notify_diagnostics!(server, Set{URI}((uri,)))
-    nothing
 end
 
 # textDocument/diagnostic
