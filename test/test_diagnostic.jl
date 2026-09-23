@@ -1050,6 +1050,47 @@ end
     end
 end
 
+@testset "live diagnostics fingerprint follows the module context of the analysis" begin
+    script = "func(x) = x\n"
+    withscript(script) do script_path
+        uri = filepath2uri(script_path)
+        withserver() do (; server)
+            @test JETLS.get_analysis_info(server.state.analysis_manager, uri) === nothing
+            no_context = JETLS.compute_live_diagnostics_fingerprint(server, uri)
+
+            JETLS.cache_file_info!(server, uri, 1, script)
+            JETLS.cache_saved_file_info!(server.state, uri, script)
+            JETLS.request_analysis!(server, uri, #=invalidate=#false; wait=true, notify_diagnostics=false)
+            result = JETLS.get_analysis_info(server.state.analysis_manager, uri)::JETLS.AnalysisResult
+            fingerprint = JETLS.compute_live_diagnostics_fingerprint(server, uri)
+            @test fingerprint != no_context
+
+            # A new result keeping the module context, like the final result following an
+            # intermediate one, does not move the fingerprint.
+            let same_context = JETLS.AnalysisResult(result.entry,
+                    copy(result.uri2diagnostics), result.analyzer,
+                    copy(result.analyzed_file_infos), result.actual2virtual,
+                    Base.get_world_counter())
+                JETLS.update_analysis_cache!(server.state, same_context)
+                @test JETLS.compute_live_diagnostics_fingerprint(server, uri) == fingerprint
+            end
+
+            # A new module context, as every script reanalysis mints, moves it.
+            let newmod = Module()
+                analyzed_file_infos = Dict{URI,JETLS.JET.AnalyzedFileInfo}(
+                    analyzed_uri => JETLS.JET.AnalyzedFileInfo(
+                        [range => newmod for (range, _) in afi.module_range_infos])
+                    for (analyzed_uri, afi) in result.analyzed_file_infos)
+                new_context = JETLS.AnalysisResult(result.entry,
+                    copy(result.uri2diagnostics), result.analyzer, analyzed_file_infos,
+                    result.actual2virtual, Base.get_world_counter())
+                JETLS.update_analysis_cache!(server.state, new_context)
+                @test JETLS.compute_live_diagnostics_fingerprint(server, uri) != fingerprint
+            end
+        end
+    end
+end
+
 @testset "per-file diagnostics computed from an outdated version are not reused" begin
     withscript("func(x, y) = x\n") do script_path
         uri = filepath2uri(script_path)

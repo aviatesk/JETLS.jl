@@ -2377,9 +2377,9 @@ end
 # Every unit member's version is folded in so a sibling edit invalidates this file's
 # cached diagnostics and the cross-file analyses
 # (`analyze_undefined_global_uses_for_file!`, `analyze_unused_imports!`) rerun; so are
-# the `[diagnostic]` config, so a config change recomputes every file, and the identity
-# of the analysis result, so a file computed before full-analysis resolved its module
-# context is recomputed once the context is known.
+# the `[diagnostic]` config, so a config change recomputes every file, and the module
+# context of the unit (`analysis_context_hash`), so a file computed before full-analysis
+# resolved its module context is recomputed once the context is known.
 const LiveDiagnosticsFingerprintCache = IdDict{Dict{URI,JET.AnalyzedFileInfo},String}
 
 function compute_live_diagnostics_fingerprint(
@@ -2395,7 +2395,7 @@ function compute_live_diagnostics_fingerprint(
     end
     search_uris = collect_search_uris(this_uri, analysis_info)
     config_hash = hash(get_config(state, :diagnostic))
-    analysis_hash = analysis_info === nothing ? zero(UInt) : objectid(analysis_info)
+    context_hash = analysis_context_hash(analysis_info)
     file_hash = zero(UInt)
     for search_uri in search_uris
         search_fi = @something begin
@@ -2405,11 +2405,29 @@ function compute_live_diagnostics_fingerprint(
         end continue
         file_hash ⊻= hash((search_uri, search_fi.version))
     end
-    fingerprint = string(hash((file_hash, config_hash, analysis_hash)))
+    fingerprint = string(hash((file_hash, config_hash, context_hash)))
     if analysis_info isa AnalysisResult
         fingerprint_cache[analysis_info.analyzed_file_infos] = fingerprint
     end
     return fingerprint
+end
+
+# Live diagnostics take only the module context from full-analysis, so an analysis result
+# that keeps every unit member's `module_range_infos` (e.g. the final result following an
+# intermediate one) leaves the fingerprint alone, just as `update_analysis_cache!` keeps
+# the per-file caches then.
+function analysis_context_hash(analysis_info::Union{Nothing,AnalysisInfo})
+    if analysis_info isa AnalysisResult
+        context_hash = zero(UInt)
+        for (analyzed_uri, analyzed_file_info) in analysis_info.analyzed_file_infos
+            context_hash ⊻= hash((analyzed_uri, analyzed_file_info.module_range_infos))
+        end
+        return context_hash
+    elseif analysis_info isa OutOfScope
+        return hash(analysis_info.module_context)
+    else
+        return zero(UInt)
+    end
 end
 
 # Computes the raw live diagnostics of a file. Falls back to parsed-stream diagnostics
