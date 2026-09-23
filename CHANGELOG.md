@@ -61,6 +61,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- Fixed occasional segmentation faults of the language server, most likely to occur while [`JETLS/live`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/source) diagnostics were being updated after edits.
+  These were caused by a Julia codegen bug (https://github.com/JuliaLang/julia/issues/63320), which JETLS now works around.
+
 - Fixed [`JETLS/live`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/source) diagnostics of notebooks on clients that do not set the [`pull_diagnostics`](https://aviatesk.github.io/JETLS.jl/release/launching/#init-options/pull_diagnostics) initialization option:
   false [`lowering/undef-local-var`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/undef-local-var) and [`lowering/ambiguous-soft-scope`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/ambiguous-soft-scope) diagnostics for code relying on soft scope, e.g. `x = 0; for i in 1:3; x += i; end`, are no longer reported in notebook cells in such clients, and diagnostics of a deleted cell or of a cell turned into a markdown cell are now cleared.
 
