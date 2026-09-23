@@ -101,6 +101,15 @@ function compute_binding_occurrences(
     for (_, idxs) in same_location_bindings
         length(idxs) == 1 && continue
         newoccurrences = union!((occurrences[ctx3.bindings.info[idx]] for idx in idxs)...)
+        if all(idx::Int->ctx3.bindings.info[idx].kind === :local, idxs)
+            # `for i in xs, j in ys` copies the outer `i` into the innermost loop via
+            # `let i = i`, which reads the outer `i` at its definition site. That read
+            # is lowering scaffolding and must not make `i` look used.
+            definition_range = JS.byte_range(JL.binding_ex(ctx3, ctx3.bindings.info[first(idxs)]))
+            filter!(newoccurrences) do occ::BindingOccurrence
+                occ.kind !== :use || JS.byte_range(occ.tree) != definition_range
+            end
+        end
         for idx in idxs
             occurrences[ctx3.bindings.info[idx]] = newoccurrences
         end

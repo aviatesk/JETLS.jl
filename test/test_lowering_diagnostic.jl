@@ -955,6 +955,62 @@ end
         end
     end
 
+    @testset "for loop with multiple iteration specs" begin
+        let diagnostics = get_lowering_diagnostics("""
+            function func(xs)
+                for i in xs, j in xs
+                    println(j)
+                end
+            end
+            """)
+            @test length(diagnostics) == 1
+            diagnostic = only(diagnostics)
+            @test diagnostic.message == "Unused local binding `i`"
+            @test diagnostic.range.start.line == 1
+            @test diagnostic.range.start.character == sizeof("    for ")
+            @test diagnostic.range.var"end".line == 1
+            @test diagnostic.range.var"end".character == sizeof("    for i")
+        end
+
+        let diagnostics = get_lowering_diagnostics("""
+            function func(xs)
+                for (i, k) in xs, j in xs
+                    println(k, j)
+                end
+            end
+            """)
+            @test length(diagnostics) == 1
+            diagnostic = only(diagnostics)
+            @test diagnostic.message == "Unused local binding `i`"
+            @test diagnostic.range.start.line == 1
+            @test diagnostic.range.start.character == sizeof("    for (")
+        end
+
+        let diagnostics = get_lowering_diagnostics("""
+            function func(xs)
+                for i in xs, j in xs, k in xs
+                    println(i, k)
+                end
+            end
+            """)
+            @test length(diagnostics) == 1
+            diagnostic = only(diagnostics)
+            @test diagnostic.message == "Unused local binding `j`"
+            @test diagnostic.range.start.line == 1
+            @test diagnostic.range.start.character == sizeof("    for i in xs, ")
+        end
+
+        let diagnostics = get_lowering_diagnostics("""
+            function func(xs)
+                for i in xs, j in xs
+                    println(i, j)
+                end
+            end
+            """)
+            @test isempty(diagnostics)
+        end
+    end
+
     @testset "allow_unused_underscore" begin
         let diagnostics = get_lowering_diagnostics("""
             function foo(_x, y)
