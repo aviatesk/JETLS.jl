@@ -1794,8 +1794,8 @@ function compute_unit_def_used_names(
         end continue
         cached = get(load(state.per_file_diagnostics_cache),
             canonical_cache_uri(state, search_uri), nothing)
-        if cached !== nothing
-            merge_def_used_names!(mod_def_used_names, cached.def_used_names)
+        if cached !== nothing && cached.version == search_fi.version
+            merge_def_used_names!(mod_def_used_names, cached.result.def_used_names)
             continue
         end
         search_st0_top = build_syntax_tree(search_fi)
@@ -2053,8 +2053,9 @@ function get_per_file_diagnostics!(
     )
     cache_uri = canonical_cache_uri(server.state, uri)
     return store!(server.state.per_file_diagnostics_cache) do cache::PerFileDiagnosticsCacheData
-        if haskey(cache, cache_uri)
-            return cache, cache[cache_uri]
+        cached = get(cache, cache_uri, nothing)
+        if cached !== nothing && cached.version == file_info.version
+            return cache, cached.result
         end
         st0_top = build_syntax_tree(file_info)
         result = compute_per_file_diagnostics(
@@ -2062,7 +2063,8 @@ function get_per_file_diagnostics!(
         if is_cancelled(cancel_flag)
             return cache, result
         end
-        return PerFileDiagnosticsCacheData(cache, cache_uri => result), result
+        entry = PerFileDiagnosticsCacheEntry(file_info.version, result)
+        return PerFileDiagnosticsCacheData(cache, cache_uri => entry), result
     end
 end
 
@@ -2073,15 +2075,17 @@ function get_per_file_diagnostics!(
     )
     cache_uri = canonical_cache_uri(server.state, uri)
     return store!(server.state.per_file_diagnostics_cache) do cache::PerFileDiagnosticsCacheData
-        if haskey(cache, cache_uri)
-            return cache, cache[cache_uri]
+        cached = get(cache, cache_uri, nothing)
+        if cached !== nothing && cached.version == file_info.version
+            return cache, cached.result
         end
         result = compute_per_file_diagnostics(
             server, uri, file_info, st0_top, cancel_flag; lookup_func)
         if is_cancelled(cancel_flag)
             return cache, result
         end
-        return PerFileDiagnosticsCacheData(cache, cache_uri => result), result
+        entry = PerFileDiagnosticsCacheEntry(file_info.version, result)
+        return PerFileDiagnosticsCacheData(cache, cache_uri => entry), result
     end
 end
 
