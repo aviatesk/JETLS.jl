@@ -1027,33 +1027,39 @@ end
                     @test a == 1
                 end
                 """)
-            @test JS.kind(st1) === JS.K"let"
-            @test JS.numchildren(st1) == 2
-            @test JS.kind(st1[1]) === JS.K"block" # bindings (empty)
-            @test JS.kind(st1[2]) === JS.K"block" # body
+            @test JS.kind(st1) === JS.K"block"
+            @test children_kinds(st1) == [JS.K"String", JS.K"let"]
+            let_st = st1[2]
+            @test JS.numchildren(let_st) == 2
+            @test JS.kind(let_st[1]) === JS.K"block" # bindings (empty)
+            @test JS.kind(let_st[2]) === JS.K"block" # body
         end
 
         # No description form.
         let st1 = test_macro_expand("@testset begin a = 1 end")
-            @test JS.kind(st1) === JS.K"let"
+            @test children_kinds(st1) == [JS.K"let"]
         end
 
-        # Description and options are dropped, only the trailing body matters.
+        # The testset type, description, and option values are evaluated ahead of the body.
         let st1 = test_macro_expand("""
                 @testset MyType "x" verbose=true begin
                     @test true
                 end
                 """)
-            @test JS.kind(st1) === JS.K"let"
+            @test children_kinds(st1) == [JS.K"Identifier", JS.K"String", JS.K"Bool", JS.K"let"]
         end
 
-        # `for` loop form: the for sits inside the let body block.
+        # `for` loop form: the for sits inside the let body block, and the description
+        # is evaluated per iteration ahead of the body, which gets its own scope.
         let st1 = test_macro_expand("""
-                @testset "x" for i = 1:10
+                @testset "x\$(i)" for i = 1:10
                     @test i > 0
                 end
                 """)
-            @test JS.kind(st1) === JS.K"let"
+            @test children_kinds(st1) == [JS.K"let"]
+            for_st = st1[1][2][1]
+            @test JS.kind(for_st) === JS.K"for"
+            @test children_kinds(for_st[2]) == [JS.K"string", JS.K"let"]
         end
     end
 
@@ -1126,6 +1132,21 @@ end
             @test occursin("unexpected argument", d.msg)
         end
 
+        # A `let` form rejects every customization; expansion still succeeds.
+        let diags = collect_macro_diagnostics() do
+                test_macro_expand("@testset MyType \"x\" verbose=true let v = 1 end")
+            end
+            @test length(diags) == 3
+            @test all(d -> d.severity == JETLS.LSP.DiagnosticSeverity.Error, diags)
+            @test all(d -> occursin("with a `let` argument cannot be customized", d.msg), diags)
+            @test Set(strip(JS.sourcetext(d.node)) for d in diags) == Set(["MyType", "x", "verbose=true"])
+        end
+        let diags = collect_macro_diagnostics() do
+                test_macro_expand("@testset let v = 1 end")
+            end
+            @test isempty(diags)
+        end
+
         # Qualified testset types (e.g. `Test.DefaultTestSet`) are accepted.
         @test test_macro_expand("@testset Test.DefaultTestSet \"x\" begin end") isa JS.SyntaxTree
 
@@ -1156,6 +1177,37 @@ end
             global_result = assert_binding_provenance(res, :global, "leaked")
             @test global_result !== nothing &&
                 JS.source_location(last(global_result[2]))[1] == 9
+        end
+
+        let code = """
+                @testset MyTestSet "case: \$(i)" rng=xxx for i in 1:2
+                    @test true
+                end
+                """
+            res = test_macro_lower(code)
+            assert_binding_provenance(res, :global, "MyTestSet")
+            assert_binding_provenance(res, :global, "xxx")
+            local_result = assert_binding_provenance(res, :local, "i")
+            if local_result !== nothing
+                world = Base.get_world_counter()
+                occurrences = JETLS.compute_binding_occurrences(res.ctx3, res.st3, world)
+                desc_range = source_range(code, "\"case: \$(i)\"")
+                @test any(occurrences[local_result[1]]) do occurrence
+                    occurrence.kind === :use && JS.byte_range(occurrence.tree) ⊆ desc_range
+                end
+            end
+        end
+
+        # The body's assignments don't capture same-named identifiers in the description.
+        let res = test_macro_lower("""
+                @testset "\$(x)" for i in 1:2
+                    x = i
+                end
+                """)
+            global_result = assert_binding_provenance(res, :global, "x")
+            @test global_result !== nothing && JS.source_location(last(global_result[2]))[1] == 1
+            local_result = assert_binding_provenance(res, :local, "x")
+            @test local_result !== nothing && JS.source_location(last(local_result[2]))[1] == 2
         end
     end
 end

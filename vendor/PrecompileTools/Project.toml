@@ -14,7 +14,7 @@ Preferences = "cc588e5a-7be0-5224-8a6a-549b21958db9"
 
 [sources.Preferences]
 subdir = "vendor/Preferences"
-rev = "9c601c6e0c8e16577b4a315e43cad69ce88a07bd"
+rev = "fb2a66b0dc8039ececd3845bcacde458fc4ec71e"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [targets]

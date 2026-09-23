@@ -205,7 +205,7 @@ function handle_DidChangeNotebookDocumentNotification(
     state = server.state
     notebook_uri = msg.params.notebookDocument.uri
     cells_change = msg.params.change.cells
-    next_notebook_info = store!(state.notebook_cache) do cache::Base.PersistentDict{URI,NotebookInfo}
+    infos = store!(state.notebook_cache) do cache::Base.PersistentDict{URI,NotebookInfo}
         notebook_info = get(cache, notebook_uri, nothing)
         if notebook_info === nothing
             @static JETLS_DEV_MODE && @warn "Received notebookDocument/didChange for unknown notebook" notebook_uri
@@ -231,9 +231,10 @@ function handle_DidChangeNotebookDocumentNotification(
             version = msg.params.notebookDocument.version,
             cells = updated_cells,
             concat)
-        Base.PersistentDict(cache, notebook_uri => new_notebook_info), new_notebook_info
+        Base.PersistentDict(cache, notebook_uri => new_notebook_info), (notebook_info, new_notebook_info)
     end
-    next_notebook_info === nothing && return nothing
+    infos === nothing && return nothing
+    prev_notebook_info, next_notebook_info = infos
     store!(state.cell_to_notebook) do mapping::Base.PersistentDict{URI,URI}
         structure = cells_change === nothing ? nothing : cells_change.structure
         if structure !== nothing
@@ -249,6 +250,7 @@ function handle_DidChangeNotebookDocumentNotification(
         end
         mapping, nothing
     end
+    clear_removed_cell_push_diagnostics!(server, prev_notebook_info, next_notebook_info)
     cache_notebook_file_info!(server, notebook_uri, next_notebook_info)
     nothing
 end
@@ -286,6 +288,9 @@ function handle_DidCloseNotebookDocumentNotification(
     store!(state.saved_file_cache) do cache
         Base.delete(cache, notebook_uri), nothing
     end
+    # Once the notebook is gone, `localize_notebook_diagnostics!` no longer maps its live
+    # diagnostics to cells, and publishes would carry them under the notebook URI itself.
+    forget_workspace_live_diagnostics!(state, notebook_uri)
     clear_cell_push_diagnostics!(server, msg.params.cellTextDocuments)
     # Disk content isn't analyzable as Julia, so keeping the analysis cache around
     # would only enable the JSON-as-Julia bug guarded against in `_store_unsynced_file_info!`.
@@ -427,6 +432,22 @@ end
 # Push diagnostics aren't auto-cleared on close; republish empty for each cell.
 function clear_cell_push_diagnostics!(server::Server, cells::Vector{TextDocumentIdentifier})
     for cell in cells
+        send(server, PublishDiagnosticsNotification(;
+            params = PublishDiagnosticsParams(;
+                uri = cell.uri,
+                diagnostics = empty_diagnostics)))
+    end
+end
+
+# Publishes target the current code cells only (see `localize_notebook_diagnostics!`), so
+# a cell that was removed or stopped being a code cell would keep what was pushed to it.
+function clear_removed_cell_push_diagnostics!(
+        server::Server, prev_notebook_info::NotebookInfo, next_notebook_info::NotebookInfo
+    )
+    code_cell_uris = Set{URI}(cell.uri for cell in next_notebook_info.cells if cell.kind == NotebookCellKind.Code)
+    for cell in prev_notebook_info.cells
+        cell.kind == NotebookCellKind.Code || continue
+        cell.uri in code_cell_uris && continue
         send(server, PublishDiagnosticsNotification(;
             params = PublishDiagnosticsParams(;
                 uri = cell.uri,

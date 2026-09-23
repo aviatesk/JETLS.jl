@@ -27,7 +27,7 @@ InteractiveUtils = "b77e0a4c-d291-57a0-90e8-8db25a27a240"
 
 [sources.CodeTracking]
 subdir = "vendor/CodeTracking"
-rev = "9c601c6e0c8e16577b4a315e43cad69ce88a07bd"
+rev = "fb2a66b0dc8039ececd3845bcacde458fc4ec71e"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [targets]

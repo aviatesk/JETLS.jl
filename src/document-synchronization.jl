@@ -254,6 +254,11 @@ function handle_DidCloseTextDocumentNotification(server::Server, msg::DidCloseTe
     end
     # Extra diagnostics should only be published for open files
     clear_extra_diagnostics!(server, uri)
+    # With `all_files=false` the publish below clears the file on the client, so its live
+    # diagnostics have to go too: reopening it at the same version before the next scan
+    # would otherwise match their fingerprint and never republish them.
+    get_config(server.state, :diagnostic, :all_files) ||
+        forget_workspace_live_diagnostics!(server.state, uri)
     # Republish textDocument/publishDiagnostics for cases with `diagnostic.all_files === false`,
     # where diagnostics for this file must be suppressed.
     notify_diagnostics!(server; ensure_cleared=uri)

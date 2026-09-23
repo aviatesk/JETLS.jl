@@ -263,7 +263,10 @@ function apply_markdown_message!(diagnostics::Vector{Diagnostic})
         diagnostic = diagnostics[i]
         message = diagnostic.message
         if message isa String
-            diagnostics[i] = Diagnostic(diagnostic; message = MarkupContent(; kind = MarkupKind.Markdown, value = message))
+            diagnostics[i] = Diagnostic(diagnostic;
+                message = MarkupContent(;
+                    kind = MarkupKind.Markdown,
+                    value = message))
         end
     end
 end
@@ -1778,11 +1781,13 @@ end
 
 function compute_unit_def_used_names(
         server::Server, search_uris::Set{URI};
+        cancel_flag::CancelFlag = DUMMY_CANCEL_FLAG,
         skip_context_check::Bool = false # used by tests only
     )
     state = server.state
     mod_def_used_names = Dict{Module,DefUsedNames}()
     for search_uri in search_uris
+        is_cancelled(cancel_flag) && break
         skip_context_check || has_analyzed_context(state, search_uri) || continue
         search_fi = @something begin
             get_file_info(state, search_uri)
@@ -1791,13 +1796,14 @@ function compute_unit_def_used_names(
         end continue
         cached = get(load(state.per_file_diagnostics_cache),
             canonical_cache_uri(state, search_uri), nothing)
-        if cached !== nothing
-            merge_def_used_names!(mod_def_used_names, cached.def_used_names)
+        if cached !== nothing && cached.version == search_fi.version
+            merge_def_used_names!(mod_def_used_names, cached.result.def_used_names)
             continue
         end
         search_st0_top = build_syntax_tree(search_fi)
 
         iterate_toplevel_tree(search_st0_top) do st0::SyntaxTree
+            is_cancelled(cancel_flag) && return traversal_terminator
             binding_occurrences = @something get_binding_occurrences!(
                 state, search_uri, search_fi, st0) return
             context_module = get_context_module(state, search_uri, offset_to_xy(search_fi, JS.first_byte(st0)))
@@ -1844,6 +1850,7 @@ end
 # `run_per_file_diagnostics!` in cli-check).
 function compute_def_used_names!(
         cache::DefUsedNamesCache, server::Server, search_uris::Set{URI};
+        cancel_flag::CancelFlag = DUMMY_CANCEL_FLAG,
         skip_context_check::Bool = false # used by tests only
     )
     # `Base.PersistentDict` uses `===` to compare keys (HAMT looks up via object identity),
@@ -1854,7 +1861,9 @@ function compute_def_used_names!(
         if haskey(data, key)
             return data, data[key]
         end
-        result = compute_unit_def_used_names(server, search_uris; skip_context_check)
+        result = compute_unit_def_used_names(server, search_uris; cancel_flag, skip_context_check)
+        # a cancelled aggregation is partial, and must not be reused by later files
+        is_cancelled(cancel_flag) && return data, result
         return DefUsedNamesCacheData(data, key => result), result
     end
 end
@@ -1872,12 +1881,15 @@ function analyze_unused_imports!(
         diagnostics::Vector{Diagnostic}, def_used_names_cache::DefUsedNamesCache,
         server::Server, uri::URI,
         mod_imported_names::Dict{Module,Dict{String,Vector{ImportInfo}}};
+        cancel_flag::CancelFlag = DUMMY_CANCEL_FLAG,
         skip_context_check::Bool = false # used by tests only
     )
     isempty(mod_imported_names) && return diagnostics
 
     search_uris = collect_search_uris(server, uri)
-    mod_def_used_names = compute_def_used_names!(def_used_names_cache, server, search_uris; skip_context_check)
+    mod_def_used_names = compute_def_used_names!(
+        def_used_names_cache, server, search_uris; cancel_flag, skip_context_check)
+    is_cancelled(cancel_flag) && return diagnostics
 
     for (context_module, imported_names) in mod_imported_names
         def_used_names = get(mod_def_used_names, context_module, nothing)
@@ -2014,7 +2026,9 @@ function compute_per_file_diagnostics(
         Dict{Module,Dict{String,Vector{ImportInfo}}}() :
         collect_explicit_imports_by_module(server.state, uri, file_info, st0_top)
     allow_unused_underscore = get_config(server, :diagnostic, :allow_unused_underscore)
-    soft_scope = is_notebook_cell_uri(server.state, uri)
+    soft_scope = is_notebook_cell_uri(server.state, uri) ||
+        # the workspace diagnostics worker computes notebooks on the notebook URI
+        is_notebook_uri(server.state, uri)
     iterate_toplevel_tree(st0_top) do st0::SyntaxTree
         is_cancelled(cancel_flag) && return traversal_terminator
         pos = offset_to_xy(file_info, JS.first_byte(st0))
@@ -2048,8 +2062,9 @@ function get_per_file_diagnostics!(
     )
     cache_uri = canonical_cache_uri(server.state, uri)
     return store!(server.state.per_file_diagnostics_cache) do cache::PerFileDiagnosticsCacheData
-        if haskey(cache, cache_uri)
-            return cache, cache[cache_uri]
+        cached = get(cache, cache_uri, nothing)
+        if cached !== nothing && cached.version == file_info.version
+            return cache, cached.result
         end
         st0_top = build_syntax_tree(file_info)
         result = compute_per_file_diagnostics(
@@ -2057,7 +2072,8 @@ function get_per_file_diagnostics!(
         if is_cancelled(cancel_flag)
             return cache, result
         end
-        return PerFileDiagnosticsCacheData(cache, cache_uri => result), result
+        entry = PerFileDiagnosticsCacheEntry(file_info.version, result)
+        return PerFileDiagnosticsCacheData(cache, cache_uri => entry), result
     end
 end
 
@@ -2068,15 +2084,17 @@ function get_per_file_diagnostics!(
     )
     cache_uri = canonical_cache_uri(server.state, uri)
     return store!(server.state.per_file_diagnostics_cache) do cache::PerFileDiagnosticsCacheData
-        if haskey(cache, cache_uri)
-            return cache, cache[cache_uri]
+        cached = get(cache, cache_uri, nothing)
+        if cached !== nothing && cached.version == file_info.version
+            return cache, cached.result
         end
         result = compute_per_file_diagnostics(
             server, uri, file_info, st0_top, cancel_flag; lookup_func)
         if is_cancelled(cancel_flag)
             return cache, result
         end
-        return PerFileDiagnosticsCacheData(cache, cache_uri => result), result
+        entry = PerFileDiagnosticsCacheEntry(file_info.version, result)
+        return PerFileDiagnosticsCacheData(cache, cache_uri => entry), result
     end
 end
 
@@ -2104,14 +2122,14 @@ end
 function cross_file_diagnostics!(
         diagnostics::Vector{Diagnostic}, def_used_names_cache::DefUsedNamesCache,
         server::Server, uri::URI, per_file::PerFileDiagnosticsResult;
+        cancel_flag::CancelFlag = DUMMY_CANCEL_FLAG,
         skip_context_check::Bool = false # used by tests only
     )
     search_uris = collect_search_uris(server, uri)
-    mod_def_used_names = compute_def_used_names!(def_used_names_cache, server, search_uris; skip_context_check)
+    mod_def_used_names = compute_def_used_names!(def_used_names_cache, server, search_uris; cancel_flag, skip_context_check)
+    is_cancelled(cancel_flag) && return diagnostics
     emit_undef_global_diagnostics!(diagnostics, per_file.undef_global_candidates, mod_def_used_names)
-    analyze_unused_imports!(
-        diagnostics, def_used_names_cache, server, uri, per_file.explicit_imports;
-        skip_context_check)
+    analyze_unused_imports!(diagnostics, def_used_names_cache, server, uri, per_file.explicit_imports; cancel_flag, skip_context_check)
     return diagnostics
 end
 
@@ -2124,7 +2142,7 @@ function toplevel_lowering_diagnostics!(
     is_cancelled(cancel_flag) && return cached.diagnostics
     diagnostics = copy(cached.diagnostics)
     if has_analyzed_context(server.state, uri; lookup_func)
-        cross_file_diagnostics!(diagnostics, def_used_names_cache, server, uri, cached)
+        cross_file_diagnostics!(diagnostics, def_used_names_cache, server, uri, cached; cancel_flag)
     end
     return diagnostics
 end
@@ -2150,6 +2168,44 @@ function get_full_diagnostics(server::Server; ensure_cleared::Union{Bool,URI} = 
     merge_workspace_live_diagnostics!(uri2diagnostics, server)
     if ensure_cleared isa URI && !haskey(uri2diagnostics, ensure_cleared)
         uri2diagnostics[ensure_cleared] = Diagnostic[]
+    end
+    localize_notebook_diagnostics!(uri2diagnostics, state)
+    return uri2diagnostics
+end
+
+# `get_full_diagnostics` restricted to `uris` and the code cells of the notebooks among
+# them, for `notify_diagnostics!(server, uris)`, which publishes nothing else.
+function get_full_diagnostics(server::Server, uris::Set{URI})
+    state = server.state
+    target_uris = Set{URI}()
+    for uri in uris
+        push!(target_uris, uri)
+        notebook_info = @something get_notebook_info(state, uri) continue
+        for cell in notebook_info.cells
+            cell.kind == NotebookCellKind.Code && push!(target_uris, cell.uri)
+        end
+    end
+    analysis_cache = load(state.analysis_manager.cache)
+    extra_diagnostics = load(state.extra_diagnostics)
+    published = load(state.workspace_diagnostics_worker.published)
+    pull = pull_diagnostics_enabled(server)
+    uri2diagnostics = URI2Diagnostics()
+    for uri in target_uris
+        diagnostics = Diagnostic[]
+        analysis_info = get(analysis_cache, uri, nothing)
+        if analysis_info isa AnalysisResult
+            full_diagnostics = get(analysis_info.uri2diagnostics, uri, nothing)
+            full_diagnostics === nothing || append!(diagnostics, full_diagnostics)
+        end
+        for (_, extra_uri2diagnostics) in extra_diagnostics
+            extra = get(extra_uri2diagnostics, uri, nothing)
+            extra === nothing || append!(diagnostics, extra)
+        end
+        live = get(published, uri, nothing)
+        if live !== nothing && !(pull && is_synchronized(state, uri))
+            append!(diagnostics, live.diagnostics)
+        end
+        uri2diagnostics[uri] = diagnostics
     end
     localize_notebook_diagnostics!(uri2diagnostics, state)
     return uri2diagnostics
@@ -2218,7 +2274,7 @@ end
 # A notebook URI stands for its code cells, which is what the client knows.
 function notify_diagnostics!(server::Server, uris::Set{URI})
     state = server.state
-    uri2diagnostics = get_full_diagnostics(server)
+    uri2diagnostics = get_full_diagnostics(server, uris)
     selected = URI2Diagnostics()
     for uri in uris
         notebook_info = get_notebook_info(state, uri)
@@ -2325,8 +2381,11 @@ end
 
 # A change arriving during a scan cancels it (see `schedule_workspace_diagnostics!`); the
 # abandoned scan counts as a run, so the redo is spaced like any other and continuous
-# typing does not keep the worker spinning. Per-file results computed before the
-# cancellation stay cached, so the redo mostly repeats the cross-file checks.
+# typing does not keep the worker spinning. Open files are published before the rest of
+# the workspace is swept (see `publish_workspace_diagnostics!`), so a cancellation mostly
+# cuts that sweep short. What it computed for files whose inputs did not move is still
+# published, and per-file results stay cached, so the redo only repeats the cross-file
+# checks of the files the change affected.
 function workspace_diagnostics_worker(server::Server)
     worker = server.state.workspace_diagnostics_worker
     last_run_time = 0.0
@@ -2368,9 +2427,9 @@ end
 # Every unit member's version is folded in so a sibling edit invalidates this file's
 # cached diagnostics and the cross-file analyses
 # (`analyze_undefined_global_uses_for_file!`, `analyze_unused_imports!`) rerun; so are
-# the `[diagnostic]` config, so a config change recomputes every file, and the identity
-# of the analysis result, so a file computed before full-analysis resolved its module
-# context is recomputed once the context is known.
+# the `[diagnostic]` config, so a config change recomputes every file, and the module
+# context of the unit (`analysis_context_hash`), so a file computed before full-analysis
+# resolved its module context is recomputed once the context is known.
 const LiveDiagnosticsFingerprintCache = IdDict{Dict{URI,JET.AnalyzedFileInfo},String}
 
 function compute_live_diagnostics_fingerprint(
@@ -2386,7 +2445,7 @@ function compute_live_diagnostics_fingerprint(
     end
     search_uris = collect_search_uris(this_uri, analysis_info)
     config_hash = hash(get_config(state, :diagnostic))
-    analysis_hash = analysis_info === nothing ? zero(UInt) : objectid(analysis_info)
+    context_hash = analysis_context_hash(analysis_info)
     file_hash = zero(UInt)
     for search_uri in search_uris
         search_fi = @something begin
@@ -2396,11 +2455,29 @@ function compute_live_diagnostics_fingerprint(
         end continue
         file_hash ⊻= hash((search_uri, search_fi.version))
     end
-    fingerprint = string(hash((file_hash, config_hash, analysis_hash)))
+    fingerprint = string(hash((file_hash, config_hash, context_hash)))
     if analysis_info isa AnalysisResult
         fingerprint_cache[analysis_info.analyzed_file_infos] = fingerprint
     end
     return fingerprint
+end
+
+# Live diagnostics take only the module context from full-analysis, so an analysis result
+# that keeps every unit member's `module_range_infos` (e.g. the final result following an
+# intermediate one) leaves the fingerprint alone, just as `update_analysis_cache!` keeps
+# the per-file caches then.
+function analysis_context_hash(analysis_info::Union{Nothing,AnalysisInfo})
+    if analysis_info isa AnalysisResult
+        context_hash = zero(UInt)
+        for (analyzed_uri, analyzed_file_info) in analysis_info.analyzed_file_infos
+            context_hash ⊻= hash((analyzed_uri, analyzed_file_info.module_range_infos))
+        end
+        return context_hash
+    elseif analysis_info isa OutOfScope
+        return hash(analysis_info.module_context)
+    else
+        return zero(UInt)
+    end
 end
 
 # Computes the raw live diagnostics of a file. Falls back to parsed-stream diagnostics
@@ -2426,6 +2503,12 @@ end
 # the previous publish as out of date, and the suppression would otherwise never retry
 # it. Each publish carries the file's complete diagnostic set, since `publishDiagnostics`
 # replaces everything the server reported for a URI.
+#
+# Open files are recomputed, stored and published before the rest of the workspace. The
+# next keystroke then cancels only the sweep over the unopened files, and the file being
+# edited is not held back by a sweep that grows with the workspace. A cancelled phase
+# still stores and publishes the results that the change did not make stale
+# (`retain_current_live_diagnostics!`).
 function publish_workspace_diagnostics!(server::Server, cancel_flag::CancelFlag)
     state = server.state
     worker = state.workspace_diagnostics_worker
@@ -2440,37 +2523,38 @@ function publish_workspace_diagnostics!(server::Server, cancel_flag::CancelFlag)
         # notebooks are keyed by the notebook URI, and `notify_diagnostics!` localizes them
         union!(uris_to_search, keys(load(state.file_cache)))
     end
+    open_uris = Set{URI}()
+    unopened_uris = Set{URI}()
+    for uri in uris_to_search
+        if !is_synchronized(state, uri)
+            push!(unopened_uris, uri)
+        elseif !pull # otherwise served by `textDocument/diagnostic`
+            push!(open_uris, uri)
+        end
+    end
     fingerprint_cache = LiveDiagnosticsFingerprintCache()
     def_used_names_cache = DefUsedNamesCache()
-    updates = Dict{URI,WorkspaceLiveDiagnostics}()
-    changed = Set{URI}()
-    removals = Set{URI}()
-    for uri in uris_to_search
-        is_cancelled(cancel_flag) && return nothing
-        synchronized = is_synchronized(state, uri)
-        synchronized && pull && continue # served by `textDocument/diagnostic`
-        # The fingerprint is taken before the inputs it covers. An edit landing in
-        # between then leaves the stored fingerprint behind the text, and the next scan
-        # (already scheduled by that edit) recomputes the file; a fingerprint taken after
-        # the inputs could instead match that scan and pin the stale diagnostics.
-        fingerprint = compute_live_diagnostics_fingerprint(server, uri, fingerprint_cache)
-        prev = get(published, uri, nothing)
-        prev !== nothing && prev.fingerprint == fingerprint && continue
-        fi = @something if synchronized
-            get_file_info(state, uri)
-        else
-            get_unsynced_file_info!(state, uri)
-        end continue # cleaned up below with the other stale entries
-        diagnostics = compute_live_diagnostics!(
-            def_used_names_cache, server, uri, fi, cancel_flag)
-        is_cancelled(cancel_flag) && return nothing
-        version = synchronized ? fi.version : nothing
-        updates[uri] = WorkspaceLiveDiagnostics(fingerprint, version, diagnostics)
-        if prev !== nothing && prev.version == version && prev.diagnostics == diagnostics
-            continue
+    for uris in (open_uris, unopened_uris)
+        updates = Dict{URI,WorkspaceLiveDiagnostics}()
+        changed = Set{URI}()
+        completed = recompute_live_diagnostics!(updates, changed, server, uris, published,
+            fingerprint_cache, def_used_names_cache, cancel_flag)
+        if !completed
+            is_cancelled(worker.shutdown_flag) && return nothing
+            retain_current_live_diagnostics!(updates, changed, server)
         end
-        push!(changed, uri)
+        if !isempty(updates)
+            store!(worker.published) do current::WorkspaceLiveDiagnosticsData
+                for (uri, live) in updates
+                    current = WorkspaceLiveDiagnosticsData(current, uri => live)
+                end
+                current, nothing
+            end
+            isempty(changed) || notify_diagnostics!(server, changed)
+        end
+        completed || return nothing
     end
+    removals = Set{URI}()
     for uri in keys(published)
         gone = if is_synchronized(state, uri)
             pull || get_file_info(state, uri) === nothing
@@ -2479,11 +2563,8 @@ function publish_workspace_diagnostics!(server::Server, cancel_flag::CancelFlag)
         end
         (!(uri in uris_to_search) || gone) && push!(removals, uri)
     end
-    isempty(updates) && isempty(removals) && return nothing
+    isempty(removals) && return nothing
     store!(worker.published) do current::WorkspaceLiveDiagnosticsData
-        for (uri, live) in updates
-            current = WorkspaceLiveDiagnosticsData(current, uri => live)
-        end
         for uri in removals
             haskey(current, uri) && (current = Base.delete(current, uri))
         end
@@ -2494,6 +2575,7 @@ function publish_workspace_diagnostics!(server::Server, cancel_flag::CancelFlag)
     # the clearing publish of the close. Any other removal republishes what is left of the
     # file (`JETLS/save` and `JETLS/extra`), as a file handed over to the client's pull
     # must keep those.
+    changed = Set{URI}()
     for uri in removals
         if all_files || is_synchronized(state, canonical_cache_uri(state, uri))
             push!(changed, uri)
@@ -2506,17 +2588,76 @@ function publish_workspace_diagnostics!(server::Server, cancel_flag::CancelFlag)
     nothing
 end
 
+# After a cancellation, keeps only the results whose inputs did not move since they were
+# computed, typically those of analysis units other than the one being edited: they are
+# not stale, so they are stored and published rather than recomputed by the redo. The
+# fingerprints are taken afresh, since the scan's `LiveDiagnosticsFingerprintCache` still
+# holds the ones from before the change that cancelled it.
+function retain_current_live_diagnostics!(
+        updates::Dict{URI,WorkspaceLiveDiagnostics}, changed::Set{URI}, server::Server
+    )
+    fingerprint_cache = LiveDiagnosticsFingerprintCache()
+    for uri in collect(keys(updates))
+        fingerprint = compute_live_diagnostics_fingerprint(server, uri, fingerprint_cache)
+        fingerprint == updates[uri].fingerprint && continue
+        delete!(updates, uri)
+        delete!(changed, uri)
+    end
+    return updates
+end
+
+# Recomputes the files of `uris` whose fingerprint moved into `updates`, and collects into
+# `changed` those to republish. Returns `false` when cancelled; `updates` then holds the
+# files fully computed before the cancellation.
+function recompute_live_diagnostics!(
+        updates::Dict{URI,WorkspaceLiveDiagnostics}, changed::Set{URI},
+        server::Server, uris::Set{URI}, published::WorkspaceLiveDiagnosticsData,
+        fingerprint_cache::LiveDiagnosticsFingerprintCache,
+        def_used_names_cache::DefUsedNamesCache, cancel_flag::CancelFlag
+    )
+    state = server.state
+    for uri in uris
+        is_cancelled(cancel_flag) && return false
+        synchronized = is_synchronized(state, uri)
+        # The fingerprint is taken before the inputs it covers. An edit landing in
+        # between then leaves the stored fingerprint behind the text, and the next scan
+        # (already scheduled by that edit) recomputes the file; a fingerprint taken after
+        # the inputs could instead match that scan and pin the stale diagnostics.
+        fingerprint = compute_live_diagnostics_fingerprint(server, uri, fingerprint_cache)
+        prev = get(published, uri, nothing)
+        prev !== nothing && prev.fingerprint == fingerprint && continue
+        fi = @something if synchronized
+            get_file_info(state, uri)
+        else
+            get_unsynced_file_info!(state, uri)
+        end continue # cleaned up by the caller with the other stale entries
+        diagnostics = compute_live_diagnostics!(
+            def_used_names_cache, server, uri, fi, cancel_flag)
+        is_cancelled(cancel_flag) && return false
+        version = synchronized ? fi.version : nothing
+        updates[uri] = WorkspaceLiveDiagnostics(fingerprint, version, diagnostics)
+        if prev !== nothing && prev.version == version && prev.diagnostics == diagnostics
+            continue
+        end
+        push!(changed, uri)
+    end
+    return true
+end
+
 # An opened file is served by `textDocument/diagnostic` from now on: forget its pushed
 # live diagnostics and republish it without them so the two sets do not overlap.
 function clear_workspace_live_diagnostics!(server::Server, uri::URI)
     pull_diagnostics_enabled(server) || return nothing
-    published = server.state.workspace_diagnostics_worker.published
-    cleared = store!(published) do data::WorkspaceLiveDiagnosticsData
+    cleared = forget_workspace_live_diagnostics!(server.state, uri)
+    cleared && notify_diagnostics!(server, Set{URI}((uri,)))
+    nothing
+end
+
+function forget_workspace_live_diagnostics!(state::ServerState, uri::URI)
+    return store!(state.workspace_diagnostics_worker.published) do data::WorkspaceLiveDiagnosticsData
         haskey(data, uri) || return data, false
         Base.delete(data, uri), true
     end
-    cleared && notify_diagnostics!(server, Set{URI}((uri,)))
-    nothing
 end
 
 # textDocument/diagnostic

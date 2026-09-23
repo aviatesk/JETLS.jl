@@ -1026,18 +1026,237 @@ end
                 @test length(params.diagnostics) == 1
             end
 
-            # `didClose` clears the file; the next scan forgets its entry and clears it
-            # once more, so a scan publish that raced with the close does not survive.
+            # `didClose` clears the file and forgets its entry, so the scan has nothing
+            # left to clear.
             (; raw_res) = writereadmsg(make_DidCloseTextDocumentNotification(uri))
             @test raw_res isa PublishDiagnosticsNotification
             @test raw_res.params.uri == uri
             @test isempty(raw_res.params.diagnostics)
+            @test !haskey(JETLS.load(published), uri)
+            @test isempty(scan_live_diagnostics!(server, readmsg))
+
+            # A scan publish that raced with the close re-adds the entry; the next scan
+            # forgets it and clears the file once more.
+            JETLS.store!(published) do data
+                live = JETLS.WorkspaceLiveDiagnostics("stale", 1, JETLS.Diagnostic[])
+                JETLS.WorkspaceLiveDiagnosticsData(data, uri => live), nothing
+            end
             let params = scan_live_diagnostics!(server, readmsg)[uri]
                 @test params.version === nothing
                 @test isempty(params.diagnostics)
             end
             @test !haskey(JETLS.load(published), uri)
-            @test isempty(scan_live_diagnostics!(server, readmsg))
+        end
+    end
+end
+
+@testset "live diagnostics fingerprint follows the module context of the analysis" begin
+    script = "func(x) = x\n"
+    withscript(script) do script_path
+        uri = filepath2uri(script_path)
+        withserver() do (; server)
+            @test JETLS.get_analysis_info(server.state.analysis_manager, uri) === nothing
+            no_context = JETLS.compute_live_diagnostics_fingerprint(server, uri)
+
+            JETLS.cache_file_info!(server, uri, 1, script)
+            JETLS.cache_saved_file_info!(server.state, uri, script)
+            JETLS.request_analysis!(server, uri, #=invalidate=#false; wait=true, notify_diagnostics=false)
+            result = JETLS.get_analysis_info(server.state.analysis_manager, uri)::JETLS.AnalysisResult
+            fingerprint = JETLS.compute_live_diagnostics_fingerprint(server, uri)
+            @test fingerprint != no_context
+
+            # A new result keeping the module context, like the final result following an
+            # intermediate one, does not move the fingerprint.
+            let same_context = JETLS.AnalysisResult(result.entry,
+                    copy(result.uri2diagnostics), result.analyzer,
+                    copy(result.analyzed_file_infos), result.actual2virtual,
+                    Base.get_world_counter())
+                JETLS.update_analysis_cache!(server.state, same_context)
+                @test JETLS.compute_live_diagnostics_fingerprint(server, uri) == fingerprint
+            end
+
+            # A new module context, as every script reanalysis mints, moves it.
+            let newmod = Module()
+                analyzed_file_infos = Dict{URI,JETLS.JET.AnalyzedFileInfo}(
+                    analyzed_uri => JETLS.JET.AnalyzedFileInfo(
+                        [range => newmod for (range, _) in afi.module_range_infos])
+                    for (analyzed_uri, afi) in result.analyzed_file_infos)
+                new_context = JETLS.AnalysisResult(result.entry,
+                    copy(result.uri2diagnostics), result.analyzer, analyzed_file_infos,
+                    result.actual2virtual, Base.get_world_counter())
+                JETLS.update_analysis_cache!(server.state, new_context)
+                @test JETLS.compute_live_diagnostics_fingerprint(server, uri) != fingerprint
+            end
+        end
+    end
+end
+
+@testset "a cancelled scan keeps the results that are still current" begin
+    withscript("func(x, y) = x\n") do script_path1; withscript("g(a, b) = a\n") do script_path2
+        uri1 = filepath2uri(script_path1)
+        uri2 = filepath2uri(script_path2)
+        withserver() do (; server)
+            fingerprint1 = JETLS.compute_live_diagnostics_fingerprint(server, uri1)
+            updates = Dict{URI,JETLS.WorkspaceLiveDiagnostics}(
+                uri1 => JETLS.WorkspaceLiveDiagnostics(fingerprint1, nothing, Diagnostic[]),
+                # computed from inputs that moved before the cancellation
+                uri2 => JETLS.WorkspaceLiveDiagnostics("stale", nothing, Diagnostic[]))
+            changed = Set((uri1, uri2))
+            JETLS.retain_current_live_diagnostics!(updates, changed, server)
+            @test keys(updates) == Set((uri1,))
+            @test changed == Set((uri1,))
+        end
+    end end
+end
+
+@testset "a cancelled unit aggregation is not memoized" begin
+    withscript("func(x) = x\n") do script_path
+        uri = filepath2uri(script_path)
+        withserver() do (; server)
+            search_uris = Set((uri,))
+            cache = JETLS.DefUsedNamesCache()
+            cancel_flag = JETLS.CancelFlag(false)
+            JETLS.cancel!(cancel_flag)
+            JETLS.compute_def_used_names!(cache, server, search_uris;
+                cancel_flag, skip_context_check = true)
+            @test isempty(JETLS.load(cache))
+            JETLS.compute_def_used_names!(cache, server, search_uris; skip_context_check = true)
+            @test !isempty(JETLS.load(cache))
+        end
+    end
+end
+
+@testset "analysis setting changes leave the refresh to the reanalysis" begin
+    capabilities = ClientCapabilities(;
+        workspace = WorkspaceClientCapabilities(;
+            diagnostics = DiagnosticWorkspaceClientCapabilities(; refreshSupport = true)))
+    withserver(; capabilities, pull_diagnostics = true) do (; writereadmsg)
+        # a `[diagnostic]` change moves the live diagnostics, so it asks for a re-pull
+        let settings = Dict{String,Any}("diagnostic" => Dict{String,Any}("all_files" => false))
+            (; raw_res) = writereadmsg(DidChangeConfigurationNotification(;
+                params = DidChangeConfigurationParams(; settings)); read = 2)
+            @test count(msg -> msg isa ShowMessageNotification, raw_res) == 1
+            @test count(msg -> msg isa WorkspaceDiagnosticRefreshRequest, raw_res) == 1
+        end
+        # an analysis setting only matters once the reanalysis stores its result
+        let settings = Dict{String,Any}(
+                "diagnostic" => Dict{String,Any}("all_files" => false),
+                "full_analysis" => Dict{String,Any}("concretization_timeout" => 5))
+            (; raw_res) = writereadmsg(DidChangeConfigurationNotification(;
+                params = DidChangeConfigurationParams(; settings)))
+            @test raw_res isa ShowMessageNotification
+        end
+    end
+end
+
+@testset "per-file diagnostics computed from an outdated version are not reused" begin
+    withscript("func(x, y) = x\n") do script_path
+        uri = filepath2uri(script_path)
+        withserver(; pull_diagnostics = true) do (; server, writemsg, writereadmsg, id_counter)
+            (; raw_res) = writereadmsg(make_DidOpenTextDocumentNotification(uri, "func(x, y) = x\n"))
+            @test raw_res isa PublishDiagnosticsNotification
+            fi1 = JETLS.get_file_info(server.state, uri)
+            writemsg(make_DidChangeTextDocumentNotification(uri, "func(x) = x\n", 2))
+            wait_for_file_cache_version(server.state, uri, 2)
+
+            # A pull that read the text before the edit stores its result after the
+            # edit's invalidation.
+            stale = JETLS.get_per_file_diagnostics!(server, uri, fi1, JETLS.DUMMY_CANCEL_FLAG)
+            @test any(d -> d.code == JETLS.LOWERING_UNUSED_ARGUMENT_CODE, stale.diagnostics)
+
+            let id = id_counter[] += 1
+                (; raw_res) = writereadmsg(DocumentDiagnosticRequest(;
+                    id,
+                    params = DocumentDiagnosticParams(;
+                        textDocument = TextDocumentIdentifier(; uri))))
+                @test raw_res isa DocumentDiagnosticResponse
+                @test raw_res.result isa RelatedFullDocumentDiagnosticReport
+                @test !any(d -> d.code == JETLS.LOWERING_UNUSED_ARGUMENT_CODE, raw_res.result.items)
+            end
+        end
+    end
+end
+
+@testset "reopening a file closed with `all_files=false` republishes it" begin
+    script_code = "func(x) = nothing\n"
+    withscript(script_code) do script_path
+        uri = filepath2uri(script_path)
+        settings = Dict{String,Any}("diagnostic" => Dict{String,Any}("all_files" => false))
+        withserver(; settings) do (; server, writemsg, writereadmsg, readmsg)
+            (; raw_res) = writereadmsg(make_DidOpenTextDocumentNotification(uri, script_code))
+            @test raw_res isa PublishDiagnosticsNotification
+            let params = scan_live_diagnostics!(server, readmsg)[uri]
+                @test params.version == 1
+                @test length(params.diagnostics) == 1
+            end
+
+            (; raw_res) = writereadmsg(make_DidCloseTextDocumentNotification(uri))
+            @test raw_res isa PublishDiagnosticsNotification
+            @test isempty(raw_res.params.diagnostics)
+
+            # reopened at the same version before any scan ran (the cached analysis
+            # result is reused, so the open itself publishes nothing)
+            writemsg(make_DidOpenTextDocumentNotification(uri, script_code))
+            wait_for_file_cache_version(server.state, uri, 1)
+            let params = scan_live_diagnostics!(server, readmsg)[uri]
+                @test params.version == 1
+                @test length(params.diagnostics) == 1
+            end
+        end
+    end
+end
+
+@testset "workspace diagnostics push publishes open files first" begin
+    pkg_code = """
+    module TestWorkspaceDiagnosticOrder
+    using Base: sum
+    include("util.jl")
+    end # module TestWorkspaceDiagnosticOrder
+    """
+    util_code = "f(x, y) = x\n"
+    pkg_setup = function ()
+        write(normpath(dirname(Pkg.project().path), "src", "util.jl"), util_code)
+    end
+    withpackage("TestWorkspaceDiagnosticOrder", pkg_code; pkg_setup) do pkg_path
+        util_uri = filepath2uri(normpath(pkg_path, "src", "util.jl"))
+        main_uri = filepath2uri(normpath(pkg_path, "src", "TestWorkspaceDiagnosticOrder.jl"))
+        rootUri = filepath2uri(pkg_path)
+        withserver(; rootUri) do (; server, writereadmsg, readmsg)
+            (; raw_res) = writereadmsg(
+                make_DidOpenTextDocumentNotification(util_uri, util_code); read = 2)
+            @test all(msg -> msg isa PublishDiagnosticsNotification, raw_res)
+
+            # `JETLS/extra` diagnostics of util.jl's testset may land in other files too
+            extra = Diagnostic(;
+                range = Range(;
+                    start = Position(; line = 0, character = 0),
+                    var"end" = Position(; line = 0, character = 1)),
+                code = JETLS.TESTRUNNER_TEST_FAILURE_CODE,
+                message = "extra")
+            key = JETLS.TestsetDiagnosticsKey(util_uri, "testset", 1)
+            JETLS.store!(server.state.extra_diagnostics) do data
+                val = JETLS.URI2Diagnostics(util_uri => [extra], main_uri => [extra])
+                JETLS.ExtraDiagnosticsData(data, key => val), nothing
+            end
+
+            JETLS.publish_workspace_diagnostics!(server, JETLS.DUMMY_CANCEL_FLAG)
+            msgs = Any[]
+            while isready(server.callback.sent_queue)
+                push!(msgs, readmsg(; check = false).raw_msg)
+            end
+            @test all(msg -> msg isa PublishDiagnosticsNotification, msgs)
+            @test [msg.params.uri for msg in msgs] == [util_uri, main_uri]
+            for msg in msgs
+                @test any(d -> d.message == "extra", msg.params.diagnostics)
+            end
+
+            let uris = Set((util_uri, main_uri))
+                selected = JETLS.get_full_diagnostics(server, uris)
+                full = JETLS.get_full_diagnostics(server)
+                for uri in uris
+                    @test selected[uri] == full[uri]
+                end
+            end
         end
     end
 end
