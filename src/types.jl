@@ -979,7 +979,14 @@ struct PerFileDiagnosticsResult
     def_used_names::Dict{Module,DefUsedNames}
     explicit_imports::Dict{Module,Dict{String,Vector{ImportInfo}}}
 end
-const PerFileDiagnosticsCacheData = Base.PersistentDict{URI,PerFileDiagnosticsResult}
+# `version` is that of the `FileInfo` the result was computed from. A computation that
+# raced with an edit can store its result after the edit's invalidation, so an entry only
+# counts as a hit for the same version.
+struct PerFileDiagnosticsCacheEntry
+    version::Int
+    result::PerFileDiagnosticsResult
+end
+const PerFileDiagnosticsCacheData = Base.PersistentDict{URI,PerFileDiagnosticsCacheEntry}
 const PerFileDiagnosticsCache = LWContainer{PerFileDiagnosticsCacheData, LWStats}
 const ConfigManager = LWContainer{ConfigManagerData, LWStats}
 const UnsyncedFileCacheData = Base.PersistentDict{URI,FileInfo}

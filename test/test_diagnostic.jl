@@ -1050,6 +1050,34 @@ end
     end
 end
 
+@testset "per-file diagnostics computed from an outdated version are not reused" begin
+    withscript("func(x, y) = x\n") do script_path
+        uri = filepath2uri(script_path)
+        withserver(; pull_diagnostics = true) do (; server, writemsg, writereadmsg, id_counter)
+            (; raw_res) = writereadmsg(make_DidOpenTextDocumentNotification(uri, "func(x, y) = x\n"))
+            @test raw_res isa PublishDiagnosticsNotification
+            fi1 = JETLS.get_file_info(server.state, uri)
+            writemsg(make_DidChangeTextDocumentNotification(uri, "func(x) = x\n", 2))
+            wait_for_file_cache_version(server.state, uri, 2)
+
+            # A pull that read the text before the edit stores its result after the
+            # edit's invalidation.
+            stale = JETLS.get_per_file_diagnostics!(server, uri, fi1, JETLS.DUMMY_CANCEL_FLAG)
+            @test any(d -> d.code == JETLS.LOWERING_UNUSED_ARGUMENT_CODE, stale.diagnostics)
+
+            let id = id_counter[] += 1
+                (; raw_res) = writereadmsg(DocumentDiagnosticRequest(;
+                    id,
+                    params = DocumentDiagnosticParams(;
+                        textDocument = TextDocumentIdentifier(; uri))))
+                @test raw_res isa DocumentDiagnosticResponse
+                @test raw_res.result isa RelatedFullDocumentDiagnosticReport
+                @test !any(d -> d.code == JETLS.LOWERING_UNUSED_ARGUMENT_CODE, raw_res.result.items)
+            end
+        end
+    end
+end
+
 @testset "reopening a file closed with `all_files=false` republishes it" begin
     script_code = "func(x) = nothing\n"
     withscript(script_code) do script_path
