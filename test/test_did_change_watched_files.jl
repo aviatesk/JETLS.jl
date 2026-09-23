@@ -340,4 +340,25 @@ end
     end
 end
 
+@testset "a batch of `.jl` file changes requests a single refresh" begin
+    mktempdir() do tmpdir
+        paths = [joinpath(tmpdir, "file$i.jl") for i in 1:3]
+        foreach(path -> write(path, "x = 1\n"), paths)
+        capabilities = ClientCapabilities(;
+            workspace = WorkspaceClientCapabilities(;
+                didChangeWatchedFiles = DidChangeWatchedFilesClientCapabilities(;
+                    dynamicRegistration = true),
+                diagnostics = DiagnosticWorkspaceClientCapabilities(; refreshSupport = true)))
+        withserver(; rootUri = filepath2uri(tmpdir), capabilities,
+                pull_diagnostics = true) do (; writereadmsg)
+            msg = DidChangeWatchedFilesNotification(;
+                params = DidChangeWatchedFilesParams(;
+                    changes = [FileEvent(; uri = filepath2uri(path), type = FileChangeType.Changed)
+                        for path in paths]))
+            (; raw_res) = writereadmsg(msg)
+            @test raw_res isa WorkspaceDiagnosticRefreshRequest
+        end
+    end
+end
+
 end # module test_did_change_watched_files

@@ -979,7 +979,14 @@ struct PerFileDiagnosticsResult
     def_used_names::Dict{Module,DefUsedNames}
     explicit_imports::Dict{Module,Dict{String,Vector{ImportInfo}}}
 end
-const PerFileDiagnosticsCacheData = Base.PersistentDict{URI,PerFileDiagnosticsResult}
+# `version` is that of the `FileInfo` the result was computed from. A computation that
+# raced with an edit can store its result after the edit's invalidation, so an entry only
+# counts as a hit for the same version.
+struct PerFileDiagnosticsCacheEntry
+    version::Int
+    result::PerFileDiagnosticsResult
+end
+const PerFileDiagnosticsCacheData = Base.PersistentDict{URI,PerFileDiagnosticsCacheEntry}
 const PerFileDiagnosticsCache = LWContainer{PerFileDiagnosticsCacheData, LWStats}
 const ConfigManager = LWContainer{ConfigManagerData, LWStats}
 const UnsyncedFileCacheData = Base.PersistentDict{URI,FileInfo}
@@ -1023,7 +1030,8 @@ const WorkspaceLiveDiagnosticsCache = LWContainer{WorkspaceLiveDiagnosticsData, 
 Background worker that pushes `JETLS/live` diagnostics via
 `textDocument/publishDiagnostics`. `schedule_workspace_diagnostics!` sets `wakeup`
 whenever those diagnostics may have changed and cancels `cancel_flag`, which is created
-anew for each scan, so that a scan started on stale inputs is abandoned and redone.
+anew for each scan, so that a scan started on stale inputs is cut short and redone,
+keeping only the results the change did not make stale.
 `shutdown_flag` is only cancelled to stop the worker.
 """
 mutable struct WorkspaceDiagnosticsWorker

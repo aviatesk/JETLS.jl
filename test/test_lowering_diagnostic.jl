@@ -857,6 +857,24 @@ end
         @test isempty(diagnostics)
     end
 
+    @testset "@testset description using loop variable" begin
+        let diagnostics = get_lowering_diagnostics("""
+            @testset "case: \$(i)" for (i, x) in ((1, 2), (3, 4))
+                @test x > 0
+            end
+            """; context_module=Test, code=JETLS.LOWERING_UNUSED_LOCAL_CODE)
+            @test isempty(diagnostics)
+        end
+        let diagnostics = get_lowering_diagnostics("""
+            @testset "case" for (i, x) in ((1, 2), (3, 4))
+                @test x > 0
+            end
+            """; context_module=Test, code=JETLS.LOWERING_UNUSED_LOCAL_CODE)
+            @test length(diagnostics) == 1
+            @test only(diagnostics).message == "Unused local binding `i`"
+        end
+    end
+
     @testset "@nospecialize macro" begin
         diagnostics = get_lowering_diagnostics("""
         function kwargs_dict(@nospecialize configs)
@@ -934,6 +952,62 @@ end
             @test diagnostic.range.start.character == length_utf16("func(xs) = [x for (")
             @test diagnostic.range.var"end".line == 0
             @test diagnostic.range.var"end".character == length_utf16("func(xs) = [x for (i")
+        end
+    end
+
+    @testset "for loop with multiple iteration specs" begin
+        let diagnostics = get_lowering_diagnostics("""
+            function func(xs)
+                for i in xs, j in xs
+                    println(j)
+                end
+            end
+            """)
+            @test length(diagnostics) == 1
+            diagnostic = only(diagnostics)
+            @test diagnostic.message == "Unused local binding `i`"
+            @test diagnostic.range.start.line == 1
+            @test diagnostic.range.start.character == sizeof("    for ")
+            @test diagnostic.range.var"end".line == 1
+            @test diagnostic.range.var"end".character == sizeof("    for i")
+        end
+
+        let diagnostics = get_lowering_diagnostics("""
+            function func(xs)
+                for (i, k) in xs, j in xs
+                    println(k, j)
+                end
+            end
+            """)
+            @test length(diagnostics) == 1
+            diagnostic = only(diagnostics)
+            @test diagnostic.message == "Unused local binding `i`"
+            @test diagnostic.range.start.line == 1
+            @test diagnostic.range.start.character == sizeof("    for (")
+        end
+
+        let diagnostics = get_lowering_diagnostics("""
+            function func(xs)
+                for i in xs, j in xs, k in xs
+                    println(i, k)
+                end
+            end
+            """)
+            @test length(diagnostics) == 1
+            diagnostic = only(diagnostics)
+            @test diagnostic.message == "Unused local binding `j`"
+            @test diagnostic.range.start.line == 1
+            @test diagnostic.range.start.character == sizeof("    for i in xs, ")
+        end
+
+        let diagnostics = get_lowering_diagnostics("""
+            function func(xs)
+                for i in xs, j in xs
+                    println(i, j)
+                end
+            end
+            """)
+            @test isempty(diagnostics)
         end
     end
 

@@ -70,16 +70,7 @@ function handle_config_file_change!(
 
     source = "[.JETLSConfig.toml] $(dirname(changed_path)) ($kind)"
     notify_config_changes(server, tracker, source)
-    apply_auto_instantiate_change!(server)
-    if tracker.diagnostic_setting_changed
-        clear_per_file_diagnostics_cache!(server.state)
-        notify_diagnostics!(server; ensure_cleared = true)
-        request_diagnostic_refresh!(server)
-    end
-    if tracker.analysis_setting_changed
-        request_reanalysis_for_tracked_entries!(server)
-        request_diagnostic_refresh!(server)
-    end
+    apply_config_changes!(server, tracker)
 end
 
 # TODO: We may eventually want to separate live config validation from saved config
@@ -169,6 +160,9 @@ function handle_server_revise_trigger!(server::Server, trigger_path::AbstractStr
 end
 
 function handle_DidChangeWatchedFilesNotification(server::Server, msg::DidChangeWatchedFilesNotification)
+    # A batch can carry many `.jl` files (e.g. after `git checkout`), and every refresh
+    # makes a pulling client re-pull its open documents, so refresh once for the batch.
+    any_jl_file_changed = false
     for change in msg.params.changes
         changed_path = @something uri2filepath(change.uri) continue
         state = server.state
@@ -181,11 +175,14 @@ function handle_DidChangeWatchedFilesNotification(server::Server, msg::DidChange
                 change.type != FileChangeType.Deleted
             handle_server_revise_trigger!(server, changed_path)
         elseif is_workspace_file(state, changed_path) && is_jl_file(changed_path)
-            handle_jl_file_change!(server, change)
+            any_jl_file_changed |= handle_jl_file_change!(server, change)
         end
     end
+    any_jl_file_changed && request_diagnostic_refresh!(server)
+    nothing
 end
 
+# Returns whether the change affects the diagnostics, for the caller to request a refresh.
 function handle_jl_file_change!(server::Server, change::FileEvent)
     state = server.state
     uri = change.uri
@@ -193,7 +190,7 @@ function handle_jl_file_change!(server::Server, change::FileEvent)
         # File is synced (opened in editor) - `unsynced_file_cache` should have been
         # invalidated via `textDocument/didOpen`, and the other cache invalidations
         # are handled by `textDocument/didChange`, so we don't need to do anything here
-        return
+        return false
     end
     if change.type == FileChangeType.Created
         store_unsynced_file_info!(state, uri)
@@ -206,5 +203,5 @@ function handle_jl_file_change!(server::Server, change::FileEvent)
         end
         invalidate_per_file_caches!(state, uri)
     end
-    request_diagnostic_refresh!(server)
+    return true
 end

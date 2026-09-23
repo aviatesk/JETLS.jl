@@ -1279,6 +1279,7 @@ function Test.var"@testset"(__context__::JL.MacroContext, args::SyntaxTree...)
 
     desc = testsettype = nothing
     seen_options = Set{String}()
+    option_values = SyntaxTree[]
     for i in 1:length(args)-1
         arg = args[i]
         k = JS.kind(arg)
@@ -1303,20 +1304,46 @@ function Test.var"@testset"(__context__::JL.MacroContext, args::SyntaxTree...)
             else
                 push!(seen_options, name)
             end
+            push!(option_values, arg[2])
         else
             # Recovery: skip the unrecognized arg — Base would error here but we
             # prefer to keep the testset's body analyzable.
             push_macro_error!(arg, "@testset: unexpected argument")
+            continue
         end
+        # Base rejects a described or typed `let` form, and options there fail in
+        # lowering; report every customization but keep expanding.
+        JS.kind(body) === JS.K"let" && push_macro_error!(arg, "@testset with a `let` argument cannot be customized")
+    end
+
+    # Keep the values the real macro evaluates to construct the testset, so that
+    # identifiers in them (e.g. loop variables interpolated into the description)
+    # reach scope analysis.
+    setup = SyntaxTree[]
+    testsettype === nothing || push!(setup, testsettype)
+    desc === nothing || push!(setup, desc)
+    append!(setup, option_values)
+    if JS.kind(body) === JS.K"for" && JS.numchildren(body) == 2
+        # The real macro evaluates them per iteration, where the loop variables are
+        # visible. The user-written body runs in a nested `try` scope, so its
+        # assignments don't capture same-named identifiers in these values.
+        body = JL.@ast(__context__, body,
+            [JS.K"for" body[1]
+                [JS.K"block"
+                    setup...
+                    [JS.K"let" [JS.K"block"] body[2]]]])
+        empty!(setup)
     end
 
     # Wrap the body in a `let` block to reproduce the local scope the real
     # macro creates via `try`/`catch` — without it, bindings would leak into
     # the enclosing scope and sibling testsets would share names.
     return JL.@ast(__context__, mc,
-        [JS.K"let"
-            [JS.K"block"]            # empty bindings list
-            [JS.K"block" body]])
+        [JS.K"block"
+            setup...
+            [JS.K"let"
+                [JS.K"block"]            # empty bindings list
+                [JS.K"block" body]]])
 end
 
 function _validate_testset_option(arg::SyntaxTree)

@@ -243,6 +243,41 @@ end
         end
     end
 
+    @testset "multiple for iteration specs" begin
+        with_binding_occurrences("for i in 1:3, j in 1:3\n    println(j)\nend") do binding_occurrences
+            i_bindings = [b for b in keys(binding_occurrences) if b.name == "i"]
+            @test length(i_bindings) == 2
+            for b in i_bindings
+                occurrences = binding_occurrences[b]
+                @test any(o->o.kind === :def, occurrences)
+                @test !any(o->o.kind === :use, occurrences)
+            end
+        end
+
+        let code = "for i in 1:3, j in 1:i\n    println(j)\nend"
+            rhs_i = last(findfirst("1:i", code))
+            with_binding_occurrences(code) do binding_occurrences
+                i_bindings = [b for b in keys(binding_occurrences) if b.name == "i"]
+                @test length(i_bindings) == 2
+                for b in i_bindings
+                    uses = [o for o in binding_occurrences[b] if o.kind === :use]
+                    @test length(uses) == 1
+                    @test JS.byte_range(only(uses).tree) == rhs_i:rhs_i
+                end
+            end
+        end
+
+        with_binding_occurrences("for i in 1:3, j in 1:3\n    println(i, j)\nend") do binding_occurrences
+            i_bindings = [b for b in keys(binding_occurrences) if b.name == "i"]
+            @test length(i_bindings) == 2
+            for b in i_bindings
+                uses = [o for o in binding_occurrences[b] if o.kind === :use]
+                @test length(uses) == 1
+                @test JS.source_line(only(uses).tree) == 2
+            end
+        end
+    end
+
     @testset "same-named arguments in disjoint scopes" begin
         # Two `do h` blocks share the same lowering unit but each introduces
         # a fresh `h` binding; their occurrence sets must remain separate.
