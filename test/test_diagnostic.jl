@@ -1091,6 +1091,41 @@ end
     end
 end
 
+@testset "a cancelled scan keeps the results that are still current" begin
+    withscript("func(x, y) = x\n") do script_path1; withscript("g(a, b) = a\n") do script_path2
+        uri1 = filepath2uri(script_path1)
+        uri2 = filepath2uri(script_path2)
+        withserver() do (; server)
+            fingerprint1 = JETLS.compute_live_diagnostics_fingerprint(server, uri1)
+            updates = Dict{URI,JETLS.WorkspaceLiveDiagnostics}(
+                uri1 => JETLS.WorkspaceLiveDiagnostics(fingerprint1, nothing, Diagnostic[]),
+                # computed from inputs that moved before the cancellation
+                uri2 => JETLS.WorkspaceLiveDiagnostics("stale", nothing, Diagnostic[]))
+            changed = Set((uri1, uri2))
+            JETLS.retain_current_live_diagnostics!(updates, changed, server)
+            @test keys(updates) == Set((uri1,))
+            @test changed == Set((uri1,))
+        end
+    end end
+end
+
+@testset "a cancelled unit aggregation is not memoized" begin
+    withscript("func(x) = x\n") do script_path
+        uri = filepath2uri(script_path)
+        withserver() do (; server)
+            search_uris = Set((uri,))
+            cache = JETLS.DefUsedNamesCache()
+            cancel_flag = JETLS.CancelFlag(false)
+            JETLS.cancel!(cancel_flag)
+            JETLS.compute_def_used_names!(cache, server, search_uris;
+                cancel_flag, skip_context_check = true)
+            @test isempty(JETLS.load(cache))
+            JETLS.compute_def_used_names!(cache, server, search_uris; skip_context_check = true)
+            @test !isempty(JETLS.load(cache))
+        end
+    end
+end
+
 @testset "per-file diagnostics computed from an outdated version are not reused" begin
     withscript("func(x, y) = x\n") do script_path
         uri = filepath2uri(script_path)

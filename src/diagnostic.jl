@@ -1781,11 +1781,13 @@ end
 
 function compute_unit_def_used_names(
         server::Server, search_uris::Set{URI};
+        cancel_flag::CancelFlag = DUMMY_CANCEL_FLAG,
         skip_context_check::Bool = false # used by tests only
     )
     state = server.state
     mod_def_used_names = Dict{Module,DefUsedNames}()
     for search_uri in search_uris
+        is_cancelled(cancel_flag) && break
         skip_context_check || has_analyzed_context(state, search_uri) || continue
         search_fi = @something begin
             get_file_info(state, search_uri)
@@ -1801,6 +1803,7 @@ function compute_unit_def_used_names(
         search_st0_top = build_syntax_tree(search_fi)
 
         iterate_toplevel_tree(search_st0_top) do st0::SyntaxTree
+            is_cancelled(cancel_flag) && return traversal_terminator
             binding_occurrences = @something get_binding_occurrences!(
                 state, search_uri, search_fi, st0) return
             context_module = get_context_module(state, search_uri, offset_to_xy(search_fi, JS.first_byte(st0)))
@@ -1847,6 +1850,7 @@ end
 # `run_per_file_diagnostics!` in cli-check).
 function compute_def_used_names!(
         cache::DefUsedNamesCache, server::Server, search_uris::Set{URI};
+        cancel_flag::CancelFlag = DUMMY_CANCEL_FLAG,
         skip_context_check::Bool = false # used by tests only
     )
     # `Base.PersistentDict` uses `===` to compare keys (HAMT looks up via object identity),
@@ -1857,7 +1861,9 @@ function compute_def_used_names!(
         if haskey(data, key)
             return data, data[key]
         end
-        result = compute_unit_def_used_names(server, search_uris; skip_context_check)
+        result = compute_unit_def_used_names(server, search_uris; cancel_flag, skip_context_check)
+        # a cancelled aggregation is partial, and must not be reused by later files
+        is_cancelled(cancel_flag) && return data, result
         return DefUsedNamesCacheData(data, key => result), result
     end
 end
@@ -1875,12 +1881,15 @@ function analyze_unused_imports!(
         diagnostics::Vector{Diagnostic}, def_used_names_cache::DefUsedNamesCache,
         server::Server, uri::URI,
         mod_imported_names::Dict{Module,Dict{String,Vector{ImportInfo}}};
+        cancel_flag::CancelFlag = DUMMY_CANCEL_FLAG,
         skip_context_check::Bool = false # used by tests only
     )
     isempty(mod_imported_names) && return diagnostics
 
     search_uris = collect_search_uris(server, uri)
-    mod_def_used_names = compute_def_used_names!(def_used_names_cache, server, search_uris; skip_context_check)
+    mod_def_used_names = compute_def_used_names!(
+        def_used_names_cache, server, search_uris; cancel_flag, skip_context_check)
+    is_cancelled(cancel_flag) && return diagnostics
 
     for (context_module, imported_names) in mod_imported_names
         def_used_names = get(mod_def_used_names, context_module, nothing)
@@ -2113,14 +2122,14 @@ end
 function cross_file_diagnostics!(
         diagnostics::Vector{Diagnostic}, def_used_names_cache::DefUsedNamesCache,
         server::Server, uri::URI, per_file::PerFileDiagnosticsResult;
+        cancel_flag::CancelFlag = DUMMY_CANCEL_FLAG,
         skip_context_check::Bool = false # used by tests only
     )
     search_uris = collect_search_uris(server, uri)
-    mod_def_used_names = compute_def_used_names!(def_used_names_cache, server, search_uris; skip_context_check)
+    mod_def_used_names = compute_def_used_names!(def_used_names_cache, server, search_uris; cancel_flag, skip_context_check)
+    is_cancelled(cancel_flag) && return diagnostics
     emit_undef_global_diagnostics!(diagnostics, per_file.undef_global_candidates, mod_def_used_names)
-    analyze_unused_imports!(
-        diagnostics, def_used_names_cache, server, uri, per_file.explicit_imports;
-        skip_context_check)
+    analyze_unused_imports!(diagnostics, def_used_names_cache, server, uri, per_file.explicit_imports; cancel_flag, skip_context_check)
     return diagnostics
 end
 
@@ -2133,7 +2142,7 @@ function toplevel_lowering_diagnostics!(
     is_cancelled(cancel_flag) && return cached.diagnostics
     diagnostics = copy(cached.diagnostics)
     if has_analyzed_context(server.state, uri; lookup_func)
-        cross_file_diagnostics!(diagnostics, def_used_names_cache, server, uri, cached)
+        cross_file_diagnostics!(diagnostics, def_used_names_cache, server, uri, cached; cancel_flag)
     end
     return diagnostics
 end
@@ -2374,8 +2383,9 @@ end
 # abandoned scan counts as a run, so the redo is spaced like any other and continuous
 # typing does not keep the worker spinning. Open files are published before the rest of
 # the workspace is swept (see `publish_workspace_diagnostics!`), so a cancellation mostly
-# abandons that sweep; per-file results computed before it stay cached, so the redo
-# mostly repeats the cross-file checks.
+# cuts that sweep short. What it computed for files whose inputs did not move is still
+# published, and per-file results stay cached, so the redo only repeats the cross-file
+# checks of the files the change affected.
 function workspace_diagnostics_worker(server::Server)
     worker = server.state.workspace_diagnostics_worker
     last_run_time = 0.0
@@ -2496,7 +2506,9 @@ end
 #
 # Open files are recomputed, stored and published before the rest of the workspace. The
 # next keystroke then cancels only the sweep over the unopened files, and the file being
-# edited is not held back by a sweep that grows with the workspace.
+# edited is not held back by a sweep that grows with the workspace. A cancelled phase
+# still stores and publishes the results that the change did not make stale
+# (`retain_current_live_diagnostics!`).
 function publish_workspace_diagnostics!(server::Server, cancel_flag::CancelFlag)
     state = server.state
     worker = state.workspace_diagnostics_worker
@@ -2525,16 +2537,22 @@ function publish_workspace_diagnostics!(server::Server, cancel_flag::CancelFlag)
     for uris in (open_uris, unopened_uris)
         updates = Dict{URI,WorkspaceLiveDiagnostics}()
         changed = Set{URI}()
-        recompute_live_diagnostics!(updates, changed, server, uris, published,
-            fingerprint_cache, def_used_names_cache, cancel_flag) || return nothing
-        isempty(updates) && continue
-        store!(worker.published) do current::WorkspaceLiveDiagnosticsData
-            for (uri, live) in updates
-                current = WorkspaceLiveDiagnosticsData(current, uri => live)
-            end
-            current, nothing
+        completed = recompute_live_diagnostics!(updates, changed, server, uris, published,
+            fingerprint_cache, def_used_names_cache, cancel_flag)
+        if !completed
+            is_cancelled(worker.shutdown_flag) && return nothing
+            retain_current_live_diagnostics!(updates, changed, server)
         end
-        isempty(changed) || notify_diagnostics!(server, changed)
+        if !isempty(updates)
+            store!(worker.published) do current::WorkspaceLiveDiagnosticsData
+                for (uri, live) in updates
+                    current = WorkspaceLiveDiagnosticsData(current, uri => live)
+                end
+                current, nothing
+            end
+            isempty(changed) || notify_diagnostics!(server, changed)
+        end
+        completed || return nothing
     end
     removals = Set{URI}()
     for uri in keys(published)
@@ -2570,8 +2588,27 @@ function publish_workspace_diagnostics!(server::Server, cancel_flag::CancelFlag)
     nothing
 end
 
+# After a cancellation, keeps only the results whose inputs did not move since they were
+# computed, typically those of analysis units other than the one being edited: they are
+# not stale, so they are stored and published rather than recomputed by the redo. The
+# fingerprints are taken afresh, since the scan's `LiveDiagnosticsFingerprintCache` still
+# holds the ones from before the change that cancelled it.
+function retain_current_live_diagnostics!(
+        updates::Dict{URI,WorkspaceLiveDiagnostics}, changed::Set{URI}, server::Server
+    )
+    fingerprint_cache = LiveDiagnosticsFingerprintCache()
+    for uri in collect(keys(updates))
+        fingerprint = compute_live_diagnostics_fingerprint(server, uri, fingerprint_cache)
+        fingerprint == updates[uri].fingerprint && continue
+        delete!(updates, uri)
+        delete!(changed, uri)
+    end
+    return updates
+end
+
 # Recomputes the files of `uris` whose fingerprint moved into `updates`, and collects into
-# `changed` those to republish. Returns `false` when cancelled, leaving both to be dropped.
+# `changed` those to republish. Returns `false` when cancelled; `updates` then holds the
+# files fully computed before the cancellation.
 function recompute_live_diagnostics!(
         updates::Dict{URI,WorkspaceLiveDiagnostics}, changed::Set{URI},
         server::Server, uris::Set{URI}, published::WorkspaceLiveDiagnosticsData,

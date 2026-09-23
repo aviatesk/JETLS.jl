@@ -1030,7 +1030,8 @@ const WorkspaceLiveDiagnosticsCache = LWContainer{WorkspaceLiveDiagnosticsData, 
 Background worker that pushes `JETLS/live` diagnostics via
 `textDocument/publishDiagnostics`. `schedule_workspace_diagnostics!` sets `wakeup`
 whenever those diagnostics may have changed and cancels `cancel_flag`, which is created
-anew for each scan, so that a scan started on stale inputs is abandoned and redone.
+anew for each scan, so that a scan started on stale inputs is cut short and redone,
+keeping only the results the change did not make stale.
 `shutdown_flag` is only cancelled to stop the worker.
 """
 mutable struct WorkspaceDiagnosticsWorker
