@@ -1148,6 +1148,61 @@ end
     end
 end
 
+@testset "workspace diagnostics push publishes open files first" begin
+    pkg_code = """
+    module TestWorkspaceDiagnosticOrder
+    using Base: sum
+    include("util.jl")
+    end # module TestWorkspaceDiagnosticOrder
+    """
+    util_code = "f(x, y) = x\n"
+    pkg_setup = function ()
+        write(normpath(dirname(Pkg.project().path), "src", "util.jl"), util_code)
+    end
+    withpackage("TestWorkspaceDiagnosticOrder", pkg_code; pkg_setup) do pkg_path
+        util_uri = filepath2uri(normpath(pkg_path, "src", "util.jl"))
+        main_uri = filepath2uri(normpath(pkg_path, "src", "TestWorkspaceDiagnosticOrder.jl"))
+        rootUri = filepath2uri(pkg_path)
+        withserver(; rootUri) do (; server, writereadmsg, readmsg)
+            (; raw_res) = writereadmsg(
+                make_DidOpenTextDocumentNotification(util_uri, util_code); read = 2)
+            @test all(msg -> msg isa PublishDiagnosticsNotification, raw_res)
+
+            # `JETLS/extra` diagnostics of util.jl's testset may land in other files too
+            extra = Diagnostic(;
+                range = Range(;
+                    start = Position(; line = 0, character = 0),
+                    var"end" = Position(; line = 0, character = 1)),
+                code = JETLS.TESTRUNNER_TEST_FAILURE_CODE,
+                message = "extra")
+            key = JETLS.TestsetDiagnosticsKey(util_uri, "testset", 1)
+            JETLS.store!(server.state.extra_diagnostics) do data
+                val = JETLS.URI2Diagnostics(util_uri => [extra], main_uri => [extra])
+                JETLS.ExtraDiagnosticsData(data, key => val), nothing
+            end
+
+            JETLS.publish_workspace_diagnostics!(server, JETLS.DUMMY_CANCEL_FLAG)
+            msgs = Any[]
+            while isready(server.callback.sent_queue)
+                push!(msgs, readmsg(; check = false).raw_msg)
+            end
+            @test all(msg -> msg isa PublishDiagnosticsNotification, msgs)
+            @test [msg.params.uri for msg in msgs] == [util_uri, main_uri]
+            for msg in msgs
+                @test any(d -> d.message == "extra", msg.params.diagnostics)
+            end
+
+            let uris = Set((util_uri, main_uri))
+                selected = JETLS.get_full_diagnostics(server, uris)
+                full = JETLS.get_full_diagnostics(server)
+                for uri in uris
+                    @test selected[uri] == full[uri]
+                end
+            end
+        end
+    end
+end
+
 @testset "workspace diagnostics push" begin
     pkg_code = """
     module TestWorkspaceDiagnosticPush

@@ -2164,6 +2164,44 @@ function get_full_diagnostics(server::Server; ensure_cleared::Union{Bool,URI} = 
     return uri2diagnostics
 end
 
+# `get_full_diagnostics` restricted to `uris` and the code cells of the notebooks among
+# them, for `notify_diagnostics!(server, uris)`, which publishes nothing else.
+function get_full_diagnostics(server::Server, uris::Set{URI})
+    state = server.state
+    target_uris = Set{URI}()
+    for uri in uris
+        push!(target_uris, uri)
+        notebook_info = @something get_notebook_info(state, uri) continue
+        for cell in notebook_info.cells
+            cell.kind == NotebookCellKind.Code && push!(target_uris, cell.uri)
+        end
+    end
+    analysis_cache = load(state.analysis_manager.cache)
+    extra_diagnostics = load(state.extra_diagnostics)
+    published = load(state.workspace_diagnostics_worker.published)
+    pull = pull_diagnostics_enabled(server)
+    uri2diagnostics = URI2Diagnostics()
+    for uri in target_uris
+        diagnostics = Diagnostic[]
+        analysis_info = get(analysis_cache, uri, nothing)
+        if analysis_info isa AnalysisResult
+            full_diagnostics = get(analysis_info.uri2diagnostics, uri, nothing)
+            full_diagnostics === nothing || append!(diagnostics, full_diagnostics)
+        end
+        for (_, extra_uri2diagnostics) in extra_diagnostics
+            extra = get(extra_uri2diagnostics, uri, nothing)
+            extra === nothing || append!(diagnostics, extra)
+        end
+        live = get(published, uri, nothing)
+        if live !== nothing && !(pull && is_synchronized(state, uri))
+            append!(diagnostics, live.diagnostics)
+        end
+        uri2diagnostics[uri] = diagnostics
+    end
+    localize_notebook_diagnostics!(uri2diagnostics, state)
+    return uri2diagnostics
+end
+
 function merge_extra_diagnostics!(uri2diagnostics::URI2Diagnostics, server::Server)
     for (_, extra_uri2diagnostics) in load(server.state.extra_diagnostics)
         merge_diagnostics!(uri2diagnostics, extra_uri2diagnostics)
@@ -2227,7 +2265,7 @@ end
 # A notebook URI stands for its code cells, which is what the client knows.
 function notify_diagnostics!(server::Server, uris::Set{URI})
     state = server.state
-    uri2diagnostics = get_full_diagnostics(server)
+    uri2diagnostics = get_full_diagnostics(server, uris)
     selected = URI2Diagnostics()
     for uri in uris
         notebook_info = get_notebook_info(state, uri)
@@ -2334,8 +2372,10 @@ end
 
 # A change arriving during a scan cancels it (see `schedule_workspace_diagnostics!`); the
 # abandoned scan counts as a run, so the redo is spaced like any other and continuous
-# typing does not keep the worker spinning. Per-file results computed before the
-# cancellation stay cached, so the redo mostly repeats the cross-file checks.
+# typing does not keep the worker spinning. Open files are published before the rest of
+# the workspace is swept (see `publish_workspace_diagnostics!`), so a cancellation mostly
+# abandons that sweep; per-file results computed before it stay cached, so the redo
+# mostly repeats the cross-file checks.
 function workspace_diagnostics_worker(server::Server)
     worker = server.state.workspace_diagnostics_worker
     last_run_time = 0.0
@@ -2453,6 +2493,10 @@ end
 # the previous publish as out of date, and the suppression would otherwise never retry
 # it. Each publish carries the file's complete diagnostic set, since `publishDiagnostics`
 # replaces everything the server reported for a URI.
+#
+# Open files are recomputed, stored and published before the rest of the workspace. The
+# next keystroke then cancels only the sweep over the unopened files, and the file being
+# edited is not held back by a sweep that grows with the workspace.
 function publish_workspace_diagnostics!(server::Server, cancel_flag::CancelFlag)
     state = server.state
     worker = state.workspace_diagnostics_worker
@@ -2467,15 +2511,77 @@ function publish_workspace_diagnostics!(server::Server, cancel_flag::CancelFlag)
         # notebooks are keyed by the notebook URI, and `notify_diagnostics!` localizes them
         union!(uris_to_search, keys(load(state.file_cache)))
     end
+    open_uris = Set{URI}()
+    unopened_uris = Set{URI}()
+    for uri in uris_to_search
+        if !is_synchronized(state, uri)
+            push!(unopened_uris, uri)
+        elseif !pull # otherwise served by `textDocument/diagnostic`
+            push!(open_uris, uri)
+        end
+    end
     fingerprint_cache = LiveDiagnosticsFingerprintCache()
     def_used_names_cache = DefUsedNamesCache()
-    updates = Dict{URI,WorkspaceLiveDiagnostics}()
-    changed = Set{URI}()
+    for uris in (open_uris, unopened_uris)
+        updates = Dict{URI,WorkspaceLiveDiagnostics}()
+        changed = Set{URI}()
+        recompute_live_diagnostics!(updates, changed, server, uris, published,
+            fingerprint_cache, def_used_names_cache, cancel_flag) || return nothing
+        isempty(updates) && continue
+        store!(worker.published) do current::WorkspaceLiveDiagnosticsData
+            for (uri, live) in updates
+                current = WorkspaceLiveDiagnosticsData(current, uri => live)
+            end
+            current, nothing
+        end
+        isempty(changed) || notify_diagnostics!(server, changed)
+    end
     removals = Set{URI}()
-    for uri in uris_to_search
-        is_cancelled(cancel_flag) && return nothing
+    for uri in keys(published)
+        gone = if is_synchronized(state, uri)
+            pull || get_file_info(state, uri) === nothing
+        else
+            get_unsynced_file_info!(state, uri) === nothing
+        end
+        (!(uri in uris_to_search) || gone) && push!(removals, uri)
+    end
+    isempty(removals) && return nothing
+    store!(worker.published) do current::WorkspaceLiveDiagnosticsData
+        for uri in removals
+            haskey(current, uri) && (current = Base.delete(current, uri))
+        end
+        current, nothing
+    end
+    # A removed entry of a file that `all_files=false` silences is cleared on the client
+    # all the same: a publish of the scan that raced with `didClose` may have landed after
+    # the clearing publish of the close. Any other removal republishes what is left of the
+    # file (`JETLS/save` and `JETLS/extra`), as a file handed over to the client's pull
+    # must keep those.
+    changed = Set{URI}()
+    for uri in removals
+        if all_files || is_synchronized(state, canonical_cache_uri(state, uri))
+            push!(changed, uri)
+        else
+            send(server, PublishDiagnosticsNotification(;
+                params = PublishDiagnosticsParams(; uri, diagnostics = empty_diagnostics)))
+        end
+    end
+    isempty(changed) || notify_diagnostics!(server, changed)
+    nothing
+end
+
+# Recomputes the files of `uris` whose fingerprint moved into `updates`, and collects into
+# `changed` those to republish. Returns `false` when cancelled, leaving both to be dropped.
+function recompute_live_diagnostics!(
+        updates::Dict{URI,WorkspaceLiveDiagnostics}, changed::Set{URI},
+        server::Server, uris::Set{URI}, published::WorkspaceLiveDiagnosticsData,
+        fingerprint_cache::LiveDiagnosticsFingerprintCache,
+        def_used_names_cache::DefUsedNamesCache, cancel_flag::CancelFlag
+    )
+    state = server.state
+    for uri in uris
+        is_cancelled(cancel_flag) && return false
         synchronized = is_synchronized(state, uri)
-        synchronized && pull && continue # served by `textDocument/diagnostic`
         # The fingerprint is taken before the inputs it covers. An edit landing in
         # between then leaves the stored fingerprint behind the text, and the next scan
         # (already scheduled by that edit) recomputes the file; a fingerprint taken after
@@ -2487,10 +2593,10 @@ function publish_workspace_diagnostics!(server::Server, cancel_flag::CancelFlag)
             get_file_info(state, uri)
         else
             get_unsynced_file_info!(state, uri)
-        end continue # cleaned up below with the other stale entries
+        end continue # cleaned up by the caller with the other stale entries
         diagnostics = compute_live_diagnostics!(
             def_used_names_cache, server, uri, fi, cancel_flag)
-        is_cancelled(cancel_flag) && return nothing
+        is_cancelled(cancel_flag) && return false
         version = synchronized ? fi.version : nothing
         updates[uri] = WorkspaceLiveDiagnostics(fingerprint, version, diagnostics)
         if prev !== nothing && prev.version == version && prev.diagnostics == diagnostics
@@ -2498,39 +2604,7 @@ function publish_workspace_diagnostics!(server::Server, cancel_flag::CancelFlag)
         end
         push!(changed, uri)
     end
-    for uri in keys(published)
-        gone = if is_synchronized(state, uri)
-            pull || get_file_info(state, uri) === nothing
-        else
-            get_unsynced_file_info!(state, uri) === nothing
-        end
-        (!(uri in uris_to_search) || gone) && push!(removals, uri)
-    end
-    isempty(updates) && isempty(removals) && return nothing
-    store!(worker.published) do current::WorkspaceLiveDiagnosticsData
-        for (uri, live) in updates
-            current = WorkspaceLiveDiagnosticsData(current, uri => live)
-        end
-        for uri in removals
-            haskey(current, uri) && (current = Base.delete(current, uri))
-        end
-        current, nothing
-    end
-    # A removed entry of a file that `all_files=false` silences is cleared on the client
-    # all the same: a publish of the scan that raced with `didClose` may have landed after
-    # the clearing publish of the close. Any other removal republishes what is left of the
-    # file (`JETLS/save` and `JETLS/extra`), as a file handed over to the client's pull
-    # must keep those.
-    for uri in removals
-        if all_files || is_synchronized(state, canonical_cache_uri(state, uri))
-            push!(changed, uri)
-        else
-            send(server, PublishDiagnosticsNotification(;
-                params = PublishDiagnosticsParams(; uri, diagnostics = empty_diagnostics)))
-        end
-    end
-    isempty(changed) || notify_diagnostics!(server, changed)
-    nothing
+    return true
 end
 
 # An opened file is served by `textDocument/diagnostic` from now on: forget its pushed
