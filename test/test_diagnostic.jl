@@ -1126,6 +1126,29 @@ end
     end
 end
 
+@testset "analysis setting changes leave the refresh to the reanalysis" begin
+    capabilities = ClientCapabilities(;
+        workspace = WorkspaceClientCapabilities(;
+            diagnostics = DiagnosticWorkspaceClientCapabilities(; refreshSupport = true)))
+    withserver(; capabilities, pull_diagnostics = true) do (; writereadmsg)
+        # a `[diagnostic]` change moves the live diagnostics, so it asks for a re-pull
+        let settings = Dict{String,Any}("diagnostic" => Dict{String,Any}("all_files" => false))
+            (; raw_res) = writereadmsg(DidChangeConfigurationNotification(;
+                params = DidChangeConfigurationParams(; settings)); read = 2)
+            @test count(msg -> msg isa ShowMessageNotification, raw_res) == 1
+            @test count(msg -> msg isa WorkspaceDiagnosticRefreshRequest, raw_res) == 1
+        end
+        # an analysis setting only matters once the reanalysis stores its result
+        let settings = Dict{String,Any}(
+                "diagnostic" => Dict{String,Any}("all_files" => false),
+                "full_analysis" => Dict{String,Any}("concretization_timeout" => 5))
+            (; raw_res) = writereadmsg(DidChangeConfigurationNotification(;
+                params = DidChangeConfigurationParams(; settings)))
+            @test raw_res isa ShowMessageNotification
+        end
+    end
+end
+
 @testset "per-file diagnostics computed from an outdated version are not reused" begin
     withscript("func(x, y) = x\n") do script_path
         uri = filepath2uri(script_path)

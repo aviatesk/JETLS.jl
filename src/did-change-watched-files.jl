@@ -70,16 +70,7 @@ function handle_config_file_change!(
 
     source = "[.JETLSConfig.toml] $(dirname(changed_path)) ($kind)"
     notify_config_changes(server, tracker, source)
-    apply_auto_instantiate_change!(server)
-    if tracker.diagnostic_setting_changed
-        clear_per_file_diagnostics_cache!(server.state)
-        notify_diagnostics!(server; ensure_cleared = true)
-        request_diagnostic_refresh!(server)
-    end
-    if tracker.analysis_setting_changed
-        request_reanalysis_for_tracked_entries!(server)
-        request_diagnostic_refresh!(server)
-    end
+    apply_config_changes!(server, tracker)
 end
 
 # TODO: We may eventually want to separate live config validation from saved config
