@@ -53,6 +53,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 >
 > Note: Path glob patterns use `/` as the separator on all platforms, including Windows; backslashes are not supported as separators.
 
+### Fixed
+
+- Fixed false [`lowering/unused-local`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/unused-local) diagnostics for `@testset` loop variables used only in the description, e.g. `i` in `@testset "case $i" for i in 1:3`.
+  Identifiers in `@testset` descriptions, options, and testset types are now analyzed like other code.
+
 ## 2026-09-22
 
 - Commit: [`71fb0bf`](https://github.com/aviatesk/JETLS.jl/commit/71fb0bf)

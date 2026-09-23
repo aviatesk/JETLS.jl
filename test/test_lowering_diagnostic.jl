@@ -857,6 +857,24 @@ end
         @test isempty(diagnostics)
     end
 
+    @testset "@testset description using loop variable" begin
+        let diagnostics = get_lowering_diagnostics("""
+            @testset "case: \$(i)" for (i, x) in ((1, 2), (3, 4))
+                @test x > 0
+            end
+            """; context_module=Test, code=JETLS.LOWERING_UNUSED_LOCAL_CODE)
+            @test isempty(diagnostics)
+        end
+        let diagnostics = get_lowering_diagnostics("""
+            @testset "case" for (i, x) in ((1, 2), (3, 4))
+                @test x > 0
+            end
+            """; context_module=Test, code=JETLS.LOWERING_UNUSED_LOCAL_CODE)
+            @test length(diagnostics) == 1
+            @test only(diagnostics).message == "Unused local binding `i`"
+        end
+    end
+
     @testset "@nospecialize macro" begin
         diagnostics = get_lowering_diagnostics("""
         function kwargs_dict(@nospecialize configs)
