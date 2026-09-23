@@ -1026,18 +1026,55 @@ end
                 @test length(params.diagnostics) == 1
             end
 
-            # `didClose` clears the file; the next scan forgets its entry and clears it
-            # once more, so a scan publish that raced with the close does not survive.
+            # `didClose` clears the file and forgets its entry, so the scan has nothing
+            # left to clear.
             (; raw_res) = writereadmsg(make_DidCloseTextDocumentNotification(uri))
             @test raw_res isa PublishDiagnosticsNotification
             @test raw_res.params.uri == uri
             @test isempty(raw_res.params.diagnostics)
+            @test !haskey(JETLS.load(published), uri)
+            @test isempty(scan_live_diagnostics!(server, readmsg))
+
+            # A scan publish that raced with the close re-adds the entry; the next scan
+            # forgets it and clears the file once more.
+            JETLS.store!(published) do data
+                live = JETLS.WorkspaceLiveDiagnostics("stale", 1, JETLS.Diagnostic[])
+                JETLS.WorkspaceLiveDiagnosticsData(data, uri => live), nothing
+            end
             let params = scan_live_diagnostics!(server, readmsg)[uri]
                 @test params.version === nothing
                 @test isempty(params.diagnostics)
             end
             @test !haskey(JETLS.load(published), uri)
-            @test isempty(scan_live_diagnostics!(server, readmsg))
+        end
+    end
+end
+
+@testset "reopening a file closed with `all_files=false` republishes it" begin
+    script_code = "func(x) = nothing\n"
+    withscript(script_code) do script_path
+        uri = filepath2uri(script_path)
+        settings = Dict{String,Any}("diagnostic" => Dict{String,Any}("all_files" => false))
+        withserver(; settings) do (; server, writemsg, writereadmsg, readmsg)
+            (; raw_res) = writereadmsg(make_DidOpenTextDocumentNotification(uri, script_code))
+            @test raw_res isa PublishDiagnosticsNotification
+            let params = scan_live_diagnostics!(server, readmsg)[uri]
+                @test params.version == 1
+                @test length(params.diagnostics) == 1
+            end
+
+            (; raw_res) = writereadmsg(make_DidCloseTextDocumentNotification(uri))
+            @test raw_res isa PublishDiagnosticsNotification
+            @test isempty(raw_res.params.diagnostics)
+
+            # reopened at the same version before any scan ran (the cached analysis
+            # result is reused, so the open itself publishes nothing)
+            writemsg(make_DidOpenTextDocumentNotification(uri, script_code))
+            wait_for_file_cache_version(server.state, uri, 1)
+            let params = scan_live_diagnostics!(server, readmsg)[uri]
+                @test params.version == 1
+                @test length(params.diagnostics) == 1
+            end
         end
     end
 end
