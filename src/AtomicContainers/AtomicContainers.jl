@@ -34,6 +34,15 @@ module AtomicContainers
 export CASContainer, LWContainer, SWContainer, getstats, load, resetstats!, store!
 
 abstract type AtomicContainer end
+
+# HACK: Every container declares `data::Any` so that the data is always stored boxed.
+# Julia's codegen can drop the GC root of an atomically loaded field that inlines an
+# immutable with GC pointers (e.g. `Base.PersistentDict`) once the loaded value is spilled
+# to the stack, so a snapshot returned by `load` could otherwise be freed while in use
+# after a `store!` replaced it (https://github.com/JuliaLang/julia/issues/63320).
+# This workaround is unnecessary on Julia versions that include
+# https://github.com/JuliaLang/julia/pull/63324.
+
 function load end
 function store! end
 function getstats end
@@ -111,7 +120,7 @@ Fastest option for sequential or non-contended updates.
     use [`LWContainer`](@ref) or [`CASContainer`](@ref) containers instead.
 """
 mutable struct SWContainer{T,Stats<:Union{Nothing,SWStats}} <: AtomicContainer
-    @atomic data::T
+    @atomic data::Any
     const stats::Stats
     SWContainer{T,SWStats}(data) where T = new{T,SWStats}(convert(T, data), SWStats())
     SWContainer{T,Nothing}(data) where T = new{T,Nothing}(convert(T, data), nothing)
@@ -122,7 +131,7 @@ mutable struct SWContainer{T,Stats<:Union{Nothing,SWStats}} <: AtomicContainer
     SWContainer{T}() where T = SWContainer{T,Nothing}(T())
 end
 
-load(c::SWContainer) = @atomic :acquire c.data
+load(c::SWContainer{T}) where T = (@atomic :acquire c.data)::T
 
 """
     store!(f, c::SWContainer{T}, args...) -> ret
@@ -138,7 +147,7 @@ Updates the data stored in an [`SWContainer`](@ref) with no concurrency protecti
     [`LWContainer`](@ref) for concurrent write safety.
 """
 @inline function store!(f, c::SWContainer{T,Nothing}, args...) where T
-    old = @atomic :acquire c.data
+    old = load(c)
     new, ret = @inline f(old, args...)
     @atomic :release c.data = new::T
     return ret
@@ -148,7 +157,7 @@ end
     t0 = time_ns()
     stats = c.stats
     @atomic :monotonic stats.attempts += 1
-    old = @atomic :acquire c.data
+    old = load(c)
     t_f_start = time_ns()
     new, ret = @inline f(old, args...)
     t_f_end = time_ns()
@@ -245,7 +254,7 @@ When to avoid:
     locks for write serialization rather than classic RCU's grace period mechanism.
 """
 mutable struct LWContainer{T,Stats<:Union{Nothing,LWStats}} <: AtomicContainer
-    @atomic data::T
+    @atomic data::Any
     const update_lock::ReentrantLock
     const stats::Stats
     LWContainer{T,LWStats}(data) where T = new{T,LWStats}(convert(T, data), ReentrantLock(), LWStats())
@@ -257,7 +266,7 @@ mutable struct LWContainer{T,Stats<:Union{Nothing,LWStats}} <: AtomicContainer
     LWContainer{T}() where T = LWContainer{T,Nothing}(T())
 end
 
-load(c::LWContainer) = @atomic :acquire c.data
+load(c::LWContainer{T}) where T = (@atomic :acquire c.data)::T
 
 """
     store!(f, c::LWContainer{T}, args...) -> ret
@@ -269,7 +278,7 @@ Atomically update the data stored in an [`LWContainer`](@ref) using a lock for s
 """
 function store!(f, c::LWContainer{T,Nothing}, args...) where T
     @lock c.update_lock begin
-        old = @atomic :acquire c.data
+        old = load(c)
         new, ret = f(old, args...)
         @atomic :release c.data = new::T
         return ret
@@ -287,7 +296,7 @@ function store!(f, c::LWContainer{T,LWStats}, args...) where T
         @atomic :monotonic stats.wait_ns += waited
     end
     try
-        old = @atomic :acquire c.data
+        old = load(c)
         new, ret = f(old, args...)
         @atomic :release c.data = new::T
         return ret
@@ -394,7 +403,7 @@ When to avoid:
     modify `data` in-place) and return a `new` object.
 """
 mutable struct CASContainer{T,Stats<:Union{Nothing,CASStats}} <: AtomicContainer
-    @atomic data::T
+    @atomic data::Any
     const stats::Stats
     CASContainer{T,CASStats}(data) where T = new{T,CASStats}(convert(T, data), CASStats())
     CASContainer{T,Nothing}(data) where T = new{T,Nothing}(convert(T, data), nothing)
@@ -405,7 +414,7 @@ mutable struct CASContainer{T,Stats<:Union{Nothing,CASStats}} <: AtomicContainer
     CASContainer{T}() where T = CASContainer{T,Nothing}(T())
 end
 
-load(c::CASContainer) = @atomic :acquire c.data
+load(c::CASContainer{T}) where T = (@atomic :acquire c.data)::T
 
 """
     store!(f, c::CASContainer{T}, args...; backoff::Union{Nothing,Unsigned}=nothing) -> ret
@@ -423,10 +432,11 @@ Atomically update the data stored in a [`CASContainer`](@ref) using compare-and-
 """
 @inline function store!(f, c::CASContainer{T,Nothing}, args...; backoff::Union{Nothing,Unsigned}=nothing) where T
     local retries = 0
-    old = @atomic :acquire c.data
+    old = load(c)
     while true
         new, ret = @inline f(old, args...)
-        old, success = @atomicreplace :acquire_release :monotonic c.data old => new::T
+        cur, success = @atomicreplace :acquire_release :monotonic c.data old => new::T
+        old = cur::T
         if success
             return ret
         else
@@ -453,12 +463,13 @@ end
     local t_loop0 = time_ns()
     stats = c.stats
     @atomic :monotonic stats.attempts += 1
-    old = @atomic :acquire c.data
+    old = load(c)
     while true
         t0 = time_ns()
         new, ret = @inline f(old, args...)
         f_time += time_ns() - t0
-        old, success = @atomicreplace :acquire_release :monotonic c.data old => new::T
+        cur, success = @atomicreplace :acquire_release :monotonic c.data old => new::T
+        old = cur::T
         if success
             if retries != 0
                 @atomic :monotonic stats.retries += retries
