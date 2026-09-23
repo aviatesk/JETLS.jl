@@ -562,6 +562,22 @@ function notify_config_changes(
     end
 end
 
+# Applies the settings `tracker` recorded as changed, whichever source they came from
+# (LSP configuration or a `.JETLSConfig.toml`).
+function apply_config_changes!(server::Server, tracker::ConfigChangeTracker)
+    apply_auto_instantiate_change!(server)
+    if tracker.diagnostic_setting_changed
+        clear_per_file_diagnostics_cache!(server.state)
+        notify_diagnostics!(server; ensure_cleared = true)
+        request_diagnostic_refresh!(server)
+    end
+    if tracker.analysis_setting_changed
+        # Live diagnostics only change once the reanalysis stores a new module context,
+        # and storing it requests the refresh (see `request_diagnostic_refresh!` callers).
+        request_reanalysis_for_tracked_entries!(server)
+    end
+end
+
 unmatched_key_msg(header_msg::AbstractString, path::Vector{String}) =
     string(header_msg, "\n`", join(path, "."), "`")
 
