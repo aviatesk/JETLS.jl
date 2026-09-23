@@ -53,7 +53,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 >
 > Note: Path glob patterns use `/` as the separator on all platforms, including Windows; backslashes are not supported as separators.
 
+### Changed
+
+- [`JETLS/live`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/source) diagnostics of the file being edited are now republished as soon as typing pauses, even in large workspaces, instead of waiting until diagnostics of the whole workspace have been recomputed.
+
+- Clients that pull diagnostics (such as the VSCode extension) are now asked to re-pull less often: once per batch of file changes on disk (e.g. after `git checkout`) instead of once per file.
+
 ### Fixed
+
+- Fixed [`JETLS/live`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/source) diagnostics of notebooks on clients that do not set the [`pull_diagnostics`](https://aviatesk.github.io/JETLS.jl/release/launching/#init-options/pull_diagnostics) initialization option:
+  false [`lowering/undef-local-var`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/undef-local-var) and [`lowering/ambiguous-soft-scope`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/ambiguous-soft-scope) diagnostics for code relying on soft scope, e.g. `x = 0; for i in 1:3; x += i; end`, are no longer reported in notebook cells in such clients, and diagnostics of a deleted cell or of a cell turned into a markdown cell are now cleared.
 
 - Fixed false [`lowering/unused-local`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/unused-local) diagnostics for `@testset` loop variables used only in the description, e.g. `i` in `@testset "case $i" for i in 1:3`.
   Identifiers in `@testset` descriptions, options, and testset types are now analyzed like other code.
