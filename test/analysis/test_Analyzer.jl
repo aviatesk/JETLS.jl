@@ -1102,6 +1102,86 @@ end
     end
 end
 
+ntuple678(nt::Tuple, n::Integer) = ntuple(i -> nt[i], n)
+ntuple678(nt::Tuple, ::Val{N}) where N = ntuple678(nt, N)
+ntuple_bounds678(x::Int, ::Val{N}) where N = ntuple(i -> x, N)[N+1]
+
+struct NTupleOverride678 end
+(::NTupleOverride678)(i::Int) = i
+Base.ntuple(::NTupleOverride678, ::Int) = sin("custom ntuple")
+
+@testset "ntuple overlay" begin
+    # xref: https://github.com/aviatesk/JET.jl/pull/874
+    @testset "unknown length" begin
+        # aviatesk/JET.jl#678: do not analyze impossible manually unrolled indices.
+        for report_target_modules in (nothing, (@__MODULE__,))
+            for T in (Int64, Int32)
+                let result = analyze_call(ntuple678, (NTuple{4,Float64},T); report_target_modules)
+                    @test isempty(get_reports(result))
+                end
+            end
+            # Constant propagation of f alone must still use the unknown-length source.
+            let result = analyze_call((Float64,Int); report_target_modules) do x, n
+                    nt = (x, 1.0, 2.0, 3.0)
+                    ntuple(i -> nt[i], n)
+                end
+                @test isempty(get_reports(result))
+            end
+            let result = analyze_call((String,Int); report_target_modules) do x, n
+                    ntuple(_ -> sin(x), n)
+                end
+                @test any(r -> r isa NoMethodMatchReport, get_reports(result))
+            end
+        end
+    end
+
+    @testset "constant length" begin
+        for n in (0, 1, 2, 10)
+            @test Base.infer_return_type(ntuple678, (NTuple{10,Float64},Val{n});
+                interp=LSAnalyzer(; report_target_modules=nothing)) === NTuple{n,Float64}
+        end
+        let result = analyze_call() do
+                ntuple(identity, 2)[3]
+            end
+            r = only(get_reports(result))
+            @test r isa BoundsErrorReport && r.i === 3
+        end
+        for n in (1, 2)
+            let result = analyze_call(ntuple_bounds678, (Int,Val{n}))
+                r = only(get_reports(result))
+                @test r isa BoundsErrorReport && r.i === n+1
+            end
+        end
+        let result = analyze_call((NTuple{4,Float64},)) do nt
+                ntuple(i -> nt[i], Val(4))
+            end
+            @test isempty(get_reports(result))
+        end
+    end
+
+    @testset "dispatch and caching" begin
+        let result = analyze_call((Int,)) do n
+                ntuple(NTupleOverride678(), n)
+            end
+            @test only(get_reports(result)) isa NoMethodMatchReport
+        end
+        for _ in 1:2
+            @test isempty(get_reports(analyze_call(ntuple678, (NTuple{4,Float64},Int))))
+            @test isempty(get_reports(analyze_call(ntuple678, (NTuple{4,Float64},Val{4}))))
+            let result = analyze_call(ntuple678, (NTuple{4,Float64},Val{5}))
+                r = only(get_reports(result))
+                @test r isa BoundsErrorReport && r.i === 5
+            end
+            @test isempty(get_reports(analyze_call(ntuple678, (NTuple{4,Float64},Val{4}))))
+        end
+        let result = analyze_call((NTuple{4,Float64},)) do nt
+                ntuple678(nt, 4), ntuple678(nt, 4)
+            end
+            @test isempty(get_reports(result))
+        end
+    end
+end
+
 kwtyped(a::Int; kw::Int=42) = a * kw       # typed keyword with a default, plus a positional
 kwtyped2(; x::Int, y::String="s") = (x, y) # required typed x, optional typed y
 kwtyped_dispatch(x::Int; kw::Int=1) = x
