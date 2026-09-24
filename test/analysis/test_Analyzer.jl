@@ -2,6 +2,7 @@ module test_Analyzer
 
 using Test
 using JETLS
+using Libdl
 
 include(normpath(pkgdir(JETLS), "test", "interactive-utils.jl"))
 include(normpath(pkgdir(JETLS), "test", "setup.jl"))
@@ -854,6 +855,25 @@ struct KwCallable end
             @test r.ftype === typeof(kwvaropt) && r.unsupported == [:z]
             @test r.posargtypes == Any[Vararg{Int}]
         end
+    end
+end
+
+@testset "dlsym overlay (sym type: $(S))" for S in (Symbol, String)
+    let result = analyze_call(Libdl.dlsym, (Ptr{Cvoid}, S))
+        @test isempty(get_reports(result))
+        @test JET.get_result(result) === Ptr{Cvoid}
+    end
+    let result = analyze_call((Ptr{Cvoid}, S)) do hnd, name
+            Libdl.dlsym(hnd, name; throw_error=false)
+        end
+        @test isempty(get_reports(result))
+        @test JET.get_result(result) === Union{Nothing,Ptr{Cvoid}}
+    end
+    let result = analyze_call((Ptr{Cvoid}, S)) do hnd, name
+            Ptr{Ptr{Float64}}(Libdl.dlsym(hnd, name))
+        end
+        @test isempty(get_reports(result))
+        @test JET.get_result(result) === Ptr{Ptr{Float64}}
     end
 end
 

@@ -53,6 +53,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 >
 > Note: Path glob patterns use `/` as the separator on all platforms, including Windows; backslashes are not supported as separators.
 
+### Fixed
+
+- Improved analysis accuracy for code that uses `Libdl.dlsym`.
+
 ## 2026-09-23
 
 - Commit: [`685e812`](https://github.com/aviatesk/JETLS.jl/commit/685e812)

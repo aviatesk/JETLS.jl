@@ -14,6 +14,7 @@ using Core.IR
 using Compiler: Compiler as CC
 using JET.JETInterface
 using JET: JET
+using Libdl: Libdl
 
 using ..JETLS: AnalysisEntry, JETLS_DEV_MODE
 using ..LSP
@@ -251,6 +252,24 @@ Base.Experimental.@MethodTable jetls_method_table
 # machinery only adds noise. Keep its unmodeled return value abstract.
 Base.Experimental.@overlay jetls_method_table Base.include(::Module, ::AbstractString) = Base.inferencebarrier(nothing)
 Base.Experimental.@overlay jetls_method_table Base.include(::Function, ::Module, ::AbstractString) = Base.inferencebarrier(nothing)
+
+# Early take-in of JuliaLang/julia#63332. The C call already throws on failure when
+# throw_error=true, but inference needs the redundant Julia-side check to exclude nothing.
+Base.Experimental.@overlay jetls_method_table function Libdl.dlsym(
+        hnd::Ptr, s::Union{Symbol,AbstractString}; throw_error::Bool = true
+    )
+    hnd == C_NULL && throw(ArgumentError("NULL library handle"))
+    val = Ref(Ptr{Cvoid}(0))
+    symbol_found = @static if VERSION < v"1.13.0-DEV.1119" # JuliaLang/julia#58815
+        @ccall jl_dlsym(hnd::Ptr{Cvoid}, s::Cstring, val::Ref{Ptr{Cvoid}}, throw_error::Cint)::Cint
+    else
+        @ccall jl_dlsym(hnd::Ptr{Cvoid}, s::Cstring, val::Ref{Ptr{Cvoid}}, throw_error::Cint, 1::Cint)::Cint
+    end
+    if symbol_found == 0 && !throw_error
+        return nothing
+    end
+    return val[]
+end
 
 @static if VERSION < v"1.14.0-DEV.2024"
 # Backport JuliaLang/julia#61526
