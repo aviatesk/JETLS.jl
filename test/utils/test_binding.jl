@@ -240,6 +240,57 @@ end
     end
 end
 
+@testset "macro definition bindings" begin
+    @testset "cursor selection" begin
+        @test with_target_binding("""
+            macro │fo│o│(│x│)
+                │x│
+            end
+            """) do i, (; ctx3, binding)
+            binfo = JL.get_binding(ctx3, binding)
+            @test binfo.name == (i <= 3 ? "@foo" : "x")
+            @test binfo.kind === (i <= 3 ? :global : :argument)
+            @test binfo.mod === (i <= 3 ? lowering_module : nothing)
+            @test JS.sourcetext(binding) == (i <= 3 ? "foo" : "x")
+            return true
+        end == 7
+
+        for (code, name, source) in (
+                ("macro │fo│o│ end", "@foo", "foo"),
+                ("macro var\"│with │space│\"(x) x end", "@with space", "with space"),
+                ("macro var\"│@fo│o│\" end", "@@foo", "@foo"),
+                ("macro var\"│foo\\\"│bar│\"(x) x end", "@foo\"bar", "foo\\\"bar"),
+                ("if true\nmacro │fo│o│(x) x end\nend", "@foo", "foo"),
+                ("\"Docstring\"\nmacro │fo│o│(x) x end", "@foo", "foo"),
+                ("macro │_│(x) x end", "@_", "_"),
+            )
+            @test with_target_binding(code) do _, (; ctx3, binding)
+                binfo = JL.get_binding(ctx3, binding)
+                @test binfo.name == name
+                @test binfo.kind === :global
+                @test binfo.mod === lowering_module
+                @test JS.sourcetext(binding) == source
+                return true
+            end == count(==('│'), code)
+        end
+
+        for code in ("macro │", "macro │()│ end")
+            @test with_target_binding(code) do _, result
+                @test result === nothing
+                return true
+            end == count(==('│'), code)
+        end
+
+        @test with_target_binding("macro │B│.info(x) x end") do _, (; ctx3, binding)
+            binfo = JL.get_binding(ctx3, binding)
+            @test binfo.name == "B"
+            @test binfo.kind === :global
+            @test binfo.mod === lowering_module
+            return true
+        end == 2
+    end
+end
+
 function with_target_binding_definitions(f, text::AbstractString; kwargs...)
     clean_code, positions = JETLS.get_text_and_positions(text; kwargs...)
     st0_top = jlparse(clean_code)

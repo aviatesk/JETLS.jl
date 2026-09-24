@@ -1320,10 +1320,9 @@ end
         @test diagnostic.severity == LSP.DiagnosticSeverity.Warning
         @test diagnostic.source == JETLS.DIAGNOSTIC_SOURCE_LIVE
         @test occursin("Multiple descriptions provided to @testset", diagnostic.message)
-        # The diagnostic anchors on the redundant `"b"` argument (the `K"String"`
-        # node's byte range covers just the inner content).
-        @test diagnostic.range.start.character == sizeof("""@testset "a" \"""")
-        @test diagnostic.range.var"end".character == sizeof("""@testset "a" "b""")
+        # The diagnostic covers the redundant `"b"` argument, including quotes.
+        @test diagnostic.range.start.character == sizeof("@testset \"a\" ")
+        @test diagnostic.range.var"end".character == sizeof("@testset \"a\" \"b\"")
     end
 
     # A macro-expansion-error reported via the sink (here: `Threads.@spawn` with an

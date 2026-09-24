@@ -602,6 +602,46 @@ function get_full_binding_occurrences(text::AbstractString;
 end
 
 @testset "compute_full_binding_occurrences" begin
+    @testset "macro definition occurrences" begin
+        for (definition, definition_kinds) in (
+                ("macro │m│(ex) esc(ex) end", ((:decl, :method_def),)),
+                ("macro │m│ end", ((:decl,),)),
+                ("macro │m│(ex=1) esc(ex) end", ((:decl, :method_def),)),
+                ("""
+                    macro │m│ end
+                    macro │m│(ex) esc(ex) end
+                    macro │m│(x, y) x end
+                    """, ((:decl,), (:decl, :method_def), (:decl, :method_def))),
+                ("""
+                    if true
+                        macro │m│(ex) ex end
+                    else
+                        macro │m│(ex) ex end
+                    end
+                    """, ((:decl, :method_def), (:decl, :method_def))),
+                ("""
+                    macro │m│(ex) ex end
+                    quote
+                        macro │m│(ex) ex end
+                        macro │m│ end
+                    end
+                    """, ((:decl, :method_def), (:decl, :method_def), (:decl,))))
+            code, positions = JETLS.get_text_and_positions(
+                "begin\n$definition\n│@m│ 1\nend")
+            fi = JETLS.FileInfo(#=version=#0, code, "testfile.jl")
+            boccs = get_full_binding_occurrences(code)
+            occurrences = Set((occ.kind, JETLS.jsobj_to_range(occ.tree, fi))
+                for (binfo, occs) in boccs if binfo.name == "@m" for occ in occs)
+            @test length(positions) == 2length(definition_kinds) + 2
+            expected = Set{Tuple{Symbol,Range}}()
+            for (i, kinds) in enumerate(definition_kinds), kind in kinds
+                push!(expected, (kind, Range(; start=positions[2i-1], var"end"=positions[2i])))
+            end
+            push!(expected, (:use, Range(; start=positions[end-1], var"end"=positions[end])))
+            @test occurrences == expected
+        end
+    end
+
     @testset "macro calls" begin
         let boccs = get_full_binding_occurrences("@nospecialize")
             @test length(boccs) == 1

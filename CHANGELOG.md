@@ -53,6 +53,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 >
 > Note: Path glob patterns use `/` as the separator on all platforms, including Windows; backslashes are not supported as separators.
 
+### Changed
+
+- Bumped JuliaSyntax and JuliaLowering revisions ([`c941fbc399`](https://github.com/JuliaLang/julia/commit/c941fbc399)), bringing several upstream JuliaLowering bug fixes (https://github.com/JuliaLang/julia/pull/63006, https://github.com/JuliaLang/julia/pull/63009).
+
 ### Fixed
 
 - Fixed spurious [`inference/bounds-error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/inference/bounds-error) diagnostics for `ntuple` calls with an unknown length.

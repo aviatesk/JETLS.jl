@@ -406,13 +406,13 @@ end
 end
 
 @testset "@label" begin
-    # Verify that provenance covers the entire macro call
+    # The label form covers the macrocall, and its identifier keeps the
+    # caller's hygiene layer.
     let code = "@label foo", st1 = jlexpand(code)
         @test JS.kind(st1) === JS.K"symboliclabel"
-        @test JS.byte_range(st1) == source_range(code, "foo")
-        label_call = JS.macro_prov(st1)
-        @test label_call !== nothing
-        @test JETLS.is_macrocall_st0(label_call, "@label")
+        @test JS.byte_range(st1) == source_range(code, "@label foo")
+        @test JS.byte_range(st1[1]) == source_range(code, "foo")
+        @test st1.context.layer === st1[1].context.layer
     end
 
     # Non-identifier argument: report via sink, let the expression flow through.
@@ -441,6 +441,18 @@ end
         function f()
             @goto start
             @label start
+        end
+        """) isa NamedTuple
+
+    # JuliaLowering matches gotos and labels by name and hygiene layer when a
+    # `try` has `finally`; a jump within the block must be accepted.
+    @test jlresolve("""
+        function f(c)
+            try
+                c && @goto done
+                @label done
+            finally
+            end
         end
         """) isa NamedTuple
 end
@@ -540,6 +552,13 @@ end
             res = jlresolve(code)
             assert_binding_provenance_range(res, :global, "key", source_range(code, "key"))
         end
+        for code in (
+                "lazyfunc() = lazy\"前置 \\\"\$key\"",
+                "lazyfunc() = lazy\"\"\"前置 \$key\"\"\"",
+            )
+            res = jlresolve(code)
+            assert_binding_provenance_range(res, :global, "key", source_range(code, "key"))
+        end
         let code = join((
                 "lazyfunc() = lazy\"\"\"",
                 "    This is",
@@ -551,7 +570,18 @@ end
         end
     end
 
+    @testset "unquoted source mapping" begin
+        for value in ("\"\$key", "\"\"\"\$key\"\"\"")
+            source_map = JETLS._lazy_str_source_map(value, value; quoted=false)
+            @test source_map == Dict(i => i for i in 1:ncodeunits(value)+1)
+        end
+    end
+
     @testset "runtime semantics" begin
+        let ls = jleval("lazy\"\"")
+            @test ls isa LazyString
+            @test String(ls) === ""
+        end
         let ls = jleval("lazy\"abc\"")
             @test ls isa LazyString
             @test String(ls) === "abc"
@@ -1097,7 +1127,7 @@ end
             d = only(diags)
             @test d.severity == JETLS.LSP.DiagnosticSeverity.Warning
             @test occursin("Multiple descriptions provided to @testset", d.msg)
-            @test JS.sourcetext(d.node) == "b"
+            @test JS.sourcetext(d.node) == "\"b\""
         end
         let diags = collect_macro_diagnostics() do
                 test_macro_expand("@testset Foo Bar begin end")
@@ -1139,7 +1169,7 @@ end
             @test length(diags) == 3
             @test all(d -> d.severity == JETLS.LSP.DiagnosticSeverity.Error, diags)
             @test all(d -> occursin("with a `let` argument cannot be customized", d.msg), diags)
-            @test Set(strip(JS.sourcetext(d.node)) for d in diags) == Set(["MyType", "x", "verbose=true"])
+            @test Set(strip(JS.sourcetext(d.node)) for d in diags) == Set(["MyType", "\"x\"", "verbose=true"])
         end
         let diags = collect_macro_diagnostics() do
                 test_macro_expand("@testset let v = 1 end")

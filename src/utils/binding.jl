@@ -303,7 +303,7 @@ function select_target_binding(
     end
     primary = _select_target_binding(ctx3, st3, offset)
     if primary !== nothing
-        binding = @something _find_internal_global_binding_at_source(ctx3, primary) primary
+        binding = @something _find_global_binding_at_source(ctx3, primary) primary
         return (; ctx3, st3, st0, binding)
     end
     inert_result = select_inert_target_binding(
@@ -736,9 +736,9 @@ function enclosing_inert_tree(st3::SyntaxTree, offset::Int)
     return best[]
 end
 
-# Low-level lookup for lowering-generated bindings that reuse a source token.
-# Callers must establish that the source form is expected to have such a binding.
-function _find_internal_global_binding_at_source(
+# Low-level lookup for the global binding anchored at a source token, e.g. the
+# type name a struct's inner constructors extend.
+function _find_global_binding_at_source(
         ctx3::JL.VariableAnalysisContext, name_node::SyntaxTree
     )
     name = if JS.kind(name_node) === JS.K"BindingId"
@@ -748,7 +748,7 @@ function _find_internal_global_binding_at_source(
     end
     range = JS.byte_range(name_node)
     for binfo::JL.BindingInfo in ctx3.bindings.info
-        binfo.kind === :global && binfo.is_internal && binfo.name == name || continue
+        binfo.kind === :global && binfo.name == name || continue
         binding = JL.binding_ex(ctx3, binfo.id)
         JS.byte_range(binding) == range || continue
         return binding
@@ -762,7 +762,7 @@ function select_struct_inner_constructor_binding(
     binding = Ref{Union{Nothing,SyntaxTree}}(nothing)
     foreach_struct_inner_constructor(st0) do name_node::SyntaxTree, constructor_node::SyntaxTree
         offset in JS.byte_range(constructor_node) || return true
-        binding[] = _find_internal_global_binding_at_source(ctx3, name_node)
+        binding[] = _find_global_binding_at_source(ctx3, name_node)
         return false
     end
     return binding[]
