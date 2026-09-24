@@ -14,7 +14,6 @@ using Core.IR
 using Compiler: Compiler as CC
 using JET.JETInterface
 using JET: JET
-using Libdl: Libdl
 
 using ..JETLS: AnalysisEntry, JETLS_DEV_MODE
 using ..LSP
@@ -136,7 +135,7 @@ struct LSAnalyzer <: ToplevelAbstractAnalyzer
             report_target_modules::Union{Nothing,Set{Module}}, reuse_native_inference::Bool,
             invariable_analysis_hash::UInt
         )
-        method_table = CC.CachedMethodTable(CC.OverlayMethodTable(state.world, jetls_method_table))
+        method_table = CC.CachedMethodTable(CC.OverlayMethodTable(state.world, JET.JET_METHOD_TABLE))
         return new(state, analysis_token, method_table, report_target_modules,
             reuse_native_inference, invariable_analysis_hash)
     end
@@ -266,48 +265,6 @@ end
 
 const LS_ANALYZER_CACHE = Dict{UInt,AnalysisToken}()
 const LS_ANALYZER_CACHE_LOCK = ReentrantLock()
-
-# method overlay
-# ==============
-
-Base.Experimental.@MethodTable jetls_method_table
-
-# `include` is concretely handled by `ConcreteInterpreter`; analyzing Base's file-loading
-# machinery only adds noise. Keep its unmodeled return value abstract.
-Base.Experimental.@overlay jetls_method_table Base.include(::Module, ::AbstractString) = Base.inferencebarrier(nothing)
-Base.Experimental.@overlay jetls_method_table Base.include(::Function, ::Module, ::AbstractString) = Base.inferencebarrier(nothing)
-
-# Early take-in of JuliaLang/julia#63332. The C call already throws on failure when
-# throw_error=true, but inference needs the redundant Julia-side check to exclude nothing.
-Base.Experimental.@overlay jetls_method_table function Libdl.dlsym(
-        hnd::Ptr, s::Union{Symbol,AbstractString}; throw_error::Bool = true
-    )
-    hnd == C_NULL && throw(ArgumentError("NULL library handle"))
-    val = Ref(Ptr{Cvoid}(0))
-    symbol_found = @static if VERSION < v"1.13.0-DEV.1119" # JuliaLang/julia#58815
-        @ccall jl_dlsym(hnd::Ptr{Cvoid}, s::Cstring, val::Ref{Ptr{Cvoid}}, throw_error::Cint)::Cint
-    else
-        @ccall jl_dlsym(hnd::Ptr{Cvoid}, s::Cstring, val::Ref{Ptr{Cvoid}}, throw_error::Cint, 1::Cint)::Cint
-    end
-    if symbol_found == 0 && !throw_error
-        return nothing
-    end
-    return val[]
-end
-
-@static if VERSION < v"1.14.0-DEV.2024"
-# Backport JuliaLang/julia#61526
-Base.Experimental.@overlay jetls_method_table Base.in(x, itr::Tuple) = _in_tuple(x, itr)
-function _in_tuple(x, @nospecialize(itr::Tuple), result = false)
-    @inline
-    isempty(itr) && return result
-    v = (itr[1] == x)
-    if v === true
-        return true
-    end
-    return _in_tuple(x, Base.tail(itr), result | v)
-end
-end
 
 # internal API
 # ============

@@ -858,22 +858,40 @@ struct KwCallable end
     end
 end
 
-@testset "dlsym overlay (sym type: $(S))" for S in (Symbol, String)
-    let result = analyze_call(Libdl.dlsym, (Ptr{Cvoid}, S))
-        @test isempty(get_reports(result))
-        @test JET.get_result(result) === Ptr{Cvoid}
-    end
-    let result = analyze_call((Ptr{Cvoid}, S)) do hnd, name
-            Libdl.dlsym(hnd, name; throw_error=false)
+@testset "JET_METHOD_TABLE overlays" begin
+    @testset "`include`" begin
+        for argtypes in ((Module, String), (typeof(identity), Module, String))
+            result = analyze_call(Base.include, argtypes)
+            @test isempty(get_reports(result))
         end
-        @test isempty(get_reports(result))
-        @test JET.get_result(result) === Union{Nothing,Ptr{Cvoid}}
     end
-    let result = analyze_call((Ptr{Cvoid}, S)) do hnd, name
-            Ptr{Ptr{Float64}}(Libdl.dlsym(hnd, name))
+
+    @testset "`Libdl.dlsym` (sym type: $(S))" for S in (Symbol, String)
+        let result = analyze_call(Libdl.dlsym, (Ptr{Cvoid}, S))
+            @test isempty(get_reports(result))
+            @test JET.get_result(result) === Ptr{Cvoid}
         end
-        @test isempty(get_reports(result))
-        @test JET.get_result(result) === Ptr{Ptr{Float64}}
+        let result = analyze_call((Ptr{Cvoid}, S)) do hnd, name
+                Libdl.dlsym(hnd, name; throw_error=false)
+            end
+            @test isempty(get_reports(result))
+            @test JET.get_result(result) === Union{Nothing,Ptr{Cvoid}}
+        end
+        let result = analyze_call((Ptr{Cvoid}, S)) do hnd, name
+                Ptr{Ptr{Float64}}(Libdl.dlsym(hnd, name))
+            end
+            @test isempty(get_reports(result))
+            @test JET.get_result(result) === Ptr{Ptr{Float64}}
+        end
+    end
+
+    @testset "`in(x, ::Tuple)`" begin
+        # JuliaLang/julia#61526
+        let result = analyze_call((Vector{String},String,)) do xs, x
+                x in tuple(xs) ? 0 : 1
+            end
+            @test isempty(get_reports(result))
+        end
     end
 end
 
@@ -1413,14 +1431,6 @@ kwtyped_in_worker(a::Int; kw::Int=42) = a * kw
             @test length(reports) == 1
             r = only(reports)
             @test r isa NonBooleanCondErrorReport && r.union_split == 2 && length(r.t) == 1
-        end
-
-        # JuliaLang/julia#61526
-        let result = analyze_call((Vector{String},String,)) do xs, x
-                x in tuple(xs) ? 0 : 1
-            end
-            reports = get_reports(result)
-            @test isempty(reports)
         end
     end
 end
