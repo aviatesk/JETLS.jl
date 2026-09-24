@@ -54,6 +54,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 >
 > Note: Path glob patterns use `/` as the separator on all platforms, including Windows; backslashes are not supported as separators.
 
+### Fixed
+
+- Fixed [`JETLS/live`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/source) diagnostics lagging one edit behind while typing on clients that set the [`pull_diagnostics`](https://aviatesk.github.io/JETLS.jl/release/launching/#init-options/pull_diagnostics) initialization option, such as the VSCode extension:
+  diagnostics shown after an edit now reflect that edit instead of the text before it.
+
 ## 2026-09-27
 
 - Commit: [`5ed21cb`](https://github.com/aviatesk/JETLS.jl/commit/5ed21cb)

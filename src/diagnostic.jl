@@ -2447,23 +2447,32 @@ function compute_live_diagnostics_fingerprint(
         cached = get(fingerprint_cache, analysis_info.analyzed_file_infos, nothing)
         cached !== nothing && return cached
     end
+    fingerprint = compute_live_diagnostics_fingerprint(state, this_uri, analysis_info)
+    if analysis_info isa AnalysisResult
+        fingerprint_cache[analysis_info.analyzed_file_infos] = fingerprint
+    end
+    return fingerprint
+end
+
+function compute_live_diagnostics_fingerprint(
+        state::ServerState, this_uri::URI, analysis_info::Union{Nothing,AnalysisInfo},
+        this_fi::Union{Nothing,FileInfo} = nothing
+    )
     search_uris = collect_search_uris(this_uri, analysis_info)
     config_hash = hash(get_config(state, :diagnostic))
     context_hash = analysis_context_hash(analysis_info)
     file_hash = zero(UInt)
     for search_uri in search_uris
         search_fi = @something begin
+            search_uri == this_uri ? this_fi : nothing
+        end begin
             get_file_info(state, search_uri)
         end begin
             get_unsynced_file_info!(state, search_uri)
         end continue
         file_hash ⊻= hash((search_uri, search_fi.version))
     end
-    fingerprint = string(hash((file_hash, config_hash, context_hash)))
-    if analysis_info isa AnalysisResult
-        fingerprint_cache[analysis_info.analyzed_file_infos] = fingerprint
-    end
-    return fingerprint
+    return string(hash((file_hash, config_hash, context_hash)))
 end
 
 # Live diagnostics take only the module context from full-analysis, so an analysis result
@@ -2704,17 +2713,16 @@ function diagnostic_registration()
 end
 
 function handle_DocumentDiagnosticRequest(
-        server::Server, msg::DocumentDiagnosticRequest, cancel_flag::CancelFlag)
-    uri = msg.params.textDocument.uri
-    result = get_file_info(server.state, uri, cancel_flag)
-    if isnothing(result)
+        server::Server, msg::DocumentDiagnosticRequest,
+        snapshot::Union{Nothing,DocumentSnapshot}, cancel_flag::CancelFlag
+    )
+    if snapshot === nothing
         return send(server, DocumentDiagnosticResponse(;
             id = msg.id,
             result = RelatedFullDocumentDiagnosticReport(; items = empty_diagnostics)))
-    elseif result isa ResponseError
-        return send(server, DocumentDiagnosticResponse(; id = msg.id, result = nothing, error = result))
     end
-    resultId = compute_live_diagnostics_fingerprint(server, uri)
+    uri = msg.params.textDocument.uri
+    resultId = compute_live_diagnostics_fingerprint(server, snapshot)
     if msg.params.previousResultId == resultId
         return send(server,
             DocumentDiagnosticResponse(;
@@ -2724,17 +2732,14 @@ function handle_DocumentDiagnosticRequest(
     if is_cancelled(cancel_flag)
         return send(server, DocumentDiagnosticResponse(; id = msg.id, result = nothing, error = request_cancelled_error()))
     end
-    # Re-read the text after taking `resultId` so that an edit in between leaves the id
-    # behind the text rather than ahead of it (see `publish_workspace_diagnostics!`).
-    this_uri = canonical_cache_uri(server.state, uri)
-    file_info = @something get_file_info(server.state, this_uri) result
     def_used_names_cache = DefUsedNamesCache()
-    diagnostics = compute_live_diagnostics!(def_used_names_cache, server, uri, file_info, cancel_flag)
+    diagnostics = compute_live_diagnostics!(
+        def_used_names_cache, server, snapshot.cache_uri, snapshot.fi, cancel_flag)
     if is_cancelled(cancel_flag)
         return send(server, DocumentDiagnosticResponse(; id = msg.id, result = nothing, error = request_cancelled_error()))
     end
     root_path = isdefined(server.state, :root_path) ? server.state.root_path : nothing
-    diagnostics = postprocess_pull_diagnostics(server, uri, diagnostics, root_path)
+    diagnostics = postprocess_pull_diagnostics(server, uri, snapshot, diagnostics, root_path)
     return send(server,
         DocumentDiagnosticResponse(;
             id = msg.id,
@@ -2743,17 +2748,26 @@ function handle_DocumentDiagnosticRequest(
                 items = diagnostics)))
 end
 
+# `textDocument/diagnostic` computes the requested document from its snapshot, so the
+# snapshot's version stands for the document in place of the current one.
+function compute_live_diagnostics_fingerprint(server::Server, snapshot::DocumentSnapshot)
+    state = server.state
+    this_uri = snapshot.cache_uri
+    analysis_info = get_analysis_info(state.analysis_manager, this_uri)
+    return compute_live_diagnostics_fingerprint(state, this_uri, analysis_info, snapshot.fi)
+end
+
 # Applies config-based filtering, notebook localization, and markdown rendering for
 # `textDocument/diagnostic` (`notify_diagnostics!` does the same for pushed diagnostics).
 function postprocess_pull_diagnostics(
-        server::Server, uri::URI, diagnostics::Vector{Diagnostic},
+        server::Server, uri::URI, snapshot::DocumentSnapshot, diagnostics::Vector{Diagnostic},
         root_path::Union{Nothing,String},
     )
     state = server.state
     apply_diagnostic_config!(diagnostics, state.config_manager, uri, root_path)
-    notebook_uri = get_notebook_uri_for_cell(state, uri)
-    if notebook_uri !== nothing
-        diagnostics = localize_notebook_diagnostics(state, notebook_uri, uri, diagnostics)
+    notebook = snapshot.notebook
+    if notebook !== nothing && uri != snapshot.cache_uri
+        diagnostics = localize_notebook_diagnostics(state, notebook, uri, diagnostics)
     end
     if supports(server, :textDocument, :diagnostic, :markupMessageSupport)
         apply_markdown_message!(diagnostics)

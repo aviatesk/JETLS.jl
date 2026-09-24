@@ -807,50 +807,36 @@ end
     end
 end
 
-@testset "Delayed file cache handling" begin
-    # Test requesting diagnostics for a file whose cache has not been populated yet
-    withscript("# some code") do script_path
-        uri = filepath2uri(script_path)
-        withserver(; pull_diagnostics = true) do (; writereadmsg, id_counter)
-            # Don't send DidOpenTextDocument notification, so no file cache is created
-            event = Base.Event()
-            local success::Bool = false
-            let id = id_counter[] += 1
-                Threads.@spawn try
-                    # `check=false`: this call races with the main thread's
-                    # `writereadmsg(DidOpen; ...)` below on `received_queue` drain.
-                    # Checking here would spuriously see `DidOpen` still queued
-                    # (CI flake). Emptiness is still verified at shutdown via
-                    # `withserver`'s own `writereadmsg` calls.
-                    (; raw_res) = writereadmsg(
-                        DocumentDiagnosticRequest(;
-                            id,
-                            params = DocumentDiagnosticParams(;
-                                textDocument = TextDocumentIdentifier(; uri)
-                            ));
-                        read = 2, check = false)
-                    @test any(raw_res) do @nospecialize res
-                        res isa DocumentDiagnosticResponse &&
-                        res.result isa RelatedFullDocumentDiagnosticReport
-                    end
-                    @test any(raw_res) do @nospecialize res
-                        res isa PublishDiagnosticsNotification
-                    end
-                    success = true
-                catch e
-                    showerror(stderr, e, catch_backtrace())
-                finally
-                    notify(event)
-                end
-            end
-            # Send `DidOpen` after the handler has started polling but before
-            # `get_file_info`'s `JETLS_TEST_MODE` timeout (1.0s) fires, so the
-            # test exercises the "cache arrives during polling" path.
-            sleep(0.5)
-            writereadmsg(make_DidOpenTextDocumentNotification(uri, read(script_path, String)); read=0, check=false)
-            wait(event)
-            @test success
-        end
+@testset "textDocument/diagnostic snapshot ordering" begin
+    with_manual_dispatch_server() do server, recorder
+        uri = filepath2uri(@__FILE__)
+        JETLS.cache_file_info!(server, uri, 1, "func(x) = nothing\n")
+        make_request(id::Int) = DocumentDiagnosticRequest(;
+            id,
+            params = DocumentDiagnosticParams(;
+                textDocument = TextDocumentIdentifier(; uri)))
+        request = make_request(1)
+        @test JETLS.is_sequential_msg(request)
+        prepared = queued_snapshot_requests(server, [
+            make_DidChangeTextDocumentNotification(uri, "func(_x) = nothing\n", 2), request,
+            make_DidChangeTextDocumentNotification(uri, "func(x, y) = x\n", 3), make_request(2)])
+        @test length(prepared) == 2
+        @test prepared[1].msg === request
+        @test prepared[1].snapshot.fi.version == 2
+        @test prepared[2].snapshot.fi.version == 3
+
+        current_result_id = JETLS.compute_live_diagnostics_fingerprint(server, uri)
+        response = dispatch_snapshot_request(server, recorder, prepared[1])
+        @test response isa DocumentDiagnosticResponse
+        @test response.result isa RelatedFullDocumentDiagnosticReport
+        @test isempty(response.result.items)
+        @test response.result.resultId != current_result_id
+        response = dispatch_snapshot_request(server, recorder, prepared[2])
+        @test response.result isa RelatedFullDocumentDiagnosticReport
+        diagnostic = only(response.result.items)
+        @test diagnostic.code == JETLS.LOWERING_UNUSED_ARGUMENT_CODE
+        @test diagnostic.range.start == Position(; line = 0, character = 8)
+        @test response.result.resultId == current_result_id
     end
 end
 
