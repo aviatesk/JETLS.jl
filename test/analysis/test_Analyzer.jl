@@ -893,6 +893,88 @@ end
             @test isempty(get_reports(result))
         end
     end
+
+    @testset "`Type{Union{}}` arities (JuliaLang/julia#63338)" begin
+        @testset "$f $argtypes" for (f, argtypes, expected) in (
+                (complex, (Type{Union{}},), Union{}),
+                (real, (Type{Union{}},), Union{}),
+                (float, (Type{Union{}},), Union{}),
+                (Base.IndexStyle, (Type{Union{}},), IndexLinear()),
+                (Base.BroadcastStyle, (Type{Union{}},), Base.Broadcast.Unknown()),
+                (Base.OrderStyle, (Type{Union{}},), Base.Ordered()),
+                (Base.ArithmeticStyle, (Type{Union{}},), Base.ArithmeticUnknown()),
+                (Base.RangeStepStyle, (Type{Union{}},), Base.RangeStepIrregular()),
+                (Base.elsize, (Type{Union{}},), 0),
+                (Base.typeinfo_eltype, (Type{Union{}},), nothing),
+                (Base.Iterators.flatten_iteratorsize, (Base.HasLength,Type{Union{}}), Base.HasLength()),
+                (Base.Iterators.flatten_iteratorsize, (Base.HasShape{1},Type{Union{}}), Base.HasLength()),
+                (Base.Iterators.flatten_length, (Any,Type{Union{}}), 0),
+            )
+            let result = analyze_call(f, argtypes)
+                @test isempty(get_reports(result))
+                @test JET.get_result(result) === CC.Const(expected)
+            end
+            for extras in ((Any,), (Any,Any))
+                result = analyze_call(f, (argtypes...,extras...))
+                @test JET.get_result(result) === Union{}
+                @test CC.widenconst(result.result.exc_result) === MethodError
+            end
+        end
+    end
+
+    @testset "numeric bottom guards" begin
+        let result = analyze_call((Any,Any)) do a, b
+                complex(a, b)
+            end
+            @test isempty(get_reports(result))
+            @test JET.get_result(result) === Complex
+        end
+        for report_target_modules in (nothing, (@__MODULE__,))
+            let result = analyze_call((Any,Any); report_target_modules) do a, b
+                    complex(a, b) / 2
+                end
+                @test isempty(get_reports(result))
+            end
+            for T in (Float32, Float64)
+                let result = analyze_call(complex, (T,T); report_target_modules)
+                    @test isempty(get_reports(result))
+                    @test JET.get_result(result) === Complex{T}
+                end
+                for V in (Vector{T}, StridedVector{T})
+                    let result = analyze_call((V,); report_target_modules) do x
+                            complex(x[1], x[2]) / 2
+                        end
+                        @test isempty(get_reports(result))
+                    end
+                    let result = analyze_call((V,V); report_target_modules) do a, b
+                            complex.(a, b) ./ 2
+                        end
+                        @test isempty(get_reports(result))
+                    end
+                end
+            end
+        end
+    end
+
+    @testset "trait combinators and empty flatten" begin
+        let result = analyze_call((Any,)) do x
+                IndexStyle(x, IndexCartesian())
+            end
+            @test isempty(get_reports(result))
+            @test CC.widenconst(JET.get_result(result)) === IndexCartesian
+        end
+        for I in (Tuple{}, Vector{Union{}})
+            T = Base.Iterators.Flatten{I}
+            let result = analyze_call(Base.IteratorSize, (Type{T},))
+                @test isempty(get_reports(result))
+                @test JET.get_result(result) === CC.Const(Base.HasLength())
+            end
+            let result = analyze_call(length, (T,))
+                @test isempty(get_reports(result))
+                @test JET.get_result(result) === CC.Const(0)
+            end
+        end
+    end
 end
 
 kwreq(; x) = x            # required keyword x

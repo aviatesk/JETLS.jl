@@ -55,6 +55,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- Fixed spurious `MethodError` diagnostics in numerical code using `complex`, such as `complex(x[1], x[2]) / 2` for a `StridedVector`.
+
 - Fixed spurious [`inference/bounds-error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/inference/bounds-error) diagnostics for `ntuple` calls with an unknown length.
   For example, the following function no longer reports a spurious bounds error at index 5:
   ```julia
