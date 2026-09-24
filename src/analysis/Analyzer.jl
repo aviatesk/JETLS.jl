@@ -207,6 +207,30 @@ CC.typeinf_lattice(::LSAnalyzer) =
 CC.ipo_lattice(::LSAnalyzer) =
     CC.InferenceLattice(CC.InterMustAliasesLattice(CC.IPOResultLattice.instance))
 
+let base_ntuple_int_method = which(Base.ntuple, Tuple{Any,Int})
+    ntuple_with_unknown_length(f::F, n::Int) where F = Base._ntuple(f, n)
+    ntuple_with_unknown_length_source = only(code_lowered(ntuple_with_unknown_length, Tuple{Any,Int}))
+
+    global function CC.InferenceState(
+            result::CC.InferenceResult, src::CodeInfo, cache_mode::UInt8,
+            analyzer::LSAnalyzer
+        )
+        # Base's small-n unrolling produces false positives for unknown n (aviatesk/JET.jl#678).
+        # Preserve the original body for constant n and the MI so constprop replaces
+        # reports from generic inference.
+        if result.linfo.def === base_ntuple_int_method && !(result.argtypes[3] isa Const)
+            inlining = src.inlining
+            src = copy(ntuple_with_unknown_length_source)
+            src.parent = result.linfo
+            src.inlining = inlining
+            CC.maybe_validate_code(result.linfo, src, "lowered")
+        end
+        return @invoke CC.InferenceState(
+            result::CC.InferenceResult, src::CodeInfo, cache_mode::UInt8,
+            analyzer::CC.AbstractInterpreter)
+    end
+end
+
 # AbstractAnalyzer API
 # ====================
 
