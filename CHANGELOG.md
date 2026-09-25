@@ -19,7 +19,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## Unreleased
 
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
-- Diff: [`685e812...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/685e812...HEAD)
+- Diff: [`906d919...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/906d919...HEAD)
 
 ### Announcement
 
@@ -53,6 +53,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > Note that `analysis_overrides` is provided as a temporary workaround and may be removed or changed at any time. A proper fix is being worked on.
 >
 > Note: Path glob patterns use `/` as the separator on all platforms, including Windows; backslashes are not supported as separators.
+
+## 2026-09-25
+
+- Commit: [`906d919`](https://github.com/aviatesk/JETLS.jl/commit/906d919)
+- Diff: [`685e812...906d919`](https://github.com/aviatesk/JETLS.jl/compare/685e812...906d919)
+- Installation:
+  ```bash
+  julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="2026-09-25")'
+  ```
 
 ### Fixed
 
