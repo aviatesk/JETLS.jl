@@ -6,7 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 <!-- links start -->
-[Unreleased]: https://github.com/aviatesk/JET.jl/compare/v0.12.0...HEAD
+[Unreleased]: https://github.com/aviatesk/JET.jl/compare/v0.12.2...HEAD
+[0.12.2]: https://github.com/aviatesk/JET.jl/compare/v0.12.1...v0.12.2
 [0.12.1]: https://github.com/aviatesk/JET.jl/compare/v0.12.0...v0.12.1
 [0.12.0]: https://github.com/aviatesk/JET.jl/compare/v0.11.6...v0.12.0
 [0.11.6]: https://github.com/aviatesk/JET.jl/compare/v0.11.5...v0.11.6
@@ -62,6 +63,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed spurious reports, such as `NonBooleanCondErrorReport`s, for reductions
+  like `all(f, x)` over imprecisely typed vectors when SparseArrays is loaded,
+  as in `all(p -> p isa Pair, x) ? a : b` for `x::AbstractVector`.
+
+## [0.12.2]
+
 ### Added
 
 - Added the `concretization_timeout` configuration (10 seconds by default),
@@ -82,6 +91,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   calls, still cannot be interrupted.
 
 ### Fixed
+
+- Fixed spurious `BoundsError` reports when analyzing `ntuple` calls with an
+  unknown length (aviatesk/JET.jl#678).
+
+- Fixed spurious `NonBooleanCondErrorReport`s when branching on `in` checks
+  against tuples, as in `x in (1, 2) ? a : b`, on Julia 1.12 and 1.13.
+
+- Improved analysis accuracy for code that uses `Libdl.dlsym`.
+
+- Fixed spurious `MethodError` reports for expressions such as
+  `complex(a, b) / 2` with imprecisely inferred inputs, and improved inference
+  for `IndexStyle` and related Base traits.
 
 - Fixed `report_file` hanging when a nonterminating top-level loop assigns to a
   global variable. Global declarations emitted by assignments under control

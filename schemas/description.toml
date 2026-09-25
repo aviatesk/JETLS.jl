@@ -57,7 +57,7 @@ strip_prefix = "Controls whether to strip `\\` or `:` prefix from LaTeX/emoji co
 
 [CodeLensConfig]
 references = "Show reference counts above top-level symbols (functions, structs, constants, etc.). Click to open references panel."
-testrunner = "Show `Run`/`Debug` code lenses above `@testset` blocks. Some editors (e.g., Zed) show these as code actions, causing duplication; zed-julia defaults to false."
+testrunner = "Show `Run`/`Debug` code lenses above `@testset` blocks. Some editors (e.g., Zed) show these as code actions, causing duplication."
 
 [InlayHintConfig]
 block_end = "Block-end inlay hints configuration. See [Block-end hints](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/inlay_hint/block_end)."

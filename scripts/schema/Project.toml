@@ -7,7 +7,7 @@ JSON = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
 
 [sources.OrderedCollections]
 subdir = "vendor/OrderedCollections"
-rev = "fb2a66b0dc8039ececd3845bcacde458fc4ec71e"
+rev = "874289d382ca605a751e50a3c04a53ef7397e990"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.Struct2JSONSchema]

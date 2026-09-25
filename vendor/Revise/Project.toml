@@ -33,27 +33,27 @@ Preferences = "cc588e5a-7be0-5224-8a6a-549b21958db9"
 
 [sources.OrderedCollections]
 subdir = "vendor/OrderedCollections"
-rev = "fb2a66b0dc8039ececd3845bcacde458fc4ec71e"
+rev = "874289d382ca605a751e50a3c04a53ef7397e990"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.CodeTracking]
 subdir = "vendor/CodeTracking"
-rev = "fb2a66b0dc8039ececd3845bcacde458fc4ec71e"
+rev = "874289d382ca605a751e50a3c04a53ef7397e990"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.JuliaInterpreter]
 subdir = "vendor/JuliaInterpreter"
-rev = "fb2a66b0dc8039ececd3845bcacde458fc4ec71e"
+rev = "874289d382ca605a751e50a3c04a53ef7397e990"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.LoweredCodeUtils]
 subdir = "vendor/LoweredCodeUtils"
-rev = "fb2a66b0dc8039ececd3845bcacde458fc4ec71e"
+rev = "874289d382ca605a751e50a3c04a53ef7397e990"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.Preferences]
 subdir = "vendor/Preferences"
-rev = "fb2a66b0dc8039ececd3845bcacde458fc4ec71e"
+rev = "874289d382ca605a751e50a3c04a53ef7397e990"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [targets]

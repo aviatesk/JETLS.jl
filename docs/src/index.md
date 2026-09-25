@@ -32,8 +32,9 @@ features JETLS provides.
 
 Choose the instructions that match how you plan to use JETLS:
 
-- For VSCode, the `jetls-client` extension manages the server installation
-  automatically. Go directly to [VSCode setup](@ref index/editor-setup/vscode).
+- For VSCode and Zed, the editor extensions manage the server installation
+  automatically. Go directly to [VSCode setup](@ref index/editor-setup/vscode)
+  or [Zed setup](@ref index/editor-setup/zed).
 - For other editors, complete
   [Server installation](@ref index/server-installation), then follow the
   corresponding instructions under [Editor setup](@ref index/editor-setup).
@@ -123,6 +124,24 @@ advanced configuration, see the
     ([LanguageServer.jl](https://github.com/julia-vscode/LanguageServer.jl)),
     you may encounter confusing situations where, for example, completion candidates
     are provided from different backends.
+
+### [Zed](@id index/editor-setup/zed)
+
+The official [Zed](https://zed.dev/) extension for Julia,
+[`JuliaEditorSupport/zed-julia`](https://github.com/JuliaEditorSupport/zed-julia),
+uses JETLS as its default language server since v0.2.0.
+
+Install the `Julia` extension from Zed's extensions view (run the
+`zed: extensions` command and search for `julia`), then open any Julia file.
+No separate JETLS installation is required.
+
+Make sure the `julia` command is available on the `PATH` of your project
+environment. The extension installs JETLS automatically on first use, which
+requires network access.
+
+For choosing a Julia installation, launch and server configuration, and
+migrating from the LanguageServer.jl-based versions of the extension, see the
+[zed-julia README](https://github.com/JuliaEditorSupport/zed-julia#language-server).
 
 ### [Emacs](@id index/editor-setup/emacs)
 
@@ -241,12 +260,6 @@ Minimal [Sublime](https://www.sublimetext.com/) setup using the
   }
 }
 ```
-
-### [Zed](@id index/editor-setup/zed)
-
-[Zed](https://zed.dev/) extension for Julia/JETLS is available:
-See [`aviatesk/zed-julia#avi/JETLS`](https://github.com/aviatesk/zed-julia/tree/avi/JETLS)
-for the detailed installation steps.
 
 ### [Helix](@id index/editor-setup/helix)
 

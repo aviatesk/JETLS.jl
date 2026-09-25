@@ -3,5 +3,5 @@ JSON3 = "00ac8d46-747e-5902-8e12-fdfc767369c7"
 
 [sources.JSON3]
 subdir = "vendor/JSON3"
-rev = "fb2a66b0dc8039ececd3845bcacde458fc4ec71e"
+rev = "874289d382ca605a751e50a3c04a53ef7397e990"
 url = "https://github.com/aviatesk/JETLS.jl"
