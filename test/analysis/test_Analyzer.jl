@@ -1292,6 +1292,19 @@ module KeywordTypeExternalModule
     libkwtyped(; kw::Int=1) = kw
 end
 kwtyped_in_worker(a::Int; kw::Int=42) = a * kw
+takes_bool(b::Bool) = b
+takes_int(i::Int) = i
+takes_symbol(s::Symbol) = s
+parse_int_or_missing(s::String) = all(isdigit, s) ? parse(Int, s) : missing
+get_flag(xs::AbstractVector{<:Union{Missing,Bool}}, i::Int) = xs[i]::Union{Missing,Bool}
+parse_flag_or_missing(s::String) = s == "yes" ? true : s == "no" ? false : missing
+struct RowWithMissing
+    val::Union{Missing,Int}
+end
+iszero_val(r::RowWithMissing) = r.val == 0
+const LOOKUP_TABLE = Dict{Symbol,Int}(:a => 1)
+lookup_or_missing(::Missing) = missing
+lookup_or_missing(k) = get(LOOKUP_TABLE, k, missing)
 
 @testset HierarchicalTestSet "TypeErrorReport" begin
     @testset "KeywordTypeErrorReport" begin
@@ -1513,6 +1526,62 @@ kwtyped_in_worker(a::Int; kw::Int=42) = a * kw
             @test length(reports) == 1
             r = only(reports)
             @test r isa NonBooleanCondErrorReport && r.union_split == 2 && length(r.t) == 1
+        end
+
+        @testset "possibly `missing` call results" begin
+            # `missing` that only comes from `Any`-typed arguments is not reported:
+            # `==(::Missing, ::Any)` and `max(::Missing, ::Any)` match `x::Any`
+            for (f, argtypes) in (
+                    (x -> x == :flag ? 1 : 2, (Any,)),
+                    (x -> x in (:a, :b) ? 1 : 2, (Any,)),
+                    (x -> takes_bool(x == :flag), (Any,)),
+                    (x -> takes_symbol(max(x, :a)), (Any,)),
+                    # `Union{Bool,Missing}` from the three-valued logic of Base
+                    ((xs, ys) -> xs == ys ? 1 : 2, (Vector{Any}, Vector{Any})),
+                    (t -> all(x -> x == 1, t) ? 1 : 2, (Tuple,)),
+                    # `&(::Missing, ::Integer)` would refine `x::Any` to `Union{Missing,Integer}`
+                    (x -> (iszero(x & 0x0f); Int(x)), (Any,)),
+                    # also when the result of the speculative call is unused
+                    (x -> (x & 0x0f; Int(x)), (Any,)),
+                )
+                @test isempty(get_reports(analyze_call(f, argtypes)))
+            end
+
+            # `missing` from argument types involving `Missing` is still reported
+            for (f, argtypes) in (
+                    (x -> x == 0 ? 1 : 2, (Union{Missing,Int},)),
+                    ((xs, i) -> xs[i] == 0 ? 1 : 2, (Vector{Union{Missing,Int}}, Int)),
+                    ((xs, i) -> xs[i] ? 1 : 2, (Vector{Union{Missing,Bool}}, Int)),
+                    (x -> x ? 1 : 2, (Union{Missing,Bool},)),
+                    # `Missing` only in the upper bound of a type variable
+                    ((xs, i) -> get_flag(xs, i) ? 1 : 2,
+                     (AbstractVector{<:Union{Missing,Bool}}, Int)),
+                )
+                r = only(get_reports(analyze_call(f, argtypes)))
+                @test r isa NonBooleanCondErrorReport && r.union_split == 2 && r.t == Any[Missing]
+            end
+            let result = analyze_call(x -> takes_symbol(max(x, :a)), (Union{Missing,Symbol},))
+                @test only(get_reports(result)) isa NoMethodMatchReport
+            end
+
+            # so is `missing` created in the callee body
+            let result = analyze_call(s -> takes_int(parse_int_or_missing(s)), (String,))
+                @test only(get_reports(result)) isa NoMethodMatchReport
+            end
+
+            # known limitations: genuine errors that are not reported
+            for (f, argtypes) in (
+                    # `Union{Bool,Missing}` created in the callee body
+                    (s -> parse_flag_or_missing(s) ? 1 : 2, (String,)),
+                    (r -> iszero_val(r) ? 1 : 2, (RowWithMissing,)),
+                    # other uses of widened results
+                    (s -> takes_bool(parse_flag_or_missing(s)), (String,)),
+                    (x -> takes_int(x == :flag), (Any,)),
+                    # `missing` created in the callee body along with a speculative match
+                    (k -> takes_int(lookup_or_missing(k)), (Any,)),
+                )
+                @test_broken !isempty(get_reports(analyze_call(f, argtypes)))
+            end
         end
     end
 end
