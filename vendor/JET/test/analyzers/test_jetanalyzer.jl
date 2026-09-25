@@ -960,7 +960,146 @@ function issue_404(c::Bool)
         println(v)
     end
 end
-test_call(issue_404, (Bool,))
+
+using Libdl: Libdl
+
+complex_divide(a, b) = complex(a, b) / 2
+
+@testset "JET_METHOD_TABLE overlays" begin
+    @testset "`iterate(::Tuple{}, ::Int)`" begin
+        test_call(issue_404, (Bool,))
+    end
+
+    @testset "`include`" begin
+        test_call(Base.include, (Module,String))
+        test_call(Base.include, (typeof(identity),Module,String))
+    end
+
+    @testset "`in(x, ::Tuple)`" begin
+        test_call((Any,)) do x
+            x in (1, 2) ? 1 : 2
+        end
+    end
+
+    @testset "`mapreduce_impl(f, op, ::SkipMissing, ...)` (JuliaLang/julia#63353)" begin
+        # an array argument inferred as `Any` shouldn't pick up the `Union{Nothing,Some}`
+        # results of the `SkipMissing` methods
+        @test Base.infer_return_type((Any,Int); interp=JETAnalyzer()) do A, n
+            Base.mapreduce_impl(x -> x isa Pair, &, A, 1, n)
+        end === Bool
+        test_call((Any,Int)) do A, n
+            Base.mapreduce_impl(x -> x isa Pair, &, A, 1, n) ? 1 : 2
+        end
+        @test Base.infer_return_type((Vector{Union{Missing,Int}},); interp=JETAnalyzer()) do x
+            sum(skipmissing(x))
+        end === Int
+        test_call((Vector{Union{Missing,Int}},)) do x
+            sum(skipmissing(x))
+        end
+    end
+
+    @testset "`Libdl.dlsym`" begin
+        @test Base.infer_return_type(Libdl.dlsym, (Ptr{Cvoid},Symbol); interp=JETAnalyzer()) === Ptr{Cvoid}
+        @test Base.infer_return_type((Ptr{Cvoid},Symbol); interp=JETAnalyzer()) do hnd, name
+            Libdl.dlsym(hnd, name; throw_error=false)
+        end === Union{Nothing,Ptr{Cvoid}}
+        test_call((Ptr{Cvoid},Symbol)) do hnd, name
+            Ptr{Ptr{Float64}}(Libdl.dlsym(hnd, name))
+        end
+    end
+
+    @testset "`Type{Union{}}` arities (JuliaLang/julia#63338)" begin
+        @testset "$f $argtypes" for (f, argtypes, expected) in (
+                (complex, (Type{Union{}},), Union{}),
+                (real, (Type{Union{}},), Union{}),
+                (float, (Type{Union{}},), Union{}),
+                (Base.IndexStyle, (Type{Union{}},), IndexLinear()),
+                (Base.BroadcastStyle, (Type{Union{}},), Base.Broadcast.Unknown()),
+                (Base.OrderStyle, (Type{Union{}},), Base.Ordered()),
+                (Base.ArithmeticStyle, (Type{Union{}},), Base.ArithmeticUnknown()),
+                (Base.RangeStepStyle, (Type{Union{}},), Base.RangeStepIrregular()),
+                (Base.elsize, (Type{Union{}},), 0),
+                (Base.typeinfo_eltype, (Type{Union{}},), nothing),
+                (Base.Iterators.flatten_iteratorsize, (Base.HasLength,Type{Union{}}), Base.HasLength()),
+                (Base.Iterators.flatten_iteratorsize, (Base.HasShape{1},Type{Union{}}), Base.HasLength()),
+                (Base.Iterators.flatten_length, (Any,Type{Union{}}), 0),
+            )
+            let result = report_call(f, argtypes)
+                @test get_result(result) === CC.Const(expected)
+                @test isempty(get_reports_with_test(result))
+            end
+            for extras in ((Any,), (Any,Any))
+                result = report_call(f, (argtypes...,extras...))
+                @test get_result(result) === Bottom
+                @test widenconst(result.result.exc_result) === MethodError
+            end
+        end
+    end
+
+    @testset "numeric bottom guards" begin
+        @test Base.infer_return_type(complex, (Any,Any); interp=JETAnalyzer()) === Complex
+        test_call(complex_divide, (Any,Any))
+        for f in (real, float)
+            @test Base.infer_return_type(f, (Any,Any); interp=JETAnalyzer()) === Bottom
+        end
+        for T in (Float32, Float64)
+            @test Base.infer_return_type(complex, (T,T); interp=JETAnalyzer()) === Complex{T}
+            test_call((StridedVector{T},)) do x
+                complex_divide(x[1], x[2])
+            end
+            test_call(complex, (StridedVector{T},))
+            test_call((StridedVector{T},StridedVector{T})) do a, b
+                complex_divide.(a, b)
+            end
+        end
+
+        @testset "$f" for (f, T, R) in (
+                (complex, Int, Complex{Int}),
+                (real, ComplexF64, Float64),
+                (float, Int, Float64),
+            )
+            for (argtype, expected) in (
+                    (Type{T}, R),
+                    (Type{Missing}, Missing),
+                    (Type{Union{T,Missing}}, f(Union{T,Missing})),
+                    (Missing, missing),
+                )
+                result = report_call(f, (argtype,))
+                @test get_result(result) === CC.Const(expected)
+                @test isempty(get_reports_with_test(result))
+            end
+            @test Base.infer_return_type(f, (T,); interp=JETAnalyzer()) === R
+            @test Base.infer_return_type(f, (Union{T,Missing},); interp=JETAnalyzer()) === Union{R,Missing}
+        end
+    end
+
+    @testset "trait combinators and empty flatten" begin
+        @test Base.infer_return_type(Base.IndexStyle, (Any,IndexCartesian); interp=JETAnalyzer()) === IndexCartesian
+        for (f, argtypes, expected) in (
+                (Base.IndexStyle, (IndexLinear,IndexLinear), IndexLinear),
+                (Base.IndexStyle, (IndexLinear,IndexCartesian), IndexCartesian),
+                (Base.IndexStyle, (IndexCartesian,IndexLinear), IndexCartesian),
+                (Base.BroadcastStyle, (Base.Broadcast.DefaultArrayStyle{1},Base.Broadcast.Unknown), Base.Broadcast.DefaultArrayStyle{1}),
+                (Base.BroadcastStyle, (Base.Broadcast.DefaultArrayStyle{1},Base.Broadcast.DefaultArrayStyle{2}), Base.Broadcast.DefaultArrayStyle{2}),
+                (Base.Iterators.flatten_iteratorsize, (Base.HasLength,Type{Tuple{Int,Int}}), Base.HasLength),
+                (Base.Iterators.flatten_iteratorsize, (Base.HasShape{1},Type{Int}), Base.HasLength),
+            )
+            @test Base.infer_return_type(f, argtypes; interp=JETAnalyzer()) === expected
+            test_call(f, argtypes)
+        end
+        for I in (Tuple{}, Vector{Union{}})
+            T = Base.Iterators.Flatten{I}
+            let result = report_call(Base.IteratorSize, (Type{T},))
+                @test get_result(result) === CC.Const(Base.HasLength())
+                @test isempty(get_reports_with_test(result))
+            end
+            let result = report_call(length, (T,))
+                @test get_result(result) === CC.Const(0)
+                @test isempty(get_reports_with_test(result))
+            end
+        end
+    end
+end
 
 @testset "intrinsic errors" begin
     let result = report_call((Int32,Int64)) do x, y
@@ -1071,6 +1210,78 @@ pr60857getx(b::PR60857B) = b.x
 test_call((Union{PR60857A,PR60857B},)) do ab
     sin(pr60857getx(ab))
 end
+end
+
+ntuple678(nt::Tuple, n::Integer) = ntuple(i->nt[i], n)
+ntuple678(nt::Tuple, ::Val{N}) where N = ntuple678(nt, N)
+ntuple_bounds678(x::Int, ::Val{N}) where N = ntuple(i->x, N)[N+1]
+
+struct NTupleOverride678 end
+(::NTupleOverride678)(i::Int) = i
+Base.ntuple(::NTupleOverride678, ::Int) = sin("custom ntuple")
+
+@testset "ntuple" begin
+    @testset "unknown length" begin
+        # aviatesk/JET.jl#678: do not analyze impossible manually unrolled indices.
+        test_call(ntuple678, (NTuple{4,Float64},Int64))
+        test_call(ntuple678, (NTuple{4,Float64},Int32))
+        # Constant propagation of f alone must still use the unknown-length source.
+        test_call((Float64,Int)) do x, n
+            nt = (x, 1.0, 2.0, 3.0)
+            ntuple(i->nt[i], n)
+        end
+        let res = report_call((String,Int)) do x, n
+                ntuple(_->sin(x), n)
+            end
+            @test any(r->r isa MethodErrorReport, get_reports_with_test(res))
+        end
+    end
+
+    @testset "constant length" begin
+        for n in (0, 1, 2, 10)
+            @test Base.infer_return_type(ntuple678, (NTuple{10,Float64},Val{n}); interp=JETAnalyzer()) === NTuple{n,Float64}
+        end
+        let res = report_call() do
+                ntuple(identity,2)[3]
+            end
+            r = only(get_reports_with_test(res))
+            @test r isa BuiltinErrorReport && r.f === getfield
+        end
+        for n in (0, 2)
+            let res = report_call(ntuple_bounds678, (Int,Val{n}))
+                r = only(get_reports_with_test(res))
+                @test r isa BuiltinErrorReport && r.f === getfield
+            end
+        end
+        let res = report_call((Int,)) do x
+                ntuple(_->x, -1)
+            end
+            @test only(get_reports_with_test(res)) isa UncaughtExceptionReport
+        end
+        test_call((NTuple{4,Float64},)) do nt
+            ntuple(i->nt[i], Val(4))
+        end
+    end
+
+    @testset "dispatch and caching" begin
+        let res = report_call((Int,)) do n
+                ntuple(NTupleOverride678(), n)
+            end
+            @test only(get_reports_with_test(res)) isa MethodErrorReport
+        end
+        for _ in 1:2
+            test_call(ntuple678, (NTuple{4,Float64},Int))
+            test_call(ntuple678, (NTuple{4,Float64},Val{4}))
+            let res = report_call(ntuple678, (NTuple{4,Float64},Val{5}))
+                r = only(get_reports_with_test(res))
+                @test r isa BuiltinErrorReport && r.f === getfield
+            end
+            test_call(ntuple678, (NTuple{4,Float64},Val{4}))
+        end
+        test_call((NTuple{4,Float64},)) do nt
+            ntuple678(nt, 4), ntuple678(nt, 4)
+        end
+    end
 end
 
 end # module test_jetanalyzer

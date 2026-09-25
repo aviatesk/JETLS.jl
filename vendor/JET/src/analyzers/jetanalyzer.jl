@@ -199,6 +199,76 @@ a package, or improve the accuracy of base abstract interpretation analysis.
 @overlay JET_METHOD_TABLE Base.include(::Module, ::AbstractString) = Base.inferencebarrier(nothing)
 @overlay JET_METHOD_TABLE Base.include(::Function, ::Module, ::AbstractString) = Base.inferencebarrier(nothing)
 
+# Early take-in of JuliaLang/julia#63338. Keep the variadic signatures for bottom-type
+# lookup pruning, but do not let invalid arities contribute successful return types.
+@static if VERSION < v"1.14.0-DEV.3358"
+for (f, result) in (
+        (:(Base.complex), :(Union{})),
+        (:(Base.real), :(Union{})),
+        (:(Base.float), :(Union{})),
+        (:(Base.IndexStyle), :(Base.IndexLinear())),
+        (:(Base.BroadcastStyle), :(Base.Broadcast.Unknown())),
+        (:(Base.OrderStyle), :(Base.Ordered())),
+        (:(Base.ArithmeticStyle), :(Base.ArithmeticUnknown())),
+        (:(Base.RangeStepStyle), :(Base.RangeStepIrregular())),
+        (:(Base.elsize), 0),
+        (:(Base.typeinfo_eltype), nothing),
+    )
+    @eval begin
+        @overlay JET_METHOD_TABLE $f(::Type{Union{}}) = $result
+        @overlay JET_METHOD_TABLE $f(::Type{Union{}}, slurp...) = throw(MethodError($f, (Union{}, slurp...)))
+    end
+end
+
+@overlay JET_METHOD_TABLE Base.Iterators.flatten_iteratorsize(::Union{Base.HasShape,Base.HasLength}, ::Type{Union{}}) = Base.HasLength()
+@overlay JET_METHOD_TABLE Base.Iterators.flatten_iteratorsize(sz::Union{Base.HasShape,Base.HasLength}, ::Type{Union{}}, slurp...) = throw(MethodError(Base.Iterators.flatten_iteratorsize, (sz, Union{}, slurp...)))
+@overlay JET_METHOD_TABLE Base.Iterators.flatten_length(f, ::Type{Union{}}) = 0
+@overlay JET_METHOD_TABLE Base.Iterators.flatten_length(f, ::Type{Union{}}, slurp...) = throw(MethodError(Base.Iterators.flatten_length, (f, Union{}, slurp...)))
+end # @static if VERSION < v"1.14.0-DEV.3358"
+
+# Early take-in of JuliaLang/julia#63332. The C call already throws on failure when
+# throw_error=true, but inference needs the redundant Julia-side check to exclude nothing.
+@static if VERSION < v"1.14.0-DEV.3357"
+@overlay JET_METHOD_TABLE function Libdl.dlsym(
+        hnd::Ptr, s::Union{Symbol,AbstractString}; throw_error::Bool = true
+    )
+    hnd == C_NULL && throw(ArgumentError("NULL library handle"))
+    val = Ref(Ptr{Cvoid}(0))
+    symbol_found = @static if VERSION < v"1.13.0-DEV.1119" # JuliaLang/julia#58815
+        @ccall jl_dlsym(hnd::Ptr{Cvoid}, s::Cstring, val::Ref{Ptr{Cvoid}}, throw_error::Cint)::Cint
+    else
+        @ccall jl_dlsym(hnd::Ptr{Cvoid}, s::Cstring, val::Ref{Ptr{Cvoid}}, throw_error::Cint, 1::Cint)::Cint
+    end
+    if symbol_found == 0 && !throw_error
+        return nothing
+    end
+    return val[]
+end
+end
+
+@static if VERSION < v"1.14.0-DEV.2024"
+# Backport JuliaLang/julia#61526
+@overlay JET_METHOD_TABLE Base.in(x, itr::Tuple) = _in_tuple(x, itr)
+function _in_tuple(x, @nospecialize(itr::Tuple), result = false)
+    @inline
+    isempty(itr) && return result
+    v = (itr[1] == x)
+    if v === true
+        return true
+    end
+    return _in_tuple(x, Base.tail(itr), result | v)
+end
+end
+
+# Early take-in of JuliaLang/julia#63353. Unlike its other methods, the `SkipMissing` methods
+# of `mapreduce_impl` return `nothing` or `Some(x)`, which calls with an array argument
+# inferred as `Any` would otherwise include in their results. Base only calls this method
+# from `_mapreduce`, which unwraps its result with `something` and ensures it isn't `nothing`.
+@static if !isdefined(Base, :_mapreduce_impl_skipmissing)
+@overlay JET_METHOD_TABLE Base.mapreduce_impl(f, op, A::Base.SkipMissing, ifirst::Integer, ilast::Integer) =
+    something(Base.mapreduce_impl(f, op, A, ifirst, ilast, Base.pairwise_blocksize(f, op)))
+end
+
 # analysis injections
 # ===================
 
@@ -208,6 +278,30 @@ function CC.InferenceState(result::InferenceResult, cache_mode::UInt8, analyzer:
         report_generator_error!(analyzer, result)
     end
     return frame
+end
+
+let base_ntuple_int_method = which(Base.ntuple, Tuple{Any,Int})
+    ntuple_with_unknown_length(f::F, n::Int) where F = Base._ntuple(f, n)
+    ntuple_with_unknown_length_source = only(code_lowered(ntuple_with_unknown_length, Tuple{Any,Int}))
+
+    global function CC.InferenceState(
+            result::InferenceResult, src::CodeInfo, cache_mode::UInt8,
+            analyzer::JETAnalyzer
+        )
+        # Base's small-n unrolling produces false positives when n is unknown (aviatesk/JET.jl#678).
+        # Keep the original source for constant n, preserving tuple lengths and callback
+        # indices, and retain the original MI so constprop replaces the generic reports.
+        if result.linfo.def === base_ntuple_int_method && !(result.argtypes[3] isa Const)
+            inlining = src.inlining
+            src = copy(ntuple_with_unknown_length_source)
+            src.parent = result.linfo
+            src.inlining = inlining
+            CC.maybe_validate_code(result.linfo, src, "lowered")
+        end
+        return @invoke CC.InferenceState(
+            result::InferenceResult, src::CodeInfo, cache_mode::UInt8,
+            analyzer::AbstractInterpreter)
+    end
 end
 
 function CC.finish!(analyzer::JETAnalyzer, caller::InferenceState, validation_world::UInt, time_before::UInt64)

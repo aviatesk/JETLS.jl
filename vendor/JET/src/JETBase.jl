@@ -41,6 +41,8 @@ using Base.Meta: isexpr, lower
 
 using Base.Experimental: @MethodTable, @overlay
 
+using Libdl: Libdl
+
 using JuliaSyntax: @K_str, JuliaSyntax as JS
 
 using CodeTracking: CodeTracking
@@ -52,7 +54,6 @@ using JuliaInterpreter: Frame, Interpreter, JuliaInterpreter, _INACTIVE_EXCEPTIO
 using MacroTools: @capture, normalise, striplines
 
 using InteractiveUtils: InteractiveUtils
-
 
 using Test:
     Broken, DefaultTestSet, Error, Fail, FallbackTestSet, FallbackTestSetException, Pass,
