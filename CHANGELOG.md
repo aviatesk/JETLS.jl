@@ -19,7 +19,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## Unreleased
 
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
-- Diff: [`71fb0bf...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/71fb0bf...HEAD)
+- Diff: [`685e812...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/685e812...HEAD)
 
 ### Announcement
 
@@ -28,10 +28,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > It does not support Julia 1.12.1 or earlier, nor Julia 1.14+/nightly.
 
 > [!note]
-> The VSCode extension (`jetls-client`) now lives in its own repository, [aviatesk/jetls-vscode](https://github.com/aviatesk/jetls-vscode).
-> The extension keeps its Marketplace identity ([`aviatesk.jetls-client`](https://marketplace.visualstudio.com/items?itemName=aviatesk.jetls-client)) and updates continue as usual.
-> Since `v2026.8.29`, the extension has managed the JETLS installation automatically: it installs and updates the pinned JETLS release on its own, so VSCode users no longer need to run the installation command below or keep `jetls` up to date manually (still needed if you also use the `jetls` CLI, e.g. `jetls check`).
-> Please report extension-specific problems (installation, startup, extension UI) to [aviatesk/jetls-vscode issues](https://github.com/aviatesk/jetls-vscode/issues);
+> The official Zed extension for Julia, [JuliaEditorSupport/zed-julia](https://github.com/JuliaEditorSupport/zed-julia), now uses JETLS as its default language server since v0.2.0 (https://github.com/zed-industries/extensions/pull/7455).
+> Install the `Julia` extension from Zed's extensions view: like `jetls-client`, it installs and updates the pinned JETLS release automatically, so Zed users no longer need to [install `jetls`](https://aviatesk.github.io/JETLS.jl/release/#index/server-installation) or keep it up to date manually (still needed if you also use the `jetls` CLI, e.g. `jetls check`).
+> This is a breaking migration from LanguageServer.jl for existing users of the extension; see [Migrating to version 0.2](https://github.com/JuliaEditorSupport/zed-julia#migrating-to-version-02).
+> If you have been using the [aviatesk/zed-julia](https://github.com/aviatesk/zed-julia) fork, switch to the official extension, and move your settings from `lsp.JETLS` to `lsp.jetls`, since the language server ID is now `jetls`.
+> Please report extension-specific problems (installation, startup, extension UI) to [JuliaEditorSupport/zed-julia issues](https://github.com/JuliaEditorSupport/zed-julia/issues);
 > language-feature issues belong here as before.
 
 > [!warning]
@@ -52,6 +53,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > Note that `analysis_overrides` is provided as a temporary workaround and may be removed or changed at any time. A proper fix is being worked on.
 >
 > Note: Path glob patterns use `/` as the separator on all platforms, including Windows; backslashes are not supported as separators.
+
+### Fixed
+
+- Fixed spurious [`inference/type-error/non-bool-cond`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/inference/type-error/non-bool-cond) and [`inference/method-error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/inference/method-error) diagnostics caused by values without type annotations possibly being `missing`, such as `if x == :flag` or `if x in (:a, :b)` for an untyped argument `x`.
+  Code whose types involve `Missing`, like `xs[i] == 0` for `xs::Vector{Union{Missing,Int}}`, is still checked.
+
+- Fixed spurious [`inference/method-error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/inference/method-error) diagnostics in numerical code using `complex`, such as `complex(x[1], x[2]) / 2` for a `x::StridedVector`.
+
+- Fixed spurious [`inference/bounds-error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/inference/bounds-error) diagnostics for `ntuple` calls with an unknown length.
+  For example, the following function no longer reports a spurious bounds error at index 5:
+  ```julia
+  prefix(t::NTuple{4,Float64}, n::Int) = 1 ≤ n ≤ 4 && ntuple(i -> t[i], n)
+  ```
+
+- Improved analysis accuracy for code that uses `Libdl.dlsym`.
+
+- Improved analysis accuracy for code that uses `all` or `any` on vectors whose element types are not precisely known, when [`SparseArrays`](https://github.com/JuliaSparse/SparseArrays.jl) is loaded.
+
+## 2026-09-23
+
+- Commit: [`685e812`](https://github.com/aviatesk/JETLS.jl/commit/685e812)
+- Diff: [`71fb0bf...685e812`](https://github.com/aviatesk/JETLS.jl/compare/71fb0bf...685e812)
+- Installation:
+  ```bash
+  julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="2026-09-23")'
+  ```
 
 ### Changed
 

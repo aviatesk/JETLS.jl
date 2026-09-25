@@ -2,6 +2,7 @@ module test_Analyzer
 
 using Test
 using JETLS
+using Libdl
 
 include(normpath(pkgdir(JETLS), "test", "interactive-utils.jl"))
 include(normpath(pkgdir(JETLS), "test", "setup.jl"))
@@ -857,6 +858,146 @@ struct KwCallable end
     end
 end
 
+@testset "JET_METHOD_TABLE overlays" begin
+    @testset "`include`" begin
+        for argtypes in ((Module, String), (typeof(identity), Module, String))
+            result = analyze_call(Base.include, argtypes)
+            @test isempty(get_reports(result))
+        end
+    end
+
+    @testset "`Libdl.dlsym` (sym type: $(S))" for S in (Symbol, String)
+        let result = analyze_call(Libdl.dlsym, (Ptr{Cvoid}, S))
+            @test isempty(get_reports(result))
+            @test JET.get_result(result) === Ptr{Cvoid}
+        end
+        let result = analyze_call((Ptr{Cvoid}, S)) do hnd, name
+                Libdl.dlsym(hnd, name; throw_error=false)
+            end
+            @test isempty(get_reports(result))
+            @test JET.get_result(result) === Union{Nothing,Ptr{Cvoid}}
+        end
+        let result = analyze_call((Ptr{Cvoid}, S)) do hnd, name
+                Ptr{Ptr{Float64}}(Libdl.dlsym(hnd, name))
+            end
+            @test isempty(get_reports(result))
+            @test JET.get_result(result) === Ptr{Ptr{Float64}}
+        end
+    end
+
+    @testset "`in(x, ::Tuple)`" begin
+        # JuliaLang/julia#61526
+        let result = analyze_call((Vector{String},String,)) do xs, x
+                x in tuple(xs) ? 0 : 1
+            end
+            @test isempty(get_reports(result))
+        end
+    end
+
+    @testset "`mapreduce_impl(f, op, ::SkipMissing, ...)` (JuliaLang/julia#63353)" begin
+        # an array argument inferred as `Any` shouldn't pick up the `Union{Nothing,Some}`
+        # results of the `SkipMissing` methods
+        let result = analyze_call((Any,Int)) do A, n
+                Base.mapreduce_impl(x -> x isa Pair, &, A, 1, n)
+            end
+            @test CC.widenconst(JET.get_result(result)) === Bool
+        end
+        let result = analyze_call((Any,Int); report_target_modules=(@__MODULE__,)) do A, n
+                Base.mapreduce_impl(x -> x isa Pair, &, A, 1, n) ? 1 : 2
+            end
+            @test isempty(get_reports(result))
+        end
+        let result = analyze_call((Vector{Union{Missing,Int}},)) do x
+                sum(skipmissing(x))
+            end
+            @test isempty(get_reports(result))
+            @test CC.widenconst(JET.get_result(result)) === Int
+        end
+    end
+
+    @testset "`Type{Union{}}` arities (JuliaLang/julia#63338)" begin
+        @testset "$f $argtypes" for (f, argtypes, expected) in (
+                (complex, (Type{Union{}},), Union{}),
+                (real, (Type{Union{}},), Union{}),
+                (float, (Type{Union{}},), Union{}),
+                (Base.IndexStyle, (Type{Union{}},), IndexLinear()),
+                (Base.BroadcastStyle, (Type{Union{}},), Base.Broadcast.Unknown()),
+                (Base.OrderStyle, (Type{Union{}},), Base.Ordered()),
+                (Base.ArithmeticStyle, (Type{Union{}},), Base.ArithmeticUnknown()),
+                (Base.RangeStepStyle, (Type{Union{}},), Base.RangeStepIrregular()),
+                (Base.elsize, (Type{Union{}},), 0),
+                (Base.typeinfo_eltype, (Type{Union{}},), nothing),
+                (Base.Iterators.flatten_iteratorsize, (Base.HasLength,Type{Union{}}), Base.HasLength()),
+                (Base.Iterators.flatten_iteratorsize, (Base.HasShape{1},Type{Union{}}), Base.HasLength()),
+                (Base.Iterators.flatten_length, (Any,Type{Union{}}), 0),
+            )
+            let result = analyze_call(f, argtypes)
+                @test isempty(get_reports(result))
+                @test JET.get_result(result) === CC.Const(expected)
+            end
+            for extras in ((Any,), (Any,Any))
+                result = analyze_call(f, (argtypes...,extras...))
+                @test JET.get_result(result) === Union{}
+                @test CC.widenconst(result.result.exc_result) === MethodError
+            end
+        end
+    end
+
+    @testset "numeric bottom guards" begin
+        let result = analyze_call((Any,Any)) do a, b
+                complex(a, b)
+            end
+            @test isempty(get_reports(result))
+            @test JET.get_result(result) === Complex
+        end
+        for report_target_modules in (nothing, (@__MODULE__,))
+            let result = analyze_call((Any,Any); report_target_modules) do a, b
+                    complex(a, b) / 2
+                end
+                @test isempty(get_reports(result))
+            end
+            for T in (Float32, Float64)
+                let result = analyze_call(complex, (T,T); report_target_modules)
+                    @test isempty(get_reports(result))
+                    @test JET.get_result(result) === Complex{T}
+                end
+                for V in (Vector{T}, StridedVector{T})
+                    let result = analyze_call((V,); report_target_modules) do x
+                            complex(x[1], x[2]) / 2
+                        end
+                        @test isempty(get_reports(result))
+                    end
+                    let result = analyze_call((V,V); report_target_modules) do a, b
+                            complex.(a, b) ./ 2
+                        end
+                        @test isempty(get_reports(result))
+                    end
+                end
+            end
+        end
+    end
+
+    @testset "trait combinators and empty flatten" begin
+        let result = analyze_call((Any,)) do x
+                IndexStyle(x, IndexCartesian())
+            end
+            @test isempty(get_reports(result))
+            @test CC.widenconst(JET.get_result(result)) === IndexCartesian
+        end
+        for I in (Tuple{}, Vector{Union{}})
+            T = Base.Iterators.Flatten{I}
+            let result = analyze_call(Base.IteratorSize, (Type{T},))
+                @test isempty(get_reports(result))
+                @test JET.get_result(result) === CC.Const(Base.HasLength())
+            end
+            let result = analyze_call(length, (T,))
+                @test isempty(get_reports(result))
+                @test JET.get_result(result) === CC.Const(0)
+            end
+        end
+    end
+end
+
 kwreq(; x) = x            # required keyword x
 kwreq2(; x, y=2) = (x, y) # required x, optional y
 kwopt(; x=1) = x          # optional keyword x
@@ -1082,6 +1223,86 @@ end
     end
 end
 
+ntuple678(nt::Tuple, n::Integer) = ntuple(i -> nt[i], n)
+ntuple678(nt::Tuple, ::Val{N}) where N = ntuple678(nt, N)
+ntuple_bounds678(x::Int, ::Val{N}) where N = ntuple(i -> x, N)[N+1]
+
+struct NTupleOverride678 end
+(::NTupleOverride678)(i::Int) = i
+Base.ntuple(::NTupleOverride678, ::Int) = sin("custom ntuple")
+
+@testset "ntuple overlay" begin
+    # xref: https://github.com/aviatesk/JET.jl/pull/874
+    @testset "unknown length" begin
+        # aviatesk/JET.jl#678: do not analyze impossible manually unrolled indices.
+        for report_target_modules in (nothing, (@__MODULE__,))
+            for T in (Int64, Int32)
+                let result = analyze_call(ntuple678, (NTuple{4,Float64},T); report_target_modules)
+                    @test isempty(get_reports(result))
+                end
+            end
+            # Constant propagation of f alone must still use the unknown-length source.
+            let result = analyze_call((Float64,Int); report_target_modules) do x, n
+                    nt = (x, 1.0, 2.0, 3.0)
+                    ntuple(i -> nt[i], n)
+                end
+                @test isempty(get_reports(result))
+            end
+            let result = analyze_call((String,Int); report_target_modules) do x, n
+                    ntuple(_ -> sin(x), n)
+                end
+                @test any(r -> r isa NoMethodMatchReport, get_reports(result))
+            end
+        end
+    end
+
+    @testset "constant length" begin
+        for n in (0, 1, 2, 10)
+            @test Base.infer_return_type(ntuple678, (NTuple{10,Float64},Val{n});
+                interp=LSAnalyzer(; report_target_modules=nothing)) === NTuple{n,Float64}
+        end
+        let result = analyze_call() do
+                ntuple(identity, 2)[3]
+            end
+            r = only(get_reports(result))
+            @test r isa BoundsErrorReport && r.i === 3
+        end
+        for n in (1, 2)
+            let result = analyze_call(ntuple_bounds678, (Int,Val{n}))
+                r = only(get_reports(result))
+                @test r isa BoundsErrorReport && r.i === n+1
+            end
+        end
+        let result = analyze_call((NTuple{4,Float64},)) do nt
+                ntuple(i -> nt[i], Val(4))
+            end
+            @test isempty(get_reports(result))
+        end
+    end
+
+    @testset "dispatch and caching" begin
+        let result = analyze_call((Int,)) do n
+                ntuple(NTupleOverride678(), n)
+            end
+            @test only(get_reports(result)) isa NoMethodMatchReport
+        end
+        for _ in 1:2
+            @test isempty(get_reports(analyze_call(ntuple678, (NTuple{4,Float64},Int))))
+            @test isempty(get_reports(analyze_call(ntuple678, (NTuple{4,Float64},Val{4}))))
+            let result = analyze_call(ntuple678, (NTuple{4,Float64},Val{5}))
+                r = only(get_reports(result))
+                @test r isa BoundsErrorReport && r.i === 5
+            end
+            @test isempty(get_reports(analyze_call(ntuple678, (NTuple{4,Float64},Val{4}))))
+        end
+        let result = analyze_call((NTuple{4,Float64},)) do nt
+                ntuple678(nt, 4), ntuple678(nt, 4)
+            end
+            @test isempty(get_reports(result))
+        end
+    end
+end
+
 kwtyped(a::Int; kw::Int=42) = a * kw       # typed keyword with a default, plus a positional
 kwtyped2(; x::Int, y::String="s") = (x, y) # required typed x, optional typed y
 kwtyped_dispatch(x::Int; kw::Int=1) = x
@@ -1092,6 +1313,19 @@ module KeywordTypeExternalModule
     libkwtyped(; kw::Int=1) = kw
 end
 kwtyped_in_worker(a::Int; kw::Int=42) = a * kw
+takes_bool(b::Bool) = b
+takes_int(i::Int) = i
+takes_symbol(s::Symbol) = s
+parse_int_or_missing(s::String) = all(isdigit, s) ? parse(Int, s) : missing
+get_flag(xs::AbstractVector{<:Union{Missing,Bool}}, i::Int) = xs[i]::Union{Missing,Bool}
+parse_flag_or_missing(s::String) = s == "yes" ? true : s == "no" ? false : missing
+struct RowWithMissing
+    val::Union{Missing,Int}
+end
+iszero_val(r::RowWithMissing) = r.val == 0
+const LOOKUP_TABLE = Dict{Symbol,Int}(:a => 1)
+lookup_or_missing(::Missing) = missing
+lookup_or_missing(k) = get(LOOKUP_TABLE, k, missing)
 
 @testset HierarchicalTestSet "TypeErrorReport" begin
     @testset "KeywordTypeErrorReport" begin
@@ -1315,12 +1549,60 @@ kwtyped_in_worker(a::Int; kw::Int=42) = a * kw
             @test r isa NonBooleanCondErrorReport && r.union_split == 2 && length(r.t) == 1
         end
 
-        # JuliaLang/julia#61526
-        let result = analyze_call((Vector{String},String,)) do xs, x
-                x in tuple(xs) ? 0 : 1
+        @testset "possibly `missing` call results" begin
+            # `missing` that only comes from `Any`-typed arguments is not reported:
+            # `==(::Missing, ::Any)` and `max(::Missing, ::Any)` match `x::Any`
+            for (f, argtypes) in (
+                    (x -> x == :flag ? 1 : 2, (Any,)),
+                    (x -> x in (:a, :b) ? 1 : 2, (Any,)),
+                    (x -> takes_bool(x == :flag), (Any,)),
+                    (x -> takes_symbol(max(x, :a)), (Any,)),
+                    # `Union{Bool,Missing}` from the three-valued logic of Base
+                    ((xs, ys) -> xs == ys ? 1 : 2, (Vector{Any}, Vector{Any})),
+                    (t -> all(x -> x == 1, t) ? 1 : 2, (Tuple,)),
+                    # `&(::Missing, ::Integer)` would refine `x::Any` to `Union{Missing,Integer}`
+                    (x -> (iszero(x & 0x0f); Int(x)), (Any,)),
+                    # also when the result of the speculative call is unused
+                    (x -> (x & 0x0f; Int(x)), (Any,)),
+                )
+                @test isempty(get_reports(analyze_call(f, argtypes)))
             end
-            reports = get_reports(result)
-            @test isempty(reports)
+
+            # `missing` from argument types involving `Missing` is still reported
+            for (f, argtypes) in (
+                    (x -> x == 0 ? 1 : 2, (Union{Missing,Int},)),
+                    ((xs, i) -> xs[i] == 0 ? 1 : 2, (Vector{Union{Missing,Int}}, Int)),
+                    ((xs, i) -> xs[i] ? 1 : 2, (Vector{Union{Missing,Bool}}, Int)),
+                    (x -> x ? 1 : 2, (Union{Missing,Bool},)),
+                    # `Missing` only in the upper bound of a type variable
+                    ((xs, i) -> get_flag(xs, i) ? 1 : 2,
+                     (AbstractVector{<:Union{Missing,Bool}}, Int)),
+                )
+                r = only(get_reports(analyze_call(f, argtypes)))
+                @test r isa NonBooleanCondErrorReport && r.union_split == 2 && r.t == Any[Missing]
+            end
+            let result = analyze_call(x -> takes_symbol(max(x, :a)), (Union{Missing,Symbol},))
+                @test only(get_reports(result)) isa NoMethodMatchReport
+            end
+
+            # so is `missing` created in the callee body
+            let result = analyze_call(s -> takes_int(parse_int_or_missing(s)), (String,))
+                @test only(get_reports(result)) isa NoMethodMatchReport
+            end
+
+            # known limitations: genuine errors that are not reported
+            for (f, argtypes) in (
+                    # `Union{Bool,Missing}` created in the callee body
+                    (s -> parse_flag_or_missing(s) ? 1 : 2, (String,)),
+                    (r -> iszero_val(r) ? 1 : 2, (RowWithMissing,)),
+                    # other uses of widened results
+                    (s -> takes_bool(parse_flag_or_missing(s)), (String,)),
+                    (x -> takes_int(x == :flag), (Any,)),
+                    # `missing` created in the callee body along with a speculative match
+                    (k -> takes_int(lookup_or_missing(k)), (Any,)),
+                )
+                @test_broken !isempty(get_reports(analyze_call(f, argtypes)))
+            end
         end
     end
 end
