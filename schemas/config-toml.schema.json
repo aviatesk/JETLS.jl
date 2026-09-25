@@ -13,7 +13,7 @@
         },
         "testrunner": {
           "default": true,
-          "description": "Show `Run`/`Debug` code lenses above `@testset` blocks. Some editors (e.g., Zed) show these as code actions, causing duplication; zed-julia defaults to false.",
+          "description": "Show `Run`/`Debug` code lenses above `@testset` blocks. Some editors (e.g., Zed) show these as code actions, causing duplication.",
           "type": "boolean"
         }
       },

@@ -193,14 +193,14 @@ Configure initialization options in VSCode's `settings.json`:
 }
 ```
 
-##### [Zed (`aviatesk/zed-julia` extension)](@id init-options/client-config/zed)
+##### [Zed (`JuliaEditorSupport/zed-julia` extension)](@id init-options/client-config/zed)
 
 Configure initialization options in Zed's `settings.json`:
 
 ```json
 {
   "lsp": {
-    "JETLS": {
+    "jetls": {
       "initialization_options": {
         "analysis_overrides": [
           {

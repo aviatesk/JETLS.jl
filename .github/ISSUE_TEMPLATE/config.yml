@@ -1,1 +1,8 @@
 blank_issues_enabled: false
+contact_links:
+  - name: VSCode extension (jetls-client) issues
+    url: https://github.com/aviatesk/jetls-vscode/issues
+    about: Report problems specific to the VSCode extension (installation, startup, extension UI) there. Language-feature issues belong here.
+  - name: Zed extension (zed-julia) issues
+    url: https://github.com/JuliaEditorSupport/zed-julia/issues
+    about: Report problems specific to the Zed extension (installation, startup, extension UI) there. Language-feature issues belong here.
