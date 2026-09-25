@@ -553,11 +553,9 @@ Enable or disable [TestRunner code lenses](@ref testrunner/features/code-lens).
 When enabled, JETLS shows "Run" and "Debug" code lenses above `@testset` blocks
 for running individual tests.
 
-Some editors (e.g., Zed[^zed_code_lens_testrunner]) display code lenses as code actions, which can cause
+Some editors (e.g., Zed) display code lenses as code actions, which can cause
 duplication when both code lenses and code actions are shown for the same
 functionality. In such cases, you may want to disable this setting.
-
-[^zed_code_lens_testrunner]: The [aviatesk/zed-julia](https://github.com/aviatesk/zed-julia) extension defaults this setting to `false` unless explicitly configured.
 
 ```toml
 [code_lens]
@@ -666,7 +664,7 @@ If your client supports [`workspace/configuration`](#workspace-configuration-sup
 you can configure JETLS in a client-specific manner.
 As examples, we show the configuration methods for the VSCode extension
 [`jetls-client`](https://marketplace.visualstudio.com/items?itemName=aviatesk.jetls-client), and the Zed extension
-[`aviatesk/zed-julia#avi/JETLS`](https://github.com/aviatesk/zed-julia/tree/avi/JETLS).
+[`JuliaEditorSupport/zed-julia`](https://github.com/JuliaEditorSupport/zed-julia).
 
 #### [VSCode (`jetls-client` extension)](@id config/lsp-config/vscode)
 
@@ -705,9 +703,9 @@ section:
 See [`package.json`](https://github.com/aviatesk/JETLS.jl/blob/master/package.json)
 for the complete list of available VSCode settings and their descriptions.
 
-#### [Zed (`aviatesk/zed-julia#avi/JETLS` extension)](@id config/lsp-config/zed)
+#### [Zed (`JuliaEditorSupport/zed-julia` extension)](@id config/lsp-config/zed)
 
-Configure JETLS in Zed's settings.json file with the `lsp.JETLS.settings`
+Configure JETLS in Zed's settings.json file with the `lsp.jetls.settings`
 section:
 
 > Example `.zed/settings.json`:
@@ -715,7 +713,7 @@ section:
 ```jsonc
 {
   "lsp": {
-    "JETLS": {
+    "jetls": {
       "settings": {
         "full_analysis": {
           "debounce": 2.0
