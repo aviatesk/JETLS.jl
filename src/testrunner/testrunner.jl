@@ -195,6 +195,26 @@ end
 testrunner_code_actions(args...) = # used by tests
     testrunner_code_actions!(Union{CodeAction,Command}[], args...)
 
+function handle_TestsetsRequest(server::Server, msg::TestsetsRequest, cancel_flag::CancelFlag)
+    uri = msg.params.textDocument.uri
+    result = get_file_info(server.state, uri, cancel_flag)
+    if isnothing(result)
+        return send(server, TestsetsResponse(; id = msg.id, result = null))
+    elseif result isa ResponseError
+        return send(server, TestsetsResponse(; id = msg.id, result = nothing, error = result))
+    end
+    return send(server, TestsetsResponse(; id = msg.id, result = testset_items(result)))
+end
+
+function testset_items(fi::FileInfo)
+    return TestsetItem[
+        TestsetItem(;
+            index,
+            name = testset_name(testsetinfo),
+            range = jsobj_to_range(testsetinfo.st0, fi))
+        for (index, testsetinfo) in enumerate(fi.testsetinfos)]
+end
+
 function testrunner_testset_code_actions!(
         code_actions::Vector{Union{CodeAction,Command}}, uri::URI, fi::FileInfo,
         action_range::Range
@@ -364,16 +384,19 @@ function testrunner_cmd(launcher::TestRunnerLauncher, test_env_path::Union{Nothi
 end
 
 # `@testset` execution
-function testrunner_testset_cmd(launcher::TestRunnerLauncher, filepath::String, tsn::String, tsl::Int,
+function testrunner_testset_cmd(launcher::TestRunnerLauncher, filepath::String,
+                                lines::Vector{UnitRange{Int}},
                                 test_env_path::Union{Nothing,String},
                                 root_path::Union{Nothing,String})
-    tsn = rlstrip(tsn, '"')
     # `--root-path` only matters when `filepath` is a virtual identifier
     # (no `dirname`); for saved files we omit it to avoid implying a
     # workspace-relative include base that doesn't apply.
     root_args = isnothing(root_path) ? `` : `--root-path=$root_path`
+    # Select `@testset`s by their lines rather than their names, since name patterns can't
+    # match interpolated names
+    patterns = String["L$(first(range)):$(last(range))" for range in lines]
     return testrunner_cmd(launcher, test_env_path,
-        `--verbose $root_args --json --read-stdin $filepath $tsn --filter-lines=$tsl`)
+        `--verbose $root_args --json --read-stdin $filepath $patterns`)
 end
 
 # `@test` execution
@@ -515,31 +538,85 @@ function handle_test_runner_message_response4(
     # If user cancelled (result is null), do nothing
 end
 
-function testrunner_run_testset(
-        server::Server, uri::URI, fi::FileInfo, idx::Int, tsn::String, filepath::String;
-        cancellable_token::Union{Nothing,CancellableToken} = nothing
+testrunner_run_cancelled() = TestRunnerRunResult(;
+    status = TestRunnerRunStatus.Cancelled,
+    message = "Test execution cancelled by user")
+
+testrunner_run_errored(message::String) = TestRunnerRunResult(;
+    status = TestRunnerRunStatus.Errored,
+    message)
+
+function testrunner_run_completed(
+        result::TestRunnerResult;
+        testsets::Union{Nothing,Vector{TestsetRunResult}} = nothing
     )
-    launcher = testrunner_launcher(server)
-    if launcher isa String
-        show_error_message(server, launcher)
-        if !isnothing(cancellable_token)
-            send_progress(server, cancellable_token.token, WorkDoneProgressEnd(; message = "Failed to launch TestRunner"))
-        end
-        return
-    end
+    return TestRunnerRunResult(;
+        status = TestRunnerRunStatus.Completed,
+        message = summary_testrunner_result(result),
+        stats = testrunner_run_stats(result.stats),
+        failures = testrunner_run_failures(result.diagnostics),
+        logs = result.logs,
+        testsets)
+end
 
-    if !isnothing(cancellable_token)
-        send_progress(server, cancellable_token.token,
-            WorkDoneProgressBegin(;
-                cancellable = true,
-                title = "Running tests for $tsn"))
-    end
+function testrunner_run_stats(stats::TestRunnerStats)
+    (; n_passed, n_failed, n_errored, n_broken, duration) = stats
+    return TestRunnerRunStats(;
+        passed = n_passed, failed = n_failed, errored = n_errored, broken = n_broken,
+        duration)
+end
 
-    local result::String
+function testrunner_run_failures(diagnostics::Vector{TestRunnerDiagnostic})
+    failures = TestRunnerRunFailure[]
+    for diag in diagnostics
+        location = Location(;
+            uri = to_valid_uri(diag.filename),
+            range = line_range(diag.line))
+        relatedInformation = testrunner_diagnostic_to_related_information(diag)
+        push!(failures,
+            TestRunnerRunFailure(; location, message = diag.message, relatedInformation))
+    end
+    return failures
+end
+
+function testset_run_results(results::Dict{Int,TestRunnerResult})
+    return TestsetRunResult[
+        TestsetRunResult(;
+            index,
+            stats = testrunner_run_stats(result.stats),
+            failures = testrunner_run_failures(result.diagnostics))
+        for (index, result) in sort!(collect(results); by = first)]
+end
+
+"""
+    run_testrunner(f, server::Server, title::String;
+                   cancellable_token, request_id) -> TestRunnerRunResult
+
+Run `f(launcher::TestRunnerLauncher)::TestRunnerRunResult` while reporting the progress on
+`cancellable_token`, then answer the `jetls/runTestsets` request of `request_id`, if any,
+with the result.
+"""
+function run_testrunner(
+        f, server::Server, title::String;
+        cancellable_token::Union{Nothing,CancellableToken},
+        request_id::Union{Nothing,MessageId}
+    )
+    progress_token = cancellable_token === nothing ? nothing : cancellable_token.token
+    local result::TestRunnerRunResult
     try
-        result = _testrunner_run_testset(server, launcher, uri, fi, idx, tsn, filepath; cancellable_token)
+        launcher = testrunner_launcher(server)
+        if launcher isa String
+            show_error_message(server, launcher)
+            result = testrunner_run_errored("Failed to launch TestRunner")
+        else
+            if !isnothing(progress_token)
+                send_progress(server, progress_token,
+                    WorkDoneProgressBegin(; cancellable = true, title))
+            end
+            result = f(launcher)
+        end
     catch err
-        result = sprint(locked_showerror, err, catch_backtrace())
+        result = testrunner_run_errored(sprint(locked_showerror, err, catch_backtrace()))
         @error "Error from testrunner executor" err
         show_error_message(server, """
             An unexpected error occurred while setting up TestRunner.jl or handling the result:
@@ -547,10 +624,66 @@ function testrunner_run_testset(
             """)
     finally
         @assert @isdefined(result) "`result` should be defined at this point"
-        if !isnothing(cancellable_token)
-            send_progress(server, cancellable_token.token, WorkDoneProgressEnd(; message = result))
+        if !isnothing(progress_token)
+            send_progress(server, progress_token,
+                WorkDoneProgressEnd(; message = result.message))
+        end
+        if !isnothing(request_id)
+            send(server, RunTestsetsResponse(; id = request_id, result))
         end
     end
+    return result
+end
+
+struct TestsetTarget
+    idx::Int
+    tsn::String
+end
+
+function testrunner_run_testset(
+        server::Server, uri::URI, fi::FileInfo, idx::Int, tsn::String, filepath::String;
+        cancellable_token::Union{Nothing,CancellableToken} = nothing
+    )
+    return run_testrunner(server, "Running tests for $tsn";
+                          cancellable_token, request_id = nothing) do launcher::TestRunnerLauncher
+        _testrunner_run_testsets(server, launcher, uri, fi, [TestsetTarget(idx, tsn)],
+            filepath; cancellable_token, show_result_message = true)
+    end
+end
+
+function handle_RunTestsetsRequest(
+        server::Server, msg::RunTestsetsRequest, cancel_flag::CancelFlag
+    )
+    (; textDocument, testsets, workDoneToken) = msg.params
+    if isempty(testsets)
+        return send(server,
+            RunTestsetsResponse(;
+                id = msg.id,
+                result = nothing,
+                error = request_failed_error("No `@testset` to run is specified")))
+    end
+    uri = textDocument.uri
+    result = get_file_info(server.state, uri, cancel_flag)
+    if isnothing(result)
+        return send(server,
+            RunTestsetsResponse(;
+                id = msg.id,
+                result = nothing,
+                error = request_failed_error("File is no longer available in the editor")))
+    elseif result isa ResponseError
+        return send(server, RunTestsetsResponse(; id = msg.id, result = nothing, error = result))
+    end
+    fi = result
+    targets = TestsetTarget[TestsetTarget(testset.index, testset.name) for testset in testsets]
+    title = length(targets) == 1 ?
+        "Running tests for $(only(targets).tsn)" :
+        "Running tests for $(length(targets)) test sets"
+    cancellable_token = CancellableToken(workDoneToken, cancel_flag)
+    run_testrunner(server, title; cancellable_token, request_id = msg.id) do launcher::TestRunnerLauncher
+        _testrunner_run_testsets(server, launcher, uri, fi, targets, uri2filename(uri);
+            cancellable_token, show_result_message = false)
+    end
+    return nothing
 end
 
 # Check if the `@testset` mapping state in testsetinfos is still in the expected state
@@ -625,7 +758,7 @@ function read_testrunner_result(
     testrunnerproc = open(pipeline(cmd; stdin = IOBuffer(source)); read = true)
     (; output, process_success, cancelled) =
         read_testrunner_output(testrunnerproc, cancellable_token)
-    cancelled && return "Test execution cancelled by user"
+    cancelled && return testrunner_run_cancelled()
 
     result = try
         LSP.JSON3.read(output, TestRunnerResult)
@@ -640,7 +773,7 @@ function read_testrunner_result(
         An unexpected error occurred while executing TestRunner.jl:
         See the server log for details.
         """)
-        return "Test execution failed"
+        return testrunner_run_errored("Test execution failed")
     end
 
     expected_test_failure =
@@ -653,58 +786,160 @@ function read_testrunner_result(
         An unexpected error occurred while executing TestRunner.jl:
         See the server log for details.
         """)
-        return "Test execution failed"
+        return testrunner_run_errored("Test execution failed")
     end
     return result
 end
 
-function _testrunner_run_testset(
+function _testrunner_run_testsets(
         server::Server, launcher::TestRunnerLauncher, uri::URI, fi::FileInfo,
-        idx::Int, tsn::String, filepath::String;
-        cancellable_token::Union{Nothing, CancellableToken} = nothing
+        targets::Vector{TestsetTarget}, filepath::String;
+        cancellable_token::Union{Nothing, CancellableToken} = nothing,
+        show_result_message::Bool = true
     )
-    if !is_testsetinfo_valid(server, uri, fi, idx)
+    if !all(target -> is_testset_target_valid(server, uri, fi, target), targets)
         show_warning_message(server, """
             The test structure has changed significantly, so test execution is being cancelled.
             Please run the test again from the code lens or code actions currently displayed in the editor.
             """)
-        return "Test execution cancelled"
+        return testrunner_run_errored("Test execution cancelled due to test structure changes")
     end
+    targets = outermost_testset_targets(fi, targets)
 
-    tsl = testset_line(fi.testsetinfos[idx])
+    lines = UnitRange{Int}[testset_lines(fi, target.idx) for target in targets]
     test_env_path = find_uri_env_path(server.state, uri)
     root_path = testrunner_root_path(server.state, uri)
-    cmd = testrunner_testset_cmd(launcher, filepath, tsn, tsl, test_env_path, root_path)
+    cmd = testrunner_testset_cmd(launcher, filepath, lines, test_env_path, root_path)
     source = String(document_text(fi))
     result = read_testrunner_result(server, cmd, source; cancellable_token)
-    result isa String && return result
+    result isa TestRunnerRunResult && return result
 
-    ret = summary_testrunner_result(result)
+    results = testset_results(fi, result)
+    target_results = Pair{TestsetTarget,TestRunnerResult}[
+        target => results[target.idx] for target in targets if haskey(results, target.idx)]
+    completed = testrunner_run_completed(result; testsets = testset_run_results(results))
 
-    # Update testsetinfos with the new result atomically
-    key = TestsetDiagnosticsKey(uri, tsn, idx)
+    # Update testsetinfos with the new results atomically
     updated = store!(server.state.file_cache) do cache
         current_fi = get(cache, uri, nothing)
-        if current_fi === nothing || !is_testsetinfo_valid(current_fi, idx)
+        if current_fi === nothing ||
+           !all(target -> is_testsetinfo_valid(current_fi, target.idx), targets)
             return cache, false
         end
         new_infos = copy(current_fi.testsetinfos)
-        new_infos[idx] = TestsetInfo(new_infos[idx].st0, TestsetResult(result, key))
+        for (target, target_result) in target_results
+            key = TestsetDiagnosticsKey(uri, target.tsn, target.idx)
+            new_infos[target.idx] =
+                TestsetInfo(new_infos[target.idx].st0, TestsetResult(target_result, key))
+        end
         new_fi = FileInfo(current_fi; testsetinfos=new_infos)
         Base.PersistentDict(cache, uri => new_fi), true
     end
+    first_target = first(targets)
     if !updated
         # If the file state has changed during test execution, it's difficult to apply results to the file:
         # Simply show only the option to open logs
-        show_testrunner_result_in_message(server, result, #=title=#tsn)
-        return ret
+        show_result_message &&
+            show_testrunner_result_in_message(server, result, #=title=#first_target.tsn)
+        return completed
     end
 
-    if supports_text_document_content(server)
-        log_uri = testsetinfo_logs_content_uri(uri, idx, String(rlstrip(tsn, '"')))
-        update_text_document_content!(server, log_uri, result.logs)
+    for (target, target_result) in target_results
+        if supports_text_document_content(server)
+            log_uri = testsetinfo_logs_content_uri(uri, target.idx, String(rlstrip(target.tsn, '"')))
+            update_text_document_content!(server, log_uri, target_result.logs)
+        end
+        update_testset_diagnostics!(server,
+            TestsetDiagnosticsKey(uri, target.tsn, target.idx), target_result)
     end
+    notify_diagnostics!(server; ensure_cleared=uri)
 
+    if supports(server, :workspace, :codeLens, :refreshSupport)
+        request_codelens_refresh!(server)
+    end
+    show_result_message && show_testrunner_result_in_message(server, result,
+        #=title=#first_target.tsn; next_info=(; uri, idx = first_target.idx))
+
+    return completed
+end
+
+is_testset_target_valid(server::Server, uri::URI, fi::FileInfo, target::TestsetTarget) =
+    is_testsetinfo_valid(server, uri, fi, target.idx) &&
+    testset_name(fi.testsetinfos[target.idx]) == target.tsn
+
+function testset_lines(fi::FileInfo, idx::Int)
+    range = jsobj_to_range(fi.testsetinfos[idx].st0, fi)
+    return (Int(range.start.line) + 1):(Int(range.var"end".line) + 1)
+end
+
+# Drops the targets nested in other targets, since they are run as parts of the others anyway
+function outermost_testset_targets(fi::FileInfo, targets::Vector{TestsetTarget})
+    targets = unique(target -> target.idx, targets)
+    lines = UnitRange{Int}[testset_lines(fi, target.idx) for target in targets]
+    is_nested(i::Int, j::Int) = i != j && lines[i] ⊆ lines[j] && (lines[i] != lines[j] || j < i)
+    return TestsetTarget[targets[i] for i in eachindex(targets)
+        if !any(j -> is_nested(i, j), eachindex(targets))]
+end
+
+"""
+    testset_results(fi::FileInfo, result::TestRunnerResult) -> Dict{Int,TestRunnerResult}
+
+Map the results of the test sets reported by TestRunner to the `@testset`s of `fi` by their
+lines, keyed by the indices of the `@testset`s. The results of a `@testset` executed multiple
+times (e.g. in a loop) are summed up.
+"""
+function testset_results(fi::FileInfo, result::TestRunnerResult)
+    results = Dict{Int,TestRunnerResult}()
+    testsets = @something result.testsets return results
+    line_to_idx = Dict{Int,Int}()
+    for idx in eachindex(fi.testsetinfos)
+        get!(line_to_idx, first(testset_lines(fi, idx)), idx)
+    end
+    return collect_testset_results!(results, line_to_idx, result, testsets)
+end
+
+function collect_testset_results!(
+        results::Dict{Int,TestRunnerResult}, line_to_idx::Dict{Int,Int},
+        run_result::TestRunnerResult, testsets::Vector{TestRunnerTestSetResult}
+    )
+    for testset in testsets
+        line = testset.line
+        idx = line === nothing ? nothing : get(line_to_idx, line, nothing)
+        if idx !== nothing
+            diagnostics = collect_testset_diagnostics!(TestRunnerDiagnostic[], testset)
+            prev = get(results, idx, nothing)
+            results[idx] = TestRunnerResult(;
+                filename = run_result.filename,
+                stats = prev === nothing ? testset.stats :
+                    add_testrunner_stats(prev.stats, testset.stats),
+                logs = run_result.logs,
+                diagnostics = prev === nothing ? diagnostics : vcat(prev.diagnostics, diagnostics))
+        end
+        collect_testset_results!(results, line_to_idx, run_result, testset.children)
+    end
+    return results
+end
+
+function collect_testset_diagnostics!(
+        diagnostics::Vector{TestRunnerDiagnostic}, testset::TestRunnerTestSetResult
+    )
+    append!(diagnostics, testset.diagnostics)
+    for child in testset.children
+        collect_testset_diagnostics!(diagnostics, child)
+    end
+    return diagnostics
+end
+
+add_testrunner_stats(a::TestRunnerStats, b::TestRunnerStats) = TestRunnerStats(;
+    n_passed = a.n_passed + b.n_passed,
+    n_failed = a.n_failed + b.n_failed,
+    n_errored = a.n_errored + b.n_errored,
+    n_broken = a.n_broken + b.n_broken,
+    duration = a.duration + b.duration)
+
+function update_testset_diagnostics!(
+        server::Server, key::TestsetDiagnosticsKey, result::TestRunnerResult
+    )
     if !isempty(result.diagnostics)
         val = testrunner_result_to_diagnostics(result)
         store!(server.state.extra_diagnostics) do data
@@ -721,51 +956,17 @@ function _testrunner_run_testset(
             end
         end
     end
-    notify_diagnostics!(server; ensure_cleared=uri)
-
-    if supports(server, :workspace, :codeLens, :refreshSupport)
-        request_codelens_refresh!(server)
-    end
-    show_testrunner_result_in_message(server, result, #=title=#tsn; next_info=(; uri, idx))
-
-    return ret
+    return nothing
 end
 
 function testrunner_run_testcase(
         server::Server, uri::URI, tcl::Int, tct::String, filepath::String, source::String;
         cancellable_token::Union{Nothing,CancellableToken} = nothing
     )
-    launcher = testrunner_launcher(server)
-    if launcher isa String
-        show_error_message(server, launcher)
-        if !isnothing(cancellable_token)
-            send_progress(server, cancellable_token.token, WorkDoneProgressEnd(; message = "Failed to launch TestRunner"))
-        end
-        return
-    end
-
-    if !isnothing(cancellable_token)
-        send_progress(server, cancellable_token.token,
-            WorkDoneProgressBegin(;
-                cancellable = true,
-                title = "Running test case $tct at L$tcl"))
-    end
-
-    local result::String
-    try
-        result = _testrunner_run_testcase(server, launcher, uri, tcl, tct, filepath, source; cancellable_token)
-    catch err
-        result = sprint(showerror, err, catch_backtrace())
-        @error "Error from testrunner executor" err
-        show_error_message(server, """
-            An unexpected error occurred while setting up TestRunner.jl or handling the result:
-            See the server log for details.
-            """)
-    finally
-        @assert @isdefined(result) "`result` should be defined at this point"
-        if !isnothing(cancellable_token)
-            send_progress(server, cancellable_token.token, WorkDoneProgressEnd(; message = result))
-        end
+    return run_testrunner(server, "Running test case $tct at L$tcl";
+                          cancellable_token, request_id = nothing) do launcher::TestRunnerLauncher
+        _testrunner_run_testcase(server, launcher, uri, tcl, tct, filepath, source;
+            cancellable_token)
     end
 end
 
@@ -778,7 +979,7 @@ function _testrunner_run_testcase(
     root_path = testrunner_root_path(server.state, uri)
     cmd = testrunner_testcase_cmd(launcher, filepath, tcl, test_env_path, root_path)
     result = read_testrunner_result(server, cmd, source; cancellable_token)
-    result isa String && return result
+    result isa TestRunnerRunResult && return result
 
     # Show the results of this `@test` case temporarily as diagnostics:
     # The `Server` (or `FileInfo`) doesn't track the state of each `@test`,
@@ -797,7 +998,7 @@ function _testrunner_run_testcase(
 
     show_testrunner_result_in_message(server, result, "$tct", #=request_key=#""; extra_message)
 
-    return summary_testrunner_result(result)
+    return testrunner_run_completed(result)
 end
 
 is_testsetinfo_logs_filename_unsafe(c::Char) =
