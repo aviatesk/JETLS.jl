@@ -54,6 +54,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 >
 > Note: Path glob patterns use `/` as the separator on all platforms, including Windows; backslashes are not supported as separators.
 
+### Added
+
+- Added the `jetls/testsets` and `jetls/runTestset` requests, which let clients build their own test UI on top of the [TestRunner integration](https://aviatesk.github.io/JETLS.jl/release/testrunner/).
+  `jetls/testsets` lists the runnable `@testset` blocks of a document, and `jetls/runTestset` runs one of them and responds with its result (test counts, failure locations, and logs) once the run finishes.
+  Servers supporting these requests advertise `testsetsProvider` in the `experimental` server capabilities; see [`LSP/src/extensions/testrunner.jl`](https://github.com/aviatesk/JETLS.jl/blob/master/LSP/src/extensions/testrunner.jl) for the protocol details.
+  For now, the [jetls-vscode](https://github.com/aviatesk/jetls-vscode) extension is the only client using them, to integrate TestRunner with VSCode's Testing API (e.g. run buttons in the editor gutter), but the requests themselves are not tied to VSCode and are available to any client.
+
 ### Fixed
 
 - Fixed spurious [`inference/method-error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/inference/method-error) diagnostics in numerical code using `complex`, such as `complex(x[1], x[2]) / 2` for a `x::StridedVector`.

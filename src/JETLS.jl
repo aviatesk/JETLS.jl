@@ -592,6 +592,10 @@ function handle_request_message(
         handle_ExecuteCommandRequest(server, msg)
     elseif msg isa TextDocumentContentRequest
         handle_TextDocumentContentRequest(server, msg)
+    elseif msg isa TestsetsRequest
+        handle_TestsetsRequest(server, msg, cancel_flag)
+    elseif msg isa RunTestsetRequest
+        handle_RunTestsetRequest(server, msg, cancel_flag)
     else
         method = isdefined(msg, :method) ? getfield(msg, :method) : nothing
         @static if JETLS_DEV_MODE
