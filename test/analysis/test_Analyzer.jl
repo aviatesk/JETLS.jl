@@ -894,6 +894,27 @@ end
         end
     end
 
+    @testset "`mapreduce_impl(f, op, ::SkipMissing, ...)` (JuliaLang/julia#63353)" begin
+        # an array argument inferred as `Any` shouldn't pick up the `Union{Nothing,Some}`
+        # results of the `SkipMissing` methods
+        let result = analyze_call((Any,Int)) do A, n
+                Base.mapreduce_impl(x -> x isa Pair, &, A, 1, n)
+            end
+            @test CC.widenconst(JET.get_result(result)) === Bool
+        end
+        let result = analyze_call((Any,Int); report_target_modules=(@__MODULE__,)) do A, n
+                Base.mapreduce_impl(x -> x isa Pair, &, A, 1, n) ? 1 : 2
+            end
+            @test isempty(get_reports(result))
+        end
+        let result = analyze_call((Vector{Union{Missing,Int}},)) do x
+                sum(skipmissing(x))
+            end
+            @test isempty(get_reports(result))
+            @test CC.widenconst(JET.get_result(result)) === Int
+        end
+    end
+
     @testset "`Type{Union{}}` arities (JuliaLang/julia#63338)" begin
         @testset "$f $argtypes" for (f, argtypes, expected) in (
                 (complex, (Type{Union{}},), Union{}),
