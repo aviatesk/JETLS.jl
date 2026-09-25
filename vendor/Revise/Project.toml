@@ -32,19 +32,29 @@ UUIDs = "cf7118a7-6976-5b1a-9a39-7adc72f591a4"
 Preferences = "cc588e5a-7be0-5224-8a6a-549b21958db9"
 
 [sources.OrderedCollections]
-path = "../OrderedCollections"
+subdir = "vendor/OrderedCollections"
+rev = "874289d382ca605a751e50a3c04a53ef7397e990"
+url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.CodeTracking]
-path = "../CodeTracking"
+subdir = "vendor/CodeTracking"
+rev = "874289d382ca605a751e50a3c04a53ef7397e990"
+url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.JuliaInterpreter]
-path = "../JuliaInterpreter"
+subdir = "vendor/JuliaInterpreter"
+rev = "874289d382ca605a751e50a3c04a53ef7397e990"
+url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.LoweredCodeUtils]
-path = "../LoweredCodeUtils"
+subdir = "vendor/LoweredCodeUtils"
+rev = "874289d382ca605a751e50a3c04a53ef7397e990"
+url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.Preferences]
-path = "../Preferences"
+subdir = "vendor/Preferences"
+rev = "874289d382ca605a751e50a3c04a53ef7397e990"
+url = "https://github.com/aviatesk/JETLS.jl"
 
 [targets]
 test = ["CatIndices", "Distributed", "EndpointRanges", "EponymTuples", "Example", "IndirectArrays", "InteractiveUtils", "MacroTools", "MappedArrays", "Pkg", "Random", "Requires", "RoundingIntegers", "Test", "UnsafeArrays"]
