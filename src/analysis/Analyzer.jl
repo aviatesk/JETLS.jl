@@ -472,6 +472,119 @@ function CC.abstract_call_gf_by_type(
 end
 end
 
+"""
+    CC.widen_call_result(analyzer::LSAnalyzer, si, state, sv) -> Bool
+
+Widens a call result that may be `missing` to `Any` when the `missing` comes from the
+loose argument types of signature analysis rather than from the analyzed code itself.
+
+With `x::Any`, `x == :sym` also matches `==(::Missing, ::Any)` and is inferred as
+`Union{Bool,Missing}`, so branching on it would be reported as a non-boolean condition
+even though `x` is rarely `missing` in practice. Results are widened when the call signature
+does not involve `Missing` and either:
+- a method specialized on `Missing` matched only because an argument is `Any`
+  (see [`is_speculative_missing_match`](@ref)), e.g. `x == :sym` or `max(x, :sym)`, or
+- the result is exactly `Union{Bool,Missing}`, which mostly comes from the three-valued
+  logic of Base applied to loosely typed values, e.g. `==` for `Vector{Any}` arguments.
+
+A speculative match also refines its argument slots, e.g. `x & 0x0f` refines `x::Any` to
+`Union{Missing,Integer}`. Refinements that include `Missing` are dropped whenever such a
+match exists, even if the result itself is not widened or is unused, so that `x` is not
+reported as possibly `missing` afterwards.
+
+Other `missing` results created in the callee body, e.g. by a parser returning `missing` for
+invalid input, are kept, as are results of calls whose argument types involve `Missing`.
+"""
+function CC.widen_call_result(
+        analyzer::LSAnalyzer, si::CC.StmtInfo, state::CC.CallInferenceState,
+        sv::CC.AbsIntState
+    )
+    matches = state.matches
+    mentions = call_signature_mentions_missing(matches)
+    speculative = !mentions && has_speculative_missing_match(matches)
+    if speculative
+        # `widen_call_result` is called after the slot refinements are computed and before
+        # they are stored in the resulting `CallMeta`. Drop them before the default check
+        # below, which returns early for unused call results.
+        drop_missing_slot_refinements!(state)
+    end
+    @invoke(CC.widen_call_result(analyzer::ToplevelAbstractAnalyzer, si::CC.StmtInfo,
+        state::CC.CallInferenceState, sv::CC.AbsIntState)) && return true
+    mentions && return false
+    has_missing_member(state.rettype) || return false
+    return speculative || CC.widenconst(state.rettype) === Union{Bool,Missing}
+end
+
+call_signature_mentions_missing(matches::CC.MethodMatches) =
+    mentions_missing(matches.info.atype)
+call_signature_mentions_missing(matches::CC.UnionSplitMethodMatches) =
+    any(info::CC.MethodMatchInfo -> mentions_missing(info.atype), matches.info.split)
+
+# Whether `Missing` appears in `t`, including union components, type parameters and the
+# upper bounds of type variables, e.g. `AbstractVector{<:Union{Missing,Int}}`.
+function mentions_missing(@nospecialize(t), depth::Int = 0)
+    depth > 8 && return false # bound the recursion into deeply nested type parameters
+    t === Missing && return true
+    if t isa Union
+        return mentions_missing(t.a, depth) || mentions_missing(t.b, depth)
+    elseif t isa UnionAll
+        return mentions_missing(Base.unwrap_unionall(t), depth)
+    elseif t isa TypeVar
+        return mentions_missing(t.ub, depth)
+    elseif t isa Core.TypeofVararg
+        return isdefined(t, :T) && mentions_missing(t.T, depth + 1)
+    elseif t isa DataType
+        for p in t.parameters
+            mentions_missing(p, depth + 1) && return true
+        end
+    end
+    return false
+end
+
+has_speculative_missing_match(matches::CC.MethodMatches) =
+    has_speculative_missing_match(matches.info)
+has_speculative_missing_match(matches::CC.UnionSplitMethodMatches) =
+    any(has_speculative_missing_match, matches.info.split)
+has_speculative_missing_match(info::CC.MethodMatchInfo) =
+    any(match::Core.MethodMatch -> is_speculative_missing_match(info.atype, match), info.results)
+
+"""
+    is_speculative_missing_match(atype, match::Core.MethodMatch) -> Bool
+
+Returns whether the method of `match` is declared with `::Missing` at a position where the
+call signature `atype` has `Any`, i.e. whether it matched only because the argument type is
+unknown, like `==(::Missing, ::Any)` for `x == :sym` with `x::Any`.
+"""
+function is_speculative_missing_match(@nospecialize(atype), match::Core.MethodMatch)
+    sig = Base.unwrap_unionall(atype)
+    msig = Base.unwrap_unionall(match.method.sig)
+    (sig isa DataType && msig isa DataType) || return false
+    argtypes, params = sig.parameters, msig.parameters
+    for i = 1:min(length(argtypes), length(params))
+        argtype, param = argtypes[i], params[i]
+        (argtype isa Core.TypeofVararg || param isa Core.TypeofVararg) && return false
+        argtype === Any && param === Missing && return true
+    end
+    return false
+end
+
+function drop_missing_slot_refinements!(state::CC.CallInferenceState)
+    refinements = state.slotrefinements
+    refinements === nothing && return nothing
+    for i = eachindex(refinements)
+        refinement = refinements[i]
+        if refinement !== nothing && has_missing_member(refinement)
+            refinements[i] = nothing
+        end
+    end
+    return nothing
+end
+
+function has_missing_member(@nospecialize t)
+    t = CC.widenconst(t)
+    return t isa Union && any(@nospecialize(u)->u===Missing, Base.uniontypes(t))
+end
+
 # TODO Better to factor out and share it with `JET.JETAnalyzer`
 function CC.abstract_eval_globalref(
         analyzer::LSAnalyzer, g::GlobalRef, saw_latestworld::Bool, sv::CC.InferenceState;

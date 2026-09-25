@@ -56,6 +56,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- Fixed spurious [`inference/type-error/non-bool-cond`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/inference/type-error/non-bool-cond) and [`inference/method-error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/inference/method-error) diagnostics caused by values without type annotations possibly being `missing`, such as `if x == :flag` or `if x in (:a, :b)` for an untyped argument `x`.
+  Code whose types involve `Missing`, like `xs[i] == 0` for `xs::Vector{Union{Missing,Int}}`, is still checked.
+
 - Fixed spurious [`inference/method-error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/inference/method-error) diagnostics in numerical code using `complex`, such as `complex(x[1], x[2]) / 2` for a `x::StridedVector`.
 
 - Fixed spurious [`inference/bounds-error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/inference/bounds-error) diagnostics for `ntuple` calls with an unknown length.

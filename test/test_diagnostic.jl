@@ -502,6 +502,25 @@ end
     end
 end
 
+@testset "inference diagnostic for possibly `missing` call results" begin
+    scriptcode = """
+    check_flag(x) = x == :flag ? 1 : 2
+    check_zero(xs::Vector{Union{Missing,Int}}, i::Int) = xs[i] == 0 ? 1 : 2
+    """
+    withscript(scriptcode) do script_path
+        uri = filepath2uri(script_path)
+        withserver() do (; writereadmsg)
+            (; raw_res) = writereadmsg(make_DidOpenTextDocumentNotification(uri, scriptcode))
+            @test raw_res isa PublishDiagnosticsNotification
+            diags = filter(raw_res.params.diagnostics) do diag
+                diag.code == JETLS.INFERENCE_TYPE_ERROR_NON_BOOL_COND_CODE
+            end
+            # only the comparison of a value that may actually be `missing` is reported
+            @test only(diags).range.start.line == 1
+        end
+    end
+end
+
 @testset "inference diagnostic (package analysis)" begin
     withpackage("TestPackageAnalysis", """
         module TestPackageAnalysis

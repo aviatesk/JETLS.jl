@@ -1525,33 +1525,39 @@ end
 When union-split types include non-boolean branches:
 
 ```julia
-function find_zero(xs::Vector{Union{Missing,Int}})
-    for i in eachindex(xs)
-        xs[i] == 0 && return i  # non-boolean `Missing` found in boolean context (1/2 union split)
-                                # (JETLS inference/type-error/non-bool-cond)
+function is_enabled(flags::Dict{String,Bool}, name::String)
+    if get(flags, name, nothing)  # non-boolean `Nothing` found in boolean context (1/2 union split)
+                                  # (JETLS inference/type-error/non-bool-cond)
+        return true
     end
+    return false
 end
 ```
 
-!!! tip "Common case: `Any`-typed arguments and `==`"
-    When an argument is inferred as `Any`, `==` returns
-    `Union{Bool,Missing}` (because `==(::Missing, ::Any)` is a
-    candidate method):
+!!! note "Possibly `missing` call results"
+    Calls with loosely typed arguments can be inferred to return `missing` even
+    though the code rarely sees it: with `x` inferred as `Any`, `x == :flag`
+    also matches `==(::Missing, ::Any)` and is inferred as `Union{Bool,Missing}`.
+    JETLS does not report errors caused only by such results. It still reports
+    them when the argument types of the call involve `Missing`, e.g. branching
+    on `xs[i] == 0` for `xs::Vector{Union{Missing,Int}}`.
+    As a limitation, branching on a call inferred as `Union{Bool,Missing}` is
+    not reported when its argument types do not involve `Missing`, even if the
+    callee itself returns `missing`:
 
     ```julia
-    function check(x, y::AbstractString)
-        x == :flag || error("x is invalid")  # non-boolean `Missing` found in boolean context (1/2 union split)
-                                             # (JETLS inference/type-error/non-bool-cond)
-        return println(y)
+    parse_flag(s::String) = s == "yes" ? true : s == "no" ? false : missing
+
+    function use_flag(s::String)
+        if parse_flag(s)  # not reported, although `parse_flag("maybe")` is `missing`
+            return 1
+        end
+        return 2
     end
     ```
 
-    You can resolve this by either:
-    - Restricting the argument type so that `==` no longer returns
-      `Missing` (e.g. `x::Symbol`).
-    - Adding a `::Bool` return type annotation to the comparison
-      expression if you know `x` will never be `missing`
-      (e.g. `(x == :flag)::Bool`).
+    Such a result is treated as `Any` from then on, so other uses of it, e.g. passing
+    it to a function that accepts neither `Bool` nor `Missing`, are not checked either.
 
 ###### [Legacy diagnostic code (`inference/non-boolean-cond`)](@id diagnostic/reference/inference/non-boolean-cond)
 
