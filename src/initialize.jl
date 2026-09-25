@@ -319,6 +319,7 @@ function handle_InitializeRequest(
             renameProvider,
             workspaceSymbolProvider,
             workspace,
+            experimental = Dict{String,Any}("testsetsProvider" => true),
         ),
         serverInfo = ServerInfo(;
             name = "JETLS",

@@ -47,6 +47,7 @@ include("workspace-features/apply-edit.jl")
 include("workspace-features/text-document-content.jl")
 include("window-features.jl")
 include("lifecycle-messages/initialize.jl")
+include("extensions/testrunner.jl")
 
 include("communication.jl")
 baremodule Communication

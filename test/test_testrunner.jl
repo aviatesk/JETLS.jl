@@ -7,6 +7,7 @@ using JETLS: JL, JS
 using JETLS.LSP
 using JETLS.LSP.URIs2
 
+include("setup.jl")
 include("jsjl-utils.jl")
 
 function mock_testrunner_result(; n_passed=1, n_failed=0, n_errored=0, n_broken=0, duration=1.0)
@@ -162,7 +163,9 @@ end
             result = with_logger(logger) do
                 JETLS.read_testrunner_result(server, cmd, source)
             end
-            @test result == "Test execution failed"
+            @test result isa TestRunnerRunResult
+            @test result.status == TestRunnerRunStatus.Errored
+            @test result.message == "Test execution failed"
             log = only(logger.logs)
             @test log.message == "TestRunner execution failed"
             details = log.kwargs[:details]
@@ -180,7 +183,8 @@ end
             result = with_logger(logger) do
                 JETLS.read_testrunner_result(server, cmd, "")
             end
-            @test result == "Test execution failed"
+            @test result isa TestRunnerRunResult
+            @test result.status == TestRunnerRunStatus.Errored
             log = only(logger.logs)
             @test log.message == "TestRunner execution failed"
             details = log.kwargs[:details]
@@ -197,7 +201,8 @@ end
             result = with_logger(logger) do
                 JETLS.read_testrunner_result(server, `/bin/cat`, "not json\n")
             end
-            @test result == "Test execution failed"
+            @test result isa TestRunnerRunResult
+            @test result.status == TestRunnerRunStatus.Errored
             log = only(logger.logs)
             @test log.message == "TestRunner execution failed"
             details = log.kwargs[:details]
@@ -218,7 +223,8 @@ end
             end
             result = JETLS.read_testrunner_result(server, `/bin/sleep 30`, ""; cancellable_token)
             wait(cancel_task)
-            @test result == "Test execution cancelled by user"
+            @test result isa TestRunnerRunResult
+            @test result.status == TestRunnerRunStatus.Cancelled
         end
     end
 end
@@ -285,11 +291,11 @@ end
     launcher = JETLS.TestRunnerLauncher(`julia`, ["--threads=2"],
         Pair{String,Union{Nothing,String}}["JULIA_LOAD_PATH" => "/jetls", "JULIA_PROJECT" => nothing])
     let cmd = withenv("JULIA_PROJECT" => "/user") do
-            JETLS.testrunner_testset_cmd(launcher, "/test/runtests.jl", "\"foo\"", 3, "/test", nothing)
+            JETLS.testrunner_testset_cmd(launcher, "/test/runtests.jl", [2:9, 10:12], "/test", nothing)
         end
         @test cmd.exec == ["julia", "--startup-file=no", "--project=/test", "--threads=2",
-            "-m", "TestRunner", "--verbose", "--json", "--read-stdin", "/test/runtests.jl", "foo",
-            "--filter-lines=3"]
+            "-m", "TestRunner", "--verbose", "--json", "--read-stdin", "/test/runtests.jl",
+            "L2:9", "L10:12"]
         @test "JULIA_LOAD_PATH=/jetls" in cmd.env
         @test !any(startswith("JULIA_PROJECT="), cmd.env)
     end
@@ -314,11 +320,14 @@ end
         """
         server = JETLS.Server()
         launcher = JETLS.testrunner_launcher(server)::JETLS.TestRunnerLauncher
-        cmd = JETLS.testrunner_testset_cmd(launcher, filepath, "\"foo\"", 2, project_file, nothing)
+        cmd = JETLS.testrunner_testset_cmd(launcher, filepath, [2:5], project_file, nothing)
         result = JETLS.read_testrunner_result(server, cmd, source)::JETLS.TestRunnerResult
         @test result.stats.n_passed == 1
         @test result.stats.n_failed == 1
         @test only(result.diagnostics).line == 4
+        testset = only(result.testsets)
+        @test testset.line == 2
+        @test testset.stats.n_failed == 1
     end
 end
 
@@ -837,6 +846,317 @@ end
         @test isdefined(testsetinfos[1], :result)
         @test testsetinfos[1].result.result === result
         @test !isdefined(testsetinfos[2], :result)
+    end
+end
+
+@testset "testset_items" begin
+    let server = JETLS.Server()
+        test_code = """
+        @testset "outer" begin
+            @testset "inner" begin
+                @test true
+            end
+        end
+
+        @testset "other" begin
+            @test true
+        end
+        """
+        uri = URI("file:///testset_items.jl")
+        fi = JETLS.cache_file_info!(server, uri, 1, test_code)
+        items = JETLS.testset_items(fi)
+        @test [item.index for item in items] == [1, 2, 3]
+        @test [item.name for item in items] == ["\"outer\"", "\"inner\"", "\"other\""]
+        @test [item.range.start.line for item in items] == [0, 1, 6]
+        @test [item.range.var"end".line for item in items] == [4, 3, 8]
+    end
+end
+
+@testset "testrunner_run_completed" begin
+    let filename = joinpath(@__DIR__, "testfile.jl")
+        stats = JETLS.TestRunnerStats(; n_passed = 2, n_failed = 1, duration = 1.5)
+        diagnostics = [JETLS.TestRunnerDiagnostic(filename, 3, "Test Failed", nothing)]
+        result = JETLS.TestRunnerResult(; filename, stats, logs = "logs", diagnostics)
+        run_result = JETLS.testrunner_run_completed(result)
+        @test run_result.status == TestRunnerRunStatus.Completed
+        @test run_result.message == JETLS.summary_testrunner_result(result)
+        @test run_result.stats.passed == 2
+        @test run_result.stats.failed == 1
+        @test run_result.stats.errored == 0
+        @test run_result.stats.duration == 1.5
+        @test run_result.logs == "logs"
+        failure = only(run_result.failures)
+        @test failure.location.uri == filepath2uri(filename)
+        @test failure.location.range.start.line == 2
+        @test failure.message == "Test Failed"
+    end
+end
+
+const NESTED_TESTSETS_CODE = """
+using Test
+@testset "outer" begin
+    @testset "inner" begin
+        @test true
+    end
+    @testset "case \$i" for i in 1:2
+        @test i > 0
+    end
+end
+@testset "other" begin
+    @test true
+end
+"""
+
+testrunner_stats(n_passed::Int; n_failed::Int = 0) =
+    JETLS.TestRunnerStats(; n_passed, n_failed, duration = 0.5)
+
+function nested_testset_results(failure::JETLS.TestRunnerDiagnostic)
+    case(i::Int; kwargs...) =
+        JETLS.TestRunnerTestSetResult(; description = "case $i", line = 6, kwargs...)
+    return [
+        JETLS.TestRunnerTestSetResult(;
+            description = "outer", line = 2, stats = testrunner_stats(3; n_failed = 1),
+            children = [
+                JETLS.TestRunnerTestSetResult(;
+                    description = "inner", line = 3, stats = testrunner_stats(1)),
+                case(1; stats = testrunner_stats(1)),
+                case(2; stats = testrunner_stats(0; n_failed = 1), diagnostics = [failure]),
+                JETLS.TestRunnerTestSetResult(;
+                    description = "unidentified", stats = testrunner_stats(1))]),
+        JETLS.TestRunnerTestSetResult(;
+            description = "other", line = 10, stats = testrunner_stats(1))]
+end
+
+@testset "testset_results" begin
+    let server = JETLS.Server()
+        uri = URI("file:///testset_results.jl")
+        fi = JETLS.cache_file_info!(server, uri, 1, NESTED_TESTSETS_CODE)
+        failure = JETLS.TestRunnerDiagnostic("testset_results.jl", 7, "Test Failed", nothing)
+        result = JETLS.TestRunnerResult(;
+            filename = "testset_results.jl", stats = testrunner_stats(4; n_failed = 1),
+            logs = "logs", diagnostics = [failure], testsets = nested_testset_results(failure))
+        results = JETLS.testset_results(fi, result)
+        @test sort!(collect(keys(results))) == [1, 2, 3, 4]
+        @test results[1].stats.n_passed == 3
+        @test only(results[1].diagnostics) === failure # includes those of nested test sets
+        @test results[2].stats.n_passed == 1
+        @test isempty(results[2].diagnostics)
+        # the results of a `@testset` executed in a loop are summed up
+        @test results[3].stats.n_passed == 1
+        @test results[3].stats.n_failed == 1
+        @test results[3].stats.duration == 1.0
+        @test only(results[3].diagnostics) === failure
+        @test results[4].stats.n_passed == 1
+        @test all(r -> r.logs == "logs", values(results))
+    end
+end
+
+@testset "outermost_testset_targets" begin
+    let server = JETLS.Server()
+        uri = URI("file:///outermost_testset_targets.jl")
+        fi = JETLS.cache_file_info!(server, uri, 1, NESTED_TESTSETS_CODE)
+        @test JETLS.testset_lines(fi, 1) == 2:9
+        @test JETLS.testset_lines(fi, 2) == 3:5
+        target(idx::Int) = JETLS.TestsetTarget(idx, JETLS.testset_name(fi.testsetinfos[idx]))
+        targets = [target(2), target(1), target(4), target(1)]
+        @test [t.idx for t in JETLS.outermost_testset_targets(fi, targets)] == [1, 4]
+    end
+end
+
+const TESTRUNNER_COMMAND_TEST_CODE = """
+using Test
+@testset "foo" begin
+    @test true
+end
+"""
+
+# A stand-in for the Julia executable running TestRunner: it ignores its arguments,
+# consumes the source piped via stdin, and then runs `body`.
+function fake_testrunner(dir::AbstractString, body::AbstractString)
+    path = joinpath(dir, "julia")
+    write(path, "#!/bin/sh\ncat > /dev/null\n" * body)
+    chmod(path, 0o755)
+    return path
+end
+
+function fake_testrunner_output(;
+        stats::JETLS.TestRunnerStats = JETLS.TestRunnerStats(; n_passed = 1, duration = 0.1),
+        testsets::Vector{JETLS.TestRunnerTestSetResult} = [
+            JETLS.TestRunnerTestSetResult(; description = "foo", line = 2, stats)]
+    )
+    result = JETLS.TestRunnerResult(;
+        filename = "runtests.jl", stats, logs = "fake logs", testsets)
+    return "cat <<'EOF'\n" * String(LSP.JSON3.write(result)) * "\nEOF\n"
+end
+
+function with_fake_testrunner(
+        f, script_body::AbstractString;
+        capabilities::ClientCapabilities = ClientCapabilities(),
+        code::String = TESTRUNNER_COMMAND_TEST_CODE
+    )
+    mktempdir() do dir
+        julia = fake_testrunner(dir, script_body)
+        settings = Dict{String,Any}(
+            "testrunner" => Dict{String,Any}(
+                "env" => Dict{String,Any}("JULIA_APPS_JULIA_CMD" => julia)))
+        uri = filepath2uri(joinpath(dir, "runtests.jl"))
+        withserver(; capabilities, settings) do server_ctx
+            JETLS.cache_file_info!(server_ctx.server, uri, 1, code)
+            f(server_ctx, uri)
+        end
+    end
+end
+
+function run_testsets_request(
+        id::Int, uri::URI;
+        testsets::Vector{Pair{Int,String}} = [1 => "\"foo\""],
+        workDoneToken::Union{Nothing,String} = nothing
+    )
+    return RunTestsetsRequest(;
+        id,
+        params = RunTestsetsParams(;
+            textDocument = TextDocumentIdentifier(; uri),
+            testsets = [TestsetIdentifier(; index, name) for (index, name) in testsets],
+            workDoneToken))
+end
+
+function run_testset_command(id::Int, uri::URI)
+    return ExecuteCommandRequest(;
+        id,
+        params = ExecuteCommandParams(;
+            command = JETLS.COMMAND_TESTRUNNER_RUN_TESTSET,
+            arguments = Any[string(uri), 1, "\"foo\""]))
+end
+
+function collect_messages_until(pred, readmsg)
+    messages = Any[]
+    for _ in 1:50
+        msg = readmsg(; check = false).raw_msg
+        push!(messages, msg)
+        pred(msg) && return messages
+    end
+    error("Gave up waiting for a matching server message")
+end
+
+read_until_response(readmsg, ::Type{T}, id::Int) where T =
+    collect_messages_until(msg -> msg isa T && msg.id == id, readmsg)
+
+is_progress_value(msg, token, T) =
+    msg isa ProgressNotification && msg.params.token == token && msg.params.value isa T
+
+@static if Sys.iswindows()
+    @testset "TestRunner commands" begin
+        @test_skip "fake Julia executable is Unix-only"
+    end
+else
+    @testset "jetls/testsets request" begin
+        with_fake_testrunner(fake_testrunner_output()) do (; initialize_response, writereadmsg, id_counter), uri
+            @test initialize_response.result.capabilities.experimental["testsetsProvider"] === true
+            (; raw_res) = writereadmsg(TestsetsRequest(;
+                id = id_counter[] += 1,
+                params = TestsetsParams(; textDocument = TextDocumentIdentifier(; uri))))
+            @test raw_res isa TestsetsResponse
+            item = only(raw_res.result)
+            @test item.index == 1
+            @test item.name == "\"foo\""
+            @test item.range.start.line == 1
+        end
+    end
+
+    @testset "jetls/runTestsets request" begin
+        with_fake_testrunner(fake_testrunner_output()) do (; writemsg, readmsg, id_counter), uri
+            id = id_counter[] += 1
+            writemsg(run_testsets_request(id, uri; workDoneToken = "client-token"); check = false)
+            messages = read_until_response(readmsg, RunTestsetsResponse, id)
+            result = last(messages).result
+            @test result isa TestRunnerRunResult
+            @test result.status == TestRunnerRunStatus.Completed
+            @test result.stats.passed == 1
+            @test result.logs == "fake logs"
+            testset = only(result.testsets)
+            @test testset.index == 1
+            @test testset.stats.passed == 1
+            @test any(msg -> is_progress_value(msg, "client-token", WorkDoneProgressBegin), messages)
+            @test any(msg -> is_progress_value(msg, "client-token", WorkDoneProgressEnd), messages)
+            @test !any(msg -> msg isa ShowMessageRequest, messages)
+        end
+
+        with_fake_testrunner(fake_testrunner_output()) do (; writemsg, readmsg, id_counter), uri
+            id = id_counter[] += 1
+            writemsg(run_testsets_request(id, uri); check = false)
+            messages = read_until_response(readmsg, RunTestsetsResponse, id)
+            result = last(messages).result
+            @test result isa TestRunnerRunResult
+            @test result.status == TestRunnerRunStatus.Completed
+            @test !any(msg -> msg isa ProgressNotification, messages)
+            @test !any(msg -> msg isa ShowMessageRequest, messages)
+        end
+    end
+
+    @testset "jetls/runTestsets request with multiple test sets" begin
+        failure = JETLS.TestRunnerDiagnostic("runtests.jl", 7, "Test Failed", nothing)
+        output = fake_testrunner_output(; testsets = nested_testset_results(failure))
+        testsets = [1 => "\"outer\"", 4 => "\"other\""]
+        with_fake_testrunner(output; code = NESTED_TESTSETS_CODE) do (; server, writemsg, readmsg, id_counter), uri
+            id = id_counter[] += 1
+            writemsg(run_testsets_request(id, uri; testsets); check = false)
+            messages = read_until_response(readmsg, RunTestsetsResponse, id)
+            result = last(messages).result
+            @test result.status == TestRunnerRunStatus.Completed
+            # the results of the nested test sets are reported too
+            @test [testset.index for testset in result.testsets] == [1, 2, 3, 4]
+            @test result.testsets[1].stats.passed == 3
+            @test result.testsets[3].stats.failed == 1
+            @test only(result.testsets[3].failures).location.range.start.line == 6
+            # the results of the requested test sets are kept for the code lenses
+            testsetinfos = JETLS.get_file_info(server.state, uri).testsetinfos
+            @test isdefined(testsetinfos[1], :result)
+            @test isdefined(testsetinfos[4], :result)
+            @test !isdefined(testsetinfos[2], :result)
+        end
+    end
+
+    @testset "run@testset command" begin
+        with_fake_testrunner(fake_testrunner_output()) do (; writemsg, readmsg, id_counter), uri
+            id = id_counter[] += 1
+            writemsg(run_testset_command(id, uri); check = false)
+            messages = read_until_response(readmsg, ExecuteCommandResponse, id)
+            @test last(messages).result === null
+            @test any(msg -> msg isa ShowMessageRequest, messages)
+        end
+
+        # With server-created progress, the command request is answered before the run
+        # starts, so that clients timing out command requests don't report long runs as errors
+        capabilities = ClientCapabilities(;
+            window = WindowClientCapabilities(; workDoneProgress = true))
+        with_fake_testrunner(fake_testrunner_output(); capabilities) do (; writemsg, readmsg, id_counter), uri
+            id = id_counter[] += 1
+            writemsg(run_testset_command(id, uri); check = false)
+            messages = read_until_response(readmsg, ExecuteCommandResponse, id)
+            @test last(messages).result === null
+            progress_request = only(msg for msg in messages if msg isa WorkDoneProgressCreateRequest)
+            writemsg(ResponseMessage(; id = progress_request.id, result = null); check = false)
+            token = progress_request.params.token
+            messages = collect_messages_until(readmsg) do msg
+                is_progress_value(msg, token, WorkDoneProgressEnd)
+            end
+            @test any(msg -> msg isa ShowMessageRequest, messages)
+        end
+    end
+
+    @testset "jetls/runTestsets cancellation" begin
+        with_fake_testrunner("exec sleep 30\n") do (; writemsg, readmsg, id_counter), uri
+            id = id_counter[] += 1
+            writemsg(run_testsets_request(id, uri; workDoneToken = "client-token"); check = false)
+            read_until(readmsg) do msg
+                is_progress_value(msg, "client-token", WorkDoneProgressBegin)
+            end
+            writemsg(CancelRequestNotification(; params = CancelParams(; id)); check = false)
+            messages = read_until_response(readmsg, RunTestsetsResponse, id)
+            result = last(messages).result
+            @test result isa TestRunnerRunResult
+            @test result.status == TestRunnerRunStatus.Cancelled
+        end
     end
 end
 

@@ -89,7 +89,8 @@ using TOML: TOML
 using TOMLSource: TOMLSource as TS
 using Test: Test # used to define new-style implementations of `@test`/`@testset`
 using TestRunner: TestRunner
-using .TestRunner.App: TestRunnerDiagnostic, TestRunnerResult
+using .TestRunner.App: TestRunnerDiagnostic, TestRunnerResult, TestRunnerStats,
+    TestRunnerTestSetResult
 
 using Glob: Glob
 
@@ -625,6 +626,10 @@ function handle_request_message(
         handle_ExecuteCommandRequest(server, msg)
     elseif msg isa TextDocumentContentRequest
         handle_TextDocumentContentRequest(server, msg)
+    elseif msg isa TestsetsRequest
+        handle_TestsetsRequest(server, msg, cancel_flag)
+    elseif msg isa RunTestsetsRequest
+        handle_RunTestsetsRequest(server, msg, cancel_flag)
     else
         method = isdefined(msg, :method) ? getfield(msg, :method) : nothing
         @static if JETLS_DEV_MODE
