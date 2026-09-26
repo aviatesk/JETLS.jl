@@ -35,13 +35,15 @@ export CASContainer, LWContainer, SWContainer, getstats, load, resetstats!, stor
 
 abstract type AtomicContainer end
 
-# HACK: Every container declares `data::Any` so that the data is always stored boxed.
+# HACK: On Julia versions without https://github.com/JuliaLang/julia/pull/63324, every
+# container declares `data::Any` so that the data is always stored boxed.
 # Julia's codegen can drop the GC root of an atomically loaded field that inlines an
 # immutable with GC pointers (e.g. `Base.PersistentDict`) once the loaded value is spilled
 # to the stack, so a snapshot returned by `load` could otherwise be freed while in use
 # after a `store!` replaced it (https://github.com/JuliaLang/julia/issues/63320).
-# This workaround is unnecessary on Julia versions that include
-# https://github.com/JuliaLang/julia/pull/63324.
+const JULIA_63320_FIXED =
+    v"1.12.8" ≤ VERSION ≤ v"1.13.0-" || v"1.13.1" ≤ VERSION ≤ v"1.14.0-" ||
+    v"1.14.0-DEV.3345" ≤ VERSION
 
 function load end
 function store! end
@@ -120,7 +122,7 @@ Fastest option for sequential or non-contended updates.
     use [`LWContainer`](@ref) or [`CASContainer`](@ref) containers instead.
 """
 mutable struct SWContainer{T,Stats<:Union{Nothing,SWStats}} <: AtomicContainer
-    @atomic data::Any
+    @atomic data :: (@static JULIA_63320_FIXED ? T : Any)
     const stats::Stats
     SWContainer{T,SWStats}(data) where T = new{T,SWStats}(convert(T, data), SWStats())
     SWContainer{T,Nothing}(data) where T = new{T,Nothing}(convert(T, data), nothing)
@@ -254,7 +256,7 @@ When to avoid:
     locks for write serialization rather than classic RCU's grace period mechanism.
 """
 mutable struct LWContainer{T,Stats<:Union{Nothing,LWStats}} <: AtomicContainer
-    @atomic data::Any
+    @atomic data :: (@static JULIA_63320_FIXED ? T : Any)
     const update_lock::ReentrantLock
     const stats::Stats
     LWContainer{T,LWStats}(data) where T = new{T,LWStats}(convert(T, data), ReentrantLock(), LWStats())
@@ -403,7 +405,7 @@ When to avoid:
     modify `data` in-place) and return a `new` object.
 """
 mutable struct CASContainer{T,Stats<:Union{Nothing,CASStats}} <: AtomicContainer
-    @atomic data::Any
+    @atomic data :: (@static JULIA_63320_FIXED ? T : Any)
     const stats::Stats
     CASContainer{T,CASStats}(data) where T = new{T,CASStats}(convert(T, data), CASStats())
     CASContainer{T,Nothing}(data) where T = new{T,Nothing}(convert(T, data), nothing)
