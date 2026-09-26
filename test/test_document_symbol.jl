@@ -519,6 +519,105 @@ end
     end
 end
 
+@testset "global function" begin
+    let symbols = get_document_symbols("global foo(x) = x")
+        @test length(symbols) == 1
+        @test symbols[1].name == "foo"
+        @test symbols[1].kind == SymbolKind.Function
+        @test symbols[1].detail == "foo(x) ="
+        @test symbols[1].range.start.character == 0
+        @test only(symbols[1].children).name == "x"
+    end
+
+    let symbols = get_document_symbols("global function foo(x) end")
+        @test length(symbols) == 1
+        @test symbols[1].name == "foo"
+        @test symbols[1].kind == SymbolKind.Function
+        @test symbols[1].detail == "function foo(x)"
+        @test symbols[1].range.start.character == 0
+    end
+
+    let symbols = get_document_symbols("global foo(x::T) where T = x")
+        @test length(symbols) == 1
+        @test symbols[1].name == "foo"
+        @test symbols[1].detail == "foo(x::T) where T ="
+    end
+end
+
+@testset "global method definition in local scope" begin
+    let code = """
+        let
+            sentence = "Hi"
+            global hi(x) = println(sentence, x)
+        end
+        """
+        symbols = get_document_symbols(code)
+        @test length(symbols) == 1
+        children = symbols[1].children
+        @test children !== nothing
+        @test length(children) == 2
+        @test only(filter(c -> c.name == "sentence", children)).kind == SymbolKind.Variable
+        hi_sym = only(filter(c -> c.name == "hi", children))
+        @test hi_sym.kind == SymbolKind.Function
+        @test hi_sym.detail == "hi(x) ="
+        @test hi_sym.range.start == Position(; line=2, character=4)
+        @test hi_sym.selectionRange.start == Position(; line=2, character=11)
+        @test only(hi_sym.children).name == "x"
+    end
+
+    let code = """
+        let
+            global function foo(x)
+                y = x
+            end
+            global bar
+            bar(x) = map(y -> y, x)
+            Base.show(io::IO, ::Int) = nothing
+        end
+        """
+        symbols = get_document_symbols(code)
+        @test length(symbols) == 1
+        children = symbols[1].children
+        @test children !== nothing
+        @test length(children) == 3
+        foo_sym = only(filter(c -> c.name == "foo", children))
+        @test foo_sym.kind == SymbolKind.Function
+        @test foo_sym.detail == "function foo(x)"
+        @test Set(c.name for c in foo_sym.children) == Set(("x", "y"))
+        bar_sym = only(filter(c -> c.name == "bar", children))
+        @test bar_sym.kind == SymbolKind.Function
+        @test bar_sym.detail == "bar(x) ="
+        @test only(bar_sym.children).name == "x"
+        show_sym = only(filter(c -> c.name == "Base.show", children))
+        @test show_sym.kind == SymbolKind.Function
+        @test only(show_sym.children).name == "io"
+    end
+
+    let code = """
+        let
+            global foo() = 1
+        end
+        """
+        symbols = get_document_symbols(code)
+        @test length(symbols) == 1
+        @test symbols[1].kind == SymbolKind.Namespace
+        @test only(symbols[1].children).name == "foo"
+    end
+
+    let code = """
+        for T in (Int, Float64)
+            Base.zero(::Type{MyVector{T}}) = T[]
+        end
+        """
+        symbols = get_document_symbols(code)
+        @test length(symbols) == 1
+        children = symbols[1].children
+        @test children !== nothing
+        zero_sym = only(filter(c -> c.name == "Base.zero", children))
+        @test zero_sym.kind == SymbolKind.Function
+    end
+end
+
 @testset "let block" begin
     let code = """
         let x = 42

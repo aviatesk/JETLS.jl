@@ -182,7 +182,8 @@ end
 
 function extract_function_symbol!(
         symbols::Vector{DocumentSymbol}, st0::SyntaxTree, fi::FileInfo,
-        context_module::Module, world::UInt
+        context_module::Module, world::UInt;
+        range_node::SyntaxTree = st0
     )
     JS.numchildren(st0) ≥ 1 || return nothing
     sig = st0[1]
@@ -195,7 +196,7 @@ function extract_function_symbol!(
         name,
         detail,
         kind = SymbolKind.Function,
-        range = jsobj_to_range(st0, fi),
+        range = jsobj_to_range(range_node, fi),
         selectionRange = jsobj_to_range(name_node, fi),
         children))
     return nothing
@@ -420,9 +421,18 @@ function extract_global_symbols!(
     )
     JS.numchildren(st0) ≥ 1 || return nothing
     inner = st0[1]
+    inner_kind = JS.kind(inner)
+    if inner_kind === JS.K"function"
+        extract_function_symbol!(symbols, inner, fi, context_module, world; range_node = st0)
+        return nothing
+    elseif inner_kind === JS.K"=" && JS.numchildren(inner) ≥ 2 && is_short_function_lhs(inner[1])
+        extract_short_function_symbol!(
+            symbols, inner, fi, context_module, world; range_node = st0)
+        return nothing
+    end
     range = jsobj_to_range(st0, fi)
     detail = lstrip(JS.sourcetext(st0))
-    if JS.kind(inner) === JS.K"="
+    if inner_kind === JS.K"="
         JS.numchildren(inner) ≥ 2 || return nothing
         lhs = inner[1]
         rhs = inner[2]
@@ -511,8 +521,7 @@ function extract_toplevel_assignment_symbols!(
     JS.numchildren(st0) ≥ 2 || return nothing
     lhs = st0[1]
     JS.kind(lhs) in JS.KSet". ref" && return nothing # Skip property assignment like obj.field = value
-    lhs_unwrapped = unwrap_funcdef_sig(lhs)
-    if JS.kind(lhs_unwrapped) === JS.K"call" || is_mainfunc0(lhs_unwrapped)
+    if is_short_function_lhs(lhs)
         extract_short_function_symbol!(symbols, st0, fi, context_module, world)
         return nothing
     end
@@ -525,21 +534,27 @@ function extract_toplevel_assignment_symbols!(
     return nothing
 end
 
+function is_short_function_lhs(lhs::SyntaxTree)
+    lhs = unwrap_funcdef_sig(lhs)
+    return JS.kind(lhs) === JS.K"call" || is_mainfunc0(lhs)
+end
+
 # Short-form function definition: `f(x) = x` or `f(x) where T = x`
 function extract_short_function_symbol!(
         symbols::Vector{DocumentSymbol}, st0::SyntaxTree, fi::FileInfo,
-        context_module::Module, world::UInt
+        context_module::Module, world::UInt;
+        range_node::SyntaxTree = st0
     )
     JS.numchildren(st0) ≥ 2 || return nothing
     sig = st0[1]
     name, name_node = @something extract_function_name(sig) return nothing
     children = @something extract_scoped_children(st0, fi, context_module, world) Some(nothing)
-    detail = JS.sourcetext(sig) * " ="
+    detail = lstrip(JS.sourcetext(sig)) * " ="
     push!(symbols, DocumentSymbol(;
         name,
         detail,
         kind = SymbolKind.Function,
-        range = jsobj_to_range(st0, fi),
+        range = jsobj_to_range(range_node, fi),
         selectionRange = jsobj_to_range(name_node, fi),
         children))
     return nothing
@@ -1132,9 +1147,16 @@ function extract_child_scope_symbols!(
         push!(group[2], child_id)
     end
     for (key, (construct, group_ids)) in construct_groups
+        construct_kind = JS.kind(construct)
+        if construct_kind in JS.KSet"function =" && defines_closure(lctx, group_ids)
+            append!(transparent_ids, group_ids)
+            continue
+        end
         key in seen || push!(seen, key)
-        if JS.kind(construct) === JS.K"try"
+        if construct_kind === JS.K"try"
             push_try_namespace_symbol!(symbols, construct, lctx, group_ids)
+        elseif construct_kind in JS.KSet"function ="
+            push_method_symbol!(symbols, construct, lctx, group_ids)
         else
             child_symbols = @somereal extract_local_scope_bindings(lctx, group_ids) continue
             push_namespace_symbol!(symbols, construct, child_symbols, lctx.fi)
@@ -1143,6 +1165,51 @@ function extract_child_scope_symbols!(
     if !isempty(transparent_ids)
         extract_local_scope_bindings!(symbols, lctx, transparent_ids)
     end
+    return nothing
+end
+
+function defines_closure(lctx::LocalScopeContext, scope_ids::Vector{Int})
+    (; ctx3) = lctx
+    for scope_id in scope_ids
+        1 ≤ scope_id ≤ length(ctx3.scopes) || continue
+        if ctx3.scopes[scope_id].lambda_id == scope_id
+            scope_id in lctx.func_scope_ids && return true
+        else
+            child_ids = @something get(lctx.scope_children, scope_id, nothing) continue
+            defines_closure(lctx, child_ids) && return true
+        end
+    end
+    return false
+end
+
+function push_method_symbol!(
+        symbols::Vector{DocumentSymbol}, construct::SyntaxTree,
+        lctx::LocalScopeContext, group_ids::Vector{Int}
+    )
+    JS.numchildren(construct) ≥ 1 || return nothing
+    sig = construct[1]
+    name, name_node = @something extract_function_name(sig) return nothing
+    is_short_form = JS.kind(construct) === JS.K"=" ||
+        has_source_flags(construct, JS.SHORT_FORM_FUNCTION_FLAG)
+    sig_text = lstrip(JS.sourcetext(sig))
+    detail = is_short_form ? sig_text * " =" : "function " * sig_text
+    construct_range = (JS.first_byte(construct), JS.last_byte(construct))
+    range_node = get(lctx.parent_map, construct_range, nothing)
+    if range_node === nothing || JS.kind(range_node) !== JS.K"global"
+        range_node = construct
+    end
+    child_lctx = LocalScopeContext(lctx;
+        seen = Set{Tuple{Int,Int}}(), root_range = construct_range,
+        static_param_names = collect_static_param_names(
+            lctx.ctx3, group_ids, lctx.scope_children, lctx.func_scope_ids))
+    children = extract_local_scope_bindings(child_lctx, group_ids)
+    push!(symbols, DocumentSymbol(;
+        name,
+        detail,
+        kind = SymbolKind.Function,
+        range = jsobj_to_range(range_node, lctx.fi),
+        selectionRange = jsobj_to_range(name_node, lctx.fi),
+        children = @somereal children Some(nothing)))
     return nothing
 end
 
@@ -1248,6 +1315,11 @@ function find_scope_construct(
         # Look up the actual st0 node via node_map, since the provenance node
         # lives in the lowered graph and has different children.
         return get(node_map, (fb, lb), nothing)
+    elseif k === JS.K"function"
+        node = get(node_map, (fb, lb), nothing)
+        if node !== nothing && JS.kind(node) in JS.KSet"function ="
+            return node
+        end
     elseif k === JS.K"block"
         # In the new EST, try clause scopes have `block` provenance
         # pointing to the block child of the try node.

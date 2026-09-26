@@ -54,6 +54,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 >
 > Note: Path glob patterns use `/` as the separator on all platforms, including Windows; backslashes are not supported as separators.
 
+### Fixed
+
+- Fixed global function definitions such as `global f() = ...` and `global function f() end`, including those inside `let`/`for`/`while` blocks, not appearing in the document outline and workspace symbol search.
+  For example, `sayhi` in the following code is now listed:
+  ```julia
+  let
+      sentence = "Hi"
+      global sayhi() = println(sentence)
+  end
+  ```
+  Method definitions like `Base.show(io::IO, x::Foo) = ...` inside these blocks are now listed as well.
+
 ## 2026-09-25
 
 - Commit: [`906d919`](https://github.com/aviatesk/JETLS.jl/commit/906d919)

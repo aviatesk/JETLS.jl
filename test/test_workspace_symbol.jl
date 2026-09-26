@@ -62,4 +62,19 @@ end
     @test !any(s -> s.kind == SymbolKind.Namespace, workspace_symbols)
 end
 
+@testset "global method defined in let block" begin
+    code = """
+    let
+        sentence = "Hi"
+        global hi() = println(sentence)
+    end
+
+    hello() = hi()
+    """
+    workspace_symbols = get_workspace_symbols(code)
+    hi_sym = only(filter(s -> s.name == "hi", workspace_symbols))
+    @test hi_sym.kind == SymbolKind.Function
+    @test hi_sym.location.range.start == Position(; line=2, character=4)
+end
+
 end # module test_workspace_symbol
