@@ -491,9 +491,18 @@ mask_inert_interpolations(
 # interpolations enclosed by their corresponding quote kind are kept for
 # JuliaLowering to resolve in the inert template's execution scope.
 function prepare_inert_template(
-        st3::SyntaxTree; preserve_nested_interpolations::Bool = false
+        st3::SyntaxTree;
+        parameters::Dict{String,SyntaxTree} = Dict{String,SyntaxTree}(),
+        preserve_nested_interpolations::Bool = false
     )
-    placeholder_name = String(gensym("JETLS_UNQUOTE_PLACEHOLDER"))
+    names = collect_identifier_names!(Set{String}(keys(parameters)), st3)
+    # Later lowering may intern this name, so reuse candidates across independent analyses.
+    index = 0
+    placeholder_name = "##JETLS_UNQUOTE_PLACEHOLDER#0"
+    while placeholder_name in names
+        index += 1
+        placeholder_name = string("##JETLS_UNQUOTE_PLACEHOLDER#", string(index))
+    end
     template = mask_inert_interpolations(
         st3, placeholder_name; preserve_nested_interpolations)
     return template, placeholder_name
@@ -508,7 +517,7 @@ function resolve_inert_tree(
     )
     JS.numchildren(inert_tree) >= 1 || return nothing
     template, placeholder_name = prepare_inert_template(
-        inert_tree[1]; preserve_nested_interpolations)
+        inert_tree[1]; parameters, preserve_nested_interpolations)
     input = if hard_scope || !isempty(parameters)
         parameter_nodes = JS.SyntaxList()
         for (name, source) in parameters

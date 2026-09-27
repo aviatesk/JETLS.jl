@@ -360,12 +360,10 @@ function compute_binding_occurrences!(
     return occurrences
 end
 
-function is_matching_global_binding(
-        a::Union{BindingInfoKey,JL.BindingInfo},
-        b::Union{BindingInfoKey,JL.BindingInfo},
-    )
-    return a.kind === :global && b.kind === :global && a.name == b.name && a.mod === b.mod
-end
+is_matching_global_binding(
+    a::Union{BindingInfoKey,JL.BindingInfo},
+    b::Union{BindingInfoKey,JL.BindingInfo},
+) = a.kind === :global && b.kind === :global && a.name == b.name && a.mod === b.mod
 
 function find_global_binding_occurrences!(
         state::ServerState, uri::URI, fi::FileInfo, binfo::JL.BindingInfo;
