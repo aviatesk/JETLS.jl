@@ -288,6 +288,20 @@ function materialize_snapshots(config::SnapshotConfig, compiler_root::String; ch
             write(entrypoint_path, entrypoint)
             println("Updated Compiler entrypoint")
         end
+
+        fallback_source = joinpath(@__DIR__, "src", "fallback.jl")
+        fallback_path = joinpath(compiler_root, "src", "fallback.jl")
+        if check
+            if isfile(fallback_path) && read(fallback_path) == read(fallback_source)
+                println("Compiler fallback is up to date")
+            else
+                success = false
+                println("Compiler fallback is out of date")
+            end
+        elseif fallback_path != fallback_source
+            cp(fallback_source, fallback_path; force=true)
+            println("Updated Compiler fallback")
+        end
         return success
     end
 end
