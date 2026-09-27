@@ -7,8 +7,8 @@ include("HierarchicalTestSet.jl")
 
 @testset HierarchicalTestSet "Configuration utilities" begin
     @testset "`get_default_config`" begin
-        @test JETLS.get_default_config(:testrunner, :executable) ==
-            (@static Sys.iswindows() ? "testrunner.bat" : "testrunner")
+        @test JETLS.get_default_config(:testrunner, :env) == Dict{String,String}()
+        @test JETLS.get_default_config(:testrunner, :julia_args) == String[]
         @test JETLS.get_default_config(:formatter) == "Runic"
         @test_throws FieldError JETLS.get_default_config(:nonexistent)
         @test_throws FieldError JETLS.get_default_config(:full_analysis, :nonexistent)
@@ -17,7 +17,7 @@ include("HierarchicalTestSet.jl")
     @testset "`merge_settings`" begin
         base_config = JETLS.JETLSConfig(;
             full_analysis=JETLS.FullAnalysisConfig(; debounce=1.0),
-            testrunner=JETLS.TestRunnerConfig("base_runner"),
+            testrunner=JETLS.TestRunnerConfig(; julia_args=["base_arg"]),
         )
         overlay_config = JETLS.JETLSConfig(;
             full_analysis=JETLS.FullAnalysisConfig(; debounce=2.0),
@@ -25,7 +25,7 @@ include("HierarchicalTestSet.jl")
         merged = JETLS.merge_settings(base_config, overlay_config)
 
         @test JETLS.getobjpath(merged, :full_analysis, :debounce) == 2.0
-        @test JETLS.getobjpath(merged, :testrunner, :executable) == "base_runner"
+        @test JETLS.getobjpath(merged, :testrunner, :julia_args) == ["base_arg"]
 
         @testset "`merge_settings` for `Vector{<:ConfigSection}`" begin
             pattern1 = JETLS.DiagnosticPattern(r"error1", "code", "regex", 1, nothing, "error1")
@@ -125,11 +125,11 @@ include("HierarchicalTestSet.jl")
     @testset "`track_setting_changes`" begin
         let config1 = JETLS.JETLSConfig(;
                 full_analysis=JETLS.FullAnalysisConfig(; debounce=1.0),
-                testrunner=JETLS.TestRunnerConfig("runner1"),
+                testrunner=JETLS.TestRunnerConfig(; julia_args=["arg1"]),
             )
             config2 = JETLS.JETLSConfig(;
                 full_analysis=JETLS.FullAnalysisConfig(; debounce=2.0),
-                testrunner=JETLS.TestRunnerConfig("runner2")
+                testrunner=JETLS.TestRunnerConfig(; julia_args=["arg2"])
             )
             paths_called = []
             JETLS.track_setting_changes(config1, config2) do _, _, path
@@ -137,7 +137,7 @@ include("HierarchicalTestSet.jl")
             end
             @test Set(paths_called) == Set([
                 (:full_analysis, :debounce),
-                (:testrunner, :executable),
+                (:testrunner, :julia_args),
             ])
         end
 
@@ -250,16 +250,17 @@ end
         @test occursin("expected `Dict{String,Any}`", message)
     end
 
-    let executable = SubString("jetls", 1, 5),
+    let value = SubString("value", 1, 5),
         config_data = Dict{String,Any}(
-            "testrunner" => Dict{String,Any}("executable" => executable))
+            "testrunner" => Dict{String,Any}(
+                "env" => Dict{String,Any}("NAME" => value)))
         err = try
             JETLS.validate_config_data(config_data)
             nothing
         catch e; e; end
         @test err isa JETLS.InvalidConfigDataError
         message = sprint(showerror, err)
-        @test occursin("at `testrunner.executable`", message)
+        @test occursin("at `testrunner.env.NAME`", message)
         @test occursin("expected `String`", message)
         @test occursin("got `SubString{String}`", message)
     end
@@ -278,13 +279,13 @@ end
     end
 
     let config_data = Dict{String,Any}(
-            "testrunner" => Dict{String,Any}("executable" => "jetls"),
+            "formatter" => "Runic",
             "full_analysis" => Dict{String,Any}(
                 "concretization_patterns" => String["A = x_"]))
         @test JETLS.validate_config_data(config_data) === config_data
     end
     let config_data = Dict{String,Any}(
-            "testrunner" => Dict{String,Any}("executable" => "jetls"),
+            "formatter" => "Runic",
             "full_analysis" => Dict{String,Any}(
                 "concretization_patterns" => Any["A = x_"]))
         @test JETLS.validate_config_data(config_data) === config_data
@@ -441,13 +442,13 @@ end
 
     test_config = JETLS.JETLSConfig(;
         full_analysis=JETLS.FullAnalysisConfig(; debounce=2.0),
-        testrunner=JETLS.TestRunnerConfig("test_runner"),
+        testrunner=JETLS.TestRunnerConfig(; julia_args=["test_arg"]),
     )
 
     store_file_config!(manager, "/foo/bar/.JETLSConfig.toml", test_config)
 
     @test JETLS.get_config(manager, :full_analysis, :debounce) === 2.0
-    @test JETLS.get_config(manager, :testrunner, :executable) === "test_runner"
+    @test JETLS.get_config(manager, :testrunner, :julia_args) == ["test_arg"]
     @test_throws FieldError JETLS.get_config(manager, :nonexistent)
 
     # Type stability check (N.B: Nothing is not allowed)
@@ -461,22 +462,22 @@ end
     # Test priority: file config has higher priority than LSP config
     lsp_config = JETLS.JETLSConfig(;
         full_analysis=JETLS.FullAnalysisConfig(; debounce=999.0),
-        testrunner=JETLS.TestRunnerConfig("lsp_runner")
+        testrunner=JETLS.TestRunnerConfig(; julia_args=["lsp_arg"])
     )
     store_lsp_config!(manager, lsp_config)
     # High priority file config should win
     @test JETLS.get_config(manager, :full_analysis, :debounce) === 2.0
-    @test JETLS.get_config(manager, :testrunner, :executable) === "test_runner"
+    @test JETLS.get_config(manager, :testrunner, :julia_args) == ["test_arg"]
 
     # Test updating config
     store_lsp_config!(manager, JETLS.EMPTY_CONFIG)
     updated_config = JETLS.JETLSConfig(;
         full_analysis=JETLS.FullAnalysisConfig(; debounce=3.0),
-        testrunner=JETLS.TestRunnerConfig("new_runner"),
+        testrunner=JETLS.TestRunnerConfig(; julia_args=["new_arg"]),
     )
     store_file_config!(manager, "/foo/bar/.JETLSConfig.toml", updated_config)
     @test JETLS.get_config(manager, :full_analysis, :debounce) == 3.0
-    @test JETLS.get_config(manager, :testrunner, :executable) == "new_runner"
+    @test JETLS.get_config(manager, :testrunner, :julia_args) == ["new_arg"]
 end
 
 @testset "LSP configuration priority and merging" begin
@@ -487,7 +488,7 @@ end
         testrunner=nothing
     )
     file_config = JETLS.JETLSConfig(;
-        testrunner=JETLS.TestRunnerConfig("file_runner"),
+        testrunner=JETLS.TestRunnerConfig(; julia_args=["file_arg"]),
         full_analysis=nothing
     )
 
@@ -495,7 +496,7 @@ end
     store_file_config!(manager, "/project/.JETLSConfig.toml", file_config)
 
     # File config has higher priority, so it wins when both are set
-    @test JETLS.get_config(manager, :testrunner, :executable) == "file_runner"
+    @test JETLS.get_config(manager, :testrunner, :julia_args) == ["file_arg"]
     # When file config doesn't set a value, LSP config is used
     @test JETLS.get_config(manager, :full_analysis, :debounce) == 2.0
 end
@@ -504,10 +505,10 @@ end
     manager = JETLS.ConfigManager(JETLS.ConfigManagerData())
     lsp_config = JETLS.JETLSConfig(;
         full_analysis=JETLS.FullAnalysisConfig(; debounce=3.0),
-        testrunner=JETLS.TestRunnerConfig("lsp_runner")
+        testrunner=JETLS.TestRunnerConfig(; julia_args=["lsp_arg"])
     )
     store_lsp_config!(manager, lsp_config)
-    @test JETLS.get_config(manager, :testrunner, :executable) == "lsp_runner"
+    @test JETLS.get_config(manager, :testrunner, :julia_args) == ["lsp_arg"]
     @test JETLS.get_config(manager, :full_analysis, :debounce) == 3.0
 end
 
@@ -578,6 +579,32 @@ end
     @test !haskey(d, "completion")
     config = JETLS.parse_config_dict(d)
     @test config isa JETLS.JETLSConfig
+end
+
+@testset "`testrunner.executable` is deprecated" begin
+    d = JETLS.validate_config_data(Dict{String,Any}(
+        "testrunner" => Dict{String,Any}(
+            "executable" => "testrunner")))
+    warnings = JETLS.migrate_deprecated_config_keys!(d)
+    @test length(warnings) == 1
+    @test occursin("`testrunner.executable` is deprecated", warnings[1])
+    @test !haskey(d, "testrunner")
+    @test JETLS.parse_config_dict(d) isa JETLS.JETLSConfig
+end
+
+@testset "`testrunner.env`" begin
+    parse_env(env) = JETLS.parse_config_from_dict(JETLS.JETLSConfig, Dict{String,Any}(
+        "testrunner" => Dict{String,Any}("env" => env)))
+    let config = parse_env(Dict{String,Any}("JULIAUP_CHANNEL" => "1.12"))
+        @test config.testrunner.env == Dict("JULIAUP_CHANNEL" => "1.12")
+    end
+    for key in JETLS.TESTRUNNER_RESERVED_ENV_KEYS
+        @test_throws "Invalid value at `testrunner.env.$key`" parse_env(
+            Dict{String,Any}(key => "/path"))
+    end
+    @test_throws "Invalid value at `testrunner.env.JULIA_NUM_THREADS`: expected String" parse_env(
+        Dict{String,Any}("JULIA_NUM_THREADS" => 4))
+    @test_throws "Invalid value at `testrunner.env`: expected a table" parse_env("1.12")
 end
 
 @testset "`did_change_configuration_registration` reflects `configuration_section`" begin

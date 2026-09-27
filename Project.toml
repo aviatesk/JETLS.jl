@@ -4,6 +4,7 @@ version = "0.0.0"
 JET = "avi/JET-JETLS-head-2026-09-26"
 JuliaLowering = "master"
 JuliaSyntax = "master"
+TestRunner = "master"
 authors = ["Shuhei Kadowaki <aviatesk@gmail.com>"]
 
 [workspace]
@@ -26,6 +27,7 @@ Revise = "295af30f-e4ad-537b-8983-00126c2a3abe"
 Sockets = "6462fe0b-24de-5631-8697-dd941f90decc"
 TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+TestRunner = "4efbe77e-ddf3-4ce7-be91-16409ca9e85f"
 
 [sources]
 Compiler = {path = "Compiler"}
@@ -33,6 +35,7 @@ JET = {rev = "ed9cd0c2f0", url = "https://github.com/aviatesk/JET.jl"}
 JuliaLowering = {rev = "43ff15c53c", subdir = "JuliaLowering", url = "https://github.com/JuliaLang/julia"}
 JuliaSyntax = {rev = "43ff15c53c", subdir = "JuliaSyntax", url = "https://github.com/JuliaLang/julia"}
 LSP = {path = "LSP"}
+TestRunner = {rev = "01d25f359e", url = "https://github.com/aviatesk/TestRunner.jl"}
 
 [compat]
 Compiler = "0.1.1"
@@ -51,6 +54,7 @@ Revise = "3.17"
 Sockets = "1.11.0"
 TOML = "1.0.3"
 Test = "1.11.0"
+TestRunner = "0.1"
 julia = "1.12.2 - 1.13"
 
 [apps.jetls]

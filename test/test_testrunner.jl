@@ -10,8 +10,29 @@ using JETLS.LSP.URIs2
 include("jsjl-utils.jl")
 
 function mock_testrunner_result(; n_passed=1, n_failed=0, n_errored=0, n_broken=0, duration=1.0)
-    stats = JETLS.TestRunnerStats(; n_passed, n_failed, n_errored, n_broken, duration)
+    stats = JETLS.TestRunner.App.TestRunnerStats(; n_passed, n_failed, n_errored, n_broken, duration)
     return JETLS.TestRunnerResult(; filename="test.jl", stats)
+end
+
+function store_lsp_config!(server::JETLS.Server, config::JETLS.JETLSConfig)
+    JETLS.store!(server.state.config_manager) do old_data::JETLS.ConfigManagerData
+        new_data = JETLS.ConfigManagerData(old_data; lsp_config = config)
+        return new_data, nothing
+    end
+end
+
+function server_with_testrunner_config(; kwargs...)
+    server = JETLS.Server()
+    store_lsp_config!(server, JETLS.JETLSConfig(; testrunner = JETLS.TestRunnerConfig(; kwargs...)))
+    return server
+end
+
+function env_with_deps(deps::Pair{String,Base.UUID}...)
+    dir = mktempdir()
+    write(joinpath(dir, "Manifest.toml"), "")
+    write(joinpath(dir, "Project.toml"),
+        "[deps]\n" * join("$name = \"$uuid\"\n" for (name, uuid) in deps))
+    return dir
 end
 
 function update_testsetinfo_result!(
@@ -109,7 +130,7 @@ end
     else
         @testset "large stdin and stdout" begin
             server = JETLS.Server()
-            stats = JETLS.TestRunnerStats(;
+            stats = JETLS.TestRunner.App.TestRunnerStats(;
                 n_passed = 1, n_failed = 0, n_errored = 0, n_broken = 0,
                 duration = 1.0)
             expected = JETLS.TestRunnerResult(;
@@ -199,6 +220,105 @@ end
             wait(cancel_task)
             @test result == "Test execution cancelled by user"
         end
+    end
+end
+
+@testset "find_testrunner_load_path" begin
+    pkgid = Base.PkgId(JETLS.TestRunner)
+    root = pkgdir(JETLS)
+    @test JETLS.find_testrunner_load_path(root, pkgid) == root
+    # workspace members resolve to the root project through the shared manifest
+    @test JETLS.find_testrunner_load_path(joinpath(root, "test"), pkgid) == root
+
+    let dir = env_with_deps("TestRunner" => pkgid.uuid)
+        @test JETLS.find_testrunner_load_path(dir, pkgid) == dir
+    end
+    # `-m TestRunner` needs the root project to list `TestRunner` as a direct dependency
+    let dir = env_with_deps("JETLS" => Base.PkgId(JETLS).uuid)
+        @test JETLS.find_testrunner_load_path(dir, pkgid) === nothing
+    end
+    let dir = env_with_deps("TestRunner" => Base.UUID(0))
+        @test JETLS.find_testrunner_load_path(dir, pkgid) === nothing
+    end
+end
+
+@testset "testrunner_launcher" begin
+    @test JETLS.testrunner_load_path[] isa String
+
+    let launcher = JETLS.testrunner_launcher(JETLS.Server())::JETLS.TestRunnerLauncher
+        @test launcher.julia.exec == Base.julia_cmd().exec
+        @test isempty(launcher.julia_args)
+        @test ("JULIA_LOAD_PATH" => JETLS.testrunner_load_path[]) in launcher.env
+        @test ("JULIA_PROJECT" => nothing) in launcher.env
+    end
+
+    let julia = first(Base.julia_cmd().exec),
+        server = server_with_testrunner_config(;
+            env = Dict("JULIA_APPS_JULIA_CMD" => julia, "NAME" => "value"),
+            julia_args = ["--threads=2"])
+        launcher = JETLS.testrunner_launcher(server)::JETLS.TestRunnerLauncher
+        @test launcher.julia.exec == [Sys.which(julia)]
+        @test launcher.julia_args == ["--threads=2"]
+        @test ("NAME" => "value") in launcher.env
+    end
+
+    let server = server_with_testrunner_config(;
+            env = Dict("JULIA_APPS_JULIA_CMD" => "/nonexistent/julia"))
+        msg = JETLS.testrunner_launcher(server)
+        @test msg isa String
+        @test occursin("/nonexistent/julia", msg)
+    end
+
+    let server = server_with_testrunner_config(; env = Dict("JULIAUP_CHANNEL" => "1.12"))
+        launcher = withenv("PATH" => Sys.BINDIR) do
+            JETLS.testrunner_launcher(server)
+        end::JETLS.TestRunnerLauncher
+        @test launcher.julia.exec == [withenv(() -> Sys.which("julia"), "PATH" => Sys.BINDIR)]
+        @test ("JULIAUP_CHANNEL" => "1.12") in launcher.env
+        mktempdir() do dir
+            @test withenv(() -> JETLS.testrunner_launcher(server), "PATH" => dir) isa String
+        end
+    end
+end
+
+@testset "testrunner_testset_cmd / testrunner_testcase_cmd" begin
+    launcher = JETLS.TestRunnerLauncher(`julia`, ["--threads=2"],
+        Pair{String,Union{Nothing,String}}["JULIA_LOAD_PATH" => "/jetls", "JULIA_PROJECT" => nothing])
+    let cmd = withenv("JULIA_PROJECT" => "/user") do
+            JETLS.testrunner_testset_cmd(launcher, "/test/runtests.jl", "\"foo\"", 3, "/test", nothing)
+        end
+        @test cmd.exec == ["julia", "--startup-file=no", "--project=/test", "--threads=2",
+            "-m", "TestRunner", "--verbose", "--json", "--read-stdin", "/test/runtests.jl", "foo",
+            "--filter-lines=3"]
+        @test "JULIA_LOAD_PATH=/jetls" in cmd.env
+        @test !any(startswith("JULIA_PROJECT="), cmd.env)
+    end
+    let cmd = JETLS.testrunner_testcase_cmd(launcher, "Untitled-1", 5, nothing, "/root")
+        @test cmd.exec == ["julia", "--startup-file=no", "--threads=2",
+            "-m", "TestRunner", "--verbose", "--root-path=/root", "--json", "--read-stdin",
+            "Untitled-1", "L5"]
+    end
+end
+
+@testset "run TestRunner" begin
+    mktempdir() do dir
+        project_file = joinpath(dir, "Project.toml")
+        write(project_file, "")
+        filepath = joinpath(dir, "runtests.jl")
+        source = """
+        using Test
+        @testset "foo" begin
+            @test Base.active_project() == $(repr(project_file))
+            @test 1 == 2
+        end
+        """
+        server = JETLS.Server()
+        launcher = JETLS.testrunner_launcher(server)::JETLS.TestRunnerLauncher
+        cmd = JETLS.testrunner_testset_cmd(launcher, filepath, "\"foo\"", 2, project_file, nothing)
+        result = JETLS.read_testrunner_result(server, cmd, source)::JETLS.TestRunnerResult
+        @test result.stats.n_passed == 1
+        @test result.stats.n_failed == 1
+        @test only(result.diagnostics).line == 4
     end
 end
 

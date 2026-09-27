@@ -47,7 +47,8 @@ Base.include(@__MODULE__, joinpath(pkgdir(JETLS), "docs", "config-schema-block.j
   - [`[inlay_hint.types]`](@ref config/inlay_hint/types)
     - [`[inlay_hint.types] enabled`](@ref config/inlay_hint/types/enabled)
 - [`[testrunner]`](@ref config/testrunner)
-  - [`[testrunner] executable`](@ref config/testrunner/executable)
+  - [`[testrunner] env`](@ref config/testrunner/env)
+  - [`[testrunner] julia_args`](@ref config/testrunner/julia_args)
 
 ### [`[full_analysis]`](@id config/full_analysis)
 
@@ -614,20 +615,57 @@ enabled = false  # Hide type hints; keep `end`-tag hints
 
 ### [`[testrunner]`](@id config/testrunner)
 
-#### [`[testrunner] executable`](@id config/testrunner/executable)
+Configure the Julia process that runs tests for the
+[TestRunner integration](@ref testrunner).
 
-- **Type**: string
-- **Default**: `"testrunner"` or `"testrunner.bat"` on Windows
+#### [`[testrunner] env`](@id config/testrunner/env)
 
-Path to the [TestRunner.jl](https://github.com/aviatesk/TestRunner.jl)
-executable for running individual `@testset` blocks and `@test` cases.
+- **Type**: table of strings
+- **Default**: `{}`
+
+Environment variables for the Julia process that runs tests.
+By default, tests run with the Julia running JETLS. The following variables
+select another Julia, in the same way as the managed installations of the
+VSCode and Zed extensions do:
+
+- `JULIA_APPS_JULIA_CMD`: path to the Julia executable to run tests with
+- `JULIAUP_CHANNEL`: [juliaup](https://github.com/JuliaLang/juliaup) channel to
+  run tests with; this takes effect when the `julia` command resolves to the
+  juliaup launcher, and is ignored when `JULIA_APPS_JULIA_CMD` is set
 
 ```toml
 [testrunner]
-executable = "/path/to/custom/testrunner"
+env = { JULIAUP_CHANNEL = "1.12", JULIA_NUM_THREADS = "4" }
 ```
 
-See [TestRunner integration](@ref testrunner) for setup instructions.
+`JULIA_DEPOT_PATH`, `JULIA_LOAD_PATH`, and `JULIA_PROJECT` cannot be set, since
+JETLS uses them to load TestRunner.jl. The environment of the tests is the
+nearest `Project.toml` of the test file, which can be overridden with
+[`julia_args`](@ref config/testrunner/julia_args).
+
+!!! note
+    The first test run with a Julia other than the one running JETLS
+    precompiles TestRunner.jl and its dependencies for that Julia, which may
+    take a while. TestRunner.jl requires Julia 1.12 or later. Julia versions
+    not supported by JETLS itself, such as nightly, can be selected as well,
+    but running tests with them may break.
+
+#### [`[testrunner] julia_args`](@id config/testrunner/julia_args)
+
+- **Type**: array of strings
+- **Default**: `[]`
+
+Additional command-line options for the Julia process that runs tests.
+These take precedence over the options set by JETLS; for example,
+`--project=/path/to/env` overrides the environment detected from the test file.
+
+```toml
+[testrunner]
+julia_args = ["--threads=4", "--project=/path/to/env"]
+```
+
+Options that affect precompilation, such as `--check-bounds=yes`, make the
+first test run precompile TestRunner.jl and its dependencies for them.
 
 ## How to configure JETLS
 
@@ -655,7 +693,8 @@ match_type = "literal"
 severity = "off"
 
 [testrunner]
-executable = "/path/to/custom/testrunner"
+env = { JULIAUP_CHANNEL = "1.12" }
+julia_args = ["--threads=4"]
 ```
 
 ### [Method 2: Editor configuration via LSP](@id config/lsp-config)
@@ -694,7 +733,10 @@ section:
       ]
     },
     "testrunner": {
-      "executable": "/path/to/custom/testrunner"
+      "env": {
+        "JULIAUP_CHANNEL": "1.12"
+      },
+      "julia_args": ["--threads=4"]
     }
   }
 }
@@ -733,7 +775,10 @@ section:
           ]
         },
         "testrunner": {
-          "executable": "/path/to/custom/testrunner"
+          "env": {
+            "JULIAUP_CHANNEL": "1.12"
+          },
+          "julia_args": ["--threads=4"]
         }
       }
     }
@@ -770,7 +815,8 @@ vim.lsp.config("jetls", {
         },
       },
       testrunner = {
-        executable = "/path/to/custom/testrunner"
+        env = { JULIAUP_CHANNEL = "1.12" },
+        julia_args = { "--threads=4" },
       },
     },
   },
@@ -792,10 +838,13 @@ editors.
 
 ### [Configuration merging](@id config/merge)
 
-For array-type configuration fields (such as [`diagnostic.patterns`](@ref config/diagnostic/patterns)),
+For array-of-tables configuration fields (such as [`diagnostic.patterns`](@ref config/diagnostic/patterns)),
 entries from both LSP config and file config are merged rather than one
 completely overriding the other. Entries with same keys are merged with file
 config taking precedence, while entries unique to either source are preserved.
+Other values, including [`[testrunner] env`](@ref config/testrunner/env) and
+[`[testrunner] julia_args`](@ref config/testrunner/julia_args), are overridden
+as a whole.
 
 ## [JSON schema](@id config/schema-cli)
 

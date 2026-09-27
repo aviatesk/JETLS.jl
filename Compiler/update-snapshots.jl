@@ -187,14 +187,8 @@ function generate_entrypoint(config::SnapshotConfig)
     end
     ranges = range_display.(getfield.(config.snapshots, :runtime_range))
     println(io, "else")
-    println(io, "    error(")
-    println(io, "        \"Unsupported Julia version \$(VERSION); supported ranges: \" *")
-    for (index, range) in enumerate(ranges)
-        text = index < length(ranges) ? "$range, " : range
-        suffix = index < length(ranges) ? " *" : ","
-        println(io, "        $(repr(text))$suffix")
-    end
-    println(io, "    )")
+    println(io, "    # outside the snapshot ranges: ", join(ranges, ", "))
+    println(io, "    Base.include(Base.__toplevel__, \"fallback.jl\")")
     println(io, "end")
     return String(take!(io))
 end
