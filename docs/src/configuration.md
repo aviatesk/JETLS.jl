@@ -679,11 +679,12 @@ formats that each client can understand.
 > Example `.JETLSConfig.toml`:
 
 ```toml
-[full_analysis]
-debounce = 2.0
-
 # Use JuliaFormatter instead of Runic
 formatter = "JuliaFormatter"
+
+# Wait 2 seconds after save before running full analysis
+[full_analysis]
+debounce = 2.0
 
 # Suppress unused argument warnings
 [[diagnostic.patterns]]
@@ -693,7 +694,9 @@ match_type = "literal"
 severity = "off"
 
 [testrunner]
+# Run tests with Julia 1.12 via juliaup
 env = { JULIAUP_CHANNEL = "1.12" }
+# Run tests with 4 threads
 julia_args = ["--threads=4"]
 ```
 
@@ -715,11 +718,13 @@ section:
 ```jsonc
 {
   "jetls-client.settings": {
+    // Wait 2 seconds after save before running full analysis
     "full_analysis": {
       "debounce": 2.0
     },
     // Use JuliaFormatter instead of Runic
     "formatter": "JuliaFormatter",
+    // Change the severity of specific diagnostics
     "diagnostic": {
       "patterns": [
         // Suppress toplevel/inference warnings in test folder
@@ -733,9 +738,11 @@ section:
       ]
     },
     "testrunner": {
+      // Run tests with Julia 1.12 via juliaup
       "env": {
         "JULIAUP_CHANNEL": "1.12"
       },
+      // Run tests with 4 threads
       "julia_args": ["--threads=4"]
     }
   }
@@ -757,11 +764,13 @@ section:
   "lsp": {
     "jetls": {
       "settings": {
+        // Wait 2 seconds after save before running full analysis
         "full_analysis": {
-          "debounce": 2.0
+          "debounce": 2.0,
         },
         // Use JuliaFormatter instead of Runic
         "formatter": "JuliaFormatter",
+        // Change the severity of specific diagnostics
         "diagnostic": {
           "patterns": [
             // Suppress toplevel/inference warnings in test folder
@@ -770,19 +779,21 @@ section:
               "match_by": "code",
               "match_type": "regex",
               "severity": "off",
-              "path": "test/**/*.jl"
-            }
-          ]
+              "path": "test/**/*.jl",
+            },
+          ],
         },
         "testrunner": {
+          // Run tests with Julia 1.12 via juliaup
           "env": {
-            "JULIAUP_CHANNEL": "1.12"
+            "JULIAUP_CHANNEL": "1.12",
           },
-          "julia_args": ["--threads=4"]
-        }
-      }
-    }
-  }
+          // Run tests with 4 threads
+          "julia_args": ["--threads=4"],
+        },
+      },
+    },
+  },
 }
 ```
 
@@ -797,11 +808,13 @@ configured as follows:
 vim.lsp.config("jetls", {
   settings = {
     jetls = {
+      -- Wait 2 seconds after save before running full analysis
       full_analysis = {
         debounce = 2.0,
       },
       -- Use JuliaFormatter instead of Runic
       formatter = "JuliaFormatter",
+      -- Change the severity of specific diagnostics
       diagnostic = {
         patterns = {
           -- Suppress toplevel/inference warnings in test folder
@@ -815,7 +828,9 @@ vim.lsp.config("jetls", {
         },
       },
       testrunner = {
+        -- Run tests with Julia 1.12 via juliaup
         env = { JULIAUP_CHANNEL = "1.12" },
+        -- Run tests with 4 threads
         julia_args = { "--threads=4" },
       },
     },
