@@ -28,7 +28,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > It does not support Julia 1.12.1 or earlier, nor Julia 1.14+/nightly.
 
 > [!note]
-> The official Zed extension for Julia, [JuliaEditorSupport/zed-julia](https://github.com/JuliaEditorSupport/zed-julia), now uses JETLS as its default language server since v0.2.0 (https://github.com/zed-industries/extensions/pull/7455).
+> The official Zed extension for Julia, [JuliaEditorSupport/zed-julia](https://github.com/JuliaEditorSupport/zed-julia), now uses JETLS as its default language server since v0.2.0.
 > Install the `Julia` extension from Zed's extensions view: like `jetls-client`, it installs and updates the pinned JETLS release automatically, so Zed users no longer need to [install `jetls`](https://aviatesk.github.io/JETLS.jl/release/#index/server-installation) or keep it up to date manually (still needed if you also use the `jetls` CLI, e.g. `jetls check`).
 > This is a breaking migration from LanguageServer.jl for existing users of the extension; see [Migrating to version 0.2](https://github.com/JuliaEditorSupport/zed-julia#migrating-to-version-02).
 > If you have been using the [aviatesk/zed-julia](https://github.com/aviatesk/zed-julia) fork, switch to the official extension, and move your settings from `lsp.JETLS` to `lsp.jetls`, since the language server ID is now `jetls`.
