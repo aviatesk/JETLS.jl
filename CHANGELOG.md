@@ -54,7 +54,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 >
 > Note: Path glob patterns use `/` as the separator on all platforms, including Windows; backslashes are not supported as separators.
 
+### Added
+
+- Added the [`testrunner.env`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/testrunner/env) and [`testrunner.julia_args`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/testrunner/julia_args) configurations for the Julia process that runs tests.
+  `testrunner.env` sets its environment variables, where `JULIA_APPS_JULIA_CMD` or `JULIAUP_CHANNEL` runs tests with a Julia other than the one running JETLS:
+  ```toml
+  [testrunner]
+  env = { JULIAUP_CHANNEL = "1.12" }
+  julia_args = ["--threads=4"]
+  ```
+
 ### Changed
+
+- The [TestRunner integration](https://aviatesk.github.io/JETLS.jl/release/testrunner/) now uses the TestRunner.jl bundled with JETLS, so the `testrunner` executable no longer needs to be installed.
+  Tests run with the Julia running JETLS by default.
+  If you installed `testrunner` only for JETLS, you can uninstall it with `pkg> app rm TestRunner`.
+
+- The `testrunner.executable` configuration is deprecated and no longer has any effect.
 
 - Bumped JuliaSyntax and JuliaLowering revisions ([`c941fbc399`](https://github.com/JuliaLang/julia/commit/c941fbc399)), bringing several upstream JuliaLowering bug fixes (https://github.com/JuliaLang/julia/pull/63006, https://github.com/JuliaLang/julia/pull/63009).
 

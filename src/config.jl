@@ -290,8 +290,25 @@ function parse_config_field(
         return parse_auto_instantiate(x, path)
     elseif T === FullAnalysisConfig && fname === :concretization_timeout
         return parse_concretization_timeout(x, path)
+    elseif T === TestRunnerConfig && fname === :env
+        return parse_testrunner_env(x, path)
     end
     return parse_config_dict_value(fieldtype(T, fname), x, path)
+end
+
+function parse_testrunner_env(@nospecialize(x), path::Vector{String})
+    x === nothing && return nothing
+    x isa Dict{String,Any} ||
+        parse_dict_error(path, "expected a table of environment variables, got $(typeof(x))")
+    env = Dict{String,String}()
+    for (key, value) in x
+        key in TESTRUNNER_RESERVED_ENV_KEYS && parse_dict_error(String[path; key],
+            "`$key` cannot be set because JETLS uses it to load TestRunner.jl")
+        value isa String ||
+            parse_dict_error(String[path; key], "expected String, got $(typeof(value))")
+        env[key] = value
+    end
+    return env
 end
 
 function parse_auto_instantiate(@nospecialize(x), path::Vector{String})

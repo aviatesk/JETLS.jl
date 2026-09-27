@@ -374,7 +374,9 @@ julia --startup-file=no Compiler/update-snapshots.jl
 Each snapshot has an explicit half-open Julia version range. The script rejects
 overlapping ranges and regenerates the version-selection logic in
 [`Compiler/src/Compiler.jl`](./Compiler/src/Compiler.jl).
-Julia versions outside all configured ranges fail with an explicit error.
+Julia versions outside all configured ranges fall back to `Base.Compiler`
+([`Compiler/src/fallback.jl`](./Compiler/src/fallback.jl)). JETLS does not
+support them, but TestRunner.jl can still run tests with them.
 
 Verify that committed sources match the configured commits with:
 

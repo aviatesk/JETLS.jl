@@ -556,9 +556,12 @@ const AUTO_INSTANTIATE_VALUES = (
 )
 
 @kwdef struct TestRunnerConfig <: ConfigSection
-    executable::Maybe{String} = nothing
+    env::Maybe{Dict{String,String}} = nothing
+    julia_args::Maybe{Vector{String}} = nothing
 end
 @define_eq_overloads TestRunnerConfig
+
+const TESTRUNNER_RESERVED_ENV_KEYS = ("JULIA_DEPOT_PATH", "JULIA_LOAD_PATH", "JULIA_PROJECT")
 
 @kwdef struct CustomFormatterConfig <: ConfigSection
     executable::Maybe{String} = nothing
@@ -773,7 +776,7 @@ const DEFAULT_CONFIG = JETLSConfig(;
         @static(JETLS_TEST_MODE ? AUTO_INSTANTIATE_ALWAYS : AUTO_INSTANTIATE_PROMPT),
         ConcretizationPattern[],
         JET.DEFAULT_CONCRETIZATION_TIMEOUT),
-    testrunner = TestRunnerConfig(@static Sys.iswindows() ? "testrunner.bat" : "testrunner"),
+    testrunner = TestRunnerConfig(Dict{String,String}(), String[]),
     formatter = "Runic",
     completion = CompletionConfig(LaTeXEmojiConfig(missing)),
     code_lens = CodeLensConfig(false, true),

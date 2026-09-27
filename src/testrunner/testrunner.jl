@@ -2,7 +2,6 @@ const TESTRUNNER_RUN_TITLE = "▶ Run"
 const TESTRUNNER_RERUN_TITLE = "▶ Rerun"
 const TESTRUNNER_OPEN_LOGS_TITLE = "☰ Open logs"
 const TESTRUNNER_CLEAR_RESULT_TITLE = "✓ Clear result"
-const TESTRUNNER_INSTALLATION_URL = "https://github.com/aviatesk/JETLS.jl#prerequisites"
 
 const TEST_MACROS = [
     "@inferred",
@@ -286,29 +285,105 @@ function testrunner_root_path(state::ServerState, uri::URI)
     return isdefined(state, :root_path) ? state.root_path : nothing
 end
 
-# `@testset` execution
-function testrunner_cmd(executable::String, filepath::String, tsn::String, tsl::Int,
-                        test_env_path::Union{Nothing,String},
-                        root_path::Union{Nothing,String})
-    tsn = rlstrip(tsn, '"')
-    testrunner_exe = Sys.which(executable)
+# `julia -m TestRunner` resolves `TestRunner` by name like its Pkg app shim does, which
+# requires the root project of the environment JETLS is loaded from. It is captured at load
+# time since the server replaces `LOAD_PATH` afterwards (see `@with_cli_LOAD_PATH`).
+const testrunner_load_path = Ref{Union{Nothing,String}}(nothing)
+push_init_hook!() do
+    testrunner_load_path[] = try
+        find_testrunner_load_path()
+    catch err
+        @error "Failed to locate the environment of TestRunner.jl"
+        Base.display_error(stderr, err, catch_backtrace())
+        nothing
+    end
+end
+
+function find_testrunner_load_path()
+    pkgid = Base.PkgId(TestRunner)
+    (_, env) = @something (@lock Base.require_lock Base.locate_package_env(pkgid)) return nothing
+    return @something find_testrunner_load_path(env, pkgid) begin
+        @warn "TestRunner.jl is not a direct dependency of the root project of the environment JETLS is loaded from" env
+        nothing
+    end
+end
+
+function find_testrunner_load_path(env::String, pkgid::Base.PkgId)
+    project_file = Base.env_project_file(env)
+    project_file isa String || return nothing
+    manifest_file = @something Base.project_file_manifest_path(project_file) return nothing
+    load_path = dirname(manifest_file)
+    root_project_file = Base.env_project_file(load_path)
+    root_project_file isa String || return nothing
+    Base.explicit_project_deps_get(root_project_file, pkgid.name) == pkgid.uuid || return nothing
+    return load_path
+end
+
+struct TestRunnerLauncher
+    julia::Cmd
+    julia_args::Vector{String}
+    env::Vector{Pair{String,Union{Nothing,String}}}
+end
+
+# Selects the Julia executable in the same way as the managed installations of the clients:
+# `JULIA_APPS_JULIA_CMD` names the executable, `JULIAUP_CHANNEL` selects a channel of the
+# `julia` launcher, and tests run with the Julia running JETLS otherwise.
+function testrunner_launcher(server::Server)
+    load_path = @something testrunner_load_path[] begin
+        return "Failed to locate the environment of TestRunner.jl bundled with JETLS."
+    end
+    env = get_config(server, :testrunner, :env)
+    julia_cmd = if haskey(env, "JULIA_APPS_JULIA_CMD")
+        julia = env["JULIA_APPS_JULIA_CMD"]
+        exe = @something Sys.which(julia) begin
+            return app_notfound_message(julia) * check_settings_message(:testrunner, :env)
+        end
+        `$exe`
+    elseif haskey(env, "JULIAUP_CHANNEL")
+        exe = @something Sys.which("julia") begin
+            return app_notfound_message("julia") * check_settings_message(:testrunner, :env)
+        end
+        `$exe`
+    else
+        Base.julia_cmd()
+    end
+    julia_args = get_config(server, :testrunner, :julia_args)
+    launcher_env = Pair{String,Union{Nothing,String}}[
+        env...,
+        "JULIA_LOAD_PATH" => load_path,
+        "JULIA_PROJECT" => nothing]
+    return TestRunnerLauncher(julia_cmd, julia_args, launcher_env)
+end
+
+# `julia_args` follows `--project` so that it can override the detected test environment.
+function testrunner_cmd(launcher::TestRunnerLauncher, test_env_path::Union{Nothing,String},
+                        args::Cmd)
     project_args = isnothing(test_env_path) ? `` : `--project=$test_env_path`
+    cmd = `$(launcher.julia) --startup-file=no $project_args $(launcher.julia_args) -m TestRunner $args`
+    return addenv(cmd, launcher.env...)
+end
+
+# `@testset` execution
+function testrunner_testset_cmd(launcher::TestRunnerLauncher, filepath::String, tsn::String, tsl::Int,
+                                test_env_path::Union{Nothing,String},
+                                root_path::Union{Nothing,String})
+    tsn = rlstrip(tsn, '"')
     # `--root-path` only matters when `filepath` is a virtual identifier
     # (no `dirname`); for saved files we omit it to avoid implying a
     # workspace-relative include base that doesn't apply.
     root_args = isnothing(root_path) ? `` : `--root-path=$root_path`
-    return `$testrunner_exe --verbose $project_args $root_args --json --read-stdin $filepath $tsn --filter-lines=$tsl`
+    return testrunner_cmd(launcher, test_env_path,
+        `--verbose $root_args --json --read-stdin $filepath $tsn --filter-lines=$tsl`)
 end
 
 # `@test` execution
-function testrunner_cmd(executable::String, filepath::String, tcl::Int,
-                        test_env_path::Union{Nothing,String},
-                        root_path::Union{Nothing,String})
-    testrunner_exe = Sys.which(executable)
-    project_args = isnothing(test_env_path) ? `` : `--project=$test_env_path`
-    # See the `@testset` overload for the rationale behind `--root-path`.
+function testrunner_testcase_cmd(launcher::TestRunnerLauncher, filepath::String, tcl::Int,
+                                 test_env_path::Union{Nothing,String},
+                                 root_path::Union{Nothing,String})
+    # See `testrunner_testset_cmd` for the rationale behind `--root-path`.
     root_args = isnothing(root_path) ? `` : `--root-path=$root_path`
-    return `$testrunner_exe --verbose $project_args $root_args --json --read-stdin $filepath L$tcl`
+    return testrunner_cmd(launcher, test_env_path,
+        `--verbose $root_args --json --read-stdin $filepath L$tcl`)
 end
 
 function testrunner_diagnostic_to_related_information(diagnostic::TestRunnerDiagnostic)
@@ -444,18 +519,11 @@ function testrunner_run_testset(
         server::Server, uri::URI, fi::FileInfo, idx::Int, tsn::String, filepath::String;
         cancellable_token::Union{Nothing,CancellableToken} = nothing
     )
-    setting_path = (:testrunner, :executable)
-    executable = get_config(server, setting_path...)
-    if isnothing(Sys.which(executable))
-        default_executable = get_default_config(setting_path...)
-        additional_msg = if executable == default_executable
-            install_instruction_message(executable, TESTRUNNER_INSTALLATION_URL)
-        else
-            check_settings_message(setting_path...)
-        end
-        show_error_message(server, app_notfound_message(executable) * additional_msg)
+    launcher = testrunner_launcher(server)
+    if launcher isa String
+        show_error_message(server, launcher)
         if !isnothing(cancellable_token)
-            send_progress(server, cancellable_token.token, WorkDoneProgressEnd(; message = "TestRunner not installed"))
+            send_progress(server, cancellable_token.token, WorkDoneProgressEnd(; message = "Failed to launch TestRunner"))
         end
         return
     end
@@ -469,7 +537,7 @@ function testrunner_run_testset(
 
     local result::String
     try
-        result = _testrunner_run_testset(server, executable, uri, fi, idx, tsn, filepath; cancellable_token)
+        result = _testrunner_run_testset(server, launcher, uri, fi, idx, tsn, filepath; cancellable_token)
     catch err
         result = sprint(showerror, err, catch_backtrace())
         @error "Error from testrunner executor" err
@@ -539,7 +607,7 @@ function log_testrunner_failure(
         parse_error::Union{Nothing,String} = nothing
     )
     details = (;
-        cmd,
+        cmd = Cmd(cmd.exec), # omit the environment, which may contain secrets
         exitcode = proc.exitcode,
         termsignal = proc.termsignal,
         stdout_bytes = length(output),
@@ -591,7 +659,7 @@ function read_testrunner_result(
 end
 
 function _testrunner_run_testset(
-        server::Server, executable::AbstractString, uri::URI, fi::FileInfo,
+        server::Server, launcher::TestRunnerLauncher, uri::URI, fi::FileInfo,
         idx::Int, tsn::String, filepath::String;
         cancellable_token::Union{Nothing, CancellableToken} = nothing
     )
@@ -606,7 +674,7 @@ function _testrunner_run_testset(
     tsl = testset_line(fi.testsetinfos[idx])
     test_env_path = find_uri_env_path(server.state, uri)
     root_path = testrunner_root_path(server.state, uri)
-    cmd = testrunner_cmd(executable, filepath, tsn, tsl, test_env_path, root_path)
+    cmd = testrunner_testset_cmd(launcher, filepath, tsn, tsl, test_env_path, root_path)
     source = String(document_text(fi))
     result = read_testrunner_result(server, cmd, source; cancellable_token)
     result isa String && return result
@@ -667,18 +735,11 @@ function testrunner_run_testcase(
         server::Server, uri::URI, tcl::Int, tct::String, filepath::String, source::String;
         cancellable_token::Union{Nothing,CancellableToken} = nothing
     )
-    setting_path = (:testrunner, :executable)
-    executable = get_config(server, setting_path...)
-    if isnothing(Sys.which(executable))
-        default_executable = get_default_config(setting_path...)
-        additional_msg = if executable == default_executable
-            install_instruction_message(executable, TESTRUNNER_INSTALLATION_URL)
-        else
-            check_settings_message(setting_path...)
-        end
-        show_error_message(server, app_notfound_message(executable) * additional_msg)
+    launcher = testrunner_launcher(server)
+    if launcher isa String
+        show_error_message(server, launcher)
         if !isnothing(cancellable_token)
-            send_progress(server, cancellable_token.token, WorkDoneProgressEnd(; message = "TestRunner not installed"))
+            send_progress(server, cancellable_token.token, WorkDoneProgressEnd(; message = "Failed to launch TestRunner"))
         end
         return
     end
@@ -692,7 +753,7 @@ function testrunner_run_testcase(
 
     local result::String
     try
-        result = _testrunner_run_testcase(server, executable, uri, tcl, tct, filepath, source; cancellable_token)
+        result = _testrunner_run_testcase(server, launcher, uri, tcl, tct, filepath, source; cancellable_token)
     catch err
         result = sprint(showerror, err, catch_backtrace())
         @error "Error from testrunner executor" err
@@ -709,13 +770,13 @@ function testrunner_run_testcase(
 end
 
 function _testrunner_run_testcase(
-        server::Server, executable::AbstractString, uri::URI, tcl::Int, tct::String,
+        server::Server, launcher::TestRunnerLauncher, uri::URI, tcl::Int, tct::String,
         filepath::String, source::String;
         cancellable_token::Union{Nothing,CancellableToken} = nothing
     )
     test_env_path = find_uri_env_path(server.state, uri)
     root_path = testrunner_root_path(server.state, uri)
-    cmd = testrunner_cmd(executable, filepath, tcl, test_env_path, root_path)
+    cmd = testrunner_testcase_cmd(launcher, filepath, tcl, test_env_path, root_path)
     result = read_testrunner_result(server, cmd, source; cancellable_token)
     result isa String && return result
 
