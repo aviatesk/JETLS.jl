@@ -29,13 +29,18 @@ Notes:
 
 ## Focused iteration with TestRunner.jl
 
-For faster iteration on a specific `@testset`,
-use [TestRunner.jl](https://github.com/aviatesk/TestRunner.jl)
-when `testrunner --help` succeeds:
+For faster iteration on a specific `@testset`, use
+[TestRunner.jl](https://github.com/aviatesk/TestRunner.jl), which the test
+environment depends on:
 
 ```bash
-testrunner --project=test test/test_XXX.jl "testset_name"
+julia --startup-file=no --project=test -m TestRunner test/test_XXX.jl "testset_name"
 ```
+
+`--project=test` before `-m` keeps `JETLS_TEST_MODE` enabled and resolves
+`TestRunner` through the shared workspace manifest, so the tests run with the
+TestRunner bundled in JETLS. Do not use the `testrunner` app shim: it loads its
+own TestRunner, which conflicts with the one JETLS imports.
 
 TestRunner.jl is still experimental, but it is reliable enough to try first
 when the target `@testset` is clear. If it fails in a way that looks specific
