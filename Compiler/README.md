@@ -38,8 +38,11 @@ informational and is never followed automatically.
 
 Version ranges are half-open: `runtime.lower` is included and `runtime.upper`
 is excluded. Ranges must not overlap, but gaps may represent unsupported Julia
-versions. The generated entrypoint reports the supported ranges when the
-running Julia version does not match any snapshot.
+versions. When the running Julia version does not match any snapshot, the
+generated entrypoint falls back to `Base.Compiler` with
+[`src/fallback.jl`](./src/fallback.jl), in the same way as the registered
+Compiler.jl does. JETLS does not support these versions, but this lets
+TestRunner.jl, which JETLS runs tests with, work on them (e.g. nightly).
 
 [`update-snapshots.jl`](./update-snapshots.jl) materializes the configured
 sources under [`snapshots/`](./snapshots/) and regenerates

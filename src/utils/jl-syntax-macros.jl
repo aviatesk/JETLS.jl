@@ -350,10 +350,9 @@ function Base.var"@label"(__context__::JL.MacroContext, ex::SyntaxTree)
         # reaches scope analysis. Goto-target semantics are lost.
         return JL.@ast(__context__, __context__.macrocall::SyntaxTree, ex)
     end
-    # Keep the label token's exact range without inheriting its caller context, so
-    # macro expansion records the originating `@label` call in `SyntaxContext`.
-    src = JS.sourceref(ex)
-    return JL.@ast(__context__, ex, [JS.K"symboliclabel"(src; context=nothing) ex])
+    # The `@label` form is the label's provenance; the identifier keeps its own
+    # hygiene layer.
+    return JL.@ast(__context__, __context__.macrocall::SyntaxTree, [JS.K"symboliclabel" ex])
 end
 
 function Base.var"@label"(__context__::JL.MacroContext, args::SyntaxTree...)
@@ -418,7 +417,7 @@ function Base.var"@lazy_str"(__context__::JL.MacroContext, text::SyntaxTree)
         push_macro_error!(text, "@lazy_str expects a string literal")
         return JL.@ast(__context__, mc, text)
     end
-    source_map = _lazy_str_source_map(value, raw)
+    source_map = _lazy_str_source_map(value, raw; quoted=JS.kind(text) === JS.K"String")
     parts = _lazy_str_parts(__context__, text, value, source_map)
     src = _macro_generated_source(__context__)
     return JL.@ast(__context__, src,
@@ -464,17 +463,17 @@ function _lazy_str_parts(
     return parts
 end
 
-function _lazy_str_source_map(value::String, raw::String)
-    if startswith(raw, "\"\"\"") && endswith(raw, "\"\"\"")
+function _lazy_str_source_map(value::String, raw::String; quoted::Bool)
+    if quoted && startswith(raw, "\"\"\"") && endswith(raw, "\"\"\"")
         return _lazy_str_triple_source_map(value, raw)
     end
-    return _lazy_str_linear_source_map(value, raw)
+    raw_start = quoted ? nextind(raw, firstindex(raw)) : firstindex(raw)
+    return _lazy_str_linear_source_map(value, raw, raw_start)
 end
 
-function _lazy_str_linear_source_map(value::String, raw::String)
+function _lazy_str_linear_source_map(value::String, raw::String, ri::Int)
     value_to_raw = Dict{Int,Int}()
     vi = firstindex(value)
-    ri = firstindex(raw)
     value_to_raw[vi] = ri
     while vi <= lastindex(value) && ri <= lastindex(raw)
         vi, ri = _lazy_str_step_source_map!(value_to_raw, value, raw, vi, ri)

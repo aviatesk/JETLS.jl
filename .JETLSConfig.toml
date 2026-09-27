@@ -89,6 +89,10 @@ full_analysis = true
 path = "Compiler/snapshots/**/*.jl"
 full_analysis = false
 
+[[initialization_options.analysis_overrides]]
+path = "Compiler/src/**/*.jl"
+full_analysis = false
+
 # Just disable analysis for test files for now
 [[initialization_options.analysis_overrides]]
 path = "test/**/*.jl"

@@ -446,7 +446,7 @@ function linearize_cfg_events!(
         label_id = cfg_get_or_create_goto_label!(lin, name_val(ex3))
         cfg_emit_label!(lin, label_id)
 
-    elseif k == JS.K"symbolicgoto" || k == JS.K"oldsymbolicgoto"
+    elseif k == JS.K"symbolicgoto"
         # `@goto name` — unconditional jump to the matching `K"symboliclabel"`.
         # Forward references work because `pending_gotos` is resolved later in
         # `cfg_finalize!`.

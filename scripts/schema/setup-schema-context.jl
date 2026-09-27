@@ -66,6 +66,15 @@ function setup_ctx!(ctx::SchemaContext)
         )
     end
 
+    override_field!(ctx, JETLS.TestRunnerConfig, :env) do _
+        Dict(
+            "type" => "object",
+            "additionalProperties" => Dict("type" => "string"),
+            "propertyNames" => Dict(
+                "not" => Dict("enum" => collect(JETLS.TESTRUNNER_RESERVED_ENV_KEYS))),
+        )
+    end
+
     override_field!(ctx, JETLS.DiagnosticPattern, :match_by) do _
         Dict("type" => "string", "enum" => ["code", "message"])
     end

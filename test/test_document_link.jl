@@ -35,6 +35,51 @@ end
         end
     end
 
+    @testset "literal payload ranges" begin
+        mktempdir() do dir
+            main = joinpath(dir, "main.jl")
+            for delimiter in ("\"", "\"\"\""), (spelling, filename) in (
+                    ("foo.jl", "foo.jl"),
+                    (raw"f\u006fo.jl", "foo.jl"),
+
+                    ("é😀", "é😀"),
+                )
+                touch(joinpath(dir, filename))
+                code = "include(" * delimiter * spelling * delimiter * ")"
+                links, _ = get_document_links(code, main)
+                @test length(links) == 1
+                link = only(links)
+                @test link.target == filename2uri(joinpath(dir, filename))
+                start = 8 + ncodeunits(delimiter)
+                stop = start + length(transcode(UInt16, spelling))
+                @test link.range == Range(;
+                    start = Position(; line=0, character=start),
+                    var"end" = Position(; line=0, character=stop))
+            end
+            let code = "include(\"\"\"\n    foo.jl\"\"\")"
+                links, _ = get_document_links(code, main)
+                @test length(links) == 1
+                link = only(links)
+                @test link.target == filename2uri(joinpath(dir, "foo.jl"))
+                @test link.range == Range(;
+                    start = Position(; line=0, character=11),
+                    var"end" = Position(; line=1, character=10))
+            end
+        end
+    end
+
+    @testset "malformed literals are skipped" begin
+        mktempdir() do dir
+            touch(joinpath(dir, "foo.jl"))
+            main = joinpath(dir, "main.jl")
+            for code in ("include(\"foo.jl", "include(\"\"\"foo.jl\"\"",
+                         "include(\"foo.jl\\\"", "include(\"foo\\q.jl\")")
+                links, _ = get_document_links(code, main)
+                @test isempty(links)
+            end
+        end
+    end
+
     @testset "subdirectory path" begin
         mktempdir() do dir
             mkdir(joinpath(dir, "sub"))

@@ -1105,7 +1105,7 @@ const DefUsedNamesCache = LWContainer{DefUsedNamesCacheData, LWStats}
 # the lowering context. The cross-file phase consumes these via
 # `emit_undef_global_diagnostics!` with a unit-wide def-name set.
 function collect_undef_global_candidates!(
-        candidates::Vector{UndefGlobalCandidate}, fi::FileInfo, ctx3::JL.VariableAnalysisContext,
+        candidates::Vector{UndefGlobalCandidate}, fi::FileInfo,
         binding_occurrences::Dict{JL.BindingInfo,Set{BindingOccurrence}},
         world::UInt, analyzer::Union{Nothing,LSAnalyzer}, postprocessor::LSPostProcessor,
         reported::Set{LoweringDiagnosticKey}
@@ -1127,13 +1127,16 @@ function collect_undef_global_candidates!(
             haskey(JET.AnalyzerState(analyzer).binding_states, bp) && continue
         end
         bn = binfo.name
-        provs = JS.flattened_provenance(JL.binding_ex(ctx3, binfo.id))
-        is_from_user_ast(provs) || continue
-        range = jsobj_to_range(last(provs), fi)
-        key = LoweringDiagnosticKey(range, bk, bn)
-        key in reported ? continue : push!(reported, key)
         message = postprocessor("`$(bmod).$(bn)` is not defined")
-        push!(candidates, UndefGlobalCandidate(bmod, bn, range, message))
+        for occ in sort!(collect(occurrences); by = o -> JS.first_byte(o.tree))
+            occ.kind === :use || continue
+            provs = JS.flattened_provenance(occ.tree)
+            is_from_user_ast(provs) || continue
+            range = jsobj_to_range(last(provs), fi)
+            key = LoweringDiagnosticKey(range, bk, bn)
+            key in reported ? continue : push!(reported, key)
+            push!(candidates, UndefGlobalCandidate(bmod, bn, range, message))
+        end
     end
 end
 
@@ -1229,7 +1232,7 @@ function compute_unused_variable_data(
     # lhs_eq_range: from LHS start to actual RHS start in source (exclusive).
     # We scan forward from after the LHS to find the `=` sign and any
     # following whitespace.  This is needed because some node kinds (e.g.
-    # K"String") have a byte range that excludes delimiters, so
+    # K"Char") have a byte range that excludes delimiters, so
     # `first_byte(rhs)` may point past the opening delimiter.
     assignment_range = jsobj_to_range(assignment, fi)
     lhs_eq_range = if JS.kind(assignment) === JS.K"="
@@ -1548,11 +1551,12 @@ function check_lambda_gotos!(
         # Skip macro-generated labels — only report user-written ones.
         provs = JL.flattened_provenance(st)
         is_from_user_ast(provs) || continue
-        label_call = @something JS.macro_prov(st) continue
+        label_call = @something provenance_ancestor(st, JS.K"macrocall") continue
         get_macrocall_name(label_call) == "@label" || continue
+        JS.numchildren(label_call) >= 2 || continue
         delete_range = line_absorbing_delete_range(label_call, fi)
         push!(diagnostics, Diagnostic(;
-            range = jsobj_to_range(st, fi),
+            range = jsobj_to_range(label_call[end], fi),
             severity = DiagnosticSeverity.Information,
             message = "Unused label `$name`",
             source = DIAGNOSTIC_SOURCE_LIVE,
@@ -1581,7 +1585,7 @@ function collect_gotos_labels!(
         elseif k === JS.K"symboliclabel"
             push!(labels, (name_val(node), node))
             return traversal_no_recurse
-        elseif k === JS.K"symbolicgoto" || k === JS.K"oldsymbolicgoto"
+        elseif k === JS.K"symbolicgoto"
             push!(gotos, (name_val(node), node))
             return traversal_no_recurse
         elseif k === JS.K"symbolicblock" || k === JS.K"break"
@@ -1634,7 +1638,7 @@ function analyze_lowered_code!(
     analyze_unresolved_gotos!(diagnostics, fi, st3)
 
     if !skip_analysis_requiring_context
-        collect_undef_global_candidates!(candidates, fi, ctx3, binding_occurrences,
+        collect_undef_global_candidates!(candidates, fi, binding_occurrences,
             world, analyzer, postprocessor, reported)
         analyze_ambiguous_soft_scope!(diagnostics, fi, ctx3, reported)
     end

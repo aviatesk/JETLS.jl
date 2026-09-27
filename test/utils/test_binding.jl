@@ -240,6 +240,86 @@ end
     end
 end
 
+@testset "macro definition bindings" begin
+    @testset "cursor selection" begin
+        @test with_target_binding("""
+            macro │fo│o│(│x│)
+                │x│
+            end
+            """) do i, (; ctx3, binding)
+            binfo = JL.get_binding(ctx3, binding)
+            @test binfo.name == (i <= 3 ? "@foo" : "x")
+            @test binfo.kind === (i <= 3 ? :global : :argument)
+            @test binfo.mod === (i <= 3 ? lowering_module : nothing)
+            @test JS.sourcetext(binding) == (i <= 3 ? "foo" : "x")
+            return true
+        end == 7
+
+        for (code, name, source) in (
+                ("macro │fo│o│ end", "@foo", "foo"),
+                ("macro var\"│with │space│\"(x) x end", "@with space", "with space"),
+                ("macro var\"│@fo│o│\" end", "@@foo", "@foo"),
+                ("macro var\"│foo\\\"│bar│\"(x) x end", "@foo\"bar", "foo\\\"bar"),
+                ("if true\nmacro │fo│o│(x) x end\nend", "@foo", "foo"),
+                ("\"Docstring\"\nmacro │fo│o│(x) x end", "@foo", "foo"),
+                ("macro │_│(x) x end", "@_", "_"),
+            )
+            @test with_target_binding(code) do _, (; ctx3, binding)
+                binfo = JL.get_binding(ctx3, binding)
+                @test binfo.name == name
+                @test binfo.kind === :global
+                @test binfo.mod === lowering_module
+                @test JS.sourcetext(binding) == source
+                return true
+            end == count(==('│'), code)
+        end
+
+        for code in ("macro │", "macro │()│ end")
+            @test with_target_binding(code) do _, result
+                @test result === nothing
+                return true
+            end == count(==('│'), code)
+        end
+
+        @test with_target_binding("macro │B│.info(x) x end") do _, (; ctx3, binding)
+            binfo = JL.get_binding(ctx3, binding)
+            @test binfo.name == "B"
+            @test binfo.kind === :global
+            @test binfo.mod === lowering_module
+            return true
+        end == 2
+    end
+end
+
+module macro_first_module
+foo() = 1
+macro use_foo()
+    return :(foo())
+end
+end
+
+@testset "global mentioned first by a same-module macro" begin
+    # Lower with the macrocall kept, so the macro expansion creates the shared
+    # `foo` binding; the user-written mention must still be selectable.
+    clean_code, positions = JETLS.get_text_and_positions("""
+        function f()
+            @use_foo()
+            │fo│o│()
+        end
+        """)
+    st0 = jlparse(clean_code; rule=:statement)
+    world = Base.get_world_counter()
+    (; ctx3, st3) = JETLS.jl_lower_for_scope_resolution(macro_first_module, world, st0)
+    for pos in positions
+        offset = JETLS.xy_to_offset(clean_code, pos, @__FILE__)
+        binding = JETLS._select_target_binding(ctx3, st3, offset)
+        @test binding !== nothing
+        binding === nothing && continue
+        @test JS.sourcetext(binding) == "foo"
+        @test JL.get_binding(ctx3, binding).kind === :global
+    end
+end
+
 function with_target_binding_definitions(f, text::AbstractString; kwargs...)
     clean_code, positions = JETLS.get_text_and_positions(text; kwargs...)
     st0_top = jlparse(clean_code)

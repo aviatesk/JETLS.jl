@@ -12,7 +12,9 @@ end
 # `old_path => nothing` to deprecate a key without a replacement.
 # Each path is a list of nested keys; `migrate_deprecated_config_keys!` consults this
 # table and rewrites raw user config dicts before parsing.
-const deprecated_configurations = Pair{Vector{String},Union{Nothing,Vector{String}}}[]
+const deprecated_configurations = Pair{Vector{String},Union{Nothing,Vector{String}}}[
+    ["testrunner", "executable"] => nothing,
+]
 
 const __init__hooks__ = Any[]
 push_init_hook!(hook) = push!(__init__hooks__, hook)
@@ -66,6 +68,8 @@ using REPL: REPL # loading REPL is necessary to make `Base.Docs.doc(::Base.Docs.
 using Markdown: Markdown
 using TOML: TOML
 using Test: Test # used to define new-style implementations of `@test`/`@testset`
+using TestRunner: TestRunner
+using .TestRunner.App: TestRunnerDiagnostic, TestRunnerResult
 
 using Glob: Glob
 
@@ -96,7 +100,6 @@ using .FixedSizeQueues
 include("utils/markdown.jl")
 include("utils/general.jl")
 
-include("testrunner/testrunner-types.jl")
 include("types.jl")
 
 include("utils/jl-syntax-macros.jl")

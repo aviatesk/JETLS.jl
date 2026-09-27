@@ -19,7 +19,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## Unreleased
 
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
-- Diff: [`685e812...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/685e812...HEAD)
+- Diff: [`906d919...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/906d919...HEAD)
 
 ### Announcement
 
@@ -53,6 +53,47 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > Note that `analysis_overrides` is provided as a temporary workaround and may be removed or changed at any time. A proper fix is being worked on.
 >
 > Note: Path glob patterns use `/` as the separator on all platforms, including Windows; backslashes are not supported as separators.
+
+### Added
+
+- Added the [`testrunner.env`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/testrunner/env) and [`testrunner.julia_args`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/testrunner/julia_args) configurations for the Julia process that runs tests.
+  `testrunner.env` sets its environment variables, where `JULIA_APPS_JULIA_CMD` or `JULIAUP_CHANNEL` runs tests with a Julia other than the one running JETLS:
+  ```toml
+  [testrunner]
+  env = { JULIAUP_CHANNEL = "1.12" }
+  julia_args = ["--threads=4"]
+  ```
+
+### Changed
+
+- The [TestRunner integration](https://aviatesk.github.io/JETLS.jl/release/testrunner/) now uses the TestRunner.jl bundled with JETLS, so the `testrunner` executable no longer needs to be installed.
+  Tests run with the Julia running JETLS by default.
+  If you installed `testrunner` only for JETLS, you can uninstall it with `pkg> app rm TestRunner`.
+
+- The `testrunner.executable` configuration is deprecated and no longer has any effect.
+
+- Bumped JuliaSyntax and JuliaLowering revisions ([`c941fbc399`](https://github.com/JuliaLang/julia/commit/c941fbc399)), bringing several upstream JuliaLowering bug fixes (https://github.com/JuliaLang/julia/pull/63006, https://github.com/JuliaLang/julia/pull/63009).
+
+### Fixed
+
+- Fixed global function definitions such as `global f() = ...` and `global function f() end`, including those inside `let`/`for`/`while` blocks, not appearing in the document outline and workspace symbol search.
+  For example, `sayhi` in the following code is now listed:
+  ```julia
+  let
+      sentence = "Hi"
+      global sayhi() = println(sentence)
+  end
+  ```
+  Method definitions like `Base.show(io::IO, x::Foo) = ...` inside these blocks are now listed as well.
+
+## 2026-09-25
+
+- Commit: [`906d919`](https://github.com/aviatesk/JETLS.jl/commit/906d919)
+- Diff: [`685e812...906d919`](https://github.com/aviatesk/JETLS.jl/compare/685e812...906d919)
+- Installation:
+  ```bash
+  julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="2026-09-25")'
+  ```
 
 ### Fixed
 
