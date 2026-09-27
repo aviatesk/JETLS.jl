@@ -840,6 +840,75 @@ end
     end
 end
 
+@testset "live diagnostics fingerprints of collected texts" begin
+    with_manual_dispatch_server() do server, _
+        uri = filepath2uri(@__FILE__)
+        # Earlier `FileInfo`s are collected while the fingerprints computed from them are
+        # still held, as by the workspace diagnostics worker or as a client's
+        # `previousResultId`.
+        fingerprints = map(1:5) do version
+            JETLS.cache_file_info!(server, uri, version, "func(x) = $version\n")
+            GC.gc()
+            return JETLS.compute_live_diagnostics_fingerprint(server, uri)
+        end
+        @test allunique(fingerprints)
+    end
+end
+
+@testset "textDocument/diagnostic binding occurrence cache snapshot isolation" begin
+    for unused_first in (true, false)
+        with_manual_dispatch_server() do server, recorder
+            uri = filepath2uri(@__FILE__)
+            JETLS.cache_out_of_scope!(
+                server.state.analysis_manager, uri, JETLS.OutOfScope(@__MODULE__))
+            old_text = unused_first ? "using Base: sin\ncos(1)\n" : "using Base: sin\nsin(1)\n"
+            new_text = unused_first ? "using Base: sin\nsin(1)\n" : "using Base: sin\ncos(1)\n"
+            JETLS.cache_file_info!(server, uri, 1, old_text)
+            make_request(id::Int; previousResultId::Union{Nothing,String} = nothing) =
+                DocumentDiagnosticRequest(;
+                    id,
+                    params = DocumentDiagnosticParams(;
+                        textDocument = TextDocumentIdentifier(; uri), previousResultId))
+            prepared = queued_snapshot_requests(server, [
+                make_request(1),
+                make_DidChangeTextDocumentNotification(uri, new_text, 2),
+                make_request(2)])
+            @test length(prepared) == 2
+            @test prepared[1].snapshot.fi.version == 1
+            @test prepared[2].snapshot.fi.version == 2
+
+            response = dispatch_snapshot_request(server, recorder, prepared[1])
+            @test response isa DocumentDiagnosticResponse
+            @test response.result isa RelatedFullDocumentDiagnosticReport
+            if unused_first
+                @test only(response.result.items).code == JETLS.LOWERING_UNUSED_IMPORT_CODE
+            else
+                @test isempty(response.result.items)
+            end
+            first_result_id = response.result.resultId
+
+            response = dispatch_snapshot_request(server, recorder, prepared[2])
+            @test response isa DocumentDiagnosticResponse
+            @test response.result isa RelatedFullDocumentDiagnosticReport
+            if unused_first
+                @test isempty(response.result.items)
+            else
+                @test only(response.result.items).code == JETLS.LOWERING_UNUSED_IMPORT_CODE
+            end
+            second_result_id = response.result.resultId
+            @test second_result_id isa String
+            @test second_result_id != first_result_id
+
+            repeated = only(queued_snapshot_requests(server, [
+                make_request(3; previousResultId = second_result_id)]))
+            response = dispatch_snapshot_request(server, recorder, repeated)
+            @test response isa DocumentDiagnosticResponse
+            @test response.result isa RelatedUnchangedDocumentDiagnosticReport
+            @test response.result.resultId == second_result_id
+        end
+    end
+end
+
 @testset "textDocument/diagnostic message cycle" begin
     script_code = "func(x) = nothing\n"
     withscript(script_code) do script_path

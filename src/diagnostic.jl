@@ -1785,6 +1785,7 @@ end
 
 function compute_unit_def_used_names(
         server::Server, search_uris::Set{URI};
+        snapshot::Union{Nothing,DocumentSnapshot} = nothing,
         cancel_flag::CancelFlag = DUMMY_CANCEL_FLAG,
         skip_context_check::Bool = false # used by tests only
     )
@@ -1794,13 +1795,15 @@ function compute_unit_def_used_names(
         is_cancelled(cancel_flag) && break
         skip_context_check || has_analyzed_context(state, search_uri) || continue
         search_fi = @something begin
+            snapshot !== nothing && search_uri == snapshot.cache_uri ? snapshot.fi : nothing
+        end begin
             get_file_info(state, search_uri)
         end begin
             get_unsynced_file_info!(state, search_uri)
         end continue
         cached = get(load(state.per_file_diagnostics_cache),
             canonical_cache_uri(state, search_uri), nothing)
-        if cached !== nothing && cached.version == search_fi.version
+        if cached !== nothing && cached.file_identity == search_fi.identity
             merge_def_used_names!(mod_def_used_names, cached.result.def_used_names)
             continue
         end
@@ -1854,18 +1857,21 @@ end
 # `run_per_file_diagnostics!` in cli-check).
 function compute_def_used_names!(
         cache::DefUsedNamesCache, server::Server, search_uris::Set{URI};
+        snapshot::Union{Nothing,DocumentSnapshot} = nothing,
         cancel_flag::CancelFlag = DUMMY_CANCEL_FLAG,
         skip_context_check::Bool = false # used by tests only
     )
     # `Base.PersistentDict` uses `===` to compare keys (HAMT looks up via object identity),
     # so a `Set{URI}` key would never hit the cache across calls even when the elements
     # match. Hash the URI set up-front to get an immutable key that `===`-equates by value.
-    key = hash(search_uris)
+    key = snapshot === nothing ? hash(search_uris) :
+        hash((search_uris, snapshot.cache_uri, snapshot.fi.identity))
     return store!(cache) do data::DefUsedNamesCacheData
         if haskey(data, key)
             return data, data[key]
         end
-        result = compute_unit_def_used_names(server, search_uris; cancel_flag, skip_context_check)
+        result = compute_unit_def_used_names(
+            server, search_uris; snapshot, cancel_flag, skip_context_check)
         # a cancelled aggregation is partial, and must not be reused by later files
         is_cancelled(cancel_flag) && return data, result
         return DefUsedNamesCacheData(data, key => result), result
@@ -1885,6 +1891,7 @@ function analyze_unused_imports!(
         diagnostics::Vector{Diagnostic}, def_used_names_cache::DefUsedNamesCache,
         server::Server, uri::URI,
         mod_imported_names::Dict{Module,Dict{String,Vector{ImportInfo}}};
+        snapshot::Union{Nothing,DocumentSnapshot} = nothing,
         cancel_flag::CancelFlag = DUMMY_CANCEL_FLAG,
         skip_context_check::Bool = false # used by tests only
     )
@@ -1892,7 +1899,7 @@ function analyze_unused_imports!(
 
     search_uris = collect_search_uris(server, uri)
     mod_def_used_names = compute_def_used_names!(
-        def_used_names_cache, server, search_uris; cancel_flag, skip_context_check)
+        def_used_names_cache, server, search_uris; snapshot, cancel_flag, skip_context_check)
     is_cancelled(cancel_flag) && return diagnostics
 
     for (context_module, imported_names) in mod_imported_names
@@ -2067,7 +2074,7 @@ function get_per_file_diagnostics!(
     cache_uri = canonical_cache_uri(server.state, uri)
     return store!(server.state.per_file_diagnostics_cache) do cache::PerFileDiagnosticsCacheData
         cached = get(cache, cache_uri, nothing)
-        if cached !== nothing && cached.version == file_info.version
+        if cached !== nothing && cached.file_identity == file_info.identity
             return cache, cached.result
         end
         st0_top = build_syntax_tree(file_info)
@@ -2076,7 +2083,7 @@ function get_per_file_diagnostics!(
         if is_cancelled(cancel_flag)
             return cache, result
         end
-        entry = PerFileDiagnosticsCacheEntry(file_info.version, result)
+        entry = PerFileDiagnosticsCacheEntry(file_info.identity, result)
         return PerFileDiagnosticsCacheData(cache, cache_uri => entry), result
     end
 end
@@ -2089,7 +2096,7 @@ function get_per_file_diagnostics!(
     cache_uri = canonical_cache_uri(server.state, uri)
     return store!(server.state.per_file_diagnostics_cache) do cache::PerFileDiagnosticsCacheData
         cached = get(cache, cache_uri, nothing)
-        if cached !== nothing && cached.version == file_info.version
+        if cached !== nothing && cached.file_identity == file_info.identity
             return cache, cached.result
         end
         result = compute_per_file_diagnostics(
@@ -2097,7 +2104,7 @@ function get_per_file_diagnostics!(
         if is_cancelled(cancel_flag)
             return cache, result
         end
-        entry = PerFileDiagnosticsCacheEntry(file_info.version, result)
+        entry = PerFileDiagnosticsCacheEntry(file_info.identity, result)
         return PerFileDiagnosticsCacheData(cache, cache_uri => entry), result
     end
 end
@@ -2126,27 +2133,32 @@ end
 function cross_file_diagnostics!(
         diagnostics::Vector{Diagnostic}, def_used_names_cache::DefUsedNamesCache,
         server::Server, uri::URI, per_file::PerFileDiagnosticsResult;
+        snapshot::Union{Nothing,DocumentSnapshot} = nothing,
         cancel_flag::CancelFlag = DUMMY_CANCEL_FLAG,
         skip_context_check::Bool = false # used by tests only
     )
     search_uris = collect_search_uris(server, uri)
-    mod_def_used_names = compute_def_used_names!(def_used_names_cache, server, search_uris; cancel_flag, skip_context_check)
+    mod_def_used_names = compute_def_used_names!(
+        def_used_names_cache, server, search_uris; snapshot, cancel_flag, skip_context_check)
     is_cancelled(cancel_flag) && return diagnostics
     emit_undef_global_diagnostics!(diagnostics, per_file.undef_global_candidates, mod_def_used_names)
-    analyze_unused_imports!(diagnostics, def_used_names_cache, server, uri, per_file.explicit_imports; cancel_flag, skip_context_check)
+    analyze_unused_imports!(diagnostics, def_used_names_cache, server, uri,
+        per_file.explicit_imports; snapshot, cancel_flag, skip_context_check)
     return diagnostics
 end
 
 function toplevel_lowering_diagnostics!(
         def_used_names_cache::DefUsedNamesCache, server::Server, uri::URI,
         file_info::FileInfo, cancel_flag::CancelFlag=DUMMY_CANCEL_FLAG;
+        snapshot::Union{Nothing,DocumentSnapshot} = nothing,
         lookup_func = nothing
     )
     cached = get_per_file_diagnostics!(server, uri, file_info, cancel_flag; lookup_func)
     is_cancelled(cancel_flag) && return cached.diagnostics
     diagnostics = copy(cached.diagnostics)
     if has_analyzed_context(server.state, uri; lookup_func)
-        cross_file_diagnostics!(diagnostics, def_used_names_cache, server, uri, cached; cancel_flag)
+        cross_file_diagnostics!(
+            diagnostics, def_used_names_cache, server, uri, cached; snapshot, cancel_flag)
     end
     return diagnostics
 end
@@ -2428,7 +2440,7 @@ end
 
 # Fingerprints the inputs of a file's live diagnostics: the worker skips files whose
 # fingerprint did not move, and `textDocument/diagnostic` returns it as the `resultId`.
-# Every unit member's version is folded in so a sibling edit invalidates this file's
+# Every unit member's text identity is folded in so a sibling edit invalidates this file's
 # cached diagnostics and the cross-file analyses
 # (`analyze_undefined_global_uses_for_file!`, `analyze_unused_imports!`) rerun; so are
 # the `[diagnostic]` config, so a config change recomputes every file, and the module
@@ -2470,7 +2482,7 @@ function compute_live_diagnostics_fingerprint(
         end begin
             get_unsynced_file_info!(state, search_uri)
         end continue
-        file_hash ⊻= hash((search_uri, search_fi.version))
+        file_hash ⊻= hash((search_uri, search_fi.identity))
     end
     return string(hash((file_hash, config_hash, context_hash)))
 end
@@ -2497,10 +2509,12 @@ end
 # when the file does not parse cleanly, otherwise runs the lowering-based analyses.
 function compute_live_diagnostics!(
         def_used_names_cache::DefUsedNamesCache, server::Server, uri::URI, fi::FileInfo,
-        cancel_flag::CancelFlag
+        cancel_flag::CancelFlag;
+        snapshot::Union{Nothing,DocumentSnapshot} = nothing
     )
     if isempty(fi.parsed_stream.diagnostics)
-        return toplevel_lowering_diagnostics!(def_used_names_cache, server, uri, fi, cancel_flag)
+        return toplevel_lowering_diagnostics!(
+            def_used_names_cache, server, uri, fi, cancel_flag; snapshot)
     else
         return parsed_stream_to_diagnostics(fi)
     end
@@ -2734,7 +2748,7 @@ function handle_DocumentDiagnosticRequest(
     end
     def_used_names_cache = DefUsedNamesCache()
     diagnostics = compute_live_diagnostics!(
-        def_used_names_cache, server, snapshot.cache_uri, snapshot.fi, cancel_flag)
+        def_used_names_cache, server, snapshot.cache_uri, snapshot.fi, cancel_flag; snapshot)
     if is_cancelled(cancel_flag)
         return send(server, DocumentDiagnosticResponse(; id = msg.id, result = nothing, error = request_cancelled_error()))
     end
@@ -2749,7 +2763,7 @@ function handle_DocumentDiagnosticRequest(
 end
 
 # `textDocument/diagnostic` computes the requested document from its snapshot, so the
-# snapshot's version stands for the document in place of the current one.
+# snapshot's identity stands for the document in place of the current one.
 function compute_live_diagnostics_fingerprint(server::Server, snapshot::DocumentSnapshot)
     state = server.state
     this_uri = snapshot.cache_uri
