@@ -160,8 +160,8 @@ function request_instantiation_progress!(
         server::Server, uri::URI, ins_request::InstantiationRequest,
         invalidate::Bool, notify_diagnostics::Bool, debounce::Float64
     )
-    id = String(gensym(:WorkDoneProgressCreateRequest_instantiation))
-    token = String(gensym(:InstantiationProgress))
+    id = unique_id("WorkDoneProgressCreateRequest_instantiation")
+    token = unique_id("InstantiationProgress")
     caller = InstantiationProgressCaller(
         uri, ins_request, invalidate, notify_diagnostics, debounce, token)
     addrequest!(server, id => caller)
@@ -198,8 +198,8 @@ function request_analysis_progress!(
         server::Server, uri::URI, invalidate::Bool, @nospecialize(entry::AnalysisEntry),
         notify_diagnostics::Bool, debounce::Float64
     )
-    id = String(gensym(:WorkDoneProgressCreateRequest_analysis))
-    token = String(gensym(:AnalysisProgress))
+    id = unique_id("WorkDoneProgressCreateRequest_analysis")
+    token = unique_id("AnalysisProgress")
     caller = AnalysisProgressCaller(
         uri, invalidate, entry, notify_diagnostics, debounce, token)
     addrequest!(server, id => caller)
@@ -1609,8 +1609,8 @@ end
 function request_instantiation_prompt_progress!(
         server::Server, ins_request::InstantiationRequest
     )
-    id = String(gensym(:WorkDoneProgressCreateRequest_instantiation_prompt))
-    token = String(gensym(:InstantiationPromptProgress))
+    id = unique_id("WorkDoneProgressCreateRequest_instantiation_prompt")
+    token = unique_id("InstantiationPromptProgress")
     caller = InstantiationPromptProgressCaller(ins_request, token)
     addrequest!(server, id => caller)
     params = WorkDoneProgressCreateParams(; token)
@@ -1621,7 +1621,7 @@ function send_instantiation_prompt!(
         server::Server, ins_request::InstantiationRequest,
         progress_token::Union{Nothing,ProgressToken} = nothing
     )
-    id = String(gensym(:ShowMessageRequest_instantiation))
+    id = unique_id("ShowMessageRequest_instantiation")
     caller = InstantiationPromptCaller(ins_request, progress_token)
     addrequest!(server, id => caller)
     message = """

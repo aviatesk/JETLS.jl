@@ -94,7 +94,7 @@ end
 
 function request_text_document_content_refresh!(server::Server, uri::URI)
     supports_text_document_content(server) || return nothing
-    id = String(gensym(:TextDocumentContentRefreshRequest))
+    id = unique_id("TextDocumentContentRefreshRequest")
     addrequest!(server, id=>TextDocumentContentRefreshCaller(uri))
     params = TextDocumentContentRefreshParams(; uri)
     return send(server, TextDocumentContentRefreshRequest(; id, params))
@@ -180,7 +180,7 @@ function open_text_document_content!(
     )
     if (content_uri !== nothing && supports_text_document_content(server) &&
         supports(server, :window, :showDocument, :support))
-        id = String(gensym(:ShowTextDocumentContentRequest))
+        id = unique_id("ShowTextDocumentContentRequest")
         addrequest!(server, id => ShowTextDocumentContentCaller(
             label, content_uri, produce_text, tempfile_name, nothing))
         params = ShowDocumentParams(; uri = content_uri, takeFocus)
@@ -199,7 +199,7 @@ function open_text_document_content_tempfile!(
         server, text, label, tempfile_name) return nothing
     (; temp_path, uri) = saved
     if supports(server, :window, :showDocument, :support)
-        id = String(gensym(:ShowTextDocumentContentRequest))
+        id = unique_id("ShowTextDocumentContentRequest")
         addrequest!(server, id => ShowTextDocumentContentCaller(
             label, uri, nothing, nothing, temp_path))
         params = ShowDocumentParams(; uri, takeFocus)

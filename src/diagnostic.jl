@@ -2771,7 +2771,7 @@ function request_diagnostic_refresh!(server::Server)
     schedule_workspace_diagnostics!(server)
     pull_diagnostics_enabled(server) || return nothing
     supports(server, :workspace, :diagnostics, :refreshSupport) || return nothing
-    id = String(gensym(:WorkspaceDiagnosticRefreshRequest))
+    id = unique_id("WorkspaceDiagnosticRefreshRequest")
     addrequest!(server, id=>DiagnosticRefreshRequestCaller())
     return send(server, WorkspaceDiagnosticRefreshRequest(; id))
 end

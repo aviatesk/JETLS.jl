@@ -10,7 +10,7 @@ function set_document_content(server::Server, uri::URI, content::String; context
         newText = content)]
     changes = Dict{URI,Vector{TextEdit}}(uri => edits)
     edit = WorkspaceEdit(; changes)
-    id = String(gensym(:ApplyWorkspaceEditRequest))
+    id = unique_id("ApplyWorkspaceEditRequest")
     addrequest!(server, id=>SetDocumentContentCaller())
     label = "Set document content"
     if context !== nothing
@@ -46,7 +46,7 @@ function request_delete_file(server::Server, uri::URI)
             ignoreIfNotExists = true))
     documentChanges = DeleteFile[delete_op]
     edit = WorkspaceEdit(; documentChanges)
-    id = String(gensym(:ApplyWorkspaceEditRequest))
+    id = unique_id("ApplyWorkspaceEditRequest")
     addrequest!(server, id=>DeleteFileCaller())
     return send(server, ApplyWorkspaceEditRequest(;
         id,

@@ -156,8 +156,8 @@ function handle_RenameRequest(
         # so it cannot respond to `window/workDoneProgress/create` (aviatesk/JETLS.jl#820).
         # Avoid that deadlock until Helix handles rename asynchronously.
         getobjpath(state, :init_params, :clientInfo, :name) != "helix"
-        id = String(gensym(:WorkDoneProgressCreateRequest_rename))
-        token = String(gensym(:RenameProgress))
+        id = unique_id("WorkDoneProgressCreateRequest_rename")
+        token = unique_id("RenameProgress")
         addrequest!(server, id => RenameProgressCaller(uri, fi, pos, newName, msg.id, token, cancel_flag))
         params = WorkDoneProgressCreateParams(; token)
         send(server, WorkDoneProgressCreateRequest(; id, params))

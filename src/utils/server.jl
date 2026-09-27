@@ -1,6 +1,19 @@
 # server interaction utilities
 # ===========================
 
+const UNIQUE_ID_COUNTER = Threads.Atomic{UInt64}(0)
+
+"""
+    unique_id(prefix::AbstractString) -> String
+
+Generate a process-wide, thread-safe ID without interning a new `Symbol`.
+The counter is shared across request IDs, progress tokens, and completion resolvers.
+"""
+function unique_id(prefix::AbstractString)
+    id = Threads.atomic_add!(UNIQUE_ID_COUNTER, UInt64(1))
+    return string("jetls/", prefix, "/", string(id))
+end
+
 const DEFAULT_FLUSH_INTERVAL = 0.05
 function yield_to_endpoint(interval=DEFAULT_FLUSH_INTERVAL)
     # HACK: allow LSP endpoint to process queued messages (e.g. work done progress report)
@@ -57,15 +70,15 @@ a `RequestCaller` subtype that encapsulates the context needed to handle the res
 
 # Arguments
 - `server::Server`: The language server instance
-- `id::String`: A unique identifier for the request (typically generated with `gensym`)
+- `id::String`: A unique identifier for the request (generated with [`unique_id`](@ref))
 - `caller::RequestCaller`: An instance of a `RequestCaller` subtype containing the
   context information needed to handle the client's response
 
 # Example
 ```julia
 # When creating a progress token
-id = String(gensym(:WorkDoneProgressCreateRequest_formatting))
-token = String(gensym(:FormattingProgress))
+id = unique_id("WorkDoneProgressCreateRequest_formatting")
+token = unique_id("FormattingProgress")
 caller = FormattingProgressCaller(uri, msg.id, token)
 addrequest!(server, id=>caller)
 send(server, WorkDoneProgressCreateRequest(; id, params))

@@ -8,8 +8,8 @@ cancellable_token_impl(caller::ProfileProgressCaller) = caller.token
 
 function trigger_profile!(server::Server, trigger_path::String)
     if supports(server, :window, :workDoneProgress)
-        id = String(gensym(:WorkDoneProgressCreateRequest_profile))
-        token = String(gensym(:ProfileProgress))
+        id = unique_id("WorkDoneProgressCreateRequest_profile")
+        token = unique_id("ProfileProgress")
         addrequest!(server, id => ProfileProgressCaller(trigger_path, token))
         params = WorkDoneProgressCreateParams(; token)
         send(server, WorkDoneProgressCreateRequest(; id, params))

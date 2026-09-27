@@ -29,8 +29,8 @@ function handle_WorkspaceSymbolRequest(
     if token !== nothing
         do_workspace_symbol(server, msg.id, params; token, cancel_flag)
     elseif supports(server, :window, :workDoneProgress)
-        id = String(gensym(:WorkDoneProgressCreateRequest_workspace_symbol))
-        token = String(gensym(:WorkspaceSymbolProgress))
+        id = unique_id("WorkDoneProgressCreateRequest_workspace_symbol")
+        token = unique_id("WorkspaceSymbolProgress")
         addrequest!(server, id => WorkspaceSymbolProgressCaller(msg.id, params, token, cancel_flag))
         send(server, WorkDoneProgressCreateRequest(; id, params = WorkDoneProgressCreateParams(; token)))
     else

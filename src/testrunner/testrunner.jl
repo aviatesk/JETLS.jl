@@ -463,7 +463,7 @@ function show_testrunner_result_in_message(server::Server, result::TestRunnerRes
         request_caller = TestRunnerMessageRequestCaller4(request_key, uri, idx, result.logs)
     end
 
-    id = String(gensym(:ShowMessageRequest))
+    id = unique_id("ShowMessageRequest")
     addrequest!(server, id=>request_caller)
 
     params = ShowMessageRequestParams(; type = msg_type, message, actions)
@@ -881,8 +881,8 @@ function testrunner_run_testset_from_uri(server::Server, uri::URI, idx::Int, tsn
     filepath = uri2filename(uri)
 
     if supports(server, :window, :workDoneProgress)
-        id = String(gensym(:WorkDoneProgressCreateRequest_testrunner))
-        token = String(gensym(:TestRunnerProgress))
+        id = unique_id("WorkDoneProgressCreateRequest_testrunner")
+        token = unique_id("TestRunnerProgress")
         addrequest!(server, id=>TestRunnerTestsetProgressCaller(uri, fi, idx, tsn, filepath, token))
         params = WorkDoneProgressCreateParams(; token)
         send(server, WorkDoneProgressCreateRequest(; id, params))
@@ -922,8 +922,8 @@ function testrunner_run_testcase_from_uri(server::Server, uri::URI, tcl::Int, tc
     source = String(document_text(fi))
 
     if supports(server, :window, :workDoneProgress)
-        id = String(gensym(:WorkDoneProgressCreateRequest_testrunner))
-        token = String(gensym(:TestRunnerProgress))
+        id = unique_id("WorkDoneProgressCreateRequest_testrunner")
+        token = unique_id("TestRunnerProgress")
         addrequest!(server, id=>TestRunnerTestcaseProgressCaller(uri, tcl, tct, filepath, source, token))
         params = WorkDoneProgressCreateParams(; token)
         send(server, WorkDoneProgressCreateRequest(; id, params))
