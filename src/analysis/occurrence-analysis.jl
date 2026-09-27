@@ -369,7 +369,7 @@ function find_global_binding_occurrences!(
         state::ServerState, uri::URI, fi::FileInfo, binfo::JL.BindingInfo;
         lookup_func = gen_lookup_out_of_scope!(state, uri),
     )
-    cached = get_cached_global_binding_occurrences(state, uri, binfo)
+    cached = get_cached_global_binding_occurrences(state, uri, fi, binfo)
     cached === nothing || return cached
     st0_top = build_syntax_tree(fi)
     return find_global_binding_occurrences_from_tree!(
@@ -377,11 +377,11 @@ function find_global_binding_occurrences!(
 end
 
 function get_cached_global_binding_occurrences(
-        state::ServerState, uri::URI, binfo::JL.BindingInfo
+        state::ServerState, uri::URI, fi::FileInfo, binfo::JL.BindingInfo
     )
     cache_uri = canonical_cache_uri(state, uri)
     file_cache = get(load(state.binding_occurrences_cache), cache_uri, nothing)
-    file_cache === nothing && return nothing
+    (file_cache === nothing || file_cache.file_identity != fi.identity) && return nothing
     globals = @something file_cache.globals return nothing
     return lookup_global_binding_occurrences(globals, binfo)
 end
@@ -390,7 +390,7 @@ function find_global_binding_occurrences_from_tree!(
         state::ServerState, uri::URI, fi::FileInfo, st0_top::SyntaxTree, binfo::JL.BindingInfo;
         lookup_func = gen_lookup_out_of_scope!(state, uri),
     )
-    cached = get_cached_global_binding_occurrences(state, uri, binfo)
+    cached = get_cached_global_binding_occurrences(state, uri, fi, binfo)
     cached === nothing || return cached
     globals = BindingOccurrencesResult()
     iterate_toplevel_tree(st0_top) do st0::SyntaxTree
@@ -398,7 +398,7 @@ function find_global_binding_occurrences_from_tree!(
             state, uri, fi, st0; lookup_func) return
         add_global_binding_occurrences!(globals, binding_occurrences)
     end
-    store_global_binding_occurrences!(state, uri, globals)
+    store_global_binding_occurrences!(state, uri, fi, globals)
     return lookup_global_binding_occurrences(globals, binfo)
 end
 
@@ -424,22 +424,22 @@ function add_global_binding_occurrences!(
 end
 
 function store_global_binding_occurrences!(
-        state::ServerState, uri::URI, globals::BindingOccurrencesResult
+        state::ServerState, uri::URI, fi::FileInfo, globals::BindingOccurrencesResult
     )
     cache_uri = canonical_cache_uri(state, uri)
     store!(state.binding_occurrences_cache) do cache::BindingOccurrencesCacheData
         file_cache = get(cache, cache_uri, nothing)
-        by_range = file_cache === nothing ? BindingOccurrencesRangeCache() : file_cache.by_range
-        new_file_cache = BindingOccurrencesCacheEntry(by_range, globals)
+        by_range = file_cache !== nothing && file_cache.file_identity == fi.identity ?
+            file_cache.by_range : BindingOccurrencesRangeCache()
+        new_file_cache = BindingOccurrencesCacheEntry(fi.identity, by_range, globals)
         return BindingOccurrencesCacheData(cache, cache_uri => new_file_cache), nothing
     end
 end
 
-# Cached entry point. The cache key is only the byte range — `lookup_func`
-# is *not* part of the key. Production callers all rely on the default
-# `gen_lookup_out_of_scope!`, so they share the cache safely. Tests that
-# pass a custom `lookup_func` use isolated `ServerState` instances and
-# therefore don't collide with the production cache.
+# Cached per text snapshot and byte range — `lookup_func` is *not* part of the key.
+# Production callers all rely on the default `gen_lookup_out_of_scope!`.
+# Tests that pass a custom `lookup_func` use isolated `ServerState` instances
+# and therefore don't collide with the production cache.
 function get_binding_occurrences!(
         state::ServerState, uri::URI, fi::FileInfo, st0::SyntaxTree;
         lookup_func = gen_lookup_out_of_scope!(state, uri),
@@ -448,6 +448,9 @@ function get_binding_occurrences!(
     range_key = JS.byte_range(st0)
     return store!(state.binding_occurrences_cache) do cache::BindingOccurrencesCacheData
         file_cache = get(cache, cache_uri, nothing)
+        if file_cache !== nothing && file_cache.file_identity != fi.identity
+            file_cache = nothing
+        end
         if file_cache !== nothing && haskey(file_cache.by_range, range_key)
             return cache, file_cache.by_range[range_key]
         end
@@ -465,7 +468,7 @@ function get_binding_occurrences!(
         by_range = file_cache === nothing ?
             BindingOccurrencesRangeCache(range_key => cache_result) :
             BindingOccurrencesRangeCache(file_cache.by_range, range_key => cache_result)
-        file_cache = BindingOccurrencesCacheEntry(by_range, nothing)
+        file_cache = BindingOccurrencesCacheEntry(fi.identity, by_range, nothing)
         return BindingOccurrencesCacheData(cache, cache_uri => file_cache), cache_result
     end
 end
