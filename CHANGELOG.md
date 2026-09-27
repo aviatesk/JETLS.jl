@@ -76,7 +76,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Changed
 
 - The [TestRunner integration](https://aviatesk.github.io/JETLS.jl/release/testrunner/) now uses the TestRunner.jl bundled with JETLS, so the `testrunner` executable no longer needs to be installed.
-  Tests run with the Julia running JETLS by default.
+  Tests run with the Julia running JETLS by default, and the new [`testrunner.env`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/testrunner/env) configuration allows running them with another Julia via `JULIAUP_CHANNEL` or `JULIA_APPS_JULIA_CMD`.
   If you installed `testrunner` only for JETLS, you can uninstall it with `pkg> app rm TestRunner`.
 
 - The `testrunner.executable` configuration is deprecated and no longer has any effect.
