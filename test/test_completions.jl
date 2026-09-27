@@ -1860,6 +1860,28 @@ end
     end
 end
 
+module macro_first_completions_module
+foo() = 1
+macro use_foo()
+    return :(foo())
+end
+end
+
+@testset "global mentioned first by a same-module macro" begin
+    # The macro expansion creates the shared `foo` binding, so its `binding_ex`
+    # is not user-written; the user's own mention must still be offered.
+    cbs = get_cursor_bindings("""
+        function f()
+            @use_foo()
+            foo()
+            fo│
+        end
+        """; context_module=macro_first_completions_module)
+    foos = filter(((bi, _, _),) -> bi.name == "foo", cbs)
+    @test length(foos) == 1
+    @test JS.sourcetext(foos[1][2]) == "foo"
+end
+
 function make_completion_request(id::Int, uri::URI, pos::Position)
     return CompletionRequest(;
         id,

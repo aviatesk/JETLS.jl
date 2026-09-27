@@ -42,9 +42,33 @@ test outcomes and execution timing information.
 end
 
 """
+    TestRunnerTestSetResult
+
+Represents the result of a test set executed in a test run, along with the results of
+the test sets nested in it.
+"""
+@kwdef struct TestRunnerTestSetResult
+    "Description of the test set"
+    description::String
+    """
+    Line of the `@testset` in the test file that the test set was executed from (1-based),
+    or `nothing` when it cannot be identified (e.g. for test sets in `include`d files)
+    """
+    line::Union{Nothing,Int} = nothing
+    "Test counts, including those of the nested test sets"
+    stats::TestRunnerStats
+    "Test failures and errors recorded directly in this test set"
+    diagnostics::Vector{TestRunnerDiagnostic} = TestRunnerDiagnostic[]
+    "Results of the test sets nested in this test set, in the order of execution"
+    children::Vector{TestRunnerTestSetResult} = TestRunnerTestSetResult[]
+end
+
+"""
     TestRunnerResult
 
 Represents the complete result of a test run in JSON format.
+`testsets` holds the results of the test sets executed at the top level of the test file,
+and is reported only for test runs with patterns.
 """
 @kwdef struct TestRunnerResult
     filename::String
@@ -52,4 +76,5 @@ Represents the complete result of a test run in JSON format.
     stats::TestRunnerStats
     logs::String = ""
     diagnostics::Vector{TestRunnerDiagnostic} = TestRunnerDiagnostic[]
+    testsets::Union{Nothing,Vector{TestRunnerTestSetResult}} = nothing
 end

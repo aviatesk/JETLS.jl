@@ -26,6 +26,9 @@ function toml_repr(@nospecialize x)
     elseif x isa Vector
         isempty(x) || error("cannot render a non-empty array default: ", repr(x))
         return "[]"
+    elseif x isa AbstractDict
+        isempty(x) || error("cannot render a non-empty table default: ", repr(x))
+        return "{}"
     else
         error("cannot render a default value of type ", typeof(x), ": ", repr(x))
     end
@@ -115,9 +118,10 @@ end
 function toml_keys!(acc::Set{String}, dict::AbstractDict{String}, prefix::String)
     for (key, value) in dict
         path = isempty(prefix) ? key : string(prefix, '.', key)
-        if value isa AbstractDict{String}
+        if value isa AbstractDict{String} && !isempty(value)
             toml_keys!(acc, value, path)
-        elseif value isa AbstractVector && all(Base.Fix2(isa, AbstractDict{String}), value)
+        elseif value isa AbstractVector && !isempty(value) &&
+                all(Base.Fix2(isa, AbstractDict{String}), value)
             foreach(elem::AbstractDict{String} -> toml_keys!(acc, elem, path), value)
         else
             push!(acc, path)
@@ -180,7 +184,8 @@ let rows = Union{Nothing, SchemaRow}[
         default_entry(:inlay_hint, :types, :enabled; comment = "boolean"),
         nothing,
         table_header("testrunner"),
-        default_entry(:testrunner, :executable; comment = "string", note = " (\"testrunner.bat\" on Windows)"),
+        default_entry(:testrunner, :env; comment = "table of strings"),
+        default_entry(:testrunner, :julia_args; comment = "array of strings"),
     ]
 
     display_text = render_display(rows)

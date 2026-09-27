@@ -2,7 +2,7 @@ module test_AtomicContainers
 
 using Test
 using JETLS.AtomicContainers
-using JETLS.AtomicContainers: CASStats, LWStats, SWStats
+using JETLS.AtomicContainers: AtomicContainer, CASStats, LWStats, SWStats
 
 include("../HierarchicalTestSet.jl")
 
@@ -254,6 +254,44 @@ end
             end
             @test ret == 0
             @test load(c) == (cnd ? 1 : 2)
+        end
+    end
+end
+
+# A snapshot returned by `load` must stay alive while it is passed by reference to a
+# non-inlined function, even after `store!` replaced it and a GC ran; getting
+# `JULIA_63320_FIXED` wrong makes this segfault (JuliaLang/julia#63320).
+const SnapshotData = Base.PersistentDict{String,Vector{Int}}
+@noinline function churn!(c::AtomicContainer, n::Int)
+    for _ in 1:n
+        store!(c) do data
+            SnapshotData(data, string("k", rand(1:4n)) => rand(Int, 8)), nothing
+        end
+    end
+end
+@noinline function snapshot_size(data::SnapshotData)
+    s = 0
+    for (k, v) in data
+        s += length(k) + length(v)
+    end
+    return s
+end
+function check_snapshot_rooted(c::AtomicContainer)
+    snapshot = load(c)
+    s = snapshot_size(snapshot)
+    churn!(c, 200)
+    GC.gc(false)
+    churn!(c, 200)
+    GC.gc(true)
+    churn!(c, 200)
+    return s == snapshot_size(snapshot)
+end
+@testset "`load` snapshot stays rooted across `store!` (JuliaLang/julia#63320)" begin
+    @testset "$Container" for Container in (SWContainer, LWContainer, CASContainer)
+        c = Container(SnapshotData())
+        churn!(c, 500)
+        for _ in 1:10
+            @test check_snapshot_rooted(c)
         end
     end
 end

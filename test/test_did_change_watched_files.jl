@@ -13,7 +13,7 @@ const CLIENT_CAPABILITIES = ClientCapabilities(;
             dynamicRegistration = true)))
 
 const DEBOUNCE_DEFAULT = JETLS.get_config(JETLS.ConfigManager(JETLS.ConfigManagerData()), :full_analysis, :debounce)
-const TESTRUNNER_DEFAULT = JETLS.get_config(JETLS.ConfigManager(JETLS.ConfigManagerData()), :testrunner, :executable)
+const TESTRUNNER_DEFAULT = JETLS.get_config(JETLS.ConfigManager(JETLS.ConfigManagerData()), :testrunner, :julia_args)
 
 @testset "watched-file registration patterns" begin
     mktempdir() do dir
@@ -76,17 +76,17 @@ end
         TESTRUNNER_STARTUP = "testrunner_startup"
         write(config_path, """
             [testrunner]
-            executable = \"$TESTRUNNER_STARTUP\"
+            julia_args = [\"$TESTRUNNER_STARTUP\"]
             """)
         rootUri = filepath2uri(tmpdir)
         withserver(; rootUri, capabilities=CLIENT_CAPABILITIES) do (; writereadmsg, server)
             manager = server.state.config_manager
 
-            @test JETLS.get_config(manager, :testrunner, :executable) == TESTRUNNER_STARTUP
+            @test JETLS.get_config(manager, :testrunner, :julia_args) == [TESTRUNNER_STARTUP]
 
             write(config_path, """
                 [testrunner]
-                executable = \"$TESTRUNNER_STARTUP\"
+                julia_args = [\"$TESTRUNNER_STARTUP\"]
                 """)
 
             DEBOUNCE_V2 = 300.0
@@ -95,7 +95,7 @@ end
                 [full_analysis]
                 debounce = $DEBOUNCE_V2
                 [testrunner]
-                executable = \"$TESTRUNNER_STARTUP\"
+                julia_args = [\"$TESTRUNNER_STARTUP\"]
                 """)
 
             let msg = DidChangeWatchedFilesNotification(;
@@ -113,13 +113,13 @@ end
             # `full_analysis.debounce` should be changed
             @test JETLS.get_config(manager, :full_analysis, :debounce) == DEBOUNCE_V2
 
-            # Change `testrunner.executable` to "newtestrunner"
+            # Change `testrunner.julia_args`
             TESTRUNNER_V2 = "testrunner_v2"
             write(config_path, """
                 [full_analysis]
                 debounce = $DEBOUNCE_V2
                 [testrunner]
-                executable = \"$TESTRUNNER_V2\"
+                julia_args = [\"$TESTRUNNER_V2\"]
                 """)
 
             let msg = DidChangeWatchedFilesNotification(;
@@ -129,14 +129,14 @@ end
                 @test raw_res isa ShowMessageNotification
                 @test raw_res.params.type == MessageType.Info
                 expected_changes_msg = JETLS.changed_settings_message([
-                    JETLS.ConfigChange("testrunner.executable", TESTRUNNER_STARTUP, TESTRUNNER_V2)
+                    JETLS.ConfigChange("testrunner.julia_args", [TESTRUNNER_STARTUP], [TESTRUNNER_V2])
                 ])
                 @test occursin(expected_changes_msg, raw_res.params.message)
                 @test !occursin("full_analysis.debounce", raw_res.params.message)
             end
 
-            # testrunner.executable should be updated
-            @test JETLS.get_config(manager, :testrunner, :executable) == TESTRUNNER_V2
+            # `testrunner.julia_args` should be updated
+            @test JETLS.get_config(manager, :testrunner, :julia_args) == [TESTRUNNER_V2]
 
             # unknown keys should be reported
             write(config_path, """
@@ -168,7 +168,7 @@ end
                     if r isa ShowMessageNotification && r.params.type == MessageType.Info
                         expected_changes = JETLS.changed_settings_message([
                             JETLS.ConfigChange("full_analysis.debounce", DEBOUNCE_V2, DEBOUNCE_DEFAULT),
-                            JETLS.ConfigChange("testrunner.executable", TESTRUNNER_V2, TESTRUNNER_DEFAULT)
+                            JETLS.ConfigChange("testrunner.julia_args", [TESTRUNNER_V2], TESTRUNNER_DEFAULT)
                         ])
                         return occursin(expected_changes, r.params.message)
                     end
@@ -183,7 +183,7 @@ end
             TESTRUNNER_RECREATE = "testrunner_recreate"
             write(config_path, """
                 [testrunner]
-                executable = \"$TESTRUNNER_RECREATE\"
+                julia_args = [\"$TESTRUNNER_RECREATE\"]
                 """)
 
             let msg = DidChangeWatchedFilesNotification(;
@@ -198,7 +198,7 @@ end
                 @test any(raw_res) do r
                     if r isa ShowMessageNotification && r.params.type == MessageType.Info
                         expected_changes = JETLS.changed_settings_message([
-                            JETLS.ConfigChange("testrunner.executable", TESTRUNNER_DEFAULT, TESTRUNNER_RECREATE)
+                            JETLS.ConfigChange("testrunner.julia_args", TESTRUNNER_DEFAULT, [TESTRUNNER_RECREATE])
                         ])
                         return occursin(expected_changes, r.params.message)
                     end
@@ -210,7 +210,7 @@ end
             nested_dir = joinpath(tmpdir, "nested")
             mkpath(nested_dir)
             nested_config = joinpath(nested_dir, JETLS.CONFIG_FILE)
-            write(nested_config, "[testrunner]\nexecutable = \"nested\"\n")
+            write(nested_config, "[testrunner]\njulia_args = [\"nested\"]\n")
             let msg = DidChangeWatchedFilesNotification(;
                     params = DidChangeWatchedFilesParams(;
                         changes = [FileEvent(;
@@ -218,7 +218,7 @@ end
                             type = FileChangeType.Changed)]))
                 writereadmsg(msg; read=0)
             end
-            @test JETLS.get_config(manager, :testrunner, :executable) == TESTRUNNER_RECREATE
+            @test JETLS.get_config(manager, :testrunner, :julia_args) == [TESTRUNNER_RECREATE]
 
             # non-config file change (should be ignored)
             other_file = joinpath(tmpdir, "other.txt")
@@ -229,7 +229,7 @@ end
                 writereadmsg(msg; read=0)
             end
             # no effect on config
-            @test JETLS.get_config(manager, :testrunner, :executable) == TESTRUNNER_RECREATE
+            @test JETLS.get_config(manager, :testrunner, :julia_args) == [TESTRUNNER_RECREATE]
         end
     end
 end
@@ -302,7 +302,7 @@ end
             TESTRUNNER_RECREATE = "testrunner_recreate"
             write(config_path, """
                 [testrunner]
-                executable = \"$TESTRUNNER_RECREATE\"
+                julia_args = [\"$TESTRUNNER_RECREATE\"]
                 """)
             creation_notification = DidChangeWatchedFilesNotification(;
                 params = DidChangeWatchedFilesParams(;
@@ -316,18 +316,18 @@ end
             @test any(raw_res) do r
                 if r isa ShowMessageNotification && r.params.type == MessageType.Info
                     expected_changes = JETLS.changed_settings_message([
-                        JETLS.ConfigChange("testrunner.executable", TESTRUNNER_DEFAULT, TESTRUNNER_RECREATE)])
+                        JETLS.ConfigChange("testrunner.julia_args", TESTRUNNER_DEFAULT, [TESTRUNNER_RECREATE])])
                     return occursin(expected_changes, r.params.message)
                 end
                 return false
             end
-            @test JETLS.get_config(manager, :testrunner, :executable) == TESTRUNNER_RECREATE
+            @test JETLS.get_config(manager, :testrunner, :julia_args) == [TESTRUNNER_RECREATE]
 
             # New config file change also should be watched
             TESTRUNNER_V2 = "testrunner_v2"
             write(config_path, """
                 [testrunner]
-                executable = \"$TESTRUNNER_V2\"
+                julia_args = [\"$TESTRUNNER_V2\"]
                 """)
             change_notification = DidChangeWatchedFilesNotification(;
                 params = DidChangeWatchedFilesParams(;
@@ -335,7 +335,7 @@ end
             (; raw_res) = writereadmsg(change_notification)
             @test raw_res isa ShowMessageNotification
             @test raw_res.params.type == MessageType.Info
-            @test JETLS.get_config(manager, :testrunner, :executable) == TESTRUNNER_V2
+            @test JETLS.get_config(manager, :testrunner, :julia_args) == [TESTRUNNER_V2]
         end
     end
 end

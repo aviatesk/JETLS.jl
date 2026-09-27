@@ -5,16 +5,15 @@ to provide an enhanced testing experience directly within your editor. This
 feature allows you to run individual `@testset` blocks directly from your
 development environment.
 
-## [Prerequisites](@id testrunner/prerequisites)
+TestRunner.jl is bundled with JETLS, so no additional installation is required.
+Tests run in a separate process with the Julia running JETLS by default; see
+[`[testrunner]`](@ref config/testrunner) to run them with another Julia or to
+pass additional options to Julia.
 
-To use this feature, you need to install the `testrunner` executable:
-```bash
-julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/TestRunner.jl", rev="release")'
-```
-
-Note that you need to manually make `~/.julia/bin` available on the `PATH`
-environment for the `testrunner` executable to be accessible.
-See <https://pkgdocs.julialang.org/dev/apps/> for the details.
+Test execution sends the current editor buffer to TestRunner.jl, so saving the
+file is not required and unsaved edits run as-is, including buffers that have
+never been saved to disk (`untitled:` for VSCode / `buffer:` for Sublime Text),
+where relative `include` calls resolve from the workspace root.
 
 ## [Features](@id testrunner/features)
 
@@ -182,20 +181,14 @@ See the [TestRunner.jl README](https://github.com/aviatesk/TestRunner.jl) for mo
 
 ## [Troubleshooting](@id testrunner/troubleshooting)
 
-If you see an error about `testrunner` not being found:
+If tests fail to start with an error about the Julia executable not being
+found, check the Julia selected by [`[testrunner] env`](@ref config/testrunner/env):
+`JULIA_APPS_JULIA_CMD` needs to point to an existing Julia executable, and
+`JULIAUP_CHANNEL` needs the `julia` launcher of
+[juliaup](https://github.com/JuliaLang/juliaup) to be available on the `PATH`
+of the JETLS process.
 
-1. Ensure you've installed TestRunner.jl as described above
-2. Check that `testrunner` is in your system `PATH` by running
-   `which testrunner`: otherwise you may need to add `~/.julia/bin` to `PATH`
-3. Restart your editor to ensure it picks up the updated `PATH`
-
-Starting with releases on or after 2026-05-06, test execution streams the
-current editor buffer to `testrunner` over stdin, so saving the file is not
-required and unsaved edits run as-is — including buffers (`untitled:` for
-VSCode / `buffer:` for Sublime Text) that have never been saved to disk,
-where relative `include` calls resolve from the workspace root.
-
-This needs a `testrunner` CLI new enough to recognize the `--read-stdin`
-flag — if tests fail to start with an "Unknown option" error, reinstall
-`testrunner` (see [Prerequisites](@ref testrunner/prerequisites)) and confirm
-that `testrunner --help` lists `--read-stdin` under `Options:`.
+If `JULIAUP_CHANNEL` seems to have no effect, the `julia` command on the `PATH`
+of the JETLS process is probably not the juliaup launcher, in which case the
+channel is ignored. Note that this `PATH` can differ from the one of your
+shell, e.g. when the editor is not launched from the shell.

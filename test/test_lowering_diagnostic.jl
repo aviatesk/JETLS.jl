@@ -1320,10 +1320,9 @@ end
         @test diagnostic.severity == LSP.DiagnosticSeverity.Warning
         @test diagnostic.source == JETLS.DIAGNOSTIC_SOURCE_LIVE
         @test occursin("Multiple descriptions provided to @testset", diagnostic.message)
-        # The diagnostic anchors on the redundant `"b"` argument (the `K"String"`
-        # node's byte range covers just the inner content).
-        @test diagnostic.range.start.character == sizeof("""@testset "a" \"""")
-        @test diagnostic.range.var"end".character == sizeof("""@testset "a" "b""")
+        # The diagnostic covers the redundant `"b"` argument, including quotes.
+        @test diagnostic.range.start.character == sizeof("@testset \"a\" ")
+        @test diagnostic.range.var"end".character == sizeof("@testset \"a\" \"b\"")
     end
 
     # A macro-expansion-error reported via the sink (here: `Threads.@spawn` with an
@@ -1442,6 +1441,44 @@ end
         @test diagnostic.range.var"end".line == 3
         @test diagnostic.range.var"end".character ==
             length("        \$") + length("undef_lazy_triple_interp")
+    end
+end
+
+module TestLoweringUndefGlobalMacroFirst
+macro use_undeffunc()
+    return :(undeffunc())
+end
+end
+
+@testset HierarchicalTestSet "Undefined global binding report at user-written reads" begin
+    # The same-module macro expansion creates the shared `undeffunc` binding
+    # first, so the report must be anchored at the user-written read.
+    let diagnostics = get_lowering_diagnostics("""
+            function f(x)
+                @use_undeffunc()
+                undeffunc(x)
+            end
+            """; context_module=TestLoweringUndefGlobalMacroFirst)
+        @test length(diagnostics) == 1
+        diagnostic = only(diagnostics)
+        @test diagnostic.code == JETLS.LOWERING_UNDEF_GLOBAL_VAR_CODE
+        @test diagnostic.message == "`$(TestLoweringUndefGlobalMacroFirst).undeffunc` is not defined"
+        @test diagnostic.range.start.line == 2
+        @test diagnostic.range.start.character == 4
+        @test diagnostic.range.var"end".line == 2
+        @test diagnostic.range.var"end".character == 13
+    end
+
+    # Each user-written read is reported
+    let diagnostics = get_lowering_diagnostics("""
+            function f(x)
+                undeffunc(x)
+                undeffunc(x)
+            end
+            """; context_module=TestLoweringUndefGlobalMacroFirst)
+        @test length(diagnostics) == 2
+        @test all(d -> d.code == JETLS.LOWERING_UNDEF_GLOBAL_VAR_CODE, diagnostics)
+        @test [d.range.start.line for d in diagnostics] == [1, 2]
     end
 end
 

@@ -1,0 +1,101 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - master
+      - release
+  pull_request:
+    branches-ignore:
+      - release
+
+jobs:
+  test:
+    name: Julia ${{ matrix.version }} / ${{ matrix.os }} ${{ matrix.arch }} / ${{ matrix.precompile }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false # don't stop CI even when one of them fails
+      matrix:
+        include:
+          - version: '1' # current stable
+            os: ubuntu-latest
+            arch: x64
+            precompile: true
+          - version: "1" # x86 ubuntu
+            os: ubuntu-latest
+            arch: x86
+            precompile: true
+          - version: "1" # precompile_workload = false
+            os: ubuntu-latest
+            arch: x64
+            precompile: false
+          - version: "1" # macos (Apple Silicon)
+            os: macos-latest
+            arch: aarch64
+            precompile: true
+          - version: "1" # x86 windows
+            os: windows-latest
+            arch: x64
+            precompile: true
+          - version: "1" # x86 windows
+            os: windows-latest
+            arch: x86
+            precompile: true
+          - version: "nightly" # nightly
+            os: ubuntu-latest
+            arch: x64
+            precompile: true
+    steps:
+      - uses: actions/checkout@v7
+      - uses: julia-actions/setup-julia@v3
+        with:
+          version: ${{ matrix.version }}
+          arch: ${{ matrix.arch }}
+      - uses: julia-actions/cache@v3
+      - uses: julia-actions/julia-buildpkg@latest
+      - uses: julia-actions/julia-runtest@latest
+      - uses: julia-actions/julia-processcoverage@v1
+      - uses: codecov/codecov-action@v7
+
+  jetls_check:
+    name: JETLS check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: aviatesk/JETLS.jl/.github/actions/check@release
+        with:
+          files: src/TestRunner.jl
+
+  test-vendored:
+    name: Test with vendored environment
+    if: github.base_ref != 'release'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: julia-actions/setup-julia@v3
+        with:
+          version: "1"
+          arch: x64
+      - uses: julia-actions/cache@v3
+
+      - name: Fetch branch for vendor-deps.jl
+        run: git fetch origin ${{ github.head_ref || github.ref_name }}
+
+      - name: Run vendor-deps.jl
+        run: |
+          julia --startup-file=no --project=. scripts/vendor-deps.jl \
+            --source-branch=origin/${{ github.head_ref || github.ref_name }} --local
+
+      - name: Show vendored packages
+        run: |
+          echo "=== Vendored packages ==="
+          ls -la vendor/
+          echo ""
+          echo "=== Project.toml deps ==="
+          grep -A 100 '^\[deps\]' Project.toml | head -50
+          echo ""
+          echo "=== Project.toml sources ==="
+          grep -A 100 '^\[sources' Project.toml | head -50
+
+      - uses: julia-actions/julia-buildpkg@latest
+      - uses: julia-actions/julia-runtest@latest
