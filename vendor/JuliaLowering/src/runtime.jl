@@ -361,52 +361,60 @@ end
 # Get the binding for `name` if one is already resolved in module `mod`. Note
 # that we cannot use `isdefined(::Module, ::Symbol)` here, because that causes
 # binding resolution which is a massive side effect we must avoid in lowering.
-function _get_module_binding(mod, name; create=false)
+function _get_module_binding(mod::Module, name::Symbol; create::Bool=false)
     b = @ccall jl_get_module_binding(mod::Module, name::Symbol, create::Cint)::Ptr{Core.Binding}
     b == C_NULL ? nothing : unsafe_pointer_to_objref(b)
 end
 
-# Reserve a global binding named "$basename##$i" in module `mod` for the
-# smallest `i` starting at `0`.
+_module_binding_i_taken(mod::Module, basename::AbstractString, i::Int) =
+    _get_module_binding(mod, Symbol(basename, "##", i); create=false) !== nothing
+
+# Reserve a global binding named "$basename##$i" in module `mod` for some
+# free `i`.  We could scan 0:n here, but we instead try exponentially
+# increasing `i` and backwards binary search to achieve `log(n)` performance
 #
 # TODO: Remove the use of this where possible. Currently this is used within
 # lowering to create unique global names for keyword function bodies and
 # closure types as a more local alternative to current-julia-module-counter.
 # However, we should ideally defer it to eval-time to make lowering itself
 # completely non-mutating.
-function reserve_module_binding_i(mod, basename)
-    i = 0
-    while true
-        name = "$basename##$i"
-        # TODO: Fix the race condition here: We should really hold the Module's
-        # binding lock during this test-and-set type operation. But the binding
-        # lock is only accessible from C. See also the C code in
-        # `fl_module_unique_name`.
-        symname = Symbol(name)
-        if _get_module_binding(mod, symname; create=false) === nothing
-            _get_module_binding(mod, symname; create=true)
-            return name
-        end
-        i += 1
+function reserve_module_binding_i(mod::Module, basename::AbstractString)
+    hi = 0
+    while _module_binding_i_taken(mod, basename, hi)
+        hi = 2hi + 1
     end
+    lo = hi == 0 ? 0 : (hi - 1) ÷ 2 + 1
+    while lo < hi
+        mid = (lo + hi) ÷ 2
+        if _module_binding_i_taken(mod, basename, mid)
+            lo = mid + 1
+        else
+            hi = mid
+        end
+    end
+    name = "$basename##$hi"
+    # TODO: Fix the race condition here: We should really hold the Module's
+    # binding lock during this test-and-set type operation. But the binding
+    # lock is only accessible from C. See also the C code in
+    # `fl_module_unique_name`.
+    _get_module_binding(mod, Symbol(name); create=true)
+    return name
 end
 
 # Even less likely to be deterministic than the above, but necessary to avoid
-# quadratic behaviour where flisp doesn't already have it.
-function reserve_module_binding_simple(mod, hint::String)
-    # (JETLS) jl_module_next_counter is not exported before Julia 1.14.0-DEV.3063.
+# quadratic behaviour where flisp doesn't already have it.  See
+# `fl_module_unique_name`
+function module_unique_name(mod::Module)
     @static if VERSION < v"1.14.0-DEV.3063"
-        return reserve_module_binding_i(mod, hint)
+        # (JETLS) jl_module_next_counter is not exported before 1.14.0-DEV.3063
+        reserve_module_binding_i(mod, "")[3:end]
     else
-        i = module_next_counter(mod)
-        name = "$hint#$i"
-        b = _get_module_binding(mod, Symbol(name); create=true)
-        # @assert !isdefined(b, :partitions) || b.partitions.kind === Base.PARTITION_KIND_GUARD hint
-        return name
+        string(@ccall(jl_module_next_counter(mod::Module)::UInt32))
     end
 end
-@static if VERSION >= v"1.14.0-DEV.3063"
-    module_next_counter(mod::Module) = @ccall(jl_module_next_counter(mod::Module)::UInt32)
+function module_unique_name(mod::Module, funcname::AbstractString)
+    occursin('#', funcname) ? module_unique_name(mod) :
+        reserve_module_binding_i(mod, funcname)
 end
 
 # Return true if a `name` is defined in and *by* the module `mod`.

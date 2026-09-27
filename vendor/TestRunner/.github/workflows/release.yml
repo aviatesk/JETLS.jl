@@ -1,0 +1,29 @@
+name: release
+
+on:
+  pull_request:
+    branches:
+      - release
+
+jobs:
+  test:
+    name: Test with vendored environment
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: julia-actions/setup-julia@v3
+        with:
+          version: "1"
+          arch: x64
+      - uses: julia-actions/cache@v3
+
+      - name: Show vendored packages
+        run: |
+          echo "=== Vendored packages ==="
+          ls -la vendor/
+          echo ""
+          echo "=== Project.toml sources ==="
+          grep -A 100 '^\[sources' Project.toml | head -50
+
+      - uses: julia-actions/julia-buildpkg@latest
+      - uses: julia-actions/julia-runtest@latest
