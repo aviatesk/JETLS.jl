@@ -49,14 +49,6 @@ match_type = "regex"
 severity = "off"
 path = "src/app/cli-serve.jl"
 
-# This is type instability within JSON3.jl
-[[diagnostic.patterns]]
-pattern = "no matching method found `convert(.+)`"
-match_by = "message"
-match_type = "regex"
-severity = "off"
-path = "src/testrunner/testrunner-types.jl"
-
 [[full_analysis.concretization_patterns]]
 pattern = "const devbranch = x_"
 path = "docs/make.jl"
