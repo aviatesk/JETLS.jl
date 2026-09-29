@@ -420,7 +420,7 @@ end
             pos = Position(; line = 0, character = 16)
             request = make_signature_help_request(1, uri, pos)
             next_request = make_signature_help_request(2, uri, pos)
-            @test JETLS.is_sequential_msg(request)
+            @test JETLS.is_snapshot_msg(request)
             prepared = queued_snapshot_requests(server, [
                 make_DidChangeTextDocumentNotification(uri, "snapshot_pair(1,)", 2), request,
                 make_DidChangeTextDocumentNotification(uri, "snapshot_single()", 3), next_request])
@@ -502,8 +502,8 @@ end
                     textDocument = TextDocumentIdentifier(; uri),
                     position = Position(; line = 0, character = 6)))
             signature = make_signature_help_request(2, uri, Position(; line = 0, character = 16))
-            @test JETLS.is_sequential_msg(completion)
-            @test JETLS.is_sequential_msg(signature)
+            @test JETLS.is_snapshot_msg(completion)
+            @test JETLS.is_snapshot_msg(signature)
             prepared = queued_snapshot_requests(server, [
                 completion, make_DidChangeTextDocumentNotification(uri, "snapshot_pair(1,)", 2),
                 signature, make_DidChangeTextDocumentNotification(uri, "\\beta", 3)])

@@ -286,7 +286,7 @@ function runserver(
                             code = ErrorCodes.InvalidRequest,
                             message = "Received request after a shutdown request requested")))
                 end
-            elseif is_sequential_msg(msg)
+            elseif is_sequential_msg(msg) || is_snapshot_msg(msg)
                 put!(seq_queue, msg)
             else
                 put!(con_queue, msg)
@@ -340,9 +340,14 @@ function is_sequential_msg(@nospecialize msg)
            msg isa DidOpenNotebookDocumentNotification ||
            msg isa DidChangeNotebookDocumentNotification ||
            msg isa DidCloseNotebookDocumentNotification ||
-           msg isa DidSaveNotebookDocumentNotification ||
-           msg isa CompletionRequest ||
+           msg isa DidSaveNotebookDocumentNotification
+end
+
+function is_snapshot_msg(@nospecialize msg)
+    return msg isa CompletionRequest ||
            msg isa SignatureHelpRequest ||
+           msg isa HoverRequest ||
+           msg isa DocumentHighlightRequest ||
            msg isa DocumentDiagnosticRequest
 end
 
@@ -390,6 +395,10 @@ function handle_sequential_message(server::Server, @nospecialize msg)
     elseif msg isa CompletionRequest
         enqueue_message!(server, snapshot_request_message(server.state, msg, msg.params.textDocument.uri))
     elseif msg isa SignatureHelpRequest
+        enqueue_message!(server, snapshot_request_message(server.state, msg, msg.params.textDocument.uri))
+    elseif msg isa HoverRequest
+        enqueue_message!(server, snapshot_request_message(server.state, msg, msg.params.textDocument.uri))
+    elseif msg isa DocumentHighlightRequest
         enqueue_message!(server, snapshot_request_message(server.state, msg, msg.params.textDocument.uri))
     elseif msg isa DocumentDiagnosticRequest
         enqueue_message!(server, snapshot_request_message(server.state, msg, msg.params.textDocument.uri))
@@ -536,6 +545,10 @@ function handle_snapshot_request_message(
         handle_CompletionRequest(server, msg, snapshot, cancel_flag)
     elseif msg isa SignatureHelpRequest
         handle_SignatureHelpRequest(server, msg, snapshot, cancel_flag)
+    elseif msg isa HoverRequest
+        handle_HoverRequest(server, msg, snapshot, cancel_flag)
+    elseif msg isa DocumentHighlightRequest
+        handle_DocumentHighlightRequest(server, msg, snapshot, cancel_flag)
     else
         error(lazy"Unexpected snapshot request message: $(typeof(msg))")
     end
@@ -560,10 +573,6 @@ function handle_request_message(
         handle_TypeDefinitionRequest(server, msg, cancel_flag)
     elseif msg isa ReferencesRequest
         handle_ReferencesRequest(server, msg, cancel_flag)
-    elseif msg isa HoverRequest
-        handle_HoverRequest(server, msg, cancel_flag)
-    elseif msg isa DocumentHighlightRequest
-        handle_DocumentHighlightRequest(server, msg, cancel_flag)
     elseif msg isa DocumentSymbolRequest
         handle_DocumentSymbolRequest(server, msg, cancel_flag)
     elseif msg isa WorkspaceSymbolRequest

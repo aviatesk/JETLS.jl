@@ -73,6 +73,98 @@ end
     end
 end
 
+function make_hover_request(id::Int, uri::URI, pos::Position)
+    return HoverRequest(;
+        id,
+        params = HoverParams(;
+            textDocument = TextDocumentIdentifier(; uri),
+            position = pos))
+end
+
+@testset "hover snapshot ordering" begin
+    captured = "let captured = 1\n    captured\nend"
+    later = "let later = 2\n    later\nend"
+    pos = Position(; line = 1, character = 5)
+
+    @testset "prior and later didChange" begin
+        with_manual_dispatch_server() do server, recorder
+            uri = filepath2uri(@__FILE__)
+            JETLS.cache_file_info!(server, uri, 1, "let initial = 0\n    initial\nend")
+            request = make_hover_request(1, uri, pos)
+            @test JETLS.is_snapshot_msg(request)
+            prepared = queued_snapshot_requests(server, [
+                make_DidChangeTextDocumentNotification(uri, captured, 2), request,
+                make_DidChangeTextDocumentNotification(uri, later, 3),
+                make_hover_request(2, uri, pos)])
+            @test prepared[1].snapshot.fi.version == 2
+            @test prepared[2].snapshot.fi.version == 3
+            for (item, name) in zip(prepared, ("captured", "later"))
+                response = dispatch_snapshot_request(server, recorder, item)
+                @test response isa HoverResponse
+                @test response.error === nothing
+                @test occursin("(local) $name", response.result.contents.value)
+                @test response.result.range == Range(;
+                    start = Position(; line = 1, character = 4),
+                    var"end" = Position(; line = 1, character = 4 + length(name)))
+            end
+        end
+    end
+
+    @testset "missing cache is not retried" begin
+        with_manual_dispatch_server() do server, recorder
+            uri = filepath2uri(@__FILE__)
+            prepared = only(queued_snapshot_requests(server, [make_hover_request(1, uri, pos)]))
+            @test prepared.snapshot === nothing
+            JETLS.cache_file_info!(server, uri, 1, captured)
+            response = dispatch_snapshot_request(server, recorder, prepared)
+            @test response.error === nothing
+            @test response.result === null
+            current = only(queued_snapshot_requests(server, [make_hover_request(2, uri, pos)]))
+            response = dispatch_snapshot_request(server, recorder, current)
+            @test response isa HoverResponse
+            @test occursin("(local) captured", response.result.contents.value)
+        end
+    end
+
+    @testset "close and reopen at the same version" begin
+        with_manual_dispatch_server() do server, recorder
+            uri = filepath2uri(@__FILE__)
+            JETLS.cache_file_info!(server, uri, 1, captured)
+            prepared = only(queued_snapshot_requests(server, [
+                make_hover_request(1, uri, pos), make_DidCloseTextDocumentNotification(uri)]))
+            @test JETLS.get_file_info(server.state, uri) === nothing
+            while isready(recorder.sent_queue)
+                @test take!(recorder.sent_queue) isa PublishDiagnosticsNotification
+            end
+            current = only(queued_snapshot_requests(server, [
+                make_DidOpenTextDocumentNotification(uri, later; version = 1),
+                make_hover_request(2, uri, pos)]))
+            @test prepared.snapshot.fi.identity != current.snapshot.fi.identity
+            for (item, name) in zip((prepared, current), ("captured", "later"))
+                response = dispatch_snapshot_request(server, recorder, item)
+                @test response isa HoverResponse
+                @test response.error === nothing
+                @test occursin("(local) $name", response.result.contents.value)
+            end
+        end
+    end
+
+    @testset "cancellation before prepared dispatch" begin
+        with_manual_dispatch_server() do server, recorder
+            uri = filepath2uri(@__FILE__)
+            JETLS.cache_file_info!(server, uri, 1, captured)
+            request = make_hover_request(1, uri, pos)
+            prepared = only(queued_snapshot_requests(server, [request]))
+            JETLS.handler_concurrent_message(server, CancelRequestNotification(;
+                params = CancelParams(; id = request.id)))
+            response = dispatch_snapshot_request(server, recorder, prepared)
+            @test response.result === nothing
+            @test response.error isa ResponseError
+            @test response.error.code == ErrorCodes.RequestCancelled
+        end
+    end
+end
+
 function get_hover(
         text::AbstractString, pos::Position;
         filename::AbstractString = @__FILE__,
@@ -80,8 +172,9 @@ function get_hover(
     )
     server = JETLS.Server()
     uri = filename2uri(filename)
-    fi = JETLS.cache_file_info!(server, uri, 0, text)
-    return JETLS.get_hover(server.state, fi, uri, pos; context_module)
+    JETLS.cache_file_info!(server, uri, 0, text)
+    snapshot = JETLS.get_document_snapshot(server.state, uri)::JETLS.DocumentSnapshot
+    return JETLS.get_hover(server.state, snapshot, uri, pos; context_module)
 end
 
 # `single_hover_test`-shaped assertion that skips the LSP roundtrip — for

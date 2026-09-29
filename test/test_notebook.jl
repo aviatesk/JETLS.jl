@@ -511,6 +511,7 @@ end
 end
 
 module M_snapshot
+    """Notebook snapshot global binding."""
     global x = 1
     snapshot_pair(a, b) = nothing
 end
@@ -684,6 +685,199 @@ end
             signature = only(response.result.signatures)
             @test signature.label == "snapshot_pair(a, b)"
             @test signature.activeParameter == 1
+        end
+    end
+end
+
+@testset "notebook hover snapshot ordering" begin
+    @testset "$change_kind" for change_kind in (:preceding_lines, :remove_preceding, :remove_requested)
+        with_manual_dispatch_server() do server, recorder
+            state = server.state
+            notebook_uri = URI("file:///hover-snapshot.ipynb")
+            cell1 = URI("vscode-notebook-cell:/hover-snapshot.ipynb#1")
+            cell2 = URI("vscode-notebook-cell:/hover-snapshot.ipynb#2")
+            text, positions = JETLS.get_text_and_positions("""
+                for _ in 1:1
+                    │x = 2
+                    println(x)
+                end
+                i│f true; 1; end""")
+            cells = [
+                JETLS.NotebookCellInfo(cell1, NotebookCellKind.Code, 1, "prefix = 1\nprefix"),
+                JETLS.NotebookCellInfo(cell2, NotebookCellKind.Code, 1, text)]
+            concat = JETLS.concatenate_cells(cells)
+            notebook = JETLS.NotebookInfo(1, "jupyter-notebook", state.encoding, cells, concat)
+            JETLS.store!(state.notebook_cache) do cache
+                Base.PersistentDict(cache, notebook_uri => notebook), nothing
+            end
+            JETLS.store!(state.cell_to_notebook) do cache
+                for cell in cells
+                    cache = Base.PersistentDict(cache, cell.uri => notebook_uri)
+                end
+                cache, nothing
+            end
+            fi = JETLS.cache_notebook_file_info!(server, notebook_uri, notebook)
+            change = if change_kind === :preceding_lines
+                NotebookDocumentChangeEventCells(;
+                    textContent = [NotebookDocumentChangeEventCellsTextContentItem(;
+                        document = VersionedTextDocumentIdentifier(; uri = cell1, version = 2),
+                        changes = [TextDocumentContentChangeEvent(; text = "prefix = 1")])])
+            else
+                removed_uri = change_kind === :remove_preceding ? cell1 : cell2
+                NotebookDocumentChangeEventCells(;
+                    structure = NotebookDocumentChangeEventCellsStructure(;
+                        array = NotebookCellArrayChange(;
+                            start = UInt(change_kind === :remove_preceding ? 0 : 1),
+                            deleteCount = UInt(1)),
+                        didClose = [TextDocumentIdentifier(; uri = removed_uri)]))
+            end
+            requests = [HoverRequest(;
+                id = i,
+                params = HoverParams(;
+                    textDocument = TextDocumentIdentifier(; uri = cell2), position = pos))
+                for (i, pos) in enumerate(positions)]
+            prepared = queued_snapshot_requests(server, [
+                requests...,
+                make_DidChangeNotebookDocumentNotification(
+                    notebook_uri, NotebookDocumentChangeEvent(; cells = change); version = 2)])
+            @test length(prepared) == 2
+            @test JETLS.get_file_info(state, notebook_uri).version == 2
+            if change_kind !== :preceding_lines
+                cleared = take_with_timeout!(recorder.sent_queue)
+                @test cleared isa PublishDiagnosticsNotification
+                @test cleared.params.uri == (change_kind === :remove_preceding ? cell1 : cell2)
+                @test isempty(cleared.params.diagnostics)
+            end
+            if change_kind === :remove_requested
+                @test !JETLS.is_notebook_cell_uri(state, cell2)
+                @test JETLS.snapshot_request_message(state, requests[1], cell2).snapshot === nothing
+            end
+
+            # Only the canonical notebook URI has the module and its binding documentation.
+            JETLS.cache_out_of_scope!(state.analysis_manager, notebook_uri, JETLS.OutOfScope(M_snapshot))
+            for (i, request) in enumerate(prepared)
+                snapshot = request.snapshot
+                @test snapshot.fi === fi
+                @test snapshot.fi.version == 1
+                @test snapshot.cache_uri == notebook_uri
+                @test snapshot.notebook === concat
+                @test request.msg === requests[i]
+                pos = JETLS.adjust_position(snapshot, cell2, request.msg.params.position)
+                @test pos == Position(;
+                    line = positions[i].line + 2, character = positions[i].character)
+                @test JETLS.get_context_info(state, snapshot.cache_uri, pos).context_module === M_snapshot
+                response = dispatch_snapshot_request(server, recorder, request)
+                @test response isa HoverResponse
+                @test response.error === nothing
+                @test response.result isa Hover
+                if i == 1
+                    @test occursin("(global) x", response.result.contents.value)
+                    @test occursin("Notebook snapshot global binding.", response.result.contents.value)
+                    @test response.result.range == Range(;
+                        start = Position(; line = 1, character = 4),
+                        var"end" = Position(; line = 1, character = 5))
+                else
+                    @test occursin("performs conditional evaluation", response.result.contents.value)
+                    @test response.result.range == Range(;
+                        start = Position(; line = 4, character = 0),
+                        var"end" = Position(; line = 4, character = 2))
+                end
+            end
+        end
+    end
+end
+
+@testset "notebook document highlight snapshot ordering" begin
+    @testset "$change_kind" for change_kind in (:preceding_lines, :remove_preceding, :remove_requested)
+        with_manual_dispatch_server() do server, recorder
+            state = server.state
+            notebook_uri = URI("file:///highlight-snapshot.ipynb")
+            cell1 = URI("vscode-notebook-cell:/highlight-snapshot.ipynb#1")
+            cell2 = URI("vscode-notebook-cell:/highlight-snapshot.ipynb#2")
+            text, positions = JETLS.get_text_and_positions("""
+                for _ in 1:1
+                    x = 2
+                    println(│x)
+                end
+                x""")
+            pos = only(positions)
+            cells = [
+                JETLS.NotebookCellInfo(cell1, NotebookCellKind.Code, 1, "x = 1\nx"),
+                JETLS.NotebookCellInfo(cell2, NotebookCellKind.Code, 1, text)]
+            concat = JETLS.concatenate_cells(cells)
+            notebook = JETLS.NotebookInfo(1, "jupyter-notebook", state.encoding, cells, concat)
+            JETLS.store!(state.notebook_cache) do cache
+                Base.PersistentDict(cache, notebook_uri => notebook), nothing
+            end
+            JETLS.store!(state.cell_to_notebook) do cache
+                for cell in cells
+                    cache = Base.PersistentDict(cache, cell.uri => notebook_uri)
+                end
+                cache, nothing
+            end
+            fi = JETLS.cache_notebook_file_info!(server, notebook_uri, notebook)
+            change = if change_kind === :preceding_lines
+                NotebookDocumentChangeEventCells(;
+                    textContent = [NotebookDocumentChangeEventCellsTextContentItem(;
+                        document = VersionedTextDocumentIdentifier(; uri = cell1, version = 2),
+                        changes = [TextDocumentContentChangeEvent(; text = "x = 1")])])
+            else
+                removed_uri = change_kind === :remove_preceding ? cell1 : cell2
+                NotebookDocumentChangeEventCells(;
+                    structure = NotebookDocumentChangeEventCellsStructure(;
+                        array = NotebookCellArrayChange(;
+                            start = UInt(change_kind === :remove_preceding ? 0 : 1),
+                            deleteCount = UInt(1)),
+                        didClose = [TextDocumentIdentifier(; uri = removed_uri)]))
+            end
+            request = DocumentHighlightRequest(;
+                id = 1,
+                params = DocumentHighlightParams(;
+                    textDocument = TextDocumentIdentifier(; uri = cell2), position = pos))
+            prepared = only(queued_snapshot_requests(server, [
+                request,
+                make_DidChangeNotebookDocumentNotification(
+                    notebook_uri, NotebookDocumentChangeEvent(; cells = change); version = 2)]))
+            snapshot = prepared.snapshot
+            @test snapshot.fi === fi
+            @test snapshot.fi.version == 1
+            @test snapshot.cache_uri == notebook_uri
+            @test snapshot.notebook === concat
+            @test prepared.msg === request
+            @test JETLS.adjust_position(snapshot, cell2, pos) ==
+                Position(; line = pos.line + 2, character = pos.character)
+            @test JETLS.get_file_info(state, notebook_uri).version == 2
+            if change_kind !== :preceding_lines
+                cleared = take_with_timeout!(recorder.sent_queue)
+                @test cleared isa PublishDiagnosticsNotification
+                @test cleared.params.uri == (change_kind === :remove_preceding ? cell1 : cell2)
+                @test isempty(cleared.params.diagnostics)
+            end
+            if change_kind === :remove_requested
+                @test !JETLS.is_notebook_cell_uri(state, cell2)
+                @test JETLS.snapshot_request_message(state, request, cell2).snapshot === nothing
+            end
+
+            JETLS.cache_out_of_scope!(state.analysis_manager, notebook_uri, JETLS.OutOfScope(M_snapshot))
+            response = dispatch_snapshot_request(server, recorder, prepared)
+            @test response isa DocumentHighlightResponse
+            @test response.error === nothing
+            @test response.result isa Vector{DocumentHighlight}
+            # Soft scope connects the loop assignment to the final read, but not other cells.
+            @test length(response.result) == 3
+            @test Set((highlight.range, highlight.kind) for highlight in response.result) ==
+                Set([(Range(;
+                        start = Position(; line = 1, character = 4),
+                        var"end" = Position(; line = 1, character = 5)),
+                      DocumentHighlightKind.Write),
+                     (Range(;
+                         start = Position(; line = 2, character = 12),
+                         var"end" = Position(; line = 2, character = 13)),
+                      DocumentHighlightKind.Read),
+                     (Range(;
+                         start = Position(; line = 4, character = 0),
+                         var"end" = Position(; line = 4, character = 1)),
+                      DocumentHighlightKind.Read)])
         end
     end
 end

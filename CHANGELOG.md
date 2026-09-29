@@ -56,6 +56,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- Fixed hover information and document highlights using the wrong text or positions when edits arrive while a request is being processed, including notebook cell edits and deletions.
+  Notebook document highlights now include only occurrences in the requested cell.
+
 - Fixed [`JETLS/live`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/source) diagnostics lagging one edit behind while typing on clients that set the [`pull_diagnostics`](https://aviatesk.github.io/JETLS.jl/release/launching/#init-options/pull_diagnostics) initialization option, such as the VSCode extension:
   diagnostics shown after an edit now reflect that edit instead of the text before it.
 

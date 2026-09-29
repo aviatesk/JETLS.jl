@@ -16,21 +16,13 @@ function hover_registration()
 end
 
 function handle_HoverRequest(
-        server::Server, msg::HoverRequest, cancel_flag::CancelFlag
+        server::Server, msg::HoverRequest, snapshot::DocumentSnapshot, cancel_flag::CancelFlag
     )
     state = server.state
     uri = msg.params.textDocument.uri
-    pos = adjust_position(state, uri, msg.params.position)
+    pos = adjust_position(snapshot, uri, msg.params.position)
 
-    result = get_file_info(state, uri, cancel_flag)
-    if isnothing(result)
-        return send(server, HoverResponse(; id = msg.id, result = null))
-    elseif result isa ResponseError
-        return send(server, HoverResponse(; id = msg.id, result = nothing, error = result))
-    end
-    fi = result
-
-    hover = get_hover(state, fi, uri, pos; cancel_flag)
+    hover = get_hover(state, snapshot, uri, pos; cancel_flag)
     if is_cancelled(cancel_flag)
         return send(server, HoverResponse(;
             id = msg.id,
@@ -60,33 +52,34 @@ end
 # parameter)`) so the binding's role in scope is visible even when the type
 # alone wouldn't carry that information.
 function get_hover(
-        state::ServerState, fi::FileInfo, uri::URI, pos::Position;
+        state::ServerState, snapshot::DocumentSnapshot, uri::URI, pos::Position;
         context_module::Union{Nothing,Module} = nothing,
         cancel_flag::AbstractCancelFlag = DUMMY_CANCEL_FLAG
     )
-    hover = _get_hover(state, fi, uri, pos; context_module, cancel_flag)
+    hover = _get_hover(state, snapshot, uri, pos; context_module, cancel_flag)
     if hover === nothing
         is_cancelled(cancel_flag) && return nothing
-        return keyword_hover(state, fi, uri, pos)
+        return keyword_hover(snapshot, uri, pos)
     end
     return hover
 end
 
 function _get_hover(
-        state::ServerState, fi::FileInfo, uri::URI, pos::Position;
+        state::ServerState, snapshot::DocumentSnapshot, uri::URI, pos::Position;
         context_module::Union{Nothing,Module} = nothing,
         cancel_flag::AbstractCancelFlag = DUMMY_CANCEL_FLAG
     )
     is_cancelled(cancel_flag) && return nothing
 
+    (; fi, cache_uri) = snapshot
     st0_top = build_syntax_tree(fi)
     offset = xy_to_offset(fi, pos)
-    (; postprocessor, world) = ctx_info = get_context_info(state, uri, pos)
+    (; postprocessor, world) = ctx_info = get_context_info(state, cache_uri, pos)
     # `context_module` kwarg overrides the analysis-derived module — exposed
     # for tests so they can seed the lookup with a pre-populated module
     # without running full-analysis on the test source.
     context_module = something(context_module, ctx_info.context_module)
-    soft_scope = is_notebook_cell_uri(state, uri)
+    soft_scope = snapshot.notebook !== nothing
     binding_result = select_target_binding(
         st0_top, offset, context_module, world; soft_scope)
     is_cancelled(cancel_flag) && return nothing
@@ -217,7 +210,7 @@ function _get_hover(
         end
     end
     contents = MarkupContent(; kind = MarkupKind.Markdown, value = String(take!(io)))
-    _, range = unadjust_range(state, uri, jsobj_to_range(display_node, fi))
+    _, range = unadjust_range(snapshot, uri, jsobj_to_range(display_node, fi))
     return Hover(; contents, range)
 end
 
@@ -400,7 +393,8 @@ end
 # Returns a `Hover` for a keyword token at `pos`, or `nothing` if the cursor
 # isn't on a recognized keyword. Used as the fallback when no identifier
 # resolves at the cursor.
-function keyword_hover(state::ServerState, fi::FileInfo, uri::URI, pos::Position)
+function keyword_hover(snapshot::DocumentSnapshot, uri::URI, pos::Position)
+    fi = snapshot.fi
     tok = @something token_at_offset(fi, pos) return nothing
     byterng = JS.byte_range(tok)
     tokstr = String(fi.parsed_stream.textbuf[byterng])
@@ -409,6 +403,6 @@ function keyword_hover(state::ServerState, fi::FileInfo, uri::URI, pos::Position
     range = Range(;
         start = offset_to_xy(fi, first(byterng)),
         var"end" = offset_to_xy(fi, last(byterng)+1))
-    _, range = unadjust_range(state, uri, range)
+    _, range = unadjust_range(snapshot, uri, range)
     return Hover(; contents, range)
 end

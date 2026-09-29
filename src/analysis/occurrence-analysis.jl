@@ -476,13 +476,9 @@ end
 function compute_full_binding_occurrences(
         state::ServerState, uri::URI, fi::FileInfo, st0::SyntaxTree;
         lookup_func = gen_lookup_out_of_scope!(state, uri),
+        # Global searches use the notebook URI rather than an individual cell URI.
+        soft_scope::Bool = is_notebook_cell_uri(state, uri) || is_notebook_uri(state, uri),
     )
-    soft_scope = is_notebook_cell_uri(state, uri) ||
-        # Handlers like References and Rename receive notebook cell URIs, just like
-        # other LSP handlers. However, when performing a global search over an analysis
-        # unit using `collect_search_uris`, the notebook URI is used instead, and its
-        # lowering requires `soft_scope`.
-        is_notebook_uri(state, uri)
     pos = offset_to_xy(fi, JS.first_byte(st0))
     (; context_module, world) = get_context_info(state, uri, pos; lookup_func)
 

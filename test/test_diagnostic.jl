@@ -816,7 +816,7 @@ end
             params = DocumentDiagnosticParams(;
                 textDocument = TextDocumentIdentifier(; uri)))
         request = make_request(1)
-        @test JETLS.is_sequential_msg(request)
+        @test JETLS.is_snapshot_msg(request)
         prepared = queued_snapshot_requests(server, [
             make_DidChangeTextDocumentNotification(uri, "func(_x) = nothing\n", 2), request,
             make_DidChangeTextDocumentNotification(uri, "func(x, y) = x\n", 3), make_request(2)])

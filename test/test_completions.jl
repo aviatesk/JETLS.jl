@@ -1901,7 +1901,7 @@ end
             pos = Position(; line = 1, character = 7)
             request = make_completion_request(1, uri, pos)
             next_request = make_completion_request(2, uri, pos)
-            @test JETLS.is_sequential_msg(request)
+            @test JETLS.is_snapshot_msg(request)
             prepared = queued_snapshot_requests(server, [
                 make_DidChangeTextDocumentNotification(uri, captured, 2), request,
                 make_DidChangeTextDocumentNotification(uri, later, 3), next_request])

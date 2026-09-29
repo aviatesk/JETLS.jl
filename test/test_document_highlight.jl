@@ -23,6 +23,132 @@ function highlight_testcase(code::AbstractString, n::Int)
     return fi, positions
 end
 
+function make_document_highlight_request(id::Int, uri::URI, pos::Position)
+    return DocumentHighlightRequest(;
+        id,
+        params = DocumentHighlightParams(;
+            textDocument = TextDocumentIdentifier(; uri),
+            position = pos))
+end
+
+function test_snapshot_highlights(highlights::Vector{DocumentHighlight}, positions::Vector{Position})
+    expected = Set(
+        (Range(; start = positions[i], var"end" = positions[i+1]),
+            i == 1 ? DocumentHighlightKind.Write : DocumentHighlightKind.Read)
+        for i in 1:2:length(positions))
+    @test length(highlights) == length(expected)
+    @test Set((highlight.range, highlight.kind) for highlight in highlights) == expected
+end
+
+@testset "document highlight snapshot ordering" begin
+    captured, captured_positions = JETLS.get_text_and_positions(
+        "let │captured│ = 1\n    │captured│\nend")
+    later, later_positions = JETLS.get_text_and_positions(
+        "let │later│ = 2\n    │later│ + │later│\nend")
+    pos = Position(; line = 1, character = 5)
+
+    @testset "prior and later didChange" begin
+        with_manual_dispatch_server() do server, recorder
+            uri = filepath2uri(@__FILE__)
+            JETLS.cache_file_info!(server, uri, 1, "let initial = 0\n    initial\nend")
+            request = make_document_highlight_request(1, uri, pos)
+            next_request = make_document_highlight_request(2, uri, pos)
+            @test JETLS.is_snapshot_msg(request)
+            prepared = queued_snapshot_requests(server, [
+                make_DidChangeTextDocumentNotification(uri, captured, 2), request,
+                make_DidChangeTextDocumentNotification(uri, later, 3), next_request])
+            @test length(prepared) == 2
+            @test prepared[1].msg === request
+            @test prepared[2].msg === next_request
+            @test prepared[1].msg.params.position == pos
+            @test prepared[1].snapshot.fi.version == 2
+            @test prepared[1].snapshot.cache_uri == uri
+            @test prepared[1].snapshot.notebook === nothing
+            @test prepared[2].snapshot.fi.version == 3
+            @test JETLS.get_file_info(server.state, uri) === prepared[2].snapshot.fi
+            @test prepared[1].snapshot.fi !== prepared[2].snapshot.fi
+
+            for (item, positions) in zip(prepared, (captured_positions, later_positions))
+                response = dispatch_snapshot_request(server, recorder, item)
+                @test response isa DocumentHighlightResponse
+                @test response.error === nothing
+                test_snapshot_highlights(response.result, positions)
+            end
+        end
+    end
+
+    @testset "missing cache is not retried" begin
+        with_manual_dispatch_server() do server, recorder
+            uri = filepath2uri(@__FILE__)
+            request = make_document_highlight_request(1, uri, pos)
+            prepared = only(queued_snapshot_requests(server, [request]))
+            @test prepared.snapshot === nothing
+            @test JETLS.get_file_info(server.state, uri) === nothing
+            JETLS.cache_file_info!(server, uri, 1, captured)
+            current = only(queued_snapshot_requests(server, [
+                make_document_highlight_request(2, uri, pos)]))
+            @test current.snapshot !== nothing
+
+            response = dispatch_snapshot_request(server, recorder, prepared)
+            @test response isa ResponseMessage
+            @test response.error === nothing
+            @test response.result === null
+            response = dispatch_snapshot_request(server, recorder, current)
+            @test response isa DocumentHighlightResponse
+            @test response.error === nothing
+            test_snapshot_highlights(response.result, captured_positions)
+        end
+    end
+
+    @testset "close and reopen at the same version" begin
+        with_manual_dispatch_server() do server, recorder
+            uri = filepath2uri(@__FILE__)
+            JETLS.cache_file_info!(server, uri, 1, captured)
+            request = make_document_highlight_request(1, uri, pos)
+            prepared = only(queued_snapshot_requests(server, [
+                request, make_DidCloseTextDocumentNotification(uri)]))
+            @test prepared.snapshot.fi.version == 1
+            @test JETLS.get_file_info(server.state, uri) === nothing
+            while isready(recorder.sent_queue)
+                @test take!(recorder.sent_queue) isa PublishDiagnosticsNotification
+            end
+            current = only(queued_snapshot_requests(server, [
+                make_DidOpenTextDocumentNotification(uri, later; version = 1),
+                make_document_highlight_request(2, uri, pos)]))
+            @test current.snapshot.fi.version == 1
+            @test current.snapshot.fi.identity != prepared.snapshot.fi.identity
+            @test JETLS.get_file_info(server.state, uri) === current.snapshot.fi
+
+            response = dispatch_snapshot_request(server, recorder, prepared)
+            @test response isa DocumentHighlightResponse
+            @test response.error === nothing
+            test_snapshot_highlights(response.result, captured_positions)
+            response = dispatch_snapshot_request(server, recorder, current)
+            @test response isa DocumentHighlightResponse
+            @test response.error === nothing
+            test_snapshot_highlights(response.result, later_positions)
+        end
+    end
+
+    @testset "cancellation before prepared dispatch" begin
+        with_manual_dispatch_server() do server, recorder
+            uri = filepath2uri(@__FILE__)
+            JETLS.cache_file_info!(server, uri, 1, captured)
+            request = make_document_highlight_request(1, uri, pos)
+            prepared = only(queued_snapshot_requests(server, [request]))
+            @test prepared.snapshot !== nothing
+            JETLS.handler_concurrent_message(server, CancelRequestNotification(;
+                params = CancelParams(; id = request.id)))
+            @test JETLS.is_cancelled(server.state.currently_handled[request.id])
+            response = dispatch_snapshot_request(server, recorder, prepared)
+            @test response isa ResponseMessage
+            @test response.result === nothing
+            @test response.error isa ResponseError
+            @test response.error.code == ErrorCodes.RequestCancelled
+        end
+    end
+end
+
 @testset HierarchicalTestSet "document_highlights!" begin
     @testset "local binding highlights" begin
         let code = """
