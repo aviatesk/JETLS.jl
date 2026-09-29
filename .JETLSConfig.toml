@@ -40,15 +40,6 @@ severity = "off"
 path = "src/utils/JETLSTestModule.jl"
 
 # TODO [JETLS]
-# `@interface` type instability for anonymous interface definitions
-[[diagnostic.patterns]]
-pattern = "no matching method found `.*var\"AnonymousInterface.*`"
-match_by = "message"
-match_type = "regex"
-severity = "off"
-path = "LSP/src/**/*.jl"
-
-# TODO [JETLS]
 # When Revise updates the `Server` type graph, analyzing `run_serve` in the latest world
 # sees an impossible assignment from latest `Server(endpoint)` to the old typed global.
 [[diagnostic.patterns]]
