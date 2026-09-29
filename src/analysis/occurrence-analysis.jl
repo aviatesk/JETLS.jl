@@ -455,22 +455,29 @@ function get_binding_occurrences!(
             return cache, file_cache.by_range[range_key]
         end
         # Cache lowering failures as empty results so repeated calls for the same statement
-        cache_result = BindingOccurrencesResult()
         result = compute_full_binding_occurrences(state, uri, fi, st0; lookup_func)
-        if result !== nothing
-            for (binfo, occurrences) in result
-                cached_set = get!(Set{CachedBindingOccurrence}, cache_result, BindingInfoKey(binfo))
-                for occurrence in occurrences
-                    push!(cached_set, CachedBindingOccurrence(occurrence))
-                end
-            end
-        end
+        cache_result = cache_binding_occurrences(result)
         by_range = file_cache === nothing ?
             BindingOccurrencesRangeCache(range_key => cache_result) :
             BindingOccurrencesRangeCache(file_cache.by_range, range_key => cache_result)
         file_cache = BindingOccurrencesCacheEntry(fi.identity, by_range, nothing)
         return BindingOccurrencesCacheData(cache, cache_uri => file_cache), cache_result
     end
+end
+
+function cache_binding_occurrences(
+        result::Union{Nothing,Dict{JL.BindingInfo,Set{BindingOccurrence}}}
+    )
+    cache_result = BindingOccurrencesResult()
+    if result !== nothing
+        for (binfo, occurrences) in result
+            cached_set = get!(Set{CachedBindingOccurrence}, cache_result, BindingInfoKey(binfo))
+            for occurrence in occurrences
+                push!(cached_set, CachedBindingOccurrence(occurrence))
+            end
+        end
+    end
+    return cache_result
 end
 
 function compute_full_binding_occurrences(

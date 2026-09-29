@@ -348,6 +348,8 @@ function is_snapshot_msg(@nospecialize msg)
            msg isa SignatureHelpRequest ||
            msg isa HoverRequest ||
            msg isa DocumentHighlightRequest ||
+           msg isa SemanticTokensFullRequest ||
+           msg isa SemanticTokensRangeRequest ||
            msg isa DocumentDiagnosticRequest
 end
 
@@ -399,6 +401,10 @@ function handle_sequential_message(server::Server, @nospecialize msg)
     elseif msg isa HoverRequest
         enqueue_message!(server, snapshot_request_message(server.state, msg, msg.params.textDocument.uri))
     elseif msg isa DocumentHighlightRequest
+        enqueue_message!(server, snapshot_request_message(server.state, msg, msg.params.textDocument.uri))
+    elseif msg isa SemanticTokensFullRequest
+        enqueue_message!(server, snapshot_request_message(server.state, msg, msg.params.textDocument.uri))
+    elseif msg isa SemanticTokensRangeRequest
         enqueue_message!(server, snapshot_request_message(server.state, msg, msg.params.textDocument.uri))
     elseif msg isa DocumentDiagnosticRequest
         enqueue_message!(server, snapshot_request_message(server.state, msg, msg.params.textDocument.uri))
@@ -549,6 +555,10 @@ function handle_snapshot_request_message(
         handle_HoverRequest(server, msg, snapshot, cancel_flag)
     elseif msg isa DocumentHighlightRequest
         handle_DocumentHighlightRequest(server, msg, snapshot, cancel_flag)
+    elseif msg isa SemanticTokensFullRequest
+        handle_SemanticTokensFullRequest(server, msg, snapshot, cancel_flag)
+    elseif msg isa SemanticTokensRangeRequest
+        handle_SemanticTokensRangeRequest(server, msg, snapshot, cancel_flag)
     else
         error(lazy"Unexpected snapshot request message: $(typeof(msg))")
     end
@@ -589,10 +599,6 @@ function handle_request_message(
         handle_InlayHintRequest(server, msg, cancel_flag)
     elseif msg isa InlayHintResolveRequest
         handle_InlayHintResolveRequest(server, msg, cancel_flag)
-    elseif msg isa SemanticTokensFullRequest
-        handle_SemanticTokensFullRequest(server, msg, cancel_flag)
-    elseif msg isa SemanticTokensRangeRequest
-        handle_SemanticTokensRangeRequest(server, msg, cancel_flag)
     elseif msg isa DocumentFormattingRequest
         handle_DocumentFormattingRequest(server, msg, cancel_flag)
     elseif msg isa DocumentRangeFormattingRequest

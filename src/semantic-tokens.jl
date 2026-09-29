@@ -8,8 +8,8 @@
 # comments, macros, etc. are left to the client's syntactic highlighter (which
 # is enabled via the `augmentsSyntaxTokens` capability).
 #
-# The implementation reuses `binding_occurrences_cache` via `iterate_toplevel_tree`,
-# i.e. the same path used by document-highlight / references for global lookups.
+# Regular documents reuse `binding_occurrences_cache` via `iterate_toplevel_tree`.
+# Notebook snapshots use explicit soft scope without consulting live membership.
 
 const SEMANTIC_TOKENS_REGISTRATION_ID = "jetls-semantic-tokens"
 const SEMANTIC_TOKENS_REGISTRATION_METHOD = "textDocument/semanticTokens"
@@ -64,45 +64,33 @@ function semantic_tokens_registration()
 end
 
 function handle_SemanticTokensFullRequest(
-        server::Server, msg::SemanticTokensFullRequest, cancel_flag::CancelFlag
+        server::Server, msg::SemanticTokensFullRequest, snapshot::DocumentSnapshot,
+        cancel_flag::CancelFlag
     )
     state = server.state
     uri = msg.params.textDocument.uri
 
-    result = get_file_info(state, uri, cancel_flag)
-    if isnothing(result)
-        return send(server, SemanticTokensFullResponse(; id = msg.id, result = null))
-    elseif result isa ResponseError
+    data = compute_semantic_tokens(state, uri, snapshot)
+    if is_cancelled(cancel_flag)
         return send(server, SemanticTokensFullResponse(;
-            id = msg.id, result = nothing, error = result))
+            id = msg.id, result = nothing, error = request_cancelled_error()))
     end
-    fi = result
-
-    data = compute_semantic_tokens(state, uri, fi)
     return send(server, SemanticTokensFullResponse(;
         id = msg.id,
         result = SemanticTokens(; data)))
 end
 
 function handle_SemanticTokensRangeRequest(
-        server::Server, msg::SemanticTokensRangeRequest, cancel_flag::CancelFlag
+        server::Server, msg::SemanticTokensRangeRequest, snapshot::DocumentSnapshot,
+        cancel_flag::CancelFlag
     )
     state = server.state
     uri = msg.params.textDocument.uri
-    range = Range(;
-        start = adjust_position(state, uri, msg.params.range.start),
-        var"end" = adjust_position(state, uri, msg.params.range.var"end"))
-
-    result = get_file_info(state, uri, cancel_flag)
-    if isnothing(result)
-        return send(server, SemanticTokensRangeResponse(; id = msg.id, result = null))
-    elseif result isa ResponseError
+    data = compute_semantic_tokens(state, uri, snapshot; range = msg.params.range)
+    if is_cancelled(cancel_flag)
         return send(server, SemanticTokensRangeResponse(;
-            id = msg.id, result = nothing, error = result))
+            id = msg.id, result = nothing, error = request_cancelled_error()))
     end
-    fi = result
-
-    data = compute_semantic_tokens(state, uri, fi; range)
     return send(server, SemanticTokensRangeResponse(;
         id = msg.id,
         result = SemanticTokens(; data)))
@@ -112,20 +100,27 @@ end
 const SemanticTokenTuple = NTuple{5,UInt}
 
 function compute_semantic_tokens(
-        state::ServerState, uri::URI, fi::FileInfo;
+        state::ServerState, uri::URI, snapshot::DocumentSnapshot;
         range::Union{Nothing,Range} = nothing,
     )
+    (; fi, cache_uri) = snapshot
     st0_top = build_syntax_tree(fi)
     raw = SemanticTokenTuple[]
-    # For range requests, convert the LSP range to a byte range so we can
-    # cheaply skip toplevel statements that don't overlap.
-    range_bytes = range === nothing ? nothing : range_to_byte_range(fi, range)
+    # Statement selection uses concatenated-source coordinates; the final token
+    # filter uses the request's cell-local range after localization.
+    range_bytes = range === nothing ? nothing :
+        range_to_byte_range(fi, adjust_range(snapshot, uri, range))
     iterate_toplevel_tree(st0_top) do st0::SyntaxTree
         if range_bytes !== nothing && !overlaps_byte_range(st0, range_bytes)
             return
         end
-        occs = get_binding_occurrences!(state, uri, fi, st0)
-        collect_semantic_tokens_for_occurrences!(raw, state, uri, fi, occs, st0)
+        occs = if snapshot.notebook === nothing
+            get_binding_occurrences!(state, cache_uri, fi, st0)
+        else
+            cache_binding_occurrences(compute_full_binding_occurrences(
+                state, cache_uri, fi, st0; soft_scope=true))
+        end
+        collect_semantic_tokens_for_occurrences!(raw, uri, snapshot, occs, st0)
     end
     sort!(raw)
     merge_overlapping_tokens!(raw)
@@ -175,7 +170,7 @@ function merge_overlapping_tokens!(raw::Vector{SemanticTokenTuple})
 end
 
 function collect_semantic_tokens_for_occurrences!(
-        raw::Vector{SemanticTokenTuple}, state::ServerState, uri::URI, fi::FileInfo,
+        raw::Vector{SemanticTokenTuple}, uri::URI, snapshot::DocumentSnapshot,
         occs::BindingOccurrencesResult, st0::SyntaxTree,
     )
     # `:local` aliases for type parameters cover a superset of the corresponding
@@ -197,7 +192,7 @@ function collect_semantic_tokens_for_occurrences!(
         end
         name_bytes = sizeof(binfo_key.name)
         for occurrence in occurrences
-            push_semantic_token!(raw, state, uri, fi, occurrence, ttype, name_bytes)
+            push_semantic_token!(raw, uri, snapshot, occurrence, ttype, name_bytes)
         end
     end
     return raw
@@ -234,7 +229,7 @@ function collect_type_param_names_from_tree!(names::Set{String}, st0::SyntaxTree
 end
 
 function push_semantic_token!(
-        raw::Vector{SemanticTokenTuple}, state::ServerState, uri::URI, fi::FileInfo,
+        raw::Vector{SemanticTokenTuple}, uri::URI, snapshot::DocumentSnapshot,
         occurrence::CachedBindingOccurrence, ttype::UInt, name_bytes::Int,
     )
     # Reject occurrences without a precise source byte range. Macro-internal
@@ -249,9 +244,9 @@ function push_semantic_token!(
     # highlight. Compare in UTF-8 bytes (not via `jsobj_to_range`, which returns
     # LSP encoding units like UTF-16 and would mismatch for non-ASCII identifiers).
     occurrence.tree.lb - occurrence.tree.fb + 1 == name_bytes || return
-    range = jsobj_to_range(occurrence.tree, fi)
-    target_uri, range = unadjust_range(state, uri, range)
-    # For notebooks, `fi` is the concatenated buffer that spans every cell, so
+    range = jsobj_to_range(occurrence.tree, snapshot.fi)
+    target_uri, range = unadjust_range(snapshot, uri, range)
+    # For notebooks, `snapshot.fi` is the concatenated buffer that spans every cell, so
     # `iterate_toplevel_tree` reaches occurrences belonging to other cells. The
     # response is scoped to the cell that issued the request, so drop tokens that
     # `unadjust_range` resolved to a different cell.
@@ -314,5 +309,6 @@ function semantic_tokens(fi::FileInfo; range::Union{Nothing,Range} = nothing)
     store!(state.file_cache) do cache
         Base.PersistentDict(cache, uri => fi), nothing
     end
-    return compute_semantic_tokens(state, uri, fi; range)
+    snapshot = get_document_snapshot(state, uri)::DocumentSnapshot
+    return compute_semantic_tokens(state, uri, snapshot; range)
 end

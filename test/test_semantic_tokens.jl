@@ -4,6 +4,8 @@ using Test
 using JETLS
 using JETLS.LSP
 
+include(normpath(pkgdir(JETLS), "test", "setup.jl"))
+
 const TYPE_PARAMETER       = JETLS.SEMANTIC_TOKEN_TYPE_PARAMETER
 const TYPE_TYPE_PARAMETER  = JETLS.SEMANTIC_TOKEN_TYPE_TYPE_PARAMETER
 const TYPE_VARIABLE        = JETLS.SEMANTIC_TOKEN_TYPE_VARIABLE
@@ -281,6 +283,207 @@ end
             start = Position(; line = 100, character = 0),
             var"end" = Position(; line = 101, character = 0))
         @test isempty(tokens_for(code; range = empty_range))
+    end
+end
+
+function make_semantic_tokens_request(id::Int, uri::URI; range::Union{Nothing,Range} = nothing)
+    textDocument = TextDocumentIdentifier(; uri)
+    if range === nothing
+        return SemanticTokensFullRequest(;
+            id, params = SemanticTokensParams(; textDocument))
+    end
+    return SemanticTokensRangeRequest(;
+        id, params = SemanticTokensRangeParams(; textDocument, range))
+end
+
+function dispatch_semantic_tokens(
+        server::JETLS.Server, recorder::JETLS.ServerMessageRecorder,
+        prepared::JETLS.SnapshotRequestMessage
+    )
+    response = dispatch_snapshot_request(server, recorder, prepared)
+    response_type = prepared.msg isa SemanticTokensFullRequest ?
+        SemanticTokensFullResponse : SemanticTokensRangeResponse
+    @test response isa response_type
+    @test response.error === nothing
+    return decode_semantic_tokens((response.result::SemanticTokens).data)
+end
+
+@testset "semantic tokens snapshot ordering" begin
+    captured = "let captured = 1\n    captured\nend"
+    later = "let later = 2\n    later + later\nend"
+    line_range = Range(;
+        start = Position(; line = 1, character = 0),
+        var"end" = Position(; line = 2, character = 0))
+
+    @testset "$(range === nothing ? "full" : "range")" for range in (nothing, line_range)
+        expected_captured = tokens_for(captured; range)
+        expected_later = tokens_for(later; range)
+        @test !isempty(expected_captured)
+        @test expected_captured != expected_later
+
+        @testset "prior and later didChange" begin
+            with_manual_dispatch_server() do server, recorder
+                uri = filepath2uri(@__FILE__)
+                JETLS.cache_file_info!(server, uri, 1, "let initial = 0\n    initial\nend")
+                request = make_semantic_tokens_request(1, uri; range)
+                @test JETLS.is_snapshot_msg(request)
+                prepared = queued_snapshot_requests(server, [
+                    make_DidChangeTextDocumentNotification(uri, captured, 2), request,
+                    make_DidChangeTextDocumentNotification(uri, later, 3),
+                    make_semantic_tokens_request(2, uri; range)])
+                @test length(prepared) == 2
+                @test prepared[1].snapshot.fi.version == 2
+                @test prepared[2].snapshot.fi.version == 3
+                @test JETLS.get_file_info(server.state, uri) === prepared[2].snapshot.fi
+                @test dispatch_semantic_tokens(server, recorder, prepared[1]) == expected_captured
+                @test dispatch_semantic_tokens(server, recorder, prepared[2]) == expected_later
+            end
+        end
+
+        @testset "missing capture is not retried" begin
+            with_manual_dispatch_server() do server, recorder
+                uri = filepath2uri(@__FILE__)
+                prepared = only(queued_snapshot_requests(server, [
+                    make_semantic_tokens_request(1, uri; range)]))
+                @test prepared.snapshot === nothing
+                JETLS.cache_file_info!(server, uri, 1, captured)
+                response = dispatch_snapshot_request(server, recorder, prepared)
+                @test response.error === nothing
+                @test response.result === null
+                current = only(queued_snapshot_requests(server, [
+                    make_semantic_tokens_request(2, uri; range)]))
+                @test dispatch_semantic_tokens(server, recorder, current) == expected_captured
+            end
+        end
+
+        @testset "close and reopen at the same version" begin
+            with_manual_dispatch_server() do server, recorder
+                uri = filepath2uri(@__FILE__)
+                JETLS.cache_file_info!(server, uri, 1, captured)
+                prepared = only(queued_snapshot_requests(server, [
+                    make_semantic_tokens_request(1, uri; range),
+                    make_DidCloseTextDocumentNotification(uri)]))
+                @test JETLS.get_file_info(server.state, uri) === nothing
+                while isready(recorder.sent_queue)
+                    @test take!(recorder.sent_queue) isa PublishDiagnosticsNotification
+                end
+                current = only(queued_snapshot_requests(server, [
+                    make_DidOpenTextDocumentNotification(uri, later; version = 1),
+                    make_semantic_tokens_request(2, uri; range)]))
+                @test current.snapshot.fi.version == prepared.snapshot.fi.version == 1
+                @test current.snapshot.fi.identity != prepared.snapshot.fi.identity
+                # Populate the shared occurrence cache with the reopened document first.
+                @test dispatch_semantic_tokens(server, recorder, current) == expected_later
+                @test dispatch_semantic_tokens(server, recorder, prepared) == expected_captured
+            end
+        end
+
+        @testset "cancellation before prepared dispatch" begin
+            with_manual_dispatch_server() do server, recorder
+                uri = filepath2uri(@__FILE__)
+                JETLS.cache_file_info!(server, uri, 1, captured)
+                request = make_semantic_tokens_request(1, uri; range)
+                prepared = only(queued_snapshot_requests(server, [request]))
+                JETLS.handler_concurrent_message(server, CancelRequestNotification(;
+                    params = CancelParams(; id = request.id)))
+                response = dispatch_snapshot_request(server, recorder, prepared)
+                @test response.result === nothing
+                @test response.error isa ResponseError
+                @test response.error.code == ErrorCodes.RequestCancelled
+            end
+        end
+    end
+end
+
+module M_snapshot
+    global x = 1
+end
+
+@testset "notebook semantic tokens snapshot ordering" begin
+    @testset "$change_kind" for change_kind in (
+            :preceding_lines, :remove_preceding, :remove_requested, :close)
+        with_manual_dispatch_server() do server, recorder
+            state = server.state
+            notebook_uri = URI("file:///semantic-tokens-snapshot.ipynb")
+            cell1 = URI("vscode-notebook-cell:/semantic-tokens-snapshot.ipynb#1")
+            cell2 = URI("vscode-notebook-cell:/semantic-tokens-snapshot.ipynb#2")
+            text = "while true\n    x = 2\n    println(x)\nend\nx"
+            cells = [
+                JETLS.NotebookCellInfo(cell1, NotebookCellKind.Code, 1, "prefix = 1\nprefix"),
+                JETLS.NotebookCellInfo(cell2, NotebookCellKind.Code, 1, text)]
+            concat = JETLS.concatenate_cells(cells)
+            notebook = JETLS.NotebookInfo(1, "jupyter-notebook", state.encoding, cells, concat)
+            JETLS.store!(state.notebook_cache) do cache
+                Base.PersistentDict(cache, notebook_uri => notebook), nothing
+            end
+            JETLS.store!(state.cell_to_notebook) do cache
+                for cell in cells
+                    cache = Base.PersistentDict(cache, cell.uri => notebook_uri)
+                end
+                cache, nothing
+            end
+            fi = JETLS.cache_notebook_file_info!(server, notebook_uri, notebook)
+            notification = if change_kind === :close
+                DidCloseNotebookDocumentNotification(;
+                    params = DidCloseNotebookDocumentParams(;
+                        notebookDocument = NotebookDocumentIdentifier(; uri = notebook_uri),
+                        cellTextDocuments = [TextDocumentIdentifier(; uri = cell.uri) for cell in cells]))
+            else
+                change = if change_kind === :preceding_lines
+                    NotebookDocumentChangeEventCells(;
+                        textContent = [NotebookDocumentChangeEventCellsTextContentItem(;
+                            document = VersionedTextDocumentIdentifier(; uri = cell1, version = 2),
+                            changes = [TextDocumentContentChangeEvent(; text = "prefix = 1")])])
+                else
+                    removed_uri = change_kind === :remove_preceding ? cell1 : cell2
+                    NotebookDocumentChangeEventCells(;
+                        structure = NotebookDocumentChangeEventCellsStructure(;
+                            array = NotebookCellArrayChange(;
+                                start = UInt(change_kind === :remove_preceding ? 0 : 1),
+                                deleteCount = UInt(1)),
+                            didClose = [TextDocumentIdentifier(; uri = removed_uri)]))
+                end
+                DidChangeNotebookDocumentNotification(;
+                    params = DidChangeNotebookDocumentParams(;
+                        notebookDocument = VersionedNotebookDocumentIdentifier(;
+                            uri = notebook_uri, version = 2),
+                        change = NotebookDocumentChangeEvent(; cells = change)))
+            end
+            line_range = Range(;
+                start = Position(; line = 2, character = 0),
+                var"end" = Position(; line = 3, character = 0))
+            partial_range = Range(;
+                start = Position(; line = 2, character = 12),
+                var"end" = Position(; line = 2, character = 13))
+            prepared = queued_snapshot_requests(server, [
+                make_semantic_tokens_request(1, cell2),
+                make_semantic_tokens_request(2, cell2; range = line_range),
+                make_semantic_tokens_request(3, cell2; range = partial_range),
+                notification])
+            @test length(prepared) == 3
+            @test prepared[1].snapshot.fi === fi
+            @test prepared[1].snapshot.cache_uri == notebook_uri
+            @test prepared[1].snapshot.notebook === concat
+            if change_kind in (:remove_requested, :close)
+                @test !JETLS.is_notebook_cell_uri(state, cell2)
+            end
+            while isready(recorder.sent_queue)
+                @test take!(recorder.sent_queue) isa PublishDiagnosticsNotification
+            end
+
+            # Only the canonical URI supplies the existing global needed by soft scope.
+            JETLS.cache_out_of_scope!(state.analysis_manager, notebook_uri, JETLS.OutOfScope(M_snapshot))
+            full = dispatch_semantic_tokens(server, recorder, prepared[1])
+            @test [(t.line, t.char, t.len, t.type) for t in full] == [
+                (1, 4, 1, TYPE_UNSPECIFIED),
+                (2, 4, 7, TYPE_UNSPECIFIED),
+                (2, 12, 1, TYPE_UNSPECIFIED),
+                (4, 0, 1, TYPE_UNSPECIFIED)]
+            @test (full[1].mod & MOD_DEFINITION) != 0
+            @test all(t -> t.mod == 0, full[2:4])
+            @test dispatch_semantic_tokens(server, recorder, prepared[2]) == full[2:3]
+            @test dispatch_semantic_tokens(server, recorder, prepared[3]) == full[3:3]
+        end
     end
 end
 
