@@ -34,7 +34,7 @@ For faster iteration on a specific `@testset`, use
 environment depends on:
 
 ```bash
-julia --startup-file=no --project=test -m TestRunner test/test_XXX.jl "testset_name"
+julia --startup-file=no --project=test -m TestRunner --verbose test/test_XXX.jl "testset_name"
 ```
 
 `--project=test` before `-m` keeps `JETLS_TEST_MODE` enabled and resolves
