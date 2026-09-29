@@ -1191,10 +1191,11 @@ end
             cache = JETLS.DefUsedNamesCache()
             cancel_flag = JETLS.CancelFlag(false)
             JETLS.cancel!(cancel_flag)
-            JETLS.compute_def_used_names!(cache, server, search_uris;
+            JETLS.compute_def_used_names!(cache, server, search_uris, #=snapshot=#nothing;
                 cancel_flag, skip_context_check = true)
             @test isempty(JETLS.load(cache))
-            JETLS.compute_def_used_names!(cache, server, search_uris; skip_context_check = true)
+            JETLS.compute_def_used_names!(cache, server, search_uris, #=snapshot=#nothing;
+                skip_context_check = true)
             @test !isempty(JETLS.load(cache))
         end
     end

@@ -521,7 +521,7 @@ function run_per_file_diagnostics!(
                 @something server_lookup_func() OutOfScope(Main)
             end
             diagnostics = if isempty(fi.parsed_stream.diagnostics)
-                toplevel_lowering_diagnostics!(def_used_names_cache, server, uri, fi; lookup_func)
+                toplevel_lowering_diagnostics!(def_used_names_cache, server, uri, fi, #=snapshot=#nothing, DUMMY_CANCEL_FLAG; lookup_func)
             else
                 parsed_stream_to_diagnostics(fi)
             end
