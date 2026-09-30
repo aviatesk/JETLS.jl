@@ -154,7 +154,7 @@ using Compiler: Compiler as CC
 using JET: JET
 using ..JETLS: InferredContextCache, InferredContextCacheData, SyntaxTree,
     TraversalReturn, TreeAnnotations
-using ..JETLS: JETLS_DEBUG_LOWERING, JETLS_DEV_MODE, JL, JS
+using ..JETLS: Analyzer, JETLS_DEBUG_LOWERING, JETLS_DEV_MODE, JL, JS
 using ..JETLS: get_name_val, iterate_toplevel_tree, jl_lower_for_scope_resolution, load,
     rewrite_local_closures_to_opaque, store!, traverse, unwrap_funcdef_sig
 import ..JETLS: InferredTreeContext
@@ -293,6 +293,12 @@ CC.may_optimize(::ASTTypeAnnotator) = false
 
 # ASTTypeAnnotator doesn't need any sources to be cached, so discard them aggressively
 CC.transform_result_for_cache(::ASTTypeAnnotator, ::CC.InferenceResult, ::Core.SimpleVector) = nothing
+
+@static if isdefined(CC, :codeinst_as_edge)
+CC.codeinst_as_edge(
+    interp::ASTTypeAnnotator, sv::CC.InferenceState, @nospecialize(existing_edge)
+) = Analyzer.codeinst_as_shared_edge(interp, sv, existing_edge)
+end
 
 # `bail_out_toplevel_call(interp, sv::InferenceState) = sv.restrict_abstract_call_sites` is
 # `true` for thunk MIs (`def isa Module`), and `abstract_call_gf_by_type` then refuses to

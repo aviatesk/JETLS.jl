@@ -59,6 +59,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Fixed [`JETLS/live`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/source) diagnostics lagging one edit behind while typing on clients that set the [`pull_diagnostics`](https://aviatesk.github.io/JETLS.jl/release/launching/#init-options/pull_diagnostics) initialization option, such as the VSCode extension:
   diagnostics shown after an edit now reflect that edit instead of the text before it.
 
+- Fixed memory usage growing each time [type inlay hints](https://aviatesk.github.io/JETLS.jl/release/features/#features/inlay-hint/types) are computed, e.g. while editing a file with the hints shown.
+  The memory retained after full-analysis is also reduced (related: https://github.com/aviatesk/JETLS.jl/issues/357).
+
 ## 2026-09-27
 
 - Commit: [`5ed21cb`](https://github.com/aviatesk/JETLS.jl/commit/5ed21cb)
