@@ -417,6 +417,60 @@ function CC.typeinf_edge(analyzer::LSAnalyzer,
         caller::CC.InferenceState, edgecycle::Bool, edgelimited::Bool)
 end
 
+# JuliaLang/julia#62359 replaced `codeinst_as_edge` with local inference proofs (v1.14)
+@static if isdefined(CC, :codeinst_as_edge)
+
+CC.codeinst_as_edge(
+    analyzer::LSAnalyzer, sv::CC.InferenceState, @nospecialize(existing_edge)
+) = codeinst_as_shared_edge(analyzer, sv, existing_edge)
+
+# Constant propagation allocates a dummy edge `CodeInstance` whenever the edges of the
+# constant-propagated inference differ from those of `existing_edge`, and registers its
+# backedges, which keep it alive as long as its callees are. Since the analyses re-infer the
+# same code over and over, this piles up equivalent dummy edges, so share one per
+# `MethodInstance`, owner and set of edges instead, under the same conditions for reuse as
+# `existing_edge`.
+const DUMMY_EDGES = IdDict{MethodInstance,Vector{Core.CodeInstance}}()
+const DUMMY_EDGES_LOCK = ReentrantLock()
+
+function codeinst_as_shared_edge(
+        interp::CC.AbstractInterpreter, sv::CC.InferenceState, @nospecialize(existing_edge)
+    )
+    mi = sv.linfo
+    min_world, max_world = first(sv.world.valid_worlds), last(sv.world.valid_worlds)
+    if max_world >= CC.get_world_counter()
+        max_world = typemax(UInt)
+    end
+    edges = Core.svec(sv.edges...)
+    if (existing_edge isa Core.CodeInstance && existing_edge.min_world >= min_world &&
+        existing_edge.max_world <= max_world && existing_edge.edges == edges)
+        return existing_edge
+    end
+    owner = CC.cache_owner(interp)
+    if max_world != typemax(UInt)
+        return Core.CodeInstance(mi, owner, Any, Any, nothing, nothing, zero(Int32),
+            min_world, max_world, zero(UInt32), nothing, nothing, edges)
+    end
+    return @lock DUMMY_EDGES_LOCK begin
+        dummies = get!(Vector{Core.CodeInstance}, DUMMY_EDGES, mi)
+        filter!(dummy::Core.CodeInstance -> dummy.max_world == typemax(UInt), dummies)
+        idx = findfirst(dummies) do dummy::Core.CodeInstance
+            dummy.owner === owner && dummy.min_world >= min_world && dummy.edges == edges
+        end
+        if idx === nothing
+            ci = Core.CodeInstance(mi, owner, Any, Any, nothing, nothing, zero(Int32),
+                min_world, max_world, zero(UInt32), nothing, nothing, edges)
+            CC.store_backedges(ci, edges)
+            push!(dummies, ci)
+            ci
+        else
+            dummies[idx]
+        end
+    end
+end
+
+end # @static if isdefined(CC, :codeinst_as_edge)
+
 # Analysis injections
 # ===================
 
