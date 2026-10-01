@@ -175,7 +175,7 @@ the event is automatically notified in the `finally` block.
 """
 function activate_with_early_release(func, env_path::String)
     activation_done = Base.Event()
-    t = @lock PKG_ACTIVATION_LOCK Pkg.activate(env_path) do
+    t = activate_do(env_path) do
         local t = Threads.@spawn try
             func(activation_done)
         finally
