@@ -264,7 +264,12 @@ JETInterface.aggregation_policy(::LSAnalyzer) = function (report::JET.InferenceE
 end
 
 const LS_ANALYZER_CACHE = Dict{UInt,AnalysisToken}()
-const LS_ANALYZER_CACHE_LOCK = ReentrantLock()
+# `AbstractAnalyzer(::LSAnalyzer, ::AnalyzerState)` takes this lock during inference, while
+# Compiler engine reservations owned by the current OS thread may be held. Waiting on a
+# `ReentrantLock` may yield and resume the task on another thread, so use a non-yielding
+# `SpinLock` instead. Critical sections must stay short and free of yield points, and must
+# not re-acquire the lock since `SpinLock` is not reentrant.
+const LS_ANALYZER_CACHE_LOCK = Threads.SpinLock()
 
 # internal API
 # ============
@@ -431,7 +436,9 @@ CC.codeinst_as_edge(
 # `MethodInstance`, owner and set of edges instead, under the same conditions for reuse as
 # `existing_edge`.
 const DUMMY_EDGES = IdDict{MethodInstance,Vector{Core.CodeInstance}}()
-const DUMMY_EDGES_LOCK = ReentrantLock()
+# `codeinst_as_edge` runs during inference too, so use a `SpinLock` for the same reason as
+# `LS_ANALYZER_CACHE_LOCK`.
+const DUMMY_EDGES_LOCK = Threads.SpinLock()
 
 function codeinst_as_shared_edge(
         interp::CC.AbstractInterpreter, sv::CC.InferenceState, @nospecialize(existing_edge)
