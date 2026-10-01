@@ -33,8 +33,8 @@ TestRunner = "4efbe77e-ddf3-4ce7-be91-16409ca9e85f"
 [sources]
 Compiler = {path = "Compiler"}
 JET = {rev = "ed9cd0c2f0", url = "https://github.com/aviatesk/JET.jl"}
-JuliaLowering = {rev = "1de3991eed", subdir = "JuliaLowering", url = "https://github.com/JuliaLang/julia"}
-JuliaSyntax = {rev = "1de3991eed", subdir = "JuliaSyntax", url = "https://github.com/JuliaLang/julia"}
+JuliaLowering = {rev = "5c0dc2df56", subdir = "JuliaLowering", url = "https://github.com/JuliaLang/julia"}
+JuliaSyntax = {rev = "5c0dc2df56", subdir = "JuliaSyntax", url = "https://github.com/JuliaLang/julia"}
 LSP = {path = "LSP"}
 Revise = {rev = "2832088593", url = "https://github.com/timholy/Revise.jl"}
 TestRunner = {rev = "01d25f359e", url = "https://github.com/aviatesk/TestRunner.jl"}
