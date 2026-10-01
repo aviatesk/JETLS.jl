@@ -5,6 +5,14 @@ using JETLS: JETLS
 using JETLS.URIs2: filepath2uri
 
 include(normpath(pkgdir(JETLS), "test", "setup.jl"))
+include(normpath(pkgdir(JETLS), "test", "jsjl-utils.jl"))
+
+module module_range_target
+module A
+module B end
+end
+baremodule C end
+end
 
 @testset "immediate invalidation supersedes older requests" begin
     server = JETLS.Server()
@@ -454,6 +462,46 @@ end
                 end
             end
         end
+    end
+end
+
+@testset "collect_module_range_infos" begin
+    let st0_top = jlparse("""
+            x = 1
+
+            module A
+            y = 2
+            \"\"\"docs\"\"\"
+            module B
+            end
+
+            end
+
+            baremodule C
+            end
+            module Undefined
+            end
+            """)
+        world = Base.get_world_counter()
+        @test JETLS.collect_module_range_infos(st0_top, module_range_target, world) == [
+            (1:typemax(Int)) => module_range_target,
+            3:9 => module_range_target.A,
+            6:7 => module_range_target.A.B,
+            11:12 => module_range_target.C]
+    end
+
+    # Revise tracks a package entry file as `include`d into the package module itself
+    let st0_top = jlparse("""
+            module module_range_target
+            module A
+            end
+            end
+            """)
+        world = Base.get_world_counter()
+        @test JETLS.collect_module_range_infos(st0_top, module_range_target, world) == [
+            (1:typemax(Int)) => module_range_target,
+            1:4 => module_range_target,
+            2:3 => module_range_target.A]
     end
 end
 

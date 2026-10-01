@@ -22,15 +22,6 @@ severity = "hint"
 path = "**/*.jl"
 
 # TODO [JETLS]
-# Need to properly set module context when a single file contains multiple modules (for the new incremental full analysis mode)
-[[diagnostic.patterns]]
-pattern = ".*"
-match_by = "message"
-match_type = "regex"
-severity = "off"
-path = "LSP/src/LSP.jl"
-
-# TODO [JETLS]
 # `JETLSTestModule` is a pseudo lowering context only used as `analysis_overrides.module_name` for our test files; it is never reachable from JETLS itself, so diagnositcs against it are noise.
 [[diagnostic.patterns]]
 pattern = ".*"
