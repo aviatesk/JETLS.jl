@@ -4,6 +4,7 @@ version = "0.0.0"
 JET = "avi/JET-JETLS-head-2026-09-26"
 JuliaLowering = "master"
 JuliaSyntax = "master"
+Revise = "master"
 TestRunner = "master"
 authors = ["Shuhei Kadowaki <aviatesk@gmail.com>"]
 
@@ -35,6 +36,7 @@ JET = {rev = "ed9cd0c2f0", url = "https://github.com/aviatesk/JET.jl"}
 JuliaLowering = {rev = "1de3991eed", subdir = "JuliaLowering", url = "https://github.com/JuliaLang/julia"}
 JuliaSyntax = {rev = "1de3991eed", subdir = "JuliaSyntax", url = "https://github.com/JuliaLang/julia"}
 LSP = {path = "LSP"}
+Revise = {rev = "2832088593", url = "https://github.com/timholy/Revise.jl"}
 TestRunner = {rev = "01d25f359e", url = "https://github.com/aviatesk/TestRunner.jl"}
 
 [compat]
