@@ -91,7 +91,7 @@ function parse_diagnostic_pattern(x::Dict{String,Any})
             Regex(pattern_value)
         catch e
             throw(DiagnosticConfigError(
-                lazy"Invalid regex pattern \"$pattern_value\": $(sprint(showerror, e))"))
+                lazy"Invalid regex pattern \"$pattern_value\": $(sprint(locked_showerror, e))"))
         end
     else
         pattern_value
@@ -113,7 +113,7 @@ function parse_diagnostic_pattern(x::Dict{String,Any})
             Glob.FilenameMatch(path_value, "dp")
         catch e
             throw(DiagnosticConfigError(
-                lazy"Invalid glob pattern \"$path_value\" for pattern \"$pattern_value\": $(sprint(showerror, e))"))
+                lazy"Invalid glob pattern \"$path_value\" for pattern \"$pattern_value\": $(sprint(locked_showerror, e))"))
         end
     else
         nothing
@@ -383,7 +383,7 @@ function jet_toplevel_error_report_to_diagnostic(
     else
         data = nothing
         message = JET.with_bufferring(:limit=>true, :markdown_rendering=>markdown_rendering) do io
-            JET.print_report(io, report)
+            with_base_render_lock(JET.print_report, io, report)
         end |> postprocessor
         code = report isa JET.ConcretizationTimeoutErrorReport ?
             TOPLEVEL_CONCRETIZATION_TIMEOUT_CODE : TOPLEVEL_ERROR_CODE
@@ -466,7 +466,7 @@ function jet_inference_error_report_to_diagnostic(
     rstack = inference_error_report_stack(report)
     topframe = report.vst[first(rstack)]
     message = JET.with_bufferring(:limit=>true) do io
-        Base.invoke_in_world(world, JET.print_report_message, io, report)
+        with_base_render_lock(Base.invoke_in_world, world, JET.print_report_message, io, report)
     end |> postprocessor
     relatedInformation = DiagnosticRelatedInformation[]
     for related_frame in inference_error_report_related_frames(report)
@@ -1689,7 +1689,7 @@ function per_stmt_diagnostics!(
                     msg = "Macro name `$(inner.var)` not found"
                     relatedInformation = nothing
                 else
-                    msg *= "\n" * sprint(showerror, inner)
+                    msg *= "\n" * sprint(locked_showerror, inner)
                     relatedInformation = stacktrace_to_related_information(st)
                 end
                 provs = JS.flattened_provenance(err.ex)
@@ -1709,8 +1709,8 @@ function per_stmt_diagnostics!(
             end
         else
             @static JETLS_DEBUG_LOWERING && @warn "Error in lowering (with macrocall nodes)"
-            @static JETLS_DEBUG_LOWERING && showerror(stderr, err)
-            @static JETLS_DEBUG_LOWERING && Base.show_backtrace(stderr, catch_backtrace())
+            @static JETLS_DEBUG_LOWERING && locked_showerror(stderr, err)
+            @static JETLS_DEBUG_LOWERING && locked_show_backtrace(stderr, catch_backtrace())
         end
         nothing # signal primary-attempt failure to the fallback path
     end
@@ -2372,7 +2372,7 @@ function start_workspace_diagnostics_worker!(server::Server)
         workspace_diagnostics_worker(server)
     catch err
         @error "Critical error happened in workspace diagnostics worker"
-        Base.display_error(stderr, err, catch_backtrace())
+        locked_display_error(stderr, err, catch_backtrace())
     end
     worker_task[] = task
     return task

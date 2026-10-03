@@ -56,6 +56,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- Fixed a crash that could occur when hover documentation, diagnostics, or error messages were rendered concurrently on Julia versions without the upstream display fix.
+
 - Fixed [`JETLS/live`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/source) diagnostics lagging one edit behind while typing on clients that set the [`pull_diagnostics`](https://aviatesk.github.io/JETLS.jl/release/launching/#init-options/pull_diagnostics) initialization option, such as the VSCode extension:
   diagnostics shown after an edit now reflect that edit instead of the text before it.
 

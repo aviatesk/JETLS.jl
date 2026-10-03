@@ -66,7 +66,7 @@ noise text for undocumented bindings while still keeping the auto-generated
 method/type summary that follows it.
 """
 function lookup_doc_stripped(@nospecialize(object), world::UInt)
-    md = Base.invoke_in_world(world, Base.Docs.doc, object)::Markdown.MD
+    md = with_base_render_lock(Base.invoke_in_world, world, Base.Docs.doc, object)::Markdown.MD
     # Tied to Base's exact placeholder phrasing (`Base.Docs.summarize` /
     # `bindingsummary`) — if upstream ever changes that wording, this filter
     # silently stops working.

@@ -428,7 +428,7 @@ function parse_concretization_pattern(x::Dict{String,Any}, path::Vector{String})
             Glob.FilenameMatch(path_value, "dp")
         catch e
             parse_dict_error(String[path; "path"],
-                "invalid glob pattern `$path_value`: $(sprint(showerror, e))")
+                "invalid glob pattern `$path_value`: $(sprint(locked_showerror, e))")
         end
     else
         nothing
@@ -480,7 +480,7 @@ function parse_config_dict(
                 """
             end
         end
-        error_message = sprint(showerror, e)
+        error_message = sprint(locked_showerror, e)
         if isnothing(filepath)
             return "Failed to parse LSP configuration: $error_message"
         else

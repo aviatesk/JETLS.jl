@@ -87,6 +87,8 @@ const CASStats = Nothing
 const SyntaxTree = JS.SyntaxTree
 const SyntaxList = JS.SyntaxList
 
+include("utils/rendering.jl")
+
 include("analysis/Analyzer.jl")
 using .Analyzer
 
@@ -295,7 +297,7 @@ function runserver(
         end
     catch err
         @error "Message handling loop failed"
-        Base.display_error(stderr, err, catch_backtrace())
+        locked_display_error(stderr, err, catch_backtrace())
     finally
         # The client may close the transport after `exit`; reject output before worker cleanup.
         close(server.endpoint)

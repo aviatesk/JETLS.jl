@@ -131,7 +131,7 @@ end
 function print_expansion_error_trace(io::IO, @nospecialize(err), bt)
     println(io, "# Expansion error trace:")
     buf = IOBuffer()
-    Base.display_error(buf, err, bt)
+    locked_display_error(buf, err, bt)
     for l in eachsplit(String(take!(buf)), '\n')
         println(io, "# ", l)
     end

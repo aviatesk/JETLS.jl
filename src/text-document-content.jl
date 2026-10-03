@@ -216,7 +216,7 @@ function save_text_document_content_tempfile(
     try
         write(temp_path, text)
     catch err
-        show_error_message(server, "Failed to save the $label: $(sprint(showerror, err))")
+        show_error_message(server, "Failed to save the $label: $(sprint(locked_showerror, err))")
         return nothing
     end
     return (; temp_path, uri = filepath2uri(temp_path))

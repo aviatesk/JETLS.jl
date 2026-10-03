@@ -122,7 +122,7 @@ function find_global_references!(
             seen_locations, server, uris_to_search, binfo; token, kwargs...)
     catch err
         @error "Error in `find_global_references!`"
-        Base.display_error(stderr, err, catch_backtrace())
+        locked_display_error(stderr, err, catch_backtrace())
         errored = true
     finally
         if token !== nothing
