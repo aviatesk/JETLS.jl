@@ -155,6 +155,7 @@ using JET: JET
 using ..JETLS: InferredContextCache, InferredContextCacheData, SyntaxTree,
     TraversalReturn, TreeAnnotations
 using ..JETLS: Analyzer, JETLS_DEBUG_LOWERING, JETLS_DEV_MODE, JL, JS
+using ..JETLS: locked_show_backtrace, locked_showerror
 using ..JETLS: get_name_val, iterate_toplevel_tree, jl_lower_for_scope_resolution, load,
     rewrite_local_closures_to_opaque, store!, traverse, unwrap_funcdef_sig
 import ..JETLS: InferredTreeContext
@@ -988,7 +989,7 @@ function get_inferrable_tree(
             trim_error_nodes=true, recover_from_macro_errors=false)
     catch err
         @static JETLS_DEBUG_LOWERING && @warn "Error in lowering ($caller)" err
-        @static JETLS_DEBUG_LOWERING && Base.show_backtrace(stderr, catch_backtrace())
+        @static JETLS_DEBUG_LOWERING && locked_show_backtrace(stderr, catch_backtrace())
         return nothing
     end
     return (; ctx3, st3)
@@ -1125,7 +1126,7 @@ function infer_lowered_tree(
         st5
     catch e
         @static JETLS_DEV_MODE && @error "infer_toplevel_tree: Lowering failed" e
-        @static JETLS_DEV_MODE && showerror(stderr, e, catch_backtrace())
+        @static JETLS_DEV_MODE && locked_showerror(stderr, e, catch_backtrace())
         return nothing
     end
     lwr = JL.to_lowered_expr(inferrable_tree)

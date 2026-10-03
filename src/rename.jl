@@ -305,7 +305,7 @@ function get_global_binding_rename(
             changes, server, uris_to_search, binfo, newName, cancel_flag, token)
     catch err
         @error "Error in `global_binding_rename`"
-        Base.display_error(stderr, err, catch_backtrace())
+        locked_display_error(stderr, err, catch_backtrace())
         errored = true
     finally
         if token !== nothing

@@ -110,7 +110,7 @@ function load_file_config!(on_difference, server::Server, filepath::AbstractStri
             err isa InvalidConfigDataError || rethrow(err)
             show_error_message(server, """
                 Failed to load configuration file at $filepath:
-                $(sprint(showerror, err))
+                $(sprint(locked_showerror, err))
                 """)
             return old_data, nothing
         end

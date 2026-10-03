@@ -204,7 +204,7 @@ macro tryinvokelatest(ex)
         $callex
     catch err
         @error "@tryinvokelatest failed with" $(callargs...)
-        Base.display_error(stderr, err, catch_backtrace())
+        locked_display_error(stderr, err, catch_backtrace())
     end)
 end
 

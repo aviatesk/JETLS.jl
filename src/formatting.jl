@@ -419,7 +419,7 @@ function log_formatter_failure(
         cmd::Cmd, proc::Base.Process, input_task::Task, output::Vector{UInt8}
     )
     input_error = istaskfailed(input_task) ?
-        sprint(showerror, TaskFailedException(input_task)) : nothing
+        sprint(locked_showerror, TaskFailedException(input_task)) : nothing
     details = (;
         cmd,
         exitcode = proc.exitcode,

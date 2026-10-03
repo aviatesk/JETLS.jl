@@ -15,7 +15,7 @@ using Compiler: Compiler as CC
 using JET.JETInterface
 using JET: JET
 
-using ..JETLS: AnalysisEntry, JETLS_DEV_MODE
+using ..JETLS: AnalysisEntry, JETLS_DEV_MODE, with_base_render_lock
 using ..LSP
 
 # JETLS internal interface
@@ -1196,7 +1196,8 @@ function print_no_method_hint_impl(
             "when trying to treat it as a callable object.")
     end
     exception = MethodError(f, arg_types, world)
-    candidates = sprint(Base.show_method_candidates, exception; context=io)
+    candidates = with_base_render_lock(sprint, Base.show_method_candidates, exception;
+            context=io)
     print_bulleted_method_candidates(io, candidates)
     return nothing
 end

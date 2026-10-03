@@ -70,7 +70,7 @@ function store_lsp_config!(tracker::ConfigChangeTracker, server::Server, @nospec
         validate_config_data(config_value)
     catch err
         err isa InvalidConfigDataError || rethrow(err)
-        error_message = sprint(showerror, err)
+        error_message = sprint(locked_showerror, err)
         show_error_message(server,
             lazy"Unexpected config data was passed from $source, deleting LSP configuration: $error_message")
         return delete_lsp_config!(tracker, server)

@@ -567,7 +567,7 @@ function _lazy_str_parse_interpolation(
     parsed, nextidx = try
         JS.parseatom(JS.SyntaxTree, value, idx; ignore_errors=false)
     catch err
-        msg = first(split(sprint(showerror, err), '\n'))
+        msg = first(split(sprint(locked_showerror, err), '\n'))
         push_macro_error!(text, "@lazy_str: failed to parse interpolation: $msg")
         return nothing
     end
@@ -1515,7 +1515,7 @@ function _static_eval_cond(ctx::JL.MacroContext, cond::SyntaxTree)
             Core.eval(base_mod, JL.est_to_expr(cond))
         end
     catch err
-        msg = first(split(sprint(showerror, err), '\n'))
+        msg = first(split(sprint(locked_showerror, err), '\n'))
         push_macro_error!(cond, "@static: failed to evaluate condition: $msg")
         return nothing
     end

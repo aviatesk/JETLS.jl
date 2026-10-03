@@ -118,7 +118,7 @@ function run_serve(args::Vector{String})
             @info "Connected to $pipe_type" pipe_connect_path
         catch e
             @error "Failed to connect to pipe" pipe_connect_path
-            Base.display_error(stderr, e, catch_backtrace())
+            locked_display_error(stderr, e, catch_backtrace())
             return 1
         end
     elseif !isnothing(pipe_listen_path)
@@ -133,7 +133,7 @@ function run_serve(args::Vector{String})
             @info "Accepted connection on $pipe_type"
         catch e
             @error "Failed to listen on pipe" pipe_listen_path
-            Base.display_error(stderr, e, catch_backtrace())
+            locked_display_error(stderr, e, catch_backtrace())
             return 1
         end
     elseif !isnothing(socket_port)
@@ -148,7 +148,7 @@ function run_serve(args::Vector{String})
             @info "Connected via TCP socket" actual_port
         catch e
             @error "Failed to create socket connection" socket_port
-            Base.display_error(stderr, e, catch_backtrace())
+            locked_display_error(stderr, e, catch_backtrace())
             return 1
         end
     else # use stdio as the communication channel

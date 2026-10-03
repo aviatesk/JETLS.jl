@@ -6,7 +6,7 @@ using JuliaSyntax: JuliaSyntax as JS
 using Compiler: Compiler as CC
 using JET: JET, JuliaInterpreter
 using ..JETLS: AnalysisExecution, JETLS, JETLS_DEV_MODE, Server,
-    get_init_option, get_source_text, is_cancelled, send_progress, yield_to_endpoint
+    get_init_option, get_source_text, is_cancelled, locked_showerror, send_progress, yield_to_endpoint
 using ..JETLS.URIs2
 using ..JETLS.LSP
 using ..JETLS.Analyzer
@@ -183,7 +183,7 @@ function (job::InterpreterSignatureAnalysisJob)(server::Server)
         end
     catch err
         @error "Error during signature analysis"
-        showerror(stderr, err, catch_backtrace())
+        locked_showerror(stderr, err, catch_backtrace())
     end
 end
 

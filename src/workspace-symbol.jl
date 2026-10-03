@@ -80,7 +80,7 @@ function workspace_symbols(
         completed = collect_symbols_from_files!(symbols, server, uris_to_search, params; token, kwargs...)
     catch err
         @error "Error in `workspace_symbol`"
-        Base.display_error(stderr, err, catch_backtrace())
+        locked_display_error(stderr, err, catch_backtrace())
         errored = true
     finally
         if token !== nothing

@@ -11,7 +11,7 @@ function parse_analysis_override(x::Dict{String,Any})
     path_glob = try
         Glob.FilenameMatch(path_value, "dp")
     catch e
-        error(lazy"Invalid glob pattern in analysis_override for \"$path_value\": $(sprint(showerror, e))")
+        error(lazy"Invalid glob pattern in analysis_override for \"$path_value\": $(sprint(locked_showerror, e))")
     end
 
     module_name = get(x, "module_name", nothing)
@@ -235,7 +235,7 @@ function start_signature_analysis_workers!(server::Server)
             signature_analysis_worker(server)
         catch err
             @error "Critical error happened in signature analysis worker"
-            Base.display_error(stderr, err, catch_backtrace())
+            locked_display_error(stderr, err, catch_backtrace())
         end
     end
     return worker_tasks
@@ -281,7 +281,7 @@ function start_analysis_worker!(server::Server)
         analysis_worker(server)
     catch err
         @error "Critical error happened in analysis worker"
-        Base.display_error(stderr, err, catch_backtrace())
+        locked_display_error(stderr, err, catch_backtrace())
     end
     worker_task[] = task
     return task
@@ -538,7 +538,7 @@ function resolve_analysis_request(server::Server, request::AnalysisRequest)
         result
     catch err
         @error "Error in `execute_analysis` for " request
-        Base.display_error(stderr, err, catch_backtrace())
+        locked_display_error(stderr, err, catch_backtrace())
         failed = true
     finally
         if cancellable_token !== nothing
@@ -663,7 +663,7 @@ function cleanup_prev_methods(prev_result::AnalysisResult)
             Base.delete_method(m)
         catch e
             @static JETLS_DEV_MODE && @warn "Failed to delete method $m" disabled=is_method_disabled(m)
-            @static JETLS_DEV_MODE && showerror(stderr, e, catch_backtrace())
+            @static JETLS_DEV_MODE && locked_showerror(stderr, e, catch_backtrace())
         end
     end
 end
@@ -1114,7 +1114,7 @@ function (job::ReviseSignatureAnalysisJob)(server::Server)
         isempty(reports) || @lock progress.reports_lock append!(progress.reports, reports)
     catch err
         @error "Error analyzing method signature" siginfo.sig
-        showerror(stderr, err, catch_backtrace())
+        locked_showerror(stderr, err, catch_backtrace())
     finally
         done = (@atomic progress.done += 1)
         if cancellable_token !== nothing
@@ -1259,7 +1259,7 @@ function analyze_package_with_revise(
     pkgmod = try
         pkgmod === nothing ? Base.require(pkgid)::Module : pkgmod
     catch e
-        show_error_message(server, "Failed to load package $(pkgid.name): $(sprint(showerror, e))")
+        show_error_message(server, "Failed to load package $(pkgid.name): $(sprint(locked_showerror, e))")
         error(lazy"Package $(pkgid.name) is not loadable") # TODO Make this top-level diagnostic?
     finally
         isnothing(activation_done) || notify(activation_done)
@@ -1821,7 +1821,7 @@ function ensure_instantiated!(
             This may cause various features such as diagnostics to not function properly.
             It is recommended to fix the problem by referring to the following error""" env_path
             println(stderr, String(take!(io)))
-            showerror(stderr, e, catch_backtrace())
+            locked_showerror(stderr, e, catch_backtrace())
             if !server.state.cli_mode
                 show_warning_message(server, """
                     Failed to instantiate package environment at $env_path.
@@ -1853,7 +1853,7 @@ function inspect_instantiation_needs(env_path::String)
             instantiation_needs(env_path)
         catch e
             @error "Failed to inspect package environment" env_path
-            showerror(stderr, e, catch_backtrace())
+            locked_showerror(stderr, e, catch_backtrace())
             (; resolve = true, instantiate = true)
         finally
             clear_pkg_registry_cache!()
