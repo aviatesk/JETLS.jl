@@ -317,26 +317,42 @@ function maybe_extract_sigs_for_types(types)
     end
 end
 
-function maybe_add_includes_to_pkgdata!(pkgdata::PkgData, file::AbstractString, includes; eval_now::Bool=false)
+"""
+    Revise.maybe_add_includes_to_pkgdata!(pkgdata, file, includes; eval_now=false, revise=revise_file_now)
+
+Register the files named by the `include` statements `includes` (as
+`(module, mapexpr, path)` tuples) found in `pkgdata`'s `file`, and start watching
+them.
+
+A registered file whose stored expressions do not describe what the session has
+loaded — a file registered here for the first time, one whose `mapexpr` changed, or
+one whose watch was relinquished — is brought current by `revise(pkgdata, path, idx)`
+when `eval_now` is set. The default, [`Revise.revise_file_now`](@ref), diffs and
+evaluates it immediately; `revise` schedules it instead when the call is made from
+within a revision pass. With `eval_now=false` a first-time file is recorded as
+already loaded (as when `Requires` has just evaluated it), and one that needs
+revising is queued on [`Revise.revision_queue`](@ref).
+"""
+function maybe_add_includes_to_pkgdata!(pkgdata::PkgData, file::AbstractString, includes; eval_now::Bool=false,
+                                        revise::Function=revise_file_now)
     for (mod, mapexpr, inc) in includes
         inc = joinpath(splitdir(file)[1], inc)
         incrp = relpath(inc, pkgdata)
-        hasinclude = false
         # Each `(path, module)` inclusion has its own entry (issue #730). A differing
         # `mapexpr` for that pair makes the old entry stale.
-        stale_idx = 0
+        current_idx = stale_idx = 0
         for (i, srcfile) in enumerate(srcfiles(pkgdata))
             srcfile == incrp || continue
             fi = pkgdata.fileinfos[i]
             first(keys(fi.mod_exs_infos)) === mod || continue
             if fi.mapexpr === mapexpr
-                hasinclude = true
+                current_idx = i
                 break
             elseif stale_idx == 0
                 stale_idx = i
             end
         end
-        if hasinclude
+        if current_idx != 0
             # Already registered, but the watch may have been relinquished while
             # the file's directory was absent (e.g. a branch switch removed it
             # past `watch_reappear_grace`); an `include` of the file in revised
@@ -345,7 +361,7 @@ function maybe_add_includes_to_pkgdata!(pkgdata::PkgData, file::AbstractString, 
             # the file's methods) cannot be trusted — so bring the file current
             # before re-arming the watch.
             if !iswatched(pkgdata, incrp)
-                revise_file_now(pkgdata, incrp)
+                revise(pkgdata, incrp, current_idx)
                 init_watching(pkgdata, (incrp,))
             end
         elseif stale_idx != 0
@@ -361,7 +377,7 @@ function maybe_add_includes_to_pkgdata!(pkgdata::PkgData, file::AbstractString, 
             # Re-diff the file under the new transform so the session catches up with
             # the new effective source.
             if eval_now
-                revise_file_now(pkgdata, incrp)
+                revise(pkgdata, incrp, stale_idx)
             else
                 @lock revise_lock push!(revision_queue, (pkgdata, incrp))
             end
@@ -373,21 +389,21 @@ function maybe_add_includes_to_pkgdata!(pkgdata::PkgData, file::AbstractString, 
             push!(pkgdata.info.files, incrp)
             fi = FileInfo(mod; mapexpr)
             push!(pkgdata.fileinfos, fi)
-            # Parse the source of the new file
+            # Watch before evaluating: if evaluation fails, an edit to the file must
+            # still trigger its revision.
+            init_watching(pkgdata, (incrp,))
             fullfile = joinpath(basedir(pkgdata), incrp)
             if isfile(fullfile)
-                parse_and_maybe_eval_source!(fi.mod_exs_infos, fullfile, mod; mapexpr)
                 if eval_now
-                    # Pin to Revise's frozen world (issue #552); `frozen`'s runtime dispatch
-                    # also reduces latency.
-                    nested = Tuple{Module,Function,String}[]
-                    frozen(instantiate_sigs!, fi.mod_exs_infos; mode=:eval, includes=nested)
-                    # Register files included by this newly registered file.
-                    isempty(nested) || maybe_add_includes_to_pkgdata!(pkgdata, incrp, nested; eval_now)
+                    # The empty record makes every expression in the file new, so
+                    # revising it evaluates the whole file and registers the files it
+                    # `include`s. If that fails, the record stays empty, and a retry or
+                    # an edit to the file evaluates it again from the start.
+                    revise(pkgdata, incrp, length(pkgdata.fileinfos))
+                else
+                    parse_and_maybe_eval_source!(fi.mod_exs_infos, fullfile, mod; mapexpr)
                 end
             end
-            # Add to watchlist
-            init_watching(pkgdata, (incrp,))
             yield()
         end
     end
@@ -461,8 +477,12 @@ Paths are relative to `pkgdata`.
 Only literal paths and destination-module names are recognized. An unresolved
 two-argument form is treated as `include(mapexpr, path)` in the current module.
 """
-function include_targets(pkgdata::PkgData, file::AbstractString, mod_exs_infos::ModuleExprsInfos)
-    targets = Set{Tuple{String,Module}}()
+include_targets(pkgdata::PkgData, file::AbstractString, mod_exs_infos::ModuleExprsInfos) =
+    Set{Tuple{String,Module}}(ordered_include_targets(pkgdata, file, mod_exs_infos))
+
+# `include_targets` as a vector in source order (module by module).
+function ordered_include_targets(pkgdata::PkgData, file::AbstractString, mod_exs_infos::ModuleExprsInfos)
+    targets = Tuple{String,Module}[]
     dir = splitdir(String(file)::String)[1]
     incs = Tuple{String,Any}[]
     for (mod, exs_infos) in mod_exs_infos
@@ -669,6 +689,34 @@ end
 # file, so call it only on event-named files, not in the per-directory sweep.
 filehash(path::AbstractString) = open(crc32c, path)
 
+# Whether `err` came from a filesystem call on a file that vanished after its
+# existence was checked (editors that save by delete-and-recreate open this
+# window; issue #1142). `open` throws `SystemError`, `stat` throws `IOError`.
+# Windows reports a file whose deletion is pending as EACCES rather than
+# ENOENT, so only there is EACCES treated as vanished.
+function vanished_error(err)
+    if err isa SystemError
+        return err.errnum == Libc.ENOENT || (Sys.iswindows() && err.errnum == Libc.EACCES)
+    elseif err isa Base.IOError
+        return err.code == Base.UV_ENOENT || (Sys.iswindows() && Base.uverrorname(err.code) == "EACCES")
+    end
+    return false
+end
+
+# Record that `file` is missing and return whether to queue it. The
+# disappearance is queued only once (stored ctime 0.0 marks it as already
+# queued); a sibling-file event must not requeue a persistently missing file.
+# The stored value reverts to a real ctime when the file reappears, and the
+# dropped hash makes the reappeared content compare as changed.
+function queue_missing!(wf::WatchList, file::AbstractString)
+    return @lock revise_lock begin
+        queueit = get(wf.file_ctimes, file, NaN) != 0.0
+        wf.file_ctimes[file] = 0.0
+        delete!(wf.file_hashes, file)
+        queueit
+    end
+end
+
 # Scan the `tracked` `name=>PkgId` pairs of directory `dirname`, returning those
 # whose files should be queued for revision. `changed` is the set of entry names
 # reported by the filesystem events (`nothing` if unknown).
@@ -687,42 +735,46 @@ function scan_changed_files(dirname::AbstractString, wf::WatchList, tracked, cha
     latestfiles = Pair{String,PkgId}[]
     for (file, id) in tracked
         fullpath = joinpath(dirname, file)
-        if isdir(fullpath)
-            # Detected a modification in a directory that we're watching in
-            # itself (not as a container for watched files)
-            push!(latestfiles, file=>id)
-            continue
-        elseif !file_exists(fullpath)
-            # File may have been deleted. But check again after a very brief pause.
-            sleep(0.1)
-            if !file_exists(fullpath)
-                # Queue the disappearance only once (stored ctime 0.0 marks it
-                # as already queued); a sibling-file event must not requeue a
-                # persistently missing file. The stored value reverts to a real
-                # ctime when the file reappears.
-                if (@lock revise_lock get(wf.file_ctimes, file, NaN)) != 0.0
-                    push!(latestfiles, file=>id)
-                    @lock revise_lock wf.file_ctimes[file] = 0.0
-                end
-                continue
-            end
+        queueit = try
+            scan_tracked_file!(wf, fullpath, file, changed)
+        catch err
+            # The file vanished between the existence check and a later
+            # filesystem call; treat it like one that was already missing
+            # rather than letting the exception kill the watcher task.
+            vanished_error(err) || rethrow()
+            queue_missing!(wf, file)
         end
-        current_ctime = ctime(fullpath)
-        queueit = current_ctime != @lock revise_lock get(wf.file_ctimes, file, current_ctime - 1)
-        if !queueit && changed !== nothing && file in changed
-            h = filehash(fullpath)
-            queueit = h != @lock revise_lock get(wf.file_hashes, file, h + 1)
-        end
-        if queueit
-            push!(latestfiles, file=>id)
-            h = filehash(fullpath)
-            @lock revise_lock begin
-                wf.file_ctimes[file] = current_ctime
-                wf.file_hashes[file] = h
-            end
-        end
+        queueit && push!(latestfiles, file=>id)
     end
     return latestfiles
+end
+
+# Whether the tracked `file` at `fullpath` should be queued, updating the
+# stored ctime and hash when it is.
+function scan_tracked_file!(wf::WatchList, fullpath::AbstractString, file::AbstractString, changed::Union{Nothing,Set{String}})
+    if isdir(fullpath)
+        # Detected a modification in a directory that we're watching in
+        # itself (not as a container for watched files)
+        return true
+    elseif !file_exists(fullpath)
+        # File may have been deleted. But check again after a very brief pause.
+        sleep(0.1)
+        file_exists(fullpath) || return queue_missing!(wf, file)
+    end
+    current_ctime = ctime(fullpath)
+    queueit = current_ctime != @lock revise_lock get(wf.file_ctimes, file, current_ctime - 1)
+    if !queueit && changed !== nothing && file in changed
+        h = filehash(fullpath)
+        queueit = h != @lock revise_lock get(wf.file_hashes, file, h + 1)
+    end
+    if queueit
+        h = filehash(fullpath)
+        @lock revise_lock begin
+            wf.file_ctimes[file] = current_ctime
+            wf.file_hashes[file] = h
+        end
+    end
+    return queueit
 end
 
 function watch_files_via_dir(dirname::AbstractString)

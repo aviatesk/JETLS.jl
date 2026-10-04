@@ -224,6 +224,27 @@ Options:
 - `--read-stdin` - Read source for the given file path from stdin instead of disk.
   The path is still used for `@__FILE__`, error messages, and resolving `include`d files
 
+### Running via `julia -m TestRunner`
+
+The `testrunner` executable is a thin shim around `julia -m TestRunner`, so
+TestRunner can also run from any environment that has it as a dependency:
+
+```bash
+julia --project=test -m TestRunner test/runtests.jl "my tests"
+```
+
+Julia options such as `--project` go before `-m`, and everything after the
+module name goes to TestRunner. `-m` resolves `TestRunner` by name from the
+load path, so when TestRunner lives in a different environment from the tests,
+add that environment to `JULIA_LOAD_PATH`:
+
+```bash
+JULIA_LOAD_PATH=/path/to/env julia --project=test -m TestRunner test/runtests.jl "my tests"
+```
+
+TestRunner resets `LOAD_PATH` to Julia's defaults before running the tests, so
+the extra entry only affects how TestRunner itself is loaded.
+
 ## Examples
 
 Given this [demo.jl](./demo.jl) file:

@@ -1,8 +1,9 @@
+module test_toplevel
+
+using JuliaInterpreter, Test
 using JuliaInterpreter: isdefinedglobal
 
-if !isdefinedglobal(@__MODULE__, :read_and_parse)
-    include("utils.jl")
-end
+include("utils.jl")
 
 module JIVisible
 module JIInvisible
@@ -62,13 +63,13 @@ end
 
         sum
     end
-    modexs = collect(ExprSplitter(Main, ex))
+    modexs = collect(ExprSplitter(@__MODULE__, ex))
     m, ex = first(modexs)       # FIXME don't use index in tests
     @test !JuliaInterpreter.is_doc_expr(ex.args[2])
 
-    @test !isdefinedglobal(Main, :JIInvisible)
+    @test !isdefinedglobal(@__MODULE__, :JIInvisible)
     collect(ExprSplitter(JIVisible, :(module JIInvisible f() = 1 end)))  # this looks up JIInvisible rather than create it
-    @test !isdefinedglobal(Main, :JIInvisible)
+    @test !isdefinedglobal(@__MODULE__, :JIInvisible)
     @test  isdefinedglobal(JIVisible, :JIInvisible)
 
     # `Base` has a self-binding even though `parentmodule(Base) === Main`.
@@ -141,8 +142,10 @@ module ToplevelDirect end
 # Drive a whole `:toplevel` expression two ways: the historical `ExprSplitter` trampoline
 # (still used by Revise to chunk source into top-level expressions) and direct surface
 # interpretation as a single `Frame` (the default for `Frame(mod, ::Expr)`). Evaluating the
-# same source through both paths into independent modules checks that the direct path
-# reproduces the observable results of the established path.
+# same source through both paths into independent modules checks that they agree on source
+# evaluated once. They intentionally differ for modules: `Frame` follows native evaluation
+# (a fresh module on each evaluation, `__init__` run), while `ExprSplitter` re-enters
+# existing modules for revision (see "Native module evaluation through Frame").
 function eval_via_exprsplitter!(mod::Module, ex)
     for (m, e) in ExprSplitter(mod, ex)
         # Build each frame in the latest world so framecode construction (e.g. resolving a
@@ -499,6 +502,16 @@ module ApplyIterateDirect end
     @test invokelatest(() -> M.fn4(:w, 1, 2, 3, 4)) == (:w, (1, 2, 3, 4))
 end
 
+@testset "Top-level frames start in the latest world" begin
+    m = Module(:LatestStart)
+    world = Base.get_world_counter()
+    Core.eval(m, :(defined_later() = :visible))
+    # Even when constructed by code running in an older world, like native evaluation.
+    frame = Base.invoke_in_world(world, Frame, m, :(defined_later()))
+    @test frame.world > world
+    @test JuliaInterpreter.finish_and_return!(frame, true) === :visible
+end
+
 @testset "Docstrings" begin
     ex = quote
         """
@@ -591,7 +604,7 @@ end
     end
     str = read(filename, String)
     ex = Base.parse_input_line(str)
-    modexs = ExprSplitter(Main, ex)
+    modexs = ExprSplitter(@__MODULE__, ex)
     @test !isempty(modexs)
     pop!(LOAD_PATH)
     rm(tmpdir, recursive=true)
@@ -847,33 +860,35 @@ module DirectKwdef end
 end
 
 # Targeted coverage of the direct surface-interpretation path (`step_toplevel!` /
-# `interpret_toplevel_stmt!` / `find_or_create_module`) for cases the dual-path testsets
-# above do not reach: error propagation, module reopening, and bare import/export/public/
-# literal statements fed as surface `:toplevel` expressions.
+# `interpret_toplevel_stmt!` / `begin_module`) for cases the dual-path testsets above do not
+# reach: error propagation, module re-evaluation, and bare import/export/public/literal
+# statements fed as surface `:toplevel` expressions.
 module DirectSurface end
 @testset "Direct toplevel surface paths" begin
     # A runtime error in a surface statement propagates through `step_toplevel!`'s handler.
     @test_throws "boom" JuliaInterpreter.finish_and_return!(
         Frame(DirectSurface, Expr(:toplevel, :(error("boom")))), true)
 
-    # A statement that lowering rejects surfaces as an `ArgumentError`.
-    @test_throws "lowering returned an error" JuliaInterpreter.finish_and_return!(
+    # Lowering failures preserve the syntax error raised by native eval.
+    @test_throws "syntax: invalid assignment location" JuliaInterpreter.finish_and_return!(
         Frame(DirectSurface, Expr(:toplevel, :(1 = 2))), true)
 
     # A bare literal statement is evaluated and returned.
     @test JuliaInterpreter.finish_and_return!(
         Frame(DirectSurface, Expr(:toplevel, 42)), true) == 42
 
-    # Reopening a module: the second `:module` declaration reuses the existing module rather
-    # than creating a new one, so bindings from both declarations coexist.
+    # Re-evaluating a module: like native evaluation, the second `:module` declaration
+    # replaces the module with a fresh one rather than reopening it.
     JuliaInterpreter.finish_and_return!(
         Frame(DirectSurface, Expr(:toplevel, :(module Reopened; a = 1; end))), true)
     mod1 = invokelatest(getglobal, DirectSurface, :Reopened)
     JuliaInterpreter.finish_and_return!(
         Frame(DirectSurface, Expr(:toplevel, :(module Reopened; b = 2; end))), true)
-    @test invokelatest(getglobal, DirectSurface, :Reopened) === mod1
+    mod2 = invokelatest(getglobal, DirectSurface, :Reopened)
+    @test mod2 !== mod1
     @test invokelatest(() -> mod1.a) == 1
-    @test invokelatest(() -> mod1.b) == 2
+    @test !invokelatest(isdefinedglobal, mod2, :a)
+    @test invokelatest(() -> mod2.b) == 2
 
     # `import`/`export`/`public` are handled directly as surface statements.
     JuliaInterpreter.finish_and_return!(
@@ -889,6 +904,279 @@ module DirectSurface end
     # `whereis` on a toplevel-surface frame reads the surface `LineNumberNode`s directly.
     fr = JuliaInterpreter.toplevel_frame(DirectSurface, Any[LineNumberNode(7, :somefile), :(x = 1)])
     @test JuliaInterpreter.whereis(fr, 2) == ("somefile", 7)
+end
+
+@testset "Stepping into a surface statement: $ex" for (name, ex) in (
+        (:y, :(y = g(h(1)))), (:z, :(global z::Int = g(h(1)))))
+    # `:s` enters the lowered frame of the statement like a callee, before any of the
+    # statement's side effects, and stops at its first call, past the global declarations
+    # (builtin calls on some versions). The surface expression itself cannot be stepped,
+    # since its arguments may contain calls.
+    m = Module(:SurfaceStep)
+    Core.eval(m, :(h(x) = x + 1))
+    Core.eval(m, :(g(x) = 2x))
+    frame = Frame(m, Expr(:toplevel, ex))
+    ret = JuliaInterpreter.debug_command(frame, :s, true)
+    @test ret isa Tuple{Frame, BreakpointRef}
+    current = ret[1]
+    @test JuliaInterpreter.scopeof(current) === m && current.caller === frame
+    stmt = JuliaInterpreter.pc_expr(current)
+    @test JuliaInterpreter.is_call(stmt) &&
+        JuliaInterpreter.lookup(current, stmt.args[1]) === invokelatest(getglobal, m, :h)
+    @test !invokelatest(isdefinedglobal, m, name)
+    # `:si` stops at the exact entry.
+    ret = JuliaInterpreter.debug_command(Frame(m, Expr(:toplevel, ex)), :si, true)
+    @test ret isa Tuple{Frame, BreakpointRef} && ret[1].pc == 1
+    for _ in 1:100
+        ret = JuliaInterpreter.debug_command(current, :s, true)
+        ret === nothing && break
+        current = ret[1]
+    end
+    @test ret === nothing
+    @test invokelatest(getglobal, m, name) == 4
+end
+
+# `Frame` evaluates `:module` expressions like native evaluation does: each evaluation
+# creates a fresh module, runs `__init__` after the body, and evaluates to the module.
+# Native `Core.eval` is the reference for the observable behavior.
+const native_module_log = Symbol[]
+native_module_bp(x) = x + 1
+
+eval_module_natively(mod::Module, ex) = Core.eval(mod, ex)
+eval_module_via_toplevel(mod::Module, ex) =
+    JuliaInterpreter.finish_and_return!(Frame(mod, Expr(:toplevel, ex)), true)
+eval_module_via_frame(mod::Module, ex) =
+    JuliaInterpreter.finish_and_return!(Frame(mod, ex), true)
+
+# Resume `frame`, paused at a breakpoint, by repeating the debugger command `cmd`.
+function finish_with_debug_command(frame::Frame, cmd::Symbol)
+    current = JuliaInterpreter.leaf(frame)
+    for _ in 1:5000
+        ret = JuliaInterpreter.debug_command(current, cmd, true)
+        ret === nothing && return JuliaInterpreter.get_return(frame)
+        current = ret[1]
+    end
+    error("frame did not finish after 5000 `$cmd` commands")
+end
+
+@testset "Native module evaluation through Frame" begin
+    @testset "$(nameof(evaluate))" for evaluate in (
+            eval_module_natively, eval_module_via_toplevel, eval_module_via_frame)
+        host = Module(:NativeModuleHost)
+
+        # Re-evaluation replaces the module instead of re-entering it.
+        old = evaluate(host, :(module Child; old = 1; end))
+        @test old isa Module && parentmodule(old) === host
+        new = evaluate(host, :(module Child; fresh = 2; end))
+        @test new isa Module && new !== old
+        @test invokelatest(getglobal, host, :Child) === new
+        @test !invokelatest(isdefinedglobal, new, :old)
+        @test invokelatest(isdefinedglobal, old, :old)
+
+        # A module named like its parent is a fresh child, not the parent itself.
+        outer = evaluate(host, :(module Same; module Same; inner = true; end; end))
+        inner = invokelatest(getglobal, outer, :Same)
+        @test inner !== outer && parentmodule(inner) === outer
+        @test invokelatest(isdefinedglobal, inner, :inner)
+
+        # `__init__` runs after the body. Nested modules are initialized once the outermost
+        # one completes, in the order they completed.
+        empty!(native_module_log)
+        evaluate(host, :(module Outer
+            module Inner
+                __init__() = push!($native_module_log, :inner)
+            end
+            __init__() = push!($native_module_log, :outer)
+            push!($native_module_log, :outer_body)
+        end))
+        @test native_module_log == [:outer_body, :inner, :outer]
+
+        # A failing `__init__` throws an `InitError` naming the module.
+        err = try
+            evaluate(host, :(module BadInit; __init__() = error("init failed"); end))
+            nothing
+        catch e
+            e
+        end
+        @test err isa InitError
+        @test err.mod === :BadInit && err.error == ErrorException("init failed")
+
+        # A failing body leaves the module bound, without initializing it.
+        empty!(native_module_log)
+        @test_throws "body failed" evaluate(host, :(module BadBody
+            __init__() = push!($native_module_log, :badbody)
+            error("body failed")
+        end))
+        @test invokelatest(isdefinedglobal, host, :BadBody)
+        @test isempty(native_module_log)
+
+        # A module expression returned by a macro evaluates to the module too.
+        Core.eval(host, :(macro make_module() esc(:(module MacroMade; value = 42; end)) end))
+        made = evaluate(host, :(@make_module))
+        @test made isa Module && nameof(made) === :MacroMade
+        @test invokelatest(getglobal, made, :value) == 42
+
+        # Malformed module expressions throw the errors of native evaluation.
+        @test_throws "syntax: malformed module expression" evaluate(host, Expr(:module, true, :Malformed, :notablock))
+        @test_throws "syntax: module expression third argument must be a block" evaluate(host, Expr(:module, true, :Malformed, Expr(:tuple)))
+        @test_throws "in module, expected Symbol, got a value of type $(Int)" evaluate(host, Expr(:module, true, 1, Expr(:block)))
+        # `false` standard imports make a bare module.
+        bare = evaluate(host, Expr(:module, false, :Bare, Expr(:block)))
+        @test bare isa Module && !invokelatest(isdefinedglobal, bare, :println)
+    end
+
+    @testset "creation order" begin
+        host = Module(:NativeModuleOrder)
+        # The module is created when the frame reaches its statement, after the earlier ones.
+        frame = Frame(host, Expr(:toplevel, :(seen = isdefined(@__MODULE__, :Child)), :(module Child end)))
+        @test !invokelatest(isdefinedglobal, host, :Child)
+        JuliaInterpreter.finish_and_return!(frame, true)
+        @test invokelatest(getglobal, host, :seen) === false
+        # A frame for a `:module` expression runs in the parent and creates nothing up front.
+        frame = Frame(host, :(module Lazy end))
+        @test JuliaInterpreter.moduleof(frame) === host
+        @test !invokelatest(isdefinedglobal, host, :Lazy)
+        @test JuliaInterpreter.finish_and_return!(frame, true) === invokelatest(getglobal, host, :Lazy)
+    end
+
+    @testset "module statements in lowered code" begin
+        host = Module(:NativeModuleLowered)
+        # Lowering wraps a module nested in a block into a `:toplevel` statement of the thunk.
+        ex = :(begin
+            $(Expr(:toplevel, :(module Wrapped
+                __init__() = push!($native_module_log, :wrapped)
+            end)))
+            1
+        end)
+        empty!(native_module_log)
+        @test JuliaInterpreter.finish_and_return!(Frame(host, ex), true) == 1
+        @test native_module_log == [:wrapped]
+        Core.eval(host, :(macro wrapped_module() esc(Expr(:toplevel, :(module MacroWrapped end))) end))
+        @test JuliaInterpreter.finish_and_return!(Frame(host, :(begin; @wrapped_module; 2; end)), true) == 2
+        @test invokelatest(getglobal, host, :MacroWrapped) isa Module
+        # Without `esc`, the module name is a `GlobalRef`, which native evaluation rejects too.
+        Core.eval(host, :(macro unescaped_module() Expr(:toplevel, :(module Unescaped end)) end))
+        @test_throws "in module, expected Symbol, got a value of type GlobalRef" JuliaInterpreter.finish_and_return!(
+            Frame(host, :(begin; @unescaped_module; 3; end)), true)
+        # A bare `:module` statement in lowered code is evaluated the same way.
+        src = (Meta.lower(host, ex)::Expr).args[1]::Core.CodeInfo
+        idx = findfirst(stmt -> Meta.isexpr(stmt, :toplevel), src.code)
+        src.code[idx] = only(src.code[idx].args)
+        previous = invokelatest(getglobal, host, :Wrapped)
+        empty!(native_module_log)
+        @test JuliaInterpreter.finish_and_return!(Frame(host, src), true) == 1
+        @test invokelatest(getglobal, host, :Wrapped) !== previous
+        @test native_module_log == [:wrapped]
+    end
+
+    @testset "resume a paused module body with $cmd" for cmd in (:finish_stack, :c, :n, :finish, :se, :s)
+        host = Module(:NativeModuleResume)
+        inits = Ref(0)
+        ex = Expr(:toplevel, :(module Paused
+            value = $native_module_bp(41)
+            __init__() = $inits[] += 1
+        end), :(after = 1))
+        bp = breakpoint(native_module_bp)
+        try
+            frame = Frame(host, ex)
+            @test JuliaInterpreter.finish_and_return!(frame, true) isa BreakpointRef
+            @test inits[] == 0
+            cmd === :finish_stack ? JuliaInterpreter.finish_stack!(frame, true) :
+                                    finish_with_debug_command(frame, cmd)
+            paused = invokelatest(getglobal, host, :Paused)
+            @test inits[] == 1
+            @test invokelatest(getglobal, paused, :value) == 42
+            @test frame.framedata.ssavalues[1] === paused # the statement's value
+            @test invokelatest(getglobal, host, :after) == 1
+        finally
+            remove(bp)
+        end
+    end
+
+    @testset "resume nested and macro-generated module bodies" begin
+        host = Module(:NativeModuleResumeNested)
+        bp = breakpoint(native_module_bp)
+        try
+            empty!(native_module_log)
+            frame = Frame(host, :(module Outer
+                module Inner
+                    value = $native_module_bp(1)
+                    __init__() = push!($native_module_log, :inner)
+                end
+                __init__() = push!($native_module_log, :outer)
+                push!($native_module_log, :outer_body)
+            end))
+            @test JuliaInterpreter.finish_and_return!(frame, true) isa BreakpointRef
+            outer = JuliaInterpreter.finish_stack!(frame, true)
+            @test outer === invokelatest(getglobal, host, :Outer)
+            @test native_module_log == [:outer_body, :inner, :outer]
+
+            modex = :(module MacroPaused; value = $native_module_bp(1); end)
+            Core.eval(host, :(macro paused_module() esc($(QuoteNode(modex))) end))
+            frame = Frame(host, Expr(:toplevel, :(@paused_module)))
+            @test JuliaInterpreter.finish_and_return!(frame, true) isa BreakpointRef
+            @test JuliaInterpreter.finish_stack!(frame, true) === invokelatest(getglobal, host, :MacroPaused)
+        finally
+            remove(bp)
+        end
+    end
+
+    @testset "`__init__` runs natively" begin
+        # Breakpoints in the calls `__init__` makes are not hit.
+        host = Module(:NativeModuleInitBreakpoint)
+        bp = breakpoint(native_module_bp)
+        try
+            frame = Frame(host, :(module InitCalls
+                __init__() = (global value = $native_module_bp(1))
+            end))
+            initcalls = JuliaInterpreter.finish_and_return!(frame, true)
+            @test initcalls isa Module
+            @test invokelatest(getglobal, initcalls, :value) == 2
+        finally
+            remove(bp)
+        end
+    end
+
+    @testset "initialization error while resuming with $cmd" for cmd in (:finish_stack, :c)
+        host = Module(:NativeModuleResumeInitError)
+        bp = breakpoint(native_module_bp)
+        try
+            frame = Frame(host, :(module BadInit
+                value = $native_module_bp(1)
+                __init__() = error("init failed")
+            end))
+            @test JuliaInterpreter.finish_and_return!(frame, true) isa BreakpointRef
+            @test_throws InitError cmd === :finish_stack ? JuliaInterpreter.finish_stack!(frame, true) :
+                                                           finish_with_debug_command(frame, cmd)
+        finally
+            remove(bp)
+        end
+    end
+
+    @testset "root module" begin
+        # Like native evaluation, a module evaluated into `Base.__toplevel__` is registered
+        # as a root module rather than bound in `Base.__toplevel__`.
+        name = gensym(:NativeModuleRoot)
+        root = eval_module_via_frame(Base.__toplevel__, Expr(:module, true, name, Expr(:block)))
+        @test parentmodule(root) === root
+        @test !invokelatest(isdefinedglobal, Base.__toplevel__, name)
+        @test Base.root_module(Base.PkgId(root)) === root
+    end
+
+    @testset "ExprSplitter still re-enters modules" begin
+        # `ExprSplitter` keeps the revision-oriented behavior: it reuses the existing module
+        # and never runs `__init__`.
+        host = Module(:SplitterReentry)
+        inits = Ref(0)
+        ex = :(module Reentered; __init__() = $inits[] += 1; end)
+        modules = Module[]
+        for _ in 1:2, (mod, e) in ExprSplitter(host, ex)
+            JuliaInterpreter.finish_and_return!(Frame(mod, e), true)
+            push!(modules, mod)
+        end
+        @test length(modules) == 2 && modules[1] === modules[2]
+        @test inits[] == 0
+    end
 end
 
 @testset "macrocall with nothing line info" begin
@@ -960,3 +1248,5 @@ end
     fr = Frame(MacroDeclTest, ex)
     @test JuliaInterpreter.finish_and_return!(fr, true) === nothing
 end
+
+end # module test_toplevel

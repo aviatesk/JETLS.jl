@@ -184,21 +184,21 @@ module LinePatternModule3 end
     end
 
     # Test line range - when selecting lines inside a testset, the whole testset runs
-    let result = @testset "line range" runtest(line_pattern_file, [9:15]; topmodule=LinePatternModule2)
+    let result = @testset "line range" runtest(line_pattern_file, [9:14]; topmodule=LinePatternModule2)
         @test length(result.results) == 1
         @test only(result.results).n_passed == 2
     end
 
     # Test single line number within test set
-    let result = @testset "line range" runtest(line_pattern_file, [12]; topmodule=LinePatternModule2)
+    let result = @testset "line range" runtest(line_pattern_file, [11]; topmodule=LinePatternModule2)
         @test result.n_passed == 0
-        @test only(result.results).n_passed == 1  # The test on line 12 in "math tests"
+        @test only(result.results).n_passed == 1  # The test on line 11 in "math tests"
     end
 
     # Test combining line numbers with other patterns
-    let result = @testset "mixed patterns" runtest(line_pattern_file, ["math tests", 18]; topmodule=LinePatternModule3)
+    let result = @testset "mixed patterns" runtest(line_pattern_file, ["math tests", 17]; topmodule=LinePatternModule3)
         # "math tests" testset (2 tests) + line 17 standalone test (1 test)
-        @test result.n_passed == 1  # The standalone test on line 18
+        @test result.n_passed == 1  # The standalone test on line 17
         @test length(result.results) == 1  # The "math tests" testset
         @test only(result.results).n_passed == 2  # Tests in "math tests"
     end

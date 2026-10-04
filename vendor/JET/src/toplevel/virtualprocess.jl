@@ -422,11 +422,12 @@ These options apply to all entry points described in the
   stops it at the next interpreted statement, including statements of functions
   called from the top-level code, reports a `ConcretizationTimeoutErrorReport`
   showing the calls that were running, and skips the abstract analysis of that
-  top-level statement. Code that runs natively, such as `ccall`s, builtins,
-  code evaluated by `Core.eval` and the calls of blocks selected by
-  `concretization_patterns`, cannot be interrupted. The time spent in
-  `include`d files and in module-loading statements handled by JET is not
-  counted.
+  top-level statement. Code passed to `Core.eval`, as by `@eval`, is
+  interpreted as well. Code that runs natively, such as `ccall`s, builtins,
+  the `__init__` functions of modules evaluated by `Core.eval` and the calls of
+  blocks selected by `concretization_patterns`, cannot be interrupted.
+  The time spent in `include`d files and in module-loading statements handled
+  by JET is not counted.
   Set `Inf` to disable the timeout.
 ---
 - `toplevel_logger::Union{Nothing,IO} = nothing` \\
@@ -552,9 +553,13 @@ struct SignatureInfo
     mod::Module
     tt::Type
     src
+    # the location of the definition, as `Method.file` and `Method.line`:
+    # `src` may carry no line information, e.g. for `f() = 1`
+    linenode::LineNumberNode
     SignatureInfo(
-        filename::AbstractString, mod::Module, @nospecialize(tt::Type), @nospecialize(src)
-    ) = new(filename, mod, tt, src)
+        filename::AbstractString, mod::Module, @nospecialize(tt::Type), @nospecialize(src),
+        linenode::LineNumberNode
+    ) = new(filename, mod, tt, src, linenode)
 end
 
 """
@@ -1719,37 +1724,40 @@ function _virtual_process!(interp::ConcreteInterpreter,
 
         if isexpr(x, :module)
             @static if !isdefinedglobal(Base, :set_syntax_version)
+                # Older Julia versions accept any standard-imports flag; only `true` enables it.
+                if length(x.args) == 3
+                    x.args[1] = x.args[1] === true
+                end
+            end
+            # A macro can generate a malformed module expression: reject it with the error
+            # native evaluation raises, before its body is replaced below.
+            modbody = try
+                JuliaInterpreter.ModuleExprParts(x).body
+            catch err
+                general_err_handler(err, Base.StackTraces.StackFrame[], state)
+                continue
+            end
+            @static if !isdefinedglobal(Base, :set_syntax_version)
                 if length(x.args) == 4 && x.args[1] isa VersionNumber
                     deleteat!(x.args, 1)
                 end
             end
+            x.args[end] = Expr(:block, lnn) # empty module's code body
+            newcontext = eval_with_err_handling(state, x)
+            isnothing(newcontext) && continue # error happened, e.g. duplicated naming
+            newcontext = newcontext::Module
+            newstate = InterpretationState(state;
+                                           context = newcontext,
+                                           pkg_mod_depth = state.pkg_mod_depth + 1,
+                                           dependencies = Set{Symbol}())
+            newinterp = ConcreteInterpreter(interp, newstate)
             if isexpanded
-                newblk = x.args[end]
-                @assert isexpr(newblk, :block)
-                overrideex = Expr(:toplevel, newblk.args...)
-                x.args[end] = Expr(:block, lnn) # empty module's code body
-                newcontext = eval_with_err_handling(state, x)
-                isnothing(newcontext) && continue # error happened, e.g. duplicated naming
-                newcontext = newcontext::Module
-                newstate = InterpretationState(state;
-                                               context = newcontext,
-                                               pkg_mod_depth = state.pkg_mod_depth + 1,
-                                               dependencies = Set{Symbol}())
-                newinterp = ConcreteInterpreter(interp, newstate)
+                overrideex = Expr(:toplevel, modbody.args...)
                 modnode = something(find_module_node(node), node)
                 _virtual_process!(newinterp, modnode;
                                   force_concretize, overrideex)
             else
                 @assert JS.kind(node) === K"module"
-                x.args[end] = Expr(:block, lnn) # empty module's code body
-                newcontext = eval_with_err_handling(state, x)
-                isnothing(newcontext) && continue # error happened, e.g. duplicated naming
-                newcontext = newcontext::Module
-                newstate = InterpretationState(state;
-                                               context = newcontext,
-                                               pkg_mod_depth = state.pkg_mod_depth + 1,
-                                               dependencies = Set{Symbol}())
-                newinterp = ConcreteInterpreter(interp, newstate)
                 _virtual_process!(newinterp, node;
                                   force_concretize)
             end
@@ -2016,8 +2024,10 @@ function partially_interpret!(
         src′.code[idx] = weak_global_declaration(stmt)
     end
 
-    # NOTE if `JuliaInterpreter.optimize!` may modify `src′`, `src′` and `plan` can be
-    # inconsistent; create the frame without optimization (#277).
+    # Create the frame without JuliaInterpreter's optimizations: for top-level code they
+    # compile `ccall`s and `@cfunction`s into wrappers when the frame is built, evaluating
+    # their type and library expressions natively, even for statements `plan` does not select.
+    # Statement indices are preserved either way, so `plan` stays aligned with the frame.
     frame = Frame(mod, src′; optimize=false, world=state.world)
     # The controller's gotos and shortcuts come from `plan.selected` alone, so the loops
     # and branches enclosing materialized declarations fall through and each declaration
@@ -2520,7 +2530,10 @@ function JuliaInterpreter.step_expr!(interp::ConcreteInterpreter, frame::Frame, 
         end
     end
 
-    if istoplevel && (ismoduleusage(node) || is_lowered_module_usage(node))
+    # Module usages in code that a method evaluates with `Core.eval` are left to the generic
+    # `step_expr!`, which evaluates them natively as actual execution does: in the module
+    # evaluated into, and raising errors to the calling code.
+    if istoplevel && (ismoduleusage(node) || is_lowered_module_usage(node)) && !is_evaled_frame(frame)
         moduleusage = ismoduleusage(node) ? node : to_module_usage(node)
         world = frame.world
         pause_concretization_timeout(state) do
@@ -2546,11 +2559,25 @@ function JuliaInterpreter.step_expr!(interp::ConcreteInterpreter, frame::Frame, 
         end
     end
 
-    if istoplevel && should_analyze_from_definitions(state.config)
+    return res
+end
+
+# Whether `frame` runs code that a method evaluates with `Core.eval`, rather than the
+# top-level code being analyzed.
+function is_evaled_frame(frame::Frame)
+    while true
+        frame = @something frame.caller return false
+        JuliaInterpreter.scopeof(frame) isa Method && return true
+    end
+end
+
+function JuliaInterpreter.evaluate_methoddef(interp::ConcreteInterpreter, frame::Frame, node::Expr)
+    # A failed definition may be caught by `step_expr!`; collect only after success.
+    ret = @invoke JuliaInterpreter.evaluate_methoddef(interp::Interpreter, frame::Frame, node::Expr)
+    if should_analyze_from_definitions(InterpretationState(interp).config)
         collect_toplevel_signature!(interp, frame, node)
     end
-
-    return res
+    return ret
 end
 
 function collect_toplevel_signature!(interp::ConcreteInterpreter, frame::Frame, @nospecialize(node))
@@ -2566,7 +2593,7 @@ function collect_toplevel_signature!(interp::ConcreteInterpreter, frame::Frame, 
             return nothing
         end
     end
-    atype_params, sparams, #=linenode=#_ =
+    atype_params, sparams, linenode =
         JuliaInterpreter.lookup(frame, node.args[2])::SimpleVector
     tt = form_method_signature(atype_params::SimpleVector, sparams::SimpleVector)
     @assert !CC.has_free_typevars(tt) "free type variable left in signature_infos"
@@ -2576,7 +2603,8 @@ function collect_toplevel_signature!(interp::ConcreteInterpreter, frame::Frame, 
     end
     mod = JuliaInterpreter.moduleof(frame)
     src = JuliaInterpreter.lookup(frame, node.args[3])
-    push!(state.res.signature_infos, SignatureInfo(state.filename, mod, tt, src))
+    push!(state.res.signature_infos,
+        SignatureInfo(state.filename, mod, tt, src, linenode::LineNumberNode))
 end
 
 # form a method signature from the first and second parameters of lowered `:method` expression
@@ -2696,7 +2724,8 @@ function handle_include(interp::ConcreteInterpreter, @nospecialize(include_func)
     state = InterpretationState(interp)
     filename = state.filename
     line = state.curline
-    include_context = state.context
+    # `include` of another module, e.g. called in code evaluated into that module
+    include_context = include_func isa Base.IncludeInto ? include_func.m : state.context
 
     function add_actual_method_error_report!(args::Vector{Any})
         err = MethodError(include_func, args)
@@ -2896,7 +2925,19 @@ function callee_stacktrace(frame::Frame)
     st = Base.StackTraces.StackFrame[]
     while true
         caller = @something frame.caller break # the top-level frame is not part of the stack
-        push!(st, Base.StackTraces.StackFrame(frame))
+        framecode = frame.framecode
+        if framecode.is_toplevel_surface
+            # JuliaInterpreter's driver frames for `Core.eval`ed code run each statement
+            # in a child frame, which carries the location
+        else
+            sf = Base.StackTraces.StackFrame(frame)
+            if framecode.scope isa Module
+                # the thunk of `Core.eval`ed code, named as in native stack traces
+                sf = Base.StackTraces.StackFrame(Symbol("top-level scope"),
+                    sf.file, sf.line, sf.linfo, sf.from_c, sf.inlined, sf.pointer)
+            end
+            push!(st, sf)
+        end
         frame = caller
     end
     return st

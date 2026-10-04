@@ -238,16 +238,49 @@ top-level statements, returning a `:toplevel` expression.
 steps through the unlowered surface statements one at a time, raising the world age between
 each so that each statement sees all definitions from earlier ones.
 
+A `:module` expression is evaluated as native evaluation does: when the driver frame reaches
+it, a fresh module is created (replacing any existing module of the same name), its body is
+interpreted, and its `__init__` runs (natively, so it cannot be stepped into). The statement
+evaluates to the module.
+
 `ExprSplitter` remains available for applications that need fine-grained control
 over when each sub-expression is evaluated; `Revise.jl` uses it for this purpose.
+Unlike `Frame`, it re-enters existing modules, as suits re-evaluating revised source, and
+it never runs `__init__`.
 
 (Incidentally, `JuliaInterpreter.enter_call(map, x->x^2, [1, 2, 3])` works fine on its own,
 because the anonymous function is defined by the caller — you'll see that the created frame
 is very simple.)
 
+### Interpreting `Core.eval`
+
+With `RecursiveInterpreter()`, calls to `Core.eval(mod, expr)` interpret `expr` in
+linked top-level frames in `mod`. This also applies to `Base.eval`, `@eval`, and
+entry through `@interpret Core.eval(mod, expr)`. Calls made by the evaluated code
+can hit breakpoints and be stepped through; resuming a paused eval does not require
+setting `rootistoplevel=true` when the root is an ordinary method frame.
+
+Evaluation starts in the latest world, but the calling method keeps its original
+world age after eval returns. Definitions and other side effects still
+affect the real target module, and `:module` expressions are evaluated as described
+above. Lowering and top-level declarations that cannot be interpreted continue to use
+Julia's native machinery.
+
+Since `include` evaluates each expression of the file with `Core.eval`, an `include` called
+from interpreted code interprets the whole file.
+
+To retain native evaluation, use `NonRecursiveInterpreter()` or add
+`which(Core.eval, Tuple{Module,Any})` to `JuliaInterpreter.compiled_methods` before
+constructing the calling frames (clear existing interpreter caches if necessary).
+
 ### World-age threading
 
 Each `Frame` captures the current world age at construction time. For method frames,
 this world is held fixed throughout execution, so stepping sees a consistent view of the
-method table even if new methods are defined mid-session. Toplevel driver frames refresh
-the world before each statement so they always see the latest definitions.
+method table even if new methods are defined mid-session. Toplevel frames follow native
+evaluation of top-level code instead: they start in the latest world, and they see the
+definitions of their earlier statements by advancing the world at `:latestworld` statements
+on Julia 1.12 and later, and before each statement on earlier versions. A nested `Core.eval`
+therefore does not by itself advance the world of the enclosing top-level frame. Code that
+evaluates top-level frames selectively, skipping statements, must still advance the world
+at the `:latestworld` statements it skips (as `LoweredCodeUtils.next_or_nothing!` does).

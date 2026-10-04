@@ -1,11 +1,11 @@
+module test_limits
+
 using JuliaInterpreter
 using CodeTracking
 using Test
 
 # This is a test-for-tests, verifying the code in utils.jl.
-if !JuliaInterpreter.isdefinedglobal(@__MODULE__, :read_and_parse)
-    include("utils.jl")
-end
+include("utils.jl")
 
 @testset "Abort" begin
     ex = Base.parse_input_line("""
@@ -21,7 +21,7 @@ end
     end
     @elapsed sum(rand(5))
     """; filename="fake.jl")
-    modexs = collect(ExprSplitter(Main, ex))
+    modexs = collect(ExprSplitter(@__MODULE__, ex))
     # find the 3rd assignment statement in the 2nd frame (corresponding to the x += 1 line)
     frame = Frame(modexs[2]...)
     i = 0
@@ -133,3 +133,5 @@ module EvalLimited end
     @test lin.file === Symbol("fake.jl")
     @test lin.line ∈ (2, 3, 4, 5)
 end
+
+end # module test_limits

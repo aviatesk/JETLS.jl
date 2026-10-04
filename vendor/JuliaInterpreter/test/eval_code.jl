@@ -1,3 +1,6 @@
+module test_eval_code
+
+using JuliaInterpreter, Test
 using JuliaInterpreter: eval_code
 
 # Simple evaling of function argument
@@ -78,8 +81,8 @@ eval_code(fr, "non_accessible_variable = 5.0")
 @test eval_code(fr, "non_accessible_variable") == 5.0
 
 # Evaluating SSAValues
-f(x) = x^2
-frame = JuliaInterpreter.enter_call(f, 5)
+f_literal_pow(x) = x^2
+frame = JuliaInterpreter.enter_call(f_literal_pow, 5)
 id = let
     pc, n = frame.pc, length(frame.framecode.src.code)
     while pc < n - 1
@@ -91,7 +94,7 @@ id = let
 end
 # This could change with changes to Julia lowering
 @test eval_code(frame, "var\"%$(id)\"") == Val(2)
-@test eval_code(frame, "var\"@_1\"") == f
+@test eval_code(frame, "var\"@_1\"") == f_literal_pow
 
 function fun(;output=:sym)
    x = 5
@@ -153,3 +156,5 @@ frame = JuliaInterpreter.enter_call(toplevel_eval_arg, 1)
 # Multi-statement strings arrive as a nested :toplevel from parse_input_line
 frame = JuliaInterpreter.enter_call(toplevel_eval_arg, 1)
 @test eval_code(frame, "x = 7; x + 1") == 8
+
+end # module test_eval_code

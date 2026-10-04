@@ -7,7 +7,6 @@ using Test
 @test 2 * 2 == 4
 
 @testset "math tests" begin
-    nothing # FIXME and remove me
     # Line 10
     @test 3 + 3 == 6
     # Line 12

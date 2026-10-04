@@ -1,3 +1,5 @@
+module test_debug
+
 using CodeTracking, InteractiveUtils, JuliaInterpreter, Test
 using JuliaInterpreter: enter_call, enter_call_expr, get_return
 using Base.Meta: isexpr
@@ -328,7 +330,7 @@ end
     @testset "Macros" begin
         # Work around the fact that we can't detect macro expansions if the macro
         # is defined in the same file
-        include_string(Main, """
+        include_string(@__MODULE__, """
         function test_macro()
             a = sin(5)
             b = asin(a)
@@ -801,7 +803,7 @@ end
             defined_in_catch()
         end
     end
-    fr = Frame(Main, ex)
+    fr = Frame(@__MODULE__, ex)
     ret = JuliaInterpreter.debug_command(fr, :s, true)
     count = 0
     while ret isa Tuple && count < 100
@@ -821,7 +823,7 @@ end
 end
 
 @testset "until_line! without location metadata" begin
-    fr = Frame(Main, Base.remove_linenums!(quote nolineinfo_a = 1; nolineinfo_b = nolineinfo_a + 1; nolineinfo_b end))
+    fr = Frame(@__MODULE__, Base.remove_linenums!(quote nolineinfo_a = 1; nolineinfo_b = nolineinfo_a + 1; nolineinfo_b end))
     ret = JuliaInterpreter.debug_command(fr, :until, true)
     @test ret === nothing || ret isa Tuple
 end
@@ -896,3 +898,5 @@ end
     # the leaf's uncaught error must land in the caller's catch, not escape
     @test JuliaInterpreter.finish_stack!(NonRecursiveInterpreter(), JuliaInterpreter.root(ret[1]), false) == 42
 end
+
+end # module test_debug

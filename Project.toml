@@ -39,13 +39,24 @@ Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 TestRunner = "65a77010-ae58-5cc9-8243-71cff1cf0f92"
 
 [sources]
-Compiler = {path = "Compiler"}
-JET = {rev = "a877b60089", url = "https://github.com/aviatesk/JET.jl"}
-JuliaLowering = {rev = "5c0dc2df56", subdir = "JuliaLowering", url = "https://github.com/JuliaLang/julia"}
-JuliaSyntax = {rev = "5c0dc2df56", subdir = "JuliaSyntax", url = "https://github.com/JuliaLang/julia"}
-LSP = {path = "LSP"}
-Revise = {rev = "32638add42", url = "https://github.com/timholy/Revise.jl"}
-TestRunner = {rev = "4dcc98f4ce", url = "https://github.com/aviatesk/TestRunner.jl"}
+CodeTracking = {path = "vendor/CodeTracking"}
+Compiler = {path = "vendor/Compiler"}
+Glob = {path = "vendor/Glob"}
+JET = {path = "vendor/JET"}
+JSON3 = {path = "vendor/JSON3"}
+JuliaInterpreter = {path = "vendor/JuliaInterpreter"}
+JuliaLowering = {path = "vendor/JuliaLowering"}
+JuliaSyntax = {path = "vendor/JuliaSyntax"}
+LSP = {path = "vendor/LSP"}
+LoweredCodeUtils = {path = "vendor/LoweredCodeUtils"}
+MacroTools = {path = "vendor/MacroTools"}
+OrderedCollections = {path = "vendor/OrderedCollections"}
+Parsers = {path = "vendor/Parsers"}
+PrecompileTools = {path = "vendor/PrecompileTools"}
+Preferences = {path = "vendor/Preferences"}
+Revise = {path = "vendor/Revise"}
+StructTypes = {path = "vendor/StructTypes"}
+TestRunner = {path = "vendor/TestRunner"}
 
 [compat]
 Compiler = "0.1.1"

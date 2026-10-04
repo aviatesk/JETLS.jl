@@ -496,24 +496,26 @@ module ModSelective end
     @test ModSelective.max_values(Int16) === 65536
 
     # Avoid redefining types
-    ex = quote
-        struct MyNewType
-            x::Int
-            MyNewType(y::Int) = new(y)
+    let isrequired
+        ex = quote
+            struct MyNewType
+                x::Int
+                MyNewType(y::Int) = new(y)
+            end
         end
-    end
-    Core.eval(ModEval, ex)
-    frame = Frame(ModEval, ex)
-    src = frame.framecode.src
-    edges = CodeEdges(ModEval, src)
-    isrequired = minimal_evaluation(@nospecialize(stmt)->(LoweredCodeUtils.ismethod3(stmt),false), src, edges; norequire=exclude_named_typedefs(src))  # initially mark only the constructor
-    bbs = CC.compute_basic_blocks(src.code)
-    for (iblock, block) in enumerate(bbs.blocks)
-        r = LoweredCodeUtils.rng(block)
-        if iblock == length(bbs.blocks)
-            @test any(idx->isrequired[idx], r)
-        else
-            @test !any(idx->isrequired[idx], r)
+        Core.eval(ModEval, ex)
+        frame = Frame(ModEval, ex)
+        src = frame.framecode.src
+        edges = CodeEdges(ModEval, src)
+        isrequired = minimal_evaluation(@nospecialize(stmt)->(LoweredCodeUtils.ismethod3(stmt),false), src, edges; norequire=exclude_named_typedefs(src))  # initially mark only the constructor
+        bbs = CC.compute_basic_blocks(src.code)
+        for (iblock, block) in enumerate(bbs.blocks)
+            r = LoweredCodeUtils.rng(block)
+            if iblock == length(bbs.blocks)
+                @test any(idx->isrequired[idx], r)
+            else
+                @test !any(idx->isrequired[idx], r)
+            end
         end
     end
 
@@ -720,6 +722,25 @@ end
             @test @invokelatest(isdefined(m, :TGB))
             @test @invokelatest(fieldtype(m.TGB, :a)) === @invokelatest(m.TGA)
         end
+    end
+end
+
+@testset "skipped :latestworld still advances the world" begin
+    # Selective evaluation skips the `:latestworld` statements it does not select, e.g.
+    # the one after the anonymous function of `max_values` in the "CodeEdges" tests above,
+    # which then fail on JuliaInterpreter versions that advance the world of top-level code
+    # only at `:latestworld`.
+    m = Module(:SkippedLatestworld)
+    world = Base.get_world_counter()
+    Core.eval(m, :(defined_after = 1))
+    lwsrc = (Meta.lower(m, :(global gl = 1; gl))::Expr).args[1]::Core.CodeInfo
+    lwidx = findfirst(stmt -> Meta.isexpr(stmt, :latestworld), lwsrc.code)
+    if lwidx !== nothing
+        frame = Frame(m, lwsrc; world)
+        frame.pc = lwidx
+        LoweredCodeUtils.next_or_nothing!(frame)
+        @test frame.pc == lwidx + 1
+        @test frame.world > world
     end
 end
 

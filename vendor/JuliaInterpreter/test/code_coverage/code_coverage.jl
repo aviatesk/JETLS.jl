@@ -1,3 +1,7 @@
+module test_code_coverage
+
+using Test
+
 function cleanup_coverage_files(pid)
     # clean up coverage files for source code
     dir, _, files = first(walkdir(normpath(@__DIR__, "..", "..", "src")))
@@ -62,3 +66,5 @@ let
         end
     end
 end
+
+end # module test_code_coverage

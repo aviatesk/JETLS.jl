@@ -7,7 +7,6 @@ using ExplicitImports
 @test isempty(detect_ambiguities(JuliaInterpreter, Base, Core))
 Aqua.test_all(JuliaInterpreter; deps_compat=(
     ignore=[:InteractiveUtils, :Random, :UUIDs],
-    check_extras=(ignore=[:Dates, :Distributed, :LinearAlgebra, :Logging, :Mmap, :SHA, :SparseArrays, :Test],),
 ))
 
 if isdefined(Test, :detect_closure_boxes)
@@ -59,17 +58,15 @@ if isdefined(Test, :detect_closure_boxes)
     @test isempty(Test.detect_closure_boxes(JuliaInterpreter))
 end
 
-if !JuliaInterpreter.isdefinedglobal(@__MODULE__, :read_and_parse)
-    include("utils.jl")
-end
-
 Core.eval(JuliaInterpreter, :(debug_mode() = true))
 
 @testset "Main tests" begin
     @testset "check_bulitins.jl" begin include("check_builtins.jl") end
+    @testset "builtins.jl" begin include("builtins.jl") end
     @testset "core.jl" begin include("core.jl") end
     @testset "interpret.jl" begin include("interpret.jl") end
     @testset "toplevel.jl" begin include("toplevel.jl") end
+    @testset "eval.jl" begin include("eval.jl") end
     @testset "limits.jl" begin include("limits.jl") end
     @testset "eval_code.jl" begin include("eval_code.jl") end
     @testset "breakpoints.jl" begin include("breakpoints.jl") end

@@ -377,6 +377,56 @@ end
 methods_by_execution!(exinfo::ExInfo, mod::Module, ex::Expr; kwargs...) =
     methods_by_execution!(Compiled(), exinfo, mod, ex; kwargs...)
 
+# `step_expr!` returns a `BreakpointRef` when execution hits a breakpoint, or when
+# `JuliaInterpreter.break_on(:error)`/`break_on(:throw)` is active and a statement throws.
+# `disablebp` only disables breakpoint instances; `break_on` is a global toggle it does not
+# touch, so a `BreakpointRef` can still reach the evaluation loops below. They cannot pause,
+# so it is never a valid program counter here: rethrow the error it carries (what would have
+# propagated had `break_on` been inactive), or fail if it carries none.
+function throw_if_breakpoint(pc)
+    if pc isa JuliaInterpreter.BreakpointRef
+        err = pc.err
+        err === nothing && error("unexpected breakpoint while evaluating: ", pc)
+        throw(err)
+    end
+    return pc
+end
+
+# Structural identity of types up to renaming of `TypeVar`s. `===` compares `TypeVar`
+# names, which are generated (e.g., `#s1` for `AbstractVector{<:Integer}`) and need not
+# match between sessions; `==` is too weak, since distinct signatures can be equal as types
+# (e.g., `Union{Tuple{Any}, Tuple{T}} where T<:Float64` and `Tuple{Any}`).
+same_type_modulo_typevar_names(@nospecialize(a), @nospecialize(b)) =
+    same_type_modulo_typevar_names(a, b, Pair{TypeVar,TypeVar}[])
+function same_type_modulo_typevar_names(@nospecialize(a), @nospecialize(b), env::Vector{Pair{TypeVar,TypeVar}})
+    same(@nospecialize(x), @nospecialize(y)) = same_type_modulo_typevar_names(x, y, env)
+    a === b && return true
+    if a isa TypeVar && b isa TypeVar
+        for i in lastindex(env):-1:firstindex(env)
+            va, vb = env[i]
+            (va === a || vb === b) && return va === a && vb === b
+        end
+        return false
+    elseif a isa UnionAll && b isa UnionAll
+        same(a.var.lb, b.var.lb) && same(a.var.ub, b.var.ub) || return false
+        push!(env, a.var => b.var)
+        ret = same(a.body, b.body)
+        pop!(env)
+        return ret
+    elseif a isa Union && b isa Union
+        return same(a.a, b.a) && same(a.b, b.b)
+    elseif a isa DataType && b isa DataType
+        a.name === b.name && length(a.parameters) == length(b.parameters) || return false
+        return all(i -> same(a.parameters[i], b.parameters[i]), eachindex(a.parameters))
+    elseif a isa Core.TypeofVararg && b isa Core.TypeofVararg
+        isdefined(a, :T) == isdefined(b, :T) && isdefined(a, :N) == isdefined(b, :N) || return false
+        isdefined(a, :T) && !same(a.T, b.T) && return false
+        isdefined(a, :N) && !same(a.N, b.N) && return false
+        return true
+    end
+    return false
+end
+
 function _methods_by_execution!(
         interp::Interpreter, exinfo::ExInfo, frame::Frame, isrequired::AbstractVector{Bool};
         mode::Symbol = :eval, skip_include::Bool = true, eval_namespace::Bool = mode!==:sigs
@@ -390,6 +440,7 @@ function _methods_by_execution!(
     # plain access would be a backdated-const read (warning now, error in future Julia).
     modinclude = @invokelatest(isdefinedglobal(mod, :include)) ? @invokelatest(getglobal(mod, :include)) : nothing
     signatures = MethodInfoKey[]  # temporary for method signature storage
+    new_types = mode === :sigs ? IdSet{Type}() : nothing
     pc = frame.pc
     while true
         JuliaInterpreter.is_leaf(frame) || (@warn("not a leaf"); break)
@@ -442,7 +493,7 @@ function _methods_by_execution!(
                         end
                     end
                     @assert is_methoddef1(stmt)
-                    pc = mode !== :sigs ? step_expr!(interp, frame, stmt, true) :
+                    pc = mode !== :sigs ? throw_if_breakpoint(step_expr!(interp, frame, stmt, true)) :
                         next_or_nothing!(frame)
                 else
                     pc, pc3 = ret
@@ -540,7 +591,7 @@ function _methods_by_execution!(
                     if isa(callstmt, Expr) && callstmt.head === :call
                         @goto call_dispatch
                     end
-                    pc = step_expr!(interp, frame, stmt, true)
+                    pc = throw_if_breakpoint(step_expr!(interp, frame, stmt, true))
                 end
             elseif head === :call
                 callstmt = stmt
@@ -561,10 +612,18 @@ function _methods_by_execution!(
                         assign_this!(frame, existing)
                         pc = next_or_nothing!(frame)
                     else
-                        pc = step_expr!(interp, frame, stmt, true)
+                        oldtypes = mode === :sigs ? lookup(interp, frame, callstmt.args[5]) : nothing
+                        pc = throw_if_breakpoint(step_expr!(interp, frame, stmt, true))
                         # (guarded: an assignment form would store to the slot instead)
                         groupresult = isassigned(frame.framedata.ssavalues, pc0) ?
                             frame.framedata.ssavalues[pc0] : nothing
+                        if mode === :sigs && groupresult isa Tuple
+                            for typ in groupresult
+                                if typ isa Type && !any(@nospecialize(old) -> old === typ, oldtypes)
+                                    push!(new_types, Base.unwrap_unionall(typ))
+                                end
+                            end
+                        end
                     end
                     if __bpart__[]
                         analyze_typegroup_result!(exinfo, groupresult)
@@ -581,7 +640,9 @@ function _methods_by_execution!(
                         # whose `:method` statements are skipped because `define=false`).
                         pc = next_or_nothing!(frame)
                     else
-                        pc = step_expr!(interp, frame, stmt, true)
+                        typ = mode === :sigs ? typebody_partial(interp, frame, callstmt) : nothing
+                        pc = throw_if_breakpoint(step_expr!(interp, frame, stmt, true))
+                        typ === nothing || push!(new_types, Base.unwrap_unionall(typ))
                     end
                 elseif mode === :sigs && @static(isdefined(Core, :declare_const) ? true : false) && f === Core.declare_const &&
                        length(callstmt.args) >= 3 && skip_declare_const(interp, frame, callstmt)
@@ -622,10 +683,12 @@ function _methods_by_execution!(
                             add_signature!(exinfo, sig, lnn)
                         end
                     end
-                    if mode === :sigs
+                    # Macro expansion can create fresh types even in :sigs mode. These
+                    # need constructors; reused types must keep their existing methods.
+                    if mode === :sigs && !(T isa Type && Base.unwrap_unionall(T) in new_types)
                         pc = next_or_nothing!(frame)
                     else # also execute this call
-                        pc = step_expr!(interp, frame, stmt, true)
+                        pc = throw_if_breakpoint(step_expr!(interp, frame, stmt, true))
                     end
                 elseif f === Core.eval
                     # an @eval or eval block: this may contain method definitions, so intercept it.
@@ -665,6 +728,16 @@ function _methods_by_execution!(
                         Base.Docs.initmeta(dmod)
                     end
                     m = get!(Base.Docs.meta(dmod), b, Base.Docs.MultiDoc())::Base.Docs.MultiDoc
+                    if !haskey(m.docs, sig)
+                        # The existing key may differ from `sig` only in `TypeVar` names
+                        # (e.g., when it was created during precompilation); reuse it.
+                        for k in m.order
+                            if same_type_modulo_typevar_names(k, sig)
+                                sig = k
+                                break
+                            end
+                        end
+                    end
                     if haskey(m.docs, sig)
                         currentstr = m.docs[sig]::Base.Docs.DocStr
                         redefine = currentstr.text != str.text
@@ -682,16 +755,16 @@ function _methods_by_execution!(
                     pc = next_or_nothing!(frame)
                 else
                     # A :call Expr we don't want to intercept
-                    pc = step_expr!(interp, frame, stmt, true)
+                    pc = throw_if_breakpoint(step_expr!(interp, frame, stmt, true))
                 end
             else
                 # An Expr we don't want to intercept
                 frame.pc = pc
-                pc = step_expr!(interp, frame, stmt, true)
+                pc = throw_if_breakpoint(step_expr!(interp, frame, stmt, true))
             end
         else
             # A statement we don't want to intercept
-            pc = step_expr!(interp, frame, stmt, true)
+            pc = throw_if_breakpoint(step_expr!(interp, frame, stmt, true))
         end
         pc === nothing && break
     end
@@ -1022,7 +1095,7 @@ function predict_typebodies!(predictions::TypePredictions, mod::Module, ex::Expr
                     callstmt = isa(rhs, Expr) && rhs.head === :call ? rhs : nothing
                 end
                 if callstmt === nothing
-                    pc = step_expr!(interp, frame, stmt, true)
+                    pc = throw_if_breakpoint(step_expr!(interp, frame, stmt, true))
                 else
                     f = lookup(frame, callstmt.args[1])
                     if @static(isdefined(Core, :resolve_typegroup) ? true : false) && f === Core.resolve_typegroup && length(callstmt.args) >= 5
@@ -1049,12 +1122,12 @@ function predict_typebodies!(predictions::TypePredictions, mod::Module, ex::Expr
                         assign_this!(frame, nothing)
                         pc = next_or_nothing!(frame)
                     else
-                        pc = step_expr!(interp, frame, stmt, true)
+                        pc = throw_if_breakpoint(step_expr!(interp, frame, stmt, true))
                     end
                 end
             end
         else
-            pc = step_expr!(interp, frame, stmt, true)
+            pc = throw_if_breakpoint(step_expr!(interp, frame, stmt, true))
         end
         pc === nothing && break
     end

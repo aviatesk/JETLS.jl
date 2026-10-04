@@ -1,3 +1,5 @@
+module test_breakpoints
+
 radius2(x, y) = x^2 + y^2
 function loop_radius2(n)
     s = 0
@@ -21,17 +23,9 @@ close(io)
 include(tmppath)
 
 # Don't move these to the top, because line numbers matter for the tests below
-using JuliaInterpreter, CodeTracking, Test, Logging
+using CodeTracking, InteractiveUtils, JuliaInterpreter, Logging, Test
 
-function stacklength(frame)
-    n = 1
-    frame = frame.callee
-    while frame !== nothing
-        n += 1
-        frame = frame.callee
-    end
-    return n
-end
+include("utils.jl")
 
 struct Squarer end
 
@@ -73,7 +67,7 @@ struct Squarer end
     # Conditional breakpoints on local variables
     remove()
     halfthresh = loop_radius2(5)
-    bp = @breakpoint loop_radius2(10) 5 s>$halfthresh
+    bp = @breakpoint loop_radius2(10) 7 s>$halfthresh
     frame, bpref = @interpret loop_radius2(10)
     @test isa(bpref, JuliaInterpreter.BreakpointRef)
     lframe = leaf(frame)
@@ -92,14 +86,14 @@ struct Squarer end
     @test isa(frame, Frame) && isa(bp, JuliaInterpreter.BreakpointRef)
 
     # Next line with breakpoints
-    function outer(x)
-        inner(x)
+    function nextline_outer(x)
+        nextline_inner(x)
     end
-    function inner(x)
+    function nextline_inner(x)
         return 2
     end
-    breakpoint(inner)
-    frame = JuliaInterpreter.enter_call(outer, 0)
+    breakpoint(nextline_inner)
+    frame = JuliaInterpreter.enter_call(nextline_outer, 0)
     bp = JuliaInterpreter.next_line!(frame)
     @test isa(bp, JuliaInterpreter.BreakpointRef)
     @test JuliaInterpreter.finish_stack!(frame) == 2
@@ -202,11 +196,11 @@ struct Squarer end
     frame = JuliaInterpreter.enter_call(loop_radius2, 2)
     LOC = " @ $(@__MODULE__) $(contractuser(@__FILE__))"
     bp = JuliaInterpreter.BreakpointRef(frame.framecode, 1)
-    @test repr(bp) == "breakpoint(loop_radius2(n)$LOC:$(3-Δ), line 3)"
+    @test repr(bp) == "breakpoint(loop_radius2(n)$LOC:$(5-Δ), line 5)"
     bp = JuliaInterpreter.BreakpointRef(frame.framecode, 0)  # fictive breakpoint
-    @test repr(bp) == "breakpoint(loop_radius2(n)$LOC:$(3-Δ), %0)"
+    @test repr(bp) == "breakpoint(loop_radius2(n)$LOC:$(5-Δ), %0)"
     bp = JuliaInterpreter.BreakpointRef(frame.framecode, 1, ArgumentError("whoops"))
-    @test repr(bp) == "breakpoint(loop_radius2(n)$LOC:$(3-Δ), line 3, ArgumentError(\"whoops\"))"
+    @test repr(bp) == "breakpoint(loop_radius2(n)$LOC:$(5-Δ), line 5, ArgumentError(\"whoops\"))"
 
     # In source breakpointing
     f_outer_bp(x) = g_inner_bp(x)
@@ -634,17 +628,18 @@ end
     # Module-scoped frames created by direct `:toplevel` interpretation have a caller, so the
     # resume machinery must identify them as toplevel by scope, not by stack position: the
     # interrupted thunk still contains `:latestworld`/`:method` statements to execute.
-    # Distinct values per scenario keep each run's assertions independent of the previous run.
-    resume_stmts(x, y) = Any[
+    # Distinct values per scenario keep each run's assertions independent of the previous run,
+    # and a distinct name `k` per scenario avoids overwriting the previous run's method.
+    resume_stmts(x, y, k) = Any[
         :(a = callee($x)),
-        :(begin b = callee($y); k() = $x + $y; c = k() end),   # `:method` after the call, same thunk
-        :(d = k() + 1),
+        :(begin b = callee($y); $k() = $x + $y; c = $k() end),   # `:method` after the call, same thunk
+        :(d = $k() + 1),
     ]
     getglob(name) = invokelatest(getproperty, BPResumeToplevel, name)
     breakpoint(BPResumeToplevel.callee)
     try
         # Resume with `:c` (`finish_stack!`)
-        frame = Frame(BPResumeToplevel, Expr(:toplevel, resume_stmts(3, 4)...))
+        frame = Frame(BPResumeToplevel, Expr(:toplevel, resume_stmts(3, 4, :k1)...))
         ret = JuliaInterpreter.debug_command(frame, :c, true)
         nhits = 0
         while ret !== nothing && nhits < 10
@@ -661,7 +656,7 @@ end
 
         # Resume with `:finish` and `:n` (`maybe_reset_frame!`): `:finish` returns from the
         # callee into the interrupted thunk, then `:n` steps the toplevel frames to completion.
-        frame = Frame(BPResumeToplevel, Expr(:toplevel, resume_stmts(5, 6)...))
+        frame = Frame(BPResumeToplevel, Expr(:toplevel, resume_stmts(5, 6, :k2)...))
         leafframe, bp = JuliaInterpreter.debug_command(frame, :c, true)      # first hit
         leafframe, bp = JuliaInterpreter.debug_command(leafframe, :c, true)  # second hit, mid-thunk
         ret = JuliaInterpreter.debug_command(leafframe, :finish, true)
@@ -789,3 +784,5 @@ end
     @test isempty(bp.instances)
     remove()
 end
+
+end # module test_breakpoints
