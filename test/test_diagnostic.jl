@@ -601,6 +601,29 @@ end
             end
         end
     end
+
+    let code = """
+        for name in (:EvalA, :EvalB)
+            @eval struct \$name
+                x::Integer
+            end
+        end
+        for (name, field) in ((:EvalC, :y),)
+            @eval struct \$name
+                \$field::Integer
+            end
+        end
+        """
+        withscript(code) do script_path
+            diagnostics = get_open_diagnostics(dirname(script_path), script_path, code)
+            abstract_fields = filter(diag -> diag.code == JETLS.TOPLEVEL_ABSTRACT_FIELD_CODE, diagnostics)
+            @test length(abstract_fields) == 3
+            for (name, line) in (("EvalA", 2), ("EvalB", 2), ("EvalC", 7))
+                diag = only(filter(diag -> occursin(name, diag.message), abstract_fields))
+                @test diag.range.start.line == line
+            end
+        end
+    end
 end
 
 @testset "malformed module expression from macro" begin

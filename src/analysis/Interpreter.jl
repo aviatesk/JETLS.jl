@@ -360,10 +360,33 @@ end
 
 # TODO Use lowered `SyntaxTree` for finding field line for macro-generated structs
 function extract_field_line(interp::LSInterpreter, frame::JuliaInterpreter.Frame, structname::Symbol, fname::Symbol)
-    isassigned(interp.current_node) || return JuliaInterpreter.linenumber(frame)
-    return @something(
-        JETLS.try_extract_field_line(interp.current_node[], structname, fname),
-        return JuliaInterpreter.linenumber(frame))
+    node = isassigned(interp.current_node) ? interp.current_node[] : nothing
+    if node !== nothing
+        fieldline = JETLS.try_extract_field_line(node, structname, fname)
+        fieldline === nothing || return fieldline
+    end
+    line = JuliaInterpreter.linenumber(frame)
+    line === nothing || return line
+    # e.g. the frame defining a struct in `Core.eval`ed code carries no line information
+    if node !== nothing
+        fieldline = JETLS.try_extract_field_line(node, structname, fname; interpolated=true)
+        fieldline === nothing || return fieldline
+    end
+    return caller_line(frame, JET.InterpretationState(interp).filename)
+end
+
+# the line of the innermost caller in `filename`, e.g. that of `@eval`
+function caller_line(frame::JuliaInterpreter.Frame, filename::String)
+    caller = frame.caller
+    while caller !== nothing
+        file = JuliaInterpreter.getfile(caller)
+        if file !== nothing && JETLS.paths_equal(file, filename)
+            line = JuliaInterpreter.linenumber(caller)
+            line === nothing || return line
+        end
+        caller = caller.caller
+    end
+    return nothing
 end
 
 end # module Interpreter

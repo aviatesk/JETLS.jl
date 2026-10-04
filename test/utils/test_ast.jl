@@ -955,6 +955,18 @@ end
         @test !isnothing(fieldline)
         @test JS.sourcetext(fieldline) == "xs"
     end
+    let node = jsparse("""
+            for name in (:A, :B)
+                @eval struct \$name <: AbstractVector{Int}
+                    xs::Vector{Int}
+                end
+            end
+        """)
+        @test isnothing(JETLS.try_extract_field_line(node, :A, :xs))
+        fieldline = JETLS.try_extract_field_line(node, :A, :xs; interpolated=true)
+        @test !isnothing(fieldline)
+        @test JS.sourcetext(fieldline) == "xs::Vector{Int}"
+    end
 end
 
 @testset "iterate_toplevel_tree" begin
