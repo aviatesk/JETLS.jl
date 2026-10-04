@@ -128,7 +128,13 @@ end
         report = only(result.res.toplevel_error_reports)
         @test report isa JETLS.JET.ConcretizationTimeoutErrorReport
         @test report.timeout == timeout
-        @test isempty(report.st)
+        if mode === :script
+            # the `@eval`ed code is interpreted, so the timeout stops inside `sleep`
+            @test any(sf -> sf.func === :sleep, report.st)
+            @test any(sf -> sf.func === Symbol("top-level scope"), report.st)
+        else
+            @test isempty(report.st)
+        end
         @test report.file == filename
         @test report.line == 1
         @test isempty(result.res.inference_error_reports)
@@ -145,6 +151,7 @@ end
             @test diag.source == JETLS.DIAGNOSTIC_SOURCE_SAVE
             @test diag.range == JETLS.line_range(report.line)
             @test occursin(string(timeout), diag.message)
+            mode === :script && @test occursin("sleep", diag.message)
         end
     end
 
@@ -173,8 +180,9 @@ end
             timeout in (0.1, "inf")
 
             filename = joinpath(@__DIR__, "concretization-callee-timeout.jl")
-            # `eval` sleeps natively, but recursive interpretation can stop before
-            # the marker. Pattern-selected calls must finish before timing out.
+            # Interpreted `Core.eval` can stop inside `sleep` before the marker.
+            # Pattern-selected and package-mode calls run natively and must finish
+            # before timing out.
             code = """
                 function inner()
                     Core.eval(@__MODULE__, :(sleep(0.2)))
@@ -575,7 +583,89 @@ end
     end
 end
 
+@testset "methods defined by `@eval`" begin
+    let code = """
+        @eval f(x::Int) = x + undefined_in_eval
+        @eval struct EvalStruct
+            x::Integer
+        end
+        """
+        withscript(code) do script_path
+            diagnostics = get_open_diagnostics(dirname(script_path), script_path, code)
+            let diag = only(filter(diag -> diag.code == JETLS.INFERENCE_UNDEF_GLOBAL_VAR_CODE, diagnostics))
+                @test diag.range.start.line == 0
+                @test occursin("undefined_in_eval", diag.message)
+            end
+            let diag = only(filter(diag -> diag.code == JETLS.TOPLEVEL_ABSTRACT_FIELD_CODE, diagnostics))
+                @test diag.range.start.line == 2
+            end
+        end
+    end
+
+    let code = """
+        for name in (:EvalA, :EvalB)
+            @eval struct \$name
+                x::Integer
+            end
+        end
+        for (name, field) in ((:EvalC, :y),)
+            @eval struct \$name
+                \$field::Integer
+            end
+        end
+        """
+        withscript(code) do script_path
+            diagnostics = get_open_diagnostics(dirname(script_path), script_path, code)
+            abstract_fields = filter(diag -> diag.code == JETLS.TOPLEVEL_ABSTRACT_FIELD_CODE, diagnostics)
+            @test length(abstract_fields) == 3
+            for (name, line) in (("EvalA", 2), ("EvalB", 2), ("EvalC", 7))
+                diag = only(filter(diag -> occursin(name, diag.message), abstract_fields))
+                @test diag.range.start.line == line
+            end
+        end
+    end
+end
+
+@testset "malformed module expression from macro" begin
+    let code = """
+        macro badmodule()
+            esc(Expr(:module, true, :M, :(x = 1)))
+        end
+        @badmodule
+        """
+        withscript(code) do script_path
+            diagnostics = get_open_diagnostics(dirname(script_path), script_path, code)
+            diag = only(filter(diag -> diag.code == JETLS.TOPLEVEL_ERROR_CODE, diagnostics))
+            @test diag.range.start.line == 3
+            @test occursin("module expression third argument must be a block", diag.message)
+        end
+    end
+end
+
 @testset "method overwrite diagnostic" begin
+    # bodies that only return a constant, as in `f() = 1`, carry no line information
+    let code = """
+        duplicate(x::Int) = 1
+        duplicate(x::Int) = 2
+        for i in 1:2
+            @eval duplicate_eval() = \$i
+        end
+        """
+        withscript(code) do script_path
+            diagnostics = get_open_diagnostics(dirname(script_path), script_path, code)
+            overwrites = filter(diag -> diag.code == JETLS.TOPLEVEL_METHOD_OVERWRITE_CODE, diagnostics)
+            @test length(overwrites) == 2
+            let diag = only(filter(diag -> occursin("duplicate(::$Int)", diag.message), overwrites))
+                @test diag.range == JETLS.lines_range(2 => 2)
+                @test only(diag.relatedInformation).location.range == JETLS.lines_range(1 => 1)
+            end
+            let diag = only(filter(diag -> occursin("duplicate_eval()", diag.message), overwrites))
+                @test diag.range == JETLS.lines_range(4 => 4)
+                @test only(diag.relatedInformation).location.range == JETLS.lines_range(4 => 4)
+            end
+        end
+    end
+
     withpackage("TestMethodOverwrite", """
         module TestMethodOverwrite
 
@@ -807,49 +897,104 @@ end
     end
 end
 
-@testset "Delayed file cache handling" begin
-    # Test requesting diagnostics for a file whose cache has not been populated yet
-    withscript("# some code") do script_path
-        uri = filepath2uri(script_path)
-        withserver(; pull_diagnostics = true) do (; writereadmsg, id_counter)
-            # Don't send DidOpenTextDocument notification, so no file cache is created
-            event = Base.Event()
-            local success::Bool = false
-            let id = id_counter[] += 1
-                Threads.@spawn try
-                    # `check=false`: this call races with the main thread's
-                    # `writereadmsg(DidOpen; ...)` below on `received_queue` drain.
-                    # Checking here would spuriously see `DidOpen` still queued
-                    # (CI flake). Emptiness is still verified at shutdown via
-                    # `withserver`'s own `writereadmsg` calls.
-                    (; raw_res) = writereadmsg(
-                        DocumentDiagnosticRequest(;
-                            id,
-                            params = DocumentDiagnosticParams(;
-                                textDocument = TextDocumentIdentifier(; uri)
-                            ));
-                        read = 2, check = false)
-                    @test any(raw_res) do @nospecialize res
-                        res isa DocumentDiagnosticResponse &&
-                        res.result isa RelatedFullDocumentDiagnosticReport
-                    end
-                    @test any(raw_res) do @nospecialize res
-                        res isa PublishDiagnosticsNotification
-                    end
-                    success = true
-                catch e
-                    showerror(stderr, e, catch_backtrace())
-                finally
-                    notify(event)
-                end
+@testset "textDocument/diagnostic snapshot ordering" begin
+    with_manual_dispatch_server() do server, recorder
+        uri = filepath2uri(@__FILE__)
+        JETLS.cache_file_info!(server, uri, 1, "func(x) = nothing\n")
+        make_request(id::Int) = DocumentDiagnosticRequest(;
+            id,
+            params = DocumentDiagnosticParams(;
+                textDocument = TextDocumentIdentifier(; uri)))
+        request = make_request(1)
+        @test JETLS.is_sequential_msg(request)
+        prepared = queued_snapshot_requests(server, [
+            make_DidChangeTextDocumentNotification(uri, "func(_x) = nothing\n", 2), request,
+            make_DidChangeTextDocumentNotification(uri, "func(x, y) = x\n", 3), make_request(2)])
+        @test length(prepared) == 2
+        @test prepared[1].msg === request
+        @test prepared[1].snapshot.fi.version == 2
+        @test prepared[2].snapshot.fi.version == 3
+
+        current_result_id = JETLS.compute_live_diagnostics_fingerprint(server, uri)
+        response = dispatch_snapshot_request(server, recorder, prepared[1])
+        @test response isa DocumentDiagnosticResponse
+        @test response.result isa RelatedFullDocumentDiagnosticReport
+        @test isempty(response.result.items)
+        @test response.result.resultId != current_result_id
+        response = dispatch_snapshot_request(server, recorder, prepared[2])
+        @test response.result isa RelatedFullDocumentDiagnosticReport
+        diagnostic = only(response.result.items)
+        @test diagnostic.code == JETLS.LOWERING_UNUSED_ARGUMENT_CODE
+        @test diagnostic.range.start == Position(; line = 0, character = 8)
+        @test response.result.resultId == current_result_id
+    end
+end
+
+@testset "live diagnostics fingerprints of collected texts" begin
+    with_manual_dispatch_server() do server, _
+        uri = filepath2uri(@__FILE__)
+        # Earlier `FileInfo`s are collected while the fingerprints computed from them are
+        # still held, as by the workspace diagnostics worker or as a client's
+        # `previousResultId`.
+        fingerprints = map(1:5) do version
+            JETLS.cache_file_info!(server, uri, version, "func(x) = $version\n")
+            GC.gc()
+            return JETLS.compute_live_diagnostics_fingerprint(server, uri)
+        end
+        @test allunique(fingerprints)
+    end
+end
+
+@testset "textDocument/diagnostic binding occurrence cache snapshot isolation" begin
+    for unused_first in (true, false)
+        with_manual_dispatch_server() do server, recorder
+            uri = filepath2uri(@__FILE__)
+            JETLS.cache_out_of_scope!(
+                server.state.analysis_manager, uri, JETLS.OutOfScope(@__MODULE__))
+            old_text = unused_first ? "using Base: sin\ncos(1)\n" : "using Base: sin\nsin(1)\n"
+            new_text = unused_first ? "using Base: sin\nsin(1)\n" : "using Base: sin\ncos(1)\n"
+            JETLS.cache_file_info!(server, uri, 1, old_text)
+            make_request(id::Int; previousResultId::Union{Nothing,String} = nothing) =
+                DocumentDiagnosticRequest(;
+                    id,
+                    params = DocumentDiagnosticParams(;
+                        textDocument = TextDocumentIdentifier(; uri), previousResultId))
+            prepared = queued_snapshot_requests(server, [
+                make_request(1),
+                make_DidChangeTextDocumentNotification(uri, new_text, 2),
+                make_request(2)])
+            @test length(prepared) == 2
+            @test prepared[1].snapshot.fi.version == 1
+            @test prepared[2].snapshot.fi.version == 2
+
+            response = dispatch_snapshot_request(server, recorder, prepared[1])
+            @test response isa DocumentDiagnosticResponse
+            @test response.result isa RelatedFullDocumentDiagnosticReport
+            if unused_first
+                @test only(response.result.items).code == JETLS.LOWERING_UNUSED_IMPORT_CODE
+            else
+                @test isempty(response.result.items)
             end
-            # Send `DidOpen` after the handler has started polling but before
-            # `get_file_info`'s `JETLS_TEST_MODE` timeout (1.0s) fires, so the
-            # test exercises the "cache arrives during polling" path.
-            sleep(0.5)
-            writereadmsg(make_DidOpenTextDocumentNotification(uri, read(script_path, String)); read=0, check=false)
-            wait(event)
-            @test success
+            first_result_id = response.result.resultId
+
+            response = dispatch_snapshot_request(server, recorder, prepared[2])
+            @test response isa DocumentDiagnosticResponse
+            @test response.result isa RelatedFullDocumentDiagnosticReport
+            if unused_first
+                @test isempty(response.result.items)
+            else
+                @test only(response.result.items).code == JETLS.LOWERING_UNUSED_IMPORT_CODE
+            end
+            second_result_id = response.result.resultId
+            @test second_result_id isa String
+            @test second_result_id != first_result_id
+
+            repeated = only(queued_snapshot_requests(server, [
+                make_request(3; previousResultId = second_result_id)]))
+            response = dispatch_snapshot_request(server, recorder, repeated)
+            @test response isa DocumentDiagnosticResponse
+            @test response.result isa RelatedUnchangedDocumentDiagnosticReport
+            @test response.result.resultId == second_result_id
         end
     end
 end
@@ -1136,10 +1281,11 @@ end
             cache = JETLS.DefUsedNamesCache()
             cancel_flag = JETLS.CancelFlag(false)
             JETLS.cancel!(cancel_flag)
-            JETLS.compute_def_used_names!(cache, server, search_uris;
+            JETLS.compute_def_used_names!(cache, server, search_uris, #=snapshot=#nothing;
                 cancel_flag, skip_context_check = true)
             @test isempty(JETLS.load(cache))
-            JETLS.compute_def_used_names!(cache, server, search_uris; skip_context_check = true)
+            JETLS.compute_def_used_names!(cache, server, search_uris, #=snapshot=#nothing;
+                skip_context_check = true)
             @test !isempty(JETLS.load(cache))
         end
     end

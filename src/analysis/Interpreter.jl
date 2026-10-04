@@ -6,7 +6,7 @@ using JuliaSyntax: JuliaSyntax as JS
 using Compiler: Compiler as CC
 using JET: JET, JuliaInterpreter
 using ..JETLS: AnalysisExecution, JETLS, JETLS_DEV_MODE, Server,
-    get_init_option, get_source_text, is_cancelled, send_progress, yield_to_endpoint
+    get_init_option, get_source_text, is_cancelled, locked_showerror, send_progress, yield_to_endpoint
 using ..JETLS.URIs2
 using ..JETLS.LSP
 using ..JETLS.Analyzer
@@ -104,13 +104,6 @@ end
 # overloads
 # =========
 
-struct MethodDefinitionInfo
-    filename::String
-    mod::Module
-    src
-    MethodDefinitionInfo(filename::AbstractString, mod::Module, @nospecialize(src)) = new(filename, mod, src)
-end
-
 mutable struct SignatureAnalysisProgress
     const reports::Vector{JET.InferenceErrorReport}
     const reports_lock::ReentrantLock
@@ -183,7 +176,7 @@ function (job::InterpreterSignatureAnalysisJob)(server::Server)
         end
     catch err
         @error "Error during signature analysis"
-        showerror(stderr, err, catch_backtrace())
+        locked_showerror(stderr, err, catch_backtrace())
     end
 end
 
@@ -203,6 +196,21 @@ function cache_intermediate_analysis_result!(interp::LSInterpreter)
     nothing
 end
 
+function definition_lines(signature_info::JET.SignatureInfo)
+    (; filename, src, linenode) = signature_info
+    if src isa Core.CodeInfo
+        lines = JETLS.get_lines_in_src(filename, src)
+        lines == JETLS.empty_lines_range || return lines
+        # e.g. the body of `f() = 1` carries no line information
+        file = linenode.file
+        file isa Symbol && JETLS.paths_equal(filename, String(file)) || return lines
+        return linenode.line => linenode.line
+    elseif src isa Expr
+        return JETLS.get_lines_in_ex(filename, src)
+    end
+    return nothing
+end
+
 function JET.analyze_from_definitions!(interp::LSInterpreter, config::JET.ToplevelConfig)
     activation_done = interp.activation_done
     if activation_done !== nothing
@@ -219,32 +227,23 @@ function JET.analyze_from_definitions!(interp::LSInterpreter, config::JET.Toplev
     reset_report_target_modules!(interp.analyzer, res.analyzed_files)
 
     # Detect method overwrites
-    seen_sigs = IdDict{Type,MethodDefinitionInfo}()
+    seen_sigs = IdDict{Type,JET.SignatureInfo}()
     for signature_info in res.signature_infos
         (; filename, mod, tt, src) = signature_info
         if haskey(seen_sigs, tt)
-            lines = if src isa Core.CodeInfo
-                JETLS.get_lines_in_src(filename, src)
-            elseif src isa Expr
-                JETLS.get_lines_in_ex(filename, src)
-            else
+            lines = @something definition_lines(signature_info) begin
                 @warn "Unsupported source type found" filename mod tt typeof(src)
                 continue
             end
             original_definition = seen_sigs[tt]
             original_filename = original_definition.filename
-            original_src = original_definition.src
-            original_lines = if original_src isa Core.CodeInfo
-                JETLS.get_lines_in_src(original_filename, original_src)
-            elseif original_src isa Expr
-                JETLS.get_lines_in_ex(original_filename, original_src)
-            else
-                @warn "Unsupported source type found" original_filename typeof(original_src)
+            original_lines = @something definition_lines(original_definition) begin
+                @warn "Unsupported source type found" original_filename typeof(original_definition.src)
                 continue
             end
             push!(interp.warning_reports, JETLS.MethodOverwriteReport(mod, tt, filename, lines, original_filename, original_lines))
         else
-            seen_sigs[tt] = MethodDefinitionInfo(filename, mod, src)
+            seen_sigs[tt] = signature_info
         end
     end
 
@@ -361,10 +360,33 @@ end
 
 # TODO Use lowered `SyntaxTree` for finding field line for macro-generated structs
 function extract_field_line(interp::LSInterpreter, frame::JuliaInterpreter.Frame, structname::Symbol, fname::Symbol)
-    isassigned(interp.current_node) || return JuliaInterpreter.linenumber(frame)
-    return @something(
-        JETLS.try_extract_field_line(interp.current_node[], structname, fname),
-        return JuliaInterpreter.linenumber(frame))
+    node = isassigned(interp.current_node) ? interp.current_node[] : nothing
+    if node !== nothing
+        fieldline = JETLS.try_extract_field_line(node, structname, fname)
+        fieldline === nothing || return fieldline
+    end
+    line = JuliaInterpreter.linenumber(frame)
+    line === nothing || return line
+    # e.g. the frame defining a struct in `Core.eval`ed code carries no line information
+    if node !== nothing
+        fieldline = JETLS.try_extract_field_line(node, structname, fname; interpolated=true)
+        fieldline === nothing || return fieldline
+    end
+    return caller_line(frame, JET.InterpretationState(interp).filename)
+end
+
+# the line of the innermost caller in `filename`, e.g. that of `@eval`
+function caller_line(frame::JuliaInterpreter.Frame, filename::String)
+    caller = frame.caller
+    while caller !== nothing
+        file = JuliaInterpreter.getfile(caller)
+        if file !== nothing && JETLS.paths_equal(file, filename)
+            line = JuliaInterpreter.linenumber(caller)
+            line === nothing || return line
+        end
+        caller = caller.caller
+    end
+    return nothing
 end
 
 end # module Interpreter

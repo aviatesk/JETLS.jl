@@ -3,6 +3,25 @@ module test_general
 using Test
 using JETLS
 
+@testset "Base rendering compatibility" begin
+    @test JETLS.with_base_render_lock(+, 1, 2) == 3
+    @test JETLS.with_base_render_lock(round, 1.234; digits=2) == 1.23
+    @test JETLS.with_base_render_lock(JETLS.with_base_render_lock, identity, 42) == 42
+    @test_throws ErrorException JETLS.with_base_render_lock(error, "rendering failed")
+    @static if !(isdefined(Base, :get_stacktrace_color) && isdefined(Base, :STACKTRACE_COLORS_LOCK))
+        @test !islocked(JETLS.BASE_RENDER_LOCK)
+        @test JETLS.with_base_render_lock(islocked, JETLS.BASE_RENDER_LOCK)
+    end
+    let err = ErrorException("rendering failed"), bt = backtrace()
+        @test sprint(JETLS.locked_showerror, err) == sprint(showerror, err)
+        @test sprint(JETLS.locked_showerror, err, bt; context=:color=>false) ==
+            sprint(showerror, err, bt; context=:color=>false)
+        @test sprint(JETLS.locked_display_error, err, bt) ==
+            sprint(Base.display_error, err, bt)
+        @test sprint(JETLS.locked_show_backtrace, bt) == sprint(Base.show_backtrace, bt)
+    end
+end
+
 @testset "format_duration" begin
     # Test milliseconds formatting (< 1 second)
     @test JETLS.format_duration(0.0) == "0.0ms"

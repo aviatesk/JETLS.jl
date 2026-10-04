@@ -87,6 +87,8 @@ const CASStats = Nothing
 const SyntaxTree = JS.SyntaxTree
 const SyntaxList = JS.SyntaxList
 
+include("utils/rendering.jl")
+
 include("analysis/Analyzer.jl")
 using .Analyzer
 
@@ -295,7 +297,7 @@ function runserver(
         end
     catch err
         @error "Message handling loop failed"
-        Base.display_error(stderr, err, catch_backtrace())
+        locked_display_error(stderr, err, catch_backtrace())
     finally
         # The client may close the transport after `exit`; reject output before worker cleanup.
         close(server.endpoint)
@@ -342,7 +344,8 @@ function is_sequential_msg(@nospecialize msg)
            msg isa DidCloseNotebookDocumentNotification ||
            msg isa DidSaveNotebookDocumentNotification ||
            msg isa CompletionRequest ||
-           msg isa SignatureHelpRequest
+           msg isa SignatureHelpRequest ||
+           msg isa DocumentDiagnosticRequest
 end
 
 function start_sequential_message_worker(server::Server)
@@ -389,6 +392,8 @@ function handle_sequential_message(server::Server, @nospecialize msg)
     elseif msg isa CompletionRequest
         enqueue_message!(server, snapshot_request_message(server.state, msg, msg.params.textDocument.uri))
     elseif msg isa SignatureHelpRequest
+        enqueue_message!(server, snapshot_request_message(server.state, msg, msg.params.textDocument.uri))
+    elseif msg isa DocumentDiagnosticRequest
         enqueue_message!(server, snapshot_request_message(server.state, msg, msg.params.textDocument.uri))
     else
         error(lazy"Unexpected sequential message: $(typeof(msg))")
@@ -525,6 +530,8 @@ function handle_snapshot_request_message(
                 id,
                 result = nothing,
                 error = request_cancelled_error()))
+    elseif msg isa DocumentDiagnosticRequest # responds with a report even without a snapshot
+        handle_DocumentDiagnosticRequest(server, msg, snapshot, cancel_flag)
     elseif snapshot === nothing
         send(server, ResponseMessage(; id, result = null))
     elseif msg isa CompletionRequest
@@ -563,8 +570,6 @@ function handle_request_message(
         handle_DocumentSymbolRequest(server, msg, cancel_flag)
     elseif msg isa WorkspaceSymbolRequest
         handle_WorkspaceSymbolRequest(server, msg, cancel_flag)
-    elseif msg isa DocumentDiagnosticRequest
-        handle_DocumentDiagnosticRequest(server, msg, cancel_flag)
     elseif msg isa CodeLensRequest
         handle_CodeLensRequest(server, msg, cancel_flag)
     elseif msg isa CodeLensResolveRequest

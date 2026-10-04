@@ -11,7 +11,7 @@ function parse_analysis_override(x::Dict{String,Any})
     path_glob = try
         Glob.FilenameMatch(path_value, "dp")
     catch e
-        error(lazy"Invalid glob pattern in analysis_override for \"$path_value\": $(sprint(showerror, e))")
+        error(lazy"Invalid glob pattern in analysis_override for \"$path_value\": $(sprint(locked_showerror, e))")
     end
 
     module_name = get(x, "module_name", nothing)
@@ -160,8 +160,8 @@ function request_instantiation_progress!(
         server::Server, uri::URI, ins_request::InstantiationRequest,
         invalidate::Bool, notify_diagnostics::Bool, debounce::Float64
     )
-    id = String(gensym(:WorkDoneProgressCreateRequest_instantiation))
-    token = String(gensym(:InstantiationProgress))
+    id = unique_id("WorkDoneProgressCreateRequest_instantiation")
+    token = unique_id("InstantiationProgress")
     caller = InstantiationProgressCaller(
         uri, ins_request, invalidate, notify_diagnostics, debounce, token)
     addrequest!(server, id => caller)
@@ -198,8 +198,8 @@ function request_analysis_progress!(
         server::Server, uri::URI, invalidate::Bool, @nospecialize(entry::AnalysisEntry),
         notify_diagnostics::Bool, debounce::Float64
     )
-    id = String(gensym(:WorkDoneProgressCreateRequest_analysis))
-    token = String(gensym(:AnalysisProgress))
+    id = unique_id("WorkDoneProgressCreateRequest_analysis")
+    token = unique_id("AnalysisProgress")
     caller = AnalysisProgressCaller(
         uri, invalidate, entry, notify_diagnostics, debounce, token)
     addrequest!(server, id => caller)
@@ -235,27 +235,19 @@ function start_signature_analysis_workers!(server::Server)
             signature_analysis_worker(server)
         catch err
             @error "Critical error happened in signature analysis worker"
-            Base.display_error(stderr, err, catch_backtrace())
+            locked_display_error(stderr, err, catch_backtrace())
         end
     end
     return worker_tasks
 end
 
 function signature_analysis_worker(server::Server)
-    # HACK: Compiler engine reservations are owned by OS thread ID.
-    # Prevent migration only while this job may run inference. This assumes jobs don't
-    # leave sticky child tasks running: stickiness isn't reference-counted, so restoring
-    # it could erase stickiness propagated by a child scheduled during the job.
     queue = server.state.analysis_manager.signature_queue
     while true
         job = @something take!(queue) break
-        task = current_task()
-        was_sticky = task.sticky
-        task.sticky = true
         try
             @tryinvokelatest job(server)
         finally
-            task.sticky = was_sticky
             notify(signature_analysis_completion(job))
         end
         yield()
@@ -289,7 +281,7 @@ function start_analysis_worker!(server::Server)
         analysis_worker(server)
     catch err
         @error "Critical error happened in analysis worker"
-        Base.display_error(stderr, err, catch_backtrace())
+        locked_display_error(stderr, err, catch_backtrace())
     end
     worker_task[] = task
     return task
@@ -546,7 +538,7 @@ function resolve_analysis_request(server::Server, request::AnalysisRequest)
         result
     catch err
         @error "Error in `execute_analysis` for " request
-        Base.display_error(stderr, err, catch_backtrace())
+        locked_display_error(stderr, err, catch_backtrace())
         failed = true
     finally
         if cancellable_token !== nothing
@@ -671,7 +663,7 @@ function cleanup_prev_methods(prev_result::AnalysisResult)
             Base.delete_method(m)
         catch e
             @static JETLS_DEV_MODE && @warn "Failed to delete method $m" disabled=is_method_disabled(m)
-            @static JETLS_DEV_MODE && showerror(stderr, e, catch_backtrace())
+            @static JETLS_DEV_MODE && locked_showerror(stderr, e, catch_backtrace())
         end
     end
 end
@@ -1122,7 +1114,7 @@ function (job::ReviseSignatureAnalysisJob)(server::Server)
         isempty(reports) || @lock progress.reports_lock append!(progress.reports, reports)
     catch err
         @error "Error analyzing method signature" siginfo.sig
-        showerror(stderr, err, catch_backtrace())
+        locked_showerror(stderr, err, catch_backtrace())
     finally
         done = (@atomic progress.done += 1)
         if cancellable_token !== nothing
@@ -1210,6 +1202,54 @@ function get_lines_in_src(filepath::AbstractString, src::Core.CodeInfo)
     return lines
 end
 
+function revise_module_range_infos(state::ServerState, uri::URI, filemod::Module, world::UInt)
+    fi = @something get_saved_file_info(state, uri) get_unsynced_file_info!(state, uri) begin
+        return Pair{UnitRange{Int},Module}[(1:typemax(Int)) => filemod]
+    end
+    st0_top = JS.build_tree(JS.SyntaxTree, fi.parsed_stream; filename=uri2filename(uri))
+    return collect_module_range_infos(st0_top, filemod, world)
+end
+
+# Same shape as the module ranges recorded by JET's toplevel analysis: the whole file maps
+# to `filemod`, and each `module` block to its own module.
+function collect_module_range_infos(st0_top::SyntaxTree, filemod::Module, world::UInt)
+    module_range_infos = Pair{UnitRange{Int},Module}[(1:typemax(Int)) => filemod]
+    collect_module_range_infos!(module_range_infos, st0_top, filemod, world)
+    return module_range_infos
+end
+
+function collect_module_range_infos!(
+        module_range_infos::Vector{Pair{UnitRange{Int},Module}}, st0::SyntaxTree,
+        context_module::Module, world::UInt
+    )
+    if JS.kind(st0) === JS.K"toplevel"
+        for i = 1:JS.numchildren(st0)
+            collect_module_range_infos!(module_range_infos, st0[i], context_module, world)
+        end
+    elseif is_doc0_any(st0)
+        for i = 3:JS.numchildren(st0)
+            collect_module_range_infos!(module_range_infos, st0[i], context_module, world)
+        end
+    elseif JS.kind(st0) === JS.K"module" && JS.numchildren(st0) ≥ 3
+        modconst = resolve_global_const(context_module, world, st0[2])
+        modconst isa Core.Const || return nothing
+        mod = modconst.val
+        mod isa Module || return nothing
+        sourcefile = JS.sourcefile(st0)
+        sourcefile isa JS.SourceFile || return nothing
+        first_line = JS.source_line(sourcefile, JS.first_byte(st0))
+        last_line = JS.source_line(sourcefile, JS.last_byte(st0))
+        push!(module_range_infos, first_line:last_line => mod)
+        body = st0[end]
+        if JS.kind(body) === JS.K"block"
+            for i = 1:JS.numchildren(body)
+                collect_module_range_infos!(module_range_infos, body[i], mod, world)
+            end
+        end
+    end
+    return nothing
+end
+
 function analyze_package_with_revise(
         server::Server, execution::AnalysisExecution, pkgid::Base.PkgId,
         activation_done::Union{Nothing,Base.Event} = nothing
@@ -1219,7 +1259,7 @@ function analyze_package_with_revise(
     pkgmod = try
         pkgmod === nothing ? Base.require(pkgid)::Module : pkgmod
     catch e
-        show_error_message(server, "Failed to load package $(pkgid.name): $(sprint(showerror, e))")
+        show_error_message(server, "Failed to load package $(pkgid.name): $(sprint(locked_showerror, e))")
         error(lazy"Package $(pkgid.name) is not loadable") # TODO Make this top-level diagnostic?
     finally
         isnothing(activation_done) || notify(activation_done)
@@ -1228,7 +1268,7 @@ function analyze_package_with_revise(
     Revise.getpkgdata(pkgid) === nothing && Revise.watch_package(pkgid)
     revise_now!()
 
-    local world, analyzed_file_infos, basedir, report_target_modules, workitems
+    local world, basedir, file_modules, workitems
     @lock Revise.revise_lock begin
         pkgdata = @something Revise.getpkgdata(pkgid) error(lazy"Package $(pkgid.name) is not analyzable by Revise")
         # If Revise hasn't instantiated signatures yet, populate that cache here
@@ -1239,19 +1279,15 @@ function analyze_package_with_revise(
         # Signature extraction may advance the world age, so capture it afterward
         world = Base.get_world_counter()
 
-        analyzed_file_infos = Dict{URI,JET.AnalyzedFileInfo}()
         basedir = Revise.basedir(pkgdata)
-        report_target_modules = Set{Module}()
+        file_modules = Pair{URI,Module}[]
         workitems = SigWorkItem[]
         for (file, fi) in zip(Revise.srcfiles(pkgdata), pkgdata.fileinfos)
             filepath = joinpath(basedir, file)
             uri = filepath2uri(filepath)
-            # Build module range info from Revise's tracked modules
-            # TODO This is pretty incorrect module context mapping
-            filemod, _ = last(fi.mod_exs_infos)
-            module_range_infos = Pair{UnitRange{Int},Module}[(1:typemax(Int)) => filemod]
-            analyzed_file_infos[uri] = JET.AnalyzedFileInfo(module_range_infos)
-            push!(report_target_modules, filemod)
+            # Revise guarantees the first key to be the module the file is `include`d into
+            filemod, _ = first(fi.mod_exs_infos)
+            push!(file_modules, uri => filemod)
 
             for (mod, exs_infos) in fi.mod_exs_infos, (rex, exinfos) in exs_infos
                 isnothing(exinfos) && continue
@@ -1264,10 +1300,19 @@ function analyze_package_with_revise(
         end
     end
 
+    analyzed_file_infos = Dict{URI,JET.AnalyzedFileInfo}()
+    report_target_modules = Set{Module}()
+    for (uri, filemod) in file_modules
+        module_range_infos = revise_module_range_infos(server.state, uri, filemod, world)
+        analyzed_file_infos[uri] = JET.AnalyzedFileInfo(module_range_infos)
+        for (_, mod) in module_range_infos
+            push!(report_target_modules, mod)
+        end
+    end
+
     analyzer = let analyzer # avoid captured boxes
         reuse_native_inference =
             get_init_option(server.state.init_options, :reuse_native_inference)
-        # TODO Revisit (submodules)
         analyzer = LSAnalyzer(request.entry; report_target_modules, reuse_native_inference)
         newstate = JET.AnalyzerState(JET.AnalyzerState(analyzer); world)
         JET.AbstractAnalyzer(analyzer, newstate)
@@ -1609,8 +1654,8 @@ end
 function request_instantiation_prompt_progress!(
         server::Server, ins_request::InstantiationRequest
     )
-    id = String(gensym(:WorkDoneProgressCreateRequest_instantiation_prompt))
-    token = String(gensym(:InstantiationPromptProgress))
+    id = unique_id("WorkDoneProgressCreateRequest_instantiation_prompt")
+    token = unique_id("InstantiationPromptProgress")
     caller = InstantiationPromptProgressCaller(ins_request, token)
     addrequest!(server, id => caller)
     params = WorkDoneProgressCreateParams(; token)
@@ -1621,7 +1666,7 @@ function send_instantiation_prompt!(
         server::Server, ins_request::InstantiationRequest,
         progress_token::Union{Nothing,ProgressToken} = nothing
     )
-    id = String(gensym(:ShowMessageRequest_instantiation))
+    id = unique_id("ShowMessageRequest_instantiation")
     caller = InstantiationPromptCaller(ins_request, progress_token)
     addrequest!(server, id => caller)
     message = """
@@ -1776,7 +1821,7 @@ function ensure_instantiated!(
             This may cause various features such as diagnostics to not function properly.
             It is recommended to fix the problem by referring to the following error""" env_path
             println(stderr, String(take!(io)))
-            showerror(stderr, e, catch_backtrace())
+            locked_showerror(stderr, e, catch_backtrace())
             if !server.state.cli_mode
                 show_warning_message(server, """
                     Failed to instantiate package environment at $env_path.
@@ -1808,7 +1853,7 @@ function inspect_instantiation_needs(env_path::String)
             instantiation_needs(env_path)
         catch e
             @error "Failed to inspect package environment" env_path
-            showerror(stderr, e, catch_backtrace())
+            locked_showerror(stderr, e, catch_backtrace())
             (; resolve = true, instantiate = true)
         finally
             clear_pkg_registry_cache!()

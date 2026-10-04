@@ -7,6 +7,7 @@ Logging = "56ddb016-857b-54e1-b83d-db4d58db5568"
 Markdown = "d6f4376e-aef5-505a-96c1-9c027394607a"
 Pkg = "44cfe95a-1eb2-52ea-b672-e2afdf69b78f"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+TestRunner = "4efbe77e-ddf3-4ce7-be91-16409ca9e85f"
 
 [sources]
 JETLS = {path = ".."}

@@ -42,7 +42,7 @@ function get_lowering_diagnostics(
     per_file = JETLS.PerFileDiagnosticsResult(
         diagnostics, candidates, def_used_names, explicit_imports)
     JETLS.cross_file_diagnostics!(diagnostics, JETLS.DefUsedNamesCache(),
-        server, uri, per_file; skip_context_check=true)
+        server, uri, #=snapshot=#nothing, per_file; skip_context_check=true)
     if code !== nothing
         filter!(d -> d.code == code, diagnostics)
     end

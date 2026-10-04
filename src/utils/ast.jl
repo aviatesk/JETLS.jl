@@ -1529,7 +1529,17 @@ function line_absorbing_delete_range(obj, fi::FileInfo)
         var"end" = offset_to_xy(fi, after_end))
 end
 
-function try_extract_field_line(node::JS.SyntaxNode, structname::Symbol, fname::Symbol)
+"""
+    try_extract_field_line(node::JS.SyntaxNode, structname::Symbol, fname::Symbol;
+                           interpolated::Bool = false) -> Union{Nothing,JS.SyntaxNode}
+
+Find the definition of the field `fname` of the struct `structname` within `node`.
+With `interpolated = true`, match the structs whose names are interpolated instead, as in
+`@eval struct \$name ... end`.
+"""
+function try_extract_field_line(
+        node::JS.SyntaxNode, structname::Symbol, fname::Symbol; interpolated::Bool = false
+    )
     if JS.kind(node) === JS.K"struct" && JS.numchildren(node) ≥ 2
         structnm = node[1]
         if JS.kind(structnm) === JS.K"<:" && JS.numchildren(structnm) ≥ 1
@@ -1538,7 +1548,8 @@ function try_extract_field_line(node::JS.SyntaxNode, structname::Symbol, fname::
         if JS.kind(structnm) === JS.K"curly" && JS.numchildren(structnm) ≥ 1
             structnm = structnm[1]
         end
-        if (let data = structnm.data; data !== nothing && data.val === structname; end)
+        if (interpolated ? JS.kind(structnm) === JS.K"$" :
+            (let data = structnm.data; data !== nothing && data.val === structname; end))
             for i = 1:JS.numchildren(node[2])
                 retfield = field = node[2][i]
                 if JS.kind(field) === JS.K"const" && JS.numchildren(field) ≥ 1
@@ -1555,7 +1566,7 @@ function try_extract_field_line(node::JS.SyntaxNode, structname::Symbol, fname::
         return nothing
     else
         for i = 1:JS.numchildren(node)
-            return @something try_extract_field_line(node[i], structname, fname) continue
+            return @something try_extract_field_line(node[i], structname, fname; interpolated) continue
         end
         return nothing
     end

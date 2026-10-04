@@ -1,0 +1,191 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches-ignore:
+      - release
+
+jobs:
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
+    outputs:
+      jetls: ${{ steps.filter.outputs.jetls }}
+      lsp: ${{ steps.filter.outputs.lsp }}
+      schemas: ${{ steps.filter.outputs.schemas }}
+      vendor_deps: ${{ steps.filter.outputs.vendor_deps }}
+      docs: ${{ steps.filter.outputs.docs }}
+    steps:
+      - id: filter
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BEFORE: ${{ github.event.before }}
+          # Bash glob patterns, where `*` also matches `/`.
+          # Changes to `ci.yml` itself select every component.
+          JETLS_PATHS: |
+            src/**
+            test/**
+            LSP/**
+            Compiler/**
+            Project.toml
+            .JETLSConfig.toml
+            scripts/selfcheck.sh
+            .github/workflows/JETLS.jl.yml
+            .github/workflows/test-matrix.yml
+            .github/workflows/test-app.yml
+          LSP_PATHS: |
+            LSP/**
+            .github/workflows/LSP.jl.yml
+          SCHEMAS_PATHS: |
+            src/**
+            schemas/**
+            scripts/schema/**
+            Project.toml
+            .github/workflows/check-schemas.yml
+          VENDOR_DEPS_PATHS: |
+            src/**
+            test/**
+            LSP/**
+            Compiler/**
+            scripts/vendor-deps.jl
+            Project.toml
+            .github/workflows/vendor-deps.jl.yml
+          DOCS_PATHS: |
+            src/**
+            docs/**
+            CHANGELOG.md
+            .github/workflows/Documentation.yml
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = push ]; then
+            tree=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA" --jq .commit.tree.sha)
+            # Records uploaded by pull requests from forks are not trusted.
+            run_id=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=verified-tree-$tree" \
+              --jq '[.artifacts[] | select(.expired | not) | .workflow_run |
+                select(.head_repository_id == .repository_id)][0].id // empty')
+            if [ -n "$run_id" ]; then
+              echo "Skipping checks: tree $tree was verified by $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$run_id"
+              exit 0
+            fi
+            files=$(gh api "repos/$GITHUB_REPOSITORY/compare/$BEFORE...$GITHUB_SHA" \
+              --jq '.files[] | .filename, (.previous_filename // empty)')
+          else
+            files=$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files" \
+              --jq '.[] | .filename, (.previous_filename // empty)')
+          fi
+          # Keep the patterns below from expanding against the workspace.
+          set -f
+          changed() {
+            local file pattern
+            while IFS= read -r file; do
+              # shellcheck disable=SC2086,SC2053 # split `$1` into glob patterns
+              for pattern in .github/workflows/ci.yml $1; do
+                if [[ $file == $pattern ]]; then
+                  echo true
+                  return
+                fi
+              done
+            done <<<"$files"
+            echo false
+          }
+          {
+            echo "jetls=$(changed "$JETLS_PATHS")"
+            echo "lsp=$(changed "$LSP_PATHS")"
+            echo "schemas=$(changed "$SCHEMAS_PATHS")"
+            echo "vendor_deps=$(changed "$VENDOR_DEPS_PATHS")"
+            echo "docs=$(changed "$DOCS_PATHS")"
+          } >> "$GITHUB_OUTPUT"
+
+  jetls:
+    name: JETLS.jl
+    needs: changes
+    if: needs.changes.outputs.jetls == 'true'
+    uses: ./.github/workflows/JETLS.jl.yml
+    with:
+      include-nightly: false
+
+  # Not required: failures against an unreleased Julia should not block merging.
+  test_nightly:
+    name: JETLS.jl nightly
+    needs: changes
+    if: needs.changes.outputs.jetls == 'true'
+    uses: ./.github/workflows/test-matrix.yml
+    with:
+      include-stable: false
+
+  # `push` runs are handled by `LSP.jl.yml` itself to keep its own status badge.
+  lsp:
+    name: LSP.jl
+    needs: changes
+    if: github.event_name == 'pull_request' && needs.changes.outputs.lsp == 'true'
+    uses: ./.github/workflows/LSP.jl.yml
+
+  check_schemas:
+    name: Check schemas
+    needs: changes
+    if: needs.changes.outputs.schemas == 'true'
+    uses: ./.github/workflows/check-schemas.yml
+
+  vendor_deps:
+    name: vendor-deps.jl
+    needs: changes
+    if: needs.changes.outputs.vendor_deps == 'true'
+    uses: ./.github/workflows/vendor-deps.jl.yml
+
+  # `push` runs are handled by `Documentation.yml` itself since they deploy.
+  docs:
+    name: Documentation
+    needs: changes
+    if: github.event_name == 'pull_request' && needs.changes.outputs.docs == 'true'
+    permissions:
+      actions: write
+      contents: write
+      pull-requests: read
+      statuses: write
+    uses: ./.github/workflows/Documentation.yml
+    secrets: inherit
+
+  required_checks:
+    name: Required checks
+    if: always()
+    needs:
+      - changes
+      - jetls
+      - lsp
+      - check_schemas
+      - vendor_deps
+      - docs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check results
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          jq -r 'to_entries[] | "\(.key): \(.value.result)"' <<<"$RESULTS"
+          jq -e '.changes.result == "success" and
+            all(.[]; .result == "success" or .result == "skipped")' <<<"$RESULTS" >/dev/null
+      # Lets the `push` run skip its checks when this exact tree lands on `master`.
+      - name: Get the verified tree
+        id: tree
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tree=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA" --jq .commit.tree.sha)
+          echo "tree=$tree" >> "$GITHUB_OUTPUT"
+          echo "$GITHUB_SHA" > verified-tree
+      - name: Record the verified tree
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v7
+        with:
+          name: verified-tree-${{ steps.tree.outputs.tree }}
+          path: verified-tree
+          if-no-files-found: error
+          overwrite: true

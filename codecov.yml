@@ -1,0 +1,16 @@
+coverage:
+  status:
+    project:
+      JETLS.jl:
+        flags: [JETLS.jl]
+        informational: true
+      LSP.jl:
+        flags: [LSP.jl]
+        informational: true
+    patch:
+      default:
+        informational: true
+
+flag_management:
+  default_rules:
+    carryforward: true

@@ -220,6 +220,14 @@ function remove_unused_weakdeps_and_extensions!(
         if isempty(weakdeps)
             delete!(project, "weakdeps")
         end
+        compat = get(project, "compat", nothing)
+        if compat isa Dict{String,Any}
+            deps = get(project, "deps", Dict{String,Any}())
+            extras = get(project, "extras", Dict{String,Any}())
+            for name in weakdeps_to_remove
+                haskey(deps, name) || haskey(extras, name) || delete!(compat, name)
+            end
+        end
         modified = true
     end
 

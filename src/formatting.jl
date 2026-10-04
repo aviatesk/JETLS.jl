@@ -97,8 +97,8 @@ function handle_DocumentFormattingRequest(
     if workDoneToken !== nothing
         do_format_with_progress(server, uri, options, msg.id, workDoneToken, cancel_flag)
     elseif supports(server, :window, :workDoneProgress)
-        id = String(gensym(:WorkDoneProgressCreateRequest_formatting))
-        token = String(gensym(:FormattingProgress))
+        id = unique_id("WorkDoneProgressCreateRequest_formatting")
+        token = unique_id("FormattingProgress")
         addrequest!(server, id => FormattingProgressCaller(uri, options, msg.id, token, cancel_flag))
         params = WorkDoneProgressCreateParams(; token)
         send(server, WorkDoneProgressCreateRequest(; id, params))
@@ -211,8 +211,8 @@ function handle_DocumentRangeFormattingRequest(
     if workDoneToken !== nothing
         do_range_format_with_progress(server, uri, range, options, msg.id, workDoneToken, cancel_flag)
     elseif supports(server, :window, :workDoneProgress)
-        id = String(gensym(:WorkDoneProgressCreateRequest_rangeFormatting))
-        token = String(gensym(:RangeFormattingProgress))
+        id = unique_id("WorkDoneProgressCreateRequest_rangeFormatting")
+        token = unique_id("RangeFormattingProgress")
         addrequest!(server, id => RangeFormattingProgressCaller(uri, range, options, msg.id, token, cancel_flag))
         params = WorkDoneProgressCreateParams(; token)
         send(server, WorkDoneProgressCreateRequest(; id, params))
@@ -295,8 +295,8 @@ function handle_DocumentRangesFormattingRequest(
         do_ranges_format_with_progress(
             server, uri, ranges, options, msg.id, workDoneToken, cancel_flag)
     elseif supports(server, :window, :workDoneProgress)
-        id = String(gensym(:WorkDoneProgressCreateRequest_rangesFormatting))
-        token = String(gensym(:RangesFormattingProgress))
+        id = unique_id("WorkDoneProgressCreateRequest_rangesFormatting")
+        token = unique_id("RangesFormattingProgress")
         addrequest!(server,
             id => RangesFormattingProgressCaller(
                 uri, ranges, options, msg.id, token, cancel_flag))
@@ -419,7 +419,7 @@ function log_formatter_failure(
         cmd::Cmd, proc::Base.Process, input_task::Task, output::Vector{UInt8}
     )
     input_error = istaskfailed(input_task) ?
-        sprint(showerror, TaskFailedException(input_task)) : nothing
+        sprint(locked_showerror, TaskFailedException(input_task)) : nothing
     details = (;
         cmd,
         exitcode = proc.exitcode,

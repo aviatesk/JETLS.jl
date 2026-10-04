@@ -19,6 +19,7 @@ end
         @testset "binding" include("utils/test_binding.jl")
         @testset "docs" include("utils/test_docs.jl")
         @testset "lsp" include("utils/test_lsp.jl")
+        @testset "server" include("utils/test_server.jl")
         @testset "path" include("utils/test_path.jl")
         @testset "markdown" include("utils/test_markdown.jl")
         @testset "string" include("utils/test_string.jl")

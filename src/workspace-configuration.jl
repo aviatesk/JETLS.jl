@@ -25,7 +25,7 @@ function request_workspace_configuration(
         server::Server,
         section::Union{Nothing,String}=nothing
     )
-    id = String(gensym(:WorkspaceConfigurationRequest))
+    id = unique_id("WorkspaceConfigurationRequest")
     addrequest!(server, id=>WorkspaceConfigurationCaller(handler))
     return send(server, ConfigurationRequest(;
         id,
@@ -70,7 +70,7 @@ function store_lsp_config!(tracker::ConfigChangeTracker, server::Server, @nospec
         validate_config_data(config_value)
     catch err
         err isa InvalidConfigDataError || rethrow(err)
-        error_message = sprint(showerror, err)
+        error_message = sprint(locked_showerror, err)
         show_error_message(server,
             lazy"Unexpected config data was passed from $source, deleting LSP configuration: $error_message")
         return delete_lsp_config!(tracker, server)
@@ -145,7 +145,7 @@ send the notification for any configuration change.
 function did_change_configuration_registration(init_options::InitOptions)
     section = init_options.configuration_section
     return Registration(;
-        id = String(gensym(:DidChangeConfigurationRegistration)),
+        id = unique_id("DidChangeConfigurationRegistration"),
         method = "workspace/didChangeConfiguration",
         registerOptions = section === nothing ? nothing :
             DidChangeConfigurationRegistrationOptions(; section))

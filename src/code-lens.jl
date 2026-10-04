@@ -121,7 +121,7 @@ struct CodeLensRefreshRequestCaller <: RequestCaller end
 
 function request_codelens_refresh!(server::Server)
     supports(server, :workspace, :codeLens, :refreshSupport) || return nothing
-    id = String(gensym(:CodeLensRefreshRequest))
+    id = unique_id("CodeLensRefreshRequest")
     addrequest!(server, id=>CodeLensRefreshRequestCaller())
     return send(server, CodeLensRefreshRequest(; id, params = nothing))
 end

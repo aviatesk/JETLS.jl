@@ -16,7 +16,7 @@ function register(server::Server, registrations::Vector{Registration})
             return data, false
         end
     end
-    id = String(gensym(:RegisterCapabilityRequest))
+    id = unique_id("RegisterCapabilityRequest")
     send(server, RegisterCapabilityRequest(;
         id,
         params = RegistrationParams(;
@@ -38,7 +38,7 @@ function unregister(server::Server, unregisterations::Vector{Unregistration})
             return data, false
         end
     end
-    id = String(gensym(:UnregisterCapabilityRequest))
+    id = unique_id("UnregisterCapabilityRequest")
     send(server, UnregisterCapabilityRequest(;
         id,
         params = UnregistrationParams(;

@@ -19,7 +19,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## Unreleased
 
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
-- Diff: [`906d919...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/906d919...HEAD)
+- Diff: [`5ed21cb...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/5ed21cb...HEAD)
 
 ### Announcement
 
@@ -28,7 +28,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > It does not support Julia 1.12.1 or earlier, nor Julia 1.14+/nightly.
 
 > [!note]
-> The official Zed extension for Julia, [JuliaEditorSupport/zed-julia](https://github.com/JuliaEditorSupport/zed-julia), now uses JETLS as its default language server since v0.2.0 (https://github.com/zed-industries/extensions/pull/7455).
+> The official Zed extension for Julia, [JuliaEditorSupport/zed-julia](https://github.com/JuliaEditorSupport/zed-julia), now uses JETLS as its default language server since v0.2.0.
 > Install the `Julia` extension from Zed's extensions view: like `jetls-client`, it installs and updates the pinned JETLS release automatically, so Zed users no longer need to [install `jetls`](https://aviatesk.github.io/JETLS.jl/release/#index/server-installation) or keep it up to date manually (still needed if you also use the `jetls` CLI, e.g. `jetls check`).
 > This is a breaking migration from LanguageServer.jl for existing users of the extension; see [Migrating to version 0.2](https://github.com/JuliaEditorSupport/zed-julia#migrating-to-version-02).
 > If you have been using the [aviatesk/zed-julia](https://github.com/aviatesk/zed-julia) fork, switch to the official extension, and move your settings from `lsp.JETLS` to `lsp.jetls`, since the language server ID is now `jetls`.
@@ -54,6 +54,37 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 >
 > Note: Path glob patterns use `/` as the separator on all platforms, including Windows; backslashes are not supported as separators.
 
+### Changed
+
+- Full analysis of scripts, notebooks and test files now interprets code evaluated by `@eval` and `Core.eval` like other top-level code:
+  methods defined in it are analyzed, including for [`toplevel/method-overwrite`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/toplevel/method-overwrite), structs defined in it get [`toplevel/abstract-field`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/toplevel/abstract-field), files `include`d by it are analyzed,
+  [`full_analysis.concretization_timeout`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/full_analysis/concretization_timeout) can stop it, and the stack traces of [`toplevel/error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/toplevel/error) and [`toplevel/concretization-timeout`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/toplevel/concretization-timeout) diagnostics extend into it.
+  The `__init__` functions of modules it evaluates still run natively and cannot be interrupted.
+  Since this code no longer runs natively, `@eval` code doing heavy work may now exceed the timeout:
+  add a [`full_analysis.concretization_patterns`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/full_analysis/concretization_patterns) entry matching it to run it natively, or raise the timeout.
+  Package source analysis, which runs calls natively, is unchanged.
+
+### Fixed
+
+- Fixed a crash that could occur when hover documentation, diagnostics, or error messages were rendered concurrently on Julia versions without the upstream display fix.
+
+- Fixed [`JETLS/live`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/source) diagnostics lagging one edit behind while typing on clients that set the [`pull_diagnostics`](https://aviatesk.github.io/JETLS.jl/release/launching/#init-options/pull_diagnostics) initialization option, such as the VSCode extension:
+  diagnostics shown after an edit now reflect that edit instead of the text before it.
+
+- Fixed memory usage growing each time [type inlay hints](https://aviatesk.github.io/JETLS.jl/release/features/#features/inlay-hint/types) are computed, e.g. while editing a file with the hints shown.
+  The memory retained after full-analysis is also reduced (related: https://github.com/aviatesk/JETLS.jl/issues/357).
+
+- Fixed [`toplevel/method-overwrite`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/toplevel/method-overwrite) diagnostics for method definitions whose body only returns a constant, such as `f() = 1`, being placed at an invalid location instead of the definition line.
+
+## 2026-09-27
+
+- Commit: [`5ed21cb`](https://github.com/aviatesk/JETLS.jl/commit/5ed21cb)
+- Diff: [`906d919...5ed21cb`](https://github.com/aviatesk/JETLS.jl/compare/906d919...5ed21cb)
+- Installation:
+  ```bash
+  julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="2026-09-27")'
+  ```
+
 ### Added
 
 - Added the [`testrunner.env`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/testrunner/env) and [`testrunner.julia_args`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/testrunner/julia_args) configurations for the Julia process that runs tests.
@@ -67,7 +98,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Changed
 
 - The [TestRunner integration](https://aviatesk.github.io/JETLS.jl/release/testrunner/) now uses the TestRunner.jl bundled with JETLS, so the `testrunner` executable no longer needs to be installed.
-  Tests run with the Julia running JETLS by default.
+  Tests run with the Julia running JETLS by default, and the new [`testrunner.env`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/testrunner/env) configuration allows running them with another Julia via `JULIAUP_CHANNEL` or `JULIA_APPS_JULIA_CMD`.
   If you installed `testrunner` only for JETLS, you can uninstall it with `pkg> app rm TestRunner`.
 
 - The `testrunner.executable` configuration is deprecated and no longer has any effect.
