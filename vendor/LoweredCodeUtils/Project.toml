@@ -9,19 +9,13 @@ CodeTracking = "29b28462-3302-58bb-873a-3f58224955cc"
 JuliaInterpreter = "87c368a4-672f-5de1-91ff-3cc7fc652fab"
 
 [sources.Compiler]
-subdir = "vendor/Compiler"
-rev = "575c8a554abae727d128192581ae1f62eb934281"
-url = "https://github.com/aviatesk/JETLS.jl"
+path = "../Compiler"
 
 [sources.CodeTracking]
-subdir = "vendor/CodeTracking"
-rev = "575c8a554abae727d128192581ae1f62eb934281"
-url = "https://github.com/aviatesk/JETLS.jl"
+path = "../CodeTracking"
 
 [sources.JuliaInterpreter]
-subdir = "vendor/JuliaInterpreter"
-rev = "575c8a554abae727d128192581ae1f62eb934281"
-url = "https://github.com/aviatesk/JETLS.jl"
+path = "../JuliaInterpreter"
 
 [compat]
 Compiler = "0.1"
