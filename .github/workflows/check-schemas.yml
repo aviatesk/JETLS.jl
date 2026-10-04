@@ -10,15 +10,6 @@ on:
       - "scripts/schema/**"
       - "Project.toml"
       - ".github/workflows/check-schemas.yml"
-  pull_request:
-    branches-ignore:
-      - release
-    paths:
-      - "src/**"
-      - "schemas/**"
-      - "scripts/schema/**"
-      - "Project.toml"
-      - ".github/workflows/check-schemas.yml"
   workflow_call:
 
 jobs:

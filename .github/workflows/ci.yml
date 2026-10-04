@@ -1,0 +1,108 @@
+name: CI
+
+on:
+  pull_request:
+    branches-ignore:
+      - release
+
+jobs:
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+    outputs:
+      jetls: ${{ steps.filter.outputs.jetls }}
+      lsp: ${{ steps.filter.outputs.lsp }}
+      schemas: ${{ steps.filter.outputs.schemas }}
+      vendor_deps: ${{ steps.filter.outputs.vendor_deps }}
+      docs: ${{ steps.filter.outputs.docs }}
+    steps:
+      - id: filter
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          files=$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files" \
+            --jq '.[] | .filename, (.previous_filename // empty)')
+          changed() {
+            if grep -qE "^\.github/workflows/ci\.yml$|$1" <<<"$files"; then
+              echo true
+            else
+              echo false
+            fi
+          }
+          {
+            echo "jetls=$(changed '^(src|test|LSP|Compiler)/|^Project\.toml$|^\.github/workflows/(JETLS\.jl|test-matrix|test-app)\.yml$')"
+            echo "lsp=$(changed '^LSP/|^\.github/workflows/LSP\.jl\.yml$')"
+            echo "schemas=$(changed '^(src|schemas|scripts/schema)/|^Project\.toml$|^\.github/workflows/check-schemas\.yml$')"
+            echo "vendor_deps=$(changed '^(src|test|LSP|Compiler)/|^scripts/vendor-deps\.jl$|^Project\.toml$|^\.github/workflows/vendor-deps\.jl\.yml$')"
+            echo "docs=$(changed '^(src|docs)/|^CHANGELOG\.md$|^\.github/workflows/Documentation\.yml$')"
+          } >> "$GITHUB_OUTPUT"
+
+  jetls:
+    name: JETLS.jl
+    needs: changes
+    if: needs.changes.outputs.jetls == 'true'
+    uses: ./.github/workflows/JETLS.jl.yml
+    with:
+      include-nightly: false
+
+  # Not required: failures against an unreleased Julia should not block merging.
+  test_nightly:
+    name: JETLS.jl nightly
+    needs: changes
+    if: needs.changes.outputs.jetls == 'true'
+    uses: ./.github/workflows/test-matrix.yml
+    with:
+      include-stable: false
+
+  lsp:
+    name: LSP.jl
+    needs: changes
+    if: needs.changes.outputs.lsp == 'true'
+    uses: ./.github/workflows/LSP.jl.yml
+
+  check_schemas:
+    name: Check schemas
+    needs: changes
+    if: needs.changes.outputs.schemas == 'true'
+    uses: ./.github/workflows/check-schemas.yml
+
+  vendor_deps:
+    name: vendor-deps.jl
+    needs: changes
+    if: needs.changes.outputs.vendor_deps == 'true'
+    uses: ./.github/workflows/vendor-deps.jl.yml
+
+  docs:
+    name: Documentation
+    needs: changes
+    if: needs.changes.outputs.docs == 'true'
+    permissions:
+      actions: write
+      contents: write
+      pull-requests: read
+      statuses: write
+    uses: ./.github/workflows/Documentation.yml
+    secrets: inherit
+
+  required_checks:
+    name: Required checks
+    if: always()
+    needs:
+      - changes
+      - jetls
+      - lsp
+      - check_schemas
+      - vendor_deps
+      - docs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check results
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          jq -r 'to_entries[] | "\(.key): \(.value.result)"' <<<"$RESULTS"
+          jq -e '.changes.result == "success" and
+            all(.[]; .result == "success" or .result == "skipped")' <<<"$RESULTS" >/dev/null
