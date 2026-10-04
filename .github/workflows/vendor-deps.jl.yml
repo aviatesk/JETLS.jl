@@ -1,17 +1,6 @@
 name: vendor-deps.jl
 
 on:
-  push:
-    branches:
-      - master
-    paths:
-      - "src/**"
-      - "test/**"
-      - "LSP/**"
-      - "Compiler/**"
-      - "scripts/vendor-deps.jl"
-      - "Project.toml"
-      - ".github/workflows/vendor-deps.jl.yml"
   workflow_call:
 
 jobs:

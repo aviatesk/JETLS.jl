@@ -1,18 +1,6 @@
 name: JETLS.jl
 
 on:
-  push:
-    branches:
-      - master
-    paths:
-      - "src/**"
-      - "test/**"
-      - "LSP/**"
-      - "Compiler/**"
-      - "Project.toml"
-      - ".github/workflows/JETLS.jl.yml"
-      - ".github/workflows/test-matrix.yml"
-      - ".github/workflows/test-app.yml"
   workflow_call:
     inputs:
       include-nightly:
@@ -25,8 +13,7 @@ jobs:
   test:
     uses: ./.github/workflows/test-matrix.yml
     with:
-      # `inputs` is empty for `push` runs
-      include-nightly: ${{ github.event_name == 'push' || inputs.include-nightly }}
+      include-nightly: ${{ inputs.include-nightly }}
 
   JETLS_DEV_MODE:
     name: Test with `JETLS_DEV_MODE = true`
