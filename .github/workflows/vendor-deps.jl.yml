@@ -12,17 +12,7 @@ on:
       - "scripts/vendor-deps.jl"
       - "Project.toml"
       - ".github/workflows/vendor-deps.jl.yml"
-  pull_request:
-    branches-ignore:
-      - release
-    paths:
-      - "src/**"
-      - "test/**"
-      - "LSP/**"
-      - "Compiler/**"
-      - "scripts/vendor-deps.jl"
-      - "Project.toml"
-      - ".github/workflows/vendor-deps.jl.yml"
+  workflow_call:
 
 jobs:
   test:

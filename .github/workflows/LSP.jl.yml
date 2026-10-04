@@ -8,13 +8,7 @@ on:
       - "LSP/**"
       - "LSP/Project.toml"
       - ".github/workflows/LSP.jl.yml"
-  pull_request:
-    branches-ignore:
-      - release
-    paths:
-      - "LSP/**"
-      - "LSP/Project.toml"
-      - ".github/workflows/LSP.jl.yml"
+  workflow_call:
 
 jobs:
   LSP:

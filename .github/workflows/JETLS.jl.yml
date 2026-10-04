@@ -13,23 +13,20 @@ on:
       - ".github/workflows/JETLS.jl.yml"
       - ".github/workflows/test-matrix.yml"
       - ".github/workflows/test-app.yml"
-  pull_request:
-    branches-ignore:
-      - release
-    paths:
-      - "src/**"
-      - "test/**"
-      - "LSP/**"
-      - "Compiler/**"
-      - "Project.toml"
-      - ".github/workflows/JETLS.jl.yml"
-      - ".github/workflows/test-matrix.yml"
-      - ".github/workflows/test-app.yml"
+  workflow_call:
+    inputs:
+      include-nightly:
+        description: Also test against the next Julia release
+        type: boolean
+        required: false
+        default: true
 
 jobs:
   test:
     uses: ./.github/workflows/test-matrix.yml
-    # run with the default inputs: `coverage: true`, `include-nightly: true`
+    with:
+      # `inputs` is empty for `push` runs
+      include-nightly: ${{ github.event_name == 'push' || inputs.include-nightly }}
 
   JETLS_DEV_MODE:
     name: Test with `JETLS_DEV_MODE = true`
