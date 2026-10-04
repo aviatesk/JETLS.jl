@@ -128,7 +128,13 @@ end
         report = only(result.res.toplevel_error_reports)
         @test report isa JETLS.JET.ConcretizationTimeoutErrorReport
         @test report.timeout == timeout
-        @test isempty(report.st)
+        if mode === :script
+            # the `@eval`ed code is interpreted, so the timeout stops inside `sleep`
+            @test any(sf -> sf.func === :sleep, report.st)
+            @test any(sf -> sf.func === Symbol("top-level scope"), report.st)
+        else
+            @test isempty(report.st)
+        end
         @test report.file == filename
         @test report.line == 1
         @test isempty(result.res.inference_error_reports)
@@ -145,6 +151,7 @@ end
             @test diag.source == JETLS.DIAGNOSTIC_SOURCE_SAVE
             @test diag.range == JETLS.line_range(report.line)
             @test occursin(string(timeout), diag.message)
+            mode === :script && @test occursin("sleep", diag.message)
         end
     end
 
@@ -173,8 +180,9 @@ end
             timeout in (0.1, "inf")
 
             filename = joinpath(@__DIR__, "concretization-callee-timeout.jl")
-            # `eval` sleeps natively, but recursive interpretation can stop before
-            # the marker. Pattern-selected calls must finish before timing out.
+            # Interpreted `Core.eval` can stop inside `sleep` before the marker.
+            # Pattern-selected and package-mode calls run natively and must finish
+            # before timing out.
             code = """
                 function inner()
                     Core.eval(@__MODULE__, :(sleep(0.2)))
@@ -571,6 +579,42 @@ end
             end
             @test found_diagnostic1
             @test found_diagnostic2
+        end
+    end
+end
+
+@testset "methods defined by `@eval`" begin
+    let code = """
+        @eval f(x::Int) = x + undefined_in_eval
+        @eval struct EvalStruct
+            x::Integer
+        end
+        """
+        withscript(code) do script_path
+            diagnostics = get_open_diagnostics(dirname(script_path), script_path, code)
+            let diag = only(filter(diag -> diag.code == JETLS.INFERENCE_UNDEF_GLOBAL_VAR_CODE, diagnostics))
+                @test diag.range.start.line == 0
+                @test occursin("undefined_in_eval", diag.message)
+            end
+            let diag = only(filter(diag -> diag.code == JETLS.TOPLEVEL_ABSTRACT_FIELD_CODE, diagnostics))
+                @test diag.range.start.line == 2
+            end
+        end
+    end
+end
+
+@testset "malformed module expression from macro" begin
+    let code = """
+        macro badmodule()
+            esc(Expr(:module, true, :M, :(x = 1)))
+        end
+        @badmodule
+        """
+        withscript(code) do script_path
+            diagnostics = get_open_diagnostics(dirname(script_path), script_path, code)
+            diag = only(filter(diag -> diag.code == JETLS.TOPLEVEL_ERROR_CODE, diagnostics))
+            @test diag.range.start.line == 3
+            @test occursin("module expression third argument must be a block", diag.message)
         end
     end
 end

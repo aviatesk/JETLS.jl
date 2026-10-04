@@ -54,6 +54,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 >
 > Note: Path glob patterns use `/` as the separator on all platforms, including Windows; backslashes are not supported as separators.
 
+### Changed
+
+- Full analysis of scripts, notebooks and test files now interprets code evaluated by `@eval` and `Core.eval` like other top-level code:
+  methods defined in it are analyzed, including for [`toplevel/method-overwrite`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/toplevel/method-overwrite), structs defined in it get [`toplevel/abstract-field`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/toplevel/abstract-field), files `include`d by it are analyzed,
+  [`full_analysis.concretization_timeout`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/full_analysis/concretization_timeout) can stop it, and the stack traces of [`toplevel/error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/toplevel/error) and [`toplevel/concretization-timeout`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/toplevel/concretization-timeout) diagnostics extend into it.
+  The `__init__` functions of modules it evaluates still run natively and cannot be interrupted.
+  Since this code no longer runs natively, `@eval` code doing heavy work may now exceed the timeout:
+  add a [`full_analysis.concretization_patterns`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/full_analysis/concretization_patterns) entry matching it to run it natively, or raise the timeout.
+  Package source analysis, which runs calls natively, is unchanged.
+
 ### Fixed
 
 - Fixed a crash that could occur when hover documentation, diagnostics, or error messages were rendered concurrently on Julia versions without the upstream display fix.
