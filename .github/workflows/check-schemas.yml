@@ -1,15 +1,6 @@
 name: Check schemas
 
 on:
-  push:
-    branches:
-      - master
-    paths:
-      - "src/**"
-      - "schemas/**"
-      - "scripts/schema/**"
-      - "Project.toml"
-      - ".github/workflows/check-schemas.yml"
   workflow_call:
 
 jobs:

@@ -1,6 +1,9 @@
 name: CI
 
 on:
+  push:
+    branches:
+      - master
   pull_request:
     branches-ignore:
       - release
@@ -10,6 +13,8 @@ jobs:
     name: Detect changes
     runs-on: ubuntu-latest
     permissions:
+      actions: read
+      contents: read
       pull-requests: read
     outputs:
       jetls: ${{ steps.filter.outputs.jetls }}
@@ -22,9 +27,24 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          BEFORE: ${{ github.event.before }}
         run: |
-          files=$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files" \
-            --jq '.[] | .filename, (.previous_filename // empty)')
+          if [ "$GITHUB_EVENT_NAME" = push ]; then
+            tree=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA" --jq .commit.tree.sha)
+            # Records uploaded by pull requests from forks are not trusted.
+            run_id=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=verified-tree-$tree" \
+              --jq '[.artifacts[] | select(.expired | not) | .workflow_run |
+                select(.head_repository_id == .repository_id)][0].id // empty')
+            if [ -n "$run_id" ]; then
+              echo "Skipping checks: tree $tree was verified by $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$run_id"
+              exit 0
+            fi
+            files=$(gh api "repos/$GITHUB_REPOSITORY/compare/$BEFORE...$GITHUB_SHA" \
+              --jq '.files[] | .filename, (.previous_filename // empty)')
+          else
+            files=$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files" \
+              --jq '.[] | .filename, (.previous_filename // empty)')
+          fi
           changed() {
             if grep -qE "^\.github/workflows/ci\.yml$|$1" <<<"$files"; then
               echo true
@@ -57,10 +77,11 @@ jobs:
     with:
       include-stable: false
 
+  # `push` runs are handled by `LSP.jl.yml` itself to keep its own status badge.
   lsp:
     name: LSP.jl
     needs: changes
-    if: needs.changes.outputs.lsp == 'true'
+    if: github.event_name == 'pull_request' && needs.changes.outputs.lsp == 'true'
     uses: ./.github/workflows/LSP.jl.yml
 
   check_schemas:
@@ -75,10 +96,11 @@ jobs:
     if: needs.changes.outputs.vendor_deps == 'true'
     uses: ./.github/workflows/vendor-deps.jl.yml
 
+  # `push` runs are handled by `Documentation.yml` itself since they deploy.
   docs:
     name: Documentation
     needs: changes
-    if: needs.changes.outputs.docs == 'true'
+    if: github.event_name == 'pull_request' && needs.changes.outputs.docs == 'true'
     permissions:
       actions: write
       contents: write
@@ -106,3 +128,21 @@ jobs:
           jq -r 'to_entries[] | "\(.key): \(.value.result)"' <<<"$RESULTS"
           jq -e '.changes.result == "success" and
             all(.[]; .result == "success" or .result == "skipped")' <<<"$RESULTS" >/dev/null
+      # Lets the `push` run skip its checks when this exact tree lands on `master`.
+      - name: Get the verified tree
+        id: tree
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tree=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA" --jq .commit.tree.sha)
+          echo "tree=$tree" >> "$GITHUB_OUTPUT"
+          echo "$GITHUB_SHA" > verified-tree
+      - name: Record the verified tree
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v7
+        with:
+          name: verified-tree-${{ steps.tree.outputs.tree }}
+          path: verified-tree
+          if-no-files-found: error
+          overwrite: true
