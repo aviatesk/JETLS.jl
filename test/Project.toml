@@ -17,7 +17,9 @@ TestRunner = "65a77010-ae58-5cc9-8243-71cff1cf0f92"
 path = ".."
 
 [sources.TestRunner]
-path = "../vendor/TestRunner"
+subdir = "vendor/TestRunner"
+rev = "575c8a554abae727d128192581ae1f62eb934281"
+url = "https://github.com/aviatesk/JETLS.jl"
 
 [compat]
 Test = "1.11.0"
