@@ -36,6 +36,8 @@ jobs:
             LSP/**
             Compiler/**
             Project.toml
+            .JETLSConfig.toml
+            scripts/selfcheck.sh
             .github/workflows/JETLS.jl.yml
             .github/workflows/test-matrix.yml
             .github/workflows/test-app.yml
