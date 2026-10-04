@@ -28,6 +28,39 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           BEFORE: ${{ github.event.before }}
+          # Bash glob patterns, where `*` also matches `/`.
+          # Changes to `ci.yml` itself select every component.
+          JETLS_PATHS: |
+            src/**
+            test/**
+            LSP/**
+            Compiler/**
+            Project.toml
+            .github/workflows/JETLS.jl.yml
+            .github/workflows/test-matrix.yml
+            .github/workflows/test-app.yml
+          LSP_PATHS: |
+            LSP/**
+            .github/workflows/LSP.jl.yml
+          SCHEMAS_PATHS: |
+            src/**
+            schemas/**
+            scripts/schema/**
+            Project.toml
+            .github/workflows/check-schemas.yml
+          VENDOR_DEPS_PATHS: |
+            src/**
+            test/**
+            LSP/**
+            Compiler/**
+            scripts/vendor-deps.jl
+            Project.toml
+            .github/workflows/vendor-deps.jl.yml
+          DOCS_PATHS: |
+            src/**
+            docs/**
+            CHANGELOG.md
+            .github/workflows/Documentation.yml
         run: |
           if [ "$GITHUB_EVENT_NAME" = push ]; then
             tree=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA" --jq .commit.tree.sha)
@@ -45,19 +78,27 @@ jobs:
             files=$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files" \
               --jq '.[] | .filename, (.previous_filename // empty)')
           fi
+          # Keep the patterns below from expanding against the workspace.
+          set -f
           changed() {
-            if grep -qE "^\.github/workflows/ci\.yml$|$1" <<<"$files"; then
-              echo true
-            else
-              echo false
-            fi
+            local file pattern
+            while IFS= read -r file; do
+              # shellcheck disable=SC2086,SC2053 # split `$1` into glob patterns
+              for pattern in .github/workflows/ci.yml $1; do
+                if [[ $file == $pattern ]]; then
+                  echo true
+                  return
+                fi
+              done
+            done <<<"$files"
+            echo false
           }
           {
-            echo "jetls=$(changed '^(src|test|LSP|Compiler)/|^Project\.toml$|^\.github/workflows/(JETLS\.jl|test-matrix|test-app)\.yml$')"
-            echo "lsp=$(changed '^LSP/|^\.github/workflows/LSP\.jl\.yml$')"
-            echo "schemas=$(changed '^(src|schemas|scripts/schema)/|^Project\.toml$|^\.github/workflows/check-schemas\.yml$')"
-            echo "vendor_deps=$(changed '^(src|test|LSP|Compiler)/|^scripts/vendor-deps\.jl$|^Project\.toml$|^\.github/workflows/vendor-deps\.jl\.yml$')"
-            echo "docs=$(changed '^(src|docs)/|^CHANGELOG\.md$|^\.github/workflows/Documentation\.yml$')"
+            echo "jetls=$(changed "$JETLS_PATHS")"
+            echo "lsp=$(changed "$LSP_PATHS")"
+            echo "schemas=$(changed "$SCHEMAS_PATHS")"
+            echo "vendor_deps=$(changed "$VENDOR_DEPS_PATHS")"
+            echo "docs=$(changed "$DOCS_PATHS")"
           } >> "$GITHUB_OUTPUT"
 
   jetls:
