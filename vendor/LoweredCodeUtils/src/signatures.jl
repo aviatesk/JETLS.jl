@@ -51,13 +51,10 @@ In this case, `lastpc == pc`.
 If no 3-argument `:method` expression is found, `nothing` will be returned in place of `(mt, sigt)`.
 """
 function signature(interp::Interpreter, frame::Frame, @nospecialize(stmt), pc::Int)
-    mod = moduleof(frame)
     lastpc = frame.pc = pc
     while !ismethod3(stmt)  # wait for the 3-arg :method or 4-arg define_method
         if isanonymous_typedef(stmt)
             lastpc = pc = step_through_methoddef(interp, frame, stmt)   # define an anonymous function
-        elseif is_Typeof_for_anonymous_methoddef(stmt, frame.framecode.src.code, mod)
-            return nothing, pc
         else
             lastpc = pc
             pc = throw_if_breakpoint(step_expr!(interp, frame, stmt, true))
@@ -84,19 +81,6 @@ end
 signature(interp::Interpreter, frame::Frame, pc::Int) = signature(interp, frame, pc_expr(frame, pc), pc)
 signature(frame::Frame, pc::Int) = signature(RecursiveInterpreter(), frame, pc)
 
-function is_Typeof_for_anonymous_methoddef(@nospecialize(stmt), code::Vector{Any}, mod::Module)
-    isexpr(stmt, :call) || return false
-    f = stmt.args[1]
-    isa(f, QuoteNode) || return false
-    f.value === Core.Typeof || return false
-    arg1 = stmt.args[2]
-    if isa(arg1, SSAValue)
-        arg1 = code[arg1.id]
-    end
-    arg1 isa Symbol || return false
-    return !isdefined(mod, arg1)
-end
-
 function minid(@nospecialize(node), stmts, id)
     if isa(node, SSAValue)
         id = min(id, node.id)
@@ -112,10 +96,7 @@ end
 
 function signature_top(frame, stmt::Expr, pc)
     @assert ismethod3(stmt)
-    if is_define_method_call_4arg(stmt)
-        return minid(stmt.args[4], frame.framecode.src.code, pc)
-    end
-    return minid(stmt.args[2], frame.framecode.src.code, pc)
+    return minid(method_sig(stmt), frame.framecode.src.code, pc)
 end
 
 function step_through_methoddef(interp::Interpreter, frame::Frame, @nospecialize(stmt))
@@ -507,12 +488,22 @@ end
 
 Advance the program counter without executing the corresponding line.
 If `frame` is finished, `nextpc` will be `nothing`.
+
+`next_or_nothing!` still advances the world of `frame` for a `:latestworld` statement, so
+that the statements that follow see the definitions made before it.
 """
 next_or_nothing(frame::Frame, pc::Int) = next_or_nothing(RecursiveInterpreter(), frame, pc)
 next_or_nothing(::Interpreter, frame::Frame, pc::Int) = pc < nstatements(frame.framecode) ? pc+1 : nothing
 next_or_nothing!(frame::Frame) = next_or_nothing!(RecursiveInterpreter(), frame)
 function next_or_nothing!(::Interpreter, frame::Frame)
     pc = frame.pc
+    # Since Julia 1.12, top-level code advances its world only at `:latestworld`, which
+    # JuliaInterpreter follows, so skipping one would leave later statements reading
+    # bindings in a world prior to their definition. This is done here rather than by
+    # selecting `:latestworld` in `lines_required!`, since a selected statement pulls in its
+    # control flow and type definition, which would grow the slice by branch conditions,
+    # loops, and types it does not need.
+    isexpr(pc_expr(frame, pc), :latestworld) && (frame.world = Base.get_world_counter())
     if pc < nstatements(frame.framecode)
         return frame.pc = pc + 1
     end

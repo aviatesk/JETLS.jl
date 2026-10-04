@@ -126,6 +126,16 @@ function method_module(@nospecialize(stmt))
     return nothing
 end
 
+# Extract the signature data from a method3 statement.
+# For Expr(:method, name, sig, body) it's args[2]; for define_method(mod, name, sigdata, body) it's args[4].
+function method_sig(@nospecialize(stmt))
+    if is_define_method_call_4arg(stmt)
+        return stmt.args[4]
+    else
+        return stmt.args[2]
+    end
+end
+
 # Extract the CodeInfo body from a method3 statement.
 # For Expr(:method, name, sig, body) it's args[3]; for define_method(mod, name, sigdata, body) it's args[5].
 function method_body(@nospecialize(stmt))
@@ -142,24 +152,24 @@ function ismethod_with_name(src::CodeInfo, @nospecialize(stmt), target::Abstract
     else
         ismethod3(stmt) || return false
         name = method_name(stmt)
-        if name === nothing && isexpr(stmt, :method)
-            name = stmt.args[2]
+        if name === nothing
+            name = method_sig(stmt)
         end
     end
     isdone = false
     while !isdone
         if name isa AnySSAValue || name isa AnySlotNumber
             name = src.code[name.id]
-        elseif isexpr(name, :call) && is_quotenode_egal(name.args[1], Core.svec)
+        elseif isexpr(name, :call) && callee_matches(name.args[1], Core, :svec)
             name = name.args[2]
-        elseif isexpr(name, :call) && is_quotenode_egal(name.args[1], Core.Typeof)
+        elseif isexpr(name, :call) && callee_matches(name.args[1], Core, :Typeof)
             name = name.args[2]
-        elseif isexpr(name, :call) && is_quotenode_egal(name.args[1], Core.apply_type)
+        elseif isexpr(name, :call) && callee_matches(name.args[1], Core, :apply_type)
             for arg in name.args[2:end]
                 ismethod_with_name(src, arg, target; reentrant=true) && return true
             end
             isdone = true
-        elseif isexpr(name, :call) && is_quotenode_egal(name.args[1], UnionAll)
+        elseif isexpr(name, :call) && callee_matches(name.args[1], Core, :UnionAll)
             for arg in name.args[2:end]
                 ismethod_with_name(src, arg, target; reentrant=true) && return true
             end

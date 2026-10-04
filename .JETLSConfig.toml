@@ -22,15 +22,6 @@ severity = "hint"
 path = "**/*.jl"
 
 # TODO [JETLS]
-# Need to properly set module context when a single file contains multiple modules (for the new incremental full analysis mode)
-[[diagnostic.patterns]]
-pattern = ".*"
-match_by = "message"
-match_type = "regex"
-severity = "off"
-path = "LSP/src/LSP.jl"
-
-# TODO [JETLS]
 # `JETLSTestModule` is a pseudo lowering context only used as `analysis_overrides.module_name` for our test files; it is never reachable from JETLS itself, so diagnositcs against it are noise.
 [[diagnostic.patterns]]
 pattern = ".*"
@@ -38,15 +29,6 @@ match_by = "message"
 match_type = "regex"
 severity = "off"
 path = "src/utils/JETLSTestModule.jl"
-
-# TODO [JETLS]
-# `@interface` type instability for anonymous interface definitions
-[[diagnostic.patterns]]
-pattern = "no matching method found `.*var\"AnonymousInterface.*`"
-match_by = "message"
-match_type = "regex"
-severity = "off"
-path = "LSP/src/**/*.jl"
 
 # TODO [JETLS]
 # When Revise updates the `Server` type graph, analyzing `run_serve` in the latest world
@@ -57,14 +39,6 @@ match_by = "message"
 match_type = "regex"
 severity = "off"
 path = "src/app/cli-serve.jl"
-
-# This is type instability within JSON3.jl
-[[diagnostic.patterns]]
-pattern = "no matching method found `convert(.+)`"
-match_by = "message"
-match_type = "regex"
-severity = "off"
-path = "src/testrunner/testrunner-types.jl"
 
 [[full_analysis.concretization_patterns]]
 pattern = "const devbranch = x_"

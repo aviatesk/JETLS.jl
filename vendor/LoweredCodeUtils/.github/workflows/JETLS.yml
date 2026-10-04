@@ -1,0 +1,20 @@
+name: JETLS
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+    tags: ["*"]
+jobs:
+  check:
+    name: "JETLS diagnostics check"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      # Installs JETLS and runs `jetls check` with the settings from `.JETLSConfig.toml`.
+      # Test files are configured there with `full_analysis = false`, so only the package
+      # entry point is checked here.
+      - uses: aviatesk/JETLS.jl/.github/actions/check@release
+        with:
+          files: src/LoweredCodeUtils.jl

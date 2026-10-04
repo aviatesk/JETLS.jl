@@ -128,7 +128,10 @@ function (@main)(args::Vector{String})
     if project !== nothing
         warning_print("The `--project` option of testrunner is deprecated. " *
             "Pass `--project` to Julia before `--` instead, " *
-            "e.g. `testrunner --project=test -- test/runtests.jl`")
+            "e.g. `testrunner --project=test -- test/runtests.jl`. " *
+            "With `julia -m TestRunner`, pass `--project` to Julia before `-m`; " *
+            "if TestRunner lives in another environment, add that environment to " *
+            "`JULIA_LOAD_PATH` so that `-m` can find it.")
     end
 
     # Check if filename was provided

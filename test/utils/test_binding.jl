@@ -22,6 +22,33 @@ function with_target_binding(f, text::AbstractString; kwargs...)
     return cnt
 end
 
+@testset "reusable inert placeholders" begin
+    for source in (raw"(x, $value)", raw"(y, $other)")
+        template, name = JETLS.prepare_inert_template(jlparse(source; rule=:statement))
+        @test name == "##JETLS_UNQUOTE_PLACEHOLDER#0"
+        @test JETLS.get_name_val(template[2]) == name
+    end
+
+    for (source, expected) in (
+            (raw"var\"##JETLS_UNQUOTE_PLACEHOLDER#0\"", 1),
+            (raw"(var\"##JETLS_UNQUOTE_PLACEHOLDER#1\", $value)", 0),
+            (raw"$(f(var\"##JETLS_UNQUOTE_PLACEHOLDER#0\", var\"##JETLS_UNQUOTE_PLACEHOLDER#1\"))", 2),
+        )
+        _, name = JETLS.prepare_inert_template(jlparse(source; rule=:statement))
+        @test name == "##JETLS_UNQUOTE_PLACEHOLDER#$expected"
+    end
+
+    let quoted = jlparse(raw":($value)"; rule=:statement)
+        parameters = Dict("##JETLS_UNQUOTE_PLACEHOLDER#0" =>
+            jlparse(raw"var\"##JETLS_UNQUOTE_PLACEHOLDER#0\""; rule=:statement))
+        resolution = JETLS.resolve_inert_tree(
+            lowering_module, Base.get_world_counter(), quoted; parameters)
+        @test resolution !== nothing
+        @test resolution.placeholder_name == "##JETLS_UNQUOTE_PLACEHOLDER#1"
+        @test only(keys(resolution.argument_remap)).name == "##JETLS_UNQUOTE_PLACEHOLDER#0"
+    end
+end
+
 @testset "select_target_binding" begin
     @test with_target_binding("""
         let │x│xx│

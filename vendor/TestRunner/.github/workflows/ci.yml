@@ -57,6 +57,30 @@ jobs:
       - uses: julia-actions/julia-processcoverage@v1
       - uses: codecov/codecov-action@v7
 
+  # JETLS bundles TestRunner with the JuliaSyntax development version, so
+  # run the tests against JuliaLang/julia master to catch breakage early.
+  # Failures do not fail the workflow.
+  juliasyntax-canary:
+    name: JuliaSyntax master / Julia ${{ matrix.version }}
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        version: ["1", "nightly"]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: julia-actions/setup-julia@v3
+        with:
+          version: ${{ matrix.version }}
+          arch: x64
+      - uses: julia-actions/cache@v3
+      - name: Use JuliaSyntax from JuliaLang/julia master
+        run: |
+          julia --startup-file=no --project=. -e 'using Pkg; Pkg.add(; url="https://github.com/JuliaLang/julia", subdir="JuliaSyntax", rev="master")'
+      - uses: julia-actions/julia-buildpkg@latest
+      - uses: julia-actions/julia-runtest@latest
+
   jetls_check:
     name: JETLS check
     runs-on: ubuntu-latest

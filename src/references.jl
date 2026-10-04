@@ -44,8 +44,8 @@ function handle_ReferencesRequest(
     if token !== nothing
         do_find_references(server, uri, fi, pos, msg.id; include_declaration, token, cancel_flag)
     elseif supports(server, :window, :workDoneProgress)
-        id = String(gensym(:WorkDoneProgressCreateRequest_references))
-        token = String(gensym(:ReferencesProgress))
+        id = unique_id("WorkDoneProgressCreateRequest_references")
+        token = unique_id("ReferencesProgress")
         addrequest!(server, id => ReferencesProgressCaller(uri, fi, pos, include_declaration, msg.id, token, cancel_flag))
         params = WorkDoneProgressCreateParams(; token)
         send(server, WorkDoneProgressCreateRequest(; id, params))
@@ -122,7 +122,7 @@ function find_global_references!(
             seen_locations, server, uris_to_search, binfo; token, kwargs...)
     catch err
         @error "Error in `find_global_references!`"
-        Base.display_error(stderr, err, catch_backtrace())
+        locked_display_error(stderr, err, catch_backtrace())
         errored = true
     finally
         if token !== nothing

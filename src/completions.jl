@@ -358,7 +358,7 @@ function global_completions!(
             return #=isIncomplete=#false
         end
     end
-    resolver_id = String(gensym("GlobalCompletionResolverInfo_resovler_id"))
+    resolver_id = unique_id("GlobalCompletionResolverInfo_resovler_id")
     store!(state.completion_resolver_info, context_module) do _, ctx_mod::Module
         GlobalCompletionResolverInfo(resolver_id, ctx_mod, world, postprocessor), nothing
     end
@@ -487,7 +487,7 @@ function add_property_completions!(
     end
     isempty(ordered) && return false
 
-    resolver_id = String(gensym("PropertyCompletionResolverInfo_resovler_id"))
+    resolver_id = unique_id("PropertyCompletionResolverInfo_resovler_id")
     store!(comp_ctx.state.completion_resolver_info) do _
         resolver_info = PropertyCompletionResolverInfo(
             resolver_id, prefixtyp, comp_ctx.world, comp_ctx.postprocessor)
@@ -857,7 +857,7 @@ function call_completions!(
     has_equals = equals_pos === false
     local method_sig_comp_info, kwarg_comp_info
     if should_complete_method_sigs
-        local resolver_id = String(gensym("MethodSignatureCompletionResolverInfo_resovler_id"))
+        local resolver_id = unique_id("MethodSignatureCompletionResolverInfo_resovler_id")
         store!(state.completion_resolver_info) do _
             MethodSignatureCompletionResolverInfo(resolver_id, world, matches, postprocessor), nothing
         end

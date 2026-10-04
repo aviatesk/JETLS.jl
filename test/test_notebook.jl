@@ -688,6 +688,53 @@ end
     end
 end
 
+@testset "notebook diagnostic snapshot ordering" begin
+    with_manual_dispatch_server() do server, recorder
+        state = server.state
+        notebook_uri = URI("file:///diagnostic-snapshot.ipynb")
+        cell1 = URI("vscode-notebook-cell:/diagnostic-snapshot.ipynb#1")
+        cell2 = URI("vscode-notebook-cell:/diagnostic-snapshot.ipynb#2")
+        cells = [
+            JETLS.NotebookCellInfo(cell1, NotebookCellKind.Code, 1, "prefix = 1\nprefix"),
+            JETLS.NotebookCellInfo(cell2, NotebookCellKind.Code, 1, "func(x) = nothing")]
+        concat = JETLS.concatenate_cells(cells)
+        notebook = JETLS.NotebookInfo(1, "jupyter-notebook", state.encoding, cells, concat)
+        JETLS.store!(state.notebook_cache) do cache
+            Base.PersistentDict(cache, notebook_uri => notebook), nothing
+        end
+        JETLS.store!(state.cell_to_notebook) do cache
+            for cell in cells
+                cache = Base.PersistentDict(cache, cell.uri => notebook_uri)
+            end
+            cache, nothing
+        end
+        fi = JETLS.cache_notebook_file_info!(server, notebook_uri, notebook)
+        change = NotebookDocumentChangeEventCells(;
+            textContent = [NotebookDocumentChangeEventCellsTextContentItem(;
+                document = VersionedTextDocumentIdentifier(; uri = cell1, version = 2),
+                changes = [TextDocumentContentChangeEvent(; text = "prefix = 1")])])
+        request = DocumentDiagnosticRequest(;
+            id = 1,
+            params = DocumentDiagnosticParams(;
+                textDocument = TextDocumentIdentifier(; uri = cell2)))
+        prepared = only(queued_snapshot_requests(server, [
+            request,
+            make_DidChangeNotebookDocumentNotification(
+                notebook_uri, NotebookDocumentChangeEvent(; cells = change); version = 2)]))
+        @test prepared.snapshot.fi === fi
+        @test prepared.snapshot.notebook === concat
+        @test JETLS.get_file_info(state, notebook_uri).version == 2
+
+        response = dispatch_snapshot_request(server, recorder, prepared)
+        @test response isa DocumentDiagnosticResponse
+        diagnostic = only(response.result.items)
+        @test diagnostic.code == JETLS.LOWERING_UNUSED_ARGUMENT_CODE
+        @test diagnostic.range == Range(;
+            start = Position(; line = 0, character = 5),
+            var"end" = Position(; line = 0, character = 6))
+    end
+end
+
 @testset "analysis result landing after notebook close is discarded" begin
     mktempdir() do tempdir; Pkg.activate(tempdir) do
         notebook_uri = filepath2uri(normpath(tempdir, "test.ipynb"))

@@ -8,6 +8,7 @@ const CURRENT_DIR = pwd()
 
 const VENDOR_DIR = joinpath(CURRENT_DIR, "vendor")
 const VENDOR_NAMESPACE = "JETLS-vendor"
+const COVERAGE_OUTPUT_REGEX = r"\.jl\.\d+\.(?:cov|mem)$"
 
 struct Config
     source_branch::String
@@ -87,6 +88,10 @@ function copy_package_source(mod::Module, pkg_name::AbstractString)
     for (root, _, files) in walkdir(dest_dir)
         for file in files
             filepath = joinpath(root, file)
+            if occursin(COVERAGE_OUTPUT_REGEX, file)
+                rm(filepath)
+                continue
+            end
             chmod(filepath, 0o644)
         end
     end
@@ -219,6 +224,14 @@ function remove_unused_weakdeps_and_extensions!(
         end
         if isempty(weakdeps)
             delete!(project, "weakdeps")
+        end
+        compat = get(project, "compat", nothing)
+        if compat isa Dict{String,Any}
+            deps = get(project, "deps", Dict{String,Any}())
+            extras = get(project, "extras", Dict{String,Any}())
+            for name in weakdeps_to_remove
+                haskey(deps, name) || haskey(extras, name) || delete!(compat, name)
+            end
         end
         modified = true
     end

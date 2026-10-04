@@ -1457,4 +1457,47 @@ macro noop(ex) esc(ex) end
     end
 end
 
+@testset "binding occurrence cache generations" begin
+    @testset "statement ranges" begin
+        state = JETLS.ServerState()
+        uri = filepath2uri(@__FILE__)
+        lookup_func = Returns(JETLS.OutOfScope(lowering_module))
+        old_fi = JETLS.FileInfo(1, "old = 1\nold\n", uri)
+        new_fi = JETLS.FileInfo(1, "new = 1\nnew\n", uri)
+        for st0 in JS.children(JETLS.build_syntax_tree(old_fi))
+            JETLS.get_binding_occurrences!(state, uri, old_fi, st0; lookup_func)
+        end
+        st0 = first(JS.children(JETLS.build_syntax_tree(new_fi)))
+        occurrences = JETLS.get_binding_occurrences!(state, uri, new_fi, st0; lookup_func)
+        @test Set(b.name for b in keys(occurrences) if b.kind === :global) == Set(["new"])
+        @test length(JETLS.load(state.binding_occurrences_cache)[uri].by_range) == 1
+
+        updated_fi = JETLS.FileInfo(new_fi; inferred_context_cache = JETLS.InferredContextCache())
+        @test updated_fi.identity == new_fi.identity
+        @test JETLS.get_binding_occurrences!(
+            state, uri, updated_fi, st0; lookup_func) === occurrences
+    end
+
+    @testset "global summary" begin
+        state = JETLS.ServerState()
+        uri = filepath2uri(@__FILE__)
+        lookup_func = Returns(JETLS.OutOfScope(lowering_module))
+        old_fi = JETLS.FileInfo(1, "old = 1", uri)
+        new_fi = JETLS.FileInfo(1, "new = 1", uri)
+        (; ctx3, binding) = JETLS.select_target_binding(
+            JETLS.build_syntax_tree(old_fi), 1, lowering_module, Base.get_world_counter())
+        binfo = JL.get_binding(ctx3, binding)
+        @test length(JETLS.find_global_binding_occurrences!(
+            state, uri, old_fi, binfo; lookup_func)) == 1
+        old_globals = JETLS.load(state.binding_occurrences_cache)[uri].globals
+        @test isempty(JETLS.find_global_binding_occurrences!(
+            state, uri, new_fi, binfo; lookup_func))
+
+        JETLS.store_global_binding_occurrences!(state, uri, old_fi, old_globals)
+        @test isempty(JETLS.load(state.binding_occurrences_cache)[uri].by_range)
+        @test isempty(JETLS.find_global_binding_occurrences!(
+            state, uri, new_fi, binfo; lookup_func))
+    end
+end
+
 end # module test_occurrence_analysis

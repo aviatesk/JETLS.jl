@@ -19,6 +19,9 @@ end
 # into the stack (see `step_toplevel!`), so a frame with a caller may still be toplevel.
 is_toplevel_frame(frame::Frame) = scopeof(frame) isa Module
 
+is_core_eval(scope) = scope isa Method && scope.sig === Tuple{typeof(Core.eval),Module,Any}
+will_catch_err(frame::Frame) = !isempty(frame.framedata.exception_frames) || frame.framedata.caller_will_catch_err
+
 function Base.nameof(frame::Frame)
     s = frame.framecode.scope
     isa(s, Method) ? s.name : nameof(s)
@@ -177,6 +180,22 @@ function is_define_method_call(@nospecialize(stmt))
            is_quotenode_egal(f, Core.define_method)
 end
 
+# Lowering declares a global with a builtin call on some versions: `Core.declare_global` on
+# Julia 1.13+, and `Core.set_binding_type!` for a typed global on Julia 1.10–1.11.
+function is_global_declaration_call(@nospecialize(stmt))
+    isexpr(stmt, :call) || return false
+    f = stmt.args[1]
+    @static if isdefinedglobal(Core, :declare_global)
+        return f === Core.declare_global || is_global_ref(f, Core, :declare_global) ||
+               is_quotenode_egal(f, Core.declare_global)
+    elseif isdefinedglobal(Core, :set_binding_type!)
+        return f === Core.set_binding_type! || is_global_ref(f, Core, :set_binding_type!) ||
+               is_quotenode_egal(f, Core.set_binding_type!)
+    else
+        return false
+    end
+end
+
 is_methoddef1(@nospecialize(stmt)) = isexpr(stmt, :method, 1) ||
                                       (is_define_method_call(stmt) && length(stmt.args) == 3)
 is_methoddef3(@nospecialize(stmt)) = isexpr(stmt, :method, 3) ||
@@ -265,6 +284,27 @@ function is_doc_expr(@nospecialize(ex))
 end
 
 is_leaf(frame::Frame) = frame.callee === nothing
+
+# Is `ex` a `Core.tuple(...)` call, as lowering emits for a `ccall`'s `(name, lib)` target on
+# Julia < 1.13? The constructor may appear as a `QuoteNode`, a `GlobalRef`, or the function itself.
+function is_core_tuple_call(@nospecialize(ex))
+    isexpr(ex, :call) || return false
+    a = (ex::Expr).args[1]
+    return a === Core.tuple ||
+           (isa(a, QuoteNode) && a.value === Core.tuple) ||
+           (isa(a, GlobalRef) && a.mod === Core && a.name === :tuple)
+end
+
+# Is `ex` a `Base.getproperty(x, :name)` call, as lowering emits for a qualified name `x.name` in
+# some positions (e.g. inside a `ccall` target on Julia < 1.13)? The function may appear as a
+# `QuoteNode`, a `GlobalRef`, or the function itself.
+function is_getproperty_call(@nospecialize(ex))
+    isexpr(ex, :call, 3) || return false
+    a = (ex::Expr).args[1]
+    return a === Base.getproperty ||
+           (isa(a, QuoteNode) && a.value === Base.getproperty) ||
+           is_global_ref(a, Base, :getproperty)
+end
 
 is_vararg_type(@nospecialize x) = x isa Core.TypeofVararg
 

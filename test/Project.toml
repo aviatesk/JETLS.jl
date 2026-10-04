@@ -1,21 +1,27 @@
-[deps]
-InteractiveUtils = "b77e0a4c-d291-57a0-90e8-8db25a27a240"
-JETLS = "a3b70258-0602-4ee2-b5a6-54c2470400db"
-Libdl = "8f399da3-3557-5675-b5ff-fb832c97cbdb"
-LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
-Logging = "56ddb016-857b-54e1-b83d-db4d58db5568"
-Markdown = "d6f4376e-aef5-505a-96c1-9c027394607a"
-Pkg = "44cfe95a-1eb2-52ea-b672-e2afdf69b78f"
-Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
-
-[sources]
-JETLS = {path = ".."}
-
-[compat]
-InteractiveUtils = "1.11"
-Pkg = "1.11.0"
-Test = "1.11.0"
 
 [preferences.JETLS]
 JETLS_DEV_MODE = false
-JETLS_TEST_MODE = true # disable the `try/catch` in `handle_message` when testing
+JETLS_TEST_MODE = true
+[deps]
+LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
+Libdl = "8f399da3-3557-5675-b5ff-fb832c97cbdb"
+Logging = "56ddb016-857b-54e1-b83d-db4d58db5568"
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+Markdown = "d6f4376e-aef5-505a-96c1-9c027394607a"
+InteractiveUtils = "b77e0a4c-d291-57a0-90e8-8db25a27a240"
+JETLS = "a3b70258-0602-4ee2-b5a6-54c2470400db"
+Pkg = "44cfe95a-1eb2-52ea-b672-e2afdf69b78f"
+TestRunner = "65a77010-ae58-5cc9-8243-71cff1cf0f92"
+
+[sources.JETLS]
+path = ".."
+
+[sources.TestRunner]
+subdir = "vendor/TestRunner"
+rev = "984830c3c5ca3f7711807c0a3bad4d5b2ee079a8"
+url = "https://github.com/aviatesk/JETLS.jl"
+
+[compat]
+Test = "1.11.0"
+InteractiveUtils = "1.11"
+Pkg = "1.11.0"

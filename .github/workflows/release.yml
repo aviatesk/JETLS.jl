@@ -198,6 +198,7 @@ jobs:
     if: github.event.pull_request.merged == true && startsWith(github.event.pull_request.head.ref, 'releases/')
     runs-on: ubuntu-latest
     permissions:
+      checks: write
       contents: write
     steps:
       - uses: actions/checkout@v7
@@ -247,6 +248,21 @@ jobs:
           fi
 
           git commit -m "docs: update CHANGELOG.md for $VERSION release"
+
+          # `master` requires `Required checks`, but pushes made with
+          # `GITHUB_TOKEN` trigger no workflows. Since `ci.yml` skips every
+          # job for a CHANGELOG-only commit, report its result ourselves on
+          # a temporary branch before pushing the commit to `master`.
+          test "$(git diff --name-only HEAD~1 HEAD)" = CHANGELOG.md
+          TMP_BRANCH="changelog-update/$VERSION"
+          git push origin "HEAD:refs/heads/$TMP_BRANCH"
+          trap 'git push origin --delete "$TMP_BRANCH"' EXIT
+          gh api "repos/$GITHUB_REPOSITORY/check-runs" \
+            -f name="Required checks" \
+            -f head_sha="$(git rev-parse HEAD)" \
+            -f conclusion=success \
+            -f "output[title]=CHANGELOG-only commit" \
+            -f "output[summary]=Reported by the update-changelog job of release.yml."
           git push origin master
 
           # Trigger documentation build for release branch

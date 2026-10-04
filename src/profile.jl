@@ -8,8 +8,8 @@ cancellable_token_impl(caller::ProfileProgressCaller) = caller.token
 
 function trigger_profile!(server::Server, trigger_path::String)
     if supports(server, :window, :workDoneProgress)
-        id = String(gensym(:WorkDoneProgressCreateRequest_profile))
-        token = String(gensym(:ProfileProgress))
+        id = unique_id("WorkDoneProgressCreateRequest_profile")
+        token = unique_id("ProfileProgress")
         addrequest!(server, id => ProfileProgressCaller(trigger_path, token))
         params = WorkDoneProgressCreateParams(; token)
         send(server, WorkDoneProgressCreateRequest(; id, params))
@@ -55,7 +55,7 @@ function do_profile(server::Server, trigger_path::String)
         show_info_message(server, "Heap snapshot saved to: $assembled_path")
     catch e
         @error "Failed to take heap snapshot" trigger_path
-        showerror(stderr, e, catch_backtrace())
+        locked_showerror(stderr, e, catch_backtrace())
         println(stderr)
         show_error_message(server, "Failed to take heap snapshot. See server log for details.")
     finally

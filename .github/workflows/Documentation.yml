@@ -9,12 +9,16 @@ on:
       - "docs/**"
       - "CHANGELOG.md"
       - ".github/workflows/Documentation.yml"
+  # Pull requests targeting other branches run this through `ci.yml`.
   pull_request:
+    branches:
+      - release
     paths:
       - "src/**"
       - "docs/**"
       - "CHANGELOG.md"
       - ".github/workflows/Documentation.yml"
+  workflow_call:
 
 jobs:
   build:

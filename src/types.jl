@@ -107,8 +107,12 @@ const InferredContextCacheData = Base.PersistentDict{
 const InferredContextCache = LWContainer{InferredContextCacheData,LWStats}
 
 # Current text snapshot for both synchronized documents and on-demand unsynced workspace
-# files, plus per-version caches derived from the parsed stream.
+# files, plus per-snapshot caches derived from the parsed stream.
 struct FileInfo
+    # Process-unique text snapshot ID, kept across metadata-only updates. Unlike `version`
+    # (reused after reopen) or `objectid` (reused after GC), it can be hashed into
+    # fingerprints that outlive this `FileInfo`.
+    identity::String
     version::Int
     parsed_stream::JS.ParseStream
     filename::String
@@ -144,8 +148,8 @@ struct FileInfo
         syntax_tree0 = cache_tree0 ?
             JS.build_tree(JS.SyntaxTree, parsed_stream; filename) : nothing
         line_starts = build_line_starts(parsed_stream.textbuf)
-        new(version, parsed_stream, filename, encoding, testsetinfos, syntax_tree0,
-            inferred_context_cache, line_starts)
+        new(unique_id("FileInfo"), version, parsed_stream, filename, encoding,
+            testsetinfos, syntax_tree0, inferred_context_cache, line_starts)
     end
 end
 @define_override_constructor FileInfo # For testsetinfos update
@@ -891,10 +895,12 @@ end
 const BindingOccurrencesResult = Dict{BindingInfoKey,Set{CachedBindingOccurrence}}
 const BindingOccurrencesRangeCache = Base.PersistentDict{UnitRange{Int},BindingOccurrencesResult}
 struct BindingOccurrencesCacheEntry
+    # `FileInfo.identity` of the text snapshot these entries were computed from
+    file_identity::String
     by_range::BindingOccurrencesRangeCache
     # Complete file-level global summary; `nothing` means it has not been built
-    # for this file version. Range-cache misses currently discard it defensively,
-    # although same-version top-level ranges should normally be stable.
+    # for this text snapshot. Range-cache misses currently discard it defensively,
+    # although top-level ranges of the same snapshot should normally be stable.
     globals::Union{Nothing,BindingOccurrencesResult}
 end
 
@@ -982,11 +988,10 @@ struct PerFileDiagnosticsResult
     def_used_names::Dict{Module,DefUsedNames}
     explicit_imports::Dict{Module,Dict{String,Vector{ImportInfo}}}
 end
-# `version` is that of the `FileInfo` the result was computed from. A computation that
-# raced with an edit can store its result after the edit's invalidation, so an entry only
-# counts as a hit for the same version.
+# An older diagnostic snapshot can write after an edit invalidates the cache; document
+# versions can also be reused after reopen, so match the exact text snapshot.
 struct PerFileDiagnosticsCacheEntry
-    version::Int
+    file_identity::String
     result::PerFileDiagnosticsResult
 end
 const PerFileDiagnosticsCacheData = Base.PersistentDict{URI,PerFileDiagnosticsCacheEntry}

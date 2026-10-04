@@ -46,6 +46,7 @@ struct BreakOnCall <: Interpreter end
 function finish_and_return!(::BreakOnCall, frame::Frame, ::Bool=false)
     return BreakpointRef(frame.framecode, 0)
 end
+finish_latestworld!(::BreakOnCall, frame::Frame) = BreakpointRef(frame.framecode, 0)
 
 """
     ret = finish_stack!(interp::Interpreter, frame::Frame, rootistoplevel::Bool=false)
@@ -81,7 +82,13 @@ function finish_stack!(interp::Interpreter, frame::Frame, rootistoplevel::Bool=f
             # Driver frames record each statement's value (see `step_toplevel!`). The statement's
             # side effects, including any global assignment, were performed by the child frame,
             # so a surface `:(=)` must not be re-executed here.
-            frame.framedata.ssavalues[pc] = ret
+            try
+                # completing a `:module` statement runs `__init__`, which may throw
+                toplevel_child_returned!(frame, ret)
+            catch err
+                frame = unwind_exception(frame, err)
+                continue
+            end
         elseif isassign(frame, pc)
             lhs = SSAValue(pc)
             do_assignment!(frame, lhs, ret)
@@ -260,6 +267,7 @@ that supply default positional arguments or handle keywords. `cframe` is the lea
 which execution should start.
 """
 function maybe_step_through_wrapper!(interp::Interpreter, frame::Frame)
+    is_toplevel_frame(frame) && return frame
     code = frame.framecode
     src = code.src
     stmts, scope = src.code, code.scope::Method
@@ -403,6 +411,30 @@ function advance_to_kwcall!(interp::Interpreter, frame::Frame, pccall::Int, isto
     return frame
 end
 
+# When stepping into a frame, advance from its entry to the first call or return, past
+# statements that would show the user internal-looking code that is not even the next call:
+# - On Julia 1.12 a method body may start with bare global loads (e.g. the `+` of
+#   `f(x) = g(x) + 1`). `optimize!` folds `const` globals to `QuoteNode`s, so the leading
+#   load is either a `GlobalRef` or a `QuoteNode`. Keyword/closure bodies (gensym `#` names)
+#   keep their exact entry point.
+# - The lowered code of a top-level statement typically begins with global declarations,
+#   `:latestworld`, and global loads. A declaration may itself be a builtin call (see
+#   `is_global_declaration_call`), which is not the next call either. (The statements of a
+#   driver frame are not stepped through, since each would run a whole surface statement.)
+function maybe_step_through_prelude!(interp::Interpreter, frame::Frame, istoplevel::Bool)
+    frame.framecode.is_toplevel_surface && return frame.pc
+    scope = scopeof(frame)
+    if scope isa Method
+        entrystmt = pc_expr(frame)
+        (entrystmt isa GlobalRef || entrystmt isa QuoteNode) || return frame.pc
+        startswith(string(scope.name), "#") && return frame.pc
+    end
+    return maybe_next_until!(interp, frame, istoplevel) do fr::Frame
+        stmt = pc_expr(fr)
+        shouldbreak(fr, fr.pc) || (is_call_or_return(stmt) && !is_global_declaration_call(stmt))
+    end
+end
+
 """
     frame = maybe_step_through_kwprep!(interp::Interpreter, frame::Frame)
     frame = maybe_step_through_kwprep!(frame::Frame)
@@ -491,7 +523,7 @@ maybe_step_through_kwprep!(frame::Frame, istoplevel::Bool=false) =
     maybe_step_through_kwprep!(RecursiveInterpreter(), frame, istoplevel)
 
 # The `NamedTuple` callee is a `QuoteNode` when `optimize!` folded the const (method scope),
-# or a `GlobalRef` when it didn't (toplevel scope on 1.12+); accept both forms.
+# or a `GlobalRef` when it didn't (toplevel scope on 1.12+, or `optimize=false`); accept both forms.
 function is_empty_namedtuple(stmt)
     isexpr(stmt, :call) && length(stmt.args) == 1 || return false
     arg1 = stmt.args[1]
@@ -637,12 +669,13 @@ function debug_command(interp::Interpreter, frame::Frame, cmd::Symbol, rootistop
         return frame, frame.pc
     end
 
+    rootframe = root(frame)
     istoplevel = rootistoplevel && is_toplevel_frame(frame)
     cmd0 = cmd
     is_si = false
     if cmd === :si
         stmt = pc_expr(frame)
-        cmd = is_call(stmt) ? :s : :se
+        cmd = frame.framecode.is_toplevel_surface || is_call(stmt) ? :s : :se
         is_si = true
     end
     try
@@ -670,6 +703,20 @@ function debug_command(interp::Interpreter, frame::Frame, cmd::Symbol, rootistop
             cmd = :s
         end
         if cmd === :s
+            if frame.framecode.is_toplevel_surface
+                # The lowered frame of a surface statement is its callee: enter it like a
+                # call. (The surface expression itself cannot be stepped, since its
+                # arguments may contain calls.)
+                pc = step_expr!(BreakOnCall(), frame, true)
+                isa(pc, BreakpointRef) || return maybe_reset_frame!(interp, frame, pc, rootistoplevel)
+                newframe = leaf(frame)
+                if !is_si && newframe !== frame && pc.stmtidx == 0
+                    pc = maybe_step_through_prelude!(interp, newframe, istoplevel)
+                    isa(pc, BreakpointRef) && return leaf(newframe), pc
+                    return newframe, BreakpointRef(newframe.framecode, 0)
+                end
+                return newframe, pc
+            end
             # Keyword calls begin with NamedTuple construction, which is not a
             # useful step target. Skip it before searching for the next call.
             is_si || maybe_step_through_kwprep!(interp, frame, istoplevel)
@@ -681,6 +728,10 @@ function debug_command(interp::Interpreter, frame::Frame, cmd::Symbol, rootistop
             is_return(stmt0) && return maybe_reset_frame!(interp, frame, nothing, rootistoplevel)
             if isexpr(stmt, :(=))
                 stmt = stmt.args[2]
+            end
+            # This call bypasses step_expr!, which refreshes top-level worlds before 1.12.
+            @static if VERSION < v"1.12-"
+                is_toplevel_frame(frame) && (frame.world = Base.get_world_counter())
             end
             local ret
             try
@@ -694,21 +745,8 @@ function debug_command(interp::Interpreter, frame::Frame, cmd::Symbol, rootistop
                 cmd0 === :si && return newframe, ret
                 is_si || (newframe = maybe_step_through_wrapper!(interp, newframe))
                 is_si || maybe_step_through_kwprep!(interp, newframe, istoplevel)
-                # On Julia 1.12 a method body may start with bare global loads
-                # (e.g. the `+` of `f(x) = g(x) + 1`); pausing there shows the
-                # user an internal-looking statement that is not even the next
-                # call. `optimize!` folds `const` globals to `QuoteNode`s, so the
-                # leading load is either a `GlobalRef` or a `QuoteNode`. Advance
-                # to the first call or return, like frame entry does.
-                # Keyword/closure bodies (gensym `#` names) keep their exact entry point.
-                scope = scopeof(newframe)
-                entrystmt = pc_expr(newframe)
-                normalize_entry = (entrystmt isa GlobalRef || entrystmt isa QuoteNode) &&
-                    !(scope isa Method && startswith(string(scope.name), "#"))
-                if !is_si && normalize_entry
-                    pc = maybe_next_until!(interp, newframe, istoplevel) do fr::Frame
-                        shouldbreak(fr, fr.pc) || is_call_or_return(pc_expr(fr))
-                    end
+                if !is_si
+                    pc = maybe_step_through_prelude!(interp, newframe, istoplevel)
                     isa(pc, BreakpointRef) && return leaf(newframe), pc
                 end
                 return newframe, BreakpointRef(newframe.framecode, 0)
@@ -725,7 +763,9 @@ function debug_command(interp::Interpreter, frame::Frame, cmd::Symbol, rootistop
         end
         cmd === :finish && return maybe_reset_frame!(interp, frame, finish!(interp, frame, istoplevel), rootistoplevel)
     catch err
-        frame = unwind_exception(frame, err)
+        # Returning may recycle `frame` before module initialization re-enters the interpreter.
+        # Recover from the live stack, not from the possibly reused entry frame.
+        frame = unwind_exception(leaf(rootframe), err)
         if cmd === :c
             return debug_command(interp, frame, :c, rootistoplevel)
         else

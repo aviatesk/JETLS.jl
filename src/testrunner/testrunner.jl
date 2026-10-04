@@ -294,7 +294,7 @@ push_init_hook!() do
         find_testrunner_load_path()
     catch err
         @error "Failed to locate the environment of TestRunner.jl"
-        Base.display_error(stderr, err, catch_backtrace())
+        locked_display_error(stderr, err, catch_backtrace())
         nothing
     end
 end
@@ -463,7 +463,7 @@ function show_testrunner_result_in_message(server::Server, result::TestRunnerRes
         request_caller = TestRunnerMessageRequestCaller4(request_key, uri, idx, result.logs)
     end
 
-    id = String(gensym(:ShowMessageRequest))
+    id = unique_id("ShowMessageRequest")
     addrequest!(server, id=>request_caller)
 
     params = ShowMessageRequestParams(; type = msg_type, message, actions)
@@ -539,7 +539,7 @@ function testrunner_run_testset(
     try
         result = _testrunner_run_testset(server, launcher, uri, fi, idx, tsn, filepath; cancellable_token)
     catch err
-        result = sprint(showerror, err, catch_backtrace())
+        result = sprint(locked_showerror, err, catch_backtrace())
         @error "Error from testrunner executor" err
         show_error_message(server, """
             An unexpected error occurred while setting up TestRunner.jl or handling the result:
@@ -631,7 +631,7 @@ function read_testrunner_result(
         LSP.JSON3.read(output, TestRunnerResult)
     catch err
         if process_success
-            parse_error = sprint(showerror, err, catch_backtrace())
+            parse_error = sprint(locked_showerror, err, catch_backtrace())
             log_testrunner_failure(cmd, testrunnerproc, output, :invalid_output; parse_error)
         else
             log_testrunner_failure(cmd, testrunnerproc, output, :process)
@@ -881,8 +881,8 @@ function testrunner_run_testset_from_uri(server::Server, uri::URI, idx::Int, tsn
     filepath = uri2filename(uri)
 
     if supports(server, :window, :workDoneProgress)
-        id = String(gensym(:WorkDoneProgressCreateRequest_testrunner))
-        token = String(gensym(:TestRunnerProgress))
+        id = unique_id("WorkDoneProgressCreateRequest_testrunner")
+        token = unique_id("TestRunnerProgress")
         addrequest!(server, id=>TestRunnerTestsetProgressCaller(uri, fi, idx, tsn, filepath, token))
         params = WorkDoneProgressCreateParams(; token)
         send(server, WorkDoneProgressCreateRequest(; id, params))
@@ -922,8 +922,8 @@ function testrunner_run_testcase_from_uri(server::Server, uri::URI, tcl::Int, tc
     source = String(document_text(fi))
 
     if supports(server, :window, :workDoneProgress)
-        id = String(gensym(:WorkDoneProgressCreateRequest_testrunner))
-        token = String(gensym(:TestRunnerProgress))
+        id = unique_id("WorkDoneProgressCreateRequest_testrunner")
+        token = unique_id("TestRunnerProgress")
         addrequest!(server, id=>TestRunnerTestcaseProgressCaller(uri, tcl, tct, filepath, source, token))
         params = WorkDoneProgressCreateParams(; token)
         send(server, WorkDoneProgressCreateRequest(; id, params))

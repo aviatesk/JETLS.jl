@@ -284,7 +284,11 @@ function process_interface_def!(toplevelblk::Expr, structbody::Expr,
             :(@inline $(GlobalRef(StructTypes, :isempty))(::Type{$Name}, x) = x === nothing))
     end
     if is_anon
-        push!(toplevelblk.args, :(Base.convert(::Type{$Name}, nt::NamedTuple) = $Name(; nt...)))
+        if any(@nospecialize(x)->extract_fieldname(x) !== nothing, structbody.args)
+            push!(toplevelblk.args, :(Base.convert(::Type{$Name}, nt::NamedTuple) = $Name(; nt...)))
+        else
+            push!(toplevelblk.args, :(Base.convert(::Type{$Name}, ::NamedTuple{()}) = $Name()))
+        end
     end
     if !is_anon
         push!(toplevelblk.args, :($(GlobalRef(@__MODULE__, :_interface_defs_))[$Name] = $(QuoteNode(structbody))))

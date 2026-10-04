@@ -1,4 +1,4 @@
-version = "3.9.0"
+version = "3.10.0"
 name = "LoweredCodeUtils"
 authors = ["Tim Holy <tim.holy@gmail.com>", "Shuhei Kadowaki <aviatesk@gmail.com>", "and contributors"]
 uuid = "01ede001-ea10-5720-9c31-2e53839707a9"
@@ -10,24 +10,24 @@ JuliaInterpreter = "87c368a4-672f-5de1-91ff-3cc7fc652fab"
 
 [sources.Compiler]
 subdir = "vendor/Compiler"
-rev = "afcd478c73f0d405bad410ca88785ebe5110ba5a"
+rev = "984830c3c5ca3f7711807c0a3bad4d5b2ee079a8"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.CodeTracking]
 subdir = "vendor/CodeTracking"
-rev = "afcd478c73f0d405bad410ca88785ebe5110ba5a"
+rev = "984830c3c5ca3f7711807c0a3bad4d5b2ee079a8"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.JuliaInterpreter]
 subdir = "vendor/JuliaInterpreter"
-rev = "afcd478c73f0d405bad410ca88785ebe5110ba5a"
+rev = "984830c3c5ca3f7711807c0a3bad4d5b2ee079a8"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [compat]
 Compiler = "0.1"
 julia = "1.10"
 CodeTracking = "3"
-JuliaInterpreter = "0.11"
+JuliaInterpreter = "0.12"
 
 [workspace]
 projects = ["docs", "test"]

@@ -91,7 +91,7 @@ function parse_diagnostic_pattern(x::Dict{String,Any})
             Regex(pattern_value)
         catch e
             throw(DiagnosticConfigError(
-                lazy"Invalid regex pattern \"$pattern_value\": $(sprint(showerror, e))"))
+                lazy"Invalid regex pattern \"$pattern_value\": $(sprint(locked_showerror, e))"))
         end
     else
         pattern_value
@@ -113,7 +113,7 @@ function parse_diagnostic_pattern(x::Dict{String,Any})
             Glob.FilenameMatch(path_value, "dp")
         catch e
             throw(DiagnosticConfigError(
-                lazy"Invalid glob pattern \"$path_value\" for pattern \"$pattern_value\": $(sprint(showerror, e))"))
+                lazy"Invalid glob pattern \"$path_value\" for pattern \"$pattern_value\": $(sprint(locked_showerror, e))"))
         end
     else
         nothing
@@ -383,7 +383,7 @@ function jet_toplevel_error_report_to_diagnostic(
     else
         data = nothing
         message = JET.with_bufferring(:limit=>true, :markdown_rendering=>markdown_rendering) do io
-            JET.print_report(io, report)
+            with_base_render_lock(JET.print_report, io, report)
         end |> postprocessor
         code = report isa JET.ConcretizationTimeoutErrorReport ?
             TOPLEVEL_CONCRETIZATION_TIMEOUT_CODE : TOPLEVEL_ERROR_CODE
@@ -466,7 +466,7 @@ function jet_inference_error_report_to_diagnostic(
     rstack = inference_error_report_stack(report)
     topframe = report.vst[first(rstack)]
     message = JET.with_bufferring(:limit=>true) do io
-        Base.invoke_in_world(world, JET.print_report_message, io, report)
+        with_base_render_lock(Base.invoke_in_world, world, JET.print_report_message, io, report)
     end |> postprocessor
     relatedInformation = DiagnosticRelatedInformation[]
     for related_frame in inference_error_report_related_frames(report)
@@ -1689,7 +1689,7 @@ function per_stmt_diagnostics!(
                     msg = "Macro name `$(inner.var)` not found"
                     relatedInformation = nothing
                 else
-                    msg *= "\n" * sprint(showerror, inner)
+                    msg *= "\n" * sprint(locked_showerror, inner)
                     relatedInformation = stacktrace_to_related_information(st)
                 end
                 provs = JS.flattened_provenance(err.ex)
@@ -1709,8 +1709,8 @@ function per_stmt_diagnostics!(
             end
         else
             @static JETLS_DEBUG_LOWERING && @warn "Error in lowering (with macrocall nodes)"
-            @static JETLS_DEBUG_LOWERING && showerror(stderr, err)
-            @static JETLS_DEBUG_LOWERING && Base.show_backtrace(stderr, catch_backtrace())
+            @static JETLS_DEBUG_LOWERING && locked_showerror(stderr, err)
+            @static JETLS_DEBUG_LOWERING && locked_show_backtrace(stderr, catch_backtrace())
         end
         nothing # signal primary-attempt failure to the fallback path
     end
@@ -1784,9 +1784,8 @@ let empty_names = Set{String}()
 end
 
 function compute_unit_def_used_names(
-        server::Server, search_uris::Set{URI};
-        cancel_flag::CancelFlag = DUMMY_CANCEL_FLAG,
-        skip_context_check::Bool = false # used by tests only
+        server::Server, search_uris::Set{URI}, snapshot::Union{Nothing,DocumentSnapshot},
+        cancel_flag::CancelFlag, skip_context_check::Bool
     )
     state = server.state
     mod_def_used_names = Dict{Module,DefUsedNames}()
@@ -1794,13 +1793,15 @@ function compute_unit_def_used_names(
         is_cancelled(cancel_flag) && break
         skip_context_check || has_analyzed_context(state, search_uri) || continue
         search_fi = @something begin
+            snapshot !== nothing && search_uri == snapshot.cache_uri ? snapshot.fi : nothing
+        end begin
             get_file_info(state, search_uri)
         end begin
             get_unsynced_file_info!(state, search_uri)
         end continue
         cached = get(load(state.per_file_diagnostics_cache),
             canonical_cache_uri(state, search_uri), nothing)
-        if cached !== nothing && cached.version == search_fi.version
+        if cached !== nothing && cached.file_identity == search_fi.identity
             merge_def_used_names!(mod_def_used_names, cached.result.def_used_names)
             continue
         end
@@ -1853,19 +1854,22 @@ end
 # from `LWContainer` make the cache safe to share across worker threads (e.g.
 # `run_per_file_diagnostics!` in cli-check).
 function compute_def_used_names!(
-        cache::DefUsedNamesCache, server::Server, search_uris::Set{URI};
+        cache::DefUsedNamesCache, server::Server, search_uris::Set{URI},
+        snapshot::Union{Nothing,DocumentSnapshot};
         cancel_flag::CancelFlag = DUMMY_CANCEL_FLAG,
         skip_context_check::Bool = false # used by tests only
     )
     # `Base.PersistentDict` uses `===` to compare keys (HAMT looks up via object identity),
     # so a `Set{URI}` key would never hit the cache across calls even when the elements
     # match. Hash the URI set up-front to get an immutable key that `===`-equates by value.
-    key = hash(search_uris)
+    key = snapshot === nothing ? hash(search_uris) :
+        hash((search_uris, snapshot.cache_uri, snapshot.fi.identity))
     return store!(cache) do data::DefUsedNamesCacheData
         if haskey(data, key)
             return data, data[key]
         end
-        result = compute_unit_def_used_names(server, search_uris; cancel_flag, skip_context_check)
+        result = compute_unit_def_used_names(
+            server, search_uris, snapshot, cancel_flag, skip_context_check)
         # a cancelled aggregation is partial, and must not be reused by later files
         is_cancelled(cancel_flag) && return data, result
         return DefUsedNamesCacheData(data, key => result), result
@@ -1883,7 +1887,7 @@ end
 # - Unchanged file skipping in the workspace diagnostics worker
 function analyze_unused_imports!(
         diagnostics::Vector{Diagnostic}, def_used_names_cache::DefUsedNamesCache,
-        server::Server, uri::URI,
+        server::Server, uri::URI, snapshot::Union{Nothing,DocumentSnapshot},
         mod_imported_names::Dict{Module,Dict{String,Vector{ImportInfo}}};
         cancel_flag::CancelFlag = DUMMY_CANCEL_FLAG,
         skip_context_check::Bool = false # used by tests only
@@ -1892,7 +1896,8 @@ function analyze_unused_imports!(
 
     search_uris = collect_search_uris(server, uri)
     mod_def_used_names = compute_def_used_names!(
-        def_used_names_cache, server, search_uris; cancel_flag, skip_context_check)
+        def_used_names_cache, server, search_uris, snapshot;
+        cancel_flag, skip_context_check)
     is_cancelled(cancel_flag) && return diagnostics
 
     for (context_module, imported_names) in mod_imported_names
@@ -1918,17 +1923,6 @@ function analyze_unused_imports!(
     end
 
     return diagnostics
-end
-
-function analyze_unused_imports!(
-        diagnostics::Vector{Diagnostic}, def_used_names_cache::DefUsedNamesCache,
-        server::Server, uri::URI, fi::FileInfo, st0_top::SyntaxTree;
-        skip_context_check::Bool = false # used by tests only
-    )
-    mod_imported_names = collect_explicit_imports_by_module(server.state, uri, fi, st0_top)
-    return analyze_unused_imports!(
-        diagnostics, def_used_names_cache, server, uri, mod_imported_names;
-        skip_context_check)
 end
 
 function collect_explicit_imports_by_module(
@@ -2067,7 +2061,7 @@ function get_per_file_diagnostics!(
     cache_uri = canonical_cache_uri(server.state, uri)
     return store!(server.state.per_file_diagnostics_cache) do cache::PerFileDiagnosticsCacheData
         cached = get(cache, cache_uri, nothing)
-        if cached !== nothing && cached.version == file_info.version
+        if cached !== nothing && cached.file_identity == file_info.identity
             return cache, cached.result
         end
         st0_top = build_syntax_tree(file_info)
@@ -2076,7 +2070,7 @@ function get_per_file_diagnostics!(
         if is_cancelled(cancel_flag)
             return cache, result
         end
-        entry = PerFileDiagnosticsCacheEntry(file_info.version, result)
+        entry = PerFileDiagnosticsCacheEntry(file_info.identity, result)
         return PerFileDiagnosticsCacheData(cache, cache_uri => entry), result
     end
 end
@@ -2089,7 +2083,7 @@ function get_per_file_diagnostics!(
     cache_uri = canonical_cache_uri(server.state, uri)
     return store!(server.state.per_file_diagnostics_cache) do cache::PerFileDiagnosticsCacheData
         cached = get(cache, cache_uri, nothing)
-        if cached !== nothing && cached.version == file_info.version
+        if cached !== nothing && cached.file_identity == file_info.identity
             return cache, cached.result
         end
         result = compute_per_file_diagnostics(
@@ -2097,7 +2091,7 @@ function get_per_file_diagnostics!(
         if is_cancelled(cancel_flag)
             return cache, result
         end
-        entry = PerFileDiagnosticsCacheEntry(file_info.version, result)
+        entry = PerFileDiagnosticsCacheEntry(file_info.identity, result)
         return PerFileDiagnosticsCacheData(cache, cache_uri => entry), result
     end
 end
@@ -2125,28 +2119,29 @@ end
 # which is memoized per-unit on `def_used_names_cache`.
 function cross_file_diagnostics!(
         diagnostics::Vector{Diagnostic}, def_used_names_cache::DefUsedNamesCache,
-        server::Server, uri::URI, per_file::PerFileDiagnosticsResult;
+        server::Server, uri::URI, snapshot::Union{Nothing,DocumentSnapshot},
+        per_file::PerFileDiagnosticsResult;
         cancel_flag::CancelFlag = DUMMY_CANCEL_FLAG,
         skip_context_check::Bool = false # used by tests only
     )
     search_uris = collect_search_uris(server, uri)
-    mod_def_used_names = compute_def_used_names!(def_used_names_cache, server, search_uris; cancel_flag, skip_context_check)
+    mod_def_used_names = compute_def_used_names!(def_used_names_cache, server, search_uris, snapshot; cancel_flag, skip_context_check)
     is_cancelled(cancel_flag) && return diagnostics
     emit_undef_global_diagnostics!(diagnostics, per_file.undef_global_candidates, mod_def_used_names)
-    analyze_unused_imports!(diagnostics, def_used_names_cache, server, uri, per_file.explicit_imports; cancel_flag, skip_context_check)
+    analyze_unused_imports!(diagnostics, def_used_names_cache, server, uri, snapshot, per_file.explicit_imports; cancel_flag, skip_context_check)
     return diagnostics
 end
 
 function toplevel_lowering_diagnostics!(
         def_used_names_cache::DefUsedNamesCache, server::Server, uri::URI,
-        file_info::FileInfo, cancel_flag::CancelFlag=DUMMY_CANCEL_FLAG;
+        file_info::FileInfo, snapshot::Union{Nothing,DocumentSnapshot}, cancel_flag::CancelFlag;
         lookup_func = nothing
     )
-    cached = get_per_file_diagnostics!(server, uri, file_info, cancel_flag; lookup_func)
-    is_cancelled(cancel_flag) && return cached.diagnostics
-    diagnostics = copy(cached.diagnostics)
+    per_file = get_per_file_diagnostics!(server, uri, file_info, cancel_flag; lookup_func)
+    is_cancelled(cancel_flag) && return per_file.diagnostics
+    diagnostics = copy(per_file.diagnostics)
     if has_analyzed_context(server.state, uri; lookup_func)
-        cross_file_diagnostics!(diagnostics, def_used_names_cache, server, uri, cached; cancel_flag)
+        cross_file_diagnostics!(diagnostics, def_used_names_cache, server, uri, snapshot, per_file; cancel_flag)
     end
     return diagnostics
 end
@@ -2377,7 +2372,7 @@ function start_workspace_diagnostics_worker!(server::Server)
         workspace_diagnostics_worker(server)
     catch err
         @error "Critical error happened in workspace diagnostics worker"
-        Base.display_error(stderr, err, catch_backtrace())
+        locked_display_error(stderr, err, catch_backtrace())
     end
     worker_task[] = task
     return task
@@ -2428,7 +2423,7 @@ end
 
 # Fingerprints the inputs of a file's live diagnostics: the worker skips files whose
 # fingerprint did not move, and `textDocument/diagnostic` returns it as the `resultId`.
-# Every unit member's version is folded in so a sibling edit invalidates this file's
+# Every unit member's text identity is folded in so a sibling edit invalidates this file's
 # cached diagnostics and the cross-file analyses
 # (`analyze_undefined_global_uses_for_file!`, `analyze_unused_imports!`) rerun; so are
 # the `[diagnostic]` config, so a config change recomputes every file, and the module
@@ -2447,23 +2442,33 @@ function compute_live_diagnostics_fingerprint(
         cached = get(fingerprint_cache, analysis_info.analyzed_file_infos, nothing)
         cached !== nothing && return cached
     end
+    fingerprint = compute_live_diagnostics_fingerprint(
+        state, this_uri, analysis_info, #=this_fi=#nothing)
+    if analysis_info isa AnalysisResult
+        fingerprint_cache[analysis_info.analyzed_file_infos] = fingerprint
+    end
+    return fingerprint
+end
+
+function compute_live_diagnostics_fingerprint(
+        state::ServerState, this_uri::URI, analysis_info::Union{Nothing,AnalysisInfo},
+        this_fi::Union{Nothing,FileInfo}
+    )
     search_uris = collect_search_uris(this_uri, analysis_info)
     config_hash = hash(get_config(state, :diagnostic))
     context_hash = analysis_context_hash(analysis_info)
     file_hash = zero(UInt)
     for search_uri in search_uris
         search_fi = @something begin
+            search_uri == this_uri ? this_fi : nothing
+        end begin
             get_file_info(state, search_uri)
         end begin
             get_unsynced_file_info!(state, search_uri)
         end continue
-        file_hash ⊻= hash((search_uri, search_fi.version))
+        file_hash ⊻= hash((search_uri, search_fi.identity))
     end
-    fingerprint = string(hash((file_hash, config_hash, context_hash)))
-    if analysis_info isa AnalysisResult
-        fingerprint_cache[analysis_info.analyzed_file_infos] = fingerprint
-    end
-    return fingerprint
+    return string(hash((file_hash, config_hash, context_hash)))
 end
 
 # Live diagnostics take only the module context from full-analysis, so an analysis result
@@ -2488,10 +2493,10 @@ end
 # when the file does not parse cleanly, otherwise runs the lowering-based analyses.
 function compute_live_diagnostics!(
         def_used_names_cache::DefUsedNamesCache, server::Server, uri::URI, fi::FileInfo,
-        cancel_flag::CancelFlag
+        snapshot::Union{Nothing,DocumentSnapshot}, cancel_flag::CancelFlag
     )
     if isempty(fi.parsed_stream.diagnostics)
-        return toplevel_lowering_diagnostics!(def_used_names_cache, server, uri, fi, cancel_flag)
+        return toplevel_lowering_diagnostics!(def_used_names_cache, server, uri, fi, snapshot, cancel_flag)
     else
         return parsed_stream_to_diagnostics(fi)
     end
@@ -2636,7 +2641,7 @@ function recompute_live_diagnostics!(
             get_unsynced_file_info!(state, uri)
         end continue # cleaned up by the caller with the other stale entries
         diagnostics = compute_live_diagnostics!(
-            def_used_names_cache, server, uri, fi, cancel_flag)
+            def_used_names_cache, server, uri, fi, #=snapshot=#nothing, cancel_flag)
         is_cancelled(cancel_flag) && return false
         version = synchronized ? fi.version : nothing
         updates[uri] = WorkspaceLiveDiagnostics(fingerprint, version, diagnostics)
@@ -2704,17 +2709,16 @@ function diagnostic_registration()
 end
 
 function handle_DocumentDiagnosticRequest(
-        server::Server, msg::DocumentDiagnosticRequest, cancel_flag::CancelFlag)
-    uri = msg.params.textDocument.uri
-    result = get_file_info(server.state, uri, cancel_flag)
-    if isnothing(result)
+        server::Server, msg::DocumentDiagnosticRequest,
+        snapshot::Union{Nothing,DocumentSnapshot}, cancel_flag::CancelFlag
+    )
+    if snapshot === nothing
         return send(server, DocumentDiagnosticResponse(;
             id = msg.id,
             result = RelatedFullDocumentDiagnosticReport(; items = empty_diagnostics)))
-    elseif result isa ResponseError
-        return send(server, DocumentDiagnosticResponse(; id = msg.id, result = nothing, error = result))
     end
-    resultId = compute_live_diagnostics_fingerprint(server, uri)
+    uri = msg.params.textDocument.uri
+    resultId = compute_live_diagnostics_fingerprint(server, snapshot)
     if msg.params.previousResultId == resultId
         return send(server,
             DocumentDiagnosticResponse(;
@@ -2724,17 +2728,14 @@ function handle_DocumentDiagnosticRequest(
     if is_cancelled(cancel_flag)
         return send(server, DocumentDiagnosticResponse(; id = msg.id, result = nothing, error = request_cancelled_error()))
     end
-    # Re-read the text after taking `resultId` so that an edit in between leaves the id
-    # behind the text rather than ahead of it (see `publish_workspace_diagnostics!`).
-    this_uri = canonical_cache_uri(server.state, uri)
-    file_info = @something get_file_info(server.state, this_uri) result
     def_used_names_cache = DefUsedNamesCache()
-    diagnostics = compute_live_diagnostics!(def_used_names_cache, server, uri, file_info, cancel_flag)
+    diagnostics = compute_live_diagnostics!(
+        def_used_names_cache, server, snapshot.cache_uri, snapshot.fi, snapshot, cancel_flag)
     if is_cancelled(cancel_flag)
         return send(server, DocumentDiagnosticResponse(; id = msg.id, result = nothing, error = request_cancelled_error()))
     end
     root_path = isdefined(server.state, :root_path) ? server.state.root_path : nothing
-    diagnostics = postprocess_pull_diagnostics(server, uri, diagnostics, root_path)
+    diagnostics = postprocess_pull_diagnostics(server, uri, snapshot, diagnostics, root_path)
     return send(server,
         DocumentDiagnosticResponse(;
             id = msg.id,
@@ -2743,17 +2744,26 @@ function handle_DocumentDiagnosticRequest(
                 items = diagnostics)))
 end
 
+# `textDocument/diagnostic` computes the requested document from its snapshot, so the
+# snapshot's identity stands for the document in place of the current one.
+function compute_live_diagnostics_fingerprint(server::Server, snapshot::DocumentSnapshot)
+    state = server.state
+    this_uri = snapshot.cache_uri
+    analysis_info = get_analysis_info(state.analysis_manager, this_uri)
+    return compute_live_diagnostics_fingerprint(state, this_uri, analysis_info, snapshot.fi)
+end
+
 # Applies config-based filtering, notebook localization, and markdown rendering for
 # `textDocument/diagnostic` (`notify_diagnostics!` does the same for pushed diagnostics).
 function postprocess_pull_diagnostics(
-        server::Server, uri::URI, diagnostics::Vector{Diagnostic},
+        server::Server, uri::URI, snapshot::DocumentSnapshot, diagnostics::Vector{Diagnostic},
         root_path::Union{Nothing,String},
     )
     state = server.state
     apply_diagnostic_config!(diagnostics, state.config_manager, uri, root_path)
-    notebook_uri = get_notebook_uri_for_cell(state, uri)
-    if notebook_uri !== nothing
-        diagnostics = localize_notebook_diagnostics(state, notebook_uri, uri, diagnostics)
+    notebook = snapshot.notebook
+    if notebook !== nothing && uri != snapshot.cache_uri
+        diagnostics = localize_notebook_diagnostics(state, notebook, uri, diagnostics)
     end
     if supports(server, :textDocument, :diagnostic, :markupMessageSupport)
         apply_markdown_message!(diagnostics)
@@ -2771,7 +2781,7 @@ function request_diagnostic_refresh!(server::Server)
     schedule_workspace_diagnostics!(server)
     pull_diagnostics_enabled(server) || return nothing
     supports(server, :workspace, :diagnostics, :refreshSupport) || return nothing
-    id = String(gensym(:WorkspaceDiagnosticRefreshRequest))
+    id = unique_id("WorkspaceDiagnosticRefreshRequest")
     addrequest!(server, id=>DiagnosticRefreshRequestCaller())
     return send(server, WorkspaceDiagnosticRefreshRequest(; id))
 end

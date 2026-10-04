@@ -100,7 +100,7 @@ function Base.copymutable(s::LittleSet{T}) where {T}
     data = getfield(s, :data)
     if isa(data, Tuple)
         i = nfields(data)
-        new_data = Vector{T}(undef, n)
+        new_data = Vector{T}(undef, i)
         while i != 0
             @inbounds new_data[i] = getfield(data, i)
             i -= 1

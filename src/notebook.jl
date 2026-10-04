@@ -416,10 +416,9 @@ function localize_related_information(
 end
 
 function localize_notebook_diagnostics(
-        state::ServerState, notebook_uri::URI, cell_uri::URI, diagnostics::Vector{Diagnostic}
+        state::ServerState, concat::ConcatenatedNotebook, cell_uri::URI,
+        diagnostics::Vector{Diagnostic}
     )
-    notebook_info = @something get_notebook_info(state, notebook_uri) return Diagnostic[]
-    concat = notebook_info.concat
     result = Diagnostic[]
     for diag in diagnostics
         localized_cell_uri, cell_diag = @something localize_diagnostic(diag, state, concat) continue

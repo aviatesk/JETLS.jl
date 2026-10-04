@@ -8,11 +8,11 @@ function parse_init_options(server::Server, @nospecialize init_options)
         init_options_dict = validate_config_data(init_options)
         parse_config_from_dict(InitOptions, init_options_dict)
     catch err
-        error_message = sprint(showerror, err)
+        error_message = sprint(locked_showerror, err)
         show_warning_message(server,
             "Failed to parse initializationOptions, using defaults: $error_message")
         @error "Failed to parse initializationOptions, using defaults"
-        showerror(stderr, err, catch_backtrace())
+        locked_showerror(stderr, err, catch_backtrace())
         return DEFAULT_INIT_OPTIONS
     end
     return merge_init_options(DEFAULT_INIT_OPTIONS, parsed)
@@ -25,10 +25,10 @@ function load_file_init_options(server::Server, filepath::AbstractString)
     parsed = TOML.tryparsefile(filepath)
     if parsed isa TOML.ParserError
         show_error_message(server,
-            "Failed to parse .JETLSConfig.toml file at $filepath: $(sprint(showerror, parsed))")
+            "Failed to parse .JETLSConfig.toml file at $filepath: $(sprint(locked_showerror, parsed))")
         if !server.state.cli_mode
             @error "Failed to parse .JETLSConfig.toml file" filepath
-            showerror(stderr, parsed)
+            locked_showerror(stderr, parsed)
         end
         return nothing
     end
@@ -43,7 +43,7 @@ function load_file_init_options(server::Server, filepath::AbstractString)
         validate_config_data(init_options_dict)
         return parse_config_from_dict(InitOptions, init_options_dict)
     catch err
-        error_message = sprint(showerror, err)
+        error_message = sprint(locked_showerror, err)
         show_error_message(server,
             "Failed to parse `[initialization_options]` in $filepath: $error_message")
         return nothing

@@ -1,4 +1,6 @@
-using Test, DeepDiffs
+module test_check_builtins
+
+using DeepDiffs, Test
 
 @static if get(ENV, "GITHUB_ACTION", nothing) === nothing &&  # on CI we have a separate action to run this test
         !Base.GIT_VERSION_INFO.tagged_commit && # only run on nightly
@@ -18,3 +20,5 @@ using Test, DeepDiffs
         @test consistent
     end
 end
+
+end # module test_check_builtins

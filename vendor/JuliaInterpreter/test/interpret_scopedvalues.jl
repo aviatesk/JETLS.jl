@@ -1,4 +1,4 @@
-module interpret_scopedvalues
+module test_interpret_scopedvalues
 
 using Test, JuliaInterpreter
 using Base.ScopedValues
@@ -73,4 +73,4 @@ end
 @test sval_leak_f() == 1
 @test 1 == @interpret sval_leak_f()
 
-end # module interpret_scopedvalues
+end # module test_interpret_scopedvalues

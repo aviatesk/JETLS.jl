@@ -1,0 +1,32 @@
+[deps]
+Aqua = "4c88cf16-eb10-579e-8560-4a9242c79595"
+CassetteOverlay = "d78b62d4-37fa-4a6f-acd8-2f19986eb9ee"
+CodeTracking = "da1fd8a2-8d9e-5ec2-8556-3022fb5608a2"
+DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
+Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
+DeepDiffs = "ab62b9b5-e342-54a8-a765-a90f495de1a6"
+Distributed = "8ba89e20-285c-5b6f-9357-94700520ee1b"
+ExplicitImports = "7d51a73a-1435-4ff3-83d9-f097790105c7"
+FunctionWrappers = "069b7b12-0de2-55c6-9aab-29f3d0a68a2e"
+InteractiveUtils = "b77e0a4c-d291-57a0-90e8-8db25a27a240"
+JuliaInterpreter = "aa1ae85d-cabe-5617-a682-6adf51b2e16a"
+LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
+Logging = "56ddb016-857b-54e1-b83d-db4d58db5568"
+LoopVectorization = "bdcacae8-1622-11e9-2a5c-532679323890"
+Mmap = "a63ad114-7e13-5084-954f-fe012c677804"
+Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
+SHA = "ea8e919c-243c-51af-8825-aaa63cd721ce"
+SparseArrays = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[sources]
+JuliaInterpreter = {path = ".."}
+
+[compat]
+Aqua = "0.8"
+CassetteOverlay = "0.2"
+DataFrames = "1"
+DeepDiffs = "1"
+ExplicitImports = "1.15"
+FunctionWrappers = "1"
+LoopVectorization = "0.12"

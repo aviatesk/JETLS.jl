@@ -118,8 +118,8 @@ function jl_lower_for_scope_resolution(
     catch err
         recover_from_macro_errors || rethrow(err)
         @static JETLS_DEBUG_LOWERING && @warn "Error in macro expansion; trimming and retrying"
-        @static JETLS_DEBUG_LOWERING && showerror(stderr, err)
-        @static JETLS_DEBUG_LOWERING && Base.show_backtrace(stderr, catch_backtrace())
+        @static JETLS_DEBUG_LOWERING && locked_showerror(stderr, err)
+        @static JETLS_DEBUG_LOWERING && locked_show_backtrace(stderr, catch_backtrace())
         st0 = remove_macrocalls(context_module, world, st0)
         st0 = JL.rebase_layers(st0, context_module, JS.JL_OLD_SYNTAX_VERSION)
         JL.expand_forms_1(st0, world, true)
@@ -157,7 +157,7 @@ function cursor_bindings(
         jl_lower_for_scope_resolution(context_module, world, st0; soft_scope)
     catch err
         @static JETLS_DEBUG_LOWERING && @warn "Error in lowering" err
-        @static JETLS_DEBUG_LOWERING && Base.show_backtrace(stderr, catch_backtrace())
+        @static JETLS_DEBUG_LOWERING && locked_show_backtrace(stderr, catch_backtrace())
         return nothing # lowering failed, e.g. because of incomplete input
     end
 
@@ -338,7 +338,7 @@ function select_target_binding(
         jl_lower_for_scope_resolution(context_module, world, st0′; soft_scope)
     catch err
         @static JETLS_DEBUG_LOWERING && @warn "Error in lowering ($caller)" err
-        @static JETLS_DEBUG_LOWERING && Base.show_backtrace(stderr, catch_backtrace())
+        @static JETLS_DEBUG_LOWERING && locked_show_backtrace(stderr, catch_backtrace())
         return nothing
     end
     primary = _select_target_binding(ctx3, st3, offset)
@@ -491,9 +491,18 @@ mask_inert_interpolations(
 # interpolations enclosed by their corresponding quote kind are kept for
 # JuliaLowering to resolve in the inert template's execution scope.
 function prepare_inert_template(
-        st3::SyntaxTree; preserve_nested_interpolations::Bool = false
+        st3::SyntaxTree;
+        parameters::Dict{String,SyntaxTree} = Dict{String,SyntaxTree}(),
+        preserve_nested_interpolations::Bool = false
     )
-    placeholder_name = String(gensym("JETLS_UNQUOTE_PLACEHOLDER"))
+    names = collect_identifier_names!(Set{String}(keys(parameters)), st3)
+    # Later lowering may intern this name, so reuse candidates across independent analyses.
+    index = 0
+    placeholder_name = "##JETLS_UNQUOTE_PLACEHOLDER#0"
+    while placeholder_name in names
+        index += 1
+        placeholder_name = string("##JETLS_UNQUOTE_PLACEHOLDER#", string(index))
+    end
     template = mask_inert_interpolations(
         st3, placeholder_name; preserve_nested_interpolations)
     return template, placeholder_name
@@ -508,7 +517,7 @@ function resolve_inert_tree(
     )
     JS.numchildren(inert_tree) >= 1 || return nothing
     template, placeholder_name = prepare_inert_template(
-        inert_tree[1]; preserve_nested_interpolations)
+        inert_tree[1]; parameters, preserve_nested_interpolations)
     input = if hard_scope || !isempty(parameters)
         parameter_nodes = JS.SyntaxList()
         for (name, source) in parameters
@@ -831,7 +840,7 @@ function select_macrocall_binding(
         jl_lower_for_scope_resolution(context_module, world, macrocall_name; soft_scope)
     catch err
         @static JETLS_DEBUG_LOWERING && @warn "Error in lowering ($caller)" err
-        @static JETLS_DEBUG_LOWERING && Base.show_backtrace(stderr, catch_backtrace())
+        @static JETLS_DEBUG_LOWERING && locked_show_backtrace(stderr, catch_backtrace())
         return nothing
     end
     for binfo in ctx3.bindings.info
@@ -877,7 +886,7 @@ function select_export_public_binding(
         jl_lower_for_scope_resolution(context_module, world, name_node; soft_scope)
     catch err
         @static JETLS_DEBUG_LOWERING && @warn "Error in lowering ($caller)" err
-        @static JETLS_DEBUG_LOWERING && Base.show_backtrace(stderr, catch_backtrace())
+        @static JETLS_DEBUG_LOWERING && locked_show_backtrace(stderr, catch_backtrace())
         return nothing
     end
     for binfo in ctx3.bindings.info
@@ -922,7 +931,7 @@ function select_import_using_binding(
         jl_lower_for_scope_resolution(context_module, world, name_node; soft_scope)
     catch err
         @static JETLS_DEBUG_LOWERING && @warn "Error in lowering ($caller)" err
-        @static JETLS_DEBUG_LOWERING && Base.show_backtrace(stderr, catch_backtrace())
+        @static JETLS_DEBUG_LOWERING && locked_show_backtrace(stderr, catch_backtrace())
         return nothing
     end
     for binfo in ctx3.bindings.info

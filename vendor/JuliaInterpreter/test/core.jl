@@ -1,3 +1,5 @@
+module test_core
+
 using JuliaInterpreter
 using Test
 
@@ -29,3 +31,5 @@ using Test
     # A `UnionAll` without free `TypeVar`s is embedded into compiled wrappers as it is
     @test JuliaInterpreter.parametric_type_to_expr(Base.Iterators.Stateful{String}) == Base.Iterators.Stateful{String}
 end
+
+end # module test_core
