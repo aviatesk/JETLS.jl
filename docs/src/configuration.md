@@ -209,13 +209,15 @@ concretization_timeout = 120.0  # Allow up to 120 seconds per statement
 ```
 
 Timeout checks occur between interpreted statements, including recursively
-interpreted callees during normal script analysis. In blocks selected by
+interpreted callees and code passed to `Core.eval` (e.g. by `@eval`) during
+normal script analysis. In blocks selected by
 [`concretization_patterns`](@ref config/full_analysis/concretization_patterns),
 calls execute natively, so checks occur only at interpreted top-level statement
 boundaries. Package source analysis uses the catch-all pattern `:(x_)`, so its
 callees also run natively.
 
-Native calls, including `ccall`, builtins, and `Core.eval`, cannot be interrupted.
+Native calls, including `ccall`, builtins, and the `__init__` functions of
+modules evaluated by `Core.eval`, cannot be interrupted.
 If they never return, analysis can still hang despite a finite timeout.
 Disabling the timeout with `"inf"` also risks indefinite hangs.
 
