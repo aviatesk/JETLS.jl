@@ -620,6 +620,29 @@ end
 end
 
 @testset "method overwrite diagnostic" begin
+    # bodies that only return a constant, as in `f() = 1`, carry no line information
+    let code = """
+        duplicate(x::Int) = 1
+        duplicate(x::Int) = 2
+        for i in 1:2
+            @eval duplicate_eval() = \$i
+        end
+        """
+        withscript(code) do script_path
+            diagnostics = get_open_diagnostics(dirname(script_path), script_path, code)
+            overwrites = filter(diag -> diag.code == JETLS.TOPLEVEL_METHOD_OVERWRITE_CODE, diagnostics)
+            @test length(overwrites) == 2
+            let diag = only(filter(diag -> occursin("duplicate(::$Int)", diag.message), overwrites))
+                @test diag.range == JETLS.lines_range(2 => 2)
+                @test only(diag.relatedInformation).location.range == JETLS.lines_range(1 => 1)
+            end
+            let diag = only(filter(diag -> occursin("duplicate_eval()", diag.message), overwrites))
+                @test diag.range == JETLS.lines_range(4 => 4)
+                @test only(diag.relatedInformation).location.range == JETLS.lines_range(4 => 4)
+            end
+        end
+    end
+
     withpackage("TestMethodOverwrite", """
         module TestMethodOverwrite
 

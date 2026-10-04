@@ -74,6 +74,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Fixed memory usage growing each time [type inlay hints](https://aviatesk.github.io/JETLS.jl/release/features/#features/inlay-hint/types) are computed, e.g. while editing a file with the hints shown.
   The memory retained after full-analysis is also reduced (related: https://github.com/aviatesk/JETLS.jl/issues/357).
 
+- Fixed [`toplevel/method-overwrite`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/toplevel/method-overwrite) diagnostics for method definitions whose body only returns a constant, such as `f() = 1`, being placed at an invalid location instead of the definition line.
+
 ## 2026-09-27
 
 - Commit: [`5ed21cb`](https://github.com/aviatesk/JETLS.jl/commit/5ed21cb)
