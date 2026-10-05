@@ -398,3 +398,6 @@ function is_abstract_fieldtype(@nospecialize typ)
     end
     return false
 end
+
+is_closure_type(@nospecialize typ) =
+    typ isa DataType && typ <: Function && Base.isgensym(nameof(typ))

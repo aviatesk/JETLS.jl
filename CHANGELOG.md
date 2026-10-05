@@ -54,6 +54,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 >
 > Note: Path glob patterns use `/` as the separator on all platforms, including Windows; backslashes are not supported as separators.
 
+### Fixed
+
+- Fixed [`toplevel/abstract-field`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/toplevel/abstract-field) being reported on functions containing closures that capture a `@nospecialize`d argument, such as `f(@nospecialize x) = () -> x`.
+
 ## 2026-10-04
 
 - Commit: [`3efdc63`](https://github.com/aviatesk/JETLS.jl/commit/3efdc63)

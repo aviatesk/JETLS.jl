@@ -336,7 +336,9 @@ function JuliaInterpreter.step_expr!(
         func = JuliaInterpreter.lookup(frame, node.args[1])
         if func === Core._typebody!
             structtyp = JuliaInterpreter.lookup(frame, node.args[3])
-            if structtyp isa Type && structtyp !== Union{}
+            # Field types of closure types are determined by lowering and can't be annotated
+            # by users, e.g. capturing a `@nospecialize`d argument results in an `Any` field
+            if structtyp isa Type && structtyp !== Union{} && !JETLS.is_closure_type(structtyp)
                 ftypes = JuliaInterpreter.lookup(frame, node.args[4])::Core.SimpleVector
                 fnames = fieldnames(structtyp)
                 if fnames isa Tuple{Vararg{Symbol}} && length(ftypes) == length(fnames)

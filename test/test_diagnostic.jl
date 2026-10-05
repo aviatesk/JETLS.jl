@@ -801,6 +801,32 @@ end
     end
 end
 
+@testset "abstract field diagnostic for closures" begin
+    let code = """
+        function capture(@nospecialize x)
+            return () -> x
+        end
+        function capture_in_do_block(xs)
+            filter(xs) do @nospecialize x
+                any(1:3) do i
+                    x == i
+                end
+            end
+        end
+        generator(@nospecialize(x), xs) = (x + y for y in xs)
+        struct AbstractFieldStruct
+            x::Any
+        end
+        """
+        withscript(code) do script_path
+            diagnostics = get_open_diagnostics(dirname(script_path), script_path, code)
+            let diag = only(filter(diag -> diag.code == JETLS.TOPLEVEL_ABSTRACT_FIELD_CODE, diagnostics))
+                @test occursin("AbstractFieldStruct", diag.message)
+            end
+        end
+    end
+end
+
 @testset "Empty package analysis" begin
     withpackage("TestEmptyPackageAnalysis", "module TestEmptyPackageAnalysis end") do pkg_path
         rootUri = filepath2uri(pkg_path)
