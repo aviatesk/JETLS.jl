@@ -58,6 +58,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Fixed [`toplevel/abstract-field`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/toplevel/abstract-field) being reported on functions containing closures that capture a `@nospecialize`d argument, such as `f(@nospecialize x) = () -> x`.
 
+- Fixed [`toplevel/abstract-field`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/toplevel/abstract-field) and [`toplevel/method-overwrite`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/toplevel/method-overwrite) never being reported by [`jetls check`](https://aviatesk.github.io/JETLS.jl/release/cli-check/), and not being reported in the editor for files that are not open, such as files `include`d by a package.
+
 ## 2026-10-04
 
 - Commit: [`3efdc63`](https://github.com/aviatesk/JETLS.jl/commit/3efdc63)

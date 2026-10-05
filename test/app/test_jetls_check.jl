@@ -499,6 +499,30 @@ end
     end
 end
 
+@testset "toplevel warnings" begin
+    mktempdir() do dir
+        write_test_file(dir, "sub.jl", """
+            struct SubStruct
+                x::Any
+            end
+            """)
+        filepath = write_test_file(dir, "test.jl", """
+            struct MainStruct
+                x::Any
+            end
+            f() = 1
+            f() = 2
+            include("sub.jl")
+            """)
+
+        result = run_jetls_check([filepath]; root=dir, skip_analysis=false)
+        @test occursin("`MainStruct` has abstract field `x::Any`", result.stdout)
+        @test occursin("`SubStruct` has abstract field `x::Any`", result.stdout)
+        @test occursin("# @ sub.jl:2,5", result.stdout)
+        @test occursin("toplevel/method-overwrite", result.stdout)
+    end
+end
+
 @testset "parse errors" begin
     mktempdir() do dir
         filepath = write_test_file(dir, "test.jl", "f(x) = println(x\n")

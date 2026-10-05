@@ -530,10 +530,10 @@ toplevel_warning_report_to_uri(report::ToplevelWarningReport) = toplevel_warning
 toplevel_warning_report_to_uri_impl(::ToplevelWarningReport) =
     error("Missing `toplevel_warning_report_to_uri_impl(::ToplevelWarningReport)` interface")
 
-toplevel_warning_report_to_diagnostic(report::ToplevelWarningReport, sfi::SavedFileInfo, postprocessor::JET.PostProcessor) =
-    toplevel_warning_report_to_diagnostic_impl(report, sfi, postprocessor)::Diagnostic
-toplevel_warning_report_to_diagnostic_impl(::ToplevelWarningReport, ::SavedFileInfo, ::JET.PostProcessor) =
-    error("Missing `toplevel_warning_report_to_diagnostic_impl(::ToplevelWarningReport, ::SavedFileInfo, ::JET.PostProcessor)` interface")
+toplevel_warning_report_to_diagnostic(report::ToplevelWarningReport, fi::Union{FileInfo,SavedFileInfo}, postprocessor::JET.PostProcessor) =
+    toplevel_warning_report_to_diagnostic_impl(report, fi, postprocessor)::Diagnostic
+toplevel_warning_report_to_diagnostic_impl(::ToplevelWarningReport, ::Union{FileInfo,SavedFileInfo}, ::JET.PostProcessor) =
+    error("Missing `toplevel_warning_report_to_diagnostic_impl(::ToplevelWarningReport, ::Union{FileInfo,SavedFileInfo}, ::JET.PostProcessor)` interface")
 
 function toplevel_warning_reports_to_diagnostics!(
         uri2diagnostics::URI2Diagnostics, reports::Vector{ToplevelWarningReport},
@@ -542,8 +542,13 @@ function toplevel_warning_reports_to_diagnostics!(
     for report in reports
         uri = toplevel_warning_report_to_uri(report)
         haskey(uri2diagnostics, uri) || continue
-        sfi = @something get_saved_file_info(server.state, uri) continue
-        diagnostic = toplevel_warning_report_to_diagnostic(report, sfi, postprocessor)
+        # Positions in reports refer to the text full-analysis read: the saved content for
+        # synced files and the on-disk content otherwise, never the live buffer content
+        fi = @something(
+            get_saved_file_info(server.state, uri),
+            get_unsynced_file_info!(server.state, uri),
+            continue)
+        diagnostic = toplevel_warning_report_to_diagnostic(report, fi, postprocessor)
         push!(uri2diagnostics[uri], diagnostic)
     end
     return uri2diagnostics
@@ -564,7 +569,7 @@ end
 
 toplevel_warning_report_to_uri_impl(report::MethodOverwriteReport) = to_valid_uri(report.filepath)
 
-function toplevel_warning_report_to_diagnostic_impl(report::MethodOverwriteReport, ::SavedFileInfo, postprocessor::JET.PostProcessor)
+function toplevel_warning_report_to_diagnostic_impl(report::MethodOverwriteReport, ::Union{FileInfo,SavedFileInfo}, postprocessor::JET.PostProcessor)
     sig_str = postprocessor(@invokelatest sprint(Base.show_tuple_as_call, Symbol(""), report.sig))
     mod_str = postprocessor(sprint(show, report.mod))
     message = "Method definition $sig_str in module $mod_str overwritten"
@@ -598,7 +603,7 @@ end
 
 toplevel_warning_report_to_uri_impl(report::AbstractFieldReport) = to_valid_uri(report.filepath)
 
-function abstract_ref_field_data(report::AbstractFieldReport, sfi::SavedFileInfo)
+function abstract_ref_field_data(report::AbstractFieldReport, fi::Union{FileInfo,SavedFileInfo})
     fieldline = report.fieldline
     fieldline isa JS.SyntaxNode || return nothing
     report.ft isa DataType || return nothing
@@ -616,15 +621,15 @@ function abstract_ref_field_data(report::AbstractFieldReport, sfi::SavedFileInfo
     JS.kind(ref_name) === JS.K"Identifier" || return nothing
     ref_name_data = ref_name.data
     ref_name_data !== nothing && ref_name_data.val === :Ref || return nothing
-    return AbstractRefFieldData(jsobj_to_range(ref_name, sfi))
+    return AbstractRefFieldData(jsobj_to_range(ref_name, fi))
 end
 
-function toplevel_warning_report_to_diagnostic_impl(report::AbstractFieldReport, sfi::SavedFileInfo, postprocessor::JET.PostProcessor)
+function toplevel_warning_report_to_diagnostic_impl(report::AbstractFieldReport, fi::Union{FileInfo,SavedFileInfo}, postprocessor::JET.PostProcessor)
     typ_str = postprocessor(sprint(show, report.typ))
     ft_str = postprocessor(sprint(show, report.ft))
     message = "`$typ_str` has abstract field `$(report.fname)::$ft_str`"
     fieldline = report.fieldline
-    range = fieldline isa Int ? line_range(fieldline) : jsobj_to_range(fieldline, sfi)
+    range = fieldline isa Int ? line_range(fieldline) : jsobj_to_range(fieldline, fi)
     return Diagnostic(;
         range,
         severity = DiagnosticSeverity.Information,
@@ -632,7 +637,7 @@ function toplevel_warning_report_to_diagnostic_impl(report::AbstractFieldReport,
         source = DIAGNOSTIC_SOURCE_SAVE,
         code = TOPLEVEL_ABSTRACT_FIELD_CODE,
         codeDescription = diagnostic_code_description(TOPLEVEL_ABSTRACT_FIELD_CODE),
-        data = abstract_ref_field_data(report, sfi))
+        data = abstract_ref_field_data(report, fi))
 end
 
 # lowering diagnostic
