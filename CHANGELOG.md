@@ -65,9 +65,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   code after the error is no longer loaded or analyzed, so follow-up errors caused by the incompletely loaded code are no longer reported.
   Diagnostics for top-level code before the error are still reported, and method bodies are analyzed again once the error is fixed.
 
+- Syntax warnings detected by JuliaSyntax.jl, such as `parentheses are not required here`, are now reported with the new [`syntax/parse-warning`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/syntax/parse-warning) code instead of [`syntax/parse-error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/syntax/parse-error), so they can be configured separately from syntax errors.
+  [`diagnostic.patterns`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/diagnostic/patterns) entries matching the `syntax/parse-error` code no longer apply to them.
+
 ### Fixed
 
-- Fixed full analysis not rerunning on save for files with syntax warnings but no syntax errors, such as `parentheses are not required here`.
+- Fixed files with syntax warnings but no syntax errors getting no [`lowering/*`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering) diagnostics in the editor or from [`jetls check`](https://aviatesk.github.io/JETLS.jl/release/cli-check/), and not being reanalyzed by full analysis on save.
 
 - Fixed [`toplevel/abstract-field`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/toplevel/abstract-field) being reported on functions containing closures that capture a `@nospecialize`d argument, such as `f(@nospecialize x) = () -> x`.
 

@@ -595,7 +595,8 @@ const DIAGNOSTIC_SOURCE_LIVE = "JETLS/live"
 const DIAGNOSTIC_SOURCE_SAVE = "JETLS/save"
 const DIAGNOSTIC_SOURCE_EXTRA = "JETLS/extra"
 
-const SYNTAX_DIAGNOSTIC_CODE = "syntax/parse-error"
+const SYNTAX_PARSE_ERROR_CODE = "syntax/parse-error"
+const SYNTAX_PARSE_WARNING_CODE = "syntax/parse-warning"
 const LOWERING_UNUSED_ARGUMENT_CODE = "lowering/unused-argument"
 const LOWERING_UNUSED_LOCAL_CODE = "lowering/unused-local"
 const LOWERING_UNUSED_ASSIGNMENT_CODE = "lowering/unused-assignment"
@@ -630,7 +631,8 @@ const DEPRECATED_INFERENCE_NON_BOOLEAN_COND_CODE = "inference/non-boolean-cond"
 const TESTRUNNER_TEST_FAILURE_CODE = "testrunner/test-failure"
 
 const ALL_DIAGNOSTIC_CODES = Set{String}(String[
-    SYNTAX_DIAGNOSTIC_CODE,
+    SYNTAX_PARSE_ERROR_CODE,
+    SYNTAX_PARSE_WARNING_CODE,
     LOWERING_UNUSED_ARGUMENT_CODE,
     LOWERING_UNUSED_LOCAL_CODE,
     LOWERING_UNUSED_ASSIGNMENT_CODE,

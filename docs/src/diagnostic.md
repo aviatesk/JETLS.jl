@@ -129,8 +129,9 @@ reports at line granularity.
 parses your source text into syntax trees. It runs on every edit without
 executing your code, so `syntax/*` diagnostics are delivered through the
 `JETLS/live` source and update as you type. Because every later stage builds on
-the parse result, unparsable code yields only `syntax/*` diagnostics. See
-[`syntax/*`](@ref diagnostic/reference/syntax) for the diagnostic codes.
+the parse result, unparsable code yields only `syntax/*` diagnostics. Syntax
+warnings, by contrast, do not prevent the later stages from analyzing the code.
+See [`syntax/*`](@ref diagnostic/reference/syntax) for the diagnostic codes.
 
 ###### [Lowering (`lowering/*`)](@id diagnostic/stage/lowering)
 
@@ -203,6 +204,7 @@ Here is a summary table of the diagnostics explained in this section:
 | Code                                                                                                           | Default Severity      | Source        | Description                                            |
 | -------------------------------------------------------------------------------------------------------------- | --------------------- | ------------- | ------------------------------------------------------ |
 | [`syntax/parse-error`](@ref diagnostic/reference/syntax/parse-error)                                           | `Error`               | `JETLS/live`  | Syntax parsing errors detected by JuliaSyntax.jl       |
+| [`syntax/parse-warning`](@ref diagnostic/reference/syntax/parse-warning)                                       | `Warning`             | `JETLS/live`  | Syntax warnings detected by JuliaSyntax.jl             |
 | [`lowering/error`](@ref diagnostic/reference/lowering/error)                                                   | `Error`               | `JETLS/live`  | General lowering errors                                |
 | [`lowering/macro-expansion-error`](@ref diagnostic/reference/lowering/macro-expansion-error)                   | `Error/Warning`       | `JETLS/live`  | Issues detected during macro expansion                 |
 | [`lowering/undef-global-var`](@ref diagnostic/reference/lowering/undef-global-var)                             | `Warning`             | `JETLS/live`  | References to undefined global variables               |
@@ -251,6 +253,22 @@ Example:
 function parse_error(x)
     println(x  # Expected `)` or `,` (JETLS syntax/parse-error)
 end
+```
+
+#### [Syntax parse warning (`syntax/parse-warning`)](@id diagnostic/reference/syntax/parse-warning)
+
+**Default severity**: `Warning`
+
+Syntax warnings detected by JuliaSyntax.jl. These indicate code that parses
+but is likely unintended or written in a discouraged form, such as redundant
+parentheses or quoting. Unlike
+[`syntax/parse-error`](@ref diagnostic/reference/syntax/parse-error), they do
+not prevent the code from being analyzed further.
+
+Example:
+
+```julia
+import Base: (sin)  # parentheses are not required here (JETLS syntax/parse-warning)
 ```
 
 ### [Lowering diagnostic (`lowering/*`)](@id diagnostic/reference/lowering)

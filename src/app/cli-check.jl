@@ -515,16 +515,13 @@ function run_per_file_diagnostics!(
             fi = @something get_file_info(server.state, uri) begin
                 get_unsynced_file_info!(server.state, uri)
             end return
-            # Mirrors `compute_live_diagnostics!`: parse errors short-circuit lowering.
             lookup_func = function ()
                 server_lookup_func = gen_lookup_out_of_scope!(server.state, uri)
                 @something server_lookup_func() OutOfScope(Main)
             end
-            diagnostics = if isempty(fi.parsed_stream.diagnostics)
-                toplevel_lowering_diagnostics!(def_used_names_cache, server, uri, fi, #=snapshot=#nothing, DUMMY_CANCEL_FLAG; lookup_func)
-            else
-                parsed_stream_to_diagnostics(fi)
-            end
+            diagnostics = compute_live_diagnostics!(
+                def_used_names_cache, server, uri, fi, #=snapshot=#nothing, DUMMY_CANCEL_FLAG;
+                lookup_func)
             if !isempty(diagnostics)
                 if lock
                     @lock uri2diagnostics_lock append!(get!(Vector{Diagnostic}, uri2diagnostics, uri), diagnostics)
