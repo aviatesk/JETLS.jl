@@ -441,6 +441,25 @@ function jet_toplevel_warning_report_to_diagnostic(
         codeDescription = diagnostic_code_description(TOPLEVEL_UNSUPPORTED_FEATURE_CODE))
 end
 
+function package_extension_analysis_skipped_diagnostic(;
+        markdown_rendering::Bool = false,
+        displaysize::Union{Nothing,Tuple{Int,Int}} = nothing
+    )
+    message = toplevel_report_message(JET.PostProcessor(); markdown_rendering, displaysize) do io
+        JET.print_summary(io, "JETLS does not support full analysis of package extensions yet.")
+        JET.print_wrapped(io,
+            "This file is not analyzed, so diagnostics that require full analysis " *
+            "are not reported for it.")
+    end
+    return Diagnostic(;
+        range = line_range(1),
+        severity = DiagnosticSeverity.Warning,
+        message,
+        source = DIAGNOSTIC_SOURCE_SAVE,
+        code = TOPLEVEL_ANALYSIS_SKIPPED_CODE,
+        codeDescription = diagnostic_code_description(TOPLEVEL_ANALYSIS_SKIPPED_CODE))
+end
+
 # `nothing` when JET could not derive a pattern for the assignment: any pattern guessed
 # here would be one that never matches, so no quick fix is offered
 function missing_concretization_data(report::JET.MissingConcretizationErrorReport)

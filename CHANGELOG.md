@@ -66,6 +66,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
+- Package extension files (files under the `ext` directory of a package) are no longer full-analyzed, and the new [`toplevel/analysis-skipped`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/toplevel/analysis-skipped) warning is reported at the top of each such file instead.
+  They were previously analyzed as standalone scripts in the package environment, where weak dependencies are not installed, so their analysis typically stopped at a misleading `toplevel/error` with a message like `Package SomeDep not found in current path`.
+  Since the new diagnostic is a warning, `jetls check` fails by default when package extension files are passed to it.
+
 - Full analysis now stops at the first top-level error, such as [`toplevel/error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/toplevel/error), [`toplevel/missing-concretization`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/toplevel/missing-concretization), or [`toplevel/concretization-timeout`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/toplevel/concretization-timeout):
   code after the error is no longer loaded or analyzed, so follow-up errors caused by the incompletely loaded code are no longer reported.
   Diagnostics for top-level code before the error are still reported, and method bodies are analyzed again once the error is fixed.

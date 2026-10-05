@@ -618,6 +618,7 @@ const TOPLEVEL_CONCRETIZATION_TIMEOUT_CODE = "toplevel/concretization-timeout"
 const TOPLEVEL_METHOD_OVERWRITE_CODE = "toplevel/method-overwrite"
 const TOPLEVEL_ABSTRACT_FIELD_CODE = "toplevel/abstract-field"
 const TOPLEVEL_UNSUPPORTED_FEATURE_CODE = "toplevel/unsupported-feature"
+const TOPLEVEL_ANALYSIS_SKIPPED_CODE = "toplevel/analysis-skipped"
 const INFERENCE_UNDEF_GLOBAL_VAR_CODE = "inference/undef-global-var"
 const INFERENCE_UNDEF_STATIC_PARAM_CODE = "inference/undef-static-param" # currently not reported
 const INFERENCE_FIELD_ERROR_CODE = "inference/field-error"
@@ -654,6 +655,7 @@ const ALL_DIAGNOSTIC_CODES = Set{String}(String[
     TOPLEVEL_METHOD_OVERWRITE_CODE,
     TOPLEVEL_ABSTRACT_FIELD_CODE,
     TOPLEVEL_UNSUPPORTED_FEATURE_CODE,
+    TOPLEVEL_ANALYSIS_SKIPPED_CODE,
     INFERENCE_UNDEF_GLOBAL_VAR_CODE,
     INFERENCE_UNDEF_STATIC_PARAM_CODE,
     INFERENCE_FIELD_ERROR_CODE,

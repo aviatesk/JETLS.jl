@@ -225,6 +225,7 @@ Here is a summary table of the diagnostics explained in this section:
 | [`toplevel/method-overwrite`](@ref diagnostic/reference/toplevel/method-overwrite)                             | `Warning`             | `JETLS/save`  | Method definitions that overwrite previous ones        |
 | [`toplevel/abstract-field`](@ref diagnostic/reference/toplevel/abstract-field)                                 | `Information`         | `JETLS/save`  | Struct fields with abstract types                      |
 | [`toplevel/unsupported-feature`](@ref diagnostic/reference/toplevel/unsupported-feature)                       | `Warning`             | `JETLS/save`  | Unsupported code analyzed with an approximation        |
+| [`toplevel/analysis-skipped`](@ref diagnostic/reference/toplevel/analysis-skipped)                             | `Warning`             | `JETLS/save`  | Files skipped by full analysis                         |
 | [`inference/undef-global-var`](@ref diagnostic/reference/inference/undef-global-var)                           | `Warning`             | `JETLS/save`  | References to undefined global variables               |
 | [`inference/field-error`](@ref diagnostic/reference/inference/field-error)                                     | `Warning`             | `JETLS/save`  | Access to non-existent struct fields                   |
 | [`inference/bounds-error`](@ref diagnostic/reference/inference/bounds-error)                                   | `Warning`             | `JETLS/save`  | Out-of-bounds field access by index                    |
@@ -1015,8 +1016,8 @@ export bar, @foo  # Names are not sorted alphabetically (JETLS lowering/unsorted
 
 ### [Top-level diagnostic (`toplevel/*`)](@id diagnostic/reference/toplevel)
 
-Top-level diagnostics are reported while JETLS loads your code during the
-on-save full analysis, at line granularity
+Top-level diagnostics are reported by the on-save full analysis about how it
+loads your code, at line granularity
 (see [Code loading](@ref diagnostic/stage/toplevel)).
 
 #### [Top-level error (`toplevel/error`)](@id diagnostic/reference/toplevel/error)
@@ -1073,6 +1074,8 @@ A specialized top-level error reported when JET needs the actual value of a
 top-level binding while loading code for analysis, but the binding was not
 concretized. This often happens when a global binding is used to define a type
 or method and JET cannot determine the binding's concrete value during analysis.
+As with [`toplevel/error`](@ref diagnostic/reference/toplevel/error), JETLS
+does not analyze the statement that needs the value or any code after it.
 This diagnostic is specific to script-mode analysis. Package analysis uses the
 catch-all concretization pattern `:(x_)` and evaluates all top-level code.
 
@@ -1324,6 +1327,33 @@ include(rewrite, "generated.jl")  # JET analyzes this code approximately because
                                   # JET does not support `include(mapexpr::Function, filename::String)`.
                                   # The included file is analyzed without applying `mapexpr`.
                                   # (JETLS toplevel/unsupported-feature)
+```
+
+#### [Analysis skipped (`toplevel/analysis-skipped`)](@id diagnostic/reference/toplevel/analysis-skipped)
+
+**Default severity**: `Warning`
+
+Reported at the top of a file that JETLS skips in full analysis. JETLS reports
+no full-analysis diagnostics for the file, nor lowering diagnostics that
+require the module context of the file, such as
+[`lowering/undef-global-var`](@ref diagnostic/reference/lowering/undef-global-var)
+and [`lowering/unused-import`](@ref diagnostic/reference/lowering/unused-import).
+
+Currently, this is reported for package extension files (files under the `ext`
+directory of a package), since JETLS does not support full analysis of package
+extensions yet.
+
+Example (`ext/MyPkgSomeDepExt.jl`):
+
+```julia
+module MyPkgSomeDepExt  # JETLS does not support full analysis of package extensions yet.
+                        #
+                        # This file is not analyzed, so diagnostics that require full analysis are not reported for it.
+                        # (JETLS toplevel/analysis-skipped)
+
+using MyPkg, SomeDep
+
+end
 ```
 
 ### [Inference diagnostic (`inference/*`)](@id diagnostic/reference/inference)
