@@ -350,17 +350,15 @@ function jet_result_to_diagnostics!(
         world::UInt, postprocessor::JET.PostProcessor;
         markdown_rendering::Bool = false
     )
-    for report in result.res.toplevel_error_reports
-        if report isa JET.LoweringErrorReport || report isa JET.MacroExpansionErrorReport
-            # the equivalent report should have been reported by `per_stmt_diagnostics!`
-            # with more precise location information
-            continue
-        end
-        diagnostic = @something jet_toplevel_error_report_to_diagnostic(
-            report, postprocessor; markdown_rendering) continue
-        filename = report.file
-        filename == "none" && continue
-        uri = to_valid_uri(filename)
+    report = result.res.toplevel_error_report
+    if report !== nothing && report.file != "none"
+        diagnostic = jet_toplevel_error_report_to_diagnostic(report, postprocessor; markdown_rendering)
+        diagnostic === nothing || push!(uri2diagnostics[to_valid_uri(report.file)], diagnostic)
+    end
+    for report in result.res.toplevel_warning_reports
+        diagnostic = @something jet_toplevel_warning_report_to_diagnostic(report, postprocessor) continue
+        uri = to_valid_uri(report.file)
+        haskey(uri2diagnostics, uri) || continue
         push!(uri2diagnostics[uri], diagnostic)
     end
     displayable_reports = collect_displayable_reports(result.res.inference_error_reports, keys(uri2diagnostics))
@@ -376,6 +374,11 @@ function jet_toplevel_error_report_to_diagnostic(
         markdown_rendering::Bool = false
     )
     report isa JET.ParseErrorReport && return nothing # reported as `JETLS/live` diagnostics
+    if report isa JET.LoweringErrorReport || report isa JET.MacroExpansionErrorReport
+        # the equivalent report should have been reported by `per_stmt_diagnostics!`
+        # with more precise location information
+        return nothing
+    end
     if report isa JET.MissingConcretizationErrorReport
         data = missing_concretization_data(report)
         message = missing_concretization_message(report, data, postprocessor)
@@ -396,6 +399,22 @@ function jet_toplevel_error_report_to_diagnostic(
         code,
         codeDescription = diagnostic_code_description(code),
         data)
+end
+
+function jet_toplevel_warning_report_to_diagnostic(
+        @nospecialize(report::JET.ToplevelWarningReport), postprocessor::JET.PostProcessor
+    )
+    report isa JET.ParseWarningReport && return nothing # reported as `JETLS/live` diagnostics
+    report isa JET.UnsupportedFeatureReport ||
+        error(lazy"No diagnostic code is defined for report: $report")
+    message = postprocessor(sprint(JET.print_report, report))
+    return Diagnostic(;
+        range = line_range(report.line),
+        severity = DiagnosticSeverity.Warning,
+        message,
+        source = DIAGNOSTIC_SOURCE_SAVE,
+        code = TOPLEVEL_UNSUPPORTED_FEATURE_CODE,
+        codeDescription = diagnostic_code_description(TOPLEVEL_UNSUPPORTED_FEATURE_CODE))
 end
 
 # `nothing` when JET could not derive a pattern for the assignment: any pattern guessed

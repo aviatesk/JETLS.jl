@@ -312,7 +312,7 @@ function JET.try_read_file(interp::LSInterpreter, _include_context::Module, file
     fi = JETLS.get_saved_file_info(interp.server.state, uri)
     if !isnothing(fi)
         parsed_stream = fi.parsed_stream
-        if isempty(parsed_stream.diagnostics)
+        if !JS.any_error(parsed_stream)
             return fi.syntax_node
         else
             return String(get_source_text(parsed_stream))

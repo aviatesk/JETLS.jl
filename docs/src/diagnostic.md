@@ -158,7 +158,9 @@ of JETLS's full analysis, delivered through the `JETLS/save` source on save.
 Using [JuliaInterpreter.jl](https://github.com/JuliaDebug/JuliaInterpreter.jl),
 it selectively interprets the top-level code to load the definitions (methods,
 types, globals, macros) that the later type-inference stage needs. Package
-dependencies, by contrast, are loaded unconditionally.
+dependencies, by contrast, are loaded unconditionally. Loading stops at the
+first [top-level error](@ref diagnostic/reference/toplevel/error), and code
+after it is not analyzed.
 
 !!! danger "Security"
     Do not run JETLS on code you do not trust. Full analysis runs your own
@@ -173,9 +175,9 @@ it via [`[full_analysis] debounce`](@ref config/full_analysis/debounce). See
 
 [JET.jl](https://github.com/aviatesk/JET.jl) runs type inference over your
 loaded code during the same on-save full analysis (`JETLS/save`). Inference
-only covers code that loaded successfully, so a `toplevel/error`
-(e.g. a missing dependency) suppresses `inference/*` diagnostics for the
-affected code. See
+only covers code that loaded successfully: after a `toplevel/error` (e.g. a
+missing dependency), JETLS skips inference of method bodies entirely and
+reports `inference/*` diagnostics only for top-level code before the error. See
 [`inference/*`](@ref diagnostic/reference/inference) for the diagnostic codes.
 
 ###### [Test execution (`testrunner/*`)](@id diagnostic/stage/testrunner)
@@ -220,6 +222,7 @@ Here is a summary table of the diagnostics explained in this section:
 | [`toplevel/concretization-timeout`](@ref diagnostic/reference/toplevel/concretization-timeout)                 | `Error`               | `JETLS/save`  | Concrete execution of top-level code exceeded its time limit |
 | [`toplevel/method-overwrite`](@ref diagnostic/reference/toplevel/method-overwrite)                             | `Warning`             | `JETLS/save`  | Method definitions that overwrite previous ones        |
 | [`toplevel/abstract-field`](@ref diagnostic/reference/toplevel/abstract-field)                                 | `Information`         | `JETLS/save`  | Struct fields with abstract types                      |
+| [`toplevel/unsupported-feature`](@ref diagnostic/reference/toplevel/unsupported-feature)                       | `Warning`             | `JETLS/save`  | Unsupported code analyzed with an approximation        |
 | [`inference/undef-global-var`](@ref diagnostic/reference/inference/undef-global-var)                           | `Warning`             | `JETLS/save`  | References to undefined global variables               |
 | [`inference/field-error`](@ref diagnostic/reference/inference/field-error)                                     | `Warning`             | `JETLS/save`  | Access to non-existent struct fields                   |
 | [`inference/bounds-error`](@ref diagnostic/reference/inference/bounds-error)                                   | `Warning`             | `JETLS/save`  | Out-of-bounds field access by index                    |
@@ -1028,9 +1031,11 @@ using UnexistingPkg  # Package JETLS does not have UnexistingPkg in its dependen
                      # (JETLS toplevel/error)
 ```
 
-These errors prevent JETLS from fully analyzing your code, which means
-[Inference diagnostic](@ref diagnostic/reference/inference) will not be
-available until the top-level errors are resolved.
+JETLS stops loading your code as soon as it encounters a top-level error, so
+code after the error is not analyzed, and
+[Inference diagnostic](@ref diagnostic/reference/inference) for method bodies
+will not be available until the error is resolved. Fixing the error may reveal
+another one later in the code.
 
 !!! tip "Check the package environment"
     A common case is an error indicating that a specific dependency cannot be
@@ -1134,10 +1139,10 @@ configuration to allow JETLS to evaluate the assignment during full analysis.
 **Default severity**: `Error`
 
 Reported when concretely executing a single top-level statement exceeds the
-configured time limit (10 seconds by default). JETLS stops execution and skips
-abstract analysis of that statement. Definitions not reached before the timeout
-may be missing from subsequent analysis, leaving results incomplete. The
-diagnostic includes a stack trace when available.
+configured time limit (10 seconds by default). JETLS stops execution there and,
+as with [`toplevel/error`](@ref diagnostic/reference/toplevel/error), does not
+analyze that statement or any code after it. The diagnostic includes a stack
+trace when available.
 This is distinct from
 [`toplevel/missing-concretization`](@ref diagnostic/reference/toplevel/missing-concretization):
 the code was being executed, rather than a required binding value being
@@ -1280,6 +1285,25 @@ end
     ```
 
 [^nospecialize_tip]: For such cases, you can add `@nospecialize` to the use-site methods to allow them to handle abstract data types while avoiding excessive compilation.
+
+#### [Unsupported feature (`toplevel/unsupported-feature`)](@id diagnostic/reference/toplevel/unsupported-feature)
+
+**Default severity**: `Warning`
+
+Reported when JETLS loads code that uses a feature it does not support. JETLS
+continues the analysis with an approximation of the code, so diagnostics for
+the affected code may not match its actual behavior.
+
+Currently, this is reported for `include` calls with a `mapexpr` function:
+JETLS analyzes the included file without applying the function.
+
+Example:
+
+```julia
+include(rewrite, "generated.jl")  # JET does not support `include(mapexpr::Function, filename::String)`.
+                                  # The included file is analyzed without applying `mapexpr`.
+                                  # (JETLS toplevel/unsupported-feature)
+```
 
 ### [Inference diagnostic (`inference/*`)](@id diagnostic/reference/inference)
 

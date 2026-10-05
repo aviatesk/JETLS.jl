@@ -197,7 +197,8 @@ booleans, numeric `NaN`/`Inf`, and strings other than `"inf"` are rejected.
 
 When the limit is exceeded, JETLS reports
 [`toplevel/concretization-timeout`](@ref diagnostic/reference/toplevel/concretization-timeout)
-and skips abstract analysis of that statement, so results may be incomplete.
+and stops the full analysis without analyzing that statement or any code after
+it.
 Timing starts after statement selection and interpreter frame setup. Time spent
 in `include`s and module-loading statements handled by JET is excluded from the
 caller's limit; each top-level statement in an included file has its own timeout.

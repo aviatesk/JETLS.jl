@@ -117,8 +117,6 @@ end
 
 @testset "notebook end to end" begin
     mktempdir() do tempdir; Pkg.activate(tempdir) do
-        Pkg.add("Example"; io=devnull)
-
         notebook_uri = filepath2uri(normpath(tempdir, "test.ipynb"))
 
         withserver() do (; server, writemsg, writereadmsg, readmsg)
@@ -146,7 +144,7 @@ end
             end
 
             # 2. Add cell 2 with code that has unused argument
-            let cell1_text = "using Example"
+            let cell1_text = "using LinearAlgebra"
                 cell2_text = "func(x, y) = identity(x)"
                 change = NotebookDocumentChangeEvent(;
                     cells = NotebookDocumentChangeEventCells(;
@@ -177,9 +175,9 @@ end
             let notebook_info = JETLS.get_notebook_info(server.state, notebook_uri)
                 @test notebook_info !== nothing
                 @test length(notebook_info.cells) == 2
-                @test notebook_info.cells[1].text == "using Example"
+                @test notebook_info.cells[1].text == "using LinearAlgebra"
                 @test notebook_info.cells[2].text == "func(x, y) = identity(x)"
-                @test notebook_info.concat.source == "using Example\nfunc(x, y) = identity(x)\n"
+                @test notebook_info.concat.source == "using LinearAlgebra\nfunc(x, y) = identity(x)\n"
                 @test length(notebook_info.concat.cell_ranges) == 2
                 @test notebook_info.concat.cell_ranges[1].line_offset == 0
                 @test notebook_info.concat.cell_ranges[2].line_offset == 1
@@ -210,7 +208,7 @@ end
             let notebook_info = JETLS.get_notebook_info(server.state, notebook_uri)
                 @test notebook_info !== nothing
                 @test notebook_info.cells[2].text == "func(x) = identity(x)"
-                @test notebook_info.concat.source == "using Example\nfunc(x) = identity(x)\n"
+                @test notebook_info.concat.source == "using LinearAlgebra\nfunc(x) = identity(x)\n"
             end
 
             # 6. Add markdown cell (should be ignored for diagnostics)
