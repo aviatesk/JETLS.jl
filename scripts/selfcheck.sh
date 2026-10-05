@@ -4,7 +4,7 @@ print_help() {
     cat <<'EOF'
 Usage: ./scripts/selfcheck.sh [OPTIONS]
 
-Run JETLS self-diagnostics on the JETLS, LSP, and HierarchicalTestSets packages.
+Run JETLS self-diagnostics on the JETLS, LSP, TOMLSource, and HierarchicalTestSets packages.
 Unrecognized options are passed through to jetls check.
 
 Options:
@@ -72,5 +72,5 @@ exec "$JULIA" --startup-file=no --project="$PROJECT_ROOT" --threads="$THREADS" \
     $QUIET \
     --exit-severity="$EXIT_SEVERITY" \
     --show-severity="$SHOW_SEVERITY" \
-    "$PROJECT_ROOT" "$PROJECT_ROOT/LSP" "$PROJECT_ROOT/HierarchicalTestSets" \
+    "$PROJECT_ROOT" "$PROJECT_ROOT/LSP" "$PROJECT_ROOT/TOMLSource" "$PROJECT_ROOT/HierarchicalTestSets" \
     "${EXTRA_ARGS[@]}"
