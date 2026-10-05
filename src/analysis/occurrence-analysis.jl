@@ -202,7 +202,7 @@ function may_record_occurrence!(occurrences::Dict{JL.BindingInfo,Set{BindingOccu
         kind::Symbol, st::SyntaxTree, ctx3::JL.VariableAnalysisContext;
         skip_recording::Union{Nothing,SkipRecording} = nothing
     )
-    if JS.kind(st) === JS.K"BindingId"
+    if JS.head(st) === :bindingid
         binfo = JL.get_binding(ctx3, st)
         _may_record_occurrence!(occurrences, kind, st, binfo; skip_recording)
         return true
@@ -237,23 +237,23 @@ function compute_binding_occurrences!(
     stack = JS.SyntaxList(st3)
     while !isempty(stack)
         st = pop!(stack)
-        k = JS.kind(st)
+        k = JS.head(st)
         nc = JS.numchildren(st)
-        if k === JS.K"BindingId"
+        if k === :bindingid
             may_record_occurrence!(occurrences, :use, st, ctx3; skip_recording=skip_recording_uses)
         end
 
         start_idx = 1
-        if k in JS.KSet"local function_decl" || (include_global_bindings && k === JS.K"global")
+        if k in (:local, :function_decl) || (include_global_bindings && k === :global)
             if nc ≥ 1 && may_record_occurrence!(occurrences, :decl, st[1], ctx3)
                 start_idx = 2 # skip recording use
             end
-        elseif k in JS.KSet"method_defs constdecl"
-            occurrence_kind = k === JS.K"method_defs" ? :method_def : :def
+        elseif k in (:method_defs, :constdecl)
+            occurrence_kind = k === :method_defs ? :method_def : :def
             if nc ≥ 1 && may_record_occurrence!(occurrences, occurrence_kind, st[1], ctx3)
                 start_idx = 2
             end
-        elseif k === JS.K"block" && any(i::Int -> JS.kind(st[i]) === JS.K"function_decl", 1:nc)
+        elseif k === :block && any(i::Int -> JS.head(st[i]) === :function_decl, 1:nc)
             # This block wraps a function definition. Each function's own binding
             # appears as BindingId in internal lowering nodes (`method`,
             # `function_type`, `removable`, or as the trailing "return value" of
@@ -269,10 +269,10 @@ function compute_binding_occurrences!(
             newly_added = Pair{JL.BindingInfo,UnitRange{Int}}[]
             for i = 1:nc
                 child = st[i]
-                JS.kind(child) === JS.K"function_decl" || continue
+                JS.head(child) === :function_decl || continue
                 JS.numchildren(child) ≥ 1 || continue
                 funcnode = child[1]
-                JS.kind(funcnode) === JS.K"BindingId" || continue
+                JS.head(funcnode) === :bindingid || continue
                 funcinfo = JL.get_binding(ctx3, funcnode)
                 if isnothing(skip_recording_uses) || !haskey(skip_recording_uses, funcinfo)
                     push!(newly_added, funcinfo => JS.byte_range(funcnode))
@@ -290,10 +290,10 @@ function compute_binding_occurrences!(
                 end
                 continue
             end
-        elseif k in JS.KSet"lambda toplevel_lambda"
+        elseif k in (:lambda, :toplevel_lambda)
             # All blocks except the last one define arguments and static parameters,
             # so we recurse to avoid counting them as usage
-            start_idx = 2 # skip the K"LambdaBindings" leaf
+            start_idx = 2 # skip the :lambdabindings leaf
             if nc ≥ 3
                 arglist = st[2]
                 for i = 1:JS.numchildren(arglist)
@@ -308,15 +308,15 @@ function compute_binding_occurrences!(
                     start_idx = 4
                 end
             end
-        elseif k === JS.K"="
+        elseif k === :(=)
             start_idx = 2 # the left hand side, i.e. "definition", does not account for usage
             if nc ≥ 1
                 may_record_occurrence!(occurrences, :def, st[1], ctx3)
             end
-        elseif k === JS.K"call" && nc ≥ 1
+        elseif k === :call && nc ≥ 1
             arg1 = st[1]
             skip_arguments = false
-            if JS.kind(arg1) === JS.K"BindingId"
+            if JS.head(arg1) === :bindingid
                 funcbind = JL.get_binding(ctx3, arg1)
                 if is_selffunc(funcbind)
                     # Don't count self arguments used in self calls as "usage".
@@ -330,14 +330,14 @@ function compute_binding_occurrences!(
                     # Without this, `:use` of `a` in `func(a; x) = x` would be counted.
                     skip_arguments = true
                 end
-            elseif JS.kind(arg1) === JS.K"top" && get_name_val(arg1) == "kwerr"
+            elseif JS.head(arg1) === :top && get_name_val(arg1) == "kwerr"
                 # Skip argument uses for `kwerr` calls as well
                 skip_arguments = true
             end
             if skip_arguments
                 for i = nc:-1:2 # reversed since we use `pop!`
                     argⱼ = st[i]
-                    if JS.kind(argⱼ) === JS.K"BindingId"
+                    if JS.head(argⱼ) === :bindingid
                         bkind = JL.get_binding(ctx3, argⱼ).kind
                         # Skip both `:argument` and `:local` bindings.
                         # `:local` bindings appear in kwsorter calls when
@@ -486,7 +486,7 @@ function compute_full_binding_occurrences(
     pos = offset_to_xy(fi, JS.first_byte(st0))
     (; context_module, world) = get_context_info(state, uri, pos; lookup_func)
 
-    if JS.kind(st0) in JS.KSet"export public import using"
+    if JS.head(st0) in (:export, :public, :import, :using)
         # `import`/`using`/`export`/`public` declarations are collected from the source tree
         # by `collect_import_export_occurrences!` below (lowering doesn't surface them).
         # A statement that is *only* such a declaration has no other code, so skip lowering it.
@@ -545,10 +545,10 @@ function collect_export_public_occurrences!(
         occurrences::Dict{JL.BindingInfo,Set{BindingOccurrence}},
         st0::SyntaxTree, context_module::Module
     )
-    JS.kind(st0) in JS.KSet"export public" || return occurrences
+    JS.head(st0) in (:export, :public) || return occurrences
     for i = 1:JS.numchildren(st0)
         child = st0[i]
-        JS.kind(child) === JS.K"Identifier" || continue
+        JS.head(child) === :identifier || continue
         name = @something get_name_val(child) continue
         binfo = surface_global_binfo(name, child, context_module)
         target_set = get!(Set{BindingOccurrence}, occurrences, binfo)
@@ -575,24 +575,24 @@ end
 # whether it is the whole statement or nested in a block (`if`/`begin`/`@static if`/…).
 # Lowering doesn't surface these declarations — `export`/`public` collapse their names
 # into a runtime call argument, and `import`/`using` desugar their module paths into
-# `K"inert"` calls that `collect_inert_global_occurrences!` skips — so collect them from
+# `:inert` calls that `collect_inert_global_occurrences!` skips — so collect them from
 # the source tree instead:
 # - `export foo`/`public foo`: `foo` as a `:use` of the surrounding module's global.
 # - `using M: foo`/`import M.foo`/`foo as bar`: the local name (`foo`/`bar`) as a `:decl`.
-# `K"module"` (a distinct binding scope) and `K"quote"` (quoted, non-executed code) are
+# `:module` (a distinct binding scope) and `:quote` (quoted, non-executed code) are
 # not descended into.
 function collect_import_export_occurrences!(
         occurrences::Dict{JL.BindingInfo,Set{BindingOccurrence}},
         st0::SyntaxTree, context_module::Module
     )
     traverse(st0) do st::SyntaxTree
-        k = JS.kind(st)
-        if k in JS.KSet"module quote"
+        k = JS.head(st)
+        if k in (:module, :quote)
             return traversal_no_recurse
-        elseif k in JS.KSet"export public"
+        elseif k in (:export, :public)
             collect_export_public_occurrences!(occurrences, st, context_module)
             return traversal_no_recurse
-        elseif k in JS.KSet"import using"
+        elseif k in (:import, :using)
             collect_import_using_occurrences!(occurrences, st, context_module)
             return traversal_no_recurse
         end
@@ -607,7 +607,7 @@ function collect_macrocall_occurrences!(
         soft_scope::Bool = false,
     )
     traverse(st0) do st::SyntaxTree
-        JS.kind(st) === JS.K"macrocall" || return nothing
+        JS.head(st) === :macrocall || return nothing
         JS.numchildren(st) ≥ 1 || return nothing
         should_resolve_macrocall(
             context_module, world, st0, JS.byte_range(st)) || return traversal_no_recurse
@@ -666,13 +666,13 @@ function collect_inert_global_occurrences!(
         collect_resolved_inert_globals!(occurrences, resolution, world)
     end
 
-    seen = Set{Tuple{JS.Kind,UnitRange{Int}}}()
+    seen = Set{Tuple{Symbol,UnitRange{Int}}}()
     traverse(st3) do inert_tree::SyntaxTree
         is_import_eval_call(inert_tree) && return traversal_no_recurse
-        JS.kind(inert_tree) in JS.KSet"inert syntaxinert" || return nothing
+        JS.head(inert_tree) in (:inert, :syntaxinert) || return nothing
         JS.numchildren(inert_tree) >= 1 || return nothing
         range = JS.byte_range(inert_tree)
-        key = (JS.kind(inert_tree), range)
+        key = (JS.head(inert_tree), range)
         key in seen && return traversal_no_recurse
         push!(seen, key)
         # Generated ranges were handled above with their dedicated argument scope.

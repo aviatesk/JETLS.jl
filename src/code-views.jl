@@ -34,7 +34,7 @@ end
 
 function find_macrocall_by_range(st0_top::SyntaxTree, range::UnitRange{<:Integer})
     return traverse(st0_top) do st::SyntaxTree
-        JS.kind(st) === JS.K"macrocall" || return nothing
+        JS.head(st) === :macrocall || return nothing
         JS.byte_range(st) == range || return nothing
         return TraversalReturn(st; terminate=true)
     end

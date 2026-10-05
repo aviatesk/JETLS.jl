@@ -144,7 +144,7 @@ function _get_hover(
     end
     if type_str === nothing && display_node === node && binfo !== nothing && !is_local
         # A global assignment LHS is a store, so its byte range carries no inferred type,
-        # and `node` is the lowered tree's `K"BindingId"` here, which the
+        # and `node` is the lowered tree's `:bindingid` here, which the
         # `resolve_global_const` fallback below doesn't handle either. Recover the
         # type from the binding itself so a definition site shows what a reference shows.
         binding_typ = global_binding_typ(binfo, world)
@@ -168,7 +168,7 @@ function _get_hover(
     # Cursor past the closing punctuation of a call-like surface (`f(x)│`,
     # `xs[i]│`, `[a, b]│`) — suppress the doc body and show only the
     # `expr :: T` header.
-    is_call_like_position = JS.kind(node) in _CALL_LIKE_KINDS
+    is_call_like_position = JS.head(node) in _CALL_LIKE_HEADS
     if !is_call_like_position
         if !is_local
             bdoc = symbol_literal_node !== nothing ? nothing :
@@ -255,12 +255,12 @@ binding_kind_label(kind::Symbol) =
     kind === :local ? "(local)" : "(global)"
 
 function symbol_literal_container(st0_top::SyntaxTree, node::SyntaxTree)
-    JS.is_identifier(node) || return nothing
+    JS.head(node) === :identifier || return nothing
     bas = @something byte_ancestors(st0_top, first(JS.byte_range(node))) return nothing
     length(bas) ≥ 2 || return nothing
     bas[1] === node || return nothing
     parent = bas[2]
-    JS.kind(parent) === JS.K"inert" || return nothing
+    JS.head(parent) === :inert || return nothing
     JS.numchildren(parent) == 1 || return nothing
     parent[1] === node || return nothing
     startswith(JS.sourcetext(parent), ":") || return nothing
@@ -331,14 +331,14 @@ function lookup_doc_for_identifier(
         node::SyntaxTree, context_module::Module, ctx::Union{Nothing,InferredTreeContext},
         @nospecialize(sig), world::UInt
     )
-    if JS.kind(node) === JS.K"." && JS.numchildren(node) ≥ 2
+    if JS.head(node) === :. && JS.numchildren(node) ≥ 2
         prefix_node = node[1]
         identifier_node = node[2]
-        # EST wraps the RHS of dot expressions in `K"inert"`
-        if JS.kind(identifier_node) === JS.K"inert" && JS.numchildren(identifier_node) ≥ 1
+        # EST wraps the RHS of dot expressions in `:inert`
+        if JS.head(identifier_node) === :inert && JS.numchildren(identifier_node) ≥ 1
             identifier_node = identifier_node[1]
         end
-        JS.is_identifier(identifier_node) || return nothing
+        JS.head(identifier_node) === :identifier || return nothing
         field = Symbol(@something get_name_val(identifier_node) return nothing)
         mod = resolve_dot_prefix_module(prefix_node, context_module, ctx, world)
         if mod !== nothing
@@ -352,7 +352,7 @@ function lookup_doc_for_identifier(
         prefix_typ === nothing && return nothing
         return lookup_field_doc(prefix_typ, field, world)
     end
-    JS.is_identifier(node) || return nothing
+    JS.head(node) === :identifier || return nothing
     name = @something get_name_val(node) return nothing
     return lookup_doc_for_binding(context_module, Symbol(name), sig, world)
 end
@@ -367,7 +367,7 @@ function resolve_dot_prefix_module(
         dotprefix::SyntaxTree, context_module::Module,
         ctx::Union{Nothing,InferredTreeContext}, world::UInt
     )
-    if JS.is_identifier(dotprefix) && (nv = get_name_val(dotprefix)) !== nothing
+    if JS.head(dotprefix) === :identifier && (nv = get_name_val(dotprefix)) !== nothing
         name = Symbol(nv)
         if Base.invoke_in_world(world, isdefinedglobal, context_module, name)
             v = Base.invoke_in_world(world, getglobal, context_module, name)

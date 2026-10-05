@@ -40,12 +40,12 @@ function testset_line(testset::SyntaxTree)
 end
 
 # Find the description string node of a `@testset` macrocall.
-# Returns `K"String"` for simple literals or `K"string"` for interpolated strings.
-# Both include quotes in their sourcetext.
+# Returns a string literal for simple literals or a `:string` node for interpolated
+# strings. Both include quotes in their sourcetext.
 function testset_description_node(testset::SyntaxTree)
     for i = 2:JS.numchildren(testset)
         child = testset[i]
-        if JS.kind(child) in JS.KSet"string String"
+        if is_string_literal(child) || JS.head(child) === :string
             return child
         end
     end
@@ -119,10 +119,10 @@ end
 function find_executable_testsets(st0_top::SyntaxTree)
     testsets = JS.SyntaxList()
     traverse(st0_top) do st0::SyntaxTree
-        if JS.kind(st0) in JS.KSet"function macro"
+        if JS.head(st0) in (:function, :macro)
             # avoid visit inside function scope
             return traversal_no_recurse
-        elseif JS.kind(st0) === JS.K"macrocall" && JS.numchildren(st0) ≥ 2
+        elseif JS.head(st0) === :macrocall && JS.numchildren(st0) ≥ 2
             macroname = st0[1]
             if get_name_val(macroname) == "@testset"
                 if testset_description_node(st0) !== nothing
@@ -253,10 +253,10 @@ function testrunner_testcase_code_actions!(
     )
     st0_top = build_syntax_tree(fi)
     traverse(st0_top) do st0::SyntaxTree
-        if JS.kind(st0) in JS.KSet"function macro"
+        if JS.head(st0) in (:function, :macro)
             # avoid visit inside function scope
             return traversal_no_recurse
-        elseif JS.kind(st0) === JS.K"macrocall" && JS.numchildren(st0) ≥ 1
+        elseif JS.head(st0) === :macrocall && JS.numchildren(st0) ≥ 1
             macroname = st0[1]
             if get_name_val(macroname) in TEST_MACROS
                 tcr = jsobj_to_range(st0, fi; adjust_last=1) # +1 to support cases like `@test ...│`

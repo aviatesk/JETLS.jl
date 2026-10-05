@@ -9,7 +9,7 @@
 # surface AST level analysis, so cases like `@enum` cannot be fully handled.
 # However, if we were to analyze `st1` after macro expansion, we would need to analyze
 # much more complex ASTs than `st0`, and the algorithmic complexity would increase
-# significantly, especially since K"escape" and K"hygienic-scope" are introduced at
+# significantly, especially since `:escape` and `:hygienic-scope` are introduced at
 # unspecified locations.
 # The current approach of performing scope analysis only on trees that introduce local
 # scopes seems to achieve a good trade-off between implementation complexity and analysis
@@ -94,7 +94,7 @@ end
 function extract_document_symbols(
         st0_top::SyntaxTree, fi::FileInfo, context_module::Module, world::UInt
     )
-    @assert JS.kind(st0_top) === JS.K"toplevel"
+    @assert JS.head(st0_top) === :toplevel
     symbols = DocumentSymbol[]
     extract_toplevel_symbols!(symbols, st0_top, fi, context_module, world)
     sort!(symbols; by = s::DocumentSymbol -> (s.range.start.line, s.range.start.character))
@@ -114,36 +114,36 @@ function extract_toplevel_symbol!(
         symbols::Vector{DocumentSymbol}, st0::SyntaxTree, fi::FileInfo,
         context_module::Module, world::UInt
     )
-    k = JS.kind(st0)
-    if k === JS.K"module"
+    k = JS.head(st0)
+    if k === :module
         extract_module_symbol!(symbols, st0, fi, context_module, world)
-    elseif k === JS.K"function"
+    elseif k === :function
         extract_function_symbol!(symbols, st0, fi, context_module, world)
-    elseif k === JS.K"macro"
+    elseif k === :macro
         extract_macro_symbol!(symbols, st0, fi, context_module, world)
-    elseif k === JS.K"struct"
+    elseif k === :struct
         extract_struct_symbol!(symbols, st0, fi, context_module, world)
-    elseif k === JS.K"abstract"
+    elseif k === :abstract
         extract_abstract_type_symbol!(symbols, st0, fi)
-    elseif k === JS.K"primitive"
+    elseif k === :primitive
         extract_primitive_type_symbol!(symbols, st0, fi)
-    elseif k === JS.K"const"
+    elseif k === :const
         extract_const_symbols!(symbols, st0, fi, context_module, world)
-    elseif k === JS.K"global"
+    elseif k === :global
         extract_global_symbols!(symbols, st0, fi, context_module, world)
-    elseif k === JS.K"="
+    elseif k === :(=)
         extract_toplevel_assignment_symbols!(symbols, st0, fi, context_module, world)
-    elseif k === JS.K"let"
+    elseif k === :let
         extract_let_symbol!(symbols, st0, fi, context_module, world)
-    elseif k === JS.K"while"
+    elseif k === :while
         extract_while_symbol!(symbols, st0, fi, context_module, world)
-    elseif k === JS.K"for"
+    elseif k === :for
         extract_for_symbol!(symbols, st0, fi, context_module, world)
-    elseif k === JS.K"if"
+    elseif k === :if
         extract_if_symbol!(symbols, st0, fi, context_module, world)
-    elseif k === JS.K"toplevel" || k === JS.K"block"
+    elseif k === :toplevel || k === :block
         extract_toplevel_symbols!(symbols, st0, fi, context_module, world)
-    elseif k === JS.K"macrocall"
+    elseif k === :macrocall
         extract_macrocall_symbol!(symbols, st0, fi, context_module, world)
     end
     return nothing
@@ -165,7 +165,7 @@ function extract_module_symbol!(
     end
     children = DocumentSymbol[]
     body = st0[end]
-    if JS.kind(body) === JS.K"block"
+    if JS.head(body) === :block
         extract_toplevel_symbols!(children, body, fi, context_module, world)
     end
     is_baremodule = has_source_flags(st0, JS.BARE_MODULE_FLAG)
@@ -204,11 +204,11 @@ end
 
 function extract_function_name(sig::SyntaxTree)
     sig = unwrap_funcdef_sig(sig)
-    k = JS.kind(sig)
-    if k === JS.K"call"
+    k = JS.head(sig)
+    if k === :call
         JS.numchildren(sig) ≥ 1 || return nothing
         callee = sig[1]
-        if JS.kind(callee) === JS.K"::"
+        if JS.head(callee) === :(::)
             JS.numchildren(callee) ≥ 1 || return nothing
             callee = callee[1]
         end
@@ -220,12 +220,12 @@ function extract_function_name(sig::SyntaxTree)
     elseif is_mainfunc0(sig)
         # No-parens form: @main(args...) — entire signature is a macrocall
         return ("@main", sig)
-    elseif k === JS.K"tuple"
+    elseif k === :tuple
         return nothing
-    elseif JS.is_identifier(k)
+    elseif k === :identifier
         name = @something get_name_val(sig) return nothing
         return (name, sig)
-    elseif k === JS.K"."
+    elseif k === :.
         name = @something extract_dotted_name(sig) return nothing
         return (name, sig)
     end
@@ -233,20 +233,20 @@ function extract_function_name(sig::SyntaxTree)
 end
 
 function extract_dotted_name(node::SyntaxTree)
-    k = JS.kind(node)
-    if JS.is_identifier(k)
+    k = JS.head(node)
+    if k === :identifier
         return get_name_val(node)
-    elseif k === JS.K"."
+    elseif k === :.
         JS.numchildren(node) ≥ 2 || return nothing
         lhs = @something extract_dotted_name(node[1]) return nothing
         rhs_node = node[2]
-        rhs = @something if JS.kind(rhs_node) in JS.KSet"quote inert" && JS.numchildren(rhs_node) ≥ 1
+        rhs = @something if JS.head(rhs_node) in (:quote, :inert) && JS.numchildren(rhs_node) ≥ 1
             get_name_val(rhs_node[1])
         else
             get_name_val(rhs_node)
         end return nothing
         return lhs * "." * rhs
-    elseif k === JS.K"curly"
+    elseif k === :curly
         JS.numchildren(node) ≥ 1 || return nothing
         return extract_dotted_name(node[1])
     end
@@ -260,12 +260,12 @@ function extract_macro_symbol!(
     JS.numchildren(st0) ≥ 1 || return nothing
     sig_orig = st0[1]
     sig = unwrap_funcdef_sig(sig_orig)
-    if JS.kind(sig) === JS.K"call"
+    if JS.head(sig) === :call
         JS.numchildren(sig) ≥ 1 || return nothing
         callee = sig[1]
         name = @something get_name_val(callee) return nothing
         name_node = callee
-    elseif JS.is_identifier(sig)
+    elseif JS.head(sig) === :identifier
         name = @something get_name_val(sig) return nothing
         name_node = sig
     else
@@ -291,11 +291,11 @@ function extract_struct_symbol!(
     JS.numchildren(st0) ≥ 2 || return nothing
     sig_node = st0[2]
     name_node = sig_node
-    if JS.kind(name_node) === JS.K"<:"
+    if JS.head(name_node) === :<:
         JS.numchildren(name_node) ≥ 1 || return nothing
         name_node = name_node[1]
     end
-    if JS.kind(name_node) === JS.K"curly"
+    if JS.head(name_node) === :curly
         JS.numchildren(name_node) ≥ 1 || return nothing
         name_node = name_node[1]
     end
@@ -307,10 +307,10 @@ function extract_struct_symbol!(
         body = st0[3]
         for i = 1:JS.numchildren(body)
             child = body[i]
-            child_k = JS.kind(child)
-            if child_k === JS.K"function"
+            child_k = JS.head(child)
+            if child_k === :function
                 extract_function_symbol!(children, child, fi, context_module, world)
-            elseif child_k === JS.K"="
+            elseif child_k === :(=)
                 extract_toplevel_assignment_symbols!(
                     children, child, fi, context_module, world)
             else
@@ -332,13 +332,13 @@ function extract_struct_field!(
         symbols::Vector{DocumentSymbol}, st0::SyntaxTree, fi::FileInfo
     )
     field_node = st0
-    k = JS.kind(st0)
-    if k === JS.K"const" && JS.numchildren(st0) ≥ 1
+    k = JS.head(st0)
+    if k === :const && JS.numchildren(st0) ≥ 1
         field_node = st0[1]
-        k = JS.kind(field_node)
+        k = JS.head(field_node)
     end
     name_node = field_node
-    if k === JS.K"::" && JS.numchildren(field_node) ≥ 1
+    if k === :(::) && JS.numchildren(field_node) ≥ 1
         name_node = field_node[1]
     end
     name = @something get_name_val(name_node) return nothing
@@ -357,11 +357,11 @@ function extract_abstract_type_symbol!(
     )
     JS.numchildren(st0) ≥ 1 || return nothing
     name_node = def_node = st0[1]
-    if JS.kind(name_node) === JS.K"<:"
+    if JS.head(name_node) === :<:
         JS.numchildren(name_node) ≥ 1 || return nothing
         name_node = name_node[1]
     end
-    if JS.kind(name_node) === JS.K"curly"
+    if JS.head(name_node) === :curly
         JS.numchildren(name_node) ≥ 1 || return nothing
         name_node = name_node[1]
     end
@@ -383,7 +383,7 @@ function extract_primitive_type_symbol!(
     def_node = st0[1]
     bits_node = st0[2]
     name_node = def_node
-    if JS.kind(name_node) === JS.K"<:"
+    if JS.head(name_node) === :<:
         JS.numchildren(name_node) ≥ 1 || return nothing
         name_node = name_node[1]
     end
@@ -404,7 +404,7 @@ function extract_const_symbols!(
     )
     JS.numchildren(st0) ≥ 1 || return nothing
     assign = st0[1]
-    JS.kind(assign) === JS.K"=" || return nothing
+    JS.head(assign) === :(=) || return nothing
     JS.numchildren(assign) ≥ 2 || return nothing
     lhs = assign[1]
     rhs = assign[2]
@@ -421,18 +421,18 @@ function extract_global_symbols!(
     )
     JS.numchildren(st0) ≥ 1 || return nothing
     inner = st0[1]
-    inner_kind = JS.kind(inner)
-    if inner_kind === JS.K"function"
+    inner_kind = JS.head(inner)
+    if inner_kind === :function
         extract_function_symbol!(symbols, inner, fi, context_module, world; range_node = st0)
         return nothing
-    elseif inner_kind === JS.K"=" && JS.numchildren(inner) ≥ 2 && is_short_function_lhs(inner[1])
+    elseif inner_kind === :(=) && JS.numchildren(inner) ≥ 2 && is_short_function_lhs(inner[1])
         extract_short_function_symbol!(
             symbols, inner, fi, context_module, world; range_node = st0)
         return nothing
     end
     range = jsobj_to_range(st0, fi)
     detail = lstrip(JS.sourcetext(st0))
-    if inner_kind === JS.K"="
+    if inner_kind === :(=)
         JS.numchildren(inner) ≥ 2 || return nothing
         lhs = inner[1]
         rhs = inner[2]
@@ -452,17 +452,17 @@ function extract_assignment_symbols!(
         rhs::Union{SyntaxTree,Nothing}, range::Range, kind::SymbolKind.Ty,
         detail::AbstractString, fi::FileInfo, context_module::Module, world::UInt
     )
-    children = if rhs !== nothing && JS.kind(rhs) === JS.K"let"
+    children = if rhs !== nothing && JS.head(rhs) === :let
         let_children = DocumentSymbol[]
         extract_let_symbol!(let_children, rhs, fi, context_module, world)
         @somereal let_children Some(nothing)
     else
         nothing
     end
-    lhs_kind = JS.kind(lhs)
-    if lhs_kind === JS.K"tuple"
+    lhs_kind = JS.head(lhs)
+    if lhs_kind === :tuple
         # Handle named tuple destructuring: `(; x, y) = ...`
-        if JS.numchildren(lhs) == 1 && JS.kind(lhs[1]) === JS.K"parameters"
+        if JS.numchildren(lhs) == 1 && JS.head(lhs[1]) === :parameters
             params = lhs[1]
             for i = 1:JS.numchildren(params)
                 name_node = params[i]
@@ -479,7 +479,7 @@ function extract_assignment_symbols!(
             # Handle regular tuple destructuring: `x, y = ...` or `(a, b) = ...`
             for i = 1:JS.numchildren(lhs)
                 name_node = lhs[i]
-                if JS.kind(name_node) === JS.K"::"
+                if JS.head(name_node) === :(::)
                     JS.numchildren(name_node) ≥ 1 || continue
                     name_node = name_node[1]
                 end
@@ -495,7 +495,7 @@ function extract_assignment_symbols!(
         end
     else
         name_node = lhs
-        if lhs_kind === JS.K"::"
+        if lhs_kind === :(::)
             JS.numchildren(lhs) ≥ 1 || return nothing
             name_node = lhs[1]
         end
@@ -508,7 +508,7 @@ function extract_assignment_symbols!(
             selectionRange = jsobj_to_range(name_node, fi),
             children))
     end
-    if rhs !== nothing && JS.kind(rhs) === JS.K"block"
+    if rhs !== nothing && JS.head(rhs) === :block
         extract_toplevel_symbols!(symbols, rhs, fi, context_module, world)
     end
     return nothing
@@ -520,7 +520,7 @@ function extract_toplevel_assignment_symbols!(
     )
     JS.numchildren(st0) ≥ 2 || return nothing
     lhs = st0[1]
-    JS.kind(lhs) in JS.KSet". ref" && return nothing # Skip property assignment like obj.field = value
+    JS.head(lhs) in (:., :ref) && return nothing # Skip property assignment like obj.field = value
     if is_short_function_lhs(lhs)
         extract_short_function_symbol!(symbols, st0, fi, context_module, world)
         return nothing
@@ -536,7 +536,7 @@ end
 
 function is_short_function_lhs(lhs::SyntaxTree)
     lhs = unwrap_funcdef_sig(lhs)
-    return JS.kind(lhs) === JS.K"call" || is_mainfunc0(lhs)
+    return JS.head(lhs) === :call || is_mainfunc0(lhs)
 end
 
 # Short-form function definition: `f(x) = x` or `f(x) where T = x`
@@ -573,7 +573,7 @@ function extract_namespace_symbol!(
     JS.numchildren(st0) ≥ 2 || return nothing
     children = @something extract_scoped_children(st0, fi, context_module, world) return nothing
     body = st0[end]
-    if JS.kind(body) === JS.K"block"
+    if JS.head(body) === :block
         extract_macrocalls_from_block!(children, body, fi, context_module, world)
     end
     push!(symbols, DocumentSymbol(;
@@ -612,10 +612,10 @@ function extract_if_children!(
     )
     for i in 2:JS.numchildren(st0)
         child = st0[i]
-        k = JS.kind(child)
-        if k === JS.K"block"
+        k = JS.head(child)
+        if k === :block
             extract_toplevel_symbols!(children, child, fi, context_module, world)
-        elseif k === JS.K"elseif" || k === JS.K"if"
+        elseif k === :elseif || k === :if
             extract_if_children!(children, child, fi, context_module, world)
         end
     end
@@ -628,7 +628,7 @@ function extract_macrocalls_from_block!(
     )
     for i = 1:JS.numchildren(st)
         child = st[i]
-        if JS.kind(child) === JS.K"macrocall"
+        if JS.head(child) === :macrocall
             extract_macrocall_symbol!(symbols, child, fi, context_module, world)
         end
     end
@@ -660,7 +660,7 @@ function extract_static_if_symbol!(
     )
     JS.numchildren(st0) ≥ 3 || return nothing
     if_node = st0[3]
-    JS.kind(if_node) === JS.K"if" || return nothing
+    JS.head(if_node) === :if || return nothing
     extract_if_symbol!(symbols, if_node, fi, context_module, world;
         prefix = "@static if ", range_node = st0)
     return nothing
@@ -669,10 +669,10 @@ end
 function get_macrocall_name(st0::SyntaxTree)
     JS.numchildren(st0) ≥ 1 || return nothing
     macro_node = st0[1]
-    if JS.kind(macro_node) === JS.K"."
+    if JS.head(macro_node) === :.
         JS.numchildren(macro_node) ≥ 2 || return nothing
         rhs = macro_node[2]
-        if JS.kind(rhs) in JS.KSet"quote inert" && JS.numchildren(rhs) ≥ 1
+        if JS.head(rhs) in (:quote, :inert) && JS.numchildren(rhs) ≥ 1
             return get_name_val(rhs[1])
         else
             return get_name_val(rhs)
@@ -693,31 +693,31 @@ function extract_testset_symbol!(
     description_node = nothing
     for i = 3:JS.numchildren(st0)-1
         child = st0[i]
-        if JS.kind(child) in JS.KSet"string String"
+        if is_string_literal(child) || JS.head(child) === :string
             description_node = child
             break
         end
     end
     description = if isnothing(description_node)
         ""
-    elseif JS.kind(description_node) === JS.K"String"
-        description_node.value isa String ? description_node.value::String : ""
+    elseif is_string_literal(description_node)
+        description_node.value::String
     else
         @something extract_string_content(description_node) ""
     end
 
     body = st0[end]
-    body_kind = JS.kind(body)
+    body_kind = JS.head(body)
     children = DocumentSymbol[]
-    if body_kind === JS.K"block"
+    if body_kind === :block
         extract_toplevel_symbols!(children, body, fi, context_module, world)
-    elseif body_kind === JS.K"for" || body_kind === JS.K"let"
+    elseif body_kind === :for || body_kind === :let
         JS.numchildren(body) ≥ 2 || return nothing
         body_block = body[end]
-        if JS.kind(body_block) === JS.K"block"
+        if JS.head(body_block) === :block
             extract_toplevel_symbols!(children, body_block, fi, context_module, world)
         end
-    elseif body_kind === JS.K"call"
+    elseif body_kind === :call
         # Function call: @testset "desc" test_func()
         # No children to extract, the test function itself is the body
     else
@@ -726,7 +726,7 @@ function extract_testset_symbol!(
 
     # For @testset let, use bindings node as selection range since there's no description
     selection_node = !isnothing(description_node) ? description_node :
-        body_kind === JS.K"let" ? body[1] : body
+        body_kind === :let ? body[1] : body
 
     push!(symbols, DocumentSymbol(;
         name = isempty(description) ? "@testset" : ("@testset \"$(description)\""),
@@ -739,12 +739,12 @@ function extract_testset_symbol!(
 end
 
 function extract_string_content(st0::SyntaxTree)
-    JS.kind(st0) === JS.K"string" || return nothing
+    JS.head(st0) === :string || return nothing
     JS.numchildren(st0) ≥ 1 || return nothing
     first_child = st0[1]
-    if JS.numchildren(st0) == 1 && JS.kind(first_child) === JS.K"String"
+    if JS.numchildren(st0) == 1 && is_string_literal(first_child)
         # Simple string without interpolation
-        return first_child.value isa String ? first_child.value::String : nothing
+        return first_child.value::String
     else
         # Interpolated string - extract content from source text
         src = JS.sourcetext(st0)
@@ -769,7 +769,7 @@ function extract_enum_symbol!(symbols::Vector{DocumentSymbol}, st0::SyntaxTree, 
     JS.numchildren(st0) ≥ 3 || return nothing
     type_node = st0[3]
     name_node = type_node
-    if JS.kind(type_node) === JS.K"::"
+    if JS.head(type_node) === :(::)
         JS.numchildren(type_node) ≥ 1 || return nothing
         name_node = type_node[1]
     end
@@ -791,14 +791,14 @@ end
 function extract_enum_value!(
         symbols::Vector{DocumentSymbol}, st0::SyntaxTree, enum_name::String, fi::FileInfo
     )
-    if JS.kind(st0) === JS.K"block"
+    if JS.head(st0) === :block
         for i = 1:JS.numchildren(st0)
             extract_enum_value!(symbols, st0[i], enum_name, fi)
         end
         return nothing
     end
     name_node = st0
-    if JS.kind(st0) === JS.K"="
+    if JS.head(st0) === :(=)
         JS.numchildren(st0) ≥ 1 || return nothing
         name_node = st0[1]
     end
@@ -1030,10 +1030,10 @@ function extract_local_scope_bindings!(
             if is_func
                 kind = SymbolKind.Function
                 parent = get(parent_map, (fb,lb), nothing)
-                if !isnothing(parent) && JS.kind(parent) === JS.K"call"
+                if !isnothing(parent) && JS.head(parent) === :call
                     call_fb, call_lb = JS.first_byte(parent), JS.last_byte(parent)
                     grandparent = get(parent_map, (call_fb, call_lb), nothing)
-                    is_short_form = !isnothing(grandparent) && JS.kind(grandparent) === JS.K"="
+                    is_short_form = !isnothing(grandparent) && JS.head(grandparent) === :(=)
                     detail = is_short_form ?
                         JS.sourcetext(parent) * " =" :
                         "function " * JS.sourcetext(parent)
@@ -1041,11 +1041,11 @@ function extract_local_scope_bindings!(
             elseif binfo.kind === :static_parameter
                 kind = SymbolKind.TypeParameter
                 parent = get(parent_map, (fb,lb), nothing)
-                if !isnothing(parent) && JS.kind(parent) === JS.K"<:"
+                if !isnothing(parent) && JS.head(parent) === :<:
                     detail = JS.sourcetext(parent)
                 end
             elseif binfo.kind === :argument
-                if JS.kind(source_node) === JS.K"macrocall"
+                if JS.head(source_node) === :macrocall
                     detail = JS.sourcetext(source_node)
                 else
                     detail = extract_argument_detail(parent_map, fb, lb)
@@ -1147,15 +1147,15 @@ function extract_child_scope_symbols!(
         push!(group[2], child_id)
     end
     for (key, (construct, group_ids)) in construct_groups
-        construct_kind = JS.kind(construct)
-        if construct_kind in JS.KSet"function =" && defines_closure(lctx, group_ids)
+        construct_kind = JS.head(construct)
+        if construct_kind in (:function, :(=)) && defines_closure(lctx, group_ids)
             append!(transparent_ids, group_ids)
             continue
         end
         key in seen || push!(seen, key)
-        if construct_kind === JS.K"try"
+        if construct_kind === :try
             push_try_namespace_symbol!(symbols, construct, lctx, group_ids)
-        elseif construct_kind in JS.KSet"function ="
+        elseif construct_kind in (:function, :(=))
             push_method_symbol!(symbols, construct, lctx, group_ids)
         else
             child_symbols = @somereal extract_local_scope_bindings(lctx, group_ids) continue
@@ -1189,13 +1189,13 @@ function push_method_symbol!(
     JS.numchildren(construct) ≥ 1 || return nothing
     sig = construct[1]
     name, name_node = @something extract_function_name(sig) return nothing
-    is_short_form = JS.kind(construct) === JS.K"=" ||
+    is_short_form = JS.head(construct) === :(=) ||
         has_source_flags(construct, JS.SHORT_FORM_FUNCTION_FLAG)
     sig_text = lstrip(JS.sourcetext(sig))
     detail = is_short_form ? sig_text * " =" : "function " * sig_text
     construct_range = (JS.first_byte(construct), JS.last_byte(construct))
     range_node = get(lctx.parent_map, construct_range, nothing)
-    if range_node === nothing || JS.kind(range_node) !== JS.K"global"
+    if range_node === nothing || JS.head(range_node) !== :global
         range_node = construct
     end
     child_lctx = LocalScopeContext(lctx;
@@ -1218,10 +1218,10 @@ function push_namespace_symbol!(
         children::Vector{DocumentSymbol}, fi::FileInfo
     )
     JS.numchildren(construct) ≥ 1 || return nothing
-    k = JS.kind(construct)
-    prefix = k === JS.K"for" ? "for " :
-             k === JS.K"while" ? "while " :
-             k === JS.K"let" ? "let " : ""
+    k = JS.head(construct)
+    prefix = k === :for ? "for " :
+             k === :while ? "while " :
+             k === :let ? "let " : ""
     detail = rstrip(prefix * lstrip(JS.sourcetext(construct[1])))
     push!(symbols, DocumentSymbol(;
         name = " ",
@@ -1235,7 +1235,7 @@ end
 
 # EST try node children are positional:
 #   [try_body, catch_var, catch_body, finally_body, else_body]
-# Missing parts use K"Value" placeholders.
+# Missing parts use synthesized `:value` placeholders.
 const TRY_CLAUSE_POSITIONS =
     (("try", 1), ("catch", 3), ("else", 5), ("finally", 4))
 
@@ -1255,7 +1255,7 @@ function push_try_namespace_symbol!(
     for (clause_kind, child_idx) in TRY_CLAUSE_POSITIONS
         child_idx ≤ nc || continue
         child = try_node[child_idx]
-        JS.kind(child) === JS.K"Value" && continue
+        is_synthesized_value(child) && continue
         push!(parts, clause_kind)
         clause_ids = @something get(classified, clause_kind, nothing) continue
         clause_symbols = @somereal extract_local_scope_bindings(lctx, clause_ids) continue
@@ -1308,24 +1308,24 @@ function find_scope_construct(
     prov = JS.flattened_provenance(scope.node_id)
     isempty(prov) && return nothing
     source_node = first(prov)
-    k = JS.kind(source_node)
+    k = JS.head(source_node)
     fb, lb = JS.first_byte(source_node), JS.last_byte(source_node)
     (iszero(fb) && iszero(lb)) && return nothing
-    if k in JS.KSet"for while let try"
+    if k in (:for, :while, :let, :try)
         # Look up the actual st0 node via node_map, since the provenance node
         # lives in the lowered graph and has different children.
         return get(node_map, (fb, lb), nothing)
-    elseif k === JS.K"function"
+    elseif k === :function
         node = get(node_map, (fb, lb), nothing)
-        if node !== nothing && JS.kind(node) in JS.KSet"function ="
+        if node !== nothing && JS.head(node) in (:function, :(=))
             return node
         end
-    elseif k === JS.K"block"
+    elseif k === :block
         # In the new EST, try clause scopes have `block` provenance
         # pointing to the block child of the try node.
         # Walk up parent_map to find the enclosing try node.
         node = get(parent_map, (fb, lb), nothing)
-        if node !== nothing && JS.kind(node) === JS.K"try"
+        if node !== nothing && JS.head(node) === :try
             return node
         end
     end
@@ -1337,7 +1337,7 @@ function extract_argument_detail(
     )
     parent = get(parent_map, (fb, lb), nothing)
     detail = nothing
-    if !isnothing(parent) && (JS.kind(parent) in JS.KSet":: kw ..." ||
+    if !isnothing(parent) && (JS.head(parent) in (:(::), :kw, :...) ||
             is_nospecialize_or_specialize_macrocall0(parent))
         detail = lstrip(JS.sourcetext(parent))
         fb, lb = JS.first_byte(parent), JS.last_byte(parent)
@@ -1345,7 +1345,7 @@ function extract_argument_detail(
     end
     # Handle keyword arguments: `f(; kw)` or `f(; kw=default)`
     # Only use parameters if we don't already have a more specific detail
-    if isnothing(detail) && !isnothing(parent) && JS.kind(parent) === JS.K"parameters"
+    if isnothing(detail) && !isnothing(parent) && JS.head(parent) === :parameters
         detail = lstrip(JS.sourcetext(parent))
     end
     return detail
@@ -1357,26 +1357,26 @@ function extract_local_variable_detail(
     parent = get(parent_map, (fb, lb), nothing)
     detail = nothing
     # Handle type annotation: `x::T` or `x::T = value`
-    if !isnothing(parent) && JS.kind(parent) === JS.K"::"
+    if !isnothing(parent) && JS.head(parent) === :(::)
         detail = lstrip(JS.sourcetext(parent))
         fb, lb = JS.first_byte(parent), JS.last_byte(parent)
         parent = get(parent_map, (fb, lb), nothing)
     end
     # Handle named tuple destructuring: `(; x, y) = ...`
-    if !isnothing(parent) && JS.kind(parent) === JS.K"parameters"
+    if !isnothing(parent) && JS.head(parent) === :parameters
         fb, lb = JS.first_byte(parent), JS.last_byte(parent)
         parent = get(parent_map, (fb, lb), nothing)
     end
     # Handle tuple destructuring: `x, y = ...` or `(a, b) = ...`
-    if !isnothing(parent) && JS.kind(parent) === JS.K"tuple"
+    if !isnothing(parent) && JS.head(parent) === :tuple
         fb, lb = JS.first_byte(parent), JS.last_byte(parent)
         parent = get(parent_map, (fb, lb), nothing)
     end
     # Handle assignment: `x = value` or for-loop iteration: `for x in xs`
-    if !isnothing(parent) && JS.kind(parent) === JS.K"="
+    if !isnothing(parent) && JS.head(parent) === :(=)
         fb, lb = JS.first_byte(parent), JS.last_byte(parent)
         grandparent = get(parent_map, (fb, lb), nothing)
-        if !isnothing(grandparent) && JS.kind(grandparent) === JS.K"for"
+        if !isnothing(grandparent) && JS.head(grandparent) === :for
             detail = "for " * lstrip(JS.sourcetext(parent))
         else
             detail = first(split(strip(JS.sourcetext(parent)), '\n'))
@@ -1384,21 +1384,21 @@ function extract_local_variable_detail(
         parent = grandparent
     end
     # Handle local declaration: `local x` or `local x, y`
-    if !isnothing(parent) && JS.kind(parent) === JS.K"local"
+    if !isnothing(parent) && JS.head(parent) === :local
         detail = lstrip(JS.sourcetext(parent))
     end
     return detail
 end
 
-is_anonymous_function_rhs(st::SyntaxTree) = JS.kind(st) === JS.K"->" ||
-    (JS.kind(st) === JS.K"function" && JS.numchildren(st) ≥ 1 && JS.kind(st[1]) !== JS.K"call")
+is_anonymous_function_rhs(st::SyntaxTree) = JS.head(st) === :-> ||
+    (JS.head(st) === :function && JS.numchildren(st) ≥ 1 && JS.head(st[1]) !== :call)
 
 function find_anon_func_scope_ids(
         parent_map::Dict{Tuple{Int,Int},SyntaxTree}, fb::Int, lb::Int,
         func_to_scopes::Dict{Int,Vector{Int}}, ctx3::JL.VariableAnalysisContext
     )
     parent = @something get(parent_map, (fb, lb), nothing) return nothing
-    JS.kind(parent) === JS.K"=" || return nothing
+    JS.head(parent) === :(=) || return nothing
     JS.numchildren(parent) ≥ 2 || return nothing
     rhs = parent[2]
     is_anonymous_function_rhs(rhs) || return nothing

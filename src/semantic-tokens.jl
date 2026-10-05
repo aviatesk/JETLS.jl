@@ -205,21 +205,21 @@ end
 
 function collect_type_param_names_from_tree!(names::Set{String}, st0::SyntaxTree)
     traverse(st0) do node
-        k = JS.kind(node)
-        if k === JS.K"struct" && JS.numchildren(node) >= 2
+        k = JS.head(node)
+        if k === :struct && JS.numchildren(node) >= 2
             sig = node[2]
-        elseif k in JS.KSet"abstract primitive" && JS.numchildren(node) >= 1
+        elseif k in (:abstract, :primitive) && JS.numchildren(node) >= 1
             sig = node[1]
         else
             return
         end
-        if JS.kind(sig) === JS.K"<:" && JS.numchildren(sig) >= 1
+        if JS.head(sig) === :<: && JS.numchildren(sig) >= 1
             sig = sig[1]
         end
-        if JS.kind(sig) === JS.K"curly"
+        if JS.head(sig) === :curly
             for i = 2:JS.numchildren(sig)
                 param = sig[i]
-                if JS.kind(param) === JS.K"<:" && JS.numchildren(param) >= 1
+                if JS.head(param) === :<: && JS.numchildren(param) >= 1
                     param = param[1]
                 end
                 name = @something get_name_val(param) continue
