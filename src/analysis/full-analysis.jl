@@ -626,7 +626,7 @@ function has_any_parse_errors(server::Server, execution::AnalysisExecution)
         (; parsed_stream) = @something (isunsaveduri(uri) ?
             get_file_info(server.state, uri) :
             get_saved_file_info(server.state, uri)) return false
-        return !isempty(parsed_stream.diagnostics)
+        return JS.any_error(parsed_stream)
     end
 end
 
@@ -976,7 +976,7 @@ function new_analysis_result(
 
     entry = request.entry
     prev_result = execution.prev_result
-    replace_analysis_result = isempty(result.res.toplevel_error_reports) || isnothing(prev_result)
+    replace_analysis_result = isnothing(result.res.toplevel_error_report) || isnothing(prev_result)
     if !replace_analysis_result
         prev_result = prev_result::AnalysisResult
         (; actual2virtual, analyzer, analyzed_file_infos) = prev_result

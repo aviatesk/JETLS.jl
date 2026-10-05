@@ -128,7 +128,7 @@ end
                 A{T}(x) where T = new{T}(x)
             end
             """; analyze_from_definitions=true)
-        @test isempty(result.res.toplevel_error_reports)
+        @test isnothing(result.res.toplevel_error_report)
         @test isempty(get_reports(result))
     end
 end

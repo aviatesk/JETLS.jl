@@ -122,10 +122,10 @@ end
             """
         (; result) = analyze_concretization(code, filename; mode, timeout)
         if timeout == "inf"
-            @test isempty(result.res.toplevel_error_reports)
+            @test isnothing(result.res.toplevel_error_report)
             continue
         end
-        report = only(result.res.toplevel_error_reports)
+        report = result.res.toplevel_error_report
         @test report isa JETLS.JET.ConcretizationTimeoutErrorReport
         @test report.timeout == timeout
         if mode === :script
@@ -170,7 +170,7 @@ end
             """
         filename = joinpath(@__DIR__, "concretization-guarded.jl")
         (; result, context) = analyze_concretization(code, filename)
-        @test isempty(result.res.toplevel_error_reports)
+        @test isnothing(result.res.toplevel_error_report)
         @test isdefined(context, :Guarded)
     end
 
@@ -197,11 +197,11 @@ end
             @test Base.invokelatest(isdefined, context, :completed) == (native || timeout == "inf")
             @test isempty(result.res.inference_error_reports)
             if timeout == "inf"
-                @test isempty(result.res.toplevel_error_reports)
+                @test isnothing(result.res.toplevel_error_report)
                 @test isdefined(context, :Timed)
                 continue
             end
-            report = only(result.res.toplevel_error_reports)
+            report = result.res.toplevel_error_report
             @test report isa JETLS.JET.ConcretizationTimeoutErrorReport
             @test report.timeout == timeout
             @test report.file == filename
@@ -638,6 +638,78 @@ end
             diag = only(filter(diag -> diag.code == JETLS.TOPLEVEL_ERROR_CODE, diagnostics))
             @test diag.range.start.line == 3
             @test occursin("module expression third argument must be a block", diag.message)
+        end
+    end
+end
+
+@testset "top-level error stops full analysis" begin
+    let code = """
+        sin("before")
+        using UnexistingPkg
+        sin("after")
+        """
+        withscript(code) do script_path
+            diagnostics = get_open_diagnostics(dirname(script_path), script_path, code)
+            diag = only(filter(diag -> diag.code == JETLS.TOPLEVEL_ERROR_CODE, diagnostics))
+            @test diag.range.start.line == 1
+            @test occursin("UnexistingPkg", diag.message)
+            # diagnostics from statements processed before the error are kept
+            diag = only(filter(diag -> diag.code == JETLS.INFERENCE_METHOD_ERROR_CODE, diagnostics))
+            @test diag.range.start.line == 0
+        end
+    end
+end
+
+@testset "parser warnings do not block reanalysis" begin
+    code = """
+        x = 1e-400
+        sin("first")
+        """
+    withscript(code) do script_path
+        uri = filepath2uri(script_path)
+        is_method_error(diag) = diag.code == JETLS.INFERENCE_METHOD_ERROR_CODE
+        withserver() do (; writereadmsg)
+            let (; raw_res) = writereadmsg(make_DidOpenTextDocumentNotification(uri, code))
+                @test raw_res isa PublishDiagnosticsNotification
+                @test only(filter(is_method_error, raw_res.params.diagnostics)).range.start.line == 1
+            end
+            new_code = """
+                x = 1e-400
+
+                sin("second")
+                """
+            let (; raw_res) = writereadmsg(DidSaveTextDocumentNotification(;
+                    params = DidSaveTextDocumentParams(;
+                        textDocument = TextDocumentIdentifier(; uri),
+                        text = new_code)))
+                @test raw_res isa PublishDiagnosticsNotification
+                @test only(filter(is_method_error, raw_res.params.diagnostics)).range.start.line == 2
+            end
+        end
+    end
+end
+
+@testset "unsupported feature diagnostic" begin
+    mktempdir() do root_path
+        main_path = joinpath(root_path, "main.jl")
+        write(joinpath(root_path, "included.jl"), "sin(\"included\")\n")
+        code = """
+            include(identity, "included.jl")
+            """
+        write(main_path, code)
+        main_uri = filepath2uri(main_path)
+        withserver(; rootUri = filepath2uri(root_path)) do (; writereadmsg)
+            (; raw_res) = writereadmsg(make_DidOpenTextDocumentNotification(main_uri, code); read=2)
+            main_response = only(filter(raw_res) do response
+                return response isa PublishDiagnosticsNotification &&
+                    response.params.uri == main_uri
+            end)
+            diag = only(main_response.params.diagnostics)
+            @test diag.code == JETLS.TOPLEVEL_UNSUPPORTED_FEATURE_CODE
+            @test diag.severity == DiagnosticSeverity.Warning
+            @test diag.source == JETLS.DIAGNOSTIC_SOURCE_SAVE
+            @test diag.range.start.line == 0
+            @test occursin("mapexpr", diag.message)
         end
     end
 end

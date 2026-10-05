@@ -54,7 +54,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 >
 > Note: Path glob patterns use `/` as the separator on all platforms, including Windows; backslashes are not supported as separators.
 
+### Added
+
+- Added the [`toplevel/unsupported-feature`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/toplevel/unsupported-feature) warning, reported when full analysis loads code that uses a feature JETLS does not support and analyzes it with an approximation instead.
+  It is currently reported for `include(mapexpr, filename)` calls, whose included file is analyzed without applying `mapexpr`.
+
+### Changed
+
+- Full analysis now stops at the first top-level error, such as [`toplevel/error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/toplevel/error), [`toplevel/missing-concretization`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/toplevel/missing-concretization), or [`toplevel/concretization-timeout`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/toplevel/concretization-timeout):
+  code after the error is no longer loaded or analyzed, so follow-up errors caused by the incompletely loaded code are no longer reported.
+  Diagnostics for top-level code before the error are still reported, and method bodies are analyzed again once the error is fixed.
+
 ### Fixed
+
+- Fixed full analysis not rerunning on save for files with syntax warnings but no syntax errors, such as `parentheses are not required here`.
 
 - Fixed [`toplevel/abstract-field`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/toplevel/abstract-field) being reported on functions containing closures that capture a `@nospecialize`d argument, such as `f(@nospecialize x) = () -> x`.
 
