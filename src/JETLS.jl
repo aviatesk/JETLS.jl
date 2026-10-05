@@ -67,6 +67,7 @@ using JuliaLowering: JuliaLowering as JL
 using REPL: REPL # loading REPL is necessary to make `Base.Docs.doc(::Base.Docs.Binding)` work
 using Markdown: Markdown
 using TOML: TOML
+using TOMLSource: TOMLSource as TS
 using Test: Test # used to define new-style implementations of `@test`/`@testset`
 using TestRunner: TestRunner
 using .TestRunner.App: TestRunnerDiagnostic, TestRunnerResult
@@ -106,7 +107,6 @@ include("types.jl")
 
 include("utils/jl-syntax-macros.jl")
 include("utils/string.jl")
-include("utils/toml.jl")
 include("utils/path.jl")
 include("utils/pkg.jl")
 include("utils/FallbackAnalysisContext.jl")

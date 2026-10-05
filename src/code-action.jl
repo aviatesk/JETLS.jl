@@ -535,10 +535,6 @@ function added_concretization_pattern(
         has_concretization_pattern(updated, pattern, path)
 end
 
-const CONCRETIZATION_PATTERNS_ARRAY_REGEX = Regex(
-    "(?:\"concretization_patterns\"|'concretization_patterns'|" *
-    "concretization_patterns)[ \\t]*=[ \\t]*\\[")
-
 function jetls_config_inline_array_edit(
         text::String, pattern::String, path::String, encoding::PositionEncodingKind.Ty
     )
@@ -551,23 +547,20 @@ function jetls_config_inline_array_edit(
         encoding::PositionEncodingKind.Ty
     )
     has_concretization_pattern(configured, pattern, path) && return nothing
-    entry = format_toml_inline_table(Dict("pattern" => pattern, "path" => path))
+    doc = TS.tryparse(text)
+    doc isa TS.Document || return nothing
+    edit = @something TS.prepend_array_element(
+        doc, ["full_analysis", "concretization_patterns"],
+        Dict("pattern" => pattern, "path" => path)) return nothing
     bytes = Vector{UInt8}(text)
-    for m in eachmatch(CONCRETIZATION_PATTERNS_ARRAY_REGEX, text)
-        relative_open = findlast(==('['), m.match)::Int
-        start_offset = m.offset + relative_open
-        end_offset, new_text = toml_array_entry_insertion(
-            text, start_offset, entry, isempty(configured))
-        start_position = _offset_to_xy(bytes, start_offset, encoding)
-        end_position = _offset_to_xy(bytes, end_offset, encoding)
-        text_edit = TextEdit(;
-            range = Range(; start=start_position, var"end"=end_position),
-            newText = new_text)
-        updated = apply_text_change(text, text_edit.range, text_edit.newText, encoding)
-        added_concretization_pattern(configured, updated, pattern, path) || continue
-        return text_edit
-    end
-    return nothing
+    text_edit = TextEdit(;
+        range = Range(;
+            start = _offset_to_xy(bytes, edit.span.first, encoding),
+            var"end" = _offset_to_xy(bytes, edit.span.past_last, encoding)),
+        newText = edit.text)
+    updated = apply_text_change(text, text_edit.range, text_edit.newText, encoding)
+    added_concretization_pattern(configured, updated, pattern, path) || return nothing
+    return text_edit
 end
 
 function supports_create_file_workspace_edit(server::Server)

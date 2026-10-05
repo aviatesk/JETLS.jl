@@ -717,24 +717,48 @@ end
             [full_analysis]
             "concretization_patterns" = []
             """,
+            "[full_analysis]\n\"concretization_\\u0070atterns\" = []\n",
+            "full_analysis.concretization_patterns = [] # keep this comment\n",
+            "# concretization_patterns = []\n" *
+                "[full_analysis]\nconcretization_patterns = []\n",
+            "[full_analysis]\nconcretization_patterns = [ # opening\n" *
+                "    # existing entry\n    { pattern = \"OLD\" }, # keep\n]\n",
+            "[full_analysis]\nconcretization_patterns = [ # empty\r\n" *
+                "    # keep\r\n]\r\n",
+            "note = \"雪😀\"\r\n" *
+                "full_analysis = { concretization_patterns = [] } # preserved\r\n",
         ]
-        for original in configs
+        for original in configs, encoding in (
+                PositionEncodingKind.UTF8, PositionEncodingKind.UTF16,
+                PositionEncodingKind.UTF32)
             before = TOML.parse(original)
             old_patterns = before["full_analysis"]["concretization_patterns"]
             edit = JETLS.jetls_config_inline_array_edit(
-                original, "USE_PULSE = x_", "src/config.jl",
-                PositionEncodingKind.UTF16)::TextEdit
-            updated = JETLS.apply_text_change(
-                original, edit.range, edit.newText, PositionEncodingKind.UTF16)
+                original, "USE_PULSE = x_", "src/config.jl", encoding)::TextEdit
+            updated = JETLS.apply_text_change(original, edit.range, edit.newText, encoding)
             parsed = TOML.parse(updated)
             patterns = parsed["full_analysis"]["concretization_patterns"]
             @test length(patterns) == length(old_patterns) + 1
             @test any(patterns) do config
                 config["pattern"] == "USE_PULSE = x_" && config["path"] == "src/config.jl"
             end
+            for line in split(original, '\n')
+                startswith(line, '#') && @test occursin(line, updated)
+            end
             if haskey(before, "note")
                 @test parsed["note"] == before["note"]
             end
+        end
+    end
+
+    @testset "inline array edits reject unsuitable input" begin
+        for text in (
+                "[full_analysis",
+                "[full_analysis]\nconcretization_patterns = 1\n",
+                "[[full_analysis.concretization_patterns]]\npattern = \"OLD\"\n",
+                "[full_analysis]\nconcretization_patterns = [{pattern = \"NEW\", path = \"a.jl\"}]\n")
+            @test JETLS.jetls_config_inline_array_edit(
+                text, "NEW", "a.jl", PositionEncodingKind.UTF16) === nothing
         end
     end
 
