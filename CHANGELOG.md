@@ -59,6 +59,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Added the [`toplevel/unsupported-feature`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/toplevel/unsupported-feature) warning, reported when full analysis loads code that uses a feature JETLS does not support and analyzes it with an approximation instead.
   It is currently reported for `include(mapexpr, filename)` calls, whose included file is analyzed without applying `mapexpr`.
 
+- Added package directory input to [`jetls check`](https://aviatesk.github.io/JETLS.jl/release/cli-check/#cli-check/input):
+  `jetls check /path/to/SomePkg` analyzes the package through its `src/SomePkg.jl`, and `jetls check` without paths analyzes the package in the current directory.
+  When a single package directory is given, its `.JETLSConfig.toml` is loaded and paths are displayed relative to it, unless `--root` is specified.
+  The `files` input of the [GitHub Action](https://aviatesk.github.io/JETLS.jl/release/cli-check/#cli-check/github-actions) is now optional and defaults to the package at the repository root.
+
 ### Changed
 
 - Full analysis now stops at the first top-level error, such as [`toplevel/error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/toplevel/error), [`toplevel/missing-concretization`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/toplevel/missing-concretization), or [`toplevel/concretization-timeout`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/toplevel/concretization-timeout):
