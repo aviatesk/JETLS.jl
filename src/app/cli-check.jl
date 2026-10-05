@@ -262,10 +262,12 @@ const check_help_message = """
     Analyzes Julia source files and reports errors, warnings, and suggestions.
     Useful for CI pipelines and command-line workflows.
 
-    Analysis mode is determined by the file's directory structure.
-    For package analysis, run from the package root: jetls check src/SomePkg.jl
+    Usage: jetls check [OPTIONS] [<path>...]
 
-    Usage: jetls check [OPTIONS] <file>...
+    Arguments:
+      <path>...                Julia files or package directories to check;
+                               a package directory is checked via its src/<name>.jl
+                               (default: the package at the root path)
 
     Options:
       --help, -h               Show this help message
@@ -275,7 +277,8 @@ const check_help_message = """
       --show-severity=<level>  Minimum severity to display in output
                                (error, warn, info, hint; default: info)
       --root=<path>            Set the root path for configuration and relative paths
-                               (default: current working directory)
+                               (default: the package directory if exactly one is
+                               given, otherwise the current working directory)
       --context-lines=<n>      Number of context lines to show (default: 2)
       --progress=<mode>        Progress display mode (default: auto)
                                auto   - spinner if TTY, simple otherwise
@@ -288,8 +291,10 @@ const check_help_message = """
       1  One or more diagnostics found, or invalid arguments
 
     Examples:
+      jetls check
+      jetls check /path/to/SomePkg
       jetls check src/SomePkg.jl
-      jetls check src/SomePkg.jl test/runtests.jl
+      jetls check . test/runtests.jl
       jetls check --root=/path/to/project src/SomePkg.jl
       jetls check --context-lines=0 src/SomePkg.jl
       jetls check --exit-severity=error src/SomePkg.jl
@@ -369,16 +374,28 @@ function run_check(args::Vector{String})
         end
     end
 
-    if isempty(paths)
-        print(stderr, check_help_message)
-        return 1
-    end
-
     quiet && Base.CoreLogging.disable_logging(Base.CoreLogging.Warn)
 
-    root_path = root_path_opt !== nothing ? abspath(root_path_opt) : pwd()
+    base_path = root_path_opt !== nothing ? abspath(root_path_opt) : pwd()
+    isempty(paths) && push!(paths, base_path)
 
-    paths = String[isabspath(p) ? p : joinpath(root_path, p) for p in paths]
+    package_dirs = String[]
+    for (i, path) in enumerate(paths)
+        path = isabspath(path) ? path : joinpath(base_path, path)
+        if isdir(path)
+            path = abspath(path)
+            paths[i] = @something find_package_entry_file(path) return 1
+            push!(package_dirs, path)
+        else
+            paths[i] = path
+        end
+    end
+
+    root_path = if root_path_opt === nothing && length(package_dirs) == 1
+        only(package_dirs)
+    else
+        base_path
+    end
 
     progress_ctx = ProgressContext(progress_mode, stderr)
     logger = ProgressAwareLogger(Base.CoreLogging.current_logger(), progress_ctx)
@@ -390,6 +407,26 @@ function run_check(args::Vector{String})
                 skip_analysis, context_lines, exit_severity, show_severity)
         end
     end
+end
+
+function find_package_entry_file(dir::String)
+    project_file = joinpath(dir, "Project.toml")
+    if !isfile(project_file)
+        @error "Not a package directory (Project.toml not found): $dir\n" *
+            "To check individual files, pass them as arguments (see `jetls check --help`)"
+        return nothing
+    end
+    pkgname = @something find_pkg_name(project_file) begin
+        @error "Not a package directory (Project.toml has no package name): $dir\n" *
+            "To check individual files, pass them as arguments (see `jetls check --help`)"
+        return nothing
+    end
+    pkgfile = joinpath(dir, "src", pkgname * ".jl")
+    if !isfile(pkgfile)
+        @error "Package entry file not found: $pkgfile"
+        return nothing
+    end
+    return pkgfile
 end
 
 function run_check_analysis(

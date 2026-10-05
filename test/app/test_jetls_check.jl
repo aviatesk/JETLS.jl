@@ -499,6 +499,109 @@ end
     end
 end
 
+function write_test_package(dir::String)
+    pkgdir = mkpath(joinpath(dir, "SomePkg"))
+    write_test_file(pkgdir, "Project.toml", """
+        name = "SomePkg"
+        uuid = "5a1c9c3e-2a4b-4c55-9f0e-6f1d2b3c4d5e"
+        """)
+    write_test_file(mkpath(joinpath(pkgdir, "src")), "SomePkg.jl", """
+        module SomePkg
+        function foo()
+            x = 1
+            return nothing
+        end
+        end
+        """)
+    return pkgdir
+end
+
+@testset "package directory" begin
+    mktempdir() do dir
+        pkgdir = write_test_package(dir)
+
+        # a single package directory becomes the root path
+        for path in (pkgdir, pkgdir * "/")
+            result = run_jetls_check([path])
+            @test result.exitcode == 0
+            @test occursin("# @ src/SomePkg.jl:3,5", result.stdout)
+            @test occursin("lowering/unused-local", result.stdout)
+        end
+        let result = cd(() -> run_jetls_check(["SomePkg"]), dir)
+            @test occursin("# @ src/SomePkg.jl:3,5", result.stdout)
+        end
+
+        # without paths, the package at the root path is analyzed
+        let result = run_jetls_check(String[]; root=pkgdir)
+            @test occursin("# @ src/SomePkg.jl:3,5", result.stdout)
+        end
+        let result = cd(() -> run_jetls_check(String[]), pkgdir)
+            @test occursin("# @ src/SomePkg.jl:3,5", result.stdout)
+        end
+
+        # mixed with files, relative paths are resolved against the working directory
+        write_test_file(mkpath(joinpath(pkgdir, "test")), "runtests.jl", """
+            function bar()
+                y = 2
+                return nothing
+            end
+            """)
+        let result = cd(() -> run_jetls_check(["SomePkg", "SomePkg/test/runtests.jl"]), dir)
+            @test occursin("# @ src/SomePkg.jl:3,5", result.stdout)
+            @test occursin("# @ test/runtests.jl:2,5", result.stdout)
+            @test occursin("Analyzed 2 files", result.stdout)
+        end
+
+        write_config_file(pkgdir, """
+            [[diagnostic.patterns]]
+            pattern = "lowering/unused-local"
+            match_by = "code"
+            match_type = "literal"
+            severity = "off"
+            """)
+        let result = run_jetls_check([pkgdir])
+            @test !occursin("lowering/unused-local", result.stdout)
+            @test occursin("No diagnostics found", result.stdout)
+        end
+        # explicit `--root` takes precedence over the package directory
+        let result = run_jetls_check([pkgdir]; root=dir)
+            @test occursin("# @ SomePkg/src/SomePkg.jl:3,5", result.stdout)
+            @test occursin("lowering/unused-local", result.stdout)
+        end
+        # multiple package directories keep the working directory as the root path
+        let otherdir = mkpath(joinpath(dir, "other"))
+            write_test_package(otherdir)
+            result = cd(() -> run_jetls_check(["SomePkg", "other/SomePkg"]), dir)
+            @test occursin("# @ SomePkg/src/SomePkg.jl:3,5", result.stdout)
+            @test occursin("# @ other/SomePkg/src/SomePkg.jl:3,5", result.stdout)
+        end
+    end
+end
+
+@testset "invalid package directory" begin
+    mktempdir() do dir
+        let result = run_jetls_check(String[]; root=dir)
+            @test result.exitcode == 1
+            @test occursin("Project.toml not found", result.stderr)
+            @test !occursin("# Check ", result.stdout)
+        end
+
+        write_test_file(dir, "Project.toml", "[deps]\n")
+        let result = run_jetls_check([dir])
+            @test result.exitcode == 1
+            @test occursin("Project.toml has no package name", result.stderr)
+            @test !occursin("# Check ", result.stdout)
+        end
+
+        write_test_file(dir, "Project.toml", "name = \"SomePkg\"\n")
+        let result = run_jetls_check([dir])
+            @test result.exitcode == 1
+            @test occursin("Package entry file not found", result.stderr)
+            @test !occursin("# Check ", result.stdout)
+        end
+    end
+end
+
 @testset "toplevel warnings" begin
     mktempdir() do dir
         write_test_file(dir, "sub.jl", """
