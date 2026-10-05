@@ -1039,12 +1039,13 @@ Common examples include:
 Examples:
 
 ```julia
-struct ToplevelError  # UndefVarError: `Unexisting` not defined in `JETLS`
+struct ToplevelError  # JET could not execute this top-level code: UndefVarError: `Unexisting` not defined in `JETLS`
+                      #
                       # Suggestion: check for spelling errors or missing imports. (JETLS toplevel/error)
     x::Unexisting
 end
 
-using UnexistingPkg  # Package JETLS does not have UnexistingPkg in its dependencies:
+using UnexistingPkg  # Package JETLS does not have UnexistingPkg in its dependencies.
                      # [...]
                      # (JETLS toplevel/error)
 ```
@@ -1132,7 +1133,7 @@ configuration to allow JETLS to evaluate the assignment during full analysis.
     load_types()
 
     struct Container
-        value::SomeType  # UndefVarError: `SomeType` not defined in `Main`
+        value::SomeType  # JET could not execute this top-level code: UndefVarError: `SomeType` not defined in `Main`
                          # [...]
                          # (JETLS toplevel/error)
     end
@@ -1318,7 +1319,9 @@ JETLS analyzes the included file without applying the function.
 Example:
 
 ```julia
-include(rewrite, "generated.jl")  # JET does not support `include(mapexpr::Function, filename::String)`.
+include(rewrite, "generated.jl")  # JET analyzes this code approximately because it uses an unsupported feature.
+                                  #
+                                  # JET does not support `include(mapexpr::Function, filename::String)`.
                                   # The included file is analyzed without applying `mapexpr`.
                                   # (JETLS toplevel/unsupported-feature)
 ```

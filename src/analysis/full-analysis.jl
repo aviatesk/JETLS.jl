@@ -970,7 +970,8 @@ function new_analysis_result(
         postprocessor = JET.PostProcessor(result.res.actual2virtual)
         toplevel_warning_reports_to_diagnostics!(uri2diagnostics, interp.warning_reports, interp.server, postprocessor)
         jet_result_to_diagnostics!(uri2diagnostics, result, result_world, postprocessor;
-            markdown_rendering = supports(interp.server, :textDocument, :diagnostic, :markupMessageSupport))
+            markdown_rendering = supports(interp.server, :textDocument, :diagnostic, :markupMessageSupport),
+            displaysize = interp.server.state.cli_mode ? cli_message_displaysize() : nothing)
         uri2diagnostics
     end
 

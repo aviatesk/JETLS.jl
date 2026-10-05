@@ -180,6 +180,7 @@ end
             @test diag.source == JETLS.DIAGNOSTIC_SOURCE_SAVE
             @test diag.range == JETLS.line_range(report.line)
             @test occursin(string(timeout), diag.message)
+            @test occursin("`concretization_timeout`", first(eachsplit(diag.message, '\n')))
             mode === :script && @test occursin("sleep", diag.message)
         end
     end
@@ -310,6 +311,8 @@ function get_included_diagnostics(
     return diagnostics
 end
 
+unwrapped_message(diag::Diagnostic) = join(split(diag.message), ' ')
+
 function concretization_settings(path::Union{Nothing,String} = nothing)
     pattern = Dict{String,Any}("pattern" => "USE_PULSE = x_")
     path === nothing || (pattern["path"] = path)
@@ -395,12 +398,16 @@ end
             @test diag.data.name == "USE_PULSE"
             @test diag.data.pattern == "USE_PULSE = x_"
             @test JETLS.paths_equal(diag.data.assignment_file, script_path)
-            @test occursin("assignment at $expected_path:1", diag.message)
-            @test occursin("`full_analysis.concretization_patterns`", diag.message)
-            @test occursin("`.JETLSConfig.toml`", diag.message)
-            @test occursin("preferred quick fix", diag.message)
-            @test occursin("derived pattern `USE_PULSE = x_`", diag.message)
-            @test !occursin("report_file", diag.message)
+            summary, _ = split(diag.message, "\n\n"; limit=2)
+            @test endswith(summary, "must have a concrete value for JETLS top-level analysis.")
+            @test !occursin('\n', summary)
+            message = unwrapped_message(diag)
+            @test occursin("assignment at `$expected_path:1`", message)
+            @test occursin("`full_analysis.concretization_patterns`", message)
+            @test occursin("`.JETLSConfig.toml`", message)
+            @test occursin("preferred quick fix", message)
+            @test occursin("derived pattern `USE_PULSE = x_`", message)
+            @test !occursin("report_file", message)
         end
     end
 
@@ -425,10 +432,11 @@ end
             diagnostics = get_open_diagnostics(dir, script_path, code)
             diag = only(filter(d -> d.code == JETLS.TOPLEVEL_MISSING_CONCRETIZATION_CODE, diagnostics))
             @test diag.data === nothing
-            @test occursin("`.JETLSConfig.toml` manually", diag.message)
-            @test occursin("could not derive a safe pattern", diag.message)
+            message = unwrapped_message(diag)
+            @test occursin("`.JETLSConfig.toml` manually", message)
+            @test occursin("could not derive a safe pattern", message)
             # the `let` statement, while the diagnostic is anchored at the use site
-            @test occursin("assignment at $expected_path:1", diag.message)
+            @test occursin("assignment at `$expected_path:1`", message)
             @test diag.range.start.line == 4
         end
     end
@@ -681,7 +689,7 @@ end
             diagnostics = get_open_diagnostics(dirname(script_path), script_path, code)
             diag = only(filter(diag -> diag.code == JETLS.TOPLEVEL_ERROR_CODE, diagnostics))
             @test diag.range.start.line == 1
-            @test occursin("UnexistingPkg", diag.message)
+            @test occursin("UnexistingPkg", first(eachsplit(diag.message, '\n')))
             # diagnostics from statements processed before the error are kept
             diag = only(filter(diag -> diag.code == JETLS.INFERENCE_METHOD_ERROR_CODE, diagnostics))
             @test diag.range.start.line == 0

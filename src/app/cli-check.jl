@@ -632,6 +632,13 @@ function split_diagnostic_message(message::String)
     return summary, String(details)
 end
 
+# the display size for diagnostic messages, whose details are printed after the
+# two-column `# ` prefix of `print_diagnostic_details`
+function cli_message_displaysize()
+    rows, cols = displaysize(stdout)::Tuple{Int,Int}
+    return (rows, cols - 2)
+end
+
 function print_diagnostic_details(io::IO, details::String)
     printstyled(io, "#\n"; color=:light_black)
     for line in eachsplit(details, '\n')

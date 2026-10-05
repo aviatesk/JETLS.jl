@@ -349,15 +349,18 @@ end
 function jet_result_to_diagnostics!(
         uri2diagnostics::URI2Diagnostics, result::JET.JETToplevelResult,
         world::UInt, postprocessor::JET.PostProcessor;
-        markdown_rendering::Bool = false
+        markdown_rendering::Bool = false,
+        displaysize::Union{Nothing,Tuple{Int,Int}} = nothing
     )
     report = result.res.toplevel_error_report
     if report !== nothing && report.file != "none"
-        diagnostic = jet_toplevel_error_report_to_diagnostic(report, postprocessor; markdown_rendering)
+        diagnostic = jet_toplevel_error_report_to_diagnostic(report, postprocessor;
+            markdown_rendering, displaysize)
         diagnostic === nothing || push!(uri2diagnostics[to_valid_uri(report.file)], diagnostic)
     end
     for report in result.res.toplevel_warning_reports
-        diagnostic = @something jet_toplevel_warning_report_to_diagnostic(report, postprocessor) continue
+        diagnostic = @something jet_toplevel_warning_report_to_diagnostic(report, postprocessor;
+            markdown_rendering, displaysize) continue
         uri = to_valid_uri(report.file)
         haskey(uri2diagnostics, uri) || continue
         push!(uri2diagnostics[uri], diagnostic)
@@ -370,9 +373,25 @@ end
 # toplevel diagnostic
 # -------------------
 
+function toplevel_report_message(
+        f, postprocessor::JET.PostProcessor;
+        markdown_rendering::Bool = false,
+        displaysize::Union{Nothing,Tuple{Int,Int}} = nothing
+    )
+    buf = IOBuffer()
+    io = IOContext(buf,
+        :limit=>true, :summary_line=>true, :markdown_rendering=>markdown_rendering)
+    if displaysize !== nothing
+        io = IOContext(io, :displaysize=>displaysize)
+    end
+    f(io)
+    return postprocessor(String(take!(buf)))
+end
+
 function jet_toplevel_error_report_to_diagnostic(
         @nospecialize(report::JET.ToplevelErrorReport), postprocessor::JET.PostProcessor;
-        markdown_rendering::Bool = false
+        markdown_rendering::Bool = false,
+        displaysize::Union{Nothing,Tuple{Int,Int}} = nothing
     )
     report isa JET.ParseErrorReport && return nothing # reported as `JETLS/live` diagnostics
     if report isa JET.LoweringErrorReport || report isa JET.MacroExpansionErrorReport
@@ -382,13 +401,13 @@ function jet_toplevel_error_report_to_diagnostic(
     end
     if report isa JET.MissingConcretizationErrorReport
         data = missing_concretization_data(report)
-        message = missing_concretization_message(report, data, postprocessor)
+        message = missing_concretization_message(report, data, postprocessor; markdown_rendering, displaysize)
         code = TOPLEVEL_MISSING_CONCRETIZATION_CODE
     else
         data = nothing
-        message = JET.with_bufferring(:limit=>true, :markdown_rendering=>markdown_rendering) do io
+        message = toplevel_report_message(postprocessor; markdown_rendering, displaysize) do io
             with_base_render_lock(JET.print_report, io, report)
-        end |> postprocessor
+        end
         code = report isa JET.ConcretizationTimeoutErrorReport ?
             TOPLEVEL_CONCRETIZATION_TIMEOUT_CODE : TOPLEVEL_ERROR_CODE
     end
@@ -403,12 +422,16 @@ function jet_toplevel_error_report_to_diagnostic(
 end
 
 function jet_toplevel_warning_report_to_diagnostic(
-        @nospecialize(report::JET.ToplevelWarningReport), postprocessor::JET.PostProcessor
+        @nospecialize(report::JET.ToplevelWarningReport), postprocessor::JET.PostProcessor;
+        markdown_rendering::Bool = false,
+        displaysize::Union{Nothing,Tuple{Int,Int}} = nothing
     )
     report isa JET.ParseWarningReport && return nothing # reported as `JETLS/live` diagnostics
     report isa JET.UnsupportedFeatureReport ||
         error(lazy"No diagnostic code is defined for report: $report")
-    message = postprocessor(sprint(JET.print_report, report))
+    message = toplevel_report_message(postprocessor; markdown_rendering, displaysize) do io
+        with_base_render_lock(JET.print_report, io, report)
+    end
     return Diagnostic(;
         range = line_range(report.line),
         severity = DiagnosticSeverity.Warning,
@@ -430,35 +453,40 @@ end
 function missing_concretization_message(
         report::JET.MissingConcretizationErrorReport,
         data::Union{Nothing,MissingConcretizationData},
-        postprocessor::JET.PostProcessor
+        postprocessor::JET.PostProcessor;
+        markdown_rendering::Bool = false,
+        displaysize::Union{Nothing,Tuple{Int,Int}} = nothing
     )
-    message = JET.with_bufferring(:limit=>true) do io
+    return toplevel_report_message(postprocessor; markdown_rendering, displaysize) do io
         (; isconst, var, assignment) = report
         (; mod, name) = var
-        println(io, "`$mod.$name` must have a concrete value for JETLS top-level analysis.")
+        JET.print_summary(io, "`$mod.$name` must have a concrete value for JETLS top-level analysis.")
         if assignment === nothing
-            println(io, "JETLS could not identify the assignment that defines this binding.")
+            JET.println_wrapped(io, "JETLS could not identify the assignment that defines this binding.")
         else
-            println(io, "JETLS did not evaluate the assignment at " *
-                "$(assignment.file):$(assignment.line) that defines this binding.")
+            JET.println_wrapped(io,
+                "JETLS did not evaluate the assignment at " *
+                "`$(assignment.file):$(assignment.line)` that defines this binding.")
         end
         if !isconst
             println(io)
-            println(io, "Declaring `$name` as `const` may fix this when JETLS can " *
-                "infer the concrete value of its right-hand side without evaluating it.")
+            JET.println_wrapped(io,
+                "Declaring `$name` as `const` may fix this when JETLS can infer " *
+                "the concrete value of its right-hand side without evaluating it.")
         end
         println(io)
         if data === nothing
-            println(io, "Configure `full_analysis.concretization_patterns` in " *
-                "`.JETLSConfig.toml` manually to evaluate the relevant top-level statement.")
-            print(io, "JETLS could not derive a safe pattern for this assignment.")
+            JET.print_wrapped(io,
+                "Configure `full_analysis.concretization_patterns` in `.JETLSConfig.toml` " *
+                "manually to evaluate the relevant top-level statement. JETLS could not " *
+                "derive a safe pattern for this assignment.")
         else
-            println(io, "Configure `full_analysis.concretization_patterns` in " *
-                "`.JETLSConfig.toml` to evaluate this assignment.")
-            print(io, "The preferred quick fix can add the derived pattern `$(data.pattern)`.")
+            JET.print_wrapped(io,
+                "Configure `full_analysis.concretization_patterns` in `.JETLSConfig.toml` " *
+                "to evaluate this assignment. The preferred quick fix can add the derived " *
+                "pattern `$(data.pattern)`.")
         end
     end
-    return postprocessor(message)
 end
 
 # inference diagnostic

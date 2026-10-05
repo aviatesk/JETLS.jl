@@ -32,7 +32,7 @@ TestRunner = "4efbe77e-ddf3-4ce7-be91-16409ca9e85f"
 
 [sources]
 Compiler = {path = "Compiler"}
-JET = {rev = "ed299906f4", url = "https://github.com/aviatesk/JET.jl"}
+JET = {rev = "90aa7d79be", url = "https://github.com/aviatesk/JET.jl"}
 JuliaLowering = {rev = "5c0dc2df56", subdir = "JuliaLowering", url = "https://github.com/JuliaLang/julia"}
 JuliaSyntax = {rev = "5c0dc2df56", subdir = "JuliaSyntax", url = "https://github.com/JuliaLang/julia"}
 LSP = {path = "LSP"}

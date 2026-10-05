@@ -68,6 +68,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Syntax warnings detected by JuliaSyntax.jl, such as `parentheses are not required here`, are now reported with the new [`syntax/parse-warning`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/syntax/parse-warning) code instead of [`syntax/parse-error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/syntax/parse-error), so they can be configured separately from syntax errors.
   [`diagnostic.patterns`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/diagnostic/patterns) entries matching the `syntax/parse-error` code no longer apply to them.
 
+- The messages of [`toplevel/error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/toplevel/error), [`toplevel/missing-concretization`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/toplevel/missing-concretization), and [`toplevel/concretization-timeout`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/toplevel/concretization-timeout) now start with a one-line summary, followed by a blank line and the details.
+  Errors raised while loading code are summarized with the first line of the error message, e.g. `JET could not execute this top-level code: UndefVarError: ...`.
+  The details are wrapped at 90 columns, or at the terminal width in [`jetls check`](https://aviatesk.github.io/JETLS.jl/release/cli-check/) when the terminal is narrower.
+
 ### Fixed
 
 - Fixed files with syntax warnings but no syntax errors getting no [`lowering/*`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering) diagnostics in the editor or from [`jetls check`](https://aviatesk.github.io/JETLS.jl/release/cli-check/), and not being reanalyzed by full analysis on save.
