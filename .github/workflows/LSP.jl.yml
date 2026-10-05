@@ -15,7 +15,14 @@ jobs:
     name: Test LSP.jl
     runs-on: ubuntu-latest
     steps:
+      # The root `Project.toml` lists `LSP` as a workspace project, so checking it out would
+      # make Pkg resolve LSP.jl together with the entire JETLS workspace. Check out `LSP/`
+      # only so that LSP.jl is tested as a standalone package. Non-cone mode is required
+      # because cone mode always includes root-level files.
       - uses: actions/checkout@v7
+        with:
+          sparse-checkout: /LSP/
+          sparse-checkout-cone-mode: false
       - uses: julia-actions/setup-julia@v3
         with:
           version: "1" # most stable version
