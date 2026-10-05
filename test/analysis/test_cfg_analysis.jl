@@ -1057,7 +1057,7 @@ end
     # When the try body always terminates (e.g. `return`), post-try is
     # unreachable: any use of a local there should NOT be flagged as
     # potentially undefined, since that use never executes. Without
-    # `K"tryfinally"`'s special handling for a terminated try body, the
+    # `:tryfinally`'s special handling for a terminated try body, the
     # use would be reachable via the gotoifnot bypass through finally,
     # making the post-try use look reachable from the entry on a path
     # that misses the try-body assignment, and `x` would surface as
@@ -1434,8 +1434,8 @@ end
 @testset "@label / @goto control flow" begin
     # Regression test for the pattern in `full-analysis.jl:841`: a value
     # assigned right before `@goto label` and read after `@label label` was
-    # incorrectly reported as a dead store, because `K"symbolicgoto"` /
-    # standalone `K"symboliclabel"` were not modeled in the CFG.
+    # incorrectly reported as a dead store, because `:symbolicgoto` /
+    # standalone `:symboliclabel` were not modeled in the CFG.
     let ds = get_dead_stores("""
         function f(cond)
             local reports
@@ -1869,8 +1869,8 @@ end
     end
 
     # Both try and catch terminate, finally falls through. The inner
-    # `K"trycatchelse"`'s end-block has no incoming edge from any reachable
-    # block, and `K"tryfinally"`'s on-demand reachability check picks that
+    # `:trycatchelse`'s end-block has no incoming edge from any reachable
+    # block, and `:tryfinally`'s on-demand reachability check picks that
     # up, so post-try is detected as unreachable.
     let urs = get_unreachable_statements("""
         function f()

@@ -88,7 +88,7 @@ end
 
     @testset "dot expression" begin
         # cursor on the RHS of `Base.Pair` — `select_target_identifier` walks up
-        # to the surrounding `K"."` and the type query on `Base.Pair` returns
+        # to the surrounding `:.` and the type query on `Base.Pair` returns
         # `Core.Const(Pair)`.
         @test with_find_type_definition("""
                 const T = Base.Pa│ir

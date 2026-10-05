@@ -867,11 +867,10 @@ end
     end
 
     # Compound-assignment operators (`+=`, `-=`, ...) combined with a macrocall
-    # (`x += @elapsed ...`) parse into a `K"unknown_head"` node whose `name_val`
-    # attribute carries the operator name; losing that attribute during
-    # `remove_macrocalls` reconstruction used to make scope-resolution silently
-    # fail, causing `find_references` to return empty on symbols defined in such
-    # functions.
+    # (`x += @elapsed ...`) parse into a node whose head is the operator itself
+    # (e.g. `:+=`); losing the operator during `remove_macrocalls`
+    # reconstruction used to make scope-resolution silently fail, causing
+    # `find_references` to return empty on symbols defined in such functions.
     @testset "compound assignment with macrocall" begin
         # Cursor on the definition site of a function whose body contains
         # `+= @elapsed ...`: select_target_binding must succeed.
@@ -941,7 +940,7 @@ end
 
     # `@ccall foo(...)` treats `foo` as a C library symbol, not a reference to
     # a Julia binding. `@ccall` has a new-style JuliaLowering implementation
-    # that correctly encodes this by wrapping `foo` in `K"inert"`, so scope
+    # that correctly encodes this by wrapping `foo` in `:inert`, so scope
     # resolution must leave it alone. That only holds while
     # `_remove_macrocalls` preserves the `@ccall` macrocall (because its binding
     # is in `NEW_STYLE_MACRO_BINDINGS`) — if it ever falls back to

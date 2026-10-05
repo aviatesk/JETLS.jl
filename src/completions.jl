@@ -134,7 +134,7 @@ end
 # Why not query the inferred-context cache with `offset:offset` directly:
 # It filters toplevel subtrees by `rng ⊆ JS.byte_range(toplevel)`, and the
 # cursor can sit past the toplevel's `last_byte` in incomplete code (e.g.
-# `sin(42,│\n` — parser ends the `K"call"` at byte 7, cursor at byte 8 is
+# `sin(42,│\n` — parser ends the `:call` at byte 7, cursor at byte 8 is
 # outside). `lowerable_toplevel_at` has an `offset - 1` retry that handles
 # this, so we go through it and build the context for the selected toplevel.
 function get_inferred_ctx!(comp_ctx::CompletionCtx; caller::AbstractString)
@@ -717,10 +717,10 @@ end
 # ==========================================================
 
 function extract_param_text(p::SyntaxTree)
-     k = JS.kind(p)
-    if k === JS.K"Identifier"
+     k = JS.head(p)
+    if k === :identifier
         return get_name_val(p)
-    elseif k === JS.K"::"
+    elseif k === :(::)
         n = JS.numchildren(p)
         if n == 1
             typ = JS.sourcetext(p[1])
@@ -732,9 +732,9 @@ function extract_param_text(p::SyntaxTree)
         else
             return nothing
         end
-    elseif k === JS.K"var" && JS.numchildren(p) == 1
+    elseif k === :var && JS.numchildren(p) == 1
         inner = p[1]
-        if JS.kind(inner) === JS.K"Identifier"
+        if JS.head(inner) === :identifier
             return get_name_val(inner)
         end
     end
@@ -747,7 +747,7 @@ escape_snippet_text(s::AbstractString) =
 function make_insert_text(msig::AbstractString, num_existing_args::Int, use_snippet::Bool)
     mnode = JS.parsestmt(JS.SyntaxTree, msig; ignore_errors=true)
     mnode = unwrap_funcdef_sig(mnode)
-    JS.kind(mnode) in CALL_KINDS || return nothing
+    JS.head(mnode) in CALL_HEADS || return nothing
     params, kwp_i, _ = flatten_args(mnode)
     pos_params_count = kwp_i - 1
     remaining_start = num_existing_args + 1
@@ -756,9 +756,9 @@ function make_insert_text(msig::AbstractString, num_existing_args::Int, use_snip
     snippet_idx = 1
     for i in remaining_start:pos_params_count
         p = params[i]
-        k = JS.kind(p)
-        k in JS.KSet"= kw" && continue
-        if k === JS.K"..." && JS.numchildren(p) ≥ 1
+        k = JS.head(p)
+        k in (:(=), :kw) && continue
+        if k === :... && JS.numchildren(p) ≥ 1
             inner = p[1]
             text = extract_param_text(inner)
             isnothing(text) && continue
@@ -782,10 +782,10 @@ function cursor_equals_position(ca::CallArgs, b::Int)
     for arg in ca.args
         br = JS.byte_range(arg)
         first(br) ≤ b ≤ last(br) + 1 || continue
-        JS.kind(arg) in JS.KSet"= kw" || return nothing
+        JS.head(arg) in (:(=), :kw) || return nothing
         JS.numchildren(arg) ≥ 2 || return nothing
         rhs = arg[2]
-        after_equals = if JS.kind(rhs) === JS.K"error"
+        after_equals = if JS.head(rhs) === :error
             lhs_end = JS.last_byte(arg[1])
             b > lhs_end + 1
         else
@@ -805,7 +805,7 @@ function should_insert_spaces_around_equal(fi::FileInfo, ca::CallArgs)
     has_whitespaces = has_equals = 0
     for i in values(ca.kw_map)
         kwnode = ca.args[i]
-        JS.kind(kwnode) === JS.K"kw" || continue
+        JS.head(kwnode) === :kw || continue
         has_equals += 1
         pos = offset_to_xy(fi, JS.first_byte(kwnode))
         tok = @something token_at_offset(fi, pos) continue
@@ -906,12 +906,12 @@ function call_completions!(
             (; existing_kws, seen_kwarg_names, insert_spaces, local_bindings) = kwarg_comp_info
             mnode = JS.parsestmt(JS.SyntaxTree, msig; ignore_errors=true)
             mnode = unwrap_funcdef_sig(mnode)
-            JS.kind(mnode) in CALL_KINDS || continue
+            JS.head(mnode) in CALL_HEADS || continue
             params, kwp_i, has_semicolon = flatten_args(mnode)
             kwname_sort_idx = 1
             for j in kwp_i:lastindex(params)
                 p = params[j]
-                JS.kind(p) === JS.K"..." && continue
+                JS.head(p) === :... && continue
                 kwarg_name = @something extract_kwarg_name_str(p) continue
                 kwarg_name in existing_kws && continue
                 kwarg_name in seen_kwarg_names && continue

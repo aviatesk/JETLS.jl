@@ -785,9 +785,9 @@ end
 
 # Compute a mapping from source locations to the set of identifier names found in keyword
 # argument type annotations.
-# `K"kw"` nodes are produced by JuliaSyntax for both true keyword arguments
+# `:kw` nodes are produced by JuliaSyntax for both true keyword arguments
 # (`f(; y=1)`) and positional arguments with default values (`f(y=1)`); only the former
-# sit under a `K"parameters"` node, so we track that during the walk.
+# sit under a `:parameters` node, so we track that during the walk.
 # An explicit stack is used (instead of recursion) so we don't risk overflowing
 # the C stack on pathologically deep user input.
 function compute_kwarg_type_annotation_names(st0::SyntaxTree)
@@ -796,19 +796,19 @@ function compute_kwarg_type_annotation_names(st0::SyntaxTree)
     stack = Tuple{SyntaxTree,Bool}[(st0, false)]
     while !isempty(stack)
         (node, in_parameters) = pop!(stack)
-        k = JS.kind(node)
-        if k === JS.K"kw" && in_parameters
+        k = JS.head(node)
+        if k === :kw && in_parameters
             JS.numchildren(node) >= 1 || continue
             child = node[1]
             push!(locations, JS.source_location(child))
-            if JS.kind(child) === JS.K"::" && JS.numchildren(child) >= 2
+            if JS.head(child) === :(::) && JS.numchildren(child) >= 2
                 names = Set{String}()
                 collect_identifier_names!(names, child[2])
                 isempty(names) || (type_names[JS.source_location(child)] = names)
             end
             continue
         end
-        next_in_parameters = k === JS.K"parameters"
+        next_in_parameters = k === :parameters
         for i = JS.numchildren(node):-1:1
             push!(stack, (node[i], next_in_parameters))
         end
@@ -850,18 +850,11 @@ function has_matching_argument_binding(
     return false
 end
 
-function is_assignment_expression(st::SyntaxTree)
-    k = JS.kind(st)
-    k === JS.K"=" && return true
-    if k === JS.K"unknown_head"
-        name = get_name_val(st)
-        return name !== nothing && endswith(name, "=")
-    end
-    return false
-end
+is_assignment_expression(st::SyntaxTree) =
+    JS.head(st) === :(=) || is_compound_assignment(st)
 
 same_syntax_range(a::SyntaxTree, b::SyntaxTree) =
-    JS.kind(a) === JS.kind(b) && JS.byte_range(a) == JS.byte_range(b)
+    JS.head(a) === JS.head(b) && JS.byte_range(a) == JS.byte_range(b)
 
 function is_last_child(parent::SyntaxTree, child::SyntaxTree)
     n = JS.numchildren(parent)
@@ -886,12 +879,12 @@ function is_struct_type_parameter_declaration(st0::SyntaxTree, prov::SyntaxTree)
     ancestors = byte_ancestors(st0, JS.byte_range(prov))
     for i = 2:length(ancestors)
         curly = ancestors[i]
-        JS.kind(curly) === JS.K"curly" || continue
+        JS.head(curly) === :curly || continue
         is_type_parameter = false
         for j = 2:JS.numchildren(curly)
             param = curly[j]
-            pk = JS.kind(param)
-            if (pk === JS.K"<:" || pk === JS.K">:") && JS.numchildren(param) >= 1
+            pk = JS.head(param)
+            if (pk === :<: || pk === :>:) && JS.numchildren(param) >= 1
                 param = param[1]
             end
             if JS.byte_range(prov) ⊆ JS.byte_range(param)
@@ -902,10 +895,10 @@ function is_struct_type_parameter_declaration(st0::SyntaxTree, prov::SyntaxTree)
         is_type_parameter || continue
         for j = i+1:length(ancestors)
             parent = ancestors[j]
-            JS.kind(parent) === JS.K"struct" || continue
+            JS.head(parent) === :struct || continue
             JS.numchildren(parent) >= 2 || continue
             sig = parent[2]
-            if JS.kind(sig) === JS.K"<:" && JS.numchildren(sig) >= 1
+            if JS.head(sig) === :<: && JS.numchildren(sig) >= 1
                 sig = sig[1]
             end
             same_syntax_range(sig, curly) && return true
@@ -923,15 +916,15 @@ function tail_returned_assignment_kind(
     for i in 1:length(ancestors)-1
         child = ancestors[i]
         parent = ancestors[i+1]
-        pk = JS.kind(parent)
-        if pk === JS.K"return"
+        pk = JS.head(parent)
+        if pk === :return
             return :tail
-        elseif pk === JS.K"block"
+        elseif pk === :block
             is_last_child(parent, child) || return :none
-        elseif pk === JS.K"function"
+        elseif pk === :function
             is_last_child(parent, child) || return :none
             return simple ? :simple : :tail
-        elseif pk === JS.K"if" || pk === JS.K"elseif" || pk === JS.K"?"
+        elseif pk === :if || pk === :elseif || pk === :?
             is_tail_branch_child(parent, child) || return :none
             simple = false
         else
@@ -966,23 +959,23 @@ end
 
 function collect_binding_ids!(ids::Set{JL.IdTag}, st::SyntaxTree)
     traverse(st) do node::SyntaxTree
-        JS.kind(node) === JS.K"BindingId" && push!(ids, JL.syntax_id(node))
+        JS.head(node) === :bindingid && push!(ids, JL.syntax_id(node))
         return nothing
     end
     return ids
 end
 
 function method_typevars(ctx3::JL.VariableAnalysisContext, method::SyntaxTree)
-    JS.kind(method) === JS.K"method" && JS.numchildren(method) == 3 || return nothing
+    JS.head(method) === :method && JS.numchildren(method) == 3 || return nothing
     arg_types = method[2]
     is_core_svec_call(arg_types) || return nothing
     lambda = method[3]
-    JS.kind(lambda) === JS.K"lambda" && JS.numchildren(lambda) >= 3 || return nothing
+    JS.head(lambda) === :lambda && JS.numchildren(lambda) >= 3 || return nothing
     sparams = lambda[3]
-    JS.kind(sparams) === JS.K"block" || return nothing
+    JS.head(sparams) === :block || return nothing
     typevar_ids = JL.IdTag[]
     for sparam in JS.children(sparams)
-        JS.kind(sparam) === JS.K"BindingId" || continue
+        JS.head(sparam) === :bindingid || continue
         sp_id = JL.syntax_id(sparam)
         typevar_id = get(ctx3.sp_typevars, sp_id, nothing)
         typevar_id === nothing || push!(typevar_ids, typevar_id)
@@ -1296,18 +1289,18 @@ function compute_unused_variable_data(
     lhs = assignment[1]
 
     # Check for destructuring patterns (tuple unpacking)
-    is_tuple = JS.kind(lhs) === JS.K"tuple"
+    is_tuple = JS.head(lhs) === :tuple
     if is_tuple
         return UnusedVariableData(true, nothing, nothing, nothing, nothing)
     end
 
     # lhs_eq_range: from LHS start to actual RHS start in source (exclusive).
     # We scan forward from after the LHS to find the `=` sign and any
-    # following whitespace.  This is needed because some node kinds (e.g.
-    # K"Char") have a byte range that excludes delimiters, so
+    # following whitespace.  This is needed because some nodes (e.g. character
+    # literals) have a byte range that excludes delimiters, so
     # `first_byte(rhs)` may point past the opening delimiter.
     assignment_range = jsobj_to_range(assignment, fi)
-    lhs_eq_range = if JS.kind(assignment) === JS.K"="
+    lhs_eq_range = if JS.head(assignment) === :(=)
         lhs_start = offset_to_xy(fi, JS.first_byte(lhs))
         textbuf = fi.parsed_stream.textbuf
         eq_byte = @something findnext(==(UInt8('=')), textbuf, JS.last_byte(lhs) + 1) return nothing
@@ -1380,15 +1373,15 @@ function find_capture_sites(
             lambda.locals_capt[binfo.id] || continue
             # Find the lambda in st3 that has matching lambda_bindings.self
             traverse(st3) do node3::SyntaxTree
-                JS.kind(node3) === JS.K"lambda" || return nothing
+                JS.head(node3) === :lambda || return nothing
                 JS.numchildren(node3) >= 1 || return nothing
                 lbnode = node3[1]
-                JS.kind(lbnode) === JS.K"LambdaBindings" || return nothing
+                JS.head(lbnode) === :lambdabindings || return nothing
                 lambda_bindings = JL.lambda_bindings(lbnode)
                 lambda_bindings.self == lambda.self || return nothing
                 # Find references to binfo.id inside this lambda
                 traverse(node3) do inner::SyntaxTree
-                    if JS.kind(inner) === JS.K"BindingId" && JL.syntax_id(inner) == binfo.id
+                    if JS.head(inner) === :bindingid && JL.syntax_id(inner) == binfo.id
                         varprov = last(JL.flattened_provenance(inner))
                         push!(relatedInformation, DiagnosticRelatedInformation(;
                             location = Location(; uri, range = jsobj_to_range(varprov, fi)),
@@ -1441,8 +1434,8 @@ function analyze_unsorted_imports!(
         diagnostics::Vector{Diagnostic}, fi::FileInfo, st0::SyntaxTree
     )
     traverse(st0) do st0′::SyntaxTree
-        kind = JS.kind(st0′)
-        if kind ∉ JS.KSet"import using export public"
+        kind = JS.head(st0′)
+        if kind ∉ (:import, :using, :export, :public)
             return nothing
         end
         name_keys = collect_import_names(st0′)
@@ -1469,13 +1462,13 @@ function generate_sorted_import_text(
         node::SyntaxTree, sorted_name_keys::Vector{Pair{SyntaxTree,String}},
         base_indent::String
     )
-    kind = JS.kind(node)
-    keyword = kind === JS.K"import" ? "import" :
-              kind === JS.K"using" ? "using" :
-              kind === JS.K"export" ? "export" : "public"
-    if kind in JS.KSet"import using"
+    kind = JS.head(node)
+    keyword = kind === :import ? "import" :
+              kind === :using ? "using" :
+              kind === :export ? "export" : "public"
+    if kind in (:import, :using)
         nchildren = JS.numchildren(node)
-        if nchildren == 1 && JS.kind(node[1]) === JS.K":"
+        if nchildren == 1 && JS.head(node[1]) === :(:)
             module_path = lstrip(JS.sourcetext(node[1][1]))
             prefix = "$keyword $module_path: "
         else
@@ -1520,7 +1513,7 @@ function analyze_orphaned_docstrings!(
     check_toplevel && check_orphaned_docstrings!(diagnostics, fi, st0_top,
         JS.numchildren(st0_top), :docstring; fix_first = false)
     for child in JS.children(st0_top)
-        walk_orphaned_docstrings!(diagnostics, uri, fi, child, JS.K"toplevel", true,
+        walk_orphaned_docstrings!(diagnostics, uri, fi, child, :toplevel, true,
             :undocumented)
     end
     return diagnostics
@@ -1531,12 +1524,12 @@ end
 # handle field docstrings itself.
 function walk_orphaned_docstrings!(
         diagnostics::Vector{Diagnostic}, uri::URI, fi::FileInfo, st0::SyntaxTree,
-        parent_kind::JS.Kind, global_scope::Bool, doc_target::Symbol
+        parent_kind::Symbol, global_scope::Bool, doc_target::Symbol
     )
     JS.is_leaf(st0) && return diagnostics
-    kind = JS.kind(st0)
-    kind === JS.K"quote" && return diagnostics
-    if kind === JS.K"macrocall"
+    kind = JS.head(st0)
+    kind === :quote && return diagnostics
+    if kind === :macrocall
         is_string_macrocall0(st0) && return diagnostics
         is_doc = is_doc0_any(st0)
         transparent = is_doc || is_macrocall_st0(st0, "@static", "Base.@static")
@@ -1545,22 +1538,22 @@ function walk_orphaned_docstrings!(
             doc_target : :unknown
         for i = 2:JS.numchildren(st0)
             child = st0[i]
-            transparent || JS.kind(child) !== JS.K"block" || continue
+            transparent || JS.head(child) !== :block || continue
             walk_orphaned_docstrings!(diagnostics, uri, fi, child, kind,
                 global_scope & transparent, child_doc_target)
         end
         return diagnostics
-    elseif kind === JS.K"toplevel"
+    elseif kind === :toplevel
         check_orphaned_docstrings!(diagnostics, fi, st0, JS.numchildren(st0),
             global_scope ? :docstring : :local)
-    elseif kind === JS.K"struct"
+    elseif kind === :struct
         doc_target === :undocumented &&
             check_undocumented_struct_fields!(diagnostics, uri, fi, st0)
-    elseif kind === JS.K"block"
-        if parent_kind === JS.K"module"
+    elseif kind === :block
+        if parent_kind === :module
             check_orphaned_docstrings!(diagnostics, fi, st0, JS.numchildren(st0), :docstring;
                 fix_first = false)
-        elseif parent_kind === JS.K"struct"
+        elseif parent_kind === :struct
             check_orphaned_docstrings!(diagnostics, fi, st0, JS.numchildren(st0), :struct)
         else
             context = !global_scope ? :local :
@@ -1568,8 +1561,8 @@ function walk_orphaned_docstrings!(
             check_orphaned_docstrings!(diagnostics, fi, st0, JS.numchildren(st0)-1, context)
         end
     end
-    child_global_scope = kind === JS.K"module" ||
-        (global_scope && kind in JS.KSet"toplevel block if elseif")
+    child_global_scope = kind === :module ||
+        (global_scope && kind in (:toplevel, :block, :if, :elseif))
     for child in JS.children(st0)
         walk_orphaned_docstrings!(diagnostics, uri, fi, child, kind, child_global_scope,
             :undocumented)
@@ -1578,7 +1571,7 @@ function walk_orphaned_docstrings!(
 end
 
 function is_string_macrocall0(st0::SyntaxTree)
-    JS.kind(st0) === JS.K"macrocall" || return false
+    JS.head(st0) === :macrocall || return false
     JS.numchildren(st0) >= 1 || return false
     macro_name = st0[1]
     return has_name_val(macro_name) && endswith(name_val(macro_name), "_str")
@@ -1599,7 +1592,7 @@ function check_orphaned_docstrings!(
     for i = 1:nchecked
         st0 = stmts[i]
         is_raw = is_macrocall_st0(st0, "@raw_str")
-        JS.kind(st0) in JS.KSet"String string" || is_raw || continue
+        is_string_literal(st0) || JS.head(st0) === :string || is_raw || continue
         next = i < JS.numchildren(stmts) ? stmts[i+1] : nothing
         if (context === :struct && !is_raw && next !== nothing &&
             count_gap_newlines(fi, st0, next) ≤ 1)
@@ -1635,11 +1628,12 @@ function count_gap_newlines(fi::FileInfo, st0::SyntaxTree, next::SyntaxTree)
 end
 
 function is_documentable0(st0::SyntaxTree)
-    kind = JS.kind(st0)
-    if kind === JS.K"macrocall"
+    kind = JS.head(st0)
+    if kind === :macrocall
         return !is_doc0_any(st0) && !is_string_macrocall0(st0)
     end
-    return kind in JS.KSet"function macro struct abstract primitive module const global = :: . Identifier"
+    return kind in (:function, :macro, :struct, :abstract, :primitive, :module, :const,
+        :global, :(=), :(::), :., :identifier)
 end
 
 # Attach the docstring by prefixing it with `@doc` when the context requires it, and by
@@ -1682,11 +1676,11 @@ function check_undocumented_struct_fields!(
     )
     name = @something struct_name_node(st0) return diagnostics
     body = st0[JS.numchildren(st0)]
-    JS.kind(body) === JS.K"block" || return diagnostics
+    JS.head(body) === :block || return diagnostics
     relatedInformation = DiagnosticRelatedInformation[]
     for i = 1:JS.numchildren(body)-1
         doc = body[i]
-        JS.kind(doc) in JS.KSet"String string" || continue
+        is_string_literal(doc) || JS.head(doc) === :string || continue
         field_name = @something struct_field_name_node(body[i+1]) continue
         count_gap_newlines(fi, doc, body[i+1]) <= 1 || continue
         push!(relatedInformation, DiagnosticRelatedInformation(;
@@ -1708,18 +1702,18 @@ function check_undocumented_struct_fields!(
 end
 
 function struct_field_name_node(st0::SyntaxTree)
-    kind = JS.kind(st0)
-    if kind in JS.KSet"const = ::" && JS.numchildren(st0) >= 1
+    kind = JS.head(st0)
+    if kind in (:const, :(=), :(::)) && JS.numchildren(st0) >= 1
         return struct_field_name_node(st0[1])
     end
-    return kind === JS.K"Identifier" ? st0 : nothing
+    return kind === :identifier ? st0 : nothing
 end
 
 # Reachability-based unreachable-code detection. `unreachable_statements`
-# is the set of `K"block"` children that the per-lambda CFG built in
+# is the set of `:block` children that the per-lambda CFG built in
 # `analyze_all_lambdas` determined to be in unreachable blocks.
 #
-# Walking `K"block"` nodes here only serves to (a) locate consecutive runs
+# Walking `:block` nodes here only serves to (a) locate consecutive runs
 # of unreachable statements that came from the same source position and
 # (b) recover the "transition point" — the last reachable sibling — to
 # anchor the auto-fix delete range. The reachability decision itself is
@@ -1732,7 +1726,7 @@ function analyze_unreachable_code!(
     )
     isempty(unreachable_statements) && return
     traverse(st3) do st3′::SyntaxTree
-        JS.kind(st3′) === JS.K"block" || return nothing
+        JS.head(st3′) === :block || return nothing
         nchildren = JS.numchildren(st3′)
         first_unreach_idx = 0
         for i in 1:nchildren
@@ -1800,7 +1794,7 @@ function analyze_unresolved_gotos!(
         diagnostics::Vector{Diagnostic}, fi::FileInfo, st3::SyntaxTree
     )
     traverse(st3) do st3′::SyntaxTree
-        JS.kind(st3′) in JS.KSet"lambda toplevel_lambda" || return nothing
+        JS.head(st3′) in (:lambda, :toplevel_lambda) || return nothing
         JS.numchildren(st3′) >= 4 || return nothing
         check_lambda_gotos!(diagnostics, fi, st3′[4])
         return nothing
@@ -1831,7 +1825,7 @@ function check_lambda_gotos!(
         # Skip macro-generated labels — only report user-written ones.
         provs = JL.flattened_provenance(st)
         is_from_user_ast(provs) || continue
-        label_call = @something provenance_ancestor(st, JS.K"macrocall") continue
+        label_call = @something provenance_ancestor(st, :macrocall) continue
         get_macrocall_name(label_call) == "@label" || continue
         JS.numchildren(label_call) >= 2 || continue
         delete_range = line_absorbing_delete_range(label_call, fi)
@@ -1858,20 +1852,20 @@ function collect_gotos_labels!(
         st3::SyntaxTree
     )
     traverse(st3) do node
-        k = JS.kind(node)
-        if k === JS.K"lambda"
+        k = JS.head(node)
+        if k === :lambda
             # Nested lambdas have their own goto/label scope; handled separately.
             return traversal_no_recurse
-        elseif k === JS.K"symboliclabel"
+        elseif k === :symboliclabel
             push!(labels, (name_val(node), node))
             return traversal_no_recurse
-        elseif k === JS.K"symbolicgoto"
+        elseif k === :symbolicgoto
             push!(gotos, (name_val(node), node))
             return traversal_no_recurse
-        elseif k === JS.K"symbolicblock" || k === JS.K"break"
-            # `K"symbolicblock"`'s first child is a lowering-internal label
-            # (e.g. `loop-exit`) used by `K"break"`, not reachable via `@goto`;
-            # `K"break"`'s first child is a label name reference, not a declaration.
+        elseif k === :symbolicblock || k === :break
+            # `:symbolicblock`'s first child is a lowering-internal label
+            # (e.g. `loop-exit`) used by `:break`, not reachable via `@goto`;
+            # `:break`'s first child is a label name reference, not a declaration.
             # In both cases recurse only into the body (the second child).
             if JS.numchildren(node) >= 2
                 collect_gotos_labels!(gotos, labels, node[2])
@@ -1934,7 +1928,7 @@ function per_stmt_diagnostics!(
         allow_unused_underscore::Bool = true,
         soft_scope::Bool = false
     )
-    @assert JS.kind(st0) ∉ JS.KSet"toplevel module"
+    @assert JS.head(st0) ∉ (:toplevel, :module)
 
     analyze_unsorted_imports!(diagnostics, fi, st0)
 
@@ -2052,7 +2046,7 @@ let empty_names = Set{String}()
         for d in macro_diags
             d.code == LOWERING_INACTIVE_CODE || continue
             traverse(d.node) do s
-                if JS.kind(s) === JS.K"Identifier"
+                if JS.head(s) === :identifier
                     nv = get_name_val(s)
                     nv === nothing || push!(names, nv)
                 end
@@ -2210,14 +2204,14 @@ function collect_explicit_imports_by_module(
     )
     mod_imported_names = Dict{Module,Dict{String,Vector{ImportInfo}}}()
     traverse(st0_top) do st0::SyntaxTree
-        JS.kind(st0) ∈ JS.KSet"import using" || return nothing
+        JS.head(st0) ∈ (:import, :using) || return nothing
         context_module = get_context_module(state, uri, offset_to_xy(fi, JS.first_byte(st0)))
         for (name, name_range, delete_range) in collect_explicit_import_names(st0, fi)
             imported_names =
                 get!(Dict{String,Vector{ImportInfo}}, mod_imported_names, context_module)
             push!(get!(Vector{ImportInfo}, imported_names, name),
                 ImportInfo(uri, name_range, delete_range,
-                    JS.kind(st0) === JS.K"import" ? :import : :using))
+                    JS.head(st0) === :import ? :import : :using))
         end
         return TraversalNoRecurse()
     end
@@ -2228,13 +2222,13 @@ end
 # For single imports like `using M: x`, delete_range covers the entire import statement.
 # For multiple imports like `using M: x, y`, delete_range covers the name plus comma/whitespace.
 function collect_explicit_import_names(st0::SyntaxTree, fi::FileInfo)
-    kind = JS.kind(st0)
+    kind = JS.head(st0)
     names = Tuple{String,Range,Range}[]
-    kind ∈ JS.KSet"import using" || return names
+    kind ∈ (:import, :using) || return names
     if JS.numchildren(st0) == 1
         child = st0[1]
-        ckind = JS.kind(child)
-        if ckind === JS.K":"
+        ckind = JS.head(child)
+        if ckind === :(:)
             # `using M: a, b` or `import M: a, b`
             nnames = JS.numchildren(child) - 1
             for i = 2:JS.numchildren(child)
@@ -2268,13 +2262,13 @@ function collect_explicit_import_names(st0::SyntaxTree, fi::FileInfo)
                 end
                 push!(names, (name, name_range, delete_range))
             end
-        elseif ckind === JS.K"." && kind === JS.K"import"
+        elseif ckind === :. && kind === :import
             # `import M.a` or `import M.a.b` - last component is the imported name
             # Note: `using M.a` brings all exports from module M.a, so it's not explicit
             npath = JS.numchildren(child)
             if npath >= 2
                 last_st = child[npath]
-                if JS.kind(last_st) === JS.K"Identifier"
+                if JS.head(last_st) === :identifier
                     # Single import: delete entire statement
                     name_range = jsobj_to_range(last_st, fi)
                     delete_range = line_absorbing_delete_range(st0, fi)

@@ -93,7 +93,7 @@ abstract_binding_state_typ(binding_state::JET.AbstractBindingState) =
 
 Type to display for a resolved global binding when a byte-range type query
 can't supply one — most notably at an assignment LHS, which is a store and so
-carries no inferred type, and whose `K"BindingId"` node
+carries no inferred type, and whose `:bindingid` node
 [`resolve_global_const`](@ref) doesn't accept either.
 
 Mirrors what inference reports at a *reference* to the same binding: the
@@ -117,7 +117,7 @@ end
     resolve_global_const(context_module::Module, world::UInt, node::SyntaxTree) ->
         lattice element or nothing
 
-Best-effort static lookup of a `K"Identifier"` or `K"."` dotted-path node as a
+Best-effort static lookup of an `:identifier` or `:.` dotted-path node as a
 type-inference lattice element (usually `Core.Const`) by walking the dotted
 path against `context_module`. Used as a fallback for features (signature help,
 call completion, definition, …) when the [`TypeAnnotation`](@ref) pipeline
@@ -139,17 +139,17 @@ unwrapped to the analysis-inferred binding type via
 fallback observe a newer world than the rest of the request.
 """
 function resolve_global_const(context_module::Module, world::UInt, node::SyntaxTree)
-    if JS.kind(node) === JS.K"Identifier" && has_name_val(node)
+    if JS.head(node) === :identifier && has_name_val(node)
         sym = Symbol(name_val(node))
         Base.invoke_in_world(world, isdefinedglobal, context_module, sym) || return nothing
         val = Base.invoke_in_world(world, getglobal, context_module, sym)
         val isa JET.AbstractBindingState && return abstract_binding_state_typ(val)
         return Core.Const(val)
-    elseif JS.kind(node) === JS.K"." && JS.numchildren(node) == 2
+    elseif JS.head(node) === :. && JS.numchildren(node) == 2
         prefix = node[1]
         suffix = node[2]
-        # `Base.@show` parses with the macro identifier wrapped in `K"inert"`.
-        if JS.kind(suffix) === JS.K"inert" && JS.numchildren(suffix) >= 1
+        # `Base.@show` parses with the macro identifier wrapped in `:inert`.
+        if JS.head(suffix) === :inert && JS.numchildren(suffix) >= 1
             suffix = suffix[1]
         end
         prefix_const = resolve_global_const(context_module, world, prefix)

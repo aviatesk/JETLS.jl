@@ -28,7 +28,7 @@ function get_lowering_diagnostics(
     uri = filepath2uri(filename)
     fi = JETLS.cache_file_info!(server, uri, 1, text)
     st0_top = JETLS.build_syntax_tree(fi)
-    @assert JS.kind(st0_top) === JS.K"toplevel"
+    @assert JS.head(st0_top) === :toplevel
     diagnostics = LSP.Diagnostic[]
     candidates = JETLS.UndefGlobalCandidate[]
     def_used_names = Dict{Module,JETLS.DefUsedNames}()
@@ -2878,7 +2878,7 @@ end
     # `@something(x, return default)` is a common early-return idiom. The
     # macro expands to nested `let val_i = arg_i; if isnothing(val_i) ...`,
     # whose macro-introduced wrapper contains the user-written `return`.
-    # The wrapper's lowered form puts the `K"if"` AFTER the `K"="` whose
+    # The wrapper's lowered form puts the `:if` AFTER the `:(=)` whose
     # rhs is `return`, but the wrapper's byte range encompasses the
     # `return`, so reporting it would surface a confusing
     # "macro-everything-is-unreachable" warning. The

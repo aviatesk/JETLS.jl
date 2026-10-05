@@ -636,7 +636,7 @@ end
 end
 
 @testset "operator-like methods" begin
-    # `<:` and `>:` signatures parse as their own syntax kind (not K"call"),
+    # `<:` and `>:` signatures parse as their own syntax head (not `:call`),
     # which previously caused `flatten_args` to error.
     @test siginfos(Main, "<:(│)") isa Vector
     @test siginfos(Main, ">:(│)") isa Vector

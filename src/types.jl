@@ -72,26 +72,26 @@ struct InferredTreeContext
     # `byte_range => kind` for the surface node each lowered node was lowered
     # from (first element of `JS.flattened_provenance`). First-write-wins,
     # mirroring a `traverse`-then-pick-first lookup.
-    surface_kind_index::Dict{UnitRange{Int}, JS.Kind}
+    surface_kind_index::Dict{UnitRange{Int}, Symbol}
     # Every lowered node keyed by its own `byte_range`, in preorder. The
-    # preorder property is load-bearing for the "last `K"call"` wins"
+    # preorder property is load-bearing for the "last `:call` wins"
     # semantics in `type_for_call`.
     by_byte_range::Dict{UnitRange{Int}, Vector{SyntaxTree}}
-    # Result types from typed `K"call"` nodes whose first provenance is a
-    # `K"macrocall"`, keyed by the macrocall's `byte_range`.
+    # Result types from typed `:call` nodes whose first provenance is a
+    # `:macrocall`, keyed by the macrocall's `byte_range`.
     macrocall_types::Dict{UnitRange{Int}, Vector{Any}}
-    # Every `K"return"` node, in two parallel `Vector`s sorted by
+    # Every `:return` node, in two parallel `Vector`s sorted by
     # `JS.first_byte` (so `searchsortedfirst` is valid on `return_first_bytes`).
     # User-vs-synthetic classification is derived per-query from
     # `user_return_form_ranges` below — @mlechu's idea.
     return_first_bytes::Vector{Int}
     return_nodes::Vector{SyntaxTree}
-    # Byte ranges of every user-written `K"return"` surface form in `st3`
-    # (`st3` not `st0` so macro-expansion-introduced `K"return"`s are included).
+    # Byte ranges of every user-written `:return` surface form in `st3`
+    # (`st3` not `st0` so macro-expansion-introduced `:return`s are included).
     # Consumed by `type_for_branching`.
     user_return_form_ranges::Vector{UnitRange{Int}}
     # For each lowered node inside the body of some OC, the byte range of that OC's
-    # `K"opaque_closure_method"`. Used by `tmerge_at_range` to filter OC construction
+    # `:opaque_closure_method`. Used by `tmerge_at_range` to filter OC construction
     # scaffolding sharing a byte range with the user's yield expression: a node is kept
     # only when the OC whose body it's in has the queried byte range — so inner-OC noise
     # inside an outer OC body (e.g. multi-`for` comprehension, closure-of-closure) is
@@ -120,7 +120,8 @@ struct FileInfo
     testsetinfos::Vector{TestsetInfo}
     # `st0` cache for synchronized documents, built from `parsed_stream` when the
     # constructor is given `cache_tree0=true`. Access through `build_syntax_tree`,
-    # which returns a copy safe for lowering. Unsynced files keep this `nothing`;
+    # which shares this tree across requests, so it must never be mutated in place
+    # (lowering builds new nodes instead). Unsynced files keep this `nothing`;
     # workspace-wide hot paths should rely on summary caches instead of retaining
     # `st0` for every file.
     syntax_tree0::Union{Nothing,SyntaxTree}

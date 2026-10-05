@@ -75,11 +75,11 @@ first_syntax_node(nodes::SyntaxList) = isempty(nodes) ? nothing : nodes[1]
 
 function macrocall_at_range(st0_top::SyntaxTree, range::UnitRange{Int})
     macrocall = first_syntax_node(byte_ancestors(
-        st -> JS.kind(st) === JS.K"macrocall", st0_top, range))
+        st -> JS.head(st) === :macrocall, st0_top, range))
     macrocall !== nothing && return macrocall
     first(range) > 1 || return nothing
     return first_syntax_node(byte_ancestors(
-        st -> JS.kind(st) === JS.K"macrocall", st0_top, first(range)-1))
+        st -> JS.head(st) === :macrocall, st0_top, first(range)-1))
 end
 
 function macro_expansion_code_actions!(
@@ -135,7 +135,7 @@ end
 
 function toplevel_contains_macrocall(st0::SyntaxTree)
     found = traverse(st0) do st::SyntaxTree
-        JS.kind(st) === JS.K"macrocall" || return nothing
+        JS.head(st) === :macrocall || return nothing
         return TraversalReturn(true; terminate=true)
     end
     return found === true

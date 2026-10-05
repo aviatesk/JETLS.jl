@@ -24,7 +24,7 @@ function jlexpand(
     )
     st0 = jlparse(code; rule=:statement)
     world = Base.get_world_counter()
-    st0 = JL.rebase_layers(st0, context_module, JS.JL_OLD_SYNTAX_VERSION)
+    st0 = JL.rebase_layers(st0, context_module)
     return JL.expand_forms_1(st0, world, recursive)
 end
 jlexpand(code::AbstractString; kwargs...) = jlexpand(lowering_module, code; kwargs...)
@@ -36,18 +36,21 @@ function jlresolve(context_module::Module, code::AbstractString; world::UInt=Bas
 end
 jlresolve(code::AbstractString) = jlresolve(lowering_module, code)
 
-jleval(context_module::Module, code::AbstractString) =
-    JL.eval(context_module, jlparse(code; rule=:statement))
+# `JL.eval` evaluates thunks with `jl_eval_thunk`, which older Julia runtimes don't provide
+function jleval(context_module::Module, code::AbstractString)
+    st5 = JL.lower(context_module, jlparse(code; rule=:statement))
+    return Core.eval(context_module, JL.to_lowered_expr(st5))
+end
 jleval(code::AbstractString) = jleval(lowering_module, code)
 
-children_kinds(st::JS.SyntaxTree) = JS.Kind[JS.kind(c) for c in JS.children(st)]
+children_heads(st::JS.SyntaxTree) = Symbol[JS.head(c) for c in JS.children(st)]
 
 function has_qualified_name(
-        st::JS.SyntaxTree, qualifier::JS.Kind, name::AbstractString
+        st::JS.SyntaxTree, qualifier::Symbol, name::AbstractString
     )
     found = Ref(false)
     JETLS.traverse(st) do node::JS.SyntaxTree
-        if (JS.kind(node) === qualifier && JS.numchildren(node) == 1 &&
+        if (JS.head(node) === qualifier && JS.numchildren(node) == 1 &&
             JETLS.get_name_val(node[1]) == name)
             found[] = true
         end
@@ -133,17 +136,17 @@ end
                     b::Int
                 end
                 """)
-            @test JS.kind(st1) === JS.K"block"
-            ks = children_kinds(st1)
-            @test count(==(JS.K"struct"), ks) == 1
+            @test JS.head(st1) === :block
+            ks = children_heads(st1)
+            @test count(==(:struct), ks) == 1
             # parametric: 2 constructors (S(...) and S{T}(...) where {T})
-            @test count(==(JS.K"function"), ks) == 2
+            @test count(==(:function), ks) == 2
 
             # struct fields should have defaults stripped
-            st_struct = st1[findfirst(==(JS.K"struct"), ks)]
+            st_struct = st1[findfirst(==(:struct), ks)]
             body = st_struct[3]
             for field in JS.children(body)
-                @test JS.kind(field) !== JS.K"="
+                @test JS.head(field) !== :(=)
             end
         end
 
@@ -153,11 +156,11 @@ end
                     a::Float64 = 1.0
                 end
                 """)
-            @test JS.kind(st1) === JS.K"block"
-            ks = children_kinds(st1)
-            @test count(==(JS.K"struct"), ks) == 1
+            @test JS.head(st1) === :block
+            ks = children_heads(st1)
+            @test count(==(:struct), ks) == 1
             # non-parametric: only 1 constructor
-            @test count(==(JS.K"function"), ks) == 1
+            @test count(==(:function), ks) == 1
         end
 
         # no defaults: keyword constructor is still generated
@@ -166,10 +169,10 @@ end
                     a::Int
                 end
                 """)
-            @test JS.kind(st1) === JS.K"block"
-            ks = children_kinds(st1)
-            @test count(==(JS.K"struct"), ks) == 1
-            @test count(==(JS.K"function"), ks) == 1
+            @test JS.head(st1) === :block
+            ks = children_heads(st1)
+            @test count(==(:struct), ks) == 1
+            @test count(==(:function), ks) == 1
         end
 
         # non-parametric with subtype declaration
@@ -178,10 +181,10 @@ end
                     a::Int = 10
                 end
                 """)
-            @test JS.kind(st1) === JS.K"block"
-            ks = children_kinds(st1)
-            @test count(==(JS.K"struct"), ks) == 1
-            @test count(==(JS.K"function"), ks) == 1
+            @test JS.head(st1) === :block
+            ks = children_heads(st1)
+            @test count(==(:struct), ks) == 1
+            @test count(==(:function), ks) == 1
         end
 
         # parametric with subtype declaration
@@ -190,10 +193,10 @@ end
                     a::T = 1.0
                 end
                 """)
-            @test JS.kind(st1) === JS.K"block"
-            ks = children_kinds(st1)
-            @test count(==(JS.K"struct"), ks) == 1
-            @test count(==(JS.K"function"), ks) == 2
+            @test JS.head(st1) === :block
+            ks = children_heads(st1)
+            @test count(==(:struct), ks) == 1
+            @test count(==(:function), ks) == 2
         end
 
         # mutable struct with const field default
@@ -203,18 +206,18 @@ end
                     b::Int
                 end
                 """)
-            @test JS.kind(st1) === JS.K"block"
-            ks = children_kinds(st1)
-            @test count(==(JS.K"struct"), ks) == 1
-            @test count(==(JS.K"function"), ks) == 2
+            @test JS.head(st1) === :block
+            ks = children_heads(st1)
+            @test count(==(:struct), ks) == 1
+            @test count(==(:function), ks) == 2
 
-            st_struct = st1[findfirst(==(JS.K"struct"), ks)]
+            st_struct = st1[findfirst(==(:struct), ks)]
             body = st_struct[3]
             # `const a::T` should remain, but no `=`
             has_const = false
             for field in JS.children(body)
-                @test JS.kind(field) !== JS.K"="
-                if JS.kind(field) === JS.K"const"
+                @test JS.head(field) !== :(=)
+                if JS.head(field) === :const
                     has_const = true
                 end
             end
@@ -259,10 +262,10 @@ end
 @testset "@lock" begin
     @testset "macro expansion" begin
         let st1 = jlexpand("@lock lk begin x = 1; x end")
-            @test JS.kind(st1) === JS.K"block"
+            @test JS.head(st1) === :block
             @test JS.numchildren(st1) == 2
             @test JS.sourcetext(st1[1]) == "lk"
-            @test JS.kind(st1[2]) === JS.K"let"
+            @test JS.head(st1[2]) === :let
         end
     end
 
@@ -312,24 +315,24 @@ end
     @testset "macro expansion" begin
         # Single-argument form: returns the body unchanged.
         let st1 = jlexpand("Threads.@spawn sin(xxx)")
-            @test JS.kind(st1) === JS.K"call"
+            @test JS.head(st1) === :call
             @test JS.sourcetext(st1[1]) == "sin"
             @test JS.sourcetext(st1[2]) == "xxx"
         end
 
         # Two-argument form: emits `block(threadpool, body)`.
         let st1 = jlexpand("Threads.@spawn :default sin(xxx)")
-            @test JS.kind(st1) === JS.K"block"
+            @test JS.head(st1) === :block
             @test JS.numchildren(st1) == 2
-            @test JS.kind(st1[1]) === JS.K"inert"
-            @test JS.kind(st1[2]) === JS.K"call"
+            @test JS.head(st1[1]) === :inert
+            @test JS.head(st1[2]) === :call
         end
 
-        # `$x` in the body must be unwrapped: a surviving `K"$"` outside of a
+        # `$x` in the body must be unwrapped: a surviving `:$` outside of a
         # quote context would fail later lowering passes.
         let st1 = jlexpand("Threads.@spawn sin(\$xxx)")
-            @test JS.kind(st1) === JS.K"call"
-            @test all(c -> JS.kind(c) !== JS.K"$", JS.children(st1))
+            @test JS.head(st1) === :call
+            @test all(c -> JS.head(c) !== :$, JS.children(st1))
             @test JS.sourcetext(st1[2]) == "xxx"
         end
 
@@ -409,7 +412,7 @@ end
     # The label form covers the macrocall, and its identifier keeps the
     # caller's hygiene layer.
     let code = "@label foo", st1 = jlexpand(code)
-        @test JS.kind(st1) === JS.K"symboliclabel"
+        @test JS.head(st1) === :symboliclabel
         @test JS.byte_range(st1) == source_range(code, "@label foo")
         @test JS.byte_range(st1[1]) == source_range(code, "foo")
         @test st1.context.layer === st1[1].context.layer
@@ -460,8 +463,8 @@ end
 @testset "@something" begin
     @testset "macro expansion" begin
         let st1 = jlexpand("@something 1")
-            @test has_qualified_name(st1, JS.K"top", "something")
-            @test has_qualified_name(st1, JS.K"top", "isnothing")
+            @test has_qualified_name(st1, :top, "something")
+            @test has_qualified_name(st1, :top, "isnothing")
         end
     end
 
@@ -524,7 +527,7 @@ end
 @testset "@lazy_str" begin
     @testset "macro expansion" begin
         let st1 = jlexpand("lazy\"abc\"")
-            @test has_qualified_name(st1, JS.K"top", "LazyString")
+            @test has_qualified_name(st1, :top, "LazyString")
         end
     end
 
@@ -567,6 +570,13 @@ end
             ), '\n')
             res = jlresolve(code)
             assert_binding_provenance_range(res, :global, "triple_key", source_range(code, "triple_key"))
+        end
+    end
+
+    @testset "interpolations in old-style macro output" begin
+        let code = "Base.@constprop :none lazyfunc(c) = lazy\"a \$(c.name) b\""
+            st5 = JL.lower(lowering_module, jlparse(code; rule=:statement))
+            @test_logs min_level=Base.CoreLogging.Warn JL.to_lowered_expr(st5)
         end
     end
 
@@ -614,21 +624,21 @@ end
         # Bare condition: lowered to `cond ? nothing : throw(AssertionError(...))`
         # so the false branch terminates control flow.
         let st1 = jlexpand("@assert x == 1")
-            @test JS.kind(st1) === JS.K"if"
+            @test JS.head(st1) === :if
         end
 
         # Condition + user message uses the message as the AssertionError arg.
         let st1 = jlexpand("@assert x == 1 \"failed\"")
-            @test JS.kind(st1) === JS.K"if"
-            @test has_qualified_name(st1, JS.K"core", "throw")
-            @test has_qualified_name(st1, JS.K"core", "AssertionError")
+            @test JS.head(st1) === :if
+            @test has_qualified_name(st1, :core, "throw")
+            @test has_qualified_name(st1, :core, "AssertionError")
         end
 
         # Base silently ignores extra trailing message arguments; extras are
         # piled into a leading block so they remain visible to the resolver.
         let st1 = jlexpand("@assert x == 1 \"a\" \"b\"")
-            @test JS.kind(st1) === JS.K"block"
-            @test JS.kind(st1[end]) === JS.K"if"
+            @test JS.head(st1) === :block
+            @test JS.head(st1[end]) === :if
         end
     end
 
@@ -665,21 +675,21 @@ end
 @testset "@show" begin
     @testset "macro expansion" begin
         # Zero-arg form: real `@show` returns `nothing`; the stub emits a
-        # placeholder `K"Value"` node.
+        # placeholder `:value` node.
         let st1 = jlexpand("@show")
-            @test JS.kind(st1) === JS.K"Value"
+            @test JS.head(st1) === :value
         end
 
         # Single-arg form: returned unchanged so it slots into expressions like
         # `x = @show foo` without an extra block wrapper.
         let st1 = jlexpand("@show xxx")
-            @test JS.kind(st1) === JS.K"Identifier"
+            @test JS.head(st1) === :identifier
             @test JS.sourcetext(st1) == "xxx"
         end
 
         # Multi-arg form: each user expression flows through a `block`.
         let st1 = jlexpand("@show xxx yyy zzz")
-            @test JS.kind(st1) === JS.K"block"
+            @test JS.head(st1) === :block
             @test JS.numchildren(st1) == 3
         end
     end
@@ -705,26 +715,26 @@ logging_resolve(code::AbstractString) = jlresolve(logging_module, code)
     @testset "macro expansion" begin
         for name in ("@debug", "@info", "@warn", "@error")
             # Bare message: wrapped in a `block` so the trailing
-            # `nothing::K"Value"` matches the macros' "always returns
+            # `nothing::value` matches the macros' "always returns
             # `nothing`" contract.
             let st1 = logging_expand("$name \"msg\"")
-                @test JS.kind(st1) === JS.K"block"
-                @test JS.kind(st1[end]) === JS.K"Value"
+                @test JS.head(st1) === :block
+                @test JS.head(st1[end]) === :value
             end
 
             # Mixed kwargs / bare positional / splat: kwarg RHS and the splat
-            # operand both flow through, the wrapping `K"="` and `K"..."`
+            # operand both flow through, the wrapping `:(=)` and `:...`
             # nodes are dropped so they don't reach later lowering passes.
             let st1 = logging_expand("$name \"msg\" xxx yyy=zzz extras...")
-                @test JS.kind(st1) === JS.K"block"
-                @test all(c -> JS.kind(c) ∉ JS.KSet"= ...", JS.children(st1))
+                @test JS.head(st1) === :block
+                @test all(c -> JS.head(c) ∉ (:(=), :...), JS.children(st1))
             end
 
             # The message itself can be a `begin`/`end` block (per the
             # docstring's lazy-evaluation example); it flows through unchanged.
             let st1 = logging_expand("$name begin x = 1; \"got \$x\" end")
-                @test JS.kind(st1) === JS.K"block"
-                @test JS.kind(st1[1]) === JS.K"block"
+                @test JS.head(st1) === :block
+                @test JS.head(st1[1]) === :block
             end
         end
     end
@@ -784,10 +794,10 @@ end
 @testset "@logmsg" begin
     @testset "macro expansion" begin
         # Both `level` and `message` flow through a `block`; the trailing
-        # `nothing::K"Value"` matches the macro's return contract.
+        # `nothing::value` matches the macro's return contract.
         let st1 = logging_expand("@logmsg lvl \"msg\" xxx yyy=zzz")
-            @test JS.kind(st1) === JS.K"block"
-            @test JS.kind(st1[end]) === JS.K"Value"
+            @test JS.head(st1) === :block
+            @test JS.head(st1[end]) === :value
         end
     end
 
@@ -832,19 +842,19 @@ end
     end
 end
 
-# Helper: walk the EST and return the first `K"core"` / `K"top"` node whose
-# inner `K"Identifier"` matches `name`. Used to verify that the expansion
+# Helper: walk the EST and return the first `:core` / `:top` node whose
+# inner `:identifier` matches `name`. Used to verify that the expansion
 # synthesizes `Core.invoke` / `Base.invokelatest` (and the synthesized
 # `getproperty` / `setindex!` / etc. references).
-function find_named_ref(st::JS.SyntaxTree, k::JS.Kind, name::AbstractString)
-    if JS.kind(st) === k && JS.numchildren(st) >= 1
+function find_named_ref(st::JS.SyntaxTree, h::Symbol, name::AbstractString)
+    if JS.head(st) === h && JS.numchildren(st) >= 1
         inner = st[1]
-        if JS.kind(inner) === JS.K"Identifier" && JETLS.get_name_val(inner) == name
+        if JS.head(inner) === :identifier && JETLS.get_name_val(inner) == name
             return st
         end
     end
     for c in JS.children(st)
-        r = find_named_ref(c, k, name)
+        r = find_named_ref(c, h, name)
         r === nothing || return r
     end
     return nothing
@@ -854,38 +864,38 @@ end
     @testset "@invoke macro expansion" begin
         # `f(args...)` -> `Core.invoke(f, Tuple{T1, ...}, args...)`.
         let st1 = jlexpand("@invoke f(x::T, y)")
-            @test JS.kind(st1) === JS.K"call"
-            @test find_named_ref(st1, JS.K"core", "invoke") !== nothing
-            @test find_named_ref(st1, JS.K"core", "Tuple") !== nothing
+            @test JS.head(st1) === :call
+            @test find_named_ref(st1, :core, "invoke") !== nothing
+            @test find_named_ref(st1, :core, "Tuple") !== nothing
             # Annotation-less arg `y` falls back to `Core.Typeof(y)`.
-            @test find_named_ref(st1, JS.K"core", "Typeof") !== nothing
+            @test find_named_ref(st1, :core, "Typeof") !== nothing
         end
 
         # `x.f` -> `Core.invoke(Base.getproperty, Tuple{...}, x, :f)`.
         let st1 = jlexpand("@invoke x.f")
-            @test JS.kind(st1) === JS.K"call"
-            @test find_named_ref(st1, JS.K"core", "invoke") !== nothing
-            @test find_named_ref(st1, JS.K"top", "getproperty") !== nothing
+            @test JS.head(st1) === :call
+            @test find_named_ref(st1, :core, "invoke") !== nothing
+            @test find_named_ref(st1, :top, "getproperty") !== nothing
         end
 
         # `xs[i]` -> `Core.invoke(Base.getindex, Tuple{...}, xs, i)`.
         let st1 = jlexpand("@invoke xs[i]")
-            @test find_named_ref(st1, JS.K"top", "getindex") !== nothing
+            @test find_named_ref(st1, :top, "getindex") !== nothing
         end
 
         # `x.f = v` -> `Core.invoke(Base.setproperty!, Tuple{...}, x, :f, v)`.
         let st1 = jlexpand("@invoke x.f = v")
-            @test find_named_ref(st1, JS.K"top", "setproperty!") !== nothing
+            @test find_named_ref(st1, :top, "setproperty!") !== nothing
         end
 
         # `xs[i] = v` -> `Core.invoke(Base.setindex!, Tuple{...}, xs, v, i)`.
         let st1 = jlexpand("@invoke xs[i] = v")
-            @test find_named_ref(st1, JS.K"top", "setindex!") !== nothing
+            @test find_named_ref(st1, :top, "setindex!") !== nothing
         end
 
-        # kwargs survive as a `K"parameters"` block on the synthesized call.
+        # kwargs survive as a `:parameters` block on the synthesized call.
         let st1 = jlexpand("@invoke f(x::T; k=v)")
-            @test any(c -> JS.kind(c) === JS.K"parameters", JS.children(st1))
+            @test any(c -> JS.head(c) === :parameters, JS.children(st1))
         end
     end
 
@@ -893,23 +903,23 @@ end
         # `f(args...)` -> `Base.invokelatest(f, args...)`. Note no `Tuple{...}`
         # — types are not part of `invokelatest`'s signature.
         let st1 = jlexpand("@invokelatest f(x, y)")
-            @test JS.kind(st1) === JS.K"call"
-            @test find_named_ref(st1, JS.K"top", "invokelatest") !== nothing
-            @test find_named_ref(st1, JS.K"core", "Tuple") === nothing
+            @test JS.head(st1) === :call
+            @test find_named_ref(st1, :top, "invokelatest") !== nothing
+            @test find_named_ref(st1, :core, "Tuple") === nothing
         end
 
         let st1 = jlexpand("@invokelatest x.f")
-            @test find_named_ref(st1, JS.K"top", "invokelatest") !== nothing
-            @test find_named_ref(st1, JS.K"top", "getproperty") !== nothing
+            @test find_named_ref(st1, :top, "invokelatest") !== nothing
+            @test find_named_ref(st1, :top, "getproperty") !== nothing
         end
 
         let st1 = jlexpand("@invokelatest xs[i] = v")
-            @test find_named_ref(st1, JS.K"top", "setindex!") !== nothing
+            @test find_named_ref(st1, :top, "setindex!") !== nothing
         end
 
         # kwargs survive on the synthesized call.
         let st1 = jlexpand("@invokelatest f(x; k=v)")
-            @test any(c -> JS.kind(c) === JS.K"parameters", JS.children(st1))
+            @test any(c -> JS.head(c) === :parameters, JS.children(st1))
         end
     end
 
@@ -980,17 +990,17 @@ test_macro_lower(code::AbstractString) = jlresolve(test_lowering_module, code)
     @testset "macro expansion" begin
         # Bare expression: returned unchanged.
         let st1 = test_macro_expand("@test x == 1")
-            @test JS.kind(st1) === JS.K"call"
+            @test JS.head(st1) === :call
             @test strip(JS.sourcetext(st1)) == "x == 1"
         end
 
-        # Keyword arguments keep only the RHS so the `K"="` node doesn't reach
+        # Keyword arguments keep only the RHS so the `:(=)` node doesn't reach
         # later lowering passes, but identifiers in the RHS still flow through
         # to scope resolution.
         for kw in ("broken=true", "skip=cond", "context=ctx", "atol=0.1")
             let st1 = test_macro_expand("@test x $kw")
-                @test JS.kind(st1) === JS.K"block"
-                @test all(c -> JS.kind(c) !== JS.K"=", JS.children(st1))
+                @test JS.head(st1) === :block
+                @test all(c -> JS.head(c) !== :(=), JS.children(st1))
             end
         end
     end
@@ -1057,17 +1067,17 @@ end
                     @test a == 1
                 end
                 """)
-            @test JS.kind(st1) === JS.K"block"
-            @test children_kinds(st1) == [JS.K"String", JS.K"let"]
+            @test JS.head(st1) === :block
+            @test children_heads(st1) == [:value, :let]
             let_st = st1[2]
             @test JS.numchildren(let_st) == 2
-            @test JS.kind(let_st[1]) === JS.K"block" # bindings (empty)
-            @test JS.kind(let_st[2]) === JS.K"block" # body
+            @test JS.head(let_st[1]) === :block # bindings (empty)
+            @test JS.head(let_st[2]) === :block # body
         end
 
         # No description form.
         let st1 = test_macro_expand("@testset begin a = 1 end")
-            @test children_kinds(st1) == [JS.K"let"]
+            @test children_heads(st1) == [:let]
         end
 
         # The testset type, description, and option values are evaluated ahead of the body.
@@ -1076,7 +1086,7 @@ end
                     @test true
                 end
                 """)
-            @test children_kinds(st1) == [JS.K"Identifier", JS.K"String", JS.K"Bool", JS.K"let"]
+            @test children_heads(st1) == [:identifier, :value, :value, :let]
         end
 
         # `for` loop form: the for sits inside the let body block, and the description
@@ -1086,10 +1096,10 @@ end
                     @test i > 0
                 end
                 """)
-            @test children_kinds(st1) == [JS.K"let"]
+            @test children_heads(st1) == [:let]
             for_st = st1[1][2][1]
-            @test JS.kind(for_st) === JS.K"for"
-            @test children_kinds(for_st[2]) == [JS.K"string", JS.K"let"]
+            @test JS.head(for_st) === :for
+            @test children_heads(for_st[2]) == [:string, :let]
         end
     end
 
@@ -1246,7 +1256,7 @@ end
     @testset "macro expansion" begin
         # Both args flow through a `block` so identifiers in either get scope analysis.
         let st1 = test_macro_expand("@test_throws BoundsError xxx[4]")
-            @test JS.kind(st1) === JS.K"block"
+            @test JS.head(st1) === :block
             @test JS.numchildren(st1) == 2
         end
     end
@@ -1278,14 +1288,14 @@ end
     @testset "macro expansion" begin
         for name in ("@test_broken", "@test_skip")
             let st1 = test_macro_expand("$name xxx == 1")
-                @test JS.kind(st1) === JS.K"call"
+                @test JS.head(st1) === :call
                 @test strip(JS.sourcetext(st1)) == "xxx == 1"
             end
             # Keyword arguments keep only the RHS in a block so identifiers
             # there still flow through to scope resolution.
             let st1 = test_macro_expand("$name foo(xxx) atol=0.1")
-                @test JS.kind(st1) === JS.K"block"
-                @test all(c -> JS.kind(c) !== JS.K"=", JS.children(st1))
+                @test JS.head(st1) === :block
+                @test all(c -> JS.head(c) !== :(=), JS.children(st1))
             end
         end
     end
@@ -1321,11 +1331,11 @@ end
 @testset "Test.@test_warn / Test.@test_nowarn" begin
     @testset "macro expansion" begin
         let st1 = test_macro_expand("@test_warn \"oops\" foo(xxx)")
-            @test JS.kind(st1) === JS.K"block"
+            @test JS.head(st1) === :block
             @test JS.numchildren(st1) == 2
         end
         let st1 = test_macro_expand("@test_nowarn foo(xxx)")
-            @test JS.kind(st1) === JS.K"call"
+            @test JS.head(st1) === :call
             @test JS.sourcetext(st1[1]) == "foo"
             @test JS.sourcetext(st1[2]) == "xxx"
         end
@@ -1342,15 +1352,15 @@ end
     @testset "macro expansion" begin
         # Patterns + body all flow through a `block`.
         let st1 = test_macro_expand("@test_logs (:info, \"msg\") foo(xxx)")
-            @test JS.kind(st1) === JS.K"block"
+            @test JS.head(st1) === :block
             @test JS.numchildren(st1) == 2
         end
 
         # Keyword arguments (e.g. `min_level=Logging.Warn`) keep only the RHS so
-        # the `K"="` node doesn't reach later lowering passes.
+        # the `:(=)` node doesn't reach later lowering passes.
         let st1 = test_macro_expand("@test_logs min_level=yyy foo(xxx)")
-            @test JS.kind(st1) === JS.K"block"
-            @test all(c -> JS.kind(c) !== JS.K"=", JS.children(st1))
+            @test JS.head(st1) === :block
+            @test all(c -> JS.head(c) !== :(=), JS.children(st1))
         end
     end
 
@@ -1378,10 +1388,10 @@ end
 @testset "Test.@test_deprecated" begin
     @testset "macro expansion" begin
         let st1 = test_macro_expand("@test_deprecated foo(xxx)")
-            @test JS.kind(st1) === JS.K"call"
+            @test JS.head(st1) === :call
         end
         let st1 = test_macro_expand("@test_deprecated r\"warn\" foo(xxx)")
-            @test JS.kind(st1) === JS.K"block"
+            @test JS.head(st1) === :block
             @test JS.numchildren(st1) == 2
         end
     end
@@ -1403,10 +1413,10 @@ end
 @testset "Test.@inferred" begin
     @testset "macro expansion" begin
         let st1 = test_macro_expand("@inferred foo(xxx)")
-            @test JS.kind(st1) === JS.K"call"
+            @test JS.head(st1) === :call
         end
         let st1 = test_macro_expand("@inferred Int foo(xxx)")
-            @test JS.kind(st1) === JS.K"block"
+            @test JS.head(st1) === :block
             @test JS.numchildren(st1) == 2
         end
     end
@@ -1435,8 +1445,8 @@ end
     @testset "macro expansion" begin
         # Function-definition body is returned unchanged.
         let st1 = jlexpand("Base.@assume_effects :foldable f(x) = x + 1")
-            @test JS.kind(st1) === JS.K"="
-            @test JS.kind(st1[1]) === JS.K"call" # f(x)
+            @test JS.head(st1) === :(=)
+            @test JS.head(st1[1]) === :call # f(x)
         end
 
         # `@ccall` body is passed through; the new-style `@ccall` macro then
@@ -1447,20 +1457,20 @@ end
 
         # Call-site annotation: the body expression is returned unchanged.
         let st1 = jlexpand("Base.@assume_effects :foldable foo(xxx)")
-            @test JS.kind(st1) === JS.K"call"
+            @test JS.head(st1) === :call
             @test JS.sourcetext(st1[1]) == "foo"
             @test JS.sourcetext(st1[2]) == "xxx"
         end
 
         # Multiple settings, including negation and shortcuts.
         let st1 = jlexpand("Base.@assume_effects :total !:nothrow foo(xxx)")
-            @test JS.kind(st1) === JS.K"call"
+            @test JS.head(st1) === :call
             @test JS.sourcetext(st1[2]) == "xxx"
         end
 
         # Declaration form (no body): expands to a no-op placeholder.
         let st1 = jlexpand("Base.@assume_effects :foldable")
-            @test JS.kind(st1) === JS.K"Value"
+            @test JS.head(st1) === :value
         end
     end
 
@@ -1548,23 +1558,25 @@ module static_macro_module
 using JETLS: JL, JS, SyntaxTree
 const STATIC_COND_FLAG = false
 function var"@static_condition"(ctx::JL.MacroContext)
-    return JL.@ast(ctx, ctx.macrocall, true::JS.K"Value")
+    return JL.@ast(ctx, ctx.macrocall, true::value)
 end
 function var"@wrapped_static"(ctx::JL.MacroContext, ex::SyntaxTree)
     mc = ctx.macrocall::SyntaxTree
     src = JS.sourceref(mc)
-    return JL.@ast(ctx, mc, [JS.K"macrocall"(src; context=nothing)
-        "@static"::JS.K"Identifier" mc[2] ex])
+    sc = JS.SyntaxContext(nothing, nothing, JS.edition(mc), false)
+    return JL.@ast(ctx, mc, [:macrocall(src; context=sc)
+        "@static"::identifier mc[2] ex])
 end
 function var"@generated_static"(ctx::JL.MacroContext)
     mc = ctx.macrocall::SyntaxTree
-    src = JS.newleaf(JS.sourceref(mc), JS.K"TOMBSTONE")
-    return JL.@ast(ctx, src, [JS.K"macrocall"
-        "@static"::JS.K"Identifier" mc[2]
-        [JS.K"?"
-            "STATIC_COND_FLAG"::JS.K"Identifier"
-            true::JS.K"Value"
-            false::JS.K"Value"]])
+    sc = JS.SyntaxContext(nothing, nothing, JS.edition(mc), false)
+    src = SyntaxTree(:tombstone, nothing, nothing, JS.sourceref(mc), sc)
+    return JL.@ast(ctx, src, [:macrocall
+        "@static"::identifier mc[2]
+        [:?
+            "STATIC_COND_FLAG"::identifier
+            true::value
+            false::value]])
 end
 end
 
@@ -1578,22 +1590,22 @@ end
         # Taken `if` branch survives as its source block; the dropped branch and the
         # condition disappear at expansion time.
         let st1 = jlexpand("@static if true; sin(xxx); end")
-            @test JS.kind(st1) === JS.K"block"
+            @test JS.head(st1) === :block
             @test JS.sourcetext(st1[1]) == "sin(xxx)"
         end
 
         # No `else` and a false condition: expands to `nothing`, like Base.
         let st1 = jlexpand("@static if false; aaa; end")
-            @test JS.kind(st1) === JS.K"Value"
+            @test JS.head(st1) === :value
         end
 
         # `elseif` chains keep folding until a branch is taken.
         let st1 = jlexpand("@static if false; aaa; elseif true; bbb; else; ccc; end")
-            @test JS.kind(st1) === JS.K"block"
+            @test JS.head(st1) === :block
             @test JS.sourcetext(st1[1]) == "bbb"
         end
         let st1 = jlexpand("@static if false; aaa; elseif false; bbb; else; ccc; end")
-            @test JS.kind(st1) === JS.K"block"
+            @test JS.head(st1) === :block
             @test JS.sourcetext(st1[1]) == "ccc"
         end
 
@@ -1607,19 +1619,19 @@ end
 
         # `&&` / `||` short-circuit forms, including right-nested chains.
         let st1 = jlexpand("@static true && sin(xxx)")
-            @test JS.kind(st1) === JS.K"call"
+            @test JS.head(st1) === :call
             @test JS.sourcetext(st1) == "sin(xxx)"
         end
         let st1 = jlexpand("@static false && sin(xxx)")
-            @test JS.kind(st1) === JS.K"Value"
+            @test JS.head(st1) === :value
             @test st1.value === false
         end
         let st1 = jlexpand("@static true || sin(xxx)")
-            @test JS.kind(st1) === JS.K"Value"
+            @test JS.head(st1) === :value
             @test st1.value === true
         end
         let st1 = jlexpand("@static false || false || sin(xxx)")
-            @test JS.kind(st1) === JS.K"call"
+            @test JS.head(st1) === :call
             @test JS.sourcetext(st1) == "sin(xxx)"
         end
 
@@ -1649,7 +1661,7 @@ end
             @test JS.syntax_module(cond) === static_macro_module
             @test JS.base_layer(sc).mod === static_caller_module
             st1 = jlexpand(static_caller_module, code)
-            @test JS.kind(st1) === JS.K"Value"
+            @test JS.head(st1) === :value
             @test st1.value === true
         end
     end
@@ -1658,7 +1670,7 @@ end
         @testset "new-style condition macros" begin
             let diags = collect_macro_diagnostics() do
                     st1 = jlexpand(static_caller_module, "@static if @static_condition(); aaa(); end")
-                    @test JS.kind(st1) === JS.K"block"
+                    @test JS.head(st1) === :block
                     @test JS.sourcetext(st1[1]) == "aaa()"
                 end
                 @test isempty(diags)
@@ -1677,7 +1689,7 @@ end
             code = "@static if $condition; aaa(); else; bbb(); end"
             diags = collect_macro_diagnostics() do
                 st1 = jlexpand(static_eval_module, code)
-                @test JS.kind(st1) === JS.K"block"
+                @test JS.head(st1) === :block
                 @test JS.sourcetext(st1[1]) == taken
                 @test JS.byte_range(st1[1]) == source_range(code, taken)
             end
@@ -1767,7 +1779,7 @@ end
         # Non-conditional argument: Base throws `ArgumentError("invalid @static
         # macro")`; report via sink and flow the argument through.
         let diags = collect_macro_diagnostics() do
-                @test JS.kind(jlexpand("@static foo(xxx)")) === JS.K"call"
+                @test JS.head(jlexpand("@static foo(xxx)")) === :call
             end
             @test length(diags) == 1
             d = only(diags)
@@ -1791,7 +1803,7 @@ end
         # conditional so the condition and both branches reach scope analysis.
         let diags = collect_macro_diagnostics() do
                 st1 = jlexpand("@static if undefined_var_xyz; aaa; else; bbb; end")
-                @test JS.kind(st1) === JS.K"if"
+                @test JS.head(st1) === :if
             end
             @test length(diags) == 1
             d = only(diags)
@@ -1801,7 +1813,7 @@ end
 
         # Non-`Bool` condition: same recovery shape.
         let diags = collect_macro_diagnostics() do
-                @test JS.kind(jlexpand("@static if 1; aaa; end")) === JS.K"if"
+                @test JS.head(jlexpand("@static if 1; aaa; end")) === :if
             end
             @test length(diags) == 1
             d = only(diags)

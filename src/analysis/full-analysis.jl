@@ -1227,7 +1227,7 @@ function collect_module_range_infos!(
         module_range_infos::Vector{Pair{UnitRange{Int},Module}}, st0::SyntaxTree,
         context_module::Module, world::UInt
     )
-    if JS.kind(st0) === JS.K"toplevel"
+    if JS.head(st0) === :toplevel
         for i = 1:JS.numchildren(st0)
             collect_module_range_infos!(module_range_infos, st0[i], context_module, world)
         end
@@ -1235,7 +1235,7 @@ function collect_module_range_infos!(
         for i = 3:JS.numchildren(st0)
             collect_module_range_infos!(module_range_infos, st0[i], context_module, world)
         end
-    elseif JS.kind(st0) === JS.K"module" && JS.numchildren(st0) ≥ 3
+    elseif JS.head(st0) === :module && JS.numchildren(st0) ≥ 3
         modconst = resolve_global_const(context_module, world, st0[2])
         modconst isa Core.Const || return nothing
         mod = modconst.val
@@ -1246,7 +1246,7 @@ function collect_module_range_infos!(
         last_line = JS.source_line(sourcefile, JS.last_byte(st0))
         push!(module_range_infos, first_line:last_line => mod)
         body = st0[end]
-        if JS.kind(body) === JS.K"block"
+        if JS.head(body) === :block
             for i = 1:JS.numchildren(body)
                 collect_module_range_infos!(module_range_infos, body[i], mod, world)
             end

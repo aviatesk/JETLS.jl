@@ -7,7 +7,7 @@ signature_help_options() = SignatureHelpOptions(;
 
 const SIGNATURE_HELP_REGISTRATION_ID = "jetls-signature-help"
 const SIGNATURE_HELP_REGISTRATION_METHOD = "textDocument/signatureHelp"
-const CALL_KINDS = JS.KSet"call macrocall ."
+const CALL_HEADS = (:call, :macrocall, :.)
 
 function signature_help_registration()
     (; triggerCharacters, retriggerCharacters) = signature_help_options()
@@ -28,22 +28,22 @@ end
 
 Return `(args::SyntaxList, first_kwarg_i::Int, has_semicolon::Bool)`,
 one `SyntaxTree` per argument to call.
-Ignore function name and `K"error"` (e.g. missing closing paren).
-`has_semicolon` is true if the call contains a `K"parameters"` node (explicit semicolon).
+Ignore function name and `:error` (e.g. missing closing paren).
+`has_semicolon` is true if the call contains a `:parameters` node (explicit semicolon).
 """
 function flatten_args(call::SyntaxTree)
-    while JS.kind(call) === JS.K"where"
+    while JS.head(call) === :where
         call = call[1]
     end
-    if !(JS.kind(call) in CALL_KINDS)
-        # Operator-like methods (e.g. `<:`, `>:`) parse as their own kind rather
-        # than `K"call"`, skip them for now
+    if !(JS.head(call) in CALL_HEADS)
+        # Operator-like methods (e.g. `<:`, `>:`) parse as their own head rather
+        # than `:call`, skip them for now
         return nothing
     end
-    usable = (arg::SyntaxTree) -> JS.kind(arg) ∉ JS.KSet"error Value"
-    # In new EST, dotcall `f.(args)` is represented as `K"."` with children
+    usable = (arg::SyntaxTree) -> JS.head(arg) !== :error && !is_synthesized_value(arg)
+    # In new EST, dotcall `f.(args)` is represented as `:.` with children
     # `[func, tuple(args...)]`, so we unwrap the tuple to get the actual args.
-    if JS.kind(call) === JS.K"." && JS.numchildren(call) ≥ 2 && JS.kind(call[2]) === JS.K"tuple"
+    if JS.head(call) === :. && JS.numchildren(call) ≥ 2 && JS.head(call[2]) === :tuple
         orig = filter(usable, JS.children(call[2]))
     else
         orig = filter(usable, JS.children(call)[2:end])
@@ -53,7 +53,7 @@ function flatten_args(call::SyntaxTree)
     kw_children = JS.SyntaxList()
     has_semicolon = false
     for i in eachindex(orig)
-        if JS.kind(orig[i]) === JS.K"parameters"
+        if JS.head(orig[i]) === :parameters
             has_semicolon = true
             for p in filter(usable, JS.children(orig[i]))
                 push!(kw_children, p)
@@ -70,7 +70,7 @@ function flatten_args(call::SyntaxTree)
 end
 
 """
-Get `K"Identifier"` tree from a kwarg tree (child of `K"call"` or `K"parameters"`).
+Get `:identifier` tree from a kwarg tree (child of `:call` or `:parameters`).
 `sig`: treat this as a signature rather than a call
 ```
                a => a
@@ -83,15 +83,15 @@ Get `K"Identifier"` tree from a kwarg tree (child of `K"call"` or `K"parameters"
 function extract_kwarg_name(arg::SyntaxTree; sig::Bool=false)
     ret = identifier_like(arg)
     isnothing(ret) || return ret
-    if JS.kind(arg) === JS.K"=" || JS.kind(arg) === JS.K"kw"
+    if JS.head(arg) === :(=) || JS.head(arg) === :kw
         arg1 = arg[1]
         ret = identifier_like(arg1)
         isnothing(ret) || return ret
-        if sig && JS.kind(arg1) === JS.K"::"
+        if sig && JS.head(arg1) === :(::)
             ret = identifier_like(arg1[1])
             isnothing(ret) || return ret
         end
-    elseif JS.kind(arg) === JS.K"..."
+    elseif JS.head(arg) === :...
         return nothing
     end
     @static JETLS_DEBUG_LOWERING && @info "Unknown kwarg form" arg
@@ -99,11 +99,11 @@ function extract_kwarg_name(arg::SyntaxTree; sig::Bool=false)
 end
 
 function identifier_like(st::SyntaxTree)
-    if JS.kind(st) === JS.K"Identifier"
+    if JS.head(st) === :identifier
         return st
-    elseif JS.kind(st) === JS.K"var"
+    elseif JS.head(st) === :var
         inner = st[1]
-        if JS.kind(inner) === JS.K"Identifier"
+        if JS.head(inner) === :identifier
             return inner
         end
     end
@@ -126,7 +126,7 @@ expansion, but signature help is only used on unexpanded code.
 function find_kws(args::SyntaxList, kw_i::Int; sig=false, cursor::Int=-1)
     out = Dict{String, Int}()
     for i in (sig ? (kw_i:lastindex(args)) : eachindex(args))
-        JS.kind(args[i]) ∉ JS.KSet"= kw" && i < kw_i && continue
+        JS.head(args[i]) ∉ (:(=), :kw) && i < kw_i && continue
         n = extract_kwarg_name(args[i]; sig)
         if !isnothing(n) && !(JS.first_byte(n) <= cursor <= JS.last_byte(n) + 1)
             nv = get_name_val(n)
@@ -142,16 +142,16 @@ end
     CallArgs
 
 Information from a call site's arguments for filtering method signatures.
-- `args`: Every valid child of the `K"call"` and its `K"parameters"` if present
-- `kw_i`: Index where `K"parameters"` (semicolon) args begin; `length(args)+1` if no semicolon
+- `args`: Every valid child of the `:call` and its `:parameters` if present
+- `kw_i`: Index where `:parameters` (semicolon) args begin; `length(args)+1` if no semicolon
 - `pos_map`: Map from index in `args` to `(min, max)` possible positional arg index.
-             `K"=" K"kw"` forms are excluded. `max` is `nothing` when a splat precedes.
+             `:(=)` / `:kw` forms are excluded. `max` is `nothing` when a splat precedes.
              e.g. `f(a, k=1, b..., c)` -> `{1 => (1, 1), 3 => (2, nothing), 4 => (2, nothing)}`
 - `pos_args_lb`: Number of definite positional args (excludes splats)
 - `pos_args_ub`: Upper bound on positional args; `nothing` if splat is present
 - `kw_map`: kwname => index in `args`. Excludes any WIP kw (see `find_kws`)
-- `has_semicolon`: whether the call contains an explicit semicolon (`K"parameters"`)
-- `kind`: Item in `CALL_KINDS`
+- `has_semicolon`: whether the call contains an explicit semicolon (`:parameters`)
+- `kind`: Item in `CALL_HEADS`
 """
 struct CallArgs
     args::SyntaxList
@@ -161,7 +161,7 @@ struct CallArgs
     pos_args_ub::Union{Int, Nothing}
     kw_map::Dict{String, Int}
     has_semicolon::Bool
-    kind::JS.Kind
+    kind::Symbol
     function CallArgs(st0::SyntaxTree, cursor::Int=-1)
         @assert -1 ∉ JS.byte_range(st0)
         args, kw_i, has_semicolon = @something flatten_args(st0) begin
@@ -171,17 +171,17 @@ struct CallArgs
         pos_map = Dict{Int, Tuple{Int, Union{Int, Nothing}}}()
         lb = 0; ub = 0
         for i in eachindex(args[1:kw_i-1])
-            if JS.kind(args[i]) === JS.K"..."
+            if JS.head(args[i]) === :...
                 ub = nothing
                 pos_map[i] = (lb + 1, ub)
-            elseif JS.kind(args[i]) ∉ JS.KSet"= kw"
+            elseif JS.head(args[i]) ∉ (:(=), :kw)
                 lb += 1
                 !isnothing(ub) && (ub += 1)
                 pos_map[i] = (lb, ub)
             end
         end
         kw_map = find_kws(args, kw_i; sig=false, cursor)
-        new(args, kw_i, pos_map, lb, ub, kw_map, has_semicolon, JS.kind(st0))
+        new(args, kw_i, pos_map, lb, ub, kw_map, has_semicolon, JS.head(st0))
     end
 end
 
@@ -202,8 +202,8 @@ function compatible_method(m::Method, ca::CallArgs, world::UInt)
     mnode = JS.parsestmt(JS.SyntaxTree, msig; ignore_errors=true)
 
     params, kwp_i, _ = @something flatten_args(mnode) return false
-    has_var_params = kwp_i > 1 && JS.kind(params[kwp_i - 1]) === JS.K"..."
-    has_var_kwp = kwp_i <= length(params) && JS.kind(params[end]) === JS.K"..."
+    has_var_params = kwp_i > 1 && JS.head(params[kwp_i - 1]) === :...
+    has_var_kwp = kwp_i <= length(params) && JS.head(params[end]) === :...
 
     kwp_map = find_kws(params, kwp_i; sig=true)
 
@@ -213,7 +213,7 @@ function compatible_method(m::Method, ca::CallArgs, world::UInt)
         # Filter out methods where user hasn't provided enough positional args
         # e.g., g(42;│) should not match g(x, y) which requires 2 positional args
         if !has_var_params
-            required_pos_args = count(i::Int->JS.kind(params[i]) ∉ JS.KSet"= kw ...", 1:kwp_i-1)
+            required_pos_args = count(i::Int->JS.head(params[i]) ∉ (:(=), :kw, :...), 1:kwp_i-1)
             !isnothing(ca.pos_args_ub) && ca.pos_args_ub < required_pos_args && return false
         end
     end
@@ -252,7 +252,7 @@ function get_sig_str(m::Method, ca::CallArgs, world::UInt)
             msig = replace(msig, rep)
         end
     end
-    if ca.kind === JS.K"macrocall" # hack. TODO delete
+    if ca.kind === :macrocall # hack. TODO delete
         msig = replace(msig, "__source__::LineNumberNode, __module__::Module, "=>"",
                        "__source__::LineNumberNode, __module__::Module"=>""; count=1)
     end
@@ -318,9 +318,9 @@ function make_siginfo(
         println(stderr, JS.sourcetext(mnode))
         error("make_siginfo: Expected mnode that can be flattened")
     end
-    maybe_var_params = kwp_i > 1 && JS.kind(params[kwp_i - 1]) === JS.K"..." ?
+    maybe_var_params = kwp_i > 1 && JS.head(params[kwp_i - 1]) === :... ?
         kwp_i - 1 : nothing
-    maybe_var_kwp = kwp_i <= length(params) && JS.kind(params[end]) === JS.K"..." ?
+    maybe_var_kwp = kwp_i <= length(params) && JS.head(params[end]) === :... ?
         lastindex(params) : nothing
     kwp_map = find_kws(params, kwp_i; sig=true)
     noActiveParameter = no_active_parameter_support ? null : nothing
@@ -366,10 +366,10 @@ function make_siginfo(
             else
                 lb == ub ? lb : nothing
             end
-        elseif JS.kind(ca.args[active_arg]) === JS.K"..."
+        elseif JS.head(ca.args[active_arg]) === :...
             # splat after semicolon
             maybe_var_kwp
-        elseif JS.kind(ca.args[active_arg]) in JS.KSet"= kw" || active_arg >= ca.kw_i
+        elseif JS.head(ca.args[active_arg]) in (:(=), :kw) || active_arg >= ca.kw_i
             kwname = extract_kwarg_name(ca.args[active_arg])
             # `extract_kwarg_name` returns `nothing` for unrecognized forms like `a.b=`
             if isnothing(kwname)
@@ -412,25 +412,25 @@ end
 const empty_siginfos = SignatureInformation[]
 
 function is_relevant_call(call::SyntaxTree)
-    JS.kind(call) in CALL_KINDS &&
+    JS.head(call) in CALL_HEADS &&
         # don't show help for a+b, M', etc., where call[1] isn't the function
         !(is_source_infix_op_call(call) || is_source_postfix_op_call(call)) &&
-        # K"." is also used for member access (Base.sin) — only treat it as a
-        # call when the second child is K"tuple" (i.e. broadcasting f.(args))
-        !(JS.kind(call) === JS.K"." && (JS.numchildren(call) < 2 || JS.kind(call[2]) !== JS.K"tuple"))
+        # `:.` is also used for member access (Base.sin) — only treat it as a
+        # call when the second child is `:tuple` (i.e. broadcasting f.(args))
+        !(JS.head(call) === :. && (JS.numchildren(call) < 2 || JS.head(call[2]) !== :tuple))
 end
 
 # If parents of our call are like (macro/function (where (where... (call |) ...))),
 # we're actually in a declaration, and shouldn't show signature help.
 function call_is_decl(_bas::SyntaxList, i::Int, _basᵢ::SyntaxTree = _bas[i])
-    JS.kind(_basᵢ) != JS.K"call" && return false
+    JS.head(_basᵢ) != :call && return false
     j = i + 1
-    while j <= lastindex(_bas) && JS.kind(_bas[j]) === JS.K"where"
+    while j <= lastindex(_bas) && JS.head(_bas[j]) === :where
         j += 1
     end
     return j <= lastindex(_bas) &&
         # `=` covers short-form function definitions like `f(x) = 1`
-        JS.kind(_bas[j]) in JS.KSet"macro function =" &&
+        JS.head(_bas[j]) in (:macro, :function, :(=)) &&
         _bas[j-1] === _bas[j][1]
 end
 
@@ -471,7 +471,7 @@ function cursor_call(ps::JS.ParseStream, st0::SyntaxTree, b::Int)
                 #     ... | ...
                 # end
                 return nothing
-            elseif any(j::Int->JS.kind(bas[j]) in JS.KSet"do ->", 1:i)
+            elseif any(j::Int->JS.head(bas[j]) in (:do, :->), 1:i)
                 # bail out if this is actually within a `do` block body
                 return nothing
             end
@@ -488,7 +488,7 @@ function cursor_call(ps::JS.ParseStream, st0::SyntaxTree, b::Int)
         i = findfirst(st::SyntaxTree -> is_relevant_call(st) && !noparen_macrocall(st), bas)
         if !isnothing(i)
             basᵢ = bas[i]
-            if JS.is_error(JS.children(basᵢ)[end])
+            if JS.head(JS.children(basᵢ)[end]) === :error
                 return call_is_decl(bas, i, basᵢ) ? nothing : basᵢ
             end
         end
@@ -535,7 +535,7 @@ function collect_call_argtypes(ctx::Union{Nothing,InferredTreeContext}, ca::Call
     argtypes = Any[]
     for i in sort!(collect(keys(ca.pos_map)))
         arg = ca.args[i]
-        if JS.kind(arg) === JS.K"..."
+        if JS.head(arg) === :...
             JS.numchildren(arg) >= 1 || @goto bailout
             inner = arg[1]
             argtype = CC.widenconst(@something (ctx === nothing ?
@@ -587,7 +587,7 @@ function cursor_siginfos(
     call = cursor_call(fi.parsed_stream, st0, b)
     isnothing(call) && return empty_siginfos
     after_semicolon = let
-        params_i = findfirst(st::SyntaxTree -> JS.kind(st) === JS.K"parameters", JS.children(call))
+        params_i = findfirst(st::SyntaxTree -> JS.head(st) === :parameters, JS.children(call))
         !isnothing(params_i) && b > JS.first_byte(call[params_i])
     end
 

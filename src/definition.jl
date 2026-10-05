@@ -140,8 +140,8 @@ Lookup order:
    as a static fallback when lowering fails or the surface identifier doesn't survive
    macroexpansion): for modules, jump to `Base.moduleloc`; for other values, jump to each
    method's `functionloc`. Call-like surface forms whose value path doesn't yield a jump
-   (`K"ref"` → `getindex`, `K"tuple"` → `Core.tuple`, `K"vect"` → `Base.vect`,
-   `K"vcat"` / `K"hcat"` / comprehensions and their typed variants → `Base.{vcat,hcat,collect}`)
+   (`:ref` → `getindex`, `:tuple` → `Core.tuple`, `:vect` → `Base.vect`,
+   `:vcat` / `:hcat` / comprehensions and their typed variants → `Base.{vcat,hcat,collect}`)
    additionally fall back to the matched dispatch.
 """
 function find_definition(
@@ -202,16 +202,16 @@ function find_definition(
     rng === nothing && return nothing
 
     # Phase 3: value-based fallback (Module → `moduleloc`, callable → all method `functionloc`s).
-    # For K"call" surfaces this is reached only when Phase 1's matches narrowing didn't
+    # For `:call` surfaces this is reached only when Phase 1's matches narrowing didn't
     # return a result; falling through is consistent with `some(sin).value│`
-    # (also a non-K"call" surface that resolves to `Const(sin)` → `methods(sin)`),
+    # (also a non-`:call` surface that resolves to `Const(sin)` → `methods(sin)`),
     # just applied to the call's result type.
     value_locations = find_value_definitions(state, uri, context_module, node, rng, ctx, world)
     value_locations === nothing || return value_locations, node
 
-    # Phase 4: operator-dispatch fallback for non-K"call" surface forms
-    # in `_OPERATOR_CALL_KINDS` (`K"ref"`, `K"tuple"`, `K"vect"`, `K"vcat"`,
-    # `K"hcat"`, `K"comprehension"`, and their typed variants).
+    # Phase 4: operator-dispatch fallback for non-`:call` surface forms
+    # in `_OPERATOR_CALL_HEADS` (`:ref`, `:tuple`, `:vect`, `:vcat`,
+    # `:hcat`, `:comprehension`, and their typed variants).
     if ctx !== nothing
         op_locations = find_operator_dispatch_definitions(state, uri, node, rng, ctx)
         op_locations === nothing || return op_locations, node
@@ -328,7 +328,7 @@ function find_operator_dispatch_definitions(
         node::SyntaxTree, rng::UnitRange{Int},
         ctx::InferredTreeContext,
     )
-    JS.kind(node) in _OPERATOR_CALL_KINDS || return nothing
+    JS.head(node) in _OPERATOR_CALL_HEADS || return nothing
     matches = @something get_matches_for_range(ctx, rng) return nothing
     target_methods = filter(!is_location_unknown,
         unique(Base.updated_methodloc, Method[m.method for m in matches]))
