@@ -9,7 +9,7 @@ TestRunner = "master"
 authors = ["Shuhei Kadowaki <aviatesk@gmail.com>"]
 
 [workspace]
-projects = ["HierarchicalTestSets", "LSP", "docs", "scripts", "scripts/schema", "test"]
+projects = ["HierarchicalTestSets", "LSP", "TOMLSource", "docs", "scripts", "scripts/schema", "test"]
 
 [deps]
 Compiler = "807dbc54-b67e-4c79-8afb-eafe4df6f2e1"
@@ -27,6 +27,7 @@ REPL = "3fa0cd96-eef1-5676-8a61-b3b8758bbffb"
 Revise = "295af30f-e4ad-537b-8983-00126c2a3abe"
 Sockets = "6462fe0b-24de-5631-8697-dd941f90decc"
 TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
+TOMLSource = "fbc9d53b-f647-41b7-9740-8c31078b51cf"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 TestRunner = "4efbe77e-ddf3-4ce7-be91-16409ca9e85f"
 
@@ -37,6 +38,7 @@ JuliaLowering = {rev = "4b1c835db9", subdir = "JuliaLowering", url = "https://gi
 JuliaSyntax = {rev = "4b1c835db9", subdir = "JuliaSyntax", url = "https://github.com/JuliaLang/julia"}
 LSP = {path = "LSP"}
 Revise = {rev = "32638add42", url = "https://github.com/timholy/Revise.jl"}
+TOMLSource = {path = "TOMLSource"}
 TestRunner = {rev = "fe7374559a", url = "https://github.com/aviatesk/TestRunner.jl"}
 
 [compat]
@@ -55,6 +57,7 @@ REPL = "1.11.0"
 Revise = "3.17"
 Sockets = "1.11.0"
 TOML = "1.0.3"
+TOMLSource = "0.1"
 Test = "1.11.0"
 TestRunner = "0.1"
 julia = "1.12.2 - 1.13"
