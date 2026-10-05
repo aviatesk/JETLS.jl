@@ -399,8 +399,9 @@ function run_check(args::Vector{String})
 
     progress_ctx = ProgressContext(progress_mode, stderr)
     logger = ProgressAwareLogger(Base.CoreLogging.current_logger(), progress_ctx)
-    return let root_path = root_path, paths = paths, skip_analysis = skip_analysis,
-               context_lines = context_lines, exit_severity = exit_severity,
+    return let skip_analysis = skip_analysis,
+               context_lines = context_lines,
+               exit_severity = exit_severity,
                show_severity = show_severity
         Base.CoreLogging.with_logger(logger) do
             run_check_analysis(root_path, paths, progress_ctx;
@@ -745,7 +746,7 @@ function print_diagnostics(
             character = diagnostic.range.start.character + 1
             printed_diagnostic && println(stdout)
             printstyled(stdout, "# @ $rel_path:$line,$character\n"; color=:light_black)
-            output = let note=note, notecolor=color, context_lines=context_lines
+            output = let note=note, notecolor=color
                 sprint(; context=IOContext(stdout)) do io
                     JS.highlight(io, src, start_byte:end_byte-1;
                         note, notecolor=notecolor,
