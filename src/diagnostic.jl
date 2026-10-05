@@ -329,6 +329,7 @@ function parsed_stream_to_diagnostics(fi::FileInfo)
 end
 
 function jsdiag_to_lspdiag(diagnostic::JS.Diagnostic, fi::FileInfo)
+    code = diagnostic.level === :error ? SYNTAX_PARSE_ERROR_CODE : SYNTAX_PARSE_WARNING_CODE
     return Diagnostic(;
         range = jsobj_to_range(diagnostic, fi),
         severity =
@@ -338,8 +339,8 @@ function jsdiag_to_lspdiag(diagnostic::JS.Diagnostic, fi::FileInfo)
             DiagnosticSeverity.Hint,
         message = diagnostic.message,
         source = DIAGNOSTIC_SOURCE_LIVE,
-        code = SYNTAX_DIAGNOSTIC_CODE,
-        codeDescription = diagnostic_code_description(SYNTAX_DIAGNOSTIC_CODE))
+        code,
+        codeDescription = diagnostic_code_description(code))
 end
 
 # JET diagnostics
@@ -2514,16 +2515,19 @@ function analysis_context_hash(analysis_info::Union{Nothing,AnalysisInfo})
 end
 
 # Computes the raw live diagnostics of a file. Falls back to parsed-stream diagnostics
-# when the file does not parse cleanly, otherwise runs the lowering-based analyses.
+# when the file has parse errors, otherwise runs the lowering-based analyses and reports
+# any parse warnings alongside them.
 function compute_live_diagnostics!(
         def_used_names_cache::DefUsedNamesCache, server::Server, uri::URI, fi::FileInfo,
-        snapshot::Union{Nothing,DocumentSnapshot}, cancel_flag::CancelFlag
+        snapshot::Union{Nothing,DocumentSnapshot}, cancel_flag::CancelFlag;
+        lookup_func = nothing
     )
-    if isempty(fi.parsed_stream.diagnostics)
-        return toplevel_lowering_diagnostics!(def_used_names_cache, server, uri, fi, snapshot, cancel_flag)
-    else
-        return parsed_stream_to_diagnostics(fi)
-    end
+    JS.any_error(fi.parsed_stream) && return parsed_stream_to_diagnostics(fi)
+    diagnostics = toplevel_lowering_diagnostics!(
+        def_used_names_cache, server, uri, fi, snapshot, cancel_flag; lookup_func)
+    isempty(fi.parsed_stream.diagnostics) && return diagnostics
+    # `diagnostics` may be the per-file cache's own vector
+    return append!(parsed_stream_to_diagnostics(fi), diagnostics)
 end
 
 # Rescans the workspace, recomputes the files whose fingerprint moved, and republishes

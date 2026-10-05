@@ -535,6 +535,23 @@ end
     end
 end
 
+@testset "parse warnings" begin
+    mktempdir() do dir
+        filepath = write_test_file(dir, "test.jl", """
+            x = 1e-400
+            function foo()
+                y = 1
+                return nothing
+            end
+            """)
+        result = run_jetls_check([filepath]; root=dir)
+        @test occursin("syntax/parse-warning", result.stdout)
+        @test !occursin("syntax/parse-error", result.stdout)
+        # parse warnings don't short-circuit lowering
+        @test occursin("lowering/unused-local", result.stdout)
+    end
+end
+
 @testset "invalid arguments" begin
     let result = run_jetls_check(["/nonexistent/path/file.jl"])
         @test result.exitcode == 1 || occursin("error", lowercase(result.stderr))

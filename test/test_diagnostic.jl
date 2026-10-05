@@ -36,6 +36,35 @@ using JETLS.Glob
             params = scan_live_diagnostics!(server, readmsg)[uri]
             @test params.version == 1
             @test any(d -> d.source == JETLS.DIAGNOSTIC_SOURCE_LIVE, params.diagnostics)
+            @test all(d -> d.code == JETLS.SYNTAX_PARSE_ERROR_CODE, params.diagnostics)
+        end
+    end
+end
+
+@testset "syntax warning diagnostics" begin
+    script_code = """
+    x = 1e-400
+    function foo()
+        y = 1
+        return nothing
+    end
+    """
+
+    withscript(script_code) do script_path
+        uri = filepath2uri(script_path)
+        withserver() do (; server, writereadmsg, readmsg)
+            (; raw_res) = writereadmsg(
+                make_DidOpenTextDocumentNotification(uri, script_code))
+            @test raw_res isa PublishDiagnosticsNotification
+
+            params = scan_live_diagnostics!(server, readmsg)[uri]
+            let diag = only(filter(d -> d.code == JETLS.SYNTAX_PARSE_WARNING_CODE, params.diagnostics))
+                @test diag.severity == DiagnosticSeverity.Warning
+                @test diag.range.start.line == 0
+            end
+            @test !any(d -> d.code == JETLS.SYNTAX_PARSE_ERROR_CODE, params.diagnostics)
+            # parse warnings don't short-circuit the lowering-based analyses
+            @test any(d -> d.code == JETLS.LOWERING_UNUSED_LOCAL_CODE, params.diagnostics)
         end
     end
 end
