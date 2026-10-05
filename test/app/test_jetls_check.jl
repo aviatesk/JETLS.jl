@@ -523,6 +523,26 @@ end
     end
 end
 
+@testset "toplevel report messages fit the terminal width" begin
+    mktempdir() do dir
+        write_test_file(dir, "included.jl", "x = 1\n")
+        filepath = write_test_file(dir, "test.jl", """
+            include(identity, "included.jl")
+            """)
+
+        result = withenv("COLUMNS" => "60") do
+            run_jetls_check([filepath]; root=dir, skip_analysis=false)
+        end
+        @test occursin("toplevel/unsupported-feature", result.stdout)
+        lines = split(result.stdout, '\n')
+        i = findfirst(contains("JET does not support"), lines)
+        @test i !== nothing
+        body = lines[i:findnext(!startswith("# "), lines, i)-1]
+        @test length(body) > 1
+        @test all(line -> textwidth(line) ≤ 60, body)
+    end
+end
+
 @testset "parse errors" begin
     mktempdir() do dir
         filepath = write_test_file(dir, "test.jl", "f(x) = println(x\n")
