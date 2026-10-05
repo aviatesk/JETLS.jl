@@ -751,6 +751,36 @@ end
     end
 end
 
+@testset "analysis skipped diagnostic for package extensions" begin
+    mktempdir() do root_path
+        write(joinpath(root_path, "Project.toml"), "name = \"TestAnalysisSkipped\"\n")
+        mkpath(joinpath(root_path, "ext"))
+        ext_path = joinpath(root_path, "ext", "TestAnalysisSkippedExt.jl")
+        code = """
+            module TestAnalysisSkippedExt
+            using TestAnalysisSkipped: TestAnalysisSkipped
+            using WeakDep: WeakDep
+            TestAnalysisSkipped.f(x::WeakDep.T) = x
+            end
+            """
+        write(ext_path, code)
+        ext_uri = filepath2uri(ext_path)
+        withserver(; rootUri = filepath2uri(root_path)) do (; server, writereadmsg)
+            (; raw_res) = writereadmsg(make_DidOpenTextDocumentNotification(ext_uri, code))
+            @test raw_res isa PublishDiagnosticsNotification
+            @test raw_res.params.uri == ext_uri
+            diag = only(raw_res.params.diagnostics)
+            @test diag.code == JETLS.TOPLEVEL_ANALYSIS_SKIPPED_CODE
+            @test diag.severity == DiagnosticSeverity.Warning
+            @test diag.source == JETLS.DIAGNOSTIC_SOURCE_SAVE
+            @test diag.range.start.line == 0
+            analysis_info = JETLS.get_analysis_info(server.state.analysis_manager, ext_uri)
+            @test analysis_info.entry isa JETLS.PackageExtensionAnalysisEntry
+            @test !JETLS.has_analyzed_context(server.state, ext_uri)
+        end
+    end
+end
+
 @testset "method overwrite diagnostic" begin
     # bodies that only return a constant, as in `f() = 1`, carry no line information
     let code = """

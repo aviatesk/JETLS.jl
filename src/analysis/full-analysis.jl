@@ -846,6 +846,10 @@ function execute_analysis(server::Server, execution::AnalysisExecution)
     request = execution.request
     entry = request.entry
 
+    if entry isa PackageExtensionAnalysisEntry
+        return package_extension_analysis_result(server, entry), false
+    end
+
     if entry isa NewAnalysisEntry
         env_path = entry.env_path
         result = if env_path === nothing
@@ -1478,6 +1482,28 @@ end
 entryuri_impl(::NewAnalysisEntry) = error("")
 progress_title_impl(entry::NewAnalysisEntry) = entry.pkgid.name * ".jl [package (incremental)]"
 
+struct PackageExtensionAnalysisEntry <: AnalysisEntry
+    uri::URI
+end
+entryuri_impl(entry::PackageExtensionAnalysisEntry) = entry.uri
+progress_title_impl(entry::PackageExtensionAnalysisEntry) =
+    basename(uri2filename(entry.uri)) * " [package extension]"
+
+function package_extension_analysis_result(
+        server::Server, entry::PackageExtensionAnalysisEntry
+    )
+    uri = entry.uri
+    diagnostic = package_extension_analysis_skipped_diagnostic(;
+        markdown_rendering = supports(server, :textDocument, :diagnostic, :markupMessageSupport),
+        displaysize = server.state.cli_mode ? cli_message_displaysize() : nothing)
+    world = Base.get_world_counter()
+    return AnalysisResult(entry,
+        URI2Diagnostics(uri => Diagnostic[diagnostic]),
+        LSAnalyzer(entry, world),
+        Dict{URI,JET.AnalyzedFileInfo}(uri => JET.AnalyzedFileInfo()),
+        Main => Main, world)
+end
+
 struct UserModule
     env_path::String
     pkg_name::String
@@ -1564,7 +1590,11 @@ function lookup_analysis_entry(server::Server, uri::URI)
             return InstantiationRequest(env_path, pkgname, filekind, filedir, root_path)
         end
     elseif filekind === :docs # TODO
-    elseif filekind === :ext # TODO
+    elseif filekind === :ext
+        # TODO Analyze extensions with the Revise-based package analysis, loading their
+        # trigger packages only when configured: loading weak dependencies unconditionally
+        # is costly and may not even be resolvable in the analysis environment.
+        return PackageExtensionAnalysisEntry(uri)
     else
         @assert filekind === :script
     end

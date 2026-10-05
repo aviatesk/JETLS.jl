@@ -646,6 +646,24 @@ end
     end
 end
 
+@testset "package extension files" begin
+    mktempdir() do dir
+        write_test_file(dir, "Project.toml", "name = \"SomePkg\"\n")
+        mkpath(joinpath(dir, "ext"))
+        filepath = write_test_file(dir, joinpath("ext", "SomePkgWeakDepExt.jl"), """
+            module SomePkgWeakDepExt
+            using SomePkg: SomePkg
+            using WeakDep: WeakDep
+            end
+            """)
+
+        result = run_jetls_check([filepath]; root=dir, skip_analysis=false)
+        @test result.exitcode == 1
+        @test occursin("toplevel/analysis-skipped", result.stdout)
+        @test !occursin("toplevel/error", result.stdout)
+    end
+end
+
 @testset "parse errors" begin
     mktempdir() do dir
         filepath = write_test_file(dir, "test.jl", "f(x) = println(x\n")

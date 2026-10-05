@@ -466,6 +466,7 @@ _has_analyzed_context(outofscope::OutOfScope, ::URI) =
     outofscope.module_context !== JETLSTestModule &&
     outofscope.module_context !== FallbackAnalysisContext
 _has_analyzed_context(analysis_result::AnalysisResult, uri::URI) =
+    !(analysis_result.entry isa PackageExtensionAnalysisEntry) &&
     analyzed_file_info(analysis_result, uri) !== nothing
 
 function collect_workspace_uris(server::Server)
