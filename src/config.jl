@@ -224,13 +224,20 @@ end
 function validate_config_data(@nospecialize(value), path::String)
     if value isa Dict{String,Any}
         for (key, child) in value
-            validate_config_data(child, config_data_path(path, key))
+            value[key] = validate_config_data(child, config_data_path(path, key))
         end
+    elseif value isa LSP.JSON.Object{String,Any}
+        config_data = Dict{String,Any}()
+        sizehint!(config_data, length(value))
+        for (key, child) in pairs(value)
+            config_data[key] = validate_config_data(child, config_data_path(path, key))
+        end
+        return config_data
     elseif value isa AbstractDict
         invalid_config_data(path, "Dict{String,Any}", value)
     elseif value isa Vector
         for (index, child) in pairs(value)
-            validate_config_data(child, config_data_path(path, index))
+            value[index] = validate_config_data(child, config_data_path(path, index))
         end
     elseif value isa AbstractVector
         invalid_config_data(path, "Vector", value)
@@ -238,21 +245,23 @@ function validate_config_data(@nospecialize(value), path::String)
     elseif value isa AbstractString
         invalid_config_data(path, "String", value)
     end
-    return nothing
+    return value
 end
 
 """
     validate_config_data(config_data) -> Dict{String,Any}
 
-Validate that untyped configuration data uses the concrete container and string
-representations produced by `JSON3` and `TOML`. Returns the original dictionary,
-or throws [`InvalidConfigDataError`](@ref) with the path of the invalid value.
+Validate and normalize untyped configuration data using the concrete container and string
+representations produced by `JSON.jl` and `TOML`. JSON objects are recursively converted
+to mutable dictionaries. Returns the normalized dictionary, or throws
+[`InvalidConfigDataError`](@ref) with the path of the invalid value.
 """
 function validate_config_data(@nospecialize(config_data))
-    config_data isa Dict{String,Any} ||
+    if !(config_data isa Dict{String,Any} ||
+            config_data isa LSP.JSON.Object{String,Any})
         invalid_config_data("", "Dict{String,Any}", config_data)
-    validate_config_data(config_data, "")
-    return config_data
+    end
+    return validate_config_data(config_data, "")
 end
 
 """

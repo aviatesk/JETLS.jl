@@ -212,7 +212,36 @@ end
     end
 end
 
-@testset "`validate_config_data` enforces concrete untyped data" begin
+@testset "`validate_config_data` normalizes and enforces concrete untyped data" begin
+    let request = JETLS.LSP.to_lsp_object(raw"""{
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "processId": null,
+                "capabilities": {},
+                "initializationOptions": {
+                    "reuse_native_inference": true,
+                    "analysis_overrides": [{
+                        "path": "src/**/*.jl",
+                        "module_name": "JETLS"
+                    }]
+                }
+            }
+        }""")
+        config_object = request.params.initializationOptions
+        @test config_object isa JETLS.LSP.JSON.Object{String,Any}
+
+        config_data = JETLS.validate_config_data(config_object)
+        @test config_data isa Dict{String,Any}
+        @test config_data["analysis_overrides"] isa Vector{Any}
+        @test only(config_data["analysis_overrides"]) isa Dict{String,Any}
+
+        init_options = JETLS.parse_config_from_dict(JETLS.InitOptions, config_data)
+        @test init_options.reuse_native_inference === true
+        @test only(init_options.analysis_overrides).module_name == "JETLS"
+    end
+
     let config_data = Dict{Symbol,Any}(:diagnostic => Dict{String,Any}())
         err = try
             JETLS.validate_config_data(config_data)

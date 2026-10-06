@@ -17,7 +17,7 @@ In JETLS, `URIs2.URI` corresponds to such a data structure.
 If we were to strictly adhere to the LSP definition, these fields should be defined as
 `String` type, and `DocumentUri` and `URI` should be aliases to `String`.
 However, in our Julia version of the LSP definition, for implementation simplicity, we
-automatically `convert` URI-representing fields to `URIs2.URI` during JSON3 parsing,
+automatically `convert` URI-representing fields to `URIs2.URI` during JSON parsing,
 allowing the language server to directly handle `URIs2.URI`.
 """
 # const DocumentUri = String

@@ -135,7 +135,7 @@ end
                 duration = 1.0)
             expected = JETLS.TestRunnerResult(;
                 filename = "test.jl", stats, logs = repeat("x", 1_200_000))
-            source = String(LSP.JSON3.write(expected))
+            source = LSP.JSON.json(expected)
             result = JETLS.read_testrunner_result(server, `/bin/cat`, source)
             result = result::JETLS.TestRunnerResult
             @test result.filename == expected.filename
@@ -146,7 +146,7 @@ end
         @testset "test failure result with exit 1" begin
             server = JETLS.Server()
             expected = mock_testrunner_result(; n_passed = 1, n_failed = 1)
-            source = String(LSP.JSON3.write(expected))
+            source = LSP.JSON.json(expected)
             cmd = Cmd(["/bin/sh", "-c", "cat; exit 1"])
             result = JETLS.read_testrunner_result(server, cmd, source)
             result = result::JETLS.TestRunnerResult
@@ -156,7 +156,7 @@ end
 
         @testset "non-test exit 1 remains a process failure" begin
             server = JETLS.Server()
-            source = String(LSP.JSON3.write(mock_testrunner_result()))
+            source = LSP.JSON.json(mock_testrunner_result())
             cmd = Cmd(["/bin/sh", "-c", "cat; exit 1"])
             logger = Test.TestLogger()
             result = with_logger(logger) do
