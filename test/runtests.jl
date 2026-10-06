@@ -42,6 +42,7 @@ end
     @testset "initialize" include("test_initialize.jl")
     @testset "registration" include("test_registration.jl")
     @testset "document synchronization" include("test_document_synchronization.jl")
+    @testset "syntax tree cache" include("test_syntax_tree_cache.jl")
     @testset "completions" include("test_completions.jl")
     @testset "signature help" include("test_signature_help.jl")
     @testset "declaration" include("test_declaration.jl")
