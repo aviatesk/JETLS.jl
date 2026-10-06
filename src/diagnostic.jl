@@ -2571,7 +2571,8 @@ function notify_diagnostics!(server::Server, uri2diagnostics::URI2Diagnostics; e
     all_files = get_config(state, :diagnostic, :all_files)
     root_path = isdefined(state, :root_path) ? state.root_path : nothing
     for (uri, diagnostics) in uri2diagnostics
-        if !all_files && !is_synchronized(state, canonical_cache_uri(state, uri))
+        if !all_files && !is_synchronized(state, canonical_cache_uri(state, uri)) &&
+                get_config_document(state, uri) === nothing
             if (ensure_cleared isa URI && uri == ensure_cleared) ||
                 (ensure_cleared === true && !isempty(diagnostics))
                 send(server, PublishDiagnosticsNotification(;

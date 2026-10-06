@@ -75,7 +75,7 @@ function store_lsp_config!(tracker::ConfigChangeTracker, server::Server, @nospec
             lazy"Unexpected config data was passed from $source, deleting LSP configuration: $error_message")
         return delete_lsp_config!(tracker, server)
     end
-    for msg in migrate_deprecated_config_keys!(config_dict)
+    for msg in migrate_deprecated_config!(config_dict)
         show_warning_message(server, msg)
     end
     store!(server.state.config_manager) do old_data::ConfigManagerData

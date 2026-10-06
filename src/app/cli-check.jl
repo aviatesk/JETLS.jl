@@ -508,7 +508,8 @@ function start_cli_server(root_path::AbstractString)
     config_path = joinpath(root_path, ".JETLSConfig.toml")
     if isfile(config_path)
         load_file_init_options!(server, config_path)
-        load_file_config!(Returns(nothing), server, config_path)
+        deprecation_warnings = load_file_config!(Returns(nothing), server, config_path)
+        report_deprecated_configs(server, config_path, deprecation_warnings)
     end
 
     return server

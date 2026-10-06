@@ -9,12 +9,15 @@ function code_action_options()
         resolveProvider = false)
 end
 
-function code_action_registration()
+function code_action_registration(server::Server)
+    documentSelector = copy(DEFAULT_DOCUMENT_SELECTOR)
+    config_filter = config_document_sync_filter(server)
+    config_filter === nothing || push!(documentSelector, config_filter)
     return Registration(;
         id = CODE_ACTION_REGISTRATION_ID,
         method = CODE_ACTION_REGISTRATION_METHOD,
         registerOptions = CodeActionRegistrationOptions(;
-            documentSelector = DEFAULT_DOCUMENT_SELECTOR,
+            documentSelector,
             codeActionKinds = SUPPORTED_CODE_ACTION_KINDS,
             resolveProvider = false))
 end
@@ -42,6 +45,11 @@ function handle_CodeActionRequest(
     wants_kindless_actions = code_action_kind_requested(only, nothing)
     wants_quickfix_actions || wants_kindless_actions ||
         return send(server, CodeActionResponse(; id = msg.id, result = code_actions))
+    if is_config_document_uri(server.state, uri)
+        wants_quickfix_actions && deprecated_config_code_actions!(
+            code_actions, server, uri, msg.params.context.diagnostics)
+        return send(server, CodeActionResponse(; id = msg.id, result = code_actions))
+    end
     if wants_quickfix_actions
         diagnostics = msg.params.context.diagnostics
         allow_unused_underscore = get_config(server, :diagnostic, :allow_unused_underscore)
@@ -449,18 +457,7 @@ function jetls_config_workspace_edit(
                 range = Range(; start=position, var"end"=position),
                 newText = appended)
         end
-        if supports(server, :workspace, :workspaceEdit, :documentChanges)
-            text_document = OptionalVersionedTextDocumentIdentifier(;
-                uri = config_uri, version)
-            document_edit = TextDocumentEdit(;
-                textDocument = text_document,
-                edits = TextEdit[text_edit])
-            document_changes =
-                Union{TextDocumentEdit, CreateFile, RenameFile, DeleteFile}[document_edit]
-            return WorkspaceEdit(; documentChanges = document_changes)
-        end
-        return WorkspaceEdit(;
-            changes = Dict{URI,Vector{TextEdit}}(config_uri => TextEdit[text_edit]))
+        return text_document_workspace_edit(server, config_uri, version, text_edit)
     end
     supports_create_file_workspace_edit(server) || return nothing
     text_edit = TextEdit(;
@@ -552,12 +549,7 @@ function jetls_config_inline_array_edit(
     edit = @something TS.prepend_array_element(
         doc, ["full_analysis", "concretization_patterns"],
         Dict("pattern" => pattern, "path" => path)) return nothing
-    bytes = Vector{UInt8}(text)
-    text_edit = TextEdit(;
-        range = Range(;
-            start = _offset_to_xy(bytes, edit.span.first, encoding),
-            var"end" = _offset_to_xy(bytes, edit.span.past_last, encoding)),
-        newText = edit.text)
+    text_edit = source_text_edit(Vector{UInt8}(text), edit, encoding)
     updated = apply_text_change(text, text_edit.range, text_edit.newText, encoding)
     added_concretization_pattern(configured, updated, pattern, path) || return nothing
     return text_edit

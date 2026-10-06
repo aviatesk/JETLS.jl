@@ -97,8 +97,9 @@ JETLS uses three diagnostic sources:
   These run full analysis including type inference and require loading your
   code. Includes top-level errors and inference-based analysis (`toplevel/*`,
   `inference/*`).
-- **`JETLS/extra`**: Diagnostics from external sources like the TestRunner
-  integration (`testrunner/*`). Published via [`textDocument/publishDiagnostics`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.18/specification/#textDocument_publishDiagnostics).
+- **`JETLS/extra`**: Diagnostics from sources other than the analysis of your
+  code: the TestRunner integration (`testrunner/*`) and the checks of the
+  configuration file (`config/*`). Published via [`textDocument/publishDiagnostics`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.18/specification/#textDocument_publishDiagnostics).
 
 ## [Analysis stages](@id diagnostic/stage)
 
@@ -113,11 +114,13 @@ determines what is analyzed, which tool powers it, and through which
 | [`lowering/*`](@ref diagnostic/reference/lowering)     | Lowering       | JuliaLowering.jl            | `JETLS/live`  | parsing           |
 | [`toplevel/*`](@ref diagnostic/reference/toplevel)     | Code loading   | JuliaInterpreter.jl, JET.jl | `JETLS/save`  | parsing           |
 | [`inference/*`](@ref diagnostic/reference/inference)   | Type inference | JET.jl                      | `JETLS/save`  | code loading      |
+| [`config/*`](@ref diagnostic/reference/config)         | Configuration  | JETLS                       | `JETLS/extra` | —                 |
 | [`testrunner/*`](@ref diagnostic/reference/testrunner) | Test execution | TestRunner.jl               | `JETLS/extra` | manual run        |
 
 The first four stages form a pipeline: each builds on the previous one, so a
 failure at an earlier stage limits what the later stages can analyze. Test
-execution is separate and runs only when you trigger it.
+execution is separate and runs only when you trigger it. Configuration checks
+are separate as well and only concern the configuration file.
 
 Only parsing and lowering (the live stages) report byte-precise source ranges;
 every other stage (code loading, type inference, and test execution)
@@ -181,6 +184,18 @@ missing dependency), JETLS skips inference of method bodies entirely and
 reports `inference/*` diagnostics only for top-level code before the error. See
 [`inference/*`](@ref diagnostic/reference/inference) for the diagnostic codes.
 
+###### [Configuration (`config/*`)](@id diagnostic/stage/config)
+
+JETLS checks the [`.JETLSConfig.toml`](@ref config) file at the workspace root,
+reporting issues through the `JETLS/extra` source at the keys they concern.
+They are reported when the server starts, update as you edit the file while it
+is open in the editor, and when the file changes on disk otherwise.
+Not all clients synchronize TOML files with JETLS, though. With such a client,
+JETLS sees the file as unopened, so its diagnostics update only when the file
+changes on disk, such as when you save it, and are reported only if
+[`diagnostic.all_files`](@ref config/diagnostic/all_files) is enabled.
+See [`config/*`](@ref diagnostic/reference/config) for the diagnostic codes.
+
 ###### [Test execution (`testrunner/*`)](@id diagnostic/stage/testrunner)
 
 [TestRunner.jl](https://github.com/aviatesk/TestRunner.jl) runs your tests via
@@ -236,6 +251,8 @@ Here is a summary table of the diagnostics explained in this section:
 | [`inference/type-error/type-assert`](@ref diagnostic/reference/inference/type-error/type-assert)               | `Warning`             | `JETLS/save`  | Type assertion failures                                |
 | [`inference/type-error/non-bool-cond`](@ref diagnostic/reference/inference/type-error/non-bool-cond)           | `Warning`             | `JETLS/save`  | Non-boolean value used in boolean context              |
 | [`testrunner/test-failure`](@ref diagnostic/reference/testrunner/test-failure)                                 | `Error`               | `JETLS/extra` | Test failures from TestRunner integration              |
+| [`config/deprecated-key`](@ref diagnostic/reference/config/deprecated-key)                                     | `Warning`             | `JETLS/extra` | Deprecated keys in `.JETLSConfig.toml`                 |
+| [`config/deprecated-value`](@ref diagnostic/reference/config/deprecated-value)                                 | `Warning`             | `JETLS/extra` | Deprecated values in `.JETLSConfig.toml`               |
 
 ### [Syntax diagnostic (`syntax/*`)](@id diagnostic/reference/syntax)
 
@@ -1723,6 +1740,55 @@ end
 `inference/type-error/non-bool-cond`. It is kept for existing documentation
 links and diagnostic pattern configurations for now, but this compatibility
 support may be removed in a future release.
+
+### [Configuration diagnostic (`config/*`)](@id diagnostic/reference/config)
+
+Configuration diagnostics report issues in the [`.JETLSConfig.toml`](@ref config)
+file (see [Configuration](@ref diagnostic/stage/config)).
+
+The code actions for deprecated settings keep the rest of the file, including
+comments, as it is. When the file has several deprecated settings, the "Fix
+all deprecated settings" code action fixes them at once. When JETLS loads a
+configuration file with deprecated settings, it also lists them in a message
+with a "Fix all" action that applies the same fixes. This works even if your
+editor does not show JETLS diagnostics for TOML files.
+
+#### [Deprecated configuration key (`config/deprecated-key`)](@id diagnostic/reference/config/deprecated-key)
+
+**Default severity**: `Warning`
+
+Reported on a deprecated key of `.JETLSConfig.toml`. JETLS reads a deprecated
+key that has a replacement as the replacement, and ignores one that has none,
+but the key may stop being recognized in a future release.
+
+```toml
+[testrunner]
+executable = "testrunner"  # `testrunner.executable` is deprecated and no longer has any effect; please remove it from your config.
+                           # (JETLS config/deprecated-key)
+```
+
+!!! tip "Code action available"
+    Use the "Remove deprecated `testrunner.executable`" code action to remove
+    the key, along with any table it leaves empty. For a key that has a
+    replacement, the "Replace `…` with `…`" code action moves its value to the
+    new key instead.
+
+#### [Deprecated configuration value (`config/deprecated-value`)](@id diagnostic/reference/config/deprecated-value)
+
+**Default severity**: `Warning`
+
+Reported on a deprecated value of a `.JETLSConfig.toml` setting. JETLS reads
+the value as its replacement, but the value may stop being accepted in a future
+release.
+
+```toml
+[full_analysis]
+auto_instantiate = true  # `true` for `full_analysis.auto_instantiate` is deprecated; use `"always"` instead.
+                         # (JETLS config/deprecated-value)
+```
+
+!!! tip "Code action available"
+    Use the "Replace `true` with `"always"`" code action to replace the value.
 
 ### [TestRunner diagnostic (`testrunner/*`)](@id diagnostic/reference/testrunner)
 
