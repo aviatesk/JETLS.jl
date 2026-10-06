@@ -1,9 +1,8 @@
 module test_config
 
 using Test
+using HierarchicalTestSets
 using JETLS: JETLS
-
-include("HierarchicalTestSet.jl")
 
 @testset HierarchicalTestSet "Configuration utilities" begin
     @testset "`get_default_config`" begin

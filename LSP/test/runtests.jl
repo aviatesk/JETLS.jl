@@ -3,6 +3,7 @@ using LSP.URIs2
 using LSP: test_roundtrip, to_lsp_json
 using REPL: REPL
 using Test
+using HierarchicalTestSets
 
 struct BlockingFailingWriteIO <: IO
     write_started::Base.Event
@@ -25,7 +26,7 @@ LSP.@interface OptionalInterface begin
 end
 end # module ExternalInterfaceTest
 
-@testset "LSP" begin
+@testset HierarchicalTestSet "LSP" begin
     # De/serializing complex LSP objects
     uri = filename2uri(@__FILE__)
 

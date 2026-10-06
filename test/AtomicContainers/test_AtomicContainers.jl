@@ -1,10 +1,9 @@
 module test_AtomicContainers
 
 using Test
+using HierarchicalTestSets
 using JETLS.AtomicContainers
 using JETLS.AtomicContainers: AtomicContainer, CASStats, LWStats, SWStats
-
-include("../HierarchicalTestSet.jl")
 
 struct PairSnap
     a::Int
