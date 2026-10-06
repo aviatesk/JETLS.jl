@@ -1,14 +1,15 @@
 #:schema ./schemas/config-toml.schema.json
 
-# Treat all other diagnostics as warnings (for early detection via jetls check)
+# Treat all other diagnostics as warnings (for early detection via jetls check),
+# except for those whose code contains "error", which keep their default severity
 [[diagnostic.patterns]]
-pattern = ".*"
+pattern = "^(?!.*error)"
 match_by = "code"
 match_type = "regex"
 severity = "warn"
 path = "src/**/*.jl"
 [[diagnostic.patterns]]
-pattern = ".*"
+pattern = "^(?!.*error)"
 match_by = "code"
 match_type = "regex"
 severity = "warn"
