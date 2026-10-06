@@ -1,13 +1,12 @@
 module test_type_annotation
 
 using Test
+using HierarchicalTestSets
 using JETLS
 using JETLS: CC, JL, JS
 using JETLS.TypeAnnotation
 using JETLS.TypeAnnotation: get_inferrable_tree, infer_toplevel_tree
 using LinearAlgebra: LinearAlgebra
-
-include("../HierarchicalTestSet.jl")
 
 module type_annotate_module
 # Helper for closure-argument-refinement tests: a user higher-order function the

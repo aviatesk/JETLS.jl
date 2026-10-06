@@ -1,12 +1,11 @@
 using Test
 using Pkg
+using HierarchicalTestSets
 using JETLS
 using JETLS.LSP
 using JETLS.URIs2
 
 using JETLS: get_text_and_positions
-
-include("HierarchicalTestSet.jl")
 
 """
     wait_for_file_cache_version(state::JETLS.ServerState, uri::URI, version::Int; timeout::Float64=10.0)

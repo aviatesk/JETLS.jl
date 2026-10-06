@@ -1,9 +1,8 @@
 module test_FixedSizeQueues
 
 using Test
+using HierarchicalTestSets
 using JETLS.FixedSizeQueues
-
-include("../HierarchicalTestSet.jl")
 
 struct TestType
     x::Int

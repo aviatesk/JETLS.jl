@@ -1,0 +1,46 @@
+name: HierarchicalTestSets.jl
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - "HierarchicalTestSets/**"
+      - ".github/workflows/HierarchicalTestSets.jl.yml"
+  workflow_call:
+
+jobs:
+  HierarchicalTestSets:
+    name: Test HierarchicalTestSets.jl - Julia ${{ matrix.version }}
+    runs-on: ubuntu-latest
+    # failures against an unreleased Julia should not block merging
+    continue-on-error: ${{ matrix.version == 'nightly' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # HierarchicalTestSets.jl relies on `Test` internals, which differ across Julia versions
+        version:
+          - "1.12"
+          - "1" # most stable version
+          - "nightly"
+    steps:
+      # Check out `HierarchicalTestSets/` only so that it is tested as a standalone package,
+      # as in `LSP.jl.yml`.
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: /HierarchicalTestSets/
+          sparse-checkout-cone-mode: false
+      - uses: julia-actions/setup-julia@v3
+        with:
+          version: ${{ matrix.version }}
+          arch: x64
+      - uses: julia-actions/cache@v3
+      - name: test HierarchicalTestSets
+        shell: julia --color=yes --project=. {0}    # this is necessary for the next command to work on Windows
+        run: 'using Pkg; Pkg.activate(normpath(pwd(), "HierarchicalTestSets")); Pkg.instantiate(); Pkg.test(; coverage=true)'
+      - uses: julia-actions/julia-processcoverage@v1
+        with:
+          directories: HierarchicalTestSets/src
+      - uses: codecov/codecov-action@v7
+        with:
+          flags: HierarchicalTestSets.jl

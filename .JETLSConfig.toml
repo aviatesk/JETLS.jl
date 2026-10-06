@@ -13,7 +13,7 @@ pattern = "^(?!.*error)"
 match_by = "code"
 match_type = "regex"
 severity = "warn"
-path = "LSP/src/**/*.jl"
+path = "*/src/**/*.jl"
 
 [[diagnostic.patterns]]
 pattern = "lowering/inactive-code"
