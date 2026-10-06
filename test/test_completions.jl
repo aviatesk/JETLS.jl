@@ -23,17 +23,21 @@ function get_cursor_bindings(
 end
 function get_cursor_bindings(marked_text::AbstractString; kwargs...)
     text, positions = JETLS.get_text_and_positions(marked_text)
-    fi = JETLS.FileInfo(#=version=#0, text, @__FILE__)
+    fi = JETLS.FileInfo(#=version=#0, text, @__FILE__; cache_tree0 = true)
     b = JETLS.xy_to_offset(fi, positions[1])
-    return get_cursor_bindings(fi, b; kwargs...)
+    bindings = get_cursor_bindings(fi, b; kwargs...)
+    JETLS.check_syntax_tree0(fi)
+    return bindings
 end
 
 function get_local_completions(s::AbstractString, b::Int)
     uri = JETLS.URIs2.filepath2uri(@__FILE__)
-    fi = JETLS.FileInfo(#=version=#0, s, @__FILE__)
-    return map(get_cursor_bindings(fi, b)) do ((bi, st, dist))
+    fi = JETLS.FileInfo(#=version=#0, s, @__FILE__; cache_tree0 = true)
+    completions = map(get_cursor_bindings(fi, b)) do ((bi, st, dist))
         JETLS.to_completion(bi, st, dist, uri, fi)
     end
+    JETLS.check_syntax_tree0(fi)
+    return completions
 end
 
 # Test that completion vector contains CompletionItems with all of `expected`
@@ -370,7 +374,7 @@ function with_completion_items(
                         resolveSupport = ClientCompletionItemResolveOptions(;
                             properties = ["documentation", "detail", "kind", "labelDetails"])
                     )))))
-    fi = JETLS.FileInfo(#=version=#0, clean_code, @__FILE__)
+    fi = JETLS.FileInfo(#=version=#0, clean_code, @__FILE__; cache_tree0 = true)
     JETLS.store!(state.file_cache) do cache
         Base.PersistentDict(cache, uri => fi), nothing
     end
@@ -380,6 +384,7 @@ function with_completion_items(
             context_module)
         tester((; result = (; items, isIncomplete), state, uri))
     end
+    JETLS.check_syntax_tree0(fi)
 end
 
 @testset "Test macro fallback completions" begin

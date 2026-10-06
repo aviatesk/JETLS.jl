@@ -298,7 +298,11 @@ function withserver(
             initialize_json_response,
             register_capability_request,
             register_capability_json_request)
-        return f(argnt)
+        ret = f(argnt)
+        for (_, fi) in JETLS.load(server.state.file_cache)
+            JETLS.check_syntax_tree0(fi)
+        end
+        return ret
     finally
         try
             Pkg.activate(old_env; io=devnull)

@@ -8,12 +8,13 @@ using JETLS.URIs2
 function get_document_links(code::AbstractString, filename::AbstractString)
     server = JETLS.Server()
     uri = filename2uri(filename)
-    fi = JETLS.FileInfo(#=version=#0, code, filename)
+    fi = JETLS.FileInfo(#=version=#0, code, filename; cache_tree0 = true)
     JETLS.store!(server.state.file_cache) do cache
         Base.PersistentDict(cache, uri => fi), nothing
     end
     links = DocumentLink[]
     JETLS.collect_include_document_links!(links, server.state, uri, fi)
+    JETLS.check_syntax_tree0(fi)
     return links, uri
 end
 

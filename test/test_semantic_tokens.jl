@@ -30,8 +30,9 @@ function decode_semantic_tokens(data::Vector{UInt})
 end
 
 function tokens_for(code::AbstractString; range::Union{Nothing,Range} = nothing)
-    fi = JETLS.FileInfo(1, code, @__FILE__, PositionEncodingKind.UTF16)
+    fi = JETLS.FileInfo(1, code, @__FILE__, PositionEncodingKind.UTF16; cache_tree0 = true)
     decoded = decode_semantic_tokens(JETLS.semantic_tokens(fi; range))
+    JETLS.check_syntax_tree0(fi)
     # LSP delta encoding requires tokens to be sorted by (line, char).
     @test issorted(decoded; by = t -> (t.line, t.char))
     # No legitimate identifier should span more than ~100 bytes. Occurrences

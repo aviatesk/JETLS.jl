@@ -148,6 +148,9 @@ struct FileInfo
         )
         syntax_tree0 = cache_tree0 ?
             JS.build_tree(JS.SyntaxTree, parsed_stream; filename) : nothing
+        @static if JETLS_TEST_MODE
+            syntax_tree0 === nothing || register_syntax_tree0!(syntax_tree0)
+        end
         line_starts = build_line_starts(parsed_stream.textbuf)
         new(unique_id("FileInfo"), version, parsed_stream, filename, encoding,
             testsetinfos, syntax_tree0, inferred_context_cache, line_starts)

@@ -9,11 +9,12 @@ include(normpath(pkgdir(JETLS), "test", "setup.jl"))
 function find_references(code::AbstractString, pos::Position; include_declaration::Bool=true)
     server = JETLS.Server()
     uri = URI("file:///test.jl")
-    fi = JETLS.FileInfo(#=version=#0, code, "test.jl")
+    fi = JETLS.FileInfo(#=version=#0, code, "test.jl"; cache_tree0 = true)
     JETLS.store!(server.state.file_cache) do cache
         Base.PersistentDict(cache, uri => fi), nothing
     end
     locations = JETLS.find_references(server, uri, fi, pos; include_declaration)
+    JETLS.check_syntax_tree0(fi)
     return locations
 end
 

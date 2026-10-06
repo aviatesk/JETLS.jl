@@ -27,7 +27,7 @@ function get_syntactic_inlay_hints(
     )
     server = JETLS.Server()
     uri = URI("file:///test.jl")
-    fi = JETLS.FileInfo(1, code, @__FILE__)
+    fi = JETLS.FileInfo(1, code, @__FILE__; cache_tree0 = true)
     JETLS.store!(server.state.file_cache) do cache
         Base.PersistentDict(cache, uri => fi), nothing
     end
@@ -37,7 +37,9 @@ function get_syntactic_inlay_hints(
             start = Position(; line = 0, character = 0),
             var"end" = Position(; line = n_lines, character = 0))
     end
-    return JETLS.syntactic_inlay_hints(server.state, uri, fi, range; min_lines)
+    hints = JETLS.syntactic_inlay_hints(server.state, uri, fi, range; min_lines)
+    JETLS.check_syntax_tree0(fi)
+    return hints
 end
 
 @testset HierarchicalTestSet "block end hints" begin
@@ -389,10 +391,11 @@ function get_type_inlay_hints_from_request_path(code::AbstractString, range::Ran
     filename = @__FILE__
     uri = filename2uri(filename)
     inferred_context_cache = JETLS.InferredContextCache()
-    fi = JETLS.FileInfo(1, code, filename; inferred_context_cache)
+    fi = JETLS.FileInfo(1, code, filename; inferred_context_cache, cache_tree0 = true)
     st0_top = JETLS.build_syntax_tree(fi)
     hints = InlayHint[]
     JETLS.type_inlay_hints!(hints, server.state, fi, st0_top, uri, range)
+    JETLS.check_syntax_tree0(fi)
     return hints, inferred_context_cache
 end
 
@@ -401,7 +404,7 @@ function get_lazy_type_inlay_hints(code::AbstractString, mod::Module=Main)
     filename = @__FILE__
     uri = filename2uri(filename)
     inferred_context_cache = JETLS.InferredContextCache()
-    fi = JETLS.FileInfo(1, code, filename; inferred_context_cache)
+    fi = JETLS.FileInfo(1, code, filename; inferred_context_cache, cache_tree0 = true)
     JETLS.store!(server.state.file_cache) do cache
         Base.PersistentDict(cache, uri => fi), nothing
     end
@@ -419,6 +422,7 @@ function get_lazy_type_inlay_hints(code::AbstractString, mod::Module=Main)
             hints, st0, ctx, fi, uri, range, JETLS.LSPostProcessor();
             lazy_tooltips = true)
     end
+    JETLS.check_syntax_tree0(fi)
     return server, hints
 end
 
@@ -429,7 +433,7 @@ function get_type_inlay_hints(
     )
     filename = @__FILE__
     uri = filename2uri(filename)
-    fi = JETLS.FileInfo(1, code, filename)
+    fi = JETLS.FileInfo(1, code, filename; cache_tree0 = true)
     st0_top = JETLS.build_syntax_tree(fi)
     hints = InlayHint[]
     rng = range !== nothing ? range :
@@ -447,6 +451,7 @@ function get_type_inlay_hints(
             hints, st0, ctx, fi, uri, rng, JETLS.LSPostProcessor();
             maxdepth, maxwidth)
     end
+    JETLS.check_syntax_tree0(fi)
     return hints
 end
 

@@ -12,7 +12,7 @@ module lowering_module end
 # tests can assert structural facts (e.g. an OC was actually emitted).
 function rewrite_lower_eval(code::AbstractString)
     context_module = lowering_module
-    fi = JETLS.FileInfo(1, code, @__FILE__)
+    fi = JETLS.FileInfo(1, code, @__FILE__; cache_tree0 = true)
     st0_top = JETLS.build_syntax_tree(fi)
     last_value = Ref{Any}(nothing)
     last_st3_oc = Ref{Union{JETLS.SyntaxTree,Nothing}}(nothing)
@@ -29,6 +29,7 @@ function rewrite_lower_eval(code::AbstractString)
         last_st3_oc[] = st3_oc
         return nothing
     end
+    JETLS.check_syntax_tree0(fi)
     return (last_value[], last_st3_oc[])
 end
 
@@ -39,7 +40,7 @@ end
 # rewrite did NOT fire for this shape".
 function rewrite_only(code::AbstractString)
     context_module = lowering_module
-    fi = JETLS.FileInfo(1, code, @__FILE__)
+    fi = JETLS.FileInfo(1, code, @__FILE__; cache_tree0 = true)
     st0_top = JETLS.build_syntax_tree(fi)
     last_st3_oc = Ref{Union{JETLS.SyntaxTree,Nothing}}(nothing)
     world = Base.get_world_counter()
@@ -50,6 +51,7 @@ function rewrite_only(code::AbstractString)
         last_st3_oc[] = rewrite_local_closures_to_opaque(ctx3, st3)
         return nothing
     end
+    JETLS.check_syntax_tree0(fi)
     return last_st3_oc[]
 end
 

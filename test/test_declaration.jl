@@ -12,7 +12,7 @@ function declaration_testcase(
     )
     clean_code, positions = JETLS.get_text_and_positions(code)
     @assert length(positions) == n
-    fi = JETLS.FileInfo(#=version=#0, clean_code, filename)
+    fi = JETLS.FileInfo(#=version=#0, clean_code, filename; cache_tree0 = true)
     @assert issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
     furi = filename2uri(filename)
     server = JETLS.Server()
@@ -21,8 +21,11 @@ function declaration_testcase(
     end
     return server, fi, positions, furi
 end
-find_declaration_locations(server, furi, fi, pos; kwargs...) =
-    first(@something JETLS.find_declaration(server, furi, fi, pos; kwargs...) return nothing)
+function find_declaration_locations(server, furi, fi, pos; kwargs...)
+    result = JETLS.find_declaration(server, furi, fi, pos; kwargs...)
+    JETLS.check_syntax_tree0(fi)
+    return result === nothing ? nothing : first(result)
+end
 
 @testset "declaration for imported names" begin
     let code = """
