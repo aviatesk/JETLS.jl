@@ -81,6 +81,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   Errors raised while loading code are summarized with the first line of the error message, e.g. `JET could not execute this top-level code: UndefVarError: ...`.
   The details are wrapped at 90 columns, or at the terminal width in [`jetls check`](https://aviatesk.github.io/JETLS.jl/release/cli-check/) when the terminal is narrower.
 
+- Running tests with the [TestRunner integration](https://aviatesk.github.io/JETLS.jl/release/testrunner/) no longer runs the tests in files `include`d outside the selected tests, e.g. by a top-level `include("helpers.jl")`; only their other code, such as function definitions, runs.
+  Files `include`d by the selected tests, e.g. by `@testset "name" include("file.jl")`, still run with all their tests.
+
 ### Fixed
 
 - Fixed files with syntax warnings but no syntax errors getting no [`lowering/*`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering) diagnostics in the editor or from [`jetls check`](https://aviatesk.github.io/JETLS.jl/release/cli-check/), and not being reanalyzed by full analysis on save.
@@ -88,6 +91,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Fixed [`toplevel/abstract-field`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/toplevel/abstract-field) being reported on functions containing closures that capture a `@nospecialize`d argument, such as `f(@nospecialize x) = () -> x`.
 
 - Fixed [`toplevel/abstract-field`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/toplevel/abstract-field) and [`toplevel/method-overwrite`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/toplevel/method-overwrite) never being reported by [`jetls check`](https://aviatesk.github.io/JETLS.jl/release/cli-check/), and not being reported in the editor for files that are not open, such as files `include`d by a package.
+
+- Fixed running tests with the [TestRunner integration](https://aviatesk.github.io/JETLS.jl/release/testrunner/) in files that call `include` with `mapexpr`, e.g. `Base.include(mapexpr, mod, path)`, failing with an `unreachable` error or running the included file without applying `mapexpr`.
+
+- Fixed running a test set nested in other test sets with the TestRunner integration skipping the `include` calls in the enclosing test sets, which could cause errors such as `UndefVarError` for what the included files define.
 
 ## 2026-10-04
 
