@@ -556,7 +556,7 @@ end
     d = JETLS.validate_config_data(Dict{String,Any}(
         "inlay_hint" => Dict{String,Any}(
             "block_end_min_lines" => 7)))
-    warnings = JETLS.migrate_deprecated_config_keys!(d, deprecations)
+    warnings = JETLS.migrate_deprecated_config!(d, deprecations)
     @test length(warnings) == 1
     @test occursin("`inlay_hint.block_end_min_lines` is deprecated", warnings[1])
     config = JETLS.parse_config_dict(d)
@@ -572,7 +572,7 @@ end
         "completion" => Dict{String,Any}(
             "method_signature" => Dict{String,Any}(
                 "prepend_inference_result" => true))))
-    warnings = JETLS.migrate_deprecated_config_keys!(d, deprecations)
+    warnings = JETLS.migrate_deprecated_config!(d, deprecations)
     @test length(warnings) == 1
     @test occursin("`completion.method_signature.prepend_inference_result` is deprecated", warnings[1])
     @test !haskey(d, "completion")
@@ -584,7 +584,7 @@ end
     d = JETLS.validate_config_data(Dict{String,Any}(
         "testrunner" => Dict{String,Any}(
             "executable" => "testrunner")))
-    warnings = JETLS.migrate_deprecated_config_keys!(d)
+    warnings = JETLS.migrate_deprecated_config!(d)
     @test length(warnings) == 1
     @test occursin("`testrunner.executable` is deprecated", warnings[1])
     @test !haskey(d, "testrunner")
@@ -626,11 +626,20 @@ end
     for value in JETLS.AUTO_INSTANTIATE_VALUES
         @test parse_auto_instantiate(value).full_analysis.auto_instantiate === value
     end
-    # booleans remain accepted as aliases for backward compatibility
-    @test parse_auto_instantiate(true).full_analysis.auto_instantiate === JETLS.AUTO_INSTANTIATE_ALWAYS
-    @test parse_auto_instantiate(false).full_analysis.auto_instantiate === JETLS.AUTO_INSTANTIATE_NEVER
     @test parse_auto_instantiate(nothing).full_analysis.auto_instantiate === nothing
-    for value in ("yes", 1)
+    # booleans are deprecated values, which the migration replaces before parsing
+    for (value, expected) in (true => JETLS.AUTO_INSTANTIATE_ALWAYS,
+                              false => JETLS.AUTO_INSTANTIATE_NEVER)
+        d = Dict{String,Any}("full_analysis" => Dict{String,Any}("auto_instantiate" => value))
+        warnings = JETLS.migrate_deprecated_config!(d)
+        @test only(warnings) == JETLS.deprecated_config_value_message(
+            ["full_analysis", "auto_instantiate"], value, expected)
+        @test JETLS.parse_config_dict(d).full_analysis.auto_instantiate === expected
+    end
+    let d = Dict{String,Any}("full_analysis" => Dict{String,Any}("auto_instantiate" => 1))
+        @test isempty(JETLS.migrate_deprecated_config!(d))
+    end
+    for value in ("yes", 1, true)
         err = try
             parse_auto_instantiate(value)
             nothing

@@ -8,12 +8,31 @@ const JETLS_VERSION = let
     isfile(version_file) ? strip(read(version_file, String)) : "unknown"
 end
 
+# Deprecation entries below are not removed after a deadline: a deprecated setting is
+# reported with a quick fix, whereas an unknown key keeps the whole config file from
+# loading. Remove an entry only to reuse its key or value; `test/test_config_deprecation.jl`
+# checks that no entry names a current setting.
+
+const DeprecatedConfiguration  = Pair{Vector{String},Union{Nothing,Vector{String}}}
+const DeprecatedConfigurations = Vector{DeprecatedConfiguration}
+const DeprecatedConfigurationValue  = Pair{Vector{String},Pair{Any,Any}}
+const DeprecatedConfigurationValues = Vector{DeprecatedConfigurationValue}
+
 # Append `old_path => new_path` pairs to register a key migration, or
 # `old_path => nothing` to deprecate a key without a replacement.
-# Each path is a list of nested keys; `migrate_deprecated_config_keys!` consults this
+# Each path is a list of nested keys; `migrate_deprecated_config!` consults this
 # table and rewrites raw user config dicts before parsing.
-const deprecated_configurations = Pair{Vector{String},Union{Nothing,Vector{String}}}[
+const deprecated_configurations = DeprecatedConfiguration[
+    ["inlay_hint", "block_end_min_lines"] => ["inlay_hint", "block_end", "min_lines"],
+    ["completion", "method_signature", "prepend_inference_result"] => nothing,
     ["testrunner", "executable"] => nothing,
+]
+
+# Append `path => (old_value => new_value)` pairs to deprecate a value of the key at
+# `path`, which `migrate_deprecated_config!` replaces with `new_value`.
+const deprecated_configuration_values = DeprecatedConfigurationValue[
+    ["full_analysis", "auto_instantiate"] => (true => "always"),
+    ["full_analysis", "auto_instantiate"] => (false => "never"),
 ]
 
 const __init__hooks__ = Any[]
@@ -115,6 +134,7 @@ include("utils/ast.jl")
 include("utils/binding.jl")
 include("utils/docs.jl")
 include("utils/lsp.jl")
+include("utils/toml-source.jl")
 include("utils/server.jl")
 include("utils/native-inference.jl")
 
@@ -159,6 +179,7 @@ include("document-link.jl")
 include("document-symbol.jl")
 include("workspace-symbol.jl")
 include("code-action.jl")
+include("config-deprecation.jl")
 include("code-lens.jl")
 include("formatting.jl")
 include("inlay-hint.jl")
@@ -473,6 +494,10 @@ function handle_response_message(
         handle_show_text_document_content_response(server, msg, request_caller)
     elseif request_caller isa SetDocumentContentCaller
         handle_apply_workspace_edit_response(server, msg, request_caller)
+    elseif request_caller isa ApplyWorkspaceEditCaller
+        handle_apply_workspace_edit_response(server, msg, request_caller)
+    elseif request_caller isa DeprecatedConfigPromptCaller
+        handle_deprecated_config_prompt_response(server, msg, request_caller)
     elseif request_caller isa DeleteFileCaller
         handle_apply_workspace_edit_response(server, msg, request_caller)
     elseif request_caller isa TestRunnerMessageRequestCaller2

@@ -69,6 +69,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   The "Attach docstring to the following definition" code action fixes them by prefixing `@doc` and removing the blank lines as needed.
   This check was suggested in [JuliaLang/julia#63631](https://github.com/JuliaLang/julia/pull/63631), which fixed such docstrings in Julia itself.
 
+- Added the [`config/deprecated-key`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/config/deprecated-key) and [`config/deprecated-value`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/config/deprecated-value) warnings on deprecated keys and values of `.JETLSConfig.toml`, with quick fixes that remove a key, move its value to the new key, or replace a value, while keeping the rest of the file, including comments, as it is.
+  The warning message shown when JETLS loads such a file now also offers a "Fix all" action that applies these fixes to the file.
+  The legacy `true` and `false` values of [`full_analysis.auto_instantiate`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/full_analysis/auto_instantiate) are now reported the same way, and also come with a warning when set through LSP settings.
+
 ### Changed
 
 - Package extension files (files under the `ext` directory of a package) are no longer full-analyzed, and the new [`toplevel/analysis-skipped`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/toplevel/analysis-skipped) warning is reported at the top of each such file instead.

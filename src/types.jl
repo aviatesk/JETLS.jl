@@ -9,6 +9,11 @@ struct TestsetDiagnosticsKey <: ExtraDiagnosticsKey
 end
 to_uri_impl(key::TestsetDiagnosticsKey) = key.uri
 
+struct ConfigDiagnosticsKey <: ExtraDiagnosticsKey
+    uri::URI
+end
+to_uri_impl(key::ConfigDiagnosticsKey) = key.uri
+
 struct TestsetResult
     result::TestRunnerResult
     key::TestsetDiagnosticsKey
@@ -633,6 +638,8 @@ const INFERENCE_TYPE_ERROR_TYPE_ASSERT_CODE = "inference/type-error/type-assert"
 const INFERENCE_TYPE_ERROR_KEYWORD_CODE = "inference/type-error/keyword"
 const DEPRECATED_INFERENCE_NON_BOOLEAN_COND_CODE = "inference/non-boolean-cond"
 const TESTRUNNER_TEST_FAILURE_CODE = "testrunner/test-failure"
+const CONFIG_DEPRECATED_KEY_CODE = "config/deprecated-key"
+const CONFIG_DEPRECATED_VALUE_CODE = "config/deprecated-value"
 
 const ALL_DIAGNOSTIC_CODES = Set{String}(String[
     SYNTAX_PARSE_ERROR_CODE,
@@ -670,6 +677,8 @@ const ALL_DIAGNOSTIC_CODES = Set{String}(String[
     INFERENCE_TYPE_ERROR_TYPE_ASSERT_CODE,
     INFERENCE_TYPE_ERROR_KEYWORD_CODE,
     TESTRUNNER_TEST_FAILURE_CODE,
+    CONFIG_DEPRECATED_KEY_CODE,
+    CONFIG_DEPRECATED_VALUE_CODE,
 ])
 
 const DIAGNOSTIC_CODE_ALIASES = Dict{String,Vector{String}}(

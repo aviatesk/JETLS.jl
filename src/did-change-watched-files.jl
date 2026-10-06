@@ -54,13 +54,14 @@ function handle_config_file_change!(
         server::Server, changed_path::AbstractString, change_type::FileChangeType.Ty
     )
     tracker = ConfigChangeTracker()
+    deprecation_warnings = String[]
 
     if change_type == FileChangeType.Created
-        load_file_config!(tracker, server, changed_path)
+        deprecation_warnings = load_file_config!(tracker, server, changed_path)
         kind = "created"
         show_info_message(server, config_file_created_msg(changed_path))
     elseif change_type == FileChangeType.Changed
-        load_file_config!(tracker, server, changed_path; reload=true)
+        deprecation_warnings = load_file_config!(tracker, server, changed_path; reload=true)
         kind = "updated"
     elseif change_type == FileChangeType.Deleted
         delete_file_config!(tracker, server.state.config_manager, changed_path)
@@ -70,6 +71,12 @@ function handle_config_file_change!(
 
     source = "[.JETLSConfig.toml] $(dirname(changed_path)) ($kind)"
     notify_config_changes(server, tracker, source)
+    report_deprecated_configs(server, changed_path, deprecation_warnings)
+    # An open config file is diagnosed from its buffer on `textDocument/didChange`
+    config_uri = filepath2uri(changed_path)
+    if get_config_document(server.state, config_uri) === nothing
+        update_config_diagnostics!(server, config_uri)
+    end
     apply_config_changes!(server, tracker)
 end
 
@@ -87,7 +94,9 @@ end
 # applied.
 
 """
-Loads the file-based configuration from the specified path into the server's config manager.
+Loads the file-based configuration from the specified path into the server's config manager,
+and returns the warnings about the deprecated settings in it, for
+[`report_deprecated_configs`](@ref).
 
 If the file does not exist or cannot be parsed, just return leaving the current
 configuration unchanged. When there are unknown keys in the config file,
@@ -95,15 +104,15 @@ send error message while leaving current configuration unchanged.
 """
 function load_file_config!(on_difference, server::Server, filepath::AbstractString;
                            reload::Bool = false)
-    store!(server.state.config_manager) do old_data::ConfigManagerData
+    return store!(server.state.config_manager) do old_data::ConfigManagerData
         old_path = old_data.file_config_path
         if reload && (old_path === nothing || !paths_equal(old_path, filepath))
             show_warning_message(server, "Loading unregistered configuration file: $filepath")
         end
 
-        isfile(filepath) || return old_data, nothing
+        isfile(filepath) || return old_data, String[]
         parsed = TOML.tryparsefile(filepath)
-        parsed isa TOML.ParserError && return old_data, nothing
+        parsed isa TOML.ParserError && return old_data, String[]
         config_dict = try
             validate_config_data(parsed)
         catch err
@@ -112,23 +121,21 @@ function load_file_config!(on_difference, server::Server, filepath::AbstractStri
                 Failed to load configuration file at $filepath:
                 $(sprint(locked_showerror, err))
                 """)
-            return old_data, nothing
+            return old_data, String[]
         end
 
-        for msg in migrate_deprecated_config_keys!(config_dict)
-            show_warning_message(server, msg)
-        end
+        deprecation_warnings = migrate_deprecated_config!(config_dict)
         new_file_config = parse_config_dict(config_dict, filepath)
         if new_file_config isa AbstractString
             show_error_message(server, new_file_config)
-            return old_data, nothing
+            return old_data, deprecation_warnings
         end
         new_data = ConfigManagerData(old_data;
             file_config=new_file_config,
             file_config_path=filepath
         )
         track_setting_changes(on_difference, old_data.settings, new_data.settings)
-        return new_data, nothing
+        return new_data, deprecation_warnings
     end
 end
 

@@ -183,6 +183,7 @@ function handle_DidOpenTextDocumentNotification(server::Server, msg::DidOpenText
         return mark_text_document_content_opened!(server, uri) # turn on the `opened` flag
     if is_config_document_uri(server.state, uri)
         cache_config_document!(server.state, uri, textDocument.version, textDocument.text)
+        update_config_diagnostics!(server, uri)
         return nothing
     end
     if textDocument.languageId != "julia"
@@ -206,6 +207,7 @@ function handle_DidChangeTextDocumentNotification(server::Server, msg::DidChange
     text = last(contentChanges).text
     if is_config_document_uri(server.state, uri)
         cache_config_document!(server.state, uri, textDocument.version, text)
+        update_config_diagnostics!(server, uri)
         return nothing
     end
     is_synchronized(server.state, uri) || return nothing
@@ -244,6 +246,8 @@ function handle_DidCloseTextDocumentNotification(server::Server, msg::DidCloseTe
         return mark_text_document_content_closed!(server, uri) # turn off the `opened` flag
     if is_config_document_uri(server.state, uri)
         delete_config_document!(server.state, uri)
+        # Rediagnose from disk, or clear the diagnostics when `diagnostic.all_files` is off
+        update_config_diagnostics!(server, uri)
         return nothing
     end
     delete_rejected_text_document!(server.state, uri) && return nothing
