@@ -104,12 +104,14 @@ function find_definition(
         context_module::Union{Nothing,Module} = nothing
     )
     server = JETLS.Server()
-    fi = JETLS.FileInfo(#=version=#0, text, filename)
+    fi = JETLS.FileInfo(#=version=#0, text, filename; cache_tree0 = true)
     furi = filename2uri(filename)
     JETLS.store!(server.state.file_cache) do cache
         Base.PersistentDict(cache, furi => fi), nothing
     end
-    return JETLS.find_definition(server, furi, fi, pos; context_module)
+    result = JETLS.find_definition(server, furi, fi, pos; context_module)
+    JETLS.check_syntax_tree0(fi)
+    return result
 end
 
 # `definition_test(text, expected; ...)` — single-cursor assertion shorthand.

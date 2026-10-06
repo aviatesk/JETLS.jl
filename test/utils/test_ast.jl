@@ -1106,4 +1106,18 @@ end
     end
 end
 
+@testset "check_syntax_tree0 detects mutation" begin
+    for mutate! in (
+            st::JS.SyntaxTree -> JS.setmeta!(st[1], :mutated, true),
+            st::JS.SyntaxTree -> push!(JS.children(st[1]), st[1][1]),
+            st::JS.SyntaxTree -> setfield!(st[1][1], :value, :mutated))
+        fi = JETLS.FileInfo(#=version=#1, "f(x) = x + 1", "test.jl"; cache_tree0=true)
+        @test JETLS.build_syntax_tree(fi) === fi.syntax_tree0
+        @test JETLS.check_syntax_tree0(fi) === nothing
+        mutate!(fi.syntax_tree0::JS.SyntaxTree)
+        @test_throws ErrorException JETLS.check_syntax_tree0(fi)
+        @test_throws ErrorException JETLS.build_syntax_tree(fi)
+    end
+end
+
 end # module test_ast

@@ -8,7 +8,7 @@ using JETLS.URIs2
 function get_code_lenses_with_counts(code::AbstractString)
     server = JETLS.Server()
     uri = URI("file:///test.jl")
-    fi = JETLS.FileInfo(#=version=#0, code, "test.jl")
+    fi = JETLS.FileInfo(#=version=#0, code, "test.jl"; cache_tree0 = true)
     JETLS.store!(server.state.file_cache) do cache
         Base.PersistentDict(cache, uri => fi), nothing
     end
@@ -23,6 +23,7 @@ function get_code_lenses_with_counts(code::AbstractString)
         count = locations isa Vector ? length(locations) : 0
         push!(results, (lens, count))
     end
+    JETLS.check_syntax_tree0(fi)
     return results
 end
 

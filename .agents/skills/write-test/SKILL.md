@@ -2,8 +2,9 @@
 name: write-test
 description: >
   Use when adding or modifying JETLS tests. Covers test file and module
-  structure, `@testset` organization, `let` blocks, `withserver` usage, and
-  when subroutine tests are sufficient for language-server features.
+  structure, `@testset` organization, `let` blocks, `withserver` usage,
+  cached syntax trees in helpers that call features directly, and when
+  subroutine tests are sufficient for language-server features.
 ---
 
 # Write JETLS tests
@@ -98,6 +99,38 @@ it keeps the full `withserver` coverage to one `request/response sanity` test
 for the `DidOpen` → analysis → `DefinitionRequest` path, while most cases use
 `definition_test` to call `find_definition` directly and assert on returned
 locations. Prefer this split for LSP handlers.
+
+### Cached syntax trees
+
+Requests on a synchronized document share the cached syntax tree of its
+`FileInfo` without copying it, so no feature may mutate that tree. Under
+`JETLS_TEST_MODE`, JETLS records a fingerprint of each cached tree and
+`JETLS.check_syntax_tree0(fi)` throws if the tree has changed since.
+`withserver` runs this check for every open document when the test finishes.
+
+Helpers that construct their own `FileInfo` and call a feature directly
+should construct it with `cache_tree0 = true`, as `cache_file_info!` does for
+synchronized documents, and call `JETLS.check_syntax_tree0(fi)` after the
+feature call:
+
+```julia
+function find_definition(text::AbstractString, pos::Position)
+    server = JETLS.Server()
+    filename = joinpath(@__DIR__, "testfile_$(gensym(:definition)).jl")
+    fi = JETLS.FileInfo(#=version=#0, text, filename; cache_tree0 = true)
+    furi = filename2uri(filename)
+    JETLS.store!(server.state.file_cache) do cache
+        Base.PersistentDict(cache, furi => fi), nothing
+    end
+    result = JETLS.find_definition(server, furi, fi, pos)
+    JETLS.check_syntax_tree0(fi)
+    return result
+end
+```
+
+Leave `cache_tree0` unset when the `FileInfo` is only used to convert
+positions or stands for a file that is not open in the editor, since JETLS
+doesn't cache a tree for such files in production either.
 
 ## After writing tests
 

@@ -20,7 +20,7 @@ function rename_testcase(
     )
     clean_code, positions = JETLS.get_text_and_positions(code)
     @assert length(positions) == n
-    fi = JETLS.FileInfo(#=version=#0, clean_code, filename)
+    fi = JETLS.FileInfo(#=version=#0, clean_code, filename; cache_tree0 = true)
     @assert issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
     furi = filename2uri(filename)
     # Register the file with the provided server so that
@@ -56,8 +56,12 @@ function local_rename_preparation_testcase(
         context_module::Module
     )
     (; fi, positions, furi, world) = binding_rename_testcase(code, n)
-    prepare(pos::Position) = JETLS.prepare_local_binding_rename(
-        state, furi, fi, pos, context_module, world)
+    function prepare(pos::Position)
+        result = JETLS.prepare_local_binding_rename(
+            state, furi, fi, pos, context_module, world)
+        JETLS.check_syntax_tree0(fi)
+        return result
+    end
     return (; positions, prepare)
 end
 
@@ -66,8 +70,12 @@ function global_rename_preparation_testcase(
         context_module::Module
     )
     (; fi, positions, furi, world) = binding_rename_testcase(code, n)
-    prepare(pos::Position) = JETLS.prepare_global_binding_rename(
-        state, furi, fi, pos, context_module, world)
+    function prepare(pos::Position)
+        result = JETLS.prepare_global_binding_rename(
+            state, furi, fi, pos, context_module, world)
+        JETLS.check_syntax_tree0(fi)
+        return result
+    end
     return (; positions, prepare)
 end
 
@@ -76,8 +84,12 @@ function local_rename_testcase(
         context_module::Module
     )
     (; fi, positions, furi, world) = binding_rename_testcase(code, n)
-    rename_binding(pos::Position, new_name::String) = JETLS.get_local_binding_rename(
-        server, furi, fi, pos, context_module, world, new_name)
+    function rename_binding(pos::Position, new_name::String)
+        result = JETLS.get_local_binding_rename(
+            server, furi, fi, pos, context_module, world, new_name)
+        JETLS.check_syntax_tree0(fi)
+        return result
+    end
     return (; positions, furi, rename_binding)
 end
 
@@ -91,8 +103,12 @@ function global_rename_testcase(
         binding_rename_testcase(code, n)
     end
     (; fi, positions, furi, world) = testcase
-    rename_binding(pos::Position, new_name::String) = JETLS.get_global_binding_rename(
-        server, furi, fi, pos, context_module, world, new_name)
+    function rename_binding(pos::Position, new_name::String)
+        result = JETLS.get_global_binding_rename(
+            server, furi, fi, pos, context_module, world, new_name)
+        JETLS.check_syntax_tree0(fi)
+        return result
+    end
     return (; positions, furi, rename_binding)
 end
 

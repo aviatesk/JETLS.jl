@@ -1,8 +1,54 @@
 function build_syntax_tree(fi::FileInfo)
     syntax_tree0 = fi.syntax_tree0
-    syntax_tree0 === nothing || return syntax_tree0
+    if syntax_tree0 !== nothing
+        @static JETLS_TEST_MODE && check_syntax_tree0(fi)
+        return syntax_tree0
+    end
     return JS.build_tree(JS.SyntaxTree, fi.parsed_stream; filename=fi.filename)
 end
+
+@static if JETLS_TEST_MODE
+# Requests share a cached `syntax_tree0` without copying it, so tests fingerprint each
+# cached tree when it is built and check that no request has mutated it since.
+const SYNTAX_TREE0_FINGERPRINTS = WeakKeyDict{SyntaxTree,UInt}()
+
+function syntax_tree_fingerprint(root::SyntaxTree)
+    h = zero(UInt)
+    seen = Base.IdSet{SyntaxTree}()
+    stack = SyntaxTree[root]
+    while !isempty(stack)
+        st = pop!(stack)
+        st in seen && continue
+        push!(seen, st)
+        for i = 1:fieldcount(SyntaxTree)
+            h = hash(objectid(getfield(st, i)), h)
+        end
+        cs = getfield(st, :children)
+        if cs !== nothing
+            for c in cs
+                h = hash(objectid(c), h)
+            end
+            append!(stack, cs)
+        end
+        src = getfield(st, :source)
+        src isa SyntaxTree && push!(stack, src)
+    end
+    return h
+end
+
+function register_syntax_tree0!(st0::SyntaxTree)
+    SYNTAX_TREE0_FINGERPRINTS[st0] = syntax_tree_fingerprint(st0)
+    return st0
+end
+
+function check_syntax_tree0(fi::FileInfo)
+    st0 = @something fi.syntax_tree0 return nothing
+    fingerprint = @something get(SYNTAX_TREE0_FINGERPRINTS, st0, nothing) return nothing
+    syntax_tree_fingerprint(st0) == fingerprint ||
+        error(lazy"The cached syntax tree of $(fi.filename) has been mutated")
+    return nothing
+end
+end # @static if JETLS_TEST_MODE
 
 has_source_flags(st::SyntaxTree, flags::UInt16) = JS.has_flags(JS.prov_end(st), flags)
 is_source_infix_op_call(st::SyntaxTree) = JS.is_infix_op_call(JS.prov_end(st))

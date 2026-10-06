@@ -29,10 +29,11 @@ end
 # (the common case) or place the statement under test first. `fi` is returned
 # so tests can use `xy_to_offset` etc. against the source.
 function type_annotate(code::AbstractString, context_module::Module = type_annotate_module)
-    fi = JETLS.FileInfo(1, code, @__FILE__)
+    fi = JETLS.FileInfo(1, code, @__FILE__; cache_tree0 = true)
     st0_top = JETLS.build_syntax_tree(fi)
     ctx = build_inferred_context_for_range(st0_top, context_module, 1:1)
     @test ctx !== nothing
+    JETLS.check_syntax_tree0(fi)
     return fi, ctx
 end
 
@@ -86,7 +87,7 @@ end
     end
     """
     cache = JETLS.InferredContextCache()
-    fi = JETLS.FileInfo(1, code, @__FILE__; inferred_context_cache=cache)
+    fi = JETLS.FileInfo(1, code, @__FILE__; inferred_context_cache=cache, cache_tree0 = true)
     st0_top = JETLS.build_syntax_tree(fi)
     rng1 = range_of(code, "x + 1")
     rng2 = range_of(code, "y")
@@ -112,13 +113,14 @@ end
     @test get_type_for_range(ctx4, rng4) === Int
     @test ctx4 !== ctx3
     @test length(JETLS.load(cache)) == 2
+    JETLS.check_syntax_tree0(fi)
 end
 
 @testset "build_inferred_context_for_range declaration-only forms" begin
     for code in ("using Base\n", "import Base: map\n", "export foo, bar\n",
                  "public baz\n", "abstract type AT end\n", "primitive type PT 8 end\n")
         cache = JETLS.InferredContextCache()
-        fi = JETLS.FileInfo(1, code, @__FILE__; inferred_context_cache=cache)
+        fi = JETLS.FileInfo(1, code, @__FILE__; inferred_context_cache=cache, cache_tree0 = true)
         st0_top = JETLS.build_syntax_tree(fi)
         tree = @something JETLS.lowerable_toplevel_at(st0_top, 1) error("missing tree")
         tree_ctx = build_inferred_context_for_tree(tree, type_annotate_module; cache)
@@ -127,6 +129,7 @@ end
         @test tree_ctx === nothing
         @test range_ctx === nothing
         @test isempty(JETLS.load(cache))
+        JETLS.check_syntax_tree0(fi)
     end
 
     let code = """
@@ -136,7 +139,7 @@ end
         end
         """
         cache = JETLS.InferredContextCache()
-        fi = JETLS.FileInfo(1, code, @__FILE__; inferred_context_cache=cache)
+        fi = JETLS.FileInfo(1, code, @__FILE__; inferred_context_cache=cache, cache_tree0 = true)
         st0_top = JETLS.build_syntax_tree(fi)
         tree = @something JETLS.lowerable_toplevel_at(st0_top, 1) error("missing tree")
         tree_ctx = build_inferred_context_for_tree(tree, type_annotate_module; cache)
@@ -145,6 +148,7 @@ end
         @test tree_ctx !== nothing
         @test range_ctx === tree_ctx
         @test length(JETLS.load(cache)) == 1
+        JETLS.check_syntax_tree0(fi)
     end
 end
 
@@ -162,7 +166,7 @@ end
             end
             const C = 42
             """
-            fi = JETLS.FileInfo(1, code, @__FILE__)
+            fi = JETLS.FileInfo(1, code, @__FILE__; cache_tree0 = true)
             st0_top = JETLS.build_syntax_tree(fi)
             results = []
             world = Base.get_world_counter()
@@ -177,6 +181,7 @@ end
                 @test st3 isa JS.SyntaxTree
                 @test infer_toplevel_tree(ctx3, st3, st0, @__MODULE__) isa JETLS.SyntaxTree
             end
+            JETLS.check_syntax_tree0(fi)
         end
     end
 
@@ -184,13 +189,14 @@ end
     # callers don't need to wrap every call in `try`.
     @testset "lowering failure returns nothing" begin
         let code = "@__undefined_macro_for_test__ xyz"
-            fi = JETLS.FileInfo(1, code, @__FILE__)
+            fi = JETLS.FileInfo(1, code, @__FILE__; cache_tree0 = true)
             st0_top = JETLS.build_syntax_tree(fi)
             world = Base.get_world_counter()
             JETLS.iterate_toplevel_tree(st0_top) do st0::JS.SyntaxTree
                 @test isnothing(get_inferrable_tree(st0, @__MODULE__, world))
                 return nothing
             end
+            JETLS.check_syntax_tree0(fi)
         end
     end
 end
