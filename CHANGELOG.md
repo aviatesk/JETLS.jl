@@ -105,6 +105,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Fixed a string at the end of a [notebook](https://aviatesk.github.io/JETLS.jl/release/notebook/) cell being treated as the docstring of the first expression in the next cell.
 
+- Fixed full analysis aborting with an internal error, and reporting no diagnostics for the file, when a docstring is attached to an expression that cannot be documented, such as an `if` block.
+  Such code is now reported as a [`toplevel/error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/toplevel/error) with the error Julia raises, `cannot document the following expression`.
+
 ## 2026-10-04
 
 - Commit: [`3efdc63`](https://github.com/aviatesk/JETLS.jl/commit/3efdc63)
