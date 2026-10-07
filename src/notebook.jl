@@ -65,6 +65,12 @@ function concatenate_cells(cells::Vector{NotebookCellInfo})
     for cell in cells
         cell.kind == NotebookCellKind.Code || continue
         isempty(cell.text) && continue
+        if !isempty(cell_ranges)
+            # A blank line keeps a string ending the previous cell from being parsed as
+            # the docstring of this cell's first expression; cells are evaluated separately.
+            source *= "\n"
+            current_line += 1
+        end
         source *= cell.text * "\n"
         push!(cell_ranges, CellRange(cell.uri, current_line))
         current_line += count(==('\n'), cell.text) + 1

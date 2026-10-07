@@ -177,10 +177,10 @@ end
                 @test length(notebook_info.cells) == 2
                 @test notebook_info.cells[1].text == "using LinearAlgebra"
                 @test notebook_info.cells[2].text == "func(x, y) = identity(x)"
-                @test notebook_info.concat.source == "using LinearAlgebra\nfunc(x, y) = identity(x)\n"
+                @test notebook_info.concat.source == "using LinearAlgebra\n\nfunc(x, y) = identity(x)\n"
                 @test length(notebook_info.concat.cell_ranges) == 2
                 @test notebook_info.concat.cell_ranges[1].line_offset == 0
-                @test notebook_info.concat.cell_ranges[2].line_offset == 1
+                @test notebook_info.concat.cell_ranges[2].line_offset == 2
             end
 
             # 4. Update cell 2 to remove unused argument
@@ -208,7 +208,7 @@ end
             let notebook_info = JETLS.get_notebook_info(server.state, notebook_uri)
                 @test notebook_info !== nothing
                 @test notebook_info.cells[2].text == "func(x) = identity(x)"
-                @test notebook_info.concat.source == "using LinearAlgebra\nfunc(x) = identity(x)\n"
+                @test notebook_info.concat.source == "using LinearAlgebra\n\nfunc(x) = identity(x)\n"
             end
 
             # 6. Add markdown cell (should be ignored for diagnostics)
@@ -271,9 +271,9 @@ end
                 @test notebook_info.concat.cell_ranges[1].cell_uri == cell1_uri
                 @test notebook_info.concat.cell_ranges[1].line_offset == 0
                 @test notebook_info.concat.cell_ranges[2].cell_uri == cell2_uri
-                @test notebook_info.concat.cell_ranges[2].line_offset == 1
+                @test notebook_info.concat.cell_ranges[2].line_offset == 2
                 @test notebook_info.concat.cell_ranges[3].cell_uri == cell3_uri
-                @test notebook_info.concat.cell_ranges[3].line_offset == 2
+                @test notebook_info.concat.cell_ranges[3].line_offset == 4
             end
         end
     end; end # mktempdir() do tempdir; Pkg.activate(tempdir) do
@@ -577,7 +577,7 @@ end
                 pos = request.msg.params.position
                 @test pos == positions[i]
                 @test JETLS.adjust_position(snapshot, cell2, pos) ==
-                    Position(; line = positions[i].line + 2, character = positions[i].character)
+                    Position(; line = positions[i].line + 3, character = positions[i].character)
             end
             if change_kind === :remove_requested
                 @test !JETLS.is_notebook_cell_uri(state, cell2)
@@ -655,7 +655,7 @@ end
             @test prepared.msg === request
             @test prepared.msg.params.position == pos
             global_pos = JETLS.adjust_position(snapshot, cell2, prepared.msg.params.position)
-            @test global_pos == Position(; line = 2, character = pos.character)
+            @test global_pos == Position(; line = 3, character = pos.character)
             @test JETLS.get_file_info(state, notebook_uri).version == 2
             if change_kind === :remove_requested
                 let cleared = take_with_timeout!(recorder.sent_queue)
@@ -811,7 +811,7 @@ end
                 NotebookCell(; kind = NotebookCellKind.Code, document = cell_uri1),
                 NotebookCell(; kind = NotebookCellKind.Code, document = cell_uri2)]
             cell_texts = Dict{URI,String}(
-                cell_uri1 => "\"displayed\"\n",
+                cell_uri1 => "\"displayed\"",
                 cell_uri2 => """
                     if true
                         "doc"
