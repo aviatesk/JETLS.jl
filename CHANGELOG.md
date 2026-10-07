@@ -96,6 +96,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Fixed running a test set nested in other test sets with the TestRunner integration skipping the `include` calls in the enclosing test sets, which could cause errors such as `UndefVarError` for what the included files define.
 
+- Fixed saving a file not updating diagnostics from full analysis in editors that do not include the document text in save notifications.
+
 ## 2026-10-04
 
 - Commit: [`3efdc63`](https://github.com/aviatesk/JETLS.jl/commit/3efdc63)

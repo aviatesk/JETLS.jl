@@ -224,15 +224,17 @@ function handle_DidSaveTextDocumentNotification(server::Server, msg::DidSaveText
     cache = load(server.state.saved_file_cache)
     haskey(cache, uri) || return nothing
     text = msg.params.text
-    if !(text isa String)
-        @warn """
+    if text isa String
+        cache_saved_file_info!(server.state, uri, text)
+    else
+        @static JETLS_TEST_MODE || @warn """
         The client is not respecting the `capabilities.textDocumentSync.save.includeText`
-        option specified by this server during initialization. Without the document text
-        content in save notifications, the diagnostics feature cannot function properly.
-        """
-        return nothing
+        option specified by this server during initialization. Falling back to the
+        synchronized document content for save notifications.
+        """ maxlog=1
+        fi = @something get_file_info(server.state, uri) return nothing
+        cache_saved_file_info!(server.state, uri, fi.parsed_stream)
     end
-    cache_saved_file_info!(server.state, uri, text)
     request_analysis!(server, uri, #=invalidate=#true)
 end
 

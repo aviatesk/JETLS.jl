@@ -279,4 +279,31 @@ end
     end
 end
 
+@testset "didSave without text falls back to synchronized content" begin
+    code = """
+        sin("first")
+        """
+    withscript(code) do script_path
+        uri = filepath2uri(script_path)
+        is_method_error(diag) = diag.code == JETLS.INFERENCE_METHOD_ERROR_CODE
+        withserver() do (; writemsg, writereadmsg)
+            let (; raw_res) = writereadmsg(make_DidOpenTextDocumentNotification(uri, code))
+                @test raw_res isa PublishDiagnosticsNotification
+                @test only(filter(is_method_error, raw_res.params.diagnostics)).range.start.line == 0
+            end
+            new_code = """
+
+                sin("second")
+                """
+            writemsg(make_DidChangeTextDocumentNotification(uri, new_code, #=version=#2))
+            let (; raw_res) = writereadmsg(DidSaveTextDocumentNotification(;
+                    params = DidSaveTextDocumentParams(;
+                        textDocument = TextDocumentIdentifier(; uri))))
+                @test raw_res isa PublishDiagnosticsNotification
+                @test only(filter(is_method_error, raw_res.params.diagnostics)).range.start.line == 1
+            end
+        end
+    end
+end
+
 end # module test_document_synchronization
