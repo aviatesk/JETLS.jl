@@ -8,30 +8,28 @@ end
 # Publish diagnostics
 # ===================
 
-"""
-Diagnostics notifications are sent from the server to the client to signal
-results of validation runs.
-
-Diagnostics are "owned" by the server so it is the server's responsibility to clear them
-if necessary. The following rule is used for VS Code servers that generate diagnostics:
-
-- if a language is single file only (for example HTML) then diagnostics are cleared by the
-  server when the file is closed. Please note that open / close events don't necessarily
-  reflect what the user sees in the user interface. These events are ownership events. So
-  with the current version of the specification it is possible that problems are not
-  cleared although the file is not visible in the user interface since the client has not
-  closed the file yet.
-- if a language has a project system (for example C#) diagnostics are not cleared when a
-  file closes. When a project is opened all diagnostics for all files are recomputed (or
-  read from a cache).
-
-When a file changes it is the server's responsibility to re-compute diagnostics and push
-them to the client. If the computed set is empty it has to push the empty array to clear
-former diagnostics. Newly pushed diagnostics always replace previously pushed diagnostics.
-There is no merging that happens on the client side.
-
-See also the [Diagnostic](@ref diagnostic) section.
-"""
+# Diagnostics notifications are sent from the server to the client to signal
+# results of validation runs.
+#
+# Diagnostics are "owned" by the server so it is the server's responsibility to clear them
+# if necessary. The following rule is used for VS Code servers that generate diagnostics:
+#
+# - if a language is single file only (for example HTML) then diagnostics are cleared by the
+#   server when the file is closed. Please note that open / close events don't necessarily
+#   reflect what the user sees in the user interface. These events are ownership events. So
+#   with the current version of the specification it is possible that problems are not
+#   cleared although the file is not visible in the user interface since the client has not
+#   closed the file yet.
+# - if a language has a project system (for example C#) diagnostics are not cleared when a
+#   file closes. When a project is opened all diagnostics for all files are recomputed (or
+#   read from a cache).
+#
+# When a file changes it is the server's responsibility to re-compute diagnostics and push
+# them to the client. If the computed set is empty it has to push the empty array to clear
+# former diagnostics. Newly pushed diagnostics always replace previously pushed diagnostics.
+# There is no merging that happens on the client side.
+#
+# See also the [Diagnostic](@ref diagnostic) section.
 
 @interface PublishDiagnosticsClientCapabilities begin
     """
@@ -99,22 +97,20 @@ end
 # Pull diagnostics
 # ================
 
-"""
-Diagnostics are currently published by the server to the client using a
-notification. This model has the advantage that for workspace wide diagnostics
-the server has the freedom to compute them at a server preferred point in
-time. On the other hand the approach has the disadvantage that the server
-can't prioritize the computation for the file in which the user types or
-which are visible in the editor. Inferring the client's UI state from the
-[`textDocument/didOpen`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.18/specification/#textDocument_didOpen)
-and [`textDocument/didChange`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.18/specification/#textDocument_didChange)
-notifications might lead to false positives since these notifications are
-ownership transfer notifications.
-
-The specification therefore introduces the concept of diagnostic pull requests
-to give a client more control over the documents for which diagnostics should
-be computed and at which point in time.
-"""
+# Diagnostics are currently published by the server to the client using a
+# notification. This model has the advantage that for workspace wide diagnostics
+# the server has the freedom to compute them at a server preferred point in
+# time. On the other hand the approach has the disadvantage that the server
+# can't prioritize the computation for the file in which the user types or
+# which are visible in the editor. Inferring the client's UI state from the
+# [`textDocument/didOpen`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.18/specification/#textDocument_didOpen)
+# and [`textDocument/didChange`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.18/specification/#textDocument_didChange)
+# notifications might lead to false positives since these notifications are
+# ownership transfer notifications.
+#
+# The specification therefore introduces the concept of diagnostic pull requests
+# to give a client more control over the documents for which diagnostics should
+# be computed and at which point in time.
 
 # Document diagnostics
 # --------------------
@@ -518,16 +514,14 @@ end
 # Implementation Considerations
 # -----------------------------
 
-"""
-Generally the language server specification doesn't enforce any specific client implementation
-since those usually depend on how the client UI behaves. However since diagnostics can be
-provided on a document and workspace level here are some tips:
-
-- a client should pull actively for the document the users types in.
-- if the server signals inter file dependencies a client should also pull for visible documents
-  to ensure accurate diagnostics. However the pull should happen less frequently.
-- if the server signals workspace pull support a client should also pull for workspace
-  diagnostics. It is recommended for clients to implement partial result progress for the
-  workspace pull to allow servers to keep the request open for a long time. If a server closes
-  a workspace diagnostic pull request the client should re-trigger the request.
-"""
+# Generally the language server specification doesn't enforce any specific client implementation
+# since those usually depend on how the client UI behaves. However since diagnostics can be
+# provided on a document and workspace level here are some tips:
+#
+# - a client should pull actively for the document the users types in.
+# - if the server signals inter file dependencies a client should also pull for visible documents
+#   to ensure accurate diagnostics. However the pull should happen less frequently.
+# - if the server signals workspace pull support a client should also pull for workspace
+#   diagnostics. It is recommended for clients to implement partial result progress for the
+#   workspace pull to allow servers to keep the request open for a long time. If a server closes
+#   a workspace diagnostic pull request the client should re-trigger the request.
