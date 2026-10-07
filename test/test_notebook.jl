@@ -801,6 +801,41 @@ end
     end end
 end
 
+@testset "orphaned docstrings in notebooks" begin
+    mktempdir() do tempdir; Pkg.activate(tempdir) do
+        notebook_uri = filepath2uri(normpath(tempdir, "test.ipynb"))
+        cell_uri1 = make_cell_uri(tempdir, 1)
+        cell_uri2 = make_cell_uri(tempdir, 2)
+        withserver() do (; server, writereadmsg, readmsg)
+            cells = NotebookCell[
+                NotebookCell(; kind = NotebookCellKind.Code, document = cell_uri1),
+                NotebookCell(; kind = NotebookCellKind.Code, document = cell_uri2)]
+            cell_texts = Dict{URI,String}(
+                cell_uri1 => "\"displayed\"\n",
+                cell_uri2 => """
+                    if true
+                        "doc"
+                        foo() = 1
+                    end
+                    """)
+            writereadmsg(
+                make_DidOpenNotebookDocumentNotification(notebook_uri, cells, cell_texts);
+                read = 2)
+            scanned = scan_live_diagnostics!(server, readmsg)
+            orphaned(uri) = filter(scanned[uri].diagnostics) do diag
+                diag.code == JETLS.LOWERING_ORPHANED_DOCSTRING_CODE
+            end
+            @test isempty(orphaned(cell_uri1))
+            diag = only(orphaned(cell_uri2))
+            @test diag.range.start == Position(; line = 1, character = 4)
+            @test diag.data isa OrphanedDocstringData
+            edit = only(diag.data.attach_edits)
+            @test edit.range.start == Position(; line = 1, character = 4)
+            @test edit.newText == "@doc "
+        end
+    end end
+end
+
 @testset "live diagnostics of a closed notebook are not published under its URI" begin
     mktempdir() do tempdir; Pkg.activate(tempdir) do
         notebook_uri = filepath2uri(normpath(tempdir, "test.ipynb"))

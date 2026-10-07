@@ -1507,6 +1507,214 @@ function generate_sorted_import_text(
     return join(lines, "\n")
 end
 
+# JuliaSyntax attaches a string literal as a docstring only inside top-level, `module`,
+# `begin`/`quote` and `struct` bodies, and only when the documented expression starts on
+# the next line. A string literal anywhere else in a position whose value is discarded
+# documents nothing. `raw"..."` strings are never attached without `@doc`.
+# Strings in `begin` blocks passed to macros are not reported, since macros like
+# `ArgParse.@add_arg_table!` give them a meaning.
+function analyze_orphaned_docstrings!(
+        diagnostics::Vector{Diagnostic}, uri::URI, fi::FileInfo, st0_top::SyntaxTree;
+        check_toplevel::Bool = true
+    )
+    check_toplevel && check_orphaned_docstrings!(diagnostics, fi, st0_top,
+        JS.numchildren(st0_top), :docstring; fix_first = false)
+    for child in JS.children(st0_top)
+        walk_orphaned_docstrings!(diagnostics, uri, fi, child, JS.K"toplevel", true,
+            :undocumented)
+    end
+    return diagnostics
+end
+
+# `doc_target` tracks whether `st0` is (part of) the expression documented by `@doc`:
+# `:documented`, `:undocumented`, or `:unknown` when it is wrapped by a macro that may
+# handle field docstrings itself.
+function walk_orphaned_docstrings!(
+        diagnostics::Vector{Diagnostic}, uri::URI, fi::FileInfo, st0::SyntaxTree,
+        parent_kind::JS.Kind, global_scope::Bool, doc_target::Symbol
+    )
+    JS.is_leaf(st0) && return diagnostics
+    kind = JS.kind(st0)
+    kind === JS.K"quote" && return diagnostics
+    if kind === JS.K"macrocall"
+        is_string_macrocall0(st0) && return diagnostics
+        is_doc = is_doc0_any(st0)
+        transparent = is_doc || is_macrocall_st0(st0, "@static", "Base.@static")
+        child_doc_target = is_doc ? :documented :
+            doc_target === :documented || is_macrocall_st0(st0, "@kwdef", "Base.@kwdef") ?
+            doc_target : :unknown
+        for i = 2:JS.numchildren(st0)
+            child = st0[i]
+            transparent || JS.kind(child) !== JS.K"block" || continue
+            walk_orphaned_docstrings!(diagnostics, uri, fi, child, kind,
+                global_scope & transparent, child_doc_target)
+        end
+        return diagnostics
+    elseif kind === JS.K"toplevel"
+        check_orphaned_docstrings!(diagnostics, fi, st0, JS.numchildren(st0),
+            global_scope ? :docstring : :local)
+    elseif kind === JS.K"struct"
+        doc_target === :undocumented &&
+            check_undocumented_struct_fields!(diagnostics, uri, fi, st0)
+    elseif kind === JS.K"block"
+        if parent_kind === JS.K"module"
+            check_orphaned_docstrings!(diagnostics, fi, st0, JS.numchildren(st0), :docstring;
+                fix_first = false)
+        elseif parent_kind === JS.K"struct"
+            check_orphaned_docstrings!(diagnostics, fi, st0, JS.numchildren(st0), :struct)
+        else
+            context = !global_scope ? :local :
+                startswith(JS.sourcetext(st0), "begin") ? :docstring : :block
+            check_orphaned_docstrings!(diagnostics, fi, st0, JS.numchildren(st0)-1, context)
+        end
+    end
+    child_global_scope = kind === JS.K"module" ||
+        (global_scope && kind in JS.KSet"toplevel block if elseif")
+    for child in JS.children(st0)
+        walk_orphaned_docstrings!(diagnostics, uri, fi, child, kind, child_global_scope,
+            :undocumented)
+    end
+    return diagnostics
+end
+
+function is_string_macrocall0(st0::SyntaxTree)
+    JS.kind(st0) === JS.K"macrocall" || return false
+    JS.numchildren(st0) >= 1 || return false
+    macro_name = st0[1]
+    return has_name_val(macro_name) && endswith(name_val(macro_name), "_str")
+end
+
+# `context` is one of:
+# - `:docstring`: a global-scope body where adjacent docstrings are attached
+# - `:block`: a global-scope body where docstrings are attached only with `@doc`
+#   (e.g. `if` blocks)
+# - `:struct`: a struct body, where attached field docstrings remain plain strings
+# - `:local`: a local-scope body, where docstrings are never attached
+# A string opening a file or module is usually a header describing the whole file rather
+# than the following definition, so `fix_first = false` offers no fix for it.
+function check_orphaned_docstrings!(
+        diagnostics::Vector{Diagnostic}, fi::FileInfo, stmts::SyntaxTree, nchecked::Int,
+        context::Symbol; fix_first::Bool = true
+    )
+    for i = 1:nchecked
+        st0 = stmts[i]
+        is_raw = is_macrocall_st0(st0, "@raw_str")
+        JS.kind(st0) in JS.KSet"String string" || is_raw || continue
+        next = i < JS.numchildren(stmts) ? stmts[i+1] : nothing
+        if (context === :struct && !is_raw && next !== nothing &&
+            count_gap_newlines(fi, st0, next) ≤ 1)
+            continue
+        end
+        reason = context === :local ? "docstrings are not recognized in local scope" :
+            next === nothing ? "no expression follows it" :
+            is_raw ? "`raw` strings are recognized as docstrings only with `@doc`" :
+            context === :block ? "docstrings in this block are recognized only with `@doc`" :
+            "the documented expression must start on the next line"
+        attach_edits = nothing
+        fixable = context === :docstring || context === :block ||
+            (context === :struct && !is_raw)
+        if fixable && (i > 1 || fix_first) && next !== nothing && is_documentable0(next)
+            attach_edits = orphaned_docstring_attach_edits(fi, st0, next;
+                insert_doc = is_raw || context === :block)
+        end
+        push!(diagnostics, Diagnostic(;
+            range = jsobj_to_range(st0, fi),
+            severity = DiagnosticSeverity.Information,
+            message = "Docstring is not attached to any definition: $reason",
+            source = DIAGNOSTIC_SOURCE_LIVE,
+            code = LOWERING_ORPHANED_DOCSTRING_CODE,
+            codeDescription = diagnostic_code_description(LOWERING_ORPHANED_DOCSTRING_CODE),
+            data = attach_edits === nothing ? nothing : OrphanedDocstringData(attach_edits)))
+    end
+    return diagnostics
+end
+
+function count_gap_newlines(fi::FileInfo, st0::SyntaxTree, next::SyntaxTree)
+    gap = JS.last_byte(st0)+1:JS.first_byte(next)-1
+    return count(==(UInt8('\n')), @view fi.parsed_stream.textbuf[gap])
+end
+
+function is_documentable0(st0::SyntaxTree)
+    kind = JS.kind(st0)
+    if kind === JS.K"macrocall"
+        return !is_doc0_any(st0) && !is_string_macrocall0(st0)
+    end
+    return kind in JS.KSet"function macro struct abstract primitive module const global = :: . Identifier"
+end
+
+# Attach the docstring by prefixing it with `@doc` when the context requires it, and by
+# deleting the blank lines before `next`. Comments or other code in between make the
+# intended target unclear, so no edits are offered then.
+function orphaned_docstring_attach_edits(
+        fi::FileInfo, st0::SyntaxTree, next::SyntaxTree; insert_doc::Bool
+    )
+    textbuf = fi.parsed_stream.textbuf
+    first_newline = last_newline = 0
+    for i = JS.last_byte(st0)+1:JS.first_byte(next)-1
+        b = textbuf[i]
+        if b == UInt8('\n')
+            first_newline == 0 && (first_newline = i)
+            last_newline = i
+        elseif !(b == UInt8(' ') || b == UInt8('\t') || b == UInt8('\r'))
+            return nothing
+        end
+    end
+    first_newline == 0 && return nothing
+    edits = TextEdit[]
+    if insert_doc
+        pos = offset_to_xy(fi, JS.first_byte(st0))
+        push!(edits, TextEdit(;
+            range = Range(; start = pos, var"end" = pos),
+            newText = "@doc "))
+    end
+    if first_newline != last_newline
+        push!(edits, TextEdit(;
+            range = byte_range_to_range(first_newline+1:last_newline, fi),
+            newText = ""))
+    end
+    return isempty(edits) ? nothing : edits
+end
+
+# Field docstrings are collected only by the `@doc` call documenting the struct itself, so
+# they are discarded when the struct has no docstring (JuliaLang/julia#39825).
+function check_undocumented_struct_fields!(
+        diagnostics::Vector{Diagnostic}, uri::URI, fi::FileInfo, st0::SyntaxTree
+    )
+    name = @something struct_name_node(st0) return diagnostics
+    body = st0[JS.numchildren(st0)]
+    JS.kind(body) === JS.K"block" || return diagnostics
+    relatedInformation = DiagnosticRelatedInformation[]
+    for i = 1:JS.numchildren(body)-1
+        doc = body[i]
+        JS.kind(doc) in JS.KSet"String string" || continue
+        field_name = @something struct_field_name_node(body[i+1]) continue
+        count_gap_newlines(fi, doc, body[i+1]) <= 1 || continue
+        push!(relatedInformation, DiagnosticRelatedInformation(;
+            location = Location(uri, jsobj_to_range(doc, fi)),
+            message = "Discarded docstring of field `$(JS.sourcetext(field_name))`"))
+    end
+    isempty(relatedInformation) && return diagnostics
+    struct_name = JS.sourcetext(name)
+    push!(diagnostics, Diagnostic(;
+        range = jsobj_to_range(name, fi),
+        severity = DiagnosticSeverity.Information,
+        message = "Field docstrings of `$struct_name` are discarded because " *
+                  "`$struct_name` has no docstring",
+        source = DIAGNOSTIC_SOURCE_LIVE,
+        code = LOWERING_ORPHANED_DOCSTRING_CODE,
+        codeDescription = diagnostic_code_description(LOWERING_ORPHANED_DOCSTRING_CODE),
+        relatedInformation))
+    return diagnostics
+end
+
+function struct_field_name_node(st0::SyntaxTree)
+    kind = JS.kind(st0)
+    if kind in JS.KSet"const = ::" && JS.numchildren(st0) >= 1
+        return struct_field_name_node(st0[1])
+    end
+    return kind === JS.K"Identifier" ? st0 : nothing
+end
+
 # Reachability-based unreachable-code detection. `unreachable_statements`
 # is the set of `K"block"` children that the per-lambda CFG built in
 # `analyze_all_lambdas` determined to be in unreachable blocks.
@@ -2099,6 +2307,9 @@ function compute_per_file_diagnostics(
     soft_scope = is_notebook_cell_uri(server.state, uri) ||
         # the workspace diagnostics worker computes notebooks on the notebook URI
         is_notebook_uri(server.state, uri)
+    # the last expression of a notebook cell is displayed, so top-level strings are not
+    # necessarily orphaned there
+    analyze_orphaned_docstrings!(diagnostics, uri, file_info, st0_top; check_toplevel = !soft_scope)
     iterate_toplevel_tree(st0_top) do st0::SyntaxTree
         is_cancelled(cancel_flag) && return traversal_terminator
         pos = offset_to_xy(file_info, JS.first_byte(st0))

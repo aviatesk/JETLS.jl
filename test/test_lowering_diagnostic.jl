@@ -3183,4 +3183,361 @@ end
     end
 end
 
+const ORPHANED_DOCSTRING_TEST_URI = filepath2uri(@__FILE__)
+
+function get_orphaned_docstring_diagnostics(text::AbstractString; check_toplevel::Bool = true)
+    fi = JETLS.FileInfo(#=version=#0, text, @__FILE__)
+    return JETLS.analyze_orphaned_docstrings!(LSP.Diagnostic[], ORPHANED_DOCSTRING_TEST_URI,
+        fi, JETLS.build_syntax_tree(fi); check_toplevel)
+end
+
+orphaned_docstring_message(reason::AbstractString) =
+    "Docstring is not attached to any definition: $reason"
+
+@testset HierarchicalTestSet "orphaned docstring detection" begin
+    @testset "separated from the definition" begin
+        let (text, positions) = JETLS.get_text_and_positions("""
+                const x = 1
+                │\"\"\"
+                    foo()
+                \"\"\"│
+
+                foo() = 1
+                """)
+            diagnostics = get_orphaned_docstring_diagnostics(text)
+            @test length(diagnostics) == 1
+            d = only(diagnostics)
+            @test d.code == JETLS.LOWERING_ORPHANED_DOCSTRING_CODE
+            @test d.severity == LSP.DiagnosticSeverity.Information
+            @test d.message == orphaned_docstring_message(
+                "the documented expression must start on the next line")
+            @test d.range.start == positions[1]
+            @test d.range.var"end" == positions[2]
+            @test d.data isa JETLS.OrphanedDocstringData
+        end
+
+        # comments in between make the intended target unclear
+        let diagnostics = get_orphaned_docstring_diagnostics("""
+                const x = 1
+                "doc"
+                # comment
+                foo() = 1
+                """)
+            @test length(diagnostics) == 1
+            @test isnothing(only(diagnostics).data)
+        end
+
+        # a string opening a file or module is usually a header for the whole file
+        let diagnostics = get_orphaned_docstring_diagnostics("""
+                "file header"
+
+                foo() = 1
+                module M
+                "module header"
+
+                bar() = 1
+                end
+                """)
+            @test length(diagnostics) == 2
+            @test all(d -> isnothing(d.data), diagnostics)
+        end
+
+        let diagnostics = get_orphaned_docstring_diagnostics("""
+                begin
+                    "doc"
+
+                    foo() = 1
+                end
+                """)
+            @test length(diagnostics) == 1
+            @test only(diagnostics).data isa JETLS.OrphanedDocstringData
+        end
+
+        let diagnostics = get_orphaned_docstring_diagnostics("""
+                "doc"; foo() = 1
+                """)
+            @test length(diagnostics) == 1
+        end
+
+        # nothing to attach the docstring to
+        let diagnostics = get_orphaned_docstring_diagnostics("""
+                const x = 1
+                "doc"
+
+                using Foo
+                """)
+            @test length(diagnostics) == 1
+            @test isnothing(only(diagnostics).data)
+        end
+    end
+
+    @testset "blocks requiring `@doc`" begin
+        let diagnostics = get_orphaned_docstring_diagnostics("""
+                if cond
+                    "doc"
+                    foo() = 1
+                else
+                    "doc"
+                    bar() = 1
+                end
+                """)
+            @test length(diagnostics) == 2
+            @test all(diagnostics) do d
+                d.message == orphaned_docstring_message(
+                    "docstrings in this block are recognized only with `@doc`") &&
+                d.data isa JETLS.OrphanedDocstringData
+            end
+        end
+
+        let diagnostics = get_orphaned_docstring_diagnostics("""
+                @static if Sys.iswindows()
+                    "doc"
+                    foo() = 1
+                end
+                Base.@static if Sys.iswindows()
+                    "doc"
+                    bar() = 1
+                end
+                """)
+            @test length(diagnostics) == 2
+            @test all(d -> d.data isa JETLS.OrphanedDocstringData, diagnostics)
+        end
+
+        let diagnostics = get_orphaned_docstring_diagnostics("""
+                const x = 1
+                raw\"\"\"
+                    foo()
+                \"\"\"
+                foo() = 1
+                """)
+            @test length(diagnostics) == 1
+            d = only(diagnostics)
+            @test d.message == orphaned_docstring_message(
+                "`raw` strings are recognized as docstrings only with `@doc`")
+            @test d.data isa JETLS.OrphanedDocstringData
+        end
+    end
+
+    @testset "local scope" begin
+        let diagnostics = get_orphaned_docstring_diagnostics("""
+                function foo(x)
+                    "doc"
+                    x + 1
+                end
+                let
+                    "doc"
+                    bar() = 1
+                end
+                for i = 1:3
+                    "doc"
+                    println(i)
+                end
+                @inline function baz()
+                    "doc"
+                    nothing
+                end
+                """)
+            @test length(diagnostics) == 4
+            @test all(diagnostics) do d
+                d.message == orphaned_docstring_message(
+                    "docstrings are not recognized in local scope") &&
+                isnothing(d.data)
+            end
+        end
+    end
+
+    @testset "struct fields" begin
+        let diagnostics = get_orphaned_docstring_diagnostics("""
+                "Foo"
+                struct Foo
+                    "doc"
+
+                    x::Int
+                    "doc"
+                    y::Int
+                    "doc" # comment
+                    z::Int
+                    "trailing"
+                end
+                """)
+            @test length(diagnostics) == 2
+            @test diagnostics[1].range.start.line == 2
+            @test diagnostics[1].data isa JETLS.OrphanedDocstringData
+            @test diagnostics[2].range.start.line == 9
+            @test diagnostics[2].message == orphaned_docstring_message("no expression follows it")
+        end
+    end
+
+    @testset "fields of undocumented structs" begin
+        let (text, positions) = JETLS.get_text_and_positions("""
+                struct │Foo│{T} <: Bar
+                    │"doc of x"│
+                    x::T
+                    y::Int
+                    │"doc of z"│ # comment
+                    const z::Int
+                    "orphaned"
+
+                    w::Int
+                    "doc of the constructor"
+                    Foo(x) = new(x)
+                end
+                """)
+            diagnostics = get_orphaned_docstring_diagnostics(text)
+            @test length(diagnostics) == 2
+            d = diagnostics[findfirst(d -> d.range.start == positions[1], diagnostics)]
+            @test d.code == JETLS.LOWERING_ORPHANED_DOCSTRING_CODE
+            @test d.severity == LSP.DiagnosticSeverity.Information
+            @test d.message == "Field docstrings of `Foo` are discarded because `Foo` has no docstring"
+            @test d.range.var"end" == positions[2]
+            @test isnothing(d.data)
+            related = d.relatedInformation
+            @test length(related) == 2
+            @test related[1].location.uri == ORPHANED_DOCSTRING_TEST_URI
+            @test related[1].location.range == LSP.Range(; start = positions[3], var"end" = positions[4])
+            @test related[1].message == "Discarded docstring of field `x`"
+            @test related[2].location.range == LSP.Range(; start = positions[5], var"end" = positions[6])
+            @test related[2].message == "Discarded docstring of field `z`"
+        end
+
+        # `@kwdef` keeps field docstrings only for documented structs
+        let diagnostics = get_orphaned_docstring_diagnostics("""
+                Base.@kwdef struct Foo
+                    "doc"
+                    x::Int = 1
+                end
+                @static if Sys.iswindows()
+                    struct Bar
+                        "doc"
+                        x::Int
+                    end
+                end
+                """)
+            @test length(diagnostics) == 2
+            @test all(d -> startswith(d.message, "Field docstrings of "), diagnostics)
+        end
+
+        let diagnostics = get_orphaned_docstring_diagnostics("""
+                "Foo"
+                struct Foo
+                    "doc"
+                    x::Int
+                end
+                @doc "Bar"
+                Base.@kwdef struct Bar
+                    "doc"
+                    x::Int = 1
+                end
+                "Baz"
+                @kwdef mutable struct Baz
+                    "doc"
+                    const x::Int = 1
+                end
+                struct Qux
+                    x::Int
+                end
+                """)
+            @test isempty(diagnostics)
+        end
+
+        # other macros may handle field docstrings themselves
+        let diagnostics = get_orphaned_docstring_diagnostics("""
+                @with_kw struct Foo
+                    "doc"
+                    x::Int = 1
+                end
+                """)
+            @test isempty(diagnostics)
+        end
+    end
+
+    @testset "module body" begin
+        let diagnostics = get_orphaned_docstring_diagnostics("""
+                module M
+                foo() = 1
+                "trailing"
+                end
+                """)
+            @test length(diagnostics) == 1
+            @test only(diagnostics).message == orphaned_docstring_message("no expression follows it")
+        end
+    end
+
+    @testset "not reported" begin
+        # attached docstrings
+        let diagnostics = get_orphaned_docstring_diagnostics("""
+                "doc"
+                module M
+                "doc"
+                foo() = 1
+                @doc "doc"
+                bar() = 1
+                @doc raw"doc"
+                baz() = 1
+                begin
+                    "doc"
+                    qux() = 1
+                end
+                end
+                """)
+            @test isempty(diagnostics)
+        end
+
+        # strings whose value is used
+        let diagnostics = get_orphaned_docstring_diagnostics("""
+                function foo(x)
+                    "returned"
+                end
+                y = if cond
+                    "a"
+                else
+                    "b"
+                end
+                """)
+            @test isempty(diagnostics)
+        end
+
+        # macros may give meanings to strings in `begin` blocks
+        let diagnostics = get_orphaned_docstring_diagnostics("""
+                @add_arg_table! s begin
+                    "--opt"
+                        help = "an option"
+                end
+                ex = quote
+                    "doc"
+                    foo() = 1
+                end
+                """)
+            @test isempty(diagnostics)
+        end
+
+        # string macros may have side effects
+        let diagnostics = get_orphaned_docstring_diagnostics("""
+                py\"\"\"
+                import numpy
+                \"\"\"
+                md"text"
+                foo() = 1
+                """)
+            @test isempty(diagnostics)
+        end
+    end
+
+    @testset "check_toplevel" begin
+        let text = """
+                "displayed"
+
+                if cond
+                    "doc"
+                    foo() = 1
+                end
+                """
+            @test length(get_orphaned_docstring_diagnostics(text)) == 2
+            diagnostics = get_orphaned_docstring_diagnostics(text; check_toplevel = false)
+            @test length(diagnostics) == 1
+            @test only(diagnostics).range.start.line == 3
+        end
+    end
+end
+
 end # module test_lowering_diagnostics

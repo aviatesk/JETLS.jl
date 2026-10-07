@@ -212,6 +212,7 @@ Here is a summary table of the diagnostics explained in this section:
 | [`lowering/ambiguous-soft-scope`](@ref diagnostic/reference/lowering/ambiguous-soft-scope)                     | `Warning`             | `JETLS/live`  | Assignment in soft scope shadows a global variable     |
 | [`lowering/captured-boxed-variable`](@ref diagnostic/reference/lowering/captured-boxed-variable)               | `Information`         | `JETLS/live`  | Variables captured by closures that require boxing     |
 | [`lowering/unconstrained-static-parameter`](@ref diagnostic/reference/lowering/unconstrained-static-parameter) | `Warning`             | `JETLS/live`  | Static parameters not used in function parameter types |
+| [`lowering/orphaned-docstring`](@ref diagnostic/reference/lowering/orphaned-docstring)                         | `Information`         | `JETLS/live`  | Docstrings not attached to any definition              |
 | [`lowering/unused-argument`](@ref diagnostic/reference/lowering/unused-argument)                               | `Information`         | `JETLS/live`  | Function arguments that are never used                 |
 | [`lowering/unused-local`](@ref diagnostic/reference/lowering/unused-local)                                     | `Information`         | `JETLS/live`  | Local variables that are never used                    |
 | [`lowering/unused-assignment`](@ref diagnostic/reference/lowering/unused-assignment)                           | `Information`         | `JETLS/live`  | Assignments whose values are never read                |
@@ -677,6 +678,88 @@ f(::T) where {S,T<:S} = S  # OK: `S` constrains the dispatched type variable `T`
 f(::T) where {T<:S,S} = S  # Method definition declares type variable `S` but does not use it in the type of any function parameter
                            # (JETLS lowering/unconstrained-static-parameter)
 ```
+
+#### [Orphaned docstring (`lowering/orphaned-docstring`)](@id diagnostic/reference/lowering/orphaned-docstring)
+
+**Default severity**: `Information`
+
+Reported on string literals that look like docstrings but are not attached to
+any definition, so they silently document nothing. Julia attaches a string
+literal as a docstring only when:
+- it appears at the top level, in a `module` body, in a `begin` block, or in a
+  `struct` body (as a field docstring)
+- the documented expression starts on the next line, without blank lines or
+  comments in between
+- it is a plain string literal, not a string macro such as `raw"..."`
+
+Elsewhere, docstrings must be written with `@doc`, and docstrings in local
+scope (e.g. in function bodies) are never attached.
+
+Examples:
+
+```julia
+"""
+    foo()
+"""  # Docstring is not attached to any definition: the documented expression must start on the next line
+     # (JETLS lowering/orphaned-docstring)
+foo() = nothing
+
+@static if Sys.iswindows()
+    """
+        bar()
+    """              # Docstring is not attached to any definition: docstrings in this block are recognized only with `@doc`
+    bar() = nothing  # (JETLS lowering/orphaned-docstring)
+end
+
+raw"""
+    baz(path)
+"""                  # Docstring is not attached to any definition: `raw` strings are recognized as docstrings only with `@doc`
+baz(path) = nothing  # (JETLS lowering/orphaned-docstring)
+
+function qux()
+    "Python-style docstring"  # Docstring is not attached to any definition: docstrings are not recognized in local scope
+    nothing                   # (JETLS lowering/orphaned-docstring)
+end
+```
+
+Field docstrings are also reported when the struct itself has no docstring,
+since Julia then discards them[^field_docstrings]. The diagnostic is reported
+on the struct name, with the discarded field docstrings listed as related
+information:
+
+```julia
+struct Point            # Field docstrings of `Point` are discarded because `Point` has no docstring
+    "The x coordinate"  # (JETLS lowering/orphaned-docstring)
+    x::Float64
+    "The y coordinate"
+    y::Float64
+end
+```
+
+Documenting the struct makes the field docstrings available. Adding a docstring
+later with `@doc "..." Point` does not, since Julia collects field docstrings
+only from the documented struct definition. Structs wrapped by macros other than
+`@kwdef` are not checked, since such macros may handle field docstrings
+themselves.
+
+[^field_docstrings]: See [JuliaLang/julia#39825](https://github.com/JuliaLang/julia/issues/39825).
+
+Strings whose value is used, such as the last expression of a function body,
+are not reported. Neither are strings in `begin` blocks passed to macros, since
+macros may give them a meaning (e.g. argument names in
+`ArgParse.@add_arg_table!`), nor string macro calls other than `raw"..."`,
+which may have side effects (e.g. `py"..."`).
+
+!!! tip "Code action available"
+    The "Attach docstring to the following definition" code action prefixes the
+    docstring with `@doc` and removes the blank lines in between as needed.
+    It is not offered when comments separate the docstring from the next
+    expression, since the intended target is then unclear, nor for a string at
+    the start of a file or module, which usually describes the whole file.
+
+!!! note "Notebook mode"
+    Top-level strings are not reported in [notebooks](@ref notebook), where
+    the last expression of a cell is displayed.
 
 #### [Unused argument (`lowering/unused-argument`)](@id diagnostic/reference/lowering/unused-argument)
 

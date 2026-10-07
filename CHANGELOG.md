@@ -64,6 +64,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   When a single package directory is given, its `.JETLSConfig.toml` is loaded and paths are displayed relative to it, unless `--root` is specified.
   The `files` input of the [GitHub Action](https://aviatesk.github.io/JETLS.jl/release/cli-check/#cli-check/github-actions) is now optional and defaults to the package at the repository root.
 
+- Added the [`lowering/orphaned-docstring`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/orphaned-docstring) diagnostic, reported on docstrings that silently document nothing:
+  docstrings separated from the definition by a blank line or comment, docstrings in `if` blocks (including `@static if`) without `@doc`, `raw"..."` docstrings without `@doc`, docstrings in local scope such as function bodies, and field docstrings of structs that have no docstring themselves (which Julia discards).
+  The "Attach docstring to the following definition" code action fixes them by prefixing `@doc` and removing the blank lines as needed.
+  This check was suggested in [JuliaLang/julia#63631](https://github.com/JuliaLang/julia/pull/63631), which fixed such docstrings in Julia itself.
+
 ### Changed
 
 - Package extension files (files under the `ext` directory of a package) are no longer full-analyzed, and the new [`toplevel/analysis-skipped`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/toplevel/analysis-skipped) warning is reported at the top of each such file instead.

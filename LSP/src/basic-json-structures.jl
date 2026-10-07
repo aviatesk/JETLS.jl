@@ -694,6 +694,11 @@ struct DeleteRangeData
 end
 export DeleteRangeData
 
+struct OrphanedDocstringData
+    attach_edits::Vector{TextEdit}
+end
+export OrphanedDocstringData
+
 struct UnsortedImportData
     new_text::String
 end
@@ -724,6 +729,7 @@ const DiagnosticData = Union{
     AbstractRefFieldData,
     AmbiguousSoftScopeData,
     DeleteRangeData,
+    OrphanedDocstringData,
     UnsortedImportData,
     UnusedArgumentData,
     UnusedVariableData,

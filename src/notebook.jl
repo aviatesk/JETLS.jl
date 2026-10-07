@@ -369,6 +369,10 @@ function localize_diagnostic_data(@nospecialize(data), concat::ConcatenatedNoteb
         return AbstractRefFieldData(localize_range(data.ref_name_range, concat))
     elseif data isa DeleteRangeData
         return DeleteRangeData(data.kind, localize_range(data.delete_range, concat))
+    elseif data isa OrphanedDocstringData
+        return OrphanedDocstringData(TextEdit[
+            TextEdit(edit; range = localize_range(edit.range, concat))
+            for edit in data.attach_edits])
     elseif data isa UnusedVariableData
         assignment_range = data.assignment_range
         if assignment_range !== nothing

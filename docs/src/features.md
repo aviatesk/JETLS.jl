@@ -822,6 +822,7 @@ JETLS provides code actions for quick fixes and refactoring, including:
 - Sort import names
 - Delete unreachable code
 - Insert `global` / `local` declarations for ambiguous soft scope variables
+- Attach orphaned docstrings to the following definition
 - Run a nearby `@testset` or `@test` case via
   [TestRunner code actions](@ref testrunner/features/code-actions)
 - Expand macro calls via
