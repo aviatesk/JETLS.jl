@@ -514,6 +514,129 @@ end
     end
 end
 
+function get_orphaned_docstring_code_actions(text::AbstractString)
+    filename = abspath(pkgdir(JETLS), "test", "test_code_action.jl")
+    fi = JETLS.FileInfo(#=version=#0, text, filename)
+    uri = filepath2uri(filename)
+    diagnostics = JETLS.analyze_orphaned_docstrings!(
+        LSP.Diagnostic[], uri, fi, JETLS.build_syntax_tree(fi))
+    code_actions = Union{CodeAction,Command}[]
+    JETLS.orphaned_docstring_code_actions!(code_actions, uri, diagnostics)
+    return code_actions, uri
+end
+
+function apply_code_action(text::String, action::CodeAction, uri::URI)
+    for edit in sort(action.edit.changes[uri]; by = edit -> edit.range.start, rev = true)
+        text = JETLS.apply_text_change(
+            text, edit.range, edit.newText, LSP.PositionEncodingKind.UTF16)
+    end
+    return text
+end
+
+@testset "orphaned docstring code actions" begin
+    let text = """
+            const x = 1
+            \"\"\"
+                foo()
+            \"\"\"
+
+
+            foo() = 1
+            """
+        (code_actions, uri) = get_orphaned_docstring_code_actions(text)
+        @test length(code_actions) == 1
+        action = only(code_actions)
+        @test action.title == "Attach docstring to the following definition"
+        @test action.isPreferred == true
+        @test apply_code_action(text, action, uri) == """
+            const x = 1
+            \"\"\"
+                foo()
+            \"\"\"
+            foo() = 1
+            """
+    end
+
+    let text = """
+            if cond
+                \"\"\"
+                    foo()
+                \"\"\"
+                function foo()
+                end
+            end
+            """
+        (code_actions, uri) = get_orphaned_docstring_code_actions(text)
+        @test apply_code_action(text, only(code_actions), uri) == """
+            if cond
+                @doc \"\"\"
+                    foo()
+                \"\"\"
+                function foo()
+                end
+            end
+            """
+    end
+
+    let text = """
+            module M
+            foo() = 1
+            raw\"\"\"
+                bar()
+            \"\"\"
+
+            bar() = 1
+            end
+            """
+        (code_actions, uri) = get_orphaned_docstring_code_actions(text)
+        @test apply_code_action(text, only(code_actions), uri) == """
+            module M
+            foo() = 1
+            @doc raw\"\"\"
+                bar()
+            \"\"\"
+            bar() = 1
+            end
+            """
+    end
+
+    let text = """
+            "Foo"
+            struct Foo
+                "field doc"
+
+                x::Int
+            end
+            """
+        (code_actions, uri) = get_orphaned_docstring_code_actions(text)
+        @test apply_code_action(text, only(code_actions), uri) == """
+            "Foo"
+            struct Foo
+                "field doc"
+                x::Int
+            end
+            """
+    end
+
+    let text = "const x = 1\r\n\"doc\"\r\n\r\nfoo() = 1\r\n"
+        (code_actions, uri) = get_orphaned_docstring_code_actions(text)
+        @test apply_code_action(text, only(code_actions), uri) =="const x = 1\r\n\"doc\"\r\nfoo() = 1\r\n"
+    end
+
+    let (code_actions, _) = get_orphaned_docstring_code_actions("""
+            const x = 1
+            "doc"
+            # comment
+            foo() = 1
+            function bar()
+                "doc"
+                nothing
+            end
+            """)
+        @test isempty(code_actions)
+    end
+end
+
 @testset "abstract Ref field code action" begin
     _, positions = JETLS.get_text_and_positions("""
         struct AAA

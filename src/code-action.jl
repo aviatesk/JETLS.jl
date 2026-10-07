@@ -49,6 +49,7 @@ function handle_CodeActionRequest(
         delete_range_code_actions!(code_actions, uri, diagnostics)
         sort_imports_code_actions!(code_actions, uri, diagnostics)
         ambiguous_soft_scope_code_actions!(code_actions, uri, diagnostics)
+        orphaned_docstring_code_actions!(code_actions, uri, diagnostics)
         abstract_ref_field_code_actions!(code_actions, uri, diagnostics)
         missing_concretization_code_actions!(code_actions, server, diagnostics)
     end
@@ -359,6 +360,25 @@ function ambiguous_soft_scope_code_actions!(
                     uri => TextEdit[TextEdit(;
                         range = insert_range,
                         newText = data.indent * "local $(data.name)\n")]))))
+    end
+    return code_actions
+end
+
+function orphaned_docstring_code_actions!(
+        code_actions::Vector{Union{CodeAction,Command}}, uri::URI,
+        diagnostics::Vector{Diagnostic}
+    )
+    for diagnostic in diagnostics
+        diagnostic.code == LOWERING_ORPHANED_DOCSTRING_CODE || continue
+        data = diagnostic.data
+        data isa OrphanedDocstringData || continue
+        push!(code_actions, CodeAction(;
+            title = "Attach docstring to the following definition",
+            kind = CodeActionKind.QuickFix,
+            diagnostics = Diagnostic[diagnostic],
+            isPreferred = true,
+            edit = WorkspaceEdit(;
+                changes = Dict{URI,Vector{TextEdit}}(uri => data.attach_edits))))
     end
     return code_actions
 end
