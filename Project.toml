@@ -2,8 +2,8 @@ name = "JETLS"
 uuid = "a3b70258-0602-4ee2-b5a6-54c2470400db"
 version = "0.0.0"
 JET = "avi/JET-JETLS-head-2026-10-07"
-JuliaLowering = "master"
-JuliaSyntax = "master"
+JuliaLowering = "avi/JETLS-JSJL-head-2026-10-09"
+JuliaSyntax = "avi/JETLS-JSJL-head-2026-10-09"
 Revise = "master"
 TestRunner = "master"
 authors = ["Shuhei Kadowaki <aviatesk@gmail.com>"]
@@ -34,8 +34,8 @@ TestRunner = "4efbe77e-ddf3-4ce7-be91-16409ca9e85f"
 [sources]
 Compiler = {path = "Compiler"}
 JET = {rev = "dbd9ced85d", url = "https://github.com/aviatesk/JET.jl"}
-JuliaLowering = {rev = "4b1c835db9", subdir = "JuliaLowering", url = "https://github.com/JuliaLang/julia"}
-JuliaSyntax = {rev = "4b1c835db9", subdir = "JuliaSyntax", url = "https://github.com/JuliaLang/julia"}
+JuliaLowering = {rev = "c54e29d033", subdir = "JuliaLowering", url = "https://github.com/JuliaLang/julia"}
+JuliaSyntax = {rev = "c54e29d033", subdir = "JuliaSyntax", url = "https://github.com/JuliaLang/julia"}
 LSP = {path = "LSP"}
 Revise = {rev = "32638add42", url = "https://github.com/timholy/Revise.jl"}
 TOMLSource = {path = "TOMLSource"}

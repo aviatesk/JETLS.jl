@@ -953,6 +953,28 @@ end
             @test diagnostic.range.var"end".line == 0
             @test diagnostic.range.var"end".character == length_utf16("func(xs) = [x for (i")
         end
+
+        let diagnostics = get_lowering_diagnostics("""
+            function func(ys)
+                a = [x for j in ys if j != 1 for x in j]
+                b = [x for j in ys if j != 2 for x in j]
+                return a, b
+            end
+            """)
+            @test isempty(diagnostics)
+        end
+
+        let diagnostics = get_lowering_diagnostics("""
+            func(ys, flag) = [x for (i, j) in ys if flag for x in j]
+            """)
+            @test length(diagnostics) == 1
+            diagnostic = only(diagnostics)
+            @test diagnostic.message == "Unused local binding `i`"
+            @test diagnostic.range.start.line == 0
+            @test diagnostic.range.start.character == length_utf16("func(ys, flag) = [x for (")
+            @test diagnostic.range.var"end".line == 0
+            @test diagnostic.range.var"end".character == length_utf16("func(ys, flag) = [x for (i")
+        end
     end
 
     @testset "for loop with multiple iteration specs" begin
