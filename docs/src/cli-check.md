@@ -49,18 +49,13 @@ rejected.
 When no path is given, the package at the root path (the current working
 directory by default) is analyzed.
 
-For files, the analysis mode is determined by the file's location within the
-directory structure:
-
-- **Package source files** (`src/SomePkg.jl`): Analyzed in package context with
-  full type inference
-- **Test files** (`test/*.jl`): Analyzed in test context
-- **Standalone scripts**: Analyzed as scripts
-
-The package context is detected from the nearest `Project.toml` above each
-file, regardless of the working directory. The root path only determines where
-`.JETLSConfig.toml` is loaded from and how paths are displayed (see
-[`--root`](@ref cli-check/options/root)).
+Files are analyzed in the same way as in the language server, as described in
+[How each file is analyzed](@ref analysis/full/files): the [analysis mode](@ref analysis/full/modes)
+is determined by the nearest  `Project.toml` above each file and the file's
+location relative to it, regardless of the working directory. Unlike the
+language server,  `jetls check` also analyzes files outside the root path.
+The root path only determines where `.JETLSConfig.toml` is loaded from and how
+paths are  displayed (see [`--root`](@ref cli-check/options/root)).
 
 ## [Options](@id cli-check/options)
 

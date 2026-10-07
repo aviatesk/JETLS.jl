@@ -120,14 +120,14 @@ auto_instantiate = "always"  # Instantiate without asking
 - **Type**: array of tables
 - **Default**: `[]`
 
-During script-mode analysis, JETLS analyzes top-level code without evaluating
-every expression. If it needs the value of a global binding to define a later
+During [script analysis](@ref analysis/full/modes/script), JETLS
+analyzes top-level code without evaluating every expression.
+If it needs the value of a global binding to define a later
 type or method, JETLS may report `toplevel/missing-concretization`.
 
 By contrast, when analyzing package source code under `src/`, JETLS uses the
 catch-all concretization pattern `:(x_)` and evaluates all top-level code.
-Additional concretization patterns are therefore needed only for script-mode
-analysis.
+Additional concretization patterns are therefore needed only for script analysis.
 
 For example, suppose `scripts/random-type.jl` contains:
 
@@ -289,8 +289,9 @@ enabled = false  # Disable all diagnostics
 - **Default**: `true`
 
 Enable or disable diagnostics for unopened files. When enabled, JETLS reports
-diagnostics for all Julia files in the workspace. When disabled, diagnostics
-are only reported for files currently open in the editor.
+diagnostics for all Julia files in the workspace that full analysis covers
+(see [How each file is analyzed](@ref analysis/full/files)). When disabled,
+diagnostics are only reported for files currently open in the editor.
 
 This setting affects both [`JETLS/live` and `JETLS/save`](@ref diagnostic/source)
 diagnostics. For `JETLS/live`, lowering-based analysis for unopened files is

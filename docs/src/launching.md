@@ -244,18 +244,9 @@ path = "test/fixtures/**"
 Save-time diagnostics produced by full analysis, including
 [`toplevel` diagnostics](@ref diagnostic/reference/toplevel) and
 [`inference` diagnostics](@ref diagnostic/reference/inference), are unavailable
-for the matched files.
-
-Features that do not require full analysis keep working. These include
-completion, hover, inlay hints, and
-[`syntax` diagnostics](@ref diagnostic/reference/syntax). Context-independent
-[`lowering` diagnostics](@ref diagnostic/reference/lowering) also remain
-available, while context-dependent diagnostics such as
-`lowering/macro-expansion-error` and `lowering/undef-global-var` are
-unavailable.
-Hover and type inlay hints infer the current top-level form on demand, but their
-results may be incomplete because full analysis does not establish a module
-context for the matched files.
+for the matched files. Live analysis keeps working with a fallback module
+context; see [Files without full analysis](@ref analysis/live/fallback) for what
+remains available.
 
 !!! warning
     `analysis_overrides` is provided as a temporary workaround and may be

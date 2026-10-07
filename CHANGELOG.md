@@ -49,7 +49,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 >   }
 > }
 > ```
-> This disables analysis for matched files. Basic features like completion still might work, but most LSP features will be unfunctional.
+> This disables full analysis for matched files; see [Files without full analysis](https://aviatesk.github.io/JETLS.jl/release/analysis/#analysis/live/fallback) for what remains available for them.
 > Note that `analysis_overrides` is provided as a temporary workaround and may be removed or changed at any time. A proper fix is being worked on.
 >
 > Note: Path glob patterns use `/` as the separator on all platforms, including Windows; backslashes are not supported as separators.
@@ -80,12 +80,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   The "Attach docstring to the following definition" code action fixes them by prefixing `@doc` and removing the blank lines as needed.
   This check was suggested in [JuliaLang/julia#63631](https://github.com/JuliaLang/julia/pull/63631), which fixed such docstrings in Julia itself.
 
-- Added the [`toplevel/unsupported-feature`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/toplevel/unsupported-feature) warning, reported when full analysis loads code that uses a feature JETLS does not support and analyzes it with an approximation instead.
-  It is currently reported for `include(mapexpr, filename)` calls, whose included file is analyzed without applying `mapexpr`.
-
 - Added the [`config/deprecated-key`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/config/deprecated-key) and [`config/deprecated-value`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/config/deprecated-value) warnings on deprecated keys and values of `.JETLSConfig.toml`, with quick fixes that remove a key, move its value to the new key, or replace a value, while keeping the rest of the file, including comments, as it is.
   The warning message shown when JETLS loads such a file now also offers a "Fix all" action that applies these fixes to the file.
   The legacy `true` and `false` values of [`full_analysis.auto_instantiate`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/full_analysis/auto_instantiate) are now reported the same way, and also come with a warning when set through LSP settings.
+
+- Added the [Analysis](https://aviatesk.github.io/JETLS.jl/release/analysis/) documentation page, which explains the two layers of JETLS's analysis: full analysis, which loads your code with package analysis or script analysis, and live analysis, which builds on the module context that full analysis establishes.
+  It also describes how each file is analyzed depending on its location and environment, when full analysis runs, and what remains available for files that full analysis does not cover.
+
+- Added the [`toplevel/unsupported-feature`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/toplevel/unsupported-feature) warning, reported when full analysis loads code that uses a feature JETLS does not support and analyzes it with an approximation instead.
+  It is currently reported for `include(mapexpr, filename)` calls, whose included file is analyzed without applying `mapexpr`.
 
 ### Changed
 
