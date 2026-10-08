@@ -22,6 +22,9 @@ jetls check src/SomePkg.jl
 # Check multiple files
 jetls check src/SomePkg.jl test/runtests.jl
 
+# Check code read from stdin
+jetls check - <<< 'f(x) = undefined_name + x'
+
 # Check multiple files with multi threads
 jetls --threads=4,2 -- check src/SomePkg.jl test/runtests.jl
 ```
@@ -57,6 +60,24 @@ language server,  `jetls check` also analyzes files outside the root path.
 The root path only determines where `.JETLSConfig.toml` is loaded from and how
 paths are  displayed (see [`--root`](@ref cli-check/options/root)).
 
+### [Reading source from stdin](@id cli-check/input/stdin)
+
+Passing `-` as a path reads Julia source from stdin, which is useful for
+checking code that is not saved to a file:
+
+```bash
+jetls check - <<'EOF'
+function f(x)
+    return undefined_name + x
+end
+EOF
+```
+
+By default, the source is analyzed like an unsaved buffer in the language
+server (see [How each file is analyzed](@ref analysis/full/files)) and is
+displayed as `<stdin>`. With [`--stdin-filename`](@ref cli-check/options/stdin-filename),
+it is analyzed as the file at the given path instead.
+
 ## [Options](@id cli-check/options)
 
 ### [`--root=<path>`](@id cli-check/options/root)
@@ -79,6 +100,33 @@ jetls check --root=/path/to/project src/SomePkg.jl
 # Useful when running from a different directory
 cd /tmp && jetls check --root=/path/to/project /path/to/project/src/SomePkg.jl
 ```
+
+### [`--stdin-filename=<path>`](@id cli-check/options/stdin-filename)
+
+Analyzes the source [read from stdin](@ref cli-check/input/stdin) as if it were
+the file at `<path>`, which is resolved like other input paths. The file does
+not need to exist; if it does, its contents on disk are ignored.
+
+The path determines how the source is analyzed, in the same way as for the file
+at that path: the analysis mode, path-specific configuration, and the files it
+`include`s. For a package source file, the package is analyzed with the source
+substituted for the file on disk. This allows checking changes to a package
+file before writing them:
+
+```bash
+# Check src/utils.jl, which src/SomePkg.jl includes, with `helper` renamed
+# to `helper2`, without modifying the file
+sed 's/helper/helper2/g' src/utils.jl | jetls check --stdin-filename=src/utils.jl -
+```
+
+Without `--stdin-filename`, the source is analyzed as a standalone script, so
+names defined in the other files of the package would be reported as
+undefined.
+
+Unlike a package directory input, `--stdin-filename` does not set the
+[root path](@ref cli-check/options/root), so run the command in the package
+directory as above, or specify `--root`, to load the package's
+`.JETLSConfig.toml`.
 
 ### [`--context-lines=<n>`](@id cli-check/options/context-lines)
 

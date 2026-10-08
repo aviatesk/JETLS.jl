@@ -57,11 +57,21 @@ end
 function run_jetls_check(
         args::Vector{String};
         root::Union{String,Nothing} = nothing,
-        skip_analysis::Bool = true
+        skip_analysis::Bool = true,
+        input::Union{String,Nothing} = nothing
     )
     check_args = build_check_args(args; root, skip_analysis)
     return capture_jetls_check() do
-        JETLS.run_check(check_args)
+        input === nothing && return JETLS.run_check(check_args)
+        mktemp() do input_path, input_io
+            write(input_io, input)
+            close(input_io)
+            open(input_path) do io
+                redirect_stdin(io) do
+                    JETLS.run_check(check_args)
+                end
+            end
+        end
     end
 end
 
@@ -599,6 +609,71 @@ end
             @test occursin("Package entry file not found", result.stderr)
             @test !occursin("# Check ", result.stdout)
         end
+    end
+end
+
+@testset "stdin" begin
+    input = """
+        function foo()
+            x = 1
+            return undefined_name
+        end
+        """
+
+    mktempdir() do dir
+        # `-` alone doesn't fall back to checking the package at the root path
+        let result = run_jetls_check(["-"]; root=dir, input)
+            @test result.exitcode == 1
+            @test occursin("Analyzed 1 file", result.stdout)
+            @test occursin("# @ <stdin>:2,5", result.stdout)
+            @test occursin("lowering/unused-local", result.stdout)
+        end
+        let result = run_jetls_check(["-"]; root=dir, input, skip_analysis=false)
+            @test result.exitcode == 1
+            @test occursin("# @ <stdin>:3,12", result.stdout)
+            @test occursin("inference/undef-global-var", result.stdout)
+        end
+
+        # the source is checked as `--stdin-filename`, which doesn't need to exist
+        let result = run_jetls_check(["--stdin-filename=scratch.jl", "-"]; root=dir, input)
+            @test occursin("# @ scratch.jl:2,5", result.stdout)
+            @test occursin("lowering/unused-local", result.stdout)
+            @test !isfile(joinpath(dir, "scratch.jl"))
+        end
+
+        filepath = write_test_file(dir, "test.jl", "module TestModule\nend\n")
+        let result = run_jetls_check(["--stdin-filename=test.jl", "-", filepath]; root=dir, input)
+            @test occursin("Analyzed 1 file", result.stdout)
+            @test occursin("# @ test.jl:2,5", result.stdout)
+            @test occursin("    x = 1", result.stdout)
+        end
+
+        let result = run_jetls_check(["--stdin-filename=scratch.jl"]; root=dir)
+            @test result.exitcode == 1
+            @test occursin("--stdin-filename requires `-`", result.stderr)
+            @test !occursin("# Check ", result.stdout)
+        end
+    end
+
+    # the full analysis of the package reads the source from stdin instead of the disk
+    mktempdir() do dir
+        pkgdir = mkpath(joinpath(dir, "SomePkg"))
+        write_test_file(pkgdir, "Project.toml", """
+            name = "SomePkg"
+            uuid = "5a1c9c3e-2a4b-4c55-9f0e-6f1d2b3c4d5e"
+            """)
+        srcdir = mkpath(joinpath(pkgdir, "src"))
+        write_test_file(srcdir, "SomePkg.jl", """
+            module SomePkg
+            include("sub.jl")
+            end
+            """)
+        write_test_file(srcdir, "sub.jl", "sub() = 1\n")
+        result = run_jetls_check(["--stdin-filename=src/sub.jl", "-"];
+            root=pkgdir, input="sub() = undefined_name\n", skip_analysis=false)
+        @test result.exitcode == 1
+        @test occursin("# @ src/sub.jl:1,1", result.stdout)
+        @test occursin("`SomePkg.undefined_name` is not defined [warn:inference/undef-global-var]", result.stdout)
     end
 end
 

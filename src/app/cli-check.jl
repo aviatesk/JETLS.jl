@@ -272,6 +272,9 @@ const check_help_message = """
     Options:
       --help, -h               Show this help message
       --quiet, -q              Suppress info and warning log messages
+      --stdin-filename=<path>  Check the source read from stdin as if it were the
+                               file at <path>, which does not need to exist
+                               (default: an unsaved buffer shown as <stdin>)
       --exit-severity=<level>  Minimum severity to exit with error code 1
                                (error, warn, info, hint; default: warn)
       --show-severity=<level>  Minimum severity to display in output
@@ -300,23 +303,38 @@ const check_help_message = """
       jetls check --exit-severity=error src/SomePkg.jl
       jetls check --show-severity=warn src/SomePkg.jl
       jetls check --progress=none src/SomePkg.jl
+      jetls check - <<< 'f(x) = undefined_name + x'
+      sed 's/helper/helper2/g' src/utils.jl | jetls check --stdin-filename=src/utils.jl -
     """
 
+const STDIN_URI = URI(; scheme="untitled", path="Untitled-stdin")
+
+struct StdinSource
+    uri::URI
+    text::String
+end
+
 function run_check(args::Vector{String})
-    root_path_opt = nothing
-    context_lines = 2
-    exit_severity = DiagnosticSeverity.Warning
-    show_severity = DiagnosticSeverity.Information
-    progress_mode = PROGRESS_AUTO
-    skip_analysis = false # Undocumented option to skip analysis (only used for test)
-    quiet = false
-    paths = String[]
+    root_path_opt  = nothing
+    read_stdin     = false
+    stdin_filename = nothing
+    context_lines  = 2
+    exit_severity  = DiagnosticSeverity.Warning
+    show_severity  = DiagnosticSeverity.Information
+    progress_mode  = PROGRESS_AUTO
+    skip_analysis  = false # Undocumented option to skip analysis (only used for test)
+    quiet          = false
+    paths          = String[]
     for arg in args
         if arg in ("-h", "--help", "help")
             print(stdout, check_help_message)
             return 0
         elseif arg in ("--quiet", "-q")
             quiet = true
+        elseif arg == "-"
+            read_stdin = true
+        elseif startswith(arg, "--stdin-filename=")
+            stdin_filename = arg[18:end]
         elseif startswith(arg, "--root=")
             root_path_opt = arg[8:end]
         elseif startswith(arg, "--context-lines=")
@@ -376,8 +394,13 @@ function run_check(args::Vector{String})
 
     quiet && Base.CoreLogging.disable_logging(Base.CoreLogging.Warn)
 
+    if stdin_filename !== nothing && !read_stdin
+        @error "--stdin-filename requires `-` to read the source from stdin"
+        return 1
+    end
+
     base_path = root_path_opt !== nothing ? abspath(root_path_opt) : pwd()
-    isempty(paths) && push!(paths, base_path)
+    isempty(paths) && !read_stdin && push!(paths, base_path)
 
     package_dirs = String[]
     for (i, path) in enumerate(paths)
@@ -397,6 +420,15 @@ function run_check(args::Vector{String})
         base_path
     end
 
+    stdin_source = if read_stdin
+        stdin_uri = if stdin_filename === nothing
+            STDIN_URI
+        else
+            filepath2uri(isabspath(stdin_filename) ? stdin_filename : joinpath(base_path, stdin_filename))
+        end
+        StdinSource(stdin_uri, read(stdin, String))
+    end
+
     progress_ctx = ProgressContext(progress_mode, stderr)
     logger = ProgressAwareLogger(Base.CoreLogging.current_logger(), progress_ctx)
     return let skip_analysis = skip_analysis,
@@ -404,7 +436,7 @@ function run_check(args::Vector{String})
                exit_severity = exit_severity,
                show_severity = show_severity
         Base.CoreLogging.with_logger(logger) do
-            run_check_analysis(root_path, paths, progress_ctx;
+            run_check_analysis(root_path, paths, stdin_source, progress_ctx;
                 skip_analysis, context_lines, exit_severity, show_severity)
         end
     end
@@ -431,11 +463,19 @@ function find_package_entry_file(dir::String)
 end
 
 function run_check_analysis(
-        root_path::String, paths::Vector{String}, progress_ctx::ProgressContext;
+        root_path::String, paths::Vector{String}, stdin_source::Union{Nothing,StdinSource},
+        progress_ctx::ProgressContext;
         skip_analysis::Bool, context_lines::Int,
         exit_severity::DiagnosticSeverity.Ty, show_severity::DiagnosticSeverity.Ty
     )
     server = start_cli_server(root_path)
+    if stdin_source !== nothing
+        # Cache it as `textDocument/didOpen` does: the saved file cache makes the full
+        # analysis read this text instead of the file on disk at `--stdin-filename`.
+        parsed_stream = ParseStream!(stdin_source.text)
+        cache_file_info!(server, stdin_source.uri, 1, parsed_stream)
+        cache_saved_file_info!(server.state, stdin_source.uri, parsed_stream)
+    end
     if !skip_analysis
         start_signature_analysis_workers!(server)
         start_analysis_worker!(server)
@@ -454,9 +494,10 @@ function run_check_analysis(
             uri = filepath2uri(filepath)
             push!(analysis_uris, uri)
         end
+        stdin_source === nothing || push!(analysis_uris, stdin_source.uri)
     else
         # Full analysis phase (textDocument/publishDiagnostics equivalent)
-        @with_cli_LOAD_PATH run_full_analysis(server, root_path, paths, progress_ctx)
+        @with_cli_LOAD_PATH run_full_analysis(server, root_path, paths, stdin_source, progress_ctx)
         analysis_uris = collect_workspace_uris(server)
         if isempty(analysis_uris)
             @error "Full analysis failed: could not find any files to analyze"
@@ -476,7 +517,8 @@ function run_check_analysis(
 
     elapsed_time = time() - start_time
     print_stats(uri2diagnostics, total_uris, elapsed_time, show_severity)
-    has_errors = print_diagnostics(uri2diagnostics, root_path, context_lines, exit_severity, show_severity)
+    has_errors = print_diagnostics(uri2diagnostics, root_path, context_lines, exit_severity, show_severity;
+        stdin_source)
 
     cleanup_cli_tasks(server)
 
@@ -517,19 +559,35 @@ end
 
 function run_full_analysis(
         server::Server, root_path::AbstractString, paths::Vector{String},
-        progress_ctx::ProgressContext
+        stdin_source::Union{Nothing,StdinSource}, progress_ctx::ProgressContext
     )
-    total_files = length(paths)
-    for (idx, path) in enumerate(paths)
-        filepath = abspath(path)
-        rel_path = relpath(filepath, root_path)
-        display_name = "[$idx/$total_files] $rel_path"
+    uris = URI[filepath2uri(abspath(path)) for path in paths]
+    stdin_source === nothing || push!(uris, stdin_source.uri)
+    total_files = length(uris)
+    for (idx, uri) in enumerate(uris)
+        display_name = "[$idx/$total_files] $(cli_display_path(uri, root_path))"
         with_progress(progress_ctx, "Full analysis", display_name) do cancellable_token
-            uri = filepath2uri(filepath)
-            cache_file_info!(server, uri, 1, read(filepath))
+            if stdin_source === nothing || uri != stdin_source.uri
+                cache_file_info!(server, uri, 1, read(uri2filepath(uri)::String))
+            end
             request_analysis!(server, uri, false;
                 wait=true, notify_diagnostics=false, cancellable_token, debounce=0.0)
         end
+    end
+end
+
+cli_display_path(uri::URI, root_path::AbstractString) =
+    uri == STDIN_URI ? "<stdin>" : relpath(uri2filepath(uri)::String, root_path)
+
+function cli_source_text(uri::URI, stdin_source::Union{Nothing,StdinSource})
+    if stdin_source !== nothing && uri == stdin_source.uri
+        return stdin_source.text
+    end
+    filepath = @something uri2filepath(uri) return nothing
+    return try
+        read(filepath, String)
+    catch
+        nothing
     end
 end
 
@@ -692,7 +750,8 @@ end
 function print_diagnostics(
         uri2diagnostics::URI2Diagnostics, root_path::String,
         context_lines::Int, exit_severity::DiagnosticSeverity.Ty,
-        show_severity::DiagnosticSeverity.Ty
+        show_severity::DiagnosticSeverity.Ty;
+        stdin_source::Union{Nothing,StdinSource} = nothing
     )
     has_errors = false
     printed_diagnostic = false
@@ -701,18 +760,12 @@ function print_diagnostics(
     for uri in sorted_uris
         diagnostics = uri2diagnostics[uri]
         isempty(diagnostics) && continue
-        filepath = uri2filepath(uri)
-        filepath === nothing && continue
-        text = try
-            read(filepath, String)
-        catch
-            continue
-        end
-        src = JS.SourceFile(text; filename=filepath)
+        text = @something cli_source_text(uri, stdin_source) continue
+        src = JS.SourceFile(text; filename=uri2filename(uri))
         textbuf = Vector{UInt8}(text)
         line_starts = build_line_starts(textbuf)
 
-        rel_path = relpath(filepath, root_path)
+        rel_path = cli_display_path(uri, root_path)
         sorted_diagnostics = sort(diagnostics; by=d->(d.range.start.line, d.range.start.character))
         for diagnostic in sorted_diagnostics
             severity = diagnostic.severity

@@ -61,6 +61,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   When a single package directory is given, its `.JETLSConfig.toml` is loaded and paths are displayed relative to it, unless `--root` is specified.
   The `files` input of the [GitHub Action](https://aviatesk.github.io/JETLS.jl/release/cli-check/#cli-check/github-actions) is now optional and defaults to the package at the repository root.
 
+- Added stdin input to [`jetls check`](https://aviatesk.github.io/JETLS.jl/release/cli-check/#cli-check/input/stdin):
+  `jetls check -` reads Julia source from stdin and analyzes it as a standalone script, like an unsaved buffer in the language server:
+  ```bash
+  echo 'f(x) = undefined_name + x' | jetls check -
+  ```
+  With the new [`--stdin-filename=<path>`](https://aviatesk.github.io/JETLS.jl/release/cli-check/#cli-check/options/stdin-filename) option, the source is analyzed in place of the file at `<path>` instead: for a package source file, the package is analyzed with the source substituted for the file on disk.
+  This allows checking changes to a package file before writing them, e.g. renaming `helper` to `helper2` in `src/utils.jl`:
+  ```bash
+  sed 's/helper/helper2/g' src/utils.jl | jetls check --stdin-filename=src/utils.jl -
+  ```
+  Without `--stdin-filename`, names defined in the other files of the package would be reported as undefined.
+
 - Added the [`lowering/orphaned-docstring`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/orphaned-docstring) diagnostic, reported on docstrings that silently document nothing:
   - docstrings separated from the definition by a blank line or comment
   - docstrings in `if` blocks (including `@static if`) without `@doc`
