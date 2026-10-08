@@ -578,7 +578,7 @@ function handle_request_message(
                 result = nothing,
                 error = request_cancelled_error()))
     elseif msg isa CompletionResolveRequest
-        handle_CompletionResolveRequest(server, msg)
+        handle_CompletionResolveRequest(server, msg, cancel_flag)
     elseif msg isa DeclarationRequest
         handle_DeclarationRequest(server, msg, cancel_flag)
     elseif msg isa DefinitionRequest

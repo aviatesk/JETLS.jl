@@ -137,6 +137,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   ```
   See [Test selection](https://aviatesk.github.io/JETLS.jl/release/testrunner/#testrunner/test-selection) for what runs along with the selected tests.
 
+- `textDocument/completion` and `completionItem/resolve` requests now stop partway when the client cancels them, e.g. when the editor requests completions again while you keep typing, or when VSCode moves the focus to another completion item before the details of the previous one are resolved.
+
 ### Fixed
 
 - Fixed files with syntax warnings but no syntax errors getting no [`lowering/*`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering) diagnostics in the editor or from [`jetls check`](https://aviatesk.github.io/JETLS.jl/release/cli-check/), and not being reanalyzed by full analysis on save.

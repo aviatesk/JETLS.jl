@@ -97,6 +97,7 @@ mutable struct CompletionCtx
     const pos::Position
     const context::Union{Nothing,CompletionContext}
     const snapshot::DocumentSnapshot
+    const cancel_flag::AbstractCancelFlag
 
     # Eagerly populated by the constructor.
     const offset::Int
@@ -114,7 +115,8 @@ mutable struct CompletionCtx
     function CompletionCtx(
             state::ServerState, request_uri::URI, snapshot::DocumentSnapshot,
             pos::Position, context::Union{Nothing,CompletionContext};
-            context_module::Union{Nothing,Module} = nothing
+            context_module::Union{Nothing,Module} = nothing,
+            cancel_flag::AbstractCancelFlag = DUMMY_CANCEL_FLAG
         )
         (; fi, cache_uri) = snapshot
         st0_top = build_syntax_tree(fi)
@@ -122,7 +124,7 @@ mutable struct CompletionCtx
         context_mod = something(context_module, info.context_module)
         offset = xy_to_offset(fi, pos)
         soft_scope = cache_uri != request_uri
-        return new(state, request_uri, pos, context, snapshot,
+        return new(state, request_uri, pos, context, snapshot, cancel_flag,
             offset, st0_top, context_mod, info.world, info.postprocessor, soft_scope)
     end
 end
@@ -274,6 +276,7 @@ function local_completions!(
         items::Dict{String,CompletionItem}, comp_ctx::CompletionCtx,
     )
     should_invoke_auto_completion(comp_ctx.context) || return nothing
+    is_cancelled(comp_ctx.cancel_flag) && return false
 
     # NOTE don't bail out even if `length(fi.parsed_stream.diagnostics) ≠ 0`
     # so that we can get some completions even for incomplete code
@@ -336,6 +339,7 @@ function global_completions!(
     dotprefix = select_dotprefix_identifier(st0_top, comp_ctx.offset)
     if !isnothing(dotprefix)
         rng = JS.byte_range(dotprefix)
+        is_cancelled(comp_ctx.cancel_flag) && return false
         ctx = get_dotprefix_inferred_ctx(comp_ctx, dotprefix; caller="global_completions!")
         prefixtyp = ctx === nothing ? nothing : get_type_for_range(ctx, rng)
         # A `Union{}` prefix type is uninformative (the prefix throws or is dead code);
@@ -363,6 +367,7 @@ function global_completions!(
         GlobalCompletionResolverInfo(resolver_id, ctx_mod, world, postprocessor), nothing
     end
 
+    is_cancelled(comp_ctx.cancel_flag) && return false
     prioritized_names = let s = Set{Symbol}()
         pnames = Base.invoke_in_world(
             world, Base.unsorted_names, context_module; all=true)::Vector{Symbol}
@@ -374,6 +379,7 @@ function global_completions!(
         s
     end
 
+    is_cancelled(comp_ctx.cancel_flag) && return false
     all_names = Base.invoke_in_world(world, Base.unsorted_names, context_module;
         all=true, imported=true, usings=true)::Vector{Symbol}
     for name in all_names
@@ -475,6 +481,7 @@ function add_property_completions!(
     ordered = Symbol[]
     seen = Set{Symbol}()
     for typ in union_components(prefixtyp)
+        is_cancelled(comp_ctx.cancel_flag) && return false
         rt = abstract_call_const(propertynames, Any[typ], comp_ctx.world)
         rt isa Core.Const || continue
         names = rt.val
@@ -840,6 +847,7 @@ function call_completions!(
     should_complete_kwargs = !(equals_pos === true) # is not after `=`
 
     should_complete_method_sigs || should_complete_kwargs || return nothing
+    is_cancelled(comp_ctx.cancel_flag) && return false
 
     ctx = get_inferred_ctx!(comp_ctx; caller="call_completions!")
     fntyp = ctx === nothing ? nothing : get_type_for_range(ctx, JS.byte_range(call[1]))
@@ -848,10 +856,13 @@ function call_completions!(
     end
     fntyp isa Core.Const || return nothing
 
+    is_cancelled(comp_ctx.cancel_flag) && return false
     argtypes = @something collect_call_argtypes(ctx, ca) return nothing
     fixup_argtypes!(argtypes, fntyp)
+    is_cancelled(comp_ctx.cancel_flag) && return false
     matches = @something find_all_matches(argtypes; world) return nothing
     isempty(matches) && return nothing
+    is_cancelled(comp_ctx.cancel_flag) && return false
 
     num_existing_args = ca.kw_i - 1
     has_equals = equals_pos === false
@@ -875,6 +886,8 @@ function call_completions!(
 
     method_sig_sort_idx = 1
     for (i, match) in enumerate(matches)
+        is_cancelled(comp_ctx.cancel_flag) && return false
+
         m = match.method
         startswith(String(m.name), '@') && continue
         compatible_method(m, ca, world) || continue
@@ -979,7 +992,10 @@ function supports_completion_item_resolve(state::ServerState, property::Abstract
     return property in ("documentation", "detail")
 end
 
-function resolve_completion_item(state::ServerState, item::CompletionItem)
+function resolve_completion_item(
+        state::ServerState, item::CompletionItem;
+        cancel_flag::AbstractCancelFlag = DUMMY_CANCEL_FLAG
+    )
     completion_resolver_info = @something load(state.completion_resolver_info) return item
     data = item.data
     if (data isa GlobalCompletionData &&
@@ -989,11 +1005,13 @@ function resolve_completion_item(state::ServerState, item::CompletionItem)
     elseif (data isa MethodSignatureCompletionData &&
             completion_resolver_info isa MethodSignatureCompletionResolverInfo &&
             data.resolver_id == completion_resolver_info.id)
-        return resolve_method_signature_completion_item(state, item, data, completion_resolver_info)
+        return resolve_method_signature_completion_item(
+            state, item, data, completion_resolver_info; cancel_flag)
     elseif (data isa PropertyCompletionData &&
             completion_resolver_info isa PropertyCompletionResolverInfo &&
             data.resolver_id == completion_resolver_info.id)
-        return resolve_property_completion_item(state, item, data, completion_resolver_info)
+        return resolve_property_completion_item(
+            state, item, data, completion_resolver_info; cancel_flag)
     else
         return item
     end
@@ -1001,7 +1019,8 @@ end
 
 function resolve_property_completion_item(
         state::ServerState, item::CompletionItem, data::PropertyCompletionData,
-        completion_resolver_info::PropertyCompletionResolverInfo,
+        completion_resolver_info::PropertyCompletionResolverInfo;
+        cancel_flag::AbstractCancelFlag = DUMMY_CANCEL_FLAG
     )
     supports_labelDetails = supports_completion_item_resolve(state, "labelDetails")
     supports_detail = supports_completion_item_resolve(state, "detail")
@@ -1015,9 +1034,11 @@ function resolve_property_completion_item(
     name = Core.Const(Symbol(data.label))
     rawtyp = Union{}
     for comp in union_components(prefixtyp)
+        is_cancelled(cancel_flag) && return item
         gp_rt = @something abstract_call_const(getproperty, Any[comp, name], world) continue
         rawtyp = CC.tmerge(rawtyp, gp_rt)
     end
+    is_cancelled(cancel_flag) && return item
     typstr = truncate_typstr(
         postprocessor(sprint(show, rawtyp; context = :compact => true)),
         #=maxdepth=#3, #=maxwidth=#20)
@@ -1106,7 +1127,8 @@ end
 
 function resolve_method_signature_completion_item(
         state::ServerState, item::CompletionItem, data::MethodSignatureCompletionData,
-        completion_resolver_info::MethodSignatureCompletionResolverInfo
+        completion_resolver_info::MethodSignatureCompletionResolverInfo;
+        cancel_flag::AbstractCancelFlag = DUMMY_CANCEL_FLAG
     )
     supports_labelDetails = supports_completion_item_resolve(state, "labelDetails")
     supports_detail = supports_completion_item_resolve(state, "detail")
@@ -1117,6 +1139,7 @@ function resolve_method_signature_completion_item(
     1 ≤ data.match_idx ≤ length(matches) || return item # just to make sure
     match = matches[data.match_idx]
     doc = @something lookup_doc_for_match(match, world) return item
+    is_cancelled(cancel_flag) && return item
     docstr = postprocessor(string(doc))
     _, result = infer_match!(world, match)
     resulttyp = @something result.result return item
@@ -1150,8 +1173,9 @@ function get_completion_items(
         state::ServerState, uri::URI, snapshot::DocumentSnapshot,
         pos::Position, context::Union{Nothing,CompletionContext};
         context_module::Union{Nothing,Module} = nothing,
+        cancel_flag::AbstractCancelFlag = DUMMY_CANCEL_FLAG,
     )
-    comp_ctx = CompletionCtx(state, uri, snapshot, pos, context; context_module)
+    comp_ctx = CompletionCtx(state, uri, snapshot, pos, context; context_module, cancel_flag)
     return get_completion_items(comp_ctx)
 end
 
@@ -1167,6 +1191,10 @@ function get_completion_items(comp_ctx::CompletionCtx)
         local_completions!(items, comp_ctx),
         keyword_completions!(items, comp_ctx),
         false)
+    # Once the request is cancelled, a routine returns `false` to skip the remaining ones
+    if is_cancelled(comp_ctx.cancel_flag)
+        return nothing
+    end
     return collect(values(items)), isIncomplete
 end
 
@@ -1179,7 +1207,11 @@ function handle_CompletionRequest(
     end
     uri = msg.params.textDocument.uri
     pos = adjust_position(snapshot, uri, msg.params.position)
-    items, isIncomplete = get_completion_items(server.state, uri, snapshot, pos, msg.params.context)
+    items, isIncomplete = @something get_completion_items(
+            server.state, uri, snapshot, pos, msg.params.context; cancel_flag) begin
+        return send(server, CompletionResponse(;
+            id = msg.id, result = nothing, error = request_cancelled_error()))
+    end
     # For method signature completions, set `isIncomplete = true` so that when
     # the user continues typing (e.g., an identifier), the client will re-request
     # and trigger global/local completions instead of continuing to filter
@@ -1190,9 +1222,13 @@ function handle_CompletionRequest(
             result = CompletionList(; isIncomplete, items)))
 end
 
-function handle_CompletionResolveRequest(server::Server, msg::CompletionResolveRequest)
-    return send(server,
-        CompletionResolveResponse(;
-            id = msg.id,
-            result = resolve_completion_item(server.state, msg.params)))
+function handle_CompletionResolveRequest(
+        server::Server, msg::CompletionResolveRequest, cancel_flag::CancelFlag
+    )
+    item = resolve_completion_item(server.state, msg.params; cancel_flag)
+    if is_cancelled(cancel_flag)
+        return send(server, CompletionResolveResponse(;
+            id = msg.id, result = nothing, error = request_cancelled_error()))
+    end
+    return send(server, CompletionResolveResponse(; id = msg.id, result = item))
 end
