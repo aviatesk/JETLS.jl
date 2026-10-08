@@ -380,7 +380,7 @@ const PendingAnalyses = CASContainer{Dict{AnalysisEntry,Union{Nothing,AnalysisRe
 const CurrentGenerations = CASContainer{Dict{AnalysisEntry,Int}, CASStats}
 const AnalyzedGenerations = CASContainer{Dict{AnalysisEntry,Int}, CASStats}
 const DebouncedRequests = LWContainer{Dict{AnalysisEntry,Tuple{Timer,Base.Event}}, LWStats}
-const InstantiatedEnvs = LWContainer{Dict{String,Union{Nothing,Tuple{Base.PkgId,String}}}, LWStats}
+const InstantiatedEnvs = LWContainer{Set{String}, LWStats}
 
 struct PendingAnalysisRequest
     uri::URI
