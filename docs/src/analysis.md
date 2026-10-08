@@ -228,8 +228,10 @@ the module context, such as
 are reported only once full analysis has established the module context of the
 file. JETLS then refreshes the live diagnostics to include them, so they appear
 without further edits. Global names are likewise resolved against the
-definitions that full analysis has loaded. Hover and type inlay hints also run
-type inference on the current top-level form on demand in that context.
+definitions that full analysis has loaded, except that completion of global
+names also offers the global names defined by the current contents of files in
+in the same analysis unit. Hover and type inlay hints also run type inference
+on the current top-level form on demand in that context.
 
 ### [Files without full analysis](@id analysis/live/fallback)
 
@@ -264,6 +266,6 @@ imports. As a result:
   context. The arguments of other macro calls are analyzed approximately, as
   if they were written without the macro. For global names, these features
   only consider the file itself.
-- Completion of global names offers only the names available in the fallback
-  context, not the global names that the file itself defines.
+- Completion of global names offers the names available in the fallback context
+  and the global names that the file itself defines.
 - Hover and type inlay hints may give incomplete results.

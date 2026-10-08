@@ -382,6 +382,16 @@ function global_completions!(
     is_cancelled(comp_ctx.cancel_flag) && return false
     all_names = Base.invoke_in_world(world, Base.unsorted_names, context_module;
         all=true, imported=true, usings=true)::Vector{Symbol}
+
+    is_cancelled(comp_ctx.cancel_flag) && return false
+    live_names = live_global_names(comp_ctx, context_module)
+
+    is_cancelled(comp_ctx.cancel_flag) && return false
+    union!(prioritized_names, live_names)
+    live_only_names = setdiff!(live_names, all_names)
+    append!(all_names, live_only_names)
+
+    is_cancelled(comp_ctx.cancel_flag) && return false
     for name in all_names
         if context_module === FallbackAnalysisContext && name === :FallbackAnalysisContext
             continue
@@ -445,10 +455,36 @@ function global_completions!(
             filterText,
             insertTextFormat,
             textEdit,
-            data = GlobalCompletionData(resolver_id, resolveName))
+            data = name in live_only_names ? nothing :
+                GlobalCompletionData(resolver_id, resolveName))
     end
 
     return is_completed ? #=isIncomplete=#false : nothing
+end
+
+# Globals of `context_module` introduced by the live contents of synchronized documents in
+# the analysis unit, which full-analysis may not reflect yet (e.g. unsaved definitions).
+# Unsynchronized files are skipped: full-analysis loads their on-disk contents, and lowering
+# all of them would delay completion.
+function live_global_names(comp_ctx::CompletionCtx, context_module::Module)
+    (; state, snapshot, cancel_flag) = comp_ctx
+    names = Set{Symbol}()
+    analysis_info = get_analysis_info(state.analysis_manager, snapshot.cache_uri)
+    for uri in collect_search_uris(snapshot.cache_uri, analysis_info)
+        is_cancelled(cancel_flag) && break
+        fi = uri == snapshot.cache_uri ? snapshot.fi :
+            @something get_file_info(state, uri) continue
+        iterate_toplevel_tree(build_syntax_tree(fi)) do st0::SyntaxTree
+            is_cancelled(cancel_flag) && return traversal_terminator
+            binding_occurrences = @something get_binding_occurrences!(state, uri, fi, st0) return
+            for (binfo, occurrences) in binding_occurrences
+                binfo.kind === :global && binfo.mod === context_module || continue
+                all(o -> o.kind === :use, occurrences) && continue
+                push!(names, Symbol(binfo.name))
+            end
+        end
+    end
+    return names
 end
 
 # Property completions

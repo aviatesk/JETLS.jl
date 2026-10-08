@@ -137,6 +137,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   ```
   See [Test selection](https://aviatesk.github.io/JETLS.jl/release/testrunner/#testrunner/test-selection) for what runs along with the selected tests.
 
+- Completion of global names now also offers the names defined in open files, including unsaved edits, so definitions you have just written can be completed before full analysis loads them on save.
+  For [files without full analysis](https://aviatesk.github.io/JETLS.jl/release/analysis/#analysis/live/fallback), it now offers the global names the file itself defines in addition to the names of the fallback context.
+
 - `textDocument/completion` and `completionItem/resolve` requests now stop partway when the client cancels them, e.g. when the editor requests completions again while you keep typing, or when VSCode moves the focus to another completion item before the details of the previous one are resolved.
 
 ### Fixed
