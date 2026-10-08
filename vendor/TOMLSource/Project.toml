@@ -9,7 +9,9 @@ TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
 PrecompileTools = "32931bc0-5014-5544-84d5-53636ff9f6c5"
 
 [sources.PrecompileTools]
-path = "../PrecompileTools"
+subdir = "vendor/PrecompileTools"
+rev = "3a31af4c7f871f79944de8feb9211d2fa7765e4c"
+url = "https://github.com/aviatesk/JETLS.jl"
 
 [compat]
 julia = "1.12"
