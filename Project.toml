@@ -35,19 +35,30 @@ Revise = "d54aa4ff-5f0d-5e64-8d83-7613e0a93f9b"
 Sockets = "6462fe0b-24de-5631-8697-dd941f90decc"
 StructTypes = "66bcceda-d870-5865-93dd-65803322e79e"
 TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
-TOMLSource = "fbc9d53b-f647-41b7-9740-8c31078b51cf"
+TOMLSource = "7718a0b2-46c0-5f25-a46d-52644d8fb185"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 TestRunner = "65a77010-ae58-5cc9-8243-71cff1cf0f92"
 
 [sources]
-Compiler = {path = "Compiler"}
-JET = {rev = "dbd9ced85d", url = "https://github.com/aviatesk/JET.jl"}
-JuliaLowering = {rev = "4b1c835db9", subdir = "JuliaLowering", url = "https://github.com/JuliaLang/julia"}
-JuliaSyntax = {rev = "4b1c835db9", subdir = "JuliaSyntax", url = "https://github.com/JuliaLang/julia"}
-LSP = {path = "LSP"}
-Revise = {rev = "32638add42", url = "https://github.com/timholy/Revise.jl"}
-TOMLSource = {path = "TOMLSource"}
-TestRunner = {rev = "21eef22df8", url = "https://github.com/aviatesk/TestRunner.jl"}
+CodeTracking = {path = "vendor/CodeTracking"}
+Compiler = {path = "vendor/Compiler"}
+Glob = {path = "vendor/Glob"}
+JET = {path = "vendor/JET"}
+JSON3 = {path = "vendor/JSON3"}
+JuliaInterpreter = {path = "vendor/JuliaInterpreter"}
+JuliaLowering = {path = "vendor/JuliaLowering"}
+JuliaSyntax = {path = "vendor/JuliaSyntax"}
+LSP = {path = "vendor/LSP"}
+LoweredCodeUtils = {path = "vendor/LoweredCodeUtils"}
+MacroTools = {path = "vendor/MacroTools"}
+OrderedCollections = {path = "vendor/OrderedCollections"}
+Parsers = {path = "vendor/Parsers"}
+PrecompileTools = {path = "vendor/PrecompileTools"}
+Preferences = {path = "vendor/Preferences"}
+Revise = {path = "vendor/Revise"}
+StructTypes = {path = "vendor/StructTypes"}
+TOMLSource = {path = "vendor/TOMLSource"}
+TestRunner = {path = "vendor/TestRunner"}
 
 [compat]
 Compiler = "0.1.1"

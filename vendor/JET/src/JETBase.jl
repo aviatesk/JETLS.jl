@@ -342,9 +342,21 @@ include("abstractinterpret/abstractanalyzer.jl")
 include("abstractinterpret/typeinfer.jl")
 
 """
-    print_report(io::IO, report::ToplevelErrorReport)
+    print_report(io::IO, report::Union{ToplevelErrorReport,ToplevelWarningReport})
 
-Prints a report of the top-level error `report` to the given `io`.
+Print a top-level error or warning report to the given `io`.
+
+The message starts with a summary that makes sense on its own, followed by a blank line
+and the body if any. Consumers can control the formatting with the following `IO`
+properties:
+- `:summary_line::Bool`: if `true`, the summary is printed on a single line, so that
+  consumers can show the first line on its own; otherwise it is wrapped like the body.
+  Error messages from Julia in the summary are not wrapped either way: when such a
+  summary does not fit, the error message starts a new line.
+- `:displaysize::Tuple{Int,Int}`: the message is wrapped at 90 columns, or at the width
+  of the display if it is narrower.
+- `:markdown_rendering::Bool`: if `true`, the message is rendered as Markdown, and
+  preformatted text such as stacktraces and source excerpts is printed in code blocks.
 """
 function print_report end
 
@@ -427,6 +439,12 @@ Represents the result of analyzing top-level code, including files, packages, an
 `JETToplevelResult` implements `Base.show` methods for JET's supported front ends.
 Julia's display system selects the appropriate method when rendering the
 analysis result.
+
+When top-level processing stops at a fatal error, the displayed result shows only that
+error, under a `Top-level analysis failed` heading that asks to fix the error and rerun
+the analysis. Otherwise, top-level warnings are shown before inference reports, and the
+`No errors detected` message is shown only when there are neither warnings nor
+inference reports.
 """
 struct JETToplevelResult{Analyzer<:AbstractAnalyzer,JETConfigs}
     analyzer::Analyzer
@@ -482,9 +500,17 @@ end
 Return the reports represented by `result`, one per detected issue.
 
 For a [`JETCallResult`](@ref), this returns the inference reports after applying
-report configuration. For a [`JETToplevelResult`](@ref), top-level errors take
-precedence: if any top-level errors were collected, only those errors are
-returned. Otherwise, this returns the configured inference reports.
+report configuration. For a [`JETToplevelResult`](@ref), a fatal top-level error
+stops analysis and takes precedence: this returns a vector containing only that
+error, without the warnings or inference reports collected before it. Otherwise,
+this returns top-level warning reports followed by the configured inference reports,
+so consumers must not assume that every element is an `InferenceErrorReport`.
+Report filtering applies only to inference reports; warnings are retained.
+Warnings are not also emitted as log messages.
+
+Because the returned reports can include warnings that do not indicate problems in
+the analyzed code, use [`has_problems(result)`](@ref has_problems) rather than
+checking whether this vector is empty to decide whether `result` has problems.
 """
 function get_reports(result::JETCallResult)
     reports = get_reports(result.analyzer, result.result)
@@ -492,13 +518,14 @@ function get_reports(result::JETCallResult)
 end
 function get_reports(result::JETToplevelResult)
     res = result.res
-    if !isempty(res.toplevel_error_reports)
-        # non-empty `ret.toplevel_error_reports` means critical errors happened during
-        # the AST transformation, so they always have precedence over `ret.inference_error_reports`
-        return res.toplevel_error_reports
-    else
-        return configured_reports(res.inference_error_reports; result.jetconfigs...)
+    report = res.toplevel_error_report
+    if report !== nothing
+        return ToplevelErrorReport[report]
     end
+    reports = configured_reports(res.inference_error_reports; result.jetconfigs...)
+    warnings = res.toplevel_warning_reports
+    isempty(warnings) && return reports
+    return Union{ToplevelWarningReport,InferenceErrorReport}[warnings; reports]
 end
 
 """
@@ -591,7 +618,7 @@ julia> @report_call foo("julia")
 ││││││││││││┌ (::Base.BottomRF{typeof(Base.add_sum)})(acc::Char, x::Char) @ Base ./reduce.jl:86
 │││││││││││││┌ add_sum(x::Char, y::Char) @ Base ./reduce.jl:24
 ││││││││││││││ no matching method found `+(::Char, ::Char)`: (x::Char + y::Char)
-│││││││││││││└────────────────────
+││││││││││└┴┴┴──────────────────────────────────────────────────────────────────
 ││││││││││┌ foldl_impl(op::Base.BottomRF{typeof(Base.add_sum)}, nt::Base._InitialValue, itr::String) @ Base ./reduce.jl:49
 │││││││││││┌ reduce_empty_iter(op::Base.BottomRF{typeof(Base.add_sum)}, itr::String) @ Base ./reduce.jl:383
 ││││││││││││┌ reduce_empty_iter(op::Base.BottomRF{typeof(Base.add_sum)}, itr::String, ::Base.HasEltype) @ Base ./reduce.jl:384
@@ -599,10 +626,10 @@ julia> @report_call foo("julia")
 ││││││││││││││┌ reduce_empty(::typeof(Base.add_sum), ::Type{Char}) @ Base ./reduce.jl:352
 │││││││││││││││┌ reduce_empty(::typeof(+), ::Type{Char}) @ Base ./reduce.jl:343
 ││││││││││││││││ no matching method found `zero(::Type{Char})`: zero(T::Type{Char})
-│││││││││││││││└────────────────────
+└┴┴┴┴┴┴┴┴┴┴┴┴┴┴┴───────────────────────────────────────────────────────────────────
 ┌ foo(a::String) @ Main ./REPL[14]:3
 │ `Main.undefsum` is not defined: undefsum
-└────────────────────
+└─────────────────────────────────────────
 
 # With `target_modules=(Main,)`, JET reports only problems detected in code
 # defined interactively in the REPL:
@@ -610,21 +637,21 @@ julia> @report_call target_modules=(Main,) foo("julia")
 ═════ 1 possible error found ═════
 ┌ foo(a::String) @ Main ./REPL[14]:3
 │ `Main.undefsum` is not defined: undefsum
-└────────────────────
+└─────────────────────────────────────────
 
 # With `ignored_modules=(Base,)`, JET ignores errors detected in `Base`:
 julia> @report_call ignored_modules=(Base,) foo("julia")
 ═════ 1 possible error found ═════
 ┌ foo(a::String) @ Main ./REPL[14]:3
 │ `Main.undefsum` is not defined: undefsum
-└────────────────────
+└─────────────────────────────────────────
 
 # Alternatively, use a Symbol to specify the module by name:
 julia> @report_call ignored_modules=(:Base,) foo("julia")
 ═════ 1 possible error found ═════
 ┌ foo(a::String) @ Main ./REPL[14]:3
 │ `Main.undefsum` is not defined: undefsum
-└────────────────────
+└─────────────────────────────────────────
 ```
 ---
 """
@@ -1100,13 +1127,25 @@ function call_test_ex(funcname::Symbol, testname::Symbol, ex0, __module__, __sou
     end
 end
 
+"""
+    has_problems(result::Union{JETCallResult,JETToplevelResult}) -> Bool
+
+Returns whether `result` reports problems in the analyzed code. Tests implemented with
+[`call_test_ex`](@ref) or [`func_test`](@ref) fail exactly when this returns `true`.
+[`UnsupportedFeatureReport`](@ref)s are not counted, since they describe JET's own
+limitations rather than problems in the analyzed code. All other reports are counted,
+including top-level warnings such as [`ParseWarningReport`](@ref)s.
+"""
+has_problems(result::Union{JETCallResult,JETToplevelResult}) =
+    !all(@nospecialize(report) -> report isa UnsupportedFeatureReport, get_reports(result))
+
 function _call_test_ex(funcname::Symbol, testname::Symbol, ex0, __module__, __source__)
     analysis = InteractiveUtils.gen_call_with_extracted_types_and_kwargs(__module__, funcname, ex0)
     orig_expr = QuoteNode(Expr(:macrocall, GlobalRef(@__MODULE__, testname), __source__, ex0...))
     source = QuoteNode(__source__)
     testres = :(try
         result = $analysis
-        if length(get_reports(result)) == 0
+        if !has_problems(result)
             Pass($(QuoteNode(testname)), $orig_expr, nothing, nothing, $source)
         else
             JETTestFailure($orig_expr, $source, result)
@@ -1139,7 +1178,7 @@ function func_test(func, testname::Symbol, @nospecialize(args...);
     else
         testres = try
             result = func(args...; jetconfigs...)
-            if length(get_reports(result)) == 0
+            if !has_problems(result)
                 Pass(testname, orig_expr, nothing, nothing, source)
             else
                 JETTestFailure(orig_expr, source, result)
@@ -1241,10 +1280,10 @@ reexport_as_api!(JETInterface,
     AbstractAnalyzer, AnalyzerState, AnalysisToken, ToplevelAbstractAnalyzer,
     valid_configurations, aggregation_policy, typeinf_world, VSCode.vscode_diagnostics_order,
     # ErrorReport API
-    InferenceErrorReport, ToplevelErrorReport, copy_report, print_report,
+    InferenceErrorReport, ToplevelErrorReport, ToplevelWarningReport, copy_report, print_report,
     print_report_message, print_signature, report_color,
     # generic entry points,
-    analyze_and_report_call!, call_test_ex, func_test,
+    analyze_and_report_call!, call_test_ex, func_test, has_problems,
     analyze_and_report_file!, analyze_and_report_text!,
     # development utilities
     add_new_report!, var"@jetreport")

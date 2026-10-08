@@ -24,17 +24,23 @@ struct TRInterpreter <: JI.Interpreter
     root_path::Union{Nothing,String}
     # constant across per-file execution
     filename::String # absolute path
+    file_patterns::Union{Nothing,Vector{Any}} # `nothing` executes all code of the file
     context::Module
     current_exceptions::Vector{ExceptionFrame}
+    # constant across per-top-level-expression execution
+    selected_lines::Set{Int}
 end
 function TRInterpreter(interp::TRInterpreter;
                        patterns::Dict{String,Vector{Any}} = interp.patterns,
                        filter_lines::Dict{String,Set{Int}} = interp.filter_lines,
                        root_path::Union{Nothing,String} = interp.root_path,
                        filename::String = interp.filename,
+                       file_patterns::Union{Nothing,Vector{Any}} = interp.file_patterns,
                        context::Module = interp.context,
-                       current_exceptions::Vector{ExceptionFrame} = interp.current_exceptions)
-    return TRInterpreter(patterns, filter_lines, root_path, filename, context, current_exceptions)
+                       current_exceptions::Vector{ExceptionFrame} = interp.current_exceptions,
+                       selected_lines::Set{Int} = interp.selected_lines)
+    return TRInterpreter(patterns, filter_lines, root_path, filename, file_patterns, context,
+                         current_exceptions, selected_lines)
 end
 
 const current_interpreter = Ref{TRInterpreter}()
@@ -104,12 +110,18 @@ runtest("testfile.jl", ["unit tests", r"helper.*", 42])
 ```
 
 # Notes
-- All top-level code (except @test and @testset) is automatically executed
+- All code except unmatched tests (`@test`, `@testset`, etc.) is automatically executed,
+  both at the top level and around tests nested in other code, e.g. in `let` blocks or in
+  the testsets enclosing matched code. Only the code using what unmatched tests compute,
+  e.g. `n = (@testset "name" ...).n_passed`, is skipped along with them
 - Only top-level code is interpreted; function calls within tests are compiled for performance
 - Matched code runs within its enclosing testsets without running their other tests
 - If an empty patterns collection is provided, only non-test top-level code will be executed
   (no `@test` or `@testset` expressions will run). This includes all function definitions,
   imports, and other setup code, including any `include` statements
+- Files included by matched code, e.g. by `@testset "name" include("file.jl")`, are executed
+  entirely, including the files they include in turn. Files included by the other code have
+  only their non-test top-level code executed
 """
 function runtest(filename::AbstractString, patterns;
                  filter_lines=nothing,
@@ -128,7 +140,8 @@ function runtest(filename::AbstractString, patterns;
         filter_lines = Dict{String,Set{Int}}(filepath => Set{Int}(filter_lines))
     end
     rp = root_path === nothing ? nothing : String(root_path)
-    interp = TRInterpreter(patterns, filter_lines, rp, filepath, topmodule, ExceptionFrame[])
+    interp = TRInterpreter(patterns, filter_lines, rp, filepath, patterns[filepath], topmodule,
+                           ExceptionFrame[], Set{Int}())
     global current_interpreter
     current_interpreter[] = interp
     empty!(errors_and_fails)
@@ -157,8 +170,9 @@ for test suites that include multiple test files via `include` statements.
       "test/perf_tests.jl" => [50:100]  # run tests on lines 50-100
   ]
   ```
-  Files not listed in this dictionary will have all their top-level code executed
-  (excluding `@test` and `@testset` expressions)
+  Files not listed in this dictionary are executed entirely when they are the entry file or
+  included by matched code (including the files they `include` in turn), and otherwise only
+  their non-test top-level code is executed
 - `filter_lines=nothing`: Optional collection of `filename => line_numbers` pairs that
   specify line-based filtering for each file. When provided for a file, only pattern matches
   that overlap with the specified lines will be executed in that file
@@ -185,7 +199,8 @@ runtests("test/runtests.jl", [
 
 # Combine with line filtering for precise control
 runtests("test/runtests.jl",
-    ["test/core.jl" => ["important tests"]],
+    ["test/runtests.jl" => [],
+     "test/core.jl" => ["important tests"]],
     filter_lines=["test/core.jl" => [45, 46, 47]]
 )
 ```
@@ -193,8 +208,8 @@ runtests("test/runtests.jl",
 # Notes
 - The entry file is always executed starting from `entryfilename`
 - Files included via `include()` statements will be discovered and processed automatically
-- For files not specified in `patterns`, all non-test top-level code is executed
-  (no @test or @testset expressions will run)
+- Files not specified in `patterns` are executed entirely when included by matched code,
+  and otherwise only their non-test top-level code is executed
 - Pattern types for each file follow the same rules as `runtest`:
   strings, regexes, expressions, integers, and ranges
 """
@@ -216,7 +231,8 @@ function runtests(entryfilename::AbstractString, patterns_for_files;
     # See `runtest` — keep `entryfilename` verbatim when `source` is supplied.
     filepath = source === nothing ? abspath(entryfilename) : String(entryfilename)
     rp = root_path === nothing ? nothing : String(root_path)
-    interp = TRInterpreter(patterns, filter_lines, rp, filepath, topmodule, ExceptionFrame[])
+    interp = TRInterpreter(patterns, filter_lines, rp, filepath, get(patterns, filepath, nothing),
+                           topmodule, ExceptionFrame[], Set{Int}())
     global current_interpreter
     current_interpreter[] = interp
     empty!(errors_and_fails)
@@ -250,6 +266,9 @@ function _selective_run(interp::TRInterpreter, sntop::JS.SyntaxNode)
     end
 
     context = interp.context
+    patterns = interp.file_patterns
+    filter_lines = get(interp.filter_lines, interp.filename, nothing)
+    ret = nothing
     while !isempty(vnodes)
         node = pop!(vnodes)
         lnn = LineNumberNode(JS.source_line(node), interp.filename)
@@ -263,10 +282,12 @@ function _selective_run(interp::TRInterpreter, sntop::JS.SyntaxNode)
             newcontext = Core.eval(context, Expr(:module, !isbare, Expr(ModuleName), Expr(:block, lnn)))
             newinterp = TRInterpreter(interp; context=newcontext)
             children = JS.children(newsntop)
-            children === nothing && continue
-            for newsn in children
-                _selective_run(newinterp, newsn)
+            if children !== nothing
+                for newsn in children
+                    _selective_run(newinterp, newsn)
+                end
             end
+            ret = newcontext
             continue
         end
 
@@ -278,46 +299,66 @@ function _selective_run(interp::TRInterpreter, sntop::JS.SyntaxNode)
         # For the meanwhile, we should also raise an error to indicate that
         # TestRunner fails to selectively execute such code.
 
-        patterns = get(interp.patterns, interp.filename, nothing)
+        lines = Set{Int}()
+        isnothing(patterns) || matched_lines!(lines, node, patterns, filter_lines)
+        nodeinterp = TRInterpreter(interp; selected_lines=lines)
+        test_lines = isnothing(patterns) ? Set{Int}() : unmatched_test_lines(node, lines)
 
         if !isnothing(patterns) && is_test_expr
             # For @testset and @test, use pattern matching
             expr = attribute_testset_to_call_site(expr::Expr)
-            lines = Set{Int}()
-            matched_lines!(lines, node, patterns, get(interp.filter_lines, interp.filename, nothing))
 
             expr = Expr(:block, expr, lnn)
             lwr = Meta.lower(context, expr)
 
             if !Meta.isexpr(lwr, :thunk)
-                Core.eval(context, lwr)
+                ret = Core.eval(context, lwr)
                 continue
             end
             src = only(lwr.args)::CodeInfo
 
             concretized = falses(length(src.code))
-            controller = select_statements!(interp, concretized, src, context, lines)
+            controller = select_statements!(nodeinterp, concretized, src, context, lines,
+                                            test_lines)
 
-            frame = JI.Frame(interp.context, src)
-            LCU.selective_eval_fromstart!(interp, frame, concretized, controller, #=istoplevel=#true)
+            frame = JI.Frame(context, src)
+            ret = LCU.selective_eval_fromstart!(nodeinterp, frame, concretized, controller, #=istoplevel=#true)
         else
-            # Unconditionally execute non-test top-level code,
-            # or no patterns are specified for this file.
-            # Note: We use `JI.finish!` here instead of `Core.eval`
+            # Unconditionally execute non-test top-level code, except the unmatched tests
+            # nested in it, or no patterns are specified for this file.
+            # Note: We use `JI.finish_and_return!` here instead of `Core.eval`
             # to ensure proper handling of `include` statements through our
             # custom `evaluate_call!` implementation
+            isempty(test_lines) || (expr = attribute_testset_to_call_site(expr::Expr))
+            # `global x` alone can't be lowered within a block on Julia 1.12, and has no code
+            # for `is_matched` to check anyway
+            isdecl = Meta.isexpr(expr, :global) &&
+                     !any(arg -> Meta.isexpr(arg, :(=)), expr.args)
+            if !(Meta.isexpr(expr, :toplevel) || isdecl)
+                # Attribute the code to its line, like `JI.ExprSplitter` does, for `is_matched`
+                expr = Expr(:block, lnn, expr)
+            end
             lwr = Meta.lower(context, expr)
 
             if !Meta.isexpr(lwr, :thunk)
-                Core.eval(context, lwr)
+                ret = Core.eval(context, lwr)
                 continue
             end
             src = only(lwr.args)::CodeInfo
 
             frame = JI.Frame(context, src)
-            JI.finish!(interp, frame, #=istoplevel=#true)
+            if isempty(test_lines)
+                ret = JI.finish_and_return!(nodeinterp, frame, #=istoplevel=#true)
+            else
+                concretized = falses(length(src.code))
+                controller = select_statements!(nodeinterp, concretized, src, context,
+                                                lines, test_lines)
+                ret = LCU.selective_eval_fromstart!(nodeinterp, frame, concretized,
+                                                    controller, #=istoplevel=#true)
+            end
         end
     end
+    return ret
 end
 
 # `Test.@testset` attributes its whole expansion to the first `LineNumberNode` of the body
@@ -416,36 +457,64 @@ function matches_named_testset_call(pat::Union{AbstractString,Regex}, @nospecial
     return pat isa Regex ? occursin(pat, name) : pat == name
 end
 
-function is_testset_or_test(@nospecialize expr)
-    # Check if expression is a test-related macro call
-    return MacroTools.@capture(expr, @inferred(xs__)) ||
-           MacroTools.@capture(expr, @test(xs__)) ||
-           MacroTools.@capture(expr, @test_broken(xs__)) ||
-           MacroTools.@capture(expr, @test_deprecated(xs__)) ||
-           MacroTools.@capture(expr, @test_logs(xs__)) ||
-           MacroTools.@capture(expr, @test_warn(xs__)) ||
-           MacroTools.@capture(expr, @test_skip(xs__)) ||
-           MacroTools.@capture(expr, @test_throws(xs__)) ||
-           MacroTools.@capture(expr, @testset(xs__))
+# The lines of the test macro calls in `node` that don't overlap `matched_lines`. The tests
+# that do overlap them are matched or enclose matched code, so the code in them is searched
+# for unmatched tests like any other code, except definitions and quoted code, which don't
+# run along with `node`.
+function unmatched_test_lines(node::JS.SyntaxNode, matched_lines::Set{Int})
+    lines = Set{Int}()
+    stack = JS.SyntaxNode[node]
+    while !isempty(stack)
+        current = pop!(stack)
+        kind = JS.kind(current)
+        if kind == JS.K"function" || kind == JS.K"macro" || kind == JS.K"->" ||
+           kind == JS.K"quote"
+            continue
+        elseif kind == JS.K"macrocall" && is_testset_or_test(Expr(current))
+            sourcefile = JS.sourcefile(current)
+            first_line = JS.source_line(sourcefile, JS.first_byte(current))
+            last_line = JS.source_line(sourcefile, JS.last_byte(current))
+            if !any(in(matched_lines), first_line:last_line)
+                union!(lines, first_line:last_line)
+                continue
+            end
+        end
+        for i = JS.numchildren(current):-1:1
+            push!(stack, current[i])
+        end
+    end
+    return lines
 end
 
-function select_statements!(interp::TRInterpreter, concretized::BitVector, src::CodeInfo, mod::Module, lines::Set{Int})
+# Compared without MacroTools, which would take the underscores in e.g. `@test_broken` for
+# pattern variables
+const TEST_MACRO_NAMES = (Symbol("@inferred"), Symbol("@test"), Symbol("@test_broken"),
+                          Symbol("@test_deprecated"), Symbol("@test_logs"),
+                          Symbol("@test_warn"), Symbol("@test_nowarn"), Symbol("@test_skip"),
+                          Symbol("@test_throws"), Symbol("@testset"))
+
+function is_testset_or_test(@nospecialize expr)
+    # Check if expression is a test-related macro call
+    return Meta.isexpr(expr, :macrocall) && expr.args[1] in TEST_MACRO_NAMES
+end
+
+function select_statements!(interp::TRInterpreter, concretized::BitVector, src::CodeInfo,
+                            mod::Module, lines::Set{Int}, test_lines::Set{Int})
     cl = LCU.CodeLinks(mod, src)
     edges = LCU.CodeEdges(src, cl)
 
     line_stacks = Vector{Vector{Int}}(undef, length(src.code))
     for idx in 1:length(src.code)
-        lins = Base.IRShow.buildLineInfoNode(src.debuginfo, nothing, idx)
-        line_stacks[idx] = Int[lin.line for lin in lins if String(lin.file) == interp.filename]
+        line_stacks[idx] = stmt_line_stack(interp, src, idx)
         # If the line containing this statement is requested by pattern match,
         # this statement needs to be executed.
         if any(in(lines), line_stacks[idx])
             concretized[idx] = true
         end
     end
-    select_enclosing_macro_code!(concretized, line_stacks)
+    excluded = select_nontest_code!(concretized, edges, line_stacks, test_lines)
 
-    controller = select_dependencies!(concretized, src, edges, cl)
+    controller = select_dependencies!(concretized, src, edges, cl, excluded)
 
     # Debug: uncomment to see which statements are selected
     # LCU.print_with_code(stdout, src, concretized)
@@ -453,29 +522,44 @@ function select_statements!(interp::TRInterpreter, concretized::BitVector, src::
     return controller
 end
 
-# The code expanded from an enclosing macro call, e.g. the setup and teardown of an enclosing
-# `@testset`, is attributed to a proper prefix of the line stack of the code nested in it,
-# while the other code in the macro call (e.g. the other tests of that `@testset`) is
-# attributed to longer stacks. Select the former so that the selected code runs within its
-# enclosing context, e.g. so that selected tests are recorded into their enclosing testsets.
-function select_enclosing_macro_code!(concretized::BitVector, line_stacks::Vector{Vector{Int}})
-    prefixes = Set{Vector{Int}}()
+# Select the code around the unmatched tests attributed to `test_lines`, e.g. the rest of a
+# `let` block or an enclosing `@testset` wrapping them, except those tests and the code
+# using what they compute. Return them as `excluded`, so that the dependency selection adds
+# them only when needed. Statements without lines, e.g. some `goto`s, are left to the
+# dependency selection.
+function select_nontest_code!(concretized::BitVector, edges::LCU.CodeEdges,
+                              line_stacks::Vector{Vector{Int}}, test_lines::Set{Int})
+    excluded = falses(length(concretized))
+    worklist = Int[]
     for idx in 1:length(concretized)
-        concretized[idx] || continue
-        line_stack = line_stacks[idx]
-        for n in 1:length(line_stack)-1
-            push!(prefixes, line_stack[1:n])
+        if !concretized[idx] && any(in(test_lines), line_stacks[idx])
+            excluded[idx] = true
+            push!(worklist, idx)
+        end
+    end
+    while !isempty(worklist)
+        for succ in edges.succs[pop!(worklist)]
+            if !concretized[succ] && !excluded[succ]
+                excluded[succ] = true
+                push!(worklist, succ)
+            end
         end
     end
     for idx in 1:length(concretized)
-        if !concretized[idx] && line_stacks[idx] in prefixes
+        if !excluded[idx] && !isempty(line_stacks[idx])
             concretized[idx] = true
         end
     end
-    return concretized
+    return excluded
 end
 
-function select_dependencies!(concretized::BitVector, src::CodeInfo, edges, cl)
+function stmt_line_stack(interp::TRInterpreter, src::CodeInfo, idx::Int)
+    lins = Base.IRShow.buildLineInfoNode(src.debuginfo, nothing, idx)
+    return Int[lin.line for lin in lins if String(lin.file) == interp.filename]
+end
+
+function select_dependencies!(concretized::BitVector, src::CodeInfo, edges, cl,
+                              excluded::BitVector)
     typedefs = LCU.find_typedefs(src)
     cfg = CC.compute_basic_blocks(src.code)
     postdomtree = CC.construct_postdomtree(cfg.blocks)
@@ -485,8 +569,8 @@ function select_dependencies!(concretized::BitVector, src::CodeInfo, edges, cl)
     while changed
         changed = false
         changed |= LCU.add_ssa_preds!(concretized, src, edges, ())
-        changed |= add_ssas_uses!(concretized, ssavalue_uses)
-        changed |= add_slot_deps!(concretized, cl)
+        changed |= add_ssas_uses!(concretized, ssavalue_uses, excluded)
+        changed |= add_slot_deps!(concretized, cl, excluded)
         changed |= LCU.add_typedefs!(concretized, src, edges, typedefs, ())
         changed |= LCU.add_control_flow!(concretized, src, cfg, postdomtree)
     end
@@ -499,12 +583,12 @@ function select_dependencies!(concretized::BitVector, src::CodeInfo, edges, cl)
 end
 
 # Add statements that use SSA values produced by already selected statements
-function add_ssas_uses!(concretized::BitVector, ssavalue_uses)
+function add_ssas_uses!(concretized::BitVector, ssavalue_uses, excluded::BitVector)
     changed = false
     for idx = 1:length(concretized)
         if concretized[idx]
             for use_idx in ssavalue_uses[idx]
-                if !concretized[use_idx]
+                if !concretized[use_idx] && !excluded[use_idx]
                     concretized[use_idx] = true
                     changed = true
                 end
@@ -514,7 +598,7 @@ function add_ssas_uses!(concretized::BitVector, ssavalue_uses)
     return changed
 end
 
-function add_slot_deps!(concretized::BitVector, cl::LCU.CodeLinks)
+function add_slot_deps!(concretized::BitVector, cl::LCU.CodeLinks, excluded::BitVector)
     changed = false
 
     # For each slot, check if any selected statement uses it
@@ -556,7 +640,7 @@ function add_slot_deps!(concretized::BitVector, cl::LCU.CodeLinks)
 
         # Select all prior uses of the slot (to ensure their effects are included)
         for succ_idx in slot_succs.ssas
-            if !concretized[succ_idx]
+            if !concretized[succ_idx] && !excluded[succ_idx]
                 # Only select uses that come before the latest selected use
                 # This helps avoid selecting unrelated later uses
                 latest_selected = 0
@@ -605,7 +689,7 @@ function JI.evaluate_call!(interp::TRInterpreter, frame::JI.Frame, fargs::Vector
     end
     f = popfirst!(fargs)
     args = fargs # now it's really args
-    isinclude(f) && return invokelatest_in_scope(frame, handle_include, interp, f, args)
+    isinclude(f) && return invokelatest_in_scope(frame, handle_include, interp, frame, f, args)
     return invokelatest_in_scope(frame, f, args...)
 end
 
@@ -627,38 +711,46 @@ end
 
 isinclude(@nospecialize f) = f isa Base.IncludeInto || (isa(f, Function) && nameof(f) === :include)
 
-function handle_include(interp::TRInterpreter, @nospecialize(include_func), args::Vector{Any})
+function handle_include(interp::TRInterpreter, frame::JI.Frame, @nospecialize(include_func),
+                        args::Vector{Any})
     nargs = length(args)
-    include_context = interp.context
-    if nargs == 1
-        fname = only(args)
-    elseif nargs == 2
-        x, fname = args
-        if isa(x, Module)
-            include_context = x
-        elseif isa(x, Function)
-            @warn "TestRunner is unable to execute `include(mapexpr::Function, filename::String)` call currently."
-        else
-            @invokelatest include_func(args...) # make it throw throw
-            @assert false "unreachable"
-        end
+    if nargs == 1 && args[1] isa String
+        include_context = interp.context
+    elseif nargs == 2 && args[1] isa Module && args[2] isa String
+        include_context = args[1]::Module
+    elseif nargs ≥ 2 && args[1] isa Function && args[end] isa String
+        # `mapexpr` takes whole top-level expressions, including `module`s that
+        # `_selective_run` splits up, so `include(mapexpr, [m,] path)` runs natively, with
+        # an absolute path that native `include` doesn't resolve against `:SOURCE_PATH`
+        path = abspath(include_path(interp, args[end]::String))
+        return @invokelatest include_func(args[1:end-1]..., path)
     else
-        @invokelatest include_func(args...) # make it throw throw
-        throw(ErrorException("unreachable"))
+        return @invokelatest include_func(args...)
     end
-    if !isa(fname, String)
-        @invokelatest include_func(args...) # make it throw throw
-        @assert false "unreachable"
+    included_file = include_path(interp, args[end]::String)
+    # Files without their own patterns run their tests only when included by matched code
+    file_patterns = get(interp.patterns, included_file) do
+        is_matched(interp, frame) ? nothing : Any[]
     end
-    # Use `interp.root_path` only as a fallback when the current file has no
-    # meaningful directory (i.e. a virtual top-level filename). Once an
-    # include resolves into a real path, nested includes use that file's
-    # `dirname` as usual.
+    newinterp = TRInterpreter(interp; filename=included_file, file_patterns,
+                              context=include_context)
+    return _selective_run(newinterp)
+end
+
+function is_matched(interp::TRInterpreter, frame::JI.Frame)
+    interp.file_patterns === nothing && return true
+    line_stack = stmt_line_stack(interp, frame.framecode.src, frame.pc)
+    return any(in(interp.selected_lines), line_stack)
+end
+
+# Use `interp.root_path` only as a fallback when the current file has no
+# meaningful directory (i.e. a virtual top-level filename). Once an
+# include resolves into a real path, nested includes use that file's
+# `dirname` as usual.
+function include_path(interp::TRInterpreter, fname::String)
     filedir = dirname(interp.filename)
     base = isempty(filedir) ? something(interp.root_path, "") : filedir
-    included_file = normpath(base, fname)
-    newinterp = TRInterpreter(interp; filename=included_file, context=include_context)
-    _selective_run(newinterp)
+    return normpath(base, fname)
 end
 
 function JI.handle_err(interp::TRInterpreter, frame::JI.Frame, @nospecialize(err))

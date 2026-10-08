@@ -28,8 +28,8 @@ dependencies are executed.
 Install from the `release` branch, which has vendored dependencies to avoid
 conflicts with your project's packages:
 
-```julia-repl
-pkg> app add https://github.com/aviatesk/TestRunner.jl#release
+```bash
+julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/TestRunner.jl", rev="release")'
 ```
 
 This installs the `testrunner` executable. Make sure `~/.julia/bin` is in your
@@ -43,7 +43,7 @@ For programmatic usage within Julia:
 pkg> add https://github.com/aviatesk/TestRunner.jl#release
 ```
 
-## Quick Start
+## Quick start
 
 ```bash
 $ testrunner demo.jl "basic tests"  # Run tests matching a specific testset name
@@ -64,7 +64,7 @@ julia> runtest("demo.jl", ["basic tests", "struct tests"])
 julia> runtest("demo.jl", [:(@test startswith(inner_func2(), "inner"))])
 ```
 
-## Programmatic Usage
+## Programmatic usage
 
 ### `runtest`
 
@@ -124,32 +124,36 @@ using Test, TestRunner
 
 `TestRunnerTestSet` is automatically used in the [`testrunner` app](#app-usage).
 
-See the [Test Failure/Error Handling](#test-failureerror-handling) section for
+See the [Test failure/error handling](#test-failureerror-handling) section for
 detailed comparisons showing how different types of failures are reported.
 
-## Pattern Types
+## Pattern types
 
-### String Patterns
+### String patterns
+
 Match testsets by exact name:
 ```julia
 # Match a testset by name
 runtest("demo.jl", ["struct tests"])  # matches any testset whose name is "struct tests"
 ```
 
-### Regex Patterns
+### Regex patterns
+
 Match testsets using regular expressions:
 ```julia
 runtest("demo.jl", [r"foo"])  # matches any testset containing "foo"
 ```
 
-### Expression Patterns
+### Expression patterns
+
 Match arbitrary Julia expressions using MacroTools patterns:
 ```julia
 runtest("demo.jl", [:(@test startswith(s_, prefix_))])  # matches e.g. `@test startswith(s, "Julia")`
 runtest("demo.jl", [:(@test a_ > b_)])                  # matches e.g. `@test x > 0`
 ```
 
-### Line Number Patterns
+### Line number patterns
+
 Directly specify line numbers or ranges to execute:
 ```julia
 # Run code on specific lines
@@ -162,7 +166,7 @@ runtest("demo.jl", [10:15])
 runtest("demo.jl", ["basic tests", 42, 50:55])
 ```
 
-## App Usage
+## App usage
 
 TestRunner can be installed as a CLI executable (see the [installation](#installation) section):
 
@@ -398,7 +402,7 @@ Mixed patterns      |    4      4  0.0s
 > the test results in an organized way and is not required for TestRunner
 > functionality itself.
 
-### Test Failure/Error Handling
+### Test failure/error handling
 
 When tests fail or encounter errors, TestRunner provides enhanced debugging
 capabilities through its custom `TestRunnerTestSet` type. This section explains
@@ -406,7 +410,8 @@ how different types of test failures are handled and reported.
 Let's compare how different types of test failures are reported with and without
 `TestRunnerTestSet`:
 
-#### 1. Test Failure
+#### 1. Test failure
+
 For simple assertion failures, there's no difference between the two approaches.
 Both provide the full interpreter stacktrace.
 
@@ -436,7 +441,8 @@ Stacktrace:
   ...
 ```
 
-#### 2. Exception Inside `@test`
+#### 2. Exception inside `@test`
+
 When an exception occurs within a `@test` expression, full exception information
 is only available with `TestRunnerTestSet`.
 
@@ -480,7 +486,7 @@ Exception inside of `@test`: Error During Test at demo.jl:74
     ...
 ```
 
-#### 3. Exception Outside `@test`
+#### 3. Exception outside `@test`
 
 When an exception occurs outside of a `@test` macro (preventing subsequent tests
 from running), full exception information is available only with `TestRunnerTestSet`:
@@ -507,7 +513,7 @@ Exception outside of `@test`: Error During Test at demo.jl:77
     ...
 ```
 
-## How It Works
+## How it works
 
 TestRunner leverages JuliaInterpreter and LoweredCodeUtils to selectively
 execute test code:
@@ -518,9 +524,34 @@ execute test code:
    which serve as the bridge to lowered code
 3. Selective Interpretation: Only top-level code is interpreted;
    function calls within tests are compiled and run at normal speed
-4. Conservative Dependency Execution: Executes _all_ top-level code except
-   `@test` and `@testset` expressions to ensure tests don't fail due to
-   missing dependencies
+4. Conservative Dependency Execution: Executes _all_ code except unmatched
+   tests (`@test`, `@testset`, etc.) to ensure tests don't fail due to
+   missing dependencies. This covers top-level code as well as the code
+   around tests nested in other code, e.g. in `let` blocks and in the
+   testsets enclosing matched code, since the effects of such code, e.g.
+   definitions loaded by `include` or changes to global state, can't be
+   tracked. Only the code using what unmatched tests compute, e.g. their
+   results, is skipped along with them:
+   ```julia
+   @testset "outer" begin
+       setup()                  # runs
+       @testset "a" begin       # skipped when only "b" is matched
+           @test f() == 1
+       end
+       @testset "b" begin       # matched
+           @test g() == 2
+       end
+       result = @testset "c" begin  # skipped
+           @test h() == 3
+       end
+       report(result)           # skipped, since it uses the result of "c"
+   end
+   ```
+5. Recursive Inclusion: Files included by matched code, e.g. by
+   `@testset "name" include("file.jl")`, are executed entirely. Files
+   included by the other executed code, including `include` calls in the
+   testsets enclosing matched code, only have their non-test top-level code
+   executed, like the conservative dependency execution above
 
 The key insight is that in reasonably-organized test code, the conservative
 dependency execution would only run the function and type definitions necessary
@@ -659,6 +690,15 @@ unrelated tests while still ensuring all code dependencies are available.
    end
    ```
 
+4. **`include` with `mapexpr`**: Files included with `mapexpr`, e.g. via
+   `include(mapexpr, path)` or `Base.include(mapexpr, mod, path)`, are
+   executed natively as a whole. `mapexpr` takes each top-level expression as
+   a whole, including `module` expressions whose contents TestRunner would
+   otherwise execute one by one, so they cannot be executed selectively.
+   As a result, the tests in such files are executed even when the `include`
+   call is not matched, and patterns given to `runtests` for such files are
+   ignored.
+
 ## Development
 
 TestRunner is built on top of:
@@ -669,7 +709,7 @@ TestRunner is built on top of:
 - [MacroTools.jl](https://github.com/FluxML/MacroTools.jl) for pattern
   matching
 
-### Release Process
+### Release process
 
 TestRunner avoids dependency conflicts by rewriting the UUIDs of its
 dependencies and vendoring them. This allows the `testrunner` CLI to work

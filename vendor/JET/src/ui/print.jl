@@ -39,11 +39,13 @@ are displayed in the REPL.
     location is essential.
 ---
 - `print_toplevel_success::Bool = false` \\
-  If `true`, print a message when no top-level errors are found.
+  **Deprecated**. This configuration has no effect and will be removed in a future release.
 ---
 - `print_inference_success::Bool = true` \\
+  **Deprecated**. This configuration will be removed in a future release.
   If `true`, print a message when no errors are found by an
   abstract-interpretation-based analysis pass.
+  Use [`JET.has_problems(result)`](@ref has_problems) to check whether a result has problems.
 ---
 - `stacktrace_types_limit::Union{Nothing, Int} = nothing` \\
   If `nothing`, limit the type depth of argument types in stack traces based on
@@ -53,20 +55,31 @@ are displayed in the REPL.
 ---
 """
 struct PrintConfig
-    print_toplevel_success::Bool
     print_inference_success::Bool
     sourceinfo::Symbol
     stacktrace_types_limit::Union{Nothing,Int}
-    function PrintConfig(; print_toplevel_success::Bool = false,
-                           print_inference_success::Bool = true,
+    function PrintConfig(; print_toplevel_success::Union{Nothing,Bool} = nothing,
+                           print_inference_success::Union{Nothing,Bool} = nothing,
                            sourceinfo::Symbol = :default,
                            stacktrace_types_limit::Union{Nothing,Int} = nothing,
                            _jetconfigs...)
+        if print_toplevel_success !== nothing
+            Base.depwarn("The `print_toplevel_success` configuration is deprecated and " *
+                         "has no effect. It will be removed in a future release.",
+                         :PrintConfig)
+        end
+        if print_inference_success === nothing
+            print_inference_success = true
+        else
+            Base.depwarn("The `print_inference_success` configuration is deprecated and " *
+                         "will be removed in a future release. Use " *
+                         "`JET.has_problems(result)` to check whether a result has " *
+                         "problems.", :PrintConfig)
+        end
         if sourceinfo ∉ (:full, :default, :compact, :minimal, :none)
             throw(ArgumentError("Invalid sourceinfo: $sourceinfo. Must be one of :full, :default, :compact, :minimal, :none"))
         end
-        return new(print_toplevel_success,
-                   print_inference_success,
+        return new(print_inference_success,
                    sourceinfo,
                    stacktrace_types_limit)
     end
@@ -76,6 +89,7 @@ end
 # =======
 
 const ERROR_COLOR = :light_red
+const WARNING_COLOR = :yellow
 const NOERROR_COLOR = :light_green
 # TODO other nicer color scheme ?
 const RAIL_COLORS = ( # Julia color + yellow
@@ -102,6 +116,25 @@ function print_rails(io, depth)
         color = RAIL_COLORS[i%N_RAILS+1]
         printstyled(io, '│'; color)
     end
+end
+
+# Terminal control sequences, which take no display width: CSI sequences such as colors and
+# OSC sequences such as hyperlinks
+const CONTROL_SEQUENCE = r"\e\[[0-?]*[ -/]*[@-~]|\e\][^\a\e]*(?:\a|\e\\)"
+
+# error messages in report messages can be colored
+display_width(s::AbstractString) = textwidth(replace(s, CONTROL_SEQUENCE => ""))
+
+# The display width of the widest line of the report message `s` as it is finally shown,
+# i.e. after `postprocessor` and without terminal control sequences.
+message_width(s::String, postprocessor::PostProcessor) =
+    maximum(textwidth, split(replace(postprocessor(s), CONTROL_SEQUENCE => ""), '\n'))
+
+# Closes the boxes from depth `to` through `from` on one line that is `width` wide: `└`
+# closes the box at depth `to`, and each `┴` closes a deeper box.
+function print_box_bottom(io::IO, width::Int, from::Int, to::Int, color::Symbol)
+    print_rails(io, to-1)
+    printlnstyled(io, '└', '┴'^(from-to), '─'^max(width-from, 1); color)
 end
 
 function format_path(path::AbstractString, sourceinfo::Symbol)
@@ -142,44 +175,219 @@ function print_reports(io::IO,
     config = PrintConfig(; jetconfigs...)
 
     n = length(reports)
-    if n == 0
-        if config.print_toplevel_success
-            printlnstyled(io, "No toplevel errors detected"; color = NOERROR_COLOR)
-        end
-        return 0
-    end
+    n == 0 && return 0
 
-    ctx = colorctx(io)
-    with_bufferring(ctx) do io
-        s = string(pluralize(n, "toplevel error"), " found")
-        printlnstyled(io, LEFT_ROOF, s, RIGHT_ROOF; color = HEADER_COLOR)
-
-        color = ERROR_COLOR
-
-        rail = with_bufferring(ctx) do io
-            printstyled(io, "│ "; color)
-        end
-
+    with_bufferring(colorctx(io), :displaysize => displaysize(io)) do io
+        s = "Top-level analysis failed"
+        # unlike the headers for found problems, this one tells that the analysis stopped
+        printlnstyled(io, LEFT_ROOF, s, RIGHT_ROOF; color = ERROR_COLOR, reverse = true)
+        println(io, "JET stopped before completing the analysis.")
+        println(io, "Fix the error below and rerun the analysis.")
         for report in reports
-            # For top-level errors, :none and :minimal don't make sense, so treat them as :compact
-            style = config.sourceinfo
-            if style === :none || style === :minimal
-                style = :compact
-            end
-            filepath = format_path(report.file, style)
-            printlnstyled(io, "┌ @ ", filepath, ':', report.line, ' '; color)
-
-            errlines = with_bufferring(ctx) do io
-                print_report(io, report)
-            end |> strip
-            join(io, string.(rail, split(errlines, '\n')), '\n')
-            println(io)
-
-            printlnstyled(io, '└', '─'^(length(s)-1); color)
+            print_toplevel_report(io, report, config, ERROR_COLOR, postprocessor)
         end
     end |> postprocessor |> (x->print(io::IO,x))
 
     return n
+end
+
+function print_reports(io::IO,
+                       reports::Vector{ToplevelWarningReport},
+                       postprocessor::PostProcessor = PostProcessor();
+                       jetconfigs...)
+    config = PrintConfig(; jetconfigs...)
+
+    n = length(reports)
+    n == 0 && return 0
+
+    with_bufferring(colorctx(io), :displaysize => displaysize(io)) do io
+        s = string(pluralize(n, "toplevel warning"), " found")
+        printlnstyled(io, LEFT_ROOF, s, RIGHT_ROOF; color = HEADER_COLOR)
+        for report in reports
+            print_toplevel_report(io, report, config, WARNING_COLOR, postprocessor)
+        end
+    end |> postprocessor |> (x->print(io::IO,x))
+
+    return n
+end
+
+function print_toplevel_report(io::IO,
+                               report::Union{ToplevelErrorReport,ToplevelWarningReport},
+                               config::PrintConfig, color::Symbol,
+                               postprocessor::PostProcessor)
+    ctx = colorctx(io)
+    rail = with_bufferring(ctx) do io
+        printstyled(io, "│ "; color)
+    end
+
+    # For top-level reports, :none and :minimal don't make sense, so treat them as :compact
+    style = config.sourceinfo
+    if style === :none || style === :minimal
+        style = :compact
+    end
+    filepath = format_path(report.file, style)
+    printlnstyled(io, "┌ @ ", filepath, ':', report.line, ' '; color)
+
+    rows, cols = displaysize(io)
+    # the message is printed after the two-column rail
+    lines = with_bufferring(ctx, :displaysize => (rows, cols - 2)) do io
+        print_report(io, report)
+    end |> strip
+    message = join(string.(rail, split(lines, '\n')), '\n')
+    println(io, message)
+    print_box_bottom(io, message_width(message, postprocessor), 1, 1, color)
+    return nothing
+end
+
+function print_reports(io::IO,
+                       reports::Vector{Union{ToplevelWarningReport,InferenceErrorReport}},
+                       postprocessor::PostProcessor = PostProcessor();
+                       jetconfigs...)
+    warnings = ToplevelWarningReport[r for r in reports if r isa ToplevelWarningReport]
+    errors = InferenceErrorReport[r for r in reports if r isa InferenceErrorReport]
+    isempty(warnings) || print_reports(io, warnings, postprocessor; jetconfigs...)
+    # "No errors detected" after warnings would read as if the analysis found no problems
+    if isempty(warnings) || !isempty(errors)
+        print_reports(io, errors, postprocessor; jetconfigs...)
+    end
+    return length(reports)
+end
+
+# A top-level report message starts with a summary that makes sense on its own, followed by
+# a blank line and the body if any. Consumers that show the first line on its own, such as
+# the JETLS CLI, set the `:summary_line` IO property so that the summary is printed on a
+# single line; otherwise it is wrapped like the body.
+summary_line(io::IO) = get(io, :summary_line, false)::Bool
+
+function print_summary(io::IO, summary::String; body::Bool = true)
+    if summary_line(io)
+        print(io, summary)
+    else
+        print_wrapped(io, summary)
+    end
+    body && print(io, "\n\n")
+end
+
+# A summary that joins JET's `context` with an error `message` from Julia. The message is
+# kept intact, like the rest of the error output: when the summary does not fit, the
+# message starts a new line instead of being wrapped.
+function print_summary(io::IO, context::String, message::String; body::Bool = true)
+    summary = isempty(message) ? "$context." : "$context: $message"
+    if summary_line(io) || display_width(summary) ≤ wrap_width(io)
+        print(io, summary)
+    else
+        print_wrapped(io, "$context:")
+        print(io, '\n', message)
+    end
+    body && print(io, "\n\n")
+end
+
+# Prints the error message as Julia shows it, after the context of the error: the first line
+# of the `showerror` output joins the context in the summary, and the rest of the output,
+# including the stacktrace, makes the body.
+function print_error_report(io::IO, context::String, @nospecialize(err),
+                            st::Base.StackTraces.StackTrace)
+    msg = sprint(showerror, err, st; context=io)
+    firstline, rest = let i = findfirst('\n', msg)
+        i === nothing ? (msg, "") : (msg[1:prevind(msg, i)], msg[nextind(msg, i):end])
+    end
+    print_summary(io, context, firstline; body = !isempty(rest))
+    stacktrace = markdown_rendering(io) ? findfirst(r"^Stacktrace:"m, rest) : nothing
+    if stacktrace === nothing
+        print(io, rest)
+    else
+        message = rstrip(rest[1:prevind(rest, first(stacktrace))], '\n')
+        isempty(message) || print(io, message, "\n\n")
+        print_markdown_codeblock(io, rest[first(stacktrace):end])
+    end
+end
+
+# Consumers such as language servers set the `:markdown_rendering` IO property when they
+# render report messages as Markdown. Preformatted text, such as stacktraces and source
+# excerpts, then has to be printed in code blocks to keep Markdown from reflowing it.
+markdown_rendering(io::IO) = get(io, :markdown_rendering, false)::Bool
+
+# the fence is longer than any backtick run in `code`, which would otherwise close it
+function print_markdown_codeblock(io::IO, code::AbstractString)
+    fence = '`'^max(3, maximum(m -> length(m.match) + 1, eachmatch(r"`+", code); init=0))
+    print(io, fence, '\n', code, '\n', fence, '\n')
+end
+
+# Messages are wrapped at `MESSAGE_WIDTH` columns, which keeps prose readable and fits in 92
+# columns with a two-column line prefix. Displays that know their width, such as the REPL,
+# pass it to `print_report` as the `:displaysize` IO property, so that narrower displays get
+# narrower lines.
+const MESSAGE_WIDTH = 90
+
+function wrap_width(io::IO)
+    displaysize = get(io, :displaysize, nothing)
+    displaysize === nothing && return MESSAGE_WIDTH
+    # keep narrow displays legible
+    return clamp(last(displaysize::Tuple{Int,Int}), 40, MESSAGE_WIDTH)
+end
+
+# Prints `text` starting with `prefix` and wrapped at `wrap_width(io)` columns, indenting
+# continuation lines by the width of `prefix`. Inline code spans are not broken.
+function print_wrapped(io::IO, text::String; prefix::String = "")
+    words = message_words(text)
+    indent = textwidth(prefix)
+    print(io, prefix)
+    for (k, line) in enumerate(wrap_lines(map(display_width, words), wrap_width(io) - indent))
+        k == 1 || print(io, '\n', ' '^indent)
+        join(io, @view(words[line]), ' ')
+    end
+end
+println_wrapped(io::IO, text::String; prefix::String = "") =
+    (print_wrapped(io, text; prefix); println(io))
+
+# Breaks words with the given widths into lines of at most `width` columns, choosing the
+# breaks that minimize the sum of squared trailing spaces of the lines. The last line
+# weighs a quarter as much as the others: it may be shorter, but it is not left with only
+# a few words as in greedy wrapping. A word wider than `width` takes a line of its own.
+function wrap_lines(widths::Vector{Int}, width::Int)
+    n = length(widths)
+    # `cost[j+1]` is the minimum cost for the first `j` words, whose last line starts at
+    # word `start[j+1]`
+    cost = fill(typemax(Int), n+1)
+    start = zeros(Int, n+1)
+    cost[1] = 0
+    for j = 1:n
+        linewidth = -1
+        for i = j:-1:1
+            linewidth += widths[i] + 1
+            linewidth > width && i < j && break
+            slack = max(width - linewidth, 0)
+            c = cost[i] + (j == n ? slack^2 : 4slack^2)
+            if c < cost[j+1]
+                cost[j+1] = c
+                start[j+1] = i
+            end
+        end
+    end
+    lines = UnitRange{Int}[]
+    j = n + 1
+    while j > 1
+        pushfirst!(lines, start[j]:j-1)
+        j = start[j]
+    end
+    return lines
+end
+
+# space-separated words of `text`, where an inline code span counts as a single word
+function message_words(text::String)
+    words = String[]
+    start = firstindex(text)
+    in_code = false
+    for (i, c) in pairs(text)
+        if c == ' ' && !in_code
+            start < i && push!(words, text[start:prevind(text, i)])
+            start = nextind(text, i)
+        elseif c == '`'
+            in_code = !in_code
+        end
+    end
+    start ≤ lastindex(text) && push!(words, text[start:end])
+    return words
 end
 
 # inference
@@ -207,23 +415,40 @@ function print_reports(io::IO,
         # don't duplicated virtual stack frames for reports from the same toplevel frame
         toplevel_linfo_hash = hash(:dummy)
         wrote_linfos = Set{UInt64}()
+        open_depth, open_width, open_color = 0, 0, ERROR_COLOR
         for report in reports
             new_toplevel_linfo_hash = hash(first(report.vst))
             if toplevel_linfo_hash != new_toplevel_linfo_hash
                 toplevel_linfo_hash = new_toplevel_linfo_hash
                 wrote_linfos = Set{UInt64}()
             end
-            print_stack(io, report, config, wrote_linfos)
+            if open_depth > 0
+                # close the boxes that the next report does not share
+                to = min(first_printed_depth(report, wrote_linfos), open_depth)
+                print_box_bottom(io, open_width, open_depth, to, open_color)
+            end
+            open_width = print_stack(io, report, config, wrote_linfos, postprocessor)::Int
+            open_depth, open_color = length(report.vst), report_color(report)
         end
+        print_box_bottom(io, open_width, open_depth, 1, open_color)
     end |> postprocessor |> (x->print(io::IO,x))
 
     return n
 end
 
-# traverse abstract call stack, print frames
-function print_stack(io, report, config, wrote_linfos, depth = 1)
+# The depth of the first frame that `print_stack` prints for `report`.
+function first_printed_depth(report::InferenceErrorReport, wrote_linfos::Set{UInt64})
+    vst = report.vst
+    for depth = 1:length(vst)-1
+        hash(vst[depth]) ∉ wrote_linfos && return depth
+    end
+    return length(vst)
+end
+
+# traverse abstract call stack, print frames, and return the width of the error message
+function print_stack(io, report, config, wrote_linfos, postprocessor, depth = 1)
     if length(report.vst) == depth # error here
-        return print_error_frame(io, report, config, depth)
+        return print_error_frame(io, report, config, postprocessor, depth)
     end
 
     frame = report.vst[depth]
@@ -243,7 +468,7 @@ function print_stack(io, report, config, wrote_linfos, depth = 1)
         print_frame_loc(io, frame, config, color)
         println(io)
     end
-    print_stack(io, report, config, wrote_linfos, depth + 1)
+    print_stack(io, report, config, wrote_linfos, postprocessor, depth + 1)
 end
 
 function print_frame_sig(io, frame, config)
@@ -301,7 +526,7 @@ function fixed_line_number(frame)
     return line + Δ
 end
 
-function print_error_frame(io, report, config, depth)
+function print_error_frame(io, report, config, postprocessor, depth)
     frame = report.vst[depth]
     color = report_color(report)
 
@@ -312,13 +537,13 @@ function print_error_frame(io, report, config, depth)
     print_frame_loc(io, frame, config, color)
     println(io)
 
-    print_rails(io, depth-1)
-    printstyled(io, "│ "; color)
-    print_report(io, report, config)
-    println(io)
-
-    print_rails(io, depth-1)
-    printlnstyled(io, '└', '─'^20; color)
+    message = with_bufferring(colorctx(io)) do io
+        print_rails(io, depth-1)
+        printstyled(io, "│ "; color)
+        print_report(io, report, config)
+    end
+    println(io, message)
+    return message_width(message, postprocessor)
 end
 
 function print_report(io::IO, report::InferenceErrorReport, config::PrintConfig=PrintConfig())

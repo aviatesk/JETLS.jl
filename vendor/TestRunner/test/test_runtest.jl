@@ -231,6 +231,165 @@ let testfile = joinpath(@__DIR__, "testfile_included_tests.jl")
     end
 end
 
+module IncludeMapexprPathModule end
+@testset "mapexpr include paths ignore the caller's SOURCE_PATH" begin
+    mktempdir() do dir
+        caller = joinpath(dir, "caller")
+        mkdir(caller)
+        write(joinpath(dir, "child.jl"), "answer = 42\n")
+        write(joinpath(caller, "child.jl"), "answer = 99\n")
+        cd(dir) do
+            # Reproduce calling TestRunner from a script included in another directory.
+            task_local_storage(:SOURCE_PATH, joinpath(caller, "driver.jl")) do
+                for source in ("include(identity, \"child.jl\")",
+                               "Base.include(identity, @__MODULE__, \"child.jl\")")
+                    for root_path in (nothing, ".", dir)
+                        Core.eval(IncludeMapexprPathModule, :(answer = nothing))
+                        runtest("untitled", []; source, root_path,
+                                topmodule=IncludeMapexprPathModule)
+                        @test (@invokelatest getglobal(IncludeMapexprPathModule, :answer)) == 42
+                    end
+                end
+            end
+        end
+    end
+end
+
+module IncludeMapexprModule end
+let testfile = joinpath(@__DIR__, "testfile_include_mapexpr.jl")
+    result = @testset "include with mapexpr" runtest(testfile, ["include with mapexpr"]; topmodule=IncludeMapexprModule)
+    included = only(result.results).results
+    @test [ts.description for ts in included] == ["answer", "answer"]
+    @test all(ts -> ts.n_passed == 1, included)
+end
+
+module IncludeSelectionModule1 end
+module IncludeSelectionModule2 end
+module IncludeSelectionModule3 end
+module IncludeSelectionModule4 end
+module IncludeSelectionModule5 end
+module IncludeSelectionModule6 end
+@testset "included files execute tests only when included by matched code" begin
+    testfile = joinpath(@__DIR__, "testfile_include_selection.jl")
+    descriptions(ts) = [r.description for r in ts.results if r isa Test.DefaultTestSet]
+
+    let result = @testset "bare include" runtest(testfile, ["after bare include"]; topmodule=IncludeSelectionModule1)
+        @test descriptions(result) == ["after bare include"]
+        @test only(result.results).n_passed == 1
+    end
+    let result = @testset "no patterns" runtest(testfile, []; topmodule=IncludeSelectionModule2)
+        @test isempty(result.results)
+    end
+    let result = @testset "include in matched testset" runtest(testfile, ["include in testset"]; topmodule=IncludeSelectionModule3)
+        @test descriptions(only(result.results)) == ["included tests 1", "included tests 2"]
+    end
+    let result = @testset "matched bare include" runtest(testfile, [:(include("_testfile_include_selection1.jl"))]; filter_lines=[3], topmodule=IncludeSelectionModule4)
+        @test descriptions(result) == ["included tests 1"]
+    end
+    # `include` calls in the enclosing testsets are executed, but not those in the other ones
+    let result = @testset "include in enclosing testset" runtest(testfile, ["inner"]; topmodule=IncludeSelectionModule5)
+        outer = only(result.results)
+        @test descriptions(outer) == ["inner"]
+        @test only(outer.results).n_passed == 1
+    end
+    let result = @testset "include as dependency" runtest(testfile, ["uses value"]; topmodule=IncludeSelectionModule6)
+        dependency = only(result.results)
+        @test descriptions(dependency) == ["uses value"]
+        @test only(dependency.results).n_passed == 1
+    end
+end
+
+module GlobalIncludeLineModule end
+module GlobalIncludeExprModule end
+module GlobalIncludeUnmatchedModule end
+@testset "include in a global assignment" begin
+    source = """
+    using Test
+    global declared
+    global value = include("_testfile_include_selection2.jl")
+    """
+    filename = joinpath(@__DIR__, "global-include.jl")
+    for (patterns, topmodule, expected) in (
+        ([3], GlobalIncludeLineModule, 2),
+        ([:(include("_testfile_include_selection2.jl"))], GlobalIncludeExprModule, 2),
+        ([], GlobalIncludeUnmatchedModule, 0))
+        result = @testset "global include" runtest(filename, patterns; source, topmodule)
+        @test length(result.results) == expected
+        @test all(ts -> ts.n_passed == 1, result.results)
+        @test (@invokelatest getglobal(topmodule, :value)) == 2
+    end
+end
+
+module EnclosingIncludeModule end
+module EnclosingCallIncludeModule end
+@testset "code in enclosing testsets" begin
+    # `call_include` includes the file natively, which runs its tests as well
+    for (setup, topmodule, expected) in (
+        ("Base.include(@__MODULE__, \"_testfile_include_selection2.jl\")",
+         EnclosingIncludeModule, ["inner"]),
+        ("call_include(\"_testfile_include_selection2.jl\")",
+         EnclosingCallIncludeModule, ["included tests 1", "included tests 2", "inner"]))
+        source = """
+        using Test
+        call_include(file) = include(joinpath(@__DIR__, file))
+        @testset "outer" begin
+            $setup
+            @testset "sibling" begin
+                include("missing.jl")
+            end
+            @testset "inner" begin
+                @test value2() == 2
+            end
+        end
+        """
+        filename = joinpath(@__DIR__, "enclosing-code.jl")
+        result = @testset "enclosing code" runtest(filename, ["inner"]; source, topmodule)
+        outer = only(result.results)
+        @test outer.description == "outer"
+        @test [ts.description for ts in outer.results] == expected
+        @test all(ts -> ts.n_passed == 1, outer.results)
+    end
+end
+
+module WrappedTestsModule1 end
+module WrappedTestsModule2 end
+module WrappedTestsModule3 end
+module WrappedTestsModule4 end
+module WrappedTestsModule5 end
+module WrappedTestsModule6 end
+@testset "tests nested in non-test code run only when matched" begin
+    testfile = joinpath(@__DIR__, "testfile_wrapped_tests.jl")
+    descriptions(ts) = [r.description for r in ts.results if r isa Test.DefaultTestSet]
+
+    let result = @testset "non-test code" runtest(testfile, ["non-test code"]; topmodule=WrappedTestsModule1)
+        @test descriptions(result) == ["non-test code"]
+        @test result.n_passed == 0
+        @test only(result.results).n_passed == 5
+        # The code using the result of an unmatched test doesn't run
+        @test !(@invokelatest isdefinedglobal(WrappedTestsModule1, :result_count))
+    end
+    let result = @testset "no patterns" runtest(testfile, []; topmodule=WrappedTestsModule2)
+        @test isempty(result.results)
+        @test result.n_passed == 0
+        @test (@invokelatest getglobal(WrappedTestsModule2, :mutated)) == [1, 2, 3, 4]
+    end
+    let result = @testset "testset in let" runtest(testfile, ["let testset"]; topmodule=WrappedTestsModule3)
+        @test descriptions(result) == ["let testset"]
+        @test result.n_passed == 0
+    end
+    let result = @testset "test in let" runtest(testfile, [29]; topmodule=WrappedTestsModule4)
+        @test isempty(result.results)
+        @test result.n_passed == 1
+    end
+    let result = @testset "testset in for" runtest(testfile, ["for testset"]; topmodule=WrappedTestsModule5)
+        @test descriptions(result) == ["for testset", "for testset"]
+    end
+    let result = @testset "testset result" runtest(testfile, ["result testset"]; topmodule=WrappedTestsModule6)
+        @test descriptions(result) == ["result testset"]
+        @test (@invokelatest getglobal(WrappedTestsModule6, :result_count)) == 1
+    end
+end
+
 module RunTestsModule1 end
 module RunTestsModule2 end
 module RunTestsModule3 end

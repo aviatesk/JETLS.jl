@@ -64,6 +64,86 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `JETInterface` now exports `has_problems`, the predicate that `call_test_ex`
+  and `func_test` use to decide whether an analysis result fails a test.
+
+### Changed
+
+- Top-level processing now stops entirely at the first fatal parsing, macro
+  expansion, lowering, concrete execution, dependency, or include failure.
+  No later statements, modules, files, or definition analysis are processed.
+  Fatal results are displayed as `Top-level analysis failed`, with guidance
+  to fix the error and rerun the incomplete analysis.
+  `VirtualProcessResult.toplevel_error_report` holds that single
+  `ToplevelErrorReport`, or `nothing` on success. `get_reports` on a
+  `JETToplevelResult` still returns a vector: only the fatal error on failure,
+  or warnings followed by filtered inference reports on success. Module and
+  `report_config` filtering apply only to inference reports; warnings are
+  retained, so successful results can contain a mix of report types. The
+  console output prints warnings before inference reports and omits the
+  "No errors detected" message when warnings are present. The `Test`
+  integration (`test_file`, `test_text`, `test_package`) does not count
+  `UnsupportedFeatureReport`s as failures, but `ParseWarningReport`s still
+  fail tests.
+
+  > [!WARNING]
+  > Known limitation: forced interruption skips user `finally` blocks in
+  > interpreted code, including during timeout, missing-concretization, and
+  > fatal include failures. Concrete execution can leave the working directory
+  > changed or locks held after analysis exits; its side effects are not rolled
+  > back.
+
+- Nonfatal JET warnings are stored in
+  `VirtualProcessResult.toplevel_warning_reports`, a
+  `Vector{ToplevelWarningReport}`, and are not also emitted as `@warn` logs.
+  Parser warnings now produce nonfatal `ParseWarningReport`s. Unsupported
+  `include(mapexpr, filename)` calls produce `UnsupportedFeatureReport`s and
+  analyze the included file without applying `mapexpr`.
+
+- The explanatory text of top-level reports is wrapped at 90 columns, or at
+  the terminal width when results are shown in a narrower REPL. Error
+  messages, stacktraces, and source excerpts are not wrapped.
+
+- The `Top-level analysis failed` header is now highlighted in red.
+
+- Top-level report messages now start with a summary, followed by a blank line
+  and the details. Errors from parsing, macro expansion, lowering, and concrete
+  execution are summarized with what JET was doing and the first line of the
+  error message, e.g.
+  `JET could not execute this top-level code: UndefVarError: ...`, and parser
+  diagnostics as `Syntax error: ...` or `Syntax warning: ...`.
+  `UnsupportedFeatureReport`s show a common summary above the description of
+  the unsupported feature, and `RecursiveIncludeErrorReport`s list the include
+  chain. The VS Code integration keeps the summary on the first line of its
+  diagnostics.
+
+### Deprecated
+
+- The `print_toplevel_success` and `print_inference_success` configurations
+  are deprecated and will be removed in a future release. Passing either one
+  emits `Base.depwarn`. `print_toplevel_success` now has no effect; displayed
+  analysis results never printed its message. `print_inference_success` keeps
+  working until its removal; use `JET.has_problems(result)` to check whether
+  an analysis result has problems.
+
+- `VirtualProcessResult.toplevel_error_reports` is deprecated and will be
+  removed in a future release. Access emits `Base.depwarn` and returns a fresh
+  empty or one-element `Vector`; `propertynames` lists the property only when
+  private names are requested. Migrate to `toplevel_error_report`: replace
+  `isempty(res.toplevel_error_reports)` with
+  `isnothing(res.toplevel_error_report)` and use the singular report directly
+  when non-`nothing`. For a vector of reports from a `JETToplevelResult`, use
+  `JET.get_reports(result)` instead.
+
+### Fixed
+
+- Fixed top-level analysis crashing with an `AssertionError` when a docstring
+  is attached to an expression that cannot be documented, such as an `if`
+  block. The analysis now stops with the error that Julia raises for such
+  code, `cannot document the following expression`.
+
 ## [0.12.3]
 
 ### Changed

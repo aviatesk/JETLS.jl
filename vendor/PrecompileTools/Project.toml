@@ -13,9 +13,7 @@ UUIDs = "cf7118a7-6976-5b1a-9a39-7adc72f591a4"
 Preferences = "cc588e5a-7be0-5224-8a6a-549b21958db9"
 
 [sources.Preferences]
-subdir = "vendor/Preferences"
-rev = "984830c3c5ca3f7711807c0a3bad4d5b2ee079a8"
-url = "https://github.com/aviatesk/JETLS.jl"
+path = "../Preferences"
 
 [targets]
 test = ["InteractiveUtils", "Pkg", "Test", "UUIDs"]
