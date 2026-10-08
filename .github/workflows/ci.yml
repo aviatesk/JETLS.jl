@@ -20,6 +20,7 @@ jobs:
       jetls: ${{ steps.filter.outputs.jetls }}
       lsp: ${{ steps.filter.outputs.lsp }}
       hierarchical_testsets: ${{ steps.filter.outputs.hierarchical_testsets }}
+      markdownsource: ${{ steps.filter.outputs.markdownsource }}
       tomlsource: ${{ steps.filter.outputs.tomlsource }}
       selfcheck: ${{ steps.filter.outputs.selfcheck }}
       schemas: ${{ steps.filter.outputs.schemas }}
@@ -51,6 +52,9 @@ jobs:
           HIERARCHICAL_TESTSETS_PATHS: |
             HierarchicalTestSets/**
             .github/workflows/HierarchicalTestSets.jl.yml
+          MARKDOWNSOURCE_PATHS: |
+            MarkdownSource/**
+            .github/workflows/MarkdownSource.jl.yml
           TOMLSOURCE_PATHS: |
             TOMLSource/**
             .github/workflows/TOMLSource.jl.yml
@@ -58,6 +62,7 @@ jobs:
             src/**
             LSP/**
             HierarchicalTestSets/**
+            MarkdownSource/**
             TOMLSource/**
             Compiler/**
             Project.toml
@@ -120,6 +125,7 @@ jobs:
             echo "jetls=$(changed "$JETLS_PATHS")"
             echo "lsp=$(changed "$LSP_PATHS")"
             echo "hierarchical_testsets=$(changed "$HIERARCHICAL_TESTSETS_PATHS")"
+            echo "markdownsource=$(changed "$MARKDOWNSOURCE_PATHS")"
             echo "tomlsource=$(changed "$TOMLSOURCE_PATHS")"
             echo "selfcheck=$(changed "$SELFCHECK_PATHS")"
             echo "schemas=$(changed "$SCHEMAS_PATHS")"
@@ -157,6 +163,13 @@ jobs:
     needs: changes
     if: github.event_name == 'pull_request' && needs.changes.outputs.hierarchical_testsets == 'true'
     uses: ./.github/workflows/HierarchicalTestSets.jl.yml
+
+  # `push` runs are handled by `MarkdownSource.jl.yml` itself to keep its own status badge.
+  markdownsource:
+    name: MarkdownSource.jl
+    needs: changes
+    if: github.event_name == 'pull_request' && needs.changes.outputs.markdownsource == 'true'
+    uses: ./.github/workflows/MarkdownSource.jl.yml
 
   # `push` runs are handled by `TOMLSource.jl.yml` itself to keep its own status badge.
   tomlsource:
@@ -204,6 +217,7 @@ jobs:
       - jetls
       - lsp
       - hierarchical_testsets
+      - markdownsource
       - tomlsource
       - selfcheck
       - check_schemas
