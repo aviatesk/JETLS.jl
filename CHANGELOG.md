@@ -67,6 +67,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 >
 > Note: Path glob patterns use `/` as the separator on all platforms, including Windows; backslashes are not supported as separators.
 
+### Added
+
+- Added the `on_include` field to [`analysis_overrides`](https://aviatesk.github.io/JETLS.jl/release/launching/#init-options/analysis_overrides) entries.
+  With `on_include = "skip"`, full analysis skips an `include` of a matched file and continues with the rest of the analysis unit, reporting [`toplevel/analysis-skipped`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/toplevel/analysis-skipped) as information at the call.
+  This suits files whose definitions the rest of the unit does not use, such as an expensive test file included from `test/runtests.jl`:
+  ```toml
+  [[initialization_options.analysis_overrides]]
+  path = "test/test_expensive.jl"
+  on_include = "skip"
+  ```
+  The default `on_include = "stop"` stops the unit with `toplevel/analysis-stopped` (see the fix below).
+  Like `analysis_overrides` itself, `on_include` is experimental and may be removed or changed at any time.
+
 ### Changed
 
 - [`toplevel/abstract-field`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/toplevel/abstract-field) is now reported as a hint instead of information, since abstract fields are often intentional.
@@ -80,7 +93,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   severity = "info"
   ```
 
+- Files excluded by [`analysis_overrides`](https://aviatesk.github.io/JETLS.jl/release/launching/#init-options/analysis_overrides) now report [`toplevel/analysis-skipped`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/toplevel/analysis-skipped) as information at their first line, naming the matched pattern, so that the exclusion is visible.
+  The files of a package or its tests whose entry file is excluded report it as well, naming the entry file.
+  Passing such files to `jetls check` now reports it along with the diagnostics that do not require full analysis, instead of failing with `could not find any files to analyze`.
+  Package extension files keep reporting it as a warning.
+
 ### Fixed
+
+- Fixed [`analysis_overrides`](https://aviatesk.github.io/JETLS.jl/release/launching/#init-options/analysis_overrides) being ignored when full analysis reached an excluded file through `include`, or when the excluded file was the entry file of a package or its tests.
+  Full analysis now stops that unit before loading the excluded file and reports the new [`toplevel/analysis-stopped`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/toplevel/analysis-stopped) warning at the `include` call, unless the override sets `on_include = "skip"` (see above).
+  Diagnostics from top-level code before the include are kept, but code after it and method bodies are not analyzed. Other analysis units are unaffected.
+  Since this is a warning, it causes `jetls check` to fail by default.
+  Like `analysis_overrides` itself, `toplevel/analysis-stopped` is experimental and may be removed or changed at any time.
+  The files of a package or its tests whose entry file is excluded are no longer analyzed, and report `toplevel/analysis-skipped` instead.
 
 - Fixed a `WARNING: Detected access to binding ... in a world prior to its definition world` message that full analysis could print for scripts that define a `global const` inside a `let` block and use it within the same block, e.g. during `jetls check`.
 

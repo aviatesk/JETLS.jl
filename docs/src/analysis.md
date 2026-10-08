@@ -214,6 +214,31 @@ initialization option excludes the matched files from full analysis:
 path = "test/fixtures/**"
 ```
 
+An excluded file reports
+[`toplevel/analysis-skipped`](@ref diagnostic/reference/toplevel/analysis-skipped)
+at its first line, which names the matched pattern. If the entry file of a
+package or its tests is excluded, the other files of that analysis unit are
+not analyzed either, and report the same diagnostic naming the entry file.
+
+If full analysis reaches an `include` of a matched file, it reports
+[`toplevel/analysis-stopped`](@ref diagnostic/reference/toplevel/analysis-stopped)
+at the call site and stops the entire analysis unit before loading that file.
+Code after that point and method bodies are not analyzed; diagnostics from
+top-level code before the `include` are kept. Disabling the warning
+through diagnostic settings does not change this behavior.
+
+When the code after the `include` does not depend on the matched file, set
+`on_include = "skip"` to continue the analysis without loading the file
+instead. Full analysis then reports
+[`toplevel/analysis-skipped`](@ref diagnostic/reference/toplevel/analysis-skipped)
+at the call site and analyzes the rest of the unit as usual:
+
+```toml
+[[initialization_options.analysis_overrides]]
+path = "test/test_expensive.jl"
+on_include = "skip"
+```
+
 Excluded files are handled as described in
 [Files without full analysis](@ref analysis/live/fallback).
 
@@ -261,7 +286,8 @@ Full analysis does not cover the following files:
   [How each file is analyzed](@ref analysis/full/files))
 - Files that are not reachable through `include` from the entry file of any
   analysis unit, such as a file under `src/` that the package does not include
-- Files excluded with [`analysis_overrides`](@ref init-options/analysis_overrides)
+- Files excluded with [`analysis_overrides`](@ref init-options/analysis_overrides),
+  and the files of a package or its tests whose entry file is excluded
 - Any file until its first full analysis completes
 
 For these files, live analysis uses a fallback module context in place of the
@@ -277,8 +303,11 @@ imports. As a result:
   [`lowering/undef-global-var`](@ref diagnostic/reference/lowering/undef-global-var),
   [`lowering/unused-import`](@ref diagnostic/reference/lowering/unused-import),
   and [`lowering/macro-expansion-error`](@ref diagnostic/reference/lowering/macro-expansion-error),
-  are not reported. Neither are `toplevel/*` and `inference/*` diagnostics,
-  which come from full analysis.
+  are not reported. Neither are `inference/*` diagnostics or `toplevel/*`
+  diagnostics from code loading. For package extension files and files
+  excluded with `analysis_overrides`,
+  [`toplevel/analysis-skipped`](@ref diagnostic/reference/toplevel/analysis-skipped)
+  explains why the file is not analyzed.
 - Go-to-definition, references, and rename keep working for local variables,
   including inside `@testset` and other macros available in the fallback
   context. The arguments of other macro calls are analyzed approximately, as

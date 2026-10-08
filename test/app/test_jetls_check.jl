@@ -481,6 +481,81 @@ end
     end
 end
 
+@testset "analysis override stops included code" begin
+    mktempdir() do dir
+        marker = joinpath(dir, "executed")
+        filepath = write_test_file(dir, "main.jl", """
+            include("excluded.jl")
+            @eval write($(repr(marker)), "after")
+            """)
+        write_test_file(dir, "excluded.jl", "@eval write($(repr(marker)), \"excluded\")")
+        config = """
+            [[initialization_options.analysis_overrides]]
+            path = "excluded.jl"
+            """
+        write_config_file(dir, config)
+        let result = run_jetls_check([filepath]; root=dir, skip_analysis=false)
+            @test result.exitcode == 1
+            @test occursin("toplevel/analysis-stopped", result.stdout)
+            @test occursin("excluded.jl", result.stdout)
+            @test !isfile(marker)
+        end
+
+        write_config_file(dir, config * """
+            [[diagnostic.patterns]]
+            pattern = "toplevel/analysis-stopped"
+            match_by = "code"
+            match_type = "literal"
+            severity = "off"
+            """)
+        let result = run_jetls_check([filepath]; root=dir, skip_analysis=false)
+            @test result.exitcode == 0
+            @test !occursin("toplevel/analysis-stopped", result.stdout)
+            @test !isfile(marker)
+        end
+    end
+end
+
+@testset "analysis override skips included code" begin
+    mktempdir() do dir
+        marker = joinpath(dir, "executed")
+        filepath = write_test_file(dir, "main.jl", """
+            include("excluded.jl")
+            after() = undefined_after()
+            """)
+        write_test_file(dir, "excluded.jl", "@eval write($(repr(marker)), \"excluded\")")
+        write_config_file(dir, """
+            [[initialization_options.analysis_overrides]]
+            path = "excluded.jl"
+            on_include = "skip"
+            """)
+        result = run_jetls_check([filepath]; root=dir, skip_analysis=false)
+        @test occursin("[info:toplevel/analysis-skipped]", result.stdout)
+        @test !occursin("toplevel/analysis-stopped", result.stdout)
+        @test occursin("[warn:inference/undef-global-var]", result.stdout)
+        @test !isfile(marker)
+    end
+end
+
+@testset "files excluded by analysis overrides" begin
+    mktempdir() do dir
+        filepath = write_test_file(dir, "excluded.jl", """
+            excluded() = undefined_in_excluded()
+            unused_local() = (x = 1; nothing)
+            """)
+        write_config_file(dir, """
+            [[initialization_options.analysis_overrides]]
+            path = "excluded.jl"
+            """)
+        result = run_jetls_check([filepath]; root=dir, skip_analysis=false)
+        @test result.exitcode == 0
+        @test occursin("[info:toplevel/analysis-skipped]", result.stdout)
+        @test occursin("`excluded.jl`", result.stdout)
+        @test occursin("[info:lowering/unused-local]", result.stdout)
+        @test !occursin("undef-global-var", result.stdout)
+    end
+end
+
 @testset "multiple files" begin
     mktempdir() do dir
         file1 = write_test_file(dir, "file1.jl", """
@@ -733,7 +808,7 @@ end
 
         result = run_jetls_check([filepath]; root=dir, skip_analysis=false)
         @test result.exitcode == 1
-        @test occursin("toplevel/analysis-skipped", result.stdout)
+        @test occursin("[warn:toplevel/analysis-skipped]", result.stdout)
         @test !occursin("toplevel/error", result.stdout)
     end
 end

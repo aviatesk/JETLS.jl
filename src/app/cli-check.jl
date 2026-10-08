@@ -497,18 +497,27 @@ function run_check_analysis(
         stdin_source === nothing || push!(analysis_uris, stdin_source.uri)
     else
         # Full analysis phase (textDocument/publishDiagnostics equivalent)
-        @with_cli_LOAD_PATH run_full_analysis(server, root_path, paths, stdin_source, progress_ctx)
+        requested_uris = @with_cli_LOAD_PATH run_full_analysis(
+            server, root_path, paths, stdin_source, progress_ctx)
         analysis_uris = collect_workspace_uris(server)
-        if isempty(analysis_uris)
+        manager = server.state.analysis_manager
+        if isempty(analysis_uris) && !any(requested_uris) do uri::URI
+                analysis_info = get_analysis_info(manager, uri)
+                analysis_info isa OutOfScope && analysis_info.exclusion !== nothing
+            end
             @error "Full analysis failed: could not find any files to analyze"
             return 1
         end
+        # Requested files get the diagnostics that live analysis reports for them in the
+        # editor, even when they are excluded by `analysis_overrides` or no analysis unit
+        # reaches them, e.g. when a unit stops at an excluded `include`.
+        union!(analysis_uris, requested_uris)
     end
 
     uri2diagnostics = get_full_diagnostics(server)
 
     # Per-file diagnostics phase (workspace diagnostics worker equivalent)
-    total_uris = run_per_file_diagnostics!(uri2diagnostics, analysis_uris, server, root_path, progress_ctx)
+    total_uris = run_per_file_diagnostics!(uri2diagnostics, analysis_uris, server, root_path, progress_ctx; skip_analysis)
 
     for (uri, diagnostics) in uri2diagnostics
         apply_diagnostic_config!(diagnostics, server.state.config_manager, uri, root_path)
@@ -574,6 +583,7 @@ function run_full_analysis(
                 wait=true, notify_diagnostics=false, cancellable_token, debounce=0.0)
         end
     end
+    return uris
 end
 
 cli_display_path(uri::URI, root_path::AbstractString) =
@@ -597,7 +607,8 @@ end
 
 function run_per_file_diagnostics!(
         uri2diagnostics::Dict{URI,Vector{Diagnostic}}, analyzed_uris::Set{URI},
-        server::Server, root_path::AbstractString, progress_ctx::ProgressContext
+        server::Server, root_path::AbstractString, progress_ctx::ProgressContext;
+        skip_analysis::Bool
     )
     total_uris = length(analyzed_uris)
     uri2diagnostics_lock = ReentrantLock()
@@ -614,6 +625,9 @@ function run_per_file_diagnostics!(
             end return
             lookup_func = function ()
                 server_lookup_func = gen_lookup_out_of_scope!(server.state, uri)
+                # Files that no analysis unit reaches use the fallback context as in the
+                # editor, while `Main` stands in for the module context without analysis.
+                skip_analysis || return server_lookup_func()
                 @something server_lookup_func() OutOfScope(Main)
             end
             diagnostics = compute_live_diagnostics!(

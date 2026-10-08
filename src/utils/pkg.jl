@@ -32,56 +32,63 @@ const JULIA_DIR = let
     ispath(normpath(p1, "base")) ? p1 : p2
 end
 
+function find_analysis_override(state::ServerState, uri::URI)
+    uri.scheme == "file" || return nothing
+    analysis_overrides = @something state.init_options.analysis_overrides return nothing
+    filepath = uri2filepath(uri)::String
+    root_path = isdefined(state, :root_path) ? state.root_path : nothing
+    path_for_glob = glob_candidate_path(filepath, root_path)
+    for override in analysis_overrides
+        occursin(override.path, path_for_glob) && return override
+    end
+    return nothing
+end
+
 function find_analysis_env_path(state::ServerState, uri::URI)
     if uri.scheme == "file"
         filepath = uri2filepath(uri)::String
-        analysis_overrides = state.init_options.analysis_overrides
-        if analysis_overrides !== nothing
-            root_path = isdefined(state, :root_path) ? state.root_path : nothing
-            path_for_glob = glob_candidate_path(filepath, root_path)
-            for override in analysis_overrides
-                if occursin(override.path, path_for_glob)
-                    module_name = override.module_name
-                    if !override.full_analysis
-                        if module_name === nothing || module_name == ""
-                            @static JETLS_DEV_MODE && @info "Analysis for this file is disabled" path=filepath
-                            return OutOfScope(FallbackAnalysisContext)
-                        end
-                        mod = @something find_analysis_override_module(module_name) begin
-                            @warn "Analysis module override specified but module not found" module_name path=filepath
-                            return OutOfScope()
-                        end
-                        @static if JETLS_DEV_MODE
-                            path = filepath
-                            @info "Analysis module overridden" module_name=>nameof(mod) path _id=path maxlog=1
-                        end
-                        return OutOfScope(mod)
-                    elseif module_name === nothing || module_name == ""
-                        env_path = @something find_env_path(filepath) begin
-                            @warn "Analysis for this file is disabled, since Project.toml was not found" path=filepath
-                            return OutOfScope()
-                        end
-                        pkg_name = @something find_pkg_name(env_path) begin
-                            @warn "Full analysis is not supported for non-package code" path=filepath
-                            return OutOfScope()
-                        end
-                        pkg_uuid = @something find_pkg_uuid(env_path) begin
-                            @warn "Full analysis is not supported for non-package code" path=filepath
-                            return OutOfScope()
-                        end
-                        return UserModule(env_path, pkg_name, pkg_uuid)
-                    else
-                        mod = @something find_analysis_override_module(module_name) begin
-                            @warn "Analysis module override specified but module not found" module_name path=filepath
-                            return OutOfScope()
-                        end
-                        @static if JETLS_DEV_MODE
-                            path = filepath
-                            @info "Full analysis module overridden" module_name=>nameof(mod) path _id=path maxlog=1
-                        end
-                        return KnownModule(mod, find_env_path(filepath))
-                    end
+        override = find_analysis_override(state, uri)
+        if override !== nothing
+            module_name = override.module_name
+            if !override.full_analysis
+                exclusion = AnalysisExclusion(uri, override.path.pattern)
+                if module_name === nothing || module_name == ""
+                    @static JETLS_DEV_MODE && @info "Analysis for this file is disabled" path=filepath
+                    return OutOfScope(FallbackAnalysisContext, exclusion)
                 end
+                mod = @something find_analysis_override_module(module_name) begin
+                    @warn "Analysis module override specified but module not found" module_name path=filepath
+                    return OutOfScope(nothing, exclusion)
+                end
+                @static if JETLS_DEV_MODE
+                    path = filepath
+                    @info "Analysis module overridden" module_name=>nameof(mod) path _id=path maxlog=1
+                end
+                return OutOfScope(mod, exclusion)
+            elseif module_name === nothing || module_name == ""
+                env_path = @something find_env_path(filepath) begin
+                    @warn "Analysis for this file is disabled, since Project.toml was not found" path=filepath
+                    return OutOfScope()
+                end
+                pkg_name = @something find_pkg_name(env_path) begin
+                    @warn "Full analysis is not supported for non-package code" path=filepath
+                    return OutOfScope()
+                end
+                pkg_uuid = @something find_pkg_uuid(env_path) begin
+                    @warn "Full analysis is not supported for non-package code" path=filepath
+                    return OutOfScope()
+                end
+                return UserModule(env_path, pkg_name, pkg_uuid)
+            else
+                mod = @something find_analysis_override_module(module_name) begin
+                    @warn "Analysis module override specified but module not found" module_name path=filepath
+                    return OutOfScope()
+                end
+                @static if JETLS_DEV_MODE
+                    path = filepath
+                    @info "Full analysis module overridden" module_name=>nameof(mod) path _id=path maxlog=1
+                end
+                return KnownModule(mod, find_env_path(filepath))
             end
         end
         # HACK: we should support Base files properly

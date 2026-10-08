@@ -187,7 +187,8 @@ end
 function cache_intermediate_analysis_result!(interp::LSInterpreter)
     result = JET.JETToplevelResult(interp.analyzer, interp.state.res, "LSInterpreter (intermediate result)", ())
     intermediate_result, _ = JETLS.new_analysis_result(interp, result; intermediate=true)
-    JETLS.update_analysis_cache!(interp.server.state, intermediate_result)
+    pruned_uris = JETLS.update_analysis_cache!(interp.server.state, intermediate_result)
+    JETLS.notify_pruned_uris!(interp.server, interp.execution.request, pruned_uris)
     # Module contexts are complete at this point, which is all live diagnostics need,
     # so refresh them now rather than after signature analysis.
     JETLS.request_diagnostic_refresh!(interp.server)
@@ -309,6 +310,17 @@ end
 
 function JET.try_read_file(interp::LSInterpreter, include_context::Module, filename::AbstractString)
     uri = filename2uri(filename)
+    override = JETLS.find_analysis_override(interp.server.state, uri)
+    if override !== nothing && !override.full_analysis
+        state = JET.InterpretationState(interp)
+        if override.on_include == "skip"
+            push!(interp.warning_reports,
+                JETLS.IncludeSkippedReport(state.filename, state.curline, String(filename)))
+            return nothing
+        end
+        JET.abort_toplevel_analysis!(state,
+            JETLS.AnalysisStoppedReport(state.filename, state.curline, String(filename)))
+    end
     fi = JETLS.get_saved_file_info(interp.server.state, uri)
     if !isnothing(fi)
         parsed_stream = fi.parsed_stream

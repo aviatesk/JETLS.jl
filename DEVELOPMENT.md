@@ -348,8 +348,10 @@ standalone schema files under `schemas/`:
 - `settings.schema.json` (settings only)
 - `init-options.schema.json` (initialization options only)
 - `vscode-configuration.json` (VSCode `package.json` configuration
-  fragments, with `$defs` inlined and `description` renamed to
-  `markdownDescription`; published as a release asset, from which the
+  fragments, with `$defs` inlined, `description` renamed to
+  `markdownDescription`, and internal options marked with `doNotSuggest`
+  so that VSCode does not offer them in completions; published as a
+  release asset, from which the
   [jetls-vscode](https://github.com/aviatesk/jetls-vscode) extension
   syncs its `package.json` for the pinned release)
 

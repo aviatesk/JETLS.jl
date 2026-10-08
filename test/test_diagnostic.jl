@@ -869,6 +869,44 @@ end
     end
 end
 
+@testset "analysis skipped diagnostic for files excluded by `analysis_overrides`" begin
+    mktempdir() do root_path
+        write(joinpath(root_path, "Project.toml"), "name = \"TestAnalysisExcluded\"\n")
+        write(joinpath(root_path, ".JETLSConfig.toml"), """
+            [[initialization_options.analysis_overrides]]
+            path = "src/TestAnalysisExcluded.jl"
+            """)
+        mkpath(joinpath(root_path, "src"))
+        pkgfile = joinpath(root_path, "src", "TestAnalysisExcluded.jl")
+        otherfile = joinpath(root_path, "src", "other.jl")
+        write(pkgfile, """
+            module TestAnalysisExcluded
+            include("other.jl")
+            end
+            """)
+        write(otherfile, "other() = undefined_other()\n")
+        withserver(; rootUri = filepath2uri(root_path)) do (; server, writereadmsg)
+            for (path, named) in ((pkgfile, "`src/TestAnalysisExcluded.jl`"),
+                                  (otherfile, "`$(uri2filename(filepath2uri(pkgfile)))`"))
+                uri = filepath2uri(path)
+                (; raw_res) = writereadmsg(make_DidOpenTextDocumentNotification(uri, read(path, String)))
+                @test raw_res isa PublishDiagnosticsNotification
+                @test raw_res.params.uri == uri
+                diag = only(raw_res.params.diagnostics)
+                @test diag.code == JETLS.TOPLEVEL_ANALYSIS_SKIPPED_CODE
+                @test diag.severity == DiagnosticSeverity.Information
+                @test diag.source == JETLS.DIAGNOSTIC_SOURCE_SAVE
+                @test diag.range.start.line == 0
+                @test occursin(named, diag.message)
+                analysis_info = JETLS.get_analysis_info(server.state.analysis_manager, uri)
+                @test analysis_info isa JETLS.OutOfScope
+                @test analysis_info.exclusion.excluded_uri == filepath2uri(pkgfile)
+                @test !JETLS.has_analyzed_context(server.state, uri)
+            end
+        end
+    end
+end
+
 @testset "method overwrite diagnostic" begin
     # bodies that only return a constant, as in `f() = 1`, carry no line information
     let code = """

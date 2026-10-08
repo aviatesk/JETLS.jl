@@ -467,9 +467,11 @@ _has_analyzed_context(outofscope::OutOfScope, ::URI) =
     !isnothing(outofscope.module_context) &&
     outofscope.module_context !== JETLSTestModule &&
     outofscope.module_context !== FallbackAnalysisContext
-_has_analyzed_context(analysis_result::AnalysisResult, uri::URI) =
-    !(analysis_result.entry isa PackageExtensionAnalysisEntry) &&
-    analyzed_file_info(analysis_result, uri) !== nothing
+function _has_analyzed_context(analysis_result::AnalysisResult, uri::URI)
+    analysis_result.entry isa PackageExtensionAnalysisEntry && return false
+    safi = @something analyzed_file_info(analysis_result, uri) return false
+    return !isempty(safi.module_range_infos)
+end
 
 function collect_workspace_uris(server::Server)
     uris = Set{URI}()

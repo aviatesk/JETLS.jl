@@ -388,6 +388,20 @@ function toplevel_report_message(
     return postprocessor(String(take!(buf)))
 end
 
+# A fatal JET report stops the unit even though its diagnostic is a warning.
+struct AnalysisStoppedReport <: JET.ToplevelErrorReport
+    file::String
+    line::Int
+    excluded_file::String
+end
+
+function JET.print_report(io::IO, report::AnalysisStoppedReport)
+    JET.print_summary(io, "Full analysis of this unit stopped because a file is excluded by `analysis_overrides`.")
+    JET.print_wrapped(io, "The excluded file `$(report.excluded_file)` was not analyzed. " *
+        "Code after this point and method bodies are not analyzed.")
+    return nothing
+end
+
 function jet_toplevel_error_report_to_diagnostic(
         @nospecialize(report::JET.ToplevelErrorReport), world::UInt,
         postprocessor::JET.PostProcessor;
@@ -404,12 +418,14 @@ function jet_toplevel_error_report_to_diagnostic(
         message = toplevel_report_message(postprocessor; markdown_rendering, displaysize) do io
             with_base_render_lock(Base.invoke_in_world, world, JET.print_report, io, report)
         end
-        code = report isa JET.ConcretizationTimeoutErrorReport ?
+        code = report isa AnalysisStoppedReport ? TOPLEVEL_ANALYSIS_STOPPED_CODE :
+            report isa JET.ConcretizationTimeoutErrorReport ?
             TOPLEVEL_CONCRETIZATION_TIMEOUT_CODE : TOPLEVEL_ERROR_CODE
     end
     return Diagnostic(;
         range = line_range(report.line),
-        severity = DiagnosticSeverity.Error,
+        severity = report isa AnalysisStoppedReport ?
+            DiagnosticSeverity.Warning : DiagnosticSeverity.Error,
         message,
         source = DIAGNOSTIC_SOURCE_SAVE,
         code,
@@ -447,14 +463,47 @@ function package_extension_analysis_skipped_diagnostic(;
             "This file is not analyzed, so diagnostics that require full analysis " *
             "are not reported for it.")
     end
-    return Diagnostic(;
-        range = line_range(1),
-        severity = DiagnosticSeverity.Warning,
-        message,
-        source = DIAGNOSTIC_SOURCE_SAVE,
-        code = TOPLEVEL_ANALYSIS_SKIPPED_CODE,
-        codeDescription = diagnostic_code_description(TOPLEVEL_ANALYSIS_SKIPPED_CODE))
+    return analysis_skipped_diagnostic(message, DiagnosticSeverity.Warning)
 end
+
+function analysis_exclusion_diagnostic(
+        uri::URI, exclusion::AnalysisExclusion;
+        markdown_rendering::Bool = false,
+        displaysize::Union{Nothing,Tuple{Int,Int}} = nothing
+    )
+    (; excluded_uri, pattern) = exclusion
+    message = toplevel_report_message(JET.PostProcessor(); markdown_rendering, displaysize) do io
+        if excluded_uri == uri
+            JET.print_summary(io,
+                "Full analysis of this file is disabled by `analysis_overrides`.")
+            JET.print_wrapped(io,
+                "This file matches the path pattern `$pattern`, so diagnostics that " *
+                "require full analysis are not reported for it.")
+        else
+            JET.print_summary(io,
+                "Full analysis of this file is disabled because the entry file of its " *
+                "analysis unit is excluded by `analysis_overrides`.")
+            JET.print_wrapped(io,
+                "The entry file `$(uri2filename(excluded_uri))` matches the path pattern " *
+                "`$pattern`, so diagnostics that require full analysis are not reported " *
+                "for this file.")
+        end
+    end
+    return analysis_skipped_diagnostic(message, DiagnosticSeverity.Information)
+end
+
+analysis_exclusion_diagnostic(server::Server, uri::URI, exclusion::AnalysisExclusion) =
+    analysis_exclusion_diagnostic(uri, exclusion;
+        markdown_rendering = supports(server, :textDocument, :diagnostic, :markupMessageSupport),
+        displaysize = server.state.cli_mode ? cli_message_displaysize() : nothing)
+
+analysis_skipped_diagnostic(message::String, severity::DiagnosticSeverity.Ty) = Diagnostic(;
+    range = line_range(1),
+    severity,
+    message,
+    source = DIAGNOSTIC_SOURCE_SAVE,
+    code = TOPLEVEL_ANALYSIS_SKIPPED_CODE,
+    codeDescription = diagnostic_code_description(TOPLEVEL_ANALYSIS_SKIPPED_CODE))
 
 # `nothing` when JET could not derive a pattern for the assignment: any pattern guessed
 # here would be one that never matches, so no quick fix is offered
@@ -701,6 +750,37 @@ function toplevel_warning_report_to_diagnostic_impl(report::AbstractFieldReport,
         code = TOPLEVEL_ABSTRACT_FIELD_CODE,
         codeDescription = diagnostic_code_description(TOPLEVEL_ABSTRACT_FIELD_CODE),
         data = abstract_ref_field_data(report, fi))
+end
+
+struct IncludeSkippedReport <: ToplevelWarningReport
+    filepath::String
+    line::Int
+    excluded_file::String
+end
+
+toplevel_warning_report_to_uri_impl(report::IncludeSkippedReport) = to_valid_uri(report.filepath)
+
+function toplevel_warning_report_to_diagnostic_impl(report::IncludeSkippedReport, ::Union{FileInfo,SavedFileInfo}, postprocessor::JET.PostProcessor)
+    message = toplevel_report_message(postprocessor) do io
+        JET.print_summary(io, "Full analysis skipped this `include` because the file is excluded by `analysis_overrides`.")
+        JET.print_wrapped(io, "The definitions in the excluded file `$(report.excluded_file)` " *
+            "are not available to the code after this point.")
+    end
+    relatedInformation = DiagnosticRelatedInformation[
+        DiagnosticRelatedInformation(;
+            location = Location(;
+                uri = to_valid_uri(report.excluded_file),
+                range = line_range(1)),
+            message = "The excluded file")
+    ]
+    return Diagnostic(;
+        range = line_range(report.line),
+        severity = DiagnosticSeverity.Information,
+        message,
+        source = DIAGNOSTIC_SOURCE_SAVE,
+        code = TOPLEVEL_ANALYSIS_SKIPPED_CODE,
+        codeDescription = diagnostic_code_description(TOPLEVEL_ANALYSIS_SKIPPED_CODE),
+        relatedInformation)
 end
 
 # lowering diagnostic
@@ -2427,6 +2507,9 @@ function get_full_diagnostics(server::Server; ensure_cleared::Union{Bool,URI} = 
     uri2diagnostics = URI2Diagnostics()
     for (uri, analysis_info) in load(state.analysis_manager.cache)
         if analysis_info isa OutOfScope
+            exclusion = @something analysis_info.exclusion continue
+            push!(get!(Vector{Diagnostic}, uri2diagnostics, uri),
+                analysis_exclusion_diagnostic(server, uri, exclusion))
             continue
         end
         diagnostics = get!(Vector{Diagnostic}, uri2diagnostics, uri)
@@ -2468,6 +2551,11 @@ function get_full_diagnostics(server::Server, uris::Set{URI})
         if analysis_info isa AnalysisResult
             full_diagnostics = get(analysis_info.uri2diagnostics, uri, nothing)
             full_diagnostics === nothing || append!(diagnostics, full_diagnostics)
+        elseif analysis_info isa OutOfScope
+            exclusion = analysis_info.exclusion
+            if exclusion !== nothing
+                push!(diagnostics, analysis_exclusion_diagnostic(server, uri, exclusion))
+            end
         end
         for (_, extra_uri2diagnostics) in extra_diagnostics
             extra = get(extra_uri2diagnostics, uri, nothing)
