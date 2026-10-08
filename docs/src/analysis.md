@@ -5,9 +5,9 @@ JETLS analyzes your code in two layers:
 - **Full analysis** runs when you open or save a file. It loads your code,
   either as a package or as a script, and runs type inference on it, reporting
   `toplevel/*` and `inference/*` diagnostics.
-- **Live analysis** runs as you edit. It parses and lowers each file without
-  running it, reporting `syntax/*` and `lowering/*` diagnostics, and powers
-  language features such as completion and go-to-definition.
+- **Live analysis** runs as you edit. It parses and lowers each file,
+  reporting `syntax/*` and `lowering/*` diagnostics, and powers language
+  features such as completion and go-to-definition.
 
 The two layers are connected by the module context: full analysis records the
 module each part of a file is evaluated in, and live analysis uses it to
@@ -56,8 +56,9 @@ every file reachable from it through `include`.
 
 !!! danger "Security"
     Full analysis runs your top-level code and the dependency packages it
-    loads, both of which can execute arbitrary code. Do not run JETLS on code
-    you do not trust.
+    loads, both of which can execute arbitrary code. Live analysis can also
+    execute macro code during macro expansion. Neither layer is a sandbox;
+    do not run JETLS on code you do not trust.
 
 ### [Full analysis modes](@id analysis/full/modes)
 
@@ -92,7 +93,8 @@ it defines `Point` and `norm2` but only infers `data = rand(10)` and
 [`inference/*` diagnostic](@ref diagnostic/reference/inference).
 
 Since script analysis does not execute such assignments, a definition that
-needs the value of the assigned binding cannot be loaded, and JETLS reports
+needs the value of the assigned binding cannot be loaded unless that value
+can be inferred. Otherwise, JETLS reports
 [`toplevel/missing-concretization`](@ref diagnostic/reference/toplevel/missing-concretization):
 
 ```julia
@@ -118,7 +120,7 @@ file's location relative to it:
 | :------------------------------------ | :----------------- | :--------------------------------------------------- | :------------------------------------ |
 | Package source file (under `src/`)    | `src/<name>.jl`    | [Package analysis](@ref analysis/full/modes/package) | The package environment               |
 | Package test file (under `test/`)     | `test/runtests.jl` | [Script analysis](@ref analysis/full/modes/script)   | The package environment               |
-| Package extension file (under `ext/`) | —                  | Not full-analyzed                                    | —                                     |
+| Package extension file (under `ext/`) | —                  | No full analysis                                     | —                                     |
 | Other file in an environment          | The opened file    | [Script analysis](@ref analysis/full/modes/script)   | The environment of the `Project.toml` |
 | File without a `Project.toml`         | The opened file    | [Script analysis](@ref analysis/full/modes/script)   | No project (the default environment)  |
 
@@ -132,8 +134,8 @@ addition:
 - Other files in an environment include files in a package outside `src/`,
   `test/`, and `ext/`, and files in an environment whose `Project.toml` has no
   `name` entry.
-- With script analysis, a script is analyzed together with the files it
-  includes, while opening a file that no earlier analysis covers makes it the
+- A standalone script is analyzed together with the files it includes.
+  Opening a standalone script that no earlier analysis covers makes it the
   entry file of a new unit. For example, if `scripts/main.jl` includes
   `scripts/utils.jl`, opening `scripts/main.jl` analyzes both files together,
   while opening `scripts/utils.jl` first analyzes it alone, without what
@@ -148,7 +150,7 @@ Some documents are handled differently:
 | :------------------------------------------ | :-------------- | :------------------------------------------------- | :------------------------------------ |
 | Unsaved (untitled) buffer[^unsaved_buffers] | The buffer      | [Script analysis](@ref analysis/full/modes/script) | The environment of the workspace root |
 | Notebook                                    | The notebook    | [Script analysis](@ref analysis/full/modes/script) | The environment of the notebook file  |
-| File outside the workspace root             | —               | Not full-analyzed                                  | —                                     |
+| File outside the workspace root             | —               | No full analysis                                   | —                                     |
 | File opened without a workspace folder      | The opened file | [Script analysis](@ref analysis/full/modes/script) | No project (the default environment)  |
 
 A notebook is analyzed with all its cells as a single script (see
@@ -167,21 +169,27 @@ also analyzes files outside the root path (see
 
 ### [When full analysis runs](@id analysis/full/timing)
 
-Full analysis analyzes a whole unit at a time, in the following cases:
+Full analysis works on whole units. JETLS requests it in the following cases:
 
 - When you open a file that no full analysis covers yet. Opening a file that
   an earlier analysis already covers, e.g. another file of an analyzed
   package, reuses that result.
-- When you save a file. JETLS re-analyzes the unit the file belongs to, such
-  as the entire package for a package source file. Saves are debounced: the
-  analysis starts once no further save has happened for
-  [`[full_analysis] debounce`](@ref config/full_analysis/debounce) seconds.
+- When you save a file. JETLS schedules reanalysis of the unit the file belongs
+  to, such as the entire package for a package source file. Saves are debounced
+  per unit: JETLS waits for
+  [`[full_analysis] debounce`](@ref config/full_analysis/debounce) seconds
+  without another save in that unit before queuing the request.
 - For unsaved buffers, which are never saved, after each edit, with a fixed
   debounce of 3 seconds.
 - For notebooks, when the notebook is opened and when it is saved.
 - When [`[full_analysis] concretization_patterns`](@ref config/full_analysis/concretization_patterns)
   or [`[full_analysis] concretization_timeout`](@ref config/full_analysis/concretization_timeout)
   changes, for every unit that has been analyzed.
+
+Reanalysis is skipped if any previously analyzed file in the unit has a saved
+syntax error. This can prevent full-analysis diagnostics from updating even
+when you save another, syntactically valid file in the same unit. Fix the
+syntax errors and save the affected files to allow full analysis to run again.
 
 The first full analysis in a package environment may require the environment
 to be instantiated. See
@@ -210,8 +218,10 @@ Excluded files are handled as described in
 Live analysis parses and lowers your code with
 [JuliaSyntax.jl](https://github.com/JuliaLang/julia/tree/master/JuliaSyntax)
 and [JuliaLowering.jl](https://github.com/JuliaLang/julia/tree/master/JuliaLowering),
-without running it. It reports [`syntax/*`](@ref diagnostic/reference/syntax)
-and [`lowering/*`](@ref diagnostic/reference/lowering) diagnostics, delivered
+without loading the file as a package or script. Macro expansion can still
+execute macro code. Live analysis reports
+[`syntax/*`](@ref diagnostic/reference/syntax) and
+[`lowering/*`](@ref diagnostic/reference/lowering) diagnostics, delivered
 through the [`JETLS/live`](@ref diagnostic/source) source, and powers most
 language features, such as completion, hover, go-to-definition, references, and
 rename.

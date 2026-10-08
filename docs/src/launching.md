@@ -226,17 +226,17 @@ Configure initialization options in Zed's `settings.json`:
 - **Default**: `[]`
 
 Excludes the matched files from full analysis. This is primarily a workaround
-for the [known memory leak](https://github.com/aviatesk/JETLS.jl/issues/357),
-where memory usage grows with each re-analysis: excluding the files that
-trigger the heaviest analysis keeps the server usable until the leak is fixed.
+for the [known memory leak](https://github.com/aviatesk/JETLS.jl/issues/357), where
+memory usage grows with each re-analysis: limiting costly analysis helps keep
+the server usable until the leak is fixed.
 
-Each entry requires a `path` field: a glob pattern selecting the files to
-exclude. Patterns are matched against file paths relative to the workspace
+Each entry requires a `path` field: a glob pattern selecting the files.
+Patterns are matched against file paths relative to the workspace
 root, and `**` matches directories recursively. Use `/` as the separator on all
 platforms, including Windows; backslashes are not interpreted as separators.
 
 ```toml
-# exclude test fixtures entirely
+# Exclude test fixtures from full analysis
 [[initialization_options.analysis_overrides]]
 path = "test/fixtures/**"
 ```

@@ -106,12 +106,12 @@ JETLS uses three diagnostic sources:
 
 ## [Analysis stages](@id diagnostic/stage)
 
-JETLS produces diagnostics at successive stages of analysis. Each stage owns a
+JETLS produces diagnostics at different stages of analysis. Each stage owns a
 code [category](@ref diagnostic/code) (the first segment of its codes) and
 determines what is analyzed, which tool powers it, and through which
 [source](@ref diagnostic/source) its diagnostics are delivered:
 
-| Category                                               | Pipeline stage | Powered by                               | Source        | Depends on                                      |
+| Category                                               | Stage          | Powered by                               | Source        | Depends on                                      |
 | ------------------------------------------------------ | -------------- | ---------------------------------------- | ------------- | ----------------------------------------------- |
 | [`syntax/*`](@ref diagnostic/reference/syntax)         | Parsing        | JuliaSyntax.jl                           | `JETLS/live`  | —                                               |
 | [`lowering/*`](@ref diagnostic/reference/lowering)     | Lowering       | JuliaLowering.jl                         | `JETLS/live`  | parsing, code loading[^code_loading_dependency] |
@@ -120,13 +120,15 @@ determines what is analyzed, which tool powers it, and through which
 | [`config/*`](@ref diagnostic/reference/config)         | Configuration  | JETLS                                    | `JETLS/extra` | —                                               |
 | [`testrunner/*`](@ref diagnostic/reference/testrunner) | Test execution | TestRunner.jl                            | `JETLS/extra` | manual run                                      |
 
-The first four stages form a pipeline: each builds on the previous one, so a
-failure at an earlier stage limits what the later stages can analyze. Test
-execution is separate and runs only when you trigger it. Configuration checks
-are separate as well and only concern the configuration file. Parsing and
-lowering make up [live analysis](@ref analysis/live), and code loading and type
-inference make up [full analysis](@ref analysis/full); see
-[Analysis](@ref analysis) for how they work.
+The first four stages belong to two cooperating layers, not a single linear
+pipeline. Parsing and lowering make up [live analysis](@ref analysis/live),
+and code loading and type inference make up [full analysis](@ref analysis/full).
+Code-loading errors limit type inference and may leave live analysis without
+a complete module context; context-independent live checks remain available.
+See [Analysis](@ref analysis) for how the layers work together.
+
+Test execution is separate and runs only when you trigger it. Configuration
+checks are separate as well and only concern the configuration file.
 
 Parsing and lowering (the live stages) report byte-precise source ranges, and
 configuration checks report at the keys they concern. Code loading, type
@@ -151,8 +153,9 @@ source and update as you edit.
 Lowering relies on binding and scope information, not types, so it flags
 undefined or unused variables, unreachable code, and the like — but not
 type-level problems, which require [type inference](@ref diagnostic/stage/inference).
-Most checks are self-contained, but macro expansion and global-name resolution
-need a module context, so they additionally depend on
+Macro expansion can execute macro code. Most checks are self-contained, but
+macro expansion and global-name resolution need a module context, so they
+additionally depend on
 [code loading](@ref diagnostic/stage/toplevel)[^code_loading_dependency].
 See [`lowering/*`](@ref diagnostic/reference/lowering) for the diagnostic codes.
 
