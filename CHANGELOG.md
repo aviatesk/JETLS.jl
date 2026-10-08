@@ -56,18 +56,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
-- Added the [`toplevel/unsupported-feature`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/toplevel/unsupported-feature) warning, reported when full analysis loads code that uses a feature JETLS does not support and analyzes it with an approximation instead.
-  It is currently reported for `include(mapexpr, filename)` calls, whose included file is analyzed without applying `mapexpr`.
-
 - Added package directory input to [`jetls check`](https://aviatesk.github.io/JETLS.jl/release/cli-check/#cli-check/input):
   `jetls check /path/to/SomePkg` analyzes the package through its `src/SomePkg.jl`, and `jetls check` without paths analyzes the package in the current directory.
   When a single package directory is given, its `.JETLSConfig.toml` is loaded and paths are displayed relative to it, unless `--root` is specified.
   The `files` input of the [GitHub Action](https://aviatesk.github.io/JETLS.jl/release/cli-check/#cli-check/github-actions) is now optional and defaults to the package at the repository root.
 
 - Added the [`lowering/orphaned-docstring`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/orphaned-docstring) diagnostic, reported on docstrings that silently document nothing:
-  docstrings separated from the definition by a blank line or comment, docstrings in `if` blocks (including `@static if`) without `@doc`, `raw"..."` docstrings without `@doc`, docstrings in local scope such as function bodies, and field docstrings of structs that have no docstring themselves (which Julia discards).
+  - docstrings separated from the definition by a blank line or comment
+  - docstrings in `if` blocks (including `@static if`) without `@doc`
+  - `raw"..."` docstrings without `@doc`
+  - docstrings in local scope such as function bodies
+  - field docstrings of structs that have no docstring themselves (which Julia discards)
+
+  For example, `area` below is left undocumented, since a `raw"..."` docstring needs `@doc`:
+  ```julia
+  raw"""
+      area(r)
+
+  Compute ``\pi r^2``.
+  """  # (JETLS lowering/orphaned-docstring)
+  area(r) = π * r^2
+  ```
   The "Attach docstring to the following definition" code action fixes them by prefixing `@doc` and removing the blank lines as needed.
   This check was suggested in [JuliaLang/julia#63631](https://github.com/JuliaLang/julia/pull/63631), which fixed such docstrings in Julia itself.
+
+- Added the [`toplevel/unsupported-feature`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/toplevel/unsupported-feature) warning, reported when full analysis loads code that uses a feature JETLS does not support and analyzes it with an approximation instead.
+  It is currently reported for `include(mapexpr, filename)` calls, whose included file is analyzed without applying `mapexpr`.
 
 - Added the [`config/deprecated-key`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/config/deprecated-key) and [`config/deprecated-value`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/config/deprecated-value) warnings on deprecated keys and values of `.JETLSConfig.toml`, with quick fixes that remove a key, move its value to the new key, or replace a value, while keeping the rest of the file, including comments, as it is.
   The warning message shown when JETLS loads such a file now also offers a "Fix all" action that applies these fixes to the file.
