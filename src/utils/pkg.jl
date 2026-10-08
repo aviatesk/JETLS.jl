@@ -135,6 +135,32 @@ function find_pkg_uuid(project_toml_dict::Dict{String})
     return pkg_uuid isa String ? pkg_uuid : nothing
 end
 
+"""
+    find_env_package(env_path::String, project_toml_dict::Dict{String})
+        -> Union{Nothing,@NamedTuple{pkgid::Base.PkgId,pkgfile::String}}
+
+Identify the package defined by the project file at `env_path` and its entry file, as
+`Base` does when loading the active project itself. Neither requires the environment to be
+instantiated. Returns `nothing` when the project does not define a package or the entry
+file does not exist.
+"""
+function find_env_package(env_path::String, project_toml_dict::Dict{String})
+    pkgname = @something find_pkg_name(project_toml_dict) return nothing
+    pkguuid = find_pkg_uuid(project_toml_dict)
+    uuid = pkguuid === nothing ? Base.dummy_uuid(env_path) :
+        @something tryparse(Base.UUID, pkguuid) return nothing
+    entryfile = get(project_toml_dict, "path", nothing)
+    if !(entryfile isa String)
+        entryfile = get(project_toml_dict, "entryfile", nothing)
+    end
+    if !(entryfile isa String)
+        entryfile = joinpath("src", pkgname * ".jl")
+    end
+    pkgfile = normpath(joinpath(dirname(env_path), entryfile))
+    isfile(pkgfile) || return nothing
+    return (; pkgid = Base.PkgId(uuid, pkgname), pkgfile)
+end
+
 function parse_project_toml(env_path::AbstractString)
     try
         return TOML.parsefile(env_path)

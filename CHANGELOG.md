@@ -170,6 +170,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Fixed full analysis aborting with an internal error, and reporting no diagnostics for the file, when a docstring is attached to an expression that cannot be documented, such as an `if` block.
   Such code is now reported as a [`toplevel/error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/toplevel/error) with the error Julia raises, `cannot document the following expression`.
 
+- Fixed files under a package's `src/` and `test/` directories being analyzed on their own as scripts when another file in the same package environment, such as a script at the package root or a file under `docs/`, had been analyzed first.
+  They are now analyzed through `src/<name>.jl` and `test/runtests.jl`, as described in [How each file is analyzed](https://aviatesk.github.io/JETLS.jl/release/analysis/#analysis/full/files).
+
 ## 2026-10-04
 
 - Commit: [`3efdc63`](https://github.com/aviatesk/JETLS.jl/commit/3efdc63)
