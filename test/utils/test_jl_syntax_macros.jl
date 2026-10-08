@@ -259,6 +259,129 @@ end
     end
 end
 
+@testset "@NamedTuple" begin
+    @testset "macro expansion" begin
+        for code in ("@NamedTuple{a::Int, b}", "@NamedTuple begin\n    a::Int\n    b\nend")
+            let st1 = jlexpand(code)
+                @test JS.head(st1) === :curly
+                @test has_qualified_name(st1, :core, "NamedTuple")
+                @test has_qualified_name(st1, :core, "Tuple")
+                @test has_qualified_name(st1, :core, "Any")
+            end
+        end
+    end
+
+    @testset "validation" begin
+        for (code, msg) in (
+                ("@NamedTuple", "@NamedTuple expects exactly one argument"),
+                ("@NamedTuple a b", "@NamedTuple expects exactly one argument"),
+                ("@NamedTuple (a::Int, b)", "@NamedTuple expects {...} or begin...end"),
+                ("@NamedTuple{a.b::Int}", "must contain a sequence of name or name::type expressions"),
+                ("@NamedTuple{a::Int = 1}", "must contain a sequence of name or name::type expressions"),
+                ("@NamedTuple{a::Int, a}", "duplicate field name `a`"),
+            )
+            let diags = collect_macro_diagnostics() do
+                    jlexpand(code)
+                end
+                @test length(diags) == 1
+                d = only(diags)
+                @test d.severity == JETLS.LSP.DiagnosticSeverity.Error
+                @test occursin(msg, d.msg)
+            end
+        end
+    end
+
+    @testset "binding resolution preserves provenance" begin
+        let res = jlresolve("f(x::@NamedTuple{a::Foo, b::Vector{Bar}}) = x")
+            assert_binding_provenance(res, :global, "Foo")
+            assert_binding_provenance(res, :global, "Bar")
+            assert_no_binding(res, :global, "a")
+            assert_no_binding(res, :global, "b")
+        end
+        let res = jlresolve("const T = @NamedTuple begin\n    a::Foo\n    b\nend")
+            assert_binding_provenance(res, :global, "Foo")
+            assert_no_binding(res, :global, "a")
+            assert_no_binding(res, :global, "b")
+        end
+        let res = jlresolve("f(x::@NamedTuple{a::T}) where T = x")
+            assert_binding_provenance(res, :static_parameter, "T")
+            assert_no_binding(res, :global, "T")
+        end
+    end
+
+    @testset "runtime semantics" begin
+        @test jleval("@NamedTuple{a::Int, b}") === @NamedTuple{a::Int, b}
+        @test jleval("@NamedTuple begin\n    a::Int\n    b::Vector{Float64}\nend") ===
+            @NamedTuple{a::Int, b::Vector{Float64}}
+        @test jleval("@NamedTuple{}") === @NamedTuple{}
+        # Malformed and duplicate fields are dropped
+        @test jleval("@NamedTuple{a::Int, a, b.c, d::String}") === @NamedTuple{a::Int, d::String}
+
+        @testset "generated helper hygiene" begin
+            @test jleval("""
+                let NamedTuple = 1, Tuple = 2, Any = 3
+                    @NamedTuple{a::Int, b}
+                end
+                """) === @NamedTuple{a::Int, b}
+        end
+    end
+end
+
+@testset "@Kwargs" begin
+    @testset "macro expansion" begin
+        let st1 = jlexpand("@Kwargs{a::Int, b}")
+            @test JS.head(st1) === :let
+            @test has_qualified_name(st1, :top, "Pairs")
+            @test has_qualified_name(st1, :core, "NamedTuple")
+        end
+    end
+
+    @testset "validation" begin
+        for (code, msg) in (
+                ("@Kwargs", "@Kwargs expects exactly one argument"),
+                ("@Kwargs (a::Int, b)", "@Kwargs expects {...} or begin...end"),
+                ("@Kwargs{a.b::Int}", "@Kwargs must contain a sequence of name or name::type expressions"),
+                ("@Kwargs{a::Int, a}", "@Kwargs: duplicate field name `a`"),
+            )
+            let diags = collect_macro_diagnostics() do
+                    jlexpand(code)
+                end
+                @test length(diags) == 1
+                d = only(diags)
+                @test d.severity == JETLS.LSP.DiagnosticSeverity.Error
+                @test occursin(msg, d.msg)
+            end
+        end
+    end
+
+    @testset "binding resolution preserves provenance" begin
+        let res = jlresolve("const T = @Kwargs{a::Foo, b}")
+            assert_binding_provenance(res, :global, "Foo")
+            assert_no_binding(res, :global, "a")
+            assert_no_binding(res, :global, "b")
+            assert_no_binding(res, :global, "NT")
+        end
+        let res = jlresolve("f(x::@Kwargs{a::T}) where T = x")
+            assert_binding_provenance(res, :static_parameter, "T")
+            assert_no_binding(res, :global, "T")
+        end
+    end
+
+    @testset "runtime semantics" begin
+        @test jleval("@Kwargs{init::Int}") === @Kwargs{init::Int}
+        @test jleval("@Kwargs begin\n    a::Int\n    b\nend") === @Kwargs{a::Int, b}
+        @test jleval("@Kwargs{}") === @Kwargs{}
+
+        @testset "generated helper hygiene" begin
+            @test jleval("""
+                let NT = Int, keytype = 1, eltype = 2, Pairs = 3, Nothing = 4
+                    @Kwargs{a::NT}
+                end
+                """) === @Kwargs{a::Int}
+        end
+    end
+end
+
 @testset "@lock" begin
     @testset "macro expansion" begin
         let st1 = jlexpand("@lock lk begin x = 1; x end")

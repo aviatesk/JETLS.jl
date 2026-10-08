@@ -159,10 +159,12 @@ const NEW_STYLE_MACRO_BINDINGS = (
     Base => Symbol("@inline"),
     Base => Symbol("@invoke"),
     Base => Symbol("@invokelatest"),
+    Base => Symbol("@Kwargs"),
     Base => Symbol("@kwdef"),
     Base => Symbol("@label"),
     Base => Symbol("@lazy_str"),
     Base => Symbol("@lock"),
+    Base => Symbol("@NamedTuple"),
     Base => Symbol("@noinline"),
     Base => Symbol("@propagate_inbounds"),
     Base => Symbol("@show"),
@@ -1084,6 +1086,89 @@ function _kwdef_make_constructors(
         push_macro_error!(type_sig, "Invalid type signature for @kwdef")
         return SyntaxTree[]
     end
+end
+
+# New-style implementation of `Base.@NamedTuple`. Matches Base's expansion
+# `NamedTuple{(:a, :b), Tuple{A, Any}}`, while the user-written field types keep their
+# provenance. Without it, `remove_macrocalls` would lift the `braces` argument into a
+# `block`, which fails lowering and takes scope resolution of the whole enclosing form
+# down with it.
+#
+# Base throws on any malformed declaration and lets duplicate field names fail when the
+# type is constructed; we report both and build the type from the remaining fields.
+function Base.var"@NamedTuple"(__context__::JL.MacroContext, ex::SyntaxTree)
+    nt = _namedtuple_type(__context__, ex, "@NamedTuple")
+    nt === nothing && return JL.@ast(__context__, __context__.macrocall::SyntaxTree, ex)
+    return nt
+end
+
+function Base.var"@NamedTuple"(__context__::JL.MacroContext, args::SyntaxTree...)
+    mc = __context__.macrocall::SyntaxTree
+    push_macro_error!(mc, "@NamedTuple expects exactly one argument: {...} or begin...end")
+    isempty(args) && return JL.@ast(__context__, mc, nothing::value)
+    return JL.@ast(__context__, mc, [:block args...])
+end
+
+# New-style implementation of `Base.@Kwargs`, mirroring Base's
+# `let NT = @NamedTuple{...}; Base.Pairs{keytype(NT), eltype(NT), Nothing, NT} end`.
+# `NT` lives in the macro's scope layer so it cannot clash with user code.
+function Base.var"@Kwargs"(__context__::JL.MacroContext, ex::SyntaxTree)
+    nt = _namedtuple_type(__context__, ex, "@Kwargs")
+    nt === nothing && return JL.@ast(__context__, __context__.macrocall::SyntaxTree, ex)
+    src = _macro_generated_source(__context__)
+    return JL.@ast(__context__, src, [:let
+        [:block
+            [:(=) "NT"::identifier nt]]
+        [:block
+            [:curly [:top "Pairs"::identifier]
+                [:call [:top "keytype"::identifier] "NT"::identifier]
+                [:call [:top "eltype"::identifier] "NT"::identifier]
+                [:core "Nothing"::identifier]
+                "NT"::identifier]]])
+end
+
+function Base.var"@Kwargs"(__context__::JL.MacroContext, args::SyntaxTree...)
+    mc = __context__.macrocall::SyntaxTree
+    push_macro_error!(mc, "@Kwargs expects exactly one argument: {...} or begin...end")
+    isempty(args) && return JL.@ast(__context__, mc, nothing::value)
+    return JL.@ast(__context__, mc, [:block args...])
+end
+
+# Returns `nothing` (with the issue reported via the sink) when `ex` is not a `{...}` or
+# `begin...end` form.
+function _namedtuple_type(ctx::JL.MacroContext, ex::SyntaxTree, macroname::String)
+    if JS.head(ex) ∉ (:braces, :block)
+        push_macro_error!(ex, "$macroname expects {...} or begin...end")
+        return nothing
+    end
+    names = SyntaxTree[]
+    types = SyntaxTree[]
+    seen = Set{String}()
+    for decl in JS.children(ex)
+        k = JS.head(decl)
+        if k === :identifier
+            name = decl
+            type = JL.@ast(ctx, decl, [:core "Any"::identifier])
+        elseif k === :(::) && JS.numchildren(decl) == 2 && JS.head(decl[1]) === :identifier
+            name, type = decl[1], decl[2]
+        else
+            push_macro_error!(decl,
+                "$macroname must contain a sequence of name or name::type expressions")
+            continue
+        end
+        namestr = name_val(name)
+        if namestr in seen
+            push_macro_error!(name, "$macroname: duplicate field name `$namestr`")
+            continue
+        end
+        push!(seen, namestr)
+        push!(names, JL.@ast(ctx, name, [:inert name]))
+        push!(types, type)
+    end
+    return JL.@ast(ctx, ctx.macrocall::SyntaxTree,
+        [:curly [:core "NamedTuple"::identifier]
+            [:tuple names...]
+            [:curly [:core "Tuple"::identifier] types...]])
 end
 
 # Stubs for `Test.jl` testing macros. The real macros wrap user-written bodies in

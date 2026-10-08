@@ -962,6 +962,23 @@ end
         end
     end
 
+    @testset "$macroname in a method signature" for macroname in ("@NamedTuple", "@Kwargs")
+        let code = """
+            struct │Foo│ end
+            function f(x::$macroname{a::│Foo│})
+                │y│ = x
+                return │y│
+            end
+            """
+            clean_code, positions = JETLS.get_text_and_positions(code)
+            @test length(positions) == 8
+            for pos in positions
+                refs = find_references(clean_code, pos)
+                @test length(refs) == 2
+            end
+        end
+    end
+
     @testset "cursor on inert global inside @eval" begin
         # One-argument `@eval` resolves inert globals in the construction module.
         for eval_macro in ("@eval", "Base.@eval")
