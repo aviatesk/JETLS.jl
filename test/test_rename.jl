@@ -33,7 +33,7 @@ function rename_testcase(
         # Tie the file URI to a dedicated module so that `get_context_info`
         # (and downstream occurrence resolution) agrees with whatever module
         # the caller passes to `global_binding_rename`. Without this the file
-        # falls back to `Main`, causing a module mismatch that makes
+        # falls back to `FallbackAnalysisContext`, causing a module mismatch that makes
         # `find_global_binding_occurrences!` miss every occurrence.
         if context_module !== nothing
             JETLS.cache_out_of_scope!(

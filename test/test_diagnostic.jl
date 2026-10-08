@@ -811,6 +811,7 @@ end
             analysis_info = JETLS.get_analysis_info(server.state.analysis_manager, ext_uri)
             @test analysis_info.entry isa JETLS.PackageExtensionAnalysisEntry
             @test !JETLS.has_analyzed_context(server.state, ext_uri)
+            @test JETLS.get_context_module(server.state, ext_uri, Position(; line=0, character=0)) === JETLS.FallbackAnalysisContext
         end
     end
 end
