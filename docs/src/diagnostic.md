@@ -1135,6 +1135,7 @@ Common examples include:
   dependencies (the most frequent cause)
 - Type definition failures
 - References to undefined names at the top level
+- Code that cannot be lowered or whose macros fail to expand
 - Other errors during module evaluation
 
 Examples:

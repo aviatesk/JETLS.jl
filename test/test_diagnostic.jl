@@ -697,6 +697,40 @@ end
     end
 end
 
+@testset "lowering and macro expansion errors from JET are reported as top-level errors" begin
+    let code = """
+        sin("before")
+        '*' -> 1
+        sin("after")
+        """
+        withscript(code) do script_path
+            diagnostics = get_open_diagnostics(dirname(script_path), script_path, code)
+            diag = only(filter(diag -> diag.code == JETLS.TOPLEVEL_ERROR_CODE, diagnostics))
+            @test diag.range.start.line == 1
+            diag = only(filter(diag -> diag.code == JETLS.INFERENCE_METHOD_ERROR_CODE, diagnostics))
+            @test diag.range.start.line == 0
+        end
+    end
+
+    let code = """
+        macro failing()
+            error("failing macro")
+        end
+        sin("before")
+        @failing
+        sin("after")
+        """
+        withscript(code) do script_path
+            diagnostics = get_open_diagnostics(dirname(script_path), script_path, code)
+            diag = only(filter(diag -> diag.code == JETLS.TOPLEVEL_ERROR_CODE, diagnostics))
+            @test diag.range.start.line == 4
+            @test occursin("failing macro", diag.message)
+            diag = only(filter(diag -> diag.code == JETLS.INFERENCE_METHOD_ERROR_CODE, diagnostics))
+            @test diag.range.start.line == 3
+        end
+    end
+end
+
 @testset "parser warnings do not block reanalysis" begin
     code = """
         x = 1e-400

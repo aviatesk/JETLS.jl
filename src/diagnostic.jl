@@ -354,7 +354,7 @@ function jet_result_to_diagnostics!(
     )
     report = result.res.toplevel_error_report
     if report !== nothing && report.file != "none"
-        diagnostic = jet_toplevel_error_report_to_diagnostic(report, postprocessor;
+        diagnostic = jet_toplevel_error_report_to_diagnostic(report, world, postprocessor;
             markdown_rendering, displaysize)
         diagnostic === nothing || push!(uri2diagnostics[to_valid_uri(report.file)], diagnostic)
     end
@@ -389,16 +389,12 @@ function toplevel_report_message(
 end
 
 function jet_toplevel_error_report_to_diagnostic(
-        @nospecialize(report::JET.ToplevelErrorReport), postprocessor::JET.PostProcessor;
+        @nospecialize(report::JET.ToplevelErrorReport), world::UInt,
+        postprocessor::JET.PostProcessor;
         markdown_rendering::Bool = false,
         displaysize::Union{Nothing,Tuple{Int,Int}} = nothing
     )
     report isa JET.ParseErrorReport && return nothing # reported as `JETLS/live` diagnostics
-    if report isa JET.LoweringErrorReport || report isa JET.MacroExpansionErrorReport
-        # the equivalent report should have been reported by `per_stmt_diagnostics!`
-        # with more precise location information
-        return nothing
-    end
     if report isa JET.MissingConcretizationErrorReport
         data = missing_concretization_data(report)
         message = missing_concretization_message(report, data, postprocessor; markdown_rendering, displaysize)
@@ -406,7 +402,7 @@ function jet_toplevel_error_report_to_diagnostic(
     else
         data = nothing
         message = toplevel_report_message(postprocessor; markdown_rendering, displaysize) do io
-            with_base_render_lock(JET.print_report, io, report)
+            with_base_render_lock(Base.invoke_in_world, world, JET.print_report, io, report)
         end
         code = report isa JET.ConcretizationTimeoutErrorReport ?
             TOPLEVEL_CONCRETIZATION_TIMEOUT_CODE : TOPLEVEL_ERROR_CODE
