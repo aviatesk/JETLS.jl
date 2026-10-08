@@ -104,27 +104,8 @@ end
 
 struct InstantiationRequest
     env_path::String
-    pkgname::Union{Nothing,String,Base.PkgId}
-    filekind::Symbol                 # :script, :src, :test
-    filedir::String                  # used for :test to construct runtestsuri
+    entry::AnalysisEntry
     root_path::Union{String,Nothing} # used for progress
-    isnotebook::Bool
-end
-function InstantiationRequest(
-        env_path::String, root_path::Union{String,Nothing}, isnotebook::Bool=false
-    )
-    return InstantiationRequest(env_path, nothing, :script, "", root_path, isnotebook)
-end
-function InstantiationRequest(
-        env_path::String, pkgname::Union{Nothing,String}, filekind::Symbol,
-        filedir::String, root_path::Union{String,Nothing}
-    )
-    return InstantiationRequest(env_path, pkgname, filekind, filedir, root_path, #=isnotebook=#false)
-end
-function InstantiationRequest(
-        env_path::String, pkgid::Base.PkgId, root_path::Union{String,Nothing}
-    )
-    return InstantiationRequest(env_path, pkgid, :src, "", root_path, #=isnotebook=#false)
 end
 
 struct InstantiationProgressCaller <: RequestCaller
@@ -173,7 +154,7 @@ function handle_instantiation_progress_response(
         server::Server, caller::InstantiationProgressCaller
     )
     (; uri, ins_request, invalidate, notify_diagnostics, debounce, token) = caller
-    entry = do_instantiation_with_progress(server, uri, ins_request, token)
+    entry = do_instantiation_with_progress(server, ins_request, token)
     # Now request a new progress token for the analysis phase
     request_analysis_progress!(
         server, uri, invalidate, entry, notify_diagnostics, debounce)
@@ -364,7 +345,7 @@ function request_analysis!(
                     server, uri, phase1_result, invalidate, notify_diagnostics, debounce)
                 return nothing
             else
-                entry = do_instantiation(server, uri, phase1_result)
+                entry = do_instantiation(server, phase1_result)
             end
         else
             entry = phase1_result::AnalysisEntry
@@ -626,7 +607,7 @@ function has_any_parse_errors(server::Server, execution::AnalysisExecution)
         (; parsed_stream) = @something (isunsaveduri(uri) ?
             get_file_info(server.state, uri) :
             get_saved_file_info(server.state, uri)) return false
-        return !isempty(parsed_stream.diagnostics)
+        return JS.any_error(parsed_stream)
     end
 end
 
@@ -846,6 +827,10 @@ function execute_analysis(server::Server, execution::AnalysisExecution)
     request = execution.request
     entry = request.entry
 
+    if entry isa PackageExtensionAnalysisEntry
+        return package_extension_analysis_result(server, entry), false
+    end
+
     if entry isa NewAnalysisEntry
         env_path = entry.env_path
         result = if env_path === nothing
@@ -970,13 +955,14 @@ function new_analysis_result(
         postprocessor = JET.PostProcessor(result.res.actual2virtual)
         toplevel_warning_reports_to_diagnostics!(uri2diagnostics, interp.warning_reports, interp.server, postprocessor)
         jet_result_to_diagnostics!(uri2diagnostics, result, result_world, postprocessor;
-            markdown_rendering = supports(interp.server, :textDocument, :diagnostic, :markupMessageSupport))
+            markdown_rendering = supports(interp.server, :textDocument, :diagnostic, :markupMessageSupport),
+            displaysize = interp.server.state.cli_mode ? cli_message_displaysize() : nothing)
         uri2diagnostics
     end
 
     entry = request.entry
     prev_result = execution.prev_result
-    replace_analysis_result = isempty(result.res.toplevel_error_reports) || isnothing(prev_result)
+    replace_analysis_result = isnothing(result.res.toplevel_error_report) || isnothing(prev_result)
     if !replace_analysis_result
         prev_result = prev_result::AnalysisResult
         (; actual2virtual, analyzer, analyzed_file_infos) = prev_result
@@ -1222,7 +1208,7 @@ function collect_module_range_infos!(
         module_range_infos::Vector{Pair{UnitRange{Int},Module}}, st0::SyntaxTree,
         context_module::Module, world::UInt
     )
-    if JS.kind(st0) === JS.K"toplevel"
+    if JS.head(st0) === :toplevel
         for i = 1:JS.numchildren(st0)
             collect_module_range_infos!(module_range_infos, st0[i], context_module, world)
         end
@@ -1230,7 +1216,7 @@ function collect_module_range_infos!(
         for i = 3:JS.numchildren(st0)
             collect_module_range_infos!(module_range_infos, st0[i], context_module, world)
         end
-    elseif JS.kind(st0) === JS.K"module" && JS.numchildren(st0) ≥ 3
+    elseif JS.head(st0) === :module && JS.numchildren(st0) ≥ 3
         modconst = resolve_global_const(context_module, world, st0[2])
         modconst isa Core.Const || return nothing
         mod = modconst.val
@@ -1241,7 +1227,7 @@ function collect_module_range_infos!(
         last_line = JS.source_line(sourcefile, JS.last_byte(st0))
         push!(module_range_infos, first_line:last_line => mod)
         body = st0[end]
-        if JS.kind(body) === JS.K"block"
+        if JS.head(body) === :block
             for i = 1:JS.numchildren(body)
                 collect_module_range_infos!(module_range_infos, body[i], mod, world)
             end
@@ -1477,6 +1463,28 @@ end
 entryuri_impl(::NewAnalysisEntry) = error("")
 progress_title_impl(entry::NewAnalysisEntry) = entry.pkgid.name * ".jl [package (incremental)]"
 
+struct PackageExtensionAnalysisEntry <: AnalysisEntry
+    uri::URI
+end
+entryuri_impl(entry::PackageExtensionAnalysisEntry) = entry.uri
+progress_title_impl(entry::PackageExtensionAnalysisEntry) =
+    basename(uri2filename(entry.uri)) * " [package extension]"
+
+function package_extension_analysis_result(
+        server::Server, entry::PackageExtensionAnalysisEntry
+    )
+    uri = entry.uri
+    diagnostic = package_extension_analysis_skipped_diagnostic(;
+        markdown_rendering = supports(server, :textDocument, :diagnostic, :markupMessageSupport),
+        displaysize = server.state.cli_mode ? cli_message_displaysize() : nothing)
+    world = Base.get_world_counter()
+    return AnalysisResult(entry,
+        URI2Diagnostics(uri => Diagnostic[diagnostic]),
+        LSAnalyzer(entry, world),
+        Dict{URI,JET.AnalyzedFileInfo}(uri => JET.AnalyzedFileInfo()),
+        Main => Main, world)
+end
+
 struct UserModule
     env_path::String
     pkg_name::String
@@ -1493,14 +1501,25 @@ end
 
 Phase 1 of analysis entry lookup. Returns immediately without blocking.
 - If no instantiation is needed (cached or no env), returns an `AnalysisEntry` directly.
-- If instantiation is needed, returns `InstantiationRequest` with the information required
-  to perform instantiation in phase 2 (`do_instantiation` or `do_instantiation_with_progress`).
+- If instantiation is needed, returns `InstantiationRequest` holding the entry to analyze
+  once phase 2 (`do_instantiation` or `do_instantiation_with_progress`) has instantiated
+  its environment.
 - If the file is out of scope, returns `OutOfScope`.
 """
 function lookup_analysis_entry(server::Server, uri::URI)
     state = server.state
-    result = find_analysis_env_path(state, uri)
+    entry = find_analysis_entry(state, uri)
+    entry isa OutOfScope && return entry
+    env_path = entry_env_path(entry)
+    if env_path === nothing || is_env_cached(server, env_path)
+        return entry
+    end
     root_path = isdefined(state, :root_path) ? state.root_path : nothing
+    return InstantiationRequest(env_path, entry, root_path)
+end
+
+function find_analysis_entry(state::ServerState, uri::URI)
+    result = find_analysis_env_path(state, uri)
     if result isa OutOfScope
         return result
     elseif result isa KnownModule
@@ -1508,18 +1527,12 @@ function lookup_analysis_entry(server::Server, uri::URI)
         env_path = result.env_path
         if env_path === nothing
             return NewAnalysisEntry(pkgid)
-        elseif is_env_cached(server, env_path)
-            return NewAnalysisEntry(pkgid, env_path)
         else
-            return InstantiationRequest(env_path, pkgid, root_path)
+            return NewAnalysisEntry(pkgid, env_path)
         end
     elseif result isa UserModule
         pkgid = Base.PkgId(Base.UUID(result.pkg_uuid), result.pkg_name)
-        if is_env_cached(server, result.env_path)
-            return NewAnalysisEntry(pkgid, result.env_path)
-        else
-            return InstantiationRequest(result.env_path, pkgid, root_path)
-        end
+        return NewAnalysisEntry(pkgid, result.env_path)
     end
 
     isnotebook = is_notebook_uri(state, uri)
@@ -1527,62 +1540,57 @@ function lookup_analysis_entry(server::Server, uri::URI)
     if isnothing(env_path)
         return ScriptAnalysisEntry(uri, isnotebook)
     elseif isunsaveduri(uri) || isnotebook
-        if is_env_cached(server, env_path)
-            return ScriptInEnvAnalysisEntry(env_path, uri, isnotebook)
-        else
-            return InstantiationRequest(env_path, root_path, isnotebook)
-        end
+        return ScriptInEnvAnalysisEntry(env_path, uri, isnotebook)
     end
 
-    pkgname = find_pkg_name(env_path)
+    project_toml_dict = parse_project_toml(env_path)
     filepath = uri2filepath(uri)::String # uri.scheme == "file"
-    if isnothing(pkgname) # TODO Test environment with workspace setup fails here
-        if is_env_cached(server, env_path)
-            return ScriptInEnvAnalysisEntry(env_path, uri)
-        else
-            return InstantiationRequest(env_path, root_path)
-        end
+    # TODO Test environment with workspace setup fails here
+    if isnothing(project_toml_dict) || isnothing(find_pkg_name(project_toml_dict))
+        return ScriptInEnvAnalysisEntry(env_path, uri)
     end
 
     filekind, filedir = find_package_directory(filepath, env_path)
     if filekind === :src || filekind === :test
-        cached = get_cached_pkg_env(server, env_path)
-        if cached !== missing
-            if cached === nothing
-                return ScriptInEnvAnalysisEntry(env_path, uri)
-            else
-                pkgid, pkgfile = cached
-                if filekind === :src
-                    return PackageSourceAnalysisEntry(env_path, filepath2uri(pkgfile), pkgid)
-                else
-                    runtestsuri = filepath2uri(joinpath(filedir, "runtests.jl"))
-                    return PackageTestAnalysisEntry(env_path, runtestsuri, pkgid)
-                end
-            end
+        (; pkgid, pkgfile) = @something find_env_package(env_path, project_toml_dict) begin
+            return ScriptInEnvAnalysisEntry(env_path, uri)
+        end
+        if filekind === :src
+            return PackageSourceAnalysisEntry(env_path, filepath2uri(pkgfile), pkgid)
         else
-            return InstantiationRequest(env_path, pkgname, filekind, filedir, root_path)
+            runtestsuri = filepath2uri(joinpath(filedir, "runtests.jl"))
+            return PackageTestAnalysisEntry(env_path, runtestsuri, pkgid)
         end
     elseif filekind === :docs # TODO
-    elseif filekind === :ext # TODO
+    elseif filekind === :ext
+        # TODO Analyze extensions with the Revise-based package analysis, loading their
+        # trigger packages only when configured: loading weak dependencies unconditionally
+        # is costly and may not even be resolvable in the analysis environment.
+        return PackageExtensionAnalysisEntry(uri)
     else
         @assert filekind === :script
     end
 
-    if is_env_cached(server, env_path)
-        return ScriptInEnvAnalysisEntry(env_path, uri)
+    return ScriptInEnvAnalysisEntry(env_path, uri)
+end
+
+function entry_env_path(@nospecialize entry::AnalysisEntry)
+    if entry isa ScriptInEnvAnalysisEntry
+        return entry.env_path
+    elseif entry isa PackageSourceAnalysisEntry
+        return entry.env_path
+    elseif entry isa PackageTestAnalysisEntry
+        return entry.env_path
+    elseif entry isa NewAnalysisEntry
+        return entry.env_path
     else
-        return InstantiationRequest(env_path, root_path)
+        return nothing
     end
 end
 
 function is_env_cached(server::Server, env_path::String)
     instantiated_envs = server.state.analysis_manager.instantiated_envs
-    return haskey(load(instantiated_envs), env_path)
-end
-
-function get_cached_pkg_env(server::Server, env_path::String)
-    instantiated_envs = server.state.analysis_manager.instantiated_envs
-    return get(load(instantiated_envs), env_path, missing)
+    return env_path in load(instantiated_envs)
 end
 
 # Environment instantiation
@@ -1695,33 +1703,11 @@ function should_request_instantiation_progress(server::Server, env_path::String)
 end
 
 function do_instantiation(
-        server::Server, uri::URI, ins_request::InstantiationRequest;
+        server::Server, ins_request::InstantiationRequest;
         progress_io::Union{Nothing,InstantiationProgressIO} = nothing
     )
-    (; env_path, pkgname, filekind, filedir, isnotebook) = ins_request
-    if pkgname === nothing
-        ensure_instantiated_if_requested!(server, env_path; progress_io)
-        return ScriptInEnvAnalysisEntry(env_path, uri, isnotebook)
-    elseif pkgname isa Base.PkgId
-        pkgid = pkgname
-        envpkgname = find_pkg_name(env_path)
-        if envpkgname === nothing
-            ensure_instantiated_if_requested!(server, env_path; progress_io)
-        else
-            instantiate_package_environment!(server, env_path, envpkgname; progress_io)
-        end
-        return NewAnalysisEntry(pkgid, env_path)
-    else
-        pkgid, pkgfile = @something(
-            instantiate_package_environment!(server, env_path, pkgname; progress_io),
-            return ScriptInEnvAnalysisEntry(env_path, uri, isnotebook))
-        if filekind === :src
-            return PackageSourceAnalysisEntry(env_path, filepath2uri(pkgfile), pkgid)
-        else # :test
-            runtestsuri = filepath2uri(joinpath(filedir, "runtests.jl"))
-            return PackageTestAnalysisEntry(env_path, runtestsuri, pkgid)
-        end
-    end
+    ensure_instantiated_if_requested!(server, ins_request.env_path; progress_io)
+    return ins_request.entry
 end
 
 function ensure_instantiated_if_requested!(
@@ -1730,54 +1716,16 @@ function ensure_instantiated_if_requested!(
     )
     instantiated_envs = server.state.analysis_manager.instantiated_envs
     activate_do(env_path) do
-        if haskey(load(instantiated_envs), env_path)
+        if env_path in load(instantiated_envs)
             return
         end
         ensure_instantiated!(server, env_path; progress_io)
         store!(instantiated_envs) do cache
-            if haskey(cache, env_path)
+            if env_path in cache
                 cache, nothing
             else
-                new_cache = copy(cache)
-                new_cache[env_path] = nothing
-                new_cache, nothing
+                push!(copy(cache), env_path), nothing
             end
-        end
-    end
-end
-
-function instantiate_package_environment!(
-        server::Server, env_path::String, pkgname::String;
-        progress_io::Union{Nothing,InstantiationProgressIO} = nothing
-    )
-    instantiated_envs = server.state.analysis_manager.instantiated_envs
-    activate_do(env_path) do
-        cached = get(load(instantiated_envs), env_path, missing)
-        if cached !== missing
-            return cached
-        end
-        ensure_instantiated!(server, env_path; progress_io)
-        pkgenv = @lock Base.require_lock @something Base.identify_package_env(pkgname) begin
-            @warn "Failed to identify package environment" env_path pkgname
-            return store!(instantiated_envs) do cache
-                new_cache = copy(cache)
-                new_cache[env_path] = nothing
-                new_cache, nothing
-            end
-        end
-        pkgid, env = pkgenv
-        pkgfile = @something Base.locate_package(pkgid, env) begin
-            @warn "Expected a package to have a source file" pkgname
-            return store!(instantiated_envs) do cache
-                new_cache = copy(cache)
-                new_cache[env_path] = nothing
-                new_cache, nothing
-            end
-        end
-        return store!(instantiated_envs) do cache
-            new_cache = copy(cache)
-            new_cache[env_path] = (pkgid, pkgfile)
-            new_cache, (pkgid, pkgfile)
         end
     end
 end
@@ -1973,10 +1921,10 @@ end
 # Resolves the delayed environment instantiation with progress reporting.
 # Called after receiving confirmation for server-initiated progress token.
 function do_instantiation_with_progress(
-        server::Server, uri::URI, ins_request::InstantiationRequest, token::ProgressToken
+        server::Server, ins_request::InstantiationRequest, token::ProgressToken
     )
     message_path = instantiation_message_path(ins_request)
     return with_instantiation_progress(server, token, message_path) do progress_io
-        do_instantiation(server, uri, ins_request; progress_io)
+        do_instantiation(server, ins_request; progress_io)
     end
 end

@@ -1,4 +1,5 @@
 # Formatting
+
 - When writing Julia code, use `4 whitespaces` for indentation and try to keep
   the maximum line length under `92` characters.
 - When writing Markdown text, use `2 whitespaces` for indentation and try to
@@ -10,7 +11,8 @@
   When referencing external GitHub PRs or issues, use proper GitHub interlinking
   format (e.g., `owner/repo#123` for PRs/issues).
 
-# Coding Rules
+# Coding rules
+
 - When writing functions, use the most restrictive signature type possible.
   This allows JET to easily catch unintended errors.
   Of course, when prototyping, it's perfectly fine to start with loose type
@@ -52,7 +54,8 @@
   For commonly used modules, shortened names may be used instead of `ModuleName`,
   e.g. `MN` instead of `ModuleName`.
 
-# Running Test Code
+# Running test code
+
 Please make sure to test new code when you wrote.
 
 If explicit test file or code is provided, prioritize running that.
@@ -70,7 +73,7 @@ julia --startup-file=no -e 'using Test; @testset "pattern_matching" include("tes
 Note that the usage of the `--startup-file=no` flag, which avoids loading
 unnecessary startup utilities.
 
-# About Test Code
+# About test code
 
 Test code for this package should be written in files that define independent
 module spaces with a `test_` prefix.
@@ -148,14 +151,16 @@ the command line, you can use commands like the following
 testrunner --verbose test/test_pattern_matching "some_function"
 ```
 
-# Environment-Related Issues
+# Environment-related issues
+
 For AI agents: **NEVER MODIFY [Project.toml](./Project.toml) BY YOURSELF**.
 If you encounter errors that seem to be environment-related when running tests,
 in most cases this is due to working directory issues, so first `cd` to the root directory of this project
 and re-run the tests. Never attempt to fix environment-related issues yourself.
 If you cannot resolve the problem, inform the human engineer and ask for instructions.
 
-# About Modifications to Code You've Written
+# About modifications to code you've written
+
 If you, as an AI agent, add or modify code, and the user appears to have made
 further manual changes to that code after your response, please respect those
 modifications as much as possible.

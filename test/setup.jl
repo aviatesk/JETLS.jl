@@ -1,12 +1,11 @@
 using Test
 using Pkg
+using HierarchicalTestSets
 using JETLS
 using JETLS.LSP
 using JETLS.URIs2
 
 using JETLS: get_text_and_positions
-
-include("HierarchicalTestSet.jl")
 
 """
     wait_for_file_cache_version(state::JETLS.ServerState, uri::URI, version::Int; timeout::Float64=10.0)
@@ -299,7 +298,11 @@ function withserver(
             initialize_json_response,
             register_capability_request,
             register_capability_json_request)
-        return f(argnt)
+        ret = f(argnt)
+        for (_, fi) in JETLS.load(server.state.file_cache)
+            JETLS.check_syntax_tree0(fi)
+        end
+        return ret
     finally
         try
             Pkg.activate(old_env; io=devnull)

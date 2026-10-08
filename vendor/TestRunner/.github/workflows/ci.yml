@@ -21,6 +21,10 @@ jobs:
             os: ubuntu-latest
             arch: x64
             precompile: true
+          - version: "1.12" # oldest supported
+            os: ubuntu-latest
+            arch: x64
+            precompile: true
           - version: "1" # x86 ubuntu
             os: ubuntu-latest
             arch: x86

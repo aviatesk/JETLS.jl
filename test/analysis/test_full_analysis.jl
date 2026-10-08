@@ -224,18 +224,16 @@ end
                         script_path = joinpath(pkgpath, "script.jl")
                         write(script_path, "using Test\n")
                         uri = filepath2uri(script_path)
-                        request = JETLS.InstantiationRequest(env_path, pkgpath)
                     else
                         open(env_path, "a") do io
                             print(io, deps)
                         end
                         uri = filepath2uri(joinpath(pkgpath, "src", "$pkgname.jl"))
-                        request = JETLS.InstantiationRequest(
-                            env_path, pkgname, :src, joinpath(pkgpath, "src"), pkgpath)
                     end
                     sent_queue = Channel{Any}(Inf)
                     server = JETLS.Server(;
                         callback = JETLS.ServerMessageRecorder(Channel{Any}(Inf), sent_queue))
+                    server.state.root_path = pkgpath
                     JETLS.store!(server.state.config_manager) do old_data
                         lsp_config = JETLS.JETLSConfig(;
                             full_analysis = JETLS.FullAnalysisConfig(;
@@ -244,10 +242,12 @@ end
                     end
                     token = "pkg-instantiation-$filekind"
                     @test !isfile(manifest_path)
-                    entry = JETLS.do_instantiation_with_progress(server, uri, request, token)
+                    request = JETLS.lookup_analysis_entry(server, uri)
+                    @test request isa JETLS.InstantiationRequest
+                    entry = JETLS.do_instantiation_with_progress(server, request, token)
                     @test isfile(manifest_path)
                     @test JETLS.instantiation_needs(env_path) == (; resolve=false, instantiate=false)
-                    @test entry.env_path == env_path
+                    @test filepath2uri(entry.env_path) == filepath2uri(env_path)
                     if filekind === :script
                         @test entry isa JETLS.ScriptInEnvAnalysisEntry
                         @test entry.uri == uri
@@ -280,6 +280,61 @@ end
         end
     finally
         Pkg.offline(offline)
+    end
+end
+
+@testset "find_env_package" begin
+    uuid = "f7e1a6a2-4bd3-4f0e-9a43-0a3c6f6d8c51"
+    function find_env_package(project_toml::String, entryfiles::String...)
+        mktempdir() do dir
+            env_path = joinpath(dir, "Project.toml")
+            write(env_path, project_toml)
+            for entryfile in entryfiles
+                mkpath(dirname(joinpath(dir, entryfile)))
+                touch(joinpath(dir, entryfile))
+            end
+            pkg = JETLS.find_env_package(env_path, JETLS.parse_project_toml(env_path))
+            return pkg === nothing ? nothing :
+                (; pkg.pkgid, pkgfile = relpath(pkg.pkgfile, dir),
+                   base_pkgid = Base.project_file_name_uuid(env_path, pkg.pkgid.name))
+        end
+    end
+
+    let pkg = find_env_package("name = \"Foo\"\nuuid = \"$uuid\"\n", "src/Foo.jl")
+        @test pkg.pkgid == Base.PkgId(Base.UUID(uuid), "Foo")
+        @test pkg.pkgfile == joinpath("src", "Foo.jl")
+    end
+    let pkg = find_env_package(
+            "name = \"Foo\"\nuuid = \"$uuid\"\nentryfile = \"main.jl\"\n", "main.jl")
+        @test pkg.pkgfile == "main.jl"
+    end
+    # `Base` loads a project without `uuid` under a path-derived dummy UUID
+    let pkg = find_env_package("name = \"Foo\"\n", "src/Foo.jl")
+        @test pkg.pkgid == pkg.base_pkgid
+    end
+    @test find_env_package("name = \"Foo\"\nuuid = \"$uuid\"\n") === nothing
+    @test find_env_package("name = \"Foo\"\nuuid = \"invalid\"\n", "src/Foo.jl") === nothing
+    @test find_env_package("[deps]\n", "src/Foo.jl") === nothing
+end
+
+@testset "package files after instantiating the environment for a script" begin
+    pkgname = "TestScriptInstantiation"
+    withpackage(pkgname, "module $pkgname end") do pkgpath
+        script_path = joinpath(pkgpath, "script.jl")
+        write(script_path, "1 + 1\n")
+        script_uri = filepath2uri(script_path)
+        pkgfile_uri = filepath2uri(joinpath(pkgpath, "src", "$pkgname.jl"))
+        server = JETLS.Server()
+        server.state.root_path = pkgpath
+
+        request = JETLS.lookup_analysis_entry(server, script_uri)
+        @test request isa JETLS.InstantiationRequest
+        @test JETLS.do_instantiation(server, request) isa JETLS.ScriptInEnvAnalysisEntry
+
+        entry = JETLS.lookup_analysis_entry(server, pkgfile_uri)
+        @test entry isa JETLS.PackageSourceAnalysisEntry
+        @test entry.pkgfileuri == pkgfile_uri
+        @test entry.pkgid.name == pkgname
     end
 end
 

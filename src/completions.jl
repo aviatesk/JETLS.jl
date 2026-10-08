@@ -97,6 +97,7 @@ mutable struct CompletionCtx
     const pos::Position
     const context::Union{Nothing,CompletionContext}
     const snapshot::DocumentSnapshot
+    const cancel_flag::AbstractCancelFlag
 
     # Eagerly populated by the constructor.
     const offset::Int
@@ -114,7 +115,8 @@ mutable struct CompletionCtx
     function CompletionCtx(
             state::ServerState, request_uri::URI, snapshot::DocumentSnapshot,
             pos::Position, context::Union{Nothing,CompletionContext};
-            context_module::Union{Nothing,Module} = nothing
+            context_module::Union{Nothing,Module} = nothing,
+            cancel_flag::AbstractCancelFlag = DUMMY_CANCEL_FLAG
         )
         (; fi, cache_uri) = snapshot
         st0_top = build_syntax_tree(fi)
@@ -122,7 +124,7 @@ mutable struct CompletionCtx
         context_mod = something(context_module, info.context_module)
         offset = xy_to_offset(fi, pos)
         soft_scope = cache_uri != request_uri
-        return new(state, request_uri, pos, context, snapshot,
+        return new(state, request_uri, pos, context, snapshot, cancel_flag,
             offset, st0_top, context_mod, info.world, info.postprocessor, soft_scope)
     end
 end
@@ -134,7 +136,7 @@ end
 # Why not query the inferred-context cache with `offset:offset` directly:
 # It filters toplevel subtrees by `rng ⊆ JS.byte_range(toplevel)`, and the
 # cursor can sit past the toplevel's `last_byte` in incomplete code (e.g.
-# `sin(42,│\n` — parser ends the `K"call"` at byte 7, cursor at byte 8 is
+# `sin(42,│\n` — parser ends the `:call` at byte 7, cursor at byte 8 is
 # outside). `lowerable_toplevel_at` has an `offset - 1` retry that handles
 # this, so we go through it and build the context for the selected toplevel.
 function get_inferred_ctx!(comp_ctx::CompletionCtx; caller::AbstractString)
@@ -274,6 +276,7 @@ function local_completions!(
         items::Dict{String,CompletionItem}, comp_ctx::CompletionCtx,
     )
     should_invoke_auto_completion(comp_ctx.context) || return nothing
+    is_cancelled(comp_ctx.cancel_flag) && return false
 
     # NOTE don't bail out even if `length(fi.parsed_stream.diagnostics) ≠ 0`
     # so that we can get some completions even for incomplete code
@@ -336,6 +339,7 @@ function global_completions!(
     dotprefix = select_dotprefix_identifier(st0_top, comp_ctx.offset)
     if !isnothing(dotprefix)
         rng = JS.byte_range(dotprefix)
+        is_cancelled(comp_ctx.cancel_flag) && return false
         ctx = get_dotprefix_inferred_ctx(comp_ctx, dotprefix; caller="global_completions!")
         prefixtyp = ctx === nothing ? nothing : get_type_for_range(ctx, rng)
         # A `Union{}` prefix type is uninformative (the prefix throws or is dead code);
@@ -363,6 +367,7 @@ function global_completions!(
         GlobalCompletionResolverInfo(resolver_id, ctx_mod, world, postprocessor), nothing
     end
 
+    is_cancelled(comp_ctx.cancel_flag) && return false
     prioritized_names = let s = Set{Symbol}()
         pnames = Base.invoke_in_world(
             world, Base.unsorted_names, context_module; all=true)::Vector{Symbol}
@@ -374,8 +379,19 @@ function global_completions!(
         s
     end
 
+    is_cancelled(comp_ctx.cancel_flag) && return false
     all_names = Base.invoke_in_world(world, Base.unsorted_names, context_module;
         all=true, imported=true, usings=true)::Vector{Symbol}
+
+    is_cancelled(comp_ctx.cancel_flag) && return false
+    live_names = live_global_names(comp_ctx, context_module)
+
+    is_cancelled(comp_ctx.cancel_flag) && return false
+    union!(prioritized_names, live_names)
+    live_only_names = setdiff!(live_names, all_names)
+    append!(all_names, live_only_names)
+
+    is_cancelled(comp_ctx.cancel_flag) && return false
     for name in all_names
         if context_module === FallbackAnalysisContext && name === :FallbackAnalysisContext
             continue
@@ -439,10 +455,36 @@ function global_completions!(
             filterText,
             insertTextFormat,
             textEdit,
-            data = GlobalCompletionData(resolver_id, resolveName))
+            data = name in live_only_names ? nothing :
+                GlobalCompletionData(resolver_id, resolveName))
     end
 
     return is_completed ? #=isIncomplete=#false : nothing
+end
+
+# Globals of `context_module` introduced by the live contents of synchronized documents in
+# the analysis unit, which full-analysis may not reflect yet (e.g. unsaved definitions).
+# Unsynchronized files are skipped: full-analysis loads their on-disk contents, and lowering
+# all of them would delay completion.
+function live_global_names(comp_ctx::CompletionCtx, context_module::Module)
+    (; state, snapshot, cancel_flag) = comp_ctx
+    names = Set{Symbol}()
+    analysis_info = get_analysis_info(state.analysis_manager, snapshot.cache_uri)
+    for uri in collect_search_uris(snapshot.cache_uri, analysis_info)
+        is_cancelled(cancel_flag) && break
+        fi = uri == snapshot.cache_uri ? snapshot.fi :
+            @something get_file_info(state, uri) continue
+        iterate_toplevel_tree(build_syntax_tree(fi)) do st0::SyntaxTree
+            is_cancelled(cancel_flag) && return traversal_terminator
+            binding_occurrences = @something get_binding_occurrences!(state, uri, fi, st0) return
+            for (binfo, occurrences) in binding_occurrences
+                binfo.kind === :global && binfo.mod === context_module || continue
+                all(o -> o.kind === :use, occurrences) && continue
+                push!(names, Symbol(binfo.name))
+            end
+        end
+    end
+    return names
 end
 
 # Property completions
@@ -475,6 +517,7 @@ function add_property_completions!(
     ordered = Symbol[]
     seen = Set{Symbol}()
     for typ in union_components(prefixtyp)
+        is_cancelled(comp_ctx.cancel_flag) && return false
         rt = abstract_call_const(propertynames, Any[typ], comp_ctx.world)
         rt isa Core.Const || continue
         names = rt.val
@@ -717,10 +760,10 @@ end
 # ==========================================================
 
 function extract_param_text(p::SyntaxTree)
-     k = JS.kind(p)
-    if k === JS.K"Identifier"
+     k = JS.head(p)
+    if k === :identifier
         return get_name_val(p)
-    elseif k === JS.K"::"
+    elseif k === :(::)
         n = JS.numchildren(p)
         if n == 1
             typ = JS.sourcetext(p[1])
@@ -732,9 +775,9 @@ function extract_param_text(p::SyntaxTree)
         else
             return nothing
         end
-    elseif k === JS.K"var" && JS.numchildren(p) == 1
+    elseif k === :var && JS.numchildren(p) == 1
         inner = p[1]
-        if JS.kind(inner) === JS.K"Identifier"
+        if JS.head(inner) === :identifier
             return get_name_val(inner)
         end
     end
@@ -747,7 +790,7 @@ escape_snippet_text(s::AbstractString) =
 function make_insert_text(msig::AbstractString, num_existing_args::Int, use_snippet::Bool)
     mnode = JS.parsestmt(JS.SyntaxTree, msig; ignore_errors=true)
     mnode = unwrap_funcdef_sig(mnode)
-    JS.kind(mnode) in CALL_KINDS || return nothing
+    JS.head(mnode) in CALL_HEADS || return nothing
     params, kwp_i, _ = flatten_args(mnode)
     pos_params_count = kwp_i - 1
     remaining_start = num_existing_args + 1
@@ -756,9 +799,9 @@ function make_insert_text(msig::AbstractString, num_existing_args::Int, use_snip
     snippet_idx = 1
     for i in remaining_start:pos_params_count
         p = params[i]
-        k = JS.kind(p)
-        k in JS.KSet"= kw" && continue
-        if k === JS.K"..." && JS.numchildren(p) ≥ 1
+        k = JS.head(p)
+        k in (:(=), :kw) && continue
+        if k === :... && JS.numchildren(p) ≥ 1
             inner = p[1]
             text = extract_param_text(inner)
             isnothing(text) && continue
@@ -782,10 +825,10 @@ function cursor_equals_position(ca::CallArgs, b::Int)
     for arg in ca.args
         br = JS.byte_range(arg)
         first(br) ≤ b ≤ last(br) + 1 || continue
-        JS.kind(arg) in JS.KSet"= kw" || return nothing
+        JS.head(arg) in (:(=), :kw) || return nothing
         JS.numchildren(arg) ≥ 2 || return nothing
         rhs = arg[2]
-        after_equals = if JS.kind(rhs) === JS.K"error"
+        after_equals = if JS.head(rhs) === :error
             lhs_end = JS.last_byte(arg[1])
             b > lhs_end + 1
         else
@@ -805,7 +848,7 @@ function should_insert_spaces_around_equal(fi::FileInfo, ca::CallArgs)
     has_whitespaces = has_equals = 0
     for i in values(ca.kw_map)
         kwnode = ca.args[i]
-        JS.kind(kwnode) === JS.K"kw" || continue
+        JS.head(kwnode) === :kw || continue
         has_equals += 1
         pos = offset_to_xy(fi, JS.first_byte(kwnode))
         tok = @something token_at_offset(fi, pos) continue
@@ -840,6 +883,7 @@ function call_completions!(
     should_complete_kwargs = !(equals_pos === true) # is not after `=`
 
     should_complete_method_sigs || should_complete_kwargs || return nothing
+    is_cancelled(comp_ctx.cancel_flag) && return false
 
     ctx = get_inferred_ctx!(comp_ctx; caller="call_completions!")
     fntyp = ctx === nothing ? nothing : get_type_for_range(ctx, JS.byte_range(call[1]))
@@ -848,10 +892,13 @@ function call_completions!(
     end
     fntyp isa Core.Const || return nothing
 
+    is_cancelled(comp_ctx.cancel_flag) && return false
     argtypes = @something collect_call_argtypes(ctx, ca) return nothing
     fixup_argtypes!(argtypes, fntyp)
+    is_cancelled(comp_ctx.cancel_flag) && return false
     matches = @something find_all_matches(argtypes; world) return nothing
     isempty(matches) && return nothing
+    is_cancelled(comp_ctx.cancel_flag) && return false
 
     num_existing_args = ca.kw_i - 1
     has_equals = equals_pos === false
@@ -875,6 +922,8 @@ function call_completions!(
 
     method_sig_sort_idx = 1
     for (i, match) in enumerate(matches)
+        is_cancelled(comp_ctx.cancel_flag) && return false
+
         m = match.method
         startswith(String(m.name), '@') && continue
         compatible_method(m, ca, world) || continue
@@ -906,12 +955,12 @@ function call_completions!(
             (; existing_kws, seen_kwarg_names, insert_spaces, local_bindings) = kwarg_comp_info
             mnode = JS.parsestmt(JS.SyntaxTree, msig; ignore_errors=true)
             mnode = unwrap_funcdef_sig(mnode)
-            JS.kind(mnode) in CALL_KINDS || continue
+            JS.head(mnode) in CALL_HEADS || continue
             params, kwp_i, has_semicolon = flatten_args(mnode)
             kwname_sort_idx = 1
             for j in kwp_i:lastindex(params)
                 p = params[j]
-                JS.kind(p) === JS.K"..." && continue
+                JS.head(p) === :... && continue
                 kwarg_name = @something extract_kwarg_name_str(p) continue
                 kwarg_name in existing_kws && continue
                 kwarg_name in seen_kwarg_names && continue
@@ -979,7 +1028,10 @@ function supports_completion_item_resolve(state::ServerState, property::Abstract
     return property in ("documentation", "detail")
 end
 
-function resolve_completion_item(state::ServerState, item::CompletionItem)
+function resolve_completion_item(
+        state::ServerState, item::CompletionItem;
+        cancel_flag::AbstractCancelFlag = DUMMY_CANCEL_FLAG
+    )
     completion_resolver_info = @something load(state.completion_resolver_info) return item
     data = item.data
     if (data isa GlobalCompletionData &&
@@ -989,11 +1041,13 @@ function resolve_completion_item(state::ServerState, item::CompletionItem)
     elseif (data isa MethodSignatureCompletionData &&
             completion_resolver_info isa MethodSignatureCompletionResolverInfo &&
             data.resolver_id == completion_resolver_info.id)
-        return resolve_method_signature_completion_item(state, item, data, completion_resolver_info)
+        return resolve_method_signature_completion_item(
+            state, item, data, completion_resolver_info; cancel_flag)
     elseif (data isa PropertyCompletionData &&
             completion_resolver_info isa PropertyCompletionResolverInfo &&
             data.resolver_id == completion_resolver_info.id)
-        return resolve_property_completion_item(state, item, data, completion_resolver_info)
+        return resolve_property_completion_item(
+            state, item, data, completion_resolver_info; cancel_flag)
     else
         return item
     end
@@ -1001,7 +1055,8 @@ end
 
 function resolve_property_completion_item(
         state::ServerState, item::CompletionItem, data::PropertyCompletionData,
-        completion_resolver_info::PropertyCompletionResolverInfo,
+        completion_resolver_info::PropertyCompletionResolverInfo;
+        cancel_flag::AbstractCancelFlag = DUMMY_CANCEL_FLAG
     )
     supports_labelDetails = supports_completion_item_resolve(state, "labelDetails")
     supports_detail = supports_completion_item_resolve(state, "detail")
@@ -1015,9 +1070,11 @@ function resolve_property_completion_item(
     name = Core.Const(Symbol(data.label))
     rawtyp = Union{}
     for comp in union_components(prefixtyp)
+        is_cancelled(cancel_flag) && return item
         gp_rt = @something abstract_call_const(getproperty, Any[comp, name], world) continue
         rawtyp = CC.tmerge(rawtyp, gp_rt)
     end
+    is_cancelled(cancel_flag) && return item
     typstr = truncate_typstr(
         postprocessor(sprint(show, rawtyp; context = :compact => true)),
         #=maxdepth=#3, #=maxwidth=#20)
@@ -1106,7 +1163,8 @@ end
 
 function resolve_method_signature_completion_item(
         state::ServerState, item::CompletionItem, data::MethodSignatureCompletionData,
-        completion_resolver_info::MethodSignatureCompletionResolverInfo
+        completion_resolver_info::MethodSignatureCompletionResolverInfo;
+        cancel_flag::AbstractCancelFlag = DUMMY_CANCEL_FLAG
     )
     supports_labelDetails = supports_completion_item_resolve(state, "labelDetails")
     supports_detail = supports_completion_item_resolve(state, "detail")
@@ -1117,6 +1175,7 @@ function resolve_method_signature_completion_item(
     1 ≤ data.match_idx ≤ length(matches) || return item # just to make sure
     match = matches[data.match_idx]
     doc = @something lookup_doc_for_match(match, world) return item
+    is_cancelled(cancel_flag) && return item
     docstr = postprocessor(string(doc))
     _, result = infer_match!(world, match)
     resulttyp = @something result.result return item
@@ -1150,8 +1209,9 @@ function get_completion_items(
         state::ServerState, uri::URI, snapshot::DocumentSnapshot,
         pos::Position, context::Union{Nothing,CompletionContext};
         context_module::Union{Nothing,Module} = nothing,
+        cancel_flag::AbstractCancelFlag = DUMMY_CANCEL_FLAG,
     )
-    comp_ctx = CompletionCtx(state, uri, snapshot, pos, context; context_module)
+    comp_ctx = CompletionCtx(state, uri, snapshot, pos, context; context_module, cancel_flag)
     return get_completion_items(comp_ctx)
 end
 
@@ -1167,6 +1227,10 @@ function get_completion_items(comp_ctx::CompletionCtx)
         local_completions!(items, comp_ctx),
         keyword_completions!(items, comp_ctx),
         false)
+    # Once the request is cancelled, a routine returns `false` to skip the remaining ones
+    if is_cancelled(comp_ctx.cancel_flag)
+        return nothing
+    end
     return collect(values(items)), isIncomplete
 end
 
@@ -1179,7 +1243,11 @@ function handle_CompletionRequest(
     end
     uri = msg.params.textDocument.uri
     pos = adjust_position(snapshot, uri, msg.params.position)
-    items, isIncomplete = get_completion_items(server.state, uri, snapshot, pos, msg.params.context)
+    items, isIncomplete = @something get_completion_items(
+            server.state, uri, snapshot, pos, msg.params.context; cancel_flag) begin
+        return send(server, CompletionResponse(;
+            id = msg.id, result = nothing, error = request_cancelled_error()))
+    end
     # For method signature completions, set `isIncomplete = true` so that when
     # the user continues typing (e.g., an identifier), the client will re-request
     # and trigger global/local completions instead of continuing to filter
@@ -1190,9 +1258,13 @@ function handle_CompletionRequest(
             result = CompletionList(; isIncomplete, items)))
 end
 
-function handle_CompletionResolveRequest(server::Server, msg::CompletionResolveRequest)
-    return send(server,
-        CompletionResolveResponse(;
-            id = msg.id,
-            result = resolve_completion_item(server.state, msg.params)))
+function handle_CompletionResolveRequest(
+        server::Server, msg::CompletionResolveRequest, cancel_flag::CancelFlag
+    )
+    item = resolve_completion_item(server.state, msg.params; cancel_flag)
+    if is_cancelled(cancel_flag)
+        return send(server, CompletionResolveResponse(;
+            id = msg.id, result = nothing, error = request_cancelled_error()))
+    end
+    return send(server, CompletionResolveResponse(; id = msg.id, result = item))
 end

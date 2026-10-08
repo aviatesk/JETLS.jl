@@ -8,6 +8,7 @@ const CURRENT_DIR = pwd()
 
 const VENDOR_DIR = joinpath(CURRENT_DIR, "vendor")
 const VENDOR_NAMESPACE = "TestRunner-vendor"
+const COVERAGE_OUTPUT_REGEX = r"\.jl\.\d+\.(?:cov|mem)$"
 
 struct Config
     source_branch::String
@@ -86,6 +87,10 @@ function copy_package_source(mod::Module, pkg_name::AbstractString)
     for (root, _, files) in walkdir(dest_dir)
         for file in files
             filepath = joinpath(root, file)
+            if occursin(COVERAGE_OUTPUT_REGEX, file)
+                rm(filepath)
+                continue
+            end
             chmod(filepath, 0o644)
         end
     end

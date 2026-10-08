@@ -1,0 +1,39 @@
+name: TOMLSource.jl
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - "TOMLSource/**"
+      - "TOMLSource/Project.toml"
+      - ".github/workflows/TOMLSource.jl.yml"
+  workflow_call:
+
+jobs:
+  TOMLSource:
+    name: Test TOMLSource.jl
+    runs-on: ubuntu-latest
+    steps:
+      # The root `Project.toml` lists `TOMLSource` as a workspace project, so checking it
+      # out would make Pkg resolve TOMLSource.jl together with the entire JETLS workspace.
+      # Check out `TOMLSource/` only so that TOMLSource.jl is tested as a standalone
+      # package. Non-cone mode is required because cone mode always includes root-level files.
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: /TOMLSource/
+          sparse-checkout-cone-mode: false
+      - uses: julia-actions/setup-julia@v3
+        with:
+          version: "1" # most stable version
+          arch: x64
+      - uses: julia-actions/cache@v3
+      - name: test TOMLSource
+        shell: julia --color=yes --project=. {0}    # this is necessary for the next command to work on Windows
+        run: 'using Pkg; Pkg.activate(normpath(pwd(), "TOMLSource")); Pkg.instantiate(); Pkg.test(; coverage=true)'
+      - uses: julia-actions/julia-processcoverage@v1
+        with:
+          directories: TOMLSource/src
+      - uses: codecov/codecov-action@v7
+        with:
+          flags: TOMLSource.jl

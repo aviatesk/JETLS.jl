@@ -1,0 +1,8 @@
+repository = "https://github.com/JuliaLang/julia.git"
+commit = "2bd299a6bc6f5b36ecc5707e02a13dc837f06e45"
+paths = [
+    "base/toml/parser.jl",
+    "base/toml/printer.jl",
+    "stdlib/TOML/src/TOML.jl",
+    "stdlib/TOML/test",
+]

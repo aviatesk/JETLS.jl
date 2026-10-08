@@ -438,21 +438,18 @@ A special text edit with an additional change annotation.
     annotationId::ChangeAnnotationIdentifier
 end
 
-"""
-Complex text manipulations are described with an array of [`TextEdit`](#textedit[])'s or
-[`AnnotatedTextEdit`](#annotatedTextEdit)'s, representing a single change to the
-document.
-
-All text edits ranges refer to positions in the document they are computed on. They
-therefore move a document from state S1 to S2 without describing any intermediate
-state. Text edits ranges must never overlap, that means no part of the original
-document must be manipulated by more than one edit. However, it is possible that
-multiple edits have the same start position: multiple inserts, or any number of
-inserts followed by a single remove or replace edit. If multiple inserts have the same
-position, the order in the array defines the order in which the inserted strings
-appear in the resulting text.
-"""
-# var"TextEdit[]"
+# Complex text manipulations are described with an array of [`TextEdit`](#textedit[])'s or
+# [`AnnotatedTextEdit`](#annotatedTextEdit)'s, representing a single change to the
+# document.
+#
+# All text edits ranges refer to positions in the document they are computed on. They
+# therefore move a document from state S1 to S2 without describing any intermediate
+# state. Text edits ranges must never overlap, that means no part of the original
+# document must be manipulated by more than one edit. However, it is possible that
+# multiple edits have the same start position: multiple inserts, or any number of
+# inserts followed by a single remove or replace edit. If multiple inserts have the same
+# position, the order in the array defines the order in which the inserted strings
+# appear in the resulting text.
 
 """
 New in version 3.16: support for [`AnnotatedTextEdit`](@ref). The support
@@ -697,6 +694,11 @@ struct DeleteRangeData
 end
 export DeleteRangeData
 
+struct OrphanedDocstringData
+    attach_edits::Vector{TextEdit}
+end
+export OrphanedDocstringData
+
 struct UnsortedImportData
     new_text::String
 end
@@ -727,6 +729,7 @@ const DiagnosticData = Union{
     AbstractRefFieldData,
     AmbiguousSoftScopeData,
     DeleteRangeData,
+    OrphanedDocstringData,
     UnsortedImportData,
     UnusedArgumentData,
     UnusedVariableData,
@@ -818,18 +821,16 @@ end
 # File Resource changes
 # =====================
 
-"""
-New in version 3.13. Since version 3.16 file resource changes can carry an additional
-property `changeAnnotation` to describe the actual change in more detail. Whether a
-client has support for change annotations is guarded by the client capability
-`workspace.workspaceEdit.changeAnnotationSupport`.
-
-File resource changes allow servers to create, rename and delete files and folders via
-the client. Note that the names talk about files but the operations are supposed to
-work on files and folders. This is in line with other naming in the Language Server
-Protocol (see file watchers which can watch files and folders). The corresponding
-change literals look as follows:
-"""
+# New in version 3.13. Since version 3.16 file resource changes can carry an additional
+# property `changeAnnotation` to describe the actual change in more detail. Whether a
+# client has support for change annotations is guarded by the client capability
+# `workspace.workspaceEdit.changeAnnotationSupport`.
+#
+# File resource changes allow servers to create, rename and delete files and folders via
+# the client. Note that the names talk about files but the operations are supposed to
+# work on files and folders. This is in line with other naming in the Language Server
+# Protocol (see file watchers which can watch files and folders). The corresponding
+# change literals look as follows:
 
 @interface CreateFileOptions begin
     """

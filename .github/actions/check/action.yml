@@ -3,8 +3,9 @@ description: "Run JETLS diagnostics on Julia source files"
 
 inputs:
   files:
-    description: "Space-separated list of Julia files to check"
-    required: true
+    description: "Space-separated list of Julia files or package directories to check (default: the package at the root path)"
+    required: false
+    default: ""
   version:
     description: "JETLS revision to install (branch, tag, or commit SHA)"
     required: false
@@ -20,7 +21,7 @@ inputs:
   root:
     description: "Root directory for configuration and relative paths"
     required: false
-    default: "."
+    default: ""
   context-lines:
     description: "Number of source context lines to show around diagnostics"
     required: false
@@ -60,7 +61,9 @@ runs:
         if [[ "${{ inputs.quiet }}" == "true" ]]; then
           args+=(--quiet)
         fi
-        args+=(--root="${{ inputs.root }}")
+        if [[ -n "${{ inputs.root }}" ]]; then
+          args+=(--root="${{ inputs.root }}")
+        fi
         if [[ -n "${{ inputs.context-lines }}" ]]; then
           args+=(--context-lines="${{ inputs.context-lines }}")
         fi

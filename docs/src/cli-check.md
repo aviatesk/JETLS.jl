@@ -10,11 +10,20 @@ For details on what each diagnostic code means, see the
 ## [Basic usage](@id cli-check/usage)
 
 ```bash
+# Check the package in the current directory
+jetls check
+
+# Check a package in another directory
+jetls check /path/to/SomePkg
+
 # Check a package source file
 jetls check src/SomePkg.jl
 
 # Check multiple files
 jetls check src/SomePkg.jl test/runtests.jl
+
+# Check code read from stdin
+jetls check - <<< 'f(x) = undefined_name + x'
 
 # Check multiple files with multi threads
 jetls --threads=4,2 -- check src/SomePkg.jl test/runtests.jl
@@ -30,43 +39,58 @@ using Markdown
 Markdown.parse('`'^3 * '\n' * JETLS.check_help_message * '\n' * '`'^3)
 ```
 
-## [Input files and analysis mode](@id cli-check/input)
+## [Input paths and analysis mode](@id cli-check/input)
 
-Currently, `jetls check` accepts only file paths as input (not directories).
-The analysis mode is determined by the file's location within the directory
-structure:
+`jetls check` accepts Julia files and package directories as input.
 
-- **Package source files** (`src/SomePkg.jl`): Analyzed in package context with
-  full type inference
-- **Test files** (`test/*.jl`): Analyzed in test context
-- **Standalone scripts**: Analyzed as scripts
+A package directory is a directory whose `Project.toml` has a `name` entry.
+It is analyzed through its package entry file `src/<name>.jl`. Test files are
+not included; pass `test/runtests.jl` as well to analyze them. Other
+directories, including subdirectories of a package such as `src/`, are
+rejected.
 
-For example, when analyzing package code, run `jetls check` from the package
-root directory:
+When no path is given, the package at the root path (the current working
+directory by default) is analyzed.
+
+Files are analyzed in the same way as in the language server, as described in
+[How each file is analyzed](@ref analysis/full/files): the [analysis mode](@ref analysis/full/modes)
+is determined by the nearest  `Project.toml` above each file and the file's
+location relative to it, regardless of the working directory. Unlike the
+language server,  `jetls check` also analyzes files outside the root path.
+The root path only determines where `.JETLSConfig.toml` is loaded from and how
+paths are  displayed (see [`--root`](@ref cli-check/options/root)).
+
+### [Reading source from stdin](@id cli-check/input/stdin)
+
+Passing `-` as a path reads Julia source from stdin, which is useful for
+checking code that is not saved to a file:
 
 ```bash
-# Correct: run from package root
-cd /path/to/MyPkg
-jetls check src/SomePkg.jl
-
-# Incorrect: running from src/ directory won't detect package context
-cd /path/to/MyPkg/src
-jetls check SomePkg.jl  # May not work as expected
+jetls check - <<'EOF'
+function f(x)
+    return undefined_name + x
+end
+EOF
 ```
 
-The working directory (or `--root` path) is used to locate `Project.toml` for
-package context detection and `.JETLSConfig.toml` for configuration.
+By default, the source is analyzed like an unsaved buffer in the language
+server (see [How each file is analyzed](@ref analysis/full/files)) and is
+displayed as `<stdin>`. With [`--stdin-filename`](@ref cli-check/options/stdin-filename),
+it is analyzed as the file at the given path instead.
 
 ## [Options](@id cli-check/options)
 
 ### [`--root=<path>`](@id cli-check/options/root)
 
 Sets the root path for configuration file lookup and relative path display.
-By default, the current working directory is used.
+By default, the package directory is used when exactly one
+[package directory](@ref cli-check/input) is given, and the current working
+directory otherwise.
 
 When specified, JETLS will:
 
 - Look for `.JETLSConfig.toml` in the specified root directory
+- Resolve relative input paths against this root
 - Display file paths relative to this root in diagnostic output
 
 ```bash
@@ -76,6 +100,33 @@ jetls check --root=/path/to/project src/SomePkg.jl
 # Useful when running from a different directory
 cd /tmp && jetls check --root=/path/to/project /path/to/project/src/SomePkg.jl
 ```
+
+### [`--stdin-filename=<path>`](@id cli-check/options/stdin-filename)
+
+Analyzes the source [read from stdin](@ref cli-check/input/stdin) as if it were
+the file at `<path>`, which is resolved like other input paths. The file does
+not need to exist; if it does, its contents on disk are ignored.
+
+The path determines how the source is analyzed, in the same way as for the file
+at that path: the analysis mode, path-specific configuration, and the files it
+`include`s. For a package source file, the package is analyzed with the source
+substituted for the file on disk. This allows checking changes to a package
+file before writing them:
+
+```bash
+# Check src/utils.jl, which src/SomePkg.jl includes, with `helper` renamed
+# to `helper2`, without modifying the file
+sed 's/helper/helper2/g' src/utils.jl | jetls check --stdin-filename=src/utils.jl -
+```
+
+Without `--stdin-filename`, the source is analyzed as a standalone script, so
+names defined in the other files of the package would be reported as
+undefined.
+
+Unlike a package directory input, `--stdin-filename` does not set the
+[root path](@ref cli-check/options/root), so run the command in the package
+directory as above, or specify `--root`, to load the package's
+`.JETLSConfig.toml`.
 
 ### [`--context-lines=<n>`](@id cli-check/options/context-lines)
 
@@ -172,8 +223,8 @@ For more details on available runtime flags, see the [Pkg documentation on runti
 
 ## [Configuration](@id cli-check/configuration)
 
-`jetls check` loads `.JETLSConfig.toml` from the root path (specified by
-`--root`, or the current working directory by default). This is the same
+`jetls check` loads `.JETLSConfig.toml` from the root path (see
+[`--root`](@ref cli-check/options/root) for its default). This is the same
 configuration file used by the language server, and includes:
 
 - [Diagnostic severity overrides](@ref diagnostic/configuring)
@@ -214,9 +265,9 @@ This handles Julia setup, caching, and JETLS installation automatically.
 steps:
   - uses: actions/checkout@v6
   - uses: aviatesk/JETLS.jl/.github/actions/check@release
-    with:
-      files: src/SomePkg.jl
 ```
+
+Without `files`, this checks the package at the repository root.
 
 ### With options
 
@@ -234,17 +285,17 @@ steps:
 
 All `jetls check` command-line options are available as action inputs:
 
-| Input              | Default   | Description                                         |
-| :----------------- | :-------- | :-------------------------------------------------- |
-| `files` (required) |           | Space-separated list of files to check              |
-| `version`          | `release` | JETLS revision to install                           |
-| `julia-version`    | `1.13`    | Julia version to use                                |
-| `quiet`            | `true`    | Suppress info and warning log messages              |
-| `root`             | `.`       | Root directory for configuration and relative paths |
-| `context-lines`    | `2`       | Number of source context lines                      |
-| `exit-severity`    | `warn`    | Minimum severity to trigger non-zero exit           |
-| `show-severity`    | `info`    | Minimum severity to display                         |
-| `progress`         | `none`    | Progress display mode                               |
+| Input           | Default   | Description                                                   |
+| :-------------- | :-------- | :------------------------------------------------------------ |
+| `files`         |           | Space-separated list of files or package directories to check |
+| `version`       | `release` | JETLS revision to install                                     |
+| `julia-version` | `1.13`    | Julia version to use                                          |
+| `quiet`         | `true`    | Suppress info and warning log messages                        |
+| `root`          |           | Root directory for configuration and relative paths           |
+| `context-lines` | `2`       | Number of source context lines                                |
+| `exit-severity` | `warn`    | Minimum severity to trigger non-zero exit                     |
+| `show-severity` | `info`    | Minimum severity to display                                   |
+| `progress`      | `none`    | Progress display mode                                         |
 
 See [`.github/actions/check/action.yml`](https://github.com/aviatesk/JETLS.jl/blob/release/.github/actions/check/action.yml)
 for the full action definition.

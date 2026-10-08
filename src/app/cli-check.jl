@@ -262,20 +262,26 @@ const check_help_message = """
     Analyzes Julia source files and reports errors, warnings, and suggestions.
     Useful for CI pipelines and command-line workflows.
 
-    Analysis mode is determined by the file's directory structure.
-    For package analysis, run from the package root: jetls check src/SomePkg.jl
+    Usage: jetls check [OPTIONS] [<path>...]
 
-    Usage: jetls check [OPTIONS] <file>...
+    Arguments:
+      <path>...                Julia files or package directories to check;
+                               a package directory is checked via its src/<name>.jl
+                               (default: the package at the root path)
 
     Options:
       --help, -h               Show this help message
       --quiet, -q              Suppress info and warning log messages
+      --stdin-filename=<path>  Check the source read from stdin as if it were the
+                               file at <path>, which does not need to exist
+                               (default: an unsaved buffer shown as <stdin>)
       --exit-severity=<level>  Minimum severity to exit with error code 1
                                (error, warn, info, hint; default: warn)
       --show-severity=<level>  Minimum severity to display in output
                                (error, warn, info, hint; default: info)
       --root=<path>            Set the root path for configuration and relative paths
-                               (default: current working directory)
+                               (default: the package directory if exactly one is
+                               given, otherwise the current working directory)
       --context-lines=<n>      Number of context lines to show (default: 2)
       --progress=<mode>        Progress display mode (default: auto)
                                auto   - spinner if TTY, simple otherwise
@@ -288,30 +294,47 @@ const check_help_message = """
       1  One or more diagnostics found, or invalid arguments
 
     Examples:
+      jetls check
+      jetls check /path/to/SomePkg
       jetls check src/SomePkg.jl
-      jetls check src/SomePkg.jl test/runtests.jl
+      jetls check . test/runtests.jl
       jetls check --root=/path/to/project src/SomePkg.jl
       jetls check --context-lines=0 src/SomePkg.jl
       jetls check --exit-severity=error src/SomePkg.jl
       jetls check --show-severity=warn src/SomePkg.jl
       jetls check --progress=none src/SomePkg.jl
+      jetls check - <<< 'f(x) = undefined_name + x'
+      sed 's/helper/helper2/g' src/utils.jl | jetls check --stdin-filename=src/utils.jl -
     """
 
+const STDIN_URI = URI(; scheme="untitled", path="Untitled-stdin")
+
+struct StdinSource
+    uri::URI
+    text::String
+end
+
 function run_check(args::Vector{String})
-    root_path_opt = nothing
-    context_lines = 2
-    exit_severity = DiagnosticSeverity.Warning
-    show_severity = DiagnosticSeverity.Information
-    progress_mode = PROGRESS_AUTO
-    skip_analysis = false # Undocumented option to skip analysis (only used for test)
-    quiet = false
-    paths = String[]
+    root_path_opt  = nothing
+    read_stdin     = false
+    stdin_filename = nothing
+    context_lines  = 2
+    exit_severity  = DiagnosticSeverity.Warning
+    show_severity  = DiagnosticSeverity.Information
+    progress_mode  = PROGRESS_AUTO
+    skip_analysis  = false # Undocumented option to skip analysis (only used for test)
+    quiet          = false
+    paths          = String[]
     for arg in args
         if arg in ("-h", "--help", "help")
             print(stdout, check_help_message)
             return 0
         elseif arg in ("--quiet", "-q")
             quiet = true
+        elseif arg == "-"
+            read_stdin = true
+        elseif startswith(arg, "--stdin-filename=")
+            stdin_filename = arg[18:end]
         elseif startswith(arg, "--root=")
             root_path_opt = arg[8:end]
         elseif startswith(arg, "--context-lines=")
@@ -369,35 +392,90 @@ function run_check(args::Vector{String})
         end
     end
 
-    if isempty(paths)
-        print(stderr, check_help_message)
+    quiet && Base.CoreLogging.disable_logging(Base.CoreLogging.Warn)
+
+    if stdin_filename !== nothing && !read_stdin
+        @error "--stdin-filename requires `-` to read the source from stdin"
         return 1
     end
 
-    quiet && Base.CoreLogging.disable_logging(Base.CoreLogging.Warn)
+    base_path = root_path_opt !== nothing ? abspath(root_path_opt) : pwd()
+    isempty(paths) && !read_stdin && push!(paths, base_path)
 
-    root_path = root_path_opt !== nothing ? abspath(root_path_opt) : pwd()
+    package_dirs = String[]
+    for (i, path) in enumerate(paths)
+        path = isabspath(path) ? path : joinpath(base_path, path)
+        if isdir(path)
+            path = abspath(path)
+            paths[i] = @something find_package_entry_file(path) return 1
+            push!(package_dirs, path)
+        else
+            paths[i] = path
+        end
+    end
 
-    paths = String[isabspath(p) ? p : joinpath(root_path, p) for p in paths]
+    root_path = if root_path_opt === nothing && length(package_dirs) == 1
+        only(package_dirs)
+    else
+        base_path
+    end
+
+    stdin_source = if read_stdin
+        stdin_uri = if stdin_filename === nothing
+            STDIN_URI
+        else
+            filepath2uri(isabspath(stdin_filename) ? stdin_filename : joinpath(base_path, stdin_filename))
+        end
+        StdinSource(stdin_uri, read(stdin, String))
+    end
 
     progress_ctx = ProgressContext(progress_mode, stderr)
     logger = ProgressAwareLogger(Base.CoreLogging.current_logger(), progress_ctx)
-    return let root_path = root_path, paths = paths, skip_analysis = skip_analysis,
-               context_lines = context_lines, exit_severity = exit_severity,
+    return let skip_analysis = skip_analysis,
+               context_lines = context_lines,
+               exit_severity = exit_severity,
                show_severity = show_severity
         Base.CoreLogging.with_logger(logger) do
-            run_check_analysis(root_path, paths, progress_ctx;
+            run_check_analysis(root_path, paths, stdin_source, progress_ctx;
                 skip_analysis, context_lines, exit_severity, show_severity)
         end
     end
 end
 
+function find_package_entry_file(dir::String)
+    project_file = joinpath(dir, "Project.toml")
+    if !isfile(project_file)
+        @error "Not a package directory (Project.toml not found): $dir\n" *
+            "To check individual files, pass them as arguments (see `jetls check --help`)"
+        return nothing
+    end
+    pkgname = @something find_pkg_name(project_file) begin
+        @error "Not a package directory (Project.toml has no package name): $dir\n" *
+            "To check individual files, pass them as arguments (see `jetls check --help`)"
+        return nothing
+    end
+    pkgfile = joinpath(dir, "src", pkgname * ".jl")
+    if !isfile(pkgfile)
+        @error "Package entry file not found: $pkgfile"
+        return nothing
+    end
+    return pkgfile
+end
+
 function run_check_analysis(
-        root_path::String, paths::Vector{String}, progress_ctx::ProgressContext;
+        root_path::String, paths::Vector{String}, stdin_source::Union{Nothing,StdinSource},
+        progress_ctx::ProgressContext;
         skip_analysis::Bool, context_lines::Int,
         exit_severity::DiagnosticSeverity.Ty, show_severity::DiagnosticSeverity.Ty
     )
     server = start_cli_server(root_path)
+    if stdin_source !== nothing
+        # Cache it as `textDocument/didOpen` does: the saved file cache makes the full
+        # analysis read this text instead of the file on disk at `--stdin-filename`.
+        parsed_stream = ParseStream!(stdin_source.text)
+        cache_file_info!(server, stdin_source.uri, 1, parsed_stream)
+        cache_saved_file_info!(server.state, stdin_source.uri, parsed_stream)
+    end
     if !skip_analysis
         start_signature_analysis_workers!(server)
         start_analysis_worker!(server)
@@ -416,9 +494,10 @@ function run_check_analysis(
             uri = filepath2uri(filepath)
             push!(analysis_uris, uri)
         end
+        stdin_source === nothing || push!(analysis_uris, stdin_source.uri)
     else
         # Full analysis phase (textDocument/publishDiagnostics equivalent)
-        @with_cli_LOAD_PATH run_full_analysis(server, root_path, paths, progress_ctx)
+        @with_cli_LOAD_PATH run_full_analysis(server, root_path, paths, stdin_source, progress_ctx)
         analysis_uris = collect_workspace_uris(server)
         if isempty(analysis_uris)
             @error "Full analysis failed: could not find any files to analyze"
@@ -438,7 +517,8 @@ function run_check_analysis(
 
     elapsed_time = time() - start_time
     print_stats(uri2diagnostics, total_uris, elapsed_time, show_severity)
-    has_errors = print_diagnostics(uri2diagnostics, root_path, context_lines, exit_severity, show_severity)
+    has_errors = print_diagnostics(uri2diagnostics, root_path, context_lines, exit_severity, show_severity;
+        stdin_source)
 
     cleanup_cli_tasks(server)
 
@@ -470,7 +550,8 @@ function start_cli_server(root_path::AbstractString)
     config_path = joinpath(root_path, ".JETLSConfig.toml")
     if isfile(config_path)
         load_file_init_options!(server, config_path)
-        load_file_config!(Returns(nothing), server, config_path)
+        deprecation_warnings = load_file_config!(Returns(nothing), server, config_path)
+        report_deprecated_configs(server, config_path, deprecation_warnings)
     end
 
     return server
@@ -478,19 +559,35 @@ end
 
 function run_full_analysis(
         server::Server, root_path::AbstractString, paths::Vector{String},
-        progress_ctx::ProgressContext
+        stdin_source::Union{Nothing,StdinSource}, progress_ctx::ProgressContext
     )
-    total_files = length(paths)
-    for (idx, path) in enumerate(paths)
-        filepath = abspath(path)
-        rel_path = relpath(filepath, root_path)
-        display_name = "[$idx/$total_files] $rel_path"
+    uris = URI[filepath2uri(abspath(path)) for path in paths]
+    stdin_source === nothing || push!(uris, stdin_source.uri)
+    total_files = length(uris)
+    for (idx, uri) in enumerate(uris)
+        display_name = "[$idx/$total_files] $(cli_display_path(uri, root_path))"
         with_progress(progress_ctx, "Full analysis", display_name) do cancellable_token
-            uri = filepath2uri(filepath)
-            cache_file_info!(server, uri, 1, read(filepath))
+            if stdin_source === nothing || uri != stdin_source.uri
+                cache_file_info!(server, uri, 1, read(uri2filepath(uri)::String))
+            end
             request_analysis!(server, uri, false;
                 wait=true, notify_diagnostics=false, cancellable_token, debounce=0.0)
         end
+    end
+end
+
+cli_display_path(uri::URI, root_path::AbstractString) =
+    uri == STDIN_URI ? "<stdin>" : relpath(uri2filepath(uri)::String, root_path)
+
+function cli_source_text(uri::URI, stdin_source::Union{Nothing,StdinSource})
+    if stdin_source !== nothing && uri == stdin_source.uri
+        return stdin_source.text
+    end
+    filepath = @something uri2filepath(uri) return nothing
+    return try
+        read(filepath, String)
+    catch
+        nothing
     end
 end
 
@@ -515,16 +612,13 @@ function run_per_file_diagnostics!(
             fi = @something get_file_info(server.state, uri) begin
                 get_unsynced_file_info!(server.state, uri)
             end return
-            # Mirrors `compute_live_diagnostics!`: parse errors short-circuit lowering.
             lookup_func = function ()
                 server_lookup_func = gen_lookup_out_of_scope!(server.state, uri)
                 @something server_lookup_func() OutOfScope(Main)
             end
-            diagnostics = if isempty(fi.parsed_stream.diagnostics)
-                toplevel_lowering_diagnostics!(def_used_names_cache, server, uri, fi, #=snapshot=#nothing, DUMMY_CANCEL_FLAG; lookup_func)
-            else
-                parsed_stream_to_diagnostics(fi)
-            end
+            diagnostics = compute_live_diagnostics!(
+                def_used_names_cache, server, uri, fi, #=snapshot=#nothing, DUMMY_CANCEL_FLAG;
+                lookup_func)
             if !isempty(diagnostics)
                 if lock
                     @lock uri2diagnostics_lock append!(get!(Vector{Diagnostic}, uri2diagnostics, uri), diagnostics)
@@ -635,6 +729,13 @@ function split_diagnostic_message(message::String)
     return summary, String(details)
 end
 
+# the display size for diagnostic messages, whose details are printed after the
+# two-column `# ` prefix of `print_diagnostic_details`
+function cli_message_displaysize()
+    rows, cols = displaysize(stdout)::Tuple{Int,Int}
+    return (rows, cols - 2)
+end
+
 function print_diagnostic_details(io::IO, details::String)
     printstyled(io, "#\n"; color=:light_black)
     for line in eachsplit(details, '\n')
@@ -649,7 +750,8 @@ end
 function print_diagnostics(
         uri2diagnostics::URI2Diagnostics, root_path::String,
         context_lines::Int, exit_severity::DiagnosticSeverity.Ty,
-        show_severity::DiagnosticSeverity.Ty
+        show_severity::DiagnosticSeverity.Ty;
+        stdin_source::Union{Nothing,StdinSource} = nothing
     )
     has_errors = false
     printed_diagnostic = false
@@ -658,18 +760,12 @@ function print_diagnostics(
     for uri in sorted_uris
         diagnostics = uri2diagnostics[uri]
         isempty(diagnostics) && continue
-        filepath = uri2filepath(uri)
-        filepath === nothing && continue
-        text = try
-            read(filepath, String)
-        catch
-            continue
-        end
-        src = JS.SourceFile(text; filename=filepath)
+        text = @something cli_source_text(uri, stdin_source) continue
+        src = JS.SourceFile(text; filename=uri2filename(uri))
         textbuf = Vector{UInt8}(text)
         line_starts = build_line_starts(textbuf)
 
-        rel_path = relpath(filepath, root_path)
+        rel_path = cli_display_path(uri, root_path)
         sorted_diagnostics = sort(diagnostics; by=d->(d.range.start.line, d.range.start.character))
         for diagnostic in sorted_diagnostics
             severity = diagnostic.severity
@@ -704,7 +800,7 @@ function print_diagnostics(
             character = diagnostic.range.start.character + 1
             printed_diagnostic && println(stdout)
             printstyled(stdout, "# @ $rel_path:$line,$character\n"; color=:light_black)
-            output = let note=note, notecolor=color, context_lines=context_lines
+            output = let note=note, notecolor=color
                 sprint(; context=IOContext(stdout)) do io
                     JS.highlight(io, src, start_byte:end_byte-1;
                         note, notecolor=notecolor,

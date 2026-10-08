@@ -52,15 +52,15 @@ function collect_include_document_links!(
 end
 
 # If `node` is an `include("path")` call with a single non-interpolated string
-# argument, return that `K"String"` node. Otherwise return `nothing`.
-# Interpolated strings (e.g. `"$x.jl"`) parse into `K"string"` and are skipped.
+# argument, return that string literal node. Otherwise return `nothing`.
+# Interpolated strings (e.g. `"$x.jl"`) parse into `:string` and are skipped.
 function include_path_string_node(node::SyntaxTree)
-    JS.kind(node) === JS.K"call" || return nothing
+    JS.head(node) === :call || return nothing
     JS.numchildren(node) == 2 || return nothing
     callee = node[1]
-    JS.kind(callee) === JS.K"Identifier" || return nothing
+    JS.head(callee) === :identifier || return nothing
     get_name_val(callee) in ("include", "include_dependency") || return nothing
     arg = node[2]
-    JS.kind(arg) === JS.K"String" || return nothing
+    is_string_literal(arg) || return nothing
     return arg
 end

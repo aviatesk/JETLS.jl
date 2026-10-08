@@ -50,16 +50,16 @@ end
         st = jlparse(clean_code)
         let ancestors = JETLS.byte_ancestors(st, 1)
             @test length(ancestors) >= 2
-            @test JS.kind(ancestors[1]) === JS.K"function"
-            @test JS.kind(ancestors[end]) === JS.K"toplevel"
+            @test JS.head(ancestors[1]) === :function
+            @test JS.head(ancestors[end]) === :toplevel
         end
         let ancestors = JETLS.byte_ancestors(st, return_pos)
             @test length(ancestors) >= 4
-            @test JS.kind(ancestors[1]) === JS.K"call"  # x + 1
-            @test JS.kind(ancestors[2]) === JS.K"return"
-            @test JS.kind(ancestors[3]) === JS.K"block"
-            @test JS.kind(ancestors[4]) === JS.K"function"
-            @test JS.kind(ancestors[end]) === JS.K"toplevel"
+            @test JS.head(ancestors[1]) === :call  # x + 1
+            @test JS.head(ancestors[2]) === :return
+            @test JS.head(ancestors[3]) === :block
+            @test JS.head(ancestors[4]) === :function
+            @test JS.head(ancestors[end]) === :toplevel
         end
     end
 
@@ -78,10 +78,10 @@ end
 
         let st = jlparse(clean_code),
             ancestors = JETLS.byte_ancestors(st, hello_start:hello_end)
-            @test any(node -> JS.kind(node) === JS.K"String" && JS.sourcetext(node) == "\"hello\"", ancestors)
-            @test any(node -> JS.kind(node) === JS.K"call", ancestors)
-            @test any(node -> JS.kind(node) === JS.K"function", ancestors)
-            @test any(node -> JS.kind(node) === JS.K"module", ancestors)
+            @test any(node -> JETLS.is_string_literal(node) && JS.sourcetext(node) == "\"hello\"", ancestors)
+            @test any(node -> JS.head(node) === :call, ancestors)
+            @test any(node -> JS.head(node) === :function, ancestors)
+            @test any(node -> JS.head(node) === :module, ancestors)
         end
     end
 
@@ -100,7 +100,7 @@ end
 
         # Test at exact boundaries
         let ancestors = JETLS.byte_ancestors(st, x_pos)
-            @test any(node -> JS.kind(node) === JS.K"Identifier" && JS.sourcetext(node) == "x", ancestors)
+            @test any(node -> JS.head(node) === :identifier && JS.sourcetext(node) == "x", ancestors)
         end
     end
 
@@ -113,7 +113,7 @@ end
 
         let st = jlparse(clean_code),
             ancestors = JETLS.byte_ancestors(st, c_pos)
-            @test any(node -> JS.kind(node) === JS.K"Identifier" && JS.sourcetext(node) == "c", ancestors)
+            @test any(node -> JS.head(node) === :identifier && JS.sourcetext(node) == "c", ancestors)
         end
     end
 
@@ -126,7 +126,7 @@ end
 
         let st = jlparse(clean_code),
             ancestors = JETLS.byte_ancestors(st, γ_pos)
-            @test any(node -> JS.kind(node) === JS.K"Identifier" && JS.sourcetext(node) == "γ", ancestors)
+            @test any(node -> JS.head(node) === :identifier && JS.sourcetext(node) == "γ", ancestors)
         end
     end
 
@@ -145,9 +145,9 @@ end
 
         st = jlparse(clean_code)
         ancestors1 = JETLS.byte_ancestors(st, pos1)
-        @test any(node -> JS.kind(node) === JS.K"Identifier" && JS.sourcetext(node) == "δεζ", ancestors1)
+        @test any(node -> JS.head(node) === :identifier && JS.sourcetext(node) == "δεζ", ancestors1)
         ancestors2 = JETLS.byte_ancestors(st, pos2-1)
-        @test any(node -> JS.kind(node) === JS.K"Identifier" && JS.sourcetext(node) == "ηθι", ancestors2)
+        @test any(node -> JS.head(node) === :identifier && JS.sourcetext(node) == "ηθι", ancestors2)
     end
 end
 
@@ -164,7 +164,7 @@ end
             offset = JETLS.xy_to_offset(clean_code, pos, @__FILE__)
             local_tree = JETLS.lowerable_toplevel_at(st, offset)
             @test !isnothing(local_tree)
-            @test JS.kind(local_tree) === JS.K"function"
+            @test JS.head(local_tree) === :function
         end
     end
 
@@ -199,7 +199,7 @@ end
         offset = sizeof("export foo") + 1
         local_tree = JETLS.lowerable_toplevel_at(st, offset)
         @test !isnothing(local_tree)
-        @test JS.kind(local_tree) === JS.K"export"
+        @test JS.head(local_tree) === :export
     end
 
     # Same fallback for trailing identifier in a statement-ending position.
@@ -208,7 +208,7 @@ end
         offset = sizeof("x = 1\ny") + 1  # just past `y`, on the newline
         local_tree = JETLS.lowerable_toplevel_at(st, offset)
         @test !isnothing(local_tree)
-        @test JS.kind(local_tree) === JS.K"Identifier"
+        @test JS.head(local_tree) === :identifier
         @test JS.sourcetext(local_tree) == "y"
     end
 end
@@ -497,7 +497,7 @@ end
         end
     end
     @testset "copied EST" begin
-        # `mktree` adds a provenance layer when copying a cached surface tree.
+        # `mktree` adds a provenance layer, so flags must come from the end of the chain.
         let st = JS.mktree(jlparse("a + b"; rule=:statement))
             @test JETLS.is_source_infix_op_call(st)
         end
@@ -521,12 +521,12 @@ end
             "T.@test true")
         st0 = jlparse(code; rule=:statement)
         transformed = JETLS.remove_macrocalls(new_style_macro_context, world, st0)
-        @test JS.kind(transformed) === JS.K"macrocall"
+        @test JS.head(transformed) === :macrocall
     end
 
     let st0 = jlparse("@inline x"; rule=:statement)
         transformed = JETLS.remove_macrocalls(same_named_macro_context, world, st0)
-        @test JS.kind(transformed) === JS.K"block"
+        @test JS.head(transformed) === :block
     end
 
     let st0 = jlparse("""
@@ -539,7 +539,7 @@ end
         transformed = JETLS.remove_macrocalls(new_style_macro_context, world, st0; strip_static=true)
         macrocalls = String[]
         JETLS.traverse(transformed) do node::JS.SyntaxTree
-            JS.kind(node) === JS.K"macrocall" || return nothing
+            JS.head(node) === :macrocall || return nothing
             push!(macrocalls, JS.sourcetext(node[1]))
             return nothing
         end
@@ -559,7 +559,7 @@ end
         transformed = JETLS.remove_macrocalls(context_module, world, st0)
         macrocalls = String[]
         JETLS.traverse(transformed) do node::JS.SyntaxTree
-            JS.kind(node) === JS.K"macrocall" || return nothing
+            JS.head(node) === :macrocall || return nothing
             push!(macrocalls, JS.sourcetext(node[1]))
             return nothing
         end
@@ -581,7 +581,7 @@ end
         test_│func(5)
         """
         fi, node = get_target_identifier(code)
-        @test (node !== nothing) && (JS.kind(node) === JS.K"Identifier")
+        @test (node !== nothing) && (JS.head(node) === :identifier)
         @test JS.sourcetext(node) == "test_func"
         let range = JETLS.jsobj_to_range(node, fi)
             @test range.start.line == 0 && range.start.character == 0
@@ -594,7 +594,7 @@ end
         """
         fi, node = get_target_identifier(code)
         @test node !== nothing
-        @test JS.kind(node) === JS.K"."
+        @test JS.head(node) === :.
         @test length(JS.children(node)) == 2
         @test JS.sourcetext(JS.children(node)[1]) == "obj"
         @test JS.sourcetext(JS.children(node)[2]) == "property"
@@ -609,7 +609,7 @@ end
         """
         fi, node = get_target_identifier(code)
         @test node !== nothing
-        @test JS.kind(node) === JS.K"."
+        @test JS.head(node) === :.
         let range = JETLS.jsobj_to_range(node, fi)
             @test range.start.line == 0 && range.start.character == 0
             @test range.var"end".line == 0 && range.var"end".character == sizeof("Core.Compiler.tmeet")
@@ -621,7 +621,7 @@ end
         """
         fi, node = get_target_identifier(code)
         @test node !== nothing
-        @test JS.kind(node) === JS.K"."
+        @test JS.head(node) === :.
         let range = JETLS.jsobj_to_range(node, fi)
             @test range.start.line == 0 && range.start.character == 0
             @test range.var"end".line == 0 && range.var"end".character == sizeof("Core.Compiler")
@@ -633,7 +633,7 @@ end
         """
         fi, node = get_target_identifier(code)
         @test node !== nothing
-        @test JS.kind(node) === JS.K"Identifier"
+        @test JS.head(node) === :identifier
         let range = JETLS.jsobj_to_range(node, fi)
             @test range.start.line == 0 && range.start.character == 0
             @test range.var"end".line == 0 && range.var"end".character == sizeof("Core")
@@ -645,7 +645,7 @@ end
         """
         fi, node = get_target_identifier(code)
         @test node !== nothing
-        @test JS.kind(node) === JS.K"Identifier"
+        @test JS.head(node) === :identifier
         let range = JETLS.jsobj_to_range(node, fi)
             @test range.start.line == 0 && range.start.character == 0 # include @-mark
             @test range.var"end".line == 0 && range.var"end".character == sizeof("@inline")
@@ -700,7 +700,7 @@ end
 @testset "`select_target_string`" begin
     let node = get_target_string("include(\"fo│o.jl\")")
         @test node !== nothing
-        @test JS.kind(node) === JS.K"String"
+        @test JETLS.is_string_literal(node)
         @test node.value == "foo.jl"
     end
     let node = get_target_string("x = \"hello│ world\"")
@@ -722,81 +722,81 @@ end
     # cursor right after `)` resolves via the `offset - 1` retry
     let node = get_enclosing_call("foo(1, 2)│")
         @test node !== nothing
-        @test JS.kind(node) === JS.K"call"
+        @test JS.head(node) === :call
         @test JS.sourcetext(node) == "foo(1, 2)"
     end
     # cursor inside the call's argument list
     let node = get_enclosing_call("foo(1, │2)")
         @test node !== nothing
-        @test JS.kind(node) === JS.K"call"
+        @test JS.head(node) === :call
         @test JS.sourcetext(node) == "foo(1, 2)"
     end
     # innermost call wins when cursor sits inside both
     let node = get_enclosing_call("outer(inner(│x))")
         @test node !== nothing
-        @test JS.kind(node) === JS.K"call"
+        @test JS.head(node) === :call
         @test JS.sourcetext(node) == "inner(x)"
     end
     # right after the inner `)` the more specific (inner) call wins over the
     # outer call that also spans the cursor — symmetric with `func(args)│`
     let node = get_enclosing_call("outer(inner(x)│)")
         @test node !== nothing
-        @test JS.kind(node) === JS.K"call"
+        @test JS.head(node) === :call
         @test JS.sourcetext(node) == "inner(x)"
     end
     # method call (dot-call expression)
     let node = get_enclosing_call("obj.method(x)│")
         @test node !== nothing
-        @test JS.kind(node) === JS.K"call"
+        @test JS.head(node) === :call
         @test JS.sourcetext(node) == "obj.method(x)"
     end
-    # `K"ref"` (indexing) is treated as call-like since it lowers to `getindex`
+    # `:ref` (indexing) is treated as call-like since it lowers to `getindex`
     let node = get_enclosing_call("xs[2]│")
         @test node !== nothing
-        @test JS.kind(node) === JS.K"ref"
+        @test JS.head(node) === :ref
         @test JS.sourcetext(node) == "xs[2]"
     end
-    # `K"tuple"` is treated as call-like
+    # `:tuple` is treated as call-like
     let node = get_enclosing_call("(1, 2)│")
         @test node !== nothing
-        @test JS.kind(node) === JS.K"tuple"
+        @test JS.head(node) === :tuple
         @test JS.sourcetext(node) == "(1, 2)"
     end
     # array literals and comprehensions are call-like since they lower to
     # `Base.vect` / `Base.vcat` / `Base.hcat` / `Base.collect`.
     let node = get_enclosing_call("[1, 2, 3]│")
         @test node !== nothing
-        @test JS.kind(node) === JS.K"vect"
+        @test JS.head(node) === :vect
         @test JS.sourcetext(node) == "[1, 2, 3]"
     end
     let node = get_enclosing_call("[1; 2]│")
         @test node !== nothing
-        @test JS.kind(node) === JS.K"vcat"
+        @test JS.head(node) === :vcat
         @test JS.sourcetext(node) == "[1; 2]"
     end
     let node = get_enclosing_call("[1 2]│")
         @test node !== nothing
-        @test JS.kind(node) === JS.K"hcat"
+        @test JS.head(node) === :hcat
         @test JS.sourcetext(node) == "[1 2]"
     end
     let node = get_enclosing_call("[i for i in 1:3]│")
         @test node !== nothing
-        @test JS.kind(node) === JS.K"comprehension"
+        @test JS.head(node) === :comprehension
         @test JS.sourcetext(node) == "[i for i in 1:3]"
     end
     let node = get_enclosing_call("Int[1; 2]│")
         @test node !== nothing
-        @test JS.kind(node) === JS.K"typed_vcat"
+        @test JS.head(node) === :typed_vcat
         @test JS.sourcetext(node) == "Int[1; 2]"
     end
     let node = get_enclosing_call("Int[1 2]│")
         @test node !== nothing
-        @test JS.kind(node) === JS.K"typed_hcat"
+        @test JS.head(node) === :typed_hcat
         @test JS.sourcetext(node) == "Int[1 2]"
     end
     let node = get_enclosing_call("Int[i for i in 1:3]│")
         @test node !== nothing
-        @test JS.kind(node) === JS.K"typed_comprehension"
+        @test JS.head(node) === :typed_comprehension
         @test JS.sourcetext(node) == "Int[i for i in 1:3]"
     end
     # cursor not inside any call-like expression
@@ -816,35 +816,35 @@ end
     # identifier path mirrors `select_target_identifier`
     let node = get_target_for_type_query("f│oo(x)")
         @test node !== nothing
-        @test JS.kind(node) === JS.K"Identifier"
+        @test JS.head(node) === :identifier
         @test JS.sourcetext(node) == "foo"
     end
-    # dot-chain path: walk up through `K"."` like `select_target_identifier`
+    # dot-chain path: walk up through `:.` like `select_target_identifier`
     let node = get_target_for_type_query("Base.Pa│ir(1, 2)")
         @test node !== nothing
-        @test JS.kind(node) === JS.K"."
+        @test JS.head(node) === :.
         @test JS.sourcetext(node) == "Base.Pair"
     end
     # call fallback when there is no identifier at the cursor
     let node = get_target_for_type_query("foo(1, 2)│")
         @test node !== nothing
-        @test JS.kind(node) === JS.K"call"
+        @test JS.head(node) === :call
         @test JS.sourcetext(node) == "foo(1, 2)"
     end
     let node = get_target_for_type_query("Base.Pair(1, 2)│")
         @test node !== nothing
-        @test JS.kind(node) === JS.K"call"
+        @test JS.head(node) === :call
         @test JS.sourcetext(node) == "Base.Pair(1, 2)"
     end
     # array literal / comprehension forms fall through to
     # `select_enclosing_call` and resolve as `Vector`/`Matrix`/… surfaces.
     let node = get_target_for_type_query("[1, 2, 3]│")
         @test node !== nothing
-        @test JS.kind(node) === JS.K"vect"
+        @test JS.head(node) === :vect
     end
     let node = get_target_for_type_query("Int[i for i in 1:3]│")
         @test node !== nothing
-        @test JS.kind(node) === JS.K"typed_comprehension"
+        @test JS.head(node) === :typed_comprehension
     end
     # neither identifier nor enclosing call
     @test isnothing(get_target_for_type_query("x = 42│"))
@@ -1008,10 +1008,9 @@ end
             end
             """)) do st0
             cnt[] += 1
-            k = JS.kind(st0)
-            if k === JS.K"string"
+            if JS.head(st0) === :string
                 inner_doc[] = st0
-            elseif k === JS.K"String"
+            elseif JETLS.is_string_literal(st0)
                 outer_doc[] = st0
             else
                 s = JS.sourcetext(st0)
@@ -1028,17 +1027,17 @@ end
         doc = inner_doc[]
         @test doc !== nothing
         @test any(JS.children(doc)) do c
-            JS.kind(c) === JS.K"Identifier" && JETLS.get_name_val(c) == "SIGNATURES"
+            JS.head(c) === :identifier && JETLS.get_name_val(c) == "SIGNATURES"
         end
     end
 end
 
-# Find the first descendant (or `st` itself) whose kind matches `k`.
-function find_first_kind(st::JS.SyntaxTree, k::JS.Kind)
-    JS.kind(st) === k && return st
+# Find the first descendant (or `st` itself) whose head matches `h`.
+function find_first_head(st::JS.SyntaxTree, h::Symbol)
+    JS.head(st) === h && return st
     JS.is_leaf(st) && return nothing
     for c in JS.children(st)
-        r = find_first_kind(c, k)
+        r = find_first_head(c, h)
         r === nothing || return r
     end
     return nothing
@@ -1055,48 +1054,48 @@ end
         return false
     end
 
-    # `K"."`: `(. lhs (inert (error)))` collapses to `lhs` so the surrounding
+    # `:.`: `(. lhs (inert (error)))` collapses to `lhs` so the surrounding
     # tree stays usable for downstream lowering / type queries.
     let st = jlparse("function f(binfo); g(binfo.); end")
         trimmed = JETLS.trim_error_nodes(st)
-        @test find_first_kind(trimmed, JS.K"error") === nothing
-        @test find_first_kind(trimmed, JS.K".") === nothing
-        call = find_first_kind(trimmed, JS.K"call")
+        @test find_first_head(trimmed, :error) === nothing
+        @test find_first_head(trimmed, :.) === nothing
+        call = find_first_head(trimmed, :call)
         @test call !== nothing
         # `g(binfo)` after repair → `(call g binfo)`.
         @test JS.numchildren(call) == 2
-        @test JS.kind(call[2]) === JS.K"Identifier"
+        @test JS.head(call[2]) === :identifier
         @test JETLS.get_name_val(call[2]) == "binfo"
         @test lowers_ok(trimmed)
     end
 
-    # `K"&&"` / `K"||"`: 1-child residue collapses to the surviving operand.
+    # `:&&` / `:||`: 1-child residue collapses to the surviving operand.
     let st = jlparse("function f(a); g(a && ); end")
         trimmed = JETLS.trim_error_nodes(st)
-        @test find_first_kind(trimmed, JS.K"&&") === nothing
+        @test find_first_head(trimmed, :&&) === nothing
         @test lowers_ok(trimmed)
     end
     let st = jlparse("function f(a); g(a || ); end")
         trimmed = JETLS.trim_error_nodes(st)
-        @test find_first_kind(trimmed, JS.K"||") === nothing
+        @test find_first_head(trimmed, :||) === nothing
         @test lowers_ok(trimmed)
     end
 
-    # `K"::"`: the infix form `value::│` collapses to `value`; the anonymous
+    # `:(::)`: the infix form `value::│` collapses to `value`; the anonymous
     # prefix form `f(::T)` is preserved. Disambiguation recovers the parser's
     # infix/prefix flag from source provenance after trimming.
     let st = jlparse("function f(); g(binfo::); end")
         trimmed = JETLS.trim_error_nodes(st)
-        @test find_first_kind(trimmed, JS.K"::") === nothing
+        @test find_first_head(trimmed, :(::)) === nothing
         @test lowers_ok(trimmed)
     end
     let st = jlparse("f(::Int) = 1")
         trimmed = JETLS.trim_error_nodes(st)
-        ascription = find_first_kind(trimmed, JS.K"::")
+        ascription = find_first_head(trimmed, :(::))
         @test ascription !== nothing
         @test JETLS.is_source_prefix_op_call(ascription)
         @test JS.numchildren(ascription) == 1
-        @test JS.kind(ascription[1]) === JS.K"Identifier"
+        @test JS.head(ascription[1]) === :identifier
         @test JETLS.get_name_val(ascription[1]) == "Int"
         @test lowers_ok(trimmed)
     end
@@ -1104,6 +1103,20 @@ end
     # No-op on well-formed input: every legitimate shape passes through unchanged.
     let st = jlparse("function f(a::Int, b); a.x + (a && b) || a; end")
         @test JETLS.trim_error_nodes(st) === st
+    end
+end
+
+@testset "check_syntax_tree0 detects mutation" begin
+    for mutate! in (
+            st::JS.SyntaxTree -> JS.setmeta!(st[1], :mutated, true),
+            st::JS.SyntaxTree -> push!(JS.children(st[1]), st[1][1]),
+            st::JS.SyntaxTree -> setfield!(st[1][1], :value, :mutated))
+        fi = JETLS.FileInfo(#=version=#1, "f(x) = x + 1", "test.jl"; cache_tree0=true)
+        @test JETLS.build_syntax_tree(fi) === fi.syntax_tree0
+        @test JETLS.check_syntax_tree0(fi) === nothing
+        mutate!(fi.syntax_tree0::JS.SyntaxTree)
+        @test_throws ErrorException JETLS.check_syntax_tree0(fi)
+        @test_throws ErrorException JETLS.build_syntax_tree(fi)
     end
 end
 

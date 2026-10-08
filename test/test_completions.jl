@@ -23,17 +23,21 @@ function get_cursor_bindings(
 end
 function get_cursor_bindings(marked_text::AbstractString; kwargs...)
     text, positions = JETLS.get_text_and_positions(marked_text)
-    fi = JETLS.FileInfo(#=version=#0, text, @__FILE__)
+    fi = JETLS.FileInfo(#=version=#0, text, @__FILE__; cache_tree0 = true)
     b = JETLS.xy_to_offset(fi, positions[1])
-    return get_cursor_bindings(fi, b; kwargs...)
+    bindings = get_cursor_bindings(fi, b; kwargs...)
+    JETLS.check_syntax_tree0(fi)
+    return bindings
 end
 
 function get_local_completions(s::AbstractString, b::Int)
     uri = JETLS.URIs2.filepath2uri(@__FILE__)
-    fi = JETLS.FileInfo(#=version=#0, s, @__FILE__)
-    return map(get_cursor_bindings(fi, b)) do ((bi, st, dist))
+    fi = JETLS.FileInfo(#=version=#0, s, @__FILE__; cache_tree0 = true)
+    completions = map(get_cursor_bindings(fi, b)) do ((bi, st, dist))
         JETLS.to_completion(bi, st, dist, uri, fi)
     end
+    JETLS.check_syntax_tree0(fi)
+    return completions
 end
 
 # Test that completion vector contains CompletionItems with all of `expected`
@@ -370,7 +374,7 @@ function with_completion_items(
                         resolveSupport = ClientCompletionItemResolveOptions(;
                             properties = ["documentation", "detail", "kind", "labelDetails"])
                     )))))
-    fi = JETLS.FileInfo(#=version=#0, clean_code, @__FILE__)
+    fi = JETLS.FileInfo(#=version=#0, clean_code, @__FILE__; cache_tree0 = true)
     JETLS.store!(state.file_cache) do cache
         Base.PersistentDict(cache, uri => fi), nothing
     end
@@ -380,6 +384,7 @@ function with_completion_items(
             context_module)
         tester((; result = (; items, isIncomplete), state, uri))
     end
+    JETLS.check_syntax_tree0(fi)
 end
 
 @testset "Test macro fallback completions" begin
@@ -881,6 +886,125 @@ Core.eval(completion_binding_state_fixture,
         cnt[] += 1
     end
     @test cnt[] == 1
+end
+
+@testset "global completion for live definitions" begin
+    let text = """
+        function live_func(x) x end
+        const LIVE_CONST = 1
+        struct LiveStruct end
+        macro live_macro(ex) ex end
+        live_undefined
+        live_│
+        """
+        cnt = Ref(0)
+        with_completion_items(text) do (; result)
+            cv_has(result.items, ["live_func", "LIVE_CONST", "LiveStruct", "@live_macro"])
+            cv_nhas(result.items, ["live_undefined"])
+            @test only(filter(item -> item.label == "live_func", result.items)).data === nothing
+            cnt[] += 1
+        end
+        @test cnt[] == 1
+    end
+
+    let text = """
+        live_func(x) = x
+        macro live_macro(ex) ex end
+        @live│
+        """
+        context = CompletionContext(; triggerKind = CompletionTriggerKind.Invoked)
+        cnt = Ref(0)
+        with_completion_items(text; context) do (; result)
+            cv_has(result.items, ["@live_macro"])
+            cv_nhas(result.items, ["live_func"])
+            cnt[] += 1
+        end
+        @test cnt[] == 1
+    end
+end
+
+@testset "global completion for live definitions in analyzed modules" begin
+    # The live texts keep the line layout of the saved texts so that the analyzed
+    # module ranges still apply to them.
+    main_saved = """
+        include("SUBFILE")
+
+        module LiveOuter
+        outer_existing() = 1
+
+        module LiveInner
+        inner_existing() = 1
+
+
+        end # module LiveInner
+
+        end # module LiveOuter
+
+        """
+    main_live = """
+        include("SUBFILE")
+        main_live() = 1
+        module LiveOuter
+        outer_existing() = 1
+        outer_live() = 1
+        module LiveInner
+        inner_existing() = 1
+        inner_live() = 1
+        inner_│
+        end # module LiveInner
+        outer_│
+        end # module LiveOuter
+        LiveOuter.LiveInner.inner_│
+        live_│
+        """
+    sub_saved = "sub_existing() = 1\n"
+    sub_live = "sub_existing() = 1\nsub_live() = 1\n"
+    withscript("") do script_path
+        sub_path = script_path * "_sub.jl"
+        try
+            write(sub_path, sub_saved)
+            main_saved′ = replace(main_saved, "SUBFILE" => basename(sub_path))
+            write(script_path, main_saved′)
+            main_live′, positions = JETLS.get_text_and_positions(
+                replace(main_live, "SUBFILE" => basename(sub_path)))
+            main_uri = filepath2uri(script_path)
+            sub_uri = filepath2uri(sub_path)
+            withserver() do (; server, writereadmsg, id_counter)
+                JETLS.cache_file_info!(server, main_uri, 1, main_saved′)
+                JETLS.cache_saved_file_info!(server.state, main_uri, main_saved′)
+                JETLS.request_analysis!(server, main_uri, #=invalidate=#false;
+                    wait=true, notify_diagnostics=false)
+                JETLS.cache_file_info!(server, main_uri, 2, main_live′)
+                JETLS.cache_file_info!(server, sub_uri, 1, sub_live)
+                inner_items, outer_items, dot_items, top_items = map(positions) do pos
+                    (; raw_res) = writereadmsg(CompletionRequest(;
+                        id = id_counter[] += 1,
+                        params = CompletionParams(;
+                            textDocument = TextDocumentIdentifier(; uri = main_uri),
+                            position = pos)))
+                    return raw_res.result.items
+                end
+
+                cv_has(inner_items, ["inner_existing", "inner_live"])
+                cv_nhas(inner_items, ["outer_live", "main_live", "sub_live"])
+
+                cv_has(outer_items, ["outer_existing", "outer_live"])
+                cv_nhas(outer_items, ["inner_live", "main_live", "sub_live"])
+                outer_item(label) = only(filter(item -> item.label == label, outer_items))
+                @test outer_item("outer_live").sortText == outer_item("outer_existing").sortText
+                @test outer_item("outer_live").data === nothing
+                @test outer_item("outer_existing").data isa GlobalCompletionData
+
+                cv_has(dot_items, ["inner_existing", "inner_live"])
+                cv_nhas(dot_items, ["outer_live", "main_live"])
+
+                cv_has(top_items, ["main_live", "sub_live", "sub_existing"])
+                cv_nhas(top_items, ["outer_live", "inner_live"])
+            end
+        finally
+            rm(sub_path; force=true)
+        end
+    end
 end
 
 @testset "macro completion" begin

@@ -9,11 +9,12 @@ include(normpath(pkgdir(JETLS), "test", "setup.jl"))
 function find_references(code::AbstractString, pos::Position; include_declaration::Bool=true)
     server = JETLS.Server()
     uri = URI("file:///test.jl")
-    fi = JETLS.FileInfo(#=version=#0, code, "test.jl")
+    fi = JETLS.FileInfo(#=version=#0, code, "test.jl"; cache_tree0 = true)
     JETLS.store!(server.state.file_cache) do cache
         Base.PersistentDict(cache, uri => fi), nothing
     end
     locations = JETLS.find_references(server, uri, fi, pos; include_declaration)
+    JETLS.check_syntax_tree0(fi)
     return locations
 end
 
@@ -867,11 +868,10 @@ end
     end
 
     # Compound-assignment operators (`+=`, `-=`, ...) combined with a macrocall
-    # (`x += @elapsed ...`) parse into a `K"unknown_head"` node whose `name_val`
-    # attribute carries the operator name; losing that attribute during
-    # `remove_macrocalls` reconstruction used to make scope-resolution silently
-    # fail, causing `find_references` to return empty on symbols defined in such
-    # functions.
+    # (`x += @elapsed ...`) parse into a node whose head is the operator itself
+    # (e.g. `:+=`); losing the operator during `remove_macrocalls`
+    # reconstruction used to make scope-resolution silently fail, causing
+    # `find_references` to return empty on symbols defined in such functions.
     @testset "compound assignment with macrocall" begin
         # Cursor on the definition site of a function whose body contains
         # `+= @elapsed ...`: select_target_binding must succeed.
@@ -941,7 +941,7 @@ end
 
     # `@ccall foo(...)` treats `foo` as a C library symbol, not a reference to
     # a Julia binding. `@ccall` has a new-style JuliaLowering implementation
-    # that correctly encodes this by wrapping `foo` in `K"inert"`, so scope
+    # that correctly encodes this by wrapping `foo` in `:inert`, so scope
     # resolution must leave it alone. That only holds while
     # `_remove_macrocalls` preserves the `@ccall` macrocall (because its binding
     # is in `NEW_STYLE_MACRO_BINDINGS`) — if it ever falls back to
@@ -959,6 +959,23 @@ end
             # `strlen` inside `@ccall` is not linked to the Julia local.
             refs_at_let = find_references(clean_code, positions[1])
             @test length(refs_at_let) == 1
+        end
+    end
+
+    @testset "$macroname in a method signature" for macroname in ("@NamedTuple", "@Kwargs")
+        let code = """
+            struct │Foo│ end
+            function f(x::$macroname{a::│Foo│})
+                │y│ = x
+                return │y│
+            end
+            """
+            clean_code, positions = JETLS.get_text_and_positions(code)
+            @test length(positions) == 8
+            for pos in positions
+                refs = find_references(clean_code, pos)
+                @test length(refs) == 2
+            end
         end
     end
 

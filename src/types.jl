@@ -9,6 +9,11 @@ struct TestsetDiagnosticsKey <: ExtraDiagnosticsKey
 end
 to_uri_impl(key::TestsetDiagnosticsKey) = key.uri
 
+struct ConfigDiagnosticsKey <: ExtraDiagnosticsKey
+    uri::URI
+end
+to_uri_impl(key::ConfigDiagnosticsKey) = key.uri
+
 struct TestsetResult
     result::TestRunnerResult
     key::TestsetDiagnosticsKey
@@ -72,26 +77,26 @@ struct InferredTreeContext
     # `byte_range => kind` for the surface node each lowered node was lowered
     # from (first element of `JS.flattened_provenance`). First-write-wins,
     # mirroring a `traverse`-then-pick-first lookup.
-    surface_kind_index::Dict{UnitRange{Int}, JS.Kind}
+    surface_kind_index::Dict{UnitRange{Int}, Symbol}
     # Every lowered node keyed by its own `byte_range`, in preorder. The
-    # preorder property is load-bearing for the "last `K"call"` wins"
+    # preorder property is load-bearing for the "last `:call` wins"
     # semantics in `type_for_call`.
     by_byte_range::Dict{UnitRange{Int}, Vector{SyntaxTree}}
-    # Result types from typed `K"call"` nodes whose first provenance is a
-    # `K"macrocall"`, keyed by the macrocall's `byte_range`.
+    # Result types from typed `:call` nodes whose first provenance is a
+    # `:macrocall`, keyed by the macrocall's `byte_range`.
     macrocall_types::Dict{UnitRange{Int}, Vector{Any}}
-    # Every `K"return"` node, in two parallel `Vector`s sorted by
+    # Every `:return` node, in two parallel `Vector`s sorted by
     # `JS.first_byte` (so `searchsortedfirst` is valid on `return_first_bytes`).
     # User-vs-synthetic classification is derived per-query from
     # `user_return_form_ranges` below — @mlechu's idea.
     return_first_bytes::Vector{Int}
     return_nodes::Vector{SyntaxTree}
-    # Byte ranges of every user-written `K"return"` surface form in `st3`
-    # (`st3` not `st0` so macro-expansion-introduced `K"return"`s are included).
+    # Byte ranges of every user-written `:return` surface form in `st3`
+    # (`st3` not `st0` so macro-expansion-introduced `:return`s are included).
     # Consumed by `type_for_branching`.
     user_return_form_ranges::Vector{UnitRange{Int}}
     # For each lowered node inside the body of some OC, the byte range of that OC's
-    # `K"opaque_closure_method"`. Used by `tmerge_at_range` to filter OC construction
+    # `:opaque_closure_method`. Used by `tmerge_at_range` to filter OC construction
     # scaffolding sharing a byte range with the user's yield expression: a node is kept
     # only when the OC whose body it's in has the queried byte range — so inner-OC noise
     # inside an outer OC body (e.g. multi-`for` comprehension, closure-of-closure) is
@@ -120,7 +125,8 @@ struct FileInfo
     testsetinfos::Vector{TestsetInfo}
     # `st0` cache for synchronized documents, built from `parsed_stream` when the
     # constructor is given `cache_tree0=true`. Access through `build_syntax_tree`,
-    # which returns a copy safe for lowering. Unsynced files keep this `nothing`;
+    # which shares this tree across requests, so it must never be mutated in place
+    # (lowering builds new nodes instead). Unsynced files keep this `nothing`;
     # workspace-wide hot paths should rely on summary caches instead of retaining
     # `st0` for every file.
     syntax_tree0::Union{Nothing,SyntaxTree}
@@ -147,6 +153,9 @@ struct FileInfo
         )
         syntax_tree0 = cache_tree0 ?
             JS.build_tree(JS.SyntaxTree, parsed_stream; filename) : nothing
+        @static if JETLS_TEST_MODE
+            syntax_tree0 === nothing || register_syntax_tree0!(syntax_tree0)
+        end
         line_starts = build_line_starts(parsed_stream.textbuf)
         new(unique_id("FileInfo"), version, parsed_stream, filename, encoding,
             testsetinfos, syntax_tree0, inferred_context_cache, line_starts)
@@ -197,12 +206,10 @@ end
 struct NotebookCellInfo
     uri::URI
     kind::LSP.NotebookCellKind.Ty
-    """
-    The client-tracked text-document version of this cell. Each notebook cell is an
-    independent text document with its own version counter, distinct from the enclosing
-    `NotebookInfo.version` (the notebook-document version). This per-cell version is what
-    the client expects in `OptionalVersionedTextDocumentIdentifier` for cell edits.
-    """
+    # The client-tracked text-document version of this cell. Each notebook cell is an
+    # independent text document with its own version counter, distinct from the enclosing
+    # `NotebookInfo.version` (the notebook-document version). This per-cell version is what
+    # the client expects in `OptionalVersionedTextDocumentIdentifier` for cell edits.
     version::Int
     text::String
 end
@@ -373,7 +380,7 @@ const PendingAnalyses = CASContainer{Dict{AnalysisEntry,Union{Nothing,AnalysisRe
 const CurrentGenerations = CASContainer{Dict{AnalysisEntry,Int}, CASStats}
 const AnalyzedGenerations = CASContainer{Dict{AnalysisEntry,Int}, CASStats}
 const DebouncedRequests = LWContainer{Dict{AnalysisEntry,Tuple{Timer,Base.Event}}, LWStats}
-const InstantiatedEnvs = LWContainer{Dict{String,Union{Nothing,Tuple{Base.PkgId,String}}}, LWStats}
+const InstantiatedEnvs = LWContainer{Set{String}, LWStats}
 
 struct PendingAnalysisRequest
     uri::URI
@@ -595,7 +602,8 @@ const DIAGNOSTIC_SOURCE_LIVE = "JETLS/live"
 const DIAGNOSTIC_SOURCE_SAVE = "JETLS/save"
 const DIAGNOSTIC_SOURCE_EXTRA = "JETLS/extra"
 
-const SYNTAX_DIAGNOSTIC_CODE = "syntax/parse-error"
+const SYNTAX_PARSE_ERROR_CODE = "syntax/parse-error"
+const SYNTAX_PARSE_WARNING_CODE = "syntax/parse-warning"
 const LOWERING_UNUSED_ARGUMENT_CODE = "lowering/unused-argument"
 const LOWERING_UNUSED_LOCAL_CODE = "lowering/unused-local"
 const LOWERING_UNUSED_ASSIGNMENT_CODE = "lowering/unused-assignment"
@@ -611,11 +619,14 @@ const LOWERING_UNUSED_LABEL_CODE = "lowering/unused-label"
 const LOWERING_UNREACHABLE_CODE = "lowering/unreachable-code"
 const LOWERING_INACTIVE_CODE = "lowering/inactive-code"
 const LOWERING_AMBIGUOUS_SOFT_SCOPE_CODE = "lowering/ambiguous-soft-scope"
+const LOWERING_ORPHANED_DOCSTRING_CODE = "lowering/orphaned-docstring"
 const TOPLEVEL_ERROR_CODE = "toplevel/error"
 const TOPLEVEL_MISSING_CONCRETIZATION_CODE = "toplevel/missing-concretization"
 const TOPLEVEL_CONCRETIZATION_TIMEOUT_CODE = "toplevel/concretization-timeout"
 const TOPLEVEL_METHOD_OVERWRITE_CODE = "toplevel/method-overwrite"
 const TOPLEVEL_ABSTRACT_FIELD_CODE = "toplevel/abstract-field"
+const TOPLEVEL_UNSUPPORTED_FEATURE_CODE = "toplevel/unsupported-feature"
+const TOPLEVEL_ANALYSIS_SKIPPED_CODE = "toplevel/analysis-skipped"
 const INFERENCE_UNDEF_GLOBAL_VAR_CODE = "inference/undef-global-var"
 const INFERENCE_UNDEF_STATIC_PARAM_CODE = "inference/undef-static-param" # currently not reported
 const INFERENCE_FIELD_ERROR_CODE = "inference/field-error"
@@ -627,9 +638,12 @@ const INFERENCE_TYPE_ERROR_TYPE_ASSERT_CODE = "inference/type-error/type-assert"
 const INFERENCE_TYPE_ERROR_KEYWORD_CODE = "inference/type-error/keyword"
 const DEPRECATED_INFERENCE_NON_BOOLEAN_COND_CODE = "inference/non-boolean-cond"
 const TESTRUNNER_TEST_FAILURE_CODE = "testrunner/test-failure"
+const CONFIG_DEPRECATED_KEY_CODE = "config/deprecated-key"
+const CONFIG_DEPRECATED_VALUE_CODE = "config/deprecated-value"
 
 const ALL_DIAGNOSTIC_CODES = Set{String}(String[
-    SYNTAX_DIAGNOSTIC_CODE,
+    SYNTAX_PARSE_ERROR_CODE,
+    SYNTAX_PARSE_WARNING_CODE,
     LOWERING_UNUSED_ARGUMENT_CODE,
     LOWERING_UNUSED_LOCAL_CODE,
     LOWERING_UNUSED_ASSIGNMENT_CODE,
@@ -645,11 +659,14 @@ const ALL_DIAGNOSTIC_CODES = Set{String}(String[
     LOWERING_UNREACHABLE_CODE,
     LOWERING_INACTIVE_CODE,
     LOWERING_AMBIGUOUS_SOFT_SCOPE_CODE,
+    LOWERING_ORPHANED_DOCSTRING_CODE,
     TOPLEVEL_ERROR_CODE,
     TOPLEVEL_MISSING_CONCRETIZATION_CODE,
     TOPLEVEL_CONCRETIZATION_TIMEOUT_CODE,
     TOPLEVEL_METHOD_OVERWRITE_CODE,
     TOPLEVEL_ABSTRACT_FIELD_CODE,
+    TOPLEVEL_UNSUPPORTED_FEATURE_CODE,
+    TOPLEVEL_ANALYSIS_SKIPPED_CODE,
     INFERENCE_UNDEF_GLOBAL_VAR_CODE,
     INFERENCE_UNDEF_STATIC_PARAM_CODE,
     INFERENCE_FIELD_ERROR_CODE,
@@ -660,6 +677,8 @@ const ALL_DIAGNOSTIC_CODES = Set{String}(String[
     INFERENCE_TYPE_ERROR_TYPE_ASSERT_CODE,
     INFERENCE_TYPE_ERROR_KEYWORD_CODE,
     TESTRUNNER_TEST_FAILURE_CODE,
+    CONFIG_DEPRECATED_KEY_CODE,
+    CONFIG_DEPRECATED_VALUE_CODE,
 ])
 
 const DIAGNOSTIC_CODE_ALIASES = Dict{String,Vector{String}}(

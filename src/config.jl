@@ -313,14 +313,10 @@ end
 
 function parse_auto_instantiate(@nospecialize(x), path::Vector{String})
     x === nothing && return nothing
-    # `auto_instantiate` used to be a boolean; keep accepting `true`/`false` for
-    # backward compatibility, mapping them to `"always"`/`"never"`.
-    x === true && return AUTO_INSTANTIATE_ALWAYS
-    x === false && return AUTO_INSTANTIATE_NEVER
     x isa String && x in AUTO_INSTANTIATE_VALUES && return x
     parse_dict_error(path, string(
         "expected one of ", join((repr(v) for v in AUTO_INSTANTIATE_VALUES), ", "),
-        " (or `true`/`false`), got ", repr(x)))
+        ", got ", repr(x)))
 end
 
 function parse_concretization_timeout(@nospecialize(x), path::Vector{String})
@@ -599,34 +595,64 @@ unmatched_key_msg(header_msg::AbstractString, path::Vector{String}) =
     string(header_msg, "\n`", join(path, "."), "`")
 
 # Rewrite raw user config dicts so deprecated key paths land at their new
-# location before `parse_config_from_dict` sees them. Returns a list of
-# user-facing warnings — one per deprecation actually present.
+# location, and deprecated values are replaced, before `parse_config_from_dict`
+# sees them. Returns a list of user-facing warnings — one per deprecation
+# actually present.
 #
-# The struct schema only knows the current key paths, so callers must invoke
-# this *before* parsing. Already-migrated values win over the legacy alias.
-function migrate_deprecated_config_keys!(
+# The struct schema only knows the current key paths and values, so callers must
+# invoke this *before* parsing. Already-migrated values win over the legacy alias.
+function migrate_deprecated_config!(
         config_dict::Dict{String,Any},
-        deprecated_configs::Vector{Pair{Vector{String},Union{Nothing,Vector{String}}}} = deprecated_configurations
+        deprecated_configs::Vector{Pair{Vector{String},Union{Nothing,Vector{String}}}} = deprecated_configurations,
+        deprecated_values::Vector{Pair{Vector{String},Pair{Any,Any}}} = deprecated_configuration_values
     )
     warnings = String[]
     for (old_path, new_path) in deprecated_configs
         popped = @something pop_nested!(config_dict, old_path) continue
         old_value = something(popped)
-        if new_path === nothing
-            push!(warnings,
-                "`" * join(old_path, ".") * "` is deprecated and no longer has " *
-                "any effect; please remove it from your config.")
-        else
+        if new_path !== nothing
             new_parent = ensure_nested_dict!(config_dict, @view new_path[1:end-1])
             if new_parent !== nothing && !haskey(new_parent, new_path[end])
                 new_parent[new_path[end]] = old_value
             end
-            push!(warnings,
-                "`" * join(old_path, ".") * "` is deprecated; " *
-                "use `" * join(new_path, ".") * "` instead.")
         end
+        push!(warnings, deprecated_config_key_message(old_path, new_path))
+    end
+    for (path, (old_value, new_value)) in deprecated_values
+        parent = @something get_nested_dict(config_dict, @view path[1:end-1]) continue
+        is_deprecated_value(get(parent, path[end], nothing), old_value) || continue
+        parent[path[end]] = new_value
+        push!(warnings, deprecated_config_value_message(path, old_value, new_value))
     end
     return warnings
+end
+
+# `isequal(1, true)` holds, but `1` is not the deprecated `true`.
+is_deprecated_value(@nospecialize(value), @nospecialize(old_value)) =
+    typeof(value) === typeof(old_value) && isequal(value, old_value)
+
+function get_nested_dict(d::Dict{String,Any}, path)
+    for key in path
+        d = @something get(d, key, nothing) return nothing
+        d isa Dict{String,Any} || return nothing
+    end
+    return d
+end
+
+function deprecated_config_key_message(
+        old_path::Vector{String}, new_path::Union{Nothing,Vector{String}}
+    )
+    new_path === nothing && return "`" * join(old_path, ".") * "` is deprecated and no " *
+        "longer has any effect; please remove it from your config."
+    return "`" * join(old_path, ".") * "` is deprecated; use `" * join(new_path, ".") *
+        "` instead."
+end
+
+function deprecated_config_value_message(
+        path::Vector{String}, @nospecialize(old_value), @nospecialize(new_value)
+    )
+    return "`" * TS.format_value(old_value) * "` for `" * join(path, ".") *
+        "` is deprecated; use `" * TS.format_value(new_value) * "` instead."
 end
 
 # Pop `path[end]` from the nested location in `d`. Empty parent dicts along the

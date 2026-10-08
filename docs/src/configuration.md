@@ -57,7 +57,8 @@ Base.include(@__MODULE__, joinpath(pkgdir(JETLS), "docs", "config-schema-block.j
 - **Type**: number (seconds)
 - **Default**: `1.0`
 
-Debounce time in seconds before triggering full analysis after a file save.
+Debounce time in seconds before triggering [full analysis](@ref analysis/full)
+after a file save.
 JETLS performs type-aware analysis using [JET.jl](https://github.com/aviatesk/JET.jl)
 to detect potential errors. The debounce prevents excessive analysis when you
 save files frequently. Higher values reduce analysis frequency (saving CPU) but
@@ -82,10 +83,10 @@ never touched.
 - `"prompt"` asks for confirmation before instantiating, once per environment
   per server session. Clients that support work-done progress show
   "Waiting for environment instantiation" until the prompt is answered.
-  Full analysis of the files in that environment is deferred until then, so
-  if the notification is left unanswered (e.g. tucked away in VSCode's
-  notification center), those files get no save-time diagnostics until you
-  respond.
+  [full analysis](@ref analysis/full) of the files in that environment is
+  deferred until then, so if the notification is left unanswered (e.g. tucked
+  away in VSCode's notification center), those files get no save-time
+  diagnostics until you respond.
   Alternatively, you can resolve and instantiate the environment manually while
   the prompt is open, then choose "Skip" after the operation finishes.
   JETLS rechecks the environment before analysis and uses the updated
@@ -120,14 +121,14 @@ auto_instantiate = "always"  # Instantiate without asking
 - **Type**: array of tables
 - **Default**: `[]`
 
-During script-mode analysis, JETLS analyzes top-level code without evaluating
-every expression. If it needs the value of a global binding to define a later
+During [script analysis](@ref analysis/full/modes/script), JETLS
+analyzes top-level code without evaluating every expression.
+If it needs the value of a global binding to define a later
 type or method, JETLS may report `toplevel/missing-concretization`.
 
 By contrast, when analyzing package source code under `src/`, JETLS uses the
 catch-all concretization pattern `:(x_)` and evaluates all top-level code.
-Additional concretization patterns are therefore needed only for script-mode
-analysis.
+Additional concretization patterns are therefore needed only for script analysis.
 
 For example, suppose `scripts/random-type.jl` contains:
 
@@ -182,22 +183,25 @@ the built-in patterns; they do not replace them.
     top-level expression instead of only analyzing it. Any side effects of that
     expression, such as writing files, accessing the network, starting external
     processes, or mutating global state, can therefore occur during analysis.
-    Full analysis may run again after a file is saved, so these effects may occur
-    more than once. Keep both `pattern` and `path` as specific as possible.
+    [full analysis](@ref analysis/full) may run again after a file is saved,
+    so these effects may occur more than once.
+    Keep both `pattern` and `path` as specific as possible.
 
 #### [`[full_analysis] concretization_timeout`](@id config/full_analysis/concretization_timeout)
 
 - **Type**: positive finite number (seconds) or the exact string `"inf"`
 - **Default**: `10.0`
 
-Limits concrete execution of each top-level statement during full analysis of
-both scripts and packages. This is not a time limit for the overall analysis.
-Positive integers and floating-point values are accepted; `0`, negative values,
-booleans, numeric `NaN`/`Inf`, and strings other than `"inf"` are rejected.
+Limits concrete execution of each top-level statement during
+[full analysis](@ref analysis/full) of both scripts and packages. This is not a
+time limit for the overall analysis. Positive integers and floating-point values
+are accepted; `0`, negative values, booleans, numeric `NaN`/`Inf`, and strings
+other than `"inf"` are rejected.
 
 When the limit is exceeded, JETLS reports
 [`toplevel/concretization-timeout`](@ref diagnostic/reference/toplevel/concretization-timeout)
-and skips abstract analysis of that statement, so results may be incomplete.
+and stops the full analysis without analyzing that statement or any code after
+it.
 Timing starts after statement selection and interpreter frame setup. Time spent
 in `include`s and module-loading statements handled by JET is excluded from the
 caller's limit; each top-level statement in an included file has its own timeout.
@@ -288,15 +292,18 @@ enabled = false  # Disable all diagnostics
 - **Default**: `true`
 
 Enable or disable diagnostics for unopened files. When enabled, JETLS reports
-diagnostics for all Julia files in the workspace. When disabled, diagnostics
+diagnostics for all Julia files in the workspace that
+[full analysis](@ref analysis/full) covers (see
+[How each file is analyzed](@ref analysis/full/files)), as well as for the
+[`.JETLSConfig.toml`](@ref diagnostic/stage/config). When disabled, diagnostics
 are only reported for files currently open in the editor.
 
-This setting affects both [`JETLS/live` and `JETLS/save`](@ref diagnostic/source)
-diagnostics. For `JETLS/live`, lowering-based analysis for unopened files is
-skipped when disabled (though the performance impact is minimal since lowering
-analysis is usually pretty fast). For `JETLS/save`, full analysis still runs;
-only reporting is suppressed. Disabling this can be useful to reduce noise when
-there are many warnings across the workspace.
+This setting affects all [diagnostic sources](@ref diagnostic/source). For
+`JETLS/live`, lowering-based analysis for unopened files is skipped when
+disabled (though the performance impact is minimal since lowering analysis is
+usually pretty fast). For `JETLS/save`, full analysis still runs; only reporting
+is suppressed. The same goes for `JETLS/extra`. Disabling this can be useful to
+reduce noise when there are many warnings across the workspace.
 
 ```toml
 [diagnostic]

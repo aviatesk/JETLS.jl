@@ -1,13 +1,12 @@
 module test_type_annotation
 
 using Test
+using HierarchicalTestSets
 using JETLS
 using JETLS: CC, JL, JS
 using JETLS.TypeAnnotation
 using JETLS.TypeAnnotation: get_inferrable_tree, infer_toplevel_tree
 using LinearAlgebra: LinearAlgebra
-
-include("../HierarchicalTestSet.jl")
 
 module type_annotate_module
 # Helper for closure-argument-refinement tests: a user higher-order function the
@@ -30,10 +29,11 @@ end
 # (the common case) or place the statement under test first. `fi` is returned
 # so tests can use `xy_to_offset` etc. against the source.
 function type_annotate(code::AbstractString, context_module::Module = type_annotate_module)
-    fi = JETLS.FileInfo(1, code, @__FILE__)
+    fi = JETLS.FileInfo(1, code, @__FILE__; cache_tree0 = true)
     st0_top = JETLS.build_syntax_tree(fi)
     ctx = build_inferred_context_for_range(st0_top, context_module, 1:1)
     @test ctx !== nothing
+    JETLS.check_syntax_tree0(fi)
     return fi, ctx
 end
 
@@ -45,13 +45,13 @@ range_of(code::AbstractString, s::AbstractString) =
 # Walk the surface tree of `code` and return the byte range of the first
 # encountered node of the given `kind`. Use this when you need the exact
 # `JS.byte_range` of a kind whose source includes leading trivia (e.g.
-# `K"comparison"` in tail position swallows the space between `return` and the
+# `:comparison` in tail position swallows the space between `return` and the
 # first operand) — `findfirst`-based `range_of` mismatches in those cases.
-function range_of_kind(code::AbstractString, kind::JS.Kind)
+function range_of_kind(code::AbstractString, kind::Symbol)
     fi = JETLS.FileInfo(1, code, @__FILE__)
     st0_top = JETLS.build_syntax_tree(fi)
     return @something JETLS.traverse(st0_top) do node::JS.SyntaxTree
-        JS.kind(node) === kind || return nothing
+        JS.head(node) === kind || return nothing
         return JETLS.TraversalReturn(JS.byte_range(node); terminate=true)
     end error(lazy"no surface node of kind $kind in $code")
 end
@@ -87,7 +87,7 @@ end
     end
     """
     cache = JETLS.InferredContextCache()
-    fi = JETLS.FileInfo(1, code, @__FILE__; inferred_context_cache=cache)
+    fi = JETLS.FileInfo(1, code, @__FILE__; inferred_context_cache=cache, cache_tree0 = true)
     st0_top = JETLS.build_syntax_tree(fi)
     rng1 = range_of(code, "x + 1")
     rng2 = range_of(code, "y")
@@ -113,13 +113,14 @@ end
     @test get_type_for_range(ctx4, rng4) === Int
     @test ctx4 !== ctx3
     @test length(JETLS.load(cache)) == 2
+    JETLS.check_syntax_tree0(fi)
 end
 
 @testset "build_inferred_context_for_range declaration-only forms" begin
     for code in ("using Base\n", "import Base: map\n", "export foo, bar\n",
                  "public baz\n", "abstract type AT end\n", "primitive type PT 8 end\n")
         cache = JETLS.InferredContextCache()
-        fi = JETLS.FileInfo(1, code, @__FILE__; inferred_context_cache=cache)
+        fi = JETLS.FileInfo(1, code, @__FILE__; inferred_context_cache=cache, cache_tree0 = true)
         st0_top = JETLS.build_syntax_tree(fi)
         tree = @something JETLS.lowerable_toplevel_at(st0_top, 1) error("missing tree")
         tree_ctx = build_inferred_context_for_tree(tree, type_annotate_module; cache)
@@ -128,6 +129,7 @@ end
         @test tree_ctx === nothing
         @test range_ctx === nothing
         @test isempty(JETLS.load(cache))
+        JETLS.check_syntax_tree0(fi)
     end
 
     let code = """
@@ -137,7 +139,7 @@ end
         end
         """
         cache = JETLS.InferredContextCache()
-        fi = JETLS.FileInfo(1, code, @__FILE__; inferred_context_cache=cache)
+        fi = JETLS.FileInfo(1, code, @__FILE__; inferred_context_cache=cache, cache_tree0 = true)
         st0_top = JETLS.build_syntax_tree(fi)
         tree = @something JETLS.lowerable_toplevel_at(st0_top, 1) error("missing tree")
         tree_ctx = build_inferred_context_for_tree(tree, type_annotate_module; cache)
@@ -146,6 +148,7 @@ end
         @test tree_ctx !== nothing
         @test range_ctx === tree_ctx
         @test length(JETLS.load(cache)) == 1
+        JETLS.check_syntax_tree0(fi)
     end
 end
 
@@ -163,7 +166,7 @@ end
             end
             const C = 42
             """
-            fi = JETLS.FileInfo(1, code, @__FILE__)
+            fi = JETLS.FileInfo(1, code, @__FILE__; cache_tree0 = true)
             st0_top = JETLS.build_syntax_tree(fi)
             results = []
             world = Base.get_world_counter()
@@ -178,6 +181,7 @@ end
                 @test st3 isa JS.SyntaxTree
                 @test infer_toplevel_tree(ctx3, st3, st0, @__MODULE__) isa JETLS.SyntaxTree
             end
+            JETLS.check_syntax_tree0(fi)
         end
     end
 
@@ -185,13 +189,14 @@ end
     # callers don't need to wrap every call in `try`.
     @testset "lowering failure returns nothing" begin
         let code = "@__undefined_macro_for_test__ xyz"
-            fi = JETLS.FileInfo(1, code, @__FILE__)
+            fi = JETLS.FileInfo(1, code, @__FILE__; cache_tree0 = true)
             st0_top = JETLS.build_syntax_tree(fi)
             world = Base.get_world_counter()
             JETLS.iterate_toplevel_tree(st0_top) do st0::JS.SyntaxTree
                 @test isnothing(get_inferrable_tree(st0, @__MODULE__, world))
                 return nothing
             end
+            JETLS.check_syntax_tree0(fi)
         end
     end
 end
@@ -221,7 +226,7 @@ end
             _, ctx = type_annotate(code)
             copy_type = widenconst(get_type_for_range(ctx, range_of(code, "copy(a)")))
             @test copy_type !== Union{}
-            @test widenconst(get_type_for_range(ctx, range_of_kind(code, JS.K"function"))) === Int
+            @test widenconst(get_type_for_range(ctx, range_of_kind(code, :function))) === Int
         end
     end
 
@@ -309,7 +314,7 @@ end
             @testset "closure call from outer body" begin
                 @test widenconst(get_type_for_range(ctx, range_of(code, "inner(xs[1])"))) === Int
             end
-            # `type_for_funcdef` walks `K"opaque_closure_method"` (mirroring its `K"method"`
+            # `type_for_funcdef` walks `:opaque_closure_method` (mirroring its `:method`
             # branch) so the funcdef's byte range surfaces the OC body's return type.
             @testset "funcdef byte range" begin
                 rng = range_of(code, "inner(y::Int) = y * 2")
@@ -481,7 +486,7 @@ end
 
         # Closures with `::RT` annotation: the rewrite preserves the lambda's
         # return-type assertion (we pass the entire `lambda` subtree into
-        # `K"_opaque_closure"`), so JL's `convert_closures` keeps the
+        # `:_opaque_closure`), so JL's `convert_closures` keeps the
         # body-level typeassert. The call site here flows the `PartialOpaque`
         # directly without a `widenconst` boundary, so the precise rt comes
         # from `abstract_call_opaque_closure`'s body inference, independent of
@@ -946,7 +951,7 @@ end
             code = "println(\"hi\")"
             _, ctx = type_annotate(code)
             @test get_type_for_range(ctx, range_of(code, "println")) === Core.Const(println)
-            @test get_type_for_range(ctx, range_of_kind(code, JS.K"String")) === Core.Const("hi")
+            @test get_type_for_range(ctx, range_of_kind(code, :value)) === Core.Const("hi")
         end
         # Symbol / Char literals expose the value at the inner content node.
         @testset "symbol" begin
@@ -996,11 +1001,11 @@ module myfunc_module
 myfunc(x::Int) = x + 1
 end
 
-# Helper macro for the "user-defined macro injecting K\"return\"" test below:
+# Helper macro for the "user-defined macro injecting `:return`" test below:
 # the macrocall site `@return_zero` carries no `return` in its source,
 # but the macro's expansion does — so `st3` (post-macro-expansion) is the
-# only tree where the `K"return"` is visible. Walking `st0` would miss it
-# and the IR `K"return"` it produces would mis-classify as a synthetic
+# only tree where the `:return` is visible. Walking `st0` would miss it
+# and the IR `:return` it produces would mis-classify as a synthetic
 # tail-position return.
 module test_return_zero_module
 macro return_zero()
@@ -1030,7 +1035,7 @@ end
         end
     end
 
-    # A lambda body that consists of exactly one expression makes the body `K"block"`
+    # A lambda body that consists of exactly one expression makes the body `:block`
     # share that expression's byte range. The dispatch-relevant surface kind must win
     # the `surface_kind_index` slot (see `DISPATCH_SURFACE_KINDS`) — otherwise the query
     # falls into `tmerge_at_range` and merges the comprehension's loop scaffolding
@@ -1065,7 +1070,7 @@ end
     # for comprehension/`map` lambdas; queries at that range should surface only the body's
     # value type. See `tmerge_at_range`.
     # Property destructuring in parameter position (`do (; a, b)`) lowers each name to a
-    # `getproperty(obj, :a)` whose field-name `K"Symbol"` leaf lands on the binding's
+    # `getproperty(obj, :a)` whose field-name `:symbol` leaf lands on the binding's
     # byte range. `tmerge_at_range` must skip it so the query yields the binding's type,
     # not `Union{T, Symbol}`. (Assignment-position `(; a, b) = rhs` is already clean via
     # `is_synthetic_destructure_stmt`.)
@@ -1216,7 +1221,7 @@ end
     end
 
     # Kwcall lowering plants the kwargs `NamedTuple` / `Tuple` constructors at the
-    # same byte range as the user's call. K"call" dispatch picks the last K"call",
+    # same byte range as the user's call. `:call` dispatch picks the last `:call`,
     # which is the user-visible result.
     @testset "kwcall returns user's result type, not kwargs constructor" begin
         let code = """
@@ -1294,17 +1299,17 @@ end
                     "@something 1 nothing",
                 )
                 _, ctx = type_annotate(code)
-                @test_broken get_type_for_range(ctx, range_of_kind(code, JS.K"macrocall")) === Core.Const(1)
+                @test_broken get_type_for_range(ctx, range_of_kind(code, :macrocall)) === Core.Const(1)
             end
 
             let code = "let result = @something 1; result; end"
                 _, ctx = type_annotate(code)
-                @test_broken get_type_for_range(ctx, range_of_kind(code, JS.K"macrocall")) === Core.Const(1)
+                @test_broken get_type_for_range(ctx, range_of_kind(code, :macrocall)) === Core.Const(1)
             end
 
             let code = "@something nothing"
                 _, ctx = type_annotate(code)
-                @test get_type_for_range(ctx, range_of_kind(code, JS.K"macrocall")) === Union{}
+                @test get_type_for_range(ctx, range_of_kind(code, :macrocall)) === Union{}
             end
         end
 
@@ -1315,12 +1320,12 @@ end
                     "let condition = Bool[true, false][1]; @assert condition; end",
                 )
                 _, ctx = type_annotate(code)
-                @test_broken get_type_for_range(ctx, range_of_kind(code, JS.K"macrocall")) === Core.Const(nothing)
+                @test_broken get_type_for_range(ctx, range_of_kind(code, :macrocall)) === Core.Const(nothing)
             end
 
             let code = "@assert false"
                 _, ctx = type_annotate(code)
-                @test get_type_for_range(ctx, range_of_kind(code, JS.K"macrocall")) === Union{}
+                @test get_type_for_range(ctx, range_of_kind(code, :macrocall)) === Union{}
             end
         end
     end
@@ -1413,7 +1418,7 @@ end
         end
     end
 
-    # `K"function"` / `K"macro"` dispatch returns the method body's `tmerge`d
+    # `:function` / `:macro` dispatch returns the method body's `tmerge`d
     # return-statement type. Naive lookup would either pull in unrelated nodes
     # inside the body (slot reads, intermediate calls) or land on dispatcher
     # methods synthesized for default args / kwargs (which share the funcdef
@@ -1449,7 +1454,7 @@ end
             end
         end
 
-        # Macros are also K"method" lowered, so the same dispatch applies.
+        # Macros are also `:method` lowered, so the same dispatch applies.
         @testset "macro definition" begin
             let code = """
                 macro just_one()
@@ -1509,7 +1514,7 @@ end
                 @inline f(x::Int) = x + 1
                 """
                 _, ctx = type_annotate(code)
-                @test widenconst(get_type_for_range(ctx, range_of_kind(code, JS.K"="))) === Int
+                @test widenconst(get_type_for_range(ctx, range_of_kind(code, :(=)))) === Int
             end
         end
 
@@ -1533,7 +1538,7 @@ end
     end
 
     # Branching expressions: value type is the `tmerge` of all branches. Each
-    # group below pairs a `K"="` RHS case with a tail-position case (lowering
+    # group below pairs a `:(=)` RHS case with a tail-position case (lowering
     # of branches differs between the two contexts).
     @testset "branching expressions" begin
         @testset "chained comparison in `=` RHS" begin
@@ -1554,7 +1559,7 @@ end
                 end
                 """
                 _, ctx = type_annotate(code)
-                rng = range_of_kind(code, JS.K"comparison")
+                rng = range_of_kind(code, :comparison)
                 @test widenconst(get_type_for_range(ctx, rng)) === Bool
             end
         end
@@ -1578,7 +1583,7 @@ end
                 end
                 """
                 _, ctx = type_annotate(code)
-                rng = range_of_kind(code, JS.K"&&")
+                rng = range_of_kind(code, :&&)
                 @test widenconst(get_type_for_range(ctx, rng)) === Union{Bool, Int}
             end
         end
@@ -1589,13 +1594,13 @@ end
                 end
                 """
                 _, ctx = type_annotate(code)
-                rng = range_of_kind(code, JS.K"||")
+                rng = range_of_kind(code, :||)
                 @test widenconst(get_type_for_range(ctx, rng)) === Union{Bool, Nothing}
             end
         end
 
-        # Ternary's surface kind is `K"if"` (same as block-form), but the
-        # inferred tree's provenance keeps the parser's `K"?"` — the dispatch
+        # Ternary's surface kind is `:if` (same as block-form), but the
+        # inferred tree's provenance keeps the parser's `:?` — the dispatch
         # has to handle both kinds to cover ternary in any context.
         @testset "ternary in `=` RHS" begin
             let code = """
@@ -1616,7 +1621,7 @@ end
                 end
                 """
                 _, ctx = type_annotate(code)
-                rng = range_of_kind(code, JS.K"if")
+                rng = range_of_kind(code, :if)
                 @test widenconst(get_type_for_range(ctx, rng)) === Union{Int, Nothing}
             end
         end
@@ -1632,7 +1637,7 @@ end
                 end
                 """
                 _, ctx = type_annotate(code)
-                rng = range_of_kind(code, JS.K"if")
+                rng = range_of_kind(code, :if)
                 @test widenconst(get_type_for_range(ctx, rng)) === Union{Int, Nothing}
             end
         end
@@ -1649,7 +1654,7 @@ end
                 end
                 """
                 _, ctx = type_annotate(code)
-                rng = range_of_kind(code, JS.K"if")
+                rng = range_of_kind(code, :if)
                 typ = widenconst(get_type_for_range(ctx, rng))
                 @test typ === Union{Int, String, Nothing}
             end
@@ -1661,7 +1666,7 @@ end
         # lowering splits it into per-branch tail returns at narrower byte ranges than `X`
         # itself, so a literal byte-range match doesn't suffice. The walker over `st3`
         # (post-desugaring, post-macro-expansion) handles all these uniform cases since
-        # they collect the nested `K"return"`s regardless of the wrapping form.
+        # they collect the nested `:return`s regardless of the wrapping form.
         #
         # In every case below, the outer `if b ... end` should resolve to `Nothing`
         # (the implicit fall-through is the only path that reaches `out`).
@@ -1676,7 +1681,7 @@ end
                     end
                     """
                     _, ctx = type_annotate(code)
-                    rng = range_of_kind(code, JS.K"if")
+                    rng = range_of_kind(code, :if)
                     @test get_type_for_range(ctx, rng) === Core.Const(nothing)
                 end
             end
@@ -1694,7 +1699,7 @@ end
                     # branches correctly, as for any branching expression.
                     inner_rng = range_of(code, "if c; 1; else; \"x\"; end")
                     @test widenconst(get_type_for_range(ctx, inner_rng)) === Union{Int, String}
-                    outer_rng = range_of_kind(code, JS.K"if")
+                    outer_rng = range_of_kind(code, :if)
                     @test widenconst(get_type_for_range(ctx, outer_rng)) === Nothing
                 end
             end
@@ -1708,7 +1713,7 @@ end
                     end
                     """
                     _, ctx = type_annotate(code)
-                    outer_rng = range_of_kind(code, JS.K"if")
+                    outer_rng = range_of_kind(code, :if)
                     @test widenconst(get_type_for_range(ctx, outer_rng)) === Nothing
                 end
             end
@@ -1722,7 +1727,7 @@ end
                     end
                     """
                     _, ctx = type_annotate(code)
-                    outer_rng = range_of_kind(code, JS.K"if")
+                    outer_rng = range_of_kind(code, :if)
                     @test widenconst(get_type_for_range(ctx, outer_rng)) === Nothing
                 end
             end
@@ -1736,7 +1741,7 @@ end
                     end
                     """
                     _, ctx = type_annotate(code)
-                    outer_rng = range_of_kind(code, JS.K"if")
+                    outer_rng = range_of_kind(code, :if)
                     @test widenconst(get_type_for_range(ctx, outer_rng)) === Nothing
                 end
             end
@@ -1750,7 +1755,7 @@ end
                     end
                     """
                     _, ctx = type_annotate(code)
-                    outer_rng = range_of_kind(code, JS.K"if")
+                    outer_rng = range_of_kind(code, :if)
                     @test widenconst(get_type_for_range(ctx, outer_rng)) === Nothing
                 end
             end
@@ -1764,7 +1769,7 @@ end
                     end
                     """
                     _, ctx = type_annotate(code)
-                    outer_rng = range_of_kind(code, JS.K"if")
+                    outer_rng = range_of_kind(code, :if)
                     @test widenconst(get_type_for_range(ctx, outer_rng)) === Nothing
                 end
             end
@@ -1778,7 +1783,7 @@ end
                     end
                     """
                     _, ctx = type_annotate(code)
-                    outer_rng = range_of_kind(code, JS.K"if")
+                    outer_rng = range_of_kind(code, :if)
                     @test widenconst(get_type_for_range(ctx, outer_rng)) === Nothing
                 end
             end
@@ -1792,7 +1797,7 @@ end
                     end
                     """
                     _, ctx = type_annotate(code)
-                    outer_rng = range_of_kind(code, JS.K"if")
+                    outer_rng = range_of_kind(code, :if)
                     @test widenconst(get_type_for_range(ctx, outer_rng)) === Nothing
                 end
             end
@@ -1805,7 +1810,7 @@ end
             # `@something args... return X` expands such that the literal
             # `return X` exits the function when none of the args are
             # non-`nothing`. Without filtering the macro-expanded
-            # `K"return"` SSA, the outer `if`'s value would leak the
+            # `:return` SSA, the outer `if`'s value would leak the
             # return-value type (`String` below).
             @testset "Base.@something with `return` fallback" begin
                 let code = """
@@ -1817,7 +1822,7 @@ end
                     end
                     """
                     _, ctx = type_annotate(code)
-                    outer_rng = range_of_kind(code, JS.K"if")
+                    outer_rng = range_of_kind(code, :if)
                     @test widenconst(get_type_for_range(ctx, outer_rng)) === Union{Int, Nothing}
                     # `out` at its trailing-line use site: the `String` from
                     # `return "no value"` exits the function rather than
@@ -1832,7 +1837,7 @@ end
             # the macrocall args and thus visible in `st0`), here the user
             # source has no `return` token at all — only the macro's
             # expansion emits one. `st0`-only walking would miss it.
-            @testset "user-defined macro injecting K\"return\"" begin
+            @testset "user-defined macro injecting `:return`" begin
                 let code = """
                     function f(cond::Bool)
                         out = if cond
@@ -1842,7 +1847,7 @@ end
                     end
                     """
                     _, ctx = type_annotate(code, test_return_zero_module)
-                    outer_rng = range_of_kind(code, JS.K"if")
+                    outer_rng = range_of_kind(code, :if)
                     # `Int` (from `return 0`) would leak in without st3 walking:
                     # `Union{Int, Nothing}` would be the wrong answer.
                     @test widenconst(get_type_for_range(ctx, outer_rng)) === Nothing
@@ -1890,7 +1895,7 @@ end
             @test widenconst(get_type_for_range(ctx, b_rng)) === Float64
         end
 
-        # `a, b = rhs` (no parens) parses with the same K"tuple" LHS.
+        # `a, b = rhs` (no parens) parses with the same `:tuple` LHS.
         let code = """
             function f(x::Float64)
                 a, b = sincos(x)
@@ -1903,7 +1908,7 @@ end
                 Tuple{Float64, Float64}
         end
 
-        # A user-written `K"="` inside a destructure RHS sits within the destructure's
+        # A user-written `:(=)` inside a destructure RHS sits within the destructure's
         # byte range but isn't synthetic — its type must still be annotated.
         let code = """
             function f()
@@ -1958,7 +1963,7 @@ end
 
 @testset HierarchicalTestSet "Multi-position / composition behaviors" begin
     # Chained dotted access on a dereferenced `Ref`: `Ref(...)[].field`
-    # exercises K"." → K"ref" → K"call" composition. Each link in the chain
+    # exercises `:.` → `:ref` → `:call` composition. Each link in the chain
     # has to land its own `:type` for editor features (hover / inlay) to
     # show useful information when the cursor is anywhere along the access.
     @testset "property access via dereferenced Ref" begin
@@ -2025,7 +2030,7 @@ end
 
 @testset HierarchicalTestSet "Pipeline-level edge cases" begin
     # JuliaSyntax doesn't bail on incomplete source — it produces a partial tree with
-    # `K"error"` siblings around the well-formed parts. `get_inferrable_tree` strips those
+    # `:error` siblings around the well-formed parts. `get_inferrable_tree` strips those
     # error nodes, and JuliaLowering happily lowers what remains, so type queries on the
     # well-formed portion come back accurate. This is what powers completion past `.` on
     # a half-typed buffer.
@@ -2036,8 +2041,8 @@ end
             _, ctx = type_annotate(code)
             @test get_type_for_range(ctx, range_of(code, "sin")) === Core.Const(sin)
         end
-        # K"error" buried inside a function body: the body parses to `(. x (inert end))`
-        # plus a sibling K"error", stripping the latter leaves a well-formed function.
+        # `:error` buried inside a function body: the body parses to `(. x (inert end))`
+        # plus a sibling `:error`, stripping the latter leaves a well-formed function.
         # The body's `x` reference picks up the parameter's declared type, which is
         # what completion on `x.|` needs.
         let code = """
@@ -2183,9 +2188,9 @@ end
         end
     end
 
-    # `K"ref"` (`xs[i]`) lowers to a `getindex` call, so its matches expose
+    # `:ref` (`xs[i]`) lowers to a `getindex` call, so its matches expose
     # the dispatched `getindex` method.
-    @testset "exposes operator dispatch for K\"ref\"" begin
+    @testset "exposes operator dispatch for `:ref`" begin
         let code = "let arr = Int[1, 2, 3], i = 1; arr[i]; end"
             _, ctx = type_annotate(code)
             ms = get_matches_for_range(ctx, range_of(code, "arr[i]"))
@@ -2200,7 +2205,7 @@ end
     end
 
     # Non-call surfaces (a local binding occurrence, an `if` expression, …) don't carry a
-    # `:matches` attribute on any `K"call"` at their byte range
+    # `:matches` attribute on any `:call` at their byte range
     @testset "returns nothing for non-call surfaces" begin
         let code = "let x = 42; x; end"
             _, ctx = type_annotate(code)

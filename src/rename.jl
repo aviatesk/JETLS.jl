@@ -419,7 +419,7 @@ end
 # Classify a `:decl` occurrence sitting inside an `import`/`using` statement.
 # Returns one of:
 # - `:regular`        — not in an `import`/`using`; treat as a normal rename.
-# - `:alias`          — the identifier is the alias of a `K"as"` node (`using M: foo as bar`);
+# - `:alias`          — the identifier is the alias of an `:as` node (`using M: foo as bar`);
 #                       a standard replace renames only the alias.
 # - `:needs_as`       — the identifier is a bare source name in an `import`/`using` form that
 #                       accepts `as` (any `import` form, or `using M: name` inside a colon list);
@@ -430,37 +430,37 @@ end
 function classify_import_rename(st0_top::SyntaxTree, id_byte_range::UnitRange{Int}, kind::Symbol)
     kind === :decl || return :regular
     bas = byte_ancestors(st0_top, id_byte_range)
-    import_stmt_idx = findfirst(b::SyntaxTree -> JS.kind(b) in JS.KSet"import using", bas)
+    import_stmt_idx = findfirst(b::SyntaxTree -> JS.head(b) in (:import, :using), bas)
     isnothing(import_stmt_idx) && return :regular
     has_colon = false
     for i = 1:import_stmt_idx-1
-        k = JS.kind(bas[i])
-        if k === JS.K"as"
+        k = JS.head(bas[i])
+        if k === :as
             as_node = bas[i]
             if JS.numchildren(as_node) >= 2 && JS.byte_range(as_node[2]) == id_byte_range
                 return :alias
             end
             return :regular
-        elseif k === JS.K":"
+        elseif k === :(:)
             has_colon = true
         end
     end
-    import_kind = JS.kind(bas[import_stmt_idx])
-    if import_kind === JS.K"import" || has_colon
+    import_kind = JS.head(bas[import_stmt_idx])
+    if import_kind === :import || has_colon
         return :needs_as
     end
     return :implicit_bare
 end
 
 # If the alias occurrence is being renamed back to the source name of its
-# surrounding `K"as"` node, return the LSP range covering ` as <alias>` so a
+# surrounding `:as` node, return the LSP range covering ` as <alias>` so a
 # single empty-text edit can delete it. Otherwise return `nothing`.
 function collapse_alias_to_source(
         st0_top::SyntaxTree, id_byte_range::UnitRange{Int}, fi::FileInfo,
         newName::String, ismacro::Bool
     )
     bas = byte_ancestors(st0_top, id_byte_range)
-    as_idx = @something findfirst(b::SyntaxTree -> JS.kind(b) === JS.K"as", bas) return nothing
+    as_idx = @something findfirst(b::SyntaxTree -> JS.head(b) === :as, bas) return nothing
     as_node = bas[as_idx]
     JS.numchildren(as_node) >= 2 || return nothing
     source_path = as_node[1]

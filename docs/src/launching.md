@@ -226,17 +226,17 @@ Configure initialization options in Zed's `settings.json`:
 - **Default**: `[]`
 
 Excludes the matched files from full analysis. This is primarily a workaround
-for the [known memory leak](https://github.com/aviatesk/JETLS.jl/issues/357),
-where memory usage grows with each re-analysis: excluding the files that
-trigger the heaviest analysis keeps the server usable until the leak is fixed.
+for the [known memory leak](https://github.com/aviatesk/JETLS.jl/issues/357), where
+memory usage grows with each re-analysis: limiting costly analysis helps keep
+the server usable until the leak is fixed.
 
-Each entry requires a `path` field: a glob pattern selecting the files to
-exclude. Patterns are matched against file paths relative to the workspace
+Each entry requires a `path` field: a glob pattern selecting the files.
+Patterns are matched against file paths relative to the workspace
 root, and `**` matches directories recursively. Use `/` as the separator on all
 platforms, including Windows; backslashes are not interpreted as separators.
 
 ```toml
-# exclude test fixtures entirely
+# Exclude test fixtures from full analysis
 [[initialization_options.analysis_overrides]]
 path = "test/fixtures/**"
 ```
@@ -244,18 +244,9 @@ path = "test/fixtures/**"
 Save-time diagnostics produced by full analysis, including
 [`toplevel` diagnostics](@ref diagnostic/reference/toplevel) and
 [`inference` diagnostics](@ref diagnostic/reference/inference), are unavailable
-for the matched files.
-
-Features that do not require full analysis keep working. These include
-completion, hover, inlay hints, and
-[`syntax` diagnostics](@ref diagnostic/reference/syntax). Context-independent
-[`lowering` diagnostics](@ref diagnostic/reference/lowering) also remain
-available, while context-dependent diagnostics such as
-`lowering/macro-expansion-error` and `lowering/undef-global-var` are
-unavailable.
-Hover and type inlay hints infer the current top-level form on demand, but their
-results may be incomplete because full analysis does not establish a module
-context for the matched files.
+for the matched files. Live analysis keeps working with a fallback module
+context; see [Files without full analysis](@ref analysis/live/fallback) for what
+remains available.
 
 !!! warning
     `analysis_overrides` is provided as a temporary workaround and may be

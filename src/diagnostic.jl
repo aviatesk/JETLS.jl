@@ -329,6 +329,7 @@ function parsed_stream_to_diagnostics(fi::FileInfo)
 end
 
 function jsdiag_to_lspdiag(diagnostic::JS.Diagnostic, fi::FileInfo)
+    code = diagnostic.level === :error ? SYNTAX_PARSE_ERROR_CODE : SYNTAX_PARSE_WARNING_CODE
     return Diagnostic(;
         range = jsobj_to_range(diagnostic, fi),
         severity =
@@ -338,8 +339,8 @@ function jsdiag_to_lspdiag(diagnostic::JS.Diagnostic, fi::FileInfo)
             DiagnosticSeverity.Hint,
         message = diagnostic.message,
         source = DIAGNOSTIC_SOURCE_LIVE,
-        code = SYNTAX_DIAGNOSTIC_CODE,
-        codeDescription = diagnostic_code_description(SYNTAX_DIAGNOSTIC_CODE))
+        code,
+        codeDescription = diagnostic_code_description(code))
 end
 
 # JET diagnostics
@@ -348,19 +349,20 @@ end
 function jet_result_to_diagnostics!(
         uri2diagnostics::URI2Diagnostics, result::JET.JETToplevelResult,
         world::UInt, postprocessor::JET.PostProcessor;
-        markdown_rendering::Bool = false
+        markdown_rendering::Bool = false,
+        displaysize::Union{Nothing,Tuple{Int,Int}} = nothing
     )
-    for report in result.res.toplevel_error_reports
-        if report isa JET.LoweringErrorReport || report isa JET.MacroExpansionErrorReport
-            # the equivalent report should have been reported by `per_stmt_diagnostics!`
-            # with more precise location information
-            continue
-        end
-        diagnostic = @something jet_toplevel_error_report_to_diagnostic(
-            report, postprocessor; markdown_rendering) continue
-        filename = report.file
-        filename == "none" && continue
-        uri = to_valid_uri(filename)
+    report = result.res.toplevel_error_report
+    if report !== nothing && report.file != "none"
+        diagnostic = jet_toplevel_error_report_to_diagnostic(report, world, postprocessor;
+            markdown_rendering, displaysize)
+        diagnostic === nothing || push!(uri2diagnostics[to_valid_uri(report.file)], diagnostic)
+    end
+    for report in result.res.toplevel_warning_reports
+        diagnostic = @something jet_toplevel_warning_report_to_diagnostic(report, postprocessor;
+            markdown_rendering, displaysize) continue
+        uri = to_valid_uri(report.file)
+        haskey(uri2diagnostics, uri) || continue
         push!(uri2diagnostics[uri], diagnostic)
     end
     displayable_reports = collect_displayable_reports(result.res.inference_error_reports, keys(uri2diagnostics))
@@ -371,20 +373,37 @@ end
 # toplevel diagnostic
 # -------------------
 
+function toplevel_report_message(
+        f, postprocessor::JET.PostProcessor;
+        markdown_rendering::Bool = false,
+        displaysize::Union{Nothing,Tuple{Int,Int}} = nothing
+    )
+    buf = IOBuffer()
+    io = IOContext(buf,
+        :limit=>true, :summary_line=>true, :markdown_rendering=>markdown_rendering)
+    if displaysize !== nothing
+        io = IOContext(io, :displaysize=>displaysize)
+    end
+    f(io)
+    return postprocessor(String(take!(buf)))
+end
+
 function jet_toplevel_error_report_to_diagnostic(
-        @nospecialize(report::JET.ToplevelErrorReport), postprocessor::JET.PostProcessor;
-        markdown_rendering::Bool = false
+        @nospecialize(report::JET.ToplevelErrorReport), world::UInt,
+        postprocessor::JET.PostProcessor;
+        markdown_rendering::Bool = false,
+        displaysize::Union{Nothing,Tuple{Int,Int}} = nothing
     )
     report isa JET.ParseErrorReport && return nothing # reported as `JETLS/live` diagnostics
     if report isa JET.MissingConcretizationErrorReport
         data = missing_concretization_data(report)
-        message = missing_concretization_message(report, data, postprocessor)
+        message = missing_concretization_message(report, data, postprocessor; markdown_rendering, displaysize)
         code = TOPLEVEL_MISSING_CONCRETIZATION_CODE
     else
         data = nothing
-        message = JET.with_bufferring(:limit=>true, :markdown_rendering=>markdown_rendering) do io
-            with_base_render_lock(JET.print_report, io, report)
-        end |> postprocessor
+        message = toplevel_report_message(postprocessor; markdown_rendering, displaysize) do io
+            with_base_render_lock(Base.invoke_in_world, world, JET.print_report, io, report)
+        end
         code = report isa JET.ConcretizationTimeoutErrorReport ?
             TOPLEVEL_CONCRETIZATION_TIMEOUT_CODE : TOPLEVEL_ERROR_CODE
     end
@@ -396,6 +415,45 @@ function jet_toplevel_error_report_to_diagnostic(
         code,
         codeDescription = diagnostic_code_description(code),
         data)
+end
+
+function jet_toplevel_warning_report_to_diagnostic(
+        @nospecialize(report::JET.ToplevelWarningReport), postprocessor::JET.PostProcessor;
+        markdown_rendering::Bool = false,
+        displaysize::Union{Nothing,Tuple{Int,Int}} = nothing
+    )
+    report isa JET.ParseWarningReport && return nothing # reported as `JETLS/live` diagnostics
+    report isa JET.UnsupportedFeatureReport ||
+        error(lazy"No diagnostic code is defined for report: $report")
+    message = toplevel_report_message(postprocessor; markdown_rendering, displaysize) do io
+        with_base_render_lock(JET.print_report, io, report)
+    end
+    return Diagnostic(;
+        range = line_range(report.line),
+        severity = DiagnosticSeverity.Warning,
+        message,
+        source = DIAGNOSTIC_SOURCE_SAVE,
+        code = TOPLEVEL_UNSUPPORTED_FEATURE_CODE,
+        codeDescription = diagnostic_code_description(TOPLEVEL_UNSUPPORTED_FEATURE_CODE))
+end
+
+function package_extension_analysis_skipped_diagnostic(;
+        markdown_rendering::Bool = false,
+        displaysize::Union{Nothing,Tuple{Int,Int}} = nothing
+    )
+    message = toplevel_report_message(JET.PostProcessor(); markdown_rendering, displaysize) do io
+        JET.print_summary(io, "JETLS does not support full analysis of package extensions yet.")
+        JET.print_wrapped(io,
+            "This file is not analyzed, so diagnostics that require full analysis " *
+            "are not reported for it.")
+    end
+    return Diagnostic(;
+        range = line_range(1),
+        severity = DiagnosticSeverity.Warning,
+        message,
+        source = DIAGNOSTIC_SOURCE_SAVE,
+        code = TOPLEVEL_ANALYSIS_SKIPPED_CODE,
+        codeDescription = diagnostic_code_description(TOPLEVEL_ANALYSIS_SKIPPED_CODE))
 end
 
 # `nothing` when JET could not derive a pattern for the assignment: any pattern guessed
@@ -410,35 +468,40 @@ end
 function missing_concretization_message(
         report::JET.MissingConcretizationErrorReport,
         data::Union{Nothing,MissingConcretizationData},
-        postprocessor::JET.PostProcessor
+        postprocessor::JET.PostProcessor;
+        markdown_rendering::Bool = false,
+        displaysize::Union{Nothing,Tuple{Int,Int}} = nothing
     )
-    message = JET.with_bufferring(:limit=>true) do io
+    return toplevel_report_message(postprocessor; markdown_rendering, displaysize) do io
         (; isconst, var, assignment) = report
         (; mod, name) = var
-        println(io, "`$mod.$name` must have a concrete value for JETLS top-level analysis.")
+        JET.print_summary(io, "`$mod.$name` must have a concrete value for JETLS top-level analysis.")
         if assignment === nothing
-            println(io, "JETLS could not identify the assignment that defines this binding.")
+            JET.println_wrapped(io, "JETLS could not identify the assignment that defines this binding.")
         else
-            println(io, "JETLS did not evaluate the assignment at " *
-                "$(assignment.file):$(assignment.line) that defines this binding.")
+            JET.println_wrapped(io,
+                "JETLS did not evaluate the assignment at " *
+                "`$(assignment.file):$(assignment.line)` that defines this binding.")
         end
         if !isconst
             println(io)
-            println(io, "Declaring `$name` as `const` may fix this when JETLS can " *
-                "infer the concrete value of its right-hand side without evaluating it.")
+            JET.println_wrapped(io,
+                "Declaring `$name` as `const` may fix this when JETLS can infer " *
+                "the concrete value of its right-hand side without evaluating it.")
         end
         println(io)
         if data === nothing
-            println(io, "Configure `full_analysis.concretization_patterns` in " *
-                "`.JETLSConfig.toml` manually to evaluate the relevant top-level statement.")
-            print(io, "JETLS could not derive a safe pattern for this assignment.")
+            JET.print_wrapped(io,
+                "Configure `full_analysis.concretization_patterns` in `.JETLSConfig.toml` " *
+                "manually to evaluate the relevant top-level statement. JETLS could not " *
+                "derive a safe pattern for this assignment.")
         else
-            println(io, "Configure `full_analysis.concretization_patterns` in " *
-                "`.JETLSConfig.toml` to evaluate this assignment.")
-            print(io, "The preferred quick fix can add the derived pattern `$(data.pattern)`.")
+            JET.print_wrapped(io,
+                "Configure `full_analysis.concretization_patterns` in `.JETLSConfig.toml` " *
+                "to evaluate this assignment. The preferred quick fix can add the derived " *
+                "pattern `$(data.pattern)`.")
         end
     end
-    return postprocessor(message)
 end
 
 # inference diagnostic
@@ -530,10 +593,10 @@ toplevel_warning_report_to_uri(report::ToplevelWarningReport) = toplevel_warning
 toplevel_warning_report_to_uri_impl(::ToplevelWarningReport) =
     error("Missing `toplevel_warning_report_to_uri_impl(::ToplevelWarningReport)` interface")
 
-toplevel_warning_report_to_diagnostic(report::ToplevelWarningReport, sfi::SavedFileInfo, postprocessor::JET.PostProcessor) =
-    toplevel_warning_report_to_diagnostic_impl(report, sfi, postprocessor)::Diagnostic
-toplevel_warning_report_to_diagnostic_impl(::ToplevelWarningReport, ::SavedFileInfo, ::JET.PostProcessor) =
-    error("Missing `toplevel_warning_report_to_diagnostic_impl(::ToplevelWarningReport, ::SavedFileInfo, ::JET.PostProcessor)` interface")
+toplevel_warning_report_to_diagnostic(report::ToplevelWarningReport, fi::Union{FileInfo,SavedFileInfo}, postprocessor::JET.PostProcessor) =
+    toplevel_warning_report_to_diagnostic_impl(report, fi, postprocessor)::Diagnostic
+toplevel_warning_report_to_diagnostic_impl(::ToplevelWarningReport, ::Union{FileInfo,SavedFileInfo}, ::JET.PostProcessor) =
+    error("Missing `toplevel_warning_report_to_diagnostic_impl(::ToplevelWarningReport, ::Union{FileInfo,SavedFileInfo}, ::JET.PostProcessor)` interface")
 
 function toplevel_warning_reports_to_diagnostics!(
         uri2diagnostics::URI2Diagnostics, reports::Vector{ToplevelWarningReport},
@@ -542,8 +605,13 @@ function toplevel_warning_reports_to_diagnostics!(
     for report in reports
         uri = toplevel_warning_report_to_uri(report)
         haskey(uri2diagnostics, uri) || continue
-        sfi = @something get_saved_file_info(server.state, uri) continue
-        diagnostic = toplevel_warning_report_to_diagnostic(report, sfi, postprocessor)
+        # Positions in reports refer to the text full-analysis read: the saved content for
+        # synced files and the on-disk content otherwise, never the live buffer content
+        fi = @something(
+            get_saved_file_info(server.state, uri),
+            get_unsynced_file_info!(server.state, uri),
+            continue)
+        diagnostic = toplevel_warning_report_to_diagnostic(report, fi, postprocessor)
         push!(uri2diagnostics[uri], diagnostic)
     end
     return uri2diagnostics
@@ -564,7 +632,7 @@ end
 
 toplevel_warning_report_to_uri_impl(report::MethodOverwriteReport) = to_valid_uri(report.filepath)
 
-function toplevel_warning_report_to_diagnostic_impl(report::MethodOverwriteReport, ::SavedFileInfo, postprocessor::JET.PostProcessor)
+function toplevel_warning_report_to_diagnostic_impl(report::MethodOverwriteReport, ::Union{FileInfo,SavedFileInfo}, postprocessor::JET.PostProcessor)
     sig_str = postprocessor(@invokelatest sprint(Base.show_tuple_as_call, Symbol(""), report.sig))
     mod_str = postprocessor(sprint(show, report.mod))
     message = "Method definition $sig_str in module $mod_str overwritten"
@@ -598,7 +666,7 @@ end
 
 toplevel_warning_report_to_uri_impl(report::AbstractFieldReport) = to_valid_uri(report.filepath)
 
-function abstract_ref_field_data(report::AbstractFieldReport, sfi::SavedFileInfo)
+function abstract_ref_field_data(report::AbstractFieldReport, fi::Union{FileInfo,SavedFileInfo})
     fieldline = report.fieldline
     fieldline isa JS.SyntaxNode || return nothing
     report.ft isa DataType || return nothing
@@ -616,15 +684,15 @@ function abstract_ref_field_data(report::AbstractFieldReport, sfi::SavedFileInfo
     JS.kind(ref_name) === JS.K"Identifier" || return nothing
     ref_name_data = ref_name.data
     ref_name_data !== nothing && ref_name_data.val === :Ref || return nothing
-    return AbstractRefFieldData(jsobj_to_range(ref_name, sfi))
+    return AbstractRefFieldData(jsobj_to_range(ref_name, fi))
 end
 
-function toplevel_warning_report_to_diagnostic_impl(report::AbstractFieldReport, sfi::SavedFileInfo, postprocessor::JET.PostProcessor)
+function toplevel_warning_report_to_diagnostic_impl(report::AbstractFieldReport, fi::Union{FileInfo,SavedFileInfo}, postprocessor::JET.PostProcessor)
     typ_str = postprocessor(sprint(show, report.typ))
     ft_str = postprocessor(sprint(show, report.ft))
     message = "`$typ_str` has abstract field `$(report.fname)::$ft_str`"
     fieldline = report.fieldline
-    range = fieldline isa Int ? line_range(fieldline) : jsobj_to_range(fieldline, sfi)
+    range = fieldline isa Int ? line_range(fieldline) : jsobj_to_range(fieldline, fi)
     return Diagnostic(;
         range,
         severity = DiagnosticSeverity.Information,
@@ -632,7 +700,7 @@ function toplevel_warning_report_to_diagnostic_impl(report::AbstractFieldReport,
         source = DIAGNOSTIC_SOURCE_SAVE,
         code = TOPLEVEL_ABSTRACT_FIELD_CODE,
         codeDescription = diagnostic_code_description(TOPLEVEL_ABSTRACT_FIELD_CODE),
-        data = abstract_ref_field_data(report, sfi))
+        data = abstract_ref_field_data(report, fi))
 end
 
 # lowering diagnostic
@@ -713,9 +781,9 @@ end
 
 # Compute a mapping from source locations to the set of identifier names found in keyword
 # argument type annotations.
-# `K"kw"` nodes are produced by JuliaSyntax for both true keyword arguments
+# `:kw` nodes are produced by JuliaSyntax for both true keyword arguments
 # (`f(; y=1)`) and positional arguments with default values (`f(y=1)`); only the former
-# sit under a `K"parameters"` node, so we track that during the walk.
+# sit under a `:parameters` node, so we track that during the walk.
 # An explicit stack is used (instead of recursion) so we don't risk overflowing
 # the C stack on pathologically deep user input.
 function compute_kwarg_type_annotation_names(st0::SyntaxTree)
@@ -724,19 +792,19 @@ function compute_kwarg_type_annotation_names(st0::SyntaxTree)
     stack = Tuple{SyntaxTree,Bool}[(st0, false)]
     while !isempty(stack)
         (node, in_parameters) = pop!(stack)
-        k = JS.kind(node)
-        if k === JS.K"kw" && in_parameters
+        k = JS.head(node)
+        if k === :kw && in_parameters
             JS.numchildren(node) >= 1 || continue
             child = node[1]
             push!(locations, JS.source_location(child))
-            if JS.kind(child) === JS.K"::" && JS.numchildren(child) >= 2
+            if JS.head(child) === :(::) && JS.numchildren(child) >= 2
                 names = Set{String}()
                 collect_identifier_names!(names, child[2])
                 isempty(names) || (type_names[JS.source_location(child)] = names)
             end
             continue
         end
-        next_in_parameters = k === JS.K"parameters"
+        next_in_parameters = k === :parameters
         for i = JS.numchildren(node):-1:1
             push!(stack, (node[i], next_in_parameters))
         end
@@ -778,18 +846,11 @@ function has_matching_argument_binding(
     return false
 end
 
-function is_assignment_expression(st::SyntaxTree)
-    k = JS.kind(st)
-    k === JS.K"=" && return true
-    if k === JS.K"unknown_head"
-        name = get_name_val(st)
-        return name !== nothing && endswith(name, "=")
-    end
-    return false
-end
+is_assignment_expression(st::SyntaxTree) =
+    JS.head(st) === :(=) || is_compound_assignment(st)
 
 same_syntax_range(a::SyntaxTree, b::SyntaxTree) =
-    JS.kind(a) === JS.kind(b) && JS.byte_range(a) == JS.byte_range(b)
+    JS.head(a) === JS.head(b) && JS.byte_range(a) == JS.byte_range(b)
 
 function is_last_child(parent::SyntaxTree, child::SyntaxTree)
     n = JS.numchildren(parent)
@@ -814,12 +875,12 @@ function is_struct_type_parameter_declaration(st0::SyntaxTree, prov::SyntaxTree)
     ancestors = byte_ancestors(st0, JS.byte_range(prov))
     for i = 2:length(ancestors)
         curly = ancestors[i]
-        JS.kind(curly) === JS.K"curly" || continue
+        JS.head(curly) === :curly || continue
         is_type_parameter = false
         for j = 2:JS.numchildren(curly)
             param = curly[j]
-            pk = JS.kind(param)
-            if (pk === JS.K"<:" || pk === JS.K">:") && JS.numchildren(param) >= 1
+            pk = JS.head(param)
+            if (pk === :<: || pk === :>:) && JS.numchildren(param) >= 1
                 param = param[1]
             end
             if JS.byte_range(prov) ⊆ JS.byte_range(param)
@@ -830,10 +891,10 @@ function is_struct_type_parameter_declaration(st0::SyntaxTree, prov::SyntaxTree)
         is_type_parameter || continue
         for j = i+1:length(ancestors)
             parent = ancestors[j]
-            JS.kind(parent) === JS.K"struct" || continue
+            JS.head(parent) === :struct || continue
             JS.numchildren(parent) >= 2 || continue
             sig = parent[2]
-            if JS.kind(sig) === JS.K"<:" && JS.numchildren(sig) >= 1
+            if JS.head(sig) === :<: && JS.numchildren(sig) >= 1
                 sig = sig[1]
             end
             same_syntax_range(sig, curly) && return true
@@ -851,15 +912,15 @@ function tail_returned_assignment_kind(
     for i in 1:length(ancestors)-1
         child = ancestors[i]
         parent = ancestors[i+1]
-        pk = JS.kind(parent)
-        if pk === JS.K"return"
+        pk = JS.head(parent)
+        if pk === :return
             return :tail
-        elseif pk === JS.K"block"
+        elseif pk === :block
             is_last_child(parent, child) || return :none
-        elseif pk === JS.K"function"
+        elseif pk === :function
             is_last_child(parent, child) || return :none
             return simple ? :simple : :tail
-        elseif pk === JS.K"if" || pk === JS.K"elseif" || pk === JS.K"?"
+        elseif pk === :if || pk === :elseif || pk === :?
             is_tail_branch_child(parent, child) || return :none
             simple = false
         else
@@ -894,23 +955,23 @@ end
 
 function collect_binding_ids!(ids::Set{JL.IdTag}, st::SyntaxTree)
     traverse(st) do node::SyntaxTree
-        JS.kind(node) === JS.K"BindingId" && push!(ids, JL.syntax_id(node))
+        JS.head(node) === :bindingid && push!(ids, JL.syntax_id(node))
         return nothing
     end
     return ids
 end
 
 function method_typevars(ctx3::JL.VariableAnalysisContext, method::SyntaxTree)
-    JS.kind(method) === JS.K"method" && JS.numchildren(method) == 3 || return nothing
+    JS.head(method) === :method && JS.numchildren(method) == 3 || return nothing
     arg_types = method[2]
     is_core_svec_call(arg_types) || return nothing
     lambda = method[3]
-    JS.kind(lambda) === JS.K"lambda" && JS.numchildren(lambda) >= 3 || return nothing
+    JS.head(lambda) === :lambda && JS.numchildren(lambda) >= 3 || return nothing
     sparams = lambda[3]
-    JS.kind(sparams) === JS.K"block" || return nothing
+    JS.head(sparams) === :block || return nothing
     typevar_ids = JL.IdTag[]
     for sparam in JS.children(sparams)
-        JS.kind(sparam) === JS.K"BindingId" || continue
+        JS.head(sparam) === :bindingid || continue
         sp_id = JL.syntax_id(sparam)
         typevar_id = get(ctx3.sp_typevars, sp_id, nothing)
         typevar_id === nothing || push!(typevar_ids, typevar_id)
@@ -1224,18 +1285,18 @@ function compute_unused_variable_data(
     lhs = assignment[1]
 
     # Check for destructuring patterns (tuple unpacking)
-    is_tuple = JS.kind(lhs) === JS.K"tuple"
+    is_tuple = JS.head(lhs) === :tuple
     if is_tuple
         return UnusedVariableData(true, nothing, nothing, nothing, nothing)
     end
 
     # lhs_eq_range: from LHS start to actual RHS start in source (exclusive).
     # We scan forward from after the LHS to find the `=` sign and any
-    # following whitespace.  This is needed because some node kinds (e.g.
-    # K"Char") have a byte range that excludes delimiters, so
+    # following whitespace.  This is needed because some nodes (e.g. character
+    # literals) have a byte range that excludes delimiters, so
     # `first_byte(rhs)` may point past the opening delimiter.
     assignment_range = jsobj_to_range(assignment, fi)
-    lhs_eq_range = if JS.kind(assignment) === JS.K"="
+    lhs_eq_range = if JS.head(assignment) === :(=)
         lhs_start = offset_to_xy(fi, JS.first_byte(lhs))
         textbuf = fi.parsed_stream.textbuf
         eq_byte = @something findnext(==(UInt8('=')), textbuf, JS.last_byte(lhs) + 1) return nothing
@@ -1308,15 +1369,15 @@ function find_capture_sites(
             lambda.locals_capt[binfo.id] || continue
             # Find the lambda in st3 that has matching lambda_bindings.self
             traverse(st3) do node3::SyntaxTree
-                JS.kind(node3) === JS.K"lambda" || return nothing
+                JS.head(node3) === :lambda || return nothing
                 JS.numchildren(node3) >= 1 || return nothing
                 lbnode = node3[1]
-                JS.kind(lbnode) === JS.K"LambdaBindings" || return nothing
+                JS.head(lbnode) === :lambdabindings || return nothing
                 lambda_bindings = JL.lambda_bindings(lbnode)
                 lambda_bindings.self == lambda.self || return nothing
                 # Find references to binfo.id inside this lambda
                 traverse(node3) do inner::SyntaxTree
-                    if JS.kind(inner) === JS.K"BindingId" && JL.syntax_id(inner) == binfo.id
+                    if JS.head(inner) === :bindingid && JL.syntax_id(inner) == binfo.id
                         varprov = last(JL.flattened_provenance(inner))
                         push!(relatedInformation, DiagnosticRelatedInformation(;
                             location = Location(; uri, range = jsobj_to_range(varprov, fi)),
@@ -1369,8 +1430,8 @@ function analyze_unsorted_imports!(
         diagnostics::Vector{Diagnostic}, fi::FileInfo, st0::SyntaxTree
     )
     traverse(st0) do st0′::SyntaxTree
-        kind = JS.kind(st0′)
-        if kind ∉ JS.KSet"import using export public"
+        kind = JS.head(st0′)
+        if kind ∉ (:import, :using, :export, :public)
             return nothing
         end
         name_keys = collect_import_names(st0′)
@@ -1397,13 +1458,13 @@ function generate_sorted_import_text(
         node::SyntaxTree, sorted_name_keys::Vector{Pair{SyntaxTree,String}},
         base_indent::String
     )
-    kind = JS.kind(node)
-    keyword = kind === JS.K"import" ? "import" :
-              kind === JS.K"using" ? "using" :
-              kind === JS.K"export" ? "export" : "public"
-    if kind in JS.KSet"import using"
+    kind = JS.head(node)
+    keyword = kind === :import ? "import" :
+              kind === :using ? "using" :
+              kind === :export ? "export" : "public"
+    if kind in (:import, :using)
         nchildren = JS.numchildren(node)
-        if nchildren == 1 && JS.kind(node[1]) === JS.K":"
+        if nchildren == 1 && JS.head(node[1]) === :(:)
             module_path = lstrip(JS.sourcetext(node[1][1]))
             prefix = "$keyword $module_path: "
         else
@@ -1435,11 +1496,220 @@ function generate_sorted_import_text(
     return join(lines, "\n")
 end
 
+# JuliaSyntax attaches a string literal as a docstring only inside top-level, `module`,
+# `begin`/`quote` and `struct` bodies, and only when the documented expression starts on
+# the next line. A string literal anywhere else in a position whose value is discarded
+# documents nothing. `raw"..."` strings are never attached without `@doc`.
+# Strings in `begin` blocks passed to macros are not reported, since macros like
+# `ArgParse.@add_arg_table!` give them a meaning.
+function analyze_orphaned_docstrings!(
+        diagnostics::Vector{Diagnostic}, uri::URI, fi::FileInfo, st0_top::SyntaxTree;
+        check_toplevel::Bool = true
+    )
+    check_toplevel && check_orphaned_docstrings!(diagnostics, fi, st0_top,
+        JS.numchildren(st0_top), :docstring; fix_first = false)
+    for child in JS.children(st0_top)
+        walk_orphaned_docstrings!(diagnostics, uri, fi, child, :toplevel, true,
+            :undocumented)
+    end
+    return diagnostics
+end
+
+# `doc_target` tracks whether `st0` is (part of) the expression documented by `@doc`:
+# `:documented`, `:undocumented`, or `:unknown` when it is wrapped by a macro that may
+# handle field docstrings itself.
+function walk_orphaned_docstrings!(
+        diagnostics::Vector{Diagnostic}, uri::URI, fi::FileInfo, st0::SyntaxTree,
+        parent_kind::Symbol, global_scope::Bool, doc_target::Symbol
+    )
+    JS.is_leaf(st0) && return diagnostics
+    kind = JS.head(st0)
+    kind === :quote && return diagnostics
+    if kind === :macrocall
+        is_string_macrocall0(st0) && return diagnostics
+        is_doc = is_doc0_any(st0)
+        transparent = is_doc || is_macrocall_st0(st0, "@static", "Base.@static")
+        child_doc_target = is_doc ? :documented :
+            doc_target === :documented || is_macrocall_st0(st0, "@kwdef", "Base.@kwdef") ?
+            doc_target : :unknown
+        for i = 2:JS.numchildren(st0)
+            child = st0[i]
+            transparent || JS.head(child) !== :block || continue
+            walk_orphaned_docstrings!(diagnostics, uri, fi, child, kind,
+                global_scope & transparent, child_doc_target)
+        end
+        return diagnostics
+    elseif kind === :toplevel
+        check_orphaned_docstrings!(diagnostics, fi, st0, JS.numchildren(st0),
+            global_scope ? :docstring : :local)
+    elseif kind === :struct
+        doc_target === :undocumented &&
+            check_undocumented_struct_fields!(diagnostics, uri, fi, st0)
+    elseif kind === :block
+        if parent_kind === :module
+            check_orphaned_docstrings!(diagnostics, fi, st0, JS.numchildren(st0), :docstring;
+                fix_first = false)
+        elseif parent_kind === :struct
+            check_orphaned_docstrings!(diagnostics, fi, st0, JS.numchildren(st0), :struct)
+        else
+            context = !global_scope ? :local :
+                startswith(JS.sourcetext(st0), "begin") ? :docstring : :block
+            check_orphaned_docstrings!(diagnostics, fi, st0, JS.numchildren(st0)-1, context)
+        end
+    end
+    child_global_scope = kind === :module ||
+        (global_scope && kind in (:toplevel, :block, :if, :elseif))
+    for child in JS.children(st0)
+        walk_orphaned_docstrings!(diagnostics, uri, fi, child, kind, child_global_scope,
+            :undocumented)
+    end
+    return diagnostics
+end
+
+function is_string_macrocall0(st0::SyntaxTree)
+    JS.head(st0) === :macrocall || return false
+    JS.numchildren(st0) >= 1 || return false
+    macro_name = st0[1]
+    return has_name_val(macro_name) && endswith(name_val(macro_name), "_str")
+end
+
+# `context` is one of:
+# - `:docstring`: a global-scope body where adjacent docstrings are attached
+# - `:block`: a global-scope body where docstrings are attached only with `@doc`
+#   (e.g. `if` blocks)
+# - `:struct`: a struct body, where attached field docstrings remain plain strings
+# - `:local`: a local-scope body, where docstrings are never attached
+# A string opening a file or module is usually a header describing the whole file rather
+# than the following definition, so `fix_first = false` offers no fix for it.
+function check_orphaned_docstrings!(
+        diagnostics::Vector{Diagnostic}, fi::FileInfo, stmts::SyntaxTree, nchecked::Int,
+        context::Symbol; fix_first::Bool = true
+    )
+    for i = 1:nchecked
+        st0 = stmts[i]
+        is_raw = is_macrocall_st0(st0, "@raw_str")
+        is_string_literal(st0) || JS.head(st0) === :string || is_raw || continue
+        next = i < JS.numchildren(stmts) ? stmts[i+1] : nothing
+        if (context === :struct && !is_raw && next !== nothing &&
+            count_gap_newlines(fi, st0, next) ≤ 1)
+            continue
+        end
+        reason = context === :local ? "docstrings are not recognized in local scope" :
+            next === nothing ? "no expression follows it" :
+            is_raw ? "`raw` strings are recognized as docstrings only with `@doc`" :
+            context === :block ? "docstrings in this block are recognized only with `@doc`" :
+            "the documented expression must start on the next line"
+        attach_edits = nothing
+        fixable = context === :docstring || context === :block ||
+            (context === :struct && !is_raw)
+        if fixable && (i > 1 || fix_first) && next !== nothing && is_documentable0(next)
+            attach_edits = orphaned_docstring_attach_edits(fi, st0, next;
+                insert_doc = is_raw || context === :block)
+        end
+        push!(diagnostics, Diagnostic(;
+            range = jsobj_to_range(st0, fi),
+            severity = DiagnosticSeverity.Information,
+            message = "Docstring is not attached to any definition: $reason",
+            source = DIAGNOSTIC_SOURCE_LIVE,
+            code = LOWERING_ORPHANED_DOCSTRING_CODE,
+            codeDescription = diagnostic_code_description(LOWERING_ORPHANED_DOCSTRING_CODE),
+            data = attach_edits === nothing ? nothing : OrphanedDocstringData(attach_edits)))
+    end
+    return diagnostics
+end
+
+function count_gap_newlines(fi::FileInfo, st0::SyntaxTree, next::SyntaxTree)
+    gap = JS.last_byte(st0)+1:JS.first_byte(next)-1
+    return count(==(UInt8('\n')), @view fi.parsed_stream.textbuf[gap])
+end
+
+function is_documentable0(st0::SyntaxTree)
+    kind = JS.head(st0)
+    if kind === :macrocall
+        return !is_doc0_any(st0) && !is_string_macrocall0(st0)
+    end
+    return kind in (:function, :macro, :struct, :abstract, :primitive, :module, :const,
+        :global, :(=), :(::), :., :identifier)
+end
+
+# Attach the docstring by prefixing it with `@doc` when the context requires it, and by
+# deleting the blank lines before `next`. Comments or other code in between make the
+# intended target unclear, so no edits are offered then.
+function orphaned_docstring_attach_edits(
+        fi::FileInfo, st0::SyntaxTree, next::SyntaxTree; insert_doc::Bool
+    )
+    textbuf = fi.parsed_stream.textbuf
+    first_newline = last_newline = 0
+    for i = JS.last_byte(st0)+1:JS.first_byte(next)-1
+        b = textbuf[i]
+        if b == UInt8('\n')
+            first_newline == 0 && (first_newline = i)
+            last_newline = i
+        elseif !(b == UInt8(' ') || b == UInt8('\t') || b == UInt8('\r'))
+            return nothing
+        end
+    end
+    first_newline == 0 && return nothing
+    edits = TextEdit[]
+    if insert_doc
+        pos = offset_to_xy(fi, JS.first_byte(st0))
+        push!(edits, TextEdit(;
+            range = Range(; start = pos, var"end" = pos),
+            newText = "@doc "))
+    end
+    if first_newline != last_newline
+        push!(edits, TextEdit(;
+            range = byte_range_to_range(first_newline+1:last_newline, fi),
+            newText = ""))
+    end
+    return isempty(edits) ? nothing : edits
+end
+
+# Field docstrings are collected only by the `@doc` call documenting the struct itself, so
+# they are discarded when the struct has no docstring (JuliaLang/julia#39825).
+function check_undocumented_struct_fields!(
+        diagnostics::Vector{Diagnostic}, uri::URI, fi::FileInfo, st0::SyntaxTree
+    )
+    name = @something struct_name_node(st0) return diagnostics
+    body = st0[JS.numchildren(st0)]
+    JS.head(body) === :block || return diagnostics
+    relatedInformation = DiagnosticRelatedInformation[]
+    for i = 1:JS.numchildren(body)-1
+        doc = body[i]
+        is_string_literal(doc) || JS.head(doc) === :string || continue
+        field_name = @something struct_field_name_node(body[i+1]) continue
+        count_gap_newlines(fi, doc, body[i+1]) <= 1 || continue
+        push!(relatedInformation, DiagnosticRelatedInformation(;
+            location = Location(uri, jsobj_to_range(doc, fi)),
+            message = "Discarded docstring of field `$(JS.sourcetext(field_name))`"))
+    end
+    isempty(relatedInformation) && return diagnostics
+    struct_name = JS.sourcetext(name)
+    push!(diagnostics, Diagnostic(;
+        range = jsobj_to_range(name, fi),
+        severity = DiagnosticSeverity.Information,
+        message = "Field docstrings of `$struct_name` are discarded because " *
+                  "`$struct_name` has no docstring",
+        source = DIAGNOSTIC_SOURCE_LIVE,
+        code = LOWERING_ORPHANED_DOCSTRING_CODE,
+        codeDescription = diagnostic_code_description(LOWERING_ORPHANED_DOCSTRING_CODE),
+        relatedInformation))
+    return diagnostics
+end
+
+function struct_field_name_node(st0::SyntaxTree)
+    kind = JS.head(st0)
+    if kind in (:const, :(=), :(::)) && JS.numchildren(st0) >= 1
+        return struct_field_name_node(st0[1])
+    end
+    return kind === :identifier ? st0 : nothing
+end
+
 # Reachability-based unreachable-code detection. `unreachable_statements`
-# is the set of `K"block"` children that the per-lambda CFG built in
+# is the set of `:block` children that the per-lambda CFG built in
 # `analyze_all_lambdas` determined to be in unreachable blocks.
 #
-# Walking `K"block"` nodes here only serves to (a) locate consecutive runs
+# Walking `:block` nodes here only serves to (a) locate consecutive runs
 # of unreachable statements that came from the same source position and
 # (b) recover the "transition point" — the last reachable sibling — to
 # anchor the auto-fix delete range. The reachability decision itself is
@@ -1452,7 +1722,7 @@ function analyze_unreachable_code!(
     )
     isempty(unreachable_statements) && return
     traverse(st3) do st3′::SyntaxTree
-        JS.kind(st3′) === JS.K"block" || return nothing
+        JS.head(st3′) === :block || return nothing
         nchildren = JS.numchildren(st3′)
         first_unreach_idx = 0
         for i in 1:nchildren
@@ -1520,7 +1790,7 @@ function analyze_unresolved_gotos!(
         diagnostics::Vector{Diagnostic}, fi::FileInfo, st3::SyntaxTree
     )
     traverse(st3) do st3′::SyntaxTree
-        JS.kind(st3′) in JS.KSet"lambda toplevel_lambda" || return nothing
+        JS.head(st3′) in (:lambda, :toplevel_lambda) || return nothing
         JS.numchildren(st3′) >= 4 || return nothing
         check_lambda_gotos!(diagnostics, fi, st3′[4])
         return nothing
@@ -1551,7 +1821,7 @@ function check_lambda_gotos!(
         # Skip macro-generated labels — only report user-written ones.
         provs = JL.flattened_provenance(st)
         is_from_user_ast(provs) || continue
-        label_call = @something provenance_ancestor(st, JS.K"macrocall") continue
+        label_call = @something provenance_ancestor(st, :macrocall) continue
         get_macrocall_name(label_call) == "@label" || continue
         JS.numchildren(label_call) >= 2 || continue
         delete_range = line_absorbing_delete_range(label_call, fi)
@@ -1578,20 +1848,20 @@ function collect_gotos_labels!(
         st3::SyntaxTree
     )
     traverse(st3) do node
-        k = JS.kind(node)
-        if k === JS.K"lambda"
+        k = JS.head(node)
+        if k === :lambda
             # Nested lambdas have their own goto/label scope; handled separately.
             return traversal_no_recurse
-        elseif k === JS.K"symboliclabel"
+        elseif k === :symboliclabel
             push!(labels, (name_val(node), node))
             return traversal_no_recurse
-        elseif k === JS.K"symbolicgoto"
+        elseif k === :symbolicgoto
             push!(gotos, (name_val(node), node))
             return traversal_no_recurse
-        elseif k === JS.K"symbolicblock" || k === JS.K"break"
-            # `K"symbolicblock"`'s first child is a lowering-internal label
-            # (e.g. `loop-exit`) used by `K"break"`, not reachable via `@goto`;
-            # `K"break"`'s first child is a label name reference, not a declaration.
+        elseif k === :symbolicblock || k === :break
+            # `:symbolicblock`'s first child is a lowering-internal label
+            # (e.g. `loop-exit`) used by `:break`, not reachable via `@goto`;
+            # `:break`'s first child is a label name reference, not a declaration.
             # In both cases recurse only into the body (the second child).
             if JS.numchildren(node) >= 2
                 collect_gotos_labels!(gotos, labels, node[2])
@@ -1654,7 +1924,7 @@ function per_stmt_diagnostics!(
         allow_unused_underscore::Bool = true,
         soft_scope::Bool = false
     )
-    @assert JS.kind(st0) ∉ JS.KSet"toplevel module"
+    @assert JS.head(st0) ∉ (:toplevel, :module)
 
     analyze_unsorted_imports!(diagnostics, fi, st0)
 
@@ -1772,7 +2042,7 @@ let empty_names = Set{String}()
         for d in macro_diags
             d.code == LOWERING_INACTIVE_CODE || continue
             traverse(d.node) do s
-                if JS.kind(s) === JS.K"Identifier"
+                if JS.head(s) === :identifier
                     nv = get_name_val(s)
                     nv === nothing || push!(names, nv)
                 end
@@ -1930,14 +2200,14 @@ function collect_explicit_imports_by_module(
     )
     mod_imported_names = Dict{Module,Dict{String,Vector{ImportInfo}}}()
     traverse(st0_top) do st0::SyntaxTree
-        JS.kind(st0) ∈ JS.KSet"import using" || return nothing
+        JS.head(st0) ∈ (:import, :using) || return nothing
         context_module = get_context_module(state, uri, offset_to_xy(fi, JS.first_byte(st0)))
         for (name, name_range, delete_range) in collect_explicit_import_names(st0, fi)
             imported_names =
                 get!(Dict{String,Vector{ImportInfo}}, mod_imported_names, context_module)
             push!(get!(Vector{ImportInfo}, imported_names, name),
                 ImportInfo(uri, name_range, delete_range,
-                    JS.kind(st0) === JS.K"import" ? :import : :using))
+                    JS.head(st0) === :import ? :import : :using))
         end
         return TraversalNoRecurse()
     end
@@ -1948,13 +2218,13 @@ end
 # For single imports like `using M: x`, delete_range covers the entire import statement.
 # For multiple imports like `using M: x, y`, delete_range covers the name plus comma/whitespace.
 function collect_explicit_import_names(st0::SyntaxTree, fi::FileInfo)
-    kind = JS.kind(st0)
+    kind = JS.head(st0)
     names = Tuple{String,Range,Range}[]
-    kind ∈ JS.KSet"import using" || return names
+    kind ∈ (:import, :using) || return names
     if JS.numchildren(st0) == 1
         child = st0[1]
-        ckind = JS.kind(child)
-        if ckind === JS.K":"
+        ckind = JS.head(child)
+        if ckind === :(:)
             # `using M: a, b` or `import M: a, b`
             nnames = JS.numchildren(child) - 1
             for i = 2:JS.numchildren(child)
@@ -1988,13 +2258,13 @@ function collect_explicit_import_names(st0::SyntaxTree, fi::FileInfo)
                 end
                 push!(names, (name, name_range, delete_range))
             end
-        elseif ckind === JS.K"." && kind === JS.K"import"
+        elseif ckind === :. && kind === :import
             # `import M.a` or `import M.a.b` - last component is the imported name
             # Note: `using M.a` brings all exports from module M.a, so it's not explicit
             npath = JS.numchildren(child)
             if npath >= 2
                 last_st = child[npath]
-                if JS.kind(last_st) === JS.K"Identifier"
+                if JS.head(last_st) === :identifier
                     # Single import: delete entire statement
                     name_range = jsobj_to_range(last_st, fi)
                     delete_range = line_absorbing_delete_range(st0, fi)
@@ -2027,6 +2297,9 @@ function compute_per_file_diagnostics(
     soft_scope = is_notebook_cell_uri(server.state, uri) ||
         # the workspace diagnostics worker computes notebooks on the notebook URI
         is_notebook_uri(server.state, uri)
+    # the last expression of a notebook cell is displayed, so top-level strings are not
+    # necessarily orphaned there
+    analyze_orphaned_docstrings!(diagnostics, uri, file_info, st0_top; check_toplevel = !soft_scope)
     iterate_toplevel_tree(st0_top) do st0::SyntaxTree
         is_cancelled(cancel_flag) && return traversal_terminator
         pos = offset_to_xy(file_info, JS.first_byte(st0))
@@ -2294,7 +2567,8 @@ function notify_diagnostics!(server::Server, uri2diagnostics::URI2Diagnostics; e
     all_files = get_config(state, :diagnostic, :all_files)
     root_path = isdefined(state, :root_path) ? state.root_path : nothing
     for (uri, diagnostics) in uri2diagnostics
-        if !all_files && !is_synchronized(state, canonical_cache_uri(state, uri))
+        if !all_files && !is_synchronized(state, canonical_cache_uri(state, uri)) &&
+                get_config_document(state, uri) === nothing
             if (ensure_cleared isa URI && uri == ensure_cleared) ||
                 (ensure_cleared === true && !isempty(diagnostics))
                 send(server, PublishDiagnosticsNotification(;
@@ -2490,16 +2764,19 @@ function analysis_context_hash(analysis_info::Union{Nothing,AnalysisInfo})
 end
 
 # Computes the raw live diagnostics of a file. Falls back to parsed-stream diagnostics
-# when the file does not parse cleanly, otherwise runs the lowering-based analyses.
+# when the file has parse errors, otherwise runs the lowering-based analyses and reports
+# any parse warnings alongside them.
 function compute_live_diagnostics!(
         def_used_names_cache::DefUsedNamesCache, server::Server, uri::URI, fi::FileInfo,
-        snapshot::Union{Nothing,DocumentSnapshot}, cancel_flag::CancelFlag
+        snapshot::Union{Nothing,DocumentSnapshot}, cancel_flag::CancelFlag;
+        lookup_func = nothing
     )
-    if isempty(fi.parsed_stream.diagnostics)
-        return toplevel_lowering_diagnostics!(def_used_names_cache, server, uri, fi, snapshot, cancel_flag)
-    else
-        return parsed_stream_to_diagnostics(fi)
-    end
+    JS.any_error(fi.parsed_stream) && return parsed_stream_to_diagnostics(fi)
+    diagnostics = toplevel_lowering_diagnostics!(
+        def_used_names_cache, server, uri, fi, snapshot, cancel_flag; lookup_func)
+    isempty(fi.parsed_stream.diagnostics) && return diagnostics
+    # `diagnostics` may be the per-file cache's own vector
+    return append!(parsed_stream_to_diagnostics(fi), diagnostics)
 end
 
 # Rescans the workspace, recomputes the files whose fingerprint moved, and republishes
@@ -2653,12 +2930,15 @@ function recompute_live_diagnostics!(
     return true
 end
 
-# An opened file is served by `textDocument/diagnostic` from now on: forget its pushed
-# live diagnostics and republish it without them so the two sets do not overlap.
-function clear_workspace_live_diagnostics!(server::Server, uri::URI)
-    pull_diagnostics_enabled(server) || return nothing
-    cleared = forget_workspace_live_diagnostics!(server.state, uri)
-    cleared && notify_diagnostics!(server, Set{URI}((uri,)))
+# Hand live diagnostics over to the client's pull, and restore cached full-analysis
+# diagnostics suppressed while the file was closed: a generation cache hit will not
+# publish them again. Combine both changes into a single publish for this file only.
+function notify_diagnostics_on_open!(server::Server, uri::URI)
+    state = server.state
+    cleared = pull_diagnostics_enabled(server) && forget_workspace_live_diagnostics!(state, uri)
+    cached = !get_config(state, :diagnostic, :all_files) &&
+        get_analysis_info(state.analysis_manager, uri) isa AnalysisResult
+    (cleared || cached) && notify_diagnostics!(server, Set{URI}((uri,)))
     nothing
 end
 
@@ -2678,7 +2958,7 @@ end
 # integration opts in when it is known to manage the pulled set by its editor state,
 # which the VSCode extension does by clearing it when a tab closes, something the server
 # cannot tell from `textDocument/didClose`. The worker above then leaves open files out,
-# handing a file over on open (`clear_workspace_live_diagnostics!`) and back on close (the
+# handing a file over on open (`notify_diagnostics_on_open!`) and back on close (the
 # next scan), and change points ask the client to re-pull (`request_diagnostic_refresh!`).
 
 pull_diagnostics_enabled(server::Server) =

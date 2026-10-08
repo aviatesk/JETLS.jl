@@ -27,7 +27,7 @@ function get_syntactic_inlay_hints(
     )
     server = JETLS.Server()
     uri = URI("file:///test.jl")
-    fi = JETLS.FileInfo(1, code, @__FILE__)
+    fi = JETLS.FileInfo(1, code, @__FILE__; cache_tree0 = true)
     JETLS.store!(server.state.file_cache) do cache
         Base.PersistentDict(cache, uri => fi), nothing
     end
@@ -37,7 +37,9 @@ function get_syntactic_inlay_hints(
             start = Position(; line = 0, character = 0),
             var"end" = Position(; line = n_lines, character = 0))
     end
-    return JETLS.syntactic_inlay_hints(server.state, uri, fi, range; min_lines)
+    hints = JETLS.syntactic_inlay_hints(server.state, uri, fi, range; min_lines)
+    JETLS.check_syntax_tree0(fi)
+    return hints
 end
 
 @testset HierarchicalTestSet "block end hints" begin
@@ -389,10 +391,11 @@ function get_type_inlay_hints_from_request_path(code::AbstractString, range::Ran
     filename = @__FILE__
     uri = filename2uri(filename)
     inferred_context_cache = JETLS.InferredContextCache()
-    fi = JETLS.FileInfo(1, code, filename; inferred_context_cache)
+    fi = JETLS.FileInfo(1, code, filename; inferred_context_cache, cache_tree0 = true)
     st0_top = JETLS.build_syntax_tree(fi)
     hints = InlayHint[]
     JETLS.type_inlay_hints!(hints, server.state, fi, st0_top, uri, range)
+    JETLS.check_syntax_tree0(fi)
     return hints, inferred_context_cache
 end
 
@@ -401,7 +404,7 @@ function get_lazy_type_inlay_hints(code::AbstractString, mod::Module=Main)
     filename = @__FILE__
     uri = filename2uri(filename)
     inferred_context_cache = JETLS.InferredContextCache()
-    fi = JETLS.FileInfo(1, code, filename; inferred_context_cache)
+    fi = JETLS.FileInfo(1, code, filename; inferred_context_cache, cache_tree0 = true)
     JETLS.store!(server.state.file_cache) do cache
         Base.PersistentDict(cache, uri => fi), nothing
     end
@@ -419,6 +422,7 @@ function get_lazy_type_inlay_hints(code::AbstractString, mod::Module=Main)
             hints, st0, ctx, fi, uri, range, JETLS.LSPostProcessor();
             lazy_tooltips = true)
     end
+    JETLS.check_syntax_tree0(fi)
     return server, hints
 end
 
@@ -429,7 +433,7 @@ function get_type_inlay_hints(
     )
     filename = @__FILE__
     uri = filename2uri(filename)
-    fi = JETLS.FileInfo(1, code, filename)
+    fi = JETLS.FileInfo(1, code, filename; cache_tree0 = true)
     st0_top = JETLS.build_syntax_tree(fi)
     hints = InlayHint[]
     rng = range !== nothing ? range :
@@ -447,6 +451,7 @@ function get_type_inlay_hints(
             hints, st0, ctx, fi, uri, rng, JETLS.LSPostProcessor();
             maxdepth, maxwidth)
     end
+    JETLS.check_syntax_tree0(fi)
     return hints
 end
 
@@ -701,7 +706,7 @@ end
             end
         end
 
-        # Postfix `'` (adjoint, `K"'"`) tightly binds to its operand — `M::T'`
+        # Postfix `'` (adjoint, `:'`) tightly binds to its operand — `M::T'`
         # parses as `M::(T')`, not `(M::T)'`. Suppress the operand's hint so the
         # render stays unambiguous as `M'::T_outer`.
         @testset "postfix adjoint suppresses operand hint" begin
@@ -748,7 +753,7 @@ end
             @test apply_inlay_hints(code, get_type_inlay_hints(code)) == expected
         end
 
-        # Compound assignments parse as `K"unknown_head"`, which is in the skip set;
+        # Compound assignments (operator-specific heads like `:+=`) are skipped;
         # lowering-introduced operator and LHS references don't leak hints, so
         # the `inside += 1` line stays unannotated even though the surrounding
         # expressions get annotated normally.
@@ -771,7 +776,7 @@ end
 
     @testset "macrocall expressions" begin
         # No-paren macrocalls render as `(@m … args)::T` exactly once. The
-        # `K"Value"` companion node shares the macrocall's byte range but
+        # synthesized `:value` companion node shares the macrocall's byte range but
         # must not produce a second pair of `(` / `)::T`. The `0` fallback
         # arg picks up `::Union{}` because `v::Vector{Int}` is never
         # `nothing`, making that branch unreachable.
@@ -850,7 +855,7 @@ end
     end
 
     @testset "tuple expressions" begin
-        # Open `K"tuple"` (`x, y` without parens) needs the `(…)::T` wrap because
+        # Open `:tuple` (`x, y` without parens) needs the `(…)::T` wrap because
         # `x, y::T` parses as `x, (y::T)`. Parenthesized `(x, y)` already ends in
         # `)` so `(x, y)::T` parses cleanly without an extra wrap.
         @testset "open tuple wraps with parens" begin
@@ -914,9 +919,9 @@ end
     end
 
     # `for var = iter` / `for var in iter` — the iteration variable is
-    # registered in `callee_ranges` by the K"=" pass (suppressing the regular
-    # Identifier hint) but its inferred type is informative, so we emit a hint
-    # on it explicitly. Both `=` and `in` syntactic forms parse to K"=".
+    # registered in `callee_ranges` by the `:(=)` pass (suppressing the regular
+    # identifier hint) but its inferred type is informative, so we emit a hint
+    # on it explicitly. Both `=` and `in` syntactic forms parse to `:(=)`.
     @testset "loop expressions" begin
         let code = """
                 let xs = rand(3)
@@ -953,7 +958,7 @@ end
         end
         # Tuple destructuring `for (i, x) in enumerate(...)` — each destructured
         # variable picks up its own hint; no double-emission with the regular
-        # postorder Identifier visit.
+        # postorder identifier visit.
         let code = """
                 let xs = rand(3)
                     for (i, x) in enumerate(xs)
@@ -970,8 +975,8 @@ end
                 """
             @test apply_inlay_hints(code, get_type_inlay_hints(code)) == expected
         end
-        # Named-tuple destructuring `for (; field) in iter` — the K"parameters"
-        # wrapper is walked through to reach the inner Identifier(s).
+        # Named-tuple destructuring `for (; field) in iter` — the `:parameters`
+        # wrapper is walked through to reach the inner identifier(s).
         let code = """
                 let xs = Some{$Int}[Some(1)]
                     for (; value) in xs
@@ -1031,7 +1036,7 @@ end
                     """
             end
 
-            # `if cond` produces a `K"filter"` around the binding.
+            # `if cond` produces a `:filter` around the binding.
             let code = """
                     let xs = [1, 2, 3]
                         [x for x in xs if x > 0]
@@ -1098,7 +1103,7 @@ end
                 @test apply_inlay_hints(code, get_type_inlay_hints(code)) == expected
             end
 
-            # `if cond` produces a `K"filter"` around the binding.
+            # `if cond` produces a `:filter` around the binding.
             let code = """
                     let xs = [1, 2, 3]
                         [x for x::$Int in xs if x > 0]
@@ -1170,7 +1175,7 @@ end
             @test apply_inlay_hints(code, get_type_inlay_hints(code)) == expected
         end
 
-        # Ternary in tail position: branches lower to `K"return"` stmts whose
+        # Ternary in tail position: branches lower to `:return` stmts whose
         # types `tmerge` to the ternary's value. The wrap puts `::T` outside.
         @testset "ternary in tail position" begin
             code = """
@@ -1203,7 +1208,7 @@ end
             @test apply_inlay_hints(code, get_type_inlay_hints(code)) == expected
         end
 
-        # `if-elseif-else`: the `K"elseif"` branch contributes its value alongside
+        # `if-elseif-else`: the `:elseif` branch contributes its value alongside
         # `if` and `else` to the merged type.
         @testset "if-elseif-else in tail position" begin
             code = """
@@ -1319,7 +1324,7 @@ end
             @test apply_inlay_hints(code, get_type_inlay_hints(code)) == expected
         end
 
-        # Short-form `f(args) = body` is `K"="` with a `K"call"` LHS — same
+        # Short-form `f(args) = body` is `:(=)` with a `:call` LHS — same
         # treatment as `function f(...) end` for both the signature filter
         # (no `::Any` clutter on `x::Int`) and the return-type emission at
         # the closing `)` of the signature.
@@ -1463,7 +1468,7 @@ end
     end
 
     @testset "closures handling" begin
-        # `type_for_funcdef` accepts `K"opaque_closure_method"` so single-
+        # `type_for_funcdef` accepts `:opaque_closure_method` so single-
         # method local closures get their LHS return-type slot filled the
         # same way top-level methods do.
         @testset "single-method closure LHS return type" begin
@@ -1801,7 +1806,7 @@ end
             @test apply_inlay_hints(code, get_type_inlay_hints(code)) == expected
         end
 
-        # `K"do"`, its wrapped call, and its lambda share the end byte; avoid
+        # `:do`, its wrapped call, and its lambda share the end byte; avoid
         # triplicated hints after `end`.
         @testset "typed do-block" begin
             code = """

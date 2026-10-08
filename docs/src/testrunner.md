@@ -174,10 +174,119 @@ The TestRunner integration supports:
    end
 
    # Other Test.jl macros are supported too
-   @test_throws DomainErrors sin(Inf)
+   @test_throws DomainError sin(Inf)
    ```
 
-See the [TestRunner.jl README](https://github.com/aviatesk/TestRunner.jl) for more details.
+## [Test selection](@id testrunner/test-selection)
+
+When you run a testset or test, TestRunner.jl skips the other tests in the
+file, including those nested in other code such as `let` blocks, along with
+the code using their results. _All the other code runs_, both at the top level
+and in the testsets enclosing the selected one, so that the definitions and
+setup the selected tests rely on are available. For example, running `"b"` in
+the following code runs `setup()` and `"b"`, and skips `"a"`, `"c"` and
+`report(result)`:
+```julia
+@testset "outer" begin
+    setup()
+    @testset "a" begin
+        @test f() == 1
+    end
+    @testset "b" begin
+        @test g() == 2
+    end
+    result = @testset "c" begin
+        @test h() == 3
+    end
+    report(result)
+end
+```
+
+Files `include`d by the code that runs are executed without their tests, except
+files `include`d by the selected code, which run with all their tests. For
+example, running `"b"` in the following code loads `helpers.jl` without running
+its tests, runs all of `test_b.jl` including its tests, and does not run
+`test_a.jl` at all:
+```julia
+include("helpers.jl")
+
+@testset "a" include("test_a.jl")
+@testset "b" include("test_b.jl")
+```
+
+### [Limitations and workarounds](@id testrunner/test-selection/limitations)
+
+1. Tests in functions called by the code that runs always run, since
+   TestRunner.jl does not look into function calls. This includes functions
+   called with `do` blocks:
+   ```julia
+   function test_parse()
+       @test parse(Int, "1") == 1
+   end
+   test_parse()  # its test always runs
+
+   mktempdir() do dir
+       @testset "tempdir" begin  # always runs
+           @test isdir(dir)
+       end
+   end
+   ```
+   Call such functions from a testset, so that they run only when the testset
+   is selected (see also
+   [Supported patterns](@ref testrunner/supported-patterns)):
+   ```julia
+   @testset "parse" test_parse()
+
+   @testset "tempdir" begin
+       mktempdir() do dir
+           @test isdir(dir)
+       end
+   end
+   ```
+
+2. Setup code in the testsets enclosing the selected one runs even when the
+   selected tests do not use it:
+   ```julia
+   @testset "outer" begin
+       data = load_large_data()  # runs even when running only "small"
+       @testset "large" begin
+           @test process(data) == expected
+       end
+       @testset "small" begin
+           @test process([1, 2]) == [2, 4]
+       end
+   end
+   ```
+   Move expensive setup into the testset that uses it:
+   ```julia
+   @testset "outer" begin
+       @testset "large" begin
+           data = load_large_data()
+           @test process(data) == expected
+       end
+       @testset "small" begin
+           @test process([1, 2]) == [2, 4]
+       end
+   end
+   ```
+
+3. Multiple tests on the same line cannot be selected individually:
+   ```julia
+   @testset "math" begin
+       @test f(1) == 1; @test f(2) == 2  # running either runs both
+   end
+   ```
+   Write each `@test` on its own line:
+   ```julia
+   @testset "math" begin
+       @test f(1) == 1
+       @test f(2) == 2
+   end
+   ```
+
+See the [How it works](https://github.com/aviatesk/TestRunner.jl#how-it-works)
+and [Limitations](https://github.com/aviatesk/TestRunner.jl#limitations)
+sections of the TestRunner.jl README for more details.
 
 ## [Troubleshooting](@id testrunner/troubleshooting)
 
