@@ -90,8 +90,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   Errors raised while loading code are summarized with the first line of the error message, e.g. `JET could not execute this top-level code: UndefVarError: ...`.
   The details are wrapped at 90 columns, or at the terminal width in [`jetls check`](https://aviatesk.github.io/JETLS.jl/release/cli-check/) when the terminal is narrower.
 
-- Running tests with the [TestRunner integration](https://aviatesk.github.io/JETLS.jl/release/testrunner/) no longer runs the tests in files `include`d outside the selected tests, e.g. by a top-level `include("helpers.jl")`; only their other code, such as function definitions, runs.
-  Files `include`d by the selected tests, e.g. by `@testset "name" include("file.jl")`, still run with all their tests.
+- Running tests with the [TestRunner integration](https://aviatesk.github.io/JETLS.jl/release/testrunner/) no longer runs the unselected tests nested in other code, such as in `let` blocks, or in files `include`d outside the selected tests, e.g. by a top-level `include("helpers.jl")`.
+  For example, running `"b"` in the following code no longer runs `"a"` or the tests in `helpers.jl`, while `setup()` and the definitions in `helpers.jl` still run:
+  ```julia
+  include("helpers.jl")
+
+  let x = setup()
+      @testset "a" begin
+          @test f(x) == 1
+      end
+  end
+
+  @testset "b" begin
+      @test g() == 2
+  end
+  ```
+  See [Test selection](https://aviatesk.github.io/JETLS.jl/release/testrunner/#testrunner/test-selection) for what runs along with the selected tests.
 
 ### Fixed
 
@@ -103,7 +117,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Fixed running tests with the [TestRunner integration](https://aviatesk.github.io/JETLS.jl/release/testrunner/) in files that call `include` with `mapexpr`, e.g. `Base.include(mapexpr, mod, path)`, failing with an `unreachable` error or running the included file without applying `mapexpr`.
 
-- Fixed running a test set nested in other test sets with the TestRunner integration skipping the `include` calls in the enclosing test sets, which could cause errors such as `UndefVarError` for what the included files define.
+- Fixed running a test set nested in other test sets with the TestRunner integration skipping the code in the enclosing test sets that it doesn't use directly, such as `include` calls or settings of environment variables, which could cause errors such as `UndefVarError` or test failures.
+  For example, running `"b"` in the following code skipped the `include` call and the `ENV` setting, so `helper()` was not defined and `run_mode()` did not see the setting:
+  ```julia
+  @testset "outer" begin
+      include("helpers.jl")  # defines `helper`
+      ENV["MODE"] = "fast"   # read by `run_mode`
+      @testset "b" begin
+          @test helper() == 1
+          @test run_mode() == "fast"
+      end
+  end
+  ```
+  That code now always runs, as described in [Test selection](https://aviatesk.github.io/JETLS.jl/release/testrunner/#testrunner/test-selection).
+
+- Fixed `@test_throws`, `@test_broken`, `@test_skip`, `@test_logs`, `@test_warn`, `@test_nowarn` and `@test_deprecated` written at the top level always running with the TestRunner integration, even when they were not selected.
 
 - Fixed saving a file not updating diagnostics from full analysis in editors that do not include the document text in save notifications.
 

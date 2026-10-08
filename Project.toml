@@ -39,7 +39,7 @@ JuliaSyntax = {rev = "4b1c835db9", subdir = "JuliaSyntax", url = "https://github
 LSP = {path = "LSP"}
 Revise = {rev = "32638add42", url = "https://github.com/timholy/Revise.jl"}
 TOMLSource = {path = "TOMLSource"}
-TestRunner = {rev = "fe7374559a", url = "https://github.com/aviatesk/TestRunner.jl"}
+TestRunner = {rev = "21eef22df8", url = "https://github.com/aviatesk/TestRunner.jl"}
 
 [compat]
 Compiler = "0.1.1"
