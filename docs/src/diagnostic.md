@@ -192,7 +192,8 @@ They are reported when the server starts, update as you edit the file while it
 is open in the editor, and when the file changes on disk otherwise.
 Not all clients synchronize TOML files with JETLS, though. With such a client,
 JETLS sees the file as unopened, so its diagnostics update only when the file
-changes on disk, such as when you save it, and are reported only if
+changes on disk, such as when you save it.
+Whenever JETLS sees the file as unopened, its diagnostics are reported only if
 [`diagnostic.all_files`](@ref config/diagnostic/all_files) is enabled.
 See [`config/*`](@ref diagnostic/reference/config) for the diagnostic codes.
 
