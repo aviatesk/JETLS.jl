@@ -8,7 +8,7 @@ const help_message = """
 
     Commands:
       serve                       Start language server
-      check <file>...             Run diagnostics on Julia files
+      check [<path>...]           Run diagnostics on Julia files
       schema                      Print JSON schema for configuration
       version                     Show version information
 

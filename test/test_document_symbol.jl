@@ -6,10 +6,12 @@ using JETLS.LSP
 
 module lowering_module end
 function get_document_symbols(code::AbstractString, context_module::Module=lowering_module)
-    fi = JETLS.FileInfo(1, code, @__FILE__, PositionEncodingKind.UTF16)
+    fi = JETLS.FileInfo(1, code, @__FILE__, PositionEncodingKind.UTF16; cache_tree0 = true)
     st0 = JETLS.build_syntax_tree(fi)
     world = Base.get_world_counter()
-    return JETLS.extract_document_symbols(st0, fi, context_module, world)
+    symbols = JETLS.extract_document_symbols(st0, fi, context_module, world)
+    JETLS.check_syntax_tree0(fi)
+    return symbols
 end
 
 const DUMMY_RANGE = Range(Position(0, 0), Position(0, 0))

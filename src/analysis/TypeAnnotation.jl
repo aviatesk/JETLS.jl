@@ -35,7 +35,7 @@ The pipeline has four steps. Each step's output feeds the next:
 1. **Lower for scope resolution**:
    [`get_inferrable_tree(st0::SyntaxTree, context_module::Module, world::UInt) -> (; ctx3::JL.VariableAnalysisContext, st3::SyntaxTree) | nothing`](@ref get_inferrable_tree)
    walks a top-level `st0` through JuliaLowering's early scope passes against
-   `context_module`, returning an `(ctx3, st3)` pair. Surface `K"error"` nodes are stripped
+   `context_module`, returning an `(ctx3, st3)` pair. Surface `:error` nodes are stripped
    first so incomplete user input still produces a usable lowered tree.
 
 2. **Infer & annotate**:
@@ -55,7 +55,7 @@ The pipeline has four steps. Each step's output feeds the next:
 4. **Query**:
    [`get_type_for_range(ctx::InferredTreeContext, rng::UnitRange{<:Integer}) -> typ`](@ref get_type_for_range)
    is the main entry point: given a surface byte range, it picks a lookup strategy based on
-   the lowered surface kind (`K"call"`, `K"macrocall"`, `K"function"`, branching forms, …)
+   the lowered surface head (`:call`, `:macrocall`, `:function`, branching forms, …)
    and returns the inferred lattice element.
 
 For LSP feature code, [`build_inferred_context_for_range`](@ref) and
@@ -123,7 +123,7 @@ The static-svec approach inherits a few precision losses around lowering's
 synthetic binding constructs. None of these break correctness; they only degrade
 types to `Any`.
 
-- **Closures**: Single-method local closures are rewritten to `K"_opaque_closure"`
+- **Closures**: Single-method local closures are rewritten to `:_opaque_closure`
   by [`Closure2Opaque.rewrite_local_closures_to_opaque`](@ref) before
   `JL.convert_closures`, so CC's native `OpaqueClosure` path handles them
   precisely (body, captures, and call sites all infer). Local closures with
@@ -156,8 +156,9 @@ using ..JETLS: InferredContextCache, InferredContextCacheData, SyntaxTree,
     TraversalReturn, TreeAnnotations
 using ..JETLS: Analyzer, JETLS_DEBUG_LOWERING, JETLS_DEV_MODE, JL, JS
 using ..JETLS: locked_show_backtrace, locked_showerror
-using ..JETLS: get_name_val, iterate_toplevel_tree, jl_lower_for_scope_resolution, load,
-    rewrite_local_closures_to_opaque, store!, traverse, unwrap_funcdef_sig
+using ..JETLS: get_name_val, is_string_literal, iterate_toplevel_tree,
+    jl_lower_for_scope_resolution, load, rewrite_local_closures_to_opaque, store!, traverse,
+    unwrap_funcdef_sig
 import ..JETLS: InferredTreeContext
 
 export InferredTreeContext,
@@ -194,20 +195,20 @@ const MethodBodyRangeIndex = Dict{UnitRange{Int},UnitRange{Int}}
 function collect_method_body_ranges(st0::SyntaxTree)
     ranges = MethodBodyRangeIndex()
     traverse(st0) do node::SyntaxTree
-        k = JS.kind(node)
-        if k in JS.KSet"function macro"
+        k = JS.head(node)
+        if k in (:function, :macro)
             JS.numchildren(node) >= 2 || return nothing
-        elseif k === JS.K"="
+        elseif k === :(=)
             JS.numchildren(node) >= 2 || return nothing
             sig = unwrap_funcdef_sig(node[1])
-            JS.kind(sig) === JS.K"call" || return nothing
+            JS.head(sig) === :call || return nothing
         else
             return nothing
         end
         body = nothing
         for i = JS.numchildren(node):-1:1
             child = node[i]
-            if JS.kind(child) === JS.K"block"
+            if JS.head(child) === :block
                 body = child
                 break
             end
@@ -237,7 +238,7 @@ struct ASTTypeAnnotator <: CC.AbstractInterpreter
     # Side tables receiving `annotate_types!` results; shared across all thunk
     # interps of one inference pass.
     annotations::TreeAnnotations
-    # OC `Method` → body's `K"code_info"` subtree; built by `register_oc_body_trees!`.
+    # OC `Method` → body's `:code_info` subtree; built by `register_oc_body_trees!`.
     oc_body_trees::IdDict{Method,SyntaxTree}
     # Pending eager OC body annotations. `abstract_eval_new_opaque_closure` opens an
     # entry, `finishinfer!` records the last body frame seen for that fresh OC method,
@@ -705,35 +706,35 @@ function collect_call_matches!(matches::Vector{Core.MethodMatch}, @nospecialize 
     return matches
 end
 
-# Walk to the *deepest* K"BindingId" in the source chain — argmap-renamed
+# Walk to the *deepest* `:bindingid` in the source chain — argmap-renamed
 # user arguments have an intermediate `is_internal=true` local that would
 # misreport `true` if we stopped at the first hop.
 function is_internal_binding_leaf(filter::SyntheticFilter, leaf::SyntaxTree)
     src = leaf.source
     src isa SyntaxTree || return false
-    JS.kind(src) === JS.K"BindingId" || return false
+    JS.head(src) === :bindingid || return false
     last_binding = src
     while true
         nxt = last_binding.source
         nxt isa SyntaxTree || break
-        JS.kind(nxt) === JS.K"BindingId" || break
+        JS.head(nxt) === :bindingid || break
         last_binding = nxt
     end
     return JL.get_binding(filter.bindings, last_binding).is_internal
 end
 
-# Classify every surface `K"="`:
-# - K"tuple" LHS → destructure trigger (catches `(a, b) = rhs`,
-#   `(; a, b) = rhs`, and the K"=" iter-spec of `for (a, b) in iter`)
+# Classify every surface `:(=)`:
+# - `:tuple` LHS → destructure trigger (catches `(a, b) = rhs`,
+#   `(; a, b) = rhs`, and the `:(=)` iter-spec of `for (a, b) in iter`)
 # - any other LHS → user-written simple assignment, recorded so it isn't
 #   misfiltered when it appears inside a destructure RHS.
 function collect_assignment_ranges(st0::SyntaxTree)
     destructure = UnitRange{Int}[]
     user_simple = Set{UnitRange{Int}}()
     traverse(st0) do st::SyntaxTree
-        JS.kind(st) === JS.K"=" || return nothing
+        JS.head(st) === :(=) || return nothing
         rng = JS.byte_range(st)
-        if JS.numchildren(st) >= 1 && JS.kind(st[1]) === JS.K"tuple"
+        if JS.numchildren(st) >= 1 && JS.head(st[1]) === :tuple
             push!(destructure, rng)
         else
             push!(user_simple, rng)
@@ -743,11 +744,11 @@ function collect_assignment_ranges(st0::SyntaxTree)
     return destructure, user_simple
 end
 
-# Skip lowered `K"="`s that match a user-written simple `K"="` exactly —
+# Skip lowered `:(=)`s that match a user-written simple `:(=)` exactly —
 # `(a, b) = (x = 10; (x, x+1))` puts the inner `x = 10` inside the
 # destructure's byte range, where containment alone would misflag it.
 function is_synthetic_destructure_stmt(filter::SyntheticFilter, stmttree::SyntaxTree)
-    JS.kind(stmttree) === JS.K"=" || return false
+    JS.head(stmttree) === :(=) || return false
     rng = JS.byte_range(stmttree)
     rng in filter.user_assignment_ranges && return false
     for r in filter.destructure_ranges
@@ -777,14 +778,14 @@ function annotate_types!(
         stmt = frame.src.code[i]
         stmttype = frame.src.ssavaluetypes[i]
         stmttree = citree[i]
-        if JS.kind(stmttree) in JS.KSet"newvar goto gotoifnot"
+        if JS.head(stmttree) in (:newvar, :goto, :gotoifnot)
             # The `ssavaluetype` corresponding to these nodes is always `Any`, and since
             # the provenance information for these nodes is very broad, it's more convenient
             # for the implementation of `get_type_for_range` to leave them untyped
             continue
         end
-        # Synthetic destructure K"="s share the user's RHS byte range, so
-        # annotating them (or their inner K"call" / args, below) would shadow
+        # Synthetic destructure `:(=)`s share the user's RHS byte range, so
+        # annotating them (or their inner `:call` / args, below) would shadow
         # source-range queries.
         is_synthesized_stmt = is_synthetic_destructure_stmt(filter, stmttree)
         is_synthesized_stmt || (annotations.types[stmttree] = stmttype)
@@ -830,7 +831,7 @@ function annotate_types!(
                     # `Core.apply_type` / `Core.kwcall` for kwarg calls, and
                     # lowering-introduced literals in comprehension scaffolding).
                     # Their `argextype` otherwise leaks through `tmerge_at_range`-dispatched
-                    # queries (`K"vect"`, `K"typed_vcat"`, …) as a union with the real type.
+                    # queries (`:vect`, `:typed_vcat`, …) as a union with the real type.
                     # SSAValue args are skipped separately since the producing stmt already
                     # annotates the value.
                     argtyp = CC.argextype(arg, frame.src, frame.sptypes)
@@ -899,7 +900,7 @@ function consume_oc_body_annotation_state!(interp::ASTTypeAnnotator, def::Method
 end
 
 # Register `is_for_opaque_closure` `Method`s (replacements from
-# `resolve_definition_effects_in_ir`) against their `K"code_info"` syntax
+# `resolve_definition_effects_in_ir`) against their `:code_info` syntax
 # subtree. Keyed by `Method` (not `CodeInfo`) because `jl_method_set_source`
 # compresses the body — `frame.src` is a freshly decompressed copy and won't
 # `===` the registered CodeInfo.
@@ -911,7 +912,7 @@ end
 function register_oc_body_trees!(
         oc_body_trees::IdDict{Method,SyntaxTree}, citree::SyntaxTree, src::CodeInfo
     )
-    block_citree = JS.kind(citree) in JS.KSet"thunk code_info" ? code_info_stmts(citree) : citree
+    block_citree = JS.head(citree) in (:thunk, :code_info) ? code_info_stmts(citree) : citree
     JS.numchildren(block_citree) == length(src.code) || return oc_body_trees
     for i = 1:length(src.code)
         stmt = src.code[i]
@@ -919,7 +920,7 @@ function register_oc_body_trees!(
         stmt isa Method || continue
         ocmeth = stmt
         if ocmeth.is_for_opaque_closure
-            JS.kind(node) === JS.K"opaque_closure_method" || continue
+            JS.head(node) === :opaque_closure_method || continue
             body_citree = @something find_code_info_child(node) continue
             haskey(oc_body_trees, ocmeth) && continue # avoid re-recursing on cycles
             oc_body_trees[ocmeth] = body_citree
@@ -933,18 +934,18 @@ end
 function find_code_info_child(node::SyntaxTree)
     for i = 1:JS.numchildren(node)
         c = node[i]
-        JS.kind(c) === JS.K"code_info" && return c
+        JS.head(c) === :code_info && return c
     end
     return nothing
 end
 
-# Unwrap a (possibly `K"thunk"`-wrapped) `K"code_info"` node to its statements
-# block: `K"code_info"` children are `[K"Slots", stmts::K"block"]`.
+# Unwrap a (possibly `:thunk`-wrapped) `:code_info` node to its statements
+# block: `:code_info` children are `[:slots, stmts::block]`.
 function code_info_stmts(citree::SyntaxTree)
-    if JS.kind(citree) === JS.K"thunk"
+    if JS.head(citree) === :thunk
         citree = citree[1]
     end
-    @assert JS.kind(citree) === JS.K"code_info"
+    @assert JS.head(citree) === :code_info
     return citree[2]
 end
 
@@ -958,7 +959,8 @@ Return whether type-annotation features should skip a lowerable top-level form.
 Declaration-only forms have no useful inferred value annotations.
 """
 is_type_annotation_skipped_toplevel(st0::SyntaxTree) =
-    JS.kind(st0) in JS.KSet"using import export public abstract primitive String"
+    JS.head(st0) in (:using, :import, :export, :public, :abstract, :primitive) ||
+    is_string_literal(st0)
 
 """
     get_inferrable_tree(
@@ -972,11 +974,11 @@ returning the `(ctx3, st3)` pair that [`infer_toplevel_tree`](@ref) consumes.
 Returns `nothing` if lowering throws (typically a parse error or an unready macro context);
 errors are routed through `JETLS_DEBUG_LOWERING` rather than propagated.
 
-`K"error"` nodes are stripped from `st0` before lowering so incomplete source
+`:error` nodes are stripped from `st0` before lowering so incomplete source
 still produces a usable tree — JuliaSyntax keeps parsing past errors and
 JuliaLowering happily lowers what's left. For example, in
 `function f(x::T); x.; end` the body's `x` reference still resolves to `T` after
-`K"error"` removal.
+`:error` removal.
 
 See the [`TypeAnnotation`](@ref) module docstring for the full pipeline.
 """
@@ -1210,10 +1212,10 @@ function resolve_toplevel_symbols!(src::CodeInfo, context_module::Module)
 end
 
 function is_core_define_method_call(st::SyntaxTree)
-    JS.kind(st) === JS.K"call" || return false
+    JS.head(st) === :call || return false
     JS.numchildren(st) >= 1 || return false
     callee = st[1]
-    JS.kind(callee) === JS.K"core" || return false
+    JS.head(callee) === :core || return false
     return get_name_val(callee) == "define_method"
 end
 
@@ -1230,7 +1232,7 @@ function method_definition_parts(node::SyntaxTree, stmt::Expr)
     is_core_define_method_call(stmt) || return nothing
     length(stmt.args) == 5 || return nothing
     body_tree = node[5]
-    JS.kind(body_tree) === JS.K"code_info" || return nothing
+    JS.head(body_tree) === :code_info || return nothing
     body_codeinfo = stmt.args[5]
     body_codeinfo isa CodeInfo || return nothing
     return (; sig_ref_some=Some{Any}(stmt.args[4]), body_tree, body_codeinfo)
@@ -1469,7 +1471,7 @@ end
     InferredTreeContext(
             inferred_tree::SyntaxTree, annotations::TreeAnnotations,
             ctx3::JL.VariableAnalysisContext, st3::SyntaxTree,
-            surface_kind_index::Dict{UnitRange{Int},JS.Kind},
+            surface_kind_index::Dict{UnitRange{Int},Symbol},
             macrocall_types::Dict{UnitRange{Int},Vector{Any}}
         ) -> ctx::InferredTreeContext
 
@@ -1482,10 +1484,10 @@ in \$O(1)\$ per call (or \$O(log N)\$ for the branching case).
 
 `ctx3` supplies closure argument binding ranges for parameter-position queries.
 `st3` (rather than the surface tree) is needed to identify byte ranges of
-*user-written* `K"return"` surface forms, which `type_for_branching` looks up
+*user-written* `:return` surface forms, which `type_for_branching` looks up
 to filter user returns out of the value type of an enclosing branching
 expression. Using `st3` lets the analysis see through desugared `&&` / `||` /
-`?:` / chained comparisons (now `K"if"`) and through expanded macros —
+`?:` / chained comparisons (now `:if`) and through expanded macros —
 without it, those constructs would leak.
 
 Build once per `inferred_tree` and reuse across queries — the single \$O(N)\$
@@ -1498,7 +1500,7 @@ See the [`TypeAnnotation`](@ref) module docstring for the full pipeline.
 function InferredTreeContext(
         inferred_tree::SyntaxTree, annotations::TreeAnnotations,
         ctx3::JL.VariableAnalysisContext, st3::SyntaxTree,
-        surface_kind_index::Dict{UnitRange{Int},JS.Kind},
+        surface_kind_index::Dict{UnitRange{Int},Symbol},
         macrocall_types::Dict{UnitRange{Int},Vector{Any}}
     )
     by_byte_range = Dict{UnitRange{Int}, Vector{SyntaxTree}}()
@@ -1508,7 +1510,7 @@ function InferredTreeContext(
     traverse(inferred_tree) do st::SyntaxTree
         rng = JS.byte_range(st)
         push!(get!(Vector{SyntaxTree}, by_byte_range, rng), st)
-        if JS.kind(st) === JS.K"return"
+        if JS.head(st) === :return
             push!(return_first_bytes, JS.first_byte(st))
             push!(return_nodes, st)
         end
@@ -1536,37 +1538,36 @@ end
 
 # The surface kinds `get_type_for_range` selects a lookup strategy for. When several
 # surface forms share one byte range, these take precedence in `surface_kind_index`
-# over generic wrappers: a lambda body `K"block"` (or a short-form funcdef body)
+# over generic wrappers: a lambda body `:block` (or a short-form funcdef body)
 # collapses onto the very expression it wraps, and letting the wrapper claim the range
 # would drop the query into `tmerge_at_range`, merging loop/closure scaffolding types
 # into the user-visible result.
-const CALL_RESULT_SURFACE_KINDS = JS.KSet"""
-    call dotcall ref tuple ' do juxtapose
-    vect vcat hcat ncat typed_vcat typed_hcat typed_ncat
-    """
-const DISPATCH_SURFACE_KINDS = JS.KSet"""
-    function do macro call dotcall macrocall ref tuple ' juxtapose =
-    comparison && || if ? for while
-    vect vcat hcat ncat typed_vcat typed_hcat typed_ncat typed_comprehension row
-    """
+const CALL_RESULT_SURFACE_KINDS = (
+    :call, :dotcall, :ref, :tuple, Symbol("'"), :do, :juxtapose,
+    :vect, :vcat, :hcat, :ncat, :typed_vcat, :typed_hcat, :typed_ncat)
+const DISPATCH_SURFACE_KINDS = (
+    :function, :do, :macro, :call, :dotcall, :macrocall, :ref, :tuple, Symbol("'"),
+    :juxtapose, :(=), :comparison, :&&, :||, :if, :?, :for, :while,
+    :vect, :vcat, :hcat, :ncat, :typed_vcat, :typed_hcat, :typed_ncat,
+    :typed_comprehension, :row)
 
 function collect_provenance_indexes(inferred_tree::SyntaxTree, annotations::TreeAnnotations)
-    surface_kind_index = Dict{UnitRange{Int},JS.Kind}()
+    surface_kind_index = Dict{UnitRange{Int},Symbol}()
     macrocall_types = Dict{UnitRange{Int},Vector{Any}}()
     traverse(inferred_tree) do st::SyntaxTree
         provs = JS.flattened_provenance(st)
         if !isempty(provs)
             prov = first(provs)
             prov_rng = JS.byte_range(prov)
-            pk = JS.kind(prov)
+            pk = JS.head(prov)
             existing = get(surface_kind_index, prov_rng, nothing)
             if (existing === nothing ||
                 (!(existing in DISPATCH_SURFACE_KINDS) && pk in DISPATCH_SURFACE_KINDS))
                 surface_kind_index[prov_rng] = pk
             end
             typ = get(annotations.types, st, nothing)
-            if (JS.kind(st) === JS.K"call" && typ !== nothing &&
-                JS.kind(prov) === JS.K"macrocall")
+            if (JS.head(st) === :call && typ !== nothing &&
+                JS.head(prov) === :macrocall)
                 push!(get!(Vector{Any}, macrocall_types, JS.byte_range(prov)), typ)
             end
         end
@@ -1575,10 +1576,10 @@ function collect_provenance_indexes(inferred_tree::SyntaxTree, annotations::Tree
     return surface_kind_index, macrocall_types
 end
 
-# `K"code_info"` only marks an OC body when it's the body slot of a
-# `K"opaque_closure_method"` — the top-level thunk is also wrapped in `K"code_info"` and
-# would otherwise mark the entire tree. Each `K"opaque_closure_method"` opens its own
-# scope; entering its `K"code_info"` child overrides the inherited scope so an inner OC's
+# `:code_info` only marks an OC body when it's the body slot of a
+# `:opaque_closure_method` — the top-level thunk is also wrapped in `:code_info` and
+# would otherwise mark the entire tree. Each `:opaque_closure_method` opens its own
+# scope; entering its `:code_info` child overrides the inherited scope so an inner OC's
 # body is attributed to the inner method, not the outer.
 function populate_oc_body_scope!(
         scope::Dict{SyntaxTree,UnitRange{Int}},
@@ -1587,10 +1588,10 @@ function populate_oc_body_scope!(
     )
     current === nothing || (scope[node] = current)
     JS.is_leaf(node) && return
-    if JS.kind(node) === JS.K"opaque_closure_method"
+    if JS.head(node) === :opaque_closure_method
         method_range = JS.byte_range(node)
         for c in JS.children(node)
-            child_scope = JS.kind(c) === JS.K"code_info" ? method_range : current
+            child_scope = JS.head(c) === :code_info ? method_range : current
             populate_oc_body_scope!(scope, c, child_scope)
         end
     else
@@ -1618,7 +1619,7 @@ function collect_oc_argument_binding_types(
         typ = get(oc_argtypes, (lambda_range, Symbol(name)), nothing)
         typ === nothing && continue
         binding = binfo.node_id
-        JS.kind(binding) === JS.K"BindingId" || continue
+        JS.head(binding) === :bindingid || continue
         binding_types[JS.byte_range(binding)] = typ
     end
     return binding_types
@@ -1628,7 +1629,7 @@ function collect_lambda_ranges(ctx3::JL.VariableAnalysisContext)
     ranges = Dict{Int,UnitRange{Int}}()
     for scope in ctx3.scopes
         node = scope.node_id
-        JS.kind(node) in JS.KSet"lambda toplevel_lambda generated_lambda" || continue
+        JS.head(node) in (:lambda, :toplevel_lambda, :generated_lambda) || continue
         ranges[scope.lambda_id] = JS.byte_range(node)
     end
     return ranges
@@ -1640,7 +1641,7 @@ function collect_oc_argtypes_by_binding(
     body_ranges_by_surface = collect_oc_body_ranges_by_surface(inferred_tree)
     oc_argtypes = Dict{Tuple{UnitRange{Int},Symbol},Any}()
     traverse(inferred_tree) do st::SyntaxTree
-        JS.kind(st) === JS.K"new_opaque_closure" || return nothing
+        JS.head(st) === :new_opaque_closure || return nothing
         typ = @something get(annotations.types, st, nothing) return nothing
         entry = @something oc_argtypes_for_node(typ, JS.byte_range(st)) return nothing
         body_ranges = get(Vector{UnitRange{Int}}, body_ranges_by_surface, entry.range)
@@ -1661,10 +1662,10 @@ end
 function collect_oc_body_ranges_by_surface(inferred_tree::SyntaxTree)
     body_ranges_by_surface = Dict{UnitRange{Int},Vector{UnitRange{Int}}}()
     traverse(inferred_tree) do st::SyntaxTree
-        JS.kind(st) === JS.K"opaque_closure_method" || return nothing
+        JS.head(st) === :opaque_closure_method || return nothing
         surface_range = JS.byte_range(st)
         for child in JS.children(st)
-            JS.kind(child) === JS.K"code_info" || continue
+            JS.head(child) === :code_info || continue
             body_ranges = get!(Vector{UnitRange{Int}}, body_ranges_by_surface, surface_range)
             push!(body_ranges, JS.byte_range(child))
         end
@@ -1683,11 +1684,11 @@ function oc_argtypes_for_node(@nospecialize(typ), rng::UnitRange{Int})
     return (; range = rng, argnames, argtypes)
 end
 
-# `st3` (not `st0`) so `K"return"`s introduced by macro expansion are picked up.
+# `st3` (not `st0`) so `:return`s introduced by macro expansion are picked up.
 function collect_user_return_form_ranges(st3::SyntaxTree)
     ranges = UnitRange{Int}[]
     traverse(st3) do st::SyntaxTree
-        JS.kind(st) === JS.K"return" && push!(ranges, JS.byte_range(st))
+        JS.head(st) === :return && push!(ranges, JS.byte_range(st))
         return nothing
     end
     return ranges
@@ -1822,16 +1823,16 @@ a naive `tmerge` of all matches would pull in synthetic helper types that the us
 wrote. The dispatch picks a per-kind strategy that filters or summarizes the lowered
 nodes appropriately; see the source of each helper for the rationale behind its choice:
 
-| surface kind                                                                              | strategy                     |
-|:-----------------------------------------------------------------------------------------:|:----------------------------:|
-| `K"call"` / `K"dotcall"` / `K"ref"` / `K"tuple"` / `K"'"` / `K"do"` / array literal kinds | `type_for_call`              |
-| `K"macrocall"`                                                                            | `type_for_macroexpansion`    |
-| `K"typed_comprehension"`                                                                  | `type_for_array_construct`   |
-| `K"row"`                                                                                  | always `nothing`             |
-| `K"function"` / `K"macro"`                                                                | `type_for_funcdef`           |
-| `K"comparison"` / `K"&&"` / `K"||"` / `K"if"` / `K"?"`                                    | `type_for_branching`         |
-| `K"for"` / `K"while"`                                                                     | always `Core.Const(nothing)` |
-| everything else                                                                           | `tmerge_at_range`            |
+| surface kind                                                                    | strategy                     |
+|:-------------------------------------------------------------------------------:|:----------------------------:|
+| `:call` / `:dotcall` / `:ref` / `:tuple` / `:'` / `:do` / array literal kinds   | `type_for_call`              |
+| `:macrocall`                                                                    | `type_for_macroexpansion`    |
+| `:typed_comprehension`                                                          | `type_for_array_construct`   |
+| `:row`                                                                          | always `nothing`             |
+| `:function` / `:macro`                                                          | `type_for_funcdef`           |
+| `:comparison` / `:&&` / `:||` / `:if` / `:?`                                    | `type_for_branching`         |
+| `:for` / `:while`                                                               | always `Core.Const(nothing)` |
+| everything else                                                                 | `tmerge_at_range`            |
 """
 function get_type_for_range(ctx::InferredTreeContext, rng::UnitRange{<:Integer})
     binding_typ = get(ctx.oc_argument_binding_types, rng, nothing)
@@ -1841,29 +1842,29 @@ function get_type_for_range(ctx::InferredTreeContext, rng::UnitRange{<:Integer})
         typ === nothing || return typ
     end
     surface_kind = surface_kind_at_range(ctx, rng)
-    if surface_kind === JS.K"macrocall"
+    if surface_kind === :macrocall
         return type_for_macroexpansion(ctx, rng)
     elseif surface_kind in CALL_RESULT_SURFACE_KINDS
         # `juxtapose`: parse-tree provenance retains the parser kind for `2x`,
-        # which desugars to a `K"call"` in the inferred tree.
+        # which desugars to a `:call` in the inferred tree.
         return type_for_call(ctx, rng)
-    elseif surface_kind === JS.K"typed_comprehension"
+    elseif surface_kind === :typed_comprehension
         return type_for_typed_comprehension(ctx, rng)
-    elseif surface_kind === JS.K"row"
+    elseif surface_kind === :row
         # Matrix rows carry synthetic `hvcat` dimension arguments, not values.
         return nothing
-    elseif surface_kind in JS.KSet"for while"
+    elseif surface_kind in (:for, :while)
         return Core.Const(nothing)
-    elseif surface_kind in JS.KSet"function macro"
+    elseif surface_kind in (:function, :macro)
         return type_for_funcdef(ctx, rng)
-    elseif surface_kind === JS.K"="
+    elseif surface_kind === :(=)
         # Pruned `st0` can collapse short-form function-definition provenance from
-        # `K"function"` to the surface `K"="`. The inferred tree still carries the
+        # `:function` to the surface `:(=)`. The inferred tree still carries the
         # method-like lowered node, so use that as the authoritative signal.
         typ = type_for_funcdef(ctx, rng)
         typ === nothing || return typ
-    elseif surface_kind in JS.KSet"comparison && || if ?"
-        # Ternary `b ? x : 0` is `K"if"` in the surface tree but `K"?"` in the
+    elseif surface_kind in (:comparison, :&&, :||, :if, :?)
+        # Ternary `b ? x : 0` is `:if` in the surface tree but `:?` in the
         # inferred tree's provenance (JuliaLowering retains the parser kind).
         return type_for_branching(ctx, rng)
     end
@@ -1873,8 +1874,8 @@ end
 surface_kind_at_range(ctx::InferredTreeContext, rng::UnitRange{<:Integer}) =
     get(ctx.surface_kind_index, rng, nothing)
 
-# A macrocall expansion produces many `K"call"`s whose byte ranges fall under
-# the original `K"macrocall"` source span. `macrocall_types` indexes only calls
+# A macrocall expansion produces many `:call`s whose byte ranges fall under
+# the original `:macrocall` source span. `macrocall_types` indexes only calls
 # whose first provenance is the macrocall (skipping nodes the expansion imported
 # from elsewhere); among them, the last non-Const type carries the value type.
 # `Const` entries are skipped because they're usually metadata the expansion
@@ -1888,8 +1889,8 @@ function type_for_macroexpansion(ctx::InferredTreeContext, rng::UnitRange{<:Inte
     return typ
 end
 
-# Last-K"call"-wins selector used by call-like surface kinds. The "last in
-# preorder" K"call" is the outermost lowered call, i.e. the one that produces
+# Last-`:call`-wins selector used by call-like surface kinds. The "last in
+# preorder" `:call` is the outermost lowered call, i.e. the one that produces
 # the user-visible value:
 # - kwcall `f(; kw=v)`: `Core.tuple` (kw names) and `NamedTuple{…}` (kwargs
 #   bundling) appear before `Core.kwcall(…)` in `src.code`, so the user call
@@ -1899,12 +1900,12 @@ end
 #   constructor (which produces the NamedTuple value) is emitted last.
 # - Matrix / n-dimensional literals: the dimension tuple is constructed before
 #   the final `hvcat` / `hvncat` call, so the array-producing call wins.
-# - Positional `f(args)` and `(1, 2, 3)`: a single K"call" at the range,
+# - Positional `f(args)` and `(1, 2, 3)`: a single `:call` at the range,
 #   so "last" is just that single entry.
 function type_for_call(ctx::InferredTreeContext, rng::UnitRange{<:Integer})
     typ = nothing
     for st in get(ctx.by_byte_range, rng, ())
-        JS.kind(st) === JS.K"call" || continue
+        JS.head(st) === :call || continue
         ntyp = @something get(ctx.annotations.types, st, nothing) continue
         typ = ntyp
     end
@@ -1919,7 +1920,7 @@ end
 #
 # `T[…]` literal syntax is hardcoded by Julia's parser/lowering to allocate
 # `Array{T,N}`, so the user-visible value is always (a subtype of) `Array`.
-# Pick the lowered `K"call"` matching that: ordering-independent (doesn't
+# Pick the lowered `:call` matching that: ordering-independent (doesn't
 # rely on the allocation being lowered first) and tight (`LinearIndices` is
 # `<: AbstractArray` but not `<: Array`, so it's filtered).
 #
@@ -1927,7 +1928,7 @@ end
 # (`Union{}` is `<: Array` since Bottom is a subtype of every type).
 function type_for_typed_comprehension(ctx::InferredTreeContext, rng::UnitRange{<:Integer})
     for st in get(ctx.by_byte_range, rng, ())
-        JS.kind(st) === JS.K"call" || continue
+        JS.head(st) === :call || continue
         typ = @something get(ctx.annotations.types, st, nothing) continue
         wt = CC.widenconst(typ)
         wt !== Union{} && wt <: Array && return typ
@@ -1935,27 +1936,27 @@ function type_for_typed_comprehension(ctx::InferredTreeContext, rng::UnitRange{<
     return nothing
 end
 
-# `K"comparison"` / `K"&&"` / `K"||"` / `K"if"` (ternary or block-form) all
+# `:comparison` / `:&&` / `:||` / `:if` (ternary or block-form) all
 # lower to branching code where each branch produces a candidate value. The
 # lowered branches show up as either:
-# - merge-slot assignments (`K"="` whose byte range equals the surface `rng`)
-#   when the surface is in `K"="` RHS or any non-tail position; or
-# - synthetic tail returns (`K"return"` whose byte range is contained in
+# - merge-slot assignments (`:(=)` whose byte range equals the surface `rng`)
+#   when the surface is in `:(=)` RHS or any non-tail position; or
+# - synthetic tail returns (`:return` whose byte range is contained in
 #   `rng`) when the surface is in tail position of a function body.
 # The expression's value type is the `tmerge` over all such branch values.
 #
-# User-written `K"return"`s strictly inside `rng` exit the function and must
+# User-written `:return`s strictly inside `rng` exit the function and must
 # not contribute (e.g. `out = if cond; return X; end` — the if's value is
 # `Nothing`, not `Union{Nothing, typeof(X)}`). They're filtered via
 # `ctx.user_return_form_ranges` containment.
 function type_for_branching(ctx::InferredTreeContext, rng::UnitRange{<:Integer})
     typ = nothing
-    # (1) equality match — any lowered kind, including merge-slot `K"="`.
+    # (1) equality match — any lowered kind, including merge-slot `:(=)`.
     for st in get(ctx.by_byte_range, rng, ())
         ntyp = @something get(ctx.annotations.types, st, nothing) continue
         typ = typ === nothing ? ntyp : CC.tmerge(ntyp, typ)
     end
-    # (2) containment match — `K"return"` strictly inside `rng`, excluding
+    # (2) containment match — `:return` strictly inside `rng`, excluding
     #     user-written returns whose exit doesn't contribute to `rng`'s value.
     rng_start = rng.start
     rng_stop = rng.stop
@@ -1985,22 +1986,22 @@ end
 
 # For `function f(…) … end` / `macro m(…) … end`, the user-visible "value" is
 # the function's return type. The matching `Core.define_method` call or
-# `K"opaque_closure_method"` wraps a `K"code_info"` body whose `K"return"` stmts
+# `:opaque_closure_method` wraps a `:code_info` body whose `:return` stmts
 # carry the inferred return types; `tmerge` over them yields the function's value type.
 function method_body_tree(st::SyntaxTree)
-    k = JS.kind(st)
+    k = JS.head(st)
     if is_core_define_method_call(st)
         JS.numchildren(st) == 5 || return nothing
         body_tree = st[5]
-    elseif k === JS.K"opaque_closure_method"
+    elseif k === :opaque_closure_method
         for child in JS.children(st)
-            JS.kind(child) === JS.K"code_info" && return child
+            JS.head(child) === :code_info && return child
         end
         return nothing
     else
         return nothing
     end
-    return JS.kind(body_tree) === JS.K"code_info" ? body_tree : nothing
+    return JS.head(body_tree) === :code_info ? body_tree : nothing
 end
 
 function type_for_funcdef(ctx::InferredTreeContext, rng::UnitRange{<:Integer})
@@ -2011,7 +2012,7 @@ function type_for_funcdef(ctx::InferredTreeContext, rng::UnitRange{<:Integer})
         block = body_tree[2]
         for j = 1:JS.numchildren(block)
             stmt = block[j]
-            JS.kind(stmt) === JS.K"return" || continue
+            JS.head(stmt) === :return || continue
             ntyp = @something get(ctx.annotations.types, stmt, nothing) continue
             typ = typ === nothing ? ntyp : CC.tmerge(ntyp, typ)
         end
@@ -2020,7 +2021,7 @@ function type_for_funcdef(ctx::InferredTreeContext, rng::UnitRange{<:Integer})
 end
 
 is_oc_construction_site(ctx::InferredTreeContext, rng::UnitRange{<:Integer}) =
-    any(s -> JS.kind(s) === JS.K"new_opaque_closure", get(ctx.by_byte_range, rng, ()))
+    any(s -> JS.head(s) === :new_opaque_closure, get(ctx.by_byte_range, rng, ()))
 
 function type_for_oc_body_return_at_range(
         ctx::InferredTreeContext, rng::UnitRange{<:Integer}
@@ -2051,19 +2052,19 @@ function tmerge_at_range(ctx::InferredTreeContext, rng::UnitRange{<:Integer})
     # OC at `rng`; outside that scope is scaffolding.
     is_oc_site = is_oc_construction_site(ctx, rng)
     # Property destructuring in parameter position (`do (; a, b)`) emits a
-    # `getproperty(obj, :a)` whose field-name `K"Symbol"` leaf lands on the binding's
+    # `getproperty(obj, :a)` whose field-name `:symbol` leaf lands on the binding's
     # byte range, polluting it to `Union{T, Symbol}`. (Assignment-position `(; a, b) =`
     # is already handled by `is_synthetic_destructure_stmt` at annotation time.)
     # Skip the symbol when a binding slot shares the range.
-    has_binding_slot = any(s -> JS.kind(s) === JS.K"slot", nodes)
+    has_binding_slot = any(s -> JS.head(s) === :slot, nodes)
     typ = nothing
     for st in nodes
-        # `K"core"` leaves are lowering-introduced `Core.X` references (e.g. the
+        # `:core` leaves are lowering-introduced `Core.X` references (e.g. the
         # `Core.Any` argtype entry of a closure's argt svec, whose provenance sits on
         # the parameter's surface position); users can't write them, so their types
         # (`Const(Any)` etc.) must not leak into surface queries.
-        JS.kind(st) === JS.K"core" && continue
-        has_binding_slot && JS.kind(st) === JS.K"Symbol" && continue
+        JS.head(st) === :core && continue
+        has_binding_slot && JS.head(st) === :symbol && continue
         ntyp = @something get(ctx.annotations.types, st, nothing) continue
         if is_oc_site && get(ctx.oc_body_scope, st, nothing) !== rng
             continue
@@ -2077,14 +2078,14 @@ function tmerge_at_range(ctx::InferredTreeContext, rng::UnitRange{<:Integer})
     return typ
 end
 
-# `K"core"` callee can't appear in user source — user-written
-# `Core.Typeof(x)` lowers to `K"globalref"` — so a K"core" "Typeof"
+# `:core` callee can't appear in user source — user-written
+# `Core.Typeof(x)` lowers to `:globalref` — so a `:core` "Typeof"
 # call reliably marks JL's argtype-svec scaffolding.
 function is_synthetic_typeof_scaffolding(st::SyntaxTree)
-    JS.kind(st) === JS.K"call" || return false
+    JS.head(st) === :call || return false
     JS.numchildren(st) >= 1 || return false
     c1 = st[1]
-    JS.kind(c1) === JS.K"core" || return false
+    JS.head(c1) === :core || return false
     return get_name_val(c1) == "Typeof"
 end
 
@@ -2094,14 +2095,14 @@ end
         ) -> Vector{Core.MethodMatch} | nothing
 
 Look up the `Core.MethodMatch`es CC's dispatch produced for the call site at
-surface byte range `rng`. Returns `nothing` if no lowered `K"call"` node at
+surface byte range `rng`. Returns `nothing` if no lowered `:call` node at
 `rng` carries a `:matches` annotation — the surface isn't a call site, the
 lookup hit a non-method-dispatch `CallInfo` (`InvokeCallInfo`, `OpaqueClosureCallInfo`,
 `ApplyCallInfo`, …), or inference couldn't see the callee at all.
 
-Mirrors [`get_type_for_range`](@ref)'s "last `K"call"` wins" semantics for
-call-shaped surface kinds: only the last `K"call"` at `rng` (the user-visible call —
-kwcall scaffolding `K"call"`s share the byte range and precede it in preorder) is
+Mirrors [`get_type_for_range`](@ref)'s "last `:call` wins" semantics for
+call-shaped surface kinds: only the last `:call` at `rng` (the user-visible call —
+kwcall scaffolding `:call`s share the byte range and precede it in preorder) is
 consulted, so when its callee is unresolved this returns `nothing` rather than
 leaking the scaffolding's matches.
 
@@ -2110,7 +2111,7 @@ Pair with [`build_inferred_context_for_range`](@ref) for the context.
 function get_matches_for_range(ctx::InferredTreeContext, rng::UnitRange{<:Integer})
     last_call = nothing
     for st in get(ctx.by_byte_range, rng, ())
-        JS.kind(st) === JS.K"call" || continue
+        JS.head(st) === :call || continue
         last_call = st
     end
     last_call === nothing && return nothing

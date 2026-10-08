@@ -8,12 +8,31 @@ const JETLS_VERSION = let
     isfile(version_file) ? strip(read(version_file, String)) : "unknown"
 end
 
+# Deprecation entries below are not removed after a deadline: a deprecated setting is
+# reported with a quick fix, whereas an unknown key keeps the whole config file from
+# loading. Remove an entry only to reuse its key or value; `test/test_config_deprecation.jl`
+# checks that no entry names a current setting.
+
+const DeprecatedConfiguration  = Pair{Vector{String},Union{Nothing,Vector{String}}}
+const DeprecatedConfigurations = Vector{DeprecatedConfiguration}
+const DeprecatedConfigurationValue  = Pair{Vector{String},Pair{Any,Any}}
+const DeprecatedConfigurationValues = Vector{DeprecatedConfigurationValue}
+
 # Append `old_path => new_path` pairs to register a key migration, or
 # `old_path => nothing` to deprecate a key without a replacement.
-# Each path is a list of nested keys; `migrate_deprecated_config_keys!` consults this
+# Each path is a list of nested keys; `migrate_deprecated_config!` consults this
 # table and rewrites raw user config dicts before parsing.
-const deprecated_configurations = Pair{Vector{String},Union{Nothing,Vector{String}}}[
+const deprecated_configurations = DeprecatedConfiguration[
+    ["inlay_hint", "block_end_min_lines"] => ["inlay_hint", "block_end", "min_lines"],
+    ["completion", "method_signature", "prepend_inference_result"] => nothing,
     ["testrunner", "executable"] => nothing,
+]
+
+# Append `path => (old_value => new_value)` pairs to deprecate a value of the key at
+# `path`, which `migrate_deprecated_config!` replaces with `new_value`.
+const deprecated_configuration_values = DeprecatedConfigurationValue[
+    ["full_analysis", "auto_instantiate"] => (true => "always"),
+    ["full_analysis", "auto_instantiate"] => (false => "never"),
 ]
 
 const __init__hooks__ = Any[]
@@ -67,6 +86,7 @@ using JuliaLowering: JuliaLowering as JL
 using REPL: REPL # loading REPL is necessary to make `Base.Docs.doc(::Base.Docs.Binding)` work
 using Markdown: Markdown
 using TOML: TOML
+using TOMLSource: TOMLSource as TS
 using Test: Test # used to define new-style implementations of `@test`/`@testset`
 using TestRunner: TestRunner
 using .TestRunner.App: TestRunnerDiagnostic, TestRunnerResult
@@ -106,7 +126,6 @@ include("types.jl")
 
 include("utils/jl-syntax-macros.jl")
 include("utils/string.jl")
-include("utils/toml.jl")
 include("utils/path.jl")
 include("utils/pkg.jl")
 include("utils/FallbackAnalysisContext.jl")
@@ -115,6 +134,7 @@ include("utils/ast.jl")
 include("utils/binding.jl")
 include("utils/docs.jl")
 include("utils/lsp.jl")
+include("utils/toml-source.jl")
 include("utils/server.jl")
 include("utils/native-inference.jl")
 
@@ -159,12 +179,13 @@ include("document-link.jl")
 include("document-symbol.jl")
 include("workspace-symbol.jl")
 include("code-action.jl")
+include("config-deprecation.jl")
 include("code-lens.jl")
 include("formatting.jl")
 include("inlay-hint.jl")
 include("semantic-tokens.jl")
 include("rename.jl")
-include("testrunner/testrunner.jl")
+include("testrunner.jl")
 include("profile.jl")
 include("did-change-watched-files.jl")
 include("initialize.jl")
@@ -473,6 +494,10 @@ function handle_response_message(
         handle_show_text_document_content_response(server, msg, request_caller)
     elseif request_caller isa SetDocumentContentCaller
         handle_apply_workspace_edit_response(server, msg, request_caller)
+    elseif request_caller isa ApplyWorkspaceEditCaller
+        handle_apply_workspace_edit_response(server, msg, request_caller)
+    elseif request_caller isa DeprecatedConfigPromptCaller
+        handle_deprecated_config_prompt_response(server, msg, request_caller)
     elseif request_caller isa DeleteFileCaller
         handle_apply_workspace_edit_response(server, msg, request_caller)
     elseif request_caller isa TestRunnerMessageRequestCaller2
@@ -553,7 +578,7 @@ function handle_request_message(
                 result = nothing,
                 error = request_cancelled_error()))
     elseif msg isa CompletionResolveRequest
-        handle_CompletionResolveRequest(server, msg)
+        handle_CompletionResolveRequest(server, msg, cancel_flag)
     elseif msg isa DeclarationRequest
         handle_DeclarationRequest(server, msg, cancel_flag)
     elseif msg isa DefinitionRequest

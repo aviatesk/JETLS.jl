@@ -183,6 +183,7 @@ function handle_DidOpenTextDocumentNotification(server::Server, msg::DidOpenText
         return mark_text_document_content_opened!(server, uri) # turn on the `opened` flag
     if is_config_document_uri(server.state, uri)
         cache_config_document!(server.state, uri, textDocument.version, textDocument.text)
+        update_config_diagnostics!(server, uri)
         return nothing
     end
     if textDocument.languageId != "julia"
@@ -194,7 +195,7 @@ function handle_DidOpenTextDocumentNotification(server::Server, msg::DidOpenText
     cache_file_info!(server, uri, textDocument.version, parsed_stream)
     cache_saved_file_info!(server.state, uri, parsed_stream)
     invalidate_unsynced_file_cache!(server.state, uri)
-    clear_workspace_live_diagnostics!(server, uri)
+    notify_diagnostics_on_open!(server, uri)
     request_analysis!(server, uri, #=invalidate=#false)
 end
 
@@ -206,6 +207,7 @@ function handle_DidChangeTextDocumentNotification(server::Server, msg::DidChange
     text = last(contentChanges).text
     if is_config_document_uri(server.state, uri)
         cache_config_document!(server.state, uri, textDocument.version, text)
+        update_config_diagnostics!(server, uri)
         return nothing
     end
     is_synchronized(server.state, uri) || return nothing
@@ -224,15 +226,17 @@ function handle_DidSaveTextDocumentNotification(server::Server, msg::DidSaveText
     cache = load(server.state.saved_file_cache)
     haskey(cache, uri) || return nothing
     text = msg.params.text
-    if !(text isa String)
-        @warn """
+    if text isa String
+        cache_saved_file_info!(server.state, uri, text)
+    else
+        @static JETLS_TEST_MODE || @warn """
         The client is not respecting the `capabilities.textDocumentSync.save.includeText`
-        option specified by this server during initialization. Without the document text
-        content in save notifications, the diagnostics feature cannot function properly.
-        """
-        return nothing
+        option specified by this server during initialization. Falling back to the
+        synchronized document content for save notifications.
+        """ maxlog=1
+        fi = @something get_file_info(server.state, uri) return nothing
+        cache_saved_file_info!(server.state, uri, fi.parsed_stream)
     end
-    cache_saved_file_info!(server.state, uri, text)
     request_analysis!(server, uri, #=invalidate=#true)
 end
 
@@ -242,6 +246,8 @@ function handle_DidCloseTextDocumentNotification(server::Server, msg::DidCloseTe
         return mark_text_document_content_closed!(server, uri) # turn off the `opened` flag
     if is_config_document_uri(server.state, uri)
         delete_config_document!(server.state, uri)
+        # Rediagnose from disk, or clear the diagnostics when `diagnostic.all_files` is off
+        update_config_diagnostics!(server, uri)
         return nothing
     end
     delete_rejected_text_document!(server.state, uri) && return nothing

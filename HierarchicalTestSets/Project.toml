@@ -1,0 +1,10 @@
+name = "HierarchicalTestSets"
+uuid = "de7161c7-0535-45f7-a846-78c8a451aff9"
+version = "0.1.0"
+authors = ["Shuhei Kadowaki <aviatesk@gmail.com>"]
+
+[deps]
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[compat]
+Test = "1.11.0"

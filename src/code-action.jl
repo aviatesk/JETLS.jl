@@ -9,12 +9,15 @@ function code_action_options()
         resolveProvider = false)
 end
 
-function code_action_registration()
+function code_action_registration(server::Server)
+    documentSelector = copy(DEFAULT_DOCUMENT_SELECTOR)
+    config_filter = config_document_sync_filter(server)
+    config_filter === nothing || push!(documentSelector, config_filter)
     return Registration(;
         id = CODE_ACTION_REGISTRATION_ID,
         method = CODE_ACTION_REGISTRATION_METHOD,
         registerOptions = CodeActionRegistrationOptions(;
-            documentSelector = DEFAULT_DOCUMENT_SELECTOR,
+            documentSelector,
             codeActionKinds = SUPPORTED_CODE_ACTION_KINDS,
             resolveProvider = false))
 end
@@ -42,6 +45,11 @@ function handle_CodeActionRequest(
     wants_kindless_actions = code_action_kind_requested(only, nothing)
     wants_quickfix_actions || wants_kindless_actions ||
         return send(server, CodeActionResponse(; id = msg.id, result = code_actions))
+    if is_config_document_uri(server.state, uri)
+        wants_quickfix_actions && deprecated_config_code_actions!(
+            code_actions, server, uri, msg.params.context.diagnostics)
+        return send(server, CodeActionResponse(; id = msg.id, result = code_actions))
+    end
     if wants_quickfix_actions
         diagnostics = msg.params.context.diagnostics
         allow_unused_underscore = get_config(server, :diagnostic, :allow_unused_underscore)
@@ -49,6 +57,7 @@ function handle_CodeActionRequest(
         delete_range_code_actions!(code_actions, uri, diagnostics)
         sort_imports_code_actions!(code_actions, uri, diagnostics)
         ambiguous_soft_scope_code_actions!(code_actions, uri, diagnostics)
+        orphaned_docstring_code_actions!(code_actions, uri, diagnostics)
         abstract_ref_field_code_actions!(code_actions, uri, diagnostics)
         missing_concretization_code_actions!(code_actions, server, diagnostics)
     end
@@ -74,11 +83,11 @@ first_syntax_node(nodes::SyntaxList) = isempty(nodes) ? nothing : nodes[1]
 
 function macrocall_at_range(st0_top::SyntaxTree, range::UnitRange{Int})
     macrocall = first_syntax_node(byte_ancestors(
-        st -> JS.kind(st) === JS.K"macrocall", st0_top, range))
+        st -> JS.head(st) === :macrocall, st0_top, range))
     macrocall !== nothing && return macrocall
     first(range) > 1 || return nothing
     return first_syntax_node(byte_ancestors(
-        st -> JS.kind(st) === JS.K"macrocall", st0_top, first(range)-1))
+        st -> JS.head(st) === :macrocall, st0_top, first(range)-1))
 end
 
 function macro_expansion_code_actions!(
@@ -134,7 +143,7 @@ end
 
 function toplevel_contains_macrocall(st0::SyntaxTree)
     found = traverse(st0) do st::SyntaxTree
-        JS.kind(st) === JS.K"macrocall" || return nothing
+        JS.head(st) === :macrocall || return nothing
         return TraversalReturn(true; terminate=true)
     end
     return found === true
@@ -363,6 +372,25 @@ function ambiguous_soft_scope_code_actions!(
     return code_actions
 end
 
+function orphaned_docstring_code_actions!(
+        code_actions::Vector{Union{CodeAction,Command}}, uri::URI,
+        diagnostics::Vector{Diagnostic}
+    )
+    for diagnostic in diagnostics
+        diagnostic.code == LOWERING_ORPHANED_DOCSTRING_CODE || continue
+        data = diagnostic.data
+        data isa OrphanedDocstringData || continue
+        push!(code_actions, CodeAction(;
+            title = "Attach docstring to the following definition",
+            kind = CodeActionKind.QuickFix,
+            diagnostics = Diagnostic[diagnostic],
+            isPreferred = true,
+            edit = WorkspaceEdit(;
+                changes = Dict{URI,Vector{TextEdit}}(uri => data.attach_edits))))
+    end
+    return code_actions
+end
+
 function missing_concretization_code_actions!(
         code_actions::Vector{Union{CodeAction,Command}}, server::Server,
         diagnostics::Vector{Diagnostic}
@@ -429,18 +457,7 @@ function jetls_config_workspace_edit(
                 range = Range(; start=position, var"end"=position),
                 newText = appended)
         end
-        if supports(server, :workspace, :workspaceEdit, :documentChanges)
-            text_document = OptionalVersionedTextDocumentIdentifier(;
-                uri = config_uri, version)
-            document_edit = TextDocumentEdit(;
-                textDocument = text_document,
-                edits = TextEdit[text_edit])
-            document_changes =
-                Union{TextDocumentEdit, CreateFile, RenameFile, DeleteFile}[document_edit]
-            return WorkspaceEdit(; documentChanges = document_changes)
-        end
-        return WorkspaceEdit(;
-            changes = Dict{URI,Vector{TextEdit}}(config_uri => TextEdit[text_edit]))
+        return text_document_workspace_edit(server, config_uri, version, text_edit)
     end
     supports_create_file_workspace_edit(server) || return nothing
     text_edit = TextEdit(;
@@ -515,10 +532,6 @@ function added_concretization_pattern(
         has_concretization_pattern(updated, pattern, path)
 end
 
-const CONCRETIZATION_PATTERNS_ARRAY_REGEX = Regex(
-    "(?:\"concretization_patterns\"|'concretization_patterns'|" *
-    "concretization_patterns)[ \\t]*=[ \\t]*\\[")
-
 function jetls_config_inline_array_edit(
         text::String, pattern::String, path::String, encoding::PositionEncodingKind.Ty
     )
@@ -531,23 +544,15 @@ function jetls_config_inline_array_edit(
         encoding::PositionEncodingKind.Ty
     )
     has_concretization_pattern(configured, pattern, path) && return nothing
-    entry = format_toml_inline_table(Dict("pattern" => pattern, "path" => path))
-    bytes = Vector{UInt8}(text)
-    for m in eachmatch(CONCRETIZATION_PATTERNS_ARRAY_REGEX, text)
-        relative_open = findlast(==('['), m.match)::Int
-        start_offset = m.offset + relative_open
-        end_offset, new_text = toml_array_entry_insertion(
-            text, start_offset, entry, isempty(configured))
-        start_position = _offset_to_xy(bytes, start_offset, encoding)
-        end_position = _offset_to_xy(bytes, end_offset, encoding)
-        text_edit = TextEdit(;
-            range = Range(; start=start_position, var"end"=end_position),
-            newText = new_text)
-        updated = apply_text_change(text, text_edit.range, text_edit.newText, encoding)
-        added_concretization_pattern(configured, updated, pattern, path) || continue
-        return text_edit
-    end
-    return nothing
+    doc = TS.tryparse(text)
+    doc isa TS.Document || return nothing
+    edit = @something TS.prepend_array_element(
+        doc, ["full_analysis", "concretization_patterns"],
+        Dict("pattern" => pattern, "path" => path)) return nothing
+    text_edit = source_text_edit(Vector{UInt8}(text), edit, encoding)
+    updated = apply_text_change(text, text_edit.range, text_edit.newText, encoding)
+    added_concretization_pattern(configured, updated, pattern, path) || return nothing
+    return text_edit
 end
 
 function supports_create_file_workspace_edit(server::Server)

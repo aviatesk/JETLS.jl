@@ -19,7 +19,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## Unreleased
 
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
-- Diff: [`5ed21cb...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/5ed21cb...HEAD)
+- Diff: [`3efdc63...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/3efdc63...HEAD)
 
 ### Announcement
 
@@ -49,10 +49,145 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 >   }
 > }
 > ```
-> This disables analysis for matched files. Basic features like completion still might work, but most LSP features will be unfunctional.
+> This disables full analysis for matched files; see [Files without full analysis](https://aviatesk.github.io/JETLS.jl/release/analysis/#analysis/live/fallback) for what remains available for them.
 > Note that `analysis_overrides` is provided as a temporary workaround and may be removed or changed at any time. A proper fix is being worked on.
 >
 > Note: Path glob patterns use `/` as the separator on all platforms, including Windows; backslashes are not supported as separators.
+
+### Added
+
+- Added package directory input to [`jetls check`](https://aviatesk.github.io/JETLS.jl/release/cli-check/#cli-check/input):
+  `jetls check /path/to/SomePkg` analyzes the package through its `src/SomePkg.jl`, and `jetls check` without paths analyzes the package in the current directory.
+  When a single package directory is given, its `.JETLSConfig.toml` is loaded and paths are displayed relative to it, unless `--root` is specified.
+  The `files` input of the [GitHub Action](https://aviatesk.github.io/JETLS.jl/release/cli-check/#cli-check/github-actions) is now optional and defaults to the package at the repository root.
+
+- Added stdin input to [`jetls check`](https://aviatesk.github.io/JETLS.jl/release/cli-check/#cli-check/input/stdin):
+  `jetls check -` reads Julia source from stdin and analyzes it as a standalone script, like an unsaved buffer in the language server:
+  ```bash
+  echo 'f(x) = undefined_name + x' | jetls check -
+  ```
+  With the new [`--stdin-filename=<path>`](https://aviatesk.github.io/JETLS.jl/release/cli-check/#cli-check/options/stdin-filename) option, the source is analyzed in place of the file at `<path>` instead: for a package source file, the package is analyzed with the source substituted for the file on disk.
+  This allows checking changes to a package file before writing them, e.g. renaming `helper` to `helper2` in `src/utils.jl`:
+  ```bash
+  sed 's/helper/helper2/g' src/utils.jl | jetls check --stdin-filename=src/utils.jl -
+  ```
+  Without `--stdin-filename`, names defined in the other files of the package would be reported as undefined.
+
+- Added the [`lowering/orphaned-docstring`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/orphaned-docstring) diagnostic, reported on docstrings that silently document nothing:
+  - docstrings separated from the definition by a blank line or comment
+  - docstrings in `if` blocks (including `@static if`) without `@doc`
+  - `raw"..."` docstrings without `@doc`
+  - docstrings in local scope such as function bodies
+  - field docstrings of structs that have no docstring themselves (which Julia discards)
+
+  For example, `area` below is left undocumented, since a `raw"..."` docstring needs `@doc`:
+  ```julia
+  raw"""
+      area(r)
+
+  Compute ``\pi r^2``.
+  """  # (JETLS lowering/orphaned-docstring)
+  area(r) = π * r^2
+  ```
+  The "Attach docstring to the following definition" code action fixes them by prefixing `@doc` and removing the blank lines as needed.
+  This check was suggested in [JuliaLang/julia#63631](https://github.com/JuliaLang/julia/pull/63631), which fixed such docstrings in Julia itself.
+
+- Added the [`config/deprecated-key`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/config/deprecated-key) and [`config/deprecated-value`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/config/deprecated-value) warnings on deprecated keys and values of `.JETLSConfig.toml`, with quick fixes that remove a key, move its value to the new key, or replace a value, while keeping the rest of the file, including comments, as it is.
+  The warning message shown when JETLS loads such a file now also offers a "Fix all" action that applies these fixes to the file.
+  The legacy `true` and `false` values of [`full_analysis.auto_instantiate`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/full_analysis/auto_instantiate) are now reported the same way, and also come with a warning when set through LSP settings.
+
+- Added the [Analysis](https://aviatesk.github.io/JETLS.jl/release/analysis/) documentation page, which explains the two layers of JETLS's analysis: full analysis, which loads your code with package analysis or script analysis, and live analysis, which builds on the module context that full analysis establishes.
+  It also describes how each file is analyzed depending on its location and environment, when full analysis runs, and what remains available for files that full analysis does not cover.
+
+- Added the [`toplevel/unsupported-feature`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/toplevel/unsupported-feature) warning, reported when full analysis loads code that uses a feature JETLS does not support and analyzes it with an approximation instead.
+  It is currently reported for `include(mapexpr, filename)` calls, whose included file is analyzed without applying `mapexpr`.
+
+### Changed
+
+- Package extension files (files under the `ext` directory of a package) are no longer full-analyzed, and the new [`toplevel/analysis-skipped`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/toplevel/analysis-skipped) warning is reported at the top of each such file instead.
+  They were previously analyzed as standalone scripts in the package environment, where weak dependencies are not installed, so their analysis typically stopped at a misleading `toplevel/error` with a message like `Package SomeDep not found in current path`.
+  Since the new diagnostic is a warning, `jetls check` fails by default when package extension files are passed to it.
+
+- Full analysis now stops at the first top-level error, such as [`toplevel/error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/toplevel/error), [`toplevel/missing-concretization`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/toplevel/missing-concretization), or [`toplevel/concretization-timeout`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/toplevel/concretization-timeout):
+  code after the error is no longer loaded or analyzed, so follow-up errors caused by the incompletely loaded code are no longer reported.
+  Diagnostics for top-level code before the error are still reported, and method bodies are analyzed again once the error is fixed.
+  Code that cannot be lowered or whose macros fail to expand is now also reported as `toplevel/error` to show where full analysis stopped.
+
+- Syntax warnings detected by JuliaSyntax.jl, such as `parentheses are not required here`, are now reported with the new [`syntax/parse-warning`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/syntax/parse-warning) code instead of [`syntax/parse-error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/syntax/parse-error), so they can be configured separately from syntax errors.
+  [`diagnostic.patterns`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/diagnostic/patterns) entries matching the `syntax/parse-error` code no longer apply to them.
+
+- The messages of [`toplevel/error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/toplevel/error), [`toplevel/missing-concretization`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/toplevel/missing-concretization), and [`toplevel/concretization-timeout`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/toplevel/concretization-timeout) now start with a one-line summary, followed by a blank line and the details.
+  Errors raised while loading code are summarized with the first line of the error message, e.g. `JET could not execute this top-level code: UndefVarError: ...`.
+  The details are wrapped at 90 columns, or at the terminal width in [`jetls check`](https://aviatesk.github.io/JETLS.jl/release/cli-check/) when the terminal is narrower.
+
+- Running tests with the [TestRunner integration](https://aviatesk.github.io/JETLS.jl/release/testrunner/) no longer runs the unselected tests nested in other code, such as in `let` blocks, or in files `include`d outside the selected tests, e.g. by a top-level `include("helpers.jl")`.
+  For example, running `"b"` in the following code no longer runs `"a"` or the tests in `helpers.jl`, while `setup()` and the definitions in `helpers.jl` still run:
+  ```julia
+  include("helpers.jl")
+
+  let x = setup()
+      @testset "a" begin
+          @test f(x) == 1
+      end
+  end
+
+  @testset "b" begin
+      @test g() == 2
+  end
+  ```
+  See [Test selection](https://aviatesk.github.io/JETLS.jl/release/testrunner/#testrunner/test-selection) for what runs along with the selected tests.
+
+- Completion of global names now also offers the names defined in open files, including unsaved edits, so definitions you have just written can be completed before full analysis loads them on save.
+  For [files without full analysis](https://aviatesk.github.io/JETLS.jl/release/analysis/#analysis/live/fallback), it now offers the global names the file itself defines in addition to the names of the fallback context.
+
+- `textDocument/completion` and `completionItem/resolve` requests now stop partway when the client cancels them, e.g. when the editor requests completions again while you keep typing, or when VSCode moves the focus to another completion item before the details of the previous one are resolved.
+
+### Fixed
+
+- Fixed files with syntax warnings but no syntax errors getting no [`lowering/*`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering) diagnostics in the editor or from [`jetls check`](https://aviatesk.github.io/JETLS.jl/release/cli-check/), and not being reanalyzed by full analysis on save.
+
+- Fixed [`toplevel/abstract-field`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/toplevel/abstract-field) being reported on functions containing closures that capture a `@nospecialize`d argument, such as `f(@nospecialize x) = () -> x`.
+
+- Fixed [`toplevel/abstract-field`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/toplevel/abstract-field) and [`toplevel/method-overwrite`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/toplevel/method-overwrite) never being reported by [`jetls check`](https://aviatesk.github.io/JETLS.jl/release/cli-check/), and not being reported in the editor for files that are not open, such as files `include`d by a package.
+
+- Fixed running tests with the [TestRunner integration](https://aviatesk.github.io/JETLS.jl/release/testrunner/) in files that call `include` with `mapexpr`, e.g. `Base.include(mapexpr, mod, path)`, failing with an `unreachable` error or running the included file without applying `mapexpr`.
+
+- Fixed running a test set nested in other test sets with the TestRunner integration skipping the code in the enclosing test sets that it doesn't use directly, such as `include` calls or settings of environment variables, which could cause errors such as `UndefVarError` or test failures.
+  For example, running `"b"` in the following code skipped the `include` call and the `ENV` setting, so `helper()` was not defined and `run_mode()` did not see the setting:
+  ```julia
+  @testset "outer" begin
+      include("helpers.jl")  # defines `helper`
+      ENV["MODE"] = "fast"   # read by `run_mode`
+      @testset "b" begin
+          @test helper() == 1
+          @test run_mode() == "fast"
+      end
+  end
+  ```
+  That code now always runs, as described in [Test selection](https://aviatesk.github.io/JETLS.jl/release/testrunner/#testrunner/test-selection).
+
+- Fixed `@test_throws`, `@test_broken`, `@test_skip`, `@test_logs`, `@test_warn`, `@test_nowarn` and `@test_deprecated` written at the top level always running with the TestRunner integration, even when they were not selected.
+
+- Fixed saving a file not updating diagnostics from full analysis in editors that do not include the document text in save notifications.
+
+- Fixed a string at the end of a [notebook](https://aviatesk.github.io/JETLS.jl/release/notebook/) cell being treated as the docstring of the first expression in the next cell.
+
+- Fixed full analysis aborting with an internal error, and reporting no diagnostics for the file, when a docstring is attached to an expression that cannot be documented, such as an `if` block.
+  Such code is now reported as a [`toplevel/error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/toplevel/error) with the error Julia raises, `cannot document the following expression`.
+
+- Fixed files under a package's `src/` and `test/` directories being analyzed on their own as scripts when another file in the same package environment, such as a script at the package root or a file under `docs/`, had been analyzed first.
+  They are now analyzed through `src/<name>.jl` and `test/runtests.jl`, as described in [How each file is analyzed](https://aviatesk.github.io/JETLS.jl/release/analysis/#analysis/full/files).
+
+- Fixed [`JETLS/save`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/source) diagnostics not being shown until the next save when opening a file that full analysis has already analyzed, such as another file of an analyzed package or a file reopened after closing it, with [`diagnostic.all_files`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/diagnostic/all_files) disabled on clients that set the [`pull_diagnostics`](https://aviatesk.github.io/JETLS.jl/release/launching/#init-options/pull_diagnostics) initialization option, such as the VSCode extension.
+
+## 2026-10-04
+
+- Commit: [`3efdc63`](https://github.com/aviatesk/JETLS.jl/commit/3efdc63)
+- Diff: [`5ed21cb...3efdc63`](https://github.com/aviatesk/JETLS.jl/compare/5ed21cb...3efdc63)
+- Installation:
+  ```bash
+  julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="2026-10-04")'
+  ```
 
 ### Changed
 

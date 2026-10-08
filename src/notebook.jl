@@ -65,6 +65,12 @@ function concatenate_cells(cells::Vector{NotebookCellInfo})
     for cell in cells
         cell.kind == NotebookCellKind.Code || continue
         isempty(cell.text) && continue
+        if !isempty(cell_ranges)
+            # A blank line keeps a string ending the previous cell from being parsed as
+            # the docstring of this cell's first expression; cells are evaluated separately.
+            source *= "\n"
+            current_line += 1
+        end
         source *= cell.text * "\n"
         push!(cell_ranges, CellRange(cell.uri, current_line))
         current_line += count(==('\n'), cell.text) + 1
@@ -369,6 +375,10 @@ function localize_diagnostic_data(@nospecialize(data), concat::ConcatenatedNoteb
         return AbstractRefFieldData(localize_range(data.ref_name_range, concat))
     elseif data isa DeleteRangeData
         return DeleteRangeData(data.kind, localize_range(data.delete_range, concat))
+    elseif data isa OrphanedDocstringData
+        return OrphanedDocstringData(TextEdit[
+            TextEdit(edit; range = localize_range(edit.range, concat))
+            for edit in data.attach_edits])
     elseif data isa UnusedVariableData
         assignment_range = data.assignment_range
         if assignment_range !== nothing

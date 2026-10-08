@@ -4,8 +4,8 @@ print_help() {
     cat <<'EOF'
 Usage: ./scripts/selfcheck.sh [OPTIONS]
 
-Run JETLS self-diagnostics on the server and protocol source files. Unrecognized
-options are passed through to jetls check.
+Run JETLS self-diagnostics on the JETLS, LSP, TOMLSource, and HierarchicalTestSets packages.
+Unrecognized options are passed through to jetls check.
 
 Options:
   -h, --help              Show this help message and exit
@@ -72,5 +72,5 @@ exec "$JULIA" --startup-file=no --project="$PROJECT_ROOT" --threads="$THREADS" \
     $QUIET \
     --exit-severity="$EXIT_SEVERITY" \
     --show-severity="$SHOW_SEVERITY" \
-    "$PROJECT_ROOT/src/JETLS.jl" "$PROJECT_ROOT/LSP/src/LSP.jl" \
+    "$PROJECT_ROOT" "$PROJECT_ROOT/LSP" "$PROJECT_ROOT/TOMLSource" "$PROJECT_ROOT/HierarchicalTestSets" \
     "${EXTRA_ARGS[@]}"

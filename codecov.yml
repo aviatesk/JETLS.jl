@@ -7,6 +7,9 @@ coverage:
       LSP.jl:
         flags: [LSP.jl]
         informational: true
+      HierarchicalTestSets.jl:
+        flags: [HierarchicalTestSets.jl]
+        informational: true
     patch:
       default:
         informational: true

@@ -12,7 +12,7 @@ include("setup.jl")
 function with_find_type_definition(tester, text::AbstractString; kwargs...)
     clean_code, positions = JETLS.get_text_and_positions(text; kwargs...)
     filename = joinpath(@__DIR__, "testfile_$(gensym(:type_definition)).jl")
-    fi = JETLS.FileInfo(#=version=#0, clean_code, filename)
+    fi = JETLS.FileInfo(#=version=#0, clean_code, filename; cache_tree0 = true)
     furi = filename2uri(filename)
     server = JETLS.Server()
     JETLS.store!(server.state.file_cache) do cache
@@ -27,6 +27,7 @@ function with_find_type_definition(tester, text::AbstractString; kwargs...)
             cnt += tester(i, ret[1], furi)
         end
     end
+    JETLS.check_syntax_tree0(fi)
     return cnt
 end
 
@@ -88,7 +89,7 @@ end
 
     @testset "dot expression" begin
         # cursor on the RHS of `Base.Pair` — `select_target_identifier` walks up
-        # to the surrounding `K"."` and the type query on `Base.Pair` returns
+        # to the surrounding `:.` and the type query on `Base.Pair` returns
         # `Core.Const(Pair)`.
         @test with_find_type_definition("""
                 const T = Base.Pa│ir

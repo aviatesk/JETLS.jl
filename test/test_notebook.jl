@@ -117,8 +117,6 @@ end
 
 @testset "notebook end to end" begin
     mktempdir() do tempdir; Pkg.activate(tempdir) do
-        Pkg.add("Example"; io=devnull)
-
         notebook_uri = filepath2uri(normpath(tempdir, "test.ipynb"))
 
         withserver() do (; server, writemsg, writereadmsg, readmsg)
@@ -146,7 +144,7 @@ end
             end
 
             # 2. Add cell 2 with code that has unused argument
-            let cell1_text = "using Example"
+            let cell1_text = "using LinearAlgebra"
                 cell2_text = "func(x, y) = identity(x)"
                 change = NotebookDocumentChangeEvent(;
                     cells = NotebookDocumentChangeEventCells(;
@@ -177,12 +175,12 @@ end
             let notebook_info = JETLS.get_notebook_info(server.state, notebook_uri)
                 @test notebook_info !== nothing
                 @test length(notebook_info.cells) == 2
-                @test notebook_info.cells[1].text == "using Example"
+                @test notebook_info.cells[1].text == "using LinearAlgebra"
                 @test notebook_info.cells[2].text == "func(x, y) = identity(x)"
-                @test notebook_info.concat.source == "using Example\nfunc(x, y) = identity(x)\n"
+                @test notebook_info.concat.source == "using LinearAlgebra\n\nfunc(x, y) = identity(x)\n"
                 @test length(notebook_info.concat.cell_ranges) == 2
                 @test notebook_info.concat.cell_ranges[1].line_offset == 0
-                @test notebook_info.concat.cell_ranges[2].line_offset == 1
+                @test notebook_info.concat.cell_ranges[2].line_offset == 2
             end
 
             # 4. Update cell 2 to remove unused argument
@@ -210,7 +208,7 @@ end
             let notebook_info = JETLS.get_notebook_info(server.state, notebook_uri)
                 @test notebook_info !== nothing
                 @test notebook_info.cells[2].text == "func(x) = identity(x)"
-                @test notebook_info.concat.source == "using Example\nfunc(x) = identity(x)\n"
+                @test notebook_info.concat.source == "using LinearAlgebra\n\nfunc(x) = identity(x)\n"
             end
 
             # 6. Add markdown cell (should be ignored for diagnostics)
@@ -273,9 +271,9 @@ end
                 @test notebook_info.concat.cell_ranges[1].cell_uri == cell1_uri
                 @test notebook_info.concat.cell_ranges[1].line_offset == 0
                 @test notebook_info.concat.cell_ranges[2].cell_uri == cell2_uri
-                @test notebook_info.concat.cell_ranges[2].line_offset == 1
+                @test notebook_info.concat.cell_ranges[2].line_offset == 2
                 @test notebook_info.concat.cell_ranges[3].cell_uri == cell3_uri
-                @test notebook_info.concat.cell_ranges[3].line_offset == 2
+                @test notebook_info.concat.cell_ranges[3].line_offset == 4
             end
         end
     end; end # mktempdir() do tempdir; Pkg.activate(tempdir) do
@@ -579,7 +577,7 @@ end
                 pos = request.msg.params.position
                 @test pos == positions[i]
                 @test JETLS.adjust_position(snapshot, cell2, pos) ==
-                    Position(; line = positions[i].line + 2, character = positions[i].character)
+                    Position(; line = positions[i].line + 3, character = positions[i].character)
             end
             if change_kind === :remove_requested
                 @test !JETLS.is_notebook_cell_uri(state, cell2)
@@ -657,7 +655,7 @@ end
             @test prepared.msg === request
             @test prepared.msg.params.position == pos
             global_pos = JETLS.adjust_position(snapshot, cell2, prepared.msg.params.position)
-            @test global_pos == Position(; line = 2, character = pos.character)
+            @test global_pos == Position(; line = 3, character = pos.character)
             @test JETLS.get_file_info(state, notebook_uri).version == 2
             if change_kind === :remove_requested
                 let cleared = take_with_timeout!(recorder.sent_queue)
@@ -799,6 +797,41 @@ end
                 diag.code in (JETLS.LOWERING_UNDEF_LOCAL_VAR_CODE,
                               JETLS.LOWERING_AMBIGUOUS_SOFT_SCOPE_CODE)
             end
+        end
+    end end
+end
+
+@testset "orphaned docstrings in notebooks" begin
+    mktempdir() do tempdir; Pkg.activate(tempdir) do
+        notebook_uri = filepath2uri(normpath(tempdir, "test.ipynb"))
+        cell_uri1 = make_cell_uri(tempdir, 1)
+        cell_uri2 = make_cell_uri(tempdir, 2)
+        withserver() do (; server, writereadmsg, readmsg)
+            cells = NotebookCell[
+                NotebookCell(; kind = NotebookCellKind.Code, document = cell_uri1),
+                NotebookCell(; kind = NotebookCellKind.Code, document = cell_uri2)]
+            cell_texts = Dict{URI,String}(
+                cell_uri1 => "\"displayed\"",
+                cell_uri2 => """
+                    if true
+                        "doc"
+                        foo() = 1
+                    end
+                    """)
+            writereadmsg(
+                make_DidOpenNotebookDocumentNotification(notebook_uri, cells, cell_texts);
+                read = 2)
+            scanned = scan_live_diagnostics!(server, readmsg)
+            orphaned(uri) = filter(scanned[uri].diagnostics) do diag
+                diag.code == JETLS.LOWERING_ORPHANED_DOCSTRING_CODE
+            end
+            @test isempty(orphaned(cell_uri1))
+            diag = only(orphaned(cell_uri2))
+            @test diag.range.start == Position(; line = 1, character = 4)
+            @test diag.data isa OrphanedDocstringData
+            edit = only(diag.data.attach_edits)
+            @test edit.range.start == Position(; line = 1, character = 4)
+            @test edit.newText == "@doc "
         end
     end end
 end

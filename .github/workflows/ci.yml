@@ -19,6 +19,8 @@ jobs:
     outputs:
       jetls: ${{ steps.filter.outputs.jetls }}
       lsp: ${{ steps.filter.outputs.lsp }}
+      hierarchical_testsets: ${{ steps.filter.outputs.hierarchical_testsets }}
+      tomlsource: ${{ steps.filter.outputs.tomlsource }}
       schemas: ${{ steps.filter.outputs.schemas }}
       vendor_deps: ${{ steps.filter.outputs.vendor_deps }}
       docs: ${{ steps.filter.outputs.docs }}
@@ -34,6 +36,8 @@ jobs:
             src/**
             test/**
             LSP/**
+            HierarchicalTestSets/**
+            TOMLSource/**
             Compiler/**
             Project.toml
             .JETLSConfig.toml
@@ -43,7 +47,14 @@ jobs:
             .github/workflows/test-app.yml
           LSP_PATHS: |
             LSP/**
+            HierarchicalTestSets/**
             .github/workflows/LSP.jl.yml
+          HIERARCHICAL_TESTSETS_PATHS: |
+            HierarchicalTestSets/**
+            .github/workflows/HierarchicalTestSets.jl.yml
+          TOMLSOURCE_PATHS: |
+            TOMLSource/**
+            .github/workflows/TOMLSource.jl.yml
           SCHEMAS_PATHS: |
             src/**
             schemas/**
@@ -54,6 +65,7 @@ jobs:
             src/**
             test/**
             LSP/**
+            TOMLSource/**
             Compiler/**
             scripts/vendor-deps.jl
             Project.toml
@@ -98,6 +110,8 @@ jobs:
           {
             echo "jetls=$(changed "$JETLS_PATHS")"
             echo "lsp=$(changed "$LSP_PATHS")"
+            echo "hierarchical_testsets=$(changed "$HIERARCHICAL_TESTSETS_PATHS")"
+            echo "tomlsource=$(changed "$TOMLSOURCE_PATHS")"
             echo "schemas=$(changed "$SCHEMAS_PATHS")"
             echo "vendor_deps=$(changed "$VENDOR_DEPS_PATHS")"
             echo "docs=$(changed "$DOCS_PATHS")"
@@ -126,6 +140,20 @@ jobs:
     needs: changes
     if: github.event_name == 'pull_request' && needs.changes.outputs.lsp == 'true'
     uses: ./.github/workflows/LSP.jl.yml
+
+  # `push` runs are handled by `HierarchicalTestSets.jl.yml` itself to keep its own status badge.
+  hierarchical_testsets:
+    name: HierarchicalTestSets.jl
+    needs: changes
+    if: github.event_name == 'pull_request' && needs.changes.outputs.hierarchical_testsets == 'true'
+    uses: ./.github/workflows/HierarchicalTestSets.jl.yml
+
+  # `push` runs are handled by `TOMLSource.jl.yml` itself to keep its own status badge.
+  tomlsource:
+    name: TOMLSource.jl
+    needs: changes
+    if: github.event_name == 'pull_request' && needs.changes.outputs.tomlsource == 'true'
+    uses: ./.github/workflows/TOMLSource.jl.yml
 
   check_schemas:
     name: Check schemas
@@ -159,6 +187,8 @@ jobs:
       - changes
       - jetls
       - lsp
+      - hierarchical_testsets
+      - tomlsource
       - check_schemas
       - vendor_deps
       - docs

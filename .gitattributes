@@ -2,3 +2,4 @@ vendor/** linguist-generated
 Compiler/snapshots/** linguist-generated
 schemas/** linguist-generated
 schemas/description.toml -linguist-generated
+docs/diagrams/**/*.excalidraw linguist-generated

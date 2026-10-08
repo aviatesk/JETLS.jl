@@ -205,20 +205,20 @@ function collect_type_inlay_hints!(
     callee_ranges = Set{UnitRange{Int}}()
     paren_wrap_ranges = Set{UnitRange{Int}}()
     verbatim_ranges = Set{UnitRange{Int}}()
-    # Interpolated strings have `K"string"` and `K"String"` nodes sharing the
+    # Interpolated strings have `:string` and string literal nodes sharing the
     # same source range; avoid duplicate labels like `::String::String`.
     emitted_ranges = Set{UnitRange{Int}}()
     label_cache = IdDict{Any,String}()
     traverse(st0) do node::SyntaxTree
-        JS.kind(node) === JS.K"Value" && return nothing
-        if JS.kind(node) === JS.K"." && JS.numchildren(node) >= 2
+        is_synthesized_value(node) && return nothing
+        if JS.head(node) === :. && JS.numchildren(node) >= 2
             push!(paren_wrap_ranges, JS.byte_range(node[1]))
             push!(callee_ranges, JS.byte_range(node[2]))
         end
-        if JS.kind(node) === JS.K"ref" && JS.numchildren(node) >= 1
+        if JS.head(node) === :ref && JS.numchildren(node) >= 1
             push!(paren_wrap_ranges, JS.byte_range(node[1]))
         end
-        if JS.kind(node) in JS.KSet"call dotcall" && JS.numchildren(node) >= 1
+        if JS.head(node) in (:call, :dotcall) && JS.numchildren(node) >= 1
             push!(callee_ranges, JS.byte_range(node[1]))
             # Infix `^`: `::` is tighter than `^` (so `x::T^2` parses correctly
             # as `(x::T)^2`), but the rendered text looks visually ambiguous —
@@ -232,38 +232,38 @@ function collect_type_inlay_hints!(
                 end
             end
         end
-        if JS.kind(node) in JS.KSet"function macro"
+        if JS.head(node) in (:function, :macro)
             sig_rng = funcdef_sig_range(node)
-            if (sig_rng === nothing && JS.kind(node) === JS.K"function" &&
+            if (sig_rng === nothing && JS.head(node) === :function &&
                 JS.numchildren(node) ≥ 1)
-                # Anonymous `function (args...) ... end` signatures are `K"tuple"`,
-                # not `K"call"`; suppress them like named signatures so the generic
+                # Anonymous `function (args...) ... end` signatures are `:tuple`,
+                # not `:call`; suppress them like named signatures so the generic
                 # postorder path doesn't duplicate dedicated parameter hints.
                 sig = unwrap_funcdef_sig(node[1])
-                JS.kind(sig) === JS.K"tuple" && (sig_rng = JS.byte_range(sig))
+                JS.head(sig) === :tuple && (sig_rng = JS.byte_range(sig))
             end
             sig_rng !== nothing && push!(verbatim_ranges, sig_rng)
         end
-        if JS.kind(node) === JS.K"->" && JS.numchildren(node) >= 1
+        if JS.head(node) === :-> && JS.numchildren(node) >= 1
             # Lambda/`do` parameters are signature syntax, and the OC binding's slot
             # shares their byte range, so the generic path would emit a misleading
             # `OpaqueClosure{…}` hint. Suppress it here; dedicated parameter hints
-            # are emitted by the `K"->"` branch of the postorder pass.
+            # are emitted by the `:->` branch of the postorder pass.
             params = node[1]
-            if JS.kind(params) in JS.KSet"tuple Identifier"
+            if JS.head(params) in (:tuple, :identifier)
                 push!(verbatim_ranges, JS.byte_range(params))
             end
         end
-        if JS.kind(node) === JS.K"comparison"
+        if JS.head(node) === :comparison
             # Chained-comparison operators lower like callees, which would give
             # noisy `Union{typeof(<), Bool, …}` hints.
             for i = 2:2:JS.numchildren(node)
                 push!(callee_ranges, JS.byte_range(node[i]))
             end
         end
-        if JS.kind(node) === JS.K"=" && JS.numchildren(node) >= 1
+        if JS.head(node) === :(=) && JS.numchildren(node) >= 1
             lhs = node[1]
-            if JS.kind(lhs) === JS.K"Identifier"
+            if JS.head(lhs) === :identifier
                 push!(callee_ranges, JS.byte_range(lhs))
             else
                 # Non-Identifier LHS may be a short-form function definition;
@@ -272,34 +272,34 @@ function collect_type_inlay_hints!(
                 sig_rng !== nothing && push!(verbatim_ranges, sig_rng)
             end
         end
-        if JS.kind(node) === JS.K"unknown_head" && JS.numchildren(node) >= 1
-            # Compound assignments parse as `K"unknown_head"` with the operator in
-            # `name_val`; lowering introduces references that pollute the LHS range.
+        if is_compound_assignment(node) && JS.numchildren(node) >= 1
+            # Lowering of compound assignments introduces references that pollute
+            # the LHS range.
             push!(callee_ranges, JS.byte_range(node[1]))
         end
         # Postfix `'` (adjoint): the operand's hint at end-of-operand would
         # land between the operand and `'`, producing syntactically ambiguous
         # rendering like `M::T'::T_outer` (which parses as `M::(T')`).
-        # Suppress the operand's hint so the K"'" emits cleanly as `M'::T`.
-        if JS.kind(node) === JS.K"'" && JS.numchildren(node) >= 1
+        # Suppress the operand's hint so the `:'` emits cleanly as `M'::T`.
+        if JS.head(node) === Symbol("'") && JS.numchildren(node) >= 1
             push!(callee_ranges, JS.byte_range(node[1]))
         end
         # Register for-loop iteration variables so regular postorder emission
-        # skips them; dedicated hints are emitted in the `K"for"` branch below.
-        if JS.kind(node) === JS.K"for" && JS.numchildren(node) >= 1
+        # skips them; dedicated hints are emitted in the `:for` branch below.
+        if JS.head(node) === :for && JS.numchildren(node) >= 1
             spec = node[1]
-            if JS.kind(spec) === JS.K"=" && JS.numchildren(spec) >= 1
+            if JS.head(spec) === :(=) && JS.numchildren(spec) >= 1
                 register_for_loop_vars!(callee_ranges, spec[1])
             end
         end
         # Register comprehension iteration variables like for-loop variables.
-        if JS.kind(node) in JS.KSet"generator filter"
+        if JS.head(node) in (:generator, :filter)
             spec = comprehension_iter_spec(node)
             if spec !== nothing && JS.numchildren(spec) >= 1
                 register_for_loop_vars!(callee_ranges, spec[1])
             end
         end
-        if JS.kind(node) === JS.K"::" && JS.numchildren(node) >= 1
+        if JS.head(node) === :(::) && JS.numchildren(node) >= 1
             push!(callee_ranges, JS.byte_range(node[1]))
             # The RHS is a user-written type expression — suppress annotations
             # on any identifier nested inside (e.g. `Int` in `x::Int`,
@@ -309,25 +309,25 @@ function collect_type_inlay_hints!(
             end
         end
         # User-written type declaration names should not get nested `::Any` hints.
-        if JS.kind(node) === JS.K"struct" && JS.numchildren(node) >= 2
+        if JS.head(node) === :struct && JS.numchildren(node) >= 2
             push!(verbatim_ranges, JS.byte_range(node[2])) # node[1] is mutable flag
         end
-        if JS.kind(node) in JS.KSet"abstract primitive" && JS.numchildren(node) >= 1
+        if JS.head(node) in (:abstract, :primitive) && JS.numchildren(node) >= 1
             push!(verbatim_ranges, JS.byte_range(node[1]))
         end
         # User-written module/import syntax should not receive nested hints.
-        if JS.kind(node) in JS.KSet"using import"
+        if JS.head(node) in (:using, :import)
             push!(verbatim_ranges, JS.byte_range(node))
         end
-        # `K"inert"` wraps literal symbol contents and dot-property names.
-        if JS.kind(node) === JS.K"inert"
+        # `:inert` wraps literal symbol contents and dot-property names.
+        if JS.head(node) === :inert
             push!(verbatim_ranges, JS.byte_range(node))
         end
     end
 
     traverse(st0, #=postorder=#true) do node::SyntaxTree
-        k = JS.kind(node)
-        k === JS.K"Value" && return nothing
+        k = JS.head(node)
+        is_synthesized_value(node) && return nothing
 
         byterng = JS.byte_range(node)
 
@@ -336,14 +336,14 @@ function collect_type_inlay_hints!(
         # before the funcdef return-type path's early return so a named local closure
         # gets both its parameter and return-type hints. `emit_lambda_param_hints!`
         # is a no-op when parameter ranges have no inferred types.
-        if k in JS.KSet"-> function ="
+        if k in (:->, :function, :(=))
             emit_lambda_param_hints!(
                 inlay_hints, node, ctx, fi, uri, range, nontrivia_index,
                 postprocessor, emitted_ranges, label_cache, maxdepth, maxwidth, lazy_tooltips)
         end
 
         # Emit function return hints on the signature, not the full definition.
-        if k in JS.KSet"function macro =" && (call_node = funcdef_call_node(node)) !== nothing
+        if k in (:function, :macro, :(=)) && (call_node = funcdef_call_node(node)) !== nothing
             endpos = offset_to_xy(fi, JS.last_byte(call_node) + 1)
             endpos ∈ range || return nothing
             byterng in emitted_ranges && return nothing
@@ -356,15 +356,16 @@ function collect_type_inlay_hints!(
         end
 
         # Skip nodes that would clobber user syntax or duplicate a more specific hint.
-        k in JS.KSet"function macro = do -> :: struct abstract primitive" && return nothing
+        k in (:function, :macro, :(=), :do, :->, :(::), :struct, :abstract, :primitive) &&
+            return nothing
         # Decorating macrocalls should not be framed as value-typed expressions.
-        if k === JS.K"macrocall" && JS.numchildren(node) >= 1 && is_funcdef_decl(node[end])
+        if k === :macrocall && JS.numchildren(node) >= 1 && is_funcdef_decl(node[end])
             return nothing
         end
         # Emit dedicated hints for registered for-loop iteration variables.
-        if k === JS.K"for" && JS.numchildren(node) >= 1
+        if k === :for && JS.numchildren(node) >= 1
             spec = node[1]
-            if JS.kind(spec) === JS.K"=" && JS.numchildren(spec) >= 1
+            if JS.head(spec) === :(=) && JS.numchildren(spec) >= 1
                 emit_destructure_var_hints!(
                     inlay_hints, spec[1], ctx, fi, uri, range, nontrivia_index,
                     postprocessor, emitted_ranges, label_cache, maxdepth, maxwidth,
@@ -372,7 +373,7 @@ function collect_type_inlay_hints!(
             end
         end
         # Emit per-variable hints and skip the comprehension lowering node.
-        if k in JS.KSet"generator filter"
+        if k in (:generator, :filter)
             spec = comprehension_iter_spec(node)
             if spec !== nothing && JS.numchildren(spec) >= 1
                 emit_destructure_var_hints!(
@@ -382,12 +383,13 @@ function collect_type_inlay_hints!(
             end
             return nothing
         end
-        # `K"flatten"` wraps the outer K"generator" of a multi-`for` (cartesian)
+        # `:flatten` wraps the outer `:generator` of a multi-`for` (cartesian)
         # comprehension; its anchor would surface the same `Generator{…}`-class
         # lowering noise.
-        k === JS.K"flatten" && return nothing
+        k === :flatten && return nothing
 
-        k in JS.KSet"unknown_head for while in iteration block return break continue" && return nothing
+        is_compound_assignment(node) && return nothing
+        k in (:for, :while, :in, :iteration, :block, :return, :break, :continue) && return nothing
 
         in_verbatim_range(byterng, verbatim_ranges) && return nothing
         byterng in emitted_ranges && return nothing
@@ -396,12 +398,12 @@ function collect_type_inlay_hints!(
         endpos = offset_to_xy(fi, JS.last_byte(node) + 1)
         endpos ∈ range || return nothing
 
-        if k in JS.KSet"call dotcall"
+        if k in (:call, :dotcall)
             JS.numchildren(node) >= 1 || return nothing
         end
         # Suppress container labels registered in `callee_ranges`; macrocalls
         # remain anchors in their own right.
-        k !== JS.K"macrocall" && byterng in callee_ranges && return nothing
+        k !== :macrocall && byterng in callee_ranges && return nothing
         typ = get_type_for_range(ctx, byterng)
         typ === nothing && return nothing
         should_annotate_type(node, typ) || return nothing
@@ -409,16 +411,16 @@ function collect_type_inlay_hints!(
         # Wrap forms where `::T` would otherwise bind to the wrong expression,
         # or where trailing field/index access must stay outside the assertion.
         is_dp = byterng in paren_wrap_ranges
-        is_infix_call = k in JS.KSet"call dotcall" &&
+        is_infix_call = k in (:call, :dotcall) &&
             (is_source_infix_op_call(node) || is_source_postfix_op_call(node) ||
              is_source_prefix_op_call(node))
-        is_noparen_macro = k === JS.K"macrocall" && noparen_macrocall(node)
-        is_logical_or_chained = k in JS.KSet"&& || comparison" ||
-            (k === JS.K"if" && is_ternary(node, fi))
+        is_noparen_macro = k === :macrocall && noparen_macrocall(node)
+        is_logical_or_chained = k in (:&&, :||, :comparison) ||
+            (k === :if && is_ternary(node, fi))
         needs_wrap = is_infix_call || is_noparen_macro || is_logical_or_chained || is_open_tuple(node)
         # Reuse decorative source parens when possible; for prefix unary calls,
         # start the wrap at the argument so the operator remains outside.
-        is_prefix_unary = k in JS.KSet"call dotcall" && is_source_prefix_op_call(node) &&
+        is_prefix_unary = k in (:call, :dotcall) && is_source_prefix_op_call(node) &&
             JS.numchildren(node) >= 2
         paren_start_node = is_prefix_unary ? node[2] : node
         if (needs_wrap || is_dp) && is_decoratively_parenthesized(node, fi)
@@ -428,7 +430,7 @@ function collect_type_inlay_hints!(
                 label_cache, maxdepth, maxwidth, lazy_tooltips, byterng;
                 open_paren = needs_wrap && is_dp,
                 close_paren_before_type = false,
-                close_paren_after_type = k !== JS.K"macrocall" && needs_wrap && is_dp,
+                close_paren_after_type = k !== :macrocall && needs_wrap && is_dp,
                 paren_start_node)
         else
             emit_type_hint!(
@@ -436,7 +438,7 @@ function collect_type_inlay_hints!(
                 label_cache, maxdepth, maxwidth, lazy_tooltips, byterng;
                 open_paren = needs_wrap || is_dp,
                 close_paren_before_type = needs_wrap,
-                close_paren_after_type = k !== JS.K"macrocall" && is_dp,
+                close_paren_after_type = k !== :macrocall && is_dp,
                 paren_start_node)
         end
         push!(emitted_ranges, byterng)
@@ -448,15 +450,15 @@ end
 # Detect function-definition shapes under decorating macrocalls. Unlike
 # `funcdef_call_node`, this accepts user-written return annotations.
 function is_funcdef_decl(node::SyntaxTree)
-    k = JS.kind(node)
-    if k === JS.K"function" || k === JS.K"macro"
+    k = JS.head(node)
+    if k === :function || k === :macro
         return true
-    elseif k === JS.K"="
+    elseif k === :(=)
         JS.numchildren(node) >= 1 || return false
-        return JS.kind(unwrap_funcdef_sig(node[1])) === JS.K"call"
-    elseif k === JS.K"macrocall"
+        return JS.head(unwrap_funcdef_sig(node[1])) === :call
+    elseif k === :macrocall
         # Nested decoration: `@inline @noinline f(x) = body`. The outer
-        # macrocall's last argument is itself a `K"macrocall"` whose last
+        # macrocall's last argument is itself a `:macrocall` whose last
         # argument is the funcdef.
         JS.numchildren(node) >= 1 || return false
         return is_funcdef_decl(node[end])
@@ -464,23 +466,23 @@ function is_funcdef_decl(node::SyntaxTree)
     return false
 end
 
-# Locate the `K"="` iteration binding inside a comprehension generator/filter.
+# Locate the `:(=)` iteration binding inside a comprehension generator/filter.
 function comprehension_iter_spec(node::SyntaxTree)
     JS.numchildren(node) >= 2 || return nothing
     spec = node[2]
-    JS.kind(spec) === JS.K"filter" && JS.numchildren(spec) >= 2 && (spec = spec[2])
-    return JS.kind(spec) === JS.K"=" ? spec : nothing
+    JS.head(spec) === :filter && JS.numchildren(spec) >= 2 && (spec = spec[2])
+    return JS.head(spec) === :(=) ? spec : nothing
 end
 
 function funcdef_call_node(funcdef::SyntaxTree)
     JS.numchildren(funcdef) >= 1 || return nothing
     sig = funcdef[1]
-    while JS.kind(sig) === JS.K"where"
+    while JS.head(sig) === :where
         JS.numchildren(sig) >= 1 || return nothing
         sig = sig[1]
     end
-    JS.kind(sig) === JS.K"::" && return nothing # manual return type annotation exists
-    JS.kind(sig) === JS.K"call" || return nothing
+    JS.head(sig) === :(::) && return nothing # manual return type annotation exists
+    JS.head(sig) === :call || return nothing
     return sig
 end
 
@@ -489,7 +491,7 @@ end
 function funcdef_sig_range(funcdef::SyntaxTree)
     JS.numchildren(funcdef) >= 1 || return nothing
     sig = funcdef[1]
-    JS.kind(unwrap_funcdef_sig(sig)) === JS.K"call" || return nothing
+    JS.head(unwrap_funcdef_sig(sig)) === :call || return nothing
     return JS.byte_range(sig)
 end
 
@@ -502,10 +504,10 @@ function should_annotate_type(node::SyntaxTree, @nospecialize(typ))
 end
 
 function is_const_literal_node(node::SyntaxTree, @nospecialize(val))
-    k = JS.kind(node)
-    JS.is_literal(k) && return true
-    k === JS.K"inert" && return true
-    if k === JS.K"Identifier"
+    k = JS.head(node)
+    k === :value && !is_synthesized_value(node) && return true
+    k === :inert && return true
+    if k === :identifier
         name = get_name_val(node)
         if name isa String
             return identifier_spells_const_value(name, val)
@@ -525,10 +527,10 @@ is_const_binding_value(@nospecialize val) =
 # Register both variables and destructuring wrappers so the regular postorder
 # pass doesn't emit duplicate or wrapper-level iteration hints.
 function register_for_loop_vars!(callee_ranges::Set{UnitRange{Int}}, lhs::SyntaxTree)
-    k = JS.kind(lhs)
-    if k === JS.K"Identifier"
+    k = JS.head(lhs)
+    if k === :identifier
         push!(callee_ranges, JS.byte_range(lhs))
-    elseif k in JS.KSet"tuple parameters"
+    elseif k in (:tuple, :parameters)
         push!(callee_ranges, JS.byte_range(lhs))
         for child in JS.children(lhs)
             register_for_loop_vars!(callee_ranges, child)
@@ -538,15 +540,15 @@ function register_for_loop_vars!(callee_ranges::Set{UnitRange{Int}}, lhs::Syntax
 end
 
 # Emit one hint per unannotated local-closure parameter, for every definition form:
-# `K"->"` (arrow / `do`, bare `K"Identifier"` or `K"tuple"` params), anonymous
-# `function (…) … end` (`K"tuple"` signature), and named local closures /
-# short-form `f(…) = …` (`K"call"` signature, after stripping `where` / return-type
+# `:->` (arrow / `do`, bare `:identifier` or `:tuple` params), anonymous
+# `function (…) … end` (`:tuple` signature), and named local closures /
+# short-form `f(…) = …` (`:call` signature, after stripping `where` / return-type
 # wrappers — its head child is the function name and is skipped). Each simple
-# `K"Identifier"` parameter is queried by its own source range via `get_type_for_range`;
+# `:identifier` parameter is queried by its own source range via `get_type_for_range`;
 # destructuring patterns (`(a, b)`, `(; a, b)`, …) recurse into each leaf instead
 # (`emit_destructure_var_hints!`, shared with for-loop iteration vars).
 # `Any` entries on simple parameters are skipped (an unrefined slot adds no information
-# over the bare name); user-annotated (`K"::"`) parameters are left untouched.
+# over the bare name); user-annotated (`:(::)`) parameters are left untouched.
 function emit_lambda_param_hints!(
         inlay_hints::Vector{InlayHint}, lambda::SyntaxTree,
         ctx::InferredTreeContext, fi::FileInfo, uri::URI, range::Range,
@@ -556,43 +558,43 @@ function emit_lambda_param_hints!(
     )
     JS.numchildren(lambda) >= 1 || return nothing
     sig = lambda[1]
-    k = JS.kind(lambda)
+    k = JS.head(lambda)
     # `params`: the node whose children (from `start` on) are the positional params.
-    if k === JS.K"->"
-        if JS.kind(sig) === JS.K"Identifier" # no-paren single-parameter form
+    if k === :->
+        if JS.head(sig) === :identifier # no-paren single-parameter form
             emit_lambda_param_hint!(
                 inlay_hints, sig, ctx, fi, uri, range, nontrivia_index,
                 postprocessor, label_cache, maxdepth, maxwidth, lazy_tooltips)
             return nothing
         end
-        JS.kind(sig) === JS.K"tuple" || return nothing
+        JS.head(sig) === :tuple || return nothing
         params, start = sig, 1
-    elseif k === JS.K"function"
+    elseif k === :function
         sig = unwrap_funcdef_sig(sig)
-        sk = JS.kind(sig)
-        if sk === JS.K"tuple" # anonymous `function (args...) ... end`
+        sk = JS.head(sig)
+        if sk === :tuple # anonymous `function (args...) ... end`
             params, start = sig, 1
-        elseif sk === JS.K"call" # named local `function f(args...) ... end`
+        elseif sk === :call # named local `function f(args...) ... end`
             params, start = sig, 2 # skip the function name
         else
             return nothing
         end
-    elseif k === JS.K"="
+    elseif k === :(=)
         sig = unwrap_funcdef_sig(sig)
-        JS.kind(sig) === JS.K"call" || return nothing # only short-form `f(args...) = ...`
+        JS.head(sig) === :call || return nothing # only short-form `f(args...) = ...`
         params, start = sig, 2 # skip the function name
     else
         return nothing
     end
     for ci = start:JS.numchildren(params)
         p = params[ci]
-        pk = JS.kind(p)
-        pk === JS.K"parameters" && break # keyword parameters aren't positional
-        if pk === JS.K"Identifier"
+        pk = JS.head(p)
+        pk === :parameters && break # keyword parameters aren't positional
+        if pk === :identifier
             emit_lambda_param_hint!(
                 inlay_hints, p, ctx, fi, uri, range, nontrivia_index,
                 postprocessor, label_cache, maxdepth, maxwidth, lazy_tooltips)
-        elseif pk === JS.K"tuple" # destructuring pattern — annotate each component
+        elseif pk === :tuple # destructuring pattern — annotate each component
             emit_destructure_var_hints!(
                 inlay_hints, p, ctx, fi, uri, range, nontrivia_index,
                 postprocessor, emitted_ranges, label_cache, maxdepth, maxwidth,
@@ -622,7 +624,7 @@ end
 # Emit one hint per variable in a binding pattern, recursing through destructuring
 # forms (`(a, b)`, nested `(a, (b, c))`, property `(; a, b)`). Each leaf's type is
 # queried at its own byte range. Shared by for-loop / comprehension iteration variables
-# and by destructured closure parameters. `K"..."` (slurp) and `K"::"` (user-annotated)
+# and by destructured closure parameters. `:...` (slurp) and `:(::)` (user-annotated)
 # components are left untouched.
 function emit_destructure_var_hints!(
         inlay_hints::Vector{InlayHint}, lhs::SyntaxTree,
@@ -631,12 +633,12 @@ function emit_destructure_var_hints!(
         emitted_ranges::Set{UnitRange{Int}}, label_cache::IdDict{Any,String},
         maxdepth::Int, maxwidth::Int, lazy_tooltips::Bool
     )
-    k = JS.kind(lhs)
-    if k === JS.K"Identifier"
+    k = JS.head(lhs)
+    if k === :identifier
         emit_destructure_var_hint!(
             inlay_hints, lhs, ctx, fi, uri, range, nontrivia_index, postprocessor,
             emitted_ranges, label_cache, maxdepth, maxwidth, lazy_tooltips)
-    elseif k in JS.KSet"tuple parameters"
+    elseif k in (:tuple, :parameters)
         for child in JS.children(lhs)
             emit_destructure_var_hints!(
                 inlay_hints, child, ctx, fi, uri, range, nontrivia_index, postprocessor,
@@ -666,21 +668,21 @@ function emit_destructure_var_hint!(
     return nothing
 end
 
-# Ternary and block-form `if` both parse as `K"if"`; distinguish by first token.
+# Ternary and block-form `if` both parse as `:if`; distinguish by first token.
 function is_ternary(node::SyntaxTree, fi::FileInfo)
-    JS.kind(node) === JS.K"if" || return false
+    JS.head(node) === :if || return false
     tc = @something next_nontrivia(fi.parsed_stream, JS.first_byte(node)) return false
     return JS.kind(tc) !== JS.K"if"
 end
 
 # `(x, y)::T` parses cleanly because the `)` is a syntactic boundary, but
 # `x, y::T` parses as `x, (y::T)`. The parser sets `PARENS_FLAG` on
-# `K"tuple"` exactly when it's surrounded by `(` `)` (independent of any
+# `:tuple` exactly when it's surrounded by `(` `)` (independent of any
 # nested tuple's parens), so checking the flag is the precise discriminator.
 is_open_tuple(node::SyntaxTree) =
-    JS.kind(node) === JS.K"tuple" && !has_source_flags(node, JS.PARENS_FLAG)
+    JS.head(node) === :tuple && !has_source_flags(node, JS.PARENS_FLAG)
 
-# Recover dropped `K"parens"` nodes from neighboring tokens. A preceding `(` is
+# Recover dropped `:parens` nodes from neighboring tokens. A preceding `(` is
 # decorative unless it belongs to a call, index, or chained-call form.
 function is_decoratively_parenthesized(node::SyntaxTree, fi::FileInfo)
     ps = fi.parsed_stream

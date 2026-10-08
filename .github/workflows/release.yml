@@ -257,7 +257,7 @@ jobs:
           TMP_BRANCH="changelog-update/$VERSION"
           git push origin "HEAD:refs/heads/$TMP_BRANCH"
           trap 'git push origin --delete "$TMP_BRANCH"' EXIT
-          gh api "repos/$GITHUB_REPOSITORY/check-runs" \
+          gh api --silent "repos/$GITHUB_REPOSITORY/check-runs" \
             -f name="Required checks" \
             -f head_sha="$(git rev-parse HEAD)" \
             -f conclusion=success \

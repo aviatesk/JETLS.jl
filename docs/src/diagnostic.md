@@ -66,7 +66,8 @@ severity value `"off"` (or `0`).
 
 JETLS uses different diagnostic channels to balance analysis accuracy with
 response latency. Lightweight checks run as you edit for immediate feedback,
-while deeper analysis runs on save to avoid excessive resource consumption.
+while deeper analysis runs when you open or save a file to avoid excessive
+resource consumption.
 
 Each diagnostic has a `source` field that identifies which diagnostic channel
 it comes from. This section explains what each source means, helping you
@@ -77,7 +78,8 @@ Additionally, some editors also allow filtering diagnostics by source.
     This section contains references to LSP protocol details. You don't need
     to understand these details to use JETLS effectively - the key takeaway
     is simply that different diagnostics update at different times (as you
-    edit, when you save, or when you run tests via [TestRunner integration](@ref testrunner)).
+    edit, when you open or save a file, or when you run tests via
+    [TestRunner integration](@ref testrunner)).
 
 JETLS uses three diagnostic sources:
 
@@ -92,36 +94,45 @@ JETLS uses three diagnostic sources:
   option (such as the VSCode extension) receive the diagnostics of open files
   through `textDocument/diagnostic` instead. Includes syntax errors and
   lowering-based analysis (`syntax/*`, `lowering/*`).
-- **`JETLS/save`**: Diagnostics published by JETLS after on-save full analysis
+- **`JETLS/save`**: Diagnostics published by JETLS after [full analysis](@ref analysis/full),
+  which runs when you open or save a file (see [When full analysis runs](@ref analysis/full/timing)),
   via the push model channel [`textDocument/publishDiagnostics`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.18/specification/#textDocument_publishDiagnostics).
   These run full analysis including type inference and require loading your
-  code. Includes top-level errors and inference-based analysis (`toplevel/*`,
-  `inference/*`).
-- **`JETLS/extra`**: Diagnostics from external sources like the TestRunner
-  integration (`testrunner/*`). Published via [`textDocument/publishDiagnostics`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.18/specification/#textDocument_publishDiagnostics).
+  code. Includes top-level errors and inference-based analysis
+  (`toplevel/*`, `inference/*`).
+- **`JETLS/extra`**: Diagnostics from sources other than the analysis of your
+  code: the TestRunner integration (`testrunner/*`) and the checks of the
+  configuration file (`config/*`). Published via [`textDocument/publishDiagnostics`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.18/specification/#textDocument_publishDiagnostics).
 
 ## [Analysis stages](@id diagnostic/stage)
 
-JETLS produces diagnostics at successive stages of analysis. Each stage owns a
+JETLS produces diagnostics at different stages of analysis. Each stage owns a
 code [category](@ref diagnostic/code) (the first segment of its codes) and
 determines what is analyzed, which tool powers it, and through which
 [source](@ref diagnostic/source) its diagnostics are delivered:
 
-| Category                                               | Pipeline stage | Powered by                  | Source        | Depends on        |
-| ------------------------------------------------------ | -------------- | --------------------------- | ------------- | ----------------- |
-| [`syntax/*`](@ref diagnostic/reference/syntax)         | Parsing        | JuliaSyntax.jl              | `JETLS/live`  | —                 |
-| [`lowering/*`](@ref diagnostic/reference/lowering)     | Lowering       | JuliaLowering.jl            | `JETLS/live`  | parsing           |
-| [`toplevel/*`](@ref diagnostic/reference/toplevel)     | Code loading   | JuliaInterpreter.jl, JET.jl | `JETLS/save`  | parsing           |
-| [`inference/*`](@ref diagnostic/reference/inference)   | Type inference | JET.jl                      | `JETLS/save`  | code loading      |
-| [`testrunner/*`](@ref diagnostic/reference/testrunner) | Test execution | TestRunner.jl               | `JETLS/extra` | manual run        |
+| Category                                               | Stage          | Powered by                               | Source        | Depends on                                      |
+| ------------------------------------------------------ | -------------- | ---------------------------------------- | ------------- | ----------------------------------------------- |
+| [`syntax/*`](@ref diagnostic/reference/syntax)         | Parsing        | JuliaSyntax.jl                           | `JETLS/live`  | —                                               |
+| [`lowering/*`](@ref diagnostic/reference/lowering)     | Lowering       | JuliaLowering.jl                         | `JETLS/live`  | parsing, code loading[^code_loading_dependency] |
+| [`toplevel/*`](@ref diagnostic/reference/toplevel)     | Code loading   | JuliaInterpreter.jl, LoweredCodeUtils.jl | `JETLS/save`  | parsing                                         |
+| [`inference/*`](@ref diagnostic/reference/inference)   | Type inference | JET.jl                                   | `JETLS/save`  | code loading                                    |
+| [`config/*`](@ref diagnostic/reference/config)         | Configuration  | JETLS                                    | `JETLS/extra` | —                                               |
+| [`testrunner/*`](@ref diagnostic/reference/testrunner) | Test execution | TestRunner.jl                            | `JETLS/extra` | manual run                                      |
 
-The first four stages form a pipeline: each builds on the previous one, so a
-failure at an earlier stage limits what the later stages can analyze. Test
-execution is separate and runs only when you trigger it.
+The first four stages belong to two cooperating layers, not a single linear
+pipeline. Parsing and lowering make up [live analysis](@ref analysis/live),
+and code loading and type inference make up [full analysis](@ref analysis/full).
+Code-loading errors limit type inference and may leave live analysis without
+a complete module context; context-independent live checks remain available.
+See [Analysis](@ref analysis) for how the layers work together.
 
-Only parsing and lowering (the live stages) report byte-precise source ranges;
-every other stage (code loading, type inference, and test execution)
-reports at line granularity.
+Test execution is separate and runs only when you trigger it. Configuration
+checks are separate as well and only concern the configuration file.
+
+Parsing and lowering (the live stages) report byte-precise source ranges, and
+configuration checks report at the keys they concern. Code loading, type
+inference, and test execution report at line granularity.
 
 ###### [Parsing (`syntax/*`)](@id diagnostic/stage/syntax)
 
@@ -129,19 +140,22 @@ reports at line granularity.
 parses your source text into syntax trees. It runs on every edit without
 executing your code, so `syntax/*` diagnostics are delivered through the
 `JETLS/live` source and update as you type. Because every later stage builds on
-the parse result, unparsable code yields only `syntax/*` diagnostics. See
-[`syntax/*`](@ref diagnostic/reference/syntax) for the diagnostic codes.
+the parse result, unparsable code yields only `syntax/*` diagnostics. Syntax
+warnings, by contrast, do not prevent the later stages from analyzing the code.
+See [`syntax/*`](@ref diagnostic/reference/syntax) for the diagnostic codes.
 
 ###### [Lowering (`lowering/*`)](@id diagnostic/stage/lowering)
 
 [JuliaLowering.jl](https://github.com/JuliaLang/julia/tree/master/JuliaLowering)
 lowers the parsed syntax tree into the intermediate representation JETLS
-analyzes, delivered through the `JETLS/live` source as you edit.
-It relies on binding and scope information, not types, so it flags undefined or
-unused variables, unreachable code, and the like — but not type-level problems,
-which require [type inference](@ref diagnostic/stage/inference).
-Most checks are self-contained, but macro expansion and global-name resolution
-need a module context, so they additionally depend on
+analyzes. `lowering/*` diagnostics are delivered through the `JETLS/live`
+source and update as you edit.
+Lowering relies on binding and scope information, not types, so it flags
+undefined or unused variables, unreachable code, and the like — but not
+type-level problems, which require [type inference](@ref diagnostic/stage/inference).
+Macro expansion can execute macro code. Most checks are self-contained, but
+macro expansion and global-name resolution need a module context, so they
+additionally depend on
 [code loading](@ref diagnostic/stage/toplevel)[^code_loading_dependency].
 See [`lowering/*`](@ref diagnostic/reference/lowering) for the diagnostic codes.
 
@@ -149,34 +163,42 @@ See [`lowering/*`](@ref diagnostic/reference/lowering) for the diagnostic codes.
     The [`lowering/macro-expansion-error`](@ref diagnostic/reference/lowering/macro-expansion-error) and
     [`lowering/undef-global-var`](@ref diagnostic/reference/lowering/undef-global-var)
     checks are reported only after a full analysis has established that context,
-    which JETLS refreshes diagnostics to pick up.
+    which JETLS refreshes diagnostics to pick up. See [Live analysis](@ref analysis/live)
+    for details, and [Files without full analysis](@ref analysis/live/fallback)
+    for files that full analysis does not cover.
 
 ###### [Code loading (`toplevel/*`)](@id diagnostic/stage/toplevel)
 
-[JET.jl](https://github.com/aviatesk/JET.jl) virtually loads your code as part
-of JETLS's full analysis, delivered through the `JETLS/save` source on save.
-Using [JuliaInterpreter.jl](https://github.com/JuliaDebug/JuliaInterpreter.jl),
-it selectively interprets the top-level code to load the definitions (methods,
-types, globals, macros) that the later type-inference stage needs. Package
-dependencies, by contrast, are loaded unconditionally.
-
-!!! danger "Security"
-    Do not run JETLS on code you do not trust. Full analysis runs your own
-    top-level code (scripts included) and the package dependencies it loads —
-    both can execute arbitrary code.
-
-Full analysis is debounced to avoid excessive work on frequent saves; configure
-it via [`[full_analysis] debounce`](@ref config/full_analysis/debounce). See
-[`toplevel/*`](@ref diagnostic/reference/toplevel) for the diagnostic codes.
+[JuliaInterpreter.jl](https://github.com/JuliaDebug/JuliaInterpreter.jl) and
+[LoweredCodeUtils.jl](https://github.com/JuliaDebug/LoweredCodeUtils.jl) load
+your code as the first step of [full analysis](@ref analysis/full).
+`toplevel/*` diagnostics are delivered through the `JETLS/save` source.
+Loading stops at the first [top-level error](@ref diagnostic/reference/toplevel/error),
+and code after it is not analyzed. See [`toplevel/*`](@ref diagnostic/reference/toplevel)
+for the diagnostic codes.
 
 ###### [Type inference (`inference/*`)](@id diagnostic/stage/inference)
 
 [JET.jl](https://github.com/aviatesk/JET.jl) runs type inference over your
-loaded code during the same on-save full analysis (`JETLS/save`). Inference
-only covers code that loaded successfully, so a `toplevel/error`
-(e.g. a missing dependency) suppresses `inference/*` diagnostics for the
-affected code. See
+loaded code as the second step of [full analysis](@ref analysis/full).
+`inference/*` diagnostics are delivered through the `JETLS/save` source.
+Inference only covers code that loaded successfully: after a `toplevel/error`
+(e.g. a missing dependency), JETLS skips inference of method bodies entirely and
+reports `inference/*` diagnostics only for top-level code before the error. See
 [`inference/*`](@ref diagnostic/reference/inference) for the diagnostic codes.
+
+###### [Configuration (`config/*`)](@id diagnostic/stage/config)
+
+JETLS checks the [`.JETLSConfig.toml`](@ref config) file at the workspace root,
+reporting issues through the `JETLS/extra` source at the keys they concern.
+They are reported when the server starts, update as you edit the file while it
+is open in the editor, and when the file changes on disk otherwise.
+Not all clients synchronize TOML files with JETLS, though. With such a client,
+JETLS sees the file as unopened, so its diagnostics update only when the file
+changes on disk, such as when you save it.
+Whenever JETLS sees the file as unopened, its diagnostics are reported only if
+[`diagnostic.all_files`](@ref config/diagnostic/all_files) is enabled.
+See [`config/*`](@ref diagnostic/reference/config) for the diagnostic codes.
 
 ###### [Test execution (`testrunner/*`)](@id diagnostic/stage/testrunner)
 
@@ -201,6 +223,7 @@ Here is a summary table of the diagnostics explained in this section:
 | Code                                                                                                           | Default Severity      | Source        | Description                                            |
 | -------------------------------------------------------------------------------------------------------------- | --------------------- | ------------- | ------------------------------------------------------ |
 | [`syntax/parse-error`](@ref diagnostic/reference/syntax/parse-error)                                           | `Error`               | `JETLS/live`  | Syntax parsing errors detected by JuliaSyntax.jl       |
+| [`syntax/parse-warning`](@ref diagnostic/reference/syntax/parse-warning)                                       | `Warning`             | `JETLS/live`  | Syntax warnings detected by JuliaSyntax.jl             |
 | [`lowering/error`](@ref diagnostic/reference/lowering/error)                                                   | `Error`               | `JETLS/live`  | General lowering errors                                |
 | [`lowering/macro-expansion-error`](@ref diagnostic/reference/lowering/macro-expansion-error)                   | `Error/Warning`       | `JETLS/live`  | Issues detected during macro expansion                 |
 | [`lowering/undef-global-var`](@ref diagnostic/reference/lowering/undef-global-var)                             | `Warning`             | `JETLS/live`  | References to undefined global variables               |
@@ -208,6 +231,7 @@ Here is a summary table of the diagnostics explained in this section:
 | [`lowering/ambiguous-soft-scope`](@ref diagnostic/reference/lowering/ambiguous-soft-scope)                     | `Warning`             | `JETLS/live`  | Assignment in soft scope shadows a global variable     |
 | [`lowering/captured-boxed-variable`](@ref diagnostic/reference/lowering/captured-boxed-variable)               | `Information`         | `JETLS/live`  | Variables captured by closures that require boxing     |
 | [`lowering/unconstrained-static-parameter`](@ref diagnostic/reference/lowering/unconstrained-static-parameter) | `Warning`             | `JETLS/live`  | Static parameters not used in function parameter types |
+| [`lowering/orphaned-docstring`](@ref diagnostic/reference/lowering/orphaned-docstring)                         | `Information`         | `JETLS/live`  | Docstrings not attached to any definition              |
 | [`lowering/unused-argument`](@ref diagnostic/reference/lowering/unused-argument)                               | `Information`         | `JETLS/live`  | Function arguments that are never used                 |
 | [`lowering/unused-local`](@ref diagnostic/reference/lowering/unused-local)                                     | `Information`         | `JETLS/live`  | Local variables that are never used                    |
 | [`lowering/unused-assignment`](@ref diagnostic/reference/lowering/unused-assignment)                           | `Information`         | `JETLS/live`  | Assignments whose values are never read                |
@@ -220,6 +244,8 @@ Here is a summary table of the diagnostics explained in this section:
 | [`toplevel/concretization-timeout`](@ref diagnostic/reference/toplevel/concretization-timeout)                 | `Error`               | `JETLS/save`  | Concrete execution of top-level code exceeded its time limit |
 | [`toplevel/method-overwrite`](@ref diagnostic/reference/toplevel/method-overwrite)                             | `Warning`             | `JETLS/save`  | Method definitions that overwrite previous ones        |
 | [`toplevel/abstract-field`](@ref diagnostic/reference/toplevel/abstract-field)                                 | `Information`         | `JETLS/save`  | Struct fields with abstract types                      |
+| [`toplevel/unsupported-feature`](@ref diagnostic/reference/toplevel/unsupported-feature)                       | `Warning`             | `JETLS/save`  | Unsupported code analyzed with an approximation        |
+| [`toplevel/analysis-skipped`](@ref diagnostic/reference/toplevel/analysis-skipped)                             | `Warning`             | `JETLS/save`  | Files skipped by full analysis                         |
 | [`inference/undef-global-var`](@ref diagnostic/reference/inference/undef-global-var)                           | `Warning`             | `JETLS/save`  | References to undefined global variables               |
 | [`inference/field-error`](@ref diagnostic/reference/inference/field-error)                                     | `Warning`             | `JETLS/save`  | Access to non-existent struct fields                   |
 | [`inference/bounds-error`](@ref diagnostic/reference/inference/bounds-error)                                   | `Warning`             | `JETLS/save`  | Out-of-bounds field access by index                    |
@@ -229,6 +255,8 @@ Here is a summary table of the diagnostics explained in this section:
 | [`inference/type-error/type-assert`](@ref diagnostic/reference/inference/type-error/type-assert)               | `Warning`             | `JETLS/save`  | Type assertion failures                                |
 | [`inference/type-error/non-bool-cond`](@ref diagnostic/reference/inference/type-error/non-bool-cond)           | `Warning`             | `JETLS/save`  | Non-boolean value used in boolean context              |
 | [`testrunner/test-failure`](@ref diagnostic/reference/testrunner/test-failure)                                 | `Error`               | `JETLS/extra` | Test failures from TestRunner integration              |
+| [`config/deprecated-key`](@ref diagnostic/reference/config/deprecated-key)                                     | `Warning`             | `JETLS/extra` | Deprecated keys in `.JETLSConfig.toml`                 |
+| [`config/deprecated-value`](@ref diagnostic/reference/config/deprecated-value)                                 | `Warning`             | `JETLS/extra` | Deprecated values in `.JETLSConfig.toml`               |
 
 ### [Syntax diagnostic (`syntax/*`)](@id diagnostic/reference/syntax)
 
@@ -248,6 +276,22 @@ Example:
 function parse_error(x)
     println(x  # Expected `)` or `,` (JETLS syntax/parse-error)
 end
+```
+
+#### [Syntax parse warning (`syntax/parse-warning`)](@id diagnostic/reference/syntax/parse-warning)
+
+**Default severity**: `Warning`
+
+Syntax warnings detected by JuliaSyntax.jl. These indicate code that parses
+but is likely unintended or written in a discouraged form, such as redundant
+parentheses or quoting. Unlike
+[`syntax/parse-error`](@ref diagnostic/reference/syntax/parse-error), they do
+not prevent the code from being analyzed further.
+
+Example:
+
+```julia
+import Base: (sin)  # parentheses are not required here (JETLS syntax/parse-warning)
 ```
 
 ### [Lowering diagnostic (`lowering/*`)](@id diagnostic/reference/lowering)
@@ -656,6 +700,88 @@ f(::T) where {T<:S,S} = S  # Method definition declares type variable `S` but do
                            # (JETLS lowering/unconstrained-static-parameter)
 ```
 
+#### [Orphaned docstring (`lowering/orphaned-docstring`)](@id diagnostic/reference/lowering/orphaned-docstring)
+
+**Default severity**: `Information`
+
+Reported on string literals that look like docstrings but are not attached to
+any definition, so they silently document nothing. Julia attaches a string
+literal as a docstring only when:
+- it appears at the top level, in a `module` body, in a `begin` block, or in a
+  `struct` body (as a field docstring)
+- the documented expression starts on the next line, without blank lines or
+  comments in between
+- it is a plain string literal, not a string macro such as `raw"..."`
+
+Elsewhere, docstrings must be written with `@doc`, and docstrings in local
+scope (e.g. in function bodies) are never attached.
+
+Examples:
+
+```julia
+"""
+    foo()
+"""  # Docstring is not attached to any definition: the documented expression must start on the next line
+     # (JETLS lowering/orphaned-docstring)
+foo() = nothing
+
+@static if Sys.iswindows()
+    """
+        bar()
+    """              # Docstring is not attached to any definition: docstrings in this block are recognized only with `@doc`
+    bar() = nothing  # (JETLS lowering/orphaned-docstring)
+end
+
+raw"""
+    baz(path)
+"""                  # Docstring is not attached to any definition: `raw` strings are recognized as docstrings only with `@doc`
+baz(path) = nothing  # (JETLS lowering/orphaned-docstring)
+
+function qux()
+    "Python-style docstring"  # Docstring is not attached to any definition: docstrings are not recognized in local scope
+    nothing                   # (JETLS lowering/orphaned-docstring)
+end
+```
+
+Field docstrings are also reported when the struct itself has no docstring,
+since Julia then discards them[^field_docstrings]. The diagnostic is reported
+on the struct name, with the discarded field docstrings listed as related
+information:
+
+```julia
+struct Point            # Field docstrings of `Point` are discarded because `Point` has no docstring
+    "The x coordinate"  # (JETLS lowering/orphaned-docstring)
+    x::Float64
+    "The y coordinate"
+    y::Float64
+end
+```
+
+Documenting the struct makes the field docstrings available. Adding a docstring
+later with `@doc "..." Point` does not, since Julia collects field docstrings
+only from the documented struct definition. Structs wrapped by macros other than
+`@kwdef` are not checked, since such macros may handle field docstrings
+themselves.
+
+[^field_docstrings]: See [JuliaLang/julia#39825](https://github.com/JuliaLang/julia/issues/39825).
+
+Strings whose value is used, such as the last expression of a function body,
+are not reported. Neither are strings in `begin` blocks passed to macros, since
+macros may give them a meaning (e.g. argument names in
+`ArgParse.@add_arg_table!`), nor string macro calls other than `raw"..."`,
+which may have side effects (e.g. `py"..."`).
+
+!!! tip "Code action available"
+    The "Attach docstring to the following definition" code action prefixes the
+    docstring with `@doc` and removes the blank lines in between as needed.
+    It is not offered when comments separate the docstring from the next
+    expression, since the intended target is then unclear, nor for a string at
+    the start of a file or module, which usually describes the whole file.
+
+!!! note "Notebook mode"
+    Top-level strings are not reported in [notebooks](@ref notebook), where
+    the last expression of a cell is displayed.
+
 #### [Unused argument (`lowering/unused-argument`)](@id diagnostic/reference/lowering/unused-argument)
 
 **Default severity**: `Information`
@@ -994,9 +1120,8 @@ export bar, @foo  # Names are not sorted alphabetically (JETLS lowering/unsorted
 
 ### [Top-level diagnostic (`toplevel/*`)](@id diagnostic/reference/toplevel)
 
-Top-level diagnostics are reported while JETLS loads your code during the
-on-save full analysis, at line granularity
-(see [Code loading](@ref diagnostic/stage/toplevel)).
+Top-level diagnostics are reported by full analysis about how it loads your
+code, at line granularity (see [Code loading](@ref diagnostic/stage/toplevel)).
 
 #### [Top-level error (`toplevel/error`)](@id diagnostic/reference/toplevel/error)
 
@@ -1013,24 +1138,28 @@ Common examples include:
   dependencies (the most frequent cause)
 - Type definition failures
 - References to undefined names at the top level
+- Code that cannot be lowered or whose macros fail to expand
 - Other errors during module evaluation
 
 Examples:
 
 ```julia
-struct ToplevelError  # UndefVarError: `Unexisting` not defined in `JETLS`
+struct ToplevelError  # JET could not execute this top-level code: UndefVarError: `Unexisting` not defined in `JETLS`
+                      #
                       # Suggestion: check for spelling errors or missing imports. (JETLS toplevel/error)
     x::Unexisting
 end
 
-using UnexistingPkg  # Package JETLS does not have UnexistingPkg in its dependencies:
+using UnexistingPkg  # Package JETLS does not have UnexistingPkg in its dependencies.
                      # [...]
                      # (JETLS toplevel/error)
 ```
 
-These errors prevent JETLS from fully analyzing your code, which means
-[Inference diagnostic](@ref diagnostic/reference/inference) will not be
-available until the top-level errors are resolved.
+JETLS stops loading your code as soon as it encounters a top-level error, so
+code after the error is not analyzed, and
+[Inference diagnostic](@ref diagnostic/reference/inference) for method bodies
+will not be available until the error is resolved. Fixing the error may reveal
+another one later in the code.
 
 !!! tip "Check the package environment"
     A common case is an error indicating that a specific dependency cannot be
@@ -1049,8 +1178,11 @@ A specialized top-level error reported when JET needs the actual value of a
 top-level binding while loading code for analysis, but the binding was not
 concretized. This often happens when a global binding is used to define a type
 or method and JET cannot determine the binding's concrete value during analysis.
-This diagnostic is specific to script-mode analysis. Package analysis uses the
-catch-all concretization pattern `:(x_)` and evaluates all top-level code.
+As with [`toplevel/error`](@ref diagnostic/reference/toplevel/error), JETLS
+does not analyze the statement that needs the value or any code after it.
+This diagnostic is specific to [script analysis](@ref analysis/full/modes/script).
+Package analysis uses the catch-all concretization pattern `:(x_)` and
+evaluates all top-level code.
 
 For example, suppose `scripts/random-type.jl` contains:
 
@@ -1109,14 +1241,14 @@ configuration to allow JETLS to evaluate the assignment during full analysis.
     load_types()
 
     struct Container
-        value::SomeType  # UndefVarError: `SomeType` not defined in `Main`
+        value::SomeType  # JET could not execute this top-level code: UndefVarError: `SomeType` not defined in `Main`
                          # [...]
                          # (JETLS toplevel/error)
     end
     ```
 
     Normal Julia execution calls `load_types()` and imports `SomeType`. During
-    script-mode analysis, however, the call is not evaluated unless selected for
+    script analysis, however, the call is not evaluated unless selected for
     concretization. Because the binding would be imported indirectly through
     `@eval`, JET cannot associate the undefined `SomeType` with the unevaluated
     call and reports the generic `toplevel/error` instead.
@@ -1134,10 +1266,10 @@ configuration to allow JETLS to evaluate the assignment during full analysis.
 **Default severity**: `Error`
 
 Reported when concretely executing a single top-level statement exceeds the
-configured time limit (10 seconds by default). JETLS stops execution and skips
-abstract analysis of that statement. Definitions not reached before the timeout
-may be missing from subsequent analysis, leaving results incomplete. The
-diagnostic includes a stack trace when available.
+configured time limit (10 seconds by default). JETLS stops execution there and,
+as with [`toplevel/error`](@ref diagnostic/reference/toplevel/error), does not
+analyze that statement or any code after it. The diagnostic includes a stack
+trace when available.
 This is distinct from
 [`toplevel/missing-concretization`](@ref diagnostic/reference/toplevel/missing-concretization):
 the code was being executed, rather than a required binding value being
@@ -1281,11 +1413,59 @@ end
 
 [^nospecialize_tip]: For such cases, you can add `@nospecialize` to the use-site methods to allow them to handle abstract data types while avoiding excessive compilation.
 
+#### [Unsupported feature (`toplevel/unsupported-feature`)](@id diagnostic/reference/toplevel/unsupported-feature)
+
+**Default severity**: `Warning`
+
+Reported when JETLS loads code that uses a feature it does not support. JETLS
+continues the analysis with an approximation of the code, so diagnostics for
+the affected code may not match its actual behavior.
+
+Currently, this is reported for `include` calls with a `mapexpr` function:
+JETLS analyzes the included file without applying the function.
+
+Example:
+
+```julia
+include(rewrite, "generated.jl")  # JET analyzes this code approximately because it uses an unsupported feature.
+                                  #
+                                  # JET does not support `include(mapexpr::Function, filename::String)`.
+                                  # The included file is analyzed without applying `mapexpr`.
+                                  # (JETLS toplevel/unsupported-feature)
+```
+
+#### [Analysis skipped (`toplevel/analysis-skipped`)](@id diagnostic/reference/toplevel/analysis-skipped)
+
+**Default severity**: `Warning`
+
+Reported at the top of a file that JETLS skips in full analysis. JETLS reports
+no full-analysis diagnostics for the file, nor lowering diagnostics that
+require the module context of the file, such as
+[`lowering/undef-global-var`](@ref diagnostic/reference/lowering/undef-global-var)
+and [`lowering/unused-import`](@ref diagnostic/reference/lowering/unused-import)
+(see [Files without full analysis](@ref analysis/live/fallback)).
+
+Currently, this is reported for package extension files (files under the `ext`
+directory of a package), since JETLS does not support full analysis of package
+extensions yet.
+
+Example (`ext/MyPkgSomeDepExt.jl`):
+
+```julia
+module MyPkgSomeDepExt  # JETLS does not support full analysis of package extensions yet.
+                        #
+                        # This file is not analyzed, so diagnostics that require full analysis are not reported for it.
+                        # (JETLS toplevel/analysis-skipped)
+
+using MyPkg, SomeDep
+
+end
+```
+
 ### [Inference diagnostic (`inference/*`)](@id diagnostic/reference/inference)
 
-Inference diagnostics come from JET.jl's type inference during the on-save
-full analysis, at line granularity
-(see [Type inference](@ref diagnostic/stage/inference)).
+Inference diagnostics come from JET.jl's type inference during full analysis,
+at line granularity (see [Type inference](@ref diagnostic/stage/inference)).
 
 Each corresponds to a concrete Julia runtime error that JET detects statically,
 before the code runs:
@@ -1565,6 +1745,55 @@ end
 `inference/type-error/non-bool-cond`. It is kept for existing documentation
 links and diagnostic pattern configurations for now, but this compatibility
 support may be removed in a future release.
+
+### [Configuration diagnostic (`config/*`)](@id diagnostic/reference/config)
+
+Configuration diagnostics report issues in the [`.JETLSConfig.toml`](@ref config)
+file (see [Configuration](@ref diagnostic/stage/config)).
+
+The code actions for deprecated settings keep the rest of the file, including
+comments, as it is. When the file has several deprecated settings, the "Fix
+all deprecated settings" code action fixes them at once. When JETLS loads a
+configuration file with deprecated settings, it also lists them in a message
+with a "Fix all" action that applies the same fixes. This works even if your
+editor does not show JETLS diagnostics for TOML files.
+
+#### [Deprecated configuration key (`config/deprecated-key`)](@id diagnostic/reference/config/deprecated-key)
+
+**Default severity**: `Warning`
+
+Reported on a deprecated key of `.JETLSConfig.toml`. JETLS reads a deprecated
+key that has a replacement as the replacement, and ignores one that has none,
+but the key may stop being recognized in a future release.
+
+```toml
+[testrunner]
+executable = "testrunner"  # `testrunner.executable` is deprecated and no longer has any effect; please remove it from your config.
+                           # (JETLS config/deprecated-key)
+```
+
+!!! tip "Code action available"
+    Use the "Remove deprecated `testrunner.executable`" code action to remove
+    the key, along with any table it leaves empty. For a key that has a
+    replacement, the "Replace `…` with `…`" code action moves its value to the
+    new key instead.
+
+#### [Deprecated configuration value (`config/deprecated-value`)](@id diagnostic/reference/config/deprecated-value)
+
+**Default severity**: `Warning`
+
+Reported on a deprecated value of a `.JETLSConfig.toml` setting. JETLS reads
+the value as its replacement, but the value may stop being accepted in a future
+release.
+
+```toml
+[full_analysis]
+auto_instantiate = true  # `true` for `full_analysis.auto_instantiate` is deprecated; use `"always"` instead.
+                         # (JETLS config/deprecated-value)
+```
+
+!!! tip "Code action available"
+    Use the "Replace `true` with `"always"`" code action to replace the value.
 
 ### [TestRunner diagnostic (`testrunner/*`)](@id diagnostic/reference/testrunner)
 

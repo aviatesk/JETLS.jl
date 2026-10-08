@@ -369,13 +369,14 @@ function handle_InitializedNotification(server::Server)
 
     # Load configurations: This needs to be done after the `InitializedNotification` is sent from the client
     # - Load .JETLSConfig.toml configuration
+    loaded_config = nothing
     if !isdefined(state, :root_path)
         @static JETLS_DEV_MODE && @info "`server.state.root_path` is not defined, skip config registration at startup."
     else
         config_path = joinpath(state.root_path, ".JETLSConfig.toml")
         if isfile(config_path)
             # Null callback: Don't notify even if values different from defaults are loaded initially
-            load_file_config!(Returns(nothing), server, config_path)
+            loaded_config = config_path => load_file_config!(Returns(nothing), server, config_path)
         end
     end
     # - Load LSP configuration
@@ -488,7 +489,7 @@ function handle_InitializedNotification(server::Server)
     end
 
     if supports(server, :textDocument, :codeAction, :dynamicRegistration)
-        push!(registrations, code_action_registration())
+        push!(registrations, code_action_registration(server))
         @static JETLS_DEV_MODE && @info "Dynamically registering 'textDocument/codeAction' upon `InitializedNotification`"
     else
         # NOTE If codeAction's `dynamicRegistration` is not supported,
@@ -573,6 +574,12 @@ function handle_InitializedNotification(server::Server)
     end
 
     register(server, registrations)
+
+    if loaded_config !== nothing
+        config_path, deprecation_warnings = loaded_config
+        report_deprecated_configs(server, config_path, deprecation_warnings)
+        update_config_diagnostics!(server, filepath2uri(config_path))
+    end
 
     @static JETLS_DEV_MODE && show_initialization_info(server, "Initialized JETLS with the following setup:")
 end

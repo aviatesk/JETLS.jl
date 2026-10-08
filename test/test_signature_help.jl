@@ -16,9 +16,11 @@ function siginfos(
     clean_code, positions = JETLS.get_text_and_positions(code; kwargs...)
     @assert length(positions) == 1 "siginfos requires exactly one cursor marker"
     position = only(positions)
-    fi = JETLS.FileInfo(0, clean_code, @__FILE__)
+    fi = JETLS.FileInfo(0, clean_code, @__FILE__; cache_tree0 = true)
     b = JETLS.xy_to_offset(fi, position)
-    return JETLS.cursor_siginfos(fi, b, context_module; no_active_parameter_support)
+    result = JETLS.cursor_siginfos(fi, b, context_module; no_active_parameter_support)
+    JETLS.check_syntax_tree0(fi)
+    return result
 end
 
 n_si(args...) = length(siginfos(args...))
@@ -636,7 +638,7 @@ end
 end
 
 @testset "operator-like methods" begin
-    # `<:` and `>:` signatures parse as their own syntax kind (not K"call"),
+    # `<:` and `>:` signatures parse as their own syntax head (not `:call`),
     # which previously caused `flatten_args` to error.
     @test siginfos(Main, "<:(│)") isa Vector
     @test siginfos(Main, ">:(│)") isa Vector

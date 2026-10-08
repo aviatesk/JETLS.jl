@@ -36,6 +36,35 @@ using JETLS.Glob
             params = scan_live_diagnostics!(server, readmsg)[uri]
             @test params.version == 1
             @test any(d -> d.source == JETLS.DIAGNOSTIC_SOURCE_LIVE, params.diagnostics)
+            @test all(d -> d.code == JETLS.SYNTAX_PARSE_ERROR_CODE, params.diagnostics)
+        end
+    end
+end
+
+@testset "syntax warning diagnostics" begin
+    script_code = """
+    x = 1e-400
+    function foo()
+        y = 1
+        return nothing
+    end
+    """
+
+    withscript(script_code) do script_path
+        uri = filepath2uri(script_path)
+        withserver() do (; server, writereadmsg, readmsg)
+            (; raw_res) = writereadmsg(
+                make_DidOpenTextDocumentNotification(uri, script_code))
+            @test raw_res isa PublishDiagnosticsNotification
+
+            params = scan_live_diagnostics!(server, readmsg)[uri]
+            let diag = only(filter(d -> d.code == JETLS.SYNTAX_PARSE_WARNING_CODE, params.diagnostics))
+                @test diag.severity == DiagnosticSeverity.Warning
+                @test diag.range.start.line == 0
+            end
+            @test !any(d -> d.code == JETLS.SYNTAX_PARSE_ERROR_CODE, params.diagnostics)
+            # parse warnings don't short-circuit the lowering-based analyses
+            @test any(d -> d.code == JETLS.LOWERING_UNUSED_LOCAL_CODE, params.diagnostics)
         end
     end
 end
@@ -122,10 +151,10 @@ end
             """
         (; result) = analyze_concretization(code, filename; mode, timeout)
         if timeout == "inf"
-            @test isempty(result.res.toplevel_error_reports)
+            @test isnothing(result.res.toplevel_error_report)
             continue
         end
-        report = only(result.res.toplevel_error_reports)
+        report = result.res.toplevel_error_report
         @test report isa JETLS.JET.ConcretizationTimeoutErrorReport
         @test report.timeout == timeout
         if mode === :script
@@ -151,6 +180,7 @@ end
             @test diag.source == JETLS.DIAGNOSTIC_SOURCE_SAVE
             @test diag.range == JETLS.line_range(report.line)
             @test occursin(string(timeout), diag.message)
+            @test occursin("`concretization_timeout`", first(eachsplit(diag.message, '\n')))
             mode === :script && @test occursin("sleep", diag.message)
         end
     end
@@ -170,7 +200,7 @@ end
             """
         filename = joinpath(@__DIR__, "concretization-guarded.jl")
         (; result, context) = analyze_concretization(code, filename)
-        @test isempty(result.res.toplevel_error_reports)
+        @test isnothing(result.res.toplevel_error_report)
         @test isdefined(context, :Guarded)
     end
 
@@ -197,11 +227,11 @@ end
             @test Base.invokelatest(isdefined, context, :completed) == (native || timeout == "inf")
             @test isempty(result.res.inference_error_reports)
             if timeout == "inf"
-                @test isempty(result.res.toplevel_error_reports)
+                @test isnothing(result.res.toplevel_error_report)
                 @test isdefined(context, :Timed)
                 continue
             end
-            report = only(result.res.toplevel_error_reports)
+            report = result.res.toplevel_error_report
             @test report isa JETLS.JET.ConcretizationTimeoutErrorReport
             @test report.timeout == timeout
             @test report.file == filename
@@ -280,6 +310,8 @@ function get_included_diagnostics(
     end
     return diagnostics
 end
+
+unwrapped_message(diag::Diagnostic) = join(split(diag.message), ' ')
 
 function concretization_settings(path::Union{Nothing,String} = nothing)
     pattern = Dict{String,Any}("pattern" => "USE_PULSE = x_")
@@ -366,12 +398,16 @@ end
             @test diag.data.name == "USE_PULSE"
             @test diag.data.pattern == "USE_PULSE = x_"
             @test JETLS.paths_equal(diag.data.assignment_file, script_path)
-            @test occursin("assignment at $expected_path:1", diag.message)
-            @test occursin("`full_analysis.concretization_patterns`", diag.message)
-            @test occursin("`.JETLSConfig.toml`", diag.message)
-            @test occursin("preferred quick fix", diag.message)
-            @test occursin("derived pattern `USE_PULSE = x_`", diag.message)
-            @test !occursin("report_file", diag.message)
+            summary, _ = split(diag.message, "\n\n"; limit=2)
+            @test endswith(summary, "must have a concrete value for JETLS top-level analysis.")
+            @test !occursin('\n', summary)
+            message = unwrapped_message(diag)
+            @test occursin("assignment at `$expected_path:1`", message)
+            @test occursin("`full_analysis.concretization_patterns`", message)
+            @test occursin("`.JETLSConfig.toml`", message)
+            @test occursin("preferred quick fix", message)
+            @test occursin("derived pattern `USE_PULSE = x_`", message)
+            @test !occursin("report_file", message)
         end
     end
 
@@ -396,10 +432,11 @@ end
             diagnostics = get_open_diagnostics(dir, script_path, code)
             diag = only(filter(d -> d.code == JETLS.TOPLEVEL_MISSING_CONCRETIZATION_CODE, diagnostics))
             @test diag.data === nothing
-            @test occursin("`.JETLSConfig.toml` manually", diag.message)
-            @test occursin("could not derive a safe pattern", diag.message)
+            message = unwrapped_message(diag)
+            @test occursin("`.JETLSConfig.toml` manually", message)
+            @test occursin("could not derive a safe pattern", message)
             # the `let` statement, while the diagnostic is anchored at the use site
-            @test occursin("assignment at $expected_path:1", diag.message)
+            @test occursin("assignment at `$expected_path:1`", message)
             @test diag.range.start.line == 4
         end
     end
@@ -642,6 +679,143 @@ end
     end
 end
 
+@testset "top-level error stops full analysis" begin
+    let code = """
+        sin("before")
+        using UnexistingPkg
+        sin("after")
+        """
+        withscript(code) do script_path
+            diagnostics = get_open_diagnostics(dirname(script_path), script_path, code)
+            diag = only(filter(diag -> diag.code == JETLS.TOPLEVEL_ERROR_CODE, diagnostics))
+            @test diag.range.start.line == 1
+            @test occursin("UnexistingPkg", first(eachsplit(diag.message, '\n')))
+            # diagnostics from statements processed before the error are kept
+            diag = only(filter(diag -> diag.code == JETLS.INFERENCE_METHOD_ERROR_CODE, diagnostics))
+            @test diag.range.start.line == 0
+        end
+    end
+end
+
+@testset "lowering and macro expansion errors from JET are reported as top-level errors" begin
+    let code = """
+        sin("before")
+        '*' -> 1
+        sin("after")
+        """
+        withscript(code) do script_path
+            diagnostics = get_open_diagnostics(dirname(script_path), script_path, code)
+            diag = only(filter(diag -> diag.code == JETLS.TOPLEVEL_ERROR_CODE, diagnostics))
+            @test diag.range.start.line == 1
+            diag = only(filter(diag -> diag.code == JETLS.INFERENCE_METHOD_ERROR_CODE, diagnostics))
+            @test diag.range.start.line == 0
+        end
+    end
+
+    let code = """
+        macro failing()
+            error("failing macro")
+        end
+        sin("before")
+        @failing
+        sin("after")
+        """
+        withscript(code) do script_path
+            diagnostics = get_open_diagnostics(dirname(script_path), script_path, code)
+            diag = only(filter(diag -> diag.code == JETLS.TOPLEVEL_ERROR_CODE, diagnostics))
+            @test diag.range.start.line == 4
+            @test occursin("failing macro", diag.message)
+            diag = only(filter(diag -> diag.code == JETLS.INFERENCE_METHOD_ERROR_CODE, diagnostics))
+            @test diag.range.start.line == 3
+        end
+    end
+end
+
+@testset "parser warnings do not block reanalysis" begin
+    code = """
+        x = 1e-400
+        sin("first")
+        """
+    withscript(code) do script_path
+        uri = filepath2uri(script_path)
+        is_method_error(diag) = diag.code == JETLS.INFERENCE_METHOD_ERROR_CODE
+        withserver() do (; writereadmsg)
+            let (; raw_res) = writereadmsg(make_DidOpenTextDocumentNotification(uri, code))
+                @test raw_res isa PublishDiagnosticsNotification
+                @test only(filter(is_method_error, raw_res.params.diagnostics)).range.start.line == 1
+            end
+            new_code = """
+                x = 1e-400
+
+                sin("second")
+                """
+            let (; raw_res) = writereadmsg(DidSaveTextDocumentNotification(;
+                    params = DidSaveTextDocumentParams(;
+                        textDocument = TextDocumentIdentifier(; uri),
+                        text = new_code)))
+                @test raw_res isa PublishDiagnosticsNotification
+                @test only(filter(is_method_error, raw_res.params.diagnostics)).range.start.line == 2
+            end
+        end
+    end
+end
+
+@testset "unsupported feature diagnostic" begin
+    mktempdir() do root_path
+        main_path = joinpath(root_path, "main.jl")
+        write(joinpath(root_path, "included.jl"), "sin(\"included\")\n")
+        code = """
+            include(identity, "included.jl")
+            """
+        write(main_path, code)
+        main_uri = filepath2uri(main_path)
+        withserver(; rootUri = filepath2uri(root_path)) do (; writereadmsg)
+            (; raw_res) = writereadmsg(make_DidOpenTextDocumentNotification(main_uri, code); read=2)
+            main_response = only(filter(raw_res) do response
+                return response isa PublishDiagnosticsNotification &&
+                    response.params.uri == main_uri
+            end)
+            diag = only(main_response.params.diagnostics)
+            @test diag.code == JETLS.TOPLEVEL_UNSUPPORTED_FEATURE_CODE
+            @test diag.severity == DiagnosticSeverity.Warning
+            @test diag.source == JETLS.DIAGNOSTIC_SOURCE_SAVE
+            @test diag.range.start.line == 0
+            @test occursin("mapexpr", diag.message)
+        end
+    end
+end
+
+@testset "analysis skipped diagnostic for package extensions" begin
+    mktempdir() do root_path
+        write(joinpath(root_path, "Project.toml"), "name = \"TestAnalysisSkipped\"\n")
+        mkpath(joinpath(root_path, "ext"))
+        ext_path = joinpath(root_path, "ext", "TestAnalysisSkippedExt.jl")
+        code = """
+            module TestAnalysisSkippedExt
+            using TestAnalysisSkipped: TestAnalysisSkipped
+            using WeakDep: WeakDep
+            TestAnalysisSkipped.f(x::WeakDep.T) = x
+            end
+            """
+        write(ext_path, code)
+        ext_uri = filepath2uri(ext_path)
+        withserver(; rootUri = filepath2uri(root_path)) do (; server, writereadmsg)
+            (; raw_res) = writereadmsg(make_DidOpenTextDocumentNotification(ext_uri, code))
+            @test raw_res isa PublishDiagnosticsNotification
+            @test raw_res.params.uri == ext_uri
+            diag = only(raw_res.params.diagnostics)
+            @test diag.code == JETLS.TOPLEVEL_ANALYSIS_SKIPPED_CODE
+            @test diag.severity == DiagnosticSeverity.Warning
+            @test diag.source == JETLS.DIAGNOSTIC_SOURCE_SAVE
+            @test diag.range.start.line == 0
+            analysis_info = JETLS.get_analysis_info(server.state.analysis_manager, ext_uri)
+            @test analysis_info.entry isa JETLS.PackageExtensionAnalysisEntry
+            @test !JETLS.has_analyzed_context(server.state, ext_uri)
+            @test JETLS.get_context_module(server.state, ext_uri, Position(; line=0, character=0)) === JETLS.FallbackAnalysisContext
+        end
+    end
+end
+
 @testset "method overwrite diagnostic" begin
     # bodies that only return a constant, as in `f() = 1`, carry no line information
     let code = """
@@ -797,6 +971,32 @@ end
                 end
             end
             @test found_diagnostic4
+        end
+    end
+end
+
+@testset "abstract field diagnostic for closures" begin
+    let code = """
+        function capture(@nospecialize x)
+            return () -> x
+        end
+        function capture_in_do_block(xs)
+            filter(xs) do @nospecialize x
+                any(1:3) do i
+                    x == i
+                end
+            end
+        end
+        generator(@nospecialize(x), xs) = (x + y for y in xs)
+        struct AbstractFieldStruct
+            x::Any
+        end
+        """
+        withscript(code) do script_path
+            diagnostics = get_open_diagnostics(dirname(script_path), script_path, code)
+            let diag = only(filter(diag -> diag.code == JETLS.TOPLEVEL_ABSTRACT_FIELD_CODE, diagnostics))
+                @test occursin("AbstractFieldStruct", diag.message)
+            end
         end
     end
 end
@@ -1128,6 +1328,7 @@ end
     pkg_code = """
     module TestWorkspaceDiagnosticPull
     using Base: sum
+    bad() = sin("x")
     include("util.jl")
     end # module TestWorkspaceDiagnosticPull
     """
@@ -1162,6 +1363,7 @@ end
             @test raw_res isa PublishDiagnosticsNotification
             @test raw_res.params.uri == main_uri
             @test !has_unused_import(raw_res.params)
+            @test any(d -> d.code == "inference/method-error", raw_res.params.diagnostics)
             @test !haskey(JETLS.load(published), main_uri)
             @test isempty(scan_live_diagnostics!(server, readmsg))
 
@@ -1342,12 +1544,81 @@ end
     end
 end
 
+@testset "opening a file with cached full-analysis diagnostics" begin
+    pkg_code = """
+    module TestCachedDiagnosticOpen
+    bad() = sin("x")
+    end
+    """
+    withpackage("TestCachedDiagnosticOpen", pkg_code) do pkg_path
+        uri = filepath2uri(joinpath(pkg_path, "src", "TestCachedDiagnosticOpen.jl"))
+        rootUri = filepath2uri(pkg_path)
+        settings = Dict{String,Any}("diagnostic" => Dict{String,Any}("all_files" => false))
+        @testset "pull_diagnostics=$pull_diagnostics" for pull_diagnostics in (false, true)
+            withserver(; rootUri, settings, pull_diagnostics) do (;
+                    server, readmsg, writereadmsg, id_counter)
+                # Analyze the package while the file is closed
+                JETLS.request_analysis!(server, uri, #=invalidate=#false; wait = true)
+                manager = server.state.analysis_manager
+                result = JETLS.get_analysis_info(manager, uri)
+                @test result isa JETLS.AnalysisResult
+                @test any(d -> d.code == "inference/method-error", result.uri2diagnostics[uri])
+                generation = JETLS.get_generation(manager, result.entry)
+                @test !isready(server.callback.sent_queue)
+                @test isempty(scan_live_diagnostics!(server, readmsg))
+
+                for _ in 1:2
+                    # Call the handler synchronously so a missing publish fails without
+                    # waiting for a message that will never arrive.
+                    JETLS.handle_DidOpenTextDocumentNotification(
+                        server, make_DidOpenTextDocumentNotification(uri, pkg_code))
+                    JETLS.request_analysis!(server, uri, #=invalidate=#false; wait = true)
+                    msgs = Any[]
+                    while isready(server.callback.sent_queue)
+                        push!(msgs, readmsg(; check = false).raw_msg)
+                    end
+                    @test length(msgs) == 1
+                    for msg in msgs
+                        @test msg isa PublishDiagnosticsNotification
+                        @test msg.params.uri == uri
+                        @test msg.params.version === nothing
+                        @test any(msg.params.diagnostics) do d
+                            d.code == "inference/method-error" &&
+                                d.source == JETLS.DIAGNOSTIC_SOURCE_SAVE
+                        end
+                    end
+                    @test JETLS.get_analysis_info(manager, uri) === result
+                    @test JETLS.get_generation(manager, result.entry) == generation
+
+                    if pull_diagnostics
+                        let id = id_counter[] += 1
+                            (; raw_res) = writereadmsg(DocumentDiagnosticRequest(;
+                                id,
+                                params = DocumentDiagnosticParams(;
+                                    textDocument = TextDocumentIdentifier(; uri))))
+                            @test raw_res isa DocumentDiagnosticResponse
+                            @test raw_res.result isa RelatedFullDocumentDiagnosticReport
+                            @test isempty(raw_res.result.items)
+                        end
+                        @test isempty(scan_live_diagnostics!(server, readmsg))
+                    end
+
+                    (; raw_res) = writereadmsg(make_DidCloseTextDocumentNotification(uri))
+                    @test raw_res isa PublishDiagnosticsNotification
+                    @test raw_res.params.uri == uri
+                    @test isempty(raw_res.params.diagnostics)
+                end
+            end
+        end
+    end
+end
+
 @testset "reopening a file closed with `all_files=false` republishes it" begin
     script_code = "func(x) = nothing\n"
     withscript(script_code) do script_path
         uri = filepath2uri(script_path)
         settings = Dict{String,Any}("diagnostic" => Dict{String,Any}("all_files" => false))
-        withserver(; settings) do (; server, writemsg, writereadmsg, readmsg)
+        withserver(; settings) do (; server, writereadmsg, readmsg)
             (; raw_res) = writereadmsg(make_DidOpenTextDocumentNotification(uri, script_code))
             @test raw_res isa PublishDiagnosticsNotification
             let params = scan_live_diagnostics!(server, readmsg)[uri]
@@ -1359,10 +1630,12 @@ end
             @test raw_res isa PublishDiagnosticsNotification
             @test isempty(raw_res.params.diagnostics)
 
-            # reopened at the same version before any scan ran (the cached analysis
-            # result is reused, so the open itself publishes nothing)
-            writemsg(make_DidOpenTextDocumentNotification(uri, script_code))
-            wait_for_file_cache_version(server.state, uri, 1)
+            # Reopening restores the cached full-analysis diagnostics before the live
+            # scan republishes the unused argument, even at the same document version.
+            (; raw_res) = writereadmsg(make_DidOpenTextDocumentNotification(uri, script_code))
+            @test raw_res isa PublishDiagnosticsNotification
+            @test raw_res.params.uri == uri
+            @test isempty(raw_res.params.diagnostics)
             let params = scan_live_diagnostics!(server, readmsg)[uri]
                 @test params.version == 1
                 @test length(params.diagnostics) == 1

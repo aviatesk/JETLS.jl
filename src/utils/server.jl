@@ -408,12 +408,14 @@ function get_context_info(state::ServerState, uri::URI, pos::Position; lookup_fu
     return (; context_module, world, analyzer, postprocessor)
 end
 
-get_context_module(::Nothing, ::URI, ::Position) = Main
+get_context_module(::Nothing, ::URI, ::Position) = FallbackAnalysisContext
 # Use `@something` instead of `something` due to https://github.com/JuliaLang/julia/pull/60857
 # `something` can be used after 1.12.5
-get_context_module(oos::OutOfScope, ::URI, ::Position) = something(oos.module_context, Main)
+get_context_module(oos::OutOfScope, ::URI, ::Position) =
+    something(oos.module_context, FallbackAnalysisContext)
 function get_context_module(analysis_result::AnalysisResult, uri::URI, pos::Position)
-    safi = @something analyzed_file_info(analysis_result, uri) return Main
+    _has_analyzed_context(analysis_result, uri) || return FallbackAnalysisContext
+    safi = analyzed_file_info(analysis_result, uri)::JET.AnalyzedFileInfo
     curline = Int(pos.line) + 1
     curmod = Main
     currange = 0:typemax(Int)
@@ -458,7 +460,7 @@ function has_analyzed_context(state::ServerState, uri::URI; lookup_func=nothing)
     return _has_analyzed_context(analysis_info, lookup_uri)
 end
 _has_analyzed_context(::Nothing, ::URI) = false
-# TODO Remove `JETLSTestModule` & `FallbackAnalysisContext` entirely.
+# TODO Remove `JETLSTestModule` entirely.
 # Pseudo contexts supply imports, not real analysis, so context-requiring features
 # (e.g. `analyze_unused_imports!`) must be skipped even though `module_context` is set.
 _has_analyzed_context(outofscope::OutOfScope, ::URI) =
@@ -466,6 +468,7 @@ _has_analyzed_context(outofscope::OutOfScope, ::URI) =
     outofscope.module_context !== JETLSTestModule &&
     outofscope.module_context !== FallbackAnalysisContext
 _has_analyzed_context(analysis_result::AnalysisResult, uri::URI) =
+    !(analysis_result.entry isa PackageExtensionAnalysisEntry) &&
     analyzed_file_info(analysis_result, uri) !== nothing
 
 function collect_workspace_uris(server::Server)

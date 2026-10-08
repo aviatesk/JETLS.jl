@@ -390,9 +390,9 @@ end
                 binding.name == "args" && binding.kind === :argument && any(o->o.kind===:use, occurrences)
             end
         end
-        # Compound-assignment operators (`+=`, `-=`, ...) are parsed as
-        # `K"unknown_head"` with a `name_val` attribute that JuliaLowering's
-        # validator requires. `remove_macrocalls` must preserve `name_val` when
+        # Compound-assignment operators (`+=`, `-=`, ...) are parsed into nodes
+        # whose head is the operator itself (e.g. `:+=`), which JuliaLowering's
+        # validator requires. `remove_macrocalls` must preserve the head when
         # reconstructing the parent node, otherwise lowering fails.
         with_binding_occurrences("""
             function func()
@@ -1098,8 +1098,8 @@ end
     end
 
     # `prepare_inert_template` masks interpolations before re-lowering generated
-    # quoted code. Rebuilding ancestor nodes must preserve `name_val` metadata
-    # (e.g. `K"unknown_head"` for compound assignments such as `+=`), or lowering
+    # quoted code. Rebuilding ancestor nodes must preserve their heads
+    # (e.g. the operator-specific `:+=` head of compound assignments), or lowering
     # fails before globals in the quote can be recorded.
     @testset "inert content with compound assignment + interpolation" begin
         let boccs = get_full_binding_occurrences("""
@@ -1462,8 +1462,8 @@ end
         state = JETLS.ServerState()
         uri = filepath2uri(@__FILE__)
         lookup_func = Returns(JETLS.OutOfScope(lowering_module))
-        old_fi = JETLS.FileInfo(1, "old = 1\nold\n", uri)
-        new_fi = JETLS.FileInfo(1, "new = 1\nnew\n", uri)
+        old_fi = JETLS.FileInfo(1, "old = 1\nold\n", uri; cache_tree0 = true)
+        new_fi = JETLS.FileInfo(1, "new = 1\nnew\n", uri; cache_tree0 = true)
         for st0 in JS.children(JETLS.build_syntax_tree(old_fi))
             JETLS.get_binding_occurrences!(state, uri, old_fi, st0; lookup_func)
         end
@@ -1476,14 +1476,16 @@ end
         @test updated_fi.identity == new_fi.identity
         @test JETLS.get_binding_occurrences!(
             state, uri, updated_fi, st0; lookup_func) === occurrences
+        JETLS.check_syntax_tree0(old_fi)
+        JETLS.check_syntax_tree0(new_fi)
     end
 
     @testset "global summary" begin
         state = JETLS.ServerState()
         uri = filepath2uri(@__FILE__)
         lookup_func = Returns(JETLS.OutOfScope(lowering_module))
-        old_fi = JETLS.FileInfo(1, "old = 1", uri)
-        new_fi = JETLS.FileInfo(1, "new = 1", uri)
+        old_fi = JETLS.FileInfo(1, "old = 1", uri; cache_tree0 = true)
+        new_fi = JETLS.FileInfo(1, "new = 1", uri; cache_tree0 = true)
         (; ctx3, binding) = JETLS.select_target_binding(
             JETLS.build_syntax_tree(old_fi), 1, lowering_module, Base.get_world_counter())
         binfo = JL.get_binding(ctx3, binding)
@@ -1497,6 +1499,8 @@ end
         @test isempty(JETLS.load(state.binding_occurrences_cache)[uri].by_range)
         @test isempty(JETLS.find_global_binding_occurrences!(
             state, uri, new_fi, binfo; lookup_func))
+        JETLS.check_syntax_tree0(old_fi)
+        JETLS.check_syntax_tree0(new_fi)
     end
 end
 

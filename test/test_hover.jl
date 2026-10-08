@@ -596,12 +596,12 @@ end
 
 @testset HierarchicalTestSet "'hover' on call-like surfaces" begin
     # Selector regression: `[1, 2, 3]│` (cursor right after `]`) used to miss
-    # because `K"vect"` wasn't in `select_enclosing_call`'s kind set.
+    # because `:vect` wasn't in `select_enclosing_call`'s head set.
     @testset "array literal" begin
         hover_test("[1, 2, 3]│", "Vector{$Int}")
     end
 
-    # Exercises both the `K"typed_comprehension"` selector extension and
+    # Exercises both the `:typed_comprehension` selector extension and
     # `type_for_typed_comprehension`'s `<: Array` filter (which picks the
     # `Array{T,N}(undef, …)` allocation out of the inlined-loop scaffolding).
     @testset "typed comprehension" begin
@@ -610,7 +610,7 @@ end
 end
 
 @testset "indexing expression resolves to element function" begin
-    # `s[2]│` is a `K"ref"` (lowering to `getindex`); const-prop yields
+    # `s[2]│` is a `:ref` (lowering to `getindex`); const-prop yields
     # `Core.Const(cos)`, and the source `s[2]` doesn't contain "cos" so
     # the header announces the resolved function's singleton type.
     hover_test("""

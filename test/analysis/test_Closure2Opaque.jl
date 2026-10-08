@@ -12,7 +12,7 @@ module lowering_module end
 # tests can assert structural facts (e.g. an OC was actually emitted).
 function rewrite_lower_eval(code::AbstractString)
     context_module = lowering_module
-    fi = JETLS.FileInfo(1, code, @__FILE__)
+    fi = JETLS.FileInfo(1, code, @__FILE__; cache_tree0 = true)
     st0_top = JETLS.build_syntax_tree(fi)
     last_value = Ref{Any}(nothing)
     last_st3_oc = Ref{Union{JETLS.SyntaxTree,Nothing}}(nothing)
@@ -29,6 +29,7 @@ function rewrite_lower_eval(code::AbstractString)
         last_st3_oc[] = st3_oc
         return nothing
     end
+    JETLS.check_syntax_tree0(fi)
     return (last_value[], last_st3_oc[])
 end
 
@@ -39,7 +40,7 @@ end
 # rewrite did NOT fire for this shape".
 function rewrite_only(code::AbstractString)
     context_module = lowering_module
-    fi = JETLS.FileInfo(1, code, @__FILE__)
+    fi = JETLS.FileInfo(1, code, @__FILE__; cache_tree0 = true)
     st0_top = JETLS.build_syntax_tree(fi)
     last_st3_oc = Ref{Union{JETLS.SyntaxTree,Nothing}}(nothing)
     world = Base.get_world_counter()
@@ -50,13 +51,14 @@ function rewrite_only(code::AbstractString)
         last_st3_oc[] = rewrite_local_closures_to_opaque(ctx3, st3)
         return nothing
     end
+    JETLS.check_syntax_tree0(fi)
     return last_st3_oc[]
 end
 
-# Count `K"_opaque_closure"` nodes in `tree`. Used to verify the rewrite emits
+# Count `:_opaque_closure` nodes in `tree`. Used to verify the rewrite emits
 # exactly one OC per source-level closure (no synthetic duplication).
 function count_opaque_closures(tree::JETLS.SyntaxTree)
-    n = JS.kind(tree) === JS.K"_opaque_closure" ? 1 : 0
+    n = JS.head(tree) === :_opaque_closure ? 1 : 0
     if !JS.is_leaf(tree)
         for c in JS.children(tree)
             n += count_opaque_closures(c)
@@ -169,7 +171,7 @@ end
 @testset "return type annotation" begin
     # Literal `::RT` on the closure: native `f(y)::T = body` lowers to
     # `convert(T, body)::T`, and the rewrite preserves that by passing the
-    # whole `lambda` subtree into `K"_opaque_closure"` — we don't use OC's
+    # whole `lambda` subtree into `:_opaque_closure` — we don't use OC's
     # own `rt_lb`/`rt_ub` slots (which would assert without converting).
     let (val, tree) = rewrite_lower_eval("""
             let f(y)::Float64 = 2.0 + y
@@ -326,8 +328,8 @@ end
 
 # Multi-method local closures aren't representable as a single OC, so the rewrite
 # must skip them and let `JL.convert_closures` produce a synthetic struct. JL can
-# place methods in separate inner blocks, so scanning sibling `K"method_defs"`
-# nodes is insufficient. `collect_multi_method_bindings` counts `K"method"` nodes
+# place methods in separate inner blocks, so scanning sibling `:method_defs`
+# nodes is insufficient. `collect_multi_method_bindings` counts `:method` nodes
 # per `ClosureKey` across the tree, allowing both definitions to bypass the rewrite.
 @testset "multi-method local closure should fall through" begin
     let tree = rewrite_only("""
@@ -397,7 +399,7 @@ end
 end
 
 # Multi-method *global* functions (default positional args / kwargs at top level)
-# also produce multiple `K"method"`s for one binding, but they never go through
+# also produce multiple `:method`s for one binding, but they never go through
 # synthetic-struct closure conversion, so they must not seed the propagation:
 # single-method closures inside their bodies stay OC-rewritable.
 @testset "closure inside multi-method global function" begin

@@ -37,7 +37,7 @@ end
 function jldebug(context_module::Module, st0_in::JS.SyntaxTree, stop::Int=5)
     global st0, st1, st2, st3, st4, st5
     global ctx2, ctx3, ctx4, ctx5
-    st0 = JL.rebase_layers(st0_in, context_module, JS.JL_OLD_SYNTAX_VERSION)
+    st0 = JL.rebase_layers(st0_in, context_module)
     (stop -= 1) < 0 && return nothing, st0
     world = Base.get_world_counter()
     st1 = JL.expand_forms_1(st0, world, true)
