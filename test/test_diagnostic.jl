@@ -1328,6 +1328,7 @@ end
     pkg_code = """
     module TestWorkspaceDiagnosticPull
     using Base: sum
+    bad() = sin("x")
     include("util.jl")
     end # module TestWorkspaceDiagnosticPull
     """
@@ -1362,6 +1363,7 @@ end
             @test raw_res isa PublishDiagnosticsNotification
             @test raw_res.params.uri == main_uri
             @test !has_unused_import(raw_res.params)
+            @test any(d -> d.code == "inference/method-error", raw_res.params.diagnostics)
             @test !haskey(JETLS.load(published), main_uri)
             @test isempty(scan_live_diagnostics!(server, readmsg))
 
@@ -1542,12 +1544,81 @@ end
     end
 end
 
+@testset "opening a file with cached full-analysis diagnostics" begin
+    pkg_code = """
+    module TestCachedDiagnosticOpen
+    bad() = sin("x")
+    end
+    """
+    withpackage("TestCachedDiagnosticOpen", pkg_code) do pkg_path
+        uri = filepath2uri(joinpath(pkg_path, "src", "TestCachedDiagnosticOpen.jl"))
+        rootUri = filepath2uri(pkg_path)
+        settings = Dict{String,Any}("diagnostic" => Dict{String,Any}("all_files" => false))
+        @testset "pull_diagnostics=$pull_diagnostics" for pull_diagnostics in (false, true)
+            withserver(; rootUri, settings, pull_diagnostics) do (;
+                    server, readmsg, writereadmsg, id_counter)
+                # Analyze the package while the file is closed
+                JETLS.request_analysis!(server, uri, #=invalidate=#false; wait = true)
+                manager = server.state.analysis_manager
+                result = JETLS.get_analysis_info(manager, uri)
+                @test result isa JETLS.AnalysisResult
+                @test any(d -> d.code == "inference/method-error", result.uri2diagnostics[uri])
+                generation = JETLS.get_generation(manager, result.entry)
+                @test !isready(server.callback.sent_queue)
+                @test isempty(scan_live_diagnostics!(server, readmsg))
+
+                for _ in 1:2
+                    # Call the handler synchronously so a missing publish fails without
+                    # waiting for a message that will never arrive.
+                    JETLS.handle_DidOpenTextDocumentNotification(
+                        server, make_DidOpenTextDocumentNotification(uri, pkg_code))
+                    JETLS.request_analysis!(server, uri, #=invalidate=#false; wait = true)
+                    msgs = Any[]
+                    while isready(server.callback.sent_queue)
+                        push!(msgs, readmsg(; check = false).raw_msg)
+                    end
+                    @test length(msgs) == 1
+                    for msg in msgs
+                        @test msg isa PublishDiagnosticsNotification
+                        @test msg.params.uri == uri
+                        @test msg.params.version === nothing
+                        @test any(msg.params.diagnostics) do d
+                            d.code == "inference/method-error" &&
+                                d.source == JETLS.DIAGNOSTIC_SOURCE_SAVE
+                        end
+                    end
+                    @test JETLS.get_analysis_info(manager, uri) === result
+                    @test JETLS.get_generation(manager, result.entry) == generation
+
+                    if pull_diagnostics
+                        let id = id_counter[] += 1
+                            (; raw_res) = writereadmsg(DocumentDiagnosticRequest(;
+                                id,
+                                params = DocumentDiagnosticParams(;
+                                    textDocument = TextDocumentIdentifier(; uri))))
+                            @test raw_res isa DocumentDiagnosticResponse
+                            @test raw_res.result isa RelatedFullDocumentDiagnosticReport
+                            @test isempty(raw_res.result.items)
+                        end
+                        @test isempty(scan_live_diagnostics!(server, readmsg))
+                    end
+
+                    (; raw_res) = writereadmsg(make_DidCloseTextDocumentNotification(uri))
+                    @test raw_res isa PublishDiagnosticsNotification
+                    @test raw_res.params.uri == uri
+                    @test isempty(raw_res.params.diagnostics)
+                end
+            end
+        end
+    end
+end
+
 @testset "reopening a file closed with `all_files=false` republishes it" begin
     script_code = "func(x) = nothing\n"
     withscript(script_code) do script_path
         uri = filepath2uri(script_path)
         settings = Dict{String,Any}("diagnostic" => Dict{String,Any}("all_files" => false))
-        withserver(; settings) do (; server, writemsg, writereadmsg, readmsg)
+        withserver(; settings) do (; server, writereadmsg, readmsg)
             (; raw_res) = writereadmsg(make_DidOpenTextDocumentNotification(uri, script_code))
             @test raw_res isa PublishDiagnosticsNotification
             let params = scan_live_diagnostics!(server, readmsg)[uri]
@@ -1559,10 +1630,12 @@ end
             @test raw_res isa PublishDiagnosticsNotification
             @test isempty(raw_res.params.diagnostics)
 
-            # reopened at the same version before any scan ran (the cached analysis
-            # result is reused, so the open itself publishes nothing)
-            writemsg(make_DidOpenTextDocumentNotification(uri, script_code))
-            wait_for_file_cache_version(server.state, uri, 1)
+            # Reopening restores the cached full-analysis diagnostics before the live
+            # scan republishes the unused argument, even at the same document version.
+            (; raw_res) = writereadmsg(make_DidOpenTextDocumentNotification(uri, script_code))
+            @test raw_res isa PublishDiagnosticsNotification
+            @test raw_res.params.uri == uri
+            @test isempty(raw_res.params.diagnostics)
             let params = scan_live_diagnostics!(server, readmsg)[uri]
                 @test params.version == 1
                 @test length(params.diagnostics) == 1

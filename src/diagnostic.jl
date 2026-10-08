@@ -2930,12 +2930,15 @@ function recompute_live_diagnostics!(
     return true
 end
 
-# An opened file is served by `textDocument/diagnostic` from now on: forget its pushed
-# live diagnostics and republish it without them so the two sets do not overlap.
-function clear_workspace_live_diagnostics!(server::Server, uri::URI)
-    pull_diagnostics_enabled(server) || return nothing
-    cleared = forget_workspace_live_diagnostics!(server.state, uri)
-    cleared && notify_diagnostics!(server, Set{URI}((uri,)))
+# Hand live diagnostics over to the client's pull, and restore cached full-analysis
+# diagnostics suppressed while the file was closed: a generation cache hit will not
+# publish them again. Combine both changes into a single publish for this file only.
+function notify_diagnostics_on_open!(server::Server, uri::URI)
+    state = server.state
+    cleared = pull_diagnostics_enabled(server) && forget_workspace_live_diagnostics!(state, uri)
+    cached = !get_config(state, :diagnostic, :all_files) &&
+        get_analysis_info(state.analysis_manager, uri) isa AnalysisResult
+    (cleared || cached) && notify_diagnostics!(server, Set{URI}((uri,)))
     nothing
 end
 
@@ -2955,7 +2958,7 @@ end
 # integration opts in when it is known to manage the pulled set by its editor state,
 # which the VSCode extension does by clearing it when a tab closes, something the server
 # cannot tell from `textDocument/didClose`. The worker above then leaves open files out,
-# handing a file over on open (`clear_workspace_live_diagnostics!`) and back on close (the
+# handing a file over on open (`notify_diagnostics_on_open!`) and back on close (the
 # next scan), and change points ask the client to re-pull (`request_diagnostic_refresh!`).
 
 pull_diagnostics_enabled(server::Server) =

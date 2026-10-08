@@ -175,6 +175,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Fixed files under a package's `src/` and `test/` directories being analyzed on their own as scripts when another file in the same package environment, such as a script at the package root or a file under `docs/`, had been analyzed first.
   They are now analyzed through `src/<name>.jl` and `test/runtests.jl`, as described in [How each file is analyzed](https://aviatesk.github.io/JETLS.jl/release/analysis/#analysis/full/files).
 
+- Fixed [`JETLS/save`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/source) diagnostics not being shown until the next save when opening a file that full analysis has already analyzed, such as another file of an analyzed package or a file reopened after closing it, with [`diagnostic.all_files`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/diagnostic/all_files) disabled on clients that set the [`pull_diagnostics`](https://aviatesk.github.io/JETLS.jl/release/launching/#init-options/pull_diagnostics) initialization option, such as the VSCode extension.
+
 ## 2026-10-04
 
 - Commit: [`3efdc63`](https://github.com/aviatesk/JETLS.jl/commit/3efdc63)

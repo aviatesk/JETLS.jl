@@ -195,7 +195,7 @@ function handle_DidOpenTextDocumentNotification(server::Server, msg::DidOpenText
     cache_file_info!(server, uri, textDocument.version, parsed_stream)
     cache_saved_file_info!(server.state, uri, parsed_stream)
     invalidate_unsynced_file_cache!(server.state, uri)
-    clear_workspace_live_diagnostics!(server, uri)
+    notify_diagnostics_on_open!(server, uri)
     request_analysis!(server, uri, #=invalidate=#false)
 end
 
