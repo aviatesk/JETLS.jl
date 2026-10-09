@@ -1,0 +1,15 @@
+[deps]
+Base64 = "2a0f44e3-6c83-55bd-87e4-b1978d98bd5f"
+JuliaSyntaxHighlighting = "ac6e5ff7-fb65-4e79-a425-ec3bc9c03011"
+MarkdownSource = "10f2fb8c-236c-464c-adce-ea4ff7b604e4"
+StyledStrings = "f489334b-da3d-4c2e-b8f0-e476e12c162b"
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[sources]
+MarkdownSource = {path = ".."}
+
+[compat]
+Base64 = "1"
+JuliaSyntaxHighlighting = "1"
+StyledStrings = "1"
+Test = "1"

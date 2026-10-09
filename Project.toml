@@ -9,7 +9,7 @@ TestRunner = "master"
 authors = ["Shuhei Kadowaki <aviatesk@gmail.com>"]
 
 [workspace]
-projects = ["HierarchicalTestSets", "LSP", "TOMLSource", "docs", "scripts", "scripts/schema", "test"]
+projects = ["HierarchicalTestSets", "LSP", "MarkdownSource", "TOMLSource", "docs", "scripts", "scripts/schema", "test"]
 
 [deps]
 Compiler = "807dbc54-b67e-4c79-8afb-eafe4df6f2e1"

@@ -1,6 +1,6 @@
 #!/bin/bash
 
-PACKAGES=(JETLS HierarchicalTestSets LSP TOMLSource)
+PACKAGES=(JETLS HierarchicalTestSets LSP MarkdownSource TOMLSource)
 
 print_help() {
     cat <<EOF

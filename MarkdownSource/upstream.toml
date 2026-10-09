@@ -1,0 +1,7 @@
+repository = "https://github.com/JuliaLang/julia.git"
+commit = "d7feb44de11e1b7f6f76f92d08457ae93bdf07bf"
+paths = [
+    "stdlib/Markdown/docs",
+    "stdlib/Markdown/src",
+    "stdlib/Markdown/test",
+]

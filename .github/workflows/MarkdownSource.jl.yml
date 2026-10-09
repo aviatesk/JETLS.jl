@@ -1,0 +1,38 @@
+name: MarkdownSource.jl
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - "MarkdownSource/**"
+      - "MarkdownSource/Project.toml"
+      - ".github/workflows/MarkdownSource.jl.yml"
+  workflow_call:
+
+jobs:
+  MarkdownSource:
+    name: Test MarkdownSource.jl
+    runs-on: ubuntu-latest
+    steps:
+      # Check out `MarkdownSource/` only so that MarkdownSource.jl is tested as a standalone
+      # package, apart from the JETLS workspace. Non-cone mode is required because cone mode
+      # always includes root-level files.
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: /MarkdownSource/
+          sparse-checkout-cone-mode: false
+      - uses: julia-actions/setup-julia@v3
+        with:
+          version: "1" # most stable version
+          arch: x64
+      - uses: julia-actions/cache@v3
+      - name: test MarkdownSource
+        shell: julia --color=yes --project=. {0}    # this is necessary for the next command to work on Windows
+        run: 'using Pkg; Pkg.activate(normpath(pwd(), "MarkdownSource")); Pkg.instantiate(); Pkg.test(; coverage=true)'
+      - uses: julia-actions/julia-processcoverage@v1
+        with:
+          directories: MarkdownSource/src
+      - uses: codecov/codecov-action@v7
+        with:
+          flags: MarkdownSource.jl

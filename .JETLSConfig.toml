@@ -41,12 +41,40 @@ match_type = "regex"
 severity = "off"
 path = "src/app/cli-serve.jl"
 
+# Markdown elements hold content of any kind, e.g. strings, elements, and interpolated
+# values, in `Vector{Any}` or untyped fields, `MD.meta` holds metadata of any kind, and
+# `Config` holds parser functions. `MarkdownSource` maps the elements and their content
+# vectors to source locations with `IdDict{Any}`s.
+[[diagnostic.patterns]]
+pattern = "toplevel/abstract-field"
+match_by = "code"
+match_type = "literal"
+severity = "hint"
+path = "MarkdownSource/src/**/*.jl"
+
+# TODO [JETLS]
+# Names used only in functions wrapped as `@trigger 'c' -> function ... end` are
+# reported as unused: occurrence analysis strips the macrocall, and `'c' -> ...`
+# fails to lower on its own.
+[[diagnostic.patterns]]
+pattern = "Unused import `(record_link!|substream|wrappedstream)`"
+match_by = "message"
+match_type = "regex"
+severity = "off"
+path = "MarkdownSource/src/MarkdownSource.jl"
+
 [[full_analysis.concretization_patterns]]
 pattern = "const devbranch = x_"
 path = "docs/make.jl"
 [[full_analysis.concretization_patterns]]
 pattern = "const release_date = x_"
 path = "docs/make.jl"
+[[full_analysis.concretization_patterns]]
+pattern = "const UPSTREAM = x_"
+path = "MarkdownSource/test/test_upstream.jl"
+[[full_analysis.concretization_patterns]]
+pattern = "const MARKDOWN = x_"
+path = "MarkdownSource/test/test_upstream.jl"
 
 [initialization_options]
 reuse_native_inference = true
