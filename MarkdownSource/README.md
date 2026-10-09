@@ -1,5 +1,8 @@
 # MarkdownSource
 
+[![](https://github.com/aviatesk/JETLS.jl/actions/workflows/MarkdownSource.jl.yml/badge.svg)](https://github.com/aviatesk/JETLS.jl/actions/workflows/MarkdownSource.jl.yml)
+[![](https://codecov.io/gh/aviatesk/JETLS.jl/branch/master/graph/badge.svg?flag=MarkdownSource.jl)](https://codecov.io/gh/aviatesk/JETLS.jl&flags[0]=MarkdownSource.jl)
+
 Markdown parsing with source locations, for language features on docstrings
 and Documenter pages, such as navigating `@ref` links.
 

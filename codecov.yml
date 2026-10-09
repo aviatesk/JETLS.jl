@@ -4,11 +4,17 @@ coverage:
       JETLS.jl:
         flags: [JETLS.jl]
         informational: true
+      HierarchicalTestSets.jl:
+        flags: [HierarchicalTestSets.jl]
+        informational: true
       LSP.jl:
         flags: [LSP.jl]
         informational: true
-      HierarchicalTestSets.jl:
-        flags: [HierarchicalTestSets.jl]
+      MarkdownSource.jl:
+        flags: [MarkdownSource.jl]
+        informational: true
+      TOMLSource.jl:
+        flags: [TOMLSource.jl]
         informational: true
     patch:
       default:

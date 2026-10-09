@@ -1,5 +1,8 @@
 # TOMLSource
 
+[![](https://github.com/aviatesk/JETLS.jl/actions/workflows/TOMLSource.jl.yml/badge.svg)](https://github.com/aviatesk/JETLS.jl/actions/workflows/TOMLSource.jl.yml)
+[![](https://codecov.io/gh/aviatesk/JETLS.jl/branch/master/graph/badge.svg?flag=TOMLSource.jl)](https://codecov.io/gh/aviatesk/JETLS.jl&flags[0]=TOMLSource.jl)
+
 TOML parsing with source locations, for diagnostics and code actions on files
 such as `Project.toml` and `.JETLSConfig.toml`.
 
