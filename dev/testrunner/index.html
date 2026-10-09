@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width, initial-scale=1.0"/><title>TestRunner integration · JETLS.jl</title><meta name="title" content="TestRunner integration · JETLS.jl"/><meta property="og:title" content="TestRunner integration · JETLS.jl"/><meta property="twitter:title" content="TestRunner integration · JETLS.jl"/><meta name="description" content="Documentation for JETLS.jl."/><meta property="og:description" content="Documentation for JETLS.jl."/><meta property="twitter:description" content="Documentation for JETLS.jl."/><meta property="og:url" content="https://aviatesk.github.io/JETLS.jl/testrunner/"/><meta property="twitter:url" content="https://aviatesk.github.io/JETLS.jl/testrunner/"/><link rel="canonical" href="https://aviatesk.github.io/JETLS.jl/testrunner/"/><script data-outdated-warner src="../assets/warner.js"></script><link href="https://cdnjs.cloudflare.com/ajax/libs/lato-font/3.0.0/css/lato-font.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/juliamono/0.63.2/juliamono.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/fontawesome.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/solid.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/brands.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.8/katex.min.css" rel="stylesheet" type="text/css"/><script>documenterBaseURL=".."</script><script src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.6/require.min.js" data-main="../assets/documenter.js"></script><script src="../search_index.js"></script><script src="../siteinfo.js"></script><script src="../../versions.js"></script><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../assets/themes/catppuccin-mocha.css" data-theme-name="catppuccin-mocha"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../assets/themes/catppuccin-macchiato.css" data-theme-name="catppuccin-macchiato"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../assets/themes/catppuccin-frappe.css" data-theme-name="catppuccin-frappe"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../assets/themes/catppuccin-latte.css" data-theme-name="catppuccin-latte"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../assets/themes/documenter-dark.css" data-theme-name="documenter-dark" data-theme-primary-dark/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../assets/themes/documenter-light.css" data-theme-name="documenter-light" data-theme-primary/><script src="../assets/themeswap.js"></script><link href="../assets/extras.css" rel="stylesheet" type="text/css"/></head><body><div id="documenter"><nav class="docs-sidebar"><div class="docs-package-name"><span class="docs-autofit"><a href="../">JETLS.jl</a></span></div><button class="docs-search-query input is-rounded is-small is-clickable my-2 mx-auto py-1 px-2" id="documenter-search-query">Search docs (Ctrl + /)</button><ul class="docs-menu"><li><a class="tocitem" href="../">Index</a></li><li><a class="tocitem" href="../features/">Features</a></li><li><a class="tocitem" href="../analysis/">Analysis</a></li><li><a class="tocitem" href="../diagnostic/">Diagnostic</a></li><li><a class="tocitem" href="../formatting/">Formatter integration</a></li><li class="is-active"><a class="tocitem" href>TestRunner integration</a><ul class="internal"><li><a class="tocitem" href="#testrunner/features"><span>Features</span></a></li><li><a class="tocitem" href="#testrunner/supported-patterns"><span>Supported patterns</span></a></li><li><a class="tocitem" href="#testrunner/test-selection"><span>Test selection</span></a></li><li><a class="tocitem" href="#testrunner/troubleshooting"><span>Troubleshooting</span></a></li></ul></li><li><a class="tocitem" href="../notebook/">Notebook support</a></li><li><a class="tocitem" href="../configuration/">JETLS configuration</a></li><li><a class="tocitem" href="../launching/">Launching JETLS</a></li><li><a class="tocitem" href="../cli-check/">Diagnostic CLI</a></li><li><a class="tocitem" href="../CHANGELOG/">CHANGELOG</a></li></ul><div class="docs-version-selector field has-addons"><div class="control"><span class="docs-label button is-static is-size-7">Version</span></div><div class="docs-selector control is-expanded"><div class="select is-fullwidth is-size-7"><select id="documenter-version-selector"></select></div></div></div></nav><div class="docs-main"><header class="docs-navbar"><a class="docs-sidebar-button docs-navbar-link fa-solid fa-bars is-hidden-desktop" id="documenter-sidebar-button" href="#"></a><nav class="breadcrumb"><ul class="is-hidden-mobile"><li class="is-active"><a href>TestRunner integration</a></li></ul><ul class="is-hidden-tablet"><li class="is-active"><a href>TestRunner integration</a></li></ul></nav><div class="docs-right"><a class="docs-navbar-link" href="https://github.com/aviatesk/JETLS.jl" title="View the repository on GitHub"><span class="docs-icon fa-brands"></span><span class="docs-label is-hidden-touch">GitHub</span></a><a class="docs-navbar-link" href="https://github.com/aviatesk/JETLS.jl/blob/master/docs/src/testrunner.md" title="Edit source on GitHub"><span class="docs-icon fa-solid"></span></a><a class="docs-settings-button docs-navbar-link fa-solid fa-gear" id="documenter-settings-button" href="#" title="Settings"></a><a class="docs-article-toggle-button fa-solid fa-chevron-up" id="documenter-article-toggle-button" href="javascript:;" title="Collapse all docstrings"></a></div></header><article class="content" id="documenter-page"><h1 id="testrunner"><a class="docs-heading-anchor" href="#testrunner">TestRunner integration</a><a id="testrunner-1"></a><a class="docs-heading-anchor-permalink" href="#testrunner" title="Permalink"></a></h1><p>JETLS integrates with <a href="https://github.com/aviatesk/TestRunner.jl">TestRunner.jl</a> to provide an enhanced testing experience directly within your editor. This feature allows you to run individual <code>@testset</code> blocks directly from your development environment.</p><p>TestRunner.jl is bundled with JETLS, so no additional installation is required. Tests run in a separate process with the Julia running JETLS by default; see <a href="../configuration/#config/testrunner"><code>[testrunner]</code></a> to run them with another Julia or to pass additional options to Julia.</p><p>Test execution sends the current editor buffer to TestRunner.jl, so saving the file is not required and unsaved edits run as-is, including buffers that have never been saved to disk (<code>untitled:</code> for VSCode / <code>buffer:</code> for Sublime Text), where relative <code>include</code> calls resolve from the workspace root.</p><h2 id="testrunner/features"><a class="docs-heading-anchor" href="#testrunner/features">Features</a><a id="testrunner/features-1"></a><a class="docs-heading-anchor-permalink" href="#testrunner/features" title="Permalink"></a></h2><h3 id="testrunner/features/code-lens"><a class="docs-heading-anchor" href="#testrunner/features/code-lens">Code lens</a><a id="testrunner/features/code-lens-1"></a><a class="docs-heading-anchor-permalink" href="#testrunner/features/code-lens" title="Permalink"></a></h3><p>When you open a Julia file containing <code>@testset</code> blocks, JETLS displays interactive code lenses above each <code>@testset</code>:</p><blockquote><ul><li><code>▶ Run &quot;testset_name&quot;</code>: Run the testset for the first time</li></ul><div class="display-light-only"><p><img src="../assets/testrunner/code-lens.png" alt="TestRunner Code Lens"/></p></div>
+<div class="display-dark-only"><p><img src="../assets/testrunner/code-lens-dark.png" alt="TestRunner Code Lens"/></p></div></blockquote><p>After running tests, the code lens is refreshed as follows:</p><blockquote><ul><li><code>▶ Rerun &quot;testset_name&quot; [summary]</code>: Re-run a testset that has previous results</li><li><code>☰ Open logs</code>: View the detailed test output in a new editor tab</li><li><code>✓ Clear result</code>: Remove the test results and inline diagnostics</li></ul><div class="display-light-only"><p><img src="../assets/testrunner/code-lens-refreshed.png" alt="TestRunner Code Lens with Results"/></p></div>
+<div class="display-dark-only"><p><img src="../assets/testrunner/code-lens-refreshed-dark.png" alt="TestRunner Code Lens with Results"/></p></div></blockquote><p>On editors that support <a href="https://microsoft.github.io/language-server-protocol/specifications/lsp/3.18/specification/#workspace_textDocumentContent"><code>workspace/textDocumentContent</code></a> (an LSP 3.18 feature), the logs open in a read-only virtual document that refreshes in place when you re-run the same testset, so you don&#39;t need to reopen it. On other editors, the logs open as a temporary file instead.</p><h3 id="testrunner/features/code-actions"><a class="docs-heading-anchor" href="#testrunner/features/code-actions">Code actions</a><a id="testrunner/features/code-actions-1"></a><a class="docs-heading-anchor-permalink" href="#testrunner/features/code-actions" title="Permalink"></a></h3><p>You can trigger test runs via &quot;code actions&quot; that are explicitly requested by the user:</p><blockquote><ul><li>Inside a <code>@testset</code> block: Run the entire testset</li></ul><div class="display-light-only"><p><img src="../assets/testrunner/code-actions.png" alt="TestRunner Code Actions"/></p></div>
+<div class="display-dark-only"><p><img src="../assets/testrunner/code-actions-dark.png" alt="TestRunner Code Actions"/></p></div></blockquote><blockquote><ul><li>On an individual <code>@test</code> macro: Run just that specific test case</li></ul><div class="display-light-only"><p><img src="../assets/testrunner/code-actions-test-case.png" alt="TestRunner Code Actions @test case"/></p></div>
+<div class="display-dark-only"><p><img src="../assets/testrunner/code-actions-test-case-dark.png" alt="TestRunner Code Actions @test case"/></p></div></blockquote><p>Note that when running individual <code>@test</code> cases, the error results are displayed as temporary diagnostics for 10 seconds. Click <code>☰ Open logs</code> button in the pop up message to view detailed error messages that persist.</p><h3 id="testrunner/features/test-diagnostics"><a class="docs-heading-anchor" href="#testrunner/features/test-diagnostics">Test diagnostics</a><a id="testrunner/features/test-diagnostics-1"></a><a class="docs-heading-anchor-permalink" href="#testrunner/features/test-diagnostics" title="Permalink"></a></h3><p>Failed tests are displayed as diagnostics (red squiggly lines) at the exact lines where the failures occurred, making it easy to identify and fix issues:</p><blockquote><div class="display-light-only"><p><img src="../assets/testrunner/diagnostics.png" alt="TestRunner Diagnostics"/></p></div>
+<div class="display-dark-only"><p><img src="../assets/testrunner/diagnostics-dark.png" alt="TestRunner Diagnostics"/></p></div></blockquote><h3 id="testrunner/features/progress-notifications"><a class="docs-heading-anchor" href="#testrunner/features/progress-notifications">Progress notifications</a><a id="testrunner/features/progress-notifications-1"></a><a class="docs-heading-anchor-permalink" href="#testrunner/features/progress-notifications" title="Permalink"></a></h3><p>For clients that support work done progress, JETLS shows progress notifications while tests are running, keeping you informed about long-running test suites.</p><h2 id="testrunner/supported-patterns"><a class="docs-heading-anchor" href="#testrunner/supported-patterns">Supported patterns</a><a id="testrunner/supported-patterns-1"></a><a class="docs-heading-anchor-permalink" href="#testrunner/supported-patterns" title="Permalink"></a></h2><p>The TestRunner integration supports:</p><ol><li><p>Named <code>@testset</code> blocks (via code lens or code actions):</p><pre><code class="language-julia hljs">using Test
+
+# supported: named `@testset`
+@testset &quot;foo&quot; begin
+  @test sin(0) == 0
+  @test sin(Inf) == 0
+  @test_throws ErrorException sin(Inf) == 0
+  @test cos(π) == -1
+
+    # supported: nested named `@testset`
+    @testset &quot;bar&quot; begin
+      @test sin(π) == 0
+      @test sin(0) == 1
+      @test cos(Inf) == -1
+    end
+end
+
+# unsupported: `@testset` inside function definition
+function test_func1()
+  @testset &quot;inside function&quot; begin
+    @test true
+  end
+end
+
+# supported: this pattern is fine
+function test_func2()
+  @testset &quot;inside function&quot; begin
+    @test true
+  end
+end
+@testset &quot;test_func2&quot; test_func2()</code></pre></li><li><p>Individual <code>@test</code> macros (via code actions only):</p><pre><code class="language-julia hljs"># Run individual tests directly
+@test 1 + 1 == 2
+@test sqrt(4) ≈ 2.0
+
+# Also works inside testsets
+@testset &quot;math tests&quot; begin
+  @test sin(0) == 0  # Can run just this test
+  @test cos(π) == -1  # Or just this one
+end
+
+# Multi-line `@test` expressions are just fine
+@test begin
+  x = complex_calculation()
+  validate(x)
+end
+
+# Other Test.jl macros are supported too
+@test_throws DomainError sin(Inf)</code></pre></li></ol><h2 id="testrunner/test-selection"><a class="docs-heading-anchor" href="#testrunner/test-selection">Test selection</a><a id="testrunner/test-selection-1"></a><a class="docs-heading-anchor-permalink" href="#testrunner/test-selection" title="Permalink"></a></h2><p>When you run a testset or test, TestRunner.jl skips the other tests in the file, including those nested in other code such as <code>let</code> blocks, along with the code using their results. <em>All the other code runs</em>, both at the top level and in the testsets enclosing the selected one, so that the definitions and setup the selected tests rely on are available. For example, running <code>&quot;b&quot;</code> in the following code runs <code>setup()</code> and <code>&quot;b&quot;</code>, and skips <code>&quot;a&quot;</code>, <code>&quot;c&quot;</code> and <code>report(result)</code>:</p><pre><code class="language-julia hljs">@testset &quot;outer&quot; begin
+    setup()
+    @testset &quot;a&quot; begin
+        @test f() == 1
+    end
+    @testset &quot;b&quot; begin
+        @test g() == 2
+    end
+    result = @testset &quot;c&quot; begin
+        @test h() == 3
+    end
+    report(result)
+end</code></pre><p>Files <code>include</code>d by the code that runs are executed without their tests, except files <code>include</code>d by the selected code, which run with all their tests. For example, running <code>&quot;b&quot;</code> in the following code loads <code>helpers.jl</code> without running its tests, runs all of <code>test_b.jl</code> including its tests, and does not run <code>test_a.jl</code> at all:</p><pre><code class="language-julia hljs">include(&quot;helpers.jl&quot;)
+
+@testset &quot;a&quot; include(&quot;test_a.jl&quot;)
+@testset &quot;b&quot; include(&quot;test_b.jl&quot;)</code></pre><h3 id="testrunner/test-selection/limitations"><a class="docs-heading-anchor" href="#testrunner/test-selection/limitations">Limitations and workarounds</a><a id="testrunner/test-selection/limitations-1"></a><a class="docs-heading-anchor-permalink" href="#testrunner/test-selection/limitations" title="Permalink"></a></h3><ol><li><p>Tests in functions called by the code that runs always run, since TestRunner.jl does not look into function calls. This includes functions called with <code>do</code> blocks:</p><pre><code class="language-julia hljs">function test_parse()
+    @test parse(Int, &quot;1&quot;) == 1
+end
+test_parse()  # its test always runs
+
+mktempdir() do dir
+    @testset &quot;tempdir&quot; begin  # always runs
+        @test isdir(dir)
+    end
+end</code></pre><p>Call such functions from a testset, so that they run only when the testset is selected (see also <a href="#testrunner/supported-patterns">Supported patterns</a>):</p><pre><code class="language-julia hljs">@testset &quot;parse&quot; test_parse()
+
+@testset &quot;tempdir&quot; begin
+    mktempdir() do dir
+        @test isdir(dir)
+    end
+end</code></pre></li><li><p>Setup code in the testsets enclosing the selected one runs even when the selected tests do not use it:</p><pre><code class="language-julia hljs">@testset &quot;outer&quot; begin
+    data = load_large_data()  # runs even when running only &quot;small&quot;
+    @testset &quot;large&quot; begin
+        @test process(data) == expected
+    end
+    @testset &quot;small&quot; begin
+        @test process([1, 2]) == [2, 4]
+    end
+end</code></pre><p>Move expensive setup into the testset that uses it:</p><pre><code class="language-julia hljs">@testset &quot;outer&quot; begin
+    @testset &quot;large&quot; begin
+        data = load_large_data()
+        @test process(data) == expected
+    end
+    @testset &quot;small&quot; begin
+        @test process([1, 2]) == [2, 4]
+    end
+end</code></pre></li><li><p>Multiple tests on the same line cannot be selected individually:</p><pre><code class="language-julia hljs">@testset &quot;math&quot; begin
+    @test f(1) == 1; @test f(2) == 2  # running either runs both
+end</code></pre><p>Write each <code>@test</code> on its own line:</p><pre><code class="language-julia hljs">@testset &quot;math&quot; begin
+    @test f(1) == 1
+    @test f(2) == 2
+end</code></pre></li></ol><p>See the <a href="https://github.com/aviatesk/TestRunner.jl#how-it-works">How it works</a> and <a href="https://github.com/aviatesk/TestRunner.jl#limitations">Limitations</a> sections of the TestRunner.jl README for more details.</p><h2 id="testrunner/troubleshooting"><a class="docs-heading-anchor" href="#testrunner/troubleshooting">Troubleshooting</a><a id="testrunner/troubleshooting-1"></a><a class="docs-heading-anchor-permalink" href="#testrunner/troubleshooting" title="Permalink"></a></h2><p>If tests fail to start with an error about the Julia executable not being found, check the Julia selected by <a href="../configuration/#config/testrunner/env"><code>[testrunner] env</code></a>: <code>JULIA_APPS_JULIA_CMD</code> needs to point to an existing Julia executable, and <code>JULIAUP_CHANNEL</code> needs the <code>julia</code> launcher of <a href="https://github.com/JuliaLang/juliaup">juliaup</a> to be available on the <code>PATH</code> of the JETLS process.</p><p>If <code>JULIAUP_CHANNEL</code> seems to have no effect, the <code>julia</code> command on the <code>PATH</code> of the JETLS process is probably not the juliaup launcher, in which case the channel is ignored. Note that this <code>PATH</code> can differ from the one of your shell, e.g. when the editor is not launched from the shell.</p></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../formatting/">« Formatter integration</a><a class="docs-footer-nextpage" href="../notebook/">Notebook support »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.19.0 on <span class="colophon-date" title="Thursday 8 October 2026 16:17">Thursday 8 October 2026</span>. Using Julia version 1.13.1.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
