@@ -1,21 +1,23 @@
 #!/bin/bash
 
+PACKAGES=(JETLS HierarchicalTestSets LSP TOMLSource)
+
 print_help() {
-    cat <<'EOF'
+    cat <<EOF
 Usage: ./scripts/selfcheck.sh [OPTIONS]
 
-Run JETLS self-diagnostics on the JETLS, LSP, TOMLSource, and HierarchicalTestSets packages.
-Unrecognized options are passed through to jetls check.
+Run JETLS self-diagnostics on the packages of this repository, or only on
+those given by -p. Other options are passed through to jetls check and
+override the defaults --root=<project root> and --show-severity=warn.
+
+Packages:
+  ${PACKAGES[*]}
 
 Options:
   -h, --help              Show this help message and exit
+  -p, --package NAME      Check only the package NAME; may be repeated
   --threads=COUNT         Set the Julia thread count (default: auto)
-  --root=PATH             Set the configuration root (default: project root)
-  --quiet                 Suppress log messages (default)
-  --no-quiet              Enable log messages
-  --exit-severity=LEVEL   Set the failing severity (default: warn)
-  --show-severity=LEVEL   Set the displayed severity (default: warn)
-  --skip-full-analysis    Skip full analysis and only run lowering analysis
+  --no-quiet              Enable log messages (suppressed by default)
 
 Environment variables:
   JULIA=PATH              Set the Julia executable (default: julia)
@@ -30,47 +32,70 @@ JULIA="${JULIA:-julia}"
 
 # Defaults
 THREADS="auto"
-ROOT="$PROJECT_ROOT"
 QUIET="--quiet"
-EXIT_SEVERITY="warn"
-SHOW_SEVERITY="warn"
+PACKAGE_NAMES=()
 EXTRA_ARGS=()
 
-for arg in "$@"; do
-    case "$arg" in
+while [[ $# -gt 0 ]]; do
+    case "$1" in
         -h|--help)
             print_help
             exit 0
             ;;
+        -p|--package)
+            if [[ $# -lt 2 ]]; then
+                echo "Error: $1 requires a value" >&2
+                exit 1
+            fi
+            PACKAGE_NAMES+=("$2")
+            shift
+            ;;
+        --package=*)
+            PACKAGE_NAMES+=("${1#--package=}")
+            ;;
         --threads=*)
-            THREADS="${arg#--threads=}"
-            ;;
-        --root=*)
-            ROOT="${arg#--root=}"
-            ;;
-        --quiet)
-            QUIET="--quiet"
+            THREADS="${1#--threads=}"
             ;;
         --no-quiet)
             QUIET=""
             ;;
-        --exit-severity=*)
-            EXIT_SEVERITY="${arg#--exit-severity=}"
-            ;;
-        --show-severity=*)
-            SHOW_SEVERITY="${arg#--show-severity=}"
-            ;;
         *)
-            EXTRA_ARGS+=("$arg")
+            EXTRA_ARGS+=("$1")
             ;;
     esac
+    shift
+done
+
+is_package() {
+    local name
+    for name in "${PACKAGES[@]}"; do
+        if [[ "$name" == "$1" ]]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+if [[ ${#PACKAGE_NAMES[@]} -eq 0 ]]; then
+    PACKAGE_NAMES=("${PACKAGES[@]}")
+fi
+PACKAGE_PATHS=()
+for name in "${PACKAGE_NAMES[@]}"; do
+    if ! is_package "$name"; then
+        echo "Error: Unknown package: $name (expected one of: ${PACKAGES[*]})" >&2
+        exit 1
+    fi
+    if [[ "$name" == JETLS ]]; then
+        PACKAGE_PATHS+=("$PROJECT_ROOT")
+    else
+        PACKAGE_PATHS+=("$PROJECT_ROOT/$name")
+    fi
 done
 
 exec "$JULIA" --startup-file=no --project="$PROJECT_ROOT" --threads="$THREADS" \
     -m JETLS check \
-    --root="$ROOT" \
+    --root="$PROJECT_ROOT" \
     $QUIET \
-    --exit-severity="$EXIT_SEVERITY" \
-    --show-severity="$SHOW_SEVERITY" \
-    "$PROJECT_ROOT" "$PROJECT_ROOT/LSP" "$PROJECT_ROOT/TOMLSource" "$PROJECT_ROOT/HierarchicalTestSets" \
+    --show-severity=warn \
+    "${PACKAGE_PATHS[@]}" \
     "${EXTRA_ARGS[@]}"
