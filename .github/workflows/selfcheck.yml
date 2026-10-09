@@ -1,0 +1,26 @@
+name: Self diagnostics
+
+on:
+  workflow_call:
+
+jobs:
+  selfcheck:
+    name: Run jetls check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: julia-actions/setup-julia@v3
+        with:
+          version: "1"
+          arch: x64
+      - uses: julia-actions/cache@v3
+      - name: set LocalPreferences.toml
+        working-directory: .
+        run: |
+          echo '
+          [JETLS]
+          JETLS_DEV_MODE = true
+          ' > LocalPreferences.toml
+      - uses: julia-actions/julia-buildpkg@latest
+      - name: run jetls check
+        run: ./scripts/selfcheck.sh

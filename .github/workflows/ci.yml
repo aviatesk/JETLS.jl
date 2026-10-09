@@ -21,6 +21,7 @@ jobs:
       lsp: ${{ steps.filter.outputs.lsp }}
       hierarchical_testsets: ${{ steps.filter.outputs.hierarchical_testsets }}
       tomlsource: ${{ steps.filter.outputs.tomlsource }}
+      selfcheck: ${{ steps.filter.outputs.selfcheck }}
       schemas: ${{ steps.filter.outputs.schemas }}
       vendor_deps: ${{ steps.filter.outputs.vendor_deps }}
       docs: ${{ steps.filter.outputs.docs }}
@@ -40,8 +41,6 @@ jobs:
             TOMLSource/**
             Compiler/**
             Project.toml
-            .JETLSConfig.toml
-            scripts/selfcheck.sh
             .github/workflows/JETLS.jl.yml
             .github/workflows/test-matrix.yml
             .github/workflows/test-app.yml
@@ -55,6 +54,16 @@ jobs:
           TOMLSOURCE_PATHS: |
             TOMLSource/**
             .github/workflows/TOMLSource.jl.yml
+          SELFCHECK_PATHS: |
+            src/**
+            LSP/**
+            HierarchicalTestSets/**
+            TOMLSource/**
+            Compiler/**
+            Project.toml
+            .JETLSConfig.toml
+            scripts/selfcheck.sh
+            .github/workflows/selfcheck.yml
           SCHEMAS_PATHS: |
             src/**
             schemas/**
@@ -112,6 +121,7 @@ jobs:
             echo "lsp=$(changed "$LSP_PATHS")"
             echo "hierarchical_testsets=$(changed "$HIERARCHICAL_TESTSETS_PATHS")"
             echo "tomlsource=$(changed "$TOMLSOURCE_PATHS")"
+            echo "selfcheck=$(changed "$SELFCHECK_PATHS")"
             echo "schemas=$(changed "$SCHEMAS_PATHS")"
             echo "vendor_deps=$(changed "$VENDOR_DEPS_PATHS")"
             echo "docs=$(changed "$DOCS_PATHS")"
@@ -155,6 +165,12 @@ jobs:
     if: github.event_name == 'pull_request' && needs.changes.outputs.tomlsource == 'true'
     uses: ./.github/workflows/TOMLSource.jl.yml
 
+  selfcheck:
+    name: Self diagnostics
+    needs: changes
+    if: needs.changes.outputs.selfcheck == 'true'
+    uses: ./.github/workflows/selfcheck.yml
+
   check_schemas:
     name: Check schemas
     needs: changes
@@ -189,6 +205,7 @@ jobs:
       - lsp
       - hierarchical_testsets
       - tomlsource
+      - selfcheck
       - check_schemas
       - vendor_deps
       - docs
