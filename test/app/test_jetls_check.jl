@@ -692,7 +692,7 @@ end
             include("sub.jl")
             """)
 
-        result = run_jetls_check([filepath]; root=dir, skip_analysis=false)
+        result = run_jetls_check(["--show-severity=hint", filepath]; root=dir, skip_analysis=false)
         @test occursin("`MainStruct` has abstract field `x::Any`", result.stdout)
         @test occursin("`SubStruct` has abstract field `x::Any`", result.stdout)
         @test occursin("# @ sub.jl:2,5", result.stdout)
