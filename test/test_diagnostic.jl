@@ -988,6 +988,9 @@ end
             end
         end
         generator(@nospecialize(x), xs) = (x + y for y in xs)
+        function capture_with_param(@nospecialize(x), y)
+            return () -> (x, y)
+        end
         struct AbstractFieldStruct
             x::Any
         end

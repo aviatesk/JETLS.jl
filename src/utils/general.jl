@@ -399,5 +399,7 @@ function is_abstract_fieldtype(@nospecialize typ)
     return false
 end
 
-is_closure_type(@nospecialize typ) =
-    typ isa DataType && typ <: Function && Base.isgensym(nameof(typ))
+function is_closure_type(@nospecialize typ)
+    typ = Base.unwrap_unionall(typ)
+    return typ isa DataType && typ <: Function && Base.isgensym(nameof(typ))
+end
