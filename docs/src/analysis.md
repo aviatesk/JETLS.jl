@@ -142,7 +142,15 @@ addition:
   `scripts/main.jl` defines before including it.
 - A file without a `Project.toml` is analyzed as `julia script.jl` would run
   it: dependency packages are loaded from the default environment (e.g.
-  `@v1.13`) and the standard library.
+  `@v1.13`) and the standard library. When the JETLS process has an active
+  project, set with `--project` given to Julia before `--` or with the
+  `JULIA_PROJECT` environment variable, they are loaded from it first, as
+  `julia --project script.jl` would. The same applies to the documents below
+  that are analyzed without a project.
+  ```bash
+  # Analyze a standalone script with the packages of an environment
+  jetls --project=/path/to/env -- check script.jl
+  ```
 
 Some documents are handled differently:
 
