@@ -20,9 +20,9 @@ const help_message = """
     Run 'jetls <command> --help' for command-specific options.
 
     Examples:
-      jetls check src/SomePkg.jl
-      jetls test test/runtests.jl "basic tests"
       jetls serve --pipe-listen=/tmp/jetls.sock
+      jetls check src/SomePkg.jl
+      jetls test test/runtests.jl "selected tests"
       jetls schema --settings
     """
 

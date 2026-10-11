@@ -40,7 +40,7 @@ const test_help_message = """
 
     Examples:
       jetls test test/runtests.jl
-      jetls test test/runtests.jl "basic tests"
+      jetls test test/runtests.jl "selected tests"
       jetls test test/runtests.jl L15:25
       jetls test test/runtests.jl ':(@test length(xs) == 1)'
       jetls test --verbose test/runtests.jl 'r"^basic"'
