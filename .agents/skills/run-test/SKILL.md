@@ -30,8 +30,7 @@ Notes:
 ## Focused iteration with TestRunner.jl
 
 For faster iteration on a specific `@testset`, use
-[TestRunner.jl](https://github.com/aviatesk/TestRunner.jl), which the test
-environment depends on:
+[TestRunner.jl](../../../TestRunner/), which the test environment depends on:
 
 ```bash
 julia --startup-file=no --project=test -m TestRunner --verbose test/test_XXX.jl "testset_name"

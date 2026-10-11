@@ -5,11 +5,10 @@ JET = "avi/JET-JETLS-head-2026-10-07"
 JuliaLowering = "avi/JETLS-JSJL-head-2026-10-09"
 JuliaSyntax = "avi/JETLS-JSJL-head-2026-10-09"
 Revise = "master"
-TestRunner = "master"
 authors = ["Shuhei Kadowaki <aviatesk@gmail.com>"]
 
 [workspace]
-projects = ["HierarchicalTestSets", "LSP", "MarkdownSource", "TOMLSource", "docs", "scripts", "scripts/schema", "test"]
+projects = ["HierarchicalTestSets", "LSP", "MarkdownSource", "TOMLSource", "TestRunner", "docs", "scripts", "scripts/schema", "test"]
 
 [deps]
 Compiler = "807dbc54-b67e-4c79-8afb-eafe4df6f2e1"
@@ -39,7 +38,7 @@ JuliaSyntax = {rev = "c54e29d033", subdir = "JuliaSyntax", url = "https://github
 LSP = {path = "LSP"}
 Revise = {rev = "32638add42", url = "https://github.com/timholy/Revise.jl"}
 TOMLSource = {path = "TOMLSource"}
-TestRunner = {rev = "8a81f309f9", url = "https://github.com/aviatesk/TestRunner.jl"}
+TestRunner = {path = "TestRunner"}
 
 [compat]
 Compiler = "0.1.1"

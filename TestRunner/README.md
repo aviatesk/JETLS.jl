@@ -1,5 +1,8 @@
 # TestRunner.jl
 
+[![](https://github.com/aviatesk/JETLS.jl/actions/workflows/TestRunner.jl.yml/badge.svg)](https://github.com/aviatesk/JETLS.jl/actions/workflows/TestRunner.jl.yml)
+[![](https://codecov.io/gh/aviatesk/JETLS.jl/branch/master/graph/badge.svg?flag=TestRunner.jl)](https://codecov.io/gh/aviatesk/JETLS.jl&flags[0]=TestRunner.jl)
+
 A Julia package for selective test execution using pattern matching.
 TestRunner allows you to run specific tests from a test file based on testset
 names, test expressions, or line numbers, while ensuring all necessary

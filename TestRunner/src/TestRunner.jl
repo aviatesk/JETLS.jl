@@ -446,7 +446,7 @@ function matches_pattern(@nospecialize(expr), patterns::Vector{Any})
 end
 
 function matches_named_testset_call(pat::Union{AbstractString,Regex}, @nospecialize ex)
-    name = nothing
+    local name
     if MacroTools.@capture(ex, @testset name_String xs__)
         # vanilla form: `@testset "name" body`
     elseif MacroTools.@capture(ex, @testset Type_Symbol name_String xs__)
@@ -816,7 +816,8 @@ function scrub_exc_stack(excs::Vector{ExceptionFrame})
 end
 
 include("app.jl")
-using .App: app_runner_module, main
+using .App: main
+public main
 
 include("precompile.jl")
 

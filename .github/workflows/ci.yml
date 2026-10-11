@@ -22,6 +22,7 @@ jobs:
       hierarchical_testsets: ${{ steps.filter.outputs.hierarchical_testsets }}
       markdownsource: ${{ steps.filter.outputs.markdownsource }}
       tomlsource: ${{ steps.filter.outputs.tomlsource }}
+      testrunner: ${{ steps.filter.outputs.testrunner }}
       selfcheck: ${{ steps.filter.outputs.selfcheck }}
       schemas: ${{ steps.filter.outputs.schemas }}
       vendor_deps: ${{ steps.filter.outputs.vendor_deps }}
@@ -40,6 +41,7 @@ jobs:
             LSP/**
             HierarchicalTestSets/**
             TOMLSource/**
+            TestRunner/**
             Compiler/**
             Project.toml
             .github/workflows/JETLS.jl.yml
@@ -58,12 +60,18 @@ jobs:
           TOMLSOURCE_PATHS: |
             TOMLSource/**
             .github/workflows/TOMLSource.jl.yml
+          TESTRUNNER_PATHS: |
+            TestRunner/**
+            Compiler/**
+            Project.toml
+            .github/workflows/TestRunner.jl.yml
           SELFCHECK_PATHS: |
             src/**
             LSP/**
             HierarchicalTestSets/**
             MarkdownSource/**
             TOMLSource/**
+            TestRunner/**
             Compiler/**
             Project.toml
             .JETLSConfig.toml
@@ -80,6 +88,7 @@ jobs:
             test/**
             LSP/**
             TOMLSource/**
+            TestRunner/**
             Compiler/**
             scripts/vendor-deps.jl
             Project.toml
@@ -127,6 +136,7 @@ jobs:
             echo "hierarchical_testsets=$(changed "$HIERARCHICAL_TESTSETS_PATHS")"
             echo "markdownsource=$(changed "$MARKDOWNSOURCE_PATHS")"
             echo "tomlsource=$(changed "$TOMLSOURCE_PATHS")"
+            echo "testrunner=$(changed "$TESTRUNNER_PATHS")"
             echo "selfcheck=$(changed "$SELFCHECK_PATHS")"
             echo "schemas=$(changed "$SCHEMAS_PATHS")"
             echo "vendor_deps=$(changed "$VENDOR_DEPS_PATHS")"
@@ -178,6 +188,13 @@ jobs:
     if: github.event_name == 'pull_request' && needs.changes.outputs.tomlsource == 'true'
     uses: ./.github/workflows/TOMLSource.jl.yml
 
+  # `push` runs are handled by `TestRunner.jl.yml` itself to keep its own status badge.
+  testrunner:
+    name: TestRunner.jl
+    needs: changes
+    if: github.event_name == 'pull_request' && needs.changes.outputs.testrunner == 'true'
+    uses: ./.github/workflows/TestRunner.jl.yml
+
   selfcheck:
     name: Self diagnostics
     needs: changes
@@ -219,6 +236,7 @@ jobs:
       - hierarchical_testsets
       - markdownsource
       - tomlsource
+      - testrunner
       - selfcheck
       - check_schemas
       - vendor_deps

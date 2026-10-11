@@ -1,0 +1,85 @@
+name: TestRunner.jl
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - "TestRunner/**"
+      - ".github/workflows/TestRunner.jl.yml"
+  workflow_call:
+
+jobs:
+  TestRunner:
+    name: Test TestRunner.jl - Julia ${{ matrix.version }} - ${{ matrix.os }} - ${{ matrix.arch }}
+    runs-on: ${{ matrix.os }}
+    # Failures against an unreleased Julia should not block merging.
+    continue-on-error: ${{ matrix.version == 'nightly' }}
+    strategy:
+      fail-fast: false # don't stop CI even when one of them fails
+      matrix:
+        include:
+          - version: "1" # current stable
+            os: ubuntu-latest
+            arch: x64
+          - version: "1.12" # oldest supported
+            os: ubuntu-latest
+            arch: x64
+          - version: "1" # x86 ubuntu
+            os: ubuntu-latest
+            arch: x86
+          - version: "1" # macOS
+            os: macos-latest
+            arch: default
+          - version: "1" # x64 windows
+            os: windows-latest
+            arch: x64
+          - version: "1" # x86 windows
+            os: windows-latest
+            arch: x86
+          - version: "nightly" # dev
+            os: ubuntu-latest
+            arch: x64
+    steps:
+      # The root `Project.toml` lists `TestRunner` as a workspace project, so checking it
+      # out would make Pkg resolve TestRunner.jl together with the entire JETLS workspace.
+      # Check out `TestRunner/` only so that TestRunner.jl is tested as a standalone
+      # package, including on Julia versions that JETLS does not support. Non-cone mode is
+      # required because cone mode always includes root-level files.
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: /TestRunner/
+          sparse-checkout-cone-mode: false
+      - uses: julia-actions/setup-julia@v3
+        with:
+          version: ${{ matrix.version }}
+          arch: ${{ matrix.arch }}
+      - uses: julia-actions/cache@v3
+      - name: test TestRunner
+        shell: julia --color=yes --project=. {0}    # this is necessary for the next command to work on Windows
+        run: 'using Pkg; Pkg.activate(normpath(pwd(), "TestRunner")); Pkg.instantiate(); Pkg.test(; coverage=true)'
+      - uses: julia-actions/julia-processcoverage@v1
+        with:
+          directories: TestRunner/src
+      - uses: codecov/codecov-action@v7
+        with:
+          flags: TestRunner.jl
+
+  # JETLS bundles TestRunner.jl with the dependencies resolved in its workspace, e.g. the
+  # development version of JuliaSyntax, so test it with them as well.
+  workspace:
+    name: Test TestRunner.jl in the JETLS workspace
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: julia-actions/setup-julia@v3
+        with:
+          version: "1" # most stable version
+          arch: x64
+      - uses: julia-actions/cache@v3
+      # Resolving the workspace from `TestRunner` does not apply the `[sources]` of the root
+      # project, e.g. that of JuliaSyntax, so instantiate it from the root project first.
+      - name: test TestRunner
+        run: |
+          julia --color=yes --project=. -e 'using Pkg; Pkg.instantiate()'
+          julia --color=yes --project=TestRunner -e 'using Pkg; Pkg.test()'
