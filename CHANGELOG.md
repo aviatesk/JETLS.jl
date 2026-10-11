@@ -37,8 +37,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 > [!note]
 > TestRunner.jl is now developed in this repository as a [subpackage](https://github.com/aviatesk/JETLS.jl/tree/master/TestRunner) and released together with JETLS, and [aviatesk/TestRunner.jl](https://github.com/aviatesk/TestRunner.jl) is no longer updated.
-> The [TestRunner integration](https://aviatesk.github.io/JETLS.jl/release/testrunner/) keeps using the TestRunner.jl bundled with JETLS, so no action is needed for it.
-> If you use the standalone `testrunner` executable, reinstall it from this repository:
+> Installing JETLS is all you need to run tests with TestRunner.jl: the [TestRunner integration](https://aviatesk.github.io/JETLS.jl/release/testrunner/) keeps using the TestRunner.jl bundled with JETLS, and the new [`jetls test`](https://aviatesk.github.io/JETLS.jl/release/testrunner/#testrunner/cli) command runs tests with it from the command line:
+> ```bash
+> jetls test test/runtests.jl "selected tests"
+> ```
+> If you want to run TestRunner.jl without loading JETLS, install the standalone `testrunner` executable from this repository, which replaces the one installed from aviatesk/TestRunner.jl:
 > ```bash
 > julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", subdir="TestRunner", rev="release")'
 > ```
@@ -61,6 +64,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > Note that `analysis_overrides` is provided as a temporary workaround and may be removed or changed at any time. A proper fix is being worked on.
 >
 > Note: Path glob patterns use `/` as the separator on all platforms, including Windows; backslashes are not supported as separators.
+
+### Added
+
+- Added the [`jetls test`](https://aviatesk.github.io/JETLS.jl/release/testrunner/#testrunner/cli) command, which runs tests from the command line with the TestRunner.jl bundled with JETLS, as the [TestRunner integration](https://aviatesk.github.io/JETLS.jl/release/testrunner/) does.
+  It runs only the tests that match the given patterns, such as a testset name or a line range, applies the `[testrunner]` configuration of `.JETLSConfig.toml`, and accepts `--julia` and `--project` to select the Julia and the environment of the tests:
+  ```bash
+  jetls test test/runtests.jl "basic tests"
+  jetls test --julia=/path/to/julia-nightly test/runtests.jl L15:25
+  ```
 
 ### Fixed
 

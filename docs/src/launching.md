@@ -5,10 +5,11 @@ This guide explains how to launch the JETLS language server using
 
 ## The `jetls` executable
 
-The `jetls` executable is the main entry point for JETLS, providing three commands:
+The `jetls` executable is the main entry point for JETLS, providing four commands:
 
 - `jetls serve` - Start the language server for editor integration (this page)
 - [`jetls check`](@ref cli-check) - Run diagnostics from the command line
+- [`jetls test`](@ref testrunner/cli) - Run tests with TestRunner.jl from the command line
 - [`jetls schema`](@ref config/schema-cli) - Print JSON Schema for JETLS configuration
 
 The executable can be installed as an

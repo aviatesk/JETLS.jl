@@ -625,7 +625,8 @@ enabled = false  # Hide type hints; keep `end`-tag hints
 ### [`[testrunner]`](@id config/testrunner)
 
 Configure the Julia process that runs tests for the
-[TestRunner integration](@ref testrunner).
+[TestRunner integration](@ref testrunner) and
+[`jetls test`](@ref testrunner/cli).
 
 #### [`[testrunner] env`](@id config/testrunner/env)
 
@@ -659,6 +660,11 @@ nearest `Project.toml` of the test file, which can be overridden with
     not supported by JETLS itself, such as nightly, can be selected as well,
     but running tests with them may break.
 
+!!! note "Overriding with `jetls test --julia`"
+    The [`--julia`](@ref testrunner/cli/options/julia) option of
+    [`jetls test`](@ref testrunner/cli) takes precedence over the Julia selected
+    by these variables.
+
 #### [`[testrunner] julia_args`](@id config/testrunner/julia_args)
 
 - **Type**: array of strings
@@ -675,6 +681,11 @@ julia_args = ["--threads=4", "--project=/path/to/env"]
 
 Options that affect precompilation, such as `--check-bounds=yes`, make the
 first test run precompile TestRunner.jl and its dependencies for them.
+
+!!! note "Overriding with `jetls test --project`"
+    The [`--project`](@ref testrunner/cli/options/project) option of
+    [`jetls test`](@ref testrunner/cli) takes precedence over `--project` given
+    here.
 
 ## How to configure JETLS
 

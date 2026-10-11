@@ -3,7 +3,8 @@
 JETLS integrates with [TestRunner.jl](https://github.com/aviatesk/JETLS.jl/tree/master/TestRunner)
 to provide an enhanced testing experience directly within your editor. This
 feature allows you to run individual `@testset` blocks directly from your
-development environment.
+development environment. The same TestRunner.jl also runs tests from the
+[command line](@ref testrunner/cli) with `jetls test`.
 
 TestRunner.jl is bundled with JETLS, so no additional installation is required.
 Tests run in a separate process with the Julia running JETLS by default; see
@@ -288,10 +289,95 @@ See the [How it works](https://github.com/aviatesk/JETLS.jl/blob/master/TestRunn
 and [Limitations](https://github.com/aviatesk/JETLS.jl/blob/master/TestRunner/README.md#limitations)
 sections of the TestRunner.jl README for more details.
 
+## [`jetls test` CLI](@id testrunner/cli)
+
+The `jetls test` command runs tests from the command line with the same
+TestRunner.jl, without requiring an editor. It runs only the tests that match
+the given patterns, along with the code they need, as described in
+[Test selection](@ref testrunner/test-selection):
+
+```bash
+# Run all the tests in a file
+jetls test test/runtests.jl
+
+# Run the testset named "basic tests"
+jetls test test/runtests.jl "basic tests"
+
+# Run the tests on lines 15-25
+jetls test test/runtests.jl L15:25
+
+# Run the tests matching an expression pattern
+jetls test test/runtests.jl ':(@test length(xs) == 1)'
+
+# Show the results of each test set
+jetls test --verbose test/runtests.jl 'r"^basic"'
+```
+
+`jetls test` passes the patterns and the options of TestRunner.jl to it as they
+are; see the
+[README of TestRunner.jl](https://github.com/aviatesk/JETLS.jl/blob/master/TestRunner/README.md)
+for them. It exits with code 0 when all the run tests pass, and with code 1
+when some tests fail or error, or when the arguments are invalid.
+
+The tests run in a separate process in the same way as from the editor: in the
+environment of the nearest `Project.toml` of the test file, with the Julia and
+the options selected by the [`[testrunner]`](@ref config/testrunner)
+configuration. `jetls test` reads the configuration from the
+`.JETLSConfig.toml` in the [root path](@ref testrunner/cli/options/root), not
+from the settings of an editor.
+
+### [Command reference](@id testrunner/cli/reference)
+
+> `jetls test --help`
+
+```@eval
+using JETLS
+using Markdown
+Markdown.parse('`'^3 * '\n' * JETLS.test_help_message * '\n' * '`'^3)
+```
+
+### [Options](@id testrunner/cli/options)
+
+#### [`--julia=<path>`](@id testrunner/cli/options/julia)
+
+Runs the tests with the Julia executable at `<path>`, which can also be a
+command name found on the `PATH`. This takes precedence over
+`JULIA_APPS_JULIA_CMD` and `JULIAUP_CHANNEL` in the
+[`[testrunner] env`](@ref config/testrunner/env) configuration. Julia versions
+that JETLS itself does not support, such as nightly, can be selected as well.
+
+```bash
+jetls test --julia=/path/to/julia-nightly test/runtests.jl
+```
+
+#### [`--project=<path>`](@id testrunner/cli/options/project)
+
+Runs the tests in the environment at `<path>` instead of the one detected from
+the test file. This also takes precedence over `--project` given by the
+[`[testrunner] julia_args`](@ref config/testrunner/julia_args) configuration.
+
+```bash
+jetls test --project=test test/runtests.jl "my tests"
+```
+
+Note that `jetls --project=<path> -- test ...` does not select the environment
+of the tests, since the options before `--` apply to the Julia process running
+JETLS, not to the one running the tests. `jetls test` warns about it.
+
+#### [`--root=<path>`](@id testrunner/cli/options/root)
+
+Sets the root path where `.JETLSConfig.toml` is looked up. Defaults to the
+current working directory.
+
+```bash
+jetls test --root=/path/to/SomePkg /path/to/SomePkg/test/runtests.jl
+```
+
 ## [Troubleshooting](@id testrunner/troubleshooting)
 
 If tests fail to start with an error about the Julia executable not being
-found, check the Julia selected by [`[testrunner] env`](@ref config/testrunner/env):
+found, check the Julia selected by [`[testrunner] env`](@ref config/testrunner/env)
+or by [`--julia`](@ref testrunner/cli/options/julia) of `jetls test`:
 `JULIA_APPS_JULIA_CMD` needs to point to an existing Julia executable, and
 `JULIAUP_CHANNEL` needs the `julia` launcher of
 [juliaup](https://github.com/JuliaLang/juliaup) to be available on the `PATH`
