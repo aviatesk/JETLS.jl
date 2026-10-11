@@ -30,10 +30,11 @@ TestRunner is developed as a subpackage of
 
 ## Installation
 
-### As a CLI application (recommended)
+### As a CLI application
 
-Install from the `release` branch of JETLS.jl, which has vendored dependencies
-to avoid conflicts with your project's packages:
+Install the `testrunner` executable from the `release` branch of JETLS.jl,
+which has vendored dependencies to avoid conflicts with your project's
+packages:
 
 ```bash
 julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", subdir="TestRunner", rev="release")'
@@ -42,11 +43,14 @@ julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", 
 This installs the `testrunner` executable. Make sure `~/.julia/bin` is in your
 `PATH`. See <https://pkgdocs.julialang.org/dev/apps/> for details.
 
-Only the dependencies of TestRunner are vendored, and TestRunner itself keeps
-its package identity. To run the tests of an environment that depends on
-TestRunner, e.g. JETLS itself, use the TestRunner of that environment with
-[`julia -m TestRunner`](#running-via-julia--m-testrunner) instead of the
-`testrunner` executable, since they would conflict with each other.
+### With JETLS
+
+If you use [JETLS](https://github.com/aviatesk/JETLS.jl), its
+[`jetls test`](https://aviatesk.github.io/JETLS.jl/release/testrunner/#testrunner/cli)
+command runs tests with the TestRunner bundled with JETLS, without installing
+the `testrunner` executable. Use `jetls test` in place of `testrunner` in the
+examples of this README; it takes the same patterns and options, along with a
+few of its own.
 
 ### As a package
 

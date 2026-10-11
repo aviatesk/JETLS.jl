@@ -660,6 +660,7 @@ include("app/app.jl")
 include("app/cli-check.jl")
 include("app/cli-schema.jl")
 include("app/cli-serve.jl")
+include("app/cli-test.jl")
 
 include("precompile.jl")
 
