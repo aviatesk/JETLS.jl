@@ -1,0 +1,5 @@
+.envrc
+Manifest.toml
+Manifest-v*.toml
+Project.toml.bak
+/vendor
