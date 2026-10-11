@@ -1,5 +1,3 @@
-module test_jetls_check
-
 """
 Test file for exercising the `jetls check` command.
 
@@ -12,6 +10,7 @@ This test spawns actual `julia -m JETLS check` processes and verifies:
 To run this test independently:
     julia --startup-file=no --project=./test ./test/app/test_jetls_check.jl
 """
+module test_jetls_check
 
 using Test
 using JETLS
