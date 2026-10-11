@@ -19,7 +19,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## Unreleased
 
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
-- Diff: [`3efdc63...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/3efdc63...HEAD)
+- Diff: [`53cd4a5...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/53cd4a5...HEAD)
 
 ### Announcement
 
@@ -34,6 +34,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > If you have been using the [aviatesk/zed-julia](https://github.com/aviatesk/zed-julia) fork, switch to the official extension, and move your settings from `lsp.JETLS` to `lsp.jetls`, since the language server ID is now `jetls`.
 > Please report extension-specific problems (installation, startup, extension UI) to [JuliaEditorSupport/zed-julia issues](https://github.com/JuliaEditorSupport/zed-julia/issues);
 > language-feature issues belong here as before.
+
+> [!note]
+> TestRunner.jl is now developed in this repository as a [subpackage](https://github.com/aviatesk/JETLS.jl/tree/master/TestRunner) and released together with JETLS, and [aviatesk/TestRunner.jl](https://github.com/aviatesk/TestRunner.jl) is no longer updated.
+> Installing JETLS is all you need to run tests with TestRunner.jl: the [TestRunner integration](https://aviatesk.github.io/JETLS.jl/release/testrunner/) keeps using the TestRunner.jl bundled with JETLS, and the new [`jetls test`](https://aviatesk.github.io/JETLS.jl/release/testrunner/#testrunner/cli) command runs tests with it from the command line:
+> ```bash
+> jetls test test/runtests.jl "selected tests"
+> ```
+> If you want to run TestRunner.jl without loading JETLS, install the standalone `testrunner` executable from this repository, which replaces the one installed from aviatesk/TestRunner.jl:
+> ```bash
+> julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", subdir="TestRunner", rev="release")'
+> ```
 
 > [!warning]
 > JETLS currently has a known memory leak issue where memory usage grows with each re-analysis (https://github.com/aviatesk/JETLS.jl/issues/357).
@@ -53,6 +64,41 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > Note that `analysis_overrides` is provided as a temporary workaround and may be removed or changed at any time. A proper fix is being worked on.
 >
 > Note: Path glob patterns use `/` as the separator on all platforms, including Windows; backslashes are not supported as separators.
+
+### Added
+
+- Added the [`jetls test`](https://aviatesk.github.io/JETLS.jl/release/testrunner/#testrunner/cli) command, which runs tests from the command line with the TestRunner.jl bundled with JETLS, as the [TestRunner integration](https://aviatesk.github.io/JETLS.jl/release/testrunner/) does.
+  It runs only the tests that match the given patterns, such as a testset name or a line range, applies the `[testrunner]` configuration of `.JETLSConfig.toml`, and accepts `--julia` and `--project` to select the Julia and the environment of the tests:
+  ```bash
+  jetls test test/runtests.jl "basic tests"
+  jetls test --julia=/path/to/julia-nightly test/runtests.jl L15:25
+  ```
+
+### Fixed
+
+- Fixed running a test set nested in other test sets with the [TestRunner integration](https://aviatesk.github.io/JETLS.jl/release/testrunner/) reporting no results when a test set next to it, or next to one of its enclosing test sets, contains other test sets.
+  For example, running `"a"` in the following code reported no results:
+  ```julia
+  @testset "outer" begin
+      @testset "a" begin
+          @test f() == 1
+      end
+      @testset "b" begin
+          @testset "c" begin
+              @test g() == 2
+          end
+      end
+  end
+  ```
+
+## 2026-10-08
+
+- Commit: [`53cd4a5`](https://github.com/aviatesk/JETLS.jl/commit/53cd4a5)
+- Diff: [`3efdc63...53cd4a5`](https://github.com/aviatesk/JETLS.jl/compare/3efdc63...53cd4a5)
+- Installation:
+  ```bash
+  julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="2026-10-08")'
+  ```
 
 ### Added
 

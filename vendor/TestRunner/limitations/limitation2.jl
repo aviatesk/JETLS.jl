@@ -1,19 +1,25 @@
 # Conservative Dependency Execution Limitation
 # =============================================
-# This example demonstrates that due to conservative dependency execution,
-# ALL top-level code except `@test`/`@testset` expressions is executed, including
-# the `limitation2()` call no matter if it's explicitly selected.
+# This example demonstrates that setup code needed only by a specific
+# `@testset` is executed even when another `@testset` is selected, since ALL
+# code except unselected `@test`/`@testset` expressions is executed.
 
 using Test
 
-function limitation2()
-    @test String(nameof(Test)) == "Test"
+function expensive_setup(name)
+    println("setting up ", name)
+    return collect(1:3)
 end
 
-limitation2()  # This executes during dependency execution
+data1 = expensive_setup("data1")  # needed only by "test1"
+@testset "test1" begin
+    @test sum(data1) == 6
+end
 
-@testset "selected test" limitation2()  # This also executes when selected
+data2 = expensive_setup("data2")  # needed only by "test2"
+@testset "test2" begin
+    @test length(data2) == 3
+end
 
-# The problem: The test inside limitation2() executes twice - once from the
-# top-level call (during conservative dependency execution) and once from
-# the @testset when it's selected.
+# The problem: When selecting only "test1", the setup for "test2" is executed
+# too, since TestRunner can't know that only "test2" needs `data2`.

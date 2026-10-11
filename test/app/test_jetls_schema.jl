@@ -1,5 +1,3 @@
-module test_jetls_schema
-
 """
 Test file for exercising the `jetls schema` command.
 
@@ -13,6 +11,7 @@ This test calls `JETLS.run_schema` directly for behavior coverage and uses actua
 To run this test independently:
     julia --startup-file=no --project=./test ./test/app/test_jetls_schema.jl
 """
+module test_jetls_schema
 
 using Test
 using JETLS

@@ -327,13 +327,17 @@ end
 
 # Selects the Julia executable in the same way as the managed installations of the clients:
 # `JULIA_APPS_JULIA_CMD` names the executable, `JULIAUP_CHANNEL` selects a channel of the
-# `julia` launcher, and tests run with the Julia running JETLS otherwise.
-function testrunner_launcher(server::Server)
+# `julia` launcher, and tests run with the Julia running JETLS otherwise. `julia_exe`, given
+# by `jetls test --julia`, takes precedence over them.
+function testrunner_launcher(server::Server; julia_exe::Union{Nothing,String} = nothing)
     load_path = @something testrunner_load_path[] begin
         return "Failed to locate the environment of TestRunner.jl bundled with JETLS."
     end
     env = get_config(server, :testrunner, :env)
-    julia_cmd = if haskey(env, "JULIA_APPS_JULIA_CMD")
+    julia_cmd = if julia_exe !== nothing
+        exe = @something Sys.which(julia_exe) return app_notfound_message(julia_exe)
+        `$exe`
+    elseif haskey(env, "JULIA_APPS_JULIA_CMD")
         julia = env["JULIA_APPS_JULIA_CMD"]
         exe = @something Sys.which(julia) begin
             return app_notfound_message(julia) * check_settings_message(:testrunner, :env)

@@ -343,6 +343,28 @@ function update_vendored_dependencies!(
     end
 end
 
+function collect_transitive_vendored_deps(
+        vendor_dir::AbstractString,
+        direct_deps::Set{String},
+        vendored_uuids::Set{UUID}
+    )
+    transitive_deps = Dict{String, UUID}()
+    queue = collect(direct_deps)
+    while !isempty(queue)
+        pkg_name = pop!(queue)
+        project = TOML.parsefile(joinpath(vendor_dir, pkg_name, "Project.toml"))
+        for (dep_name, dep_uuid_str) in get(project, "deps", Dict{String, Any}())
+            dep_uuid = UUID(dep_uuid_str)
+            dep_uuid in vendored_uuids || continue
+            dep_name in direct_deps && continue
+            haskey(transitive_deps, dep_name) && continue
+            transitive_deps[dep_name] = dep_uuid
+            push!(queue, dep_name)
+        end
+    end
+    return transitive_deps
+end
+
 function update_workspace_project!(
         workspace_path::AbstractString,
         uuid_mapping::Dict{UUID, UUID},
@@ -367,6 +389,20 @@ function update_workspace_project!(
             @info "  Updated dependency in $(basename(workspace_path))/Project.toml: $dep_name"
             push!(vendored_deps, dep_name)
             deps_updated = true
+        end
+    end
+
+    # `Pkg.add(; url, subdir)` resolves the transitive vendored dependencies of a package
+    # project through the `[sources]` of the vendored packages at `rev`, whose relative
+    # paths from the local vendoring step do not exist outside a repository checkout,
+    # so list the whole closure directly like the root project does.
+    if haskey(project, "uuid") && !isempty(vendored_deps)
+        vendored_uuids = Set{UUID}(values(uuid_mapping))
+        transitive_deps = collect_transitive_vendored_deps(vendor_dir, vendored_deps, vendored_uuids)
+        for (dep_name, dep_uuid) in transitive_deps
+            project["deps"][dep_name] = string(dep_uuid)
+            @info "  Added transitive vendored dependency in $(basename(workspace_path))/Project.toml: $dep_name"
+            push!(vendored_deps, dep_name)
         end
     end
 

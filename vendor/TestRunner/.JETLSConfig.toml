@@ -1,3 +1,0 @@
-[[initialization_options.analysis_overrides]]
-path = "test/**/*.jl"
-full_analysis = false

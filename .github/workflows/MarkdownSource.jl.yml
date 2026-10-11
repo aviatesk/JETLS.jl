@@ -1,0 +1,54 @@
+name: MarkdownSource.jl
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - "MarkdownSource/**"
+      - "MarkdownSource/Project.toml"
+      - "HierarchicalTestSets/**"
+      - ".github/workflows/MarkdownSource.jl.yml"
+      # Unlike the other subpackages, `MarkdownSource/README.md` is not excluded since the
+      # tests parse it.
+      - "!HierarchicalTestSets/README.md"
+  workflow_call:
+
+jobs:
+  verified_tree:
+    name: Verified tree
+    if: github.event_name == 'push'
+    uses: ./.github/workflows/verified-tree.yml
+
+  MarkdownSource:
+    name: Test MarkdownSource.jl
+    needs: verified_tree
+    # `!failure() && !cancelled()` keeps this job running when `verified_tree` is skipped,
+    # i.e. when `ci.yml` calls this workflow for a pull request.
+    if: ${{ !failure() && !cancelled() && needs.verified_tree.outputs.verified != 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      # Check out `MarkdownSource/` (plus `HierarchicalTestSets/`, which its tests use) only
+      # so that MarkdownSource.jl is tested as a standalone package, apart from the JETLS
+      # workspace. Non-cone mode is required because cone mode always includes root-level
+      # files.
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: |
+            /MarkdownSource/
+            /HierarchicalTestSets/
+          sparse-checkout-cone-mode: false
+      - uses: julia-actions/setup-julia@v3
+        with:
+          version: "1" # most stable version
+          arch: x64
+      - uses: julia-actions/cache@v3
+      - name: test MarkdownSource
+        shell: julia --color=yes --project=. {0}    # this is necessary for the next command to work on Windows
+        run: 'using Pkg; Pkg.activate(normpath(pwd(), "MarkdownSource")); Pkg.instantiate(); Pkg.test(; coverage=true)'
+      - uses: julia-actions/julia-processcoverage@v1
+        with:
+          directories: MarkdownSource/src
+      - uses: codecov/codecov-action@v7
+        with:
+          flags: MarkdownSource.jl

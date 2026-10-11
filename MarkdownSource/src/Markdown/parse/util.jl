@@ -1,0 +1,274 @@
+# This file is a part of Julia. License is MIT: https://julialang.org/license
+
+const whitespace = " \t\r"
+
+"""
+Skip any leading whitespace. Returns io.
+If `newlines=true` then also skip line ends.
+"""
+function skipwhitespace(io::IO; newlines::Bool = true)
+    while !eof(io)
+        c = peek(io, Char)
+        c in whitespace || (newlines && c == '\n') || break
+        read(io, Char)
+    end
+    return io
+end
+
+"""
+Skip any leading blank lines. Returns the number skipped.
+"""
+function skipblank(io::IO)
+    start = position(io)
+    i = 0
+    for c in readeach(io, Char)
+        c == '\n' && (start = position(io); i+=1; continue)
+        c == '\r' && (start = position(io); i+=1; continue)
+        c in whitespace || break
+    end
+    seek(io, start)
+    return i
+end
+
+"""
+Return true if the line contains only (and, unless allowempty,
+at least one of) the characters given.
+"""
+function linecontains(io::IO, chars; allow_whitespace::Bool = true,
+                                     eat::Bool = true,
+                                     allowempty::Bool = false)
+    start = position(io)
+    l = readline(io)
+    length(l) == 0 && return allowempty
+
+    result = allowempty
+    for c in l
+        c in whitespace && (allow_whitespace ? continue : (result = false; break))
+        c in chars && (result = true; continue)
+        result = false; break
+    end
+    !(result && eat) && seek(io, start)
+    return result
+end
+
+blankline(io::IO; eat::Bool = true) =
+    linecontains(io, "";
+                 allow_whitespace = true,
+                 allowempty = true,
+                 eat = eat)
+
+"""
+Test if the stream starts with the given string.
+`eat` specifies whether to advance on success (true by default).
+`padding` specifies whether leading whitespace should be ignored.
+"""
+function startswith(stream::IO, s::AbstractString; eat::Bool = true, padding::Bool = false, newlines::Bool = true)
+    start = position(stream)
+    padding && skipwhitespace(stream, newlines = newlines)
+    result = true
+    for char in s
+        !eof(stream) && read(stream, Char) == char ||
+            (result = false; break)
+    end
+    !(result && eat) && seek(stream, start)
+    return result
+end
+
+function startswith(stream::IO, c::AbstractChar; eat::Bool = true)
+    if !eof(stream) && peek(stream, Char) == c
+        eat && read(stream, Char)
+        return true
+    else
+        return false
+    end
+end
+
+function startswith(stream::IO, ss::Vector{<:AbstractString}; kws...)
+    any(s->startswith(stream, s; kws...), ss)
+end
+
+function matchstart(stream::IO, r::Regex; eat::Bool = true, padding::Bool = false)
+    @assert Base.startswith(r.pattern, "^")
+    start = position(stream)
+    padding && skipwhitespace(stream)
+    line = readline(stream)
+    seek(stream, start)
+    m = match(r, line)
+    if eat && m !== nothing
+        for _ in 1:length(m.match)
+            read(stream, Char)
+        end
+    end
+    return m
+end
+
+function startswith(stream::IO, r::Regex; kws...)
+    return matchstart(stream, r; kws...) !== nothing
+end
+
+"""
+Executes the block of code, and if the return value is `nothing` or `false`,
+returns the stream to its initial position.
+"""
+function withstream(f, stream)
+    pos = position(stream)
+    result = f()
+    (result ≡ nothing || result ≡ false) && seek(stream, pos)
+    return result
+end
+
+"""
+Consume the standard allowed markdown indent of `n` spaces (default three). Returns false if there are more than `n` present.
+"""
+function eatindent(io::IO, n::Int = 3)
+    withstream(io) do
+        m = 0
+        while startswith(io, ' ') m += 1 end
+        return m <= n
+    end
+end
+
+"""
+Read the stream until startswith(stream, delim)
+The delimiter is consumed but not included.
+Returns nothing and resets the stream if delim is
+not found.
+"""
+function readuntil(stream::IO, delimiter; newlines::Bool = false, match = nothing)
+    withstream(stream) do
+        buffer = IOBuffer()
+        count = 0
+        while !eof(stream)
+            if startswith(stream, delimiter)
+                if count == 0
+                    return takestring!(buffer)
+                else
+                    count -= 1
+                    write(buffer, delimiter)
+                    continue
+                end
+            end
+            char = read(stream, Char)
+            char == match && (count += 1)
+            !newlines && char == '\n' && break
+            write(buffer, char)
+        end
+    end
+end
+
+# TODO: refactor this. If we're going to assume
+# the delimiter is a single character + a minimum
+# repeat we may as well just pass that into the
+# function.
+
+"""
+Return the character immediately before the current position of `stream`, or
+`nothing` at the start of the stream. The position of `stream` is unchanged.
+"""
+function peekprev(stream::IO)
+    pos = position(stream)
+    pos == 0 && return nothing
+    # step back over UTF-8 continuation bytes so that we read a whole character
+    i = pos - 1
+    while i > 0
+        seek(stream, i)
+        (peek(stream) & 0xc0) == 0x80 || break
+        i -= 1
+    end
+    seek(stream, i)
+    c = read(stream, Char)
+    seek(stream, pos)
+    return c
+end
+
+"""
+Return true if `c` is a Unicode whitespace character as defined by CommonMark.
+"""
+ismarkdownspace(c::Char) =
+    c in ('\t', '\n', '\f', '\r') || Base.Unicode.category_code(c) == Base.Unicode.UTF8PROC_CATEGORY_ZS
+
+"""
+Return true if `c` is neither a Unicode whitespace character nor a Unicode
+punctuation character, as those terms are defined by CommonMark.
+"""
+function isword(c::Char)
+    # the spec replaces NUL with U+FFFD (So), so it counts as punctuation
+    (c == '\0' || ismarkdownspace(c)) && return false
+    cat = Base.Unicode.category_code(c)
+    # PC..SO are the P and S categories; above CO are malformed or out-of-range characters,
+    # treated like NUL
+    return !(Base.Unicode.UTF8PROC_CATEGORY_PC <= cat <= Base.Unicode.UTF8PROC_CATEGORY_SO ||
+             cat > Base.Unicode.UTF8PROC_CATEGORY_CO)
+end
+
+"""
+Parse a symmetrical delimiter which wraps words.
+i.e. `*word word*` but not `*word * word`.
+`rep` specifies whether the delimiter can be repeated.
+`intraword` specifies whether the delimiter may appear inside a word: with it
+disabled a run touching a word character on its outer side can neither open nor
+close, so that `foo_bar_` is left alone while `_foo_bar_baz_` still emphasises
+across its inner underscores.
+Escaped delimiters are not yet supported.
+
+Code spans are passed over whole, so a delimiter inside one doesn't close
+the run.
+"""
+function parse_inline_wrapper(stream::IO, delimiter::AbstractString;
+                              rep::Bool = false, intraword::Bool = true)
+    delimiter, nmin = string(delimiter[1]), length(delimiter)
+    withstream(stream) do
+        prev = peekprev(stream)
+        if prev !== nothing
+            # check the previous character isn't a delimiter
+            (prev in delimiter) && return nothing
+            # an intraword-forbidden delimiter can't open after a word character
+            !intraword && isword(prev) && return nothing
+        end
+        n = nmin
+        startswith(stream, delimiter^n) || return nothing
+        while startswith(stream, delimiter); n += 1; end
+        !rep && n > nmin && return nothing
+        !eof(stream) && ismarkdownspace(peek(stream, Char)) && return nothing
+
+        buffer = IOBuffer()
+        for char in readeach(stream, Char)
+            if char == '\\' && !eof(stream) && peek(stream, Char) in "\\`"
+                # an escaped backtick can't open a code span
+                write(buffer, char, read(stream, Char))
+            elseif char == '`'
+                # code spans bind more tightly than emphasis, so copy a whole
+                # span through: a delimiter inside it can't close this one
+                skip(stream, -1)
+                start = position(stream)
+                read_code_span(stream) === nothing && skip(stream, 1)
+                stop = position(stream)
+                seek(stream, start)
+                write(buffer, read(stream, stop - start))
+            else
+                write(buffer, char)
+            end
+            if !(ismarkdownspace(char) || char in delimiter) && startswith(stream, delimiter^n)
+                trailing = 0
+                while startswith(stream, delimiter); trailing += 1; end
+                if trailing == 0
+                    # an intraword-forbidden delimiter can't close before a word
+                    # character; keep scanning for a later run instead
+                    if intraword || eof(stream) || !isword(peek(stream, Char))
+                        return takestring!(buffer)
+                    end
+                    write(buffer, delimiter ^ n)
+                else
+                    write(buffer, delimiter ^ (n + trailing))
+                end
+            end
+        end
+    end
+end
+
+function showrest(io::IO)
+    start = position(io)
+    show(read(io, String))
+    println()
+    seek(io, start)
+end

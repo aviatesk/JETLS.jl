@@ -1,0 +1,36 @@
+name: Verified tree
+
+# Lets `push` runs skip their checks when a pull request run of `ci.yml` already verified
+# the pushed tree. `ci.yml` records each such tree as a `verified-tree-<tree>` artifact.
+on:
+  workflow_call:
+    outputs:
+      verified:
+        description: Whether a pull request run verified the tree of the pushed commit
+        value: ${{ jobs.lookup.outputs.verified }}
+
+jobs:
+  lookup:
+    name: Look up the verified tree
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      verified: ${{ steps.lookup.outputs.verified }}
+    steps:
+      - id: lookup
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tree=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA" --jq .commit.tree.sha)
+          # Records uploaded by pull requests from forks are not trusted.
+          run_id=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=verified-tree-$tree" \
+            --jq '[.artifacts[] | select(.expired | not) | .workflow_run |
+              select(.head_repository_id == .repository_id)][0].id // empty')
+          if [ -n "$run_id" ]; then
+            echo "Skipping checks: tree $tree was verified by $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$run_id"
+            echo "verified=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "verified=false" >> "$GITHUB_OUTPUT"
+          fi

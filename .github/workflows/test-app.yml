@@ -76,6 +76,21 @@ jobs:
         run: |
           julia --startup-file=no --project=./test ./test/app/test_jetls_check.jl
 
+  test_jetls_test:
+    name: Test jetls test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: julia-actions/setup-julia@v3
+        with:
+          version: "1" # most stable version
+          arch: x64
+      - uses: julia-actions/cache@v3
+      - uses: julia-actions/julia-buildpkg@latest
+      - name: run test
+        run: |
+          julia --startup-file=no --project=./test ./test/app/test_jetls_test.jl
+
   test_jetls_schema:
     name: Test jetls schema
     runs-on: ubuntu-latest

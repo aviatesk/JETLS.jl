@@ -66,6 +66,20 @@ already installed in your locally cloned JETLS environment are not updated to
 the latest ones, you may see some tests fail. In such cases, make sure to run
 `Pkg.update()` and re-run the tests.
 
+## Self diagnostics
+
+[`scripts/selfcheck.sh`](./scripts/selfcheck.sh) runs `jetls check` from the
+local checkout on JETLS and the subpackages in this repository, applying the
+root [`.JETLSConfig.toml`](./.JETLSConfig.toml). CI runs it as well and fails
+if it reports any warning.
+To check only some of the packages, e.g. the ones you are editing, pass their
+names with `-p`, which may be repeated:
+```bash
+./scripts/selfcheck.sh -p LSP -p TOMLSource
+```
+Other options are passed through to `jetls check`, e.g. `--show-severity=hint`
+to also show hints. See `./scripts/selfcheck.sh --help` for details.
+
 ## `JETLS_DEV_MODE`
 
 JETLS has a development mode that can be enabled through the `JETLS_DEV_MODE`

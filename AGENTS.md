@@ -119,6 +119,16 @@ The standard command is:
 
 This is run in CI and will cause failures if new warnings are introduced.
 
+To check only some of the packages in this repository, pass their names with
+`-p`, which may be repeated. Include the packages that depend on the changed
+ones as well, e.g. `JETLS` when changing `LSP` or `TOMLSource`:
+
+```bash
+./scripts/selfcheck.sh -p JETLS -p LSP
+```
+
+See `./scripts/selfcheck.sh --help` for the package names and other options.
+
 # Running test
 
 Please make sure to test new code when you wrote.

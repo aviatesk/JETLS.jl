@@ -640,7 +640,7 @@ function run_per_file_diagnostics!(
 
         if Threads.nthreads() > 1
             map(collect(analyzed_uris)) do uri
-                Threads.@spawn :default run_per_file_diagnostics_for_uri(uri, false)
+                Threads.@spawn :default run_per_file_diagnostics_for_uri(uri, true)
             end |> waitall
         else
             for uri in analyzed_uris

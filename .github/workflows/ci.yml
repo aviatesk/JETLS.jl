@@ -9,18 +9,29 @@ on:
       - release
 
 jobs:
+  verified_tree:
+    name: Verified tree
+    if: github.event_name == 'push'
+    uses: ./.github/workflows/verified-tree.yml
+
   changes:
     name: Detect changes
+    needs: verified_tree
+    # `!failure() && !cancelled()` keeps this job running when `verified_tree` is skipped,
+    # i.e. for pull requests.
+    if: ${{ !failure() && !cancelled() && needs.verified_tree.outputs.verified != 'true' }}
     runs-on: ubuntu-latest
     permissions:
-      actions: read
       contents: read
       pull-requests: read
     outputs:
       jetls: ${{ steps.filter.outputs.jetls }}
       lsp: ${{ steps.filter.outputs.lsp }}
       hierarchical_testsets: ${{ steps.filter.outputs.hierarchical_testsets }}
+      markdownsource: ${{ steps.filter.outputs.markdownsource }}
       tomlsource: ${{ steps.filter.outputs.tomlsource }}
+      testrunner: ${{ steps.filter.outputs.testrunner }}
+      selfcheck: ${{ steps.filter.outputs.selfcheck }}
       schemas: ${{ steps.filter.outputs.schemas }}
       vendor_deps: ${{ steps.filter.outputs.vendor_deps }}
       docs: ${{ steps.filter.outputs.docs }}
@@ -32,16 +43,24 @@ jobs:
           BEFORE: ${{ github.event.before }}
           # Bash glob patterns, where `*` also matches `/`.
           # Changes to `ci.yml` itself select every component.
+          # Files that no build or test reads select no component. `MarkdownSource/README.md`
+          # is not listed since the MarkdownSource tests parse it.
+          IGNORED_PATHS: |
+            Compiler/README.md
+            HierarchicalTestSets/README.md
+            LSP/README.md
+            LSP/specification.md
+            TOMLSource/README.md
+            TestRunner/README.md
           JETLS_PATHS: |
             src/**
             test/**
             LSP/**
             HierarchicalTestSets/**
             TOMLSource/**
+            TestRunner/**
             Compiler/**
             Project.toml
-            .JETLSConfig.toml
-            scripts/selfcheck.sh
             .github/workflows/JETLS.jl.yml
             .github/workflows/test-matrix.yml
             .github/workflows/test-app.yml
@@ -52,9 +71,32 @@ jobs:
           HIERARCHICAL_TESTSETS_PATHS: |
             HierarchicalTestSets/**
             .github/workflows/HierarchicalTestSets.jl.yml
+          MARKDOWNSOURCE_PATHS: |
+            MarkdownSource/**
+            HierarchicalTestSets/**
+            .github/workflows/MarkdownSource.jl.yml
           TOMLSOURCE_PATHS: |
             TOMLSource/**
+            HierarchicalTestSets/**
             .github/workflows/TOMLSource.jl.yml
+          TESTRUNNER_PATHS: |
+            TestRunner/**
+            HierarchicalTestSets/**
+            Compiler/**
+            Project.toml
+            .github/workflows/TestRunner.jl.yml
+          SELFCHECK_PATHS: |
+            src/**
+            LSP/**
+            HierarchicalTestSets/**
+            MarkdownSource/**
+            TOMLSource/**
+            TestRunner/**
+            Compiler/**
+            Project.toml
+            .JETLSConfig.toml
+            scripts/selfcheck.sh
+            .github/workflows/selfcheck.yml
           SCHEMAS_PATHS: |
             src/**
             schemas/**
@@ -66,6 +108,7 @@ jobs:
             test/**
             LSP/**
             TOMLSource/**
+            TestRunner/**
             Compiler/**
             scripts/vendor-deps.jl
             Project.toml
@@ -77,15 +120,6 @@ jobs:
             .github/workflows/Documentation.yml
         run: |
           if [ "$GITHUB_EVENT_NAME" = push ]; then
-            tree=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA" --jq .commit.tree.sha)
-            # Records uploaded by pull requests from forks are not trusted.
-            run_id=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=verified-tree-$tree" \
-              --jq '[.artifacts[] | select(.expired | not) | .workflow_run |
-                select(.head_repository_id == .repository_id)][0].id // empty')
-            if [ -n "$run_id" ]; then
-              echo "Skipping checks: tree $tree was verified by $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$run_id"
-              exit 0
-            fi
             files=$(gh api "repos/$GITHUB_REPOSITORY/compare/$BEFORE...$GITHUB_SHA" \
               --jq '.files[] | .filename, (.previous_filename // empty)')
           else
@@ -97,6 +131,10 @@ jobs:
           changed() {
             local file pattern
             while IFS= read -r file; do
+              # shellcheck disable=SC2086,SC2053 # split into glob patterns
+              for pattern in $IGNORED_PATHS; do
+                [[ $file == $pattern ]] && continue 2
+              done
               # shellcheck disable=SC2086,SC2053 # split `$1` into glob patterns
               for pattern in .github/workflows/ci.yml $1; do
                 if [[ $file == $pattern ]]; then
@@ -111,7 +149,10 @@ jobs:
             echo "jetls=$(changed "$JETLS_PATHS")"
             echo "lsp=$(changed "$LSP_PATHS")"
             echo "hierarchical_testsets=$(changed "$HIERARCHICAL_TESTSETS_PATHS")"
+            echo "markdownsource=$(changed "$MARKDOWNSOURCE_PATHS")"
             echo "tomlsource=$(changed "$TOMLSOURCE_PATHS")"
+            echo "testrunner=$(changed "$TESTRUNNER_PATHS")"
+            echo "selfcheck=$(changed "$SELFCHECK_PATHS")"
             echo "schemas=$(changed "$SCHEMAS_PATHS")"
             echo "vendor_deps=$(changed "$VENDOR_DEPS_PATHS")"
             echo "docs=$(changed "$DOCS_PATHS")"
@@ -148,12 +189,32 @@ jobs:
     if: github.event_name == 'pull_request' && needs.changes.outputs.hierarchical_testsets == 'true'
     uses: ./.github/workflows/HierarchicalTestSets.jl.yml
 
+  # `push` runs are handled by `MarkdownSource.jl.yml` itself to keep its own status badge.
+  markdownsource:
+    name: MarkdownSource.jl
+    needs: changes
+    if: github.event_name == 'pull_request' && needs.changes.outputs.markdownsource == 'true'
+    uses: ./.github/workflows/MarkdownSource.jl.yml
+
   # `push` runs are handled by `TOMLSource.jl.yml` itself to keep its own status badge.
   tomlsource:
     name: TOMLSource.jl
     needs: changes
     if: github.event_name == 'pull_request' && needs.changes.outputs.tomlsource == 'true'
     uses: ./.github/workflows/TOMLSource.jl.yml
+
+  # `push` runs are handled by `TestRunner.jl.yml` itself to keep its own status badge.
+  testrunner:
+    name: TestRunner.jl
+    needs: changes
+    if: github.event_name == 'pull_request' && needs.changes.outputs.testrunner == 'true'
+    uses: ./.github/workflows/TestRunner.jl.yml
+
+  selfcheck:
+    name: Self diagnostics
+    needs: changes
+    if: needs.changes.outputs.selfcheck == 'true'
+    uses: ./.github/workflows/selfcheck.yml
 
   check_schemas:
     name: Check schemas
@@ -184,11 +245,15 @@ jobs:
     name: Required checks
     if: always()
     needs:
+      - verified_tree
       - changes
       - jetls
       - lsp
       - hierarchical_testsets
+      - markdownsource
       - tomlsource
+      - testrunner
+      - selfcheck
       - check_schemas
       - vendor_deps
       - docs
@@ -199,9 +264,10 @@ jobs:
           RESULTS: ${{ toJSON(needs) }}
         run: |
           jq -r 'to_entries[] | "\(.key): \(.value.result)"' <<<"$RESULTS"
-          jq -e '.changes.result == "success" and
+          jq -e '(.changes.result == "success" or .verified_tree.outputs.verified == "true") and
             all(.[]; .result == "success" or .result == "skipped")' <<<"$RESULTS" >/dev/null
-      # Lets the `push` run skip its checks when this exact tree lands on `master`.
+      # Lets `push` runs, including those of the subpackage workflows, skip their checks when
+      # this exact tree lands on `master`.
       - name: Get the verified tree
         id: tree
         if: github.event_name == 'pull_request'
