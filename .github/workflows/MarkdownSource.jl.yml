@@ -7,7 +7,11 @@ on:
     paths:
       - "MarkdownSource/**"
       - "MarkdownSource/Project.toml"
+      - "HierarchicalTestSets/**"
       - ".github/workflows/MarkdownSource.jl.yml"
+      # Unlike the other subpackages, `MarkdownSource/README.md` is not excluded since the
+      # tests parse it.
+      - "!HierarchicalTestSets/README.md"
   workflow_call:
 
 jobs:
@@ -15,12 +19,15 @@ jobs:
     name: Test MarkdownSource.jl
     runs-on: ubuntu-latest
     steps:
-      # Check out `MarkdownSource/` only so that MarkdownSource.jl is tested as a standalone
-      # package, apart from the JETLS workspace. Non-cone mode is required because cone mode
-      # always includes root-level files.
+      # Check out `MarkdownSource/` (plus `HierarchicalTestSets/`, which its tests use) only
+      # so that MarkdownSource.jl is tested as a standalone package, apart from the JETLS
+      # workspace. Non-cone mode is required because cone mode always includes root-level
+      # files.
       - uses: actions/checkout@v7
         with:
-          sparse-checkout: /MarkdownSource/
+          sparse-checkout: |
+            /MarkdownSource/
+            /HierarchicalTestSets/
           sparse-checkout-cone-mode: false
       - uses: julia-actions/setup-julia@v3
         with:

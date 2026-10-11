@@ -1,8 +1,7 @@
 module test_pattern_matching
 
 using Test
-using TestRunner: TestRunner
-using JuliaSyntax: JuliaSyntax as JS
+using TestRunner: JS, TestRunner
 
 @testset "matches_pattern" begin
     @testset "String patterns" begin
