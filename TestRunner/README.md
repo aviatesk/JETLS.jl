@@ -5,6 +5,10 @@ TestRunner allows you to run specific tests from a test file based on testset
 names, test expressions, or line numbers, while ensuring all necessary
 dependencies are executed.
 
+TestRunner is developed as a subpackage of
+[JETLS.jl](https://github.com/aviatesk/JETLS.jl), which bundles it for its
+[TestRunner integration](https://aviatesk.github.io/JETLS.jl/release/testrunner/).
+
 ## Features
 
 - **Pattern-based test selection**: Run only the tests that match your
@@ -25,22 +29,29 @@ dependencies are executed.
 
 ### As a CLI application (recommended)
 
-Install from the `release` branch, which has vendored dependencies to avoid
-conflicts with your project's packages:
+Install from the `release` branch of JETLS.jl, which has vendored dependencies
+to avoid conflicts with your project's packages:
 
 ```bash
-julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/TestRunner.jl", rev="release")'
+julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", subdir="TestRunner", rev="release")'
 ```
 
 This installs the `testrunner` executable. Make sure `~/.julia/bin` is in your
 `PATH`. See <https://pkgdocs.julialang.org/dev/apps/> for details.
 
+Only the dependencies of TestRunner are vendored, and TestRunner itself keeps
+its package identity. To run the tests of an environment that depends on
+TestRunner, e.g. JETLS itself, use the TestRunner of that environment with
+[`julia -m TestRunner`](#running-via-julia--m-testrunner) instead of the
+`testrunner` executable, since they would conflict with each other.
+
 ### As a package
 
 For programmatic usage within Julia:
 
-```julia-repl
-pkg> add https://github.com/aviatesk/TestRunner.jl#release
+```julia
+using Pkg
+Pkg.add(; url="https://github.com/aviatesk/JETLS.jl", subdir="TestRunner")
 ```
 
 ## Quick start
@@ -709,29 +720,6 @@ TestRunner is built on top of:
 - [MacroTools.jl](https://github.com/FluxML/MacroTools.jl) for pattern
   matching
 
-### Release process
-
-TestRunner avoids dependency conflicts by rewriting the UUIDs of its
-dependencies and vendoring them. This allows the `testrunner` CLI to work
-reliably in any user environment.
-
-**Branch strategy:**
-- `master`: Development branch where regular development happens
-- `release`: Distribution branch for users with vendored dependencies
-
-**Updating the release:**
-```bash
-./scripts/prepare-release.sh
-```
-
-This script:
-1. Creates a `release-update` branch from `release` and merges `master`
-2. Vendors dependencies with rewritten UUIDs
-3. Creates a pull request to `release`
-
-After CI passes, merge the PR using "Create a merge commit".
-
-For local testing of vendored environment:
-```bash
-julia --startup-file=no --project=. scripts/vendor-deps.jl --source-branch=master --local
-```
+TestRunner is released together with JETLS, whose release process vendors the
+dependencies of TestRunner; see the
+[JETLS development guide](https://github.com/aviatesk/JETLS.jl/blob/master/DEVELOPMENT.md#release-process).
