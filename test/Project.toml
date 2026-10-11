@@ -18,7 +18,9 @@ HierarchicalTestSets = "de7161c7-0535-45f7-a846-78c8a451aff9"
 path = ".."
 
 [sources.TestRunner]
-path = "../vendor/TestRunner"
+subdir = "vendor/TestRunner"
+rev = "5b0854c66113dde260e3f9a253be8e57e0b49ae0"
+url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.HierarchicalTestSets]
 path = "../HierarchicalTestSets"
