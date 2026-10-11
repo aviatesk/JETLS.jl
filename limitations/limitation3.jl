@@ -7,13 +7,13 @@ using Test
 
 # Limitation: Tests inside functions cannot be pattern-matched
 function test_arithmetic()
-    @test 1 + 1 == 2   # line 10: Can't match this with :(@test 1 + 1 == 2)
-    @test 2 * 2 == 4   # line 11: Can't match this with :(@test 2 * 2 == 4)
+    @test 1 + 1 == 2   # Can't match this with :(@test 1 + 1 == 2)
+    @test 2 * 2 == 4   # Can't match this with :(@test 2 * 2 == 4)
 end
 
 function test_strings()
-    @test "hello" * " world" == "hello world"  # line 15
-    @test uppercase("julia") == "JULIA"        # line 16
+    @test "hello" * " world" == "hello world"
+    @test uppercase("julia") == "JULIA"
 end
 
 # Trying to run with pattern :(@test 1 + 1 == 2) won't execute anything

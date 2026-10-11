@@ -5,7 +5,7 @@
 
 using Test
 
-function limitation2()
+function workaround2()
     @test String(nameof(Test)) == "Test"
 end
 
@@ -13,7 +13,7 @@ end
 # Instead, only call them inside @testset blocks
 
 @testset "workaround2" begin
-    limitation2()  # Function is only called when this testset is selected
+    workaround2()  # Function is only called when this testset is selected
 end
 
 # Alternative workaround: Define test logic directly in @testset

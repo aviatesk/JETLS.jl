@@ -634,9 +634,9 @@ unrelated tests while still ensuring all code dependencies are available.
    and the testset run:
    ```julia-repl
    julia> @testset "limitation2 demo" verbose=true runtest("limitations/limitation2.jl", ["selected test"]);
-   Test Summary:     | Pass  Total  Time
-   limitation2 demo  |    2      2  0.3s
-     selected test   |    1      1  0.0s
+   Test Summary:    | Pass  Total  Time
+   limitation2 demo |    2      2  0.0s
+     selected test  |    1      1  0.0s
    ```
 
    The test inside `limitation2()` executes twice: once from the top-level
@@ -653,8 +653,8 @@ unrelated tests while still ensuring all code dependencies are available.
    Example (from [limitation3.jl](./limitations/limitation3.jl)):
    ```julia
    function test_arithmetic()
-       @test 1 + 1 == 2   # line 10: Can't match this with :(@test 1 + 1 == 2)
-       @test 2 * 2 == 4   # line 11: Can't match this with :(@test 2 * 2 == 4)
+       @test 1 + 1 == 2   # Can't match this with :(@test 1 + 1 == 2)
+       @test 2 * 2 == 4   # Can't match this with :(@test 2 * 2 == 4)
    end
    ```
 
