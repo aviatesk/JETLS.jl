@@ -1,38 +1,35 @@
 # Workarounds for Tests Within Function Bodies
 # =============================================
 # This file shows how to structure test code to work with TestRunner's
-# pattern matching when you have tests that would normally be in functions.
+# selection when you have tests that would normally be in functions.
 
 using Test
 
-# Workaround 1: Move tests directly into @testset blocks
-@testset "arithmetic tests" begin
-    @test 1 + 1 == 2   # This CAN be matched with :(@test 1 + 1 == 2)
-    @test 2 * 2 == 4   # This CAN be matched with :(@test 2 * 2 == 4)
+# Workaround 1: Write the testsets directly instead of in a function
+@testset "arithmetic" begin
+    @testset "addition" begin
+        @test 1 + 1 == 2
+    end
+    @testset "multiplication" begin
+        @test 2 * 2 == 4
+    end
 end
 
-@testset "string tests" begin
-    @test "hello" * " world" == "hello world"
-    @test uppercase("julia") == "JULIA"
-end
-
-# Workaround 2: If you need helper functions, call them inside @testset blocks
-function test_arithmetic()
-    @test 1 + 1 == 2
-    @test 2 * 2 == 4
-end
-
+# Workaround 2: If the tests need to be in a function, call it within a
+# `@testset` rather than at the top level, so that they can be selected
+# together through that `@testset`
 function test_strings()
-    @test "hello" * " world" == "hello world"
-    @test uppercase("julia") == "JULIA"
+    @testset "concatenation" begin
+        @test "hello" * " world" == "hello world"
+    end
+    @testset "uppercase" begin
+        @test uppercase("julia") == "JULIA"
+    end
 end
 
-@testset "function calls" begin
-    test_arithmetic()  # Now these tests execute when this testset is selected
-    test_strings()
-end
+@testset "strings" test_strings()
 
 # Now you can run:
-# - runtest("workaround3.jl", ["arithmetic tests"]) to run just arithmetic tests
-# - runtest("workaround3.jl", [:(@test 1 + 1 == 2)]) to run specific tests
-# - runtest("workaround3.jl", ["function calls"]) to run tests via functions
+# - runtest("workaround3.jl", ["addition"]) to run just the addition tests
+# - runtest("workaround3.jl", [:(@test 1 + 1 == 2)]) to run a specific test
+# - runtest("workaround3.jl", ["strings"]) to run the tests in `test_strings()`

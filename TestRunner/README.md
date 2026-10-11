@@ -542,7 +542,7 @@ unrelated tests while still ensuring all code dependencies are available.
 
 ## Limitations
 
-1. **Source Provenance**: Pattern matching occurs at the surface AST level and
+1. **Source provenance**: Pattern matching occurs at the surface AST level and
    results are converted to line numbers. However, lowered code representation
    lacks proper source provenance (especially for macro expansions), causing
    surface-level pattern match information to be incorrectly mapped to lowered
@@ -592,83 +592,118 @@ unrelated tests while still ensuring all code dependencies are available.
    eliminate the need for crude line number conversion from surface AST pattern
    matches.
 
-2. **Conservative Dependency Execution**: Due to the conservative approach,
-   ALL top-level code except `@test` and `@testset` expressions is executed.
-   This means individual `@test` cases within function calls cannot be
-   selectively executed.
+2. **Conservative dependency execution**: Since TestRunner can't know which
+   code the selected tests depend on, it executes all code except the
+   unselected tests (see [How it works](#how-it-works)). As a result, setup
+   code needed only by a specific `@testset` is executed even when another
+   `@testset` is selected.
 
    Example (from [limitation2.jl](./limitations/limitation2.jl)):
    ```julia
    using Test
 
-   function limitation2()
-       @test String(nameof(Test)) == "Test"
+   function expensive_setup(name)
+       println("setting up ", name)
+       return collect(1:3)
    end
 
-   limitation2()  # This executes during dependency execution
+   data1 = expensive_setup("data1")  # needed only by "test1"
+   @testset "test1" begin
+       @test sum(data1) == 6
+   end
 
-   @testset "selected test" limitation2()  # This also executes when selected
+   data2 = expensive_setup("data2")  # needed only by "test2"
+   @testset "test2" begin
+       @test length(data2) == 3
+   end
    ```
 
-   When trying to match the `@testset` pattern, both the direct function call
-   and the testset run:
+   Selecting only `"test1"` executes the setup for `"test2"` as well:
    ```console
-   $ testrunner -v limitations/limitation2.jl "selected test"
-   Test Summary:   | Pass  Total  Time
-   limitation2.jl  |    2      2  0.1s
-     selected test |    1      1  0.0s
+   $ testrunner -v limitations/limitation2.jl "test1"
+   setting up data1
+   setting up data2
+   Test Summary:  | Pass  Total  Time
+   limitation2.jl |    1      1  0.2s
+     test1        |    1      1  0.0s
    ```
 
-   The test inside `limitation2()` executes twice: once from the top-level
-   `limitation2()` call (which executes as part of conservative dependency
-   execution) and once from the matched `@testset "selected test"`.
+   **Workaround** (see [workaround2.jl](./limitations/workaround2.jl)): Move
+   setup code needed only by a specific `@testset` into that `@testset`, so
+   that it's skipped along with the `@testset`:
+   ```julia
+   @testset "test1" begin
+       data1 = expensive_setup("data1")
+       @test sum(data1) == 6
+   end
 
-   **Workaround** (see [workaround2.jl](./limitations/workaround2.jl)): Wrap test
-   execution code in `@testset` blocks instead of functions, or avoid top-level
-   function calls that contain tests.
+   @testset "test2" begin
+       data2 = expensive_setup("data2")  # skipped when only "test1" is selected
+       @test length(data2) == 3
+   end
+   ```
 
-3. **Tests Within Function Bodies**: Individual `@test` cases within function
-   bodies cannot be selectively executed using expression patterns.
+   With this workaround:
+   ```console
+   $ testrunner -v limitations/workaround2.jl "test1"
+   setting up data1
+   Test Summary:  | Pass  Total  Time
+   workaround2.jl |    1      1  0.2s
+     test1        |    1      1  0.0s
+   ```
+
+3. **Tests within function bodies**: `@test` and `@testset` within function
+   bodies can't be selected, whether by `@testset` names or by expression
+   patterns. TestRunner selects code to execute only in the top-level code
+   it interprets, while a function body is executed as a whole when the
+   function is called. So the tests in a function are all executed when the
+   function call is executed, and none of them are executed otherwise.
 
    Example (from [limitation3.jl](./limitations/limitation3.jl)):
    ```julia
    function test_arithmetic()
-       @test 1 + 1 == 2   # Can't match this with :(@test 1 + 1 == 2)
-       @test 2 * 2 == 4   # Can't match this with :(@test 2 * 2 == 4)
+       @testset "addition" begin
+           @test 1 + 1 == 2
+       end
+       @testset "multiplication" begin
+           @test 2 * 2 == 4
+       end
    end
+
+   @testset "arithmetic" test_arithmetic()
    ```
 
-   When trying to match a specific `@test` pattern:
+   Selecting `"addition"` (or `:(@test 1 + 1 == 2)`) executes no tests, since
+   the `@testset "arithmetic"` that calls `test_arithmetic()` isn't selected:
    ```console
-   $ testrunner -v limitations/limitation3.jl ':(@test 1 + 1 == 2)'
+   $ testrunner -v limitations/limitation3.jl "addition"
    Test Summary:  | Total  Time
-   limitation3.jl |     0  0.0s
+   limitation3.jl |     0  0.1s
    ```
 
-   No tests execute because the pattern matching doesn't look inside function
-   bodies. This happens because:
-   - Pattern matching occurs at the AST level where the `@test` is inside
-     a function definition
-   - Function bodies are not executed during pattern matching
-   - Only top-level `@test` expressions or those within `@testset` blocks can
-     be matched
+   Conversely, selecting `"arithmetic"` executes both `"addition"` and
+   `"multiplication"`. If `test_arithmetic()` were called at the top level
+   instead, both would be executed whatever is selected, due to the
+   conservative dependency execution above.
 
    **Workarounds** (see [workaround3.jl](./limitations/workaround3.jl)):
 
-   1. Move tests into `@testset` blocks:
+   1. Write the `@testset`s directly instead of in a function:
    ```julia
-   @testset "arithmetic tests" begin
-       @test 1 + 1 == 2   # This CAN be matched with :(@test 1 + 1 == 2)
-       @test 2 * 2 == 4
+   @testset "arithmetic" begin
+       @testset "addition" begin  # can be selected by "addition"
+           @test 1 + 1 == 2       # can be selected by :(@test 1 + 1 == 2)
+       end
+       @testset "multiplication" begin
+           @test 2 * 2 == 4
+       end
    end
    ```
 
-   2. Call test functions inside `@testset` blocks to make them selectable:
-   ```julia
-   @testset "function calls" begin
-       test_arithmetic()  # Now these tests execute when this testset is selected
-   end
-   ```
+   2. If the tests need to be in a function, call it within a `@testset`
+      rather than at the top level, so that they can at least be selected
+      together through that `@testset`, like `"arithmetic"` in the example
+      above.
 
 4. **`include` with `mapexpr`**: Files included with `mapexpr`, e.g. via
    `include(mapexpr, path)` or `Base.include(mapexpr, mod, path)`, are
