@@ -572,7 +572,7 @@ function select_dependencies!(concretized::BitVector, src::CodeInfo, edges, cl,
         changed |= add_ssas_uses!(concretized, ssavalue_uses, excluded)
         changed |= add_slot_deps!(concretized, cl, excluded)
         changed |= LCU.add_typedefs!(concretized, src, edges, typedefs, ())
-        changed |= LCU.add_control_flow!(concretized, src, cfg, postdomtree)
+        changed |= add_control_flow!(concretized, src, cfg, postdomtree, excluded)
     end
 
     controller = LCU.SelectiveEvalController()
@@ -580,6 +580,27 @@ function select_dependencies!(concretized::BitVector, src::CodeInfo, edges, cl,
     LCU.record_termination_points!(controller, concretized, cfg)
 
     return controller
+end
+
+# `LCU.add_control_flow!`, except that the `EnterNode`s of unmatched tests stay unselected:
+# their `:leave`s are excluded along with them, so a selected one would enter its handler
+# and scope, e.g. of an unmatched testset, without ever leaving them. The control flow may
+# still need to pass through such `try` blocks, since lowering places code of the enclosing
+# testsets in them, e.g. how they exit, and an unselected `EnterNode` falls through to its
+# `try` block.
+function add_control_flow!(concretized::BitVector, src::CodeInfo, cfg::CC.CFG,
+                           postdomtree::CC.PostDomTree, excluded::BitVector)
+    changed = false
+    for bb in cfg.blocks
+        length(bb.succs) == 2 || continue
+        termidx = bb.stmts[end]
+        concretized[termidx] && continue
+        excluded[termidx] && src.code[termidx] isa EnterNode && continue
+        if LCU.is_conditional_block_active(concretized, bb, cfg, postdomtree)
+            concretized[termidx] = changed = true
+        end
+    end
+    return changed
 end
 
 # Add statements that use SSA values produced by already selected statements
