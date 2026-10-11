@@ -50,7 +50,7 @@ TestRunner, e.g. JETLS itself, use the TestRunner of that environment with
 
 ### As a package
 
-For programmatic usage within Julia:
+For [programmatic usage](#programmatic-usage) within Julia:
 
 ```julia
 using Pkg
@@ -59,188 +59,99 @@ Pkg.add(; url="https://github.com/aviatesk/JETLS.jl", subdir="TestRunner")
 
 ## Quick start
 
-```bash
-$ testrunner demo.jl "basic tests"  # Run tests matching a specific testset name
-
-$ testrunner demo.jl "basic tests" "struct tests"  # Run multiple testsets
-
-$ testrunner demo.jl '(:(@test startswith(inner_func2(), "inner")))'  # Run standalone test case
-```
-
-Or equivalently via Julia REPL:
-```julia-repl
-julia> using TestRunner
-
-julia> runtest("demo.jl", ["basic tests"])
-
-julia> runtest("demo.jl", ["basic tests", "struct tests"])
-
-julia> runtest("demo.jl", [:(@test startswith(inner_func2(), "inner"))])
-```
-
-## Programmatic usage
-
-### `runtest`
-
-```julia
-runtest(filename::AbstractString, patterns;
-        filter_lines=nothing, topmodule::Module=Main, source=nothing)
-```
-
-Run tests from a file that match the given patterns and/or are on the
-specified lines.
-
-**Arguments:**
-- `filename::AbstractString`: Path to the test file
-- `patterns`: Patterns to match. Can be strings, regexes, expressions, integers (line numbers),
-  or ranges (line ranges)
-- `filter_lines=nothing`: Optional line numbers to filter pattern matches. When provided, only
-  pattern matches that overlap with these lines will be executed. This is particularly useful for
-  IDE integration where clicking on a specific test should run only that test, even when multiple
-  tests may match the same pattern
-- `topmodule::Module=Main`: Module context for execution (default: `Main`)
-- `source::Union{Nothing,AbstractString}=nothing`: When provided, use this source text for the
-  entry file instead of reading it from disk. `filename` is still used for `@__FILE__`, error
-  messages, and resolving paths of `include`d files. Useful for editor integrations that want
-  to run tests against an unsaved buffer
-
-**Returns:**
-- Test results from the selectively executed tests
-
-### `runtests`
-
-```julia
-runtests(entryfilename::AbstractString, patterns;
-         filter_lines=nothing, topmodule::Module=Main, source=nothing)
-```
-
-The package also provides a `runtests` function for advanced use cases like
-selectively running package test cases from `test/runtests.jl`, where
-you need to specify different patterns for different files in a test suite
-that includes multiple files via `include` statements.
-See its docstring for detailed usage.
-
-### `TestRunnerTestSet`
-
-Since `runtest` and `runtests` execute Test.jl code using JuliaInterpreter,
-they cannot directly utilize the test failure handling provided by Test.jl.
-
-Therefore, this package implements a custom `@testset` type called `TestRunnerTestSet`.
-When `runtest[s]` is executed within `@testset TestRunnerTestSet`,
-you get equivalent test failure handling to Test.jl.
-For programmatic usage, it can be used specifically in the following way:
-```julia
-using Test, TestRunner
-@testset TestRunnerTestSet runtest("mytest.jl", ["my tests"])
-```
-
-**It is recommended to always use `runtest[s]` together with `@testset TestRunnerTestSet` as shown above.**
-
-`TestRunnerTestSet` is automatically used in the [`testrunner` app](#app-usage).
-
-See the [Test failure/error handling](#test-failureerror-handling) section for
-detailed comparisons showing how different types of failures are reported.
-
-## Pattern types
-
-### String patterns
-
-Match testsets by exact name:
-```julia
-# Match a testset by name
-runtest("demo.jl", ["struct tests"])  # matches any testset whose name is "struct tests"
-```
-
-### Regex patterns
-
-Match testsets using regular expressions:
-```julia
-runtest("demo.jl", [r"foo"])  # matches any testset containing "foo"
-```
-
-### Expression patterns
-
-Match arbitrary Julia expressions using MacroTools patterns:
-```julia
-runtest("demo.jl", [:(@test startswith(s_, prefix_))])  # matches e.g. `@test startswith(s, "Julia")`
-runtest("demo.jl", [:(@test a_ > b_)])                  # matches e.g. `@test x > 0`
-```
-
-### Line number patterns
-
-Directly specify line numbers or ranges to execute:
-```julia
-# Run code on specific lines
-runtest("demo.jl", [10, 20, 30])
-
-# Run code in a line range
-runtest("demo.jl", [10:15])
-
-# Combine with other patterns
-runtest("demo.jl", ["basic tests", 42, 50:55])
-```
-
-## App usage
-
-TestRunner can be installed as a CLI executable (see the [installation](#installation) section):
+With the [demo.jl](./demo.jl) file shown in the [examples](#examples):
 
 ```bash
-# Run specific testsets by name
-testrunner mypkg/runtests.jl.jl "basic tests" "advanced tests"
+# Run the testset named "basic tests"
+testrunner demo.jl "basic tests"
 
-# Run tests on specific lines
-testrunner mypkg/runtests.jl.jl L10
-testrunner mypkg/runtests.jl.jl L10:20
+# Run multiple testsets
+testrunner demo.jl "basic tests" "struct tests"
 
-# Run tests matching expression patterns
-testrunner mypkg/runtests.jl.jl ':(@test foo(x_) == y_)'
+# Run the tests matching an expression pattern
+testrunner demo.jl ':(@test startswith(inner_func2(), "inner"))'
 
-# Run tests matching regex patterns
-testrunner mypkg/runtests.jl.jl r"^test.*basic"
+# Run the tests on lines 55-57
+testrunner demo.jl L55:57
+```
 
-# Run all tests in a file
-testrunner mypkg/runtests.jl.jl
+## Usage
 
+```
+testrunner [options] <path> [patterns...]
+testrunner [julia options] -- [options] <path> [patterns...]
+```
+
+TestRunner runs the tests in `<path>` that match any of the given patterns,
+along with the other code they need (see [How it works](#how-it-works)).
+Without patterns, it runs all the tests in `<path>`.
+It exits with status 1 when any test fails or errors.
+
+### Patterns
+
+| Pattern     | Runs                                                                  |
+|-------------|-----------------------------------------------------------------------|
+| `my tests`  | the `@testset`s named exactly `my tests` (the default)                |
+| `r"regex"`  | the `@testset`s whose names match the regex                           |
+| `:(expr)`   | the code matching `expr` as a [MacroTools.jl](https://github.com/FluxML/MacroTools.jl) pattern |
+| `L10`       | the code on line 10                                                   |
+| `L10:20`    | the code on lines 10-20                                               |
+
+Quote patterns so that the shell passes them to TestRunner as they are,
+including the quotes of regex patterns:
+
+```bash
+# Run the testsets whose names contain "basic"
+testrunner test/runtests.jl 'r"basic"'
+
+# Run the tests comparing a call to `foo` with something,
+# e.g. `@test foo(x) == 1`
+testrunner test/runtests.jl ':(@test foo(x_) == y_)'
+```
+
+### Options
+
+- `--filter-lines=1,5,10:20`, `-f=1,5,10:20`: Run only the matches of the
+  patterns that overlap the given lines. This is useful for editor
+  integrations, where running a specific test should run only that test even
+  when other tests match the same pattern
+- `--verbose`, `-v`: Show the Julia version, the parsed patterns, and the
+  results of each test set
+- `--json`: Output results in JSON format for machine-readable test results.
+  When patterns are given, the results of the individual test sets are included
+  as well, along with the lines of their `@testset`s
+- `--read-stdin`: Read source for the given file path from stdin instead of disk.
+  The path is still used for `@__FILE__`, error messages, and resolving `include`d files
+- `--root-path=<dir>`: Base directory for relative `include` paths when the
+  given path has no directory, e.g. when it names an unsaved editor buffer
+  read with `--read-stdin`
+- `--project[=<dir>]`: **Deprecated**: pass `--project` to Julia before `--`
+  instead, e.g. `testrunner --project=test -- test/runtests.jl`
+- `--help`, `-h`: Show the help message
+
+```bash
 # Combine patterns with filter lines
-testrunner mypkg/runtests.jl.jl "my tests" --filter-lines=10,15,20:25
-
-# Use verbose output
-testrunner -v mypkg/runtests.jl.jl L55:57
-
-# Pass options to Julia before `--`, e.g. to run tests with multiple threads
-testrunner --threads=4 -- mypkg/runtests.jl "my tests"
-
-# Use a specific project environment
-testrunner --project=/path/to/project -- mypkg/runtests.jl "my tests"
-
-# Show help
-testrunner --help
+testrunner test/runtests.jl "my tests" --filter-lines=10,15,20:25
 
 # Output results in JSON format
-testrunner --json mypkg/runtests.jl "my tests"
+testrunner --json test/runtests.jl "my tests"
 
 # Read source from stdin (e.g. an unsaved editor buffer); the file path is
 # still needed for `@__FILE__` and to resolve any `include`d files
-cat my-edits.jl | testrunner --read-stdin --json mypkg/runtests.jl "my tests"
+cat my-edits.jl | testrunner --read-stdin --json test/runtests.jl "my tests"
 ```
 
-Pattern formats:
-- `L10` - Run tests on line 10
-- `L10:20` - Run tests on lines 10-20
-- `:(expr)` - Match expression pattern
-- `r"^test.*"` - Match testset names with regex
-- `"my tests"` - Match testset by exact name (default)
+### Julia options
 
-Options:
-- `--project[=<dir>]` - **Deprecated**: pass `--project` to Julia before `--`
-  instead, e.g. `testrunner --project=test -- test/runtests.jl`
-- `--filter-lines=1,5,10:20` or `-f=1,5,10:20` - Filter to specific lines
-- `--verbose` or `-v` - Show verbose output
-- `--json` - Output results in JSON format for machine-readable test results.
-  When patterns are given, the results of the individual test sets are included
-  as well, along with the lines of their `@testset`s
-- `--read-stdin` - Read source for the given file path from stdin instead of disk.
-  The path is still used for `@__FILE__`, error messages, and resolving `include`d files
+Arguments before `--` go to Julia, e.g. to select the project environment of
+the tests or to run them with multiple threads:
+
+```bash
+testrunner --project=test -- test/runtests.jl "my tests"
+testrunner --threads=4 -- test/runtests.jl "my tests"
+```
+
+Without `--`, all arguments go to TestRunner.
 
 ### Running via `julia -m TestRunner`
 
@@ -341,23 +252,22 @@ end
 end
 ```
 
-```julia-repl
-julia> using TestRunner
-```
+The examples below use `-v` to show the results of each test set, and omit
+the Julia version and the parsed patterns that it also shows.
 
 Run `@testset "basic tests"`:
-```julia-repl
-julia> @testset "Basic tests runner" verbose=true runtest("demo.jl", ["basic tests"]);
-Test Summary:      | Pass  Broken  Total  Time
-Basic tests runner |    2       1      3  0.0s
-  basic tests      |    2       1      3  0.0s
+```console
+$ testrunner -v demo.jl "basic tests"
+Test Summary: | Pass  Broken  Total  Time
+demo.jl       |    2       1      3  0.2s
+  basic tests |    2       1      3  0.0s
 ```
 
 `@testset` can be selected with regex:
-```julia-repl
-julia> @testset "Regex runner" verbose=true runtest("demo.jl", [r".*tests"]);
+```console
+$ testrunner -v demo.jl 'r".*tests"'
 Test Summary:      | Pass  Broken  Total  Time
-Regex runner       |   12       1     13  0.0s
+demo.jl            |   12       1     13  0.2s
   basic tests      |    2       1      3  0.0s
   struct tests     |    2              2  0.0s
   nested tests     |    5              5  0.0s
@@ -365,18 +275,18 @@ Regex runner       |   12       1     13  0.0s
 ```
 
 Run individual `@test` cases that use the `process` function:
-```julia-repl
-julia> @testset "Standalone runner" verbose=true runtest("demo.jl", [:(@test process(s_) == n_)]);
-Test Summary:     | Pass  Total  Time
-Standalone runner |    2      2  0.0s
-  struct tests    |    1      1  0.0s
+```console
+$ testrunner -v demo.jl ':(@test process(s_) == n_)'
+Test Summary:  | Pass  Total  Time
+demo.jl        |    2      2  0.2s
+  struct tests |    1      1  0.0s
 ```
 
 Nested `@testset` can be selected:
-```julia-repl
-julia> @testset "Nested runner" verbose=true runtest("demo.jl", ["inner tests 1"]);
+```console
+$ testrunner -v demo.jl "inner tests 1"
 Test Summary:  | Pass  Total  Time
-Nested runner  |    2      2  0.0s
+demo.jl        |    2      2  0.2s
   nested tests |    2      2  0.0s
 ```
 
@@ -386,145 +296,197 @@ Other tests of the enclosing `@testset`s (e.g. the other tests of
 `@testset "nested tests"` above) are not run.
 
 Individual `@test` cases can be selectively matched using pattern expressions:
-```julia-repl
-julia> @testset "Pattern in nested" verbose=true runtest("demo.jl", [:(@test startswith(s_, prefix_))]);
-Test Summary:     | Pass  Total  Time
-Pattern in nested |    1      1  0.0s
-  nested tests    |    1      1  0.0s
+```console
+$ testrunner -v demo.jl ':(@test startswith(s_, prefix_))'
+Test Summary:  | Pass  Total  Time
+demo.jl        |    1      1  0.2s
+  nested tests |    1      1  0.0s
 ```
 
 We can run tests by directly specifying line numbers:
-```julia-repl
-julia> @testset "Single line" verbose=true runtest("demo.jl", [56]); # Run only the test on line 56
+```console
+$ testrunner -v demo.jl L56 # Run only the test on line 56
 Test Summary:      | Pass  Total  Time
-Single line        |    1      1  0.0s
+demo.jl            |    1      1  0.2s
   calculator tests |    1      1  0.0s
 
-julia> @testset "Line range" verbose=true runtest("demo.jl", [55:57]); # Run tests in lines 55-57
+$ testrunner -v demo.jl L55:57 # Run tests in lines 55-57
 Test Summary:      | Pass  Total  Time
-Line range         |    3      3  0.0s
+demo.jl            |    3      3  0.2s
   calculator tests |    3      3  0.0s
 
-julia> @testset "Mixed patterns" verbose=true runtest("demo.jl", ["calculator tests", 61]); # Combine named testsets with line numbers
-Test Summary:       | Pass  Total  Time
-Mixed patterns      |    4      4  0.0s
-  calculator tests  |    3      3  0.0s
+$ testrunner -v demo.jl "calculator tests" L61 # Combine named testsets with line numbers
+Test Summary:      | Pass  Total  Time
+demo.jl            |    4      4  0.2s
+  calculator tests |    3      3  0.0s
 ```
 
-> [!note]
-> Note that the `@testset "xxx runner" verbose=true` part is used only to show
-> the test results in an organized way and is not required for TestRunner
-> functionality itself.
+### Test failures and errors
 
-### Test failure/error handling
+When tests fail or error, TestRunner reports them with the full exception
+information and exits with status 1:
 
-When tests fail or encounter errors, TestRunner provides enhanced debugging
-capabilities through its custom `TestRunnerTestSet` type. This section explains
-how different types of test failures are handled and reported.
-Let's compare how different types of test failures are reported with and without
-`TestRunnerTestSet`:
+```console
+$ testrunner demo.jl "Test failure"
+ERROR: Some tests did not pass: 0 passed, 1 failed, 0 errored, 0 broken.
 
-#### 1. Test failure
-
-For simple assertion failures, there's no difference between the two approaches.
-Both provide the full interpreter stacktrace.
-
-**With `Test.DefaultTestSet`:**
-```julia-repl
-julia> @testset verbose=true runtest("demo.jl", ["Test failure"]);
-Test failure: Test Failed at demo.jl:68
+Test failure: Test Failed at /path/to/demo.jl:68
   Expression: sin(0) == π
    Evaluated: 0.0 == π
-
-Stacktrace:
-  [1] evaluate_call!(interp::TestRunner.TRInterpreter, frame::JuliaInterpreter.Frame, fargs::Vector{Any}, ::Bool)
-    @ TestRunner ~/julia/packages/TestRunner/src/TestRunner.jl:515
+  Stacktrace:
   ...
+Test Summary:  | Fail  Total  Time
+demo.jl        |    1      1  1.1s
+  Test failure |    1      1  1.0s
 ```
 
-**With `TestRunnerTestSet`:**
-```julia-repl
-julia> @testset TestRunnerTestSet verbose=true runtest("demo.jl", ["Test failure"]);
-Test failure: Test Failed at demo.jl:68
-  Expression: sin(0) == π
-   Evaluated: 0.0 == π
+```console
+$ testrunner demo.jl 'Exception inside of `@test`'
+ERROR: Some tests did not pass: 1 passed, 0 failed, 2 errored, 0 broken.
 
-Stacktrace:
-  [1] evaluate_call!(interp::TestRunner.TRInterpreter, frame::JuliaInterpreter.Frame, fargs::Vector{Any}, ::Bool)
-    @ TestRunner ~/julia/packages/TestRunner/src/TestRunner.jl:515
-  ...
-```
-
-#### 2. Exception inside `@test`
-
-When an exception occurs within a `@test` expression, full exception information
-is only available with `TestRunnerTestSet`.
-
-**With `Test.DefaultTestSet`:**
-```julia-repl
-julia> @testset verbose=true runtest("demo.jl", ["Exception inside of `@test`"]);
-Exception inside of `@test`: Error During Test at demo.jl:72
-  Test threw exception
-  Expression: sin(Inf) == π
-
-Exception inside of `@test`: Error During Test at demo.jl:74
-  Test threw exception
-  Expression: cos(Inf) == π
-```
-
-**With `TestRunnerTestSet`:**
-```julia-repl
-julia> @testset TestRunnerTestSet verbose=true runtest("demo.jl", ["Exception inside of `@test`"]);
-Exception inside of `@test`: Error During Test at demo.jl:72
+Exception inside of `@test`: Error During Test at /path/to/demo.jl:72
   Test threw exception
   Expression: sin(Inf) == π
   DomainError with Inf:
   sin(x) is only defined for finite x.
   Stacktrace:
-    [1] sin_domain_error(x::Float64)
-      @ Base.Math ./special/trig.jl:28
-    [2] sin(x::Float64)
-      @ Base.Math ./special/trig.jl:39
-    ...
+   [1] sin_domain_error(x::Float64)
+     @ Base.Math ./special/trig.jl:28
+   [2] sin(x::Float64)
+     @ Base.Math ./special/trig.jl:39
+  ...
 
-Exception inside of `@test`: Error During Test at demo.jl:74
+Exception inside of `@test`: Error During Test at /path/to/demo.jl:74
   Test threw exception
   Expression: cos(Inf) == π
   DomainError with Inf:
   cos(x) is only defined for finite x.
   Stacktrace:
-    [1] cos_domain_error(x::Float64)
-      @ Base.Math ./special/trig.jl:97
-    [2] cos(x::Float64)
-      @ Base.Math ./special/trig.jl:108
-    ...
+   [1] cos_domain_error(x::Float64)
+     @ Base.Math ./special/trig.jl:97
+   [2] cos(x::Float64)
+     @ Base.Math ./special/trig.jl:108
+  ...
+Test Summary:                 | Pass  Error  Total  Time
+demo.jl                       |    1      2      3  0.9s
+  Exception inside of `@test` |    1      2      3  0.8s
 ```
 
-#### 3. Exception outside `@test`
+An exception outside of a `@test` stops the rest of its `@testset`:
+```console
+$ testrunner demo.jl 'Exception outside of `@test`'
+ERROR: Some tests did not pass: 0 passed, 0 failed, 1 errored, 0 broken.
 
-When an exception occurs outside of a `@test` macro (preventing subsequent tests
-from running), full exception information is available only with `TestRunnerTestSet`:
-
-**With `Test.DefaultTestSet`:**
-```julia-repl
-julia> @testset verbose=true runtest("demo.jl", ["Exception outside of `@test`"]);
-Exception outside of `@test`: Error During Test at demo.jl:77
-  Got exception outside of a @test
-```
-
-**With `TestRunnerTestSet`:**
-```julia-repl
-julia> @testset TestRunnerTestSet verbose=true runtest("demo.jl", ["Exception outside of `@test`"]);
-Exception outside of `@test`: Error During Test at demo.jl:77
+Exception outside of `@test`: Error During Test at /path/to/demo.jl:77
   Got exception outside of a @test
   DomainError with Inf:
   sin(x) is only defined for finite x.
   Stacktrace:
-    [1] sin_domain_error(x::Float64)
-      @ Base.Math ./special/trig.jl:28
-    [2] sin(x::Float64)
-      @ Base.Math ./special/trig.jl:39
-    ...
+   [1] sin_domain_error(x::Float64)
+     @ Base.Math ./special/trig.jl:28
+   [2] sin(x::Float64)
+     @ Base.Math ./special/trig.jl:39
+  ...
+Test Summary:                  | Error  Total  Time
+demo.jl                        |     1      1  0.9s
+  Exception outside of `@test` |     1      1  0.7s
+```
+
+## Programmatic usage
+
+### `runtest`
+
+```julia
+runtest(filename::AbstractString, patterns;
+        filter_lines=nothing, topmodule::Module=Main, source=nothing)
+```
+
+Run tests from a file that match the given patterns and/or are on the
+specified lines.
+
+**Arguments:**
+- `filename::AbstractString`: Path to the test file
+- `patterns`: Patterns to match. Can be strings, regexes, expressions, integers (line numbers),
+  or ranges (line ranges); see [Pattern values](#pattern-values)
+- `filter_lines=nothing`: Optional line numbers to filter pattern matches. When provided, only
+  pattern matches that overlap with these lines will be executed, like `--filter-lines`
+- `topmodule::Module=Main`: Module context for execution (default: `Main`)
+- `source::Union{Nothing,AbstractString}=nothing`: When provided, use this source text for the
+  entry file instead of reading it from disk, like `--read-stdin`. `filename` is still used for
+  `@__FILE__`, error messages, and resolving paths of `include`d files
+
+**Returns:**
+- Test results from the selectively executed tests
+
+### `runtests`
+
+```julia
+runtests(entryfilename::AbstractString, patterns;
+         filter_lines=nothing, topmodule::Module=Main, source=nothing)
+```
+
+The package also provides a `runtests` function for advanced use cases like
+selectively running package test cases from `test/runtests.jl`, where
+you need to specify different patterns for different files in a test suite
+that includes multiple files via `include` statements.
+See its docstring for detailed usage.
+
+### Pattern values
+
+The patterns of `runtest` and `runtests` are the Julia values that the
+[patterns of the CLI](#patterns) represent:
+
+| CLI         | Julia value     |
+|-------------|-----------------|
+| `my tests`  | `"my tests"`    |
+| `r"regex"`  | `r"regex"`      |
+| `:(expr)`   | `:(expr)`       |
+| `L10`       | `10`            |
+| `L10:20`    | `10:20`         |
+
+```julia
+runtest("demo.jl", ["basic tests", "struct tests"])
+runtest("demo.jl", [r".*tests"])
+runtest("demo.jl", [:(@test startswith(s_, prefix_))])
+runtest("demo.jl", ["calculator tests", 61])
+```
+
+### `TestRunnerTestSet`
+
+Since `runtest` and `runtests` execute Test.jl code using JuliaInterpreter,
+they cannot directly utilize the test failure handling provided by Test.jl.
+
+Therefore, this package implements a custom `@testset` type called `TestRunnerTestSet`.
+When `runtest[s]` is executed within `@testset TestRunnerTestSet`,
+you get equivalent test failure handling to Test.jl.
+For programmatic usage, it can be used specifically in the following way:
+```julia
+using Test, TestRunner
+@testset TestRunnerTestSet runtest("mytest.jl", ["my tests"])
+```
+
+**It is recommended to always use `runtest[s]` together with `@testset TestRunnerTestSet` as shown above.**
+
+`TestRunnerTestSet` is automatically used in the [`testrunner` app](#usage),
+which shows the [full exception information](#test-failures-and-errors).
+With `Test.DefaultTestSet`, the exceptions thrown inside and outside of `@test`
+are reported without it:
+
+```julia-repl
+julia> @testset verbose=true runtest("demo.jl", ["Exception inside of `@test`"]);
+Exception inside of `@test`: Error During Test at /path/to/demo.jl:72
+  Test threw exception
+  Expression: sin(Inf) == π
+
+Exception inside of `@test`: Error During Test at /path/to/demo.jl:74
+  Test threw exception
+  Expression: cos(Inf) == π
+...
+
+julia> @testset verbose=true runtest("demo.jl", ["Exception outside of `@test`"]);
+Exception outside of `@test`: Error During Test at /path/to/demo.jl:77
+  Got exception outside of a @test
+...
 ```
 
 ## How it works
@@ -591,11 +553,11 @@ unrelated tests while still ensuring all code dependencies are available.
    ```
 
    When trying to run only the first test:
-   ```julia-repl
-   julia> @testset "Limitation1 runner" verbose=true runtest("limitations/limitation1.jl", [:(@test isnothing(limitation1()))]);
-   Test Summary:      | Pass  Total  Time
-   Limitation1 runner |    2      2  0.0s
-     limitation1      |    2      2  0.0s
+   ```console
+   $ testrunner -v limitations/limitation1.jl ':(@test isnothing(limitation1()))'
+   Test Summary:  | Pass  Total  Time
+   limitation1.jl |    2      2  0.1s
+     limitation1  |    2      2  0.0s
    ```
 
    Both tests are executed (2 tests pass) because they are on the same line. The
@@ -613,11 +575,11 @@ unrelated tests while still ensuring all code dependencies are available.
    ```
 
    With this workaround:
-   ```julia-repl
-   julia> @testset "Workaround1 runner" verbose=true runtest("limitations/workaround1.jl", [:(@test isnothing(workaround1()))]);
-   Test Summary:      | Pass  Total  Time
-   Workaround1 runner |    1      1  0.0s
-     workaround1      |    1      1  0.0s
+   ```console
+   $ testrunner -v limitations/workaround1.jl ':(@test isnothing(workaround1()))'
+   Test Summary:  | Pass  Total  Time
+   workaround1.jl |    1      1  0.1s
+     workaround1  |    1      1  0.0s
    ```
 
    Now only the matched test is executed (1 test passes).
@@ -646,11 +608,11 @@ unrelated tests while still ensuring all code dependencies are available.
 
    When trying to match the `@testset` pattern, both the direct function call
    and the testset run:
-   ```julia-repl
-   julia> @testset "limitation2 demo" verbose=true runtest("limitations/limitation2.jl", ["selected test"]);
-   Test Summary:    | Pass  Total  Time
-   limitation2 demo |    2      2  0.0s
-     selected test  |    1      1  0.0s
+   ```console
+   $ testrunner -v limitations/limitation2.jl "selected test"
+   Test Summary:   | Pass  Total  Time
+   limitation2.jl  |    2      2  0.1s
+     selected test |    1      1  0.0s
    ```
 
    The test inside `limitation2()` executes twice: once from the top-level
@@ -673,10 +635,10 @@ unrelated tests while still ensuring all code dependencies are available.
    ```
 
    When trying to match a specific `@test` pattern:
-   ```julia-repl
-   julia> @testset "limitation3 demo" verbose=true runtest("limitations/limitation3.jl", [:(@test 1 + 1 == 2)]);
-   Test Summary:    | Total  Time
-   limitation3 demo |     0  0.0s
+   ```console
+   $ testrunner -v limitations/limitation3.jl ':(@test 1 + 1 == 2)'
+   Test Summary:  | Total  Time
+   limitation3.jl |     0  0.0s
    ```
 
    No tests execute because the pattern matching doesn't look inside function
