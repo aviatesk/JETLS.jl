@@ -16,6 +16,9 @@ coverage:
       TOMLSource.jl:
         flags: [TOMLSource.jl]
         informational: true
+      TestRunner.jl:
+        flags: [TestRunner.jl]
+        informational: true
     patch:
       default:
         informational: true

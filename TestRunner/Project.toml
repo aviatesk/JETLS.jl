@@ -1,0 +1,27 @@
+name = "TestRunner"
+uuid = "4efbe77e-ddf3-4ce7-be91-16409ca9e85f"
+version = "0.1.0"
+authors = ["Shuhei Kadowaki <aviatesk@gmail.com>"]
+
+[deps]
+Compiler = "807dbc54-b67e-4c79-8afb-eafe4df6f2e1"
+JSON3 = "0f8b85d8-7281-11e9-16c2-39a750bddbf1"
+JuliaInterpreter = "aa1ae85d-cabe-5617-a682-6adf51b2e16a"
+JuliaSyntax = "70703baa-626e-46a2-a12c-08ffd08c73b4"
+LoweredCodeUtils = "6f1432cf-f94c-5a45-995e-cdbf5db27b0b"
+MacroTools = "1914dd2f-81c6-5fcd-8719-6d5c9610ff09"
+PrecompileTools = "aea7be01-6a6a-4083-8856-8a6e6704d82a"
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[compat]
+Compiler = "0.1"
+JSON3 = "1.14.3"
+JuliaInterpreter = "0.11, 0.12"
+JuliaSyntax = "1, 2"
+LoweredCodeUtils = "3.8"
+MacroTools = "0.5.16"
+PrecompileTools = "1.3.2"
+Test = "1.11"
+julia = "1.12"
+
+[apps.testrunner]

@@ -35,6 +35,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > Please report extension-specific problems (installation, startup, extension UI) to [JuliaEditorSupport/zed-julia issues](https://github.com/JuliaEditorSupport/zed-julia/issues);
 > language-feature issues belong here as before.
 
+> [!note]
+> TestRunner.jl is now developed in this repository as a [subpackage](https://github.com/aviatesk/JETLS.jl/tree/master/TestRunner) and released together with JETLS, and [aviatesk/TestRunner.jl](https://github.com/aviatesk/TestRunner.jl) is no longer updated.
+> The [TestRunner integration](https://aviatesk.github.io/JETLS.jl/release/testrunner/) keeps using the TestRunner.jl bundled with JETLS, so no action is needed for it.
+> If you use the standalone `testrunner` executable, reinstall it from this repository:
+> ```bash
+> julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", subdir="TestRunner", rev="release")'
+> ```
+
 > [!warning]
 > JETLS currently has a known memory leak issue where memory usage grows with each re-analysis (https://github.com/aviatesk/JETLS.jl/issues/357).
 > As a temporary workaround, you can disable full-analysis for specific files using the [`analysis_overrides` initialization option](https://aviatesk.github.io/JETLS.jl/release/launching/#init-options/analysis_overrides):

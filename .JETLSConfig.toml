@@ -96,6 +96,14 @@ path = "LSP/test/**/*.jl"
 module_name = "JETLSTestModule"
 
 [[initialization_options.analysis_overrides]]
+module_name = "TestRunner"
+path = "TestRunner/src/**/*.jl"
+full_analysis = true
+[[initialization_options.analysis_overrides]]
+path = "TestRunner/test/**/*.jl"
+module_name = "JETLSTestModule"
+
+[[initialization_options.analysis_overrides]]
 module_name = "TOMLSource"
 path = "TOMLSource/src/**/*.jl"
 full_analysis = true

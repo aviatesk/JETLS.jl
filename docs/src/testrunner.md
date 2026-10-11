@@ -1,6 +1,6 @@
 # [TestRunner integration](@id testrunner)
 
-JETLS integrates with [TestRunner.jl](https://github.com/aviatesk/TestRunner.jl)
+JETLS integrates with [TestRunner.jl](https://github.com/aviatesk/JETLS.jl/tree/master/TestRunner)
 to provide an enhanced testing experience directly within your editor. This
 feature allows you to run individual `@testset` blocks directly from your
 development environment.
@@ -284,8 +284,8 @@ include("helpers.jl")
    end
    ```
 
-See the [How it works](https://github.com/aviatesk/TestRunner.jl#how-it-works)
-and [Limitations](https://github.com/aviatesk/TestRunner.jl#limitations)
+See the [How it works](https://github.com/aviatesk/JETLS.jl/blob/master/TestRunner/README.md#how-it-works)
+and [Limitations](https://github.com/aviatesk/JETLS.jl/blob/master/TestRunner/README.md#limitations)
 sections of the TestRunner.jl README for more details.
 
 ## [Troubleshooting](@id testrunner/troubleshooting)

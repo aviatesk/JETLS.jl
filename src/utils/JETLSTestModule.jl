@@ -16,6 +16,7 @@ module JETLSTestModule
     using LSP
     using LSP: LSP
     using LSP.URIs2
+    using TestRunner: TestRunner
     using TOMLSource: TOMLSource as TS
     using ..JETLS: JETLS
 end
