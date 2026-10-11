@@ -54,6 +54,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 >
 > Note: Path glob patterns use `/` as the separator on all platforms, including Windows; backslashes are not supported as separators.
 
+### Fixed
+
+- Fixed running a test set nested in other test sets with the [TestRunner integration](https://aviatesk.github.io/JETLS.jl/release/testrunner/) reporting no results when a test set next to it, or next to one of its enclosing test sets, contains other test sets.
+  For example, running `"a"` in the following code reported no results:
+  ```julia
+  @testset "outer" begin
+      @testset "a" begin
+          @test f() == 1
+      end
+      @testset "b" begin
+          @testset "c" begin
+              @test g() == 2
+          end
+      end
+  end
+  ```
+
 ## 2026-10-08
 
 - Commit: [`53cd4a5`](https://github.com/aviatesk/JETLS.jl/commit/53cd4a5)
