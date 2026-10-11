@@ -13,8 +13,17 @@ on:
   workflow_call:
 
 jobs:
+  verified_tree:
+    name: Verified tree
+    if: github.event_name == 'push'
+    uses: ./.github/workflows/verified-tree.yml
+
   TestRunner:
     name: Test TestRunner.jl - Julia ${{ matrix.version }} - ${{ matrix.os }} - ${{ matrix.arch }}
+    needs: verified_tree
+    # `!failure() && !cancelled()` keeps this job running when `verified_tree` is skipped,
+    # i.e. when `ci.yml` calls this workflow for a pull request.
+    if: ${{ !failure() && !cancelled() && needs.verified_tree.outputs.verified != 'true' }}
     runs-on: ${{ matrix.os }}
     # Failures against an unreleased Julia should not block merging.
     continue-on-error: ${{ matrix.version == 'nightly' }}
@@ -72,9 +81,13 @@ jobs:
           flags: TestRunner.jl
 
   # JETLS bundles TestRunner.jl with the dependencies resolved in its workspace, e.g. the
-  # development version of JuliaSyntax, so test it with them as well.
+  # `Compiler` snapshot, so test it with them as well.
   workspace:
     name: Test TestRunner.jl in the JETLS workspace
+    needs: verified_tree
+    # `!failure() && !cancelled()` keeps this job running when `verified_tree` is skipped,
+    # i.e. when `ci.yml` calls this workflow for a pull request.
+    if: ${{ !failure() && !cancelled() && needs.verified_tree.outputs.verified != 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -84,7 +97,7 @@ jobs:
           arch: x64
       - uses: julia-actions/cache@v3
       # Resolving the workspace from `TestRunner` does not apply the `[sources]` of the root
-      # project, e.g. that of JuliaSyntax, so instantiate it from the root project first.
+      # project, e.g. that of `Compiler`, so instantiate it from the root project first.
       - name: test TestRunner
         run: |
           julia --color=yes --project=. -e 'using Pkg; Pkg.instantiate()'

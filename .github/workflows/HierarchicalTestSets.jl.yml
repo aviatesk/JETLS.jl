@@ -11,8 +11,17 @@ on:
   workflow_call:
 
 jobs:
+  verified_tree:
+    name: Verified tree
+    if: github.event_name == 'push'
+    uses: ./.github/workflows/verified-tree.yml
+
   HierarchicalTestSets:
     name: Test HierarchicalTestSets.jl - Julia ${{ matrix.version }}
+    needs: verified_tree
+    # `!failure() && !cancelled()` keeps this job running when `verified_tree` is skipped,
+    # i.e. when `ci.yml` calls this workflow for a pull request.
+    if: ${{ !failure() && !cancelled() && needs.verified_tree.outputs.verified != 'true' }}
     runs-on: ubuntu-latest
     # failures against an unreleased Julia should not block merging
     continue-on-error: ${{ matrix.version == 'nightly' }}

@@ -9,11 +9,19 @@ on:
       - release
 
 jobs:
+  verified_tree:
+    name: Verified tree
+    if: github.event_name == 'push'
+    uses: ./.github/workflows/verified-tree.yml
+
   changes:
     name: Detect changes
+    needs: verified_tree
+    # `!failure() && !cancelled()` keeps this job running when `verified_tree` is skipped,
+    # i.e. for pull requests.
+    if: ${{ !failure() && !cancelled() && needs.verified_tree.outputs.verified != 'true' }}
     runs-on: ubuntu-latest
     permissions:
-      actions: read
       contents: read
       pull-requests: read
     outputs:
@@ -112,15 +120,6 @@ jobs:
             .github/workflows/Documentation.yml
         run: |
           if [ "$GITHUB_EVENT_NAME" = push ]; then
-            tree=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA" --jq .commit.tree.sha)
-            # Records uploaded by pull requests from forks are not trusted.
-            run_id=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=verified-tree-$tree" \
-              --jq '[.artifacts[] | select(.expired | not) | .workflow_run |
-                select(.head_repository_id == .repository_id)][0].id // empty')
-            if [ -n "$run_id" ]; then
-              echo "Skipping checks: tree $tree was verified by $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$run_id"
-              exit 0
-            fi
             files=$(gh api "repos/$GITHUB_REPOSITORY/compare/$BEFORE...$GITHUB_SHA" \
               --jq '.files[] | .filename, (.previous_filename // empty)')
           else
@@ -246,6 +245,7 @@ jobs:
     name: Required checks
     if: always()
     needs:
+      - verified_tree
       - changes
       - jetls
       - lsp
@@ -264,9 +264,10 @@ jobs:
           RESULTS: ${{ toJSON(needs) }}
         run: |
           jq -r 'to_entries[] | "\(.key): \(.value.result)"' <<<"$RESULTS"
-          jq -e '.changes.result == "success" and
+          jq -e '(.changes.result == "success" or .verified_tree.outputs.verified == "true") and
             all(.[]; .result == "success" or .result == "skipped")' <<<"$RESULTS" >/dev/null
-      # Lets the `push` run skip its checks when this exact tree lands on `master`.
+      # Lets `push` runs, including those of the subpackage workflows, skip their checks when
+      # this exact tree lands on `master`.
       - name: Get the verified tree
         id: tree
         if: github.event_name == 'pull_request'
