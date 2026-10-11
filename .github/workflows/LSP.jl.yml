@@ -9,6 +9,8 @@ on:
       - "LSP/Project.toml"
       - "HierarchicalTestSets/**"
       - ".github/workflows/LSP.jl.yml"
+      - "!LSP/README.md"
+      - "!HierarchicalTestSets/README.md"
   workflow_call:
 
 jobs:
