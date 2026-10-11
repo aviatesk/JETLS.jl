@@ -53,3 +53,21 @@ terms of user-visible behavior — not implementation details.
 - The "why" of a fix rarely matters to users; the "what" of the new
   behavior does. If the prior behavior is worth mentioning, describe
   its user-visible symptom, not its cause.
+
+## Announcement lifetime
+
+When adding a time-limited announcement, put a comment right above it
+recording when it was added and when it should be removed, typically one
+month later:
+
+```markdown
+<!-- Added: 2026-10-11 / Remove after: 2026-11-11 -->
+> [!note]
+> ...
+```
+
+Announcements without a time limit, such as the supported Julia
+versions, have no such comment.
+
+If an announcement's removal date has passed, tell the user, and remove
+it together with its comment separately from the entry being added.

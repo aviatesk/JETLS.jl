@@ -24,6 +24,7 @@ end
 
 let CHANGELOG_md = joinpath(@__DIR__, "..", "CHANGELOG.md")
     CHANGELOG_md_text = read(CHANGELOG_md, String)
+    CHANGELOG_md_text = replace(CHANGELOG_md_text, r"^<!--(?:(?!-->).)*-->\n"ms => "")
     CHANGELOG_md_text = replace(CHANGELOG_md_text,
         "./DEVELOPMENT.md" =>
         "https://github.com/aviatesk/JETLS.jl/blob/master/DEVELOPMENT.md")
