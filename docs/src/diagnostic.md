@@ -202,7 +202,7 @@ See [`config/*`](@ref diagnostic/reference/config) for the diagnostic codes.
 
 ###### [Test execution (`testrunner/*`)](@id diagnostic/stage/testrunner)
 
-[TestRunner.jl](https://github.com/aviatesk/TestRunner.jl) runs your tests via
+[TestRunner.jl](https://github.com/aviatesk/JETLS.jl/tree/master/TestRunner) runs your tests via
 the [TestRunner integration](@ref testrunner), reporting failures through the
 `JETLS/extra` source. Unlike the other categories, these run only when you
 trigger them manually, not automatically on edit or save. See

@@ -1,5 +1,3 @@
-module test_jetls_serve
-
 """
 Test file for exercising the `jetls` executable app with raw JSON communication.
 
@@ -13,6 +11,7 @@ stdin/stdout using raw JSON-RPC messages, testing:
 To run this test independently:
     julia --startup-file=no -e 'using Test; @testset "jetls serve" include("test/app/test_jetls_serve.jl")'
 """
+module test_jetls_serve
 
 using Test
 using JETLS

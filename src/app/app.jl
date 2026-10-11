@@ -9,6 +9,7 @@ const help_message = """
     Commands:
       serve                       Start language server
       check [<path>...]           Run diagnostics on Julia files
+      test <path> [<pattern>...]  Run tests with TestRunner.jl
       schema                      Print JSON schema for configuration
       version                     Show version information
 
@@ -20,13 +21,14 @@ const help_message = """
 
     Examples:
       jetls check src/SomePkg.jl
+      jetls test test/runtests.jl "basic tests"
       jetls serve --pipe-listen=/tmp/jetls.sock
       jetls schema --settings
     """
 
 @doc help_message
 function (@main)(args::Vector{String})::Cint
-    if any(arg -> arg in ("-v", "--version", "version"), args)
+    if !isempty(args) && first(args) in ("-v", "--version", "version")
         println(stdout, "jetls version $JETLS_VERSION, julia version $VERSION")
         return 0
     end
@@ -43,6 +45,8 @@ function run_command(args::Vector{String})
             return run_schema(args[2:end])
         elseif first_arg == "serve"
             return run_serve(args[2:end])
+        elseif first_arg == "test"
+            return run_test(args[2:end])
         end
     end
     print(stdout, help_message)

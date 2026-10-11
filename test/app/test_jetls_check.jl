@@ -1,5 +1,3 @@
-module test_jetls_check
-
 """
 Test file for exercising the `jetls check` command.
 
@@ -12,6 +10,7 @@ This test spawns actual `julia -m JETLS check` processes and verifies:
 To run this test independently:
     julia --startup-file=no --project=./test ./test/app/test_jetls_check.jl
 """
+module test_jetls_check
 
 using Test
 using JETLS
@@ -736,6 +735,67 @@ end
         @test result.exitcode == 1
         @test occursin("toplevel/analysis-skipped", result.stdout)
         @test !occursin("toplevel/error", result.stdout)
+    end
+end
+
+function with_active_project(f, project::Union{Nothing,String})
+    old_project = Base.active_project(false)
+    Base.set_active_project(project)
+    try
+        return f()
+    finally
+        Base.set_active_project(old_project)
+    end
+end
+
+# An environment providing `DefineX.@defx`, which defines `x` when expanded
+function write_definex_env(dir::String)
+    uuid = "9c3b1d2e-4f5a-4b6c-8d7e-0f1a2b3c4d5e"
+    write_test_file(mkpath(joinpath(dir, "DefineX")), "Project.toml", """
+        name = "DefineX"
+        uuid = "$uuid"
+        version = "0.1.0"
+        """)
+    write_test_file(mkpath(joinpath(dir, "DefineX", "src")), "DefineX.jl", """
+        module DefineX
+        macro defx()
+            return :(\$(esc(:x)) = 1)
+        end
+        end
+        """)
+    envdir = mkpath(joinpath(dir, "env"))
+    write_test_file(envdir, "Manifest.toml", """
+        manifest_format = "2.0"
+
+        [[deps.DefineX]]
+        path = "../DefineX"
+        uuid = "$uuid"
+        version = "0.1.0"
+        """)
+    return write_test_file(envdir, "Project.toml", """
+        [deps]
+        DefineX = "$uuid"
+        """)
+end
+
+@testset "active project for files without an environment" begin
+    mktempdir() do dir
+        project = write_definex_env(dir)
+        filepath = write_test_file(mkpath(joinpath(dir, "scripts")), "script.jl", """
+            using DefineX
+            DefineX.@defx
+            println(x)
+            """)
+
+        result = with_active_project(nothing) do
+            run_jetls_check([filepath]; root=dir, skip_analysis=false)
+        end
+        @test occursin("`x` is not defined", result.stdout)
+
+        result = with_active_project(project) do
+            run_jetls_check([filepath]; root=dir, skip_analysis=false)
+        end
+        @test !occursin("`x` is not defined", result.stdout)
     end
 end
 
