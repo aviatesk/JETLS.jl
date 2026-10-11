@@ -117,6 +117,26 @@ end
         r = only(reports)
         @test r isa UndefVarErrorReport && r.var == GlobalRef(TestTargetModule, :unexisting)
     end
+
+    # reading a constant declared earlier in the same top-level thunk should not warn about
+    # accessing a backdated binding
+    let analyzer = LSAnalyzer(; report_target_modules=nothing)
+        interp = JET.JETConcreteInterpreter(analyzer)
+        mktemp() do path, io
+            result = redirect_stderr(io) do
+                JET.analyze_and_report_text!(interp, """
+                    let
+                        global const x = rand(Int)
+                        sin(x)
+                    end
+                    """)
+            end
+            @test isnothing(result.res.toplevel_error_report)
+            @test isempty(get_reports(result))
+            flush(io)
+            @test !occursin("prior to its definition world", read(path, String))
+        end
+    end
 end
 
 @testset "concretized call reports" begin

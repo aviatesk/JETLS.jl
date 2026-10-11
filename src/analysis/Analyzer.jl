@@ -837,13 +837,15 @@ function report_undef_global_var!(
         offset::Int
     )
     gr = binding.globalref
-    # TODO use `abstract_eval_isdefinedglobal` for respecting world age
-    world = CC.get_inference_world(analyzer)
-    if Base.invoke_in_world(world, isdefinedglobal, gr.mod, gr.name)
+    # Read constants from `partition` itself: JET defines constants in a world newer than
+    # `sv.world`, and `getglobal` warns about such backdated constants.
+    if CC.is_defined_const_binding(CC.binding_kind(partition))
         # HACK/FIXME Concretize `AbstractBindingState`
-        x = Base.invoke_in_world(world, getglobal, gr.mod, gr.name)
+        x = CC.partition_restriction(partition)
         x isa JET.AbstractBindingState || return false
         binding_state = x
+    elseif Base.invoke_in_world(sv.world.this, isdefinedglobal, gr.mod, gr.name)
+        return false
     else
         binding_states = JET.get_binding_states(analyzer)
         binding_state = get(binding_states, partition, nothing)
