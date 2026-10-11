@@ -67,6 +67,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 >
 > Note: Path glob patterns use `/` as the separator on all platforms, including Windows; backslashes are not supported as separators.
 
+### Changed
+
+- [`toplevel/abstract-field`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/toplevel/abstract-field) is now reported as a hint instead of information, since abstract fields are often intentional.
+  `jetls check` no longer shows it by default (use `--show-severity=hint` to show it), and editors render it less prominently.
+  To restore the previous severity, configure it with [`diagnostic.patterns`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/diagnostic/patterns):
+  ```toml
+  [[diagnostic.patterns]]
+  pattern = "toplevel/abstract-field"
+  match_by = "code"
+  match_type = "literal"
+  severity = "info"
+  ```
+
 ### Fixed
 
 - Fixed a `WARNING: Detected access to binding ... in a world prior to its definition world` message that full analysis could print for scripts that define a `global const` inside a `let` block and use it within the same block, e.g. during `jetls check`.

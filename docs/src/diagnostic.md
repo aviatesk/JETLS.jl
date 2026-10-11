@@ -243,7 +243,7 @@ Here is a summary table of the diagnostics explained in this section:
 | [`toplevel/missing-concretization`](@ref diagnostic/reference/toplevel/missing-concretization)                 | `Error`               | `JETLS/save`  | Top-level code needs a non-concretized binding value   |
 | [`toplevel/concretization-timeout`](@ref diagnostic/reference/toplevel/concretization-timeout)                 | `Error`               | `JETLS/save`  | Concrete execution of top-level code exceeded its time limit |
 | [`toplevel/method-overwrite`](@ref diagnostic/reference/toplevel/method-overwrite)                             | `Warning`             | `JETLS/save`  | Method definitions that overwrite previous ones        |
-| [`toplevel/abstract-field`](@ref diagnostic/reference/toplevel/abstract-field)                                 | `Information`         | `JETLS/save`  | Struct fields with abstract types                      |
+| [`toplevel/abstract-field`](@ref diagnostic/reference/toplevel/abstract-field)                                 | `Hint`                | `JETLS/save`  | Struct fields with abstract types                      |
 | [`toplevel/unsupported-feature`](@ref diagnostic/reference/toplevel/unsupported-feature)                       | `Warning`             | `JETLS/save`  | Unsupported code analyzed with an approximation        |
 | [`toplevel/analysis-skipped`](@ref diagnostic/reference/toplevel/analysis-skipped)                             | `Warning`             | `JETLS/save`  | Files skipped by full analysis                         |
 | [`inference/undef-global-var`](@ref diagnostic/reference/inference/undef-global-var)                           | `Warning`             | `JETLS/save`  | References to undefined global variables               |
@@ -1367,11 +1367,15 @@ The diagnostic includes a link to the original definition location via
 
 #### [Abstract field type (`toplevel/abstract-field`)](@id diagnostic/reference/toplevel/abstract-field)
 
-**Default severity**: `Information`
+**Default severity**: `Hint`
 
 Reported when a struct field has an abstract type, which can cause performance
 issues due to type instability. Storing values in abstractly-typed fields
 often prevents the compiler from generating optimized code.
+Since abstract fields are often intentional, this diagnostic is reported as a
+hint by default; raise its severity with
+[pattern-based configuration](@ref config/diagnostic/patterns) to make it more
+prominent.
 
 Example:
 

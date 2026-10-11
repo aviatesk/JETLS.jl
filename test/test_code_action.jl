@@ -646,7 +646,7 @@ end
     ref_name_range = Range(; start = positions[1], var"end" = positions[2])
     diagnostic = Diagnostic(;
         range = JETLS.line_range(2),
-        severity = DiagnosticSeverity.Information,
+        severity = DiagnosticSeverity.Hint,
         message = "`AAA` has abstract field `x::Ref{Int64}`",
         source = JETLS.DIAGNOSTIC_SOURCE_SAVE,
         code = JETLS.TOPLEVEL_ABSTRACT_FIELD_CODE,

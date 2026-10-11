@@ -695,7 +695,7 @@ function toplevel_warning_report_to_diagnostic_impl(report::AbstractFieldReport,
     range = fieldline isa Int ? line_range(fieldline) : jsobj_to_range(fieldline, fi)
     return Diagnostic(;
         range,
-        severity = DiagnosticSeverity.Information,
+        severity = DiagnosticSeverity.Hint,
         message,
         source = DIAGNOSTIC_SOURCE_SAVE,
         code = TOPLEVEL_ABSTRACT_FIELD_CODE,
