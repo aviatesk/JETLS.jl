@@ -744,4 +744,53 @@ end
     end
 end
 
+@static if isdefined(Core.IR, :EnterNode)
+    @testset "required `EnterNode`s are exited" begin
+        let mod = Module(:ModExitScope)
+            Core.eval(mod, :(const sv = Base.ScopedValues.ScopedValue(0)))
+            src = Meta.lower(mod, quote
+                Base.ScopedValues.@with sv => 1 begin
+                    global inside = sv[]
+                end
+                global outside = sv[]
+            end).args[1]
+            edges = CodeEdges(mod, src)
+            controller = SelectiveEvalController()
+            objs = Set((GlobalRef(mod, :inside), GlobalRef(mod, :outside)))
+            isrequired = lines_required!(falses(length(src.code)), objs, src, edges, controller)
+            selective_eval_fromstart!(
+                LoweredCodeUtils.RecursiveInterpreter(), Frame(mod, src),
+                isrequired, controller, true)
+            @test @invokelatest(mod.inside) == 1
+            @test @invokelatest(mod.outside) == 0
+        end
+
+        # A handler left entered would catch the error of `y`, and run it again
+        let mod = Module(:ModExitHandler)
+            Core.eval(mod, quote
+                hits = Symbol[]
+                boom() = (push!(hits, :boom); error("boom"))
+            end)
+            src = Meta.lower(mod, quote
+                try
+                    global x = 1
+                catch
+                    global caught = true
+                end
+                global y = boom()
+            end).args[1]
+            edges = CodeEdges(mod, src)
+            controller = SelectiveEvalController()
+            objs = Set((GlobalRef(mod, :x), GlobalRef(mod, :y)))
+            isrequired = lines_required!(falses(length(src.code)), objs, src, edges, controller)
+            @test_throws ErrorException selective_eval_fromstart!(
+                LoweredCodeUtils.RecursiveInterpreter(), Frame(mod, src),
+                isrequired, controller, true)
+            @test @invokelatest(mod.x) == 1
+            @test @invokelatest(mod.hits) == [:boom]
+            @test !@invokelatest(isdefined(mod, :caught))
+        end
+    end
+end
+
 end # module codeedges

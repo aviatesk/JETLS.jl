@@ -351,6 +351,40 @@ module EnclosingCallIncludeModule end
     end
 end
 
+module UnmatchedTestsetsModule end
+@testset "unmatched testsets around matched code" begin
+    # The control flow of "outer" and "inner" passes through the `try` blocks of the
+    # unmatched testsets, which must not be entered
+    source = """
+    using Test
+    @testset "outer" begin
+        @testset "inner" begin
+            @testset "selected" begin
+                @test true
+            end
+            @testset "unmatched" begin
+                @test true
+            end
+        end
+        @testset "sibling" begin
+            @testset "nested" begin
+                @test true
+            end
+        end
+    end
+    """
+    filename = joinpath(@__DIR__, "unmatched-testsets.jl")
+    result = @testset "unmatched testsets" runtest(filename, ["selected"]; source,
+                                                   topmodule=UnmatchedTestsetsModule)
+    outer = only(result.results)
+    @test outer.description == "outer"
+    inner = only(outer.results)
+    @test inner.description == "inner"
+    selected = only(inner.results)
+    @test selected.description == "selected"
+    @test selected.n_passed == 1
+end
+
 module WrappedTestsModule1 end
 module WrappedTestsModule2 end
 module WrappedTestsModule3 end
