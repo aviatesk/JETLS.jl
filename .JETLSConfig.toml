@@ -20,7 +20,6 @@ pattern = "lowering/inactive-code"
 match_by = "code"
 match_type = "literal" # Outrank code-regex catch-all diagnostic rules
 severity = "hint"
-path = "**/*.jl"
 
 # TODO [JETLS]
 # `JETLSTestModule` is a pseudo lowering context only used as `analysis_overrides.module_name` for our test files; it is never reachable from JETLS itself, so diagnositcs against it are noise.
@@ -63,18 +62,38 @@ match_type = "regex"
 severity = "off"
 path = "MarkdownSource/src/MarkdownSource.jl"
 
+# TOML tables hold values of any TOML type in `Dict{String,Any}`, as `TOML.parse` returns
+# them. The parser forked from `Base.TOML` tracks the tables it builds by identity in
+# `IdSet`s, and `Document` holds the parsed tables as they are.
+[[diagnostic.patterns]]
+pattern = "toplevel/abstract-field"
+match_by = "code"
+match_type = "literal"
+severity = "hint"
+path = "TOMLSource/src/**/*.jl"
+
+# Fixture files that TestRunner's tests run with `runtest`. They intentionally contain
+# failing tests, exceptions, and syntax errors, so silence their diagnostics, except for
+# `toplevel/analysis-skipped` that shows they are excluded from full analysis below.
+[[diagnostic.patterns]]
+pattern = "^(?!toplevel/analysis-skipped$).*"
+match_by = "code"
+match_type = "regex"
+severity = "off"
+path = "TestRunner/test/testfile*.jl"
+[[diagnostic.patterns]]
+pattern = "^(?!toplevel/analysis-skipped$).*"
+match_by = "code"
+match_type = "regex"
+severity = "off"
+path = "TestRunner/test/_testfile*.jl"
+
 [[full_analysis.concretization_patterns]]
 pattern = "const devbranch = x_"
 path = "docs/make.jl"
 [[full_analysis.concretization_patterns]]
 pattern = "const release_date = x_"
 path = "docs/make.jl"
-[[full_analysis.concretization_patterns]]
-pattern = "const UPSTREAM = x_"
-path = "MarkdownSource/test/test_upstream.jl"
-[[full_analysis.concretization_patterns]]
-pattern = "const MARKDOWN = x_"
-path = "MarkdownSource/test/test_upstream.jl"
 
 [initialization_options]
 reuse_native_inference = true
@@ -91,25 +110,28 @@ module_name = "JETLSTestModule"
 module_name = "LSP"
 path = "LSP/src/**/*.jl"
 full_analysis = true
-[[initialization_options.analysis_overrides]]
-path = "LSP/test/**/*.jl"
-module_name = "JETLSTestModule"
 
 [[initialization_options.analysis_overrides]]
 module_name = "TestRunner"
 path = "TestRunner/src/**/*.jl"
 full_analysis = true
 [[initialization_options.analysis_overrides]]
-path = "TestRunner/test/**/*.jl"
-module_name = "JETLSTestModule"
+path = "TestRunner/test/testfile*.jl"
+full_analysis = false
+[[initialization_options.analysis_overrides]]
+path = "TestRunner/test/_testfile*.jl"
+full_analysis = false
 
 [[initialization_options.analysis_overrides]]
-module_name = "TOMLSource"
-path = "TOMLSource/src/**/*.jl"
-full_analysis = true
+path = "MarkdownSource/test/test_upstream.jl"
+on_include = "skip"
 [[initialization_options.analysis_overrides]]
-path = "TOMLSource/test/**/*.jl"
-module_name = "JETLSTestModule"
+path = "MarkdownSource/upstream/**/*.jl"
+full_analysis = false
+
+[[initialization_options.analysis_overrides]]
+path = "TOMLSource/test/test_upstream.jl"
+on_include = "skip"
 [[initialization_options.analysis_overrides]]
 path = "TOMLSource/upstream/**/*.jl"
 full_analysis = false

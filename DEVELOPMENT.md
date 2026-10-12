@@ -69,11 +69,12 @@ the latest ones, you may see some tests fail. In such cases, make sure to run
 ## Self diagnostics
 
 [`scripts/selfcheck.sh`](./scripts/selfcheck.sh) runs `jetls check` from the
-local checkout on JETLS and the subpackages in this repository, applying the
-root [`.JETLSConfig.toml`](./.JETLSConfig.toml). CI runs it as well and fails
-if it reports any warning.
-To check only some of the packages, e.g. the ones you are editing, pass their
-names with `-p`, which may be repeated:
+local checkout on JETLS and the subpackages in this repository, along with the
+test suites of the subpackages, applying the root
+[`.JETLSConfig.toml`](./.JETLSConfig.toml). CI runs it as well and fails if it
+reports any warning.
+To check only some of the packages and their tests, e.g. the ones you are
+editing, pass their names with `-p`, which may be repeated:
 ```bash
 ./scripts/selfcheck.sh -p LSP -p TOMLSource
 ```
