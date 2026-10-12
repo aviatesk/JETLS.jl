@@ -84,6 +84,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Fixed a `WARNING: Detected access to binding ... in a world prior to its definition world` message that full analysis could print for scripts that define a `global const` inside a `let` block and use it within the same block, e.g. during `jetls check`.
 
+- Fixed the [TestRunner integration](https://aviatesk.github.io/JETLS.jl/release/testrunner/) and [`jetls test`](https://aviatesk.github.io/JETLS.jl/release/testrunner/#testrunner/cli) running all tests in a test file whose module has a docstring, instead of only the selected ones.
+
 ## 2026-10-11
 
 - Commit: [`ab294bc`](https://github.com/aviatesk/JETLS.jl/commit/ab294bc)

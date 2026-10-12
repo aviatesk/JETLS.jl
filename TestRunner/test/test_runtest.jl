@@ -44,6 +44,16 @@ let testmodule_file = normpath(pkgdir(TestRunner), "test", "testfile_module.jl")
     @test result.n_passed == 1
 end
 
+module DocumentedModuleHandlingModule end
+let testmodule_file = normpath(pkgdir(TestRunner), "test", "testfile_documented_module.jl")
+    @test isfile(testmodule_file)
+    result = @testset "documented module test runner" runtest(testmodule_file, (:(@test sin(0) == 0),); topmodule=DocumentedModuleHandlingModule)
+    @test result.n_passed == 1
+    mod = @invokelatest getglobal(DocumentedModuleHandlingModule, :testfile_documented_module)
+    multidoc = Base.Docs.meta(mod)[Base.Docs.Binding(mod, nameof(mod))]
+    @test only(multidoc.docs[Union{}].text) == "Documented test module.\n"
+end
+
 module ComplexRunnerModule end
 module Nested1RunnerModule end
 module Nested2RunnerModule end
