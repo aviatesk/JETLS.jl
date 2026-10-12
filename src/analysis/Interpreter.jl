@@ -307,7 +307,7 @@ function JET.virtual_process!(interp::LSInterpreter,
     return res
 end
 
-function JET.try_read_file(interp::LSInterpreter, _include_context::Module, filename::AbstractString)
+function JET.try_read_file(interp::LSInterpreter, include_context::Module, filename::AbstractString)
     uri = filename2uri(filename)
     fi = JETLS.get_saved_file_info(interp.server.state, uri)
     if !isnothing(fi)
@@ -319,7 +319,8 @@ function JET.try_read_file(interp::LSInterpreter, _include_context::Module, file
         end
     end
     # fallback to the default file-system-based include
-    return read(filename, String)
+    return @invoke JET.try_read_file(
+        interp::JET.ConcreteInterpreter, include_context::Module, filename::AbstractString)
 end
 
 # XXX This is an ad-hoc overload to make `node` available in the following `JuliaInterpreter.step_expr!`

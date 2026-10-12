@@ -86,6 +86,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Fixed the [TestRunner integration](https://aviatesk.github.io/JETLS.jl/release/testrunner/) and [`jetls test`](https://aviatesk.github.io/JETLS.jl/release/testrunner/#testrunner/cli) running all tests in a test file whose module has a docstring, instead of only the selected ones.
 
+- Fixed full-analysis diagnostics in code checked by Test.jl macros, such as the body of a `@testset` or a multi-line `@test` expression, being reported on the first line of the enclosing top-level statement, e.g. the outermost `@testset`, so that diagnostics with the same message on different lines were reported only once.
+  They are now reported on the line of the code that causes them:
+  ```julia
+  f(x::Int) = x
+  @testset "outer" begin    # previously, both `f` calls were reported here, only once
+      @testset "inner" begin
+          f("julia")        # now reported here
+      end
+      @test begin
+          y = "julia"
+          f(y) == 1         # and here
+      end
+  end
+  ```
+
+- Fixed diagnostics on an `include` call inside a block or a function being reported on the first line of the enclosing top-level statement instead of on the `include` call.
+
+- Fixed full analysis failing without reporting any diagnostics when the analyzed code calls `include` with arguments that no `include` method accepts, such as `include(Symbol("file.jl"))`, or calls `Base.include(mapexpr, mod, path)`.
+  The former is now reported as [`toplevel/error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/toplevel/error), and the latter as [`toplevel/unsupported-feature`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/toplevel/unsupported-feature), with the included file analyzed in `mod` without applying `mapexpr`.
+
 ## 2026-10-11
 
 - Commit: [`ab294bc`](https://github.com/aviatesk/JETLS.jl/commit/ab294bc)

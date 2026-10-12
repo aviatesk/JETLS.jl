@@ -731,6 +731,59 @@ end
     end
 end
 
+@testset "diagnostics in Test.jl macros are reported on their lines" begin
+    let code = """
+        using Test
+        f(x::Int) = x
+        @testset "outer" begin
+            @testset "inner" begin
+                f("julia")
+            end
+            @test begin
+                y = "julia"
+                f(y) == 1
+            end
+        end
+        """
+        withscript(code) do script_path
+            diagnostics = get_open_diagnostics(dirname(script_path), script_path, code)
+            diags = filter(diag -> diag.code == JETLS.INFERENCE_METHOD_ERROR_CODE, diagnostics)
+            @test sort!([diag.range.start.line for diag in diags]) == [4, 8]
+        end
+    end
+end
+
+@testset "failures to read included files are reported on the `include` calls" begin
+    let code = """
+        begin
+            x = 1
+            include("jetls_nonexistent_file.jl")
+        end
+        """
+        withscript(code) do script_path
+            diagnostics = get_open_diagnostics(dirname(script_path), script_path, code)
+            diag = only(filter(diag -> diag.code == JETLS.TOPLEVEL_ERROR_CODE, diagnostics))
+            @test diag.range.start.line == 2
+            @test occursin("jetls_nonexistent_file.jl", diag.message)
+        end
+    end
+
+    let code = """
+        using Test
+        @testset "include" begin
+            x = 1
+            include("jetls_nonexistent_file.jl")
+        end
+        """
+        withscript(code) do script_path
+            diagnostics = get_open_diagnostics(dirname(script_path), script_path, code)
+            diag = only(filter(diag -> diag.code == JETLS.TOPLEVEL_ERROR_CODE, diagnostics))
+            @test diag.range.start.line == 3
+            @test occursin("jetls_nonexistent_file.jl", diag.message)
+        end
+    end
+end
+
 @testset "parser warnings do not block reanalysis" begin
     code = """
         x = 1e-400
