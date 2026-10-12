@@ -245,7 +245,8 @@ Here is a summary table of the diagnostics explained in this section:
 | [`toplevel/method-overwrite`](@ref diagnostic/reference/toplevel/method-overwrite)                             | `Warning`             | `JETLS/save`  | Method definitions that overwrite previous ones        |
 | [`toplevel/abstract-field`](@ref diagnostic/reference/toplevel/abstract-field)                                 | `Hint`                | `JETLS/save`  | Struct fields with abstract types                      |
 | [`toplevel/unsupported-feature`](@ref diagnostic/reference/toplevel/unsupported-feature)                       | `Warning`             | `JETLS/save`  | Unsupported code analyzed with an approximation        |
-| [`toplevel/analysis-skipped`](@ref diagnostic/reference/toplevel/analysis-skipped)                             | `Warning`             | `JETLS/save`  | Files skipped by full analysis                         |
+| [`toplevel/analysis-skipped`](@ref diagnostic/reference/toplevel/analysis-skipped)                             | `Warning/Information` | `JETLS/save`  | Files skipped by full analysis                         |
+| [`toplevel/analysis-stopped`](@ref diagnostic/reference/toplevel/analysis-stopped)                             | `Warning`             | `JETLS/save`  | Analysis units stopped at an excluded file             |
 | [`inference/undef-global-var`](@ref diagnostic/reference/inference/undef-global-var)                           | `Warning`             | `JETLS/save`  | References to undefined global variables               |
 | [`inference/field-error`](@ref diagnostic/reference/inference/field-error)                                     | `Warning`             | `JETLS/save`  | Access to non-existent struct fields                   |
 | [`inference/bounds-error`](@ref diagnostic/reference/inference/bounds-error)                                   | `Warning`             | `JETLS/save`  | Out-of-bounds field access by index                    |
@@ -1440,18 +1441,42 @@ include(rewrite, "generated.jl")  # JET analyzes this code approximately because
 
 #### [Analysis skipped (`toplevel/analysis-skipped`)](@id diagnostic/reference/toplevel/analysis-skipped)
 
-**Default severity**: `Warning`
+**Default severity**: `Warning` or `Information`
 
-Reported at the top of a file that JETLS skips in full analysis. JETLS reports
-no full-analysis diagnostics for the file, nor lowering diagnostics that
-require the module context of the file, such as
+Reported when full analysis skips a file, either at the top of the file or at
+the `include` call that would load it. The severity depends on why the file is
+skipped:
+
+- **`Warning`**: At the top of package extension files (under a package's
+  `ext` directory), since full analysis of extensions is not supported yet.
+  This causes [`jetls check`](@ref cli-check) to fail by default when such
+  files are passed to it.
+- **`Information`**: For files skipped because of
+  [`analysis_overrides`](@ref init-options/analysis_overrides):
+  - At the top of an excluded file. The message names the matched pattern.
+  - At the top of a file of a package or its tests whose entry file
+    (`src/<name>.jl` or `test/runtests.jl`) is excluded, since its analysis
+    unit cannot be loaded without the entry file. The message names the entry
+    file.
+  - At an `include` call of an excluded file whose override sets
+    `on_include = "skip"`. Full analysis continues with the rest of the
+    analysis unit without loading the file, so code after the `include` that
+    depends on its definitions may get false diagnostics such as
+    [`inference/undef-global-var`](@ref diagnostic/reference/inference/undef-global-var).
+    The diagnostic links to the excluded file as related information.
+
+Skipped files receive no code-loading or inference diagnostics, apart from
+this one. They also have no lowering diagnostics that require their module
+context, such as
 [`lowering/undef-global-var`](@ref diagnostic/reference/lowering/undef-global-var)
 and [`lowering/unused-import`](@ref diagnostic/reference/lowering/unused-import)
 (see [Files without full analysis](@ref analysis/live/fallback)).
 
-Currently, this is reported for package extension files (files under the `ext`
-directory of a package), since JETLS does not support full analysis of package
-extensions yet.
+!!! warning
+    The reports for `analysis_overrides` exist to make its effect visible.
+    Like `analysis_overrides` itself, which is provided as a temporary
+    workaround, they are experimental and may be removed or changed at any
+    time.
 
 Example (`ext/MyPkgSomeDepExt.jl`):
 
@@ -1464,6 +1489,67 @@ module MyPkgSomeDepExt  # JETLS does not support full analysis of package extens
 using MyPkg, SomeDep
 
 end
+```
+
+Example (`test/runtests.jl`, where each test file runs its own test set and
+the later tests do not depend on `test/test_expensive.jl`), with the following
+`.JETLSConfig.toml`:
+
+```toml
+[[initialization_options.analysis_overrides]]
+path = "test/test_expensive.jl"
+on_include = "skip"
+```
+
+```julia
+using Test
+
+@testset "MyPkg.jl" begin
+    @testset "basics" include("test_basics.jl")
+    @testset "expensive" include("test_expensive.jl")  # Full analysis skipped this `include` because the file is excluded by `analysis_overrides`.
+                                                       #
+                                                       # The definitions in the excluded file `/path/to/test/test_expensive.jl` are not available to the code after this point.
+                                                       # (JETLS toplevel/analysis-skipped)
+    @testset "utilities" include("test_utilities.jl")
+end
+```
+
+#### [Analysis stopped (`toplevel/analysis-stopped`)](@id diagnostic/reference/toplevel/analysis-stopped)
+
+**Default severity**: `Warning`
+
+Reported at an `include` call when full analysis reaches a file excluded by
+[`analysis_overrides`](@ref init-options/analysis_overrides) with
+`on_include = "stop"` (the default). Full analysis stops the whole analysis
+unit before loading the file, rather than skipping the include and continuing
+with missing definitions.
+
+Code after that point and method bodies are not analyzed. Diagnostics from
+top-level code before it are kept, and other analysis units are unaffected.
+Hiding this warning does not resume analysis; set `on_include = "skip"` for
+the override to continue the analysis instead (see
+[`toplevel/analysis-skipped`](@ref diagnostic/reference/toplevel/analysis-skipped)).
+Since its default severity is `Warning`, it causes
+[`jetls check`](@ref cli-check) to fail by default.
+
+!!! warning
+    This diagnostic exists to make the effect of
+    [`analysis_overrides`](@ref init-options/analysis_overrides) visible.
+    Like `analysis_overrides` itself, which is provided as a temporary
+    workaround, it is experimental and may be removed or changed at any time.
+
+Example (`main.jl`), with the following `.JETLSConfig.toml`:
+
+```toml
+[[initialization_options.analysis_overrides]]
+path = "generated.jl"
+```
+
+```julia
+include("generated.jl")  # Full analysis of this unit stopped because a file is excluded by `analysis_overrides`.
+                         #
+                         # The excluded file `/path/to/generated.jl` was not analyzed. Code after this point and method bodies are not analyzed.
+                         # (JETLS toplevel/analysis-stopped)
 ```
 
 ### [Inference diagnostic (`inference/*`)](@id diagnostic/reference/inference)

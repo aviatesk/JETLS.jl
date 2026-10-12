@@ -419,6 +419,26 @@ end
     end
 end
 
+@testset "`parse_config_from_dict` analysis overrides" begin
+    parse_override(entry) = only(JETLS.parse_config_from_dict(JETLS.InitOptions,
+        Dict{String,Any}("analysis_overrides" => Any[entry])).analysis_overrides)
+    let override = parse_override(Dict{String,Any}("path" => "test/fixtures/**"))
+        @test override.on_include == "stop"
+        @test !override.full_analysis
+    end
+    let override = parse_override(Dict{String,Any}("path" => "test/upstream.jl", "on_include" => "skip"))
+        @test override.on_include == "skip"
+    end
+    for on_include in ("continue", true)
+        err = try
+            parse_override(Dict{String,Any}("path" => "test/upstream.jl", "on_include" => on_include))
+            nothing
+        catch e; e; end
+        @test err isa ErrorException
+        @test occursin("on_include", err.msg)
+    end
+end
+
 function store_file_config!(manager::JETLS.ConfigManager, filepath::AbstractString, new_config::JETLS.JETLSConfig)
     JETLS.store!(manager) do old_data
         new_data = JETLS.ConfigManagerData(old_data;

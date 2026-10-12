@@ -520,6 +520,350 @@ end
     end
 end
 
+function with_analysis_override_server(f::Function)
+    mktempdir() do dir
+        server = JETLS.Server()
+        server.state.root_path = dir
+        JETLS.start_signature_analysis_workers!(server)
+        try
+            f(server, dir)
+        finally
+            JETLS.stop_signature_analysis_workers(server)
+            close(server.endpoint)
+            close(server.message_queue)
+        end
+    end
+end
+
+function analyze_saved_unit(
+        server::JETLS.Server, entry_uri::URI;
+        request_uri::URI = entry_uri,
+        entry::JETLS.AnalysisEntry = JETLS.ScriptAnalysisEntry(entry_uri),
+        prev_result::Union{Nothing,JETLS.AnalysisResult} = nothing
+    )
+    request = JETLS.AnalysisRequest(entry, request_uri,
+        #=generation=#1, #=token=#nothing, #=notify=#false)
+    execution = JETLS.AnalysisExecution(request, prev_result)
+    interp, jet_result = JETLS.analyze_parsed_if_exist(server, execution)
+    result, replaced = JETLS.new_analysis_result(interp, jet_result)
+    return (; result, replaced, jet_result, execution)
+end
+
+function populate_analysis_context_caches!(server::JETLS.Server, uri::URI)
+    fi = JETLS.get_file_info(server.state, uri)::JETLS.FileInfo
+    JETLS.get_per_file_diagnostics!(server, uri, fi, JETLS.DUMMY_CANCEL_FLAG)
+    st0_top = JETLS.build_syntax_tree(fi)
+    st0 = JETLS.lowerable_toplevel_at(st0_top, 1)
+    mod = JETLS.get_context_module(server.state, uri, Position(; line=0, character=0))
+    JETLS.build_inferred_context_for_range(st0_top, mod, JETLS.JS.byte_range(st0);
+        cache=fi.inferred_context_cache)
+    @test haskey(JETLS.load(server.state.binding_occurrences_cache), uri)
+    @test haskey(JETLS.load(server.state.per_file_diagnostics_cache), uri)
+    @test !isempty(JETLS.load(fi.inferred_context_cache))
+    JETLS.check_syntax_tree0(fi)
+    return fi
+end
+
+@testset "analysis override abort" begin
+    @testset "nested abort cannot be caught or run finally" begin
+        for saved_excluded in (true, false)
+            with_analysis_override_server() do server, dir
+                state = server.state
+                entry_uri = filepath2uri(joinpath(dir, "main.jl"))
+                nested_uri = filepath2uri(joinpath(dir, "nested.jl"))
+                excluded_path = joinpath(dir, "excluded.jl")
+                excluded_uri = filepath2uri(excluded_path)
+                marker = joinpath(dir, "executed")
+                side_effect = "@eval write($(repr(marker)), \"executed\")"
+                state.init_options = JETLS.merge_init_options(state.init_options,
+                    JETLS.InitOptions(; analysis_overrides=[
+                        JETLS.AnalysisOverride(;
+                            path=JETLS.Glob.FilenameMatch("excluded.jl", "dp"),
+                            full_analysis=false)]))
+                JETLS.cache_saved_file_info!(state, entry_uri, """
+                    missing_before_include
+                    body_error() = missing_from_body()
+                    try
+                        include("nested.jl")
+                    catch
+                        $side_effect
+                    finally
+                        $side_effect
+                    end
+                    $side_effect
+                    """)
+                JETLS.cache_saved_file_info!(state, nested_uri, """
+                    const nested_started = true
+                    try
+                        include("excluded.jl")
+                    catch
+                        $side_effect
+                    finally
+                        $side_effect
+                    end
+                    $side_effect
+                    """)
+                if saved_excluded
+                    JETLS.cache_saved_file_info!(state, excluded_uri, side_effect)
+                end
+                @test !isfile(excluded_path)
+
+                (; result, jet_result, execution) = analyze_saved_unit(server, entry_uri)
+                report = jet_result.res.toplevel_error_report
+                @test report isa JETLS.AnalysisStoppedReport
+                @test report isa JETLS.JET.ToplevelErrorReport
+                @test report.file == uri2filename(nested_uri)
+                @test report.line == 3
+                @test report.excluded_file == uri2filename(excluded_uri)
+                diagnostic = only(result.uri2diagnostics[nested_uri])
+                @test diagnostic.code == JETLS.TOPLEVEL_ANALYSIS_STOPPED_CODE
+                @test diagnostic.severity == DiagnosticSeverity.Warning
+                @test diagnostic.source == JETLS.DIAGNOSTIC_SOURCE_SAVE
+                @test diagnostic.range == JETLS.line_range(3)
+                @test occursin("excluded.jl", diagnostic.message)
+                @test any(result.uri2diagnostics[entry_uri]) do d
+                    d.code == JETLS.INFERENCE_UNDEF_GLOBAL_VAR_CODE &&
+                        occursin("missing_before_include", d.message)
+                end
+                @test !any(d -> occursin("missing_from_body", d.message),
+                    Iterators.flatten(values(result.uri2diagnostics)))
+                @test !execution.context_refreshed
+                @test !haskey(result.analyzed_file_infos, excluded_uri)
+                @test !isfile(marker)
+            end
+        end
+    end
+
+    @testset "package-style concretization inside a module" begin
+        with_analysis_override_server() do server, dir
+            state = server.state
+            entry_uri = filepath2uri(joinpath(dir, "main.jl"))
+            excluded_path = joinpath(dir, "excluded.jl")
+            started = joinpath(dir, "started")
+            marker = joinpath(dir, "executed")
+            state.init_options = JETLS.merge_init_options(state.init_options,
+                JETLS.InitOptions(; analysis_overrides=[
+                    JETLS.AnalysisOverride(;
+                        path=JETLS.Glob.FilenameMatch("excluded.jl", "dp"),
+                        full_analysis=false, module_name="Test")]))
+            JETLS.cache_saved_file_info!(state, entry_uri, """
+                module PackageStyle
+                write($(repr(started)), "started")
+                Base.include(@__MODULE__, "excluded.jl")
+                write($(repr(marker)), "after include")
+                end
+                write($(repr(marker)), "after module")
+                """)
+            JETLS.cache_saved_file_info!(state, filepath2uri(excluded_path),
+                "write($(repr(marker)), \"excluded\")")
+            entry = JETLS.PackageSourceAnalysisEntry(dir, entry_uri, Base.PkgId(@__MODULE__))
+            @test JETLS.getjetconfigs(server, entry)[:concretization_patterns] == [:(x_)]
+            (; result, jet_result, execution) = analyze_saved_unit(server, entry_uri; entry)
+            report = jet_result.res.toplevel_error_report
+            @test report isa JETLS.AnalysisStoppedReport
+            @test report.file == uri2filename(entry_uri)
+            @test report.line == 3
+            @test report.excluded_file == uri2filename(filepath2uri(excluded_path))
+            diagnostic = only(result.uri2diagnostics[entry_uri])
+            @test diagnostic.code == JETLS.TOPLEVEL_ANALYSIS_STOPPED_CODE
+            @test diagnostic.severity == DiagnosticSeverity.Warning
+            @test diagnostic.source == JETLS.DIAGNOSTIC_SOURCE_SAVE
+            @test diagnostic.range == JETLS.line_range(3)
+            @test !execution.context_refreshed
+            @test isfile(started)
+            @test !isfile(marker)
+        end
+    end
+
+    @testset "skipped includes continue the analysis" begin
+        with_analysis_override_server() do server, dir
+            state = server.state
+            entry_uri = filepath2uri(joinpath(dir, "main.jl"))
+            excluded_uri = filepath2uri(joinpath(dir, "excluded.jl"))
+            later_uri = filepath2uri(joinpath(dir, "later.jl"))
+            marker = joinpath(dir, "executed")
+            state.init_options = JETLS.merge_init_options(state.init_options,
+                JETLS.InitOptions(; analysis_overrides=[
+                    JETLS.AnalysisOverride(;
+                        path=JETLS.Glob.FilenameMatch("excluded.jl", "dp"),
+                        on_include="skip")]))
+            JETLS.cache_saved_file_info!(state, entry_uri, """
+                begin
+                    include("excluded.jl")
+                end
+                include("later.jl")
+                """)
+            JETLS.cache_saved_file_info!(state, excluded_uri,
+                "@eval write($(repr(marker)), \"executed\")")
+            JETLS.cache_saved_file_info!(state, later_uri, "later() = missing_later()")
+            (; result, jet_result) = analyze_saved_unit(server, entry_uri)
+            @test jet_result.res.toplevel_error_report === nothing
+            @test Set(keys(result.analyzed_file_infos)) == Set([entry_uri, later_uri])
+            diagnostic = only(result.uri2diagnostics[entry_uri])
+            @test diagnostic.code == JETLS.TOPLEVEL_ANALYSIS_SKIPPED_CODE
+            @test diagnostic.severity == DiagnosticSeverity.Information
+            @test diagnostic.source == JETLS.DIAGNOSTIC_SOURCE_SAVE
+            @test diagnostic.range == JETLS.line_range(2)
+            @test only(diagnostic.relatedInformation).location.uri == excluded_uri
+            @test any(result.uri2diagnostics[later_uri]) do d
+                d.code == JETLS.INFERENCE_UNDEF_GLOBAL_VAR_CODE &&
+                    occursin("missing_later", d.message)
+            end
+            @test !isfile(marker)
+        end
+    end
+
+    @testset "first match and nonexcluded includes" begin
+        with_analysis_override_server() do server, dir
+            mktempdir() do outside_dir
+                state = server.state
+                entry_uri = filepath2uri(joinpath(dir, "main.jl"))
+                allowed_path = joinpath(dir, "allowed.jl")
+                allowed_uri = filepath2uri(allowed_path)
+                outside_path = joinpath(outside_dir, "outside.jl")
+                outside_uri = filepath2uri(outside_path)
+                write(allowed_path, "error(\"must use saved contents\")")
+                write(outside_path, "@eval const outside_value = 42")
+                JETLS.cache_saved_file_info!(state, entry_uri, """
+                    include("allowed.jl")
+                    include($(repr(outside_path)))
+                    """)
+                JETLS.cache_saved_file_info!(state, allowed_uri, "@eval const saved_value = 1")
+                allow_entry = JETLS.AnalysisOverride(;
+                    path=JETLS.Glob.FilenameMatch("main.jl", "dp"), full_analysis=true)
+                allow_include = JETLS.AnalysisOverride(;
+                    path=JETLS.Glob.FilenameMatch("allowed.jl", "dp"), full_analysis=true)
+                deny = JETLS.AnalysisOverride(;
+                    path=JETLS.Glob.FilenameMatch("*.jl", "dp"), full_analysis=false)
+                state.init_options = JETLS.merge_init_options(state.init_options,
+                    JETLS.InitOptions(; analysis_overrides=[allow_entry, allow_include, deny]))
+
+                (; result, jet_result) = analyze_saved_unit(server, entry_uri)
+                @test jet_result.res.toplevel_error_report === nothing
+                @test all(isempty, values(result.uri2diagnostics))
+                @test Set(keys(result.analyzed_file_infos)) ==
+                    Set([entry_uri, allowed_uri, outside_uri])
+                pos = Position(; line=0, character=0)
+                @test Base.invoke_in_world(result.world, getglobal,
+                    JETLS.get_context_module(result, allowed_uri, pos), :saved_value) == 1
+                @test Base.invoke_in_world(result.world, getglobal,
+                    JETLS.get_context_module(result, outside_uri, pos), :outside_value) == 42
+
+                state.init_options = JETLS.merge_init_options(state.init_options,
+                    JETLS.InitOptions(; analysis_overrides=[allow_entry, deny, allow_include]))
+                stopped = analyze_saved_unit(server, entry_uri)
+                @test stopped.jet_result.res.toplevel_error_report isa JETLS.AnalysisStoppedReport
+                @test only(stopped.result.uri2diagnostics[entry_uri]).range == JETLS.line_range(1)
+                @test !haskey(stopped.result.analyzed_file_infos, allowed_uri)
+                @test !haskey(stopped.result.analyzed_file_infos, outside_uri)
+            end
+        end
+    end
+
+    @testset "reanalysis removes stale contexts and diagnostics" begin
+        with_analysis_override_server() do server, dir
+            state = server.state
+            manager = state.analysis_manager
+            entry_uri = filepath2uri(joinpath(dir, "main.jl"))
+            excluded_uri = filepath2uri(joinpath(dir, "excluded.jl"))
+            later_uri = filepath2uri(joinpath(dir, "later.jl"))
+            independent_uri = filepath2uri(joinpath(dir, "independent.jl"))
+            for (uri, code) in (
+                    entry_uri => """
+                        root_value() = 1
+                        include("excluded.jl")
+                        include("later.jl")
+                        """,
+                    excluded_uri => "stale_child() = missing_child()",
+                    later_uri => "stale_later() = missing_later()",
+                    independent_uri => "independent_error() = missing_independent()")
+                JETLS.cache_saved_file_info!(state, uri, code)
+                JETLS.cache_file_info!(server, uri, 1, code)
+            end
+            original = analyze_saved_unit(server, entry_uri; request_uri=later_uri)
+            @test original.jet_result.res.toplevel_error_report === nothing
+            JETLS.update_analysis_cache!(state, original.result)
+            @test !isempty(original.result.uri2diagnostics[excluded_uri])
+            @test !isempty(original.result.uri2diagnostics[later_uri])
+            independent = analyze_saved_unit(server, independent_uri)
+            JETLS.update_analysis_cache!(state, independent.result)
+            independent_fi = populate_analysis_context_caches!(server, independent_uri)
+            for uri in (entry_uri, excluded_uri, later_uri)
+                @test JETLS.has_analyzed_context(state, uri)
+                populate_analysis_context_caches!(server, uri)
+            end
+
+            state.init_options = JETLS.merge_init_options(state.init_options,
+                JETLS.InitOptions(; analysis_overrides=[
+                    JETLS.AnalysisOverride(;
+                        path=JETLS.Glob.FilenameMatch("excluded.jl", "dp"), full_analysis=false)]))
+            stopped = analyze_saved_unit(server, entry_uri;
+                request_uri=later_uri, prev_result=original.result)
+            @test stopped.replaced
+            @test stopped.result.actual2virtual !== original.result.actual2virtual
+            JETLS.update_analysis_cache!(state, stopped.result)
+            @test JETLS.has_analyzed_context(state, entry_uri)
+            for uri in (excluded_uri, later_uri)
+                @test JETLS.get_analysis_info(manager, uri) === nothing
+                @test !JETLS.has_analyzed_context(state, uri)
+                @test !haskey(stopped.result.uri2diagnostics, uri)
+            end
+            diagnostics = JETLS.get_full_diagnostics(server, Set([excluded_uri, later_uri]))
+            @test all(isempty, values(diagnostics))
+            for uri in (entry_uri, excluded_uri, later_uri)
+                @test !haskey(JETLS.load(state.binding_occurrences_cache), uri)
+                @test !haskey(JETLS.load(state.per_file_diagnostics_cache), uri)
+                @test isempty(JETLS.load(JETLS.get_file_info(state, uri).inferred_context_cache))
+            end
+
+            @test JETLS.get_analysis_info(manager, independent_uri) === independent.result
+            @test JETLS.has_analyzed_context(state, independent_uri)
+            @test haskey(JETLS.load(state.binding_occurrences_cache), independent_uri)
+            @test haskey(JETLS.load(state.per_file_diagnostics_cache), independent_uri)
+            @test JETLS.get_file_info(state, independent_uri) === independent_fi
+            @test !isempty(JETLS.get_full_diagnostics(server, Set([independent_uri]))[independent_uri])
+            rerun = analyze_saved_unit(server, independent_uri; prev_result=independent.result)
+            @test rerun.jet_result.res.toplevel_error_report === nothing
+            @test rerun.execution.context_refreshed
+            @test any(rerun.result.uri2diagnostics[independent_uri]) do d
+                d.code == JETLS.INFERENCE_UNDEF_GLOBAL_VAR_CODE &&
+                    occursin("missing_independent", d.message)
+            end
+            for fi in values(JETLS.load(state.file_cache))
+                JETLS.check_syntax_tree0(fi)
+            end
+        end
+    end
+end
+
+@testset "excluded entry files" begin
+    mktempdir() do dir
+        write(joinpath(dir, "Project.toml"), "name = \"ExcludedEntry\"\n")
+        pkgfile = joinpath(mkpath(joinpath(dir, "src")), "ExcludedEntry.jl")
+        runtests = joinpath(mkpath(joinpath(dir, "test")), "runtests.jl")
+        for path in (pkgfile, runtests, joinpath(dir, "src", "other.jl"), joinpath(dir, "test", "other.jl"))
+            touch(path)
+        end
+        for (entryfile, pattern, unaffected_file, UnaffectedEntry) in (
+                (pkgfile, "src/ExcludedEntry.jl", runtests, JETLS.PackageTestAnalysisEntry),
+                (runtests, "test/runtests.jl", pkgfile, JETLS.PackageSourceAnalysisEntry))
+            state = JETLS.ServerState()
+            state.root_path = dir
+            state.init_options = JETLS.InitOptions(; analysis_overrides=[
+                JETLS.AnalysisOverride(; path=JETLS.Glob.FilenameMatch(pattern, "dp"))])
+            entryuri = filepath2uri(entryfile)
+            otheruri = filepath2uri(joinpath(dirname(entryfile), "other.jl"))
+            for uri in (entryuri, otheruri)
+                result = JETLS.find_analysis_entry(state, uri)
+                @test result isa JETLS.OutOfScope
+                @test result.module_context === JETLS.FallbackAnalysisContext
+                @test result.exclusion == JETLS.AnalysisExclusion(entryuri, pattern)
+            end
+            @test JETLS.find_analysis_entry(state, filepath2uri(unaffected_file)) isa UnaffectedEntry
+        end
+    end
+end
+
 @testset "collect_module_range_infos" begin
     let st0_top = jlparse("""
             x = 1

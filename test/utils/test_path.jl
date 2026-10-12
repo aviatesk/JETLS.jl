@@ -94,6 +94,7 @@ end
             ])
             result = JETLS.find_analysis_env_path(state, uri)::JETLS.OutOfScope
             @test result.module_context === JETLS.FallbackAnalysisContext
+            @test result.exclusion == JETLS.AnalysisExclusion(uri, "src/**/*.jl")
             @test !JETLS.has_analyzed_context(state, uri;
                 lookup_func=JETLS.gen_lookup_out_of_scope!(state, uri))
             cached = JETLS.get_analysis_info(state.analysis_manager, uri)::JETLS.OutOfScope
@@ -111,6 +112,7 @@ end
             ])
             result = JETLS.find_analysis_env_path(state, uri)::JETLS.OutOfScope
             @test result.module_context === Test
+            @test result.exclusion == JETLS.AnalysisExclusion(uri, "src/**/*.jl")
             @test JETLS.has_analyzed_context(state, uri;
                 lookup_func=JETLS.gen_lookup_out_of_scope!(state, uri))
             @test JETLS.has_analyzed_context(state, uri)

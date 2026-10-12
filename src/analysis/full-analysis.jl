@@ -14,6 +14,11 @@ function parse_analysis_override(x::Dict{String,Any})
         error(lazy"Invalid glob pattern in analysis_override for \"$path_value\": $(sprint(locked_showerror, e))")
     end
 
+    on_include = get(x, "on_include", "stop")
+    if !(on_include == "stop" || on_include == "skip")
+        error(lazy"Invalid `on_include` value found in analysis_override for `$path_value`. Must be \"stop\" or \"skip\", got `$on_include`")
+    end
+
     module_name = get(x, "module_name", nothing)
     if module_name !== nothing && !(module_name isa String)
         error(lazy"Invalid `module_name` value found in analysis_override for `$path_value`. Must be a string, got `$(typeof(module_name))`")
@@ -24,7 +29,7 @@ function parse_analysis_override(x::Dict{String,Any})
         error(lazy"Invalid `full_analysis` value found in analysis_override for `$path_value`. Must be a boolean, got `$(typeof(full_analysis))`")
     end
 
-    return AnalysisOverride(path_glob, module_name, full_analysis)
+    return AnalysisOverride(path_glob, on_include::String, module_name, full_analysis)
 end
 
 # Cache lookup
@@ -97,6 +102,17 @@ function cache_out_of_scope!(manager::AnalysisManager, uri::URI, outofscope::Out
             new_cache, nothing
         end
     end
+end
+
+# No analysis runs to publish the diagnostic of an `analysis_overrides` exclusion.
+function handle_out_of_scope_request!(
+        server::Server, uri::URI, outofscope::OutOfScope, notify_diagnostics::Bool
+    )
+    cache_out_of_scope!(server.state.analysis_manager, uri, outofscope)
+    if notify_diagnostics && outofscope.exclusion !== nothing
+        notify_diagnostics!(server, Set{URI}((uri,)))
+    end
+    return nothing
 end
 
 # Progress support
@@ -322,8 +338,7 @@ function request_analysis!(
     prev_info = get_analysis_info(manager, uri)
 
     if prev_info isa OutOfScope
-        cache_out_of_scope!(manager, uri, prev_info)
-        return nothing
+        return handle_out_of_scope_request!(server, uri, prev_info, notify_diagnostics)
     end
 
     local entry::AnalysisEntry
@@ -333,8 +348,7 @@ function request_analysis!(
         # prev_info === nothing: fresh analysis
         phase1_result = lookup_analysis_entry(server, uri)
         if phase1_result isa OutOfScope
-            cache_out_of_scope!(manager, uri, phase1_result)
-            return nothing
+            return handle_out_of_scope_request!(server, uri, phase1_result, notify_diagnostics)
         elseif phase1_result isa InstantiationRequest
             if !wait && request_instantiation_prompt!(
                     server, uri, phase1_result, invalidate, notify_diagnostics, debounce)
@@ -514,8 +528,9 @@ function resolve_analysis_request(server::Server, request::AnalysisRequest)
     s = time()
     @static JETLS_DEV_MODE && @info "Executing analysis for:" entry=progress_title(request.entry) uri=request.uri generation=get_generation(manager,request.entry)
     local cleanup::Bool = local failed::Bool = false
+    local prune::Bool = true
     analysis_result = try
-        result, cleanup = execute_analysis(server, execution)
+        result, cleanup, prune = execute_analysis(server, execution)
         result
     catch err
         @error "Error in `execute_analysis` for " request
@@ -542,7 +557,7 @@ function resolve_analysis_request(server::Server, request::AnalysisRequest)
         @goto next_request
     end
 
-    update_analysis_cache!(server.state, analysis_result)
+    pruned_uris = update_analysis_cache!(server.state, analysis_result; prune)
     # `didClose` may have run between the check above and this cache write, in which case
     # its `cleanup_analysis_state!` found nothing to pop.
     if is_abandoned_request(server, request)
@@ -552,6 +567,7 @@ function resolve_analysis_request(server::Server, request::AnalysisRequest)
     end
     mark_analyzed_generation!(manager, request)
     request.notify_diagnostics && notify_diagnostics!(server)
+    notify_pruned_uris!(server, request, pruned_uris)
     # Top-level errors can skip signature analysis and its intermediate context refresh.
     if !execution.context_refreshed
         request_diagnostic_refresh!(server)
@@ -777,16 +793,30 @@ function pop_analysis_info!(manager::AnalysisManager, uri::URI)
     end
 end
 
-function update_analysis_cache!(state::ServerState, analysis_result::AnalysisResult)
+# `prune` drops the cached files of the same entry that `analysis_result` does not cover,
+# which is valid only when it covers every file of the unit.
+function update_analysis_cache!(
+        state::ServerState, analysis_result::AnalysisResult; prune::Bool = true
+    )
     manager = state.analysis_manager
     analyzed_uris = analyzed_file_uris(analysis_result)
     prev_cache = load(manager.cache)
-    store!(manager.cache) do cache
+    removed_uris = store!(manager.cache) do cache
         new_cache = copy(cache)
+        removed = URI[]
+        if prune
+            for (uri, info) in cache
+                if (info isa AnalysisResult && info.entry == analysis_result.entry &&
+                    !haskey(analysis_result.analyzed_file_infos, uri))
+                    delete!(new_cache, uri)
+                    push!(removed, uri)
+                end
+            end
+        end
         for uri in analyzed_uris
             new_cache[uri] = analysis_result
         end
-        return new_cache, nothing
+        return new_cache, removed
     end
     # Cached occurrences embed `binfo.mod` from the module context that was in effect when
     # they were computed. Analysis modes that use virtualized contexts
@@ -795,7 +825,7 @@ function update_analysis_cache!(state::ServerState, analysis_result::AnalysisRes
     # Invalidate so lowering-based LSP handlers recompute under then current module context.
     # Revise-based analysis keeps module identity stable across runs, so we
     # skip invalidation when `module_range_infos` is unchanged.
-    for uri in analyzed_uris
+    for uri in Iterators.flatten((analyzed_uris, removed_uris))
         clear_inferred_context_cache!(state, uri)
         if module_range_infos_unchanged(prev_cache, analysis_result, uri)
             continue
@@ -803,6 +833,14 @@ function update_analysis_cache!(state::ServerState, analysis_result::AnalysisRes
         invalidate_binding_occurrences_cache!(state, uri)
         invalidate_per_file_diagnostics_cache!(state, uri)
     end
+    return removed_uris
+end
+
+# `notify_diagnostics!(server)` only publishes the files in the cache, so the files that
+# `update_analysis_cache!` dropped would keep their published diagnostics.
+function notify_pruned_uris!(server::Server, request::AnalysisRequest, pruned_uris::Vector{URI})
+    request.notify_diagnostics && !isempty(pruned_uris) || return nothing
+    notify_diagnostics!(server, Set{URI}(pruned_uris))
 end
 
 function module_range_infos_unchanged(
@@ -828,7 +866,7 @@ function execute_analysis(server::Server, execution::AnalysisExecution)
     entry = request.entry
 
     if entry isa PackageExtensionAnalysisEntry
-        return package_extension_analysis_result(server, entry), false
+        return package_extension_analysis_result(server, entry), false, true
     end
 
     if entry isa NewAnalysisEntry
@@ -840,7 +878,7 @@ function execute_analysis(server::Server, execution::AnalysisExecution)
                 analyze_package_with_revise(server, execution, entry.pkgid, activation_done)
             end::AnalysisResult
         end
-        return result, false
+        return result, false, true
     end
 
     interp, result = if entry isa ScriptAnalysisEntry
@@ -859,11 +897,11 @@ function execute_analysis(server::Server, execution::AnalysisExecution)
         end::Tuple{LSInterpreter,JET.JETToplevelResult}
     else error("Unsupported analysis entry $entry") end
 
-    ret, analysis_result_replaced = new_analysis_result(interp, result)
+    ret, analysis_result_replaced, covers_unit = new_analysis_result(interp, result)
 
     # TODO Request fallback analysis in cases this script was not analyzed by the analysis entry
     # request.uri ∉ analyzed_file_uris(ret)
-    return ret, analysis_result_replaced
+    return ret, analysis_result_replaced, covers_unit
 end
 
 function begin_full_analysis_progress(
@@ -962,7 +1000,11 @@ function new_analysis_result(
 
     entry = request.entry
     prev_result = execution.prev_result
-    replace_analysis_result = isnothing(result.res.toplevel_error_report) || isnothing(prev_result)
+    report = result.res.toplevel_error_report
+    # The files that other fatal errors keep the analysis from reaching may still belong to
+    # the unit, unlike those after an excluded `include`.
+    covers_unit = report === nothing || report isa AnalysisStoppedReport
+    replace_analysis_result = covers_unit || prev_result === nothing
     if !replace_analysis_result
         prev_result = prev_result::AnalysisResult
         (; actual2virtual, analyzer, analyzed_file_infos) = prev_result
@@ -975,7 +1017,7 @@ function new_analysis_result(
 
     analysis_result = AnalysisResult(entry, uri2diagnostics, analyzer,
         analyzed_file_infos, actual2virtual, cache_world)
-    return analysis_result, replace_analysis_result
+    return analysis_result, replace_analysis_result, covers_unit
 end
 
 function request_reanalysis_for_tracked_entries!(server::Server)
@@ -1309,7 +1351,8 @@ function analyze_package_with_revise(
     let uri2diagnostics = intermediate_analysis_diagnostics(execution, analyzed_file_infos)
         intermediate_result = AnalysisResult(request.entry, uri2diagnostics, analyzer,
             analyzed_file_infos, pkgmod => pkgmod, world)
-        update_analysis_cache!(server.state, intermediate_result)
+        pruned_uris = update_analysis_cache!(server.state, intermediate_result)
+        notify_pruned_uris!(server, request, pruned_uris)
         request_diagnostic_refresh!(server)
         request_codelens_refresh!(server)
         execution.context_refreshed = true
@@ -1555,11 +1598,17 @@ function find_analysis_entry(state::ServerState, uri::URI)
         (; pkgid, pkgfile) = @something find_env_package(env_path, project_toml_dict) begin
             return ScriptInEnvAnalysisEntry(env_path, uri)
         end
+        entryuri = filepath2uri(filekind === :src ? pkgfile : joinpath(filedir, "runtests.jl"))
+        # the unit can only be loaded from its entry file
+        entry_override = find_analysis_override(state, entryuri)
+        if entry_override !== nothing && !entry_override.full_analysis
+            return OutOfScope(FallbackAnalysisContext,
+                AnalysisExclusion(entryuri, entry_override.path.pattern))
+        end
         if filekind === :src
-            return PackageSourceAnalysisEntry(env_path, filepath2uri(pkgfile), pkgid)
+            return PackageSourceAnalysisEntry(env_path, entryuri, pkgid)
         else
-            runtestsuri = filepath2uri(joinpath(filedir, "runtests.jl"))
-            return PackageTestAnalysisEntry(env_path, runtestsuri, pkgid)
+            return PackageTestAnalysisEntry(env_path, entryuri, pkgid)
         end
     elseif filekind === :docs # TODO
     elseif filekind === :ext

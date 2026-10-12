@@ -311,10 +311,19 @@ analyzed_file_uris(analysis_result::AnalysisResult) = keys(analysis_result.analy
 
 analyzed_file_info(analysis_result::AnalysisResult, uri::URI) = get(analysis_result.analyzed_file_infos, uri, nothing)
 
+# `excluded_uri` is the file itself, or the entry file of the analysis unit it belongs to
+struct AnalysisExclusion
+    excluded_uri::URI
+    pattern::String
+end
+
 struct OutOfScope
     module_context::Union{Nothing,Module}
-    OutOfScope() = new(nothing) # really unknown context
-    OutOfScope(module_context::Module) = new(module_context)
+    exclusion::Union{Nothing,AnalysisExclusion}
+    OutOfScope() = new(nothing, nothing) # really unknown context
+    OutOfScope(module_context::Module) = new(module_context, nothing)
+    OutOfScope(module_context::Union{Nothing,Module}, exclusion::AnalysisExclusion) =
+        new(module_context, exclusion)
 end
 
 # TODO support multiple analysis units, which can happen if this file is included from multiple different analysis_units
@@ -627,6 +636,7 @@ const TOPLEVEL_METHOD_OVERWRITE_CODE = "toplevel/method-overwrite"
 const TOPLEVEL_ABSTRACT_FIELD_CODE = "toplevel/abstract-field"
 const TOPLEVEL_UNSUPPORTED_FEATURE_CODE = "toplevel/unsupported-feature"
 const TOPLEVEL_ANALYSIS_SKIPPED_CODE = "toplevel/analysis-skipped"
+const TOPLEVEL_ANALYSIS_STOPPED_CODE = "toplevel/analysis-stopped"
 const INFERENCE_UNDEF_GLOBAL_VAR_CODE = "inference/undef-global-var"
 const INFERENCE_UNDEF_STATIC_PARAM_CODE = "inference/undef-static-param" # currently not reported
 const INFERENCE_FIELD_ERROR_CODE = "inference/field-error"
@@ -667,6 +677,7 @@ const ALL_DIAGNOSTIC_CODES = Set{String}(String[
     TOPLEVEL_ABSTRACT_FIELD_CODE,
     TOPLEVEL_UNSUPPORTED_FEATURE_CODE,
     TOPLEVEL_ANALYSIS_SKIPPED_CODE,
+    TOPLEVEL_ANALYSIS_STOPPED_CODE,
     INFERENCE_UNDEF_GLOBAL_VAR_CODE,
     INFERENCE_UNDEF_STATIC_PARAM_CODE,
     INFERENCE_FIELD_ERROR_CODE,
@@ -707,9 +718,10 @@ merge_key_value(pattern::DiagnosticPattern) =
 end
 @define_eq_overloads DiagnosticConfig
 
-# Internal, undocumented configuration for full-analysis module overrides.
+# `module_name` and `full_analysis` are internal, undocumented options for JETLS development.
 @kwdef struct AnalysisOverride <: ConfigSection
     path::Glob.FilenameMatch{String}
+    on_include::String = "stop"
     module_name::Maybe{String} = nothing
     full_analysis::Bool = false
 end

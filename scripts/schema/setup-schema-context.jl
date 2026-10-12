@@ -97,6 +97,15 @@ function setup_ctx!(ctx::SchemaContext)
         Dict("type" => "string")
     end
 
+    optional!(ctx, JETLS.AnalysisOverride, :on_include)
+    override_field!(ctx, JETLS.AnalysisOverride, :on_include) do _
+        Dict(
+            "type" => "string",
+            "enum" => ["stop", "skip"],
+            "default" => "stop",
+            "description" => desc["AnalysisOverride"]["on_include"])
+    end
+
     optional!(ctx, JETLS.AnalysisOverride, :full_analysis)
     override_field!(ctx, JETLS.AnalysisOverride, :full_analysis) do _
         Dict(

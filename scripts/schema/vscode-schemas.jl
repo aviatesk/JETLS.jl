@@ -26,9 +26,13 @@ function generate_vscode_schemas(ctx::SchemaContext)
     expanded_schema = generate_schema(JETLS.JETLSConfig; ctx = ctx, inline_all_defs = true)
     rename_description_to_markdown!(expanded_schema.doc)
 
-    init_options_schema = sort_keys(
-        deepcopy(expanded_schema.doc["properties"]["initialization_options"])
-    )
+    init_options_schema = deepcopy(expanded_schema.doc["properties"]["initialization_options"])
+    # internal options for JETLS development, which `settings.json` should not suggest
+    analysis_override_schema = init_options_schema["properties"]["analysis_overrides"]["items"]
+    for name in ("module_name", "full_analysis")
+        analysis_override_schema["properties"][name]["doNotSuggest"] = true
+    end
+    init_options_schema = sort_keys(init_options_schema)
     delete!(expanded_schema.doc["properties"], "initialization_options")
     setting_schema = sort_keys(expanded_schema.doc["properties"])
 
