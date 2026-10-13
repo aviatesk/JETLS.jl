@@ -110,65 +110,98 @@ for how to let JETLS evaluate such bindings.
 
 ### [How each file is analyzed](@id analysis/full/files)
 
-JETLS decides which analysis unit a file belongs to, and whether the unit is
-loaded with [package analysis](@ref analysis/full/modes/package) or
-[script analysis](@ref analysis/full/modes/script), based on the nearest
-`Project.toml` found by searching upward from the file's directory, and on the
-file's location relative to it:
+JETLS classifies a file by the nearest `Project.toml` found by searching
+upward from the file's directory, and by the file's location relative to it.
+Here, a package is a directory whose `Project.toml` has a `name` entry. The
+class determines the entry file of the analysis unit the file belongs to, the
+[analysis mode](@ref analysis/full/modes) that loads the unit, and the
+environment the unit is loaded in:
 
-| File                                  | Entry file         | Analysis mode                                        | Environment                           |
-| :------------------------------------ | :----------------- | :--------------------------------------------------- | :------------------------------------ |
-| Package source file (under `src/`)    | `src/<name>.jl`    | [Package analysis](@ref analysis/full/modes/package) | The package environment               |
-| Package test file (under `test/`)     | `test/runtests.jl` | [Script analysis](@ref analysis/full/modes/script)   | The package test environment          |
-| Package extension file (under `ext/`) | —                  | No full analysis                                     | —                                     |
-| Other file in an environment          | The opened file    | [Script analysis](@ref analysis/full/modes/script)   | The environment of the `Project.toml` |
-| File without a `Project.toml`         | The opened file    | [Script analysis](@ref analysis/full/modes/script)   | No project (the default environment)  |
+| File                                                                    | Entry file         | Analysis mode                                        | Environment                  |
+| :---------------------------------------------------------------------- | :----------------- | :--------------------------------------------------- | :--------------------------- |
+| [Under `src/` of a package](@ref analysis/full/files/package-source)    | `src/<name>.jl`    | [Package analysis](@ref analysis/full/modes/package) | The package environment      |
+| [Under `test/` of a package](@ref analysis/full/files/package-test)     | `test/runtests.jl` | [Script analysis](@ref analysis/full/modes/script)   | The package test environment |
+| [Under `ext/` of a package](@ref analysis/full/files/package-extension) | —                  | No full analysis                                     | —                            |
+| [Elsewhere in an environment](@ref analysis/full/files/script)          | The opened file    | [Script analysis](@ref analysis/full/modes/script)   | The nearest environment      |
+| [Without a `Project.toml`](@ref analysis/full/files/script)             | The opened file    | [Script analysis](@ref analysis/full/modes/script)   | No project                   |
 
-Here, a package is an environment whose `Project.toml` has a `name` entry, and
-the package rows apply to the directories next to that `Project.toml`. In
-addition:
+An analysis unit consists of its entry file and the files reached through
+`include` from it. Some documents are handled differently; see
+[Unsaved buffers and notebooks](@ref analysis/full/files/unsaved),
+[Files outside the workspace root](@ref analysis/full/files/outside-root),
+and [`jetls check`](@ref analysis/full/files/cli).
 
-- The package test environment is the environment of `test/Project.toml` if
-  the package has one without a `name` entry, e.g. when the tests are a
-  [`[workspace]`](https://pkgdocs.julialang.org/v1/toml-files/#Workspaces)
-  member of the package, and the package environment otherwise.
-- For package extension files, JETLS reports
-  [`toplevel/analysis-skipped`](@ref diagnostic/reference/toplevel/analysis-skipped)
-  (see [Files without full analysis](@ref analysis/live/fallback)).
-- The "Other file in an environment" row covers files in a package outside
-  `src/`, `test/`, and `ext/`, and files in an environment whose
-  `Project.toml` has no `name` entry, unless that environment is a package
-  test environment.
-- A standalone script is analyzed together with the files it `include`s.
-  Opening a standalone script that no earlier analysis covers makes it the
-  entry file of a new unit. For example, if `scripts/main.jl` `include`s
-  `scripts/utils.jl`, opening `scripts/main.jl` analyzes both files together,
-  while opening `scripts/utils.jl` first analyzes it alone, without what
-  `scripts/main.jl` defines before `include`ing it.
-- A file without a `Project.toml` is analyzed as `julia script.jl` would run
-  it: dependency packages are loaded from the default environment (e.g.
-  `@v1.13`) and the standard library. When the JETLS process has an active
-  project, set with `--project` given to Julia before `--` or with the
-  `JULIA_PROJECT` environment variable, they are loaded from it first, as
-  `julia --project script.jl` would. The same applies to the documents below
-  that are analyzed without a project.
-  ```bash
-  # Analyze a standalone script with the packages of an environment
-  jetls --project=/path/to/env -- check script.jl
-  ```
+#### [Package source files](@id analysis/full/files/package-source)
 
-Some documents are handled differently:
+Files under the `src/` directory of a package are analyzed together through
+the package entry file, `src/<name>.jl`, or the file given by the `entryfile`
+entry of the `Project.toml`, with the
+[package analysis mode](@ref analysis/full/modes/package) in the package
+environment. Files under `src/` that the package does not `include` are not
+covered by full analysis (see
+[Files without full analysis](@ref analysis/live/fallback)).
 
-| Document                                    | Entry file      | Analysis mode                                      | Environment                           |
-| :------------------------------------------ | :-------------- | :------------------------------------------------- | :------------------------------------ |
-| Unsaved (untitled) buffer[^unsaved_buffers] | The buffer      | [Script analysis](@ref analysis/full/modes/script) | The environment of the workspace root |
-| Notebook                                    | The notebook    | [Script analysis](@ref analysis/full/modes/script) | The environment of the notebook file  |
-| File outside the workspace root             | —               | No full analysis                                   | —                                     |
-| File opened without a workspace folder      | The opened file | [Script analysis](@ref analysis/full/modes/script) | No project (the default environment)  |
+#### [Package test files](@id analysis/full/files/package-test)
 
-A notebook is analyzed with all its cells as a single script (see
-[Notebook support](@ref notebook)). For files outside the workspace root, see
-[Files without full analysis](@ref analysis/live/fallback).
+Files under the `test/` directory of a package are analyzed together through
+`test/runtests.jl`, with the
+[script analysis mode](@ref analysis/full/modes/script) in the package test
+environment: the environment of `test/Project.toml` if the package has one
+without a `name` entry, e.g. when the tests are a
+[`[workspace]`](https://pkgdocs.julialang.org/v1/toml-files/#Workspaces)
+member of the package, and the package environment otherwise. Files under
+`test/` that `test/runtests.jl` does not `include` are not covered by full
+analysis (see [Files without full analysis](@ref analysis/live/fallback)).
+
+#### [Package extension files](@id analysis/full/files/package-extension)
+
+Files under the `ext/` directory of a package are not covered by full
+analysis. JETLS reports
+[`toplevel/analysis-skipped`](@ref diagnostic/reference/toplevel/analysis-skipped)
+for them (see [Files without full analysis](@ref analysis/live/fallback)).
+
+#### [Scripts](@id analysis/full/files/script)
+
+The following files are analyzed as scripts, with the
+[script analysis mode](@ref analysis/full/modes/script):
+
+- Files in a package outside `src/`, `test/`, and `ext/`
+- Files in an environment whose `Project.toml` has no `name` entry, unless
+  that environment is a
+  [package test environment](@ref analysis/full/files/package-test)
+- Files without a `Project.toml` above them
+
+A script is analyzed together with the files it `include`s. Opening a script
+that no earlier analysis covers makes it the entry file of a new unit. For
+example, if `scripts/main.jl` `include`s `scripts/utils.jl`, opening
+`scripts/main.jl` analyzes both files together, while opening
+`scripts/utils.jl` first analyzes it alone, without what `scripts/main.jl`
+defines before `include`ing it. Once `scripts/main.jl` is analyzed, e.g. when
+you open it, `scripts/utils.jl` belongs to its unit: its diagnostics come from
+that analysis, and saving it reanalyzes the unit from `scripts/main.jl`.
+
+A script is loaded in the environment of the nearest `Project.toml`. A script
+without one is analyzed as `julia script.jl` would run it: dependency packages
+are loaded from the default environment (e.g. `@v1.13`) and the standard
+library. When the JETLS process has an active project, set with `--project`
+given to Julia before `--` or with the `JULIA_PROJECT` environment variable,
+they are loaded from it first, as `julia --project script.jl` would. The same
+applies to the other documents that are analyzed without a project, such as
+[files opened without a workspace folder](@ref analysis/full/files/outside-root).
+
+```bash
+# Analyze a standalone script with the packages of an environment
+jetls --project=/path/to/env -- check script.jl
+```
+
+#### [Unsaved buffers and notebooks](@id analysis/full/files/unsaved)
+
+- An unsaved (untitled) buffer[^unsaved_buffers] is analyzed with the
+  [script analysis mode](@ref analysis/full/modes/script) in the environment
+  of the workspace root.
+- A notebook is analyzed with all its cells as a single script, with the
+  [script analysis mode](@ref analysis/full/modes/script) in the environment
+  of the notebook file (see [Notebook support](@ref notebook)).
 
 [^unsaved_buffers]:
     How unsaved buffers are represented depends on the client. JETLS supports
@@ -176,8 +209,21 @@ A notebook is analyzed with all its cells as a single script (see
     - `untitled:` (VSCode and VSCode-based editors)
     - `buffer:` (Sublime Text)
 
-[`jetls check`](@ref cli-check) analyzes files in the same way, except that it
-also analyzes files outside the root path (see
+#### [Files outside the workspace root](@id analysis/full/files/outside-root)
+
+Files outside the workspace root, such as the source of a dependency opened
+through go-to-definition, are not covered by full analysis (see
+[Files without full analysis](@ref analysis/live/fallback)).
+
+When a file is opened without a workspace folder, there is no workspace root,
+and the file is analyzed as a
+[script without a project](@ref analysis/full/files/script), regardless of
+the `Project.toml` files above it.
+
+#### [`jetls check`](@id analysis/full/files/cli)
+
+[`jetls check`](@ref cli-check) classifies files in the same way, except that
+it also analyzes files outside the root path (see
 [Input paths and analysis mode](@ref cli-check/input)).
 
 ### [When full analysis runs](@id analysis/full/timing)
@@ -287,8 +333,7 @@ Full analysis does not cover the following files:
 
 - Files outside the workspace root, such as the source of a dependency opened
   through go-to-definition
-- Package extension files (see
-  [How each file is analyzed](@ref analysis/full/files))
+- [Package extension files](@ref analysis/full/files/package-extension)
 - Files that are not reachable through `include` from the entry file of any
   analysis unit, such as a file under `src/` that the package does not include
 - Files excluded with [`analysis_overrides`](@ref init-options/analysis_overrides),

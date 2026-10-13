@@ -919,6 +919,59 @@ function analyze_package_source(server::JETLS.Server, pkgpath::String, pkgname::
     return pkg_uri, result
 end
 
+function published_diagnostics(responses::Vector{Any}, uri::URI)
+    return only(filter(responses) do res
+        res isa PublishDiagnosticsNotification && res.params.uri == uri
+    end).params.diagnostics
+end
+
+@testset "an included script joins the unit of the script that includes it" begin
+    mktempdir() do dir
+        main_path = joinpath(dir, "main.jl")
+        utils_path = joinpath(dir, "utils.jl")
+        main_code = """
+            factor() = 2
+            include("utils.jl")
+            """
+        utils_code = """
+            scaled(x) = factor() * x
+            """
+        write(main_path, main_code)
+        write(utils_path, utils_code)
+        main_uri = filepath2uri(main_path)
+        utils_uri = filepath2uri(utils_path)
+        mentions(name) = diag -> occursin(name, diag.message)
+        withserver(; rootUri = filepath2uri(dir)) do (; writereadmsg)
+            # opened first, `utils.jl` is analyzed alone, without what `main.jl` defines
+            let (; raw_res) = writereadmsg(
+                    make_DidOpenTextDocumentNotification(utils_uri, utils_code))
+                @test raw_res isa PublishDiagnosticsNotification
+                @test raw_res.params.uri == utils_uri
+                @test any(mentions("factor"), raw_res.params.diagnostics)
+            end
+
+            let (; raw_res) = writereadmsg(
+                    make_DidOpenTextDocumentNotification(main_uri, main_code); read=2)
+                @test !any(mentions("factor"), published_diagnostics(raw_res, utils_uri))
+            end
+
+            # saving `utils.jl` reanalyzes the unit from `main.jl`
+            new_utils_code = """
+                scaled(x) = factor() * x
+                shifted(x) = x + offset()
+                """
+            let (; raw_res) = writereadmsg(DidSaveTextDocumentNotification(;
+                    params = DidSaveTextDocumentParams(;
+                        textDocument = TextDocumentIdentifier(; uri = utils_uri),
+                        text = new_utils_code)); read=2)
+                diagnostics = published_diagnostics(raw_res, utils_uri)
+                @test !any(mentions("factor"), diagnostics)
+                @test any(mentions("offset"), diagnostics)
+            end
+        end
+    end
+end
+
 # The vendored CI environment loads the analyzed package's Preferences.jl as a module
 # separate from the one JETLS itself uses (aviatesk/JETLS.jl#478)
 @testset "package using Preferences.jl" begin
