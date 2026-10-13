@@ -138,8 +138,9 @@ the package entry file, `src/<name>.jl`, or the file given by the `entryfile`
 entry of the `Project.toml`, with the
 [package analysis mode](@ref analysis/full/modes/package) in the package
 environment. Files under `src/` that the package does not `include` are not
-covered by full analysis (see
-[Files without full analysis](@ref analysis/live/fallback)).
+covered by full analysis, and JETLS reports
+[`toplevel/analysis-skipped`](@ref diagnostic/reference/toplevel/analysis-skipped)
+for them (see [Files without full analysis](@ref analysis/live/fallback)).
 
 #### [Package test files](@id analysis/full/files/package-test)
 
@@ -151,7 +152,9 @@ without a `name` entry, e.g. when the tests are a
 [`[workspace]`](https://pkgdocs.julialang.org/v1/toml-files/#Workspaces)
 member of the package, and the package environment otherwise. Files under
 `test/` that `test/runtests.jl` does not `include` are not covered by full
-analysis (see [Files without full analysis](@ref analysis/live/fallback)).
+analysis, and JETLS reports
+[`toplevel/analysis-skipped`](@ref diagnostic/reference/toplevel/analysis-skipped)
+for them (see [Files without full analysis](@ref analysis/live/fallback)).
 
 #### [Package extension files](@id analysis/full/files/package-extension)
 

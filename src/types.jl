@@ -305,6 +305,17 @@ struct AnalysisResult
     analyzed_file_infos::Dict{URI,JET.AnalyzedFileInfo}
     actual2virtual::JET.Actual2Virtual
     world::UInt
+    # whether the analysis loaded the whole unit, so that `analyzed_file_infos` lists every
+    # file that the entry file `include`s
+    complete::Bool
+    function AnalysisResult(
+        @nospecialize(entry::AnalysisEntry), uri2diagnostics::URI2Diagnostics,
+        analyzer::LSAnalyzer,analyzed_file_infos::Dict{URI,JET.AnalyzedFileInfo},
+        actual2virtual::JET.Actual2Virtual, world::UInt, complete::Bool = false)
+        return new(
+            entry, uri2diagnostics, analyzer, analyzed_file_infos, actual2virtual, world,
+            complete)
+    end
 end
 
 analyzed_file_uris(analysis_result::AnalysisResult) = keys(analysis_result.analyzed_file_infos)
@@ -317,13 +328,21 @@ struct AnalysisExclusion
     pattern::String
 end
 
+# A file of a package or its tests that the complete analysis of its unit does not reach
+# through `include` from the entry file
+struct UnincludedFile
+    entry_uri::URI
+end
+
+const AnalysisSkipReason = Union{AnalysisExclusion,UnincludedFile}
+
 struct OutOfScope
     module_context::Union{Nothing,Module}
-    exclusion::Union{Nothing,AnalysisExclusion}
+    skip_reason::Union{Nothing,AnalysisSkipReason}
     OutOfScope() = new(nothing, nothing) # really unknown context
     OutOfScope(module_context::Module) = new(module_context, nothing)
-    OutOfScope(module_context::Union{Nothing,Module}, exclusion::AnalysisExclusion) =
-        new(module_context, exclusion)
+    OutOfScope(module_context::Union{Nothing,Module}, skip_reason::AnalysisSkipReason) =
+        new(module_context, skip_reason)
 end
 
 # TODO support multiple analysis units, which can happen if this file is included from multiple different analysis_units

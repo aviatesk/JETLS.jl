@@ -923,7 +923,7 @@ end
                 result = JETLS.find_analysis_entry(state, uri)
                 @test result isa JETLS.OutOfScope
                 @test result.module_context === JETLS.FallbackAnalysisContext
-                @test result.exclusion == JETLS.AnalysisExclusion(entryuri, pattern)
+                @test result.skip_reason == JETLS.AnalysisExclusion(entryuri, pattern)
             end
             @test JETLS.find_analysis_entry(state, filepath2uri(unaffected_file)) isa UnaffectedEntry
         end
@@ -1034,6 +1034,68 @@ end
                 @test !any(mentions("factor"), diagnostics)
                 @test any(mentions("offset"), diagnostics)
             end
+        end
+    end
+end
+
+@testset "files that their unit does not include" begin
+    pkgname = "TestUnincludedFile"
+    pkgcode = "module $pkgname end\n"
+    withpackage(pkgname, pkgcode) do pkgpath
+        pkg_path = joinpath(pkgpath, "src", "$pkgname.jl")
+        orphan_path = joinpath(pkgpath, "src", "orphan.jl")
+        orphan_code = "orphan() = undefined_in_orphan()\n"
+        write(orphan_path, orphan_code)
+        pkg_uri = filepath2uri(pkg_path)
+        orphan_uri = filepath2uri(orphan_path)
+        is_unincluded_diagnostic(diag) =
+            diag.code == JETLS.TOPLEVEL_ANALYSIS_SKIPPED_CODE &&
+            diag.severity == DiagnosticSeverity.Information &&
+            occursin(uri2filename(pkg_uri), diag.message)
+        save(uri, text) = DidSaveTextDocumentNotification(;
+            params = DidSaveTextDocumentParams(;
+                textDocument = TextDocumentIdentifier(; uri), text))
+        withserver(; rootUri = filepath2uri(pkgpath)) do (; server, writereadmsg)
+            manager = server.state.analysis_manager
+
+            let (; raw_res) = writereadmsg(
+                    make_DidOpenTextDocumentNotification(orphan_uri, orphan_code); read=2)
+                @test is_unincluded_diagnostic(only(published_diagnostics(raw_res, orphan_uri)))
+            end
+            @test JETLS.get_analysis_info(manager, orphan_uri) ==
+                JETLS.OutOfScope(JETLS.FallbackAnalysisContext, JETLS.UnincludedFile(pkg_uri))
+
+            # saving the file does not analyze the package again
+            entry = JETLS.find_analysis_entry(server.state, pkg_uri)
+            generation = JETLS.get_generation(manager, entry)
+            let (; raw_res) = writereadmsg(save(orphan_uri, orphan_code))
+                @test raw_res isa PublishDiagnosticsNotification
+                @test raw_res.params.uri == orphan_uri
+                @test is_unincluded_diagnostic(only(raw_res.params.diagnostics))
+            end
+            @test JETLS.get_generation(manager, entry) == generation
+
+            writereadmsg(make_DidOpenTextDocumentNotification(pkg_uri, pkgcode); read=0)
+            let (; raw_res) = writereadmsg(save(pkg_uri, """
+                        module $pkgname
+                        include("orphan.jl")
+                        end
+                        """); read=2)
+                diagnostics = published_diagnostics(raw_res, orphan_uri)
+                @test any(diag -> occursin("undefined_in_orphan", diag.message), diagnostics)
+                @test !any(is_unincluded_diagnostic, diagnostics)
+            end
+
+            # the intermediate result clears the diagnostics of the file before the final
+            # result reports it again
+            let (; raw_res) = writereadmsg(save(pkg_uri, pkgcode); read=3)
+                orphan_res = last(filter(raw_res) do res
+                    res isa PublishDiagnosticsNotification && res.params.uri == orphan_uri
+                end)
+                @test is_unincluded_diagnostic(only(orphan_res.params.diagnostics))
+            end
+            @test JETLS.get_analysis_info(manager, orphan_uri) ==
+                JETLS.OutOfScope(JETLS.FallbackAnalysisContext, JETLS.UnincludedFile(pkg_uri))
         end
     end
 end
