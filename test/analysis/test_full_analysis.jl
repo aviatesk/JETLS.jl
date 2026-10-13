@@ -65,6 +65,72 @@ end
     @test take!(manager.queue) === immediate_request
 end
 
+@testset "concretization config changes reanalyze affected units" begin
+    mktempdir() do dir
+        server = JETLS.Server()
+        server.state.root_path = dir
+        manager = server.state.analysis_manager
+        glob(pattern::String) = JETLS.Glob.FilenameMatch(pattern, "dp")
+        function tracker_for(globs...; timeout::Bool = false)
+            tracker = JETLS.ConfigChangeTracker()
+            append!(tracker.changed_concretization_globs, globs)
+            tracker.concretization_timeout_changed = timeout
+            return tracker
+        end
+
+        script_uri = filepath2uri(joinpath(dir, "script.jl"))
+        included_uri = filepath2uri(joinpath(dir, "src", "included.jl"))
+        script_entry = JETLS.ScriptAnalysisEntry(script_uri)
+        affected(entry, tracker; unit_uris = [script_uri, included_uri], analyzing = false) =
+            JETLS.affected_by_config_changes(server, entry, tracker, unit_uris, analyzing)
+
+        @testset "units consulting configured patterns" begin
+            @test affected(script_entry, tracker_for(nothing))
+            @test affected(script_entry, tracker_for(glob("src/*.jl")))
+            @test !affected(script_entry, tracker_for(glob("other.jl")))
+            @test affected(script_entry, tracker_for(; timeout = true))
+            # configured patterns never apply outside the workspace
+            outside_uri = filepath2uri(joinpath(dirname(dir), "outside.jl"))
+            @test !affected(script_entry, tracker_for(nothing); unit_uris = [outside_uri])
+            # the files to check are unknown
+            @test affected(script_entry, tracker_for(glob("other.jl")); analyzing = true)
+            @test affected(script_entry, tracker_for(glob("other.jl")); unit_uris = nothing)
+        end
+
+        @testset "units not consulting configured patterns" begin
+            pkgid = Base.PkgId(@__MODULE__)
+            package_entry = JETLS.PackageSourceAnalysisEntry(dir, script_uri, pkgid)
+            @test !affected(package_entry, tracker_for(nothing); analyzing = true)
+            @test affected(package_entry, tracker_for(; timeout = true))
+            for entry in (JETLS.NewAnalysisEntry(pkgid), JETLS.PackageExtensionAnalysisEntry(script_uri))
+                @test !affected(entry, tracker_for(nothing; timeout = true); analyzing = true)
+            end
+        end
+
+        @testset "`request_reanalysis_for_tracked_entries!`" begin
+            other_uri = filepath2uri(joinpath(dir, "other.jl"))
+            other_entry = JETLS.ScriptAnalysisEntry(other_uri)
+            world = Base.get_world_counter()
+            for (entry, uris) in ((script_entry, [script_uri, included_uri]), (other_entry, [other_uri]))
+                result = JETLS.AnalysisResult(entry,
+                    JETLS.URI2Diagnostics(uri => Diagnostic[] for uri in uris),
+                    JETLS.LSAnalyzer(entry, world),
+                    Dict(uri => JETLS.JET.AnalyzedFileInfo() for uri in uris),
+                    Main => Main, world)
+                JETLS.update_analysis_cache!(server.state, result)
+            end
+            JETLS.store!(manager.tracked_entries) do _
+                Dict{JETLS.AnalysisEntry,URI}(
+                    script_entry => script_uri, other_entry => other_uri), nothing
+            end
+            # The glob matches a file of `script_entry` other than its tracked one
+            JETLS.request_reanalysis_for_tracked_entries!(server, tracker_for(glob("src/*.jl")))
+            @test JETLS.get_generation(manager, script_entry) == 1
+            @test JETLS.get_generation(manager, other_entry) == 0
+        end
+    end
+end
+
 @testset "instantiation_needs" begin
     mktempdir() do env_dir
         env_path = joinpath(env_dir, "Project.toml")

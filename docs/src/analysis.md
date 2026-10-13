@@ -242,7 +242,10 @@ Full analysis works on whole units. JETLS requests it in the following cases:
   debounce of 3 seconds.
 - For notebooks, when the notebook is opened and when it is saved.
 - When [`[full_analysis] concretization_patterns`](@ref config/full_analysis/concretization_patterns)
-  or [`[full_analysis] concretization_timeout`](@ref config/full_analysis/concretization_timeout)
+  changes, for every analyzed unit containing a file that an added or removed
+  pattern applies to. Package source analysis is not rerun, since it evaluates
+  all top-level code regardless of these patterns.
+- When [`[full_analysis] concretization_timeout`](@ref config/full_analysis/concretization_timeout)
   changes, for every unit that has been analyzed.
 
 Reanalysis is skipped if any previously analyzed file in the unit has a saved
