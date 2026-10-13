@@ -516,6 +516,13 @@ function resolve_analysis_request(server::Server, request::AnalysisRequest)
         @goto next_request
     end
 
+    if is_taken_over_request(manager, request)
+        @static JETLS_DEV_MODE && @info "Skipped analysis for script that another unit includes" entry=progress_title(request.entry) uri=request.uri
+        cleanup_analysis_entry_state!(manager, request.entry)
+        request.notify_diagnostics && notify_diagnostics!(server, Set{URI}((request.uri,)))
+        @goto next_request
+    end
+
     execution = AnalysisExecution(request, current_analysis_result(manager, request))
     prev_result = execution.prev_result
 
@@ -729,6 +736,17 @@ end
 is_abandoned_request(server::Server, request::AnalysisRequest) =
     is_abandoned_analysis_target(server, request.uri, request.entry)
 
+# A script that another unit `include`s belongs to that unit, from which its own analysis
+# would take it back, e.g. when the script was opened while that unit was being analyzed.
+# The single analysis worker runs one analysis at a time, so no other unit can take the
+# script over once its analysis has started.
+function is_taken_over_request(manager::AnalysisManager, request::AnalysisRequest)
+    entry = request.entry
+    entry isa ScriptAnalysisEntry || entry isa ScriptInEnvAnalysisEntry || return false
+    info = get_analysis_info(manager, entry.uri)
+    return info isa AnalysisResult && info.entry != entry
+end
+
 # Drops what the analysis of a closed editor-managed document leaves behind: the methods
 # it defined and the cache entry it wrote. `cleanup_analysis_state!` on `didClose` only
 # pops what was cached at that time, so the intermediate result written mid-analysis
@@ -845,7 +863,7 @@ function update_analysis_cache!(
     manager = state.analysis_manager
     analyzed_uris = analyzed_file_uris(analysis_result)
     prev_cache = load(manager.cache)
-    removed_uris = store!(manager.cache) do cache
+    removed_uris, superseded_results = store!(manager.cache) do cache
         new_cache = copy(cache)
         removed = URI[]
         if prune
@@ -857,11 +875,23 @@ function update_analysis_cache!(
                 end
             end
         end
+        displaced = AnalysisResult[]
         for uri in analyzed_uris
+            info = get(cache, uri, nothing)
+            if (info isa AnalysisResult && info.entry != analysis_result.entry &&
+                !any(result -> result === info, displaced))
+                push!(displaced, info)
+            end
             new_cache[uri] = analysis_result
         end
-        return new_cache, removed
+        superseded = filter(displaced) do result::AnalysisResult
+            !any(values(new_cache)) do info
+                info isa AnalysisResult && info.entry == result.entry
+            end
+        end
+        return new_cache, (removed, superseded)
     end
+    cleanup_superseded_units!(manager, superseded_results)
     # Cached occurrences embed `binfo.mod` from the module context that was in effect when
     # they were computed. Analysis modes that use virtualized contexts
     # (scripts, old package mode) mint a fresh gensym'd virtual module on every successful
@@ -878,6 +908,22 @@ function update_analysis_cache!(
         invalidate_per_file_diagnostics_cache!(state, uri)
     end
     return removed_uris
+end
+
+# Another unit now covers every file of these units, e.g. a script that `include`s a script
+# analyzed alone before, and analyzing them again would take the files back. The state of a
+# unit with a queued analysis is still in use; for a script, `is_taken_over_request` skips
+# that analysis and cleans the state up instead.
+function cleanup_superseded_units!(manager::AnalysisManager, superseded::Vector{AnalysisResult})
+    isempty(superseded) && return nothing
+    pending_analyses = load(manager.pending_analyses)
+    for result in superseded
+        # Revise-based analysis defines its methods in the user's real modules
+        analyzed_by_interpreter(result.entry) && cleanup_prev_methods(result)
+        haskey(pending_analyses, result.entry) && continue
+        cleanup_analysis_entry_state!(manager, result.entry)
+    end
+    return nothing
 end
 
 # `notify_diagnostics!(server)` only publishes the files in the cache, so the files that

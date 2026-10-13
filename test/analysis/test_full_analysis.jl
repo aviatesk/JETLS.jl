@@ -1007,7 +1007,10 @@ end
         main_uri = filepath2uri(main_path)
         utils_uri = filepath2uri(utils_path)
         mentions(name) = diag -> occursin(name, diag.message)
-        withserver(; rootUri = filepath2uri(dir)) do (; writereadmsg)
+        withserver(; rootUri = filepath2uri(dir)) do (; server, writereadmsg, readmsg)
+            manager = server.state.analysis_manager
+            utils_entry = JETLS.ScriptAnalysisEntry(utils_uri)
+
             # opened first, `utils.jl` is analyzed alone, without what `main.jl` defines
             let (; raw_res) = writereadmsg(
                     make_DidOpenTextDocumentNotification(utils_uri, utils_code))
@@ -1015,11 +1018,21 @@ end
                 @test raw_res.params.uri == utils_uri
                 @test any(mentions("factor"), raw_res.params.diagnostics)
             end
+            standalone = JETLS.get_analysis_info(manager, utils_uri)::JETLS.AnalysisResult
+            standalone_scaled = let mod = JETLS.get_context_module(
+                    standalone, utils_uri, Position(; line=0, character=0))
+                f = Base.invoke_in_world(standalone.world, getglobal, mod, :scaled)
+                only(Base.invoke_in_world(standalone.world, methods, f))
+            end
 
             let (; raw_res) = writereadmsg(
                     make_DidOpenTextDocumentNotification(main_uri, main_code); read=2)
                 @test !any(mentions("factor"), published_diagnostics(raw_res, utils_uri))
             end
+            # the unit that `utils.jl` formed alone is gone
+            @test !haskey(JETLS.load(manager.tracked_entries), utils_entry)
+            @test !haskey(JETLS.load(manager.analyzed_generations), utils_entry)
+            @test JETLS.is_method_disabled(standalone_scaled)
 
             # saving `utils.jl` reanalyzes the unit from `main.jl`
             new_utils_code = """
@@ -1034,7 +1047,51 @@ end
                 @test !any(mentions("factor"), diagnostics)
                 @test any(mentions("offset"), diagnostics)
             end
+
+            # a configuration change reanalyzes the unit from `main.jl`, but not the unit
+            # that `utils.jl` formed alone, which would take `utils.jl` back
+            utils_generation = JETLS.get_generation(manager, utils_entry)
+            tracker = JETLS.ConfigChangeTracker()
+            tracker.concretization_timeout_changed = true
+            JETLS.request_reanalysis_for_tracked_entries!(server, tracker)
+            @test JETLS.get_generation(manager, utils_entry) == utils_generation
+            let (; raw_msg) = readmsg(; read=2)
+                @test !any(mentions("factor"), published_diagnostics(raw_msg, utils_uri))
+            end
+            @test JETLS.get_analysis_info(manager, utils_uri).entry == JETLS.ScriptAnalysisEntry(main_uri)
         end
+    end
+end
+
+@testset "a script that another unit takes over while queued is not analyzed alone" begin
+    with_analysis_server() do server, dir
+        state = server.state
+        manager = state.analysis_manager
+        main_uri = filepath2uri(joinpath(dir, "main.jl"))
+        utils_uri = filepath2uri(joinpath(dir, "utils.jl"))
+        JETLS.cache_saved_file_info!(state, main_uri, """
+            factor() = 2
+            include("utils.jl")
+            """)
+        JETLS.cache_saved_file_info!(state, utils_uri, "scaled(x) = factor() * x\n")
+        main_entry = JETLS.ScriptAnalysisEntry(main_uri)
+        utils_entry = JETLS.ScriptAnalysisEntry(utils_uri)
+
+        # `utils.jl` is opened before the analysis of `main.jl` caches anything
+        for (uri, entry) in ((main_uri, main_entry), (utils_uri, utils_entry))
+            JETLS.schedule_analysis!(server, uri, entry, #=invalidate=#false;
+                debounce=0.0, notify_diagnostics=false)
+        end
+        main_request = take!(manager.queue)::JETLS.AnalysisRequest
+        utils_request = take!(manager.queue)::JETLS.AnalysisRequest
+        @test utils_request.entry == utils_entry
+
+        JETLS.resolve_analysis_request(server, main_request)
+        @test JETLS.get_analysis_info(manager, utils_uri).entry == main_entry
+        JETLS.resolve_analysis_request(server, utils_request)
+        @test JETLS.get_analysis_info(manager, utils_uri).entry == main_entry
+        @test !haskey(JETLS.load(manager.tracked_entries), utils_entry)
+        @test !haskey(JETLS.load(manager.analyzed_generations), utils_entry)
     end
 end
 
