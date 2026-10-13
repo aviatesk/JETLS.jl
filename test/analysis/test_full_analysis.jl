@@ -864,6 +864,50 @@ end
     end
 end
 
+@testset "package test environments" begin
+    mktempdir() do dir
+        write(joinpath(dir, "Project.toml"), """
+            name = "TestEnvPkg"
+            [workspace]
+            projects = ["test"]
+            """)
+        touch(joinpath(mkpath(joinpath(dir, "src")), "TestEnvPkg.jl"))
+        testdir = mkpath(joinpath(dir, "test"))
+        test_env_path = joinpath(testdir, "Project.toml")
+        write(test_env_path, "[deps]\n")
+        runtests = joinpath(testdir, "runtests.jl")
+        state = JETLS.ServerState()
+        state.root_path = dir
+        for path in (runtests, joinpath(testdir, "test_a.jl"),
+                     joinpath(mkpath(joinpath(testdir, "sub")), "test_b.jl"))
+            touch(path)
+            entry = JETLS.find_analysis_entry(state, filepath2uri(path))
+            @test entry isa JETLS.PackageTestAnalysisEntry
+            @test filepath2uri(entry.env_path) == filepath2uri(test_env_path)
+            @test entry.runtestsuri == filepath2uri(runtests)
+            @test entry.pkgid.name == "TestEnvPkg"
+        end
+
+        # a nameless environment in another directory is not a package test environment
+        scriptsdir = mkpath(joinpath(dir, "scripts"))
+        write(joinpath(scriptsdir, "Project.toml"), "[deps]\n")
+        script = joinpath(scriptsdir, "script.jl")
+        touch(script)
+        @test JETLS.find_analysis_entry(state, filepath2uri(script)) isa JETLS.ScriptInEnvAnalysisEntry
+    end
+
+    # `test/Project.toml` of a directory that is not a package
+    mktempdir() do dir
+        testdir = mkpath(joinpath(dir, "test"))
+        write(joinpath(testdir, "Project.toml"), "[deps]\n")
+        runtests = joinpath(testdir, "runtests.jl")
+        touch(runtests)
+        state = JETLS.ServerState()
+        state.root_path = dir
+        @test JETLS.find_analysis_entry(state, filepath2uri(runtests)) isa JETLS.ScriptInEnvAnalysisEntry
+    end
+end
+
 function analyze_package_source(server::JETLS.Server, pkgpath::String, pkgname::String)
     server.state.root_path = pkgpath
     pkg_uri = filepath2uri(joinpath(pkgpath, "src", "$pkgname.jl"))
@@ -907,7 +951,7 @@ end
         end
         end
         """
-    withpackage(pkgname, pkgcode) do pkgpath
+    withpackage(pkgname, pkgcode; pkg_setup = function () end) do pkgpath
         other_path = joinpath(pkgpath, "src", "other.jl")
         sub_path = joinpath(pkgpath, "src", "sub.jl")
         write(other_path, "const OTHER = 1\n")

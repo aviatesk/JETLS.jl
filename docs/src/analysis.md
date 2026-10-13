@@ -119,7 +119,7 @@ file's location relative to it:
 | File                                  | Entry file         | Analysis mode                                        | Environment                           |
 | :------------------------------------ | :----------------- | :--------------------------------------------------- | :------------------------------------ |
 | Package source file (under `src/`)    | `src/<name>.jl`    | [Package analysis](@ref analysis/full/modes/package) | The package environment               |
-| Package test file (under `test/`)     | `test/runtests.jl` | [Script analysis](@ref analysis/full/modes/script)   | The package environment               |
+| Package test file (under `test/`)     | `test/runtests.jl` | [Script analysis](@ref analysis/full/modes/script)   | The package test environment          |
 | Package extension file (under `ext/`) | —                  | No full analysis                                     | —                                     |
 | Other file in an environment          | The opened file    | [Script analysis](@ref analysis/full/modes/script)   | The environment of the `Project.toml` |
 | File without a `Project.toml`         | The opened file    | [Script analysis](@ref analysis/full/modes/script)   | No project (the default environment)  |
@@ -128,18 +128,23 @@ Here, a package is an environment whose `Project.toml` has a `name` entry, and
 the package rows apply to the directories next to that `Project.toml`. In
 addition:
 
+- The package test environment is the environment of `test/Project.toml` if
+  the package has one without a `name` entry, e.g. when the tests are a
+  [`[workspace]`](https://pkgdocs.julialang.org/v1/toml-files/#Workspaces)
+  member of the package, and the package environment otherwise.
 - For package extension files, JETLS reports
   [`toplevel/analysis-skipped`](@ref diagnostic/reference/toplevel/analysis-skipped)
   (see [Files without full analysis](@ref analysis/live/fallback)).
-- Other files in an environment include files in a package outside `src/`,
-  `test/`, and `ext/`, and files in an environment whose `Project.toml` has no
-  `name` entry.
-- A standalone script is analyzed together with the files it includes.
+- The "Other file in an environment" row covers files in a package outside
+  `src/`, `test/`, and `ext/`, and files in an environment whose
+  `Project.toml` has no `name` entry, unless that environment is a package
+  test environment.
+- A standalone script is analyzed together with the files it `include`s.
   Opening a standalone script that no earlier analysis covers makes it the
-  entry file of a new unit. For example, if `scripts/main.jl` includes
+  entry file of a new unit. For example, if `scripts/main.jl` `include`s
   `scripts/utils.jl`, opening `scripts/main.jl` analyzes both files together,
   while opening `scripts/utils.jl` first analyzes it alone, without what
-  `scripts/main.jl` defines before including it.
+  `scripts/main.jl` defines before `include`ing it.
 - A file without a `Project.toml` is analyzed as `julia script.jl` would run
   it: dependency packages are loaded from the default environment (e.g.
   `@v1.13`) and the standard library. When the JETLS process has an active

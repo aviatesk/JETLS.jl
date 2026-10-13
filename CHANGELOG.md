@@ -139,6 +139,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   They now return the location and version of the analyzed package, also when called from functions defined in the package.
   (Closed https://github.com/aviatesk/JETLS.jl/issues/630)
 
+- Fixed test files of a package with a `test/Project.toml`, e.g. a [`[workspace]`](https://pkgdocs.julialang.org/v1/toml-files/#Workspaces) member of the package, being analyzed on their own unless `test/runtests.jl` had been analyzed first, without what `test/runtests.jl` loads and defines before including them, which caused false diagnostics such as `` `@testset` not defined ``.
+  They are now analyzed from `test/runtests.jl` in the environment of `test/Project.toml`, as [documented](https://aviatesk.github.io/JETLS.jl/release/analysis/#analysis/full/files) for package test files.
+  As for packages without a `test/Project.toml`, files under `test/` that `test/runtests.jl` does not include get no full-analysis diagnostics.
+
 ## 2026-10-11
 
 - Commit: [`ab294bc`](https://github.com/aviatesk/JETLS.jl/commit/ab294bc)

@@ -1588,14 +1588,23 @@ function find_analysis_entry(state::ServerState, uri::URI)
 
     project_toml_dict = parse_project_toml(env_path)
     filepath = uri2filepath(uri)::String # uri.scheme == "file"
-    # TODO Test environment with workspace setup fails here
+    pkg_env_path = env_path
     if isnothing(project_toml_dict) || isnothing(find_pkg_name(project_toml_dict))
-        return ScriptInEnvAnalysisEntry(env_path, uri)
+        # `test/Project.toml` without a `name` is the test environment of the package in the
+        # parent directory: the tests are analyzed as package tests, but in this environment,
+        # which provides their dependencies
+        envdir = dirname(env_path)
+        basename(envdir) == "test" || return ScriptInEnvAnalysisEntry(env_path, uri)
+        pkg_env_path = joinpath(dirname(envdir), "Project.toml")
+        project_toml_dict = isfile(pkg_env_path) ? parse_project_toml(pkg_env_path) : nothing
+        if isnothing(project_toml_dict) || isnothing(find_pkg_name(project_toml_dict))
+            return ScriptInEnvAnalysisEntry(env_path, uri)
+        end
     end
 
-    filekind, filedir = find_package_directory(filepath, env_path)
+    filekind, filedir = find_package_directory(filepath, pkg_env_path)
     if filekind === :src || filekind === :test
-        (; pkgid, pkgfile) = @something find_env_package(env_path, project_toml_dict) begin
+        (; pkgid, pkgfile) = @something find_env_package(pkg_env_path, project_toml_dict) begin
             return ScriptInEnvAnalysisEntry(env_path, uri)
         end
         entryuri = filepath2uri(filekind === :src ? pkgfile : joinpath(filedir, "runtests.jl"))
