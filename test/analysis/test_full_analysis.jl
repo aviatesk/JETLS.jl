@@ -520,7 +520,7 @@ end
     end
 end
 
-function with_analysis_override_server(f::Function)
+function with_analysis_server(f::Function)
     mktempdir() do dir
         server = JETLS.Server()
         server.state.root_path = dir
@@ -567,7 +567,7 @@ end
 @testset "analysis override abort" begin
     @testset "nested abort cannot be caught or run finally" begin
         for saved_excluded in (true, false)
-            with_analysis_override_server() do server, dir
+            with_analysis_server() do server, dir
                 state = server.state
                 entry_uri = filepath2uri(joinpath(dir, "main.jl"))
                 nested_uri = filepath2uri(joinpath(dir, "nested.jl"))
@@ -635,7 +635,7 @@ end
     end
 
     @testset "package-style concretization inside a module" begin
-        with_analysis_override_server() do server, dir
+        with_analysis_server() do server, dir
             state = server.state
             entry_uri = filepath2uri(joinpath(dir, "main.jl"))
             excluded_path = joinpath(dir, "excluded.jl")
@@ -676,7 +676,7 @@ end
     end
 
     @testset "skipped includes continue the analysis" begin
-        with_analysis_override_server() do server, dir
+        with_analysis_server() do server, dir
             state = server.state
             entry_uri = filepath2uri(joinpath(dir, "main.jl"))
             excluded_uri = filepath2uri(joinpath(dir, "excluded.jl"))
@@ -714,7 +714,7 @@ end
     end
 
     @testset "first match and nonexcluded includes" begin
-        with_analysis_override_server() do server, dir
+        with_analysis_server() do server, dir
             mktempdir() do outside_dir
                 state = server.state
                 entry_uri = filepath2uri(joinpath(dir, "main.jl"))
@@ -761,7 +761,7 @@ end
     end
 
     @testset "reanalysis removes stale contexts and diagnostics" begin
-        with_analysis_override_server() do server, dir
+        with_analysis_server() do server, dir
             state = server.state
             manager = state.analysis_manager
             entry_uri = filepath2uri(joinpath(dir, "main.jl"))
@@ -864,6 +864,17 @@ end
     end
 end
 
+function analyze_package_source(server::JETLS.Server, pkgpath::String, pkgname::String)
+    server.state.root_path = pkgpath
+    pkg_uri = filepath2uri(joinpath(pkgpath, "src", "$pkgname.jl"))
+    entry = JETLS.find_analysis_entry(server.state, pkg_uri)
+    @test entry isa JETLS.PackageSourceAnalysisEntry
+    request = JETLS.AnalysisRequest(entry, pkg_uri,
+        #=generation=#1, #=token=#nothing, #=notify=#false)
+    result, = JETLS.execute_analysis(server, JETLS.AnalysisExecution(request, nothing))
+    return pkg_uri, result
+end
+
 # The vendored CI environment loads the analyzed package's Preferences.jl as a module
 # separate from the one JETLS itself uses (aviatesk/JETLS.jl#478)
 @testset "package using Preferences.jl" begin
@@ -877,15 +888,35 @@ end
     withpackage(pkgname, pkgcode; pkg_setup = function ()
             Pkg.add("Preferences"; io=devnull)
         end) do pkgpath
-        with_analysis_override_server() do server, _
-            server.state.root_path = pkgpath
-            pkg_uri = filepath2uri(joinpath(pkgpath, "src", "$pkgname.jl"))
-            entry = JETLS.find_analysis_entry(server.state, pkg_uri)
-            @test entry isa JETLS.PackageSourceAnalysisEntry
-            request = JETLS.AnalysisRequest(entry, pkg_uri,
-                #=generation=#1, #=token=#nothing, #=notify=#false)
-            result, = JETLS.execute_analysis(server, JETLS.AnalysisExecution(request, nothing))
+        with_analysis_server() do server, _
+            pkg_uri, result = analyze_package_source(server, pkgpath, pkgname)
             @test isempty(result.uri2diagnostics[pkg_uri])
+        end
+    end
+end
+
+@testset "package using `pathof` and `pkgdir`" begin
+    pkgname = "TestPackagePaths"
+    pkgcode = """
+        module $pkgname
+        const VERSION_STRING = string(pkgversion(@__MODULE__)::VersionNumber)
+        srcdir() = pkgdir(@__MODULE__, "src")
+        include(joinpath(srcdir(), "other.jl"))
+        module Sub
+        include(joinpath(dirname(pathof(parentmodule(@__MODULE__))), "sub.jl"))
+        end
+        end
+        """
+    withpackage(pkgname, pkgcode) do pkgpath
+        other_path = joinpath(pkgpath, "src", "other.jl")
+        sub_path = joinpath(pkgpath, "src", "sub.jl")
+        write(other_path, "const OTHER = 1\n")
+        write(sub_path, "const SUB = 1\n")
+        with_analysis_server() do server, _
+            pkg_uri, result = analyze_package_source(server, pkgpath, pkgname)
+            @test isempty(result.uri2diagnostics[pkg_uri])
+            @test haskey(result.analyzed_file_infos, filepath2uri(other_path))
+            @test haskey(result.analyzed_file_infos, filepath2uri(sub_path))
         end
     end
 end

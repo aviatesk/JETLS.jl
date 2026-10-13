@@ -135,6 +135,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `@load_preference` no longer reports [`lowering/macro-expansion-error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/macro-expansion-error) with the same error either.
   (Closed https://github.com/aviatesk/JETLS.jl/issues/478)
 
+- Fixed `pathof`, `pkgdir`, and `pkgversion` returning `nothing` for the module of the analyzed package and its submodules during full analysis, which stopped the analysis with errors such as `MethodError: no method matching dirname(::Nothing)` at code like `include(joinpath(dirname(pathof(@__MODULE__)), "file.jl"))` and left the rest of the package unanalyzed.
+  They now return the location and version of the analyzed package, also when called from functions defined in the package.
+  (Closed https://github.com/aviatesk/JETLS.jl/issues/630)
+
 ## 2026-10-11
 
 - Commit: [`ab294bc`](https://github.com/aviatesk/JETLS.jl/commit/ab294bc)
