@@ -15,8 +15,8 @@ end
 const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
 const SPINNER_INTERVAL = 0.1
 
-mutable struct SpinnerProgress{IOTyp<:IO}
-    const io::IOTyp
+mutable struct SpinnerProgress
+    const io::IO
     active::Bool
     current_file::String
     current_message::String
@@ -112,8 +112,8 @@ function send_progress(::Server, token::SpinnerProgressToken, value::WorkDonePro
 end
 
 # Simple line-based progress (PROGRESS_SIMPLE)
-mutable struct SimpleProgress{IOTyp<:IO}
-    const io::IOTyp
+mutable struct SimpleProgress
+    const io::IO
     header::String
     last_phase::String
     line_open::Bool
@@ -183,26 +183,28 @@ function send_progress(::Server, token::SimpleProgressToken, value::WorkDoneProg
     end
 end
 
-const ActiveProgress{IOTyp} = Union{Nothing,SpinnerProgress{IOTyp},SimpleProgress{IOTyp}}
+const ActiveProgress = Union{Nothing,SpinnerProgress,SimpleProgress}
 
 # Progress context that holds mode and io for unified progress handling. `active` is the
 # progress display currently drawing on `io`, consulted by `ProgressAwareLogger`.
-struct ProgressContext{IOTyp<:IO}
+# `io` is not a type parameter so that `jetls check` compiles the same code whether `stderr`
+# is a terminal, a pipe, or a file, letting the precompile workload cover all of them.
+struct ProgressContext
     mode::ProgressMode
-    io::IOTyp
-    active::Base.RefValue{ActiveProgress{IOTyp}}
-    function ProgressContext(mode::ProgressMode, io::IOTyp=stderr) where IOTyp<:IO
+    io::IO
+    active::Base.RefValue{ActiveProgress}
+    function ProgressContext(mode::ProgressMode, io::IO=stderr)
         effective_mode = mode == PROGRESS_AUTO ? (is_tty(io) ? PROGRESS_FULL : PROGRESS_SIMPLE) : mode
-        return new{IOTyp}(effective_mode, io, Ref{ActiveProgress{IOTyp}}(nothing))
+        return new(effective_mode, io, Ref{ActiveProgress}(nothing))
     end
 end
 
 # Log records share stderr with the progress display, so without coordination they would be
 # appended to the spinner line or the dotted progress line. This logger clears or ends the
 # in-progress line before delegating to the wrapped logger; the display then resumes below.
-struct ProgressAwareLogger{L<:Base.CoreLogging.AbstractLogger,IOTyp<:IO} <: Base.CoreLogging.AbstractLogger
+struct ProgressAwareLogger{L<:Base.CoreLogging.AbstractLogger} <: Base.CoreLogging.AbstractLogger
     parent::L
-    ctx::ProgressContext{IOTyp}
+    ctx::ProgressContext
 end
 Base.CoreLogging.min_enabled_level(logger::ProgressAwareLogger) =
     Base.CoreLogging.min_enabled_level(logger.parent)
