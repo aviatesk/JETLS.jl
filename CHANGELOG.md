@@ -104,6 +104,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Changing [`full_analysis.concretization_patterns`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/full_analysis/concretization_patterns) now reanalyzes only the analysis units containing files the added or removed patterns apply to, instead of every analyzed unit.
   Package source analysis is no longer rerun, since it does not use the configured patterns.
 
+- Reduced the startup latency of `jetls check` and of language server sessions by precompiling more of what they always run, such as loading the configuration, handling the `initialized` notification, publishing diagnostics, and full analysis.
+  For example, `jetls check` on a small script now finishes in about 1.5 seconds instead of 2.8 seconds.
+
 ### Fixed
 
 - Fixed [`analysis_overrides`](https://aviatesk.github.io/JETLS.jl/release/launching/#init-options/analysis_overrides) being ignored when full analysis reached an excluded file through `include`, or when the excluded file was the entry file of a package or its tests.
