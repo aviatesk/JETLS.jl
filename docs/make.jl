@@ -9,17 +9,18 @@ const release_commit = get(ENV, "DOCUMENTER_RELEASE_COMMIT", "")
 const index_md = joinpath(@__DIR__, "src", "index.md")
 const index_md_original = read(index_md, String)
 if devbranch == "release" && !isempty(release_date)
-    short_commit = isempty(release_commit) ? "" : release_commit[1:7]
-    release_info = """
-        !!! info "Release version"
-            This documentation is for the `$release_date` release ([`$short_commit`](https://github.com/aviatesk/JETLS.jl/commit/$release_commit)).
-            See the [CHANGELOG](@ref $release_date) for details about this release.
+    let short_commit = isempty(release_commit) ? "" : release_commit[1:7],
+        release_info = """
+            !!! info "Release version"
+                This documentation is for the `$release_date` release ([`$short_commit`](https://github.com/aviatesk/JETLS.jl/commit/$release_commit)).
+                See the [CHANGELOG](@ref $release_date) for details about this release.
 
-        """
-    # Insert after the title line
-    modified = replace(index_md_original,
-        r"^(# [^\n]+\n)"s => SubstitutionString("\\1\n" * release_info))
-    write(index_md, modified)
+            """,
+        # Insert after the title line
+        modified = replace(index_md_original,
+            r"^(# [^\n]+\n)"s => SubstitutionString("\\1\n" * release_info))
+        write(index_md, modified)
+    end
 end
 
 let CHANGELOG_md = joinpath(@__DIR__, "..", "CHANGELOG.md")
@@ -99,7 +100,7 @@ struct ReleaseBranchConfig <: Documenter.DeployConfig end
 
 function Documenter.deploy_folder(
         ::ReleaseBranchConfig;
-        repo::String, branch::String, kwargs...
+        repo::String, branch::String, _kwargs...
     )
     return Documenter.DeployDecision(; all_ok=true, branch, is_preview=false,
         repo, subfolder="release")
