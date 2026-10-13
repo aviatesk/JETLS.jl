@@ -104,12 +104,12 @@ function cache_out_of_scope!(manager::AnalysisManager, uri::URI, outofscope::Out
     end
 end
 
-# No analysis runs to publish the diagnostic of an `analysis_overrides` exclusion.
+# No analysis runs to publish the diagnostic of why full analysis skips the file.
 function handle_out_of_scope_request!(
         server::Server, uri::URI, outofscope::OutOfScope, notify_diagnostics::Bool
     )
     cache_out_of_scope!(server.state.analysis_manager, uri, outofscope)
-    if notify_diagnostics && outofscope.exclusion !== nothing
+    if notify_diagnostics && outofscope.skip_reason !== nothing
         notify_diagnostics!(server, Set{URI}((uri,)))
     end
     return nothing
@@ -363,6 +363,10 @@ function request_analysis!(
             end
         else
             entry = phase1_result::AnalysisEntry
+            unincluded = unincluded_file_out_of_scope(manager, uri, entry)
+            if unincluded !== nothing
+                return handle_out_of_scope_request!(server, uri, unincluded, notify_diagnostics)
+            end
         end
     end
 
@@ -565,6 +569,7 @@ function resolve_analysis_request(server::Server, request::AnalysisRequest)
         discard_abandoned_analysis!(server, request, analysis_result)
         @goto next_request
     end
+    cache_unincluded_files!(server.state, request, analysis_result, prev_result)
     mark_analyzed_generation!(manager, request)
     request.notify_diagnostics && notify_diagnostics!(server)
     notify_pruned_uris!(server, request, pruned_uris)
@@ -631,6 +636,45 @@ function current_analysis_result(manager::AnalysisManager, request::AnalysisRequ
     info = get_analysis_info(manager, request.uri)
     if info isa AnalysisResult && info.entry == request.entry
         return info
+    end
+    return find_entry_result(manager, request.entry)
+end
+
+function find_entry_result(manager::AnalysisManager, @nospecialize entry::AnalysisEntry)
+    for (_, info) in load(manager.cache)
+        info isa AnalysisResult && info.entry == entry && return info
+    end
+    return nothing
+end
+
+# A file that the complete analysis of its unit does not reach is not `include`d by the
+# entry file: report that instead of analyzing the unit again for the file.
+function unincluded_file_out_of_scope(
+        manager::AnalysisManager, uri::URI, @nospecialize entry::AnalysisEntry
+    )
+    result = @something find_entry_result(manager, entry) return nothing
+    (result.complete && uri ∉ analyzed_file_uris(result)) || return nothing
+    return OutOfScope(FallbackAnalysisContext, UnincludedFile(entryuri(entry)))
+end
+
+# `prev_result` lists the files that the unit no longer `include`s, which the cache may
+# already have dropped when the intermediate result was stored.
+function cache_unincluded_files!(
+        state::ServerState, request::AnalysisRequest, analysis_result::AnalysisResult,
+        prev_result::Union{Nothing,AnalysisResult}
+    )
+    analysis_result.complete || return nothing
+    manager = state.analysis_manager
+    entry = analysis_result.entry
+    candidates = Set{URI}((request.uri,))
+    prev_result === nothing || union!(candidates, analyzed_file_uris(prev_result))
+    for uri in candidates
+        uri.scheme == "file" && isfile(uri2filepath(uri)::String) || continue
+        uri in analyzed_file_uris(analysis_result) && continue
+        get_analysis_info(manager, uri) === nothing || continue
+        find_analysis_entry(state, uri) == entry || continue
+        cache_out_of_scope!(manager, uri,
+            OutOfScope(FallbackAnalysisContext, UnincludedFile(entryuri(entry))))
     end
     return nothing
 end
@@ -897,11 +941,7 @@ function execute_analysis(server::Server, execution::AnalysisExecution)
         end::Tuple{LSInterpreter,JET.JETToplevelResult}
     else error("Unsupported analysis entry $entry") end
 
-    ret, analysis_result_replaced, covers_unit = new_analysis_result(interp, result)
-
-    # TODO Request fallback analysis in cases this script was not analyzed by the analysis entry
-    # request.uri ∉ analyzed_file_uris(ret)
-    return ret, analysis_result_replaced, covers_unit
+    return new_analysis_result(interp, result)
 end
 
 function begin_full_analysis_progress(
@@ -1016,7 +1056,7 @@ function new_analysis_result(
     end
 
     analysis_result = AnalysisResult(entry, uri2diagnostics, analyzer,
-        analyzed_file_infos, actual2virtual, cache_world)
+        analyzed_file_infos, actual2virtual, cache_world, #=complete=#report === nothing)
     return analysis_result, replace_analysis_result, covers_unit
 end
 

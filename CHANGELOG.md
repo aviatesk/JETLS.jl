@@ -98,6 +98,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   Passing such files to `jetls check` now reports it along with the diagnostics that do not require full analysis, instead of failing with `could not find any files to analyze`.
   Package extension files keep reporting it as a warning.
 
+- Files under the `src/` or `test/` directory of a package that no `include` from `src/<name>.jl` or `test/runtests.jl` reaches now report [`toplevel/analysis-skipped`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/toplevel/analysis-skipped) as information at their first line, naming the entry file, since such files are often no longer used.
+  Saving such a file no longer reanalyzes the whole package or its tests.
+
 - Changing [`full_analysis.concretization_patterns`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/full_analysis/concretization_patterns) now reanalyzes only the analysis units containing files the added or removed patterns apply to, instead of every analyzed unit.
   Package source analysis is no longer rerun, since it does not use the configured patterns.
 
@@ -144,7 +147,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Fixed test files of a package with a `test/Project.toml`, e.g. a [`[workspace]`](https://pkgdocs.julialang.org/v1/toml-files/#Workspaces) member of the package, being analyzed on their own unless `test/runtests.jl` had been analyzed first, without what `test/runtests.jl` loads and defines before including them, which caused false diagnostics such as `` `@testset` not defined ``.
   They are now analyzed from `test/runtests.jl` in the environment of `test/Project.toml`, as [documented](https://aviatesk.github.io/JETLS.jl/release/analysis/#analysis/full/files) for package test files.
-  As for packages without a `test/Project.toml`, files under `test/` that `test/runtests.jl` does not include get no full-analysis diagnostics.
+  As for packages without a `test/Project.toml`, files under `test/` that `test/runtests.jl` does not include are not analyzed and report [`toplevel/analysis-skipped`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/toplevel/analysis-skipped) instead.
 
 ## 2026-10-11
 

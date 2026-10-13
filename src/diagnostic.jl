@@ -463,7 +463,7 @@ function package_extension_analysis_skipped_diagnostic(;
             "This file is not analyzed, so diagnostics that require full analysis " *
             "are not reported for it.")
     end
-    return analysis_skipped_diagnostic(message, DiagnosticSeverity.Warning)
+    return _analysis_skipped_diagnostic(message, DiagnosticSeverity.Warning)
 end
 
 function analysis_exclusion_diagnostic(
@@ -489,15 +489,38 @@ function analysis_exclusion_diagnostic(
                 "for this file.")
         end
     end
-    return analysis_skipped_diagnostic(message, DiagnosticSeverity.Information)
+    return _analysis_skipped_diagnostic(message, DiagnosticSeverity.Information)
 end
 
-analysis_exclusion_diagnostic(server::Server, uri::URI, exclusion::AnalysisExclusion) =
-    analysis_exclusion_diagnostic(uri, exclusion;
-        markdown_rendering = supports(server, :textDocument, :diagnostic, :markupMessageSupport),
-        displaysize = server.state.cli_mode ? cli_message_displaysize() : nothing)
+function unincluded_file_diagnostic(
+        unincluded::UnincludedFile;
+        markdown_rendering::Bool = false,
+        displaysize::Union{Nothing,Tuple{Int,Int}} = nothing
+    )
+    entryfile = uri2filename(unincluded.entry_uri)
+    message = toplevel_report_message(JET.PostProcessor(); markdown_rendering, displaysize) do io
+        JET.print_summary(io,
+            "Full analysis does not cover this file, which is not `include`d by its " *
+            "analysis unit.")
+        JET.print_wrapped(io,
+            "No `include` from the entry file `$entryfile` reaches this file, so " *
+            "diagnostics that require full analysis are not reported for it. `include` " *
+            "the file, or remove it if it is no longer used.")
+    end
+    return _analysis_skipped_diagnostic(message, DiagnosticSeverity.Information)
+end
 
-analysis_skipped_diagnostic(message::String, severity::DiagnosticSeverity.Ty) = Diagnostic(;
+function analysis_skipped_diagnostic(server::Server, uri::URI, reason::AnalysisSkipReason)
+    markdown_rendering = supports(server, :textDocument, :diagnostic, :markupMessageSupport)
+    displaysize = server.state.cli_mode ? cli_message_displaysize() : nothing
+    if reason isa AnalysisExclusion
+        return analysis_exclusion_diagnostic(uri, reason; markdown_rendering, displaysize)
+    else
+        return unincluded_file_diagnostic(reason; markdown_rendering, displaysize)
+    end
+end
+
+_analysis_skipped_diagnostic(message::String, severity::DiagnosticSeverity.Ty) = Diagnostic(;
     range = line_range(1),
     severity,
     message,
@@ -2507,9 +2530,9 @@ function get_full_diagnostics(server::Server; ensure_cleared::Union{Bool,URI} = 
     uri2diagnostics = URI2Diagnostics()
     for (uri, analysis_info) in load(state.analysis_manager.cache)
         if analysis_info isa OutOfScope
-            exclusion = @something analysis_info.exclusion continue
+            reason = @something analysis_info.skip_reason continue
             push!(get!(Vector{Diagnostic}, uri2diagnostics, uri),
-                analysis_exclusion_diagnostic(server, uri, exclusion))
+                analysis_skipped_diagnostic(server, uri, reason))
             continue
         end
         diagnostics = get!(Vector{Diagnostic}, uri2diagnostics, uri)
@@ -2552,9 +2575,9 @@ function get_full_diagnostics(server::Server, uris::Set{URI})
             full_diagnostics = get(analysis_info.uri2diagnostics, uri, nothing)
             full_diagnostics === nothing || append!(diagnostics, full_diagnostics)
         elseif analysis_info isa OutOfScope
-            exclusion = analysis_info.exclusion
-            if exclusion !== nothing
-                push!(diagnostics, analysis_exclusion_diagnostic(server, uri, exclusion))
+            reason = analysis_info.skip_reason
+            if reason !== nothing
+                push!(diagnostics, analysis_skipped_diagnostic(server, uri, reason))
             end
         end
         for (_, extra_uri2diagnostics) in extra_diagnostics

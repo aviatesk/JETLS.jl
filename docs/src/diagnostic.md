@@ -1451,6 +1451,13 @@ skipped:
   `ext` directory), since full analysis of extensions is not supported yet.
   This causes [`jetls check`](@ref cli-check) to fail by default when such
   files are passed to it.
+- **`Information`**: At the top of a file under a package's `src` or `test`
+  directory that no `include` from the entry file of its analysis unit
+  (`src/<name>.jl` or `test/runtests.jl`) reaches. The message names the entry
+  file. Such a file is often no longer used. JETLS reports this once an
+  analysis of the unit completes without a
+  [top-level error](@ref diagnostic/reference/toplevel/error), since an
+  analysis that stops early may not reach every file the unit `include`s.
 - **`Information`**: For files skipped because of
   [`analysis_overrides`](@ref init-options/analysis_overrides):
   - At the top of an excluded file. The message names the matched pattern.

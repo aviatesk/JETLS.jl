@@ -900,7 +900,7 @@ end
                 @test occursin(named, diag.message)
                 analysis_info = JETLS.get_analysis_info(server.state.analysis_manager, uri)
                 @test analysis_info isa JETLS.OutOfScope
-                @test analysis_info.exclusion.excluded_uri == filepath2uri(pkgfile)
+                @test analysis_info.skip_reason.excluded_uri == filepath2uri(pkgfile)
                 @test !JETLS.has_analyzed_context(server.state, uri)
             end
         end

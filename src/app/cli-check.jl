@@ -503,7 +503,7 @@ function run_check_analysis(
         manager = server.state.analysis_manager
         if isempty(analysis_uris) && !any(requested_uris) do uri::URI
                 analysis_info = get_analysis_info(manager, uri)
-                analysis_info isa OutOfScope && analysis_info.exclusion !== nothing
+                analysis_info isa OutOfScope && analysis_info.skip_reason !== nothing
             end
             @error "Full analysis failed: could not find any files to analyze"
             return 1
