@@ -131,6 +131,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Fixed full analysis failing without reporting any diagnostics when the analyzed code calls `include` with arguments that no `include` method accepts, such as `include(Symbol("file.jl"))`, or calls `Base.include(mapexpr, mod, path)`.
   The former is now reported as [`toplevel/error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/toplevel/error), and the latter as [`toplevel/unsupported-feature`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/toplevel/unsupported-feature), with the included file analyzed in `mod` without applying `mapexpr`.
 
+- Fixed full analysis of a package stopping with `ArgumentError: Module Main does not correspond to a loaded package!` at top-level uses of [Preferences.jl](https://github.com/JuliaPackaging/Preferences.jl) such as `@load_preference`, which left the rest of the package unanalyzed.
+  `@load_preference` no longer reports [`lowering/macro-expansion-error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/macro-expansion-error) with the same error either.
+  (Closed https://github.com/aviatesk/JETLS.jl/issues/478)
+
 ## 2026-10-11
 
 - Commit: [`ab294bc`](https://github.com/aviatesk/JETLS.jl/commit/ab294bc)

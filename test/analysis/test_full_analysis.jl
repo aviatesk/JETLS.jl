@@ -864,6 +864,32 @@ end
     end
 end
 
+# The vendored CI environment loads the analyzed package's Preferences.jl as a module
+# separate from the one JETLS itself uses (aviatesk/JETLS.jl#478)
+@testset "package using Preferences.jl" begin
+    pkgname = "TestPreferencesUsage"
+    pkgcode = """
+        module $pkgname
+        using Preferences
+        const ENABLED = @load_preference("enabled", false)
+        end
+        """
+    withpackage(pkgname, pkgcode; pkg_setup = function ()
+            Pkg.add("Preferences"; io=devnull)
+        end) do pkgpath
+        with_analysis_override_server() do server, _
+            server.state.root_path = pkgpath
+            pkg_uri = filepath2uri(joinpath(pkgpath, "src", "$pkgname.jl"))
+            entry = JETLS.find_analysis_entry(server.state, pkg_uri)
+            @test entry isa JETLS.PackageSourceAnalysisEntry
+            request = JETLS.AnalysisRequest(entry, pkg_uri,
+                #=generation=#1, #=token=#nothing, #=notify=#false)
+            result, = JETLS.execute_analysis(server, JETLS.AnalysisExecution(request, nothing))
+            @test isempty(result.uri2diagnostics[pkg_uri])
+        end
+    end
+end
+
 @testset "collect_module_range_infos" begin
     let st0_top = jlparse("""
             x = 1
