@@ -1556,8 +1556,14 @@ end
 
 entryuri(entry::AnalysisEntry) = entryuri_impl(entry)::URI
 progress_title(entry::AnalysisEntry) = progress_title_impl(entry)::String
+
+# The module in which full analysis defines the modules that it analyzes code in. The
+# precompile workload replaces it since `Main` is closed during precompilation.
+const FULL_ANALYSIS_CONTEXT = Ref{Module}(Main)
+
 function getjetconfigs(server::Server, entry::AnalysisEntry)
     jetconfigs = copy(getjetconfigs_impl(entry)::Dict{Symbol,Any})
+    jetconfigs[:context] = FULL_ANALYSIS_CONTEXT[]
     jetconfigs[:concretization_timeout] = get_config(server, :full_analysis, :concretization_timeout)
     return jetconfigs
 end
@@ -1566,7 +1572,8 @@ let default_jetconfigs = Dict{Symbol,Any}(
         :toplevel_logger => nothing,
         :analyze_from_definitions => true,
         # force concretization of documentation
-        :concretization_patterns => [:($(Base.Docs.doc!)(xs__))])
+        # `Any[]` in every entry, since the analysis is compiled for the configuration types
+        :concretization_patterns => Any[:($(Base.Docs.doc!)(xs__))])
     global getjetconfigs_impl(::AnalysisEntry) = default_jetconfigs
 end
 
@@ -1610,7 +1617,7 @@ progress_title_impl(entry::PackageSourceAnalysisEntry) = entry.pkgid.name * ".jl
 let jetconfigs = Dict{Symbol,Any}(
         :toplevel_logger => nothing,
         :analyze_from_definitions => true,
-        :concretization_patterns => [:(x_)])
+        :concretization_patterns => Any[:(x_)])
     global getjetconfigs_impl(::PackageSourceAnalysisEntry) = jetconfigs
 end
 
