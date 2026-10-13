@@ -94,8 +94,7 @@ function configured_concretization_patterns(
     path_for_glob = @something JETLS.relative_workspace_path_for_config(server, filename) return Any[]
     patterns = Any[]
     for pattern_config in configured
-        globpath = pattern_config.path
-        globpath !== nothing && !occursin(globpath, path_for_glob) && continue
+        JETLS.concretization_glob_matches(pattern_config.path, path_for_glob) || continue
         push!(patterns, pattern_config.pattern)
     end
     return patterns

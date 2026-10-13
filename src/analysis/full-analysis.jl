@@ -1020,8 +1020,18 @@ function new_analysis_result(
     return analysis_result, replace_analysis_result, covers_unit
 end
 
-function request_reanalysis_for_tracked_entries!(server::Server)
-    for (entry, uri) in load(server.state.analysis_manager.tracked_entries)
+function request_reanalysis_for_tracked_entries!(
+        server::Server, tracker::ConfigChangeTracker
+    )
+    manager = server.state.analysis_manager
+    unit_uris = Dict{AnalysisEntry,Vector{URI}}()
+    for (uri, info) in load(manager.cache)
+        info isa AnalysisResult && push!(get!(Vector{URI}, unit_uris, info.entry), uri)
+    end
+    pending_analyses = load(manager.pending_analyses)
+    for (entry, uri) in load(manager.tracked_entries)
+        affected_by_config_changes(server, entry, tracker,
+            get(unit_uris, entry, nothing), haskey(pending_analyses, entry)) || continue
         if supports(server, :window, :workDoneProgress)
             request_analysis_progress!(
                 server, uri, #=invalidate=#true, entry,
@@ -1033,6 +1043,28 @@ function request_reanalysis_for_tracked_entries!(server::Server)
     end
     return nothing
 end
+
+# A unit none of whose files any changed pattern applies to sees the same patterns at every
+# file it visits, so reanalyzing it would reproduce its cached result.
+function affected_by_config_changes(
+        server::Server, entry::AnalysisEntry, tracker::ConfigChangeTracker,
+        unit_uris::Union{Nothing,Vector{URI}}, analyzing::Bool
+    )
+    analyzed_by_interpreter(entry) || return false
+    tracker.concretization_timeout_changed && return true
+    consults_configured_concretization_patterns(entry) || return false
+    # An ongoing analysis may have read the old patterns for only some of its files
+    (analyzing || unit_uris === nothing) && return true
+    globs = tracker.changed_concretization_globs
+    return any(unit_uris) do uri::URI
+        filename = uri2filename(uri)
+        path_for_glob = @something relative_workspace_path_for_config(server, filename) return false
+        return any(glob -> concretization_glob_matches(glob, path_for_glob), globs)
+    end
+end
+
+concretization_glob_matches(glob::Maybe{Glob.FilenameMatch{String}}, path_for_glob::String) =
+    glob === nothing || occursin(glob, path_for_glob)
 
 # Revise-based package analysis
 # =============================
@@ -1452,6 +1484,13 @@ let default_jetconfigs = Dict{Symbol,Any}(
     global getjetconfigs_impl(::AnalysisEntry) = default_jetconfigs
 end
 
+# Only `LSInterpreter` reads the concretization settings
+analyzed_by_interpreter(::AnalysisEntry) = true
+
+# `:(x_)` matches every top-level block before any configured pattern is tried
+consults_configured_concretization_patterns(entry::AnalysisEntry) =
+    :(x_) ∉ get(getjetconfigs_impl(entry)::Dict{Symbol,Any}, :concretization_patterns, ())
+
 struct ScriptAnalysisEntry <: AnalysisEntry
     uri::URI
     isnotebook::Bool
@@ -1505,6 +1544,7 @@ struct NewAnalysisEntry <: AnalysisEntry
 end
 entryuri_impl(::NewAnalysisEntry) = error("")
 progress_title_impl(entry::NewAnalysisEntry) = entry.pkgid.name * ".jl [package (incremental)]"
+analyzed_by_interpreter(::NewAnalysisEntry) = false
 
 struct PackageExtensionAnalysisEntry <: AnalysisEntry
     uri::URI
@@ -1512,6 +1552,7 @@ end
 entryuri_impl(entry::PackageExtensionAnalysisEntry) = entry.uri
 progress_title_impl(entry::PackageExtensionAnalysisEntry) =
     basename(uri2filename(entry.uri)) * " [package extension]"
+analyzed_by_interpreter(::PackageExtensionAnalysisEntry) = false
 
 function package_extension_analysis_result(
         server::Server, entry::PackageExtensionAnalysisEntry

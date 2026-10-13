@@ -98,6 +98,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   Passing such files to `jetls check` now reports it along with the diagnostics that do not require full analysis, instead of failing with `could not find any files to analyze`.
   Package extension files keep reporting it as a warning.
 
+- Changing [`full_analysis.concretization_patterns`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/full_analysis/concretization_patterns) now reanalyzes only the analysis units containing files the added or removed patterns apply to, instead of every analyzed unit.
+  Package source analysis is no longer rerun, since it does not use the configured patterns.
+
 ### Fixed
 
 - Fixed [`analysis_overrides`](https://aviatesk.github.io/JETLS.jl/release/launching/#init-options/analysis_overrides) being ignored when full analysis reached an excluded file through `include`, or when the excluded file was the entry file of a package or its tests.

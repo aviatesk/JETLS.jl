@@ -519,10 +519,13 @@ end
 
 mutable struct ConfigChangeTracker
     const changed_settings::Vector{ConfigChange}
+    # `path` globs of the added or removed `full_analysis.concretization_patterns` entries
+    const changed_concretization_globs::Vector{Maybe{Glob.FilenameMatch{String}}}
     diagnostic_setting_changed::Bool
-    analysis_setting_changed::Bool
+    concretization_timeout_changed::Bool
 end
-ConfigChangeTracker() = ConfigChangeTracker(ConfigChange[], false, false)
+ConfigChangeTracker() = ConfigChangeTracker(
+    ConfigChange[], Maybe{Glob.FilenameMatch{String}}[], false, false)
 
 function (tracker::ConfigChangeTracker)(old_val, new_val, path::Tuple{Vararg{Symbol}})
     @nospecialize old_val new_val
@@ -531,9 +534,18 @@ function (tracker::ConfigChangeTracker)(old_val, new_val, path::Tuple{Vararg{Sym
         push!(tracker.changed_settings, ConfigChange(path_str, old_val, new_val))
         if !isempty(path) && first(path) === :diagnostic
             tracker.diagnostic_setting_changed = true
-        elseif (length(path) ≥ 2 && path[1] === :full_analysis &&
-                path[2] in (:concretization_patterns, :concretization_timeout))
-            tracker.analysis_setting_changed = true
+        elseif path === (:full_analysis, :concretization_patterns)
+            if old_val isa Vector{Any} && new_val isa Vector{Any}
+                # `merge_and_track` reports the merge keys of the patterns here
+                for key in symdiff(old_val, new_val)
+                    glob = key isa Tuple{Maybe{Glob.FilenameMatch{String}},String} ? first(key) : nothing
+                    push!(tracker.changed_concretization_globs, glob)
+                end
+            else
+                push!(tracker.changed_concretization_globs, nothing)
+            end
+        elseif path === (:full_analysis, :concretization_timeout)
+            tracker.concretization_timeout_changed = true
         end
     end
 end
@@ -584,10 +596,10 @@ function apply_config_changes!(server::Server, tracker::ConfigChangeTracker)
         notify_diagnostics!(server; ensure_cleared = true)
         request_diagnostic_refresh!(server)
     end
-    if tracker.analysis_setting_changed
+    if tracker.concretization_timeout_changed || !isempty(tracker.changed_concretization_globs)
         # Live diagnostics only change once the reanalysis stores a new module context,
         # and storing it requests the refresh (see `request_diagnostic_refresh!` callers).
-        request_reanalysis_for_tracked_entries!(server)
+        request_reanalysis_for_tracked_entries!(server, tracker)
     end
 end
 

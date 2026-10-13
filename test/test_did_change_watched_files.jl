@@ -283,7 +283,9 @@ end
 
             @test JETLS.get_analysis_info(manager, script_uri) === nothing
             generation = JETLS.get_generation(manager, entry)
-            JETLS.request_reanalysis_for_tracked_entries!(server)
+            tracker = JETLS.ConfigChangeTracker()
+            push!(tracker.changed_concretization_globs, JETLS.Glob.FilenameMatch("other.jl", "dp"))
+            JETLS.request_reanalysis_for_tracked_entries!(server, tracker)
             @test JETLS.get_generation(manager, entry) == generation + 1
         end
     end

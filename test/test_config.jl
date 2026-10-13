@@ -140,14 +140,22 @@ using JETLS: JETLS
             ])
         end
 
-        @testset "concretization pattern update marks `analysis_setting_changed`" begin
+        @testset "concretization pattern updates record the changed globs" begin
+            glob = JETLS.Glob.FilenameMatch("src/*.jl", "dp")
             pattern1 = JETLS.ConcretizationPattern(:(USE_PULSE = x_), nothing, "USE_PULSE = x_")
-            pattern2 = JETLS.ConcretizationPattern(:(USE_PULSE = y_), nothing, "USE_PULSE = x_")
-            config1 = JETLS.JETLSConfig(; full_analysis=JETLS.FullAnalysisConfig(; concretization_patterns=[pattern1]))
-            config2 = JETLS.JETLSConfig(; full_analysis=JETLS.FullAnalysisConfig(; concretization_patterns=[pattern2]))
-            tracker = JETLS.ConfigChangeTracker()
-            JETLS.track_setting_changes(tracker, config1, config2)
-            @test tracker.analysis_setting_changed
+            pattern2 = JETLS.ConcretizationPattern(:(USE_PULSE = y_), glob, "USE_PULSE = y_")
+            pattern3 = JETLS.ConcretizationPattern(:(USE_TICK = x_), glob, "USE_TICK = x_")
+            config(patterns...) = JETLS.JETLSConfig(; full_analysis=JETLS.FullAnalysisConfig(;
+                concretization_patterns=JETLS.ConcretizationPattern[patterns...]))
+            let tracker = JETLS.ConfigChangeTracker()
+                JETLS.track_setting_changes(tracker, config(pattern1, pattern3), config(pattern2, pattern3))
+                @test issetequal(tracker.changed_concretization_globs, [nothing, glob])
+                @test !tracker.concretization_timeout_changed
+            end
+            let tracker = JETLS.ConfigChangeTracker()
+                JETLS.track_setting_changes(tracker, config(pattern1, pattern2), config(pattern2, pattern1))
+                @test isempty(tracker.changed_concretization_globs)
+            end
         end
 
         # Test that updating severity of an existing pattern is tracked
@@ -737,7 +745,7 @@ end
                 concretization_timeout=new_value))
             tracker = JETLS.ConfigChangeTracker()
             JETLS.track_setting_changes(tracker, old_config, new_config)
-            @test tracker.analysis_setting_changed == (old_value !== new_value)
+            @test tracker.concretization_timeout_changed == (old_value !== new_value)
         end
     end
 end
