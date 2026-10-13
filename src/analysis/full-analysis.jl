@@ -1610,7 +1610,6 @@ function find_analysis_entry(state::ServerState, uri::URI)
         else
             return PackageTestAnalysisEntry(env_path, entryuri, pkgid)
         end
-    elseif filekind === :docs # TODO
     elseif filekind === :ext
         # TODO Analyze extensions with the Revise-based package analysis, loading their
         # trigger packages only when configured: loading weak dependencies unconditionally
