@@ -1,14 +1,14 @@
 module test_Analyzer
 
 using Test
-using JETLS
+using JETLSCore
 using Libdl
 
-include(normpath(pkgdir(JETLS), "test", "interactive-utils.jl"))
-include(normpath(pkgdir(JETLS), "test", "setup.jl"))
+include("../interactive-utils.jl")
+include("../setup.jl")
 
-using JETLS.JET: CC, JET, get_reports
-using JETLS.Analyzer
+using JETLSCore.JET: CC, JET, get_reports
+using JETLSCore.Analyzer
 
 # Mimics the signature analysis workers: they are spawned at server startup, so their tasks
 # run in a world age that predates the methods they analyze.
@@ -50,12 +50,12 @@ function primary_frame_signature(report; actual2virtual=Main=>@__MODULE__)
 end
 
 function analyze_signature(f; report_target_modules = nothing)
-    analyzer = JETLS.LSAnalyzer(; report_target_modules)
+    analyzer = JETLSCore.LSAnalyzer(; report_target_modules)
     analyzer = JET.AbstractAnalyzer(analyzer,
         JET.AnalyzerState(JET.AnalyzerState(analyzer), #=refresh_local_cache=#true))
     m = only(methods(f))
     world = CC.get_inference_world(analyzer)
-    match = JETLS.signature_analysis_match(analyzer, m.sig, world)
+    match = JETLSCore.signature_analysis_match(analyzer, m.sig, world)
     match === nothing && error("No method match for signature analysis")
     result = JET.analyze_method_signature!(analyzer,
         match.method, match.spec_types, match.sparams)
@@ -1494,7 +1494,7 @@ lookup_or_missing(k) = get(LOOKUP_TABLE, k, missing)
             r = only(reports)
             @test r isa TypeAssertErrorReport
             @test r.expected === Int && r.actual === Float64
-            @test sprint(JETLS.JET.print_report_message, r) == "TypeError: in `typeassert`, expected `$Int`, got a value of type `Float64`"
+            @test sprint(JETLSCore.JET.print_report_message, r) == "TypeError: in `typeassert`, expected `$Int`, got a value of type `Float64`"
         end
 
         let result = analyze_call() do
@@ -1505,7 +1505,7 @@ lookup_or_missing(k) = get(LOOKUP_TABLE, k, missing)
             r = only(reports)
             @test r isa TypeAssertErrorReport
             @test r.expected === String && r.actual === Type{Int}
-            @test sprint(JETLS.JET.print_report_message, r) == "TypeError: in `typeassert`, expected `String`, got Type{$Int}"
+            @test sprint(JETLSCore.JET.print_report_message, r) == "TypeError: in `typeassert`, expected `String`, got Type{$Int}"
         end
 
         let result = analyze_call((Union{Int,Float64},)) do x
@@ -1723,9 +1723,9 @@ call_boundary_getfield(pair::Pair{Int,Int}) = NativeBoundaryModule.getfield_erro
     @testset "analysis cache separation" begin
         # reports are cached within `CodeInstance`s and the boundary suppresses those of
         # out-of-target callees, so the two settings must never share analysis results
-        enabled = JETLS.LSAnalyzer(;
+        enabled = JETLSCore.LSAnalyzer(;
             report_target_modules=(@__MODULE__,), reuse_native_inference=true)
-        disabled = JETLS.LSAnalyzer(;
+        disabled = JETLSCore.LSAnalyzer(;
             report_target_modules=(@__MODULE__,), reuse_native_inference=false)
         @test JET.AnalysisToken(enabled) !== JET.AnalysisToken(disabled)
     end

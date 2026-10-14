@@ -15,7 +15,7 @@ using Compiler: Compiler as CC
 using JET.JETInterface
 using JET: JET
 
-using ..JETLS: AnalysisEntry, JETLS_DEV_MODE, with_base_render_lock
+using ..JETLSCore: AnalysisEntry, JETLS_DEV_MODE, with_base_render_lock
 using ..LSP
 
 # JETLS internal interface

@@ -9,7 +9,7 @@ This test calls `JETLS.run_schema` directly for behavior coverage and uses actua
 3. Unknown options exit with non-zero code
 
 To run this test independently:
-    julia --startup-file=no --project=./test ./test/app/test_jetls_schema.jl
+    julia --startup-file=no --project=./test ./test/test_jetls_schema.jl
 """
 module test_jetls_schema
 

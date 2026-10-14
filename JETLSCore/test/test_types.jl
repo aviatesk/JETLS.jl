@@ -1,16 +1,16 @@
 module test_extra_diagnostics
 
 using Test
-using JETLS
-using JETLS: JS
-using JETLS.LSP
-using JETLS.URIs2
+using JETLSCore
+using JETLSCore: JS
+using JETLSCore.LSP
+using JETLSCore.URIs2
 
-struct TestDiagnosticsKey <: JETLS.ExtraDiagnosticsKey
+struct TestDiagnosticsKey <: JETLSCore.ExtraDiagnosticsKey
     uri::URI
     id::Int
 end
-JETLS.to_uri_impl(key::TestDiagnosticsKey) = key.uri
+JETLSCore.to_uri_impl(key::TestDiagnosticsKey) = key.uri
 
 function create_test_diagnostic(message::String, line::Int=0, char::Int=0)
     return LSP.Diagnostic(;
@@ -20,11 +20,11 @@ end
 
 @testset "ExtraDiagnosticsData" begin
     @testset "ExtraDiagnosticsData basic operations" begin
-        let data = JETLS.ExtraDiagnosticsData()
+        let data = JETLSCore.ExtraDiagnosticsData()
             uri = URI("file:///test.jl")
             key = TestDiagnosticsKey(uri, 1)
             diag = create_test_diagnostic("Test message")
-            val = JETLS.URI2Diagnostics(uri => [diag])
+            val = JETLSCore.URI2Diagnostics(uri => [diag])
 
             # Test empty state
             @test !haskey(data, key)
@@ -44,13 +44,13 @@ end
     end
 
     @testset "ExtraDiagnosticsData get methods" begin
-        let data = JETLS.ExtraDiagnosticsData()
+        let data = JETLSCore.ExtraDiagnosticsData()
             uri = URI("file:///test.jl")
             key1 = TestDiagnosticsKey(uri, 1)
             key2 = TestDiagnosticsKey(uri, 2)
             diag = create_test_diagnostic("Test message")
-            val = JETLS.URI2Diagnostics(uri => [diag])
-            default_val = JETLS.URI2Diagnostics()
+            val = JETLSCore.URI2Diagnostics(uri => [diag])
+            default_val = JETLSCore.URI2Diagnostics()
 
             data[key1] = val
 
@@ -77,7 +77,7 @@ end
             # Test get! with function
             key3 = TestDiagnosticsKey(uri, 3)
             computed_val = get!(data, key3) do
-                JETLS.URI2Diagnostics(uri => [create_test_diagnostic("Computed")])
+                JETLSCore.URI2Diagnostics(uri => [create_test_diagnostic("Computed")])
             end
             @test haskey(data, key3)
             @test data[key3] == computed_val
@@ -85,11 +85,11 @@ end
     end
 
     @testset "ExtraDiagnosticsData delete!" begin
-        let data = JETLS.ExtraDiagnosticsData()
+        let data = JETLSCore.ExtraDiagnosticsData()
             uri = URI("file:///test.jl")
             key = TestDiagnosticsKey(uri, 1)
             diag = create_test_diagnostic("Test message")
-            val = JETLS.URI2Diagnostics(uri => [diag])
+            val = JETLSCore.URI2Diagnostics(uri => [diag])
 
             data[key] = val
             @test haskey(data, key)
@@ -106,7 +106,7 @@ end
     end
 
     @testset "ExtraDiagnosticsData keys and values" begin
-        let data = JETLS.ExtraDiagnosticsData()
+        let data = JETLSCore.ExtraDiagnosticsData()
             uri1 = URI("file:///test1.jl")
             uri2 = URI("file:///test2.jl")
             key1 = TestDiagnosticsKey(uri1, 1)
@@ -114,8 +114,8 @@ end
 
             diag1 = create_test_diagnostic("Message 1")
             diag2 = create_test_diagnostic("Message 2")
-            val1 = JETLS.URI2Diagnostics(uri1 => [diag1])
-            val2 = JETLS.URI2Diagnostics(uri2 => [diag2])
+            val1 = JETLSCore.URI2Diagnostics(uri1 => [diag1])
+            val2 = JETLSCore.URI2Diagnostics(uri2 => [diag2])
 
             data[key1] = val1
             data[key2] = val2
@@ -135,11 +135,11 @@ end
     end
 
     @testset "ExtraDiagnosticsData iteration" begin
-        let data = JETLS.ExtraDiagnosticsData()
+        let data = JETLSCore.ExtraDiagnosticsData()
             # Test empty iteration
             @test length(data) == 0
-            @test eltype(data) == Pair{JETLS.ExtraDiagnosticsKey,JETLS.URI2Diagnostics}
-            @test eltype(JETLS.ExtraDiagnosticsData) == Pair{JETLS.ExtraDiagnosticsKey,JETLS.URI2Diagnostics}
+            @test eltype(data) == Pair{JETLSCore.ExtraDiagnosticsKey,JETLSCore.URI2Diagnostics}
+            @test eltype(JETLSCore.ExtraDiagnosticsData) == Pair{JETLSCore.ExtraDiagnosticsKey,JETLSCore.URI2Diagnostics}
             @test collect(data) == []
 
             # Add test data
@@ -155,9 +155,9 @@ end
             diag2 = create_test_diagnostic("Message 2")
             diag3 = create_test_diagnostic("Message 3")
 
-            val1 = JETLS.URI2Diagnostics(uri1 => [diag1])
-            val2 = JETLS.URI2Diagnostics(uri2 => [diag2])
-            val3 = JETLS.URI2Diagnostics(uri3 => [diag3])
+            val1 = JETLSCore.URI2Diagnostics(uri1 => [diag1])
+            val2 = JETLSCore.URI2Diagnostics(uri2 => [diag2])
+            val3 = JETLSCore.URI2Diagnostics(uri3 => [diag3])
 
             data[key1] = val1
             data[key2] = val2
@@ -169,7 +169,7 @@ end
             # Test collect
             collected = collect(data)
             @test length(collected) == 3
-            @test all(p -> p isa Pair{JETLS.ExtraDiagnosticsKey,JETLS.URI2Diagnostics}, collected)
+            @test all(p -> p isa Pair{JETLSCore.ExtraDiagnosticsKey,JETLSCore.URI2Diagnostics}, collected)
 
             # Verify all pairs are present
             collected_dict = Dict(collected)
@@ -179,14 +179,14 @@ end
 
             # Test for loop iteration
             count = 0
-            seen_keys = JETLS.ExtraDiagnosticsKey[]
-            seen_vals = JETLS.URI2Diagnostics[]
+            seen_keys = JETLSCore.ExtraDiagnosticsKey[]
+            seen_vals = JETLSCore.URI2Diagnostics[]
             for (k, v) in data
                 count += 1
                 push!(seen_keys, k)
                 push!(seen_vals, v)
-                @test k isa JETLS.ExtraDiagnosticsKey
-                @test v isa JETLS.URI2Diagnostics
+                @test k isa JETLSCore.ExtraDiagnosticsKey
+                @test v isa JETLSCore.URI2Diagnostics
             end
             @test count == 3
             @test key1 in seen_keys
@@ -205,7 +205,7 @@ end
 
 
     @testset "ExtraDiagnosticsData with multiple diagnostics per URI" begin
-        let data = JETLS.ExtraDiagnosticsData()
+        let data = JETLSCore.ExtraDiagnosticsData()
             uri = URI("file:///test1.jl")
 
             key = TestDiagnosticsKey(uri, 1)
@@ -216,7 +216,7 @@ end
             diag2 = create_test_diagnostic("Error 2", 1, 0)
             diag3 = create_test_diagnostic("Warning 1", 2, 0)
 
-            val = JETLS.URI2Diagnostics(
+            val = JETLSCore.URI2Diagnostics(
                 uri => [diag1, diag2],
                 another_uri => [diag3]
             )
@@ -233,40 +233,40 @@ end
     end
 
     @testset "ExtraDiagnosticsData type methods" begin
-        @test Base.keytype(JETLS.ExtraDiagnosticsData) == JETLS.ExtraDiagnosticsKey
-        @test Base.valtype(JETLS.ExtraDiagnosticsData) == JETLS.URI2Diagnostics
+        @test Base.keytype(JETLSCore.ExtraDiagnosticsData) == JETLSCore.ExtraDiagnosticsKey
+        @test Base.valtype(JETLSCore.ExtraDiagnosticsData) == JETLSCore.URI2Diagnostics
     end
 
     @testset "clear_extra_diagnostics! single key" begin
-        let data = JETLS.ExtraDiagnosticsData()
-            extra_diagnostics = JETLS.ExtraDiagnostics(data)
+        let data = JETLSCore.ExtraDiagnosticsData()
+            extra_diagnostics = JETLSCore.ExtraDiagnostics(data)
 
             uri = URI("file:///test.jl")
             key = TestDiagnosticsKey(uri, 1)
             diag = create_test_diagnostic("Test message")
-            val = JETLS.URI2Diagnostics(uri => [diag])
-            JETLS.store!(extra_diagnostics) do data
+            val = JETLSCore.URI2Diagnostics(uri => [diag])
+            JETLSCore.store!(extra_diagnostics) do data
                 new_data = copy(data)
                 new_data[key] = val
                 new_data, nothing
             end
-            @test haskey(JETLS.load(extra_diagnostics), key)
+            @test haskey(JETLSCore.load(extra_diagnostics), key)
 
             # Test clearing existing key
-            @test JETLS.clear_extra_diagnostics!(extra_diagnostics, key)
-            @test !haskey(JETLS.load(extra_diagnostics), key)
-            @test length(JETLS.load(extra_diagnostics)) == 0
+            @test JETLSCore.clear_extra_diagnostics!(extra_diagnostics, key)
+            @test !haskey(JETLSCore.load(extra_diagnostics), key)
+            @test length(JETLSCore.load(extra_diagnostics)) == 0
 
             # Test clearing non-existent key
-            @test !JETLS.clear_extra_diagnostics!(extra_diagnostics, key)
+            @test !JETLSCore.clear_extra_diagnostics!(extra_diagnostics, key)
         end
     end
 end # @testset "ExtraDiagnosticsData"
 
 @testset "ExtraDiagnostics" begin
     @testset "clear_extra_diagnostics! bulk deletion by URI" begin
-        let data = JETLS.ExtraDiagnosticsData()
-            extra_diagnostics = JETLS.ExtraDiagnostics(data)
+        let data = JETLSCore.ExtraDiagnosticsData()
+            extra_diagnostics = JETLSCore.ExtraDiagnostics(data)
 
             uri1 = URI("file:///test1.jl")
             uri2 = URI("file:///test2.jl")
@@ -278,12 +278,12 @@ end # @testset "ExtraDiagnosticsData"
             # And one key for a different URI
             key4 = TestDiagnosticsKey(uri2, 4)
 
-            val1 = JETLS.URI2Diagnostics(uri1 => [create_test_diagnostic("Message 1")])
-            val2 = JETLS.URI2Diagnostics(uri1 => [create_test_diagnostic("Message 2")])
-            val3 = JETLS.URI2Diagnostics(uri1 => [create_test_diagnostic("Message 3")])
-            val4 = JETLS.URI2Diagnostics(uri2 => [create_test_diagnostic("Message 4")])
+            val1 = JETLSCore.URI2Diagnostics(uri1 => [create_test_diagnostic("Message 1")])
+            val2 = JETLSCore.URI2Diagnostics(uri1 => [create_test_diagnostic("Message 2")])
+            val3 = JETLSCore.URI2Diagnostics(uri1 => [create_test_diagnostic("Message 3")])
+            val4 = JETLSCore.URI2Diagnostics(uri2 => [create_test_diagnostic("Message 4")])
 
-            JETLS.store!(extra_diagnostics) do data
+            JETLSCore.store!(extra_diagnostics) do data
                 new_data = copy(data)
                 new_data[key1] = val1
                 new_data[key2] = val2
@@ -292,12 +292,12 @@ end # @testset "ExtraDiagnosticsData"
                 new_data, nothing
             end
 
-            @test length(JETLS.load(extra_diagnostics)) == 4
+            @test length(JETLSCore.load(extra_diagnostics)) == 4
 
             # Clear all keys associated with uri1
-            @test JETLS.clear_extra_diagnostics!(extra_diagnostics, uri1)
+            @test JETLSCore.clear_extra_diagnostics!(extra_diagnostics, uri1)
 
-            let loaded_data = JETLS.load(extra_diagnostics)
+            let loaded_data = JETLSCore.load(extra_diagnostics)
                 # Check that only keys for uri1 were deleted
                 @test !haskey(loaded_data, key1)
                 @test !haskey(loaded_data, key2)
@@ -308,11 +308,11 @@ end # @testset "ExtraDiagnosticsData"
                 # Verify the remaining key is for uri2
                 remaining_keys = collect(keys(loaded_data))
                 @test length(remaining_keys) == 1
-                @test JETLS.to_uri(remaining_keys[1]) === uri2
+                @test JETLSCore.to_uri(remaining_keys[1]) === uri2
             end
 
             # Clear non-existent URI - should return false
-            @test !JETLS.clear_extra_diagnostics!(extra_diagnostics, URI("file:///nonexistent.jl"))
+            @test !JETLSCore.clear_extra_diagnostics!(extra_diagnostics, URI("file:///nonexistent.jl"))
         end
     end
 end # @testset "ExtraDiagnostics"

@@ -8,13 +8,14 @@ This test spawns actual `julia -m JETLS check` processes and verifies:
 3. Configuration file (.JETLSConfig.toml) application
 
 To run this test independently:
-    julia --startup-file=no --project=./test ./test/app/test_jetls_check.jl
+    julia --startup-file=no --project=./test ./test/test_jetls_check.jl
 """
 module test_jetls_check
 
 using Test
 using JETLS
-using JETLS.LSP
+using JETLSCore
+using JETLSCore.LSP
 
 const JULIA_CMD = normpath(Sys.BINDIR, "julia")
 const JETLS_DIR = pkgdir(JETLS)
@@ -61,13 +62,13 @@ function run_jetls_check(
     )
     check_args = build_check_args(args; root, skip_analysis)
     return capture_jetls_check() do
-        input === nothing && return JETLS.run_check(check_args)
+        input === nothing && return JETLSCore.run_check(check_args)
         mktemp() do input_path, input_io
             write(input_io, input)
             close(input_io)
             open(input_path) do io
                 redirect_stdin(io) do
-                    JETLS.run_check(check_args)
+                    JETLSCore.run_check(check_args)
                 end
             end
         end
@@ -172,7 +173,7 @@ end
 @testset "multi-line diagnostic message rendering" begin
     mktempdir() do dir
         filepath = write_test_file(dir, "test.jl", "func(1, 2)\n")
-        uri = JETLS.filepath2uri(filepath)
+        uri = JETLSCore.filepath2uri(filepath)
         message = "MethodError: no matching method found `func(::Int64, ::Int64)`\n\n" *
             "The function `func` exists.\n\nClosest candidates are:\n- `func(::Int64)`"
         diagnostic = Diagnostic(;
@@ -182,9 +183,9 @@ end
             severity = DiagnosticSeverity.Warning,
             message,
             code = "inference/method-error")
-        uri2diagnostics = JETLS.URI2Diagnostics(uri => [diagnostic])
+        uri2diagnostics = JETLSCore.URI2Diagnostics(uri => [diagnostic])
         result = capture_jetls_check() do
-            JETLS.print_diagnostics(uri2diagnostics, dir, 1,
+            JETLSCore.print_diagnostics(uri2diagnostics, dir, 1,
                 DiagnosticSeverity.Error, DiagnosticSeverity.Information)
         end
         # the summary line carries the severity tag inline
@@ -362,11 +363,11 @@ end
         range = Range(;
             start = Position(; line=0, character=0),
             var"end" = Position(; line=0, character=1))
-        uri2diagnostics = JETLS.URI2Diagnostics()
+        uri2diagnostics = JETLSCore.URI2Diagnostics()
         for (filename, severities) in (
                 ("warnings.jl", (DiagnosticSeverity.Error, DiagnosticSeverity.Warning, DiagnosticSeverity.Warning)),
                 ("hints.jl", (DiagnosticSeverity.Information, DiagnosticSeverity.Information, DiagnosticSeverity.Hint, DiagnosticSeverity.Hint, DiagnosticSeverity.Hint)))
-            uri2diagnostics[JETLS.filepath2uri(joinpath(dir, filename))] =
+            uri2diagnostics[JETLSCore.filepath2uri(joinpath(dir, filename))] =
                 Diagnostic[
                     Diagnostic(; range, severity, message="Diagnostic $i")
                     for (i, severity) in enumerate(severities)]
@@ -385,7 +386,7 @@ end
                 (DiagnosticSeverity.Hint,
                     "# Found 8 diagnostics in 2 files (1 error, 2 warnings, 2 info, 3 hints)\n\n"))
             result = capture_jetls_check() do
-                JETLS.print_stats(uri2diagnostics, 2, 1.0, show_severity)
+                JETLSCore.print_stats(uri2diagnostics, 2, 1.0, show_severity)
                 return 0
             end
             @test endswith(result.stdout, summary)
@@ -471,7 +472,7 @@ end
         write_config_file(dir, """
             [[initialization_options.analysis_overrides]]
             path = "test.jl"
-            module_name = "JETLS"
+            module_name = "JETLSCore"
             """)
 
         result = run_jetls_check([filepath]; root=dir)
@@ -789,7 +790,8 @@ end
         lines = split(result.stdout, '\n')
         i = findfirst(contains("JET does not support"), lines)
         @test i !== nothing
-        body = lines[i:findnext(!startswith("# "), lines, i)-1]
+        i = i::Int # TODO failfast and fix
+        body = lines[i:(findnext(!startswith("# "), lines, i)::Int)-1]
         @test length(body) > 1
         @test all(line -> textwidth(line) ≤ 60, body)
     end

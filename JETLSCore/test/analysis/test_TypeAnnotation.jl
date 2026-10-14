@@ -2,17 +2,17 @@ module test_type_annotation
 
 using Test
 using HierarchicalTestSets
-using JETLS
-using JETLS: CC, JL, JS
-using JETLS.TypeAnnotation
-using JETLS.TypeAnnotation: get_inferrable_tree, infer_toplevel_tree
+using JETLSCore
+using JETLSCore: CC, JL, JS
+using JETLSCore.TypeAnnotation
+using JETLSCore.TypeAnnotation: get_inferrable_tree, infer_toplevel_tree
 using LinearAlgebra: LinearAlgebra
 
 module type_annotate_module
 # Helper for closure-argument-refinement tests: a user higher-order function the
 # `PartialOpaque` gets const-prop forwarded into.
 callback(f, x) = f(x)
-# Side-effect-only iteration helper mirroring `JETLS.traverse`'s shape (worklist
+# Side-effect-only iteration helper mirroring `JETLSCore.traverse`'s shape (worklist
 # mutation, callback result discarded).
 function eachint(f, xs::Vector{Int})
     stack = copy(xs)
@@ -29,11 +29,11 @@ end
 # (the common case) or place the statement under test first. `fi` is returned
 # so tests can use `xy_to_offset` etc. against the source.
 function type_annotate(code::AbstractString, context_module::Module = type_annotate_module)
-    fi = JETLS.FileInfo(1, code, @__FILE__; cache_tree0 = true)
-    st0_top = JETLS.build_syntax_tree(fi)
+    fi = JETLSCore.FileInfo(1, code, @__FILE__; cache_tree0 = true)
+    st0_top = JETLSCore.build_syntax_tree(fi)
     ctx = build_inferred_context_for_range(st0_top, context_module, 1:1)
     @test ctx !== nothing
-    JETLS.check_syntax_tree0(fi)
+    JETLSCore.check_syntax_tree0(fi)
     return fi, ctx
 end
 
@@ -48,11 +48,11 @@ range_of(code::AbstractString, s::AbstractString) =
 # `:comparison` in tail position swallows the space between `return` and the
 # first operand) — `findfirst`-based `range_of` mismatches in those cases.
 function range_of_kind(code::AbstractString, kind::Symbol)
-    fi = JETLS.FileInfo(1, code, @__FILE__)
-    st0_top = JETLS.build_syntax_tree(fi)
-    return @something JETLS.traverse(st0_top) do node::JS.SyntaxTree
+    fi = JETLSCore.FileInfo(1, code, @__FILE__)
+    st0_top = JETLSCore.build_syntax_tree(fi)
+    return @something JETLSCore.traverse(st0_top) do node::JS.SyntaxTree
         JS.head(node) === kind || return nothing
-        return JETLS.TraversalReturn(JS.byte_range(node); terminate=true)
+        return JETLSCore.TraversalReturn(JS.byte_range(node); terminate=true)
     end error(lazy"no surface node of kind $kind in $code")
 end
 
@@ -64,10 +64,10 @@ widenconst(typ) = CC.widenconst(@something typ return nothing)
 # source text matches `text`, and return the resulting types. Use this to
 # assert that **every** occurrence of an identifier (or expression) gets
 # an annotation, not just the first one.
-function query_all_types(fi::JETLS.FileInfo, ctx::InferredTreeContext, text::AbstractString)
-    st0_top = JETLS.build_syntax_tree(fi)
+function query_all_types(fi::JETLSCore.FileInfo, ctx::InferredTreeContext, text::AbstractString)
+    st0_top = JETLSCore.build_syntax_tree(fi)
     types = Any[]
-    JETLS.traverse(st0_top) do node::JS.SyntaxTree
+    JETLSCore.traverse(st0_top) do node::JS.SyntaxTree
         if JS.sourcetext(node) == text
             push!(types, get_type_for_range(ctx, JS.byte_range(node)))
         end
@@ -86,12 +86,12 @@ end
         z + 2
     end
     """
-    cache = JETLS.InferredContextCache()
-    fi = JETLS.FileInfo(1, code, @__FILE__; inferred_context_cache=cache, cache_tree0 = true)
-    st0_top = JETLS.build_syntax_tree(fi)
+    cache = JETLSCore.InferredContextCache()
+    fi = JETLSCore.FileInfo(1, code, @__FILE__; inferred_context_cache=cache, cache_tree0 = true)
+    st0_top = JETLSCore.build_syntax_tree(fi)
     rng1 = range_of(code, "x + 1")
     rng2 = range_of(code, "y")
-    tree1 = @something JETLS.lowerable_toplevel_at(st0_top, first(rng1)) error("missing tree")
+    tree1 = @something JETLSCore.lowerable_toplevel_at(st0_top, first(rng1)) error("missing tree")
     ctx1 = build_inferred_context_for_range(st0_top, type_annotate_module, rng1; cache)
     ctx2 = build_inferred_context_for_range(st0_top, type_annotate_module, rng2; cache)
     ctx1_tree = build_inferred_context_for_tree(tree1, type_annotate_module; cache)
@@ -100,36 +100,36 @@ end
     @test ctx1 === ctx2
     @test ctx1 === ctx1_tree
     @test get_type_for_range(ctx2, rng2) === Int
-    @test length(JETLS.load(cache)) == 1
+    @test length(JETLSCore.load(cache)) == 1
     rng4 = rng3 = range_of(code, "z + 2")
     ctx3 = build_inferred_context_for_range(st0_top, type_annotate_module, rng3; cache)
     @test ctx3 !== nothing
     @test get_type_for_range(ctx3, rng3) === Int
     @test ctx3 !== ctx1
-    @test length(JETLS.load(cache)) == 2
+    @test length(JETLSCore.load(cache)) == 2
     # Without `cache`, the same range is rebuilt instead of reusing `ctx3`.
     ctx4 = build_inferred_context_for_range(st0_top, type_annotate_module, rng4)
     @test ctx4 !== nothing
     @test get_type_for_range(ctx4, rng4) === Int
     @test ctx4 !== ctx3
-    @test length(JETLS.load(cache)) == 2
-    JETLS.check_syntax_tree0(fi)
+    @test length(JETLSCore.load(cache)) == 2
+    JETLSCore.check_syntax_tree0(fi)
 end
 
 @testset "build_inferred_context_for_range declaration-only forms" begin
     for code in ("using Base\n", "import Base: map\n", "export foo, bar\n",
                  "public baz\n", "abstract type AT end\n", "primitive type PT 8 end\n")
-        cache = JETLS.InferredContextCache()
-        fi = JETLS.FileInfo(1, code, @__FILE__; inferred_context_cache=cache, cache_tree0 = true)
-        st0_top = JETLS.build_syntax_tree(fi)
-        tree = @something JETLS.lowerable_toplevel_at(st0_top, 1) error("missing tree")
+        cache = JETLSCore.InferredContextCache()
+        fi = JETLSCore.FileInfo(1, code, @__FILE__; inferred_context_cache=cache, cache_tree0 = true)
+        st0_top = JETLSCore.build_syntax_tree(fi)
+        tree = @something JETLSCore.lowerable_toplevel_at(st0_top, 1) error("missing tree")
         tree_ctx = build_inferred_context_for_tree(tree, type_annotate_module; cache)
         range_ctx = build_inferred_context_for_range(
             st0_top, type_annotate_module, JS.byte_range(tree); cache)
         @test tree_ctx === nothing
         @test range_ctx === nothing
-        @test isempty(JETLS.load(cache))
-        JETLS.check_syntax_tree0(fi)
+        @test isempty(JETLSCore.load(cache))
+        JETLSCore.check_syntax_tree0(fi)
     end
 
     let code = """
@@ -138,17 +138,17 @@ end
             Point(x::Int) = new(x + 1)
         end
         """
-        cache = JETLS.InferredContextCache()
-        fi = JETLS.FileInfo(1, code, @__FILE__; inferred_context_cache=cache, cache_tree0 = true)
-        st0_top = JETLS.build_syntax_tree(fi)
-        tree = @something JETLS.lowerable_toplevel_at(st0_top, 1) error("missing tree")
+        cache = JETLSCore.InferredContextCache()
+        fi = JETLSCore.FileInfo(1, code, @__FILE__; inferred_context_cache=cache, cache_tree0 = true)
+        st0_top = JETLSCore.build_syntax_tree(fi)
+        tree = @something JETLSCore.lowerable_toplevel_at(st0_top, 1) error("missing tree")
         tree_ctx = build_inferred_context_for_tree(tree, type_annotate_module; cache)
         range_ctx = build_inferred_context_for_range(
             st0_top, type_annotate_module, JS.byte_range(tree); cache)
         @test tree_ctx !== nothing
         @test range_ctx === tree_ctx
-        @test length(JETLS.load(cache)) == 1
-        JETLS.check_syntax_tree0(fi)
+        @test length(JETLSCore.load(cache)) == 1
+        JETLSCore.check_syntax_tree0(fi)
     end
 end
 
@@ -166,11 +166,11 @@ end
             end
             const C = 42
             """
-            fi = JETLS.FileInfo(1, code, @__FILE__; cache_tree0 = true)
-            st0_top = JETLS.build_syntax_tree(fi)
+            fi = JETLSCore.FileInfo(1, code, @__FILE__; cache_tree0 = true)
+            st0_top = JETLSCore.build_syntax_tree(fi)
             results = []
             world = Base.get_world_counter()
-            JETLS.iterate_toplevel_tree(st0_top) do st0::JS.SyntaxTree
+            JETLSCore.iterate_toplevel_tree(st0_top) do st0::JS.SyntaxTree
                 r = get_inferrable_tree(st0, Main, world)
                 r === nothing || push!(results, (; r..., st0))
                 return nothing
@@ -179,9 +179,9 @@ end
             for (; ctx3, st3, st0) in results
                 @test ctx3 isa JL.VariableAnalysisContext
                 @test st3 isa JS.SyntaxTree
-                @test infer_toplevel_tree(ctx3, st3, st0, @__MODULE__) isa JETLS.SyntaxTree
+                @test infer_toplevel_tree(ctx3, st3, st0, @__MODULE__) isa JETLSCore.SyntaxTree
             end
-            JETLS.check_syntax_tree0(fi)
+            JETLSCore.check_syntax_tree0(fi)
         end
     end
 
@@ -189,14 +189,14 @@ end
     # callers don't need to wrap every call in `try`.
     @testset "lowering failure returns nothing" begin
         let code = "@__undefined_macro_for_test__ xyz"
-            fi = JETLS.FileInfo(1, code, @__FILE__; cache_tree0 = true)
-            st0_top = JETLS.build_syntax_tree(fi)
+            fi = JETLSCore.FileInfo(1, code, @__FILE__; cache_tree0 = true)
+            st0_top = JETLSCore.build_syntax_tree(fi)
             world = Base.get_world_counter()
-            JETLS.iterate_toplevel_tree(st0_top) do st0::JS.SyntaxTree
+            JETLSCore.iterate_toplevel_tree(st0_top) do st0::JS.SyntaxTree
                 @test isnothing(get_inferrable_tree(st0, @__MODULE__, world))
                 return nothing
             end
-            JETLS.check_syntax_tree0(fi)
+            JETLSCore.check_syntax_tree0(fi)
         end
     end
 end
@@ -2083,7 +2083,7 @@ end
     @testset "JET.AbstractBindingState integration" begin
         # Exercising `concretize_abstract_binding_state_load`-based global binding type resolution
         let context_module = Module(:type_annotation_abstract_binding_state)
-            binding_state = JETLS.JET.AbstractBindingState(true, false, Vector{Int})
+            binding_state = JETLSCore.JET.AbstractBindingState(true, false, Vector{Int})
             Core.eval(context_module, Expr(:const, :THETA, binding_state))
             code = """
                 for x in THETA
@@ -2098,7 +2098,7 @@ end
 
         # Exercising `abstract_binding_state_const_value`-based signature type resolution
         let context_module = Module(:type_annotation_abstract_binding_state_signature)
-            binding_state = JETLS.JET.AbstractBindingState(true, false, Core.Const(Int))
+            binding_state = JETLSCore.JET.AbstractBindingState(true, false, Core.Const(Int))
             Core.eval(context_module, Expr(:const, :MyInt, binding_state))
             code = "func(x::MyInt) = sin(x)"
             _, ctx = type_annotate(code, context_module)

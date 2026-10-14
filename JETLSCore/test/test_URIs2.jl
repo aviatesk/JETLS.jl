@@ -3,7 +3,7 @@
 module test_URIs2
 
 using Test
-using JETLS.URIs2
+using JETLSCore.URIs2
 
 @testset "filepath2uri to string" begin
     # TODO Remove this Windows flag later, it is not in the original, but we need support for relative paths first

@@ -3,9 +3,9 @@ module test_notebook
 include("setup.jl")
 
 using Test
-using JETLS
-using JETLS.LSP
-using JETLS.URIs2
+using JETLSCore
+using JETLSCore.LSP
+using JETLSCore.URIs2
 
 function make_cell_uri(tempdir::AbstractString, cell_id::Union{Int,AbstractString})
     return filepath2uri(normpath(tempdir, "cell_$cell_id"))
@@ -134,7 +134,7 @@ end
             end
 
             # Verify state after step 1: empty cell should result in empty concat
-            let notebook_info = JETLS.get_notebook_info(server.state, notebook_uri)
+            let notebook_info = JETLSCore.get_notebook_info(server.state, notebook_uri)
                 @test notebook_info !== nothing
                 @test length(notebook_info.cells) == 1
                 @test notebook_info.cells[1].uri == cell1_uri
@@ -165,14 +165,14 @@ end
                 @test keys(scanned) == Set((cell1_uri, cell2_uri))
                 @test scanned[cell2_uri].version === nothing
                 found_unused_y = any(scanned[cell2_uri].diagnostics) do diag
-                    diag.code == JETLS.LOWERING_UNUSED_ARGUMENT_CODE &&
+                    diag.code == JETLSCore.LOWERING_UNUSED_ARGUMENT_CODE &&
                     occursin("y", diag.message)
                 end
                 @test found_unused_y
             end
 
             # Verify state after step 2: two cells with correct line offsets
-            let notebook_info = JETLS.get_notebook_info(server.state, notebook_uri)
+            let notebook_info = JETLSCore.get_notebook_info(server.state, notebook_uri)
                 @test notebook_info !== nothing
                 @test length(notebook_info.cells) == 2
                 @test notebook_info.cells[1].text == "using LinearAlgebra"
@@ -198,14 +198,14 @@ end
             let scanned = scan_live_diagnostics!(server, readmsg)
                 @test keys(scanned) == Set((cell1_uri, cell2_uri))
                 has_unused_y = any(scanned[cell2_uri].diagnostics) do diag
-                    diag.code == JETLS.LOWERING_UNUSED_ARGUMENT_CODE &&
+                    diag.code == JETLSCore.LOWERING_UNUSED_ARGUMENT_CODE &&
                     occursin("y", diag.message)
                 end
                 @test !has_unused_y
             end
 
             # Verify state after step 4: cell 2 text updated
-            let notebook_info = JETLS.get_notebook_info(server.state, notebook_uri)
+            let notebook_info = JETLSCore.get_notebook_info(server.state, notebook_uri)
                 @test notebook_info !== nothing
                 @test notebook_info.cells[2].text == "func(x) = identity(x)"
                 @test notebook_info.concat.source == "using LinearAlgebra\n\nfunc(x) = identity(x)\n"
@@ -253,13 +253,13 @@ end
                 end
                 @test cell3_notification !== nothing
                 @test any(cell3_notification.params.diagnostics) do diag
-                    diag.source == JETLS.DIAGNOSTIC_SOURCE_SAVE &&
+                    diag.source == JETLSCore.DIAGNOSTIC_SOURCE_SAVE &&
                     occursin("undefhello", diag.message)
                 end
             end
 
             # Verify state after steps 6 and 7: 4 cells total, but only 3 code cells in concat
-            let notebook_info = JETLS.get_notebook_info(server.state, notebook_uri)
+            let notebook_info = JETLSCore.get_notebook_info(server.state, notebook_uri)
                 @test notebook_info !== nothing
                 @test length(notebook_info.cells) == 4
                 @test notebook_info.cells[1].kind == NotebookCellKind.Code
@@ -372,7 +372,7 @@ end
                 lens = lenses[1]
                 @test lens.range.start.line == 0
                 data = lens.data
-                @test data isa JETLS.ReferencesCodeLensData
+                @test data isa JETLSCore.ReferencesCodeLensData
                 @test data.uri == cell2_uri
                 @test data.line == 0
             end
@@ -520,27 +520,27 @@ end
             notebook_uri = URI("file:///completion-snapshot.ipynb")
             cell1 = URI("vscode-notebook-cell:/completion-snapshot.ipynb#1")
             cell2 = URI("vscode-notebook-cell:/completion-snapshot.ipynb#2")
-            text, positions = JETLS.get_text_and_positions("""
+            text, positions = JETLSCore.get_text_and_positions("""
                 for _ in 1:1
                     x = 2
                     println(│x)
                 end
                 \\alpha│""")
-            cells = JETLS.NotebookCellInfo[
-                JETLS.NotebookCellInfo(cell1, NotebookCellKind.Code, 1, "prefix = 1\nprefix"),
-                JETLS.NotebookCellInfo(cell2, NotebookCellKind.Code, 1, text)]
-            concat = JETLS.concatenate_cells(cells)
-            notebook = JETLS.NotebookInfo(1, "jupyter-notebook", state.encoding, cells, concat)
-            JETLS.store!(state.notebook_cache) do cache
+            cells = JETLSCore.NotebookCellInfo[
+                JETLSCore.NotebookCellInfo(cell1, NotebookCellKind.Code, 1, "prefix = 1\nprefix"),
+                JETLSCore.NotebookCellInfo(cell2, NotebookCellKind.Code, 1, text)]
+            concat = JETLSCore.concatenate_cells(cells)
+            notebook = JETLSCore.NotebookInfo(1, "jupyter-notebook", state.encoding, cells, concat)
+            JETLSCore.store!(state.notebook_cache) do cache
                 Base.PersistentDict(cache, notebook_uri => notebook), nothing
             end
-            JETLS.store!(state.cell_to_notebook) do cache
+            JETLSCore.store!(state.cell_to_notebook) do cache
                 for cell in cells
                     cache = Base.PersistentDict(cache, cell.uri => notebook_uri)
                 end
                 cache, nothing
             end
-            fi = JETLS.cache_notebook_file_info!(server, notebook_uri, notebook)
+            fi = JETLSCore.cache_notebook_file_info!(server, notebook_uri, notebook)
             change = if change_kind === :preceding_lines
                 NotebookDocumentChangeEventCells(;
                     textContent = [NotebookDocumentChangeEventCellsTextContentItem(;
@@ -561,7 +561,7 @@ end
                 make_DidChangeNotebookDocumentNotification(
                     notebook_uri, NotebookDocumentChangeEvent(; cells = change); version = 2)])
             @test length(prepared) == 2
-            @test JETLS.get_file_info(state, notebook_uri).version == 2
+            @test JETLSCore.get_file_info(state, notebook_uri).version == 2
             if change_kind !== :preceding_lines
                 cleared = take_with_timeout!(recorder.sent_queue)
                 @test cleared isa PublishDiagnosticsNotification
@@ -576,24 +576,24 @@ end
                 @test snapshot.notebook === concat
                 pos = request.msg.params.position
                 @test pos == positions[i]
-                @test JETLS.adjust_position(snapshot, cell2, pos) ==
+                @test JETLSCore.adjust_position(snapshot, cell2, pos) ==
                     Position(; line = positions[i].line + 3, character = positions[i].character)
             end
             if change_kind === :remove_requested
-                @test !JETLS.is_notebook_cell_uri(state, cell2)
+                @test !JETLSCore.is_notebook_cell_uri(state, cell2)
             else
-                current = JETLS.snapshot_request_message(state, prepared[2].msg, cell2)
+                current = JETLSCore.snapshot_request_message(state, prepared[2].msg, cell2)
                 pos = prepared[2].msg.params.position
-                @test JETLS.adjust_position(current.snapshot, cell2, pos) !=
-                    JETLS.adjust_position(prepared[2].snapshot, cell2, pos)
+                @test JETLSCore.adjust_position(current.snapshot, cell2, pos) !=
+                    JETLSCore.adjust_position(prepared[2].snapshot, cell2, pos)
             end
 
-            pos = JETLS.adjust_position(prepared[1].snapshot, cell2, prepared[1].msg.params.position)
-            items, _ = JETLS.get_completion_items(
+            pos = JETLSCore.adjust_position(prepared[1].snapshot, cell2, prepared[1].msg.params.position)
+            items, _ = JETLSCore.get_completion_items(
                 state, cell2, prepared[1].snapshot, pos, nothing;
                 context_module = M_snapshot)
             @test any(items) do item
-                item.label == "x" && JETLS.completion_is(item, :global)
+                item.label == "x" && JETLSCore.completion_is(item, :global)
             end
             response = dispatch_snapshot_request(server, recorder, prepared[2])
             @test response.error === nothing
@@ -616,20 +616,20 @@ end
             cell2 = URI("vscode-notebook-cell:/signature-snapshot.ipynb#2")
             pos = Position(; line = 0, character = 16)
             cells = [
-                JETLS.NotebookCellInfo(cell1, NotebookCellKind.Code, 1, "prefix = 1\nprefix"),
-                JETLS.NotebookCellInfo(cell2, NotebookCellKind.Code, 1, "snapshot_pair(1,)")]
-            concat = JETLS.concatenate_cells(cells)
-            notebook = JETLS.NotebookInfo(1, "jupyter-notebook", state.encoding, cells, concat)
-            JETLS.store!(state.notebook_cache) do cache
+                JETLSCore.NotebookCellInfo(cell1, NotebookCellKind.Code, 1, "prefix = 1\nprefix"),
+                JETLSCore.NotebookCellInfo(cell2, NotebookCellKind.Code, 1, "snapshot_pair(1,)")]
+            concat = JETLSCore.concatenate_cells(cells)
+            notebook = JETLSCore.NotebookInfo(1, "jupyter-notebook", state.encoding, cells, concat)
+            JETLSCore.store!(state.notebook_cache) do cache
                 Base.PersistentDict(cache, notebook_uri => notebook), nothing
             end
-            JETLS.store!(state.cell_to_notebook) do cache
+            JETLSCore.store!(state.cell_to_notebook) do cache
                 for cell in cells
                     cache = Base.PersistentDict(cache, cell.uri => notebook_uri)
                 end
                 cache, nothing
             end
-            fi = JETLS.cache_notebook_file_info!(server, notebook_uri, notebook)
+            fi = JETLSCore.cache_notebook_file_info!(server, notebook_uri, notebook)
             change = if change_kind === :preceding_lines
                 NotebookDocumentChangeEventCells(;
                     textContent = [NotebookDocumentChangeEventCellsTextContentItem(;
@@ -654,27 +654,27 @@ end
             @test snapshot.notebook === concat
             @test prepared.msg === request
             @test prepared.msg.params.position == pos
-            global_pos = JETLS.adjust_position(snapshot, cell2, prepared.msg.params.position)
+            global_pos = JETLSCore.adjust_position(snapshot, cell2, prepared.msg.params.position)
             @test global_pos == Position(; line = 3, character = pos.character)
-            @test JETLS.get_file_info(state, notebook_uri).version == 2
+            @test JETLSCore.get_file_info(state, notebook_uri).version == 2
             if change_kind === :remove_requested
                 let cleared = take_with_timeout!(recorder.sent_queue)
                     @test cleared isa PublishDiagnosticsNotification
                     @test cleared.params.uri == cell2
                     @test isempty(cleared.params.diagnostics)
                 end
-                @test !JETLS.is_notebook_cell_uri(state, cell2)
-                @test JETLS.snapshot_request_message(state, request, cell2).snapshot === nothing
+                @test !JETLSCore.is_notebook_cell_uri(state, cell2)
+                @test JETLSCore.snapshot_request_message(state, request, cell2).snapshot === nothing
             else
-                current = JETLS.snapshot_request_message(state, request, cell2)
-                @test JETLS.adjust_position(current.snapshot, cell2, current.msg.params.position) != global_pos
+                current = JETLSCore.snapshot_request_message(state, request, cell2)
+                @test JETLSCore.adjust_position(current.snapshot, cell2, current.msg.params.position) != global_pos
             end
 
             # Analysis is not snapshotted; dispatch must use the captured notebook URI.
-            JETLS.cache_out_of_scope!(state.analysis_manager, notebook_uri, JETLS.OutOfScope(M_snapshot))
-            @test JETLS.get_context_info(state, snapshot.cache_uri, global_pos).context_module === M_snapshot
+            JETLSCore.cache_out_of_scope!(state.analysis_manager, notebook_uri, JETLSCore.OutOfScope(M_snapshot))
+            @test JETLSCore.get_context_info(state, snapshot.cache_uri, global_pos).context_module === M_snapshot
             if change_kind === :remove_requested
-                @test JETLS.get_context_info(state, cell2, pos).context_module !== M_snapshot
+                @test JETLSCore.get_context_info(state, cell2, pos).context_module !== M_snapshot
             end
             response = dispatch_snapshot_request(server, recorder, prepared)
             @test response isa SignatureHelpResponse
@@ -693,20 +693,20 @@ end
         cell1 = URI("vscode-notebook-cell:/diagnostic-snapshot.ipynb#1")
         cell2 = URI("vscode-notebook-cell:/diagnostic-snapshot.ipynb#2")
         cells = [
-            JETLS.NotebookCellInfo(cell1, NotebookCellKind.Code, 1, "prefix = 1\nprefix"),
-            JETLS.NotebookCellInfo(cell2, NotebookCellKind.Code, 1, "func(x) = nothing")]
-        concat = JETLS.concatenate_cells(cells)
-        notebook = JETLS.NotebookInfo(1, "jupyter-notebook", state.encoding, cells, concat)
-        JETLS.store!(state.notebook_cache) do cache
+            JETLSCore.NotebookCellInfo(cell1, NotebookCellKind.Code, 1, "prefix = 1\nprefix"),
+            JETLSCore.NotebookCellInfo(cell2, NotebookCellKind.Code, 1, "func(x) = nothing")]
+        concat = JETLSCore.concatenate_cells(cells)
+        notebook = JETLSCore.NotebookInfo(1, "jupyter-notebook", state.encoding, cells, concat)
+        JETLSCore.store!(state.notebook_cache) do cache
             Base.PersistentDict(cache, notebook_uri => notebook), nothing
         end
-        JETLS.store!(state.cell_to_notebook) do cache
+        JETLSCore.store!(state.cell_to_notebook) do cache
             for cell in cells
                 cache = Base.PersistentDict(cache, cell.uri => notebook_uri)
             end
             cache, nothing
         end
-        fi = JETLS.cache_notebook_file_info!(server, notebook_uri, notebook)
+        fi = JETLSCore.cache_notebook_file_info!(server, notebook_uri, notebook)
         change = NotebookDocumentChangeEventCells(;
             textContent = [NotebookDocumentChangeEventCellsTextContentItem(;
                 document = VersionedTextDocumentIdentifier(; uri = cell1, version = 2),
@@ -721,12 +721,12 @@ end
                 notebook_uri, NotebookDocumentChangeEvent(; cells = change); version = 2)]))
         @test prepared.snapshot.fi === fi
         @test prepared.snapshot.notebook === concat
-        @test JETLS.get_file_info(state, notebook_uri).version == 2
+        @test JETLSCore.get_file_info(state, notebook_uri).version == 2
 
         response = dispatch_snapshot_request(server, recorder, prepared)
         @test response isa DocumentDiagnosticResponse
         diagnostic = only(response.result.items)
-        @test diagnostic.code == JETLS.LOWERING_UNUSED_ARGUMENT_CODE
+        @test diagnostic.code == JETLSCore.LOWERING_UNUSED_ARGUMENT_CODE
         @test diagnostic.range == Range(;
             start = Position(; line = 0, character = 5),
             var"end" = Position(; line = 0, character = 6))
@@ -746,7 +746,7 @@ end
             @test raw_res.params.uri == cell_uri
             @test length(raw_res.params.diagnostics) == 1
             manager = server.state.analysis_manager
-            result = JETLS.load(manager.cache)[notebook_uri]::JETLS.AnalysisResult
+            result = JETLSCore.load(manager.cache)[notebook_uri]::JETLSCore.AnalysisResult
 
             (; raw_res) = writereadmsg(
                 make_DidCloseNotebookDocumentNotification(notebook_uri, [cell_uri]))
@@ -754,16 +754,16 @@ end
             @test raw_res.params.uri == cell_uri
             @test isempty(raw_res.params.diagnostics)
             # the cells are cleared before `cleanup_analysis_state!` runs
-            @test timedwait(() -> !haskey(JETLS.load(manager.cache), notebook_uri), 10.0) === :ok
+            @test timedwait(() -> !haskey(JETLSCore.load(manager.cache), notebook_uri), 10.0) === :ok
 
             # The cache write of an analysis that was already running when the notebook
             # was closed (see `cache_intermediate_analysis_result!`) lands after
             # `cleanup_analysis_state!`; the worker discards it once the analysis finishes.
-            JETLS.update_analysis_cache!(server.state, result)
-            @test haskey(JETLS.load(manager.cache), notebook_uri)
-            request = JETLS.AnalysisRequest(result.entry, notebook_uri, 0, nothing, true)
-            JETLS.discard_abandoned_analysis!(server, request, result)
-            @test !haskey(JETLS.load(manager.cache), notebook_uri)
+            JETLSCore.update_analysis_cache!(server.state, result)
+            @test haskey(JETLSCore.load(manager.cache), notebook_uri)
+            request = JETLSCore.AnalysisRequest(result.entry, notebook_uri, 0, nothing, true)
+            JETLSCore.discard_abandoned_analysis!(server, request, result)
+            @test !haskey(JETLSCore.load(manager.cache), notebook_uri)
 
             # A full publish no longer reports the closed notebook under its own URI:
             # only the configuration-change message arrives.
@@ -794,8 +794,8 @@ end
             scanned = scan_live_diagnostics!(server, readmsg)
             @test haskey(scanned, cell_uri)
             @test !any(scanned[cell_uri].diagnostics) do diag
-                diag.code in (JETLS.LOWERING_UNDEF_LOCAL_VAR_CODE,
-                              JETLS.LOWERING_AMBIGUOUS_SOFT_SCOPE_CODE)
+                diag.code in (JETLSCore.LOWERING_UNDEF_LOCAL_VAR_CODE,
+                              JETLSCore.LOWERING_AMBIGUOUS_SOFT_SCOPE_CODE)
             end
         end
     end end
@@ -823,7 +823,7 @@ end
                 read = 2)
             scanned = scan_live_diagnostics!(server, readmsg)
             orphaned(uri) = filter(scanned[uri].diagnostics) do diag
-                diag.code == JETLS.LOWERING_ORPHANED_DOCSTRING_CODE
+                diag.code == JETLSCore.LOWERING_ORPHANED_DOCSTRING_CODE
             end
             @test isempty(orphaned(cell_uri1))
             diag = only(orphaned(cell_uri2))
@@ -856,10 +856,10 @@ end
             @test raw_res isa PublishDiagnosticsNotification
             @test raw_res.params.uri == cell_uri
             @test isempty(raw_res.params.diagnostics)
-            @test !haskey(JETLS.load(server.state.workspace_diagnostics_worker.published), notebook_uri)
+            @test !haskey(JETLSCore.load(server.state.workspace_diagnostics_worker.published), notebook_uri)
             manager = server.state.analysis_manager
-            @test timedwait(() -> !haskey(JETLS.load(manager.cache), notebook_uri), 10.0) === :ok
-            @test !haskey(JETLS.get_full_diagnostics(server), notebook_uri)
+            @test timedwait(() -> !haskey(JETLSCore.load(manager.cache), notebook_uri), 10.0) === :ok
+            @test !haskey(JETLSCore.get_full_diagnostics(server), notebook_uri)
         end
     end end
 end

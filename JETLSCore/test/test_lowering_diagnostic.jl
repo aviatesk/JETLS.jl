@@ -1,13 +1,13 @@
 module test_lowering_diagnostics
 
 using Test
-using JETLS
-using JETLS: JL, JS
-using JETLS.LSP
-using JETLS.LSP.URIs2
+using JETLSCore
+using JETLSCore: JL, JS
+using JETLSCore.LSP
+using JETLSCore.LSP.URIs2
 
-include(normpath(pkgdir(JETLS), "test", "setup.jl"))
-include(normpath(pkgdir(JETLS), "test", "jsjl-utils.jl"))
+include("setup.jl")
+include("jsjl-utils.jl")
 
 module lowering_module
 const B = Base
@@ -23,30 +23,30 @@ function get_lowering_diagnostics(
         world::UInt = Base.get_world_counter(),
         kwargs...
     )
-    filename = abspath(pkgdir(JETLS), "test", "test_lowering_diagnostic.jl")
-    server = JETLS.Server()
+    filename = joinpath(@__DIR__, "test_lowering_diagnostic.jl")
+    server = JETLSCore.Server()
     uri = filepath2uri(filename)
-    fi = JETLS.cache_file_info!(server, uri, 1, text)
-    st0_top = JETLS.build_syntax_tree(fi)
+    fi = JETLSCore.cache_file_info!(server, uri, 1, text)
+    st0_top = JETLSCore.build_syntax_tree(fi)
     @assert JS.head(st0_top) === :toplevel
     diagnostics = LSP.Diagnostic[]
-    candidates = JETLS.UndefGlobalCandidate[]
-    def_used_names = Dict{Module,JETLS.DefUsedNames}()
-    JETLS.iterate_toplevel_tree(st0_top) do st0::JS.SyntaxTree
-        JETLS.per_stmt_diagnostics!(diagnostics, candidates, uri, fi,
-            st0, context_module, world, #=analyzer=#nothing, JETLS.LSPostProcessor();
+    candidates = JETLSCore.UndefGlobalCandidate[]
+    def_used_names = Dict{Module,JETLSCore.DefUsedNames}()
+    JETLSCore.iterate_toplevel_tree(st0_top) do st0::JS.SyntaxTree
+        JETLSCore.per_stmt_diagnostics!(diagnostics, candidates, uri, fi,
+            st0, context_module, world, #=analyzer=#nothing, JETLSCore.LSPostProcessor();
             kwargs...)
-        binding_occurrences = JETLS.get_binding_occurrences!(server.state, uri, fi, st0)
+        binding_occurrences = JETLSCore.get_binding_occurrences!(server.state, uri, fi, st0)
         binding_occurrences !== nothing &&
-            JETLS.update_def_used_names!(def_used_names, context_module, binding_occurrences)
+            JETLSCore.update_def_used_names!(def_used_names, context_module, binding_occurrences)
     end
-    explicit_imports = JETLS.collect_explicit_imports_by_module(server.state, uri, fi, st0_top)
+    explicit_imports = JETLSCore.collect_explicit_imports_by_module(server.state, uri, fi, st0_top)
     # Mirror the cross-file phase. `skip_context_check=true` because the test server
     # has no populated `analysis_manager` — we want this single file to count as
     # part of its own unit anyway.
-    per_file = JETLS.PerFileDiagnosticsResult(
+    per_file = JETLSCore.PerFileDiagnosticsResult(
         diagnostics, candidates, def_used_names, explicit_imports)
-    JETLS.cross_file_diagnostics!(diagnostics, JETLS.DefUsedNamesCache(),
+    JETLSCore.cross_file_diagnostics!(diagnostics, JETLSCore.DefUsedNamesCache(),
         server, uri, #=snapshot=#nothing, per_file; skip_context_check=true)
     if code !== nothing
         filter!(d -> d.code == code, diagnostics)
@@ -141,7 +141,7 @@ end
                     return :([x + 1 for x in 1:2])
                 end
                 """)
-            diagnostics = get_lowering_diagnostics(src; code = JETLS.LOWERING_UNUSED_ARGUMENT_CODE)
+            diagnostics = get_lowering_diagnostics(src; code = JETLSCore.LOWERING_UNUSED_ARGUMENT_CODE)
             @test length(diagnostics) == 1
             @test only(diagnostics).message == "Unused argument `x`"
         end
@@ -167,7 +167,7 @@ end
         """)
         @test length(diagnostics) == 1
         diagnostic = only(diagnostics)
-        @test diagnostic.code == JETLS.LOWERING_UNUSED_LOCAL_CODE
+        @test diagnostic.code == JETLSCore.LOWERING_UNUSED_LOCAL_CODE
         @test diagnostic.message ==
             "Local binding `str` is not read; consider `return str` to return it explicitly"
         @test diagnostic.severity == DiagnosticSeverity.Information
@@ -313,7 +313,7 @@ end
                     return h(cond)
                 end
                 """;
-                code = JETLS.LOWERING_UNUSED_LOCAL_CODE)
+                code = JETLSCore.LOWERING_UNUSED_LOCAL_CODE)
             @test isempty(diagnostics)
         end
         # Same for an argument used only in a dropped branch.
@@ -325,7 +325,7 @@ end
                     return nothing
                 end
                 """;
-                code = JETLS.LOWERING_UNUSED_ARGUMENT_CODE)
+                code = JETLSCore.LOWERING_UNUSED_ARGUMENT_CODE)
             @test isempty(diagnostics)
         end
         # A debug-only `@warn` guarded by `@static DEV_MODE` (short-circuit `&&` form):
@@ -340,7 +340,7 @@ end
                     end
                 end
                 """;
-                code = JETLS.LOWERING_UNUSED_LOCAL_CODE,
+                code = JETLSCore.LOWERING_UNUSED_LOCAL_CODE,
                 context_module = static_dev_mode_module)
             @test isempty(diagnostics)
         end
@@ -355,7 +355,7 @@ end
                     return h(cond)
                 end
                 """;
-                code = JETLS.LOWERING_UNUSED_LOCAL_CODE)
+                code = JETLSCore.LOWERING_UNUSED_LOCAL_CODE)
             @test length(diagnostics) == 1
             @test only(diagnostics).message == "Unused local binding `y`"
         end
@@ -656,7 +656,7 @@ end
         expected_message(n) = "Method definition declares type variable `$n` but does not use it in the type of any function parameter"
         let diagnostics = get_lowering_diagnostics("""
             f(::T) where {T,S} = S
-            """; code = JETLS.LOWERING_UNCONSTRAINED_STATIC_PARAMETER_CODE)
+            """; code = JETLSCore.LOWERING_UNCONSTRAINED_STATIC_PARAMETER_CODE)
             @test length(diagnostics) == 1
             diagnostic = only(diagnostics)
             @test diagnostic.severity == DiagnosticSeverity.Warning
@@ -667,31 +667,31 @@ end
         end
         let diagnostics = get_lowering_diagnostics("""
             f(::T, ::S) where {T,S} = S
-            """; code = JETLS.LOWERING_UNCONSTRAINED_STATIC_PARAMETER_CODE)
+            """; code = JETLSCore.LOWERING_UNCONSTRAINED_STATIC_PARAMETER_CODE)
             @test isempty(diagnostics)
         end
         let diagnostics = get_lowering_diagnostics("""
             f(::T) where {S,T<:S} = S
-            """; code = JETLS.LOWERING_UNCONSTRAINED_STATIC_PARAMETER_CODE)
+            """; code = JETLSCore.LOWERING_UNCONSTRAINED_STATIC_PARAMETER_CODE)
             @test isempty(diagnostics)
         end
         let diagnostics = get_lowering_diagnostics("""
             f(::T) where {T,S<:T} = S
-            """; code = JETLS.LOWERING_UNCONSTRAINED_STATIC_PARAMETER_CODE)
+            """; code = JETLSCore.LOWERING_UNCONSTRAINED_STATIC_PARAMETER_CODE)
             @test length(diagnostics) == 1
             @test only(diagnostics).message == expected_message("S")
         end
         # bounds constrain transitively
         let diagnostics = get_lowering_diagnostics("""
             f(::T) where {R,S<:R,T<:S} = R
-            """; code = JETLS.LOWERING_UNCONSTRAINED_STATIC_PARAMETER_CODE)
+            """; code = JETLSCore.LOWERING_UNCONSTRAINED_STATIC_PARAMETER_CODE)
             @test isempty(diagnostics)
         end
         # a bound reference does not constrain a later declaration
         # (Julia itself warns on this definition)
         let diagnostics = get_lowering_diagnostics("""
             f(::T) where {T<:S,S} = S
-            """; code = JETLS.LOWERING_UNCONSTRAINED_STATIC_PARAMETER_CODE)
+            """; code = JETLSCore.LOWERING_UNCONSTRAINED_STATIC_PARAMETER_CODE)
             @test length(diagnostics) == 1
             @test only(diagnostics).message == expected_message("S")
         end
@@ -699,14 +699,14 @@ end
         # mirroring `JL.select_used_typevars` (and Julia's warning behavior)
         let diagnostics = get_lowering_diagnostics("""
             f(::T) where {S,T>:S} = S
-            """; code = JETLS.LOWERING_UNCONSTRAINED_STATIC_PARAMETER_CODE)
+            """; code = JETLSCore.LOWERING_UNCONSTRAINED_STATIC_PARAMETER_CODE)
             @test isempty(diagnostics)
         end
         let diagnostics = get_lowering_diagnostics("""
             function f(x::T)::S where {T,S}
                 return x
             end
-            """; code = JETLS.LOWERING_UNCONSTRAINED_STATIC_PARAMETER_CODE)
+            """; code = JETLSCore.LOWERING_UNCONSTRAINED_STATIC_PARAMETER_CODE)
             @test length(diagnostics) == 1
             @test only(diagnostics).message == expected_message("S")
         end
@@ -714,7 +714,7 @@ end
             struct Box{T}
                 Box{T}() where T = new{T}()
             end
-            """; code = JETLS.LOWERING_UNCONSTRAINED_STATIC_PARAMETER_CODE)
+            """; code = JETLSCore.LOWERING_UNCONSTRAINED_STATIC_PARAMETER_CODE)
             @test isempty(diagnostics)
         end
         let diagnostics = get_lowering_diagnostics("""
@@ -722,7 +722,7 @@ end
             function (::Callable{T})(x) where {T,S}
                 S
             end
-            """; code = JETLS.LOWERING_UNCONSTRAINED_STATIC_PARAMETER_CODE)
+            """; code = JETLSCore.LOWERING_UNCONSTRAINED_STATIC_PARAMETER_CODE)
             @test length(diagnostics) == 1
             @test only(diagnostics).message == expected_message("S")
         end
@@ -731,62 +731,62 @@ end
             function (x::T) where {T,S}
                 S
             end
-            """; code = JETLS.LOWERING_UNCONSTRAINED_STATIC_PARAMETER_CODE)
+            """; code = JETLSCore.LOWERING_UNCONSTRAINED_STATIC_PARAMETER_CODE)
             @test length(diagnostics) == 1
             @test only(diagnostics).message == expected_message("S")
         end
         # the analysis runs post-macro-expansion
         let diagnostics = get_lowering_diagnostics("""
             f(@nospecialize(x::T)) where T = x
-            """; code = JETLS.LOWERING_UNCONSTRAINED_STATIC_PARAMETER_CODE)
+            """; code = JETLSCore.LOWERING_UNCONSTRAINED_STATIC_PARAMETER_CODE)
             @test isempty(diagnostics)
         end
         let diagnostics = get_lowering_diagnostics("""
             @inline f(::T) where {T,S} = S
-            """; code = JETLS.LOWERING_UNCONSTRAINED_STATIC_PARAMETER_CODE)
+            """; code = JETLSCore.LOWERING_UNCONSTRAINED_STATIC_PARAMETER_CODE)
             @test length(diagnostics) == 1
             @test only(diagnostics).message == expected_message("S")
         end
         # a qualified name does not constrain a same-named type variable
         let diagnostics = get_lowering_diagnostics("""
             f(x::Base.RefValue) where {RefValue} = RefValue
-            """; code = JETLS.LOWERING_UNCONSTRAINED_STATIC_PARAMETER_CODE)
+            """; code = JETLSCore.LOWERING_UNCONSTRAINED_STATIC_PARAMETER_CODE)
             @test length(diagnostics) == 1
             @test only(diagnostics).message == expected_message("RefValue")
         end
         # quoted method definitions are data, not methods
         let diagnostics = get_lowering_diagnostics("""
             ex = :(f(::T) where {T,S} = S)
-            """; code = JETLS.LOWERING_UNCONSTRAINED_STATIC_PARAMETER_CODE)
+            """; code = JETLSCore.LOWERING_UNCONSTRAINED_STATIC_PARAMETER_CODE)
             @test isempty(diagnostics)
         end
         let diagnostics = get_lowering_diagnostics("""
             @eval f(::T) where {T,S} = S
-            """; code = JETLS.LOWERING_UNCONSTRAINED_STATIC_PARAMETER_CODE)
+            """; code = JETLSCore.LOWERING_UNCONSTRAINED_STATIC_PARAMETER_CODE)
             @test isempty(diagnostics)
         end
         # a keyword argument type constrains the static parameter (via the body method)
         let diagnostics = get_lowering_diagnostics("""
             f(; x::T) where T = x
-            """; code = JETLS.LOWERING_UNCONSTRAINED_STATIC_PARAMETER_CODE)
+            """; code = JETLSCore.LOWERING_UNCONSTRAINED_STATIC_PARAMETER_CODE)
             @test isempty(diagnostics)
         end
         # lowering generates multiple methods here; the report is deduplicated
         let diagnostics = get_lowering_diagnostics("""
             f(::T; kw=1) where {T,S} = S
-            """; code = JETLS.LOWERING_UNCONSTRAINED_STATIC_PARAMETER_CODE)
+            """; code = JETLSCore.LOWERING_UNCONSTRAINED_STATIC_PARAMETER_CODE)
             @test length(diagnostics) == 1
             @test only(diagnostics).message == expected_message("S")
         end
         let diagnostics = get_lowering_diagnostics("""
             f(x::T, y=1) where {T,S} = S
-            """; code = JETLS.LOWERING_UNCONSTRAINED_STATIC_PARAMETER_CODE)
+            """; code = JETLSCore.LOWERING_UNCONSTRAINED_STATIC_PARAMETER_CODE)
             @test length(diagnostics) == 1
             @test only(diagnostics).message == expected_message("S")
         end
         let diagnostics = get_lowering_diagnostics("""
             f(::T) where {T,_} = T
-            """; code = JETLS.LOWERING_UNCONSTRAINED_STATIC_PARAMETER_CODE)
+            """; code = JETLSCore.LOWERING_UNCONSTRAINED_STATIC_PARAMETER_CODE)
             @test isempty(diagnostics)
         end
         # the inner `where`'s `T` is a different type variable from the outer one
@@ -794,7 +794,7 @@ end
             function f(x::(Vector{T} where T)) where T
                 T
             end
-            """; code = JETLS.LOWERING_UNCONSTRAINED_STATIC_PARAMETER_CODE)
+            """; code = JETLSCore.LOWERING_UNCONSTRAINED_STATIC_PARAMETER_CODE)
             @test length(diagnostics) == 1
             @test only(diagnostics).message == expected_message("T")
         end
@@ -811,9 +811,9 @@ end
         withscript(script) do script_path
             uri = filepath2uri(script_path)
             withserver() do (; readmsg, server)
-                JETLS.cache_file_info!(server, uri, 1, script)
-                JETLS.cache_saved_file_info!(server.state, uri, script)
-                JETLS.request_analysis!(server, uri, #=invalidate=#false; wait=true, notify_diagnostics=false)
+                JETLSCore.cache_file_info!(server, uri, 1, script)
+                JETLSCore.cache_saved_file_info!(server.state, uri, script)
+                JETLSCore.request_analysis!(server, uri, #=invalidate=#false; wait=true, notify_diagnostics=false)
 
                 params = scan_live_diagnostics!(server, readmsg)[uri]
                 @test length(params.diagnostics) == 1
@@ -862,14 +862,14 @@ end
             @testset "case: \$(i)" for (i, x) in ((1, 2), (3, 4))
                 @test x > 0
             end
-            """; context_module=Test, code=JETLS.LOWERING_UNUSED_LOCAL_CODE)
+            """; context_module=Test, code=JETLSCore.LOWERING_UNUSED_LOCAL_CODE)
             @test isempty(diagnostics)
         end
         let diagnostics = get_lowering_diagnostics("""
             @testset "case" for (i, x) in ((1, 2), (3, 4))
                 @test x > 0
             end
-            """; context_module=Test, code=JETLS.LOWERING_UNUSED_LOCAL_CODE)
+            """; context_module=Test, code=JETLSCore.LOWERING_UNUSED_LOCAL_CODE)
             @test length(diagnostics) == 1
             @test only(diagnostics).message == "Unused local binding `i`"
         end
@@ -1097,7 +1097,7 @@ end
             @generated function foo(x)
                 return :( :(\$x) )
             end
-            """; code = JETLS.LOWERING_UNUSED_ARGUMENT_CODE)
+            """; code = JETLSCore.LOWERING_UNUSED_ARGUMENT_CODE)
             @test isempty(diagnostics)
         end
     end
@@ -1145,7 +1145,7 @@ end
 
 @static if isdefinedglobal(Core, :define_method)
     let code = """
-        using JETLS: JL
+        using JETLSCore: JL
         macro m_inner_error_JL(_)
             error("Error in foo")
         end
@@ -1162,7 +1162,7 @@ end
         diagnostics = get_lowering_diagnostics("macro foo(x, y) \$(x) end"; context_module=@__MODULE__)
         @test length(diagnostics) == 1
         diagnostic = only(diagnostics)
-        @test diagnostic.source == JETLS.DIAGNOSTIC_SOURCE_LIVE
+        @test diagnostic.source == JETLSCore.DIAGNOSTIC_SOURCE_LIVE
         @test diagnostic.message == "`\$` expression outside string or quote"
     end
 
@@ -1173,13 +1173,13 @@ end
             """)
             @test length(diagnostics) == 2
             @test count(diagnostics) do diagnostic
-                diagnostic.source == JETLS.DIAGNOSTIC_SOURCE_LIVE &&
+                diagnostic.source == JETLSCore.DIAGNOSTIC_SOURCE_LIVE &&
                 diagnostic.message == "`\$` expression outside string or quote" &&
                 diagnostic.range.start.line == 0 &&
                 diagnostic.range.var"end".line == 0
             end == 1
             @test count(diagnostics) do diagnostic
-                diagnostic.source == JETLS.DIAGNOSTIC_SOURCE_LIVE &&
+                diagnostic.source == JETLSCore.DIAGNOSTIC_SOURCE_LIVE &&
                 diagnostic.message == "`\$` expression outside string or quote" &&
                 diagnostic.range.start.line == 1 &&
                 diagnostic.range.var"end".line == 1
@@ -1198,7 +1198,7 @@ end
                 someinterface(::Type{<:Integer})
             \"\"\"
             someinterface(::Type{<:Integer})
-            """; code = JETLS.LOWERING_ERROR_CODE)
+            """; code = JETLSCore.LOWERING_ERROR_CODE)
         @test isempty(diagnostics)
     end
 
@@ -1206,7 +1206,7 @@ end
         diagnostics = get_lowering_diagnostics("x = @notexisting 42"; context_module=@__MODULE__)
         @test length(diagnostics) == 1
         diagnostic = only(diagnostics)
-        @test diagnostic.source == JETLS.DIAGNOSTIC_SOURCE_LIVE
+        @test diagnostic.source == JETLSCore.DIAGNOSTIC_SOURCE_LIVE
         @test diagnostic.message == "Macro name `@notexisting` not found"
         @test diagnostic.range.start.line == 0
         @test diagnostic.range.start.character == sizeof("x = ")
@@ -1229,7 +1229,7 @@ end
         diagnostics = get_lowering_diagnostics("x = notexisting\"string\""; context_module=@__MODULE__)
         @test length(diagnostics) == 1
         diagnostic = only(diagnostics)
-        @test diagnostic.source == JETLS.DIAGNOSTIC_SOURCE_LIVE
+        @test diagnostic.source == JETLSCore.DIAGNOSTIC_SOURCE_LIVE
         @test diagnostic.message == "Macro name `@notexisting_str` not found"
         @test diagnostic.range.start.line == 0
         @test diagnostic.range.start.character == sizeof("x = ")
@@ -1276,7 +1276,7 @@ end
         diagnostics = get_lowering_diagnostics("x = @m_throw 42"; context_module=@__MODULE__)
         @test length(diagnostics) == 1
         diagnostic = only(diagnostics)
-        @test diagnostic.source == JETLS.DIAGNOSTIC_SOURCE_LIVE
+        @test diagnostic.source == JETLSCore.DIAGNOSTIC_SOURCE_LIVE
         @test diagnostic.message == "Error expanding macro\n\"show this error message\""
         @test diagnostic.range.start.line == 0
         @test diagnostic.range.start.character == sizeof("x = ")
@@ -1290,7 +1290,7 @@ end
         end"""; context_module=@__MODULE__)
         @test length(diagnostics) == 1
         diagnostic = only(diagnostics)
-        @test diagnostic.source == JETLS.DIAGNOSTIC_SOURCE_LIVE
+        @test diagnostic.source == JETLSCore.DIAGNOSTIC_SOURCE_LIVE
         @test diagnostic.message == "Error expanding macro\nError in foo"
         @test diagnostic.range.start.line == 1
         @test diagnostic.range.start.character == 4
@@ -1305,7 +1305,7 @@ end
             end"""; context_module=@__MODULE__)
             @test length(diagnostics) == 1
             diagnostic = only(diagnostics)
-            @test diagnostic.source == JETLS.DIAGNOSTIC_SOURCE_LIVE
+            @test diagnostic.source == JETLSCore.DIAGNOSTIC_SOURCE_LIVE
             @test diagnostic.message == "Error expanding macro\nError in foo"
             @test diagnostic.range.start.line == 1
             @test diagnostic.range.start.character == 4
@@ -1322,7 +1322,7 @@ end
         """; context_module=@__MODULE__)
         @test length(diagnostics) == 1
         diagnostic = only(diagnostics)
-        @test diagnostic.source == JETLS.DIAGNOSTIC_SOURCE_LIVE
+        @test diagnostic.source == JETLSCore.DIAGNOSTIC_SOURCE_LIVE
         @test diagnostic.message == "`return` not allowed inside comprehension or generator"
         @test diagnostic.range.start.line == 2
         @test diagnostic.range.var"end".line == 2
@@ -1336,11 +1336,11 @@ end
         diagnostics = get_lowering_diagnostics(
             """@testset "a" "b" begin end""";
             context_module = Test,
-            code = JETLS.LOWERING_MACRO_EXPANSION_ERROR_CODE)
+            code = JETLSCore.LOWERING_MACRO_EXPANSION_ERROR_CODE)
         @test length(diagnostics) == 1
         diagnostic = only(diagnostics)
         @test diagnostic.severity == LSP.DiagnosticSeverity.Warning
-        @test diagnostic.source == JETLS.DIAGNOSTIC_SOURCE_LIVE
+        @test diagnostic.source == JETLSCore.DIAGNOSTIC_SOURCE_LIVE
         @test occursin("Multiple descriptions provided to @testset", diagnostic.message)
         # The diagnostic covers the redundant `"b"` argument, including quotes.
         @test diagnostic.range.start.character == sizeof("@testset \"a\" ")
@@ -1358,11 +1358,11 @@ end
             end
             """; context_module = @__MODULE__)
         @test count(diagnostics) do d
-            d.code == JETLS.LOWERING_MACRO_EXPANSION_ERROR_CODE &&
+            d.code == JETLSCore.LOWERING_MACRO_EXPANSION_ERROR_CODE &&
                 d.severity == LSP.DiagnosticSeverity.Error
         end == 1
         undef_msgs = String[d.message for d in diagnostics
-                            if d.code == JETLS.LOWERING_UNDEF_GLOBAL_VAR_CODE]
+                            if d.code == JETLSCore.LOWERING_UNDEF_GLOBAL_VAR_CODE]
         @test length(undef_msgs) == 2
         @test any(m -> occursin("undef_a", m), undef_msgs)
         @test any(m -> occursin("undef_b", m), undef_msgs)
@@ -1381,8 +1381,8 @@ end
         """; context_module=@__MODULE__)
         @test length(diagnostics) == 1
         diagnostic = only(diagnostics)
-        @test diagnostic.source == JETLS.DIAGNOSTIC_SOURCE_LIVE
-        @test diagnostic.code == JETLS.LOWERING_UNDEF_GLOBAL_VAR_CODE
+        @test diagnostic.source == JETLSCore.DIAGNOSTIC_SOURCE_LIVE
+        @test diagnostic.code == JETLSCore.LOWERING_UNDEF_GLOBAL_VAR_CODE
         @test diagnostic.message == "`$(@__MODULE__).undeffunc` is not defined"
         @test diagnostic.range.start.line == 1
         @test diagnostic.range.start.character == 4
@@ -1397,7 +1397,7 @@ end
         """; context_module=TestLoweringUndefGlobalBinding)
         @test length(diagnostics) == 1
         diagnostic = only(diagnostics)
-        @test diagnostic.source == JETLS.DIAGNOSTIC_SOURCE_LIVE
+        @test diagnostic.source == JETLSCore.DIAGNOSTIC_SOURCE_LIVE
         @test diagnostic.message == "`$(TestLoweringUndefGlobalBinding).undeffunc` is not defined"
         @test diagnostic.range.start.line == 1
         @test diagnostic.range.start.character == 4
@@ -1422,7 +1422,7 @@ end
         """; context_module=@__MODULE__)
         @test length(diagnostics) == 1
         diagnostic = only(diagnostics)
-        @test diagnostic.code == JETLS.LOWERING_UNDEF_GLOBAL_VAR_CODE
+        @test diagnostic.code == JETLSCore.LOWERING_UNDEF_GLOBAL_VAR_CODE
         @test diagnostic.message == "`$(@__MODULE__).undef_doc_interp` is not defined"
         @test diagnostic.range.start.line == 1
         @test diagnostic.range.start.character == 2
@@ -1435,7 +1435,7 @@ end
             context_module=@__MODULE__)
         @test length(diagnostics) == 1
         diagnostic = only(diagnostics)
-        @test diagnostic.code == JETLS.LOWERING_UNDEF_GLOBAL_VAR_CODE
+        @test diagnostic.code == JETLSCore.LOWERING_UNDEF_GLOBAL_VAR_CODE
         @test diagnostic.message == "`$(@__MODULE__).undef_lazy_interp` is not defined"
         @test diagnostic.range.start.line == 0
         @test diagnostic.range.start.character == length("lazy\"interpolated: \$(")
@@ -1455,7 +1455,7 @@ end
         diagnostics = get_lowering_diagnostics(code; context_module=@__MODULE__)
         @test length(diagnostics) == 1
         diagnostic = only(diagnostics)
-        @test diagnostic.code == JETLS.LOWERING_UNDEF_GLOBAL_VAR_CODE
+        @test diagnostic.code == JETLSCore.LOWERING_UNDEF_GLOBAL_VAR_CODE
         @test diagnostic.message ==
             "`$(@__MODULE__).undef_lazy_triple_interp` is not defined"
         @test diagnostic.range.start.line == 3
@@ -1483,7 +1483,7 @@ end
             """; context_module=TestLoweringUndefGlobalMacroFirst)
         @test length(diagnostics) == 1
         diagnostic = only(diagnostics)
-        @test diagnostic.code == JETLS.LOWERING_UNDEF_GLOBAL_VAR_CODE
+        @test diagnostic.code == JETLSCore.LOWERING_UNDEF_GLOBAL_VAR_CODE
         @test diagnostic.message == "`$(TestLoweringUndefGlobalMacroFirst).undeffunc` is not defined"
         @test diagnostic.range.start.line == 2
         @test diagnostic.range.start.character == 4
@@ -1499,7 +1499,7 @@ end
             end
             """; context_module=TestLoweringUndefGlobalMacroFirst)
         @test length(diagnostics) == 2
-        @test all(d -> d.code == JETLS.LOWERING_UNDEF_GLOBAL_VAR_CODE, diagnostics)
+        @test all(d -> d.code == JETLSCore.LOWERING_UNDEF_GLOBAL_VAR_CODE, diagnostics)
         @test [d.range.start.line for d in diagnostics] == [1, 2]
     end
 end
@@ -1523,13 +1523,13 @@ end
             """)
             @test length(diagnostics) == 2
             undef_diag = diagnostics[findfirst(
-                d -> d.code == JETLS.LOWERING_UNDEF_LOCAL_VAR_CODE,
+                d -> d.code == JETLSCore.LOWERING_UNDEF_LOCAL_VAR_CODE,
                 diagnostics)]
             @test undef_diag.severity == DiagnosticSeverity.Warning
             @test undef_diag.message == "Variable `y` is used before it is defined"
             @test undef_diag.range.start.line == 1
             dead_store_diag = diagnostics[findfirst(
-                d -> d.code == JETLS.LOWERING_UNUSED_ASSIGNMENT_CODE,
+                d -> d.code == JETLSCore.LOWERING_UNUSED_ASSIGNMENT_CODE,
                 diagnostics)]
             @test dead_store_diag.severity == DiagnosticSeverity.Information
             @test dead_store_diag.message ==
@@ -1564,7 +1564,7 @@ end
             """)
             @test length(diagnostics) == 1
             diagnostic = only(diagnostics)
-            @test diagnostic.code == JETLS.LOWERING_UNDEF_LOCAL_VAR_CODE
+            @test diagnostic.code == JETLSCore.LOWERING_UNDEF_LOCAL_VAR_CODE
             @test diagnostic.severity == DiagnosticSeverity.Information
             @test diagnostic.message == "Variable `y` may be used before it is defined"
         end
@@ -1582,7 +1582,7 @@ end
             """)
             @test length(diagnostics) == 1
             diagnostic = only(diagnostics)
-            @test diagnostic.code == JETLS.LOWERING_UNDEF_LOCAL_VAR_CODE
+            @test diagnostic.code == JETLSCore.LOWERING_UNDEF_LOCAL_VAR_CODE
             @test diagnostic.severity == DiagnosticSeverity.Information
         end
     end
@@ -1669,7 +1669,7 @@ end
                 return x
             end
             """)
-            undef_diags = filter(d -> d.code == JETLS.LOWERING_UNDEF_LOCAL_VAR_CODE, diagnostics)
+            undef_diags = filter(d -> d.code == JETLSCore.LOWERING_UNDEF_LOCAL_VAR_CODE, diagnostics)
             @test length(undef_diags) == 1
             diagnostic = only(undef_diags)
             @test diagnostic.severity == DiagnosticSeverity.Information
@@ -1710,7 +1710,7 @@ end
             """)
             @test length(diagnostics) == 1
             diagnostic = only(diagnostics)
-            @test diagnostic.code == JETLS.LOWERING_UNDEF_LOCAL_VAR_CODE
+            @test diagnostic.code == JETLSCore.LOWERING_UNDEF_LOCAL_VAR_CODE
             @test diagnostic.severity == DiagnosticSeverity.Information
             @test diagnostic.range.start.line == 6  # println(z) in the second if block
         end
@@ -1727,7 +1727,7 @@ end
             end
             """)
             undef_diags = filter(
-                d -> d.code == JETLS.LOWERING_UNDEF_LOCAL_VAR_CODE, diagnostics)
+                d -> d.code == JETLSCore.LOWERING_UNDEF_LOCAL_VAR_CODE, diagnostics)
             @test length(undef_diags) == 2
             @test undef_diags[1].range.start.line == 4
             @test undef_diags[2].range.start.line == 5
@@ -1769,7 +1769,7 @@ end
             """)
             @test length(diagnostics) == 1
             diagnostic = only(diagnostics)
-            @test diagnostic.code == JETLS.LOWERING_UNUSED_ASSIGNMENT_CODE
+            @test diagnostic.code == JETLSCore.LOWERING_UNUSED_ASSIGNMENT_CODE
             @test diagnostic.severity == DiagnosticSeverity.Information
             @test diagnostic.message ==
                 "Value assigned to `z` is returned implicitly; consider `return z` to return the binding explicitly"
@@ -1787,11 +1787,11 @@ end
             """)
             @test length(diagnostics) == 1
             diagnostic = only(diagnostics)
-            @test diagnostic.code == JETLS.LOWERING_UNUSED_ASSIGNMENT_CODE
+            @test diagnostic.code == JETLSCore.LOWERING_UNUSED_ASSIGNMENT_CODE
             @test diagnostic.message == "Value assigned to `z` is never used"
             @test diagnostic.range.start.line == 1
             data = diagnostic.data
-            @test data isa JETLS.UnusedVariableData
+            @test data isa JETLSCore.UnusedVariableData
             @test !data.is_tuple_unpacking
             @test data.assignment_range !== nothing
             @test data.lhs_eq_range !== nothing
@@ -1821,7 +1821,7 @@ end
                 end
                 return nothing
             end
-            """; code = JETLS.LOWERING_UNUSED_ASSIGNMENT_CODE))
+            """; code = JETLSCore.LOWERING_UNUSED_ASSIGNMENT_CODE))
     end
 
     @testset "multiple dead stores" begin
@@ -1864,7 +1864,7 @@ end
                 end
                 str *= ")"
             end
-            """; code=JETLS.LOWERING_UNUSED_ASSIGNMENT_CODE)
+            """; code=JETLSCore.LOWERING_UNUSED_ASSIGNMENT_CODE)
             @test length(diagnostics) == 1
             diagnostic = only(diagnostics)
             @test diagnostic.message ==
@@ -1885,7 +1885,7 @@ end
             @test length(diagnostics) == 1
             diagnostic = only(diagnostics)
             data = diagnostic.data
-            @test data isa JETLS.UnusedVariableData
+            @test data isa JETLSCore.UnusedVariableData
             # "Delete assignment" should remove `z = ` and keep `"initial"`
             # lhs_eq_range end character should point to `"`, not past it
             lhs_eq = data.lhs_eq_range
@@ -1915,7 +1915,7 @@ end
             """)
             # x is captured by a closure, so dead store analysis skips it.
             # The only diagnostic should be the captured-boxed-variable one.
-            @test all(d -> d.code != JETLS.LOWERING_UNUSED_ASSIGNMENT_CODE, diagnostics)
+            @test all(d -> d.code != JETLSCore.LOWERING_UNUSED_ASSIGNMENT_CODE, diagnostics)
         end
     end
 end
@@ -1933,7 +1933,7 @@ end
         @test length(diagnostics) == 1
         diagnostic = only(diagnostics)
         @test diagnostic.message == "`x` is captured and boxed"
-        @test diagnostic.code == JETLS.LOWERING_CAPTURED_BOXED_VARIABLE_CODE
+        @test diagnostic.code == JETLSCore.LOWERING_CAPTURED_BOXED_VARIABLE_CODE
         @test diagnostic.severity == DiagnosticSeverity.Information
         @test diagnostic.range.start.line == 1
         @test diagnostic.range.var"end".line == 1
@@ -1954,7 +1954,7 @@ end
         end
         """)
         @test length(diagnostics) == 2
-        @test all(d -> d.code == JETLS.LOWERING_CAPTURED_BOXED_VARIABLE_CODE, diagnostics)
+        @test all(d -> d.code == JETLSCore.LOWERING_CAPTURED_BOXED_VARIABLE_CODE, diagnostics)
         names = Set(match(r"`(\w+)`", d.message).captures[1] for d in diagnostics)
         @test names == Set(["a", "b"])
     end
@@ -2096,8 +2096,8 @@ end
             walk(st) = walk(st-1)
             walk(5)
         end
-        """; context_module=JETLS.JETLSTestModule)
-        ds = filter(d -> d.code == JETLS.LOWERING_CAPTURED_BOXED_VARIABLE_CODE, diagnostics)
+        """; context_module=JETLSCore.JETLSTestModule)
+        ds = filter(d -> d.code == JETLSCore.LOWERING_CAPTURED_BOXED_VARIABLE_CODE, diagnostics)
         @test length(ds) == 1
         d = only(ds)
         @test d.message == "`walk` is captured and boxed"
@@ -2115,13 +2115,13 @@ end
 
 is_unsorted_import_names_diagnostic(diagnostic) =
     diagnostic.message == "Names are not sorted alphabetically" &&
-    diagnostic.code == JETLS.LOWERING_UNSORTED_IMPORT_NAMES_CODE &&
-    diagnostic.severity == JETLS.DiagnosticSeverity.Hint &&
+    diagnostic.code == JETLSCore.LOWERING_UNSORTED_IMPORT_NAMES_CODE &&
+    diagnostic.severity == JETLSCore.DiagnosticSeverity.Hint &&
     diagnostic.data isa UnsortedImportData
 
 function get_unsorted_import_diagnostics(text::AbstractString)
     return get_lowering_diagnostics(text;
-        code = JETLS.LOWERING_UNSORTED_IMPORT_NAMES_CODE)
+        code = JETLSCore.LOWERING_UNSORTED_IMPORT_NAMES_CODE)
 end
 
 @testset "unsorted import names" begin
@@ -2204,7 +2204,7 @@ end
 
 function get_unused_import_diagnostics(text::AbstractString)
     return get_lowering_diagnostics(text;
-        code = JETLS.LOWERING_UNUSED_IMPORT_CODE,
+        code = JETLSCore.LOWERING_UNUSED_IMPORT_CODE,
         skip_analysis_requiring_context = true)
 end
 
@@ -2407,13 +2407,13 @@ end
         withscript(script) do script_path
             uri = filepath2uri(script_path)
             withserver() do (; readmsg, server)
-                JETLS.cache_file_info!(server, uri, 1, script)
-                JETLS.cache_saved_file_info!(server.state, uri, script)
-                JETLS.request_analysis!(server, uri, #=invalidate=#false; wait=true, notify_diagnostics=false)
+                JETLSCore.cache_file_info!(server, uri, 1, script)
+                JETLSCore.cache_saved_file_info!(server.state, uri, script)
+                JETLSCore.request_analysis!(server, uri, #=invalidate=#false; wait=true, notify_diagnostics=false)
 
                 params = scan_live_diagnostics!(server, readmsg)[uri]
                 unused_import_diags = filter(params.diagnostics) do d
-                    d.code == JETLS.LOWERING_UNUSED_IMPORT_CODE
+                    d.code == JETLSCore.LOWERING_UNUSED_IMPORT_CODE
                 end
                 @test length(unused_import_diags) == 1
                 diagnostic = only(unused_import_diags)
@@ -2431,7 +2431,7 @@ end
             x = 2
         end
         """)
-        unreachable = filter(d -> d.code == JETLS.LOWERING_UNREACHABLE_CODE, diagnostics)
+        unreachable = filter(d -> d.code == JETLSCore.LOWERING_UNREACHABLE_CODE, diagnostics)
         @test length(unreachable) == 1
         @test only(unreachable).message == "Unreachable code"
         @test only(unreachable).range.start.line == 2
@@ -2445,7 +2445,7 @@ end
             y = 3
         end
         """)
-        unreachable = filter(d -> d.code == JETLS.LOWERING_UNREACHABLE_CODE, diagnostics)
+        unreachable = filter(d -> d.code == JETLSCore.LOWERING_UNREACHABLE_CODE, diagnostics)
         @test length(unreachable) == 1
         @test only(unreachable).range.start.line == 2
         @test only(unreachable).range.var"end".line == 3
@@ -2458,7 +2458,7 @@ end
             x = 2
         end
         """)
-        unreachable = filter(d -> d.code == JETLS.LOWERING_UNREACHABLE_CODE, diagnostics)
+        unreachable = filter(d -> d.code == JETLSCore.LOWERING_UNREACHABLE_CODE, diagnostics)
         @test length(unreachable) == 1
         @test only(unreachable).range.start.line == 2
     end
@@ -2470,7 +2470,7 @@ end
             x = 2
         end
         """)
-        unreachable = filter(d -> d.code == JETLS.LOWERING_UNREACHABLE_CODE, diagnostics)
+        unreachable = filter(d -> d.code == JETLSCore.LOWERING_UNREACHABLE_CODE, diagnostics)
         @test length(unreachable) == 1
         @test only(unreachable).range.start.line == 2
     end
@@ -2482,7 +2482,7 @@ end
             return x
         end
         """)
-        unreachable = filter(d -> d.code == JETLS.LOWERING_UNREACHABLE_CODE, diagnostics)
+        unreachable = filter(d -> d.code == JETLSCore.LOWERING_UNREACHABLE_CODE, diagnostics)
         @test length(unreachable) == 1
         @test only(unreachable).range.start.line == 2
     end
@@ -2494,7 +2494,7 @@ end
             println(y)
         end
         """)
-        unreachable = filter(d -> d.code == JETLS.LOWERING_UNREACHABLE_CODE, diagnostics)
+        unreachable = filter(d -> d.code == JETLSCore.LOWERING_UNREACHABLE_CODE, diagnostics)
         @test length(unreachable) == 1
         @test only(unreachable).range.start.line == 2
     end
@@ -2510,7 +2510,7 @@ end
             end
         end
         """)
-        unreachable = filter(d -> d.code == JETLS.LOWERING_UNREACHABLE_CODE, diagnostics)
+        unreachable = filter(d -> d.code == JETLSCore.LOWERING_UNREACHABLE_CODE, diagnostics)
         @test length(unreachable) == 1
         @test only(unreachable).range.start.line == 5
     end
@@ -2522,7 +2522,7 @@ end
             x = 2
         end
         """)
-        unreachable = filter(d -> d.code == JETLS.LOWERING_UNREACHABLE_CODE, diagnostics)
+        unreachable = filter(d -> d.code == JETLSCore.LOWERING_UNREACHABLE_CODE, diagnostics)
         @test length(unreachable) == 1
         @test only(unreachable).range.start.line == 2
     end
@@ -2534,7 +2534,7 @@ end
             return x
         end
         """)
-        unreachable = filter(d -> d.code == JETLS.LOWERING_UNREACHABLE_CODE, diagnostics)
+        unreachable = filter(d -> d.code == JETLSCore.LOWERING_UNREACHABLE_CODE, diagnostics)
         @test isempty(unreachable)
     end
 
@@ -2547,7 +2547,7 @@ end
             return 0
         end
         """)
-        unreachable = filter(d -> d.code == JETLS.LOWERING_UNREACHABLE_CODE, diagnostics)
+        unreachable = filter(d -> d.code == JETLSCore.LOWERING_UNREACHABLE_CODE, diagnostics)
         @test isempty(unreachable)
     end
 
@@ -2557,7 +2557,7 @@ end
             return 1
         end
         """)
-        unreachable = filter(d -> d.code == JETLS.LOWERING_UNREACHABLE_CODE, diagnostics)
+        unreachable = filter(d -> d.code == JETLSCore.LOWERING_UNREACHABLE_CODE, diagnostics)
         @test isempty(unreachable)
     end
 
@@ -2574,7 +2574,7 @@ end
             println("fallback")
         end
         """)
-        unreachable = filter(d -> d.code == JETLS.LOWERING_UNREACHABLE_CODE, diagnostics)
+        unreachable = filter(d -> d.code == JETLSCore.LOWERING_UNREACHABLE_CODE, diagnostics)
         @test length(unreachable) == 1
         @test only(unreachable).range.start.line == 8
     end
@@ -2590,7 +2590,7 @@ end
             println("unreachable")
         end
         """)
-        unreachable = filter(d -> d.code == JETLS.LOWERING_UNREACHABLE_CODE, diagnostics)
+        unreachable = filter(d -> d.code == JETLSCore.LOWERING_UNREACHABLE_CODE, diagnostics)
         @test length(unreachable) == 1
         @test only(unreachable).range.start.line == 6
     end
@@ -2606,7 +2606,7 @@ end
             println("unreachable")
         end
         """)
-        unreachable = filter(d -> d.code == JETLS.LOWERING_UNREACHABLE_CODE, diagnostics)
+        unreachable = filter(d -> d.code == JETLSCore.LOWERING_UNREACHABLE_CODE, diagnostics)
         @test length(unreachable) == 1
         @test only(unreachable).range.start.line == 6
     end
@@ -2622,7 +2622,7 @@ end
             println("reachable")
         end
         """)
-        unreachable = filter(d -> d.code == JETLS.LOWERING_UNREACHABLE_CODE, diagnostics)
+        unreachable = filter(d -> d.code == JETLSCore.LOWERING_UNREACHABLE_CODE, diagnostics)
         @test isempty(unreachable)
     end
 
@@ -2639,7 +2639,7 @@ end
             println("unreachable")
         end
         """)
-        unreachable = filter(d -> d.code == JETLS.LOWERING_UNREACHABLE_CODE, diagnostics)
+        unreachable = filter(d -> d.code == JETLSCore.LOWERING_UNREACHABLE_CODE, diagnostics)
         @test length(unreachable) == 1
         @test only(unreachable).range.start.line == 8
     end
@@ -2657,7 +2657,7 @@ end
             println("reachable")
         end
         """)
-        unreachable = filter(d -> d.code == JETLS.LOWERING_UNREACHABLE_CODE, diagnostics)
+        unreachable = filter(d -> d.code == JETLSCore.LOWERING_UNREACHABLE_CODE, diagnostics)
         @test isempty(unreachable)
     end
 
@@ -2672,7 +2672,7 @@ end
             println("unreachable")
         end
         """)
-        unreachable = filter(d -> d.code == JETLS.LOWERING_UNREACHABLE_CODE, diagnostics)
+        unreachable = filter(d -> d.code == JETLSCore.LOWERING_UNREACHABLE_CODE, diagnostics)
         @test length(unreachable) == 1
     end
 
@@ -2687,7 +2687,7 @@ end
             println("reachable")
         end
         """)
-        unreachable = filter(d -> d.code == JETLS.LOWERING_UNREACHABLE_CODE, diagnostics)
+        unreachable = filter(d -> d.code == JETLSCore.LOWERING_UNREACHABLE_CODE, diagnostics)
         @test isempty(unreachable)
     end
 
@@ -2702,7 +2702,7 @@ end
             println("unreachable")
         end
         """)
-        unreachable = filter(d -> d.code == JETLS.LOWERING_UNREACHABLE_CODE, diagnostics)
+        unreachable = filter(d -> d.code == JETLSCore.LOWERING_UNREACHABLE_CODE, diagnostics)
         @test length(unreachable) == 1
     end
 
@@ -2717,7 +2717,7 @@ end
             println("reachable")
         end
         """)
-        unreachable = filter(d -> d.code == JETLS.LOWERING_UNREACHABLE_CODE, diagnostics)
+        unreachable = filter(d -> d.code == JETLSCore.LOWERING_UNREACHABLE_CODE, diagnostics)
         @test isempty(unreachable)
     end
 
@@ -2730,7 +2730,7 @@ end
             end
         end
         """)
-        unreachable = filter(d -> d.code == JETLS.LOWERING_UNREACHABLE_CODE, diagnostics)
+        unreachable = filter(d -> d.code == JETLSCore.LOWERING_UNREACHABLE_CODE, diagnostics)
         @test length(unreachable) == 1
     end
 
@@ -2743,7 +2743,7 @@ end
             end
         end
         """)
-        unreachable = filter(d -> d.code == JETLS.LOWERING_UNREACHABLE_CODE, diagnostics)
+        unreachable = filter(d -> d.code == JETLSCore.LOWERING_UNREACHABLE_CODE, diagnostics)
         @test length(unreachable) == 1
     end
 
@@ -2760,7 +2760,7 @@ end
             end
         end
         """)
-        unreachable = filter(d -> d.code == JETLS.LOWERING_UNREACHABLE_CODE, diagnostics)
+        unreachable = filter(d -> d.code == JETLSCore.LOWERING_UNREACHABLE_CODE, diagnostics)
         @test length(unreachable) == 1
     end
 
@@ -2777,7 +2777,7 @@ end
             end
         end
         """)
-        unreachable = filter(d -> d.code == JETLS.LOWERING_UNREACHABLE_CODE, diagnostics)
+        unreachable = filter(d -> d.code == JETLSCore.LOWERING_UNREACHABLE_CODE, diagnostics)
         @test isempty(unreachable)
     end
 
@@ -2790,7 +2790,7 @@ end
             end
         end
         """)
-        unreachable = filter(d -> d.code == JETLS.LOWERING_UNREACHABLE_CODE, diagnostics)
+        unreachable = filter(d -> d.code == JETLSCore.LOWERING_UNREACHABLE_CODE, diagnostics)
         @test length(unreachable) == 1
     end
 
@@ -2805,7 +2805,7 @@ end
             end
         end
         """)
-        unreachable = filter(d -> d.code == JETLS.LOWERING_UNREACHABLE_CODE, diagnostics)
+        unreachable = filter(d -> d.code == JETLSCore.LOWERING_UNREACHABLE_CODE, diagnostics)
         @test length(unreachable) == 1
     end
 
@@ -2818,7 +2818,7 @@ end
             end
         end
         """)
-        unreachable = filter(d -> d.code == JETLS.LOWERING_UNREACHABLE_CODE, diagnostics)
+        unreachable = filter(d -> d.code == JETLSCore.LOWERING_UNREACHABLE_CODE, diagnostics)
         @test length(unreachable) == 1
     end
 
@@ -2836,7 +2836,7 @@ end
             println("after")
         end
         """)
-        unreachable = filter(d -> d.code == JETLS.LOWERING_UNREACHABLE_CODE, diagnostics)
+        unreachable = filter(d -> d.code == JETLSCore.LOWERING_UNREACHABLE_CODE, diagnostics)
         @test length(unreachable) == 1
         d = only(unreachable)
         # The diagnostic's range must end at line 3 (`println("unreachable")`),
@@ -2859,7 +2859,7 @@ end
             end
         end
         """)
-        unreachable = filter(d -> d.code == JETLS.LOWERING_UNREACHABLE_CODE, diagnostics)
+        unreachable = filter(d -> d.code == JETLSCore.LOWERING_UNREACHABLE_CODE, diagnostics)
         # Without the filter this would be 2 (println + the iterate-step whose provenance
         # is `i = 1:10`).
         @test length(unreachable) == 1
@@ -2878,7 +2878,7 @@ end
             println("Fallback")
         end
         """)
-        unreachable = filter(d -> d.code == JETLS.LOWERING_UNREACHABLE_CODE, diagnostics)
+        unreachable = filter(d -> d.code == JETLSCore.LOWERING_UNREACHABLE_CODE, diagnostics)
         @test isempty(unreachable)
     end
 
@@ -2893,7 +2893,7 @@ end
             println("Hit")
         end
         """)
-        unreachable = filter(d -> d.code == JETLS.LOWERING_UNREACHABLE_CODE, diagnostics)
+        unreachable = filter(d -> d.code == JETLSCore.LOWERING_UNREACHABLE_CODE, diagnostics)
         @test isempty(unreachable)
     end
 
@@ -2911,7 +2911,7 @@ end
             return @something parse_thing(env) return nothing
         end
         """)
-        unreachable = filter(d -> d.code == JETLS.LOWERING_UNREACHABLE_CODE, diagnostics)
+        unreachable = filter(d -> d.code == JETLSCore.LOWERING_UNREACHABLE_CODE, diagnostics)
         @test isempty(unreachable)
     end
 end
@@ -2927,7 +2927,7 @@ end
             active_call()
         end
     end
-    """; code = JETLS.LOWERING_INACTIVE_CODE)
+    """; code = JETLSCore.LOWERING_INACTIVE_CODE)
     d = only(diagnostics)
     @test d.severity == DiagnosticSeverity.Hint
     @test d.tags == [DiagnosticTag.Unnecessary]
@@ -2945,7 +2945,7 @@ end
             x = 2
         end
         """; context_module=soft_scope_module)
-        ds = filter(d -> d.code == JETLS.LOWERING_AMBIGUOUS_SOFT_SCOPE_CODE, diagnostics)
+        ds = filter(d -> d.code == JETLSCore.LOWERING_AMBIGUOUS_SOFT_SCOPE_CODE, diagnostics)
         @test length(ds) == 1
         d = only(ds)
         @test d.severity == DiagnosticSeverity.Warning
@@ -2954,7 +2954,7 @@ end
         @test d.data.name == "x"
         # lowering/unused-local should also be reported
         unused = filter(
-            d -> d.code == JETLS.LOWERING_UNUSED_LOCAL_CODE && contains(d.message, "`x`"),
+            d -> d.code == JETLSCore.LOWERING_UNUSED_LOCAL_CODE && contains(d.message, "`x`"),
             diagnostics)
         @test length(unused) == 1
     end
@@ -2967,7 +2967,7 @@ end
             end
         end
         """; context_module=soft_scope_module)
-        ds = filter(d -> d.code == JETLS.LOWERING_AMBIGUOUS_SOFT_SCOPE_CODE, diagnostics)
+        ds = filter(d -> d.code == JETLSCore.LOWERING_AMBIGUOUS_SOFT_SCOPE_CODE, diagnostics)
         @test isempty(ds)
     end
 
@@ -2977,7 +2977,7 @@ end
             y = 2
         end
         """; context_module=soft_scope_module)
-        ds = filter(d -> d.code == JETLS.LOWERING_AMBIGUOUS_SOFT_SCOPE_CODE, diagnostics)
+        ds = filter(d -> d.code == JETLSCore.LOWERING_AMBIGUOUS_SOFT_SCOPE_CODE, diagnostics)
         @test isempty(ds)
     end
 
@@ -2987,7 +2987,7 @@ end
             global x = 2
         end
         """; context_module=soft_scope_module)
-        ds = filter(d -> d.code == JETLS.LOWERING_AMBIGUOUS_SOFT_SCOPE_CODE, diagnostics)
+        ds = filter(d -> d.code == JETLSCore.LOWERING_AMBIGUOUS_SOFT_SCOPE_CODE, diagnostics)
         @test isempty(ds)
     end
 
@@ -2998,7 +2998,7 @@ end
             break
         end
         """; context_module=soft_scope_module)
-        ds = filter(d -> d.code == JETLS.LOWERING_AMBIGUOUS_SOFT_SCOPE_CODE, diagnostics)
+        ds = filter(d -> d.code == JETLSCore.LOWERING_AMBIGUOUS_SOFT_SCOPE_CODE, diagnostics)
         @test length(ds) == 1
     end
 
@@ -3009,7 +3009,7 @@ end
                 x = 2
             end
             """; context_module=soft_scope_module, soft_scope=true)
-            ds = filter(d -> d.code == JETLS.LOWERING_AMBIGUOUS_SOFT_SCOPE_CODE, diagnostics)
+            ds = filter(d -> d.code == JETLSCore.LOWERING_AMBIGUOUS_SOFT_SCOPE_CODE, diagnostics)
             @test isempty(ds)
         end
 
@@ -3019,7 +3019,7 @@ end
                 x = 2
             end
             """; context_module=soft_scope_module, soft_scope=false)
-            ds = filter(d -> d.code == JETLS.LOWERING_AMBIGUOUS_SOFT_SCOPE_CODE, diagnostics)
+            ds = filter(d -> d.code == JETLSCore.LOWERING_AMBIGUOUS_SOFT_SCOPE_CODE, diagnostics)
             @test length(ds) == 1
         end
     end
@@ -3034,7 +3034,7 @@ end
             @label here
         end
         """)
-        ds = filter(d -> d.code == JETLS.LOWERING_ERROR_CODE, diagnostics)
+        ds = filter(d -> d.code == JETLSCore.LOWERING_ERROR_CODE, diagnostics)
         @test isempty(ds)
     end
 
@@ -3045,7 +3045,7 @@ end
             @goto retry
         end
         """)
-        ds = filter(d -> d.code == JETLS.LOWERING_ERROR_CODE, diagnostics)
+        ds = filter(d -> d.code == JETLSCore.LOWERING_ERROR_CODE, diagnostics)
         @test isempty(ds)
     end
 
@@ -3055,7 +3055,7 @@ end
             println("foo")
         end
         """)
-        ds = filter(d -> d.code == JETLS.LOWERING_ERROR_CODE, diagnostics)
+        ds = filter(d -> d.code == JETLSCore.LOWERING_ERROR_CODE, diagnostics)
         @test length(ds) == 1
         d = only(ds)
         @test d.message == "label `nonexist` referenced but not defined"
@@ -3075,7 +3075,7 @@ end
             g()
         end
         """)
-        ds = filter(d -> d.code == JETLS.LOWERING_ERROR_CODE, diagnostics)
+        ds = filter(d -> d.code == JETLSCore.LOWERING_ERROR_CODE, diagnostics)
         @test length(ds) == 1
         @test only(ds).message == "label `outer` referenced but not defined"
     end
@@ -3087,7 +3087,7 @@ end
             @goto b
         end
         """)
-        ds = filter(d -> d.code == JETLS.LOWERING_ERROR_CODE, diagnostics)
+        ds = filter(d -> d.code == JETLSCore.LOWERING_ERROR_CODE, diagnostics)
         @test length(ds) == 2
         msgs = sort([d.message for d in ds])
         @test msgs == [
@@ -3104,7 +3104,7 @@ end
             return 1
         end
         """)
-        ds = filter(d -> d.code == JETLS.LOWERING_UNUSED_LABEL_CODE, diagnostics)
+        ds = filter(d -> d.code == JETLSCore.LOWERING_UNUSED_LABEL_CODE, diagnostics)
         @test length(ds) == 1
         d = only(ds)
         @test d.message == "Unused label `unused`"
@@ -3120,11 +3120,11 @@ end
             return 1
         end
         """)
-        ds = filter(d -> d.code == JETLS.LOWERING_UNUSED_LABEL_CODE, diagnostics)
+        ds = filter(d -> d.code == JETLSCore.LOWERING_UNUSED_LABEL_CODE, diagnostics)
         @test length(ds) == 1
         d = only(ds)
         @test d.message == "Unused label `unused`"
-        @test d.data isa JETLS.DeleteRangeData
+        @test d.data isa JETLSCore.DeleteRangeData
         dr = d.data.delete_range
         @test dr.start.line == 1
         @test dr.start.character == 0
@@ -3139,7 +3139,7 @@ end
             return 1
         end
         """)
-        ds = filter(d -> d.code == JETLS.LOWERING_UNUSED_LABEL_CODE, diagnostics)
+        ds = filter(d -> d.code == JETLSCore.LOWERING_UNUSED_LABEL_CODE, diagnostics)
         @test isempty(ds)
     end
 
@@ -3150,7 +3150,7 @@ end
             @goto loop
         end
         """)
-        ds = filter(d -> d.code == JETLS.LOWERING_UNUSED_LABEL_CODE, diagnostics)
+        ds = filter(d -> d.code == JETLSCore.LOWERING_UNUSED_LABEL_CODE, diagnostics)
         @test isempty(ds)
     end
 
@@ -3162,7 +3162,7 @@ end
             @label spare
         end
         """)
-        ds = filter(d -> d.code == JETLS.LOWERING_UNUSED_LABEL_CODE, diagnostics)
+        ds = filter(d -> d.code == JETLSCore.LOWERING_UNUSED_LABEL_CODE, diagnostics)
         @test length(ds) == 1
         @test only(ds).message == "Unused label `spare`"
     end
@@ -3176,7 +3176,7 @@ end
             g()
         end
         """)
-        ds = filter(d -> d.code == JETLS.LOWERING_UNUSED_LABEL_CODE, diagnostics)
+        ds = filter(d -> d.code == JETLSCore.LOWERING_UNUSED_LABEL_CODE, diagnostics)
         @test length(ds) == 1
         @test only(ds).message == "Unused label `outer`"
     end
@@ -3189,12 +3189,12 @@ end
             @label spare
             return 1
         end
-        """; context_module=JETLS.JETLSTestModule)
-        ds = filter(d -> d.code == JETLS.LOWERING_UNUSED_LABEL_CODE, diagnostics)
+        """; context_module=JETLSCore.JETLSTestModule)
+        ds = filter(d -> d.code == JETLSCore.LOWERING_UNUSED_LABEL_CODE, diagnostics)
         @test length(ds) == 1
         d = only(ds)
         @test d.message == "Unused label `spare`"
-        @test d.data isa JETLS.DeleteRangeData
+        @test d.data isa JETLSCore.DeleteRangeData
         dr = d.data.delete_range
         # Line-absorbing delete range over `@label spare` (line 2,
         # 0-indexed = 1) up to the start of line 3.
@@ -3208,9 +3208,9 @@ end
 const ORPHANED_DOCSTRING_TEST_URI = filepath2uri(@__FILE__)
 
 function get_orphaned_docstring_diagnostics(text::AbstractString; check_toplevel::Bool = true)
-    fi = JETLS.FileInfo(#=version=#0, text, @__FILE__)
-    return JETLS.analyze_orphaned_docstrings!(LSP.Diagnostic[], ORPHANED_DOCSTRING_TEST_URI,
-        fi, JETLS.build_syntax_tree(fi); check_toplevel)
+    fi = JETLSCore.FileInfo(#=version=#0, text, @__FILE__)
+    return JETLSCore.analyze_orphaned_docstrings!(LSP.Diagnostic[], ORPHANED_DOCSTRING_TEST_URI,
+        fi, JETLSCore.build_syntax_tree(fi); check_toplevel)
 end
 
 orphaned_docstring_message(reason::AbstractString) =
@@ -3218,7 +3218,7 @@ orphaned_docstring_message(reason::AbstractString) =
 
 @testset HierarchicalTestSet "orphaned docstring detection" begin
     @testset "separated from the definition" begin
-        let (text, positions) = JETLS.get_text_and_positions("""
+        let (text, positions) = JETLSCore.get_text_and_positions("""
                 const x = 1
                 │\"\"\"
                     foo()
@@ -3229,13 +3229,13 @@ orphaned_docstring_message(reason::AbstractString) =
             diagnostics = get_orphaned_docstring_diagnostics(text)
             @test length(diagnostics) == 1
             d = only(diagnostics)
-            @test d.code == JETLS.LOWERING_ORPHANED_DOCSTRING_CODE
+            @test d.code == JETLSCore.LOWERING_ORPHANED_DOCSTRING_CODE
             @test d.severity == LSP.DiagnosticSeverity.Information
             @test d.message == orphaned_docstring_message(
                 "the documented expression must start on the next line")
             @test d.range.start == positions[1]
             @test d.range.var"end" == positions[2]
-            @test d.data isa JETLS.OrphanedDocstringData
+            @test d.data isa JETLSCore.OrphanedDocstringData
         end
 
         # comments in between make the intended target unclear
@@ -3272,7 +3272,7 @@ orphaned_docstring_message(reason::AbstractString) =
                 end
                 """)
             @test length(diagnostics) == 1
-            @test only(diagnostics).data isa JETLS.OrphanedDocstringData
+            @test only(diagnostics).data isa JETLSCore.OrphanedDocstringData
         end
 
         let diagnostics = get_orphaned_docstring_diagnostics("""
@@ -3307,7 +3307,7 @@ orphaned_docstring_message(reason::AbstractString) =
             @test all(diagnostics) do d
                 d.message == orphaned_docstring_message(
                     "docstrings in this block are recognized only with `@doc`") &&
-                d.data isa JETLS.OrphanedDocstringData
+                d.data isa JETLSCore.OrphanedDocstringData
             end
         end
 
@@ -3322,7 +3322,7 @@ orphaned_docstring_message(reason::AbstractString) =
                 end
                 """)
             @test length(diagnostics) == 2
-            @test all(d -> d.data isa JETLS.OrphanedDocstringData, diagnostics)
+            @test all(d -> d.data isa JETLSCore.OrphanedDocstringData, diagnostics)
         end
 
         let diagnostics = get_orphaned_docstring_diagnostics("""
@@ -3336,7 +3336,7 @@ orphaned_docstring_message(reason::AbstractString) =
             d = only(diagnostics)
             @test d.message == orphaned_docstring_message(
                 "`raw` strings are recognized as docstrings only with `@doc`")
-            @test d.data isa JETLS.OrphanedDocstringData
+            @test d.data isa JETLSCore.OrphanedDocstringData
         end
     end
 
@@ -3384,14 +3384,14 @@ orphaned_docstring_message(reason::AbstractString) =
                 """)
             @test length(diagnostics) == 2
             @test diagnostics[1].range.start.line == 2
-            @test diagnostics[1].data isa JETLS.OrphanedDocstringData
+            @test diagnostics[1].data isa JETLSCore.OrphanedDocstringData
             @test diagnostics[2].range.start.line == 9
             @test diagnostics[2].message == orphaned_docstring_message("no expression follows it")
         end
     end
 
     @testset "fields of undocumented structs" begin
-        let (text, positions) = JETLS.get_text_and_positions("""
+        let (text, positions) = JETLSCore.get_text_and_positions("""
                 struct │Foo│{T} <: Bar
                     │"doc of x"│
                     x::T
@@ -3408,7 +3408,7 @@ orphaned_docstring_message(reason::AbstractString) =
             diagnostics = get_orphaned_docstring_diagnostics(text)
             @test length(diagnostics) == 2
             d = diagnostics[findfirst(d -> d.range.start == positions[1], diagnostics)]
-            @test d.code == JETLS.LOWERING_ORPHANED_DOCSTRING_CODE
+            @test d.code == JETLSCore.LOWERING_ORPHANED_DOCSTRING_CODE
             @test d.severity == LSP.DiagnosticSeverity.Information
             @test d.message == "Field docstrings of `Foo` are discarded because `Foo` has no docstring"
             @test d.range.var"end" == positions[2]

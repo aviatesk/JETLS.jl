@@ -107,6 +107,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Reduced the startup latency of `jetls check` and of language server sessions by precompiling more of what they always run, such as loading the configuration, handling the `initialized` notification, publishing diagnostics, and full analysis.
   For example, `jetls check` on a small script now finishes in about 1.5 seconds instead of 2.8 seconds.
 
+- The `jetls` commands that do not need the language server, namely `jetls --help`, `jetls --version`, `jetls schema`, and the `--help` of each command, now finish in about 0.1 seconds instead of 0.9 seconds.
+  Clients that check the installed version before starting the server, such as [the Zed extension](https://github.com/JuliaEditorSupport/zed-julia), start it about 0.8 seconds faster accordingly.
+
 ### Fixed
 
 - Fixed [`analysis_overrides`](https://aviatesk.github.io/JETLS.jl/release/launching/#init-options/analysis_overrides) being ignored when full analysis reached an excluded file through `include`, or when the excluded file was the entry file of a package or its tests.

@@ -1,9 +1,9 @@
 module test_jl_syntax_macros
 
 using Test
-using JETLS: JETLS, JL, JS
+using JETLSCore: JETLSCore, JL, JS
 
-include(normpath(pkgdir(JETLS), "test", "jsjl-utils.jl"))
+include("../jsjl-utils.jl")
 
 module lowering_module
 macro lazy_wrapper(idx)
@@ -31,7 +31,7 @@ jlexpand(code::AbstractString; kwargs...) = jlexpand(lowering_module, code; kwar
 
 function jlresolve(context_module::Module, code::AbstractString; world::UInt=Base.get_world_counter())
     st0 = jlparse(code; rule=:statement)
-    return JETLS.jl_lower_for_scope_resolution(context_module, world, st0;
+    return JETLSCore.jl_lower_for_scope_resolution(context_module, world, st0;
         recover_from_macro_errors=false, convert_closures=true)
 end
 jlresolve(code::AbstractString) = jlresolve(lowering_module, code)
@@ -49,9 +49,9 @@ function has_qualified_name(
         st::JS.SyntaxTree, qualifier::Symbol, name::AbstractString
     )
     found = Ref(false)
-    JETLS.traverse(st) do node::JS.SyntaxTree
+    JETLSCore.traverse(st) do node::JS.SyntaxTree
         if (JS.head(node) === qualifier && JS.numchildren(node) == 1 &&
-            JETLS.get_name_val(node[1]) == name)
+            JETLSCore.get_name_val(node[1]) == name)
             found[] = true
         end
         return nothing
@@ -69,7 +69,7 @@ function assert_binding_provenance(
         res, kind::Symbol, name::AbstractString;
         world::UInt = Base.get_world_counter()
     )
-    binding_occurrences = JETLS.compute_binding_occurrences(
+    binding_occurrences = JETLSCore.compute_binding_occurrences(
         res.ctx3, res.st3, world; include_global_bindings=true)
     binfo = nothing
     for (b, _) in binding_occurrences
@@ -110,7 +110,7 @@ function assert_no_binding(
         res, kind::Symbol, name::AbstractString;
         world::UInt = Base.get_world_counter()
     )
-    binding_occurrences = JETLS.compute_binding_occurrences(
+    binding_occurrences = JETLSCore.compute_binding_occurrences(
         res.ctx3, res.st3, world; include_global_bindings=true)
     found = any(binding_occurrences) do (b, _)
         b.kind === kind && b.name == name
@@ -122,8 +122,8 @@ end
 # a fresh vector, then return that vector so tests can inspect the collected
 # `MacroDiagnostic` entries.
 function collect_macro_diagnostics(f)
-    sink = JETLS.MacroDiagnostic[]
-    Base.ScopedValues.@with JETLS.MACRO_DIAGNOSTIC_SINK => sink f()
+    sink = JETLSCore.MacroDiagnostic[]
+    Base.ScopedValues.@with JETLSCore.MACRO_DIAGNOSTIC_SINK => sink f()
     return sink
 end
 
@@ -250,7 +250,7 @@ end
         ]
             st0 = jlparse(code)
             offset = findfirst("MyStruct", code).start
-            result = JETLS.select_target_binding(st0, offset, lowering_module, world)
+            result = JETLSCore.select_target_binding(st0, offset, lowering_module, world)
             @test result !== nothing
             binfo = JL.get_binding(result.ctx3, result.binding)
             @test binfo.name == "MyStruct"
@@ -285,7 +285,7 @@ end
                 end
                 @test length(diags) == 1
                 d = only(diags)
-                @test d.severity == JETLS.LSP.DiagnosticSeverity.Error
+                @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
                 @test occursin(msg, d.msg)
             end
         end
@@ -348,7 +348,7 @@ end
                 end
                 @test length(diags) == 1
                 d = only(diags)
-                @test d.severity == JETLS.LSP.DiagnosticSeverity.Error
+                @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
                 @test occursin(msg, d.msg)
             end
         end
@@ -399,7 +399,7 @@ end
                 end
                 @test length(diags) == 1
                 d = only(diags)
-                @test d.severity == JETLS.LSP.DiagnosticSeverity.Error
+                @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
                 @test occursin("@lock expects exactly two arguments", d.msg)
             end
         end
@@ -477,7 +477,7 @@ end
             end
             @test length(diags) == 1
             d = only(diags)
-            @test d.severity == JETLS.LSP.DiagnosticSeverity.Error
+            @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
             @test occursin("unsupported threadpool in @spawn: foo", d.msg)
         end
 
@@ -490,7 +490,7 @@ end
                 end
                 @test length(diags) == 1
                 d = only(diags)
-                @test d.severity == JETLS.LSP.DiagnosticSeverity.Error
+                @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
                 @test occursin("wrong number of arguments in @spawn", d.msg)
             end
         end
@@ -513,7 +513,7 @@ end
                 end
                 @test length(diags) == 1
                 d = only(diags)
-                @test d.severity == JETLS.LSP.DiagnosticSeverity.Error
+                @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
                 @test occursin("threadpool argument in @spawn must be", d.msg)
             end
         end
@@ -547,7 +547,7 @@ end
         end
         @test length(diags) == 1
         d = only(diags)
-        @test d.severity == JETLS.LSP.DiagnosticSeverity.Error
+        @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
         @test occursin("requires an identifier", d.msg)
     end
 
@@ -558,7 +558,7 @@ end
         end
         @test length(diags) == 1
         d = only(diags)
-        @test d.severity == JETLS.LSP.DiagnosticSeverity.Error
+        @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
         @test occursin("only supports the `@label name` form", d.msg)
     end
 
@@ -660,7 +660,7 @@ end
             end
             @test length(diags) == 1
             d = only(diags)
-            @test d.severity == JETLS.LSP.DiagnosticSeverity.Error
+            @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
             @test occursin("@lazy_str", d.msg)
         end
         @test collect_macro_diagnostics() do
@@ -705,7 +705,7 @@ end
 
     @testset "unquoted source mapping" begin
         for value in ("\"\$key", "\"\"\"\$key\"\"\"")
-            source_map = JETLS._lazy_str_source_map(value, value; quoted=false)
+            source_map = JETLSCore._lazy_str_source_map(value, value; quoted=false)
             @test source_map == Dict(i => i for i in 1:ncodeunits(value)+1)
         end
     end
@@ -772,7 +772,7 @@ end
             end
             @test length(diags) == 1
             d = only(diags)
-            @test d.severity == JETLS.LSP.DiagnosticSeverity.Error
+            @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
             @test occursin("at least one argument is required", d.msg)
         end
     end
@@ -870,7 +870,7 @@ logging_resolve(code::AbstractString) = jlresolve(logging_module, code)
                 end
                 @test length(diags) == 1
                 d = only(diags)
-                @test d.severity == JETLS.LSP.DiagnosticSeverity.Error
+                @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
                 @test occursin("$name requires at least one argument", d.msg)
             end
         end
@@ -888,7 +888,7 @@ logging_resolve(code::AbstractString) = jlresolve(logging_module, code)
                     end
                     @test length(diags) == 1
                     d = only(diags)
-                    @test d.severity == JETLS.LSP.DiagnosticSeverity.Error
+                    @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
                     @test occursin("provided more than once", d.msg)
                 end
             end
@@ -933,7 +933,7 @@ end
                 end
                 @test length(diags) == 1
                 d = only(diags)
-                @test d.severity == JETLS.LSP.DiagnosticSeverity.Error
+                @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
                 @test occursin("@logmsg requires at least two arguments", d.msg)
             end
         end
@@ -945,7 +945,7 @@ end
             end
             @test length(diags) == 1
             d = only(diags)
-            @test d.severity == JETLS.LSP.DiagnosticSeverity.Error
+            @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
             @test occursin("provided more than once", d.msg)
         end
     end
@@ -972,7 +972,7 @@ end
 function find_named_ref(st::JS.SyntaxTree, h::Symbol, name::AbstractString)
     if JS.head(st) === h && JS.numchildren(st) >= 1
         inner = st[1]
-        if JS.head(inner) === :identifier && JETLS.get_name_val(inner) == name
+        if JS.head(inner) === :identifier && JETLSCore.get_name_val(inner) == name
             return st
         end
     end
@@ -1056,7 +1056,7 @@ end
                     end
                     @test length(diags) == 1
                     d = only(diags)
-                    @test d.severity == JETLS.LSP.DiagnosticSeverity.Error
+                    @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
                     @test occursin("expects exactly one argument", d.msg)
                 end
             end
@@ -1069,7 +1069,7 @@ end
                     end
                     @test length(diags) == 1
                     d = only(diags)
-                    @test d.severity == JETLS.LSP.DiagnosticSeverity.Error
+                    @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
                     @test occursin("expected a `:call` expression", d.msg)
                 end
             end
@@ -1080,7 +1080,7 @@ end
                 end
                 @test length(diags) == 1
                 d = only(diags)
-                @test d.severity == JETLS.LSP.DiagnosticSeverity.Error
+                @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
                 @test occursin("setproperty!", d.msg)
             end
         end
@@ -1138,7 +1138,7 @@ test_macro_lower(code::AbstractString) = jlresolve(test_lowering_module, code)
                 end
                 @test length(diags) == 1
                 d = only(diags)
-                @test d.severity == JETLS.LSP.DiagnosticSeverity.Error
+                @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
                 @test occursin("cannot set `$kw` keyword multiple times", d.msg)
             end
         end
@@ -1150,7 +1150,7 @@ test_macro_lower(code::AbstractString) = jlresolve(test_lowering_module, code)
             end
             @test length(diags) == 1
             d = only(diags)
-            @test d.severity == JETLS.LSP.DiagnosticSeverity.Error
+            @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
             @test occursin("cannot set both `skip` and `broken`", d.msg)
         end
 
@@ -1161,7 +1161,7 @@ test_macro_lower(code::AbstractString) = jlresolve(test_lowering_module, code)
             end
             @test length(diags) == 1
             d = only(diags)
-            @test d.severity == JETLS.LSP.DiagnosticSeverity.Error
+            @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
             @test occursin("expected `keyword=value`", d.msg)
         end
     end
@@ -1233,7 +1233,7 @@ end
             end
             @test length(diags) == 1
             d = only(diags)
-            @test d.severity == JETLS.LSP.DiagnosticSeverity.Error
+            @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
             @test occursin("No arguments to @testset", d.msg)
         end
 
@@ -1245,7 +1245,7 @@ end
                 end
                 @test length(diags) == 1
                 d = only(diags)
-                @test d.severity == JETLS.LSP.DiagnosticSeverity.Error
+                @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
                 @test occursin("body argument must be", d.msg)
             end
         end
@@ -1258,7 +1258,7 @@ end
             end
             @test length(diags) == 1
             d = only(diags)
-            @test d.severity == JETLS.LSP.DiagnosticSeverity.Warning
+            @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Warning
             @test occursin("Multiple descriptions provided to @testset", d.msg)
             @test JS.sourcetext(d.node) == "\"b\""
         end
@@ -1267,7 +1267,7 @@ end
             end
             @test length(diags) == 1
             d = only(diags)
-            @test d.severity == JETLS.LSP.DiagnosticSeverity.Warning
+            @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Warning
             @test occursin("Multiple testset types provided to @testset", d.msg)
             @test JS.sourcetext(d.node) == "Bar"
         end
@@ -1279,7 +1279,7 @@ end
             end
             @test length(diags) == 1
             d = only(diags)
-            @test d.severity == JETLS.LSP.DiagnosticSeverity.Warning
+            @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Warning
             @test occursin("option `verbose` provided more than once", d.msg)
             @test strip(JS.sourcetext(d.node)) == "verbose=false"
         end
@@ -1291,7 +1291,7 @@ end
             end
             @test length(diags) == 1
             d = only(diags)
-            @test d.severity == JETLS.LSP.DiagnosticSeverity.Error
+            @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
             @test occursin("unexpected argument", d.msg)
         end
 
@@ -1300,7 +1300,7 @@ end
                 test_macro_expand("@testset MyType \"x\" verbose=true let v = 1 end")
             end
             @test length(diags) == 3
-            @test all(d -> d.severity == JETLS.LSP.DiagnosticSeverity.Error, diags)
+            @test all(d -> d.severity == JETLSCore.LSP.DiagnosticSeverity.Error, diags)
             @test all(d -> occursin("with a `let` argument cannot be customized", d.msg), diags)
             @test Set(strip(JS.sourcetext(d.node)) for d in diags) == Set(["MyType", "\"x\"", "verbose=true"])
         end
@@ -1353,7 +1353,7 @@ end
             local_result = assert_binding_provenance(res, :local, "i")
             if local_result !== nothing
                 world = Base.get_world_counter()
-                occurrences = JETLS.compute_binding_occurrences(res.ctx3, res.st3, world)
+                occurrences = JETLSCore.compute_binding_occurrences(res.ctx3, res.st3, world)
                 desc_range = source_range(code, "\"case: \$(i)\"")
                 @test any(occurrences[local_result[1]]) do occurrence
                     occurrence.kind === :use && JS.byte_range(occurrence.tree) ⊆ desc_range
@@ -1394,7 +1394,7 @@ end
                 end
                 @test length(diags) == 1
                 d = only(diags)
-                @test d.severity == JETLS.LSP.DiagnosticSeverity.Error
+                @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
                 @test occursin("@test_throws expects exactly two arguments", d.msg)
             end
         end
@@ -1432,7 +1432,7 @@ end
                 end
                 @test length(diags) == 1
                 d = only(diags)
-                @test d.severity == JETLS.LSP.DiagnosticSeverity.Error
+                @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
                 @test occursin("expected `keyword=value`", d.msg)
             end
         end
@@ -1493,7 +1493,7 @@ end
             end
             @test length(diags) == 1
             d = only(diags)
-            @test d.severity == JETLS.LSP.DiagnosticSeverity.Error
+            @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
             @test occursin("@test_logs needs at least one argument", d.msg)
         end
     end
@@ -1526,7 +1526,7 @@ end
                 end
                 @test length(diags) == 1
                 d = only(diags)
-                @test d.severity == JETLS.LSP.DiagnosticSeverity.Error
+                @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
                 @test occursin("@test_deprecated expects one or two arguments", d.msg)
             end
         end
@@ -1551,7 +1551,7 @@ end
                 end
                 @test length(diags) == 1
                 d = only(diags)
-                @test d.severity == JETLS.LSP.DiagnosticSeverity.Error
+                @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
                 @test occursin("@inferred expects one or two arguments", d.msg)
             end
         end
@@ -1604,7 +1604,7 @@ end
             end
             @test length(diags) == 1
             d = only(diags)
-            @test d.severity == JETLS.LSP.DiagnosticSeverity.Error
+            @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
             @test occursin("at least one argument is required", d.msg)
         end
 
@@ -1616,7 +1616,7 @@ end
             end
             @test length(diags) == 1
             d = only(diags)
-            @test d.severity == JETLS.LSP.DiagnosticSeverity.Error
+            @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
             @test occursin("unrecognized effect setting `:badname`", d.msg)
         end
 
@@ -1627,7 +1627,7 @@ end
                 end
                 @test length(diags) == 1
                 d = only(diags)
-                @test d.severity == JETLS.LSP.DiagnosticSeverity.Error
+                @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
                 @test occursin("expected an effect setting", d.msg)
             end
         end
@@ -1640,7 +1640,7 @@ end
                 end
                 @test length(diags) == 1
                 d = only(diags)
-                @test d.severity == JETLS.LSP.DiagnosticSeverity.Error
+                @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
                 @test occursin("unrecognized effect setting", d.msg)
             end
         end
@@ -1678,7 +1678,7 @@ const STATIC_BINDINGS = (:Int, :Bool)
 end
 
 module static_macro_module
-using JETLS: JL, JS, SyntaxTree
+using JETLSCore: JL, JS, SyntaxTree
 const STATIC_COND_FLAG = false
 function var"@static_condition"(ctx::JL.MacroContext)
     return JL.@ast(ctx, ctx.macrocall, true::value)
@@ -1817,7 +1817,7 @@ end
                 @test JS.byte_range(st1[1]) == source_range(code, taken)
             end
             d = only(diags)
-            @test d.code == JETLS.LOWERING_INACTIVE_CODE
+            @test d.code == JETLSCore.LOWERING_INACTIVE_CODE
             @test occursin(dropped, JS.sourcetext(d.node))
         end
     end
@@ -1829,8 +1829,8 @@ end
                 jlexpand("@static if false; aaa; else; bbb; end")
             end
             d = only(diags)
-            @test d.severity == JETLS.LSP.DiagnosticSeverity.Hint
-            @test d.code == JETLS.LOWERING_INACTIVE_CODE
+            @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Hint
+            @test d.code == JETLSCore.LOWERING_INACTIVE_CODE
             @test occursin("Inactive `@static` branch", d.msg)
             @test occursin("`false`", d.msg)
             @test occursin("aaa", JS.sourcetext(d.node))
@@ -1840,7 +1840,7 @@ end
                 jlexpand("@static if true; aaa; else; bbb; end")
             end
             d = only(diags)
-            @test d.code == JETLS.LOWERING_INACTIVE_CODE
+            @test d.code == JETLSCore.LOWERING_INACTIVE_CODE
             @test occursin("`true`", d.msg)
             @test !occursin("aaa", JS.sourcetext(d.node))
             @test occursin("bbb", JS.sourcetext(d.node))
@@ -1875,7 +1875,7 @@ end
                 jlexpand("@static if true; aaa; elseif undefined_var_xyz; bbb; end")
             end
             d = only(diags)
-            @test d.code == JETLS.LOWERING_INACTIVE_CODE
+            @test d.code == JETLSCore.LOWERING_INACTIVE_CODE
             @test occursin("undefined_var_xyz", JS.sourcetext(d.node))
             @test occursin("bbb", JS.sourcetext(d.node))
         end
@@ -1906,7 +1906,7 @@ end
             end
             @test length(diags) == 1
             d = only(diags)
-            @test d.severity == JETLS.LSP.DiagnosticSeverity.Error
+            @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
             @test occursin("invalid @static macro", d.msg)
         end
 
@@ -1917,7 +1917,7 @@ end
                 end
                 @test length(diags) == 1
                 d = only(diags)
-                @test d.severity == JETLS.LSP.DiagnosticSeverity.Error
+                @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
                 @test occursin("invalid @static macro", d.msg)
             end
         end
@@ -1930,7 +1930,7 @@ end
             end
             @test length(diags) == 1
             d = only(diags)
-            @test d.severity == JETLS.LSP.DiagnosticSeverity.Error
+            @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
             @test occursin("failed to evaluate condition", d.msg)
         end
 
@@ -1940,7 +1940,7 @@ end
             end
             @test length(diags) == 1
             d = only(diags)
-            @test d.severity == JETLS.LSP.DiagnosticSeverity.Error
+            @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
             @test occursin("did not evaluate to a Bool", d.msg)
         end
     end

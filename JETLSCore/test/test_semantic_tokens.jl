@@ -1,16 +1,16 @@
 module test_semantic_tokens
 
 using Test
-using JETLS
-using JETLS.LSP
+using JETLSCore
+using JETLSCore.LSP
 
-const TYPE_PARAMETER       = JETLS.SEMANTIC_TOKEN_TYPE_PARAMETER
-const TYPE_TYPE_PARAMETER  = JETLS.SEMANTIC_TOKEN_TYPE_TYPE_PARAMETER
-const TYPE_VARIABLE        = JETLS.SEMANTIC_TOKEN_TYPE_VARIABLE
-const TYPE_UNSPECIFIED     = JETLS.SEMANTIC_TOKEN_TYPE_UNSPECIFIED
+const TYPE_PARAMETER       = JETLSCore.SEMANTIC_TOKEN_TYPE_PARAMETER
+const TYPE_TYPE_PARAMETER  = JETLSCore.SEMANTIC_TOKEN_TYPE_TYPE_PARAMETER
+const TYPE_VARIABLE        = JETLSCore.SEMANTIC_TOKEN_TYPE_VARIABLE
+const TYPE_UNSPECIFIED     = JETLSCore.SEMANTIC_TOKEN_TYPE_UNSPECIFIED
 
-const MOD_DECLARATION      = JETLS.SEMANTIC_TOKEN_MODIFIER_DECLARATION
-const MOD_DEFINITION       = JETLS.SEMANTIC_TOKEN_MODIFIER_DEFINITION
+const MOD_DECLARATION      = JETLSCore.SEMANTIC_TOKEN_MODIFIER_DECLARATION
+const MOD_DEFINITION       = JETLSCore.SEMANTIC_TOKEN_MODIFIER_DEFINITION
 
 function decode_semantic_tokens(data::Vector{UInt})
     @assert length(data) % 5 == 0
@@ -30,9 +30,9 @@ function decode_semantic_tokens(data::Vector{UInt})
 end
 
 function tokens_for(code::AbstractString; range::Union{Nothing,Range} = nothing)
-    fi = JETLS.FileInfo(1, code, @__FILE__, PositionEncodingKind.UTF16; cache_tree0 = true)
-    decoded = decode_semantic_tokens(JETLS.semantic_tokens(fi; range))
-    JETLS.check_syntax_tree0(fi)
+    fi = JETLSCore.FileInfo(1, code, @__FILE__, PositionEncodingKind.UTF16; cache_tree0 = true)
+    decoded = decode_semantic_tokens(JETLSCore.semantic_tokens(fi; range))
+    JETLSCore.check_syntax_tree0(fi)
     # LSP delta encoding requires tokens to be sorted by (line, char).
     @test issorted(decoded; by = t -> (t.line, t.char))
     # No legitimate identifier should span more than ~100 bytes. Occurrences

@@ -108,7 +108,7 @@ function jl_lower_for_scope_resolution(
         soft_scope::Bool = false,
     )
     if trim_error_nodes
-        st0 = JETLS.trim_error_nodes(st0)
+        st0 = JETLSCore.trim_error_nodes(st0)
     end
     st1 = try
         st0 = JL.rebase_layers(st0, context_module)

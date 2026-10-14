@@ -1,11 +1,11 @@
 module test_rename
 
 using Test
-using JETLS
-using JETLS.LSP
+using JETLSCore
+using JETLSCore.LSP
 
-include(normpath(pkgdir(JETLS), "test", "setup.jl"))
-include(normpath(pkgdir(JETLS), "test", "jsjl-utils.jl"))
+include("setup.jl")
+include("jsjl-utils.jl")
 
 function rename_testcase(
         code::AbstractString, n::Int;
@@ -15,19 +15,19 @@ function rename_testcase(
         # URI can hit stale cache entries when byte ranges of top-level
         # statements happen to coincide.
         filename::AbstractString = joinpath(@__DIR__, "testfile_$(gensym(:rename_testcase)).jl"),
-        server::Union{JETLS.Server,Nothing} = nothing,
+        server::Union{JETLSCore.Server,Nothing} = nothing,
         context_module::Union{Module,Nothing} = nothing,
     )
-    clean_code, positions = JETLS.get_text_and_positions(code)
+    clean_code, positions = JETLSCore.get_text_and_positions(code)
     @assert length(positions) == n
-    fi = JETLS.FileInfo(#=version=#0, clean_code, filename; cache_tree0 = true)
-    @assert issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
+    fi = JETLSCore.FileInfo(#=version=#0, clean_code, filename; cache_tree0 = true)
+    @assert issorted(positions; by = x -> JETLSCore.xy_to_offset(fi, x))
     furi = filename2uri(filename)
     # Register the file with the provided server so that
     # `get_file_info`/`collect_global_rename_edits!` can actually find it —
     # otherwise global rename silently returns an empty `changes` dict.
     if server !== nothing
-        JETLS.store!(server.state.file_cache) do cache
+        JETLSCore.store!(server.state.file_cache) do cache
             Base.PersistentDict(cache, furi => fi), nothing
         end
         # Tie the file URI to a dedicated module so that `get_context_info`
@@ -36,8 +36,8 @@ function rename_testcase(
         # falls back to `FallbackAnalysisContext`, causing a module mismatch that makes
         # `find_global_binding_occurrences!` miss every occurrence.
         if context_module !== nothing
-            JETLS.cache_out_of_scope!(
-                server.state.analysis_manager, furi, JETLS.OutOfScope(context_module))
+            JETLSCore.cache_out_of_scope!(
+                server.state.analysis_manager, furi, JETLSCore.OutOfScope(context_module))
         end
     end
     return fi, positions, furi
@@ -52,49 +52,49 @@ function binding_rename_testcase(code::AbstractString, n::Int; kwargs...)
 end
 
 function local_rename_preparation_testcase(
-        state::JETLS.ServerState, code::AbstractString, n::Int,
+        state::JETLSCore.ServerState, code::AbstractString, n::Int,
         context_module::Module
     )
     (; fi, positions, furi, world) = binding_rename_testcase(code, n)
     function prepare(pos::Position)
-        result = JETLS.prepare_local_binding_rename(
+        result = JETLSCore.prepare_local_binding_rename(
             state, furi, fi, pos, context_module, world)
-        JETLS.check_syntax_tree0(fi)
+        JETLSCore.check_syntax_tree0(fi)
         return result
     end
     return (; positions, prepare)
 end
 
 function global_rename_preparation_testcase(
-        state::JETLS.ServerState, code::AbstractString, n::Int,
+        state::JETLSCore.ServerState, code::AbstractString, n::Int,
         context_module::Module
     )
     (; fi, positions, furi, world) = binding_rename_testcase(code, n)
     function prepare(pos::Position)
-        result = JETLS.prepare_global_binding_rename(
+        result = JETLSCore.prepare_global_binding_rename(
             state, furi, fi, pos, context_module, world)
-        JETLS.check_syntax_tree0(fi)
+        JETLSCore.check_syntax_tree0(fi)
         return result
     end
     return (; positions, prepare)
 end
 
 function local_rename_testcase(
-        server::JETLS.Server, code::AbstractString, n::Int,
+        server::JETLSCore.Server, code::AbstractString, n::Int,
         context_module::Module
     )
     (; fi, positions, furi, world) = binding_rename_testcase(code, n)
     function rename_binding(pos::Position, new_name::String)
-        result = JETLS.get_local_binding_rename(
+        result = JETLSCore.get_local_binding_rename(
             server, furi, fi, pos, context_module, world, new_name)
-        JETLS.check_syntax_tree0(fi)
+        JETLSCore.check_syntax_tree0(fi)
         return result
     end
     return (; positions, furi, rename_binding)
 end
 
 function global_rename_testcase(
-        server::JETLS.Server, code::AbstractString, n::Int,
+        server::JETLSCore.Server, code::AbstractString, n::Int,
         context_module::Module; register_file::Bool = false
     )
     testcase = if register_file
@@ -104,16 +104,16 @@ function global_rename_testcase(
     end
     (; fi, positions, furi, world) = testcase
     function rename_binding(pos::Position, new_name::String)
-        result = JETLS.get_global_binding_rename(
+        result = JETLSCore.get_global_binding_rename(
             server, furi, fi, pos, context_module, world, new_name)
-        JETLS.check_syntax_tree0(fi)
+        JETLSCore.check_syntax_tree0(fi)
         return result
     end
     return (; positions, furi, rename_binding)
 end
 
 @testset "local_binding_rename_preparation" begin
-    state = JETLS.ServerState()
+    state = JETLSCore.ServerState()
     let code = """
         function func(│xx│x│, yyy)
             │pri│ntln│(│xx│x│, yyy)
@@ -181,7 +181,7 @@ end
 end
 
 @testset "local_binding_rename" begin
-    server = JETLS.Server()
+    server = JETLSCore.Server()
     let code = """
         function func(│xx│x│, yyy)
             │pri│ntln│(│xx│x│, yyy)
@@ -464,7 +464,7 @@ end
 end
 
 @testset "global_binding_rename_preparation" begin
-    state = JETLS.ServerState()
+    state = JETLSCore.ServerState()
     let code = """
         │foo│() = 42
         │bar│ = │foo│()
@@ -557,7 +557,7 @@ end
 end
 
 @testset "global_binding_rename" begin
-    server = JETLS.Server()
+    server = JETLSCore.Server()
     let code = """
         │foo│() = 42
         baz() = │foo│()
@@ -748,7 +748,7 @@ end
 end
 
 @testset "file_rename_preparation" begin
-    state = JETLS.ServerState()
+    state = JETLSCore.ServerState()
     mktempdir() do dir
         touch(joinpath(dir, "foo.jl"))
         mkdir(joinpath(dir, "subdir"))
@@ -760,7 +760,7 @@ end
             fi, positions, furi = rename_testcase(code, 2;
                 filename = joinpath(dir, "main.jl"))
             for pos in positions
-                rename_prep = JETLS.prepare_file_rename(state, furi, fi, pos)
+                rename_prep = JETLSCore.prepare_file_rename(state, furi, fi, pos)
                 @test !isnothing(rename_prep)
                 @test rename_prep.placeholder == target_name
                 @test rename_prep.range == Range(; start=positions[1], var"end"=positions[2])
@@ -770,21 +770,21 @@ end
         let code = """include("│nonexistent.jl│")"""
             fi, positions, furi = rename_testcase(code, 2;
                 filename = joinpath(dir, "main.jl"))
-            rename_prep = JETLS.prepare_file_rename(state, furi, fi, positions[1])
+            rename_prep = JETLSCore.prepare_file_rename(state, furi, fi, positions[1])
             @test isnothing(rename_prep)
         end
     end
 end
 
 @testset "file_rename" begin
-    server = JETLS.Server()
+    server = JETLSCore.Server()
     mktempdir() do dir
         touch(joinpath(dir, "foo.jl"))
         code = """include("│foo.jl│")"""
         fi, positions, furi = rename_testcase(code, 2;
             filename = joinpath(dir, "main.jl"))
         for pos in positions
-            (; result, error) = JETLS.get_file_rename(server, furi, fi, pos, "bar.jl")
+            (; result, error) = JETLSCore.get_file_rename(server, furi, fi, pos, "bar.jl")
             @test result isa WorkspaceEdit && isnothing(error)
             @test length(result.changes) == 1
             edits = result.changes[furi]

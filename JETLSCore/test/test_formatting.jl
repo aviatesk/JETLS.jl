@@ -4,9 +4,9 @@ include("setup.jl")
 
 using Test
 using Logging: with_logger
-using JETLS
-using JETLS.LSP
-using JETLS.URIs2
+using JETLSCore
+using JETLSCore.LSP
+using JETLSCore.URIs2
 
 function make_range(
         start_line::Int, start_character::Int, end_line::Int, end_character::Int
@@ -27,9 +27,9 @@ function ranges_formatting_capabilities()
                 rangesSupport = true)))
 end
 
-function store_lsp_config!(server::JETLS.Server, config::JETLS.JETLSConfig)
-    JETLS.store!(server.state.config_manager) do old_data::JETLS.ConfigManagerData
-        new_data = JETLS.ConfigManagerData(old_data; lsp_config = config)
+function store_lsp_config!(server::JETLSCore.Server, config::JETLSCore.JETLSConfig)
+    JETLSCore.store!(server.state.config_manager) do old_data::JETLSCore.ConfigManagerData
+        new_data = JETLSCore.ConfigManagerData(old_data; lsp_config = config)
         return new_data, nothing
     end
 end
@@ -62,17 +62,17 @@ function run_script_formatter(
     write(exe, "#!/bin/sh\n" * body)
     chmod(exe, 0o755)
     uri = filepath2uri(joinpath(tempdir, "test.jl"))
-    formatter = JETLS.CustomFormatterConfig(exe, exe)
-    return JETLS.run_formatter(exe, text, nothing, uri, formatting_options(), formatter)
+    formatter = JETLSCore.CustomFormatterConfig(exe, exe)
+    return JETLSCore.run_formatter(exe, text, nothing, uri, formatting_options(), formatter)
 end
 
-function configure_formatter!(server::JETLS.Server, exe::AbstractString)
-    return store_lsp_config!(server, JETLS.JETLSConfig(;
-        formatter = JETLS.CustomFormatterConfig(exe, exe)))
+function configure_formatter!(server::JETLSCore.Server, exe::AbstractString)
+    return store_lsp_config!(server, JETLSCore.JETLSConfig(;
+        formatter = JETLSCore.CustomFormatterConfig(exe, exe)))
 end
 
-function cache_test_file!(server::JETLS.Server, uri::URI, text::AbstractString)
-    return JETLS.cache_file_info!(server, uri, 1, text)
+function cache_test_file!(server::JETLSCore.Server, uri::URI, text::AbstractString)
+    return JETLSCore.cache_file_info!(server, uri, 1, text)
 end
 
 @testset "`run_formatter` handles large input and output" begin
@@ -83,8 +83,8 @@ end
             with_passthrough_formatter(tempdir) do exe, _
                 text = repeat("a=1\n", 300_000)
                 uri = filepath2uri(joinpath(tempdir, "test.jl"))
-                formatter = JETLS.CustomFormatterConfig(exe, exe)
-                result = JETLS.run_formatter(
+                formatter = JETLSCore.CustomFormatterConfig(exe, exe)
+                result = JETLSCore.run_formatter(
                     exe, text, nothing, uri, formatting_options(), formatter)
                 @test result == text
             end

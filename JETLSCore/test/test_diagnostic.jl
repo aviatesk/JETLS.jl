@@ -4,11 +4,11 @@ include("setup.jl")
 include("jsjl-utils.jl")
 
 using Test
-using JETLS
-using JETLS: JL, JS
-using JETLS.LSP
-using JETLS.URIs2
-using JETLS.Glob
+using JETLSCore
+using JETLSCore: JL, JS
+using JETLSCore.LSP
+using JETLSCore.URIs2
+using JETLSCore.Glob
 
 @testset "syntax error diagnostics" begin
     # Test with code that has syntax errors
@@ -29,14 +29,14 @@ using JETLS.Glob
                 make_DidOpenTextDocumentNotification(uri, script_code))
             @test raw_res isa PublishDiagnosticsNotification
             @test !any(raw_res.params.diagnostics) do d
-                d.source == JETLS.DIAGNOSTIC_SOURCE_SAVE
+                d.source == JETLSCore.DIAGNOSTIC_SOURCE_SAVE
             end
 
             # the live scan pushes them for the open file, tagged with its version
             params = scan_live_diagnostics!(server, readmsg)[uri]
             @test params.version == 1
-            @test any(d -> d.source == JETLS.DIAGNOSTIC_SOURCE_LIVE, params.diagnostics)
-            @test all(d -> d.code == JETLS.SYNTAX_PARSE_ERROR_CODE, params.diagnostics)
+            @test any(d -> d.source == JETLSCore.DIAGNOSTIC_SOURCE_LIVE, params.diagnostics)
+            @test all(d -> d.code == JETLSCore.SYNTAX_PARSE_ERROR_CODE, params.diagnostics)
         end
     end
 end
@@ -58,13 +58,13 @@ end
             @test raw_res isa PublishDiagnosticsNotification
 
             params = scan_live_diagnostics!(server, readmsg)[uri]
-            let diag = only(filter(d -> d.code == JETLS.SYNTAX_PARSE_WARNING_CODE, params.diagnostics))
+            let diag = only(filter(d -> d.code == JETLSCore.SYNTAX_PARSE_WARNING_CODE, params.diagnostics))
                 @test diag.severity == DiagnosticSeverity.Warning
                 @test diag.range.start.line == 0
             end
-            @test !any(d -> d.code == JETLS.SYNTAX_PARSE_ERROR_CODE, params.diagnostics)
+            @test !any(d -> d.code == JETLSCore.SYNTAX_PARSE_ERROR_CODE, params.diagnostics)
             # parse warnings don't short-circuit the lowering-based analyses
-            @test any(d -> d.code == JETLS.LOWERING_UNUSED_LOCAL_CODE, params.diagnostics)
+            @test any(d -> d.code == JETLSCore.LOWERING_UNUSED_LOCAL_CODE, params.diagnostics)
         end
     end
 end
@@ -86,7 +86,7 @@ end
 
             found_diagnostic = false
             for diag in raw_res.params.diagnostics
-                if (diag.source == JETLS.DIAGNOSTIC_SOURCE_SAVE &&
+                if (diag.source == JETLSCore.DIAGNOSTIC_SOURCE_SAVE &&
                     diag.range.start.line == 0)
                     found_diagnostic = true
                     break
@@ -100,19 +100,19 @@ end
 function analyze_concretization(
         code::String, filename::String;
         mode::Symbol = :script,
-        timeout::Union{Float64,String} = JETLS.JET.DEFAULT_CONCRETIZATION_TIMEOUT,
+        timeout::Union{Float64,String} = JETLSCore.JET.DEFAULT_CONCRETIZATION_TIMEOUT,
         pattern::Union{Nothing,String} = nothing
     )
-    server = JETLS.Server()
+    server = JETLSCore.Server()
     uri = filepath2uri(filename)
-    entry = mode === :script ? JETLS.ScriptAnalysisEntry(uri) :
-        JETLS.PackageSourceAnalysisEntry(dirname(filename), uri, Base.PkgId(@__MODULE__))
-    request = JETLS.AnalysisRequest(
+    entry = mode === :script ? JETLSCore.ScriptAnalysisEntry(uri) :
+        JETLSCore.PackageSourceAnalysisEntry(dirname(filename), uri, Base.PkgId(@__MODULE__))
+    request = JETLSCore.AnalysisRequest(
         entry, uri, #=generation=#1, #=token=#nothing, #=notify=#false)
-    execution = JETLS.AnalysisExecution(request, #=prev_result=#nothing)
-    interp = JETLS.LSInterpreter(server, execution)
+    execution = JETLSCore.AnalysisExecution(request, #=prev_result=#nothing)
+    interp = JETLSCore.LSInterpreter(server, execution)
     try
-        @test JETLS.getjetconfigs(server, entry)[:concretization_timeout] == JETLS.JET.DEFAULT_CONCRETIZATION_TIMEOUT
+        @test JETLSCore.getjetconfigs(server, entry)[:concretization_timeout] == JETLSCore.JET.DEFAULT_CONCRETIZATION_TIMEOUT
         full_analysis = Dict{String,Any}("concretization_timeout" => timeout)
         if pattern !== nothing
             server.state.root_path = dirname(filename)
@@ -120,11 +120,11 @@ function analyze_concretization(
                 Dict{String,Any}("pattern" => pattern)]
         end
         settings = Dict{String,Any}("full_analysis" => full_analysis)
-        JETLS.store_lsp_config!(JETLS.ConfigChangeTracker(), server, settings, "test")
-        jetconfigs = JETLS.getjetconfigs(server, entry)
+        JETLSCore.store_lsp_config!(JETLSCore.ConfigChangeTracker(), server, settings, "test")
+        jetconfigs = JETLSCore.getjetconfigs(server, entry)
         @test jetconfigs[:concretization_timeout] == (timeout == "inf" ? Inf : timeout)
         context = Module(gensym(:ConcretizationTimeout))
-        result = JETLS.JET.analyze_and_report_text!(interp, code, filename;
+        result = JETLSCore.JET.analyze_and_report_text!(interp, code, filename;
             jetconfigs...,
             context,
             virtualize = false,
@@ -155,7 +155,7 @@ end
             continue
         end
         report = result.res.toplevel_error_report
-        @test report isa JETLS.JET.ConcretizationTimeoutErrorReport
+        @test report isa JETLSCore.JET.ConcretizationTimeoutErrorReport
         @test report.timeout == timeout
         if mode === :script
             # the `@eval`ed code is interpreted, so the timeout stops inside `sleep`
@@ -169,16 +169,16 @@ end
         @test isempty(result.res.inference_error_reports)
 
         uri = filepath2uri(filename)
-        postprocessor = JETLS.JET.PostProcessor(result.res.actual2virtual)
+        postprocessor = JETLSCore.JET.PostProcessor(result.res.actual2virtual)
         for markdown_rendering in (false, true)
-            uri2diagnostics = JETLS.URI2Diagnostics(uri => Diagnostic[])
-            JETLS.jet_result_to_diagnostics!(uri2diagnostics, result,
+            uri2diagnostics = JETLSCore.URI2Diagnostics(uri => Diagnostic[])
+            JETLSCore.jet_result_to_diagnostics!(uri2diagnostics, result,
                 Base.get_world_counter(), postprocessor; markdown_rendering)
             diag = only(uri2diagnostics[uri])
-            @test diag.code == JETLS.TOPLEVEL_CONCRETIZATION_TIMEOUT_CODE
+            @test diag.code == JETLSCore.TOPLEVEL_CONCRETIZATION_TIMEOUT_CODE
             @test diag.severity == DiagnosticSeverity.Error
-            @test diag.source == JETLS.DIAGNOSTIC_SOURCE_SAVE
-            @test diag.range == JETLS.line_range(report.line)
+            @test diag.source == JETLSCore.DIAGNOSTIC_SOURCE_SAVE
+            @test diag.range == JETLSCore.line_range(report.line)
             @test occursin(string(timeout), diag.message)
             @test occursin("`concretization_timeout`", first(eachsplit(diag.message, '\n')))
             mode === :script && @test occursin("sleep", diag.message)
@@ -232,7 +232,7 @@ end
                 continue
             end
             report = result.res.toplevel_error_report
-            @test report isa JETLS.JET.ConcretizationTimeoutErrorReport
+            @test report isa JETLSCore.JET.ConcretizationTimeoutErrorReport
             @test report.timeout == timeout
             @test report.file == filename
             @test report.line == 7
@@ -244,14 +244,14 @@ end
             end
 
             uri = filepath2uri(filename)
-            uri2diagnostics = JETLS.URI2Diagnostics(uri => Diagnostic[])
-            postprocessor = JETLS.JET.PostProcessor(result.res.actual2virtual)
-            JETLS.jet_result_to_diagnostics!(uri2diagnostics, result, Base.get_world_counter(), postprocessor)
+            uri2diagnostics = JETLSCore.URI2Diagnostics(uri => Diagnostic[])
+            postprocessor = JETLSCore.JET.PostProcessor(result.res.actual2virtual)
+            JETLSCore.jet_result_to_diagnostics!(uri2diagnostics, result, Base.get_world_counter(), postprocessor)
             diag = only(uri2diagnostics[uri])
-            @test diag.code == JETLS.TOPLEVEL_CONCRETIZATION_TIMEOUT_CODE
+            @test diag.code == JETLSCore.TOPLEVEL_CONCRETIZATION_TIMEOUT_CODE
             @test diag.severity == DiagnosticSeverity.Error
-            @test diag.source == JETLS.DIAGNOSTIC_SOURCE_SAVE
-            @test diag.range == JETLS.line_range(report.line)
+            @test diag.source == JETLSCore.DIAGNOSTIC_SOURCE_SAVE
+            @test diag.range == JETLSCore.line_range(report.line)
             @test occursin(string(timeout), diag.message)
             @test !occursin("```", diag.message)
             if !native
@@ -331,26 +331,26 @@ end
                 # non-standard names need `var"..."` quoting to stay parseable
                 (Expr(:(=), Symbol("USE PULSE"), :(rand(Bool))), "var\"USE PULSE\" = x_"),
             )
-            assignment = JETLS.JET.toplevel_assignment(expression, "config.jl", 1)
-            report = JETLS.JET.MissingConcretizationErrorReport(
+            assignment = JETLSCore.JET.toplevel_assignment(expression, "config.jl", 1)
+            report = JETLSCore.JET.MissingConcretizationErrorReport(
                 false, GlobalRef(Main, :RandomType), assignment, "use.jl", 1)
-            data = JETLS.missing_concretization_data(report)
+            data = JETLSCore.missing_concretization_data(report)
             @test data.pattern == expected
             # JET strips line numbers off configured patterns before matching
-            @test JETLS.JET.striplines(Meta.parse(data.pattern)) == assignment.pattern
+            @test JETLSCore.JET.striplines(Meta.parse(data.pattern)) == assignment.pattern
             @test data.assignment_file == "config.jl"
         end
         # no pattern could be derived: no `data`, hence no quick fix
-        let assignment = JETLS.JET.toplevel_assignment(
+        let assignment = JETLSCore.JET.toplevel_assignment(
                 :(let; global RandomType = rand(Bool); end), "config.jl", 1)
             @test assignment.pattern === nothing
-            report = JETLS.JET.MissingConcretizationErrorReport(
+            report = JETLSCore.JET.MissingConcretizationErrorReport(
                 false, GlobalRef(Main, :RandomType), assignment, "use.jl", 1)
-            @test JETLS.missing_concretization_data(report) === nothing
+            @test JETLSCore.missing_concretization_data(report) === nothing
         end
-        let report = JETLS.JET.MissingConcretizationErrorReport(
+        let report = JETLSCore.JET.MissingConcretizationErrorReport(
                 false, GlobalRef(Main, :RandomType), nothing, "use.jl", 1)
-            @test JETLS.missing_concretization_data(report) === nothing
+            @test JETLSCore.missing_concretization_data(report) === nothing
         end
     end
 
@@ -382,7 +382,7 @@ end
                 script_path = joinpath(dir, "issue464.jl")
                 write(script_path, code)
                 diagnostics = get_open_diagnostics(dir, script_path, code)
-                @test !any(d -> d.code == JETLS.TOPLEVEL_MISSING_CONCRETIZATION_CODE, diagnostics)
+                @test !any(d -> d.code == JETLSCore.TOPLEVEL_MISSING_CONCRETIZATION_CODE, diagnostics)
             end
         end
     end
@@ -393,11 +393,11 @@ end
             expected_path = uri2filename(filepath2uri(script_path))
             write(script_path, missing_concretization_code)
             diagnostics = get_open_diagnostics(dir, script_path, missing_concretization_code)
-            diag = only(filter(d -> d.code == JETLS.TOPLEVEL_MISSING_CONCRETIZATION_CODE, diagnostics))
+            diag = only(filter(d -> d.code == JETLSCore.TOPLEVEL_MISSING_CONCRETIZATION_CODE, diagnostics))
             @test diag.data isa MissingConcretizationData
             @test diag.data.name == "USE_PULSE"
             @test diag.data.pattern == "USE_PULSE = x_"
-            @test JETLS.paths_equal(diag.data.assignment_file, script_path)
+            @test JETLSCore.paths_equal(diag.data.assignment_file, script_path)
             summary, _ = split(diag.message, "\n\n"; limit=2)
             @test endswith(summary, "must have a concrete value for JETLS top-level analysis.")
             @test !occursin('\n', summary)
@@ -430,7 +430,7 @@ end
                 """
             write(script_path, code)
             diagnostics = get_open_diagnostics(dir, script_path, code)
-            diag = only(filter(d -> d.code == JETLS.TOPLEVEL_MISSING_CONCRETIZATION_CODE, diagnostics))
+            diag = only(filter(d -> d.code == JETLSCore.TOPLEVEL_MISSING_CONCRETIZATION_CODE, diagnostics))
             @test diag.data === nothing
             message = unwrapped_message(diag)
             @test occursin("`.JETLSConfig.toml` manually", message)
@@ -450,7 +450,7 @@ end
                 pattern = "USE_PULSE = x_"
                 """)
             diagnostics = get_open_diagnostics(dir, script_path, missing_concretization_code)
-            @test !any(d -> d.code == JETLS.TOPLEVEL_MISSING_CONCRETIZATION_CODE, diagnostics)
+            @test !any(d -> d.code == JETLSCore.TOPLEVEL_MISSING_CONCRETIZATION_CODE, diagnostics)
         end
     end
 
@@ -460,7 +460,7 @@ end
             write(script_path, missing_concretization_code)
             settings = concretization_settings("conditional-types.jl")
             diagnostics = get_open_diagnostics(dir, script_path, missing_concretization_code; settings)
-            @test !any(d -> d.code == JETLS.TOPLEVEL_MISSING_CONCRETIZATION_CODE, diagnostics)
+            @test !any(d -> d.code == JETLSCore.TOPLEVEL_MISSING_CONCRETIZATION_CODE, diagnostics)
         end
     end
 
@@ -473,12 +473,12 @@ end
 
             @testset "path of the includer does not match" begin
                 diagnostics = get_included_diagnostics(dir, main_path, included_path, concretization_settings("main.jl"))
-                @test any(d -> d.code == JETLS.TOPLEVEL_MISSING_CONCRETIZATION_CODE, diagnostics)
+                @test any(d -> d.code == JETLSCore.TOPLEVEL_MISSING_CONCRETIZATION_CODE, diagnostics)
             end
 
             @testset "path of the included file matches" begin
                 diagnostics = get_included_diagnostics(dir, main_path, included_path, concretization_settings("config.jl"))
-                @test !any(d -> d.code == JETLS.TOPLEVEL_MISSING_CONCRETIZATION_CODE, diagnostics)
+                @test !any(d -> d.code == JETLSCore.TOPLEVEL_MISSING_CONCRETIZATION_CODE, diagnostics)
             end
         end
     end
@@ -496,7 +496,7 @@ end
                     concretization_settings(replace(included_path, '\\' => '/')),
                 )
                 diagnostics = get_included_diagnostics(workspace, main_path, included_path, settings)
-                @test any(d -> d.code == JETLS.TOPLEVEL_MISSING_CONCRETIZATION_CODE, diagnostics)
+                @test any(d -> d.code == JETLSCore.TOPLEVEL_MISSING_CONCRETIZATION_CODE, diagnostics)
             end
         end
     end
@@ -531,10 +531,10 @@ end
 
             found_diagnostic1 = found_diagnostic2 = false
             for diag in raw_res.params.diagnostics
-                if diag.source == JETLS.DIAGNOSTIC_SOURCE_SAVE
-                    if diag.code == JETLS.INFERENCE_FIELD_ERROR_CODE && occursin("type `MyStruct` has no field `propert`, available fields: `property`", diag.message)
+                if diag.source == JETLSCore.DIAGNOSTIC_SOURCE_SAVE
+                    if diag.code == JETLSCore.INFERENCE_FIELD_ERROR_CODE && occursin("type `MyStruct` has no field `propert`, available fields: `property`", diag.message)
                         found_diagnostic1 = true
-                    elseif diag.code == JETLS.INFERENCE_METHOD_ERROR_CODE && occursin("no matching method found `f32(::Float64)`", diag.message)
+                    elseif diag.code == JETLSCore.INFERENCE_METHOD_ERROR_CODE && occursin("no matching method found `f32(::Float64)`", diag.message)
                         related2 = something(diag.relatedInformation, DiagnosticRelatedInformation[])
                         related_messages2 = map(info -> info.message, related2)
                         found_diagnostic2 = only(related_messages2) == "entry: main32()"
@@ -558,7 +558,7 @@ end
             (; raw_res) = writereadmsg(make_DidOpenTextDocumentNotification(uri, scriptcode))
             @test raw_res isa PublishDiagnosticsNotification
             diags = filter(raw_res.params.diagnostics) do diag
-                diag.code == JETLS.INFERENCE_TYPE_ERROR_NON_BOOL_COND_CODE
+                diag.code == JETLSCore.INFERENCE_TYPE_ERROR_NON_BOOL_COND_CODE
             end
             # only the comparison of a value that may actually be `missing` is reported
             @test only(diags).range.start.line == 1
@@ -601,14 +601,14 @@ end
 
             found_diagnostic1 = found_diagnostic2 = false
             for diag in raw_res.params.diagnostics
-                if diag.source == JETLS.DIAGNOSTIC_SOURCE_SAVE
-                    if diag.code == JETLS.INFERENCE_UNDEF_GLOBAL_VAR_CODE &&
+                if diag.source == JETLSCore.DIAGNOSTIC_SOURCE_SAVE
+                    if diag.code == JETLSCore.INFERENCE_UNDEF_GLOBAL_VAR_CODE &&
                         occursin("`TestPackageAnalysis.BadModule.y` is not defined", diag.message)
                         # this also tests that JETLS doesn't show the nonsensical `var"..."`
                         # string caused by JET's internal details
                         found_diagnostic1 = true
                     end
-                    if diag.code == JETLS.INFERENCE_METHOD_ERROR_CODE &&
+                    if diag.code == JETLSCore.INFERENCE_METHOD_ERROR_CODE &&
                         occursin("no matching method found `_badhello2(::String)`", diag.message)
                         found_diagnostic2 = true
                     end
@@ -629,11 +629,11 @@ end
         """
         withscript(code) do script_path
             diagnostics = get_open_diagnostics(dirname(script_path), script_path, code)
-            let diag = only(filter(diag -> diag.code == JETLS.INFERENCE_UNDEF_GLOBAL_VAR_CODE, diagnostics))
+            let diag = only(filter(diag -> diag.code == JETLSCore.INFERENCE_UNDEF_GLOBAL_VAR_CODE, diagnostics))
                 @test diag.range.start.line == 0
                 @test occursin("undefined_in_eval", diag.message)
             end
-            let diag = only(filter(diag -> diag.code == JETLS.TOPLEVEL_ABSTRACT_FIELD_CODE, diagnostics))
+            let diag = only(filter(diag -> diag.code == JETLSCore.TOPLEVEL_ABSTRACT_FIELD_CODE, diagnostics))
                 @test diag.range.start.line == 2
             end
         end
@@ -653,7 +653,7 @@ end
         """
         withscript(code) do script_path
             diagnostics = get_open_diagnostics(dirname(script_path), script_path, code)
-            abstract_fields = filter(diag -> diag.code == JETLS.TOPLEVEL_ABSTRACT_FIELD_CODE, diagnostics)
+            abstract_fields = filter(diag -> diag.code == JETLSCore.TOPLEVEL_ABSTRACT_FIELD_CODE, diagnostics)
             @test length(abstract_fields) == 3
             for (name, line) in (("EvalA", 2), ("EvalB", 2), ("EvalC", 7))
                 diag = only(filter(diag -> occursin(name, diag.message), abstract_fields))
@@ -672,7 +672,7 @@ end
         """
         withscript(code) do script_path
             diagnostics = get_open_diagnostics(dirname(script_path), script_path, code)
-            diag = only(filter(diag -> diag.code == JETLS.TOPLEVEL_ERROR_CODE, diagnostics))
+            diag = only(filter(diag -> diag.code == JETLSCore.TOPLEVEL_ERROR_CODE, diagnostics))
             @test diag.range.start.line == 3
             @test occursin("module expression third argument must be a block", diag.message)
         end
@@ -687,11 +687,11 @@ end
         """
         withscript(code) do script_path
             diagnostics = get_open_diagnostics(dirname(script_path), script_path, code)
-            diag = only(filter(diag -> diag.code == JETLS.TOPLEVEL_ERROR_CODE, diagnostics))
+            diag = only(filter(diag -> diag.code == JETLSCore.TOPLEVEL_ERROR_CODE, diagnostics))
             @test diag.range.start.line == 1
             @test occursin("UnexistingPkg", first(eachsplit(diag.message, '\n')))
             # diagnostics from statements processed before the error are kept
-            diag = only(filter(diag -> diag.code == JETLS.INFERENCE_METHOD_ERROR_CODE, diagnostics))
+            diag = only(filter(diag -> diag.code == JETLSCore.INFERENCE_METHOD_ERROR_CODE, diagnostics))
             @test diag.range.start.line == 0
         end
     end
@@ -705,9 +705,9 @@ end
         """
         withscript(code) do script_path
             diagnostics = get_open_diagnostics(dirname(script_path), script_path, code)
-            diag = only(filter(diag -> diag.code == JETLS.TOPLEVEL_ERROR_CODE, diagnostics))
+            diag = only(filter(diag -> diag.code == JETLSCore.TOPLEVEL_ERROR_CODE, diagnostics))
             @test diag.range.start.line == 1
-            diag = only(filter(diag -> diag.code == JETLS.INFERENCE_METHOD_ERROR_CODE, diagnostics))
+            diag = only(filter(diag -> diag.code == JETLSCore.INFERENCE_METHOD_ERROR_CODE, diagnostics))
             @test diag.range.start.line == 0
         end
     end
@@ -722,10 +722,10 @@ end
         """
         withscript(code) do script_path
             diagnostics = get_open_diagnostics(dirname(script_path), script_path, code)
-            diag = only(filter(diag -> diag.code == JETLS.TOPLEVEL_ERROR_CODE, diagnostics))
+            diag = only(filter(diag -> diag.code == JETLSCore.TOPLEVEL_ERROR_CODE, diagnostics))
             @test diag.range.start.line == 4
             @test occursin("failing macro", diag.message)
-            diag = only(filter(diag -> diag.code == JETLS.INFERENCE_METHOD_ERROR_CODE, diagnostics))
+            diag = only(filter(diag -> diag.code == JETLSCore.INFERENCE_METHOD_ERROR_CODE, diagnostics))
             @test diag.range.start.line == 3
         end
     end
@@ -747,7 +747,7 @@ end
         """
         withscript(code) do script_path
             diagnostics = get_open_diagnostics(dirname(script_path), script_path, code)
-            diags = filter(diag -> diag.code == JETLS.INFERENCE_METHOD_ERROR_CODE, diagnostics)
+            diags = filter(diag -> diag.code == JETLSCore.INFERENCE_METHOD_ERROR_CODE, diagnostics)
             @test sort!([diag.range.start.line for diag in diags]) == [4, 8]
         end
     end
@@ -762,7 +762,7 @@ end
         """
         withscript(code) do script_path
             diagnostics = get_open_diagnostics(dirname(script_path), script_path, code)
-            diag = only(filter(diag -> diag.code == JETLS.TOPLEVEL_ERROR_CODE, diagnostics))
+            diag = only(filter(diag -> diag.code == JETLSCore.TOPLEVEL_ERROR_CODE, diagnostics))
             @test diag.range.start.line == 2
             @test occursin("jetls_nonexistent_file.jl", diag.message)
         end
@@ -777,7 +777,7 @@ end
         """
         withscript(code) do script_path
             diagnostics = get_open_diagnostics(dirname(script_path), script_path, code)
-            diag = only(filter(diag -> diag.code == JETLS.TOPLEVEL_ERROR_CODE, diagnostics))
+            diag = only(filter(diag -> diag.code == JETLSCore.TOPLEVEL_ERROR_CODE, diagnostics))
             @test diag.range.start.line == 3
             @test occursin("jetls_nonexistent_file.jl", diag.message)
         end
@@ -791,7 +791,7 @@ end
         """
     withscript(code) do script_path
         uri = filepath2uri(script_path)
-        is_method_error(diag) = diag.code == JETLS.INFERENCE_METHOD_ERROR_CODE
+        is_method_error(diag) = diag.code == JETLSCore.INFERENCE_METHOD_ERROR_CODE
         withserver() do (; writereadmsg)
             let (; raw_res) = writereadmsg(make_DidOpenTextDocumentNotification(uri, code))
                 @test raw_res isa PublishDiagnosticsNotification
@@ -829,9 +829,9 @@ end
                     response.params.uri == main_uri
             end)
             diag = only(main_response.params.diagnostics)
-            @test diag.code == JETLS.TOPLEVEL_UNSUPPORTED_FEATURE_CODE
+            @test diag.code == JETLSCore.TOPLEVEL_UNSUPPORTED_FEATURE_CODE
             @test diag.severity == DiagnosticSeverity.Warning
-            @test diag.source == JETLS.DIAGNOSTIC_SOURCE_SAVE
+            @test diag.source == JETLSCore.DIAGNOSTIC_SOURCE_SAVE
             @test diag.range.start.line == 0
             @test occursin("mapexpr", diag.message)
         end
@@ -857,14 +857,14 @@ end
             @test raw_res isa PublishDiagnosticsNotification
             @test raw_res.params.uri == ext_uri
             diag = only(raw_res.params.diagnostics)
-            @test diag.code == JETLS.TOPLEVEL_ANALYSIS_SKIPPED_CODE
+            @test diag.code == JETLSCore.TOPLEVEL_ANALYSIS_SKIPPED_CODE
             @test diag.severity == DiagnosticSeverity.Warning
-            @test diag.source == JETLS.DIAGNOSTIC_SOURCE_SAVE
+            @test diag.source == JETLSCore.DIAGNOSTIC_SOURCE_SAVE
             @test diag.range.start.line == 0
-            analysis_info = JETLS.get_analysis_info(server.state.analysis_manager, ext_uri)
-            @test analysis_info.entry isa JETLS.PackageExtensionAnalysisEntry
-            @test !JETLS.has_analyzed_context(server.state, ext_uri)
-            @test JETLS.get_context_module(server.state, ext_uri, Position(; line=0, character=0)) === JETLS.FallbackAnalysisContext
+            analysis_info = JETLSCore.get_analysis_info(server.state.analysis_manager, ext_uri)
+            @test analysis_info.entry isa JETLSCore.PackageExtensionAnalysisEntry
+            @test !JETLSCore.has_analyzed_context(server.state, ext_uri)
+            @test JETLSCore.get_context_module(server.state, ext_uri, Position(; line=0, character=0)) === JETLSCore.FallbackAnalysisContext
         end
     end
 end
@@ -893,15 +893,15 @@ end
                 @test raw_res isa PublishDiagnosticsNotification
                 @test raw_res.params.uri == uri
                 diag = only(raw_res.params.diagnostics)
-                @test diag.code == JETLS.TOPLEVEL_ANALYSIS_SKIPPED_CODE
+                @test diag.code == JETLSCore.TOPLEVEL_ANALYSIS_SKIPPED_CODE
                 @test diag.severity == DiagnosticSeverity.Information
-                @test diag.source == JETLS.DIAGNOSTIC_SOURCE_SAVE
+                @test diag.source == JETLSCore.DIAGNOSTIC_SOURCE_SAVE
                 @test diag.range.start.line == 0
                 @test occursin(named, diag.message)
-                analysis_info = JETLS.get_analysis_info(server.state.analysis_manager, uri)
-                @test analysis_info isa JETLS.OutOfScope
+                analysis_info = JETLSCore.get_analysis_info(server.state.analysis_manager, uri)
+                @test analysis_info isa JETLSCore.OutOfScope
                 @test analysis_info.skip_reason.excluded_uri == filepath2uri(pkgfile)
-                @test !JETLS.has_analyzed_context(server.state, uri)
+                @test !JETLSCore.has_analyzed_context(server.state, uri)
             end
         end
     end
@@ -918,15 +918,15 @@ end
         """
         withscript(code) do script_path
             diagnostics = get_open_diagnostics(dirname(script_path), script_path, code)
-            overwrites = filter(diag -> diag.code == JETLS.TOPLEVEL_METHOD_OVERWRITE_CODE, diagnostics)
+            overwrites = filter(diag -> diag.code == JETLSCore.TOPLEVEL_METHOD_OVERWRITE_CODE, diagnostics)
             @test length(overwrites) == 2
             let diag = only(filter(diag -> occursin("duplicate(::$Int)", diag.message), overwrites))
-                @test diag.range == JETLS.lines_range(2 => 2)
-                @test only(diag.relatedInformation).location.range == JETLS.lines_range(1 => 1)
+                @test diag.range == JETLSCore.lines_range(2 => 2)
+                @test only(diag.relatedInformation).location.range == JETLSCore.lines_range(1 => 1)
             end
             let diag = only(filter(diag -> occursin("duplicate_eval()", diag.message), overwrites))
-                @test diag.range == JETLS.lines_range(4 => 4)
-                @test only(diag.relatedInformation).location.range == JETLS.lines_range(4 => 4)
+                @test diag.range == JETLSCore.lines_range(4 => 4)
+                @test only(diag.relatedInformation).location.range == JETLSCore.lines_range(4 => 4)
             end
         end
     end
@@ -955,8 +955,8 @@ end
 
             found_diagnostic = false
             for diag in raw_res.params.diagnostics
-                if (diag.source == JETLS.DIAGNOSTIC_SOURCE_SAVE &&
-                    diag.code == JETLS.TOPLEVEL_METHOD_OVERWRITE_CODE &&
+                if (diag.source == JETLSCore.DIAGNOSTIC_SOURCE_SAVE &&
+                    diag.code == JETLSCore.TOPLEVEL_METHOD_OVERWRITE_CODE &&
                     occursin("duplicate(::$Int)", diag.message) &&
                     occursin("overwritten", diag.message))
                     found_diagnostic = true
@@ -1008,8 +1008,8 @@ end
 
             found_diagnostic1 = false
             for diag in raw_res.params.diagnostics
-                if (diag.source == JETLS.DIAGNOSTIC_SOURCE_SAVE &&
-                    diag.code == JETLS.TOPLEVEL_ABSTRACT_FIELD_CODE &&
+                if (diag.source == JETLSCore.DIAGNOSTIC_SOURCE_SAVE &&
+                    diag.code == JETLSCore.TOPLEVEL_ABSTRACT_FIELD_CODE &&
                     occursin("BadStruct1", diag.message) &&
                     occursin("xs::Vector{Integer}", diag.message))
                     found_diagnostic1 = true
@@ -1020,8 +1020,8 @@ end
 
             found_diagnostic2 = false
             for diag in raw_res.params.diagnostics
-                if (diag.source == JETLS.DIAGNOSTIC_SOURCE_SAVE &&
-                    diag.code == JETLS.TOPLEVEL_ABSTRACT_FIELD_CODE &&
+                if (diag.source == JETLSCore.DIAGNOSTIC_SOURCE_SAVE &&
+                    diag.code == JETLSCore.TOPLEVEL_ABSTRACT_FIELD_CODE &&
                     occursin("BadStruct2", diag.message) &&
                     occursin("xs::Vector{<:Integer}", diag.message))
                     found_diagnostic2 = true
@@ -1032,8 +1032,8 @@ end
 
             found_diagnostic3 = false
             for diag in raw_res.params.diagnostics
-                if (diag.source == JETLS.DIAGNOSTIC_SOURCE_SAVE &&
-                    diag.code == JETLS.TOPLEVEL_ABSTRACT_FIELD_CODE &&
+                if (diag.source == JETLSCore.DIAGNOSTIC_SOURCE_SAVE &&
+                    diag.code == JETLSCore.TOPLEVEL_ABSTRACT_FIELD_CODE &&
                     occursin("BadStruct3", diag.message) &&
                     occursin("x::Ref{$Int}", diag.message))
                     found_diagnostic3 = true
@@ -1052,8 +1052,8 @@ end
 
             found_diagnostic4 = false
             for diag in raw_res.params.diagnostics
-                if (diag.source == JETLS.DIAGNOSTIC_SOURCE_SAVE &&
-                    diag.code == JETLS.TOPLEVEL_ABSTRACT_FIELD_CODE &&
+                if (diag.source == JETLSCore.DIAGNOSTIC_SOURCE_SAVE &&
+                    diag.code == JETLSCore.TOPLEVEL_ABSTRACT_FIELD_CODE &&
                     occursin("BadStruct4", diag.message) &&
                     occursin("x::Ref{$Int}", diag.message))
                     found_diagnostic4 = true
@@ -1088,7 +1088,7 @@ end
         """
         withscript(code) do script_path
             diagnostics = get_open_diagnostics(dirname(script_path), script_path, code)
-            let diag = only(filter(diag -> diag.code == JETLS.TOPLEVEL_ABSTRACT_FIELD_CODE, diagnostics))
+            let diag = only(filter(diag -> diag.code == JETLSCore.TOPLEVEL_ABSTRACT_FIELD_CODE, diagnostics))
                 @test occursin("AbstractFieldStruct", diag.message)
             end
         end
@@ -1126,9 +1126,9 @@ end
             end
 
             # nothing changed → the scan neither recomputes nor republishes
-            let fingerprint = JETLS.load(published)[uri].fingerprint
+            let fingerprint = JETLSCore.load(published)[uri].fingerprint
                 @test isempty(scan_live_diagnostics!(server, readmsg))
-                @test JETLS.load(published)[uri].fingerprint == fingerprint
+                @test JETLSCore.load(published)[uri].fingerprint == fingerprint
             end
 
             # editing the document bumps the version; renaming to `_x` makes the
@@ -1194,13 +1194,13 @@ end
 @testset "textDocument/diagnostic snapshot ordering" begin
     with_manual_dispatch_server() do server, recorder
         uri = filepath2uri(@__FILE__)
-        JETLS.cache_file_info!(server, uri, 1, "func(x) = nothing\n")
+        JETLSCore.cache_file_info!(server, uri, 1, "func(x) = nothing\n")
         make_request(id::Int) = DocumentDiagnosticRequest(;
             id,
             params = DocumentDiagnosticParams(;
                 textDocument = TextDocumentIdentifier(; uri)))
         request = make_request(1)
-        @test JETLS.is_sequential_msg(request)
+        @test JETLSCore.is_sequential_msg(request)
         prepared = queued_snapshot_requests(server, [
             make_DidChangeTextDocumentNotification(uri, "func(_x) = nothing\n", 2), request,
             make_DidChangeTextDocumentNotification(uri, "func(x, y) = x\n", 3), make_request(2)])
@@ -1209,7 +1209,7 @@ end
         @test prepared[1].snapshot.fi.version == 2
         @test prepared[2].snapshot.fi.version == 3
 
-        current_result_id = JETLS.compute_live_diagnostics_fingerprint(server, uri)
+        current_result_id = JETLSCore.compute_live_diagnostics_fingerprint(server, uri)
         response = dispatch_snapshot_request(server, recorder, prepared[1])
         @test response isa DocumentDiagnosticResponse
         @test response.result isa RelatedFullDocumentDiagnosticReport
@@ -1218,7 +1218,7 @@ end
         response = dispatch_snapshot_request(server, recorder, prepared[2])
         @test response.result isa RelatedFullDocumentDiagnosticReport
         diagnostic = only(response.result.items)
-        @test diagnostic.code == JETLS.LOWERING_UNUSED_ARGUMENT_CODE
+        @test diagnostic.code == JETLSCore.LOWERING_UNUSED_ARGUMENT_CODE
         @test diagnostic.range.start == Position(; line = 0, character = 8)
         @test response.result.resultId == current_result_id
     end
@@ -1231,9 +1231,9 @@ end
         # still held, as by the workspace diagnostics worker or as a client's
         # `previousResultId`.
         fingerprints = map(1:5) do version
-            JETLS.cache_file_info!(server, uri, version, "func(x) = $version\n")
+            JETLSCore.cache_file_info!(server, uri, version, "func(x) = $version\n")
             GC.gc()
-            return JETLS.compute_live_diagnostics_fingerprint(server, uri)
+            return JETLSCore.compute_live_diagnostics_fingerprint(server, uri)
         end
         @test allunique(fingerprints)
     end
@@ -1243,11 +1243,11 @@ end
     for unused_first in (true, false)
         with_manual_dispatch_server() do server, recorder
             uri = filepath2uri(@__FILE__)
-            JETLS.cache_out_of_scope!(
-                server.state.analysis_manager, uri, JETLS.OutOfScope(@__MODULE__))
+            JETLSCore.cache_out_of_scope!(
+                server.state.analysis_manager, uri, JETLSCore.OutOfScope(@__MODULE__))
             old_text = unused_first ? "using Base: sin\ncos(1)\n" : "using Base: sin\nsin(1)\n"
             new_text = unused_first ? "using Base: sin\nsin(1)\n" : "using Base: sin\ncos(1)\n"
-            JETLS.cache_file_info!(server, uri, 1, old_text)
+            JETLSCore.cache_file_info!(server, uri, 1, old_text)
             make_request(id::Int; previousResultId::Union{Nothing,String} = nothing) =
                 DocumentDiagnosticRequest(;
                     id,
@@ -1265,7 +1265,7 @@ end
             @test response isa DocumentDiagnosticResponse
             @test response.result isa RelatedFullDocumentDiagnosticReport
             if unused_first
-                @test only(response.result.items).code == JETLS.LOWERING_UNUSED_IMPORT_CODE
+                @test only(response.result.items).code == JETLSCore.LOWERING_UNUSED_IMPORT_CODE
             else
                 @test isempty(response.result.items)
             end
@@ -1277,7 +1277,7 @@ end
             if unused_first
                 @test isempty(response.result.items)
             else
-                @test only(response.result.items).code == JETLS.LOWERING_UNUSED_IMPORT_CODE
+                @test only(response.result.items).code == JETLSCore.LOWERING_UNUSED_IMPORT_CODE
             end
             second_result_id = response.result.resultId
             @test second_result_id isa String
@@ -1436,7 +1436,7 @@ end
         main_code = read(main_path, String)
         rootUri = filepath2uri(pkg_path)
         has_unused_import(params) =
-            any(d -> d.code == JETLS.LOWERING_UNUSED_IMPORT_CODE, params.diagnostics)
+            any(d -> d.code == JETLSCore.LOWERING_UNUSED_IMPORT_CODE, params.diagnostics)
         withserver(; rootUri, pull_diagnostics = true) do (; server, writereadmsg, readmsg)
             published = server.state.workspace_diagnostics_worker.published
             (; raw_res) = writereadmsg(
@@ -1448,7 +1448,7 @@ end
                 @test keys(scanned) == Set((main_uri,))
                 @test has_unused_import(scanned[main_uri])
             end
-            @test !haskey(JETLS.load(published), util_uri)
+            @test !haskey(JETLSCore.load(published), util_uri)
 
             # Opening main.jl hands it over to `textDocument/diagnostic`: the pushed live
             # diagnostics are forgotten and cleared on the client right away.
@@ -1458,7 +1458,7 @@ end
             @test raw_res.params.uri == main_uri
             @test !has_unused_import(raw_res.params)
             @test any(d -> d.code == "inference/method-error", raw_res.params.diagnostics)
-            @test !haskey(JETLS.load(published), main_uri)
+            @test !haskey(JETLSCore.load(published), main_uri)
             @test isempty(scan_live_diagnostics!(server, readmsg))
 
             # Closing it brings the push back with the next scan.
@@ -1492,20 +1492,20 @@ end
             @test raw_res isa PublishDiagnosticsNotification
             @test raw_res.params.uri == uri
             @test isempty(raw_res.params.diagnostics)
-            @test !haskey(JETLS.load(published), uri)
+            @test !haskey(JETLSCore.load(published), uri)
             @test isempty(scan_live_diagnostics!(server, readmsg))
 
             # A scan publish that raced with the close re-adds the entry; the next scan
             # forgets it and clears the file once more.
-            JETLS.store!(published) do data
-                live = JETLS.WorkspaceLiveDiagnostics("stale", 1, JETLS.Diagnostic[])
-                JETLS.WorkspaceLiveDiagnosticsData(data, uri => live), nothing
+            JETLSCore.store!(published) do data
+                live = JETLSCore.WorkspaceLiveDiagnostics("stale", 1, JETLSCore.Diagnostic[])
+                JETLSCore.WorkspaceLiveDiagnosticsData(data, uri => live), nothing
             end
             let params = scan_live_diagnostics!(server, readmsg)[uri]
                 @test params.version === nothing
                 @test isempty(params.diagnostics)
             end
-            @test !haskey(JETLS.load(published), uri)
+            @test !haskey(JETLSCore.load(published), uri)
         end
     end
 end
@@ -1515,37 +1515,37 @@ end
     withscript(script) do script_path
         uri = filepath2uri(script_path)
         withserver() do (; server)
-            @test JETLS.get_analysis_info(server.state.analysis_manager, uri) === nothing
-            no_context = JETLS.compute_live_diagnostics_fingerprint(server, uri)
+            @test JETLSCore.get_analysis_info(server.state.analysis_manager, uri) === nothing
+            no_context = JETLSCore.compute_live_diagnostics_fingerprint(server, uri)
 
-            JETLS.cache_file_info!(server, uri, 1, script)
-            JETLS.cache_saved_file_info!(server.state, uri, script)
-            JETLS.request_analysis!(server, uri, #=invalidate=#false; wait=true, notify_diagnostics=false)
-            result = JETLS.get_analysis_info(server.state.analysis_manager, uri)::JETLS.AnalysisResult
-            fingerprint = JETLS.compute_live_diagnostics_fingerprint(server, uri)
+            JETLSCore.cache_file_info!(server, uri, 1, script)
+            JETLSCore.cache_saved_file_info!(server.state, uri, script)
+            JETLSCore.request_analysis!(server, uri, #=invalidate=#false; wait=true, notify_diagnostics=false)
+            result = JETLSCore.get_analysis_info(server.state.analysis_manager, uri)::JETLSCore.AnalysisResult
+            fingerprint = JETLSCore.compute_live_diagnostics_fingerprint(server, uri)
             @test fingerprint != no_context
 
             # A new result keeping the module context, like the final result following an
             # intermediate one, does not move the fingerprint.
-            let same_context = JETLS.AnalysisResult(result.entry,
+            let same_context = JETLSCore.AnalysisResult(result.entry,
                     copy(result.uri2diagnostics), result.analyzer,
                     copy(result.analyzed_file_infos), result.actual2virtual,
                     Base.get_world_counter())
-                JETLS.update_analysis_cache!(server.state, same_context)
-                @test JETLS.compute_live_diagnostics_fingerprint(server, uri) == fingerprint
+                JETLSCore.update_analysis_cache!(server.state, same_context)
+                @test JETLSCore.compute_live_diagnostics_fingerprint(server, uri) == fingerprint
             end
 
             # A new module context, as every script reanalysis mints, moves it.
             let newmod = Module()
-                analyzed_file_infos = Dict{URI,JETLS.JET.AnalyzedFileInfo}(
-                    analyzed_uri => JETLS.JET.AnalyzedFileInfo(
+                analyzed_file_infos = Dict{URI,JETLSCore.JET.AnalyzedFileInfo}(
+                    analyzed_uri => JETLSCore.JET.AnalyzedFileInfo(
                         [range => newmod for (range, _) in afi.module_range_infos])
                     for (analyzed_uri, afi) in result.analyzed_file_infos)
-                new_context = JETLS.AnalysisResult(result.entry,
+                new_context = JETLSCore.AnalysisResult(result.entry,
                     copy(result.uri2diagnostics), result.analyzer, analyzed_file_infos,
                     result.actual2virtual, Base.get_world_counter())
-                JETLS.update_analysis_cache!(server.state, new_context)
-                @test JETLS.compute_live_diagnostics_fingerprint(server, uri) != fingerprint
+                JETLSCore.update_analysis_cache!(server.state, new_context)
+                @test JETLSCore.compute_live_diagnostics_fingerprint(server, uri) != fingerprint
             end
         end
     end
@@ -1556,13 +1556,13 @@ end
         uri1 = filepath2uri(script_path1)
         uri2 = filepath2uri(script_path2)
         withserver() do (; server)
-            fingerprint1 = JETLS.compute_live_diagnostics_fingerprint(server, uri1)
-            updates = Dict{URI,JETLS.WorkspaceLiveDiagnostics}(
-                uri1 => JETLS.WorkspaceLiveDiagnostics(fingerprint1, nothing, Diagnostic[]),
+            fingerprint1 = JETLSCore.compute_live_diagnostics_fingerprint(server, uri1)
+            updates = Dict{URI,JETLSCore.WorkspaceLiveDiagnostics}(
+                uri1 => JETLSCore.WorkspaceLiveDiagnostics(fingerprint1, nothing, Diagnostic[]),
                 # computed from inputs that moved before the cancellation
-                uri2 => JETLS.WorkspaceLiveDiagnostics("stale", nothing, Diagnostic[]))
+                uri2 => JETLSCore.WorkspaceLiveDiagnostics("stale", nothing, Diagnostic[]))
             changed = Set((uri1, uri2))
-            JETLS.retain_current_live_diagnostics!(updates, changed, server)
+            JETLSCore.retain_current_live_diagnostics!(updates, changed, server)
             @test keys(updates) == Set((uri1,))
             @test changed == Set((uri1,))
         end
@@ -1574,15 +1574,15 @@ end
         uri = filepath2uri(script_path)
         withserver() do (; server)
             search_uris = Set((uri,))
-            cache = JETLS.DefUsedNamesCache()
-            cancel_flag = JETLS.CancelFlag(false)
-            JETLS.cancel!(cancel_flag)
-            JETLS.compute_def_used_names!(cache, server, search_uris, #=snapshot=#nothing;
+            cache = JETLSCore.DefUsedNamesCache()
+            cancel_flag = JETLSCore.CancelFlag(false)
+            JETLSCore.cancel!(cancel_flag)
+            JETLSCore.compute_def_used_names!(cache, server, search_uris, #=snapshot=#nothing;
                 cancel_flag, skip_context_check = true)
-            @test isempty(JETLS.load(cache))
-            JETLS.compute_def_used_names!(cache, server, search_uris, #=snapshot=#nothing;
+            @test isempty(JETLSCore.load(cache))
+            JETLSCore.compute_def_used_names!(cache, server, search_uris, #=snapshot=#nothing;
                 skip_context_check = true)
-            @test !isempty(JETLS.load(cache))
+            @test !isempty(JETLSCore.load(cache))
         end
     end
 end
@@ -1616,14 +1616,14 @@ end
         withserver(; pull_diagnostics = true) do (; server, writemsg, writereadmsg, id_counter)
             (; raw_res) = writereadmsg(make_DidOpenTextDocumentNotification(uri, "func(x, y) = x\n"))
             @test raw_res isa PublishDiagnosticsNotification
-            fi1 = JETLS.get_file_info(server.state, uri)
+            fi1 = JETLSCore.get_file_info(server.state, uri)
             writemsg(make_DidChangeTextDocumentNotification(uri, "func(x) = x\n", 2))
             wait_for_file_cache_version(server.state, uri, 2)
 
             # A pull that read the text before the edit stores its result after the
             # edit's invalidation.
-            stale = JETLS.get_per_file_diagnostics!(server, uri, fi1, JETLS.DUMMY_CANCEL_FLAG)
-            @test any(d -> d.code == JETLS.LOWERING_UNUSED_ARGUMENT_CODE, stale.diagnostics)
+            stale = JETLSCore.get_per_file_diagnostics!(server, uri, fi1, JETLSCore.DUMMY_CANCEL_FLAG)
+            @test any(d -> d.code == JETLSCore.LOWERING_UNUSED_ARGUMENT_CODE, stale.diagnostics)
 
             let id = id_counter[] += 1
                 (; raw_res) = writereadmsg(DocumentDiagnosticRequest(;
@@ -1632,7 +1632,7 @@ end
                         textDocument = TextDocumentIdentifier(; uri))))
                 @test raw_res isa DocumentDiagnosticResponse
                 @test raw_res.result isa RelatedFullDocumentDiagnosticReport
-                @test !any(d -> d.code == JETLS.LOWERING_UNUSED_ARGUMENT_CODE, raw_res.result.items)
+                @test !any(d -> d.code == JETLSCore.LOWERING_UNUSED_ARGUMENT_CODE, raw_res.result.items)
             end
         end
     end
@@ -1652,21 +1652,21 @@ end
             withserver(; rootUri, settings, pull_diagnostics) do (;
                     server, readmsg, writereadmsg, id_counter)
                 # Analyze the package while the file is closed
-                JETLS.request_analysis!(server, uri, #=invalidate=#false; wait = true)
+                JETLSCore.request_analysis!(server, uri, #=invalidate=#false; wait = true)
                 manager = server.state.analysis_manager
-                result = JETLS.get_analysis_info(manager, uri)
-                @test result isa JETLS.AnalysisResult
+                result = JETLSCore.get_analysis_info(manager, uri)
+                @test result isa JETLSCore.AnalysisResult
                 @test any(d -> d.code == "inference/method-error", result.uri2diagnostics[uri])
-                generation = JETLS.get_generation(manager, result.entry)
+                generation = JETLSCore.get_generation(manager, result.entry)
                 @test !isready(server.callback.sent_queue)
                 @test isempty(scan_live_diagnostics!(server, readmsg))
 
                 for _ in 1:2
                     # Call the handler synchronously so a missing publish fails without
                     # waiting for a message that will never arrive.
-                    JETLS.handle_DidOpenTextDocumentNotification(
+                    JETLSCore.handle_DidOpenTextDocumentNotification(
                         server, make_DidOpenTextDocumentNotification(uri, pkg_code))
-                    JETLS.request_analysis!(server, uri, #=invalidate=#false; wait = true)
+                    JETLSCore.request_analysis!(server, uri, #=invalidate=#false; wait = true)
                     msgs = Any[]
                     while isready(server.callback.sent_queue)
                         push!(msgs, readmsg(; check = false).raw_msg)
@@ -1678,11 +1678,11 @@ end
                         @test msg.params.version === nothing
                         @test any(msg.params.diagnostics) do d
                             d.code == "inference/method-error" &&
-                                d.source == JETLS.DIAGNOSTIC_SOURCE_SAVE
+                                d.source == JETLSCore.DIAGNOSTIC_SOURCE_SAVE
                         end
                     end
-                    @test JETLS.get_analysis_info(manager, uri) === result
-                    @test JETLS.get_generation(manager, result.entry) == generation
+                    @test JETLSCore.get_analysis_info(manager, uri) === result
+                    @test JETLSCore.get_generation(manager, result.entry) == generation
 
                     if pull_diagnostics
                         let id = id_counter[] += 1
@@ -1763,15 +1763,15 @@ end
                 range = Range(;
                     start = Position(; line = 0, character = 0),
                     var"end" = Position(; line = 0, character = 1)),
-                code = JETLS.TESTRUNNER_TEST_FAILURE_CODE,
+                code = JETLSCore.TESTRUNNER_TEST_FAILURE_CODE,
                 message = "extra")
-            key = JETLS.TestsetDiagnosticsKey(util_uri, "testset", 1)
-            JETLS.store!(server.state.extra_diagnostics) do data
-                val = JETLS.URI2Diagnostics(util_uri => [extra], main_uri => [extra])
-                JETLS.ExtraDiagnosticsData(data, key => val), nothing
+            key = JETLSCore.TestsetDiagnosticsKey(util_uri, "testset", 1)
+            JETLSCore.store!(server.state.extra_diagnostics) do data
+                val = JETLSCore.URI2Diagnostics(util_uri => [extra], main_uri => [extra])
+                JETLSCore.ExtraDiagnosticsData(data, key => val), nothing
             end
 
-            JETLS.publish_workspace_diagnostics!(server, JETLS.DUMMY_CANCEL_FLAG)
+            JETLSCore.publish_workspace_diagnostics!(server, JETLSCore.DUMMY_CANCEL_FLAG)
             msgs = Any[]
             while isready(server.callback.sent_queue)
                 push!(msgs, readmsg(; check = false).raw_msg)
@@ -1783,8 +1783,8 @@ end
             end
 
             let uris = Set((util_uri, main_uri))
-                selected = JETLS.get_full_diagnostics(server, uris)
-                full = JETLS.get_full_diagnostics(server)
+                selected = JETLSCore.get_full_diagnostics(server, uris)
+                full = JETLSCore.get_full_diagnostics(server)
                 for uri in uris
                     @test selected[uri] == full[uri]
                 end
@@ -1813,7 +1813,7 @@ end
         main_code = read(main_path, String)
         rootUri = filepath2uri(pkg_path)
         has_unused_import(params) =
-            any(d -> d.code == JETLS.LOWERING_UNUSED_IMPORT_CODE, params.diagnostics)
+            any(d -> d.code == JETLSCore.LOWERING_UNUSED_IMPORT_CODE, params.diagnostics)
         withserver(; rootUri) do (; server, writemsg, writereadmsg, readmsg)
             published = server.state.workspace_diagnostics_worker.published
 
@@ -1872,8 +1872,8 @@ end
                 @test keys(scanned) == Set((main_uri,))
                 @test isempty(scanned[main_uri].diagnostics)
             end
-            @test !haskey(JETLS.load(published), main_uri)
-            @test haskey(JETLS.load(published), util_uri)
+            @test !haskey(JETLSCore.load(published), main_uri)
+            @test haskey(JETLSCore.load(published), util_uri)
 
             # Re-enabling it pushes main.jl again.
             settings_on = Dict{String,Any}(
@@ -1897,30 +1897,30 @@ end
 
             # A sibling edit that leaves main.jl's diagnostics as they are moves its
             # fingerprint (so the scan recomputes it) but does not republish it.
-            main_fingerprint = JETLS.load(published)[main_uri].fingerprint
+            main_fingerprint = JETLSCore.load(published)[main_uri].fingerprint
             writemsg(make_DidChangeTextDocumentNotification(
                 util_uri, "y = sum([1, 2, 3]) # edited\n", #=version=#3))
             wait_for_file_cache_version(server.state, util_uri, 3)
             let scanned = scan_live_diagnostics!(server, readmsg)
                 @test keys(scanned) == Set((util_uri,))
-                @test JETLS.load(published)[main_uri].fingerprint != main_fingerprint
+                @test JETLSCore.load(published)[main_uri].fingerprint != main_fingerprint
             end
         end
     end
 end
 
 @testset "workspace diagnostics scan cancellation" begin
-    server = JETLS.Server()
+    server = JETLSCore.Server()
     worker = server.state.workspace_diagnostics_worker
-    cancel_flag = JETLS.CancelFlag(false)
+    cancel_flag = JETLSCore.CancelFlag(false)
     @atomic worker.cancel_flag = cancel_flag
     # a change point abandons the scan in progress without stopping the worker
-    JETLS.schedule_workspace_diagnostics!(server)
-    @test JETLS.is_cancelled(cancel_flag)
-    @test !JETLS.is_cancelled(worker.shutdown_flag)
+    JETLSCore.schedule_workspace_diagnostics!(server)
+    @test JETLSCore.is_cancelled(cancel_flag)
+    @test !JETLSCore.is_cancelled(worker.shutdown_flag)
     # an abandoned scan leaves the cache untouched
-    @test JETLS.publish_workspace_diagnostics!(server, cancel_flag) === nothing
-    @test isempty(JETLS.load(worker.published))
+    @test JETLSCore.publish_workspace_diagnostics!(server, cancel_flag) === nothing
+    @test isempty(JETLSCore.load(worker.published))
 end
 
 @testset "workspace diagnostics worker" begin
@@ -1941,7 +1941,7 @@ end
         is_main_publish(msg) =
             msg isa PublishDiagnosticsNotification && msg.params.uri == main_uri
         has_unused_import(msg) =
-            any(d -> d.code == JETLS.LOWERING_UNUSED_IMPORT_CODE, msg.params.diagnostics)
+            any(d -> d.code == JETLSCore.LOWERING_UNUSED_IMPORT_CODE, msg.params.diagnostics)
         # The worker runs on its own here: every change point wakes it, and it publishes
         # once module contexts are known and again when a sibling edit changes the result.
         withserver(; rootUri, live_diagnostics = true) do (; server, writemsg, readmsg)
@@ -1954,7 +1954,7 @@ end
             read_until(readmsg) do msg
                 is_main_publish(msg) && isempty(msg.params.diagnostics)
             end
-            @test isempty(JETLS.load(
+            @test isempty(JETLSCore.load(
                 server.state.workspace_diagnostics_worker.published)[main_uri].diagnostics)
 
             settle_live_diagnostics!(server, readmsg)
@@ -1973,27 +1973,27 @@ function make_test_diagnostic(;
             var"end" = Position(; line=0, character=10)),
         severity,
         message,
-        source = JETLS.DIAGNOSTIC_SOURCE_LIVE,
+        source = JETLSCore.DIAGNOSTIC_SOURCE_LIVE,
         code,
-        codeDescription = JETLS.diagnostic_code_description(code))
+        codeDescription = JETLSCore.diagnostic_code_description(code))
 end
 
 function make_test_manager(config_dict::Dict{String,Any})
-    lsp_config = JETLS.parse_config_from_dict(JETLS.JETLSConfig, config_dict)
-    data = JETLS.ConfigManagerData(JETLS.EMPTY_CONFIG, lsp_config, nothing, true)
-    return JETLS.ConfigManager(data)
+    lsp_config = JETLSCore.parse_config_from_dict(JETLSCore.JETLSConfig, config_dict)
+    data = JETLSCore.ConfigManagerData(JETLSCore.EMPTY_CONFIG, lsp_config, nothing, true)
+    return JETLSCore.ConfigManager(data)
 end
 
 @testset HierarchicalTestSet "diagnostic configuration" begin
     @testset "DiagnosticConfig parsing/validation" begin
         @testset "valid patterns" begin
             let config_raw = Dict{String,Any}()
-                config = JETLS.parse_config_from_dict(JETLS.DiagnosticConfig, config_raw)
+                config = JETLSCore.parse_config_from_dict(JETLSCore.DiagnosticConfig, config_raw)
                 @test config.enabled === nothing
                 @test config.patterns === nothing
             end
             let config_raw = Dict{String,Any}("enabled" => false)
-                config = JETLS.parse_config_from_dict(JETLS.DiagnosticConfig, config_raw)
+                config = JETLSCore.parse_config_from_dict(JETLSCore.DiagnosticConfig, config_raw)
                 @test config.enabled === false
                 @test config.patterns === nothing
             end
@@ -2006,7 +2006,7 @@ end
                             "match_type" => "literal",
                             "severity" => "hint")
                     ])
-                config = JETLS.parse_config_from_dict(JETLS.DiagnosticConfig, config_raw)
+                config = JETLSCore.parse_config_from_dict(JETLSCore.DiagnosticConfig, config_raw)
                 @test config.enabled === nothing
                 @test config.patterns !== nothing
                 @test length(config.patterns) == 1
@@ -2025,7 +2025,7 @@ end
                             "match_type" => "literal",
                             "severity" => 4)
                     ])
-                config = JETLS.parse_config_from_dict(JETLS.DiagnosticConfig, config_raw)
+                config = JETLSCore.parse_config_from_dict(JETLSCore.DiagnosticConfig, config_raw)
                 pattern = only(config.patterns)
                 @test pattern.severity == DiagnosticSeverity.Hint
             end
@@ -2038,7 +2038,7 @@ end
                             "match_type" => "regex",
                             "severity" => "off")
                     ])
-                config = JETLS.parse_config_from_dict(JETLS.DiagnosticConfig, config_raw)
+                config = JETLSCore.parse_config_from_dict(JETLSCore.DiagnosticConfig, config_raw)
                 pattern = only(config.patterns)
                 @test pattern.match_type == "regex"
                 @test pattern.pattern isa Regex
@@ -2054,7 +2054,7 @@ end
                             "match_type" => "literal",
                             "severity" => "info")
                     ])
-                config = JETLS.parse_config_from_dict(JETLS.DiagnosticConfig, config_raw)
+                config = JETLSCore.parse_config_from_dict(JETLSCore.DiagnosticConfig, config_raw)
                 pattern = only(config.patterns)
                 @test pattern.match_by == "message"
                 @test pattern.pattern == "Macro name `@namespace` not found"
@@ -2069,7 +2069,7 @@ end
                             "match_type" => "regex",
                             "severity" => "hint")
                     ])
-                config = JETLS.parse_config_from_dict(JETLS.DiagnosticConfig, config_raw)
+                config = JETLSCore.parse_config_from_dict(JETLSCore.DiagnosticConfig, config_raw)
                 pattern = only(config.patterns)
                 @test pattern.match_by == "message"
                 @test pattern.pattern isa Regex
@@ -2092,7 +2092,7 @@ end
                             "match_type" => "literal",
                             "severity" => "hint")
                     ])
-                config = JETLS.parse_config_from_dict(JETLS.DiagnosticConfig, config_raw)
+                config = JETLSCore.parse_config_from_dict(JETLSCore.DiagnosticConfig, config_raw)
                 @test config.enabled === true
                 @test config.patterns !== nothing
                 @test length(config.patterns) == 2
@@ -2107,7 +2107,7 @@ end
                             "severity" => "hint",
                             "path" => "test/**/*.jl")
                     ])
-                config = JETLS.parse_config_from_dict(JETLS.DiagnosticConfig, config_raw)
+                config = JETLSCore.parse_config_from_dict(JETLSCore.DiagnosticConfig, config_raw)
                 pattern = only(config.patterns)
                 @test pattern.path !== nothing
                 @test pattern.path isa Glob.FilenameMatch
@@ -2122,8 +2122,8 @@ end
         @testset "invalid patterns" begin
             let config_raw = Dict{String,Any}(
                     "invalid" => [])
-                @test_throws JETLS.InvalidKeyError JETLS.parse_config_from_dict(
-                    JETLS.DiagnosticConfig, config_raw)
+                @test_throws JETLSCore.InvalidKeyError JETLSCore.parse_config_from_dict(
+                    JETLSCore.DiagnosticConfig, config_raw)
             end
             let config_raw = Dict{String,Any}(
                     "patterns" => [
@@ -2132,8 +2132,8 @@ end
                             "match_type" => "literal",
                             "severity" => "info")
                     ])
-                @test_throws JETLS.DiagnosticConfigError JETLS.parse_config_from_dict(
-                    JETLS.DiagnosticConfig, config_raw)
+                @test_throws JETLSCore.DiagnosticConfigError JETLSCore.parse_config_from_dict(
+                    JETLSCore.DiagnosticConfig, config_raw)
             end
             let config_raw = Dict{String,Any}(
                     "patterns" => [
@@ -2142,8 +2142,8 @@ end
                             "match_type" => "literal",
                             "severity" => "info")
                     ])
-                @test_throws JETLS.DiagnosticConfigError JETLS.parse_config_from_dict(
-                    JETLS.DiagnosticConfig, config_raw)
+                @test_throws JETLSCore.DiagnosticConfigError JETLSCore.parse_config_from_dict(
+                    JETLSCore.DiagnosticConfig, config_raw)
             end
             let config_raw = Dict{String,Any}(
                     "patterns" => [
@@ -2152,8 +2152,8 @@ end
                             "match_by" => "code",
                             "severity" => "info")
                     ])
-                @test_throws JETLS.DiagnosticConfigError JETLS.parse_config_from_dict(
-                    JETLS.DiagnosticConfig, config_raw)
+                @test_throws JETLSCore.DiagnosticConfigError JETLSCore.parse_config_from_dict(
+                    JETLSCore.DiagnosticConfig, config_raw)
             end
             let config_raw = Dict{String,Any}(
                     "patterns" => [
@@ -2162,8 +2162,8 @@ end
                             "match_by" => "code",
                             "match_type" => "literal",)
                     ])
-                @test_throws JETLS.DiagnosticConfigError JETLS.parse_config_from_dict(
-                    JETLS.DiagnosticConfig, config_raw)
+                @test_throws JETLSCore.DiagnosticConfigError JETLSCore.parse_config_from_dict(
+                    JETLSCore.DiagnosticConfig, config_raw)
             end
             let config_raw = Dict{String,Any}(
                     "patterns" => [
@@ -2173,8 +2173,8 @@ end
                             "severity" => "info",
                             "match_type" => "literal")
                     ])
-                @test_throws JETLS.DiagnosticConfigError JETLS.parse_config_from_dict(
-                    JETLS.DiagnosticConfig, config_raw)
+                @test_throws JETLSCore.DiagnosticConfigError JETLSCore.parse_config_from_dict(
+                    JETLSCore.DiagnosticConfig, config_raw)
             end
             let config_raw = Dict{String,Any}(
                     "patterns" => [
@@ -2184,8 +2184,8 @@ end
                             "severity" => "info",
                             "match_type" => "literal")
                     ])
-                @test_throws JETLS.DiagnosticConfigError JETLS.parse_config_from_dict(
-                    JETLS.DiagnosticConfig, config_raw)
+                @test_throws JETLSCore.DiagnosticConfigError JETLSCore.parse_config_from_dict(
+                    JETLSCore.DiagnosticConfig, config_raw)
             end
             let config_raw = Dict{String,Any}(
                     "patterns" => [
@@ -2195,8 +2195,8 @@ end
                             "severity" => "invalid",
                             "match_type" => "literal")
                     ])
-                @test_throws JETLS.DiagnosticConfigError JETLS.parse_config_from_dict(
-                    JETLS.DiagnosticConfig, config_raw)
+                @test_throws JETLSCore.DiagnosticConfigError JETLSCore.parse_config_from_dict(
+                    JETLSCore.DiagnosticConfig, config_raw)
             end
             let config_raw = Dict{String,Any}(
                     "patterns" => [
@@ -2206,8 +2206,8 @@ end
                             "severity" => 5,
                             "match_type" => "literal")
                     ])
-                @test_throws JETLS.DiagnosticConfigError JETLS.parse_config_from_dict(
-                    JETLS.DiagnosticConfig, config_raw)
+                @test_throws JETLSCore.DiagnosticConfigError JETLSCore.parse_config_from_dict(
+                    JETLSCore.DiagnosticConfig, config_raw)
             end
             let config_raw = Dict{String,Any}(
                     "patterns" => [
@@ -2217,8 +2217,8 @@ end
                             "severity" => Dict{String,Any}(),
                             "match_type" => "literal")
                     ])
-                @test_throws JETLS.DiagnosticConfigError JETLS.parse_config_from_dict(
-                    JETLS.DiagnosticConfig, config_raw)
+                @test_throws JETLSCore.DiagnosticConfigError JETLSCore.parse_config_from_dict(
+                    JETLSCore.DiagnosticConfig, config_raw)
             end
             let config_raw = Dict{String,Any}(
                     "patterns" => [
@@ -2228,8 +2228,8 @@ end
                             "match_type" => "invalid",
                             "severity" => "info")
                     ])
-                @test_throws JETLS.DiagnosticConfigError JETLS.parse_config_from_dict(
-                    JETLS.DiagnosticConfig, config_raw)
+                @test_throws JETLSCore.DiagnosticConfigError JETLSCore.parse_config_from_dict(
+                    JETLSCore.DiagnosticConfig, config_raw)
             end
             let config_raw = Dict{String,Any}(
                     "patterns" => [
@@ -2239,8 +2239,8 @@ end
                             "match_type" => Dict{String,Any}(),
                             "severity" => "info")
                     ])
-                @test_throws JETLS.DiagnosticConfigError JETLS.parse_config_from_dict(
-                    JETLS.DiagnosticConfig, config_raw)
+                @test_throws JETLSCore.DiagnosticConfigError JETLSCore.parse_config_from_dict(
+                    JETLSCore.DiagnosticConfig, config_raw)
             end
             let config_raw = Dict{String,Any}(
                     "patterns" => [
@@ -2250,8 +2250,8 @@ end
                             "match_type" => "regex",
                             "severity" => "info")
                     ])
-                @test_throws JETLS.DiagnosticConfigError JETLS.parse_config_from_dict(
-                    JETLS.DiagnosticConfig, config_raw)
+                @test_throws JETLSCore.DiagnosticConfigError JETLSCore.parse_config_from_dict(
+                    JETLSCore.DiagnosticConfig, config_raw)
             end
             let config_raw = Dict{String,Any}(
                     "patterns" => [
@@ -2262,8 +2262,8 @@ end
                             "severity" => "info",
                             "invalid_key" => "value")
                     ])
-                @test_throws JETLS.DiagnosticConfigError JETLS.parse_config_from_dict(
-                    JETLS.DiagnosticConfig, config_raw)
+                @test_throws JETLSCore.DiagnosticConfigError JETLSCore.parse_config_from_dict(
+                    JETLSCore.DiagnosticConfig, config_raw)
             end
             let config_raw = Dict{String,Any}(
                     "patterns" => [
@@ -2274,8 +2274,8 @@ end
                             "severity" => "hint",
                             "path" => 123)
                     ])
-                @test_throws JETLS.DiagnosticConfigError JETLS.parse_config_from_dict(
-                    JETLS.DiagnosticConfig, config_raw)
+                @test_throws JETLSCore.DiagnosticConfigError JETLSCore.parse_config_from_dict(
+                    JETLSCore.DiagnosticConfig, config_raw)
             end
         end
     end
@@ -2283,10 +2283,10 @@ end
     @testset "apply_diagnostic_config!" begin
         let diagnostics = [
                 make_test_diagnostic(;
-                    code = JETLS.LOWERING_UNUSED_ARGUMENT_CODE,
+                    code = JETLSCore.LOWERING_UNUSED_ARGUMENT_CODE,
                     severity = DiagnosticSeverity.Information),
                 make_test_diagnostic(;
-                    code = JETLS.INFERENCE_UNDEF_GLOBAL_VAR_CODE,
+                    code = JETLSCore.INFERENCE_UNDEF_GLOBAL_VAR_CODE,
                     severity = DiagnosticSeverity.Warning),
             ]
             manager = make_test_manager(Dict{String,Any}(
@@ -2304,15 +2304,15 @@ end
                             "severity" => "off"),
                     ])))
             uri = filepath2uri("/tmp/test.jl")
-            JETLS.apply_diagnostic_config!(diagnostics, manager, uri, nothing)
+            JETLSCore.apply_diagnostic_config!(diagnostics, manager, uri, nothing)
             @test length(diagnostics) == 1
-            @test only(diagnostics).code == JETLS.LOWERING_UNUSED_ARGUMENT_CODE
+            @test only(diagnostics).code == JETLSCore.LOWERING_UNUSED_ARGUMENT_CODE
             @test only(diagnostics).severity == DiagnosticSeverity.Hint
         end
 
         let diagnostics = [
                 make_test_diagnostic(;
-                    code = JETLS.LOWERING_MACRO_EXPANSION_ERROR_CODE,
+                    code = JETLSCore.LOWERING_MACRO_EXPANSION_ERROR_CODE,
                     severity = DiagnosticSeverity.Error,
                     message = "Macro name `@namespace` not found")
             ]
@@ -2326,14 +2326,14 @@ end
                             "severity" => "info"),
                     ])))
             uri = filepath2uri("/tmp/test.jl")
-            JETLS.apply_diagnostic_config!(diagnostics, manager, uri, nothing)
+            JETLSCore.apply_diagnostic_config!(diagnostics, manager, uri, nothing)
             @test length(diagnostics) == 1
             @test only(diagnostics).severity == DiagnosticSeverity.Information
         end
 
         let diagnostics = [
                 make_test_diagnostic(;
-                    code = JETLS.LOWERING_MACRO_EXPANSION_ERROR_CODE,
+                    code = JETLSCore.LOWERING_MACRO_EXPANSION_ERROR_CODE,
                     severity = DiagnosticSeverity.Error,
                     message = "Macro name `@interface` not found")
             ]
@@ -2347,28 +2347,28 @@ end
                             "severity" => "hint"),
                     ])))
             uri = filepath2uri("/tmp/test.jl")
-            JETLS.apply_diagnostic_config!(diagnostics, manager, uri, nothing)
+            JETLSCore.apply_diagnostic_config!(diagnostics, manager, uri, nothing)
             @test length(diagnostics) == 1
             @test only(diagnostics).severity == DiagnosticSeverity.Hint
         end
 
         let diagnostics = [
                 make_test_diagnostic(;
-                    code = JETLS.LOWERING_UNUSED_ARGUMENT_CODE,
+                    code = JETLSCore.LOWERING_UNUSED_ARGUMENT_CODE,
                     severity = DiagnosticSeverity.Information)
             ]
             manager = make_test_manager(Dict{String,Any}(
                 "diagnostic" => Dict{String,Any}(
                     "enabled" => false)))
             uri = filepath2uri("/tmp/test.jl")
-            JETLS.apply_diagnostic_config!(diagnostics, manager, uri, nothing)
+            JETLSCore.apply_diagnostic_config!(diagnostics, manager, uri, nothing)
             @test isempty(diagnostics)
         end
 
         # message-based patterns should have higher priority than code-based patterns
         let diagnostics = [
                 make_test_diagnostic(;
-                    code = JETLS.LOWERING_MACRO_EXPANSION_ERROR_CODE,
+                    code = JETLSCore.LOWERING_MACRO_EXPANSION_ERROR_CODE,
                     severity = DiagnosticSeverity.Error,
                     message = "Macro name `@interface` not found")
             ]
@@ -2387,7 +2387,7 @@ end
                             "severity" => "info"),
                     ])))
             uri = filepath2uri("/tmp/test.jl")
-            JETLS.apply_diagnostic_config!(diagnostics, manager, uri, nothing)
+            JETLSCore.apply_diagnostic_config!(diagnostics, manager, uri, nothing)
             @test length(diagnostics) == 1
             @test only(diagnostics).severity == DiagnosticSeverity.Information
         end
@@ -2395,7 +2395,7 @@ end
         # Later rules win when patterns have the same priority.
         let diagnostics = [
                 make_test_diagnostic(;
-                    code = JETLS.LOWERING_UNUSED_ARGUMENT_CODE,
+                    code = JETLSCore.LOWERING_UNUSED_ARGUMENT_CODE,
                     severity = DiagnosticSeverity.Error)
             ]
             manager = make_test_manager(Dict{String,Any}(
@@ -2413,7 +2413,7 @@ end
                             "severity" => "hint"),
                     ])))
             uri = filepath2uri("/tmp/test.jl")
-            JETLS.apply_diagnostic_config!(diagnostics, manager, uri, nothing)
+            JETLSCore.apply_diagnostic_config!(diagnostics, manager, uri, nothing)
             @test length(diagnostics) == 1
             @test only(diagnostics).severity == DiagnosticSeverity.Hint
         end
@@ -2421,7 +2421,7 @@ end
         @testset "path matching" begin
             let diagnostics = [
                     make_test_diagnostic(;
-                        code = JETLS.LOWERING_MACRO_EXPANSION_ERROR_CODE,
+                        code = JETLSCore.LOWERING_MACRO_EXPANSION_ERROR_CODE,
                         severity = DiagnosticSeverity.Error,
                         message = "Macro name `@namespace` not found")
                 ]
@@ -2437,14 +2437,14 @@ end
                         ])))
                 uri = filepath2uri("/path/to/LSP/src/subdir/protocol.jl")
                 root_path = Sys.iswindows() ? "/PATH/TO" : "/path/to"
-                JETLS.apply_diagnostic_config!(diagnostics, manager, uri, root_path)
+                JETLSCore.apply_diagnostic_config!(diagnostics, manager, uri, root_path)
                 @test length(diagnostics) == 1
                 @test only(diagnostics).severity == DiagnosticSeverity.Information
             end
 
             let diagnostics = [
                     make_test_diagnostic(;
-                        code = JETLS.LOWERING_MACRO_EXPANSION_ERROR_CODE,
+                        code = JETLSCore.LOWERING_MACRO_EXPANSION_ERROR_CODE,
                         severity = DiagnosticSeverity.Error,
                         message = "Macro name `@namespace` not found")
                 ]
@@ -2459,14 +2459,14 @@ end
                                 "path" => "LSP/src/**/*.jl")
                         ])))
                 uri = filepath2uri("/path/to/other/src/protocol.jl")
-                JETLS.apply_diagnostic_config!(diagnostics, manager, uri, "/path/to")
+                JETLSCore.apply_diagnostic_config!(diagnostics, manager, uri, "/path/to")
                 @test length(diagnostics) == 1
                 @test only(diagnostics).severity == DiagnosticSeverity.Error
             end
 
             let diagnostics = [
                     make_test_diagnostic(;
-                        code = JETLS.LOWERING_UNUSED_ARGUMENT_CODE,
+                        code = JETLSCore.LOWERING_UNUSED_ARGUMENT_CODE,
                         severity = DiagnosticSeverity.Information)
                 ]
                 manager = make_test_manager(Dict{String,Any}(
@@ -2481,7 +2481,7 @@ end
                         ])))
                 uri = filepath2uri("/path/to/test/foo/bar.jl")
                 root_path = Sys.iswindows() ? "/PATH/TO" : "/path/to"
-                JETLS.apply_diagnostic_config!(diagnostics, manager, uri, root_path)
+                JETLSCore.apply_diagnostic_config!(diagnostics, manager, uri, root_path)
                 @test isempty(diagnostics)
             end
         end
@@ -2489,19 +2489,19 @@ end
         # diagnostics with severity=0 are filtered out when no pattern enables them
         let diagnostics = [
                 make_test_diagnostic(;
-                    code = JETLS.LOWERING_UNSORTED_IMPORT_NAMES_CODE,
+                    code = JETLSCore.LOWERING_UNSORTED_IMPORT_NAMES_CODE,
                     severity = 0)
             ]
             manager = make_test_manager(Dict{String,Any}())
             uri = filepath2uri("/tmp/test.jl")
-            JETLS.apply_diagnostic_config!(diagnostics, manager, uri, nothing)
+            JETLSCore.apply_diagnostic_config!(diagnostics, manager, uri, nothing)
             @test isempty(diagnostics)
         end
 
         # diagnostics with severity=0 can be enabled via patterns
         let diagnostics = [
                 make_test_diagnostic(;
-                    code = JETLS.LOWERING_UNSORTED_IMPORT_NAMES_CODE,
+                    code = JETLSCore.LOWERING_UNSORTED_IMPORT_NAMES_CODE,
                     severity = 0)
             ]
             manager = make_test_manager(Dict{String,Any}(
@@ -2514,7 +2514,7 @@ end
                             "severity" => "hint")
                     ])))
             uri = filepath2uri("/tmp/test.jl")
-            JETLS.apply_diagnostic_config!(diagnostics, manager, uri, nothing)
+            JETLSCore.apply_diagnostic_config!(diagnostics, manager, uri, nothing)
             @test length(diagnostics) == 1
             @test only(diagnostics).severity == DiagnosticSeverity.Hint
         end

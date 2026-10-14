@@ -1,20 +1,20 @@
 module test_references
 
 using Test
-using JETLS
-using JETLS.LSP
+using JETLSCore
+using JETLSCore.LSP
 
-include(normpath(pkgdir(JETLS), "test", "setup.jl"))
+include("setup.jl")
 
 function find_references(code::AbstractString, pos::Position; include_declaration::Bool=true)
-    server = JETLS.Server()
+    server = JETLSCore.Server()
     uri = URI("file:///test.jl")
-    fi = JETLS.FileInfo(#=version=#0, code, "test.jl"; cache_tree0 = true)
-    JETLS.store!(server.state.file_cache) do cache
+    fi = JETLSCore.FileInfo(#=version=#0, code, "test.jl"; cache_tree0 = true)
+    JETLSCore.store!(server.state.file_cache) do cache
         Base.PersistentDict(cache, uri => fi), nothing
     end
-    locations = JETLS.find_references(server, uri, fi, pos; include_declaration)
-    JETLS.check_syntax_tree0(fi)
+    locations = JETLSCore.find_references(server, uri, fi, pos; include_declaration)
+    JETLSCore.check_syntax_tree0(fi)
     return locations
 end
 
@@ -25,7 +25,7 @@ end
                 println(│xx│x│, yyy)
             end
             """
-            clean_code, positions = JETLS.get_text_and_positions(code)
+            clean_code, positions = JETLSCore.get_text_and_positions(code)
             for pos in positions
                 refs = find_references(clean_code, pos)
                 @test length(refs) == 2
@@ -40,7 +40,7 @@ end
                     println(│xx│x│, yyy)
                 end
                 """
-                clean_code, positions = JETLS.get_text_and_positions(code)
+                clean_code, positions = JETLSCore.get_text_and_positions(code)
                 for pos in positions
                     refs = find_references(clean_code, pos; include_declaration=false)
                     @test length(refs) == 1
@@ -58,7 +58,7 @@ end
                     return │xx│x│
                 end
                 """
-                clean_code, positions = JETLS.get_text_and_positions(code)
+                clean_code, positions = JETLSCore.get_text_and_positions(code)
                 for pos in positions
                     refs = find_references(clean_code, pos; include_declaration=true)
                     @test length(refs) == 3
@@ -75,13 +75,13 @@ end
 
     @testset "Test macros without full analysis" begin
         mktempdir() do root_path
-            server = JETLS.Server()
+            server = JETLSCore.Server()
             server.state.root_path = root_path
-            server.state.init_options = JETLS.InitOptions(; analysis_overrides=[
-                JETLS.AnalysisOverride(;
-                    path=JETLS.Glob.FilenameMatch("*.jl", "dp"), full_analysis=false)
+            server.state.init_options = JETLSCore.InitOptions(; analysis_overrides=[
+                JETLSCore.AnalysisOverride(;
+                    path=JETLSCore.Glob.FilenameMatch("*.jl", "dp"), full_analysis=false)
             ])
-            uri = JETLS.filepath2uri(joinpath(root_path, "test.jl"))
+            uri = JETLSCore.filepath2uri(joinpath(root_path, "test.jl"))
 
             for (version, (prefix, wrap_module)) in enumerate(
                     (("", false), ("Test.", false), ("", true), ("Test.", true)))
@@ -101,25 +101,25 @@ end
                 if wrap_module
                     code = "module TestCode\nusing Test\n" * code * "end\n"
                 end
-                clean_code, positions = JETLS.get_text_and_positions(code)
+                clean_code, positions = JETLSCore.get_text_and_positions(code)
                 @test length(positions) == 12
-                fi = JETLS.cache_file_info!(server, uri, version, clean_code)
-                context = JETLS.lookup_out_of_scope!(server.state, uri)::JETLS.OutOfScope
-                @test context.module_context === JETLS.FallbackAnalysisContext
-                @test !JETLS.has_analyzed_context(server.state, uri)
-                @test JETLS.collect_search_uris(server, uri) == Set((uri,))
+                fi = JETLSCore.cache_file_info!(server, uri, version, clean_code)
+                context = JETLSCore.lookup_out_of_scope!(server.state, uri)::JETLSCore.OutOfScope
+                @test context.module_context === JETLSCore.FallbackAnalysisContext
+                @test !JETLSCore.has_analyzed_context(server.state, uri)
+                @test JETLSCore.collect_search_uris(server, uri) == Set((uri,))
                 ranges = [Range(; start=positions[i], var"end"=positions[i+1])
                     for i in 1:2:length(positions)]
                 for (indices, expected) in ((1:8, ranges[1:4]), (9:12, ranges[5:6]))
                     for pos in positions[indices]
-                        refs = JETLS.find_references(server, uri, fi, pos)
+                        refs = JETLSCore.find_references(server, uri, fi, pos)
                         @test length(refs) == length(expected)
                         @test all(ref -> ref.uri == uri, refs)
                         @test Set(ref.range for ref in refs) == Set(expected)
                     end
                 end
 
-                result = JETLS.find_definition(server, uri, fi, positions[7])
+                result = JETLSCore.find_definition(server, uri, fi, positions[7])
                 @test result !== nothing
                 if result !== nothing
                     locations, _ = result
@@ -128,8 +128,8 @@ end
                     @test Set(loc.range for loc in locations) == Set(ranges[[1, 3]])
                 end
 
-                per_file = JETLS.compute_per_file_diagnostics(
-                    server, uri, fi, JETLS.build_syntax_tree(fi), JETLS.DUMMY_CANCEL_FLAG)
+                per_file = JETLSCore.compute_per_file_diagnostics(
+                    server, uri, fi, JETLSCore.build_syntax_tree(fi), JETLSCore.DUMMY_CANCEL_FLAG)
                 @test isempty(per_file.diagnostics)
                 @test isempty(per_file.undef_global_candidates)
             end
@@ -143,12 +143,12 @@ end
                     @unknown_macro missing_global
                     @testset
                     """
-                clean_code, positions = JETLS.get_text_and_positions(code)
-                fi = JETLS.cache_file_info!(server, uri, 5, clean_code)
-                per_file = JETLS.compute_per_file_diagnostics(
-                    server, uri, fi, JETLS.build_syntax_tree(fi), JETLS.DUMMY_CANCEL_FLAG)
+                clean_code, positions = JETLSCore.get_text_and_positions(code)
+                fi = JETLSCore.cache_file_info!(server, uri, 5, clean_code)
+                per_file = JETLSCore.compute_per_file_diagnostics(
+                    server, uri, fi, JETLSCore.build_syntax_tree(fi), JETLSCore.DUMMY_CANCEL_FLAG)
                 undef_local = filter(per_file.diagnostics) do diagnostic
-                    diagnostic.code == JETLS.LOWERING_UNDEF_LOCAL_VAR_CODE
+                    diagnostic.code == JETLSCore.LOWERING_UNDEF_LOCAL_VAR_CODE
                 end
                 @test length(undef_local) == 1
                 @test only(undef_local).range == Range(;
@@ -156,8 +156,8 @@ end
                 @test isempty(per_file.undef_global_candidates)
                 @test !any(per_file.diagnostics) do diagnostic
                     diagnostic.code in (
-                        JETLS.LOWERING_UNDEF_GLOBAL_VAR_CODE,
-                        JETLS.LOWERING_MACRO_EXPANSION_ERROR_CODE,
+                        JETLSCore.LOWERING_UNDEF_GLOBAL_VAR_CODE,
+                        JETLSCore.LOWERING_MACRO_EXPANSION_ERROR_CODE,
                     )
                 end
             end
@@ -178,7 +178,7 @@ end
 
             result2 = │myfunc│(2, 3)
             """
-            clean_code, positions = JETLS.get_text_and_positions(code)
+            clean_code, positions = JETLSCore.get_text_and_positions(code)
             @test length(positions) == 8
             for pos in positions
                 refs = find_references(clean_code, pos; include_declaration=true)
@@ -197,7 +197,7 @@ end
 
             result = │kwfunc│(1)
             """
-            clean_code, positions = JETLS.get_text_and_positions(code)
+            clean_code, positions = JETLSCore.get_text_and_positions(code)
             @test length(positions) == 4
             for pos in positions
                 refs = find_references(clean_code, pos; include_declaration=true)
@@ -220,7 +220,7 @@ end
                 end
                 make_mytype() = │MyType│(42)
                 """
-                clean_code, positions = JETLS.get_text_and_positions(code)
+                clean_code, positions = JETLSCore.get_text_and_positions(code)
                 @test length(positions) == 8
                 for pos in positions
                     @test length(find_references(clean_code, pos)) == 4
@@ -238,7 +238,7 @@ end
                 end
                 f(::│MyType│) = nothing
                 """
-                clean_code, positions = JETLS.get_text_and_positions(code)
+                clean_code, positions = JETLSCore.get_text_and_positions(code)
                 @test length(positions) == 4
                 refs = find_references(clean_code, positions[1]; include_declaration=false)
                 expected = Range(; start=positions[3], var"end"=positions[4])
@@ -254,7 +254,7 @@ end
                 println(│xx│x│, yyy)
             end
             """
-            clean_code, positions = JETLS.get_text_and_positions(code)
+            clean_code, positions = JETLSCore.get_text_and_positions(code)
             for pos in positions
                 refs = find_references(clean_code, pos)
                 @test length(refs) == 2
@@ -271,7 +271,7 @@ end
             f() = :(use(│x│))
             g() = :(│x│ = 1)
             """
-            clean_code, positions = JETLS.get_text_and_positions(code)
+            clean_code, positions = JETLSCore.get_text_and_positions(code)
             @test length(positions) == 6
             for pos in positions
                 @test length(find_references(clean_code, pos)) == 3
@@ -280,7 +280,7 @@ end
 
         # An atomic quoted identifier is Symbol data, not a reference target.
         let code = "names = (:│sin│, :cos)"
-            clean_code, positions = JETLS.get_text_and_positions(code)
+            clean_code, positions = JETLSCore.get_text_and_positions(code)
             @test length(positions) == 2
             for pos in positions
                 @test isempty(find_references(clean_code, pos))
@@ -294,7 +294,7 @@ end
                 return :(G(│x│))
             end
             """
-            clean_code, positions = JETLS.get_text_and_positions(code)
+            clean_code, positions = JETLSCore.get_text_and_positions(code)
             @test length(positions) == 6
             expected = (2, 2, 1, 1, 2, 2)
             @test all(zip(positions, expected)) do (pos, nrefs)
@@ -308,7 +308,7 @@ end
                 return :(G(\$│x│))
             end
             """
-            clean_code, positions = JETLS.get_text_and_positions(code)
+            clean_code, positions = JETLSCore.get_text_and_positions(code)
             @test length(positions) == 6
             for pos in positions[1:2]
                 @test length(find_references(clean_code, pos)) == 1
@@ -323,7 +323,7 @@ end
                 │x│
             end)
             """
-            clean_code, positions = JETLS.get_text_and_positions(code)
+            clean_code, positions = JETLSCore.get_text_and_positions(code)
             @test length(positions) == 4
             for pos in positions
                 @test length(find_references(clean_code, pos)) == 2
@@ -337,7 +337,7 @@ end
                 end
             end
             """
-            clean_code, positions = JETLS.get_text_and_positions(code)
+            clean_code, positions = JETLSCore.get_text_and_positions(code)
             @test length(positions) == 4
             for pos in positions
                 @test length(find_references(clean_code, pos)) == 2
@@ -351,7 +351,7 @@ end
                 return :(copy(│xx│x│) + │xx│x│)
             end
             """
-            clean_code, positions = JETLS.get_text_and_positions(code)
+            clean_code, positions = JETLSCore.get_text_and_positions(code)
             @test length(positions) == 9
             for pos in positions
                 refs = find_references(clean_code, pos)
@@ -364,7 +364,7 @@ end
                 return :(│x│)
             end
             """
-            clean_code, positions = JETLS.get_text_and_positions(code)
+            clean_code, positions = JETLSCore.get_text_and_positions(code)
             @test length(positions) == 4
             for pos in positions
                 @test length(find_references(clean_code, pos)) == 2
@@ -379,7 +379,7 @@ end
                 end)
             end
             """
-            clean_code, positions = JETLS.get_text_and_positions(code)
+            clean_code, positions = JETLSCore.get_text_and_positions(code)
             @test length(positions) == 6
             @test length(find_references(clean_code, positions[1])) == 1
             @test length(find_references(clean_code, positions[3])) == 2
@@ -394,7 +394,7 @@ end
                 end)
             end
             """
-            clean_code, positions = JETLS.get_text_and_positions(code)
+            clean_code, positions = JETLSCore.get_text_and_positions(code)
             @test length(positions) == 8
             argument_ranges = Set((
                 Range(; start=positions[1], var"end"=positions[2]),
@@ -421,7 +421,7 @@ end
                 end
             end
             """
-            clean_code, positions = JETLS.get_text_and_positions(code)
+            clean_code, positions = JETLSCore.get_text_and_positions(code)
             @test length(positions) == 4
             for pos in positions
                 @test length(find_references(clean_code, pos)) == 2
@@ -456,7 +456,7 @@ end
                     return :([│x│ + 1 for │x│ in 1:2])
                 end
                 """)
-            clean_code, positions = JETLS.get_text_and_positions(code)
+            clean_code, positions = JETLSCore.get_text_and_positions(code)
             @test length(positions) == 6
             outer_range = Range(; start=positions[1], var"end"=positions[2])
             local_ranges = Set((
@@ -480,7 +480,7 @@ end
                 end)
             end
             """
-            clean_code, positions = JETLS.get_text_and_positions(code)
+            clean_code, positions = JETLSCore.get_text_and_positions(code)
             @test length(positions) == 8
             outer_ranges = Set((
                 Range(; start=positions[1], var"end"=positions[2]),
@@ -507,7 +507,7 @@ end
                 end)
             end
             """
-            clean_code, positions = JETLS.get_text_and_positions(code)
+            clean_code, positions = JETLSCore.get_text_and_positions(code)
             @test length(positions) == 6
             outer_ranges = Set((
                 Range(; start=positions[1], var"end"=positions[2]),
@@ -528,7 +528,7 @@ end
                 return :( :(\$│x│) )
             end
             """
-            clean_code, positions = JETLS.get_text_and_positions(code)
+            clean_code, positions = JETLSCore.get_text_and_positions(code)
             @test length(positions) == 4
             expected_ranges = Set((
                 Range(; start=positions[1], var"end"=positions[2]),
@@ -547,7 +547,7 @@ end
                 end)
             end
             """
-            clean_code, positions = JETLS.get_text_and_positions(code)
+            clean_code, positions = JETLSCore.get_text_and_positions(code)
             @test length(positions) == 6
             outer_range = Range(; start=positions[1], var"end"=positions[2])
             local_ranges = Set((
@@ -569,7 +569,7 @@ end
                 return :(zero(│T│))
             end
             """
-            clean_code, positions = JETLS.get_text_and_positions(code)
+            clean_code, positions = JETLSCore.get_text_and_positions(code)
             @test length(positions) == 6
             for pos in positions
                 refs = find_references(clean_code, pos)
@@ -587,7 +587,7 @@ end
                 end
             end
             """
-            clean_code, positions = JETLS.get_text_and_positions(code)
+            clean_code, positions = JETLSCore.get_text_and_positions(code)
             @test length(positions) == 4
             for pos in positions
                 refs = find_references(clean_code, pos)
@@ -607,7 +607,7 @@ end
             end
             global │xxxx│ = 42
             """
-            clean_code, positions = JETLS.get_text_and_positions(code)
+            clean_code, positions = JETLSCore.get_text_and_positions(code)
             @test length(positions) == 6  # 2 markers per identifier × 3 identifiers
             # Argument and its inert `:use` are linked to each other (2 refs),
             # but the module-level `global xxxx` is an independent binding.
@@ -634,7 +634,7 @@ end
                 return :(nothing)
             end
             """
-            clean_code, positions = JETLS.get_text_and_positions(code)
+            clean_code, positions = JETLSCore.get_text_and_positions(code)
             @test length(positions) == 4
             expected = (1, 1, 0, 0)
             for (pos, nrefs) in zip(positions, expected)
@@ -653,7 +653,7 @@ end
             @mymacro println("hello")
             @mymacro println("world")
             """
-            clean_code, positions = JETLS.get_text_and_positions(code)
+            clean_code, positions = JETLSCore.get_text_and_positions(code)
             for pos in positions
                 refs = find_references(clean_code, pos)
                 @test length(refs) == 3
@@ -669,7 +669,7 @@ end
             │@mymacro│ println("hello")
             │@mymacro│ println("world")
             """
-            clean_code, positions = JETLS.get_text_and_positions(code)
+            clean_code, positions = JETLSCore.get_text_and_positions(code)
             for pos in positions
                 refs = find_references(clean_code, pos)
                 @test length(refs) == 3
@@ -681,7 +681,7 @@ end
                     "macro │mymacro│(ex) esc(ex) end",
                     "macro │mymacro│ end")
                 code = "$definition\n│@mymacro│ println(\"hello\")"
-                clean_code, positions = JETLS.get_text_and_positions(code)
+                clean_code, positions = JETLSCore.get_text_and_positions(code)
                 @test length(positions) == 4
                 definition_range = Range(; start=positions[1], var"end"=positions[2])
                 call_range = Range(; start=positions[3], var"end"=positions[4])
@@ -704,7 +704,7 @@ end
                 return :(│helper│(\$│ex│))
             end
             """
-            clean_code, positions = JETLS.get_text_and_positions(code)
+            clean_code, positions = JETLSCore.get_text_and_positions(code)
             @test length(positions) == 8
             for pos in positions[[1, 2, 5, 6]]
                 @test length(find_references(clean_code, pos)) == 2
@@ -723,7 +723,7 @@ end
                 end
             end
             """
-            clean_code, positions = JETLS.get_text_and_positions(code)
+            clean_code, positions = JETLSCore.get_text_and_positions(code)
             @test length(positions) == 4
             for pos in positions
                 @test length(find_references(clean_code, pos)) == 2
@@ -738,7 +738,7 @@ end
                     return $escape(:(│helper│(│x│)))
                 end
                 """
-            clean_code, positions = JETLS.get_text_and_positions(code)
+            clean_code, positions = JETLSCore.get_text_and_positions(code)
             @test length(positions) == 6
             for pos in positions[1:2]
                 @test length(find_references(clean_code, pos)) == 1
@@ -758,7 +758,7 @@ end
                 end
             end
             """
-            clean_code, positions = JETLS.get_text_and_positions(code)
+            clean_code, positions = JETLSCore.get_text_and_positions(code)
             @test length(positions) == 6
             for pos in positions[1:2]
                 @test length(find_references(clean_code, pos)) == 1
@@ -778,7 +778,7 @@ end
                     return $escape(:(│@helper│))
                 end
                 """
-            clean_code, positions = JETLS.get_text_and_positions(code)
+            clean_code, positions = JETLSCore.get_text_and_positions(code)
             @test length(positions) == 4
             for pos in positions[1:2]
                 @test length(find_references(clean_code, pos)) == 1
@@ -797,7 +797,7 @@ end
                 return esc(:(\$(│@helper│)))
             end
             """
-            clean_code, positions = JETLS.get_text_and_positions(code)
+            clean_code, positions = JETLSCore.get_text_and_positions(code)
             @test length(positions) == 4
             for pos in positions
                 @test length(find_references(clean_code, pos)) == 2
@@ -812,7 +812,7 @@ end
                 return temporary
             end
             """
-            clean_code, positions = JETLS.get_text_and_positions(code)
+            clean_code, positions = JETLSCore.get_text_and_positions(code)
             @test length(positions) == 6
             expected = (2, 2, 2, 2, 1, 1)
             @test all(zip(positions, expected)) do (pos, nrefs)
@@ -828,7 +828,7 @@ end
             │myfunc│(1)
             │myfunc│()
             """
-            clean_code, positions = JETLS.get_text_and_positions(code)
+            clean_code, positions = JETLSCore.get_text_and_positions(code)
             @test length(positions) == 6
             for pos in positions
                 refs = find_references(clean_code, pos; include_declaration=true)
@@ -852,7 +852,7 @@ end
             export │myfunc│
             │myfunc│(1)
             """
-            clean_code, positions = JETLS.get_text_and_positions(code)
+            clean_code, positions = JETLSCore.get_text_and_positions(code)
             @test length(positions) == 6
             for pos in positions
                 refs = find_references(clean_code, pos; include_declaration=true)
@@ -884,7 +884,7 @@ end
 
             result = │foo│(1)
             """
-            clean_code, positions = JETLS.get_text_and_positions(code)
+            clean_code, positions = JETLSCore.get_text_and_positions(code)
             @test length(positions) == 4
             for pos in positions
                 refs = find_references(clean_code, pos)
@@ -905,7 +905,7 @@ end
                 return total
             end
             """
-            clean_code, positions = JETLS.get_text_and_positions(code)
+            clean_code, positions = JETLSCore.get_text_and_positions(code)
             @test length(positions) == 4
             for pos in positions
                 refs = find_references(clean_code, pos)
@@ -930,7 +930,7 @@ end
                 @mymacro something(::Type{Int}) = \$valid
             end
             """
-            clean_code, positions = JETLS.get_text_and_positions(code)
+            clean_code, positions = JETLSCore.get_text_and_positions(code)
             @test length(positions) == 4
             for pos in positions
                 refs = find_references(clean_code, pos)
@@ -953,7 +953,7 @@ end
                 @ccall strlen("foo"::Cstring)::Csize_t
             end
             """
-            clean_code, positions = JETLS.get_text_and_positions(code)
+            clean_code, positions = JETLSCore.get_text_and_positions(code)
             @test length(positions) == 2
             # The `let` binding position finds only itself; the C symbol
             # `strlen` inside `@ccall` is not linked to the Julia local.
@@ -970,7 +970,7 @@ end
                 return │y│
             end
             """
-            clean_code, positions = JETLS.get_text_and_positions(code)
+            clean_code, positions = JETLSCore.get_text_and_positions(code)
             @test length(positions) == 8
             for pos in positions
                 refs = find_references(clean_code, pos)
@@ -988,7 +988,7 @@ end
                     $eval_macro some_func(::│LSAnalyzer│) = \$x
                 end
                 """
-            clean_code, positions = JETLS.get_text_and_positions(code)
+            clean_code, positions = JETLSCore.get_text_and_positions(code)
             @test length(positions) == 4
             for pos in positions
                 refs = find_references(clean_code, pos)
@@ -1002,7 +1002,7 @@ end
                 global │gvar│ = nothing
                 $eval_macro :│gvar│
                 """
-            clean_code, positions = JETLS.get_text_and_positions(code)
+            clean_code, positions = JETLSCore.get_text_and_positions(code)
             @test length(positions) == 4
             for pos in positions[1:2]
                 @test length(find_references(clean_code, pos)) == 1
@@ -1019,7 +1019,7 @@ end
                 q = :(use(│x│))
             end
             """
-            clean_code, positions = JETLS.get_text_and_positions(code)
+            clean_code, positions = JETLSCore.get_text_and_positions(code)
             @test length(positions) == 4
             for pos in positions
                 @test_broken length(find_references(clean_code, pos)) == 2
@@ -1036,7 +1036,7 @@ end
                     │@helper│
                 end
                 """
-            clean_code, positions = JETLS.get_text_and_positions(code)
+            clean_code, positions = JETLSCore.get_text_and_positions(code)
             @test length(positions) == 4
             for pos in positions
                 @test length(find_references(clean_code, pos)) == 2
@@ -1053,7 +1053,7 @@ end
                     q = :(│@helper│)
                 end
                 """
-            clean_code, positions = JETLS.get_text_and_positions(code)
+            clean_code, positions = JETLSCore.get_text_and_positions(code)
             @test length(positions) == 4
             for pos in positions[1:2]
                 @test length(find_references(clean_code, pos)) == 1
@@ -1070,7 +1070,7 @@ end
                 struct │LSAnalyzer│ end
                 $eval_macro SomeModule some_func(::│LSAnalyzer│) = nothing
                 """
-            clean_code, positions = JETLS.get_text_and_positions(code)
+            clean_code, positions = JETLSCore.get_text_and_positions(code)
             @test length(positions) == 4
             for (i, pos) in enumerate(positions)
                 refs = find_references(clean_code, pos)
@@ -1086,7 +1086,7 @@ end
                 end
                 $eval_macro SomeModule │@helper│
                 """
-            clean_code, positions = JETLS.get_text_and_positions(code)
+            clean_code, positions = JETLSCore.get_text_and_positions(code)
             @test length(positions) == 4
             for pos in positions[1:2]
                 @test length(find_references(clean_code, pos)) == 1

@@ -1,38 +1,12 @@
 using Sockets: Sockets
 
-const serve_help_message = """
-    jetls serve - Start language server for editor integration
-
-    Starts JETLS as an LSP server for use with LSP client editors.
-    By default, communicates via stdin/stdout.
-
-    Usage: jetls serve [OPTIONS]
-
-    Options:
-      --stdio                     Use standard input/output (default)
-      --pipe-connect=<path>       Connect to client's Unix domain socket/named pipe
-      --pipe=<path>               Alias for --pipe-connect (LSP client convention)
-      --pipe-listen=<path>        Listen on Unix domain socket/named pipe
-      --socket=<port>             Listen on TCP socket
-      --clientProcessId=<pid>     Monitor client process (enables crash detection)
-      --help, -h                  Show this help message
-
-    Examples:
-      jetls serve
-      jetls serve --pipe-listen=/tmp/jetls.sock
-      jetls serve --socket=8080
-    """
-
 function run_serve(args::Vector{String})
     pipe_connect_path = pipe_listen_path = socket_port = client_process_id = nothing
 
     i = 1
     while i <= length(args)
         arg = args[i]
-        if occursin(r"^(?:-h|--help|help)$", arg)
-            print(stdout, serve_help_message)
-            return 0
-        elseif occursin(r"^(?:--)?stdio$", arg)
+        if occursin(r"^(?:--)?stdio$", arg)
         elseif occursin(r"^(?:--)?pipe-connect$", arg)
             if i < length(args)
                 pipe_connect_path = args[i+1]

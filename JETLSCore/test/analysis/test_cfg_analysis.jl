@@ -1,11 +1,11 @@
 module test_cfg_analysis
 
 using Test
-using JETLS
-using JETLS: JL, JS
+using JETLSCore
+using JETLSCore: JL, JS
 
-include(normpath(pkgdir(JETLS), "test", "setup.jl"))
-include(normpath(pkgdir(JETLS), "test", "jsjl-utils.jl"))
+include("../setup.jl")
+include("../jsjl-utils.jl")
 
 module lowering_module end
 
@@ -18,9 +18,9 @@ function get_undef_status(
         allow_noreturn_optimization::Vector{Symbol} = Symbol[]
     )
     st0 = jlparse(text; rule=:statement, filename=@__FILE__)
-    (; ctx3, st3) = JETLS.jl_lower_for_scope_resolution(context_module, world, st0;
+    (; ctx3, st3) = JETLSCore.jl_lower_for_scope_resolution(context_module, world, st0;
         trim_error_nodes=false, recover_from_macro_errors=false)
-    (; undef_info) = JETLS.analyze_all_lambdas(ctx3, st3; allow_noreturn_optimization)
+    (; undef_info) = JETLSCore.analyze_all_lambdas(ctx3, st3; allow_noreturn_optimization)
     result = Dict{String, Union{Nothing,Bool}}()
     for (binfo, info) in undef_info
         if !binfo.is_internal && binfo.kind == :local
@@ -1153,9 +1153,9 @@ function get_dead_stores(
         allow_noreturn_optimization::Vector{Symbol} = Symbol[]
     )
     st0 = jlparse(text; rule=:statement, filename=@__FILE__)
-    (; ctx3, st3) = JETLS.jl_lower_for_scope_resolution(context_module, world, st0;
+    (; ctx3, st3) = JETLSCore.jl_lower_for_scope_resolution(context_module, world, st0;
         trim_error_nodes=false, recover_from_macro_errors=false)
-    (; dead_store_info) = JETLS.analyze_all_lambdas(ctx3, st3;
+    (; dead_store_info) = JETLSCore.analyze_all_lambdas(ctx3, st3;
         allow_noreturn_optimization)
     result = Dict{String,Int}()
     for (binfo, dsinfo) in dead_store_info
@@ -1594,9 +1594,9 @@ function get_unreachable_statements(
         allow_noreturn_optimization::Vector{Symbol} = Symbol[]
     )
     st0 = jlparse(text; rule=:statement, filename=@__FILE__)
-    (; ctx3, st3) = JETLS.jl_lower_for_scope_resolution(context_module, world, st0;
+    (; ctx3, st3) = JETLSCore.jl_lower_for_scope_resolution(context_module, world, st0;
         trim_error_nodes=false, recover_from_macro_errors=false)
-    (; unreachable_statements) = JETLS.analyze_all_lambdas(ctx3, st3;
+    (; unreachable_statements) = JETLSCore.analyze_all_lambdas(ctx3, st3;
         allow_noreturn_optimization)
     provs = [last(JL.flattened_provenance(s)) for s in unreachable_statements]
     sort!(provs; by=p -> first(JS.byte_range(p)))

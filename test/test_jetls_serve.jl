@@ -9,12 +9,13 @@ stdin/stdout using raw JSON-RPC messages, testing:
 2. Process management and graceful termination
 
 To run this test independently:
-    julia --startup-file=no -e 'using Test; @testset "jetls serve" include("test/app/test_jetls_serve.jl")'
+    julia --startup-file=no -e 'using Test; @testset "jetls serve" include("test/test_jetls_serve.jl")'
 """
 module test_jetls_serve
 
 using Test
 using JETLS
+using JETLSCore
 using Sockets: Sockets
 
 # Test configuration
@@ -22,7 +23,7 @@ const JULIA_CMD = normpath(Sys.BINDIR, "julia")
 const JETLS_DIR = pkgdir(JETLS)
 
 function withserverprocess(f)
-    cmd = `$JULIA_CMD --project=$JETLS_DIR -m JETLS serve`
+    cmd = `$JULIA_CMD --startup-file=no --project=$JETLS_DIR -m JETLS serve`
     proc = open(cmd; write=true, read=true)
     try
         return f(proc)
@@ -121,7 +122,7 @@ withserverprocess() do proc; mktempdir() do root_dir
             "processId": $(getpid()),
             "capabilities": {},
             "workspaceFolders": [{
-                "uri": "$(JETLS.LSP.URIs2.filepath2uri(root_dir))",
+                "uri": "$(JETLSCore.LSP.URIs2.filepath2uri(root_dir))",
                 "name": "test-workspace"
             }]
         }
@@ -175,7 +176,7 @@ withserverprocess() do proc; mktempdir() do root_dir
             "processId": $(getpid()),
             "capabilities": {},
             "workspaceFolders": [{
-                "uri": "$(JETLS.LSP.URIs2.filepath2uri(root_dir))",
+                "uri": "$(JETLSCore.LSP.URIs2.filepath2uri(root_dir))",
                 "name": "test-workspace"
             }]
         }
@@ -212,7 +213,7 @@ for pipe_flag in ("--pipe-connect", "--pipe")
         pipe_path = @static Sys.iswindows() ?
             "\\\\.\\pipe\\$pipe_name" : joinpath(pipe_dir, "$pipe_name.sock")
         server_socket = Sockets.listen(pipe_path)
-        cmd = `$JULIA_CMD --project=$JETLS_DIR -m JETLS serve $pipe_flag=$pipe_path`
+        cmd = `$JULIA_CMD --startup-file=no --project=$JETLS_DIR -m JETLS serve $pipe_flag=$pipe_path`
         proc = run(cmd; wait=false)
         conn = nothing
         try
@@ -232,7 +233,7 @@ for pipe_flag in ("--pipe-connect", "--pipe")
                     "processId": $(getpid()),
                     "capabilities": {},
                     "workspaceFolders": [{
-                        "uri": "$(JETLS.LSP.URIs2.filepath2uri(root_dir))",
+                        "uri": "$(JETLSCore.LSP.URIs2.filepath2uri(root_dir))",
                         "name": "test-workspace"
                     }]
                 }

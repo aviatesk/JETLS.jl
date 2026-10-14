@@ -1,7 +1,7 @@
 using PrecompileTools
 
-# Full analysis in this module refers to it by its path `JETLS.__demo__` from within it
-module __demo__; const JETLS = parentmodule(@__MODULE__); end
+# Full analysis in this module refers to it by its path `JETLSCore.__demo__` from within it
+module __demo__; const JETLSCore = parentmodule(@__MODULE__); end
 
 @setup_workload let
     save_text = """
@@ -199,7 +199,7 @@ module __demo__; const JETLS = parentmodule(@__MODULE__); end
                 Base.CoreLogging.with_logger(Base.CoreLogging.ConsoleLogger(devnull)) do
                     redirect_stdio(; stdout=devnull, stderr=devnull) do
                         for progress in ("full", "simple") # for terminals and pipes
-                            main(["check", "--progress=$progress", filename])
+                            run_command("check", ["--progress=$progress", filename], JETLS_VERSION[], JETLS_MODULE[])
                         end
                     end
                 end

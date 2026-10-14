@@ -80,9 +80,9 @@ function handle_InitializeRequest(
 
     @static if !JETLS_TEST_MODE
         client_pid = something(init_params.processId, client_process_id, Some(nothing))
-        version = JETLS_VERSION
+        version = JETLS_VERSION[]
         if version == "dev"
-            version *= " ($(pkgdir(JETLS)))"
+            version *= " ($(pkgdir(JETLS_MODULE[])))"
         end
         workspace = isdefined(state, :root_path) ? state.root_path :
             isempty(state.workspaceFolders) ? "(no workspace)" : "(multi-root)"
@@ -322,7 +322,7 @@ function handle_InitializeRequest(
         ),
         serverInfo = ServerInfo(;
             name = "JETLS",
-            version = JETLS_VERSION))
+            version = JETLS_VERSION[]))
 
     processId = init_params.processId
     if !isnothing(processId)
@@ -590,6 +590,6 @@ function show_initialization_info(server::Server, msg::AbstractString)
     root_path = isdefined(state, :root_path) ? state.root_path : nothing
     root_env_path = isdefined(state, :root_env_path) ? state.root_env_path : nothing
     Base.CoreLogging.with_logger(Base.CoreLogging.ConsoleLogger(stderr; show_limited=false)) do
-        @info msg Sys.BINDIR pkgdir(JETLS) Threads.nthreads() JETLS_VERSION JETLS_DEV_MODE JETLS_TEST_MODE JETLS_DEBUG_LOWERING init_options workspaceFolders root_path root_env_path
+        @info msg Sys.BINDIR pkgdir(JETLS_MODULE[]) Threads.nthreads() JETLS_VERSION=JETLS_VERSION[] JETLS_DEV_MODE JETLS_TEST_MODE JETLS_DEBUG_LOWERING init_options workspaceFolders root_path root_env_path
     end
 end

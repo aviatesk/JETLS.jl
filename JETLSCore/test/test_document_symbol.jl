@@ -1,16 +1,16 @@
 module test_document_symbol
 
 using Test
-using JETLS: JETLS, JL, JS
-using JETLS.LSP
+using JETLSCore: JETLSCore, JL, JS
+using JETLSCore.LSP
 
 module lowering_module end
 function get_document_symbols(code::AbstractString, context_module::Module=lowering_module)
-    fi = JETLS.FileInfo(1, code, @__FILE__, PositionEncodingKind.UTF16; cache_tree0 = true)
-    st0 = JETLS.build_syntax_tree(fi)
+    fi = JETLSCore.FileInfo(1, code, @__FILE__, PositionEncodingKind.UTF16; cache_tree0 = true)
+    st0 = JETLSCore.build_syntax_tree(fi)
     world = Base.get_world_counter()
-    symbols = JETLS.extract_document_symbols(st0, fi, context_module, world)
-    JETLS.check_syntax_tree0(fi)
+    symbols = JETLSCore.extract_document_symbols(st0, fi, context_module, world)
+    JETLSCore.check_syntax_tree0(fi)
     return symbols
 end
 
@@ -24,7 +24,7 @@ function make_test_doc_symbol(
         range = DUMMY_RANGE, selectionRange = DUMMY_RANGE, children)
 end
 
-@testset "JETLS.extract_document_symbols" begin
+@testset "JETLSCore.extract_document_symbols" begin
     @testset "module" begin
         code = """
         module Foo
@@ -1710,27 +1710,27 @@ module test_module; using Test; end
     end
 end
 
-@testset "JETLS.strip_name_from_detail" begin
+@testset "JETLSCore.strip_name_from_detail" begin
     let sym = make_test_doc_symbol("foo", "foo(x, y) =", SymbolKind.Function)
-        result = JETLS.strip_name_from_detail(sym)
+        result = JETLSCore.strip_name_from_detail(sym)
         @test result.detail == "(x, y) ="
     end
 
     # detail that does not start with name should be unchanged
     let sym = make_test_doc_symbol("foo", "function foo(x)", SymbolKind.Function)
-        result = JETLS.strip_name_from_detail(sym)
+        result = JETLSCore.strip_name_from_detail(sym)
         @test result.detail == "function foo(x)"
     end
 
     # detail that equals name exactly should become nothing
     let sym = make_test_doc_symbol("x", "x", SymbolKind.Variable)
-        result = JETLS.strip_name_from_detail(sym)
+        result = JETLSCore.strip_name_from_detail(sym)
         @test result.detail === nothing
     end
 
     # nothing detail should stay nothing
     let sym = make_test_doc_symbol("foo", nothing, SymbolKind.Function)
-        result = JETLS.strip_name_from_detail(sym)
+        result = JETLSCore.strip_name_from_detail(sym)
         @test result.detail === nothing
     end
 
@@ -1738,7 +1738,7 @@ end
     let child = make_test_doc_symbol("x", "x::Int", SymbolKind.Field)
         sym = make_test_doc_symbol("Foo", "struct Foo", SymbolKind.Struct;
             children = [child])
-        result = JETLS.strip_name_from_detail(sym)
+        result = JETLSCore.strip_name_from_detail(sym)
         @test result.detail == "struct Foo"
         @test result.children[1].detail == "::Int"
     end

@@ -1,7 +1,7 @@
 module test_type_definition
 
 using Test
-using JETLS
+using JETLSCore
 
 include("setup.jl")
 
@@ -10,24 +10,24 @@ include("setup.jl")
 # resolution that depends only on Base/Core globals (which are already
 # materialized; the lightweight server's context module is `Main`).
 function with_find_type_definition(tester, text::AbstractString; kwargs...)
-    clean_code, positions = JETLS.get_text_and_positions(text; kwargs...)
+    clean_code, positions = JETLSCore.get_text_and_positions(text; kwargs...)
     filename = joinpath(@__DIR__, "testfile_$(gensym(:type_definition)).jl")
-    fi = JETLS.FileInfo(#=version=#0, clean_code, filename; cache_tree0 = true)
+    fi = JETLSCore.FileInfo(#=version=#0, clean_code, filename; cache_tree0 = true)
     furi = filename2uri(filename)
-    server = JETLS.Server()
-    JETLS.store!(server.state.file_cache) do cache
+    server = JETLSCore.Server()
+    JETLSCore.store!(server.state.file_cache) do cache
         Base.PersistentDict(cache, furi => fi), nothing
     end
     cnt = 0
     for (i, pos) in enumerate(positions)
-        ret = JETLS.find_type_definition(server, furi, fi, pos)
+        ret = JETLSCore.find_type_definition(server, furi, fi, pos)
         if ret === nothing
             cnt += tester(i, null, furi)
         else
             cnt += tester(i, ret[1], furi)
         end
     end
-    JETLS.check_syntax_tree0(fi)
+    JETLSCore.check_syntax_tree0(fi)
     return cnt
 end
 
@@ -36,10 +36,10 @@ end
 function base_method_uris(@nospecialize T)
     uris = Set{URI}()
     for m in methods(T)
-        JETLS.is_location_unknown(m) && continue
+        JETLSCore.is_location_unknown(m) && continue
         file, _ = functionloc(m)
         file === nothing && continue
-        push!(uris, filepath2uri(JETLS.to_full_path(String(file))))
+        push!(uris, filepath2uri(JETLSCore.to_full_path(String(file))))
     end
     return uris
 end
@@ -154,7 +154,7 @@ end
                 v│
             end
             """
-        clean_code, positions = JETLS.get_text_and_positions(text)
+        clean_code, positions = JETLSCore.get_text_and_positions(text)
         withscript(clean_code) do script_path
             uri = filepath2uri(script_path)
             withserver() do (; writereadmsg, id_counter)

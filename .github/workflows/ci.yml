@@ -33,6 +33,7 @@ jobs:
       testrunner: ${{ steps.filter.outputs.testrunner }}
       selfcheck: ${{ steps.filter.outputs.selfcheck }}
       schemas: ${{ steps.filter.outputs.schemas }}
+      sources: ${{ steps.filter.outputs.sources }}
       vendor_deps: ${{ steps.filter.outputs.vendor_deps }}
       docs: ${{ steps.filter.outputs.docs }}
     steps:
@@ -48,12 +49,14 @@ jobs:
           IGNORED_PATHS: |
             Compiler/README.md
             HierarchicalTestSets/README.md
+            JETLSCore/README.md
             LSP/README.md
             LSP/specification.md
             TOMLSource/README.md
             TestRunner/README.md
           JETLS_PATHS: |
             src/**
+            JETLSCore/**
             test/**
             LSP/**
             HierarchicalTestSets/**
@@ -84,9 +87,11 @@ jobs:
             HierarchicalTestSets/**
             Compiler/**
             Project.toml
+            JETLSCore/Project.toml
             .github/workflows/TestRunner.jl.yml
           SELFCHECK_PATHS: |
             src/**
+            JETLSCore/**
             LSP/**
             HierarchicalTestSets/**
             MarkdownSource/**
@@ -99,12 +104,19 @@ jobs:
             .github/workflows/selfcheck.yml
           SCHEMAS_PATHS: |
             src/**
+            JETLSCore/src/**
+            JETLSCore/Project.toml
             schemas/**
             scripts/schema/**
             Project.toml
             .github/workflows/check-schemas.yml
+          SOURCES_PATHS: |
+            *Project.toml
+            scripts/check-sources.jl
+            .github/workflows/check-sources.yml
           VENDOR_DEPS_PATHS: |
             src/**
+            JETLSCore/**
             test/**
             LSP/**
             TOMLSource/**
@@ -115,6 +127,7 @@ jobs:
             .github/workflows/vendor-deps.jl.yml
           DOCS_PATHS: |
             src/**
+            JETLSCore/src/**
             docs/**
             CHANGELOG.md
             .github/workflows/Documentation.yml
@@ -154,6 +167,7 @@ jobs:
             echo "testrunner=$(changed "$TESTRUNNER_PATHS")"
             echo "selfcheck=$(changed "$SELFCHECK_PATHS")"
             echo "schemas=$(changed "$SCHEMAS_PATHS")"
+            echo "sources=$(changed "$SOURCES_PATHS")"
             echo "vendor_deps=$(changed "$VENDOR_DEPS_PATHS")"
             echo "docs=$(changed "$DOCS_PATHS")"
           } >> "$GITHUB_OUTPUT"
@@ -224,6 +238,12 @@ jobs:
     if: ${{ !cancelled() && needs.changes.outputs.schemas == 'true' }}
     uses: ./.github/workflows/check-schemas.yml
 
+  check_sources:
+    name: Check sources
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.sources == 'true' }}
+    uses: ./.github/workflows/check-sources.yml
+
   vendor_deps:
     name: vendor-deps.jl
     needs: changes
@@ -257,6 +277,7 @@ jobs:
       - testrunner
       - selfcheck
       - check_schemas
+      - check_sources
       - vendor_deps
       - docs
     runs-on: ubuntu-latest

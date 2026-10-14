@@ -1,20 +1,20 @@
 module test_document_link
 
 using Test
-using JETLS
-using JETLS.LSP
-using JETLS.URIs2
+using JETLSCore
+using JETLSCore.LSP
+using JETLSCore.URIs2
 
 function get_document_links(code::AbstractString, filename::AbstractString)
-    server = JETLS.Server()
+    server = JETLSCore.Server()
     uri = filename2uri(filename)
-    fi = JETLS.FileInfo(#=version=#0, code, filename; cache_tree0 = true)
-    JETLS.store!(server.state.file_cache) do cache
+    fi = JETLSCore.FileInfo(#=version=#0, code, filename; cache_tree0 = true)
+    JETLSCore.store!(server.state.file_cache) do cache
         Base.PersistentDict(cache, uri => fi), nothing
     end
     links = DocumentLink[]
-    JETLS.collect_include_document_links!(links, server.state, uri, fi)
-    JETLS.check_syntax_tree0(fi)
+    JETLSCore.collect_include_document_links!(links, server.state, uri, fi)
+    JETLSCore.check_syntax_tree0(fi)
     return links, uri
 end
 

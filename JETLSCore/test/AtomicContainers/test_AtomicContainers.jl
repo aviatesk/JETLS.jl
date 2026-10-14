@@ -2,8 +2,8 @@ module test_AtomicContainers
 
 using Test
 using HierarchicalTestSets
-using JETLS.AtomicContainers
-using JETLS.AtomicContainers: AtomicContainer, CASStats, LWStats, SWStats
+using JETLSCore.AtomicContainers
+using JETLSCore.AtomicContainers: AtomicContainer, CASStats, LWStats, SWStats
 
 struct PairSnap
     a::Int

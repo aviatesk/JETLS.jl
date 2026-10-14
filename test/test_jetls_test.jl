@@ -1,7 +1,7 @@
 """
 Test file for exercising the `jetls test` command.
 
-This test calls `JETLS.run_test` directly for behavior coverage and uses an actual
+This test calls `JETLSCore.run_test` directly for behavior coverage and uses an actual
 `julia -m JETLS test` process for a process-boundary smoke test. It verifies:
 
 1. Patterns and TestRunner.jl options are passed to TestRunner.jl
@@ -10,13 +10,14 @@ This test calls `JETLS.run_test` directly for behavior coverage and uses an actu
 4. The `[testrunner]` configuration of `.JETLSConfig.toml` and `--julia` apply
 
 To run this test independently:
-    julia --startup-file=no --project=./test ./test/app/test_jetls_test.jl
+    julia --startup-file=no --project=./test ./test/test_jetls_test.jl
 """
 module test_jetls_test
 
 using Test
 using JETLS
-using JETLS.LSP.JSON3: JSON3
+using JETLSCore
+using JETLSCore.LSP.JSON3: JSON3
 
 const JULIA_CMD = normpath(Sys.BINDIR, "julia")
 const JETLS_DIR = pkgdir(JETLS)
@@ -42,7 +43,7 @@ function capture_jetls_test(f::Function)
     end
 end
 
-run_jetls_test(args::Vector{String}) = capture_jetls_test(() -> JETLS.run_test(args))
+run_jetls_test(args::Vector{String}) = capture_jetls_test(() -> JETLSCore.run_test(args))
 
 function write_test_file(dir::String, content::String)
     filepath = joinpath(dir, "runtests.jl")
@@ -61,7 +62,7 @@ const TESTFILE_CONTENT = """
     """
 
 @testset "help" begin
-    result = run_jetls_test(["--help"])
+    result = capture_jetls_test(() -> JETLS.main(["test", "--help"]))
     @test result.exitcode == 0
     @test occursin("Usage: jetls test", result.stdout)
 end

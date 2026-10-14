@@ -9,7 +9,7 @@
     "Glob.FilenameMatch{Core.String}": {
       "type": "string"
     },
-    "JETLS.InitOptions": {
+    "JETLSCore.InitOptions": {
       "additionalProperties": false,
       "properties": {
         "analysis_overrides": {
@@ -67,6 +67,6 @@
       "type": "object"
     }
   },
-  "$ref": "#/$defs/JETLS.InitOptions",
+  "$ref": "#/$defs/JETLSCore.InitOptions",
   "$schema": "https://json-schema.org/draft/2020-12/schema"
 }

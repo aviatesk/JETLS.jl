@@ -3,9 +3,9 @@ module test_document_synchronization
 include("setup.jl")
 
 using Test
-using JETLS
-using JETLS.LSP
-using JETLS.LSP.URIs2: filepath2uri
+using JETLSCore
+using JETLSCore.LSP
+using JETLSCore.LSP.URIs2: filepath2uri
 
 function registration_for_method(request::RegisterCapabilityRequest, method::String)
     return only(registration for registration in request.params.registrations
@@ -189,7 +189,7 @@ end
                     "scheme" => "file",
                     "pattern" => Dict{String,Any}(
                         "baseUri" => string(root_uri),
-                        "pattern" => JETLS.CONFIG_FILE))
+                        "pattern" => JETLSCore.CONFIG_FILE))
                 test_config_document_sync_registration(
                     register_capability_json_request, config_filter)
             end
@@ -205,7 +205,7 @@ end
                 )
                 config_filter = Dict{String,Any}(
                     "scheme" => "file",
-                    "pattern" => JETLS.CONFIG_FILE_GLOB_PATTERN)
+                    "pattern" => JETLSCore.CONFIG_FILE_GLOB_PATTERN)
                 test_config_document_sync_registration(
                     register_capability_json_request, config_filter)
             end
@@ -215,7 +215,7 @@ end
 
 @testset "unsupported text documents are ignored" begin
     mktempdir() do dir
-        server = JETLS.Server()
+        server = JETLSCore.Server()
         state = server.state
         state.root_path = dir
         uri = filepath2uri(joinpath(dir, "Manifest.toml"))
@@ -224,38 +224,38 @@ end
             params = DidOpenTextDocumentParams(;
                 textDocument = TextDocumentItem(;
                     uri, languageId="toml", version=1, text="[deps]\n")))
-        @test JETLS.handle_DidOpenTextDocumentNotification(server, open_notification) === nothing
-        @test !JETLS.is_synchronized(state, uri)
-        @test !haskey(JETLS.load(state.saved_file_cache), uri)
-        @test JETLS.is_rejected_text_document(state, uri)
-        @test !JETLS.may_have_file_info(state, uri)
+        @test JETLSCore.handle_DidOpenTextDocumentNotification(server, open_notification) === nothing
+        @test !JETLSCore.is_synchronized(state, uri)
+        @test !haskey(JETLSCore.load(state.saved_file_cache), uri)
+        @test JETLSCore.is_rejected_text_document(state, uri)
+        @test !JETLSCore.may_have_file_info(state, uri)
 
-        config_uri = filepath2uri(joinpath(dir, JETLS.CONFIG_FILE))
-        @test !JETLS.may_have_file_info(state, config_uri)
+        config_uri = filepath2uri(joinpath(dir, JETLSCore.CONFIG_FILE))
+        @test !JETLSCore.may_have_file_info(state, config_uri)
 
-        nested_config_uri = filepath2uri(joinpath(dir, "nested", JETLS.CONFIG_FILE))
+        nested_config_uri = filepath2uri(joinpath(dir, "nested", JETLSCore.CONFIG_FILE))
         nested_open = make_DidOpenTextDocumentNotification(nested_config_uri, ""; languageId = "toml")
-        JETLS.handle_DidOpenTextDocumentNotification(server, nested_open)
-        @test JETLS.get_config_document(state, nested_config_uri) === nothing
-        @test JETLS.is_rejected_text_document(state, nested_config_uri)
+        JETLSCore.handle_DidOpenTextDocumentNotification(server, nested_open)
+        @test JETLSCore.get_config_document(state, nested_config_uri) === nothing
+        @test JETLSCore.is_rejected_text_document(state, nested_config_uri)
 
         change_notification = DidChangeTextDocumentNotification(;
             params = DidChangeTextDocumentParams(;
                 textDocument = VersionedTextDocumentIdentifier(; uri, version=2),
                 contentChanges = TextDocumentContentChangeEvent[
                     TextDocumentContentChangeEvent(; text="[compat]\n")]))
-        @test JETLS.handle_DidChangeTextDocumentNotification(server, change_notification) === nothing
-        @test !JETLS.is_synchronized(state, uri)
+        @test JETLSCore.handle_DidChangeTextDocumentNotification(server, change_notification) === nothing
+        @test !JETLSCore.is_synchronized(state, uri)
 
         save_notification = DidSaveTextDocumentNotification(;
             params = DidSaveTextDocumentParams(;
                 textDocument = TextDocumentIdentifier(; uri), text="[compat]\n"))
-        @test JETLS.handle_DidSaveTextDocumentNotification(server, save_notification) === nothing
-        @test !haskey(JETLS.load(state.saved_file_cache), uri)
+        @test JETLSCore.handle_DidSaveTextDocumentNotification(server, save_notification) === nothing
+        @test !haskey(JETLSCore.load(state.saved_file_cache), uri)
 
         delayed_uri = filepath2uri(joinpath(dir, "Project.toml"))
-        waiter = Threads.@spawn JETLS.get_file_info(
-            state, delayed_uri, JETLS.CancelFlag(false); timeout=5.0)
+        waiter = Threads.@spawn JETLSCore.get_file_info(
+            state, delayed_uri, JETLSCore.CancelFlag(false); timeout=5.0)
         @test timedwait(() -> istaskstarted(waiter), 1.0) == :ok
         sleep(0.1)
         @test !istaskdone(waiter)
@@ -266,16 +266,16 @@ end
                     languageId = "toml",
                     version = 1,
                     text = "[deps]\n")))
-        JETLS.handle_DidOpenTextDocumentNotification(server, delayed_open)
+        JETLSCore.handle_DidOpenTextDocumentNotification(server, delayed_open)
         @test timedwait(() -> istaskdone(waiter), 1.0) == :ok
         @test istaskdone(waiter) && fetch(waiter) === nothing
 
         close_notification = DidCloseTextDocumentNotification(;
             params = DidCloseTextDocumentParams(;
                 textDocument = TextDocumentIdentifier(; uri)))
-        @test JETLS.handle_DidCloseTextDocumentNotification(server, close_notification) === nothing
-        @test !JETLS.is_synchronized(state, uri)
-        @test !JETLS.is_rejected_text_document(state, uri)
+        @test JETLSCore.handle_DidCloseTextDocumentNotification(server, close_notification) === nothing
+        @test !JETLSCore.is_synchronized(state, uri)
+        @test !JETLSCore.is_rejected_text_document(state, uri)
     end
 end
 
@@ -285,7 +285,7 @@ end
         """
     withscript(code) do script_path
         uri = filepath2uri(script_path)
-        is_method_error(diag) = diag.code == JETLS.INFERENCE_METHOD_ERROR_CODE
+        is_method_error(diag) = diag.code == JETLSCore.INFERENCE_METHOD_ERROR_CODE
         withserver() do (; writemsg, writereadmsg)
             let (; raw_res) = writereadmsg(make_DidOpenTextDocumentNotification(uri, code))
                 @test raw_res isa PublishDiagnosticsNotification

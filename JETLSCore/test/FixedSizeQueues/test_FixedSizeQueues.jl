@@ -2,7 +2,7 @@ module test_FixedSizeQueues
 
 using Test
 using HierarchicalTestSets
-using JETLS.FixedSizeQueues
+using JETLSCore.FixedSizeQueues
 
 struct TestType
     x::Int

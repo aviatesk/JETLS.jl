@@ -152,14 +152,14 @@ module TypeAnnotation
 using Core.IR
 using Compiler: Compiler as CC
 using JET: JET
-using ..JETLS: InferredContextCache, InferredContextCacheData, SyntaxTree,
+using ..JETLSCore: InferredContextCache, InferredContextCacheData, SyntaxTree,
     TraversalReturn, TreeAnnotations
-using ..JETLS: Analyzer, JETLS_DEBUG_LOWERING, JETLS_DEV_MODE, JL, JS
-using ..JETLS: locked_show_backtrace, locked_showerror
-using ..JETLS: get_name_val, is_string_literal, iterate_toplevel_tree,
+using ..JETLSCore: Analyzer, JETLS_DEBUG_LOWERING, JETLS_DEV_MODE, JL, JS
+using ..JETLSCore: locked_show_backtrace, locked_showerror
+using ..JETLSCore: get_name_val, is_string_literal, iterate_toplevel_tree,
     jl_lower_for_scope_resolution, load, rewrite_local_closures_to_opaque, store!, traverse,
     unwrap_funcdef_sig
-import ..JETLS: InferredTreeContext
+import ..JETLSCore: InferredTreeContext
 
 export InferredTreeContext,
     build_inferred_context_for_range, build_inferred_context_for_tree,

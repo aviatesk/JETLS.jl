@@ -1,14 +1,14 @@
 using Test
 using Pkg
 using HierarchicalTestSets
-using JETLS
-using JETLS.LSP
-using JETLS.URIs2
+using JETLSCore
+using JETLSCore.LSP
+using JETLSCore.URIs2
 
-using JETLS: get_text_and_positions
+using JETLSCore: get_text_and_positions
 
 """
-    wait_for_file_cache_version(state::JETLS.ServerState, uri::URI, version::Int; timeout::Float64=10.0)
+    wait_for_file_cache_version(state::JETLSCore.ServerState, uri::URI, version::Int; timeout::Float64=10.0)
 
 Wait until the file cache for `uri` is updated to the given `version`.
 Use this between `writemsg` (notification) and `writereadmsg` (request) to
@@ -16,12 +16,12 @@ ensure the sequential worker has finished processing the notification before
 the concurrent worker handles the request.
 """
 function wait_for_file_cache_version(
-        state::JETLS.ServerState, uri::URIs2.URI,
+        state::JETLSCore.ServerState, uri::URIs2.URI,
         version::Int; timeout::Float64 = 10.0
     )
     deadline = time() + timeout
     while time() < deadline
-        fi = get(JETLS.load(state.file_cache), uri, nothing)
+        fi = get(JETLSCore.load(state.file_cache), uri, nothing)
         fi !== nothing && fi.version == version && return
         sleep(0.01)
     end
@@ -53,8 +53,8 @@ end
 # published, keyed by URI. With the worker stopped (see `withserver`), this is the only
 # way `JETLS/live` diagnostics reach the client, which keeps the message sequences exact;
 # the queues are expected to be empty when this is called.
-function scan_live_diagnostics!(server::JETLS.Server, readmsg)
-    JETLS.publish_workspace_diagnostics!(server, JETLS.DUMMY_CANCEL_FLAG)
+function scan_live_diagnostics!(server::JETLSCore.Server, readmsg)
+    JETLSCore.publish_workspace_diagnostics!(server, JETLSCore.DUMMY_CANCEL_FLAG)
     published = Dict{URI,PublishDiagnosticsParams}()
     while isready(server.callback.sent_queue)
         msg = readmsg(; check = false).raw_msg
@@ -67,17 +67,17 @@ end
 
 # Stops the workspace diagnostics worker once full-analysis has settled and discards
 # whatever was published meanwhile, so that the shutdown handshake sees empty queues.
-function settle_live_diagnostics!(server::JETLS.Server, readmsg)
+function settle_live_diagnostics!(server::JETLSCore.Server, readmsg)
     manager = server.state.analysis_manager
-    quiescent() = isempty(JETLS.load(manager.debounced)) &&
-        isempty(JETLS.load(manager.pending_analyses))
+    quiescent() = isempty(JETLSCore.load(manager.debounced)) &&
+        isempty(JETLSCore.load(manager.pending_analyses))
     # a debounce timer hands its request over to `pending_analyses` in two steps
     timedwait(10.0) do
         quiescent() || return false
         sleep(0.1)
         quiescent()
     end === :ok || error("Full-analysis did not settle")
-    JETLS.stop_workspace_diagnostics_worker(server)
+    JETLSCore.stop_workspace_diagnostics_worker(server)
     while isready(server.callback.sent_queue)
         readmsg(; check = false)
     end
@@ -123,7 +123,7 @@ function withserver(
     received_queue = Channel{Any}(Inf)
     sent_queue = Channel{Any}(Inf)
     endpoint = Endpoint(in_pipe.out, out_pipe.in)
-    server = Server(endpoint; callback=JETLS.ServerMessageRecorder(received_queue, sent_queue))
+    server = Server(endpoint; callback=JETLSCore.ServerMessageRecorder(received_queue, sent_queue))
     runserver_task = Threads.@spawn :interactive runserver(server)
     id_counter = Ref(0)
     old_env = Pkg.project().path
@@ -278,7 +278,7 @@ function withserver(
             register_capability_json_request = json_res::RegisterCapabilityRequest
             @assert register_capability_json_request.id isa String
 
-            live_diagnostics || JETLS.stop_workspace_diagnostics_worker(server)
+            live_diagnostics || JETLSCore.stop_workspace_diagnostics_worker(server)
 
             # apply initial settings if provided
             # read=1: ShowMessageNotification for config change
@@ -299,8 +299,8 @@ function withserver(
             register_capability_request,
             register_capability_json_request)
         ret = f(argnt)
-        for (_, fi) in JETLS.load(server.state.file_cache)
-            JETLS.check_syntax_tree0(fi)
+        for (_, fi) in JETLSCore.load(server.state.file_cache)
+            JETLSCore.check_syntax_tree0(fi)
         end
         return ret
     finally
@@ -334,7 +334,7 @@ Create a server without starting `runserver`, so tests can advance document
 synchronization and concurrent dispatch independently.
 """
 function with_manual_dispatch_server(tester)
-    recorder = JETLS.ServerMessageRecorder()
+    recorder = JETLSCore.ServerMessageRecorder()
     server = Server(Endpoint(IOBuffer(), IOBuffer()); callback = recorder)
     server.state.init_params = InitializeParams(;
         processId = getpid(), rootUri = nothing, capabilities = ClientCapabilities())
@@ -347,7 +347,7 @@ function with_manual_dispatch_server(tester)
 end
 
 function queued_snapshot_requests(server::Server, messages::Vector)
-    queue, worker = JETLS.start_sequential_message_worker(server)
+    queue, worker = JETLSCore.start_sequential_message_worker(server)
     try
         foreach(msg -> put!(queue, msg), messages)
         put!(queue, nothing)
@@ -358,26 +358,26 @@ function queued_snapshot_requests(server::Server, messages::Vector)
         close(queue)
     end
     # Keep concurrent dispatch stopped until every later edit has been applied.
-    prepared = JETLS.SnapshotRequestMessage[]
+    prepared = JETLSCore.SnapshotRequestMessage[]
     while isready(server.message_queue)
         msg = take!(server.message_queue)
-        @test msg isa JETLS.SnapshotRequestMessage
+        @test msg isa JETLSCore.SnapshotRequestMessage
         push!(prepared, msg)
     end
     return prepared
 end
 
 function dispatch_snapshot_request(
-        server::Server, recorder::JETLS.ServerMessageRecorder,
-        prepared::JETLS.SnapshotRequestMessage
+        server::Server, recorder::JETLSCore.ServerMessageRecorder,
+        prepared::JETLSCore.SnapshotRequestMessage
     )
-    JETLS.handler_concurrent_message(server, prepared)
+    JETLSCore.handler_concurrent_message(server, prepared)
     response = take_with_timeout!(recorder.sent_queue; interval = 0.01, limit = 6000)
     @test response.id == prepared.msg.id
     token = take_with_timeout!(server.message_queue; interval = 0.01, limit = 3000)
-    @test token isa JETLS.HandledToken
+    @test token isa JETLSCore.HandledToken
     @test token.id == prepared.msg.id
-    JETLS.handler_concurrent_message(server, token)
+    JETLSCore.handler_concurrent_message(server, token)
     @test !haskey(server.state.currently_handled, prepared.msg.id)
     @test prepared.msg.id in server.state.handled_history
     @test !isready(recorder.sent_queue)

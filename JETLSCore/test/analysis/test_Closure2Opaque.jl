@@ -1,8 +1,8 @@
 module test_closure_to_opaque
 
 using Test
-using JETLS
-using JETLS: JL, JS, rewrite_local_closures_to_opaque
+using JETLSCore
+using JETLSCore: JL, JS, rewrite_local_closures_to_opaque
 
 module lowering_module end
 
@@ -12,13 +12,13 @@ module lowering_module end
 # tests can assert structural facts (e.g. an OC was actually emitted).
 function rewrite_lower_eval(code::AbstractString)
     context_module = lowering_module
-    fi = JETLS.FileInfo(1, code, @__FILE__; cache_tree0 = true)
-    st0_top = JETLS.build_syntax_tree(fi)
+    fi = JETLSCore.FileInfo(1, code, @__FILE__; cache_tree0 = true)
+    st0_top = JETLSCore.build_syntax_tree(fi)
     last_value = Ref{Any}(nothing)
-    last_st3_oc = Ref{Union{JETLS.SyntaxTree,Nothing}}(nothing)
+    last_st3_oc = Ref{Union{JETLSCore.SyntaxTree,Nothing}}(nothing)
     world = Base.get_world_counter()
-    JETLS.iterate_toplevel_tree(st0_top) do st0::JS.SyntaxTree
-        result = JETLS.TypeAnnotation.get_inferrable_tree(st0, context_module, world)
+    JETLSCore.iterate_toplevel_tree(st0_top) do st0::JS.SyntaxTree
+        result = JETLSCore.TypeAnnotation.get_inferrable_tree(st0, context_module, world)
         result === nothing && error("get_inferrable_tree failed for: $code")
         (; ctx3, st3) = result
         st3_oc = rewrite_local_closures_to_opaque(ctx3, st3)
@@ -29,7 +29,7 @@ function rewrite_lower_eval(code::AbstractString)
         last_st3_oc[] = st3_oc
         return nothing
     end
-    JETLS.check_syntax_tree0(fi)
+    JETLSCore.check_syntax_tree0(fi)
     return (last_value[], last_st3_oc[])
 end
 
@@ -40,24 +40,24 @@ end
 # rewrite did NOT fire for this shape".
 function rewrite_only(code::AbstractString)
     context_module = lowering_module
-    fi = JETLS.FileInfo(1, code, @__FILE__; cache_tree0 = true)
-    st0_top = JETLS.build_syntax_tree(fi)
-    last_st3_oc = Ref{Union{JETLS.SyntaxTree,Nothing}}(nothing)
+    fi = JETLSCore.FileInfo(1, code, @__FILE__; cache_tree0 = true)
+    st0_top = JETLSCore.build_syntax_tree(fi)
+    last_st3_oc = Ref{Union{JETLSCore.SyntaxTree,Nothing}}(nothing)
     world = Base.get_world_counter()
-    JETLS.iterate_toplevel_tree(st0_top) do st0::JS.SyntaxTree
-        result = JETLS.TypeAnnotation.get_inferrable_tree(st0, context_module, world)
+    JETLSCore.iterate_toplevel_tree(st0_top) do st0::JS.SyntaxTree
+        result = JETLSCore.TypeAnnotation.get_inferrable_tree(st0, context_module, world)
         result === nothing && error("get_inferrable_tree failed for: $code")
         (; ctx3, st3) = result
         last_st3_oc[] = rewrite_local_closures_to_opaque(ctx3, st3)
         return nothing
     end
-    JETLS.check_syntax_tree0(fi)
+    JETLSCore.check_syntax_tree0(fi)
     return last_st3_oc[]
 end
 
 # Count `:_opaque_closure` nodes in `tree`. Used to verify the rewrite emits
 # exactly one OC per source-level closure (no synthetic duplication).
-function count_opaque_closures(tree::JETLS.SyntaxTree)
+function count_opaque_closures(tree::JETLSCore.SyntaxTree)
     n = JS.head(tree) === :_opaque_closure ? 1 : 0
     if !JS.is_leaf(tree)
         for c in JS.children(tree)

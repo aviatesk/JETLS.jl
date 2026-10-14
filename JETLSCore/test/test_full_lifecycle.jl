@@ -3,7 +3,7 @@ module test_full_lifecycle
 include("setup.jl")
 
 function wait_for_handled_request(
-        state::JETLS.ServerState, id::Union{Int,String}; timeout::Float64 = 10.0
+        state::JETLSCore.ServerState, id::Union{Int,String}; timeout::Float64 = 10.0
     )
     deadline = time() + timeout
     while time() < deadline
@@ -16,11 +16,11 @@ function wait_for_handled_request(
 end
 
 function wait_for_cancellation(
-        cancel_flag::JETLS.CancelFlag; timeout::Float64 = 10.0
+        cancel_flag::JETLSCore.CancelFlag; timeout::Float64 = 10.0
     )
     deadline = time() + timeout
     while time() < deadline
-        JETLS.is_cancelled(cancel_flag) && return
+        JETLSCore.is_cancelled(cancel_flag) && return
         sleep(0.01)
     end
     error("Timed out waiting for request cancellation")
@@ -28,7 +28,7 @@ end
 
 @testset "full completion cycle" begin
 
-let (pkgcode, positions) = JETLS.get_text_and_positions("""
+let (pkgcode, positions) = JETLSCore.get_text_and_positions("""
     module TestFullLifecycle
 
     \"\"\"greetings\"\"\"
@@ -201,12 +201,12 @@ end # @testset "full completion cycle" begin
             @test progress_request isa WorkDoneProgressCreateRequest
 
             cancel_flag = server.state.currently_handled[id]
-            @test !JETLS.is_cancelled(cancel_flag)
+            @test !JETLSCore.is_cancelled(cancel_flag)
             writemsg(
                 CancelRequestNotification(; params = CancelParams(; id));
                 check = false)
             wait_for_cancellation(cancel_flag)
-            @test JETLS.is_cancelled(cancel_flag)
+            @test JETLSCore.is_cancelled(cancel_flag)
 
             writemsg(
                 ResponseMessage(; id = progress_request.id, result = null);
@@ -275,7 +275,7 @@ end
         return 0
     end
     """
-    clean_code, positions = JETLS.get_text_and_positions(script_code)
+    clean_code, positions = JETLSCore.get_text_and_positions(script_code)
     @test length(positions) == 1
     refpos = only(positions)
 

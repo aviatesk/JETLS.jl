@@ -1,12 +1,14 @@
-module JETLS
+module JETLSCore
 
 export Endpoint, Server, runserver
 
-const JETLS_VERSION = let
-    version_file = joinpath(dirname(@__DIR__), "JETLS_VERSION")
-    include_dependency(version_file)
-    isfile(version_file) ? strip(read(version_file, String)) : "unknown"
-end
+# Set by `run_command` from the `JETLS_VERSION` file of the `JETLS` app package, which this
+# package cannot reach once it is vendored for a release
+const JETLS_VERSION = Ref{String}("unknown")
+
+# Set by `run_command` to the `JETLS` app package, whose directory, rather than that of this
+# package, identifies the JETLS installation or checkout in the logged setup information
+const JETLS_MODULE = Ref{Module}(@__MODULE__)
 
 # Deprecation entries below are not removed after a deadline: a deprecated setting is
 # reported with a quick fix, whereas an unknown key keeps the whole config file from
@@ -46,7 +48,7 @@ const JETLS_DEV_MODE = Preferences.@load_preference("JETLS_DEV_MODE", false)
 const JETLS_TEST_MODE = Preferences.@load_preference("JETLS_TEST_MODE", false)
 const JETLS_DEBUG_LOWERING = Preferences.@load_preference("JETLS_DEBUG_LOWERING", false)
 function show_setup_info(msg::AbstractString)
-    @info msg Sys.BINDIR pkgdir(JETLS) Threads.nthreads() JETLS_VERSION JETLS_DEV_MODE JETLS_TEST_MODE JETLS_DEBUG_LOWERING
+    @info msg Sys.BINDIR pkgdir(JETLS_MODULE[]) Threads.nthreads() JETLS_VERSION=JETLS_VERSION[] JETLS_DEV_MODE JETLS_TEST_MODE JETLS_DEBUG_LOWERING
 end
 
 const server_world_age = Ref{UInt}(typemax(UInt))
@@ -658,10 +660,9 @@ end
 
 include("app/app.jl")
 include("app/cli-check.jl")
-include("app/cli-schema.jl")
 include("app/cli-serve.jl")
 include("app/cli-test.jl")
 
 include("precompile.jl")
 
-end # module JETLS
+end # module JETLSCore

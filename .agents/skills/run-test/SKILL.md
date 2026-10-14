@@ -19,13 +19,20 @@ of the full test suite.
 Use this standard form:
 
 ```bash
-julia --startup-file=no --project=test -e 'using Test; @testset "test_XXX" include("test/test_XXX.jl")'
+julia --startup-file=no --project=JETLSCore/test -e 'using Test; @testset "test_XXX" include("JETLSCore/test/test_XXX.jl")'
 ```
 
 Notes:
 
 - `--startup-file=no` avoids loading unnecessary startup utilities.
-- `--project=test` enables `JETLS_TEST_MODE` for proper test execution.
+- `--project=JETLSCore/test` enables `JETLS_TEST_MODE` for proper test
+  execution.
+
+The tests of the `jetls` app commands are in `test/` instead, e.g.:
+
+```bash
+julia --startup-file=no --project=test test/test_jetls_check.jl
+```
 
 ## Focused iteration with TestRunner.jl
 
@@ -33,13 +40,13 @@ For faster iteration on a specific `@testset`, use
 [TestRunner.jl](../../../TestRunner/), which the test environment depends on:
 
 ```bash
-julia --startup-file=no --project=test -m TestRunner --verbose test/test_XXX.jl "testset_name"
+julia --startup-file=no --project=JETLSCore/test -m TestRunner --verbose JETLSCore/test/test_XXX.jl "testset_name"
 ```
 
-`--project=test` before `-m` keeps `JETLS_TEST_MODE` enabled and resolves
-`TestRunner` through the shared workspace manifest, so the tests run with the
-TestRunner bundled in JETLS. Do not use the `testrunner` app shim: it loads its
-own TestRunner, which conflicts with the one JETLS imports.
+`--project=JETLSCore/test` before `-m` keeps `JETLS_TEST_MODE` enabled and
+resolves `TestRunner` through the shared workspace manifest, so the tests run
+with the TestRunner bundled in JETLS. Do not use the `testrunner` app shim: it
+loads its own TestRunner, which conflicts with the one JETLS imports.
 
 TestRunner.jl is still experimental, but it is reliable enough to try first
 when the target `@testset` is clear. If it fails in a way that looks specific
@@ -47,7 +54,13 @@ to TestRunner.jl, fall back to running the test file standalone.
 
 ## Avoid the full suite by default
 
-`Pkg.test()` takes about 3.5 minutes as of June 2026. Avoid it unless:
+The full suite takes about 3.5 minutes as of June 2026:
+
+```bash
+julia --startup-file=no --project=JETLSCore -e 'using Pkg; Pkg.test()'
+```
+
+Avoid it unless:
 
 - Changes affect multiple components.
 - The user explicitly requests the full test suite.

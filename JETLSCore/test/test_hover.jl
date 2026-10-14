@@ -1,17 +1,17 @@
 module test_hover
 
 using Test
-using JETLS
-using JETLS.LSP
-using JETLS.LSP.URIs2
+using JETLSCore
+using JETLSCore.LSP
+using JETLSCore.LSP.URIs2
 
-include(normpath(pkgdir(JETLS), "test", "setup.jl"))
-include(normpath(pkgdir(JETLS), "test", "jsjl-utils.jl"))
+include("setup.jl")
+include("jsjl-utils.jl")
 
 # Helper to run hover tests against a script. Caller's `tester` is invoked
 # once per cursor position with `(i, result, uri)`.
 function with_hover_request(tester, text::AbstractString; kwargs...)
-    clean_code, positions = JETLS.get_text_and_positions(text; kwargs...)
+    clean_code, positions = JETLSCore.get_text_and_positions(text; kwargs...)
     withscript(clean_code) do script_path
         uri = filepath2uri(script_path)
         withserver() do (; writereadmsg, id_counter)
@@ -50,7 +50,7 @@ function single_hover_test(
 end
 
 # Test subroutines
-@test isnothing(JETLS.hover_type_string(Core.Const(push!), "push!"))
+@test isnothing(JETLSCore.hover_type_string(Core.Const(push!), "push!"))
 
 # End-to-end sanity checks that the LSP `textDocument/hover` request/response
 # path is wired correctly (`DidOpen` → analysis → `HoverRequest` →
@@ -78,10 +78,10 @@ function get_hover(
         filename::AbstractString = @__FILE__,
         context_module::Union{Nothing,Module} = nothing
     )
-    server = JETLS.Server()
+    server = JETLSCore.Server()
     uri = filename2uri(filename)
-    fi = JETLS.cache_file_info!(server, uri, 0, text)
-    return JETLS.get_hover(server.state, fi, uri, pos; context_module)
+    fi = JETLSCore.cache_file_info!(server, uri, 0, text)
+    return JETLSCore.get_hover(server.state, fi, uri, pos; context_module)
 end
 
 # `single_hover_test`-shaped assertion that skips the LSP roundtrip — for
@@ -96,7 +96,7 @@ function hover_test(
         notpat::Union{AbstractString, Regex, Nothing} = nothing,
         broken::Bool = false
     )
-    clean_text, positions = JETLS.get_text_and_positions(text)
+    clean_text, positions = JETLSCore.get_text_and_positions(text)
     @assert length(positions) == 1
     result = get_hover(clean_text, only(positions); context_module)
     if pat === nothing
@@ -142,9 +142,9 @@ module M_alias_const
 end
 module M_abstract_binding_state end
 Core.eval(M_abstract_binding_state, Expr(:const, :release_commit,
-    JETLS.JET.AbstractBindingState(true, false, String)))
+    JETLSCore.JET.AbstractBindingState(true, false, String)))
 Core.eval(M_abstract_binding_state, Expr(:const, :documented_release_commit,
-    JETLS.JET.AbstractBindingState(true, false, String)))
+    JETLSCore.JET.AbstractBindingState(true, false, String)))
 Core.eval(M_abstract_binding_state,
     :(Base.@doc "State-backed binding docs." documented_release_commit))
 module M_overloaded
@@ -306,7 +306,7 @@ end
                 y│
             end
             """
-        clean_text, positions = JETLS.get_text_and_positions(text)
+        clean_text, positions = JETLSCore.get_text_and_positions(text)
         result = get_hover(clean_text, only(positions))
         @test result isa Hover
         @test occursin("(local) y :: Float64  # Core.Const", result.contents.value)
@@ -327,7 +327,7 @@ end
     end
 
     @testset "module alias resolves through DocsBinding helper" begin
-        hover_test("B│.sin(42)", JETLS.lsrender(@doc Base);
+        hover_test("B│.sin(42)", JETLSCore.lsrender(@doc Base);
             context_module = M_base_alias)
     end
 
@@ -397,7 +397,7 @@ end
         end
 
         @testset "multiple overloads' docs are visually separated" begin
-            clean_text, positions = JETLS.get_text_and_positions("op│")
+            clean_text, positions = JETLSCore.get_text_and_positions("op│")
             result = get_hover(clean_text, only(positions); context_module = M_overloaded)
             @test result isa Hover
             value = result.contents.value
@@ -462,19 +462,19 @@ end
 
 @testset HierarchicalTestSet "'hover' Core / Base / locally-bound resolution" begin
     @testset "Core singleton (`nothing`) docstring" begin
-        hover_test("nothing│", JETLS.lsrender(@doc nothing))
+        hover_test("nothing│", JETLSCore.lsrender(@doc nothing))
     end
 
     @testset "macrocall — bare identifier" begin
-        hover_test("@inline│ sin(42)", JETLS.lsrender(@doc @inline))
+        hover_test("@inline│ sin(42)", JETLSCore.lsrender(@doc @inline))
     end
 
     @testset "macrocall — module-qualified" begin
-        hover_test("Base.@inline│ sin(42)", JETLS.lsrender(@doc @inline))
+        hover_test("Base.@inline│ sin(42)", JETLSCore.lsrender(@doc @inline))
     end
 
     @testset "regex literal" begin
-        hover_test("rx = r│\"foo\"", JETLS.lsrender(@doc r""))
+        hover_test("rx = r│\"foo\"", JETLSCore.lsrender(@doc r""))
     end
 
     @testset "symbol literal" begin

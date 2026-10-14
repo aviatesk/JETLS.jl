@@ -1,26 +1,26 @@
 module test_instantiation_progress
 
 using Test
-using JETLS: JETLS
+using JETLSCore: JETLSCore
 
-include(normpath(pkgdir(JETLS), "test", "setup.jl"))
+include("../setup.jl")
 
 @testset "InstantiationProgressIO" begin
     @testset "partial lines and finish" begin
-        let io = JETLS.InstantiationProgressIO()
+        let io = JETLSCore.InstantiationProgressIO()
             @test io isa IO
-            @test JETLS.instantiation_progress_message!(io) === nothing
-            @test JETLS.instantiation_progress_message!(io; finish=true) === nothing
+            @test JETLSCore.instantiation_progress_message!(io) === nothing
+            @test JETLSCore.instantiation_progress_message!(io; finish=true) === nothing
             print(io, "Resolving ", 1)
             flush(io)
-            @test JETLS.instantiation_progress_message!(io) === nothing
+            @test JETLSCore.instantiation_progress_message!(io) === nothing
             println(io, " package")
-            @test JETLS.instantiation_progress_message!(io) == "Resolving 1 package"
+            @test JETLSCore.instantiation_progress_message!(io) == "Resolving 1 package"
             print(io, "Final output")
             flush(io)
-            @test JETLS.instantiation_progress_message!(io) === nothing
-            @test JETLS.instantiation_progress_message!(io; finish=true) == "Final output"
-            @test JETLS.instantiation_progress_message!(io; finish=true) === nothing
+            @test JETLSCore.instantiation_progress_message!(io) === nothing
+            @test JETLSCore.instantiation_progress_message!(io; finish=true) == "Final output"
+            @test JETLSCore.instantiation_progress_message!(io; finish=true) === nothing
             raw = take!(io)
             @test raw isa Vector{UInt8}
             @test raw == codeunits("Resolving 1 package\nFinal output")
@@ -28,7 +28,7 @@ include(normpath(pkgdir(JETLS), "test", "setup.jl"))
     end
 
     @testset "coalescing and deduplication" begin
-        let io = JETLS.InstantiationProgressIO(), chunks = (
+        let io = JETLSCore.InstantiationProgressIO(), chunks = (
                 "old\nnewer\rlatest\r\n\r \t\n\e[0m\n",
                 "\e[32mlatest\e[0m\n",
                 "intermediate\nlatest\n",
@@ -38,10 +38,10 @@ include(normpath(pkgdir(JETLS), "test", "setup.jl"))
             for (chunk, expected) in zip(chunks,
                     ("latest", nothing, nothing, "next", "latest", nothing))
                 @test write(io, chunk) == ncodeunits(chunk)
-                @test JETLS.instantiation_progress_message!(io) == expected
-                @test JETLS.instantiation_progress_message!(io) === nothing
+                @test JETLSCore.instantiation_progress_message!(io) == expected
+                @test JETLSCore.instantiation_progress_message!(io) === nothing
             end
-            @test JETLS.instantiation_progress_message!(io; finish=true) === nothing
+            @test JETLSCore.instantiation_progress_message!(io; finish=true) === nothing
             @test take!(io) == codeunits(join(chunks))
         end
     end
@@ -54,17 +54,17 @@ include(normpath(pkgdir(JETLS), "test", "setup.jl"))
                 (" \0\x01ready\b\x7f\u0085\t now \n", "ready  now"),
                 (String(UInt8[0x61, 0xff, 0x62, 0xc0, 0x80, 0x63, 0x0a]), "abc"),
                 ("\r\n \t\e[0m\0\r\n", nothing))
-            io = JETLS.InstantiationProgressIO()
+            io = JETLSCore.InstantiationProgressIO()
             write(io, raw)
-            @test JETLS.instantiation_progress_message!(io) == expected
-            @test JETLS.instantiation_progress_message!(io; finish=true) === nothing
+            @test JETLSCore.instantiation_progress_message!(io) == expected
+            @test JETLSCore.instantiation_progress_message!(io; finish=true) === nothing
             @test take!(io) == codeunits(raw)
         end
         for n in (99, 100, 101)
-            io = JETLS.InstantiationProgressIO()
+            io = JETLSCore.InstantiationProgressIO()
             raw = repeat("🙂", n) * "\n"
             write(io, raw)
-            message = JETLS.instantiation_progress_message!(io)
+            message = JETLSCore.instantiation_progress_message!(io)
             @test message == (n > 100 ? repeat("🙂", 99) * "…" : repeat("🙂", n))
             @test length(message) == min(n, 100)
             @test take!(io) == codeunits(raw)
@@ -74,19 +74,19 @@ include(normpath(pkgdir(JETLS), "test", "setup.jl"))
     @testset "fragmented UTF-8 and unsafe_write" begin
         let raw = collect(codeunits("λ🙂 ready\n"))
             for split in 1:length(raw)-1
-                io = JETLS.InstantiationProgressIO()
+                io = JETLSCore.InstantiationProgressIO()
                 for byte in @view raw[1:split]
                     @test write(io, byte) == 1
                 end
                 flush(io)
-                @test JETLS.instantiation_progress_message!(io) === nothing
+                @test JETLSCore.instantiation_progress_message!(io) === nothing
                 remaining = length(raw) - split
                 GC.@preserve raw begin
                     @test Base.unsafe_write(io, pointer(raw, split + 1),
                         UInt(remaining)) == remaining
                 end
-                @test JETLS.instantiation_progress_message!(io) == "λ🙂 ready"
-                @test JETLS.instantiation_progress_message!(io; finish=true) === nothing
+                @test JETLSCore.instantiation_progress_message!(io) == "λ🙂 ready"
+                @test JETLSCore.instantiation_progress_message!(io; finish=true) === nothing
                 @test take!(io) == raw
             end
         end
@@ -96,14 +96,14 @@ end
 @testset "with_instantiation_progress" begin
     @testset "$outcome" for outcome in (:return, :throw)
         sent_queue = Channel{Any}(Inf)
-        server = JETLS.Server(;
-            callback = JETLS.ServerMessageRecorder(Channel{Any}(Inf), sent_queue))
+        server = JETLSCore.Server(;
+            callback = JETLSCore.ServerMessageRecorder(Channel{Any}(Inf), sent_queue))
         token = outcome === :return ? "instantiation-stream" : 42
         message_path = "environment/Project.toml"
         expected = outcome === :return ? Ref(:result) : ErrorException("instantiation failed")
-        captured_io = Ref{JETLS.InstantiationProgressIO}()
+        captured_io = Ref{JETLSCore.InstantiationProgressIO}()
         result = try
-            JETLS.with_instantiation_progress(server, token, message_path) do io
+            JETLSCore.with_instantiation_progress(server, token, message_path) do io
                 captured_io[] = io
                 msg = take_with_timeout!(sent_queue; interval=0.01, limit=500)
                 @test msg isa ProgressNotification

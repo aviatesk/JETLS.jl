@@ -1,29 +1,29 @@
 module test_declaration
 
 using Test
-using JETLS
-using JETLS.LSP
+using JETLSCore
+using JETLSCore.LSP
 
-include(normpath(pkgdir(JETLS), "test", "setup.jl"))
+include("setup.jl")
 
 function declaration_testcase(
         code::AbstractString, n::Int;
         filename::AbstractString = joinpath(@__DIR__, "testfile_$(gensym(:declaration)).jl")
     )
-    clean_code, positions = JETLS.get_text_and_positions(code)
+    clean_code, positions = JETLSCore.get_text_and_positions(code)
     @assert length(positions) == n
-    fi = JETLS.FileInfo(#=version=#0, clean_code, filename; cache_tree0 = true)
-    @assert issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
+    fi = JETLSCore.FileInfo(#=version=#0, clean_code, filename; cache_tree0 = true)
+    @assert issorted(positions; by = x -> JETLSCore.xy_to_offset(fi, x))
     furi = filename2uri(filename)
-    server = JETLS.Server()
-    JETLS.store!(server.state.file_cache) do cache
+    server = JETLSCore.Server()
+    JETLSCore.store!(server.state.file_cache) do cache
         Base.PersistentDict(cache, furi => fi), nothing
     end
     return server, fi, positions, furi
 end
 function find_declaration_locations(server, furi, fi, pos; kwargs...)
-    result = JETLS.find_declaration(server, furi, fi, pos; kwargs...)
-    JETLS.check_syntax_tree0(fi)
+    result = JETLSCore.find_declaration(server, furi, fi, pos; kwargs...)
+    JETLSCore.check_syntax_tree0(fi)
     return result === nothing ? nothing : first(result)
 end
 

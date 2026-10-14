@@ -1,23 +1,23 @@
 module test_inlay_hint
 
 using Test
-using JETLS
-using JETLS.LSP
-using JETLS.URIs2
+using JETLSCore
+using JETLSCore.LSP
+using JETLSCore.URIs2
 
-include(normpath(pkgdir(JETLS), "test", "setup.jl"))
-include(normpath(pkgdir(JETLS), "test", "jsjl-utils.jl"))
+include("setup.jl")
+include("jsjl-utils.jl")
 
 struct LongTypeNameForInlayHintTruncation end
 
 struct ThrowingShowForInlayHint end
 Base.show(::IO, ::ThrowingShowForInlayHint) = error("show failed")
 
-# Render `hints` into `code` via the shared `JETLS.apply_inlay_hints` helper
+# Render `hints` into `code` via the shared `JETLSCore.apply_inlay_hints` helper
 # (the whole document starts at byte 1).
 function apply_inlay_hints(code::AbstractString, hints::Vector{InlayHint})
-    fi = JETLS.FileInfo(1, code, @__FILE__)
-    return JETLS.apply_inlay_hints(fi, code, 1, hints)
+    fi = JETLSCore.FileInfo(1, code, @__FILE__)
+    return JETLSCore.apply_inlay_hints(fi, code, 1, hints)
 end
 
 function get_syntactic_inlay_hints(
@@ -25,10 +25,10 @@ function get_syntactic_inlay_hints(
         range::Union{Range,Nothing} = nothing,
         min_lines::Int = 0,
     )
-    server = JETLS.Server()
+    server = JETLSCore.Server()
     uri = URI("file:///test.jl")
-    fi = JETLS.FileInfo(1, code, @__FILE__; cache_tree0 = true)
-    JETLS.store!(server.state.file_cache) do cache
+    fi = JETLSCore.FileInfo(1, code, @__FILE__; cache_tree0 = true)
+    JETLSCore.store!(server.state.file_cache) do cache
         Base.PersistentDict(cache, uri => fi), nothing
     end
     if range === nothing
@@ -37,8 +37,8 @@ function get_syntactic_inlay_hints(
             start = Position(; line = 0, character = 0),
             var"end" = Position(; line = n_lines, character = 0))
     end
-    hints = JETLS.syntactic_inlay_hints(server.state, uri, fi, range; min_lines)
-    JETLS.check_syntax_tree0(fi)
+    hints = JETLSCore.syntactic_inlay_hints(server.state, uri, fi, range; min_lines)
+    JETLSCore.check_syntax_tree0(fi)
     return hints
 end
 
@@ -387,42 +387,42 @@ end
 end
 
 function get_type_inlay_hints_from_request_path(code::AbstractString, range::Range)
-    server = JETLS.Server()
+    server = JETLSCore.Server()
     filename = @__FILE__
     uri = filename2uri(filename)
-    inferred_context_cache = JETLS.InferredContextCache()
-    fi = JETLS.FileInfo(1, code, filename; inferred_context_cache, cache_tree0 = true)
-    st0_top = JETLS.build_syntax_tree(fi)
+    inferred_context_cache = JETLSCore.InferredContextCache()
+    fi = JETLSCore.FileInfo(1, code, filename; inferred_context_cache, cache_tree0 = true)
+    st0_top = JETLSCore.build_syntax_tree(fi)
     hints = InlayHint[]
-    JETLS.type_inlay_hints!(hints, server.state, fi, st0_top, uri, range)
-    JETLS.check_syntax_tree0(fi)
+    JETLSCore.type_inlay_hints!(hints, server.state, fi, st0_top, uri, range)
+    JETLSCore.check_syntax_tree0(fi)
     return hints, inferred_context_cache
 end
 
 function get_lazy_type_inlay_hints(code::AbstractString, mod::Module=Main)
-    server = JETLS.Server()
+    server = JETLSCore.Server()
     filename = @__FILE__
     uri = filename2uri(filename)
-    inferred_context_cache = JETLS.InferredContextCache()
-    fi = JETLS.FileInfo(1, code, filename; inferred_context_cache, cache_tree0 = true)
-    JETLS.store!(server.state.file_cache) do cache
+    inferred_context_cache = JETLSCore.InferredContextCache()
+    fi = JETLSCore.FileInfo(1, code, filename; inferred_context_cache, cache_tree0 = true)
+    JETLSCore.store!(server.state.file_cache) do cache
         Base.PersistentDict(cache, uri => fi), nothing
     end
-    st0_top = JETLS.build_syntax_tree(fi)
+    st0_top = JETLSCore.build_syntax_tree(fi)
     hints = InlayHint[]
     range = Range(;
         start = Position(; line=0, character=0),
         var"end" = Position(; line=10000, character=0))
-    JETLS.iterate_toplevel_tree(st0_top) do st0::JS.SyntaxTree
-        ctx = @something JETLS.build_inferred_context_for_range(
+    JETLSCore.iterate_toplevel_tree(st0_top) do st0::JS.SyntaxTree
+        ctx = @something JETLSCore.build_inferred_context_for_range(
             st0_top, mod, JS.byte_range(st0);
             caller="get_lazy_type_inlay_hints",
             cache=inferred_context_cache) return nothing
-        JETLS.collect_type_inlay_hints!(
-            hints, st0, ctx, fi, uri, range, JETLS.LSPostProcessor();
+        JETLSCore.collect_type_inlay_hints!(
+            hints, st0, ctx, fi, uri, range, JETLSCore.LSPostProcessor();
             lazy_tooltips = true)
     end
-    JETLS.check_syntax_tree0(fi)
+    JETLSCore.check_syntax_tree0(fi)
     return server, hints
 end
 
@@ -433,25 +433,25 @@ function get_type_inlay_hints(
     )
     filename = @__FILE__
     uri = filename2uri(filename)
-    fi = JETLS.FileInfo(1, code, filename; cache_tree0 = true)
-    st0_top = JETLS.build_syntax_tree(fi)
+    fi = JETLSCore.FileInfo(1, code, filename; cache_tree0 = true)
+    st0_top = JETLSCore.build_syntax_tree(fi)
     hints = InlayHint[]
     rng = range !== nothing ? range :
         Range(;
             start = Position(; line=0, character=0),
             var"end" = Position(; line=10000, character=0))
-    JETLS.iterate_toplevel_tree(st0_top) do st0::JS.SyntaxTree
-        ctx = @something JETLS.build_inferred_context_for_range(
+    JETLSCore.iterate_toplevel_tree(st0_top) do st0::JS.SyntaxTree
+        ctx = @something JETLSCore.build_inferred_context_for_range(
             st0_top, mod, JS.byte_range(st0);
             caller="get_type_inlay_hints") return nothing
         # Disable production truncation here — these tests exercise the full
         # type-resolution pipeline and assert on the unclipped type strings.
         # Truncation is its own concern and should be tested separately.
-        JETLS.collect_type_inlay_hints!(
-            hints, st0, ctx, fi, uri, rng, JETLS.LSPostProcessor();
+        JETLSCore.collect_type_inlay_hints!(
+            hints, st0, ctx, fi, uri, rng, JETLSCore.LSPostProcessor();
             maxdepth, maxwidth)
     end
-    JETLS.check_syntax_tree0(fi)
+    JETLSCore.check_syntax_tree0(fi)
     return hints
 end
 
@@ -531,7 +531,7 @@ end
             "    sum(b::Vector{Float64})::Float64\n" *
             "end\n"
         @test apply_inlay_hints(code, hints) == expected
-        @test length(JETLS.load(cache)) == 1
+        @test length(JETLSCore.load(cache)) == 1
     end
 
     @testset "long flat type names are middle-truncated" begin
@@ -561,7 +561,7 @@ end
         hint = only(filter(h -> occursin("Adjoint", h.label), hints))
         @test hint.tooltip === nothing
         @test hint.data isa TypeInlayHintData
-        resolved = JETLS.resolve_inlay_hint(server.state, hint)
+        resolved = JETLSCore.resolve_inlay_hint(server.state, hint)
         @test resolved.label == hint.label
         @test resolved.tooltip isa MarkupContent
         @test resolved.tooltip.kind == MarkupKind.Markdown
@@ -595,7 +595,7 @@ end
             h.data isa TypeInlayHintData && occursin("Float64", h.label)
         end)
         @test hint.tooltip === nothing
-        resolved = JETLS.resolve_inlay_hint(server.state, hint)
+        resolved = JETLSCore.resolve_inlay_hint(server.state, hint)
         @test resolved.tooltip isa MarkupContent
         @test occursin("```julia\nFloat64\n```", resolved.tooltip.value)
         @test occursin("\n---\n", resolved.tooltip.value)
@@ -603,8 +603,8 @@ end
     end
 
     @testset "lattice tooltip ignores show errors" begin
-        tooltip = JETLS.format_type_inlay_hint_tooltip(
-            Core.Const(ThrowingShowForInlayHint()), JETLS.LSPostProcessor();
+        tooltip = JETLSCore.format_type_inlay_hint_tooltip(
+            Core.Const(ThrowingShowForInlayHint()), JETLSCore.LSPostProcessor();
             include_lattice = true)
         @test tooltip isa MarkupContent
         @test occursin("ThrowingShowForInlayHint", tooltip.value)

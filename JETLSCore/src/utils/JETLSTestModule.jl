@@ -1,7 +1,7 @@
 # HACK: This module is a temporary, JETLS-test-suite-specific workaround, not
 # a general solution. It exists so that test files matched by an
 # `analysis_overrides` entry with `module_name = "JETLSTestModule"` can have
-# their `@testset`/`@test` macros and references like `JETLS.foo` /
+# their `@testset`/`@test` macros and references like `JETLSCore.foo` /
 # `JS.kind(...)` resolved during lowering analysis without running JET's
 # full toplevel analysis (which is too slow for our test files today).
 #
@@ -18,5 +18,5 @@ module JETLSTestModule
     using LSP.URIs2
     using TestRunner: TestRunner
     using TOMLSource: TOMLSource as TS
-    using ..JETLS: JETLS
+    using ..JETLSCore: JETLSCore
 end

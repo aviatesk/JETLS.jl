@@ -1,6 +1,6 @@
 #!/bin/bash
 
-PACKAGES=(JETLS HierarchicalTestSets LSP MarkdownSource TOMLSource TestRunner)
+PACKAGES=(JETLS JETLSCore HierarchicalTestSets LSP MarkdownSource TOMLSource TestRunner)
 
 print_help() {
     cat <<EOF
@@ -89,6 +89,8 @@ for name in "${PACKAGE_NAMES[@]}"; do
     fi
     if [[ "$name" == JETLS ]]; then
         PACKAGE_PATHS+=("$PROJECT_ROOT")
+    elif [[ "$name" == JETLSCore ]]; then
+        PACKAGE_PATHS+=("$PROJECT_ROOT/$name")
     else
         PACKAGE_PATHS+=("$PROJECT_ROOT/$name")
         TEST_PATHS+=("$PROJECT_ROOT/$name/test/runtests.jl")

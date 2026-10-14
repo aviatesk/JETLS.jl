@@ -5,11 +5,11 @@ export LSInterpreter
 using JuliaSyntax: JuliaSyntax as JS
 using Compiler: Compiler as CC
 using JET: JET, JuliaInterpreter
-using ..JETLS: AnalysisExecution, JETLS, JETLS_DEV_MODE, Server,
+using ..JETLSCore: AnalysisExecution, JETLSCore, JETLS_DEV_MODE, Server,
     get_init_option, get_source_text, is_cancelled, locked_showerror, send_progress, yield_to_endpoint
-using ..JETLS.URIs2
-using ..JETLS.LSP
-using ..JETLS.Analyzer
+using ..JETLSCore.URIs2
+using ..JETLSCore.LSP
+using ..JETLSCore.Analyzer
 
 mutable struct Counter
     count::Int
@@ -24,7 +24,7 @@ struct LSInterpreter{S<:Server} <: JET.ConcreteInterpreter
     analyzer::LSAnalyzer
     counter::Counter
     activation_done::Union{Nothing,Base.Event}
-    warning_reports::Vector{JETLS.ToplevelWarningReport}
+    warning_reports::Vector{JETLSCore.ToplevelWarningReport}
     current_node::Base.RefValue{JS.SyntaxNode}
     state::JET.InterpretationState
     function LSInterpreter(
@@ -32,12 +32,12 @@ struct LSInterpreter{S<:Server} <: JET.ConcreteInterpreter
             activation_done::Union{Nothing,Base.Event}
         ) where S<:Server
         return new{S}(server, execution, analyzer, counter, activation_done,
-            JETLS.ToplevelWarningReport[], Base.RefValue{JS.SyntaxNode}())
+            JETLSCore.ToplevelWarningReport[], Base.RefValue{JS.SyntaxNode}())
     end
     function LSInterpreter(
             server::S, execution::AnalysisExecution, analyzer::LSAnalyzer, counter::Counter,
             activation_done::Union{Nothing,Base.Event},
-            warning_reports::Vector{JETLS.ToplevelWarningReport},
+            warning_reports::Vector{JETLSCore.ToplevelWarningReport},
             current_node::Base.RefValue{JS.SyntaxNode},
             state::JET.InterpretationState,
         ) where S<:Server
@@ -89,12 +89,12 @@ end
 function configured_concretization_patterns(
         server::Server, filename::AbstractString
     )
-    configured = JETLS.get_config(server, :full_analysis, :concretization_patterns)
+    configured = JETLSCore.get_config(server, :full_analysis, :concretization_patterns)
     isempty(configured) && return Any[]
-    path_for_glob = @something JETLS.relative_workspace_path_for_config(server, filename) return Any[]
+    path_for_glob = @something JETLSCore.relative_workspace_path_for_config(server, filename) return Any[]
     patterns = Any[]
     for pattern_config in configured
-        JETLS.concretization_glob_matches(pattern_config.path, path_for_glob) || continue
+        JETLSCore.concretization_glob_matches(pattern_config.path, path_for_glob) || continue
         push!(patterns, pattern_config.pattern)
     end
     return patterns
@@ -115,13 +115,13 @@ mutable struct SignatureAnalysisProgress
     end
 end
 
-struct InterpreterSignatureAnalysisJob <: JETLS.AbstractSignatureAnalysisJob
+struct InterpreterSignatureAnalysisJob <: JETLSCore.AbstractSignatureAnalysisJob
     interp::LSInterpreter
     res::JET.VirtualProcessResult
     progress::SignatureAnalysisProgress
     index::Int
     entrypoint::Union{Bool,Symbol}
-    cancellable_token::Union{Nothing,JETLS.CancellableToken}
+    cancellable_token::Union{Nothing,JETLSCore.CancellableToken}
     n_sigs::Int
     completion::Base.Event
 end
@@ -149,7 +149,7 @@ function (job::InterpreterSignatureAnalysisJob)(server::Server)
              match.method.name === entrypoint))
             # redirect keyword-slurping forwarders to the abstract keyword sorter,
             # but only after the `entrypoint` check above sees the original method name
-            match = JETLS.redirect_keyword_slurp_match(analyzer, match, inf_world)
+            match = JETLSCore.redirect_keyword_slurp_match(analyzer, match, inf_world)
             result = JET.analyze_method_signature!(analyzer,
                 match.method, match.spec_types, match.sparams)
             reports = JET.get_reports(analyzer, result)
@@ -185,13 +185,13 @@ end
 
 function cache_intermediate_analysis_result!(interp::LSInterpreter)
     result = JET.JETToplevelResult(interp.analyzer, interp.state.res, "LSInterpreter (intermediate result)", ())
-    intermediate_result, _ = JETLS.new_analysis_result(interp, result; intermediate=true)
-    pruned_uris = JETLS.update_analysis_cache!(interp.server.state, intermediate_result)
-    JETLS.notify_pruned_uris!(interp.server, interp.execution.request, pruned_uris)
+    intermediate_result, _ = JETLSCore.new_analysis_result(interp, result; intermediate=true)
+    pruned_uris = JETLSCore.update_analysis_cache!(interp.server.state, intermediate_result)
+    JETLSCore.notify_pruned_uris!(interp.server, interp.execution.request, pruned_uris)
     # Module contexts are complete at this point, which is all live diagnostics need,
     # so refresh them now rather than after signature analysis.
-    JETLS.request_diagnostic_refresh!(interp.server)
-    JETLS.request_codelens_refresh!(interp.server)
+    JETLSCore.request_diagnostic_refresh!(interp.server)
+    JETLSCore.request_codelens_refresh!(interp.server)
     interp.execution.context_refreshed = true
     nothing
 end
@@ -199,14 +199,14 @@ end
 function definition_lines(signature_info::JET.SignatureInfo)
     (; filename, src, linenode) = signature_info
     if src isa Core.CodeInfo
-        lines = JETLS.get_lines_in_src(filename, src)
-        lines == JETLS.empty_lines_range || return lines
+        lines = JETLSCore.get_lines_in_src(filename, src)
+        lines == JETLSCore.empty_lines_range || return lines
         # e.g. the body of `f() = 1` carries no line information
         file = linenode.file
-        file isa Symbol && JETLS.paths_equal(filename, String(file)) || return lines
+        file isa Symbol && JETLSCore.paths_equal(filename, String(file)) || return lines
         return linenode.line => linenode.line
     elseif src isa Expr
-        return JETLS.get_lines_in_ex(filename, src)
+        return JETLSCore.get_lines_in_ex(filename, src)
     end
     return nothing
 end
@@ -241,7 +241,7 @@ function JET.analyze_from_definitions!(interp::LSInterpreter, config::JET.Toplev
                 @warn "Unsupported source type found" original_filename typeof(original_definition.src)
                 continue
             end
-            push!(interp.warning_reports, JETLS.MethodOverwriteReport(mod, tt, filename, lines, original_filename, original_lines))
+            push!(interp.warning_reports, JETLSCore.MethodOverwriteReport(mod, tt, filename, lines, original_filename, original_lines))
         else
             seen_sigs[tt] = signature_info
         end
@@ -272,7 +272,7 @@ function JET.analyze_from_definitions!(interp::LSInterpreter, config::JET.Toplev
             cancellable_token, n_sigs, Base.Event()))
     end
 
-    JETLS.run_signature_analysis_jobs!(interp.server, jobs)
+    JETLSCore.run_signature_analysis_jobs!(interp.server, jobs)
 
     append!(res.inference_error_reports, progress.reports)
 end
@@ -309,18 +309,18 @@ end
 
 function JET.try_read_file(interp::LSInterpreter, include_context::Module, filename::AbstractString)
     uri = filename2uri(filename)
-    override = JETLS.find_analysis_override(interp.server.state, uri)
+    override = JETLSCore.find_analysis_override(interp.server.state, uri)
     if override !== nothing && !override.full_analysis
         state = JET.InterpretationState(interp)
         if override.on_include == "skip"
             push!(interp.warning_reports,
-                JETLS.IncludeSkippedReport(state.filename, state.curline, String(filename)))
+                JETLSCore.IncludeSkippedReport(state.filename, state.curline, String(filename)))
             return nothing
         end
         JET.abort_toplevel_analysis!(state,
-            JETLS.AnalysisStoppedReport(state.filename, state.curline, String(filename)))
+            JETLSCore.AnalysisStoppedReport(state.filename, state.curline, String(filename)))
     end
-    fi = JETLS.get_saved_file_info(interp.server.state, uri)
+    fi = JETLSCore.get_saved_file_info(interp.server.state, uri)
     if !isnothing(fi)
         parsed_stream = fi.parsed_stream
         if !JS.any_error(parsed_stream)
@@ -350,17 +350,17 @@ function JuliaInterpreter.step_expr!(
             structtyp = JuliaInterpreter.lookup(frame, node.args[3])
             # Field types of closure types are determined by lowering and can't be annotated
             # by users, e.g. capturing a `@nospecialize`d argument results in an `Any` field
-            if structtyp isa Type && structtyp !== Union{} && !JETLS.is_closure_type(structtyp)
+            if structtyp isa Type && structtyp !== Union{} && !JETLSCore.is_closure_type(structtyp)
                 ftypes = JuliaInterpreter.lookup(frame, node.args[4])::Core.SimpleVector
                 fnames = fieldnames(structtyp)
                 if fnames isa Tuple{Vararg{Symbol}} && length(ftypes) == length(fnames)
                     for i = 1:length(ftypes)
                         ft, fname = ftypes[i], fnames[i]
-                        if JETLS.is_abstract_fieldtype(ft)
+                        if JETLSCore.is_abstract_fieldtype(ft)
                             filename = JET.InterpretationState(interp).filename
                             fieldline = @something extract_field_line(
                                 interp, frame, nameof(structtyp), fname) continue
-                            push!(interp.warning_reports, JETLS.AbstractFieldReport(filename, fieldline, structtyp, fname, ft))
+                            push!(interp.warning_reports, JETLSCore.AbstractFieldReport(filename, fieldline, structtyp, fname, ft))
                         end
                     end
                 end
@@ -376,14 +376,14 @@ end
 function extract_field_line(interp::LSInterpreter, frame::JuliaInterpreter.Frame, structname::Symbol, fname::Symbol)
     node = isassigned(interp.current_node) ? interp.current_node[] : nothing
     if node !== nothing
-        fieldline = JETLS.try_extract_field_line(node, structname, fname)
+        fieldline = JETLSCore.try_extract_field_line(node, structname, fname)
         fieldline === nothing || return fieldline
     end
     line = JuliaInterpreter.linenumber(frame)
     line === nothing || return line
     # e.g. the frame defining a struct in `Core.eval`ed code carries no line information
     if node !== nothing
-        fieldline = JETLS.try_extract_field_line(node, structname, fname; interpolated=true)
+        fieldline = JETLSCore.try_extract_field_line(node, structname, fname; interpolated=true)
         fieldline === nothing || return fieldline
     end
     return caller_line(frame, JET.InterpretationState(interp).filename)
@@ -394,7 +394,7 @@ function caller_line(frame::JuliaInterpreter.Frame, filename::String)
     caller = frame.caller
     while caller !== nothing
         file = JuliaInterpreter.getfile(caller)
-        if file !== nothing && JETLS.paths_equal(file, filename)
+        if file !== nothing && JETLSCore.paths_equal(file, filename)
             line = JuliaInterpreter.linenumber(caller)
             line === nothing || return line
         end

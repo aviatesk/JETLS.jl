@@ -258,57 +258,6 @@ function with_progress(f::Function, ctx::ProgressContext, prefix::String, name::
     end
 end
 
-const check_help_message = """
-    jetls check - Run diagnostics on Julia files
-
-    Analyzes Julia source files and reports errors, warnings, and suggestions.
-    Useful for CI pipelines and command-line workflows.
-
-    Usage: jetls check [OPTIONS] [<path>...]
-
-    Arguments:
-      <path>...                Julia files or package directories to check;
-                               a package directory is checked via its src/<name>.jl
-                               (default: the package at the root path)
-
-    Options:
-      --help, -h               Show this help message
-      --quiet, -q              Suppress info and warning log messages
-      --stdin-filename=<path>  Check the source read from stdin as if it were the
-                               file at <path>, which does not need to exist
-                               (default: an unsaved buffer shown as <stdin>)
-      --exit-severity=<level>  Minimum severity to exit with error code 1
-                               (error, warn, info, hint; default: warn)
-      --show-severity=<level>  Minimum severity to display in output
-                               (error, warn, info, hint; default: info)
-      --root=<path>            Set the root path for configuration and relative paths
-                               (default: the package directory if exactly one is
-                               given, otherwise the current working directory)
-      --context-lines=<n>      Number of context lines to show (default: 2)
-      --progress=<mode>        Progress display mode (default: auto)
-                               auto   - spinner if TTY, simple otherwise
-                               full   - always show spinner
-                               simple - one line per file
-                               none   - no progress output
-
-    Exit codes:
-      0  No diagnostics at or above the exit severity level
-      1  One or more diagnostics found, or invalid arguments
-
-    Examples:
-      jetls check
-      jetls check /path/to/SomePkg
-      jetls check src/SomePkg.jl
-      jetls check . test/runtests.jl
-      jetls check --root=/path/to/project src/SomePkg.jl
-      jetls check --context-lines=0 src/SomePkg.jl
-      jetls check --exit-severity=error src/SomePkg.jl
-      jetls check --show-severity=warn src/SomePkg.jl
-      jetls check --progress=none src/SomePkg.jl
-      jetls check - <<< 'f(x) = undefined_name + x'
-      sed 's/helper/helper2/g' src/utils.jl | jetls check --stdin-filename=src/utils.jl -
-    """
-
 const STDIN_URI = URI(; scheme="untitled", path="Untitled-stdin")
 
 struct StdinSource
@@ -328,10 +277,7 @@ function run_check(args::Vector{String})
     quiet          = false
     paths          = String[]
     for arg in args
-        if arg in ("-h", "--help", "help")
-            print(stdout, check_help_message)
-            return 0
-        elseif arg in ("--quiet", "-q")
+        if arg in ("--quiet", "-q")
             quiet = true
         elseif arg == "-"
             read_stdin = true

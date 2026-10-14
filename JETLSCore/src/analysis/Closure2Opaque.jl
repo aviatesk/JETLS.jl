@@ -1,6 +1,6 @@
 module Closure2Opaque
 
-using ..JETLS: JL, JS, SyntaxTree, get_name_val, var_id
+using ..JETLSCore: JL, JS, SyntaxTree, get_name_val, var_id
 
 export rewrite_local_closures_to_opaque
 

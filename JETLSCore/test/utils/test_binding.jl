@@ -1,32 +1,32 @@
 module test_binding
 
 using Test
-using JETLS: JETLS
-using JETLS.LSP
-using JETLS.LSP.URIs2
+using JETLSCore: JETLSCore
+using JETLSCore.LSP
+using JETLSCore.LSP.URIs2
 
-include(normpath(pkgdir(JETLS), "test", "jsjl-utils.jl"))
+include("../jsjl-utils.jl")
 
 module lowering_module
 const B = Base
 end
 
 function with_target_binding(f, text::AbstractString; kwargs...)
-    clean_code, positions = JETLS.get_text_and_positions(text; kwargs...)
+    clean_code, positions = JETLSCore.get_text_and_positions(text; kwargs...)
     st0_top = jlparse(clean_code)
     cnt = 0
     for (i, pos) in enumerate(positions)
-        offset = JETLS.xy_to_offset(clean_code, pos, @__FILE__)
-        cnt += f(i, JETLS.select_target_binding(st0_top, offset, lowering_module, Base.get_world_counter()))
+        offset = JETLSCore.xy_to_offset(clean_code, pos, @__FILE__)
+        cnt += f(i, JETLSCore.select_target_binding(st0_top, offset, lowering_module, Base.get_world_counter()))
     end
     return cnt
 end
 
 @testset "reusable inert placeholders" begin
     for source in (raw"(x, $value)", raw"(y, $other)")
-        template, name = JETLS.prepare_inert_template(jlparse(source; rule=:statement))
+        template, name = JETLSCore.prepare_inert_template(jlparse(source; rule=:statement))
         @test name == "##JETLS_UNQUOTE_PLACEHOLDER#0"
-        @test JETLS.get_name_val(template[2]) == name
+        @test JETLSCore.get_name_val(template[2]) == name
     end
 
     for (source, expected) in (
@@ -34,14 +34,14 @@ end
             (raw"(var\"##JETLS_UNQUOTE_PLACEHOLDER#1\", $value)", 0),
             (raw"$(f(var\"##JETLS_UNQUOTE_PLACEHOLDER#0\", var\"##JETLS_UNQUOTE_PLACEHOLDER#1\"))", 2),
         )
-        _, name = JETLS.prepare_inert_template(jlparse(source; rule=:statement))
+        _, name = JETLSCore.prepare_inert_template(jlparse(source; rule=:statement))
         @test name == "##JETLS_UNQUOTE_PLACEHOLDER#$expected"
     end
 
     let quoted = jlparse(raw":($value)"; rule=:statement)
         parameters = Dict("##JETLS_UNQUOTE_PLACEHOLDER#0" =>
             jlparse(raw"var\"##JETLS_UNQUOTE_PLACEHOLDER#0\""; rule=:statement))
-        resolution = JETLS.resolve_inert_tree(
+        resolution = JETLSCore.resolve_inert_tree(
             lowering_module, Base.get_world_counter(), quoted; parameters)
         @test resolution !== nothing
         @test resolution.placeholder_name == "##JETLS_UNQUOTE_PLACEHOLDER#1"
@@ -260,10 +260,10 @@ end
             "if VERSION >= v\"1.11\"\n    import │A.B\nend",
             "begin\n    using │Foo: bar\nend",
         )
-        clean_code, positions = JETLS.get_text_and_positions(code)
+        clean_code, positions = JETLSCore.get_text_and_positions(code)
         st0_top = jlparse(clean_code)
-        offset = JETLS.xy_to_offset(clean_code, only(positions), @__FILE__)
-        @test isnothing(JETLS.select_target_binding(st0_top, offset, lowering_module, Base.get_world_counter()))
+        offset = JETLSCore.xy_to_offset(clean_code, only(positions), @__FILE__)
+        @test isnothing(JETLSCore.select_target_binding(st0_top, offset, lowering_module, Base.get_world_counter()))
     end
 end
 
@@ -328,7 +328,7 @@ end
 @testset "global mentioned first by a same-module macro" begin
     # Lower with the macrocall kept, so the macro expansion creates the shared
     # `foo` binding; the user-written mention must still be selectable.
-    clean_code, positions = JETLS.get_text_and_positions("""
+    clean_code, positions = JETLSCore.get_text_and_positions("""
         function f()
             @use_foo()
             │fo│o│()
@@ -336,10 +336,10 @@ end
         """)
     st0 = jlparse(clean_code; rule=:statement)
     world = Base.get_world_counter()
-    (; ctx3, st3) = JETLS.jl_lower_for_scope_resolution(macro_first_module, world, st0)
+    (; ctx3, st3) = JETLSCore.jl_lower_for_scope_resolution(macro_first_module, world, st0)
     for pos in positions
-        offset = JETLS.xy_to_offset(clean_code, pos, @__FILE__)
-        binding = JETLS._select_target_binding(ctx3, st3, offset)
+        offset = JETLSCore.xy_to_offset(clean_code, pos, @__FILE__)
+        binding = JETLSCore._select_target_binding(ctx3, st3, offset)
         @test binding !== nothing
         binding === nothing && continue
         @test JS.sourcetext(binding) == "foo"
@@ -348,12 +348,12 @@ end
 end
 
 function with_target_binding_definitions(f, text::AbstractString; kwargs...)
-    clean_code, positions = JETLS.get_text_and_positions(text; kwargs...)
+    clean_code, positions = JETLSCore.get_text_and_positions(text; kwargs...)
     st0_top = jlparse(clean_code)
     cnt = 0
     for (i, pos) in enumerate(positions)
-        offset = JETLS.xy_to_offset(clean_code, pos, @__FILE__)
-        cnt += f(i, JETLS.select_target_binding_definitions(st0_top, offset, lowering_module, Base.get_world_counter()))
+        offset = JETLSCore.xy_to_offset(clean_code, pos, @__FILE__)
+        cnt += f(i, JETLSCore.select_target_binding_definitions(st0_top, offset, lowering_module, Base.get_world_counter()))
     end
     return cnt
 end

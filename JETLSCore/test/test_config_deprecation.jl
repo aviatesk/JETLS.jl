@@ -1,28 +1,28 @@
 module test_config_deprecation
 
 using Test
-using JETLS
-using JETLS: TS
-using JETLS.LSP
-using JETLS.LSP.URIs2
+using JETLSCore
+using JETLSCore: TS
+using JETLSCore.LSP
+using JETLSCore.LSP.URIs2
 
-include(normpath(pkgdir(JETLS), "test", "setup.jl"))
+include("setup.jl")
 
-const DEPRECATIONS = JETLS.DeprecatedConfigurations([
+const DEPRECATIONS = JETLSCore.DeprecatedConfigurations([
     ["testrunner", "executable"] => nothing,
     ["inlay_hint", "block_end_min_lines"] => ["inlay_hint", "block_end", "min_lines"],
 ])
-const VALUE_DEPRECATIONS = JETLS.DeprecatedConfigurationValues([
+const VALUE_DEPRECATIONS = JETLSCore.DeprecatedConfigurationValues([
     ["full_analysis", "auto_instantiate"] => (true => "always"),
 ])
 
 function fix_deprecated(text::String, path::Vector{String})
     doc = TS.parse(text)
     deprecated = only(
-        d for d in JETLS.find_deprecated_configs(doc, DEPRECATIONS, VALUE_DEPRECATIONS)
-        if (d isa JETLS.DeprecatedConfigKey ? d.old_path : d.path) == path)
-    edit = JETLS.deprecated_config_fix(doc, deprecated)::TS.SourceEdit
-    return TS.apply(text, edit), JETLS.deprecated_config_fix_title(doc, deprecated)
+        d for d in JETLSCore.find_deprecated_configs(doc, DEPRECATIONS, VALUE_DEPRECATIONS)
+        if (d isa JETLSCore.DeprecatedConfigKey ? d.old_path : d.path) == path)
+    edit = JETLSCore.deprecated_config_fix(doc, deprecated)::TS.SourceEdit
+    return TS.apply(text, edit), JETLSCore.deprecated_config_fix_title(doc, deprecated)
 end
 
 @testset "fixes of deprecated keys and values" begin
@@ -65,7 +65,7 @@ end
     @test last(fix_deprecated("full_analysis.auto_instantiate = true\n", value)) ==
         "Replace `true` with `\"always\"`"
     let doc = TS.parse("full_analysis.auto_instantiate = 1\n")
-        @test isempty(JETLS.find_deprecated_configs(doc, DEPRECATIONS, VALUE_DEPRECATIONS))
+        @test isempty(JETLSCore.find_deprecated_configs(doc, DEPRECATIONS, VALUE_DEPRECATIONS))
     end
 end
 
@@ -81,7 +81,7 @@ end
             [inlay_hint]
             block_end_min_lines = 7
             """
-        @test JETLS.fix_deprecated_configs(text, DEPRECATIONS, VALUE_DEPRECATIONS) == """
+        @test JETLSCore.fix_deprecated_configs(text, DEPRECATIONS, VALUE_DEPRECATIONS) == """
             # JETLS configuration
             [full_analysis]
             auto_instantiate = "always"
@@ -90,46 +90,46 @@ end
             block_end.min_lines = 7
             """
     end
-    @test JETLS.fix_deprecated_configs(
+    @test JETLSCore.fix_deprecated_configs(
         "[testrunner]\njulia_args = []\n", DEPRECATIONS, VALUE_DEPRECATIONS) === nothing
-    @test JETLS.fix_deprecated_configs(
+    @test JETLSCore.fix_deprecated_configs(
         "[testrunner\nexecutable = 1\n", DEPRECATIONS, VALUE_DEPRECATIONS) === nothing
 end
 
 @testset "deprecated setting diagnostics" begin
-    let diagnostic = only(JETLS.deprecated_config_diagnostics(
+    let diagnostic = only(JETLSCore.deprecated_config_diagnostics(
             "testrunner.executable = \"x\"\n", PositionEncodingKind.UTF16))
         @test diagnostic.range == Range(;
             start = Position(; line = 0, character = 0),
             var"end" = Position(; line = 0, character = 21))
-        @test diagnostic.code == JETLS.CONFIG_DEPRECATED_KEY_CODE
+        @test diagnostic.code == JETLSCore.CONFIG_DEPRECATED_KEY_CODE
         @test diagnostic.severity == DiagnosticSeverity.Warning
-        @test diagnostic.source == JETLS.DIAGNOSTIC_SOURCE_EXTRA
+        @test diagnostic.source == JETLSCore.DIAGNOSTIC_SOURCE_EXTRA
         @test diagnostic.tags == [DiagnosticTag.Deprecated]
         @test diagnostic.message ==
-            JETLS.deprecated_config_key_message(["testrunner", "executable"], nothing)
+            JETLSCore.deprecated_config_key_message(["testrunner", "executable"], nothing)
     end
-    let diagnostic = only(JETLS.deprecated_config_diagnostics(
+    let diagnostic = only(JETLSCore.deprecated_config_diagnostics(
             "[full_analysis]\nauto_instantiate = false\n", PositionEncodingKind.UTF16))
         @test diagnostic.range == Range(;
             start = Position(; line = 1, character = 19),
             var"end" = Position(; line = 1, character = 24))
-        @test diagnostic.code == JETLS.CONFIG_DEPRECATED_VALUE_CODE
+        @test diagnostic.code == JETLSCore.CONFIG_DEPRECATED_VALUE_CODE
         @test diagnostic.tags == [DiagnosticTag.Deprecated]
-        @test diagnostic.message == JETLS.deprecated_config_value_message(
+        @test diagnostic.message == JETLSCore.deprecated_config_value_message(
             ["full_analysis", "auto_instantiate"], false, "never")
     end
     let prefix = "testrunner = { env = { \"😀\" = \"1\" }, "
-        diagnostic = only(JETLS.deprecated_config_diagnostics(
+        diagnostic = only(JETLSCore.deprecated_config_diagnostics(
             "# 雪\n" * prefix * "executable = \"x\" }\n", PositionEncodingKind.UTF16))
         character = length(transcode(UInt16, prefix))
         @test diagnostic.range == Range(;
             start = Position(; line = 1, character),
             var"end" = Position(; line = 1, character = character + 10))
     end
-    @test isempty(JETLS.deprecated_config_diagnostics(
+    @test isempty(JETLSCore.deprecated_config_diagnostics(
         "[full_analysis]\nauto_instantiate = \"always\"\n", PositionEncodingKind.UTF16))
-    @test isempty(JETLS.deprecated_config_diagnostics(
+    @test isempty(JETLSCore.deprecated_config_diagnostics(
         "[testrunner\n", PositionEncodingKind.UTF16))
 end
 
@@ -143,7 +143,7 @@ end
 
 function config_parse_error(config::Dict{String,Any})
     try
-        JETLS.parse_config_from_dict(JETLS.JETLSConfig, config)
+        JETLSCore.parse_config_from_dict(JETLSCore.JETLSConfig, config)
     catch err
         return err
     end
@@ -152,15 +152,15 @@ end
 
 # Registered deprecations are kept until their names are reused, which this guards.
 @testset "registered deprecations do not name current settings" begin
-    for (old_path, new_path) in JETLS.deprecated_configurations
+    for (old_path, new_path) in JETLSCore.deprecated_configurations
         err = config_parse_error(nested_config(old_path, "value"))
-        @test err isa JETLS.InvalidKeyError && err.path == old_path[1:length(err.path)]
+        @test err isa JETLSCore.InvalidKeyError && err.path == old_path[1:length(err.path)]
         new_path === nothing && continue
         # A replacement is a current setting, though the dummy value may not fit it
         err = config_parse_error(nested_config(new_path, Dict{String,Any}()))
-        @test !(err isa JETLS.InvalidKeyError)
+        @test !(err isa JETLSCore.InvalidKeyError)
     end
-    for (path, (old_value, new_value)) in JETLS.deprecated_configuration_values
+    for (path, (old_value, new_value)) in JETLSCore.deprecated_configuration_values
         err = config_parse_error(nested_config(path, old_value))
         @test err isa ErrorException &&
             occursin("Invalid value at `$(join(path, "."))`", err.msg)
@@ -185,7 +185,7 @@ const DEPRECATED_CONFIG = "[testrunner]\nexecutable = \"x\"\njulia_args = []\n"
             @test raw_res.params.uri == config_uri
             diagnostics = raw_res.params.diagnostics
             @test Set(d.code for d in diagnostics) ==
-                Set((JETLS.CONFIG_DEPRECATED_KEY_CODE, JETLS.CONFIG_DEPRECATED_VALUE_CODE))
+                Set((JETLSCore.CONFIG_DEPRECATED_KEY_CODE, JETLSCore.CONFIG_DEPRECATED_VALUE_CODE))
 
             (; raw_res) = writereadmsg(CodeActionRequest(;
                 id = id_counter[] += 1,
@@ -206,7 +206,7 @@ const DEPRECATED_CONFIG = "[testrunner]\nexecutable = \"x\"\njulia_args = []\n"
             document_edit = only(fix_all.edit.documentChanges)::TextDocumentEdit
             @test document_edit.textDocument.version == 1
             text_edit = only(document_edit.edits)
-            fixed = JETLS.apply_text_change(text,
+            fixed = JETLSCore.apply_text_change(text,
                 text_edit.range, text_edit.newText, server.state.encoding)
             @test fixed == "[full_analysis]\nauto_instantiate = \"always\"\n" *
                 "[testrunner]\njulia_args = []\n"
@@ -253,16 +253,16 @@ end
             @test prompt.params.type == MessageType.Warning
             @test occursin("`testrunner.executable` is deprecated", prompt.params.message)
             @test [action.title for action in prompt.params.actions] ==
-                [JETLS.FIX_DEPRECATED_CONFIGS_TITLE]
+                [JETLSCore.FIX_DEPRECATED_CONFIGS_TITLE]
             @test raw_res[3] isa PublishDiagnosticsNotification
             @test raw_res[3].params.uri == config_uri
 
             (; raw_res) = writereadmsg(ResponseMessage(;
                 id = prompt.id,
-                result = Dict{String,Any}("title" => JETLS.FIX_DEPRECATED_CONFIGS_TITLE)))
+                result = Dict{String,Any}("title" => JETLSCore.FIX_DEPRECATED_CONFIGS_TITLE)))
             apply_request = raw_res::ApplyWorkspaceEditRequest
             text_edit = only(apply_request.params.edit.changes[config_uri])
-            fixed = JETLS.apply_text_change(DEPRECATED_CONFIG,
+            fixed = JETLSCore.apply_text_change(DEPRECATED_CONFIG,
                 text_edit.range, text_edit.newText, server.state.encoding)
             @test fixed == "[testrunner]\njulia_args = []\n"
 
@@ -283,7 +283,7 @@ end
             warning = raw_res[2]::ShowMessageNotification
             @test warning.params.type == MessageType.Warning
             @test warning.params.message ==
-                JETLS.deprecated_config_key_message(["testrunner", "executable"], nothing)
+                JETLSCore.deprecated_config_key_message(["testrunner", "executable"], nothing)
             @test raw_res[3] isa PublishDiagnosticsNotification
 
             (; raw_res) = writereadmsg(make_DidOpenTextDocumentNotification(

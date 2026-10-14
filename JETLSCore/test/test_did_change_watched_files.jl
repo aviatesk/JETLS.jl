@@ -1,9 +1,9 @@
 module test_did_change_watched_files
 
 using Test
-using JETLS
+using JETLSCore
 
-include(normpath(pkgdir(JETLS), "test", "setup.jl"))
+include("setup.jl")
 
 # `workspace/didChangeWatchedFiles` does not support static registration,
 # so we need to allow dynamic registration here to test it
@@ -12,8 +12,8 @@ const CLIENT_CAPABILITIES = ClientCapabilities(;
         didChangeWatchedFiles = DidChangeWatchedFilesClientCapabilities(;
             dynamicRegistration = true)))
 
-const DEBOUNCE_DEFAULT = JETLS.get_config(JETLS.ConfigManager(JETLS.ConfigManagerData()), :full_analysis, :debounce)
-const TESTRUNNER_DEFAULT = JETLS.get_config(JETLS.ConfigManager(JETLS.ConfigManagerData()), :testrunner, :julia_args)
+const DEBOUNCE_DEFAULT = JETLSCore.get_config(JETLSCore.ConfigManager(JETLSCore.ConfigManagerData()), :full_analysis, :debounce)
+const TESTRUNNER_DEFAULT = JETLSCore.get_config(JETLSCore.ConfigManager(JETLSCore.ConfigManagerData()), :testrunner, :julia_args)
 
 @testset "watched-file registration patterns" begin
     mktempdir() do dir
@@ -36,22 +36,22 @@ const TESTRUNNER_DEFAULT = JETLS.get_config(JETLS.ConfigManager(JETLS.ConfigMana
                     [Dict{String,Any}(
                         "baseUri" => string(root_uri),
                         "pattern" => pattern)
-                        for pattern in (JETLS.CONFIG_FILE, JETLS.PROFILE_TRIGGER_FILE, "**/*.jl")
+                        for pattern in (JETLSCore.CONFIG_FILE, JETLSCore.PROFILE_TRIGGER_FILE, "**/*.jl")
                     ]
                 else
                     [
-                        JETLS.CONFIG_FILE_GLOB_PATTERN,
-                        "**/$(JETLS.PROFILE_TRIGGER_FILE)",
+                        JETLSCore.CONFIG_FILE_GLOB_PATTERN,
+                        "**/$(JETLSCore.PROFILE_TRIGGER_FILE)",
                         "**/*.jl"
                     ]
                 end
-                @static if JETLS.JETLS_DEV_MODE
+                @static if JETLSCore.JETLS_DEV_MODE
                     revise_pattern = relative_pattern_support ?
                         Dict{String,Any}(
                             "baseUri" => string(root_uri),
-                            "pattern" => JETLS.SERVER_REVISE_TRIGGER_FILE
+                            "pattern" => JETLSCore.SERVER_REVISE_TRIGGER_FILE
                         ) :
-                        "**/$(JETLS.SERVER_REVISE_TRIGGER_FILE)"
+                        "**/$(JETLSCore.SERVER_REVISE_TRIGGER_FILE)"
                     push!(expected, revise_pattern)
                 end
                 @test patterns == expected
@@ -82,7 +82,7 @@ end
         withserver(; rootUri, capabilities=CLIENT_CAPABILITIES) do (; writereadmsg, server)
             manager = server.state.config_manager
 
-            @test JETLS.get_config(manager, :testrunner, :julia_args) == [TESTRUNNER_STARTUP]
+            @test JETLSCore.get_config(manager, :testrunner, :julia_args) == [TESTRUNNER_STARTUP]
 
             write(config_path, """
                 [testrunner]
@@ -104,14 +104,14 @@ end
                 (; raw_res) = writereadmsg(msg)
                 @test raw_res isa ShowMessageNotification
                 @test raw_res.params.type == MessageType.Info
-                expected_changes_msg = JETLS.changed_settings_message([
-                    JETLS.ConfigChange("full_analysis.debounce", DEBOUNCE_DEFAULT, DEBOUNCE_V2)
+                expected_changes_msg = JETLSCore.changed_settings_message([
+                    JETLSCore.ConfigChange("full_analysis.debounce", DEBOUNCE_DEFAULT, DEBOUNCE_V2)
                 ])
                 @test occursin(expected_changes_msg, raw_res.params.message)
             end
 
             # `full_analysis.debounce` should be changed
-            @test JETLS.get_config(manager, :full_analysis, :debounce) == DEBOUNCE_V2
+            @test JETLSCore.get_config(manager, :full_analysis, :debounce) == DEBOUNCE_V2
 
             # Change `testrunner.julia_args`
             TESTRUNNER_V2 = "testrunner_v2"
@@ -128,15 +128,15 @@ end
                 (; raw_res) = writereadmsg(msg)
                 @test raw_res isa ShowMessageNotification
                 @test raw_res.params.type == MessageType.Info
-                expected_changes_msg = JETLS.changed_settings_message([
-                    JETLS.ConfigChange("testrunner.julia_args", [TESTRUNNER_STARTUP], [TESTRUNNER_V2])
+                expected_changes_msg = JETLSCore.changed_settings_message([
+                    JETLSCore.ConfigChange("testrunner.julia_args", [TESTRUNNER_STARTUP], [TESTRUNNER_V2])
                 ])
                 @test occursin(expected_changes_msg, raw_res.params.message)
                 @test !occursin("full_analysis.debounce", raw_res.params.message)
             end
 
             # `testrunner.julia_args` should be updated
-            @test JETLS.get_config(manager, :testrunner, :julia_args) == [TESTRUNNER_V2]
+            @test JETLSCore.get_config(manager, :testrunner, :julia_args) == [TESTRUNNER_V2]
 
             # unknown keys should be reported
             write(config_path, """
@@ -149,7 +149,7 @@ end
                 (; raw_res) = writereadmsg(msg)
                 @test raw_res isa ShowMessageNotification
                 @test raw_res.params.type == MessageType.Error
-                expected_error_msg = JETLS.unmatched_key_in_config_file_msg(config_event_path, ["full_analysis", "___unknown_key___"])
+                expected_error_msg = JETLSCore.unmatched_key_in_config_file_msg(config_event_path, ["full_analysis", "___unknown_key___"])
                 @test occursin(expected_error_msg, raw_res.params.message)
             end
 
@@ -162,13 +162,13 @@ end
                 @test any(raw_res) do r
                     r isa ShowMessageNotification &&
                     r.params.type == MessageType.Info &&
-                    occursin(JETLS.config_file_deleted_msg(config_event_path), r.params.message)
+                    occursin(JETLSCore.config_file_deleted_msg(config_event_path), r.params.message)
                 end
                 @test any(raw_res) do r
                     if r isa ShowMessageNotification && r.params.type == MessageType.Info
-                        expected_changes = JETLS.changed_settings_message([
-                            JETLS.ConfigChange("full_analysis.debounce", DEBOUNCE_V2, DEBOUNCE_DEFAULT),
-                            JETLS.ConfigChange("testrunner.julia_args", [TESTRUNNER_V2], TESTRUNNER_DEFAULT)
+                        expected_changes = JETLSCore.changed_settings_message([
+                            JETLSCore.ConfigChange("full_analysis.debounce", DEBOUNCE_V2, DEBOUNCE_DEFAULT),
+                            JETLSCore.ConfigChange("testrunner.julia_args", [TESTRUNNER_V2], TESTRUNNER_DEFAULT)
                         ])
                         return occursin(expected_changes, r.params.message)
                     end
@@ -177,7 +177,7 @@ end
             end
 
             # After deletion, the debounce should be reverted to the default
-            @test JETLS.get_config(manager, :full_analysis, :debounce) == DEBOUNCE_DEFAULT
+            @test JETLSCore.get_config(manager, :full_analysis, :debounce) == DEBOUNCE_DEFAULT
 
             # re-create the config file
             TESTRUNNER_RECREATE = "testrunner_recreate"
@@ -193,12 +193,12 @@ end
                 @test any(raw_res) do r
                     r isa ShowMessageNotification &&
                     r.params.type == MessageType.Info &&
-                    occursin(JETLS.config_file_created_msg(config_event_path), r.params.message)
+                    occursin(JETLSCore.config_file_created_msg(config_event_path), r.params.message)
                 end
                 @test any(raw_res) do r
                     if r isa ShowMessageNotification && r.params.type == MessageType.Info
-                        expected_changes = JETLS.changed_settings_message([
-                            JETLS.ConfigChange("testrunner.julia_args", TESTRUNNER_DEFAULT, [TESTRUNNER_RECREATE])
+                        expected_changes = JETLSCore.changed_settings_message([
+                            JETLSCore.ConfigChange("testrunner.julia_args", TESTRUNNER_DEFAULT, [TESTRUNNER_RECREATE])
                         ])
                         return occursin(expected_changes, r.params.message)
                     end
@@ -209,7 +209,7 @@ end
             # nested config file change (should be ignored)
             nested_dir = joinpath(tmpdir, "nested")
             mkpath(nested_dir)
-            nested_config = joinpath(nested_dir, JETLS.CONFIG_FILE)
+            nested_config = joinpath(nested_dir, JETLSCore.CONFIG_FILE)
             write(nested_config, "[testrunner]\njulia_args = [\"nested\"]\n")
             let msg = DidChangeWatchedFilesNotification(;
                     params = DidChangeWatchedFilesParams(;
@@ -218,7 +218,7 @@ end
                             type = FileChangeType.Changed)]))
                 writereadmsg(msg; read=0)
             end
-            @test JETLS.get_config(manager, :testrunner, :julia_args) == [TESTRUNNER_RECREATE]
+            @test JETLSCore.get_config(manager, :testrunner, :julia_args) == [TESTRUNNER_RECREATE]
 
             # non-config file change (should be ignored)
             other_file = joinpath(tmpdir, "other.txt")
@@ -229,7 +229,7 @@ end
                 writereadmsg(msg; read=0)
             end
             # no effect on config
-            @test JETLS.get_config(manager, :testrunner, :julia_args) == [TESTRUNNER_RECREATE]
+            @test JETLSCore.get_config(manager, :testrunner, :julia_args) == [TESTRUNNER_RECREATE]
         end
     end
 end
@@ -247,9 +247,9 @@ end
             @test raw_res isa PublishDiagnosticsNotification
 
             manager = server.state.analysis_manager
-            analysis_info = JETLS.get_analysis_info(manager, script_uri)
-            @test analysis_info isa JETLS.AnalysisResult
-            generation = JETLS.get_generation(manager, analysis_info.entry)
+            analysis_info = JETLSCore.get_analysis_info(manager, script_uri)
+            @test analysis_info isa JETLSCore.AnalysisResult
+            generation = JETLSCore.get_generation(manager, analysis_info.entry)
 
             config_path = joinpath(tmpdir, ".JETLSConfig.toml")
             write(config_path, """
@@ -262,7 +262,7 @@ end
                         uri=filepath2uri(config_path), type=FileChangeType.Created)]))
             writereadmsg(notification; read=3)
 
-            @test JETLS.get_generation(manager, analysis_info.entry) == generation + 1
+            @test JETLSCore.get_generation(manager, analysis_info.entry) == generation + 1
         end
     end
 end
@@ -275,18 +275,18 @@ end
         rootUri = filepath2uri(tmpdir)
 
         withserver(; rootUri, capabilities=CLIENT_CAPABILITIES) do (; server)
-            JETLS.stop_analysis_worker(server)
+            JETLSCore.stop_analysis_worker(server)
             manager = server.state.analysis_manager
-            entry = JETLS.ScriptAnalysisEntry(script_uri)
-            JETLS.schedule_analysis!(server, script_uri, entry, #=invalidate=#false;
+            entry = JETLSCore.ScriptAnalysisEntry(script_uri)
+            JETLSCore.schedule_analysis!(server, script_uri, entry, #=invalidate=#false;
                 debounce=0.0, notify_diagnostics=false)
 
-            @test JETLS.get_analysis_info(manager, script_uri) === nothing
-            generation = JETLS.get_generation(manager, entry)
-            tracker = JETLS.ConfigChangeTracker()
-            push!(tracker.changed_concretization_globs, JETLS.Glob.FilenameMatch("other.jl", "dp"))
-            JETLS.request_reanalysis_for_tracked_entries!(server, tracker)
-            @test JETLS.get_generation(manager, entry) == generation + 1
+            @test JETLSCore.get_analysis_info(manager, script_uri) === nothing
+            generation = JETLSCore.get_generation(manager, entry)
+            tracker = JETLSCore.ConfigChangeTracker()
+            push!(tracker.changed_concretization_globs, JETLSCore.Glob.FilenameMatch("other.jl", "dp"))
+            JETLSCore.request_reanalysis_for_tracked_entries!(server, tracker)
+            @test JETLSCore.get_generation(manager, entry) == generation + 1
         end
     end
 end
@@ -313,17 +313,17 @@ end
             @test any(raw_res) do r
                 r isa ShowMessageNotification &&
                 r.params.type == MessageType.Info &&
-                occursin(JETLS.config_file_created_msg(config_event_path), r.params.message)
+                occursin(JETLSCore.config_file_created_msg(config_event_path), r.params.message)
             end
             @test any(raw_res) do r
                 if r isa ShowMessageNotification && r.params.type == MessageType.Info
-                    expected_changes = JETLS.changed_settings_message([
-                        JETLS.ConfigChange("testrunner.julia_args", TESTRUNNER_DEFAULT, [TESTRUNNER_RECREATE])])
+                    expected_changes = JETLSCore.changed_settings_message([
+                        JETLSCore.ConfigChange("testrunner.julia_args", TESTRUNNER_DEFAULT, [TESTRUNNER_RECREATE])])
                     return occursin(expected_changes, r.params.message)
                 end
                 return false
             end
-            @test JETLS.get_config(manager, :testrunner, :julia_args) == [TESTRUNNER_RECREATE]
+            @test JETLSCore.get_config(manager, :testrunner, :julia_args) == [TESTRUNNER_RECREATE]
 
             # New config file change also should be watched
             TESTRUNNER_V2 = "testrunner_v2"
@@ -337,7 +337,7 @@ end
             (; raw_res) = writereadmsg(change_notification)
             @test raw_res isa ShowMessageNotification
             @test raw_res.params.type == MessageType.Info
-            @test JETLS.get_config(manager, :testrunner, :julia_args) == [TESTRUNNER_V2]
+            @test JETLSCore.get_config(manager, :testrunner, :julia_args) == [TESTRUNNER_V2]
         end
     end
 end

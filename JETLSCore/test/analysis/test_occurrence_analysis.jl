@@ -1,11 +1,11 @@
 module test_occurrence_analysis
 
 using Test
-using JETLS: JETLS
-using JETLS.LSP
-using JETLS.LSP.URIs2
+using JETLSCore: JETLSCore
+using JETLSCore.LSP
+using JETLSCore.LSP.URIs2
 
-include(normpath(pkgdir(JETLS), "test", "jsjl-utils.jl"))
+include("../jsjl-utils.jl")
 
 module lowering_module
 const B = Base
@@ -26,10 +26,10 @@ function with_binding_occurrences(
     )
     st0 = jlparse(code; rule=:statement)
     if remove_macrocalls
-        st0 = JETLS.remove_macrocalls(context_module, world, st0)
+        st0 = JETLSCore.remove_macrocalls(context_module, world, st0)
     end
-    (; ctx3, st3) = JETLS.jl_lower_for_scope_resolution(context_module, world, st0)
-    binding_occurrences = JETLS.compute_binding_occurrences(ctx3, st3, world)
+    (; ctx3, st3) = JETLSCore.jl_lower_for_scope_resolution(context_module, world, st0)
+    binding_occurrences = JETLSCore.compute_binding_occurrences(ctx3, st3, world)
     callback(binding_occurrences)
 end
 
@@ -592,12 +592,12 @@ function get_full_binding_occurrences(text::AbstractString;
         filename::String = joinpath(@__DIR__, "testfile.jl"),
         context_module::Module = lowering_module,
         kwargs...)
-    fi = JETLS.FileInfo(#=version=#0, text, filename)
+    fi = JETLSCore.FileInfo(#=version=#0, text, filename)
     st0 = jlparse(text; rule=:statement)
     uri = filename2uri(filename)
-    state = JETLS.ServerState()
-    return JETLS.compute_full_binding_occurrences(state, uri, fi, st0;
-        lookup_func = Returns(JETLS.OutOfScope(context_module)),
+    state = JETLSCore.ServerState()
+    return JETLSCore.compute_full_binding_occurrences(state, uri, fi, st0;
+        lookup_func = Returns(JETLSCore.OutOfScope(context_module)),
         kwargs...)
 end
 
@@ -626,11 +626,11 @@ end
                         macro │m│ end
                     end
                     """, ((:decl, :method_def), (:decl, :method_def), (:decl,))))
-            code, positions = JETLS.get_text_and_positions(
+            code, positions = JETLSCore.get_text_and_positions(
                 "begin\n$definition\n│@m│ 1\nend")
-            fi = JETLS.FileInfo(#=version=#0, code, "testfile.jl")
+            fi = JETLSCore.FileInfo(#=version=#0, code, "testfile.jl")
             boccs = get_full_binding_occurrences(code)
-            occurrences = Set((occ.kind, JETLS.jsobj_to_range(occ.tree, fi))
+            occurrences = Set((occ.kind, JETLSCore.jsobj_to_range(occ.tree, fi))
                 for (binfo, occs) in boccs if binfo.name == "@m" for occ in occs)
             @test length(positions) == 2length(definition_kinds) + 2
             expected = Set{Tuple{Symbol,Range}}()
@@ -1151,31 +1151,31 @@ end
 function with_global_binding_occurrences(
         f, text::AbstractString, target_name::String;
         filename::String = joinpath(@__DIR__, "testfile.jl"))
-    clean_code, positions = JETLS.get_text_and_positions(text)
-    fi = JETLS.FileInfo(#=version=#0, clean_code, filename)
+    clean_code, positions = JETLSCore.get_text_and_positions(text)
+    fi = JETLSCore.FileInfo(#=version=#0, clean_code, filename)
     st0_top = jlparse(clean_code)
     furi = filename2uri(filename)
-    state = JETLS.ServerState()
+    state = JETLSCore.ServerState()
 
-    @assert issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
+    @assert issorted(positions; by = x -> JETLSCore.xy_to_offset(fi, x))
 
     pos = first(positions)
-    offset = JETLS.xy_to_offset(clean_code, pos, filename)
+    offset = JETLSCore.xy_to_offset(clean_code, pos, filename)
     world = Base.get_world_counter()
     (; ctx3, binding) = @something(
-        JETLS.select_target_binding(st0_top, offset, lowering_module, world),
+        JETLSCore.select_target_binding(st0_top, offset, lowering_module, world),
         error("No binding found at cursor position"))
     target_binfo = JL.get_binding(ctx3, binding)
     @test target_binfo.kind === :global
     @test target_binfo.name == target_name
 
-    occurrences = JETLS.find_global_binding_occurrences_from_tree!(
+    occurrences = JETLSCore.find_global_binding_occurrences_from_tree!(
         state, furi, fi, st0_top, target_binfo;
-        lookup_func = Returns(JETLS.OutOfScope(lowering_module)))
+        lookup_func = Returns(JETLSCore.OutOfScope(lowering_module)))
 
     ranges = Set{Range}()
     for occ in occurrences
-        push!(ranges, JETLS.jsobj_to_range(occ.tree, fi))
+        push!(ranges, JETLSCore.jsobj_to_range(occ.tree, fi))
     end
     f(ranges, positions)
 end
@@ -1459,48 +1459,48 @@ end
 
 @testset "binding occurrence cache generations" begin
     @testset "statement ranges" begin
-        state = JETLS.ServerState()
+        state = JETLSCore.ServerState()
         uri = filepath2uri(@__FILE__)
-        lookup_func = Returns(JETLS.OutOfScope(lowering_module))
-        old_fi = JETLS.FileInfo(1, "old = 1\nold\n", uri; cache_tree0 = true)
-        new_fi = JETLS.FileInfo(1, "new = 1\nnew\n", uri; cache_tree0 = true)
-        for st0 in JS.children(JETLS.build_syntax_tree(old_fi))
-            JETLS.get_binding_occurrences!(state, uri, old_fi, st0; lookup_func)
+        lookup_func = Returns(JETLSCore.OutOfScope(lowering_module))
+        old_fi = JETLSCore.FileInfo(1, "old = 1\nold\n", uri; cache_tree0 = true)
+        new_fi = JETLSCore.FileInfo(1, "new = 1\nnew\n", uri; cache_tree0 = true)
+        for st0 in JS.children(JETLSCore.build_syntax_tree(old_fi))
+            JETLSCore.get_binding_occurrences!(state, uri, old_fi, st0; lookup_func)
         end
-        st0 = first(JS.children(JETLS.build_syntax_tree(new_fi)))
-        occurrences = JETLS.get_binding_occurrences!(state, uri, new_fi, st0; lookup_func)
+        st0 = first(JS.children(JETLSCore.build_syntax_tree(new_fi)))
+        occurrences = JETLSCore.get_binding_occurrences!(state, uri, new_fi, st0; lookup_func)
         @test Set(b.name for b in keys(occurrences) if b.kind === :global) == Set(["new"])
-        @test length(JETLS.load(state.binding_occurrences_cache)[uri].by_range) == 1
+        @test length(JETLSCore.load(state.binding_occurrences_cache)[uri].by_range) == 1
 
-        updated_fi = JETLS.FileInfo(new_fi; inferred_context_cache = JETLS.InferredContextCache())
+        updated_fi = JETLSCore.FileInfo(new_fi; inferred_context_cache = JETLSCore.InferredContextCache())
         @test updated_fi.identity == new_fi.identity
-        @test JETLS.get_binding_occurrences!(
+        @test JETLSCore.get_binding_occurrences!(
             state, uri, updated_fi, st0; lookup_func) === occurrences
-        JETLS.check_syntax_tree0(old_fi)
-        JETLS.check_syntax_tree0(new_fi)
+        JETLSCore.check_syntax_tree0(old_fi)
+        JETLSCore.check_syntax_tree0(new_fi)
     end
 
     @testset "global summary" begin
-        state = JETLS.ServerState()
+        state = JETLSCore.ServerState()
         uri = filepath2uri(@__FILE__)
-        lookup_func = Returns(JETLS.OutOfScope(lowering_module))
-        old_fi = JETLS.FileInfo(1, "old = 1", uri; cache_tree0 = true)
-        new_fi = JETLS.FileInfo(1, "new = 1", uri; cache_tree0 = true)
-        (; ctx3, binding) = JETLS.select_target_binding(
-            JETLS.build_syntax_tree(old_fi), 1, lowering_module, Base.get_world_counter())
+        lookup_func = Returns(JETLSCore.OutOfScope(lowering_module))
+        old_fi = JETLSCore.FileInfo(1, "old = 1", uri; cache_tree0 = true)
+        new_fi = JETLSCore.FileInfo(1, "new = 1", uri; cache_tree0 = true)
+        (; ctx3, binding) = JETLSCore.select_target_binding(
+            JETLSCore.build_syntax_tree(old_fi), 1, lowering_module, Base.get_world_counter())
         binfo = JL.get_binding(ctx3, binding)
-        @test length(JETLS.find_global_binding_occurrences!(
+        @test length(JETLSCore.find_global_binding_occurrences!(
             state, uri, old_fi, binfo; lookup_func)) == 1
-        old_globals = JETLS.load(state.binding_occurrences_cache)[uri].globals
-        @test isempty(JETLS.find_global_binding_occurrences!(
+        old_globals = JETLSCore.load(state.binding_occurrences_cache)[uri].globals
+        @test isempty(JETLSCore.find_global_binding_occurrences!(
             state, uri, new_fi, binfo; lookup_func))
 
-        JETLS.store_global_binding_occurrences!(state, uri, old_fi, old_globals)
-        @test isempty(JETLS.load(state.binding_occurrences_cache)[uri].by_range)
-        @test isempty(JETLS.find_global_binding_occurrences!(
+        JETLSCore.store_global_binding_occurrences!(state, uri, old_fi, old_globals)
+        @test isempty(JETLSCore.load(state.binding_occurrences_cache)[uri].by_range)
+        @test isempty(JETLSCore.find_global_binding_occurrences!(
             state, uri, new_fi, binfo; lookup_func))
-        JETLS.check_syntax_tree0(old_fi)
-        JETLS.check_syntax_tree0(new_fi)
+        JETLSCore.check_syntax_tree0(old_fi)
+        JETLSCore.check_syntax_tree0(new_fi)
     end
 end
 

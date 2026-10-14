@@ -6,7 +6,7 @@ function initialize_result(;
         root_uri::Union{Nothing,URI} = nothing,
         workspace_folders::Union{Nothing,Vector{WorkspaceFolder}} = nothing
     )
-    recorder = JETLS.ServerMessageRecorder()
+    recorder = JETLSCore.ServerMessageRecorder()
     server = Server(; callback=recorder)
     request = InitializeRequest(;
         id = 1,
@@ -16,7 +16,7 @@ function initialize_result(;
             rootUri = root_uri,
             workspaceFolders = workspace_folders))
     try
-        JETLS.handle_InitializeRequest(server, request; client_process_id = Int(getpid()))
+        JETLSCore.handle_InitializeRequest(server, request; client_process_id = Int(getpid()))
         messages = Any[]
         while isready(recorder.sent_queue)
             push!(messages, take!(recorder.sent_queue))
@@ -24,9 +24,9 @@ function initialize_result(;
         root_path = isdefined(server.state, :root_path) ? server.state.root_path : nothing
         return (; messages, root_path)
     finally
-        JETLS.stop_analysis_worker(server)
-        JETLS.stop_signature_analysis_workers(server)
-        JETLS.stop_workspace_diagnostics_worker(server)
+        JETLSCore.stop_analysis_worker(server)
+        JETLSCore.stop_signature_analysis_workers(server)
+        JETLSCore.stop_workspace_diagnostics_worker(server)
         close(server.endpoint)
     end
 end
@@ -73,13 +73,13 @@ end
             write(script_path, "")
             workspace_folders = [WorkspaceFolder(; uri = filepath2uri(script_path), name = "script.jl")]
             result = initialize_result(; workspace_folders)
-            @test JETLS.paths_equal(result.root_path, dir)
+            @test JETLSCore.paths_equal(result.root_path, dir)
         end
 
         let workspace_path = joinpath(dir, "missing-workspace")
             workspace_folders = [WorkspaceFolder(; uri = filepath2uri(workspace_path), name = "missing-workspace")]
             result = initialize_result(; workspace_folders)
-            @test JETLS.paths_equal(result.root_path, workspace_path)
+            @test JETLSCore.paths_equal(result.root_path, workspace_path)
         end
     end
 end

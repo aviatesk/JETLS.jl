@@ -1,9 +1,9 @@
 module test_string
 
 using Test
-using JETLS: JETLS, apply_text_change, encoded_length, offset_to_xy, xy_to_offset
-using JETLS.LSP
-using JETLS.LSP.PositionEncodingKind: UTF16, UTF32, UTF8
+using JETLSCore: JETLSCore, apply_text_change, encoded_length, offset_to_xy, xy_to_offset
+using JETLSCore.LSP
+using JETLSCore.LSP.PositionEncodingKind: UTF16, UTF32, UTF8
 
 @testset "offset_to_xy with different encodings" begin
     @testset "ASCII text" begin
@@ -310,14 +310,14 @@ end
 function test_string_positions(s)
     v = Vector{UInt8}(s)
     for b in eachindex(s)
-        pos = JETLS.offset_to_xy(v, b, @__FILE__)
-        b2 =  JETLS.xy_to_offset(v, pos, @__FILE__)
+        pos = JETLSCore.offset_to_xy(v, b, @__FILE__)
+        b2 =  JETLSCore.xy_to_offset(v, pos, @__FILE__)
         @test b === b2
     end
     # One past the last byte is a valid position in an editor
     b = length(v) + 1
-    pos = JETLS.offset_to_xy(v, b, @__FILE__)
-    b2 =  JETLS.xy_to_offset(v, pos, @__FILE__)
+    pos = JETLSCore.offset_to_xy(v, b, @__FILE__)
+    b2 =  JETLSCore.xy_to_offset(v, pos, @__FILE__)
     @test b === b2
 end
 @testset "Cursor file position <-> byte" begin
@@ -343,7 +343,7 @@ length_utf16(s::AbstractString) = sum(c::Char -> codepoint(c) < 0x10000 ? 1 : 2,
 @testset "`get_text_and_positions`" begin
     # Test with simple ASCII text
     let text = "hello │world"
-        clean_text, positions = JETLS.get_text_and_positions(text)
+        clean_text, positions = JETLSCore.get_text_and_positions(text)
         @test clean_text == "hello world"
         @test length(positions) == 1
         @test positions[1] == Position(; line=0, character=length_utf16("hello "))
@@ -351,7 +351,7 @@ length_utf16(s::AbstractString) = sum(c::Char -> codepoint(c) < 0x10000 ? 1 : 2,
 
     # Test with multiple markers on same line
     let text = "a│b│c│d"
-        clean_text, positions = JETLS.get_text_and_positions(text)
+        clean_text, positions = JETLSCore.get_text_and_positions(text)
         @test clean_text == "abcd"
         @test length(positions) == 3
         @test positions[1] == Position(; line=0, character=length_utf16("a"))
@@ -365,7 +365,7 @@ length_utf16(s::AbstractString) = sum(c::Char -> codepoint(c) < 0x10000 ? 1 : 2,
         line2
         │line3│
         """
-        clean_text, positions = JETLS.get_text_and_positions(text)
+        clean_text, positions = JETLSCore.get_text_and_positions(text)
         @test clean_text == """
         line1
         line2
@@ -379,7 +379,7 @@ length_utf16(s::AbstractString) = sum(c::Char -> codepoint(c) < 0x10000 ? 1 : 2,
 
     # Test with multi-byte characters (Greek letters)
     let text = "α│β│γ"
-        clean_text, positions = JETLS.get_text_and_positions(text)
+        clean_text, positions = JETLSCore.get_text_and_positions(text)
         @test clean_text == "αβγ"
         @test length(positions) == 2
         @test positions[1] == Position(; line=0, character=length_utf16("α"))
@@ -388,7 +388,7 @@ length_utf16(s::AbstractString) = sum(c::Char -> codepoint(c) < 0x10000 ? 1 : 2,
 
     # Test with mixed ASCII and multi-byte characters
     let text = "hello α│β world │γ"
-        clean_text, positions = JETLS.get_text_and_positions(text)
+        clean_text, positions = JETLSCore.get_text_and_positions(text)
         @test clean_text == "hello αβ world γ"
         @test length(positions) == 2
         @test positions[1] == Position(; line=0, character=length_utf16("hello α"))
@@ -396,7 +396,7 @@ length_utf16(s::AbstractString) = sum(c::Char -> codepoint(c) < 0x10000 ? 1 : 2,
     end
 
     let text = "😀│😎│🎉"
-        clean_text, positions = JETLS.get_text_and_positions(text)
+        clean_text, positions = JETLSCore.get_text_and_positions(text)
         @test clean_text == "😀😎🎉"
         @test length(positions) == 2
         # Each emoji is 2 UTF-16 units (default encoding)
@@ -406,7 +406,7 @@ length_utf16(s::AbstractString) = sum(c::Char -> codepoint(c) < 0x10000 ? 1 : 2,
 
     # Test with custom marker
     let text = "foo<HERE>bar<HERE>baz"
-        clean_text, positions = JETLS.get_text_and_positions(text; matcher=r"<HERE>")
+        clean_text, positions = JETLSCore.get_text_and_positions(text; matcher=r"<HERE>")
         @test clean_text == "foobarbaz"
         @test length(positions) == 2
         @test positions[1] == Position(; line=0, character=length_utf16("foo"))
@@ -415,21 +415,21 @@ length_utf16(s::AbstractString) = sum(c::Char -> codepoint(c) < 0x10000 ? 1 : 2,
 
     # Test empty text
     let text = ""
-        clean_text, positions = JETLS.get_text_and_positions(text)
+        clean_text, positions = JETLSCore.get_text_and_positions(text)
         @test clean_text == ""
         @test isempty(positions)
     end
 
     # Test text with no markers
     let text = "no markers here"
-        clean_text, positions = JETLS.get_text_and_positions(text)
+        clean_text, positions = JETLSCore.get_text_and_positions(text)
         @test clean_text == "no markers here"
         @test isempty(positions)
     end
 
     # Test markers at beginning and end
     let text = "│start middle end│"
-        clean_text, positions = JETLS.get_text_and_positions(text)
+        clean_text, positions = JETLSCore.get_text_and_positions(text)
         @test clean_text == "start middle end"
         @test length(positions) == 2
         @test positions[1] == Position(; line=0, character=0)
@@ -438,7 +438,7 @@ length_utf16(s::AbstractString) = sum(c::Char -> codepoint(c) < 0x10000 ? 1 : 2,
 
     # Test complex multi-byte scenario matching our byte_ancestors test
     let text = "α = β + │γ"
-        clean_text, positions = JETLS.get_text_and_positions(text)
+        clean_text, positions = JETLSCore.get_text_and_positions(text)
         @test clean_text == "α = β + γ"
         @test length(positions) == 1
         @test positions[1] == Position(; line=0, character=length_utf16("α = β + "))

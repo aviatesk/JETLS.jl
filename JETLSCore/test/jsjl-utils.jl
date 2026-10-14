@@ -1,4 +1,4 @@
-using JETLS: JS, JL
+using JETLSCore: JS, JL
 
 function parsedstream(s::AbstractString; rule::Symbol=:all)
     stream = JS.ParseStream(s)
@@ -15,7 +15,7 @@ jlparse(parsed_stream::JS.ParseStream; filename::AbstractString=@__FILE__, first
     JS.build_tree(JS.SyntaxTree, parsed_stream; filename, first_line)
 
 macro expect_jl_err(ex)
-    if JETLS.JETLS_DEBUG_LOWERING
+    if JETLSCore.JETLS_DEBUG_LOWERING
         :(mktemp() do path, io
             val = redirect_stderr(io) do
                 $(esc(ex))

@@ -1,9 +1,9 @@
 module test_signature_help
 
 using Test
-using JETLS
-using JETLS: JL, JS
-using JETLS.URIs2
+using JETLSCore
+using JETLSCore: JL, JS
+using JETLSCore.URIs2
 
 # siginfos(context_module, code) -> siginfos
 # nsigs(context_module, code) -> n
@@ -13,13 +13,13 @@ function siginfos(
         no_active_parameter_support::Bool=false,
         kwargs...
     )
-    clean_code, positions = JETLS.get_text_and_positions(code; kwargs...)
+    clean_code, positions = JETLSCore.get_text_and_positions(code; kwargs...)
     @assert length(positions) == 1 "siginfos requires exactly one cursor marker"
     position = only(positions)
-    fi = JETLS.FileInfo(0, clean_code, @__FILE__; cache_tree0 = true)
-    b = JETLS.xy_to_offset(fi, position)
-    result = JETLS.cursor_siginfos(fi, b, context_module; no_active_parameter_support)
-    JETLS.check_syntax_tree0(fi)
+    fi = JETLSCore.FileInfo(0, clean_code, @__FILE__; cache_tree0 = true)
+    b = JETLSCore.xy_to_offset(fi, position)
+    result = JETLSCore.cursor_siginfos(fi, b, context_module; no_active_parameter_support)
+    JETLSCore.check_syntax_tree0(fi)
     return result
 end
 
@@ -225,7 +225,7 @@ end
 function active_parameter(context_module::Module, code::AbstractString; kwargs...)
     si = siginfos(context_module, code; kwargs...)
     activeParameter = @something only(si).activeParameter return nothing
-    activeParameter isa JETLS.LSP.Null && return activeParameter
+    activeParameter isa JETLSCore.LSP.Null && return activeParameter
     return Int(activeParameter)
 end
 @testset "Active param highlighting" begin
@@ -280,12 +280,12 @@ end
     @test siginfos(M_highlight, "f(0, 1, 2; a.b=1│)") isa Vector
 
     @test nothing === active_parameter(M_highlight, "noargs(│)")
-    @test JETLS.LSP.null === active_parameter(M_highlight, "noargs(│)"; no_active_parameter_support=true)
+    @test JETLSCore.LSP.null === active_parameter(M_highlight, "noargs(│)"; no_active_parameter_support=true)
     @test 0 == active_parameter(M_highlight, "fixedkw(; kw0=nothing│, kw1=missing, )")
     @test 1 == active_parameter(M_highlight, "fixedkw(; kw0=nothing, kw1=missing│, )")
     @test nothing === active_parameter(M_highlight, "fixedkw(; kw0, kw1, │)")
-    @test JETLS.LSP.null === active_parameter(M_highlight, "fixedkw(; kw0, kw1, │)"; no_active_parameter_support=true)
-    @test JETLS.LSP.null === active_parameter(M_highlight, "fixedkw(; fake│)"; no_active_parameter_support=true)
+    @test JETLSCore.LSP.null === active_parameter(M_highlight, "fixedkw(; kw0, kw1, │)"; no_active_parameter_support=true)
+    @test JETLSCore.LSP.null === active_parameter(M_highlight, "fixedkw(; fake│)"; no_active_parameter_support=true)
 end
 
 module M_nested
@@ -417,27 +417,27 @@ end
     @testset "prior and later didChange" begin
         with_manual_dispatch_server() do server, recorder
             uri = filepath2uri(@__FILE__)
-            JETLS.cache_out_of_scope!(server.state.analysis_manager, uri, JETLS.OutOfScope(M_snapshot))
-            JETLS.cache_file_info!(server, uri, 1, "snapshot_single(0)")
+            JETLSCore.cache_out_of_scope!(server.state.analysis_manager, uri, JETLSCore.OutOfScope(M_snapshot))
+            JETLSCore.cache_file_info!(server, uri, 1, "snapshot_single(0)")
             pos = Position(; line = 0, character = 16)
             request = make_signature_help_request(1, uri, pos)
             next_request = make_signature_help_request(2, uri, pos)
-            @test JETLS.is_sequential_msg(request)
+            @test JETLSCore.is_sequential_msg(request)
             prepared = queued_snapshot_requests(server, [
                 make_DidChangeTextDocumentNotification(uri, "snapshot_pair(1,)", 2), request,
                 make_DidChangeTextDocumentNotification(uri, "snapshot_single()", 3), next_request])
             @test length(prepared) == 2
-            @test prepared[1] isa JETLS.SnapshotRequestMessage
+            @test prepared[1] isa JETLSCore.SnapshotRequestMessage
             @test prepared[1].msg isa SignatureHelpRequest
             @test prepared[1].msg === request
             @test prepared[2].msg === next_request
             @test prepared[1].snapshot.fi.version == 2
             @test prepared[1].msg.params.position == pos
-            @test JETLS.adjust_position(prepared[1].snapshot, uri, prepared[1].msg.params.position) == pos
+            @test JETLSCore.adjust_position(prepared[1].snapshot, uri, prepared[1].msg.params.position) == pos
             @test prepared[1].snapshot.cache_uri == uri
             @test prepared[1].snapshot.notebook === nothing
             @test prepared[2].snapshot.fi.version == 3
-            @test JETLS.get_file_info(server.state, uri) === prepared[2].snapshot.fi
+            @test JETLSCore.get_file_info(server.state, uri) === prepared[2].snapshot.fi
             @test prepared[1].snapshot.fi !== prepared[2].snapshot.fi
 
             for (item, (label, parameter)) in zip(prepared, [("snapshot_pair(a, b)", 1), ("snapshot_single(x)", 0)])
@@ -454,12 +454,12 @@ end
     @testset "cancellation before prepared dispatch" begin
         with_manual_dispatch_server() do server, recorder
             uri = filepath2uri(@__FILE__)
-            JETLS.cache_file_info!(server, uri, 1, "snapshot_pair(1,)")
+            JETLSCore.cache_file_info!(server, uri, 1, "snapshot_pair(1,)")
             request = make_signature_help_request(1, uri, Position(; line = 0, character = 16))
             prepared = only(queued_snapshot_requests(server, [request]))
             @test prepared.snapshot !== nothing
-            JETLS.handler_concurrent_message(server, CancelRequestNotification(; params = CancelParams(; id = request.id)))
-            @test JETLS.is_cancelled(server.state.currently_handled[request.id])
+            JETLSCore.handler_concurrent_message(server, CancelRequestNotification(; params = CancelParams(; id = request.id)))
+            @test JETLSCore.is_cancelled(server.state.currently_handled[request.id])
             response = dispatch_snapshot_request(server, recorder, prepared)
             @test response isa ResponseMessage
             @test response.result === nothing
@@ -475,9 +475,9 @@ end
             request = make_signature_help_request(1, uri, pos)
             prepared = only(queued_snapshot_requests(server, [request]))
             @test prepared.snapshot === nothing
-            @test JETLS.get_file_info(server.state, uri) === nothing
-            JETLS.cache_file_info!(server, uri, 1, "snapshot_pair(1,)")
-            JETLS.cache_out_of_scope!(server.state.analysis_manager, uri, JETLS.OutOfScope(M_snapshot))
+            @test JETLSCore.get_file_info(server.state, uri) === nothing
+            JETLSCore.cache_file_info!(server, uri, 1, "snapshot_pair(1,)")
+            JETLSCore.cache_out_of_scope!(server.state.analysis_manager, uri, JETLSCore.OutOfScope(M_snapshot))
             current = only(queued_snapshot_requests(server, [make_signature_help_request(2, uri, pos)]))
             @test current.snapshot !== nothing
             response = dispatch_snapshot_request(server, recorder, prepared)
@@ -496,29 +496,29 @@ end
     @testset "mixed completion and signature requests" begin
         with_manual_dispatch_server() do server, recorder
             uri = filepath2uri(@__FILE__)
-            JETLS.cache_out_of_scope!(server.state.analysis_manager, uri, JETLS.OutOfScope(M_snapshot))
-            JETLS.cache_file_info!(server, uri, 1, "\\alpha")
+            JETLSCore.cache_out_of_scope!(server.state.analysis_manager, uri, JETLSCore.OutOfScope(M_snapshot))
+            JETLSCore.cache_file_info!(server, uri, 1, "\\alpha")
             completion = CompletionRequest(;
                 id = 1,
                 params = CompletionParams(;
                     textDocument = TextDocumentIdentifier(; uri),
                     position = Position(; line = 0, character = 6)))
             signature = make_signature_help_request(2, uri, Position(; line = 0, character = 16))
-            @test JETLS.is_sequential_msg(completion)
-            @test JETLS.is_sequential_msg(signature)
+            @test JETLSCore.is_sequential_msg(completion)
+            @test JETLSCore.is_sequential_msg(signature)
             prepared = queued_snapshot_requests(server, [
                 completion, make_DidChangeTextDocumentNotification(uri, "snapshot_pair(1,)", 2),
                 signature, make_DidChangeTextDocumentNotification(uri, "\\beta", 3)])
             @test length(prepared) == 2
-            @test prepared[1] isa JETLS.SnapshotRequestMessage
-            @test prepared[2] isa JETLS.SnapshotRequestMessage
+            @test prepared[1] isa JETLSCore.SnapshotRequestMessage
+            @test prepared[2] isa JETLSCore.SnapshotRequestMessage
             @test prepared[1].msg isa CompletionRequest
             @test prepared[2].msg isa SignatureHelpRequest
             @test prepared[1].msg === completion
             @test prepared[2].msg === signature
             @test prepared[1].snapshot.fi.version == 1
             @test prepared[2].snapshot.fi.version == 2
-            @test JETLS.get_file_info(server.state, uri).version == 3
+            @test JETLSCore.get_file_info(server.state, uri).version == 3
             response = dispatch_snapshot_request(server, recorder, prepared[1])
             @test response isa CompletionResponse
             @test response.error === nothing
@@ -535,7 +535,7 @@ end
 end
 
 function with_signature_help_request(tester, text::AbstractString; kwargs...)
-    clean_code, positions = JETLS.get_text_and_positions(text; kwargs...)
+    clean_code, positions = JETLSCore.get_text_and_positions(text; kwargs...)
 
     return withscript(clean_code) do script_path
         uri = filepath2uri(script_path)

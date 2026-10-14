@@ -3,9 +3,9 @@ module test_unsaved_buffer
 include("setup.jl")
 
 using Test
-using JETLS
-using JETLS.LSP
-using JETLS.URIs2
+using JETLSCore
+using JETLSCore.LSP
+using JETLSCore.URIs2
 
 # Sequential notifications (`didOpen` / `didChange` / `didClose`) are dispatched
 # to a separate worker thread, so observable state changes are *not* synchronous
@@ -23,17 +23,17 @@ function wait_until(predicate::Function;
     error("Timed out waiting for $what")
 end
 
-wait_for_analysis_cached(manager::JETLS.AnalysisManager, uri::URI) =
-    wait_until(() -> JETLS.get_analysis_info(manager, uri) isa JETLS.AnalysisResult;
+wait_for_analysis_cached(manager::JETLSCore.AnalysisManager, uri::URI) =
+    wait_until(() -> JETLSCore.get_analysis_info(manager, uri) isa JETLSCore.AnalysisResult;
                what="analysis cache for $uri")
 
-wait_for_analysis_uncached(manager::JETLS.AnalysisManager, uri::URI) =
-    wait_until(() -> JETLS.get_analysis_info(manager, uri) === nothing;
+wait_for_analysis_uncached(manager::JETLSCore.AnalysisManager, uri::URI) =
+    wait_until(() -> JETLSCore.get_analysis_info(manager, uri) === nothing;
                what="analysis cache cleared for $uri")
 
-function any_entry_for(manager::JETLS.AnalysisManager, uri::URI, field::Symbol)
-    dict = JETLS.load(getfield(manager, field))
-    return any(entry -> JETLS.entryuri(entry) == uri, keys(dict))
+function any_entry_for(manager::JETLSCore.AnalysisManager, uri::URI, field::Symbol)
+    dict = JETLSCore.load(getfield(manager, field))
+    return any(entry -> JETLSCore.entryuri(entry) == uri, keys(dict))
 end
 
 # Exercise diagnostic clearing on close with reporting limited to open files.
@@ -55,16 +55,16 @@ const SETTINGS = Dict{String,Any}(
             (; raw_res) = writereadmsg(make_DidOpenTextDocumentNotification(untitled_uri, text))
             @test raw_res isa PublishDiagnosticsNotification
             @test raw_res.params.uri == untitled_uri
-            @test any(d -> d.code == JETLS.INFERENCE_METHOD_ERROR_CODE,
+            @test any(d -> d.code == JETLSCore.INFERENCE_METHOD_ERROR_CODE,
                       raw_res.params.diagnostics)
         end
 
         manager = server.state.analysis_manager
         wait_for_analysis_cached(manager, untitled_uri)
-        info = JETLS.get_analysis_info(manager, untitled_uri)::JETLS.AnalysisResult
+        info = JETLSCore.get_analysis_info(manager, untitled_uri)::JETLSCore.AnalysisResult
         entry = info.entry
-        @test JETLS.entryuri(entry) == untitled_uri
-        @test haskey(JETLS.load(manager.analyzed_generations), entry)
+        @test JETLSCore.entryuri(entry) == untitled_uri
+        @test haskey(JETLSCore.load(manager.analyzed_generations), entry)
 
         # Closing the buffer clears its previously published inference diagnostic.
         let (; raw_res) = writereadmsg(make_DidCloseTextDocumentNotification(untitled_uri))
@@ -74,9 +74,9 @@ const SETTINGS = Dict{String,Any}(
         end
         wait_for_analysis_uncached(manager, untitled_uri)
 
-        @test JETLS.get_analysis_info(manager, untitled_uri) === nothing
-        @test !haskey(JETLS.load(manager.analyzed_generations), entry)
-        @test !haskey(JETLS.load(manager.current_generations), entry)
+        @test JETLSCore.get_analysis_info(manager, untitled_uri) === nothing
+        @test !haskey(JETLSCore.load(manager.analyzed_generations), entry)
+        @test !haskey(JETLSCore.load(manager.current_generations), entry)
         @test !any_entry_for(manager, untitled_uri, :debounced)
     end
 end
@@ -93,16 +93,16 @@ end
 
         manager = server.state.analysis_manager
         wait_for_analysis_cached(manager, untitled_uri)
-        info = JETLS.get_analysis_info(manager, untitled_uri)::JETLS.AnalysisResult
+        info = JETLSCore.get_analysis_info(manager, untitled_uri)::JETLSCore.AnalysisResult
         entry = info.entry
 
         # The didChange handler schedules a 3.0s debounced reanalysis. The timer
         # is registered synchronously inside the handler; wait for the sequential
         # worker to land it in `manager.debounced` before asserting.
         writemsg(make_DidChangeTextDocumentNotification(untitled_uri, "f(x) = x + 2", 2))
-        wait_until(() -> haskey(JETLS.load(manager.debounced), entry);
+        wait_until(() -> haskey(JETLSCore.load(manager.debounced), entry);
                    what="debounce timer to be registered")
-        @test haskey(JETLS.load(manager.debounced), entry)
+        @test haskey(JETLSCore.load(manager.debounced), entry)
 
         # didClose must cancel the timer along with the rest of the per-entry
         # state. Without the cancellation the timer would fire 3s later and the
@@ -115,8 +115,8 @@ end
         end
         wait_for_analysis_uncached(manager, untitled_uri)
 
-        @test JETLS.get_analysis_info(manager, untitled_uri) === nothing
-        @test !haskey(JETLS.load(manager.debounced), entry)
+        @test JETLSCore.get_analysis_info(manager, untitled_uri) === nothing
+        @test !haskey(JETLSCore.load(manager.debounced), entry)
     end
 end
 

@@ -1,23 +1,23 @@
 module test_lsp
 
 using Test
-using JETLS: JETLS
-using JETLS.LSP
-using JETLS.LSP.URIs2
+using JETLSCore: JETLSCore
+using JETLSCore.LSP
+using JETLSCore.LSP.URIs2
 
 @testset "create_source_location_link" begin
     uri = URI("file:///path/to/file.jl")
     uri_filename = uri2filename(uri)
-    @test JETLS.create_source_location_link(uri) == "[$uri_filename](file:///path/to/file.jl)"
-    @test JETLS.create_source_location_link(uri; line=42) == "[$(uri_filename):42](file:///path/to/file.jl#L42)"
-    @test JETLS.create_source_location_link(uri; line=42, character=10) == "[$(uri_filename):42](file:///path/to/file.jl#L42,10)"
-    @test JETLS.create_source_location_link(uri, "file.jl") == "[file.jl](file:///path/to/file.jl)"
-    @test JETLS.create_source_location_link(uri, "file.jl:42"; line=42) == "[file.jl:42](file:///path/to/file.jl#L42)"
-    @test JETLS.create_source_location_link(uri, "file.jl:42:10"; line=42, character=10) == "[file.jl:42:10](file:///path/to/file.jl#L42,10)"
-    @test JETLS.create_source_location_link(uri; character=10) == "[$uri_filename](file:///path/to/file.jl)"
+    @test JETLSCore.create_source_location_link(uri) == "[$uri_filename](file:///path/to/file.jl)"
+    @test JETLSCore.create_source_location_link(uri; line=42) == "[$(uri_filename):42](file:///path/to/file.jl#L42)"
+    @test JETLSCore.create_source_location_link(uri; line=42, character=10) == "[$(uri_filename):42](file:///path/to/file.jl#L42,10)"
+    @test JETLSCore.create_source_location_link(uri, "file.jl") == "[file.jl](file:///path/to/file.jl)"
+    @test JETLSCore.create_source_location_link(uri, "file.jl:42"; line=42) == "[file.jl:42](file:///path/to/file.jl#L42)"
+    @test JETLSCore.create_source_location_link(uri, "file.jl:42:10"; line=42, character=10) == "[file.jl:42:10](file:///path/to/file.jl#L42,10)"
+    @test JETLSCore.create_source_location_link(uri; character=10) == "[$uri_filename](file:///path/to/file.jl)"
 
     http_uri = URI("http://example.com/file.jl")
-    @test JETLS.create_source_location_link(http_uri, "remote file"; line=5) == "[remote file](http://example.com/file.jl#L5)"
+    @test JETLSCore.create_source_location_link(http_uri, "remote file"; line=5) == "[remote file](http://example.com/file.jl#L5)"
 end
 
 @testset "Position comparison" begin
@@ -166,26 +166,26 @@ end
         var"end" = Position(; line=12, character=0))
 
     # Test overlapping ranges
-    @test JETLS.overlap(range1, range2)
-    @test JETLS.overlap(range2, range1)  # Symmetric
+    @test JETLSCore.overlap(range1, range2)
+    @test JETLSCore.overlap(range2, range1)  # Symmetric
 
     # Test adjacent ranges (touching at boundary)
-    @test JETLS.overlap(range2, range3)
-    @test JETLS.overlap(range3, range2)  # Symmetric
+    @test JETLSCore.overlap(range2, range3)
+    @test JETLSCore.overlap(range3, range2)  # Symmetric
 
     # Test disjoint ranges
-    @test !JETLS.overlap(range1, range4)
-    @test !JETLS.overlap(range4, range1)  # Symmetric
+    @test !JETLSCore.overlap(range1, range4)
+    @test !JETLSCore.overlap(range4, range1)  # Symmetric
 
     # Test self-overlap
-    @test JETLS.overlap(range1, range1)
+    @test JETLSCore.overlap(range1, range1)
 
     # Test zero-width ranges
     zero_width = Range(;
         start = Position(; line=2, character=7),
         var"end" = Position(; line=2, character=7))
-    @test JETLS.overlap(zero_width, range1)
-    @test JETLS.overlap(range1, zero_width)
+    @test JETLSCore.overlap(zero_width, range1)
+    @test JETLSCore.overlap(range1, zero_width)
 
     # Test ranges that touch at a single point
     touch_start = Range(;
@@ -194,16 +194,16 @@ end
     touch_end = Range(;
         start = Position(; line=1, character=0),
         var"end" = Position(; line=2, character=0))
-    @test JETLS.overlap(touch_start, touch_end)
+    @test JETLSCore.overlap(touch_start, touch_end)
 end
 
 @testset "show_message" begin
     sent_queue = Channel{Any}(Inf)
-    recorder() = JETLS.ServerMessageRecorder(Channel{Any}(Inf), sent_queue)
+    recorder() = JETLSCore.ServerMessageRecorder(Channel{Any}(Inf), sent_queue)
 
     # LSP mode: sent to the client as `window/showMessage`
-    let server = JETLS.Server(; callback = recorder())
-        @test_logs JETLS.show_warning_message(server, "careful")
+    let server = JETLSCore.Server(; callback = recorder())
+        @test_logs JETLSCore.show_warning_message(server, "careful")
         msg = take!(sent_queue)
         @test msg isa ShowMessageNotification
         @test msg.params.type == MessageType.Warning
@@ -212,22 +212,22 @@ end
     end
 
     # CLI mode: no client, so the message is logged instead
-    let server = JETLS.Server(; cli_mode = true, callback = recorder())
-        @test_logs (:info, "hello") JETLS.show_info_message(server, "hello")
-        @test_logs (:warn, "careful") JETLS.show_warning_message(server, "careful")
-        @test_logs (:error, "boom") JETLS.show_error_message(server, "boom")
+    let server = JETLSCore.Server(; cli_mode = true, callback = recorder())
+        @test_logs (:info, "hello") JETLSCore.show_info_message(server, "hello")
+        @test_logs (:warn, "careful") JETLSCore.show_warning_message(server, "careful")
+        @test_logs (:error, "boom") JETLSCore.show_error_message(server, "boom")
         @test isempty(sent_queue)
     end
 end
 
 @testset "completion notifications during shutdown" begin
-    let recorder = JETLS.ServerMessageRecorder(),
-        server = JETLS.Server(; callback = recorder)
+    let recorder = JETLSCore.ServerMessageRecorder(),
+        server = JETLSCore.Server(; callback = recorder)
         try
             response = ResponseMessage(; id = 1, result = null)
             task = @lock server.message_queue begin
                 # @async and yield run the sender to the blocked put! before queue closure.
-                local task = @async JETLS.send(server, response)
+                local task = @async JETLSCore.send(server, response)
                 yield()
                 @test istaskstarted(task) && !istaskdone(task)
                 @test isready(recorder.sent_queue) && take!(recorder.sent_queue) === response
@@ -236,7 +236,7 @@ end
                 task
             end
             @test fetch(task) === nothing
-            @test_nowarn JETLS.send_progress(server, "progress", WorkDoneProgressEnd())
+            @test_nowarn JETLSCore.send_progress(server, "progress", WorkDoneProgressEnd())
         finally
             close(server.endpoint)
             close(server.message_queue)
@@ -251,8 +251,8 @@ end
             var"end" = Position(; line = 1, character = character + 3)),
         severity = DiagnosticSeverity.Warning,
         message = "unused argument `xxx`",
-        source = JETLS.DIAGNOSTIC_SOURCE_LIVE,
-        code = JETLS.LOWERING_UNUSED_ARGUMENT_CODE,
+        source = JETLSCore.DIAGNOSTIC_SOURCE_LIVE,
+        code = JETLSCore.LOWERING_UNUSED_ARGUMENT_CODE,
         tags = DiagnosticTag.Ty[DiagnosticTag.Unnecessary])
     # separately built objects are not egal because of the `tags` vector
     a = make_tagged(4); b = make_tagged(4)

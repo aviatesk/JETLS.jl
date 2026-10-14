@@ -1,20 +1,20 @@
 module test_workspace_symbol
 
 using Test
-using JETLS: JETLS, JS
-using JETLS.LSP
-using JETLS.LSP.URIs2
+using JETLSCore: JETLSCore, JS
+using JETLSCore.LSP
+using JETLSCore.LSP.URIs2
 
 module lowering_module end
 function get_workspace_symbols(code::AbstractString)
-    fi = JETLS.FileInfo(1, code, @__FILE__, PositionEncodingKind.UTF8; cache_tree0 = true)
-    st0 = JETLS.build_syntax_tree(fi)
+    fi = JETLSCore.FileInfo(1, code, @__FILE__, PositionEncodingKind.UTF8; cache_tree0 = true)
+    st0 = JETLSCore.build_syntax_tree(fi)
     workspace_symbols = WorkspaceSymbol[]
     world = Base.get_world_counter()
-    doc_symbols = JETLS.extract_document_symbols(st0, fi, lowering_module, world)
+    doc_symbols = JETLSCore.extract_document_symbols(st0, fi, lowering_module, world)
     uri = URI("file:///$(@__FILE__)")
-    JETLS.flatten_document_symbols!(workspace_symbols, doc_symbols, uri, nothing)
-    JETLS.check_syntax_tree0(fi)
+    JETLSCore.flatten_document_symbols!(workspace_symbols, doc_symbols, uri, nothing)
+    JETLSCore.check_syntax_tree0(fi)
     return workspace_symbols
 end
 

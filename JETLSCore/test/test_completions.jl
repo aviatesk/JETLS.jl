@@ -1,10 +1,10 @@
 module test_completions
 
 using Test
-using JETLS
-using JETLS: JL, JS
-using JETLS.LSP
-using JETLS.URIs2
+using JETLSCore
+using JETLSCore: JL, JS
+using JETLSCore.LSP
+using JETLSCore.URIs2
 
 include("setup.jl")
 include("jsjl-utils.jl")
@@ -12,31 +12,31 @@ include("jsjl-utils.jl")
 module lowering_module end
 
 function get_cursor_bindings(
-        fi::JETLS.FileInfo, b::Int;
+        fi::JETLSCore.FileInfo, b::Int;
         context_module::Module = lowering_module,
         soft_scope::Bool = false,
         world::UInt = Base.get_world_counter()
     )
-    st0 = JETLS.build_syntax_tree(fi)
-    cb = JETLS.cursor_bindings(st0, b, context_module, world; soft_scope)
+    st0 = JETLSCore.build_syntax_tree(fi)
+    cb = JETLSCore.cursor_bindings(st0, b, context_module, world; soft_scope)
     return isnothing(cb) ? [] : cb
 end
 function get_cursor_bindings(marked_text::AbstractString; kwargs...)
-    text, positions = JETLS.get_text_and_positions(marked_text)
-    fi = JETLS.FileInfo(#=version=#0, text, @__FILE__; cache_tree0 = true)
-    b = JETLS.xy_to_offset(fi, positions[1])
+    text, positions = JETLSCore.get_text_and_positions(marked_text)
+    fi = JETLSCore.FileInfo(#=version=#0, text, @__FILE__; cache_tree0 = true)
+    b = JETLSCore.xy_to_offset(fi, positions[1])
     bindings = get_cursor_bindings(fi, b; kwargs...)
-    JETLS.check_syntax_tree0(fi)
+    JETLSCore.check_syntax_tree0(fi)
     return bindings
 end
 
 function get_local_completions(s::AbstractString, b::Int)
-    uri = JETLS.URIs2.filepath2uri(@__FILE__)
-    fi = JETLS.FileInfo(#=version=#0, s, @__FILE__; cache_tree0 = true)
+    uri = JETLSCore.URIs2.filepath2uri(@__FILE__)
+    fi = JETLSCore.FileInfo(#=version=#0, s, @__FILE__; cache_tree0 = true)
     completions = map(get_cursor_bindings(fi, b)) do ((bi, st, dist))
-        JETLS.to_completion(bi, st, dist, uri, fi)
+        JETLSCore.to_completion(bi, st, dist, uri, fi)
     end
-    JETLS.check_syntax_tree0(fi)
+    JETLSCore.check_syntax_tree0(fi)
     return completions
 end
 
@@ -57,7 +57,7 @@ function cv_has(cs::Vector{CompletionItem}, expected; kind=nothing)
         @test !isnothing(c)
         if !isnothing(c)
             if !isnothing(kind)
-                @test JETLS.completion_is(c, kind)
+                @test JETLSCore.completion_is(c, kind)
             end
             isnothing(f) || f(c)
         end
@@ -73,9 +73,9 @@ function cv_nhas(cs::Vector{CompletionItem}, unexpected)
 end
 
 function with_completion(f, text::String; kwargs...)
-    clean_code, positions = JETLS.get_text_and_positions(text; kwargs...)
+    clean_code, positions = JETLSCore.get_text_and_positions(text; kwargs...)
     for (i, pos) in enumerate(positions)
-        cv = get_local_completions(clean_code, JETLS.xy_to_offset(clean_code, pos, @__FILE__))
+        cv = get_local_completions(clean_code, JETLSCore.xy_to_offset(clean_code, pos, @__FILE__))
         f(i, cv)
     end
 end
@@ -329,13 +329,13 @@ function with_completion_request(
         context::Union{Nothing, CompletionContext} = nothing,
         kwargs...
     )
-    clean_code, positions = JETLS.get_text_and_positions(text; kwargs...)
+    clean_code, positions = JETLSCore.get_text_and_positions(text; kwargs...)
     withscript(clean_code) do script_path
         uri = filepath2uri(script_path)
         withserver() do (; writereadmsg, id_counter, server)
-            JETLS.cache_file_info!(server, uri, 1, clean_code)
-            JETLS.cache_saved_file_info!(server.state, uri, clean_code)
-            JETLS.request_analysis!(server, uri, #=invalidate=#false; wait=true, notify_diagnostics=false)
+            JETLSCore.cache_file_info!(server, uri, 1, clean_code)
+            JETLSCore.cache_saved_file_info!(server.state, uri, clean_code)
+            JETLSCore.request_analysis!(server, uri, #=invalidate=#false; wait=true, notify_diagnostics=false)
             for (i, pos) in enumerate(positions)
                 params = CompletionParams(;
                     textDocument = TextDocumentIdentifier(; uri),
@@ -361,9 +361,9 @@ function with_completion_items(
         context_module::Union{Nothing, Module} = nothing,
         kwargs...
     )
-    clean_code, positions = JETLS.get_text_and_positions(text; kwargs...)
+    clean_code, positions = JETLSCore.get_text_and_positions(text; kwargs...)
     uri = filepath2uri(@__FILE__)
-    state = JETLS.ServerState()
+    state = JETLSCore.ServerState()
     state.init_params = InitializeParams(;
         processId = getpid(),
         rootUri = nothing,
@@ -374,22 +374,22 @@ function with_completion_items(
                         resolveSupport = ClientCompletionItemResolveOptions(;
                             properties = ["documentation", "detail", "kind", "labelDetails"])
                     )))))
-    fi = JETLS.FileInfo(#=version=#0, clean_code, @__FILE__; cache_tree0 = true)
-    JETLS.store!(state.file_cache) do cache
+    fi = JETLSCore.FileInfo(#=version=#0, clean_code, @__FILE__; cache_tree0 = true)
+    JETLSCore.store!(state.file_cache) do cache
         Base.PersistentDict(cache, uri => fi), nothing
     end
-    snapshot = JETLS.get_document_snapshot(state, uri)::JETLS.DocumentSnapshot
+    snapshot = JETLSCore.get_document_snapshot(state, uri)::JETLSCore.DocumentSnapshot
     for pos in positions
-        items, isIncomplete = JETLS.get_completion_items(state, uri, snapshot, pos, context;
+        items, isIncomplete = JETLSCore.get_completion_items(state, uri, snapshot, pos, context;
             context_module)
         tester((; result = (; items, isIncomplete), state, uri))
     end
-    JETLS.check_syntax_tree0(fi)
+    JETLSCore.check_syntax_tree0(fi)
 end
 
 @testset "Test macro fallback completions" begin
     for text in ("Test│", "@test│")
-        with_completion_items(text; context_module=JETLS.FallbackAnalysisContext) do (; result)
+        with_completion_items(text; context_module=JETLSCore.FallbackAnalysisContext) do (; result)
             labels = Set(item.label for item in result.items)
             @test "@testset" in labels
             @test "@test_throws" in labels
@@ -607,10 +607,10 @@ end
             for it in props
                 @test it.kind === CompletionItemKind.Property
                 @test it.labelDetails.detail === nothing
-                @test it.data isa JETLS.PropertyCompletionData
+                @test it.data isa JETLSCore.PropertyCompletionData
             end
             pattern_item = first(filter(it -> it.label == "pattern", props))
-            resolved = JETLS.resolve_completion_item(state, pattern_item)
+            resolved = JETLSCore.resolve_completion_item(state, pattern_item)
             @test resolved.labelDetails.detail !== nothing
             @test occursin("String", resolved.labelDetails.detail)
             cnt[] += 1
@@ -739,11 +739,11 @@ end
             @test labels == Set(["first", "second"])
             # Resolve `first` → `Symbol` (same on both sides).
             first_item = first(filter(it -> it.label == "first", props))
-            resolved_first = JETLS.resolve_completion_item(state, first_item)
+            resolved_first = JETLSCore.resolve_completion_item(state, first_item)
             @test occursin("Symbol", resolved_first.labelDetails.detail)
             # Resolve `second` → `Union{Int,String}` (merged from both sides).
             second_item = first(filter(it -> it.label == "second", props))
-            resolved_second = JETLS.resolve_completion_item(state, second_item)
+            resolved_second = JETLSCore.resolve_completion_item(state, second_item)
             @test occursin("$Int", resolved_second.labelDetails.detail)
             @test occursin("String", resolved_second.labelDetails.detail)
             cnt[] += 1
@@ -764,7 +764,7 @@ end
             labels = Set(it.label for it in props)
             @test labels == Set(String.(fieldnames(Regex)))
             pattern_item = first(filter(it -> it.label == "pattern", props))
-            resolved = JETLS.resolve_completion_item(state, pattern_item)
+            resolved = JETLSCore.resolve_completion_item(state, pattern_item)
             @test resolved.labelDetails.detail !== nothing
             @test occursin("String", resolved.labelDetails.detail)
             @test !occursin("Union{}", resolved.labelDetails.detail)
@@ -789,7 +789,7 @@ end
             @test all(p->isnothing(p.labelDetails.detail), props)
             i = findfirst(p->p.label=="x_float32", props)
             @test !isnothing(i)
-            resolved = JETLS.resolve_completion_item(state, props[i])
+            resolved = JETLSCore.resolve_completion_item(state, props[i])
             @test resolved.labelDetails.detail == " ::Float32"
             cnt[] += 1
         end
@@ -812,7 +812,7 @@ end
             @test length(props) == 1
             @test props[1].label == "no_such_field"
             @test props[1].labelDetails.detail === nothing
-            resolved = JETLS.resolve_completion_item(state, props[1])
+            resolved = JETLSCore.resolve_completion_item(state, props[1])
             @test resolved.labelDetails.detail == " ::Union{}"
             cnt[] += 1
         end
@@ -834,13 +834,13 @@ end
             ) do (; result, state)
             props = only_props(result.items)
             x_item = first(filter(it -> it.label == "x", props))
-            resolved_x = JETLS.resolve_completion_item(state, x_item)
+            resolved_x = JETLSCore.resolve_completion_item(state, x_item)
             x_value = resolved_x.documentation.value
             @test occursin("s.x :: $Int", x_value)
             @test occursin("The x field", x_value)
 
             z_item = first(filter(it -> it.label == "z", props))
-            resolved_z = JETLS.resolve_completion_item(state, z_item)
+            resolved_z = JETLSCore.resolve_completion_item(state, z_item)
             z_value = resolved_z.documentation.value
             @test occursin("s.z :: Float64", z_value)
             @test !occursin("---", z_value)  # no doc section appended
@@ -856,11 +856,11 @@ end
 # of leaking the placeholder's auto-generated summary.
 module completion_binding_state_fixture end
 Core.eval(completion_binding_state_fixture, Expr(:const, :virtualized_str_const,
-    JETLS.JET.AbstractBindingState(true, false, String)))
+    JETLSCore.JET.AbstractBindingState(true, false, String)))
 Core.eval(completion_binding_state_fixture, Expr(:const, :virtualized_func_alias,
-    JETLS.JET.AbstractBindingState(true, false, Core.Const(cos))))
+    JETLSCore.JET.AbstractBindingState(true, false, Core.Const(cos))))
 Core.eval(completion_binding_state_fixture, Expr(:const, :virtualized_documented,
-    JETLS.JET.AbstractBindingState(true, false, String)))
+    JETLSCore.JET.AbstractBindingState(true, false, String)))
 Core.eval(completion_binding_state_fixture,
     :(Base.@doc "Virtualized binding docs." virtualized_documented))
 
@@ -870,7 +870,7 @@ Core.eval(completion_binding_state_fixture,
             context_module = completion_binding_state_fixture) do (; result, state)
         function resolve_label(label::String)
             item = only(filter(it -> it.label == label, result.items))
-            return JETLS.resolve_completion_item(state, item)
+            return JETLSCore.resolve_completion_item(state, item)
         end
         resolved = resolve_label("virtualized_str_const")
         @test resolved.detail == "[constant variable]"
@@ -965,17 +965,17 @@ end
             write(sub_path, sub_saved)
             main_saved′ = replace(main_saved, "SUBFILE" => basename(sub_path))
             write(script_path, main_saved′)
-            main_live′, positions = JETLS.get_text_and_positions(
+            main_live′, positions = JETLSCore.get_text_and_positions(
                 replace(main_live, "SUBFILE" => basename(sub_path)))
             main_uri = filepath2uri(script_path)
             sub_uri = filepath2uri(sub_path)
             withserver() do (; server, writereadmsg, id_counter)
-                JETLS.cache_file_info!(server, main_uri, 1, main_saved′)
-                JETLS.cache_saved_file_info!(server.state, main_uri, main_saved′)
-                JETLS.request_analysis!(server, main_uri, #=invalidate=#false;
+                JETLSCore.cache_file_info!(server, main_uri, 1, main_saved′)
+                JETLSCore.cache_saved_file_info!(server.state, main_uri, main_saved′)
+                JETLSCore.request_analysis!(server, main_uri, #=invalidate=#false;
                     wait=true, notify_diagnostics=false)
-                JETLS.cache_file_info!(server, main_uri, 2, main_live′)
-                JETLS.cache_file_info!(server, sub_uri, 1, sub_live)
+                JETLSCore.cache_file_info!(server, main_uri, 2, main_live′)
+                JETLSCore.cache_file_info!(server, sub_uri, 1, sub_live)
                 inner_items, outer_items, dot_items, top_items = map(positions) do pos
                     (; raw_res) = writereadmsg(CompletionRequest(;
                         id = id_counter[] += 1,
@@ -1100,15 +1100,15 @@ end
 # ===========
 
 function test_backslash_offset(code::String, expected_result)
-    text, positions = JETLS.get_text_and_positions(code)
+    text, positions = JETLSCore.get_text_and_positions(code)
     @assert length(positions) == 1 "test_backslash_offset requires exactly one cursor marker"
 
-    server = JETLS.Server()
+    server = JETLSCore.Server()
     filename = abspath("test_backslash.jl")
     uri = filename2uri(filename)
-    fi = JETLS.cache_file_info!(server, uri, 1, text)
+    fi = JETLSCore.cache_file_info!(server, uri, 1, text)
 
-    result = JETLS.get_backslash_offset(fi, positions[1])
+    result = JETLSCore.get_backslash_offset(fi, positions[1])
     @test result == expected_result
     return result
 end
@@ -1485,72 +1485,72 @@ end
     end
 
     let p = parse_param("x")
-        @test JETLS.extract_param_text(p) == "x"
+        @test JETLSCore.extract_param_text(p) == "x"
     end
     let p = parse_param("x::Int")
-        @test JETLS.extract_param_text(p) == "x::Int"
+        @test JETLSCore.extract_param_text(p) == "x::Int"
     end
     let p = parse_param("::Nothing")
-        @test JETLS.extract_param_text(p) === "::Nothing"
+        @test JETLSCore.extract_param_text(p) === "::Nothing"
     end
     let p = parse_param("x::Vector{Int}")
-        @test JETLS.extract_param_text(p) == "x::Vector{Int}"
+        @test JETLSCore.extract_param_text(p) == "x::Vector{Int}"
     end
 end
 
 @testset "make_insert_text" begin
     @testset "use_snippet=true" begin
         let msig = "sin(x::Number)"
-            @test JETLS.make_insert_text(msig, 0, true) == "\${1:x::Number}"
-            @test JETLS.make_insert_text(msig, 1, true) === nothing
+            @test JETLSCore.make_insert_text(msig, 0, true) == "\${1:x::Number}"
+            @test JETLSCore.make_insert_text(msig, 1, true) === nothing
         end
         let msig = "filter(f, itr)"
-            @test JETLS.make_insert_text(msig, 0, true) == "\${1:f}, \${2:itr}"
-            @test JETLS.make_insert_text(msig, 1, true) == "\${1:itr}"
-            @test JETLS.make_insert_text(msig, 2, true) === nothing
+            @test JETLSCore.make_insert_text(msig, 0, true) == "\${1:f}, \${2:itr}"
+            @test JETLSCore.make_insert_text(msig, 1, true) == "\${1:itr}"
+            @test JETLSCore.make_insert_text(msig, 2, true) === nothing
         end
         let msig = "foo(a, b, c)"
-            @test JETLS.make_insert_text(msig, 0, true) == "\${1:a}, \${2:b}, \${3:c}"
-            @test JETLS.make_insert_text(msig, 1, true) == "\${1:b}, \${2:c}"
-            @test JETLS.make_insert_text(msig, 2, true) == "\${1:c}"
-            @test JETLS.make_insert_text(msig, 3, true) === nothing
+            @test JETLSCore.make_insert_text(msig, 0, true) == "\${1:a}, \${2:b}, \${3:c}"
+            @test JETLSCore.make_insert_text(msig, 1, true) == "\${1:b}, \${2:c}"
+            @test JETLSCore.make_insert_text(msig, 2, true) == "\${1:c}"
+            @test JETLSCore.make_insert_text(msig, 3, true) === nothing
         end
         let msig = "foo(a, b=1)"
-            @test JETLS.make_insert_text(msig, 0, true) == "\${1:a}"
-            @test JETLS.make_insert_text(msig, 1, true) === nothing
+            @test JETLSCore.make_insert_text(msig, 0, true) == "\${1:a}"
+            @test JETLSCore.make_insert_text(msig, 1, true) === nothing
         end
         let msig = "foo(a, args...)"
-            @test JETLS.make_insert_text(msig, 0, true) == "\${1:a}, \${2:args...}"
-            @test JETLS.make_insert_text(msig, 1, true) == "\${1:args...}"
-            @test JETLS.make_insert_text(msig, 2, true) === nothing
+            @test JETLSCore.make_insert_text(msig, 0, true) == "\${1:a}, \${2:args...}"
+            @test JETLSCore.make_insert_text(msig, 1, true) == "\${1:args...}"
+            @test JETLSCore.make_insert_text(msig, 2, true) === nothing
         end
         let msig = "filter(f, a::Array{T, N}) where {T, N}"
-            @test JETLS.make_insert_text(msig, 0, true) == "\${1:f}, \${2:a::Array{T, N\\}}"
-            @test JETLS.make_insert_text(msig, 1, true) == "\${1:a::Array{T, N\\}}"
-            @test JETLS.make_insert_text(msig, 2, true) === nothing
+            @test JETLSCore.make_insert_text(msig, 0, true) == "\${1:f}, \${2:a::Array{T, N\\}}"
+            @test JETLSCore.make_insert_text(msig, 1, true) == "\${1:a::Array{T, N\\}}"
+            @test JETLSCore.make_insert_text(msig, 2, true) === nothing
         end
         let msig = "foo(x::T) where T where S"
-            @test JETLS.make_insert_text(msig, 0, true) == "\${1:x::T}"
+            @test JETLSCore.make_insert_text(msig, 0, true) == "\${1:x::T}"
         end
         # anonymous typed parameters
         let msig = "foo(::Nothing)"
-            @test JETLS.make_insert_text(msig, 0, true) == "\${1:::Nothing}"
-            @test JETLS.make_insert_text(msig, 1, true) === nothing
+            @test JETLSCore.make_insert_text(msig, 0, true) == "\${1:::Nothing}"
+            @test JETLSCore.make_insert_text(msig, 1, true) === nothing
         end
         let msig = "foo(x, ::Nothing)"
-            @test JETLS.make_insert_text(msig, 0, true) == "\${1:x}, \${2:::Nothing}"
-            @test JETLS.make_insert_text(msig, 1, true) == "\${1:::Nothing}"
-            @test JETLS.make_insert_text(msig, 2, true) === nothing
+            @test JETLSCore.make_insert_text(msig, 0, true) == "\${1:x}, \${2:::Nothing}"
+            @test JETLSCore.make_insert_text(msig, 1, true) == "\${1:::Nothing}"
+            @test JETLSCore.make_insert_text(msig, 2, true) === nothing
         end
     end
 
     @testset "use_snippet=false" begin
         let msig = "sin(x::Number)"
-            @test JETLS.make_insert_text(msig, 0, false) == "x::Number"
+            @test JETLSCore.make_insert_text(msig, 0, false) == "x::Number"
         end
         let msig = "filter(f, itr)"
-            @test JETLS.make_insert_text(msig, 0, false) == "f, itr"
-            @test JETLS.make_insert_text(msig, 1, false) == "itr"
+            @test JETLSCore.make_insert_text(msig, 0, false) == "f, itr"
+            @test JETLSCore.make_insert_text(msig, 1, false) == "itr"
         end
     end
 end
@@ -1881,13 +1881,13 @@ end
 
 @testset "should_insert_spaces_around_equal" begin
     function test_should_insert_spaces(text::AbstractString)
-        clean_text, positions = JETLS.get_text_and_positions(text)
-        fi = JETLS.FileInfo(0, clean_text, "test.jl")
-        st0 = JETLS.build_syntax_tree(fi)
-        b = JETLS.xy_to_offset(fi, positions[1])
-        call = JETLS.cursor_call(fi.parsed_stream, st0, b)
-        ca = JETLS.CallArgs(call, b)
-        return JETLS.should_insert_spaces_around_equal(fi, ca)
+        clean_text, positions = JETLSCore.get_text_and_positions(text)
+        fi = JETLSCore.FileInfo(0, clean_text, "test.jl")
+        st0 = JETLSCore.build_syntax_tree(fi)
+        b = JETLSCore.xy_to_offset(fi, positions[1])
+        call = JETLSCore.cursor_call(fi.parsed_stream, st0, b)
+        ca = JETLSCore.CallArgs(call, b)
+        return JETLSCore.should_insert_spaces_around_equal(fi, ca)
     end
     @test test_should_insert_spaces("func(; │)")
     @test !test_should_insert_spaces("func(; a=1, │)")
@@ -1901,13 +1901,13 @@ end
 
 @testset "cursor_equals_position" begin
     function test_cursor_equals_position(text::AbstractString)
-        clean_text, positions = JETLS.get_text_and_positions(text)
-        fi = JETLS.FileInfo(0, clean_text, "test.jl")
-        st0 = JETLS.build_syntax_tree(fi)
-        b = JETLS.xy_to_offset(fi, positions[1])
-        call = JETLS.cursor_call(fi.parsed_stream, st0, b)
-        ca = JETLS.CallArgs(call, b)
-        return JETLS.cursor_equals_position(ca, b)
+        clean_text, positions = JETLSCore.get_text_and_positions(text)
+        fi = JETLSCore.FileInfo(0, clean_text, "test.jl")
+        st0 = JETLSCore.build_syntax_tree(fi)
+        b = JETLSCore.xy_to_offset(fi, positions[1])
+        call = JETLSCore.cursor_call(fi.parsed_stream, st0, b)
+        ca = JETLSCore.CallArgs(call, b)
+        return JETLSCore.cursor_equals_position(ca, b)
     end
 
     # cursor after `=` in keyword argument → true
@@ -2021,11 +2021,11 @@ end
             initial = "let initial_only = 1\n    ini\nend"
             captured = "let captured_only = 2\n    cap\nend"
             later = "let later_only = 3\n    lat\nend"
-            JETLS.cache_file_info!(server, uri, 1, initial)
+            JETLSCore.cache_file_info!(server, uri, 1, initial)
             pos = Position(; line = 1, character = 7)
             request = make_completion_request(1, uri, pos)
             next_request = make_completion_request(2, uri, pos)
-            @test JETLS.is_sequential_msg(request)
+            @test JETLSCore.is_sequential_msg(request)
             prepared = queued_snapshot_requests(server, [
                 make_DidChangeTextDocumentNotification(uri, captured, 2), request,
                 make_DidChangeTextDocumentNotification(uri, later, 3), next_request])
@@ -2033,11 +2033,11 @@ end
             @test prepared[1].msg === request
             @test prepared[1].snapshot.fi.version == 2
             @test prepared[1].msg.params.position == pos
-            @test JETLS.adjust_position(prepared[1].snapshot, uri, prepared[1].msg.params.position) == pos
+            @test JETLSCore.adjust_position(prepared[1].snapshot, uri, prepared[1].msg.params.position) == pos
             @test prepared[1].snapshot.cache_uri == uri
             @test prepared[1].snapshot.notebook === nothing
             @test prepared[2].snapshot.fi.version == 3
-            @test JETLS.get_file_info(server.state, uri) === prepared[2].snapshot.fi
+            @test JETLSCore.get_file_info(server.state, uri) === prepared[2].snapshot.fi
             @test prepared[1].snapshot.fi !== prepared[2].snapshot.fi
 
             response = dispatch_snapshot_request(server, recorder, prepared[1])
@@ -2055,7 +2055,7 @@ end
     @testset "macro trigger uses captured text" begin
         with_manual_dispatch_server() do server, recorder
             uri = filepath2uri(@__FILE__)
-            JETLS.cache_file_info!(server, uri, 1, "\n")
+            JETLSCore.cache_file_info!(server, uri, 1, "\n")
             pos = Position(; line = 0, character = 1)
             request = CompletionRequest(;
                 id = 1,
@@ -2082,12 +2082,12 @@ end
     @testset "cancellation before prepared dispatch" begin
         with_manual_dispatch_server() do server, recorder
             uri = filepath2uri(@__FILE__)
-            JETLS.cache_file_info!(server, uri, 1, "\\alpha")
+            JETLSCore.cache_file_info!(server, uri, 1, "\\alpha")
             request = make_completion_request(1, uri, Position(; line = 0, character = 6))
             prepared = only(queued_snapshot_requests(server, [request]))
             @test prepared.snapshot !== nothing
-            JETLS.handler_concurrent_message(server, CancelRequestNotification(; params = CancelParams(; id = request.id)))
-            @test JETLS.is_cancelled(server.state.currently_handled[request.id])
+            JETLSCore.handler_concurrent_message(server, CancelRequestNotification(; params = CancelParams(; id = request.id)))
+            @test JETLSCore.is_cancelled(server.state.currently_handled[request.id])
             response = dispatch_snapshot_request(server, recorder, prepared)
             @test response.result === nothing
             @test response.error isa ResponseError
@@ -2101,9 +2101,9 @@ end
             request = make_completion_request(1, uri, Position(; line = 0, character = 6))
             prepared = only(queued_snapshot_requests(server, [request]))
             @test prepared.snapshot === nothing
-            @test JETLS.get_file_info(server.state, uri) === nothing
-            JETLS.cache_file_info!(server, uri, 1, "\\alpha")
-            @test JETLS.snapshot_request_message(server.state, request, uri).snapshot !== nothing
+            @test JETLSCore.get_file_info(server.state, uri) === nothing
+            JETLSCore.cache_file_info!(server, uri, 1, "\\alpha")
+            @test JETLSCore.snapshot_request_message(server.state, request, uri).snapshot !== nothing
             response = dispatch_snapshot_request(server, recorder, prepared)
             @test response isa ResponseMessage
             @test response.error === nothing
@@ -2115,7 +2115,7 @@ end
     @testset "request/response routing sanity" begin
         withserver() do (; server, writemsg, writereadmsg, id_counter)
             uri = filepath2uri(@__FILE__)
-            JETLS.cache_file_info!(server, uri, 1, "let initial_only = 1\n    ini\nend")
+            JETLSCore.cache_file_info!(server, uri, 1, "let initial_only = 1\n    ini\nend")
             writemsg(make_DidChangeTextDocumentNotification(
                 uri, "let captured_only = 2\n    cap\nend", 2))
             id = id_counter[] += 1

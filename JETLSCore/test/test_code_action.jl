@@ -1,14 +1,14 @@
 module test_code_action
 
 using Test
-using JETLS
-using JETLS: JL, JS
-using JETLS.LSP
-using JETLS.LSP.URIs2
-using JETLS.TOML
+using JETLSCore
+using JETLSCore: JL, JS
+using JETLSCore.LSP
+using JETLSCore.LSP.URIs2
+using JETLSCore.TOML
 
-include(normpath(pkgdir(JETLS), "test", "setup.jl"))
-include(normpath(pkgdir(JETLS), "test", "jsjl-utils.jl"))
+include("setup.jl")
+include("jsjl-utils.jl")
 
 module lowering_module end
 
@@ -19,29 +19,29 @@ function get_lowering_diagnostics(
         world::UInt = Base.get_world_counter(),
         kwargs...
     )
-    filename = abspath(pkgdir(JETLS), "test", "test_code_action.jl")
-    server = JETLS.Server()
+    filename = joinpath(@__DIR__, "test_code_action.jl")
+    server = JETLSCore.Server()
     uri = filepath2uri(filename)
-    fi = JETLS.cache_file_info!(server, uri, 1, text)
-    st0_top = JETLS.build_syntax_tree(fi)
+    fi = JETLSCore.cache_file_info!(server, uri, 1, text)
+    st0_top = JETLSCore.build_syntax_tree(fi)
     diagnostics = LSP.Diagnostic[]
-    candidates = JETLS.UndefGlobalCandidate[]
-    def_used_names = Dict{Module,JETLS.DefUsedNames}()
-    JETLS.iterate_toplevel_tree(st0_top) do st0::JS.SyntaxTree
-        JETLS.per_stmt_diagnostics!(diagnostics, candidates, uri, fi,
-            st0, context_module, world, #=analyzer=#nothing, JETLS.LSPostProcessor();
+    candidates = JETLSCore.UndefGlobalCandidate[]
+    def_used_names = Dict{Module,JETLSCore.DefUsedNames}()
+    JETLSCore.iterate_toplevel_tree(st0_top) do st0::JS.SyntaxTree
+        JETLSCore.per_stmt_diagnostics!(diagnostics, candidates, uri, fi,
+            st0, context_module, world, #=analyzer=#nothing, JETLSCore.LSPostProcessor();
             kwargs...)
-        binding_occurrences = JETLS.get_binding_occurrences!(server.state, uri, fi, st0)
+        binding_occurrences = JETLSCore.get_binding_occurrences!(server.state, uri, fi, st0)
         binding_occurrences !== nothing &&
-            JETLS.update_def_used_names!(def_used_names, context_module, binding_occurrences)
+            JETLSCore.update_def_used_names!(def_used_names, context_module, binding_occurrences)
     end
-    explicit_imports = JETLS.collect_explicit_imports_by_module(server.state, uri, fi, st0_top)
+    explicit_imports = JETLSCore.collect_explicit_imports_by_module(server.state, uri, fi, st0_top)
     # Mirror the cross-file phase. `skip_context_check=true` because the test server
     # has no populated `analysis_manager` — we want this single file to count as
     # part of its own unit anyway.
-    per_file = JETLS.PerFileDiagnosticsResult(
+    per_file = JETLSCore.PerFileDiagnosticsResult(
         diagnostics, candidates, def_used_names, explicit_imports)
-    JETLS.cross_file_diagnostics!(diagnostics, JETLS.DefUsedNamesCache(),
+    JETLSCore.cross_file_diagnostics!(diagnostics, JETLSCore.DefUsedNamesCache(),
         server, uri, #=snapshot=#nothing, per_file; skip_context_check=true)
     if code !== nothing
         filter!(d -> d.code == code, diagnostics)
@@ -50,10 +50,10 @@ function get_lowering_diagnostics(
 end
 
 function get_unused_var_code_actions(marked_text::AbstractString; kwargs...)
-    text, positions = JETLS.get_text_and_positions(marked_text)
+    text, positions = JETLSCore.get_text_and_positions(marked_text)
     diagnostics, uri = get_lowering_diagnostics(text; kwargs...)
     code_actions = Union{CodeAction,Command}[]
-    JETLS.unused_variable_code_actions!(code_actions, uri, diagnostics; kwargs...)
+    JETLSCore.unused_variable_code_actions!(code_actions, uri, diagnostics; kwargs...)
     return code_actions, uri, positions
 end
 
@@ -218,9 +218,9 @@ end
 
 function get_sort_imports_code_actions(text::AbstractString)
     diagnostics, uri = get_lowering_diagnostics(text;
-        code = JETLS.LOWERING_UNSORTED_IMPORT_NAMES_CODE)
+        code = JETLSCore.LOWERING_UNSORTED_IMPORT_NAMES_CODE)
     code_actions = Union{CodeAction,Command}[]
-    JETLS.sort_imports_code_actions!(code_actions, uri, diagnostics)
+    JETLSCore.sort_imports_code_actions!(code_actions, uri, diagnostics)
     return code_actions, uri
 end
 
@@ -283,17 +283,17 @@ end
         @test length(code_actions) == 1
         action = only(code_actions)
         @test length(action.diagnostics) == 1
-        @test action.diagnostics[1].code == JETLS.LOWERING_UNSORTED_IMPORT_NAMES_CODE
+        @test action.diagnostics[1].code == JETLSCore.LOWERING_UNSORTED_IMPORT_NAMES_CODE
     end
 end
 
 function get_unused_import_code_actions(marked_text::AbstractString)
-    text, positions = JETLS.get_text_and_positions(marked_text)
+    text, positions = JETLSCore.get_text_and_positions(marked_text)
     diagnostics, uri = get_lowering_diagnostics(text;
-        code = JETLS.LOWERING_UNUSED_IMPORT_CODE,
+        code = JETLSCore.LOWERING_UNUSED_IMPORT_CODE,
         skip_analysis_requiring_context = true)
     code_actions = Union{CodeAction,Command}[]
-    JETLS.delete_range_code_actions!(code_actions, uri, diagnostics)
+    JETLSCore.delete_range_code_actions!(code_actions, uri, diagnostics)
     return code_actions, uri, positions
 end
 
@@ -363,11 +363,11 @@ end
 end
 
 function get_unreachable_code_actions(marked_text::AbstractString)
-    text, positions = JETLS.get_text_and_positions(marked_text)
+    text, positions = JETLSCore.get_text_and_positions(marked_text)
     diagnostics, uri = get_lowering_diagnostics(text;
-        code = JETLS.LOWERING_UNREACHABLE_CODE)
+        code = JETLSCore.LOWERING_UNREACHABLE_CODE)
     code_actions = Union{CodeAction,Command}[]
-    JETLS.delete_range_code_actions!(code_actions, uri, diagnostics)
+    JETLSCore.delete_range_code_actions!(code_actions, uri, diagnostics)
     return code_actions, uri, positions
 end
 
@@ -416,11 +416,11 @@ end
 end
 
 function get_unused_label_code_actions(marked_text::AbstractString)
-    text, positions = JETLS.get_text_and_positions(marked_text)
+    text, positions = JETLSCore.get_text_and_positions(marked_text)
     diagnostics, uri = get_lowering_diagnostics(text;
-        code = JETLS.LOWERING_UNUSED_LABEL_CODE)
+        code = JETLSCore.LOWERING_UNUSED_LABEL_CODE)
     code_actions = Union{CodeAction,Command}[]
-    JETLS.delete_range_code_actions!(code_actions, uri, diagnostics)
+    JETLSCore.delete_range_code_actions!(code_actions, uri, diagnostics)
     return code_actions, uri, positions
 end
 
@@ -437,7 +437,7 @@ end
         @test action.title == "Remove unused label"
         @test action.isPreferred == true
         @test length(action.diagnostics) == 1
-        @test action.diagnostics[1].code == JETLS.LOWERING_UNUSED_LABEL_CODE
+        @test action.diagnostics[1].code == JETLSCore.LOWERING_UNUSED_LABEL_CODE
         edit = only(action.edit.changes[uri])
         @test edit.newText == ""
         @test edit.range.start == positions[1]
@@ -460,12 +460,12 @@ module soft_scope_module
 end
 
 function get_ambiguous_soft_scope_code_actions(marked_text::AbstractString)
-    text, positions = JETLS.get_text_and_positions(marked_text)
+    text, positions = JETLSCore.get_text_and_positions(marked_text)
     diagnostics, uri = get_lowering_diagnostics(text;
-        code = JETLS.LOWERING_AMBIGUOUS_SOFT_SCOPE_CODE,
+        code = JETLSCore.LOWERING_AMBIGUOUS_SOFT_SCOPE_CODE,
         context_module = soft_scope_module)
     code_actions = Union{CodeAction,Command}[]
-    JETLS.ambiguous_soft_scope_code_actions!(code_actions, uri, diagnostics)
+    JETLSCore.ambiguous_soft_scope_code_actions!(code_actions, uri, diagnostics)
     return code_actions, uri, positions
 end
 
@@ -515,19 +515,19 @@ end
 end
 
 function get_orphaned_docstring_code_actions(text::AbstractString)
-    filename = abspath(pkgdir(JETLS), "test", "test_code_action.jl")
-    fi = JETLS.FileInfo(#=version=#0, text, filename)
+    filename = joinpath(@__DIR__, "test_code_action.jl")
+    fi = JETLSCore.FileInfo(#=version=#0, text, filename)
     uri = filepath2uri(filename)
-    diagnostics = JETLS.analyze_orphaned_docstrings!(
-        LSP.Diagnostic[], uri, fi, JETLS.build_syntax_tree(fi))
+    diagnostics = JETLSCore.analyze_orphaned_docstrings!(
+        LSP.Diagnostic[], uri, fi, JETLSCore.build_syntax_tree(fi))
     code_actions = Union{CodeAction,Command}[]
-    JETLS.orphaned_docstring_code_actions!(code_actions, uri, diagnostics)
+    JETLSCore.orphaned_docstring_code_actions!(code_actions, uri, diagnostics)
     return code_actions, uri
 end
 
 function apply_code_action(text::String, action::CodeAction, uri::URI)
     for edit in sort(action.edit.changes[uri]; by = edit -> edit.range.start, rev = true)
-        text = JETLS.apply_text_change(
+        text = JETLSCore.apply_text_change(
             text, edit.range, edit.newText, LSP.PositionEncodingKind.UTF16)
     end
     return text
@@ -638,22 +638,22 @@ end
 end
 
 @testset "abstract Ref field code action" begin
-    _, positions = JETLS.get_text_and_positions("""
+    _, positions = JETLSCore.get_text_and_positions("""
         struct AAA
             x::│Ref│{Int}
         end
         """)
     ref_name_range = Range(; start = positions[1], var"end" = positions[2])
     diagnostic = Diagnostic(;
-        range = JETLS.line_range(2),
+        range = JETLSCore.line_range(2),
         severity = DiagnosticSeverity.Hint,
         message = "`AAA` has abstract field `x::Ref{Int64}`",
-        source = JETLS.DIAGNOSTIC_SOURCE_SAVE,
-        code = JETLS.TOPLEVEL_ABSTRACT_FIELD_CODE,
+        source = JETLSCore.DIAGNOSTIC_SOURCE_SAVE,
+        code = JETLSCore.TOPLEVEL_ABSTRACT_FIELD_CODE,
         data = AbstractRefFieldData(ref_name_range))
-    uri = filepath2uri(abspath(pkgdir(JETLS), "test", "abstract-ref-field.jl"))
+    uri = filepath2uri(joinpath(@__DIR__, "abstract-ref-field.jl"))
     code_actions = Union{CodeAction,Command}[]
-    JETLS.abstract_ref_field_code_actions!(code_actions, uri, Diagnostic[diagnostic])
+    JETLSCore.abstract_ref_field_code_actions!(code_actions, uri, Diagnostic[diagnostic])
 
     action = only(code_actions)
     @test action.title == "Replace `Ref` with `Base.RefValue`"
@@ -667,18 +667,18 @@ end
 
 function missing_concretization_diagnostic(assignment_file::String)
     return Diagnostic(;
-        range = JETLS.line_range(1),
+        range = JETLSCore.line_range(1),
         severity = DiagnosticSeverity.Error,
         message = "`USE_PULSE` is not concretized",
-        source = JETLS.DIAGNOSTIC_SOURCE_SAVE,
-        code = JETLS.TOPLEVEL_MISSING_CONCRETIZATION_CODE,
+        source = JETLSCore.DIAGNOSTIC_SOURCE_SAVE,
+        code = JETLSCore.TOPLEVEL_MISSING_CONCRETIZATION_CODE,
         data = MissingConcretizationData("USE_PULSE", "USE_PULSE = x_", assignment_file))
 end
 
 @testset HierarchicalTestSet "missing concretization code actions" begin
     @testset "`jetls_config_append_text` appends a new pattern" begin
         text = "foo = 1\n"
-        appended = JETLS.jetls_config_append_text(text, "USE_PULSE = x_", "issue464.jl")
+        appended = JETLSCore.jetls_config_append_text(text, "USE_PULSE = x_", "issue464.jl")
         parsed = TOML.parse(text * appended)
         pattern_config = only(parsed["full_analysis"]["concretization_patterns"])
         @test pattern_config["pattern"] == "USE_PULSE = x_"
@@ -688,7 +688,7 @@ end
     @testset "`format_jetls_concretization_pattern` escapes special characters" begin
         pattern = "A\nB\t\u0001\\\"雪"
         path = "src/A\nB\t\u0001\\\"雪.jl"
-        text = JETLS.format_jetls_concretization_pattern(pattern, path)
+        text = JETLSCore.format_jetls_concretization_pattern(pattern, path)
         parsed = TOML.parse(text)
         pattern_config = only(parsed["full_analysis"]["concretization_patterns"])
         @test pattern_config["pattern"] == pattern
@@ -733,9 +733,9 @@ end
                 PositionEncodingKind.UTF32)
             before = TOML.parse(original)
             old_patterns = before["full_analysis"]["concretization_patterns"]
-            edit = JETLS.jetls_config_inline_array_edit(
+            edit = JETLSCore.jetls_config_inline_array_edit(
                 original, "USE_PULSE = x_", "src/config.jl", encoding)::TextEdit
-            updated = JETLS.apply_text_change(original, edit.range, edit.newText, encoding)
+            updated = JETLSCore.apply_text_change(original, edit.range, edit.newText, encoding)
             parsed = TOML.parse(updated)
             patterns = parsed["full_analysis"]["concretization_patterns"]
             @test length(patterns) == length(old_patterns) + 1
@@ -757,7 +757,7 @@ end
                 "[full_analysis]\nconcretization_patterns = 1\n",
                 "[[full_analysis.concretization_patterns]]\npattern = \"OLD\"\n",
                 "[full_analysis]\nconcretization_patterns = [{pattern = \"NEW\", path = \"a.jl\"}]\n")
-            @test JETLS.jetls_config_inline_array_edit(
+            @test JETLSCore.jetls_config_inline_array_edit(
                 text, "NEW", "a.jl", PositionEncodingKind.UTF16) === nothing
         end
     end
@@ -768,7 +768,7 @@ end
             pattern = "USE_PULSE = x_"
             path = "issue464.jl"
             """
-        @test JETLS.jetls_config_append_text(text, "USE_PULSE = x_", "issue464.jl") === nothing
+        @test JETLSCore.jetls_config_append_text(text, "USE_PULSE = x_", "issue464.jl") === nothing
     end
 
     @testset "existing config: append via `changes` fallback" begin
@@ -783,7 +783,7 @@ end
             rootUri = filepath2uri(dir)
             withserver(; rootUri) do (; server)
                 code_actions = Union{CodeAction,Command}[]
-                JETLS.missing_concretization_code_actions!(
+                JETLSCore.missing_concretization_code_actions!(
                     code_actions, server,
                     Diagnostic[missing_concretization_diagnostic(assignment_path)])
                 action = only(code_actions)
@@ -792,7 +792,7 @@ end
                 edit = only(action.edit.changes[filepath2uri(config_path)])
                 @test edit.range.start == edit.range.var"end"
                 original = read(config_path, String)
-                updated = JETLS.apply_text_change(
+                updated = JETLSCore.apply_text_change(
                     original, edit.range, edit.newText, server.state.encoding)
                 parsed = TOML.parse(updated)
                 patterns = parsed["full_analysis"]["concretization_patterns"]
@@ -800,7 +800,7 @@ end
                 @test patterns[2]["path"] == "config.jl"
 
                 dirty = original * "# unsaved\n"
-                updated_dirty = JETLS.apply_text_change(
+                updated_dirty = JETLSCore.apply_text_change(
                     dirty, edit.range, edit.newText, server.state.encoding)
                 @test occursin("# unsaved\n", updated_dirty)
             end
@@ -820,12 +820,12 @@ end
             rootUri = filepath2uri(dir)
             withserver(; rootUri) do (; server)
                 code_actions = Union{CodeAction,Command}[]
-                JETLS.missing_concretization_code_actions!(
+                JETLSCore.missing_concretization_code_actions!(
                     code_actions, server,
                     Diagnostic[missing_concretization_diagnostic(assignment_path)])
                 action = only(code_actions)
                 edit = only(action.edit.changes[filepath2uri(config_path)])
-                updated = JETLS.apply_text_change(
+                updated = JETLSCore.apply_text_change(
                     original, edit.range, edit.newText, server.state.encoding)
                 pattern_config = only(
                     TOML.parse(updated)["full_analysis"]["concretization_patterns"])
@@ -850,27 +850,27 @@ end
                     workspaceEdit = WorkspaceEditClientCapabilities(;
                         documentChanges = true)))
             withserver(; rootUri, capabilities) do (; server)
-                JETLS.handle_DidOpenTextDocumentNotification(server,
+                JETLSCore.handle_DidOpenTextDocumentNotification(server,
                     make_DidOpenTextDocumentNotification(config_uri, original; languageId = "toml", version = 1))
-                config_document = JETLS.get_config_document(server.state, config_uri)
+                config_document = JETLSCore.get_config_document(server.state, config_uri)
                 @test config_document.version == 1
                 @test config_document.config_data == TOML.parse(original)
 
                 live = original * "# unsaved\n"
-                JETLS.handle_DidChangeTextDocumentNotification(server,
+                JETLSCore.handle_DidChangeTextDocumentNotification(server,
                     make_DidChangeTextDocumentNotification(config_uri, live, 2))
-                config_document = JETLS.get_config_document(server.state, config_uri)
+                config_document = JETLSCore.get_config_document(server.state, config_uri)
                 @test config_document.version == 2
                 @test config_document.text == live
                 @test config_document.config_data == TOML.parse(live)
 
-                edit = JETLS.jetls_config_workspace_edit(server, config_path, "USE_PULSE = x_", "issue464.jl")
+                edit = JETLSCore.jetls_config_workspace_edit(server, config_path, "USE_PULSE = x_", "issue464.jl")
                 @test edit.changes === nothing
                 document_edit = only(edit.documentChanges)::TextDocumentEdit
                 @test document_edit.textDocument.uri == config_uri
                 @test document_edit.textDocument.version == 2
                 text_edit = only(document_edit.edits)
-                updated = JETLS.apply_text_change(live, text_edit.range, text_edit.newText, server.state.encoding)
+                updated = JETLSCore.apply_text_change(live, text_edit.range, text_edit.newText, server.state.encoding)
                 @test startswith(updated, live)
                 patterns = TOML.parse(updated)["full_analysis"]["concretization_patterns"]
                 @test [config["pattern"] for config in patterns] == ["OLD = x_", "USE_PULSE = x_"]
@@ -878,21 +878,21 @@ end
                 # The live document remains the edit target even after the file is
                 # deleted on disk.
                 rm(config_path)
-                edit = JETLS.jetls_config_workspace_edit(server, config_path, "USE_PULSE = x_", "issue464.jl")
+                edit = JETLSCore.jetls_config_workspace_edit(server, config_path, "USE_PULSE = x_", "issue464.jl")
                 document_edit = only(edit.documentChanges)::TextDocumentEdit
                 @test document_edit.textDocument.version == 2
 
                 invalid = "[full_analysis"
-                JETLS.handle_DidChangeTextDocumentNotification(server,
+                JETLSCore.handle_DidChangeTextDocumentNotification(server,
                     make_DidChangeTextDocumentNotification(config_uri, invalid, 3))
-                config_document = JETLS.get_config_document(server.state, config_uri)
+                config_document = JETLSCore.get_config_document(server.state, config_uri)
                 @test config_document.version == 3
                 @test config_document.config_data === nothing
-                @test JETLS.jetls_config_workspace_edit(server, config_path, "USE_PULSE = x_", "issue464.jl") === nothing
+                @test JETLSCore.jetls_config_workspace_edit(server, config_path, "USE_PULSE = x_", "issue464.jl") === nothing
 
-                JETLS.handle_DidCloseTextDocumentNotification(server,
+                JETLSCore.handle_DidCloseTextDocumentNotification(server,
                     make_DidCloseTextDocumentNotification(config_uri))
-                @test JETLS.get_config_document(server.state, config_uri) === nothing
+                @test JETLSCore.get_config_document(server.state, config_uri) === nothing
             end
         end
     end
@@ -910,7 +910,7 @@ end
                             ResourceOperationKind.Create])))
             withserver(; rootUri, capabilities) do (; server)
                 code_actions = Union{CodeAction,Command}[]
-                JETLS.missing_concretization_code_actions!(
+                JETLSCore.missing_concretization_code_actions!(
                     code_actions, server,
                     Diagnostic[missing_concretization_diagnostic(script_path)])
                 action = only(code_actions)
@@ -939,7 +939,7 @@ end
                     workspaceEdit = WorkspaceEditClientCapabilities(;
                         documentChanges = true)))
             withserver(; rootUri, capabilities) do (; server)
-                @test JETLS.jetls_config_workspace_edit(
+                @test JETLSCore.jetls_config_workspace_edit(
                     server, config_path, "USE_PULSE = x_", "issue464.jl") === nothing
             end
         end
@@ -954,10 +954,10 @@ end
             write(joinpath(workspace, ".JETLSConfig.toml"), "")
             rootUri = filepath2uri(workspace)
             withserver(; rootUri) do (; server)
-                @test isnothing(JETLS.concretization_pattern_path_for_code_action(
+                @test isnothing(JETLSCore.concretization_pattern_path_for_code_action(
                     server, assignment_path))
                 code_actions = Union{CodeAction,Command}[]
-                JETLS.missing_concretization_code_actions!(
+                JETLSCore.missing_concretization_code_actions!(
                     code_actions, server,
                     Diagnostic[missing_concretization_diagnostic(assignment_path)])
                 @test isempty(code_actions)

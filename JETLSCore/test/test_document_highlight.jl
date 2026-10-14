@@ -1,11 +1,11 @@
 module test_document_highlight
 
 using Test
-using JETLS
-using JETLS.LSP
+using JETLSCore
+using JETLSCore.LSP
 
-include(normpath(pkgdir(JETLS), "test", "setup.jl"))
-include(normpath(pkgdir(JETLS), "test", "jsjl-utils.jl"))
+include("setup.jl")
+include("jsjl-utils.jl")
 
 # Used by the global binding tests:
 function myfunc end
@@ -16,10 +16,10 @@ struct MyType
 end
 
 function highlight_testcase(code::AbstractString, n::Int)
-    clean_code, positions = JETLS.get_text_and_positions(code)
+    clean_code, positions = JETLSCore.get_text_and_positions(code)
     @assert length(positions) == n
-    fi = JETLS.FileInfo(#=version=#0, clean_code, @__FILE__; cache_tree0 = true)
-    @assert issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
+    fi = JETLSCore.FileInfo(#=version=#0, clean_code, @__FILE__; cache_tree0 = true)
+    @assert issorted(positions; by = x -> JETLSCore.xy_to_offset(fi, x))
     return fi, positions
 end
 
@@ -32,7 +32,7 @@ end
             """
             fi, positions = highlight_testcase(code, 6)
             for pos in positions
-                highlights = JETLS.document_highlights(fi, pos)
+                highlights = JETLSCore.document_highlights(fi, pos)
                 @test length(highlights) == 2
                 @test any(highlights) do highlight
                     highlight.range.start == positions[1] &&
@@ -54,7 +54,7 @@ end
             """
             fi, positions = highlight_testcase(code, 4)
             for pos in positions
-                highlights = JETLS.document_highlights(fi, pos)
+                highlights = JETLSCore.document_highlights(fi, pos)
                 @test length(highlights) == 2
                 @test any(highlights) do highlight
                     highlight.range.start == positions[1] &&
@@ -75,7 +75,7 @@ end
             """
             fi, positions = highlight_testcase(code, 6)
             for pos in positions
-                highlights = JETLS.document_highlights(fi, pos)
+                highlights = JETLSCore.document_highlights(fi, pos)
                 @test length(highlights) == 3
                 @test any(highlights) do highlight
                     highlight.range.start == positions[1] &&
@@ -100,7 +100,7 @@ end
             """
             fi, positions = highlight_testcase(code, 4)
             for pos in positions
-                highlights = JETLS.document_highlights(fi, pos)
+                highlights = JETLSCore.document_highlights(fi, pos)
                 @test length(highlights) == 2
                 @test any(highlights) do highlight
                     highlight.range.start == positions[1] &&
@@ -131,7 +131,7 @@ end
                 """
                 fi, positions = highlight_testcase(code, 9)
                 for pos in positions
-                    highlights = JETLS.document_highlights(fi, pos)
+                    highlights = JETLSCore.document_highlights(fi, pos)
                     @test length(highlights) == 3
                     @test count(highlights) do highlight
                         highlight.range.start == positions[1] &&
@@ -167,7 +167,7 @@ end
                 """
                 fi, positions = highlight_testcase(code, 8)
                 for i in (1, 2, 3, 4) # cursor inside the first do-block
-                    highlights = JETLS.document_highlights(fi, positions[i])
+                    highlights = JETLSCore.document_highlights(fi, positions[i])
                     @test length(highlights) == 2
                     @test count(highlights) do h
                         h.range.start == positions[1] &&
@@ -180,7 +180,7 @@ end
                     end == 1
                 end
                 for i in (5, 6, 7, 8) # cursor inside the second do-block
-                    highlights = JETLS.document_highlights(fi, positions[i])
+                    highlights = JETLSCore.document_highlights(fi, positions[i])
                     @test length(highlights) == 2
                     @test count(highlights) do h
                         h.range.start == positions[5] &&
@@ -204,7 +204,7 @@ end
             """
             fi, positions = highlight_testcase(code, 4)
             for pos in positions
-                highlights = JETLS.document_highlights(fi, pos)
+                highlights = JETLSCore.document_highlights(fi, pos)
                 @test length(highlights) == 2
                 @test any(highlights) do highlight
                     highlight.range.start == positions[1] &&
@@ -228,7 +228,7 @@ end
             fi, positions = highlight_testcase(code, 10)
             for i = (1,2,5,6,7,8) # x
                 pos = positions[i]
-                highlights = JETLS.document_highlights(fi, pos)
+                highlights = JETLSCore.document_highlights(fi, pos)
                 @test length(highlights) == 3
                 @test count(highlights) do highlight
                     highlight.range.start == positions[1] &&
@@ -248,7 +248,7 @@ end
             end
             for i = (3,4,9,10) # y
                 pos = positions[i]
-                highlights = JETLS.document_highlights(fi, pos)
+                highlights = JETLSCore.document_highlights(fi, pos)
                 @test length(highlights) == 2 # no duplications for the declaration and the write
                 @test count(highlights) do highlight
                     highlight.range.start == positions[3] &&
@@ -280,7 +280,7 @@ end
             """
             fi, positions = highlight_testcase(code, 8)
             for pos in positions
-                highlights = JETLS.document_highlights(fi, pos)
+                highlights = JETLSCore.document_highlights(fi, pos)
                 @test length(highlights) == 4
                 @test count(highlights) do highlight
                     highlight.range.start == positions[1] &&
@@ -317,7 +317,7 @@ end
             """
             fi, positions = highlight_testcase(code, 6)
             for pos in positions
-                highlights = JETLS.document_highlights(fi, pos)
+                highlights = JETLSCore.document_highlights(fi, pos)
                 @test length(highlights) == 3
                 @test count(highlights) do highlight
                     highlight.range.start == positions[1] &&
@@ -348,7 +348,7 @@ end
             """
             fi, positions = highlight_testcase(code, 6)
             for pos in positions
-                highlights = JETLS.document_highlights(fi, pos)
+                highlights = JETLSCore.document_highlights(fi, pos)
                 @test length(highlights) == 3
                 @test count(highlights) do highlight
                     highlight.range.start == positions[1] &&
@@ -377,7 +377,7 @@ end
             """
             fi, positions = highlight_testcase(code, 4)
             for pos in positions
-                highlights = JETLS.document_highlights(fi, pos)
+                highlights = JETLSCore.document_highlights(fi, pos)
                 @test length(highlights) == 2
                 @test count(highlights) do highlight
                     highlight.range.start == positions[1] &&
@@ -403,7 +403,7 @@ end
             """
             fi, positions = highlight_testcase(code, 4)
             for pos in positions
-                highlights = JETLS.document_highlights(fi, pos)
+                highlights = JETLSCore.document_highlights(fi, pos)
                 @test length(highlights) == 2
                 @test count(highlights) do highlight
                     highlight.range.start == positions[1] &&
@@ -431,7 +431,7 @@ end
             """
             fi, positions = highlight_testcase(code, 6)
             for pos in positions
-                highlights = JETLS.document_highlights(fi, pos)
+                highlights = JETLSCore.document_highlights(fi, pos)
                 @test length(highlights) == 3
                 @test count(highlights) do highlight
                     highlight.range.start == positions[1] &&
@@ -459,7 +459,7 @@ end
                 """
                 fi, positions = highlight_testcase(code, 6)
                 for pos in positions
-                    highlights = JETLS.document_highlights(fi, pos)
+                    highlights = JETLSCore.document_highlights(fi, pos)
                     @test length(highlights) == 3
                     @test count(highlights) do highlight
                         highlight.range.start == positions[1] &&
@@ -488,7 +488,7 @@ end
                 """
                 fi, positions = highlight_testcase(code, 4)
                 for pos in positions
-                    highlights = JETLS.document_highlights(fi, pos)
+                    highlights = JETLSCore.document_highlights(fi, pos)
                     @test length(highlights) == 2
                     @test count(highlights) do highlight
                         highlight.range.start == positions[1] &&
@@ -510,7 +510,7 @@ end
                 """
                 fi, positions = highlight_testcase(code, 6)
                 for pos in positions
-                    highlights = JETLS.document_highlights(fi, pos)
+                    highlights = JETLSCore.document_highlights(fi, pos)
                     @test length(highlights) == 3
                 end
             end
@@ -525,7 +525,7 @@ end
                 """
                 fi, positions = highlight_testcase(code, 4)
                 for pos in positions
-                    highlights = JETLS.document_highlights(fi, pos)
+                    highlights = JETLSCore.document_highlights(fi, pos)
                     @test length(highlights) == 2
                     @test any(highlights) do highlight
                         highlight.range.start == positions[1] &&
@@ -552,7 +552,7 @@ end
                 """
                 fi, positions = highlight_testcase(code, 7)
                 for pos in positions
-                    highlights = JETLS.document_highlights(fi, pos)
+                    highlights = JETLSCore.document_highlights(fi, pos)
                     @test length(highlights) == 3
                     @test count(highlights) do highlight
                         highlight.range.start == positions[1] &&
@@ -583,7 +583,7 @@ end
                 """
                 fi, positions = highlight_testcase(code, 6)
                 for pos in positions
-                    highlights = JETLS.document_highlights(fi, pos)
+                    highlights = JETLSCore.document_highlights(fi, pos)
                     @test length(highlights) == 3
                     @test count(highlights) do highlight
                         highlight.range.start == positions[1] &&
@@ -610,7 +610,7 @@ end
                 """
                 fi, positions = highlight_testcase(code, 6)
                 for pos in positions
-                    highlights = JETLS.document_highlights(fi, pos)
+                    highlights = JETLSCore.document_highlights(fi, pos)
                     @test length(highlights) == 3
                 end
             end
@@ -625,7 +625,7 @@ end
                 """
                 fi, positions = highlight_testcase(code, 4)
                 for pos in positions
-                    highlights = JETLS.document_highlights(fi, pos)
+                    highlights = JETLSCore.document_highlights(fi, pos)
                     @test length(highlights) == 2
                     @test count(highlights) do highlight
                         highlight.range.start == positions[1] &&
@@ -647,7 +647,7 @@ end
                 """
                 fi, positions = highlight_testcase(code, 4)
                 for pos in positions
-                    highlights = JETLS.document_highlights(fi, pos)
+                    highlights = JETLSCore.document_highlights(fi, pos)
                     @test length(highlights) == 2
                 end
             end
@@ -658,7 +658,7 @@ end
                 """
                 fi, positions = highlight_testcase(code, 4)
                 for pos in positions
-                    highlights = JETLS.document_highlights(fi, pos)
+                    highlights = JETLSCore.document_highlights(fi, pos)
                     @test length(highlights) == 2
                 end
             end

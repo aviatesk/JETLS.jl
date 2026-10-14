@@ -2,41 +2,41 @@ module test_config
 
 using Test
 using HierarchicalTestSets
-using JETLS: JETLS
+using JETLSCore: JETLSCore
 
 @testset HierarchicalTestSet "Configuration utilities" begin
     @testset "`get_default_config`" begin
-        @test JETLS.get_default_config(:testrunner, :env) == Dict{String,String}()
-        @test JETLS.get_default_config(:testrunner, :julia_args) == String[]
-        @test JETLS.get_default_config(:formatter) == "Runic"
-        @test_throws FieldError JETLS.get_default_config(:nonexistent)
-        @test_throws FieldError JETLS.get_default_config(:full_analysis, :nonexistent)
+        @test JETLSCore.get_default_config(:testrunner, :env) == Dict{String,String}()
+        @test JETLSCore.get_default_config(:testrunner, :julia_args) == String[]
+        @test JETLSCore.get_default_config(:formatter) == "Runic"
+        @test_throws FieldError JETLSCore.get_default_config(:nonexistent)
+        @test_throws FieldError JETLSCore.get_default_config(:full_analysis, :nonexistent)
     end
 
     @testset "`merge_settings`" begin
-        base_config = JETLS.JETLSConfig(;
-            full_analysis=JETLS.FullAnalysisConfig(; debounce=1.0),
-            testrunner=JETLS.TestRunnerConfig(; julia_args=["base_arg"]),
+        base_config = JETLSCore.JETLSConfig(;
+            full_analysis=JETLSCore.FullAnalysisConfig(; debounce=1.0),
+            testrunner=JETLSCore.TestRunnerConfig(; julia_args=["base_arg"]),
         )
-        overlay_config = JETLS.JETLSConfig(;
-            full_analysis=JETLS.FullAnalysisConfig(; debounce=2.0),
+        overlay_config = JETLSCore.JETLSConfig(;
+            full_analysis=JETLSCore.FullAnalysisConfig(; debounce=2.0),
         )
-        merged = JETLS.merge_settings(base_config, overlay_config)
+        merged = JETLSCore.merge_settings(base_config, overlay_config)
 
-        @test JETLS.getobjpath(merged, :full_analysis, :debounce) == 2.0
-        @test JETLS.getobjpath(merged, :testrunner, :julia_args) == ["base_arg"]
+        @test JETLSCore.getobjpath(merged, :full_analysis, :debounce) == 2.0
+        @test JETLSCore.getobjpath(merged, :testrunner, :julia_args) == ["base_arg"]
 
         @testset "`merge_settings` for `Vector{<:ConfigSection}`" begin
-            pattern1 = JETLS.DiagnosticPattern(r"error1", "code", "regex", 1, nothing, "error1")
-            pattern2 = JETLS.DiagnosticPattern(r"error2", "code", "regex", 2, nothing, "error2")
-            pattern3 = JETLS.DiagnosticPattern(r"error3", "code", "regex", 3, nothing, "error3")
+            pattern1 = JETLSCore.DiagnosticPattern(r"error1", "code", "regex", 1, nothing, "error1")
+            pattern2 = JETLSCore.DiagnosticPattern(r"error2", "code", "regex", 2, nothing, "error2")
+            pattern3 = JETLSCore.DiagnosticPattern(r"error3", "code", "regex", 3, nothing, "error3")
             # Same merge key; only severity differs.
-            pattern1_updated = JETLS.DiagnosticPattern(r"error1", "code", "regex", 4, nothing, "error1")
+            pattern1_updated = JETLSCore.DiagnosticPattern(r"error1", "code", "regex", 4, nothing, "error1")
 
-            let base = JETLS.JETLSConfig(; diagnostic=JETLS.DiagnosticConfig(; patterns=[pattern1, pattern2]))
-                overlay = JETLS.JETLSConfig(; diagnostic=JETLS.DiagnosticConfig(; patterns=[pattern1_updated, pattern3]))
-                merged = JETLS.merge_settings(base, overlay)
-                patterns = JETLS.getobjpath(merged, :diagnostic, :patterns)
+            let base = JETLSCore.JETLSConfig(; diagnostic=JETLSCore.DiagnosticConfig(; patterns=[pattern1, pattern2]))
+                overlay = JETLSCore.JETLSConfig(; diagnostic=JETLSCore.DiagnosticConfig(; patterns=[pattern1_updated, pattern3]))
+                merged = JETLSCore.merge_settings(base, overlay)
+                patterns = JETLSCore.getobjpath(merged, :diagnostic, :patterns)
                 @test length(patterns) == 3
                 patterns_by_key = Dict(p.__pattern_value__ => p for p in patterns)
                 @test patterns_by_key["error1"].severity == 4  # updated
@@ -44,53 +44,53 @@ using JETLS: JETLS
                 @test haskey(patterns_by_key, "error3")  # added from overlay
             end
 
-            let base = JETLS.JETLSConfig(; diagnostic=JETLS.DiagnosticConfig(; patterns=nothing))
-                overlay = JETLS.JETLSConfig(; diagnostic=JETLS.DiagnosticConfig(; patterns=[pattern1]))
-                merged = JETLS.merge_settings(base, overlay)
-                patterns = JETLS.getobjpath(merged, :diagnostic, :patterns)
+            let base = JETLSCore.JETLSConfig(; diagnostic=JETLSCore.DiagnosticConfig(; patterns=nothing))
+                overlay = JETLSCore.JETLSConfig(; diagnostic=JETLSCore.DiagnosticConfig(; patterns=[pattern1]))
+                merged = JETLSCore.merge_settings(base, overlay)
+                patterns = JETLSCore.getobjpath(merged, :diagnostic, :patterns)
                 @test length(patterns) == 1
                 @test patterns[1] == pattern1
             end
 
-            let base = JETLS.JETLSConfig(; diagnostic=JETLS.DiagnosticConfig(; patterns=[pattern1]))
-                overlay = JETLS.JETLSConfig(; diagnostic=JETLS.DiagnosticConfig(; patterns=nothing))
-                merged = JETLS.merge_settings(base, overlay)
-                patterns = JETLS.getobjpath(merged, :diagnostic, :patterns)
+            let base = JETLSCore.JETLSConfig(; diagnostic=JETLSCore.DiagnosticConfig(; patterns=[pattern1]))
+                overlay = JETLSCore.JETLSConfig(; diagnostic=JETLSCore.DiagnosticConfig(; patterns=nothing))
+                merged = JETLSCore.merge_settings(base, overlay)
+                patterns = JETLSCore.getobjpath(merged, :diagnostic, :patterns)
                 @test length(patterns) == 1
                 @test patterns[1] == pattern1
             end
 
             # Overlay entries come after unmatched base entries in merged order.
-            let base = JETLS.JETLSConfig(; diagnostic=JETLS.DiagnosticConfig(; patterns=[pattern1, pattern2]))
-                overlay = JETLS.JETLSConfig(; diagnostic=JETLS.DiagnosticConfig(; patterns=[pattern3, pattern1_updated]))
-                merged = JETLS.merge_settings(base, overlay)
-                patterns = JETLS.getobjpath(merged, :diagnostic, :patterns)
+            let base = JETLSCore.JETLSConfig(; diagnostic=JETLSCore.DiagnosticConfig(; patterns=[pattern1, pattern2]))
+                overlay = JETLSCore.JETLSConfig(; diagnostic=JETLSCore.DiagnosticConfig(; patterns=[pattern3, pattern1_updated]))
+                merged = JETLSCore.merge_settings(base, overlay)
+                patterns = JETLSCore.getobjpath(merged, :diagnostic, :patterns)
                 @test [p.__pattern_value__ for p in patterns] == ["error2", "error3", "error1"]
                 @test patterns[end].severity == 4
             end
         end
 
         @testset "composite merge key for DiagnosticPattern" begin
-            src_path = JETLS.Glob.FilenameMatch("src/**/*.jl", "")
-            test_path = JETLS.Glob.FilenameMatch("test/**/*.jl", "")
+            src_path = JETLSCore.Glob.FilenameMatch("src/**/*.jl", "")
+            test_path = JETLSCore.Glob.FilenameMatch("test/**/*.jl", "")
 
             # Same pattern value but different paths should be treated as different entries
-            pattern_src = JETLS.DiagnosticPattern(r".*", "code", "regex", 2, src_path, ".*")
-            pattern_test = JETLS.DiagnosticPattern(r".*", "code", "regex", 0, test_path, ".*")
+            pattern_src = JETLSCore.DiagnosticPattern(r".*", "code", "regex", 2, src_path, ".*")
+            pattern_test = JETLSCore.DiagnosticPattern(r".*", "code", "regex", 0, test_path, ".*")
 
-            let base = JETLS.JETLSConfig(; diagnostic=JETLS.DiagnosticConfig(; patterns=[pattern_src, pattern_test]))
-                overlay = JETLS.JETLSConfig(; diagnostic=JETLS.DiagnosticConfig(; patterns=nothing))
-                merged = JETLS.merge_settings(base, overlay)
-                patterns = JETLS.getobjpath(merged, :diagnostic, :patterns)
+            let base = JETLSCore.JETLSConfig(; diagnostic=JETLSCore.DiagnosticConfig(; patterns=[pattern_src, pattern_test]))
+                overlay = JETLSCore.JETLSConfig(; diagnostic=JETLSCore.DiagnosticConfig(; patterns=nothing))
+                merged = JETLSCore.merge_settings(base, overlay)
+                patterns = JETLSCore.getobjpath(merged, :diagnostic, :patterns)
                 @test length(patterns) == 2
             end
 
             # Updating only one of them should preserve the other
-            pattern_src_updated = JETLS.DiagnosticPattern(r".*", "code", "regex", 1, src_path, ".*")
-            let base = JETLS.JETLSConfig(; diagnostic=JETLS.DiagnosticConfig(; patterns=[pattern_src, pattern_test]))
-                overlay = JETLS.JETLSConfig(; diagnostic=JETLS.DiagnosticConfig(; patterns=[pattern_src_updated]))
-                merged = JETLS.merge_settings(base, overlay)
-                patterns = JETLS.getobjpath(merged, :diagnostic, :patterns)
+            pattern_src_updated = JETLSCore.DiagnosticPattern(r".*", "code", "regex", 1, src_path, ".*")
+            let base = JETLSCore.JETLSConfig(; diagnostic=JETLSCore.DiagnosticConfig(; patterns=[pattern_src, pattern_test]))
+                overlay = JETLSCore.JETLSConfig(; diagnostic=JETLSCore.DiagnosticConfig(; patterns=[pattern_src_updated]))
+                merged = JETLSCore.merge_settings(base, overlay)
+                patterns = JETLSCore.getobjpath(merged, :diagnostic, :patterns)
                 @test length(patterns) == 2
                 patterns_by_path = Dict(p.path => p for p in patterns)
                 @test patterns_by_path[src_path].severity == 1  # updated
@@ -99,20 +99,20 @@ using JETLS: JETLS
         end
 
         @testset "concretization pattern merge keys" begin
-            src_path = JETLS.Glob.FilenameMatch("src/**/*.jl", "")
-            test_path = JETLS.Glob.FilenameMatch("test/**/*.jl", "")
-            pattern_src = JETLS.ConcretizationPattern(:(USE_PULSE = x_), src_path, "USE_PULSE = x_")
-            pattern_test = JETLS.ConcretizationPattern(:(USE_PULSE = x_), test_path, "USE_PULSE = x_")
-            pattern_src_updated = JETLS.ConcretizationPattern(:(USE_PULSE = y_), src_path, "USE_PULSE = x_")
+            src_path = JETLSCore.Glob.FilenameMatch("src/**/*.jl", "")
+            test_path = JETLSCore.Glob.FilenameMatch("test/**/*.jl", "")
+            pattern_src = JETLSCore.ConcretizationPattern(:(USE_PULSE = x_), src_path, "USE_PULSE = x_")
+            pattern_test = JETLSCore.ConcretizationPattern(:(USE_PULSE = x_), test_path, "USE_PULSE = x_")
+            pattern_src_updated = JETLSCore.ConcretizationPattern(:(USE_PULSE = y_), src_path, "USE_PULSE = x_")
 
-            let base = JETLS.JETLSConfig(;
-                    full_analysis=JETLS.FullAnalysisConfig(;
+            let base = JETLSCore.JETLSConfig(;
+                    full_analysis=JETLSCore.FullAnalysisConfig(;
                         concretization_patterns=[pattern_src, pattern_test]))
-                overlay = JETLS.JETLSConfig(;
-                    full_analysis=JETLS.FullAnalysisConfig(;
+                overlay = JETLSCore.JETLSConfig(;
+                    full_analysis=JETLSCore.FullAnalysisConfig(;
                         concretization_patterns=[pattern_src_updated]))
-                merged = JETLS.merge_settings(base, overlay)
-                patterns = JETLS.getobjpath(merged, :full_analysis, :concretization_patterns)
+                merged = JETLSCore.merge_settings(base, overlay)
+                patterns = JETLSCore.getobjpath(merged, :full_analysis, :concretization_patterns)
                 @test length(patterns) == 2
                 patterns_by_path = Dict(p.path => p for p in patterns)
                 @test patterns_by_path[src_path].pattern == :(USE_PULSE = y_)
@@ -122,16 +122,16 @@ using JETLS: JETLS
     end
 
     @testset "`track_setting_changes`" begin
-        let config1 = JETLS.JETLSConfig(;
-                full_analysis=JETLS.FullAnalysisConfig(; debounce=1.0),
-                testrunner=JETLS.TestRunnerConfig(; julia_args=["arg1"]),
+        let config1 = JETLSCore.JETLSConfig(;
+                full_analysis=JETLSCore.FullAnalysisConfig(; debounce=1.0),
+                testrunner=JETLSCore.TestRunnerConfig(; julia_args=["arg1"]),
             )
-            config2 = JETLS.JETLSConfig(;
-                full_analysis=JETLS.FullAnalysisConfig(; debounce=2.0),
-                testrunner=JETLS.TestRunnerConfig(; julia_args=["arg2"])
+            config2 = JETLSCore.JETLSConfig(;
+                full_analysis=JETLSCore.FullAnalysisConfig(; debounce=2.0),
+                testrunner=JETLSCore.TestRunnerConfig(; julia_args=["arg2"])
             )
             paths_called = []
-            JETLS.track_setting_changes(config1, config2) do _, _, path
+            JETLSCore.track_setting_changes(config1, config2) do _, _, path
                 push!(paths_called, path)
             end
             @test Set(paths_called) == Set([
@@ -141,31 +141,31 @@ using JETLS: JETLS
         end
 
         @testset "concretization pattern updates record the changed globs" begin
-            glob = JETLS.Glob.FilenameMatch("src/*.jl", "dp")
-            pattern1 = JETLS.ConcretizationPattern(:(USE_PULSE = x_), nothing, "USE_PULSE = x_")
-            pattern2 = JETLS.ConcretizationPattern(:(USE_PULSE = y_), glob, "USE_PULSE = y_")
-            pattern3 = JETLS.ConcretizationPattern(:(USE_TICK = x_), glob, "USE_TICK = x_")
-            config(patterns...) = JETLS.JETLSConfig(; full_analysis=JETLS.FullAnalysisConfig(;
-                concretization_patterns=JETLS.ConcretizationPattern[patterns...]))
-            let tracker = JETLS.ConfigChangeTracker()
-                JETLS.track_setting_changes(tracker, config(pattern1, pattern3), config(pattern2, pattern3))
+            glob = JETLSCore.Glob.FilenameMatch("src/*.jl", "dp")
+            pattern1 = JETLSCore.ConcretizationPattern(:(USE_PULSE = x_), nothing, "USE_PULSE = x_")
+            pattern2 = JETLSCore.ConcretizationPattern(:(USE_PULSE = y_), glob, "USE_PULSE = y_")
+            pattern3 = JETLSCore.ConcretizationPattern(:(USE_TICK = x_), glob, "USE_TICK = x_")
+            config(patterns...) = JETLSCore.JETLSConfig(; full_analysis=JETLSCore.FullAnalysisConfig(;
+                concretization_patterns=JETLSCore.ConcretizationPattern[patterns...]))
+            let tracker = JETLSCore.ConfigChangeTracker()
+                JETLSCore.track_setting_changes(tracker, config(pattern1, pattern3), config(pattern2, pattern3))
                 @test issetequal(tracker.changed_concretization_globs, [nothing, glob])
                 @test !tracker.concretization_timeout_changed
             end
-            let tracker = JETLS.ConfigChangeTracker()
-                JETLS.track_setting_changes(tracker, config(pattern1, pattern2), config(pattern2, pattern1))
+            let tracker = JETLSCore.ConfigChangeTracker()
+                JETLSCore.track_setting_changes(tracker, config(pattern1, pattern2), config(pattern2, pattern1))
                 @test isempty(tracker.changed_concretization_globs)
             end
         end
 
         # Test that updating severity of an existing pattern is tracked
-        let pattern1 = JETLS.DiagnosticPattern(r"error1", "code", "regex", 1, nothing, "error1")
-            pattern1_updated = JETLS.DiagnosticPattern(r"error1", "code", "regex", 4, nothing, "error1")
-            pattern2 = JETLS.DiagnosticPattern(r"error2", "code", "regex", 2, nothing, "error2")
-            config1 = JETLS.JETLSConfig(; diagnostic=JETLS.DiagnosticConfig(; patterns=[pattern1]))
-            config2 = JETLS.JETLSConfig(; diagnostic=JETLS.DiagnosticConfig(; patterns=[pattern1_updated, pattern2]))
+        let pattern1 = JETLSCore.DiagnosticPattern(r"error1", "code", "regex", 1, nothing, "error1")
+            pattern1_updated = JETLSCore.DiagnosticPattern(r"error1", "code", "regex", 4, nothing, "error1")
+            pattern2 = JETLSCore.DiagnosticPattern(r"error2", "code", "regex", 2, nothing, "error2")
+            config1 = JETLSCore.JETLSConfig(; diagnostic=JETLSCore.DiagnosticConfig(; patterns=[pattern1]))
+            config2 = JETLSCore.JETLSConfig(; diagnostic=JETLSCore.DiagnosticConfig(; patterns=[pattern1_updated, pattern2]))
             changes = []
-            JETLS.track_setting_changes(config1, config2) do old_val, new_val, path
+            JETLSCore.track_setting_changes(config1, config2) do old_val, new_val, path
                 push!(changes, (old_val, new_val, path))
             end
             @test any(changes) do (old_val, new_val, path)
@@ -175,12 +175,12 @@ using JETLS: JETLS
         end
 
         # Reordering patterns should invalidate diagnostics caches.
-        let pattern1 = JETLS.DiagnosticPattern(r"error1", "code", "regex", 1, nothing, "error1")
-            pattern2 = JETLS.DiagnosticPattern(r"error2", "code", "regex", 2, nothing, "error2")
-            config1 = JETLS.JETLSConfig(; diagnostic=JETLS.DiagnosticConfig(; patterns=[pattern1, pattern2]))
-            config2 = JETLS.JETLSConfig(; diagnostic=JETLS.DiagnosticConfig(; patterns=[pattern2, pattern1]))
+        let pattern1 = JETLSCore.DiagnosticPattern(r"error1", "code", "regex", 1, nothing, "error1")
+            pattern2 = JETLSCore.DiagnosticPattern(r"error2", "code", "regex", 2, nothing, "error2")
+            config1 = JETLSCore.JETLSConfig(; diagnostic=JETLSCore.DiagnosticConfig(; patterns=[pattern1, pattern2]))
+            config2 = JETLSCore.JETLSConfig(; diagnostic=JETLSCore.DiagnosticConfig(; patterns=[pattern2, pattern1]))
             changes = []
-            JETLS.track_setting_changes(config1, config2) do old_val, new_val, path
+            JETLSCore.track_setting_changes(config1, config2) do old_val, new_val, path
                 push!(changes, (old_val, new_val, path))
             end
             @test any(changes) do (_, _, path)
@@ -191,30 +191,30 @@ using JETLS: JETLS
 
     @testset "`is_config_document_uri`" begin
         mktempdir() do dir
-            state = JETLS.Server().state
+            state = JETLSCore.Server().state
             state.root_path = dir
-            @test JETLS.is_config_document_uri(state, JETLS.filepath2uri(joinpath(dir, JETLS.CONFIG_FILE)))
-            @test JETLS.is_config_document_uri(state, JETLS.filepath2uri(joinpath(dir, "nested", "..", JETLS.CONFIG_FILE)))
-            @test !JETLS.is_config_document_uri(state, JETLS.filepath2uri(joinpath(dir, "nested", JETLS.CONFIG_FILE)))
-            @test !JETLS.is_config_document_uri(state, JETLS.filepath2uri(joinpath(dir, "config.toml")))
+            @test JETLSCore.is_config_document_uri(state, JETLSCore.filepath2uri(joinpath(dir, JETLSCore.CONFIG_FILE)))
+            @test JETLSCore.is_config_document_uri(state, JETLSCore.filepath2uri(joinpath(dir, "nested", "..", JETLSCore.CONFIG_FILE)))
+            @test !JETLSCore.is_config_document_uri(state, JETLSCore.filepath2uri(joinpath(dir, "nested", JETLSCore.CONFIG_FILE)))
+            @test !JETLSCore.is_config_document_uri(state, JETLSCore.filepath2uri(joinpath(dir, "config.toml")))
         end
     end
 end
 
 @testset "`parse_config_from_dict` reports full key paths in `InvalidKeyError`" begin
     let err = try
-            JETLS.parse_config_from_dict(JETLS.JETLSConfig, Dict{String,Any}("___unknown___" => 1))
+            JETLSCore.parse_config_from_dict(JETLSCore.JETLSConfig, Dict{String,Any}("___unknown___" => 1))
             nothing
         catch e; e; end
-        @test err isa JETLS.InvalidKeyError
+        @test err isa JETLSCore.InvalidKeyError
         @test err.path == ["___unknown___"]
     end
     let err = try
-            JETLS.parse_config_from_dict(JETLS.JETLSConfig, Dict{String,Any}(
+            JETLSCore.parse_config_from_dict(JETLSCore.JETLSConfig, Dict{String,Any}(
                 "diagnostic" => Dict{String,Any}("___unknown___" => 1)))
             nothing
         catch e; e; end
-        @test err isa JETLS.InvalidKeyError
+        @test err isa JETLSCore.InvalidKeyError
         @test err.path == ["diagnostic", "___unknown___"]
     end
 end
@@ -222,10 +222,10 @@ end
 @testset "`validate_config_data` enforces concrete untyped data" begin
     let config_data = Dict{Symbol,Any}(:diagnostic => Dict{String,Any}())
         err = try
-            JETLS.validate_config_data(config_data)
+            JETLSCore.validate_config_data(config_data)
             nothing
         catch e; e; end
-        @test err isa JETLS.InvalidConfigDataError
+        @test err isa JETLSCore.InvalidConfigDataError
         message = sprint(showerror, err)
         @test occursin("expected `Dict{String,Any}`", message)
         @test occursin("got `Dict{Symbol, Any}`", message)
@@ -233,10 +233,10 @@ end
 
     let config_data = Dict{String,Any}("diagnostic" => Dict("enabled" => true))
         err = try
-            JETLS.validate_config_data(config_data)
+            JETLSCore.validate_config_data(config_data)
             nothing
         catch e; e; end
-        @test err isa JETLS.InvalidConfigDataError
+        @test err isa JETLSCore.InvalidConfigDataError
         message = sprint(showerror, err)
         @test occursin("at `diagnostic`", message)
         @test occursin("expected `Dict{String,Any}`", message)
@@ -248,10 +248,10 @@ end
                 "concretization_patterns" => Any[
                     Dict("pattern" => "USE_PULSE = x_")]))
         err = try
-            JETLS.validate_config_data(config_data)
+            JETLSCore.validate_config_data(config_data)
             nothing
         catch e; e; end
-        @test err isa JETLS.InvalidConfigDataError
+        @test err isa JETLSCore.InvalidConfigDataError
         message = sprint(showerror, err)
         @test occursin("at `full_analysis.concretization_patterns[1]`", message)
         @test occursin("expected `Dict{String,Any}`", message)
@@ -262,10 +262,10 @@ end
             "testrunner" => Dict{String,Any}(
                 "env" => Dict{String,Any}("NAME" => value)))
         err = try
-            JETLS.validate_config_data(config_data)
+            JETLSCore.validate_config_data(config_data)
             nothing
         catch e; e; end
-        @test err isa JETLS.InvalidConfigDataError
+        @test err isa JETLSCore.InvalidConfigDataError
         message = sprint(showerror, err)
         @test occursin("at `testrunner.env.NAME`", message)
         @test occursin("expected `String`", message)
@@ -276,10 +276,10 @@ end
         config_data = Dict{String,Any}(
             "diagnostic" => Dict{String,Any}("patterns" => patterns))
         err = try
-            JETLS.validate_config_data(config_data)
+            JETLSCore.validate_config_data(config_data)
             nothing
         catch e; e; end
-        @test err isa JETLS.InvalidConfigDataError
+        @test err isa JETLSCore.InvalidConfigDataError
         message = sprint(showerror, err)
         @test occursin("at `diagnostic.patterns`", message)
         @test occursin("expected `Vector`", message)
@@ -289,20 +289,20 @@ end
             "formatter" => "Runic",
             "full_analysis" => Dict{String,Any}(
                 "concretization_patterns" => String["A = x_"]))
-        @test JETLS.validate_config_data(config_data) === config_data
+        @test JETLSCore.validate_config_data(config_data) === config_data
     end
     let config_data = Dict{String,Any}(
             "formatter" => "Runic",
             "full_analysis" => Dict{String,Any}(
                 "concretization_patterns" => Any["A = x_"]))
-        @test JETLS.validate_config_data(config_data) === config_data
+        @test JETLSCore.validate_config_data(config_data) === config_data
     end
 end
 
 @testset "`parse_dict_value` error messages include the dotted path" begin
     # Wrong leaf type at top level (single-segment path).
     let err = try
-            JETLS.parse_config_from_dict(JETLS.DiagnosticConfig, Dict{String,Any}("enabled" => "yes"))
+            JETLSCore.parse_config_from_dict(JETLSCore.DiagnosticConfig, Dict{String,Any}("enabled" => "yes"))
             nothing
         catch e; e; end
         @test err isa ErrorException
@@ -313,7 +313,7 @@ end
 
     # Wrong leaf type at a nested location (multi-segment path).
     let err = try
-            JETLS.parse_config_from_dict(JETLS.JETLSConfig, Dict{String,Any}(
+            JETLSCore.parse_config_from_dict(JETLSCore.JETLSConfig, Dict{String,Any}(
                 "diagnostic" => Dict{String,Any}("allow_unused_underscore" => "yes")))
             nothing
         catch e; e; end
@@ -325,7 +325,7 @@ end
 
     # `ConfigSection` field that should be a table.
     let err = try
-            JETLS.parse_config_from_dict(JETLS.JETLSConfig, Dict{String,Any}("diagnostic" => "nope"))
+            JETLSCore.parse_config_from_dict(JETLSCore.JETLSConfig, Dict{String,Any}("diagnostic" => "nope"))
             nothing
         catch e; e; end
         @test err isa ErrorException
@@ -335,7 +335,7 @@ end
 
     # Vector field that should be an array.
     let err = try
-            JETLS.parse_config_from_dict(JETLS.JETLSConfig, Dict{String,Any}(
+            JETLSCore.parse_config_from_dict(JETLSCore.JETLSConfig, Dict{String,Any}(
                 "diagnostic" => Dict{String,Any}("patterns" => "not an array")))
             nothing
         catch e; e; end
@@ -346,7 +346,7 @@ end
 
     # Formatter field expects a string or `{custom = ...}` table.
     let err = try
-            JETLS.parse_config_from_dict(JETLS.JETLSConfig, Dict{String,Any}("formatter" => 123))
+            JETLSCore.parse_config_from_dict(JETLSCore.JETLSConfig, Dict{String,Any}("formatter" => 123))
             nothing
         catch e; e; end
         @test err isa ErrorException
@@ -356,7 +356,7 @@ end
 
     # Formatter table missing the `custom` key.
     let err = try
-            JETLS.parse_config_from_dict(JETLS.JETLSConfig, Dict{String,Any}(
+            JETLSCore.parse_config_from_dict(JETLSCore.JETLSConfig, Dict{String,Any}(
                 "formatter" => Dict{String,Any}("not_custom" => Dict{String,Any}())))
             nothing
         catch e; e; end
@@ -375,7 +375,7 @@ end
                     Dict{String,Any}(
                         "pattern" => "SIMULATE = x_",
                         "path" => "examples/**/*.jl")]))
-        config = JETLS.parse_config_from_dict(JETLS.JETLSConfig, raw_config)
+        config = JETLSCore.parse_config_from_dict(JETLSCore.JETLSConfig, raw_config)
         patterns = config.full_analysis.concretization_patterns
         @test length(patterns) == 2
         @test patterns[1].pattern == :(USE_PULSE = x_)
@@ -389,7 +389,7 @@ end
             "full_analysis" => Dict{String,Any}(
                 "concretization_patterns" => Any["USE_PULSE = x_"]))
         err = try
-            JETLS.parse_config_from_dict(JETLS.JETLSConfig, raw_config)
+            JETLSCore.parse_config_from_dict(JETLSCore.JETLSConfig, raw_config)
             nothing
         catch e; e; end
         @test err isa ErrorException
@@ -403,7 +403,7 @@ end
                     "pattern" => "USE_PULSE =",
                     "path" => "examples/**/*.jl")]))
         err = try
-            JETLS.parse_config_from_dict(JETLS.JETLSConfig, raw_config)
+            JETLSCore.parse_config_from_dict(JETLSCore.JETLSConfig, raw_config)
             nothing
         catch e; e; end
         @test err isa ErrorException
@@ -417,7 +417,7 @@ end
                     "concretization_patterns" => Any[Dict{String,Any}(
                         "pattern" => pattern)]))
             err = try
-                JETLS.parse_config_from_dict(JETLS.JETLSConfig, raw_config)
+                JETLSCore.parse_config_from_dict(JETLSCore.JETLSConfig, raw_config)
                 nothing
             catch e; e; end
             @test err isa ErrorException
@@ -428,7 +428,7 @@ end
 end
 
 @testset "`parse_config_from_dict` analysis overrides" begin
-    parse_override(entry) = only(JETLS.parse_config_from_dict(JETLS.InitOptions,
+    parse_override(entry) = only(JETLSCore.parse_config_from_dict(JETLSCore.InitOptions,
         Dict{String,Any}("analysis_overrides" => Any[entry])).analysis_overrides)
     let override = parse_override(Dict{String,Any}("path" => "test/fixtures/**"))
         @test override.on_include == "stop"
@@ -447,9 +447,9 @@ end
     end
 end
 
-function store_file_config!(manager::JETLS.ConfigManager, filepath::AbstractString, new_config::JETLS.JETLSConfig)
-    JETLS.store!(manager) do old_data
-        new_data = JETLS.ConfigManagerData(old_data;
+function store_file_config!(manager::JETLSCore.ConfigManager, filepath::AbstractString, new_config::JETLSCore.JETLSConfig)
+    JETLSCore.store!(manager) do old_data
+        new_data = JETLSCore.ConfigManagerData(old_data;
             file_config=new_config,
             file_config_path=filepath
         )
@@ -457,65 +457,65 @@ function store_file_config!(manager::JETLS.ConfigManager, filepath::AbstractStri
     end
 end
 
-function store_lsp_config!(manager::JETLS.ConfigManager, new_config::JETLS.JETLSConfig)
-    JETLS.store!(manager) do old_data
-        new_data = JETLS.ConfigManagerData(old_data; lsp_config=new_config)
+function store_lsp_config!(manager::JETLSCore.ConfigManager, new_config::JETLSCore.JETLSConfig)
+    JETLSCore.store!(manager) do old_data
+        new_data = JETLSCore.ConfigManagerData(old_data; lsp_config=new_config)
         return new_data, nothing
     end
 end
 
 @testset "ConfigManager" begin
-    manager = JETLS.ConfigManager(JETLS.ConfigManagerData())
+    manager = JETLSCore.ConfigManager(JETLSCore.ConfigManagerData())
 
-    test_config = JETLS.JETLSConfig(;
-        full_analysis=JETLS.FullAnalysisConfig(; debounce=2.0),
-        testrunner=JETLS.TestRunnerConfig(; julia_args=["test_arg"]),
+    test_config = JETLSCore.JETLSConfig(;
+        full_analysis=JETLSCore.FullAnalysisConfig(; debounce=2.0),
+        testrunner=JETLSCore.TestRunnerConfig(; julia_args=["test_arg"]),
     )
 
     store_file_config!(manager, "/foo/bar/.JETLSConfig.toml", test_config)
 
-    @test JETLS.get_config(manager, :full_analysis, :debounce) === 2.0
-    @test JETLS.get_config(manager, :testrunner, :julia_args) == ["test_arg"]
-    @test_throws FieldError JETLS.get_config(manager, :nonexistent)
+    @test JETLSCore.get_config(manager, :full_analysis, :debounce) === 2.0
+    @test JETLSCore.get_config(manager, :testrunner, :julia_args) == ["test_arg"]
+    @test_throws FieldError JETLSCore.get_config(manager, :nonexistent)
 
     # Type stability check (N.B: Nothing is not allowed)
     @test Base.infer_return_type((typeof(manager),)) do manager
-           JETLS.get_config(manager, :full_analysis, :debounce)
+           JETLSCore.get_config(manager, :full_analysis, :debounce)
     end == Float64
     @test Base.infer_return_type((typeof(manager),)) do manager
-           JETLS.get_config(manager, :formatter)
-    end == JETLS.FormatterConfig
+           JETLSCore.get_config(manager, :formatter)
+    end == JETLSCore.FormatterConfig
 
     # Test priority: file config has higher priority than LSP config
-    lsp_config = JETLS.JETLSConfig(;
-        full_analysis=JETLS.FullAnalysisConfig(; debounce=999.0),
-        testrunner=JETLS.TestRunnerConfig(; julia_args=["lsp_arg"])
+    lsp_config = JETLSCore.JETLSConfig(;
+        full_analysis=JETLSCore.FullAnalysisConfig(; debounce=999.0),
+        testrunner=JETLSCore.TestRunnerConfig(; julia_args=["lsp_arg"])
     )
     store_lsp_config!(manager, lsp_config)
     # High priority file config should win
-    @test JETLS.get_config(manager, :full_analysis, :debounce) === 2.0
-    @test JETLS.get_config(manager, :testrunner, :julia_args) == ["test_arg"]
+    @test JETLSCore.get_config(manager, :full_analysis, :debounce) === 2.0
+    @test JETLSCore.get_config(manager, :testrunner, :julia_args) == ["test_arg"]
 
     # Test updating config
-    store_lsp_config!(manager, JETLS.EMPTY_CONFIG)
-    updated_config = JETLS.JETLSConfig(;
-        full_analysis=JETLS.FullAnalysisConfig(; debounce=3.0),
-        testrunner=JETLS.TestRunnerConfig(; julia_args=["new_arg"]),
+    store_lsp_config!(manager, JETLSCore.EMPTY_CONFIG)
+    updated_config = JETLSCore.JETLSConfig(;
+        full_analysis=JETLSCore.FullAnalysisConfig(; debounce=3.0),
+        testrunner=JETLSCore.TestRunnerConfig(; julia_args=["new_arg"]),
     )
     store_file_config!(manager, "/foo/bar/.JETLSConfig.toml", updated_config)
-    @test JETLS.get_config(manager, :full_analysis, :debounce) == 3.0
-    @test JETLS.get_config(manager, :testrunner, :julia_args) == ["new_arg"]
+    @test JETLSCore.get_config(manager, :full_analysis, :debounce) == 3.0
+    @test JETLSCore.get_config(manager, :testrunner, :julia_args) == ["new_arg"]
 end
 
 @testset "LSP configuration priority and merging" begin
-    manager = JETLS.ConfigManager(JETLS.ConfigManagerData())
+    manager = JETLSCore.ConfigManager(JETLSCore.ConfigManagerData())
 
-    lsp_config = JETLS.JETLSConfig(;
-        full_analysis=JETLS.FullAnalysisConfig(; debounce=2.0),
+    lsp_config = JETLSCore.JETLSConfig(;
+        full_analysis=JETLSCore.FullAnalysisConfig(; debounce=2.0),
         testrunner=nothing
     )
-    file_config = JETLS.JETLSConfig(;
-        testrunner=JETLS.TestRunnerConfig(; julia_args=["file_arg"]),
+    file_config = JETLSCore.JETLSConfig(;
+        testrunner=JETLSCore.TestRunnerConfig(; julia_args=["file_arg"]),
         full_analysis=nothing
     )
 
@@ -523,55 +523,55 @@ end
     store_file_config!(manager, "/project/.JETLSConfig.toml", file_config)
 
     # File config has higher priority, so it wins when both are set
-    @test JETLS.get_config(manager, :testrunner, :julia_args) == ["file_arg"]
+    @test JETLSCore.get_config(manager, :testrunner, :julia_args) == ["file_arg"]
     # When file config doesn't set a value, LSP config is used
-    @test JETLS.get_config(manager, :full_analysis, :debounce) == 2.0
+    @test JETLSCore.get_config(manager, :full_analysis, :debounce) == 2.0
 end
 
 @testset "LSP configuration merging without file config" begin
-    manager = JETLS.ConfigManager(JETLS.ConfigManagerData())
-    lsp_config = JETLS.JETLSConfig(;
-        full_analysis=JETLS.FullAnalysisConfig(; debounce=3.0),
-        testrunner=JETLS.TestRunnerConfig(; julia_args=["lsp_arg"])
+    manager = JETLSCore.ConfigManager(JETLSCore.ConfigManagerData())
+    lsp_config = JETLSCore.JETLSConfig(;
+        full_analysis=JETLSCore.FullAnalysisConfig(; debounce=3.0),
+        testrunner=JETLSCore.TestRunnerConfig(; julia_args=["lsp_arg"])
     )
     store_lsp_config!(manager, lsp_config)
-    @test JETLS.get_config(manager, :testrunner, :julia_args) == ["lsp_arg"]
-    @test JETLS.get_config(manager, :full_analysis, :debounce) == 3.0
+    @test JETLSCore.get_config(manager, :testrunner, :julia_args) == ["lsp_arg"]
+    @test JETLSCore.get_config(manager, :full_analysis, :debounce) == 3.0
 end
 
 @testset "Formatter configuration" begin
     @testset "preset formatter: Runic" begin
-        manager = JETLS.ConfigManager(JETLS.ConfigManagerData())
-        config = JETLS.JETLSConfig(; formatter="Runic")
+        manager = JETLSCore.ConfigManager(JETLSCore.ConfigManagerData())
+        config = JETLSCore.JETLSConfig(; formatter="Runic")
         store_file_config!(manager, "/path/.JETLSConfig.toml", config)
-        @test JETLS.get_config(manager, :formatter) == "Runic"
+        @test JETLSCore.get_config(manager, :formatter) == "Runic"
     end
 
     @testset "preset formatter: JuliaFormatter" begin
-        manager = JETLS.ConfigManager(JETLS.ConfigManagerData())
-        config = JETLS.JETLSConfig(; formatter="JuliaFormatter")
+        manager = JETLSCore.ConfigManager(JETLSCore.ConfigManagerData())
+        config = JETLSCore.JETLSConfig(; formatter="JuliaFormatter")
         store_file_config!(manager, "/path/.JETLSConfig.toml", config)
-        @test JETLS.get_config(manager, :formatter) == "JuliaFormatter"
+        @test JETLSCore.get_config(manager, :formatter) == "JuliaFormatter"
     end
 
     @testset "custom formatter" begin
-        manager = JETLS.ConfigManager(JETLS.ConfigManagerData())
-        custom = JETLS.CustomFormatterConfig("my-formatter", "my-range-formatter")
-        config = JETLS.JETLSConfig(; formatter=custom)
+        manager = JETLSCore.ConfigManager(JETLSCore.ConfigManagerData())
+        custom = JETLSCore.CustomFormatterConfig("my-formatter", "my-range-formatter")
+        config = JETLSCore.JETLSConfig(; formatter=custom)
         store_file_config!(manager, "/path/.JETLSConfig.toml", config)
-        formatter = JETLS.get_config(manager, :formatter)
-        @test formatter isa JETLS.CustomFormatterConfig
+        formatter = JETLSCore.get_config(manager, :formatter)
+        @test formatter isa JETLSCore.CustomFormatterConfig
         @test formatter.executable == "my-formatter"
         @test formatter.executable_range == "my-range-formatter"
     end
 
     @testset "custom formatter without executable_range" begin
-        manager = JETLS.ConfigManager(JETLS.ConfigManagerData())
-        custom = JETLS.CustomFormatterConfig("my-formatter", nothing)
-        config = JETLS.JETLSConfig(; formatter=custom)
+        manager = JETLSCore.ConfigManager(JETLSCore.ConfigManagerData())
+        custom = JETLSCore.CustomFormatterConfig("my-formatter", nothing)
+        config = JETLSCore.JETLSConfig(; formatter=custom)
         store_file_config!(manager, "/path/.JETLSConfig.toml", config)
-        formatter = JETLS.get_config(manager, :formatter)
-        @test formatter isa JETLS.CustomFormatterConfig
+        formatter = JETLSCore.get_config(manager, :formatter)
+        @test formatter isa JETLSCore.CustomFormatterConfig
         @test formatter.executable == "my-formatter"
         @test formatter.executable_range === nothing
     end
@@ -581,14 +581,14 @@ end
     deprecations = Pair{Vector{String},Union{Nothing,Vector{String}}}[
         ["inlay_hint", "block_end_min_lines"] => ["inlay_hint", "block_end", "min_lines"]
     ]
-    d = JETLS.validate_config_data(Dict{String,Any}(
+    d = JETLSCore.validate_config_data(Dict{String,Any}(
         "inlay_hint" => Dict{String,Any}(
             "block_end_min_lines" => 7)))
-    warnings = JETLS.migrate_deprecated_config!(d, deprecations)
+    warnings = JETLSCore.migrate_deprecated_config!(d, deprecations)
     @test length(warnings) == 1
     @test occursin("`inlay_hint.block_end_min_lines` is deprecated", warnings[1])
-    config = JETLS.parse_config_dict(d)
-    @test config isa JETLS.JETLSConfig
+    config = JETLSCore.parse_config_dict(d)
+    @test config isa JETLSCore.JETLSConfig
     @test config.inlay_hint.block_end.min_lines == 7
 end
 
@@ -596,36 +596,36 @@ end
     deprecations = Pair{Vector{String},Union{Nothing,Vector{String}}}[
         ["completion", "method_signature", "prepend_inference_result"] => nothing
     ]
-    d = JETLS.validate_config_data(Dict{String,Any}(
+    d = JETLSCore.validate_config_data(Dict{String,Any}(
         "completion" => Dict{String,Any}(
             "method_signature" => Dict{String,Any}(
                 "prepend_inference_result" => true))))
-    warnings = JETLS.migrate_deprecated_config!(d, deprecations)
+    warnings = JETLSCore.migrate_deprecated_config!(d, deprecations)
     @test length(warnings) == 1
     @test occursin("`completion.method_signature.prepend_inference_result` is deprecated", warnings[1])
     @test !haskey(d, "completion")
-    config = JETLS.parse_config_dict(d)
-    @test config isa JETLS.JETLSConfig
+    config = JETLSCore.parse_config_dict(d)
+    @test config isa JETLSCore.JETLSConfig
 end
 
 @testset "`testrunner.executable` is deprecated" begin
-    d = JETLS.validate_config_data(Dict{String,Any}(
+    d = JETLSCore.validate_config_data(Dict{String,Any}(
         "testrunner" => Dict{String,Any}(
             "executable" => "testrunner")))
-    warnings = JETLS.migrate_deprecated_config!(d)
+    warnings = JETLSCore.migrate_deprecated_config!(d)
     @test length(warnings) == 1
     @test occursin("`testrunner.executable` is deprecated", warnings[1])
     @test !haskey(d, "testrunner")
-    @test JETLS.parse_config_dict(d) isa JETLS.JETLSConfig
+    @test JETLSCore.parse_config_dict(d) isa JETLSCore.JETLSConfig
 end
 
 @testset "`testrunner.env`" begin
-    parse_env(env) = JETLS.parse_config_from_dict(JETLS.JETLSConfig, Dict{String,Any}(
+    parse_env(env) = JETLSCore.parse_config_from_dict(JETLSCore.JETLSConfig, Dict{String,Any}(
         "testrunner" => Dict{String,Any}("env" => env)))
     let config = parse_env(Dict{String,Any}("JULIAUP_CHANNEL" => "1.12"))
         @test config.testrunner.env == Dict("JULIAUP_CHANNEL" => "1.12")
     end
-    for key in JETLS.TESTRUNNER_RESERVED_ENV_KEYS
+    for key in JETLSCore.TESTRUNNER_RESERVED_ENV_KEYS
         @test_throws "Invalid value at `testrunner.env.$key`" parse_env(
             Dict{String,Any}(key => "/path"))
     end
@@ -635,37 +635,37 @@ end
 end
 
 @testset "`did_change_configuration_registration` reflects `configuration_section`" begin
-    let reg = JETLS.did_change_configuration_registration(JETLS.DEFAULT_INIT_OPTIONS)
+    let reg = JETLSCore.did_change_configuration_registration(JETLSCore.DEFAULT_INIT_OPTIONS)
         @test reg.registerOptions === nothing
     end
-    let init_options = JETLS.InitOptions(; configuration_section = "jetls-client.settings")
-        reg = JETLS.did_change_configuration_registration(init_options)
+    let init_options = JETLSCore.InitOptions(; configuration_section = "jetls-client.settings")
+        reg = JETLSCore.did_change_configuration_registration(init_options)
         registerOptions = reg.registerOptions
-        @test registerOptions isa JETLS.LSP.DidChangeConfigurationRegistrationOptions
+        @test registerOptions isa JETLSCore.LSP.DidChangeConfigurationRegistrationOptions
         @test registerOptions.section == "jetls-client.settings"
     end
 end
 
 @testset "`full_analysis.auto_instantiate` values" begin
-    @test JETLS.get_default_config(:full_analysis, :auto_instantiate) ===
-        (JETLS.JETLS_TEST_MODE ? JETLS.AUTO_INSTANTIATE_ALWAYS : JETLS.AUTO_INSTANTIATE_PROMPT)
-    parse_auto_instantiate(value) = JETLS.parse_config_from_dict(JETLS.JETLSConfig, Dict{String,Any}(
+    @test JETLSCore.get_default_config(:full_analysis, :auto_instantiate) ===
+        (JETLSCore.JETLS_TEST_MODE ? JETLSCore.AUTO_INSTANTIATE_ALWAYS : JETLSCore.AUTO_INSTANTIATE_PROMPT)
+    parse_auto_instantiate(value) = JETLSCore.parse_config_from_dict(JETLSCore.JETLSConfig, Dict{String,Any}(
         "full_analysis" => Dict{String,Any}("auto_instantiate" => value)))
-    for value in JETLS.AUTO_INSTANTIATE_VALUES
+    for value in JETLSCore.AUTO_INSTANTIATE_VALUES
         @test parse_auto_instantiate(value).full_analysis.auto_instantiate === value
     end
     @test parse_auto_instantiate(nothing).full_analysis.auto_instantiate === nothing
     # booleans are deprecated values, which the migration replaces before parsing
-    for (value, expected) in (true => JETLS.AUTO_INSTANTIATE_ALWAYS,
-                              false => JETLS.AUTO_INSTANTIATE_NEVER)
+    for (value, expected) in (true => JETLSCore.AUTO_INSTANTIATE_ALWAYS,
+                              false => JETLSCore.AUTO_INSTANTIATE_NEVER)
         d = Dict{String,Any}("full_analysis" => Dict{String,Any}("auto_instantiate" => value))
-        warnings = JETLS.migrate_deprecated_config!(d)
-        @test only(warnings) == JETLS.deprecated_config_value_message(
+        warnings = JETLSCore.migrate_deprecated_config!(d)
+        @test only(warnings) == JETLSCore.deprecated_config_value_message(
             ["full_analysis", "auto_instantiate"], value, expected)
-        @test JETLS.parse_config_dict(d).full_analysis.auto_instantiate === expected
+        @test JETLSCore.parse_config_dict(d).full_analysis.auto_instantiate === expected
     end
     let d = Dict{String,Any}("full_analysis" => Dict{String,Any}("auto_instantiate" => 1))
-        @test isempty(JETLS.migrate_deprecated_config!(d))
+        @test isempty(JETLSCore.migrate_deprecated_config!(d))
     end
     for value in ("yes", 1, true)
         err = try
@@ -676,27 +676,27 @@ end
         @test occursin("Invalid value at `full_analysis.auto_instantiate`", err.msg)
         @test occursin("expected one of", err.msg)
     end
-    let manager = JETLS.ConfigManager(JETLS.ConfigManagerData())
+    let manager = JETLSCore.ConfigManager(JETLSCore.ConfigManagerData())
         @test Base.infer_return_type((typeof(manager),)) do manager
-            JETLS.get_config(manager, :full_analysis, :auto_instantiate)
+            JETLSCore.get_config(manager, :full_analysis, :auto_instantiate)
         end == String
     end
 end
 
 @testset HierarchicalTestSet "`full_analysis.concretization_timeout`" begin
     @testset "parsed values" begin
-        @test JETLS.FullAnalysisConfig().concretization_timeout === nothing
-        @test JETLS.get_default_config(:full_analysis, :concretization_timeout) ===
-            JETLS.JET.DEFAULT_CONCRETIZATION_TIMEOUT
+        @test JETLSCore.FullAnalysisConfig().concretization_timeout === nothing
+        @test JETLSCore.get_default_config(:full_analysis, :concretization_timeout) ===
+            JETLSCore.JET.DEFAULT_CONCRETIZATION_TIMEOUT
         for (value, expected) in ((15, 15.0), (0.25, 0.25), (nothing, nothing), ("inf", Inf))
             raw_config = Dict{String,Any}(
                 "full_analysis" => Dict{String,Any}("concretization_timeout" => value))
-            config = JETLS.parse_config_dict(raw_config)
+            config = JETLSCore.parse_config_dict(raw_config)
             @test config.full_analysis.concretization_timeout === expected
         end
         for (value, expected) in (("15", 15.0), ("0.25", 0.25), ("\"inf\"", Inf))
-            raw_config = JETLS.TOML.parse("[full_analysis]\nconcretization_timeout = $value")
-            config = JETLS.parse_config_dict(raw_config, "/project/.JETLSConfig.toml")
+            raw_config = JETLSCore.TOML.parse("[full_analysis]\nconcretization_timeout = $value")
+            config = JETLSCore.parse_config_dict(raw_config, "/project/.JETLSConfig.toml")
             @test config.full_analysis.concretization_timeout === expected
         end
     end
@@ -707,44 +707,44 @@ end
         for value in (0, -1, true, false, Inf, -Inf, NaN, "15", "Inf", " inf ", Any[])
             raw_config = Dict{String,Any}(
                 "full_analysis" => Dict{String,Any}("concretization_timeout" => value))
-            @test_throws message JETLS.parse_config_from_dict(JETLS.JETLSConfig, raw_config)
+            @test_throws message JETLSCore.parse_config_from_dict(JETLSCore.JETLSConfig, raw_config)
         end
-        let raw_config = JETLS.TOML.parse("[full_analysis]\nconcretization_timeout = inf")
+        let raw_config = JETLSCore.TOML.parse("[full_analysis]\nconcretization_timeout = inf")
             @test occursin(message,
-                JETLS.parse_config_dict(raw_config, "/project/.JETLSConfig.toml"))
+                JETLSCore.parse_config_dict(raw_config, "/project/.JETLSConfig.toml"))
         end
     end
 
     @testset "file, LSP, and default precedence" begin
-        let manager = JETLS.ConfigManager(JETLS.ConfigManagerData())
-            @test JETLS.get_config(manager, :full_analysis, :concretization_timeout) === JETLS.JET.DEFAULT_CONCRETIZATION_TIMEOUT
-            lsp_config = JETLS.parse_config_dict(Dict{String,Any}(
+        let manager = JETLSCore.ConfigManager(JETLSCore.ConfigManagerData())
+            @test JETLSCore.get_config(manager, :full_analysis, :concretization_timeout) === JETLSCore.JET.DEFAULT_CONCRETIZATION_TIMEOUT
+            lsp_config = JETLSCore.parse_config_dict(Dict{String,Any}(
                 "full_analysis" => Dict{String,Any}("concretization_timeout" => "inf")))
             store_lsp_config!(manager, lsp_config)
-            @test JETLS.get_config(manager, :full_analysis, :concretization_timeout) === Inf
+            @test JETLSCore.get_config(manager, :full_analysis, :concretization_timeout) === Inf
 
-            file_config = JETLS.parse_config_dict(JETLS.TOML.parse(
+            file_config = JETLSCore.parse_config_dict(JETLSCore.TOML.parse(
                 "[full_analysis]\nconcretization_timeout = 2.5"))
             store_file_config!(manager, "/project/.JETLSConfig.toml", file_config)
-            @test JETLS.get_config(manager, :full_analysis, :concretization_timeout) === 2.5
+            @test JETLSCore.get_config(manager, :full_analysis, :concretization_timeout) === 2.5
 
-            unset_config = JETLS.parse_config_dict(JETLS.TOML.parse("[full_analysis]"))
+            unset_config = JETLSCore.parse_config_dict(JETLSCore.TOML.parse("[full_analysis]"))
             @test unset_config.full_analysis.concretization_timeout === nothing
             store_file_config!(manager, "/project/.JETLSConfig.toml", unset_config)
-            @test JETLS.get_config(manager, :full_analysis, :concretization_timeout) === Inf
-            store_lsp_config!(manager, JETLS.EMPTY_CONFIG)
-            @test JETLS.get_config(manager, :full_analysis, :concretization_timeout) === JETLS.JET.DEFAULT_CONCRETIZATION_TIMEOUT
+            @test JETLSCore.get_config(manager, :full_analysis, :concretization_timeout) === Inf
+            store_lsp_config!(manager, JETLSCore.EMPTY_CONFIG)
+            @test JETLSCore.get_config(manager, :full_analysis, :concretization_timeout) === JETLSCore.JET.DEFAULT_CONCRETIZATION_TIMEOUT
         end
     end
 
     @testset "changes and removal mark reanalysis" begin
         for (old_value, new_value) in ((1.0, 2.5), (2.5, Inf), (Inf, nothing), (2.5, 2.5))
-            old_config = JETLS.JETLSConfig(; full_analysis=JETLS.FullAnalysisConfig(;
+            old_config = JETLSCore.JETLSConfig(; full_analysis=JETLSCore.FullAnalysisConfig(;
                 concretization_timeout=old_value))
-            new_config = JETLS.JETLSConfig(; full_analysis=JETLS.FullAnalysisConfig(;
+            new_config = JETLSCore.JETLSConfig(; full_analysis=JETLSCore.FullAnalysisConfig(;
                 concretization_timeout=new_value))
-            tracker = JETLS.ConfigChangeTracker()
-            JETLS.track_setting_changes(tracker, old_config, new_config)
+            tracker = JETLSCore.ConfigChangeTracker()
+            JETLSCore.track_setting_changes(tracker, old_config, new_config)
             @test tracker.concretization_timeout_changed == (old_value !== new_value)
         end
     end

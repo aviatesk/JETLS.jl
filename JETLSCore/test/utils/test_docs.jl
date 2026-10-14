@@ -1,7 +1,7 @@
 module test_docs
 
 using Test
-using JETLS
+using JETLSCore
 using Markdown: Markdown
 
 # Fixtures
@@ -13,12 +13,12 @@ meth_two_tvars(::T, ::S) where {T,S} = nothing
 meth_with_sparam(::T) where T<:Union{Float32,Float64} = nothing
 
 @testset "method_doc_sig" begin
-    @test JETLS.method_doc_sig(only(methods(meth_concrete, (Int,)))) == Tuple{Int}
-    @test JETLS.method_doc_sig(only(methods(meth_noargs, ()))) == Tuple{}
-    @test JETLS.method_doc_sig(only(methods(meth_multi, (Int, String)))) == Tuple{Int, String}
-    @test JETLS.method_doc_sig(only(methods(meth_vararg, (Vararg{Int},)))) == Tuple{Vararg{Int}}
-    @test JETLS.method_doc_sig(only(methods(meth_two_tvars, (Int, String)))) == Tuple{T, S} where {T, S}
-    @test JETLS.method_doc_sig(only(methods(meth_with_sparam, (Float64,)))) ==
+    @test JETLSCore.method_doc_sig(only(methods(meth_concrete, (Int,)))) == Tuple{Int}
+    @test JETLSCore.method_doc_sig(only(methods(meth_noargs, ()))) == Tuple{}
+    @test JETLSCore.method_doc_sig(only(methods(meth_multi, (Int, String)))) == Tuple{Int, String}
+    @test JETLSCore.method_doc_sig(only(methods(meth_vararg, (Vararg{Int},)))) == Tuple{Vararg{Int}}
+    @test JETLSCore.method_doc_sig(only(methods(meth_two_tvars, (Int, String)))) == Tuple{T, S} where {T, S}
+    @test JETLSCore.method_doc_sig(only(methods(meth_with_sparam, (Float64,)))) ==
         Tuple{<:Union{Float32,Float64}}
 end
 
@@ -84,11 +84,11 @@ const world = Base.get_world_counter()
     # Module rename: `B === Base`, canonical binding is the Base module's
     # self-reference (normalised to `(Main, :Base)` by Binding's module-symbol
     # rule), not the non-existent `Base.B`.
-    b = JETLS.DocsBinding(M_module_rename, :B, world)
+    b = JETLSCore.DocsBinding(M_module_rename, :B, world)
     @test b.var === :Base
 
     # Function rename: canonical is `Base.sum`, not the non-existent `Base.mysum`.
-    b = JETLS.DocsBinding(M_function_rename, :mysum, world)
+    b = JETLSCore.DocsBinding(M_function_rename, :mysum, world)
     @test b.mod === Base
     @test b.var === :sum
 end
@@ -97,7 +97,7 @@ end
     b_op = Base.Docs.Binding(M_docs_sample, :op)
 
     @testset "method-specific match wins, generic doc still surfaced via intersect" begin
-        md = JETLS.narrow_doc_lookup(b_op, Tuple{Int}, world)
+        md = JETLSCore.narrow_doc_lookup(b_op, Tuple{Int}, world)
         @test md isa Markdown.MD
         s = string(md)
         # Both `op(x)` generic (Tuple{Any}, intersects with Tuple{Int}) and
@@ -108,7 +108,7 @@ end
 
     @testset "unrelated overload suppressed" begin
         # Tuple{String} matches the String overload only; Int's doc dropped.
-        md = JETLS.narrow_doc_lookup(b_op, Tuple{String}, world)
+        md = JETLSCore.narrow_doc_lookup(b_op, Tuple{String}, world)
         @test md isa Markdown.MD
         s = string(md)
         @test occursin("Generic doc for `op`.", s)  # generic still covers it
@@ -117,7 +117,7 @@ end
 
     @testset "interface-decl doc dropped when method-specific match found" begin
         b_iface = Base.Docs.Binding(M_docs_sample, :iface)
-        md = JETLS.narrow_doc_lookup(b_iface, Tuple{Int}, world)
+        md = JETLSCore.narrow_doc_lookup(b_iface, Tuple{Int}, world)
         @test md isa Markdown.MD
         s = string(md)
         @test occursin("Method-specific doc for `iface(::Int)`.", s)
@@ -128,7 +128,7 @@ end
         b_iface = Base.Docs.Binding(M_docs_sample, :iface)
         # `Tuple{Float64}` doesn't intersect with `Tuple{Int}` — only `Union{}`
         # interface declaration survives.
-        md = JETLS.narrow_doc_lookup(b_iface, Tuple{Float64}, world)
+        md = JETLSCore.narrow_doc_lookup(b_iface, Tuple{Float64}, world)
         @test md isa Markdown.MD
         s = string(md)
         @test occursin("Interface-level doc for `iface`.", s)
@@ -139,7 +139,7 @@ end
         b_undoc = Base.Docs.Binding(M_docs_sample, :undoc)
         # Dispatch on `Tuple{Int}` lands on the doc-less `undoc(::Int)` method;
         # the only stored key is `Tuple{String}` which doesn't intersect.
-        md = JETLS.narrow_doc_lookup(b_undoc, Tuple{Int}, world)
+        md = JETLSCore.narrow_doc_lookup(b_undoc, Tuple{Int}, world)
         @test md === nothing
     end
 
@@ -148,7 +148,7 @@ end
         # Dispatch sig is `Tuple{AbstractVector}` (the doc-less method).
         # Stored key is `Tuple{Vector{T}} where T` — `<:` fails in the forward
         # direction, but intersection picks up `Vector{T}` as a useful proxy.
-        md = JETLS.narrow_doc_lookup(b_gen, Tuple{AbstractVector}, world)
+        md = JETLSCore.narrow_doc_lookup(b_gen, Tuple{AbstractVector}, world)
         @test md isa Markdown.MD
         @test occursin("Doc for `gen(::Vector{T})`.", string(md))
     end
@@ -158,18 +158,18 @@ end
 
         # `filter(f, a::Array{T,N})`'s docstring is keyed on `Tuple{Any, Array{T,N}}`
         # in its docsystem-mangled union form. `Tuple{Any, Vector{Int}}` intersects.
-        md = JETLS.narrow_doc_lookup(b_filter, Tuple{Any, Vector{Int}}, world)
+        md = JETLSCore.narrow_doc_lookup(b_filter, Tuple{Any, Vector{Int}}, world)
         @test md isa Markdown.MD
         @test occursin("filter(f, a)", string(md))
 
         # `Tuple{Any, AbstractArray}` doesn't `<:` the Array-keyed doc, but
         # intersection (= `Vector` etc.) still surfaces the generic doc.
-        md = JETLS.narrow_doc_lookup(b_filter, Tuple{Any, AbstractArray}, world)
+        md = JETLSCore.narrow_doc_lookup(b_filter, Tuple{Any, AbstractArray}, world)
         @test md isa Markdown.MD
         @test occursin("filter(f, a)", string(md))
 
         # `Dict` intersects with `Tuple{Any, AbstractDict}` only.
-        md = JETLS.narrow_doc_lookup(b_filter, Tuple{Any, Dict{Int,String}}, world)
+        md = JETLSCore.narrow_doc_lookup(b_filter, Tuple{Any, Dict{Int,String}}, world)
         @test md isa Markdown.MD
         s = string(md)
         @test occursin("filter(f, d::AbstractDict)", s)
@@ -184,7 +184,7 @@ end
         # keeps only the Base interface doc since EA's `Tuple{IntDisjointSet}`
         # key has empty intersection with `Tuple{Vector{Int}, Int}`.
         b_push = Base.Docs.Binding(Base, :push!)
-        md = JETLS.narrow_doc_lookup(b_push, Tuple{Vector{Int}, Int}, world)
+        md = JETLSCore.narrow_doc_lookup(b_push, Tuple{Vector{Int}, Int}, world)
         @test md isa Markdown.MD
         s = string(md)
         @test occursin("push!(collection, items...)", s)  # Base interface doc kept
@@ -194,7 +194,7 @@ end
 
 @testset "lookup_doc_for_binding" begin
     @testset "with sig narrows" begin
-        md = JETLS.lookup_doc_for_binding(M_docs_sample, :op, Tuple{Int}, world)
+        md = JETLSCore.lookup_doc_for_binding(M_docs_sample, :op, Tuple{Int}, world)
         @test md isa Markdown.MD
         s = string(md)
         @test occursin("Method-specific doc for `op(::Int)`.", s)
@@ -202,7 +202,7 @@ end
 
     @testset "with sig=nothing returns full Base.Docs.doc" begin
         # Without narrowing both the generic and Int-specific docs come back.
-        md = JETLS.lookup_doc_for_binding(M_docs_sample, :op, nothing, world)
+        md = JETLSCore.lookup_doc_for_binding(M_docs_sample, :op, nothing, world)
         @test md isa Markdown.MD
         s = string(md)
         @test occursin("Generic doc for `op`.", s)
@@ -210,12 +210,12 @@ end
     end
 
     @testset "non-existent binding returns nothing" begin
-        @test JETLS.lookup_doc_for_binding(M_docs_sample, :nonexistent, nothing, world) === nothing
-        @test JETLS.lookup_doc_for_binding(M_docs_sample, :nonexistent, Tuple{Int}, world) === nothing
+        @test JETLSCore.lookup_doc_for_binding(M_docs_sample, :nonexistent, nothing, world) === nothing
+        @test JETLSCore.lookup_doc_for_binding(M_docs_sample, :nonexistent, Tuple{Int}, world) === nothing
     end
 
     @testset "undocumented binding strips the 'No documentation found' placeholder" begin
-        md = JETLS.lookup_doc_for_binding(M_docs_sample, :nodoc, nothing, world)
+        md = JETLSCore.lookup_doc_for_binding(M_docs_sample, :nodoc, nothing, world)
         @test md isa Markdown.MD
         s = string(md)
         @test !occursin("No documentation found", s)
@@ -227,8 +227,8 @@ end
     # For values that aren't `is_doc_binding_value`, the auto-generated summary
     # only restates the value's type, so just the stored docstrings come back.
     @testset "plain value binding keeps only stored docs" begin
-        @test JETLS.lookup_doc_for_binding(M_docs_sample, :plainvalue, nothing, world) === nothing
-        md = JETLS.lookup_doc_for_binding(M_docs_sample, :documented_plainvalue, nothing, world)
+        @test JETLSCore.lookup_doc_for_binding(M_docs_sample, :plainvalue, nothing, world) === nothing
+        md = JETLSCore.lookup_doc_for_binding(M_docs_sample, :documented_plainvalue, nothing, world)
         @test md isa Markdown.MD
         s = string(md)
         @test occursin("Doc for `documented_plainvalue`.", s)
@@ -238,29 +238,29 @@ end
 
 @testset "lookup_doc_for_value" begin
     @testset "non-documentable value returns nothing" begin
-        @test JETLS.lookup_doc_for_value(42, Tuple{Int}, world) === nothing
-        @test JETLS.lookup_doc_for_value("hello", Tuple{String}, world) === nothing
-        @test JETLS.lookup_doc_for_value(nothing, nothing, world) === nothing
+        @test JETLSCore.lookup_doc_for_value(42, Tuple{Int}, world) === nothing
+        @test JETLSCore.lookup_doc_for_value("hello", Tuple{String}, world) === nothing
+        @test JETLSCore.lookup_doc_for_value(nothing, nothing, world) === nothing
     end
 
     @testset "Function value with sig narrows via aliasof" begin
         # `aliasof(filter, typeof(filter))` lands on `Base.filter`'s binding;
         # the dict sig intersects only `Tuple{Any, AbstractDict}`.
-        md = JETLS.lookup_doc_for_value(filter, Tuple{Any, Dict{Int,String}}, world)
+        md = JETLSCore.lookup_doc_for_value(filter, Tuple{Any, Dict{Int,String}}, world)
         @test md isa Markdown.MD
         @test length(md.content) == 1
         @test occursin("filter(f, d::AbstractDict)", string(md))
     end
 
     @testset "Function value with sig=nothing returns full Base.Docs.doc" begin
-        md = JETLS.lookup_doc_for_value(filter, nothing, world)
+        md = JETLSCore.lookup_doc_for_value(filter, nothing, world)
         @test md isa Markdown.MD
         # Without narrowing all four `Base.filter` docs are concatenated.
         @test length(md.content) >= 4
     end
 
     @testset "Module value with sig=nothing returns full Base.Docs.doc" begin
-        md = JETLS.lookup_doc_for_value(Base, nothing, world)
+        md = JETLSCore.lookup_doc_for_value(Base, nothing, world)
         @test md isa Markdown.MD
     end
 end
@@ -270,31 +270,31 @@ end
     NoFieldDocs = M_field_doc_sample.NoFieldDocs
 
     @testset "documented field returns its docstring" begin
-        md = JETLS.lookup_field_doc(DocStruct, :x, world)
+        md = JETLSCore.lookup_field_doc(DocStruct, :x, world)
         @test md isa Markdown.MD
         @test occursin("The x field", string(md))
     end
 
     @testset "undocumented field returns nothing (no `T has fields ...` fallback)" begin
-        @test JETLS.lookup_field_doc(DocStruct, :z, world) === nothing
+        @test JETLSCore.lookup_field_doc(DocStruct, :z, world) === nothing
     end
 
     @testset "nonexistent field returns nothing" begin
-        @test JETLS.lookup_field_doc(DocStruct, :nonexistent, world) === nothing
+        @test JETLSCore.lookup_field_doc(DocStruct, :nonexistent, world) === nothing
     end
 
     @testset "struct without any field docs returns nothing" begin
-        @test JETLS.lookup_field_doc(NoFieldDocs, :a, world) === nothing
+        @test JETLSCore.lookup_field_doc(NoFieldDocs, :a, world) === nothing
     end
 
     @testset "Union prefix surfaces the documented side" begin
-        md = JETLS.lookup_field_doc(Union{DocStruct,Nothing}, :y, world)
+        md = JETLSCore.lookup_field_doc(Union{DocStruct,Nothing}, :y, world)
         @test md isa Markdown.MD
         @test occursin("The y field", string(md))
     end
 
     @testset "non-struct types return nothing" begin
-        @test JETLS.lookup_field_doc(Int, :x, world) === nothing
+        @test JETLSCore.lookup_field_doc(Int, :x, world) === nothing
     end
 end
 

@@ -1,10 +1,10 @@
 module test_ast
 
 using Test
-using JETLS
-using JETLS: JL, JS
+using JETLSCore
+using JETLSCore: JL, JS
 
-include(normpath(pkgdir(JETLS), "test", "jsjl-utils.jl"))
+include("../jsjl-utils.jl")
 
 module new_style_macro_context
 import Base: @inline as @base_inline
@@ -44,16 +44,16 @@ end
             return x│ + 1
         end
         """
-        clean_code, positions = JETLS.get_text_and_positions(code)
-        return_pos = JETLS.xy_to_offset(clean_code, positions[1], @__FILE__)
+        clean_code, positions = JETLSCore.get_text_and_positions(code)
+        return_pos = JETLSCore.xy_to_offset(clean_code, positions[1], @__FILE__)
 
         st = jlparse(clean_code)
-        let ancestors = JETLS.byte_ancestors(st, 1)
+        let ancestors = JETLSCore.byte_ancestors(st, 1)
             @test length(ancestors) >= 2
             @test JS.head(ancestors[1]) === :function
             @test JS.head(ancestors[end]) === :toplevel
         end
-        let ancestors = JETLS.byte_ancestors(st, return_pos)
+        let ancestors = JETLSCore.byte_ancestors(st, return_pos)
             @test length(ancestors) >= 4
             @test JS.head(ancestors[1]) === :call  # x + 1
             @test JS.head(ancestors[2]) === :return
@@ -71,14 +71,14 @@ end
             end
         end
         """
-        clean_code, positions = JETLS.get_text_and_positions(code)
+        clean_code, positions = JETLSCore.get_text_and_positions(code)
         @assert length(positions) == 2
-        hello_start = JETLS.xy_to_offset(clean_code, positions[1], @__FILE__)
-        hello_end = JETLS.xy_to_offset(clean_code, positions[2], @__FILE__) - 1
+        hello_start = JETLSCore.xy_to_offset(clean_code, positions[1], @__FILE__)
+        hello_end = JETLSCore.xy_to_offset(clean_code, positions[2], @__FILE__) - 1
 
         let st = jlparse(clean_code),
-            ancestors = JETLS.byte_ancestors(st, hello_start:hello_end)
-            @test any(node -> JETLS.is_string_literal(node) && JS.sourcetext(node) == "\"hello\"", ancestors)
+            ancestors = JETLSCore.byte_ancestors(st, hello_start:hello_end)
+            @test any(node -> JETLSCore.is_string_literal(node) && JS.sourcetext(node) == "\"hello\"", ancestors)
             @test any(node -> JS.head(node) === :call, ancestors)
             @test any(node -> JS.head(node) === :function, ancestors)
             @test any(node -> JS.head(node) === :module, ancestors)
@@ -90,16 +90,16 @@ end
         # comment
         │x = 1
         """
-        clean_code, positions = JETLS.get_text_and_positions(code)
-        x_pos = JETLS.xy_to_offset(clean_code, positions[1], @__FILE__)
+        clean_code, positions = JETLSCore.get_text_and_positions(code)
+        x_pos = JETLSCore.xy_to_offset(clean_code, positions[1], @__FILE__)
 
         st = jlparse(clean_code)
 
         # Test at position beyond code length should return empty
-        @test isempty(JETLS.byte_ancestors(st, 1000))
+        @test isempty(JETLSCore.byte_ancestors(st, 1000))
 
         # Test at exact boundaries
-        let ancestors = JETLS.byte_ancestors(st, x_pos)
+        let ancestors = JETLSCore.byte_ancestors(st, x_pos)
             @test any(node -> JS.head(node) === :identifier && JS.sourcetext(node) == "x", ancestors)
         end
     end
@@ -107,25 +107,25 @@ end
     let code = """
         a = b + │c
         """
-        clean_code, positions = JETLS.get_text_and_positions(code)
+        clean_code, positions = JETLSCore.get_text_and_positions(code)
         @test length(positions) == 1
-        c_pos = JETLS.xy_to_offset(clean_code, positions[1], @__FILE__)
+        c_pos = JETLSCore.xy_to_offset(clean_code, positions[1], @__FILE__)
 
         let st = jlparse(clean_code),
-            ancestors = JETLS.byte_ancestors(st, c_pos)
+            ancestors = JETLSCore.byte_ancestors(st, c_pos)
             @test any(node -> JS.head(node) === :identifier && JS.sourcetext(node) == "c", ancestors)
         end
     end
 
     # Test with multi-byte characters
     let code = "α = β + │γ"
-        clean_code, positions = JETLS.get_text_and_positions(code)
+        clean_code, positions = JETLSCore.get_text_and_positions(code)
         @test length(positions) == 1
-        γ_pos = JETLS.xy_to_offset(clean_code, positions[1], @__FILE__)
+        γ_pos = JETLSCore.xy_to_offset(clean_code, positions[1], @__FILE__)
         @test γ_pos == sizeof("α = β + ")+1
 
         let st = jlparse(clean_code),
-            ancestors = JETLS.byte_ancestors(st, γ_pos)
+            ancestors = JETLSCore.byte_ancestors(st, γ_pos)
             @test any(node -> JS.head(node) === :identifier && JS.sourcetext(node) == "γ", ancestors)
         end
     end
@@ -134,19 +134,19 @@ end
     let code = """
         αβγ = │δεζ + ηθι│
         """
-        clean_code, positions = JETLS.get_text_and_positions(code)
+        clean_code, positions = JETLSCore.get_text_and_positions(code)
         @test length(positions) == 2
 
-        pos1 = JETLS.xy_to_offset(clean_code, positions[1], @__FILE__)
+        pos1 = JETLSCore.xy_to_offset(clean_code, positions[1], @__FILE__)
         @test pos1 == sizeof("αβγ = ")+1
 
-        pos2 = JETLS.xy_to_offset(clean_code, positions[2], @__FILE__)
+        pos2 = JETLSCore.xy_to_offset(clean_code, positions[2], @__FILE__)
         @test pos2 == sizeof("αβγ = δεζ + ηθι")+1
 
         st = jlparse(clean_code)
-        ancestors1 = JETLS.byte_ancestors(st, pos1)
+        ancestors1 = JETLSCore.byte_ancestors(st, pos1)
         @test any(node -> JS.head(node) === :identifier && JS.sourcetext(node) == "δεζ", ancestors1)
-        ancestors2 = JETLS.byte_ancestors(st, pos2-1)
+        ancestors2 = JETLSCore.byte_ancestors(st, pos2-1)
         @test any(node -> JS.head(node) === :identifier && JS.sourcetext(node) == "ηθι", ancestors2)
     end
 end
@@ -158,11 +158,11 @@ end
             return │x│ + 1
         end
         """
-        clean_code, positions = JETLS.get_text_and_positions(code)
+        clean_code, positions = JETLSCore.get_text_and_positions(code)
         st = jlparse(clean_code)
         for pos in positions
-            offset = JETLS.xy_to_offset(clean_code, pos, @__FILE__)
-            local_tree = JETLS.lowerable_toplevel_at(st, offset)
+            offset = JETLSCore.xy_to_offset(clean_code, pos, @__FILE__)
+            local_tree = JETLSCore.lowerable_toplevel_at(st, offset)
             @test !isnothing(local_tree)
             @test JS.head(local_tree) === :function
         end
@@ -174,16 +174,16 @@ end
         │
         end
         """
-        clean_code, positions = JETLS.get_text_and_positions(code)
-        offset = JETLS.xy_to_offset(clean_code, only(positions), @__FILE__)
+        clean_code, positions = JETLSCore.get_text_and_positions(code)
+        offset = JETLSCore.xy_to_offset(clean_code, only(positions), @__FILE__)
         st = jlparse(clean_code)
-        @test isnothing(JETLS.lowerable_toplevel_at(st, offset))
+        @test isnothing(JETLSCore.lowerable_toplevel_at(st, offset))
     end
 
     # Offset past the end of the source.
     let code = "x = 1\n"
         st = jlparse(code)
-        @test isnothing(JETLS.lowerable_toplevel_at(st, 1000))
+        @test isnothing(JETLSCore.lowerable_toplevel_at(st, 1000))
     end
 
     # Fallback: when the cursor is just past the last token on a line (e.g. `export foo│\n`),
@@ -197,7 +197,7 @@ end
         st = jlparse(clean_code)
         # Offset at the newline after `foo` (i.e. one past the identifier's last byte).
         offset = sizeof("export foo") + 1
-        local_tree = JETLS.lowerable_toplevel_at(st, offset)
+        local_tree = JETLSCore.lowerable_toplevel_at(st, offset)
         @test !isnothing(local_tree)
         @test JS.head(local_tree) === :export
     end
@@ -206,7 +206,7 @@ end
     let code = "x = 1\ny\n"
         st = jlparse(code)
         offset = sizeof("x = 1\ny") + 1  # just past `y`, on the newline
-        local_tree = JETLS.lowerable_toplevel_at(st, offset)
+        local_tree = JETLSCore.lowerable_toplevel_at(st, offset)
         @test !isnothing(local_tree)
         @test JS.head(local_tree) === :identifier
         @test JS.sourcetext(local_tree) == "y"
@@ -217,46 +217,46 @@ end
     # Test token_at_offset with simple identifiers
     let code = "alpha beta gamma"
         ps = parsedstream(code)
-        @test String(ps.textbuf[JS.byte_range(@something(JETLS.token_at_offset(ps, 1)))]) == "alpha"
-        @test String(ps.textbuf[JS.byte_range(@something(JETLS.token_at_offset(ps, 3)))]) == "alpha"
-        @test String(ps.textbuf[JS.byte_range(@something(JETLS.token_at_offset(ps, 5)))]) == "alpha"
-        @test String(ps.textbuf[JS.byte_range(@something(JETLS.token_at_offset(ps, 6)))]) == " "
-        @test String(ps.textbuf[JS.byte_range(@something(JETLS.token_at_offset(ps, 8)))]) == "beta"
-        @test isnothing(JETLS.token_at_offset(ps, 100))
+        @test String(ps.textbuf[JS.byte_range(@something(JETLSCore.token_at_offset(ps, 1)))]) == "alpha"
+        @test String(ps.textbuf[JS.byte_range(@something(JETLSCore.token_at_offset(ps, 3)))]) == "alpha"
+        @test String(ps.textbuf[JS.byte_range(@something(JETLSCore.token_at_offset(ps, 5)))]) == "alpha"
+        @test String(ps.textbuf[JS.byte_range(@something(JETLSCore.token_at_offset(ps, 6)))]) == " "
+        @test String(ps.textbuf[JS.byte_range(@something(JETLSCore.token_at_offset(ps, 8)))]) == "beta"
+        @test isnothing(JETLSCore.token_at_offset(ps, 100))
     end
     let code = "foo(bar)"
         ps = parsedstream(code)
-        @test String(ps.textbuf[JS.byte_range(@something(JETLS.token_at_offset(ps, 2)))]) == "foo"
-        @test String(ps.textbuf[JS.byte_range(@something(JETLS.token_at_offset(ps, 4)))]) == "("
-        @test String(ps.textbuf[JS.byte_range(@something(JETLS.token_at_offset(ps, 6)))]) == "bar"
+        @test String(ps.textbuf[JS.byte_range(@something(JETLSCore.token_at_offset(ps, 2)))]) == "foo"
+        @test String(ps.textbuf[JS.byte_range(@something(JETLSCore.token_at_offset(ps, 4)))]) == "("
+        @test String(ps.textbuf[JS.byte_range(@something(JETLSCore.token_at_offset(ps, 6)))]) == "bar"
     end
 
     # Test token_before_offset
     let code = "a + b"
         ps = parsedstream(code)
-        @test String(ps.textbuf[JS.byte_range(@something(JETLS.token_before_offset(ps, 2)))]) == "a"
-        @test String(ps.textbuf[JS.byte_range(@something(JETLS.token_before_offset(ps, 3)))]) == " "
-        @test String(ps.textbuf[JS.byte_range(@something(JETLS.token_before_offset(ps, 4)))]) == "+"
-        @test isnothing(JETLS.token_before_offset(ps, 1))
+        @test String(ps.textbuf[JS.byte_range(@something(JETLSCore.token_before_offset(ps, 2)))]) == "a"
+        @test String(ps.textbuf[JS.byte_range(@something(JETLSCore.token_before_offset(ps, 3)))]) == " "
+        @test String(ps.textbuf[JS.byte_range(@something(JETLSCore.token_before_offset(ps, 4)))]) == "+"
+        @test isnothing(JETLSCore.token_before_offset(ps, 1))
     end
 
     # Test with multi-byte characters
     let code = "α + β"
         ps = parsedstream(code)
-        @test String(ps.textbuf[JS.byte_range(@something(JETLS.token_at_offset(ps, 1)))]) == "α"
-        @test String(ps.textbuf[JS.byte_range(@something(JETLS.token_at_offset(ps, sizeof("α"))))]) == "α"
-        @test String(ps.textbuf[JS.byte_range(@something(JETLS.token_at_offset(ps, sizeof("α")+1)))]) == " "
-        @test String(ps.textbuf[JS.byte_range(@something(JETLS.token_before_offset(ps, sizeof("α")+1)))]) == "α"
+        @test String(ps.textbuf[JS.byte_range(@something(JETLSCore.token_at_offset(ps, 1)))]) == "α"
+        @test String(ps.textbuf[JS.byte_range(@something(JETLSCore.token_at_offset(ps, sizeof("α"))))]) == "α"
+        @test String(ps.textbuf[JS.byte_range(@something(JETLSCore.token_at_offset(ps, sizeof("α")+1)))]) == " "
+        @test String(ps.textbuf[JS.byte_range(@something(JETLSCore.token_before_offset(ps, sizeof("α")+1)))]) == "α"
     end
 end
 
 @testset "TokenCursor" begin
-    let tc = JETLS.TokenCursor(parsedstream(""))
+    let tc = JETLSCore.TokenCursor(parsedstream(""))
         @test isempty(tc) == iszero(length(tc))
     end
     let code = "abc def"
         ps = parsedstream(code)
-        toks = collect(JETLS.TokenCursor(ps))
+        toks = collect(JETLSCore.TokenCursor(ps))
         @test length(toks) == 3
         @test String(ps.textbuf[JS.byte_range(toks[1])]) == "abc"
         @test String(ps.textbuf[JS.byte_range(toks[2])]) == " "
@@ -274,93 +274,93 @@ end
     # Test basic functionality
     let code = "x   y"
         ps = parsedstream(code)
-        @test String(ps.textbuf[JS.byte_range(@something JETLS.prev_nontrivia(ps, 1))]) == "x"
-        @test String(ps.textbuf[JS.byte_range(@something JETLS.prev_nontrivia(ps, 3))]) == "x"
-        @test String(ps.textbuf[JS.byte_range(@something JETLS.prev_nontrivia(ps, 5))]) == "y"
-        @test isnothing(JETLS.prev_nontrivia(ps, 0))
-        @test isnothing(JETLS.prev_nontrivia(ps, sizeof(code)+1))
-        @test isnothing(JETLS.prev_nontrivia(ps, 100))
+        @test String(ps.textbuf[JS.byte_range(@something JETLSCore.prev_nontrivia(ps, 1))]) == "x"
+        @test String(ps.textbuf[JS.byte_range(@something JETLSCore.prev_nontrivia(ps, 3))]) == "x"
+        @test String(ps.textbuf[JS.byte_range(@something JETLSCore.prev_nontrivia(ps, 5))]) == "y"
+        @test isnothing(JETLSCore.prev_nontrivia(ps, 0))
+        @test isnothing(JETLSCore.prev_nontrivia(ps, sizeof(code)+1))
+        @test isnothing(JETLSCore.prev_nontrivia(ps, 100))
     end
 
     # Test with newlines
     let code = "x\n  y"
         ps = parsedstream(code)
-        @test JS.kind(@something JETLS.prev_nontrivia(ps, 2)) == JS.K"NewlineWs"
-        @test String(ps.textbuf[JS.byte_range(@something JETLS.prev_nontrivia(ps, 2; pass_newlines=true))]) == "x"
-        @test String(ps.textbuf[JS.byte_range(@something JETLS.prev_nontrivia(ps, sizeof(code)))]) == "y"
-        @test isnothing(JETLS.prev_nontrivia(ps, sizeof(code)+1))  # beyond input
+        @test JS.kind(@something JETLSCore.prev_nontrivia(ps, 2)) == JS.K"NewlineWs"
+        @test String(ps.textbuf[JS.byte_range(@something JETLSCore.prev_nontrivia(ps, 2; pass_newlines=true))]) == "x"
+        @test String(ps.textbuf[JS.byte_range(@something JETLSCore.prev_nontrivia(ps, sizeof(code)))]) == "y"
+        @test isnothing(JETLSCore.prev_nontrivia(ps, sizeof(code)+1))  # beyond input
     end
 
     # Test with comments
     let code = "x # comment\ny"
         ps = parsedstream(code)
-        @test String(ps.textbuf[JS.byte_range(@something JETLS.prev_nontrivia(ps, 5))]) == "x"  # from within comment
-        @test JS.kind(@something JETLS.prev_nontrivia(ps, sizeof(code)-1)) == JS.K"NewlineWs"  # at newline
-        @test String(ps.textbuf[JS.byte_range(@something JETLS.prev_nontrivia(ps, sizeof(code)-1; pass_newlines=true))]) == "x"
-        @test String(ps.textbuf[JS.byte_range(@something JETLS.prev_nontrivia(ps, sizeof(code)))]) == "y"
+        @test String(ps.textbuf[JS.byte_range(@something JETLSCore.prev_nontrivia(ps, 5))]) == "x"  # from within comment
+        @test JS.kind(@something JETLSCore.prev_nontrivia(ps, sizeof(code)-1)) == JS.K"NewlineWs"  # at newline
+        @test String(ps.textbuf[JS.byte_range(@something JETLSCore.prev_nontrivia(ps, sizeof(code)-1; pass_newlines=true))]) == "x"
+        @test String(ps.textbuf[JS.byte_range(@something JETLSCore.prev_nontrivia(ps, sizeof(code)))]) == "y"
     end
 
     # Test with block comments
     let code = "x #= block\ncomment =# y"
         ps = parsedstream(code)
-        @test String(ps.textbuf[JS.byte_range(@something JETLS.prev_nontrivia(ps, 15))]) == "x"  # from within block comment
-        @test String(ps.textbuf[JS.byte_range(@something JETLS.prev_nontrivia(ps, sizeof(code)))]) == "y"
-        @test isnothing(JETLS.prev_nontrivia(ps, sizeof(code)+1))  # beyond input
+        @test String(ps.textbuf[JS.byte_range(@something JETLSCore.prev_nontrivia(ps, 15))]) == "x"  # from within block comment
+        @test String(ps.textbuf[JS.byte_range(@something JETLSCore.prev_nontrivia(ps, sizeof(code)))]) == "y"
+        @test isnothing(JETLSCore.prev_nontrivia(ps, sizeof(code)+1))  # beyond input
     end
 
     # Test at various positions in non-trivia tokens
     let code = "foo(bar)"
         ps = parsedstream(code)
-        @test String(ps.textbuf[JS.byte_range(@something JETLS.prev_nontrivia(ps, 1))]) == "foo"  # at start
-        @test String(ps.textbuf[JS.byte_range(@something JETLS.prev_nontrivia(ps, 2))]) == "foo"  # in middle
-        @test String(ps.textbuf[JS.byte_range(@something JETLS.prev_nontrivia(ps, 3))]) == "foo"  # at end
-        @test String(ps.textbuf[JS.byte_range(@something JETLS.prev_nontrivia(ps, 4))]) == "("
-        @test String(ps.textbuf[JS.byte_range(@something JETLS.prev_nontrivia(ps, 5))]) == "bar"
-        @test String(ps.textbuf[JS.byte_range(@something JETLS.prev_nontrivia(ps, 7))]) == "bar"
-        @test String(ps.textbuf[JS.byte_range(@something JETLS.prev_nontrivia(ps, 8))]) == ")"
+        @test String(ps.textbuf[JS.byte_range(@something JETLSCore.prev_nontrivia(ps, 1))]) == "foo"  # at start
+        @test String(ps.textbuf[JS.byte_range(@something JETLSCore.prev_nontrivia(ps, 2))]) == "foo"  # in middle
+        @test String(ps.textbuf[JS.byte_range(@something JETLSCore.prev_nontrivia(ps, 3))]) == "foo"  # at end
+        @test String(ps.textbuf[JS.byte_range(@something JETLSCore.prev_nontrivia(ps, 4))]) == "("
+        @test String(ps.textbuf[JS.byte_range(@something JETLSCore.prev_nontrivia(ps, 5))]) == "bar"
+        @test String(ps.textbuf[JS.byte_range(@something JETLSCore.prev_nontrivia(ps, 7))]) == "bar"
+        @test String(ps.textbuf[JS.byte_range(@something JETLSCore.prev_nontrivia(ps, 8))]) == ")"
     end
 
     # Test edge cases
     let code = "   "  # Only spaces
         ps = parsedstream(code)
-        @test isnothing(JETLS.prev_nontrivia(ps, sizeof(code)))
-        @test isnothing(JETLS.prev_nontrivia(ps, sizeof(code); pass_newlines=true))
+        @test isnothing(JETLSCore.prev_nontrivia(ps, sizeof(code)))
+        @test isnothing(JETLSCore.prev_nontrivia(ps, sizeof(code); pass_newlines=true))
     end
 
     # Test prev_nontrivia_byte accessor function
     let code = "a b"
         ps = parsedstream(code)
-        @test JETLS.prev_nontrivia_byte(ps, 1) == 1
-        @test JETLS.prev_nontrivia_byte(ps, 2) == 1  # from space
-        @test JETLS.prev_nontrivia_byte(ps, 3) == 3
-        @test isnothing(JETLS.prev_nontrivia_byte(ps, 0))
+        @test JETLSCore.prev_nontrivia_byte(ps, 1) == 1
+        @test JETLSCore.prev_nontrivia_byte(ps, 2) == 1  # from space
+        @test JETLSCore.prev_nontrivia_byte(ps, 3) == 3
+        @test isnothing(JETLSCore.prev_nontrivia_byte(ps, 0))
     end
 
     # Test with comments and newlines for prev_nontrivia_byte
     let code = "x  # comment\ny"
         ps = parsedstream(code)
-        @test JETLS.prev_nontrivia_byte(ps, sizeof(code)) == sizeof(code)  # at 'y'
-        @test JETLS.prev_nontrivia_byte(ps, sizeof(code)-1) == sizeof(code)-1  # at newline
-        @test JETLS.prev_nontrivia_byte(ps, sizeof(code)-1; pass_newlines=true) == 1  # skip newline to 'x'
-        @test JETLS.prev_nontrivia_byte(ps, sizeof(code)-2) == 1   # from end of comment
-        @test JETLS.prev_nontrivia_byte(ps, 5) == 1   # from within comment
+        @test JETLSCore.prev_nontrivia_byte(ps, sizeof(code)) == sizeof(code)  # at 'y'
+        @test JETLSCore.prev_nontrivia_byte(ps, sizeof(code)-1) == sizeof(code)-1  # at newline
+        @test JETLSCore.prev_nontrivia_byte(ps, sizeof(code)-1; pass_newlines=true) == 1  # skip newline to 'x'
+        @test JETLSCore.prev_nontrivia_byte(ps, sizeof(code)-2) == 1   # from end of comment
+        @test JETLSCore.prev_nontrivia_byte(ps, 5) == 1   # from within comment
     end
 
     # Test with strict=true option
     let code = "x\n# comment\ny"
         ps = parsedstream(code)
         # At 'y'
-        @test JETLS.prev_nontrivia_byte(ps, sizeof(code)) == sizeof(code)
-        @test JETLS.prev_nontrivia_byte(ps, sizeof(code); strict=true) == sizeof(code)-1
+        @test JETLSCore.prev_nontrivia_byte(ps, sizeof(code)) == sizeof(code)
+        @test JETLSCore.prev_nontrivia_byte(ps, sizeof(code); strict=true) == sizeof(code)-1
 
         # At the second newline
-        @test JETLS.prev_nontrivia_byte(ps, sizeof(code)-1) == sizeof(code)-1
-        @test JETLS.prev_nontrivia_byte(ps, sizeof(code)-1; strict=true) == 2
-        @test JETLS.prev_nontrivia_byte(ps, sizeof(code)-1; pass_newlines=true, strict=true) == 1
+        @test JETLSCore.prev_nontrivia_byte(ps, sizeof(code)-1) == sizeof(code)-1
+        @test JETLSCore.prev_nontrivia_byte(ps, sizeof(code)-1; strict=true) == 2
+        @test JETLSCore.prev_nontrivia_byte(ps, sizeof(code)-1; pass_newlines=true, strict=true) == 1
 
         # At 'x'
-        @test JETLS.prev_nontrivia_byte(ps, 1) == 1
-        @test isnothing(JETLS.prev_nontrivia_byte(ps, 1; strict=true))
+        @test JETLSCore.prev_nontrivia_byte(ps, 1) == 1
+        @test isnothing(JETLSCore.prev_nontrivia_byte(ps, 1; strict=true))
     end
 end
 
@@ -371,50 +371,50 @@ end
     # Test basic functionality - when starting on a non-trivia token
     let code = "x   y"
         ps = parsedstream(code)
-        @test String(ps.textbuf[JS.byte_range(@something JETLS.next_nontrivia(ps, 1))]) == "x"
-        @test String(ps.textbuf[JS.byte_range(@something JETLS.next_nontrivia(ps, 2))]) == "y"
-        @test String(ps.textbuf[JS.byte_range(@something JETLS.next_nontrivia(ps, sizeof(code)))]) == "y"
-        @test isnothing(JETLS.next_nontrivia(ps, sizeof(code)+1))
+        @test String(ps.textbuf[JS.byte_range(@something JETLSCore.next_nontrivia(ps, 1))]) == "x"
+        @test String(ps.textbuf[JS.byte_range(@something JETLSCore.next_nontrivia(ps, 2))]) == "y"
+        @test String(ps.textbuf[JS.byte_range(@something JETLSCore.next_nontrivia(ps, sizeof(code)))]) == "y"
+        @test isnothing(JETLSCore.next_nontrivia(ps, sizeof(code)+1))
     end
 
     # Test with pass_newlines=true
     let code = "x\n  y"
         ps = parsedstream(code)
-        @test JS.kind(@something JETLS.next_nontrivia(ps, 2)) == JS.K"NewlineWs"
-        @test String(ps.textbuf[JS.byte_range(@something JETLS.next_nontrivia(ps, 2; pass_newlines=true))]) == "y"
+        @test JS.kind(@something JETLSCore.next_nontrivia(ps, 2)) == JS.K"NewlineWs"
+        @test String(ps.textbuf[JS.byte_range(@something JETLSCore.next_nontrivia(ps, 2; pass_newlines=true))]) == "y"
     end
 
     # Test with comments (comments are considered trivia)
     let code = "x # comment\ny"
         ps = parsedstream(code)
-        @test JS.kind(@something JETLS.next_nontrivia(ps, sizeof("x #"))) == JS.K"NewlineWs"
-        @test String(ps.textbuf[JS.byte_range(@something JETLS.next_nontrivia(ps, sizeof("x #"); pass_newlines=true))]) == "y"
+        @test JS.kind(@something JETLSCore.next_nontrivia(ps, sizeof("x #"))) == JS.K"NewlineWs"
+        @test String(ps.textbuf[JS.byte_range(@something JETLSCore.next_nontrivia(ps, sizeof("x #"); pass_newlines=true))]) == "y"
 
         code = "x \n#= multi-line\ncomment =#\ny"
         ps = parsedstream(code)
-        @test JS.kind(@something JETLS.next_nontrivia(ps, sizeof("x \n#"))) == JS.K"NewlineWs"
-        @test String(ps.textbuf[JS.byte_range(@something JETLS.next_nontrivia(ps, sizeof("x \n#"); pass_newlines=true))]) == "y"
+        @test JS.kind(@something JETLSCore.next_nontrivia(ps, sizeof("x \n#"))) == JS.K"NewlineWs"
+        @test String(ps.textbuf[JS.byte_range(@something JETLSCore.next_nontrivia(ps, sizeof("x \n#"); pass_newlines=true))]) == "y"
     end
 
     let code = "foo(bar)"
         ps = parsedstream(code)
-        @test String(ps.textbuf[JS.byte_range(@something JETLS.next_nontrivia(ps, 1))]) == "foo"
-        @test String(ps.textbuf[JS.byte_range(@something JETLS.next_nontrivia(ps, 4))]) == "("
-        @test String(ps.textbuf[JS.byte_range(@something JETLS.next_nontrivia(ps, 5))]) == "bar"
+        @test String(ps.textbuf[JS.byte_range(@something JETLSCore.next_nontrivia(ps, 1))]) == "foo"
+        @test String(ps.textbuf[JS.byte_range(@something JETLSCore.next_nontrivia(ps, 4))]) == "("
+        @test String(ps.textbuf[JS.byte_range(@something JETLSCore.next_nontrivia(ps, 5))]) == "bar"
     end
 
     let code = "   "
         ps = parsedstream(code)
-        @test isnothing(JETLS.next_nontrivia(ps, 1))
-        @test isnothing(JETLS.next_nontrivia(ps, 1; pass_newlines=true))
+        @test isnothing(JETLSCore.next_nontrivia(ps, 1))
+        @test isnothing(JETLSCore.next_nontrivia(ps, 1; pass_newlines=true))
     end
 
     # Test next_nontrivia_byte accessor function
     let code = "a b"
         ps = parsedstream(code)
-        @test JETLS.next_nontrivia_byte(ps, 1) == 1
-        @test JETLS.next_nontrivia_byte(ps, 2) == 3
-        @test JETLS.next_nontrivia_byte(ps, 3) == 3
+        @test JETLSCore.next_nontrivia_byte(ps, 1) == 1
+        @test JETLSCore.next_nontrivia_byte(ps, 2) == 3
+        @test JETLSCore.next_nontrivia_byte(ps, 3) == 3
     end
 
     # Test with strict=true option
@@ -424,56 +424,56 @@ end
 
         ps = parsedstream(code)
         # At 'x'
-        @test JETLS.next_nontrivia_byte(ps, 1) == 1
-        @test JETLS.next_nontrivia_byte(ps, 1; strict=true) == sizeof(code_til_first_newline)
+        @test JETLSCore.next_nontrivia_byte(ps, 1) == 1
+        @test JETLSCore.next_nontrivia_byte(ps, 1; strict=true) == sizeof(code_til_first_newline)
 
         # At space after 'x'
-        @test JETLS.next_nontrivia_byte(ps, 2) == sizeof(code_til_first_newline)
-        @test JETLS.next_nontrivia_byte(ps, 2; strict=true) == sizeof(code_til_first_newline)
+        @test JETLSCore.next_nontrivia_byte(ps, 2) == sizeof(code_til_first_newline)
+        @test JETLSCore.next_nontrivia_byte(ps, 2; strict=true) == sizeof(code_til_first_newline)
 
         # At the first newline
-        @test JETLS.next_nontrivia_byte(ps, sizeof(code_til_first_newline)) == sizeof(code_til_first_newline)
-        @test JETLS.next_nontrivia_byte(ps, sizeof(code_til_first_newline); strict=true) == sizeof(code_til_first_newline)+1
+        @test JETLSCore.next_nontrivia_byte(ps, sizeof(code_til_first_newline)) == sizeof(code_til_first_newline)
+        @test JETLSCore.next_nontrivia_byte(ps, sizeof(code_til_first_newline); strict=true) == sizeof(code_til_first_newline)+1
 
         # At `y`
-        @test JETLS.next_nontrivia_byte(ps, sizeof(code_til_first_newline)+1) == sizeof(code_til_first_newline)+1
-        @test JETLS.next_nontrivia_byte(ps, sizeof(code_til_first_newline)+1; strict=true) == sizeof(code_til_second_newline)
-        @test JETLS.next_nontrivia_byte(ps, sizeof(code_til_first_newline)+1; pass_newlines=true, strict=true) == sizeof(code_til_second_newline)+1 # z
+        @test JETLSCore.next_nontrivia_byte(ps, sizeof(code_til_first_newline)+1) == sizeof(code_til_first_newline)+1
+        @test JETLSCore.next_nontrivia_byte(ps, sizeof(code_til_first_newline)+1; strict=true) == sizeof(code_til_second_newline)
+        @test JETLSCore.next_nontrivia_byte(ps, sizeof(code_til_first_newline)+1; pass_newlines=true, strict=true) == sizeof(code_til_second_newline)+1 # z
 
         # At the second newline position
-        @test JETLS.next_nontrivia_byte(ps, sizeof(code_til_second_newline)) == sizeof(code_til_second_newline)
-        @test JETLS.next_nontrivia_byte(ps, sizeof(code_til_second_newline); strict=true) == sizeof(code_til_second_newline)+1 # z
+        @test JETLSCore.next_nontrivia_byte(ps, sizeof(code_til_second_newline)) == sizeof(code_til_second_newline)
+        @test JETLSCore.next_nontrivia_byte(ps, sizeof(code_til_second_newline); strict=true) == sizeof(code_til_second_newline)+1 # z
 
         # At 'z'
-        @test JETLS.next_nontrivia_byte(ps, sizeof(code)) == sizeof(code)
-        @test isnothing(JETLS.next_nontrivia_byte(ps, sizeof(code); strict=true))
+        @test JETLSCore.next_nontrivia_byte(ps, sizeof(code)) == sizeof(code)
+        @test isnothing(JETLSCore.next_nontrivia_byte(ps, sizeof(code); strict=true))
     end
 end
 
 @testset "get_line_indent" begin
     let code = "export a, b"
-        fi = JETLS.FileInfo(#=version=#0, code, @__FILE__)
-        @test JETLS.get_line_indent(fi, 0) == ""
+        fi = JETLSCore.FileInfo(#=version=#0, code, @__FILE__)
+        @test JETLSCore.get_line_indent(fi, 0) == ""
     end
     let code = "    export a, b"
-        fi = JETLS.FileInfo(#=version=#0, code, @__FILE__)
-        @test JETLS.get_line_indent(fi, 0) == "    "
+        fi = JETLSCore.FileInfo(#=version=#0, code, @__FILE__)
+        @test JETLSCore.get_line_indent(fi, 0) == "    "
     end
     let code = "begin\n    export a, b\nend"
-        fi = JETLS.FileInfo(#=version=#0, code, @__FILE__)
-        @test JETLS.get_line_indent(fi, 0) == ""
+        fi = JETLSCore.FileInfo(#=version=#0, code, @__FILE__)
+        @test JETLSCore.get_line_indent(fi, 0) == ""
     end
     let code = "begin\n    export a, b\nend"
-        fi = JETLS.FileInfo(#=version=#0, code, @__FILE__)
-        @test JETLS.get_line_indent(fi, 1) == "    "
+        fi = JETLSCore.FileInfo(#=version=#0, code, @__FILE__)
+        @test JETLSCore.get_line_indent(fi, 1) == "    "
     end
     let code = "\t\texport a, b"
-        fi = JETLS.FileInfo(#=version=#0, code, @__FILE__)
-        @test JETLS.get_line_indent(fi, 0) == "\t\t"
+        fi = JETLSCore.FileInfo(#=version=#0, code, @__FILE__)
+        @test JETLSCore.get_line_indent(fi, 0) == "\t\t"
     end
     let code = "begin export a, b end"
-        fi = JETLS.FileInfo(#=version=#0, code, @__FILE__)
-        @test JETLS.get_line_indent(fi, 0) == ""
+        fi = JETLSCore.FileInfo(#=version=#0, code, @__FILE__)
+        @test JETLSCore.get_line_indent(fi, 0) == ""
     end
 end
 
@@ -481,35 +481,35 @@ end
     # Query parser flags from source provenance rather than the flag-free EST itself.
     @testset "parsed EST" begin
         let st = jlparse("a + b"; rule=:statement)
-            @test JETLS.is_source_infix_op_call(st)
+            @test JETLSCore.is_source_infix_op_call(st)
         end
         let st = jlparse("-x"; rule=:statement)
-            @test JETLS.is_source_prefix_op_call(st)
+            @test JETLSCore.is_source_prefix_op_call(st)
         end
         let st = jlparse("M'"; rule=:statement)
-            @test JETLS.is_source_postfix_op_call(st)
+            @test JETLSCore.is_source_postfix_op_call(st)
         end
         let st = jlparse("@foo(x)"; rule=:statement)
-            @test JETLS.has_source_flags(st, JS.PARENS_FLAG)
+            @test JETLSCore.has_source_flags(st, JS.PARENS_FLAG)
         end
         let st = jlparse("@foo x"; rule=:statement)
-            @test !JETLS.has_source_flags(st, JS.PARENS_FLAG)
+            @test !JETLSCore.has_source_flags(st, JS.PARENS_FLAG)
         end
     end
     @testset "copied EST" begin
         # `mktree` adds a provenance layer, so flags must come from the end of the chain.
         let st = JS.mktree(jlparse("a + b"; rule=:statement))
-            @test JETLS.is_source_infix_op_call(st)
+            @test JETLSCore.is_source_infix_op_call(st)
         end
     end
 end
 
 @testset "noparen_macrocall" begin
-    @test JETLS.noparen_macrocall(jlparse("@test true"; rule=:statement))
-    @test JETLS.noparen_macrocall(jlparse("@interface AAA begin end"; rule=:statement))
-    @test !JETLS.noparen_macrocall(jlparse("@test(true)"; rule=:statement))
-    @test !JETLS.noparen_macrocall(jlparse("r\"xxx\""; rule=:statement))
-    @test !JETLS.noparen_macrocall(jlparse("cmdmac`xxx`"; rule=:statement))
+    @test JETLSCore.noparen_macrocall(jlparse("@test true"; rule=:statement))
+    @test JETLSCore.noparen_macrocall(jlparse("@interface AAA begin end"; rule=:statement))
+    @test !JETLSCore.noparen_macrocall(jlparse("@test(true)"; rule=:statement))
+    @test !JETLSCore.noparen_macrocall(jlparse("r\"xxx\""; rule=:statement))
+    @test !JETLSCore.noparen_macrocall(jlparse("cmdmac`xxx`"; rule=:statement))
 end
 
 @testset "`remove_macrocalls` resolves macro objects" begin
@@ -520,12 +520,12 @@ end
             "ThreadsAlias.@spawn x",
             "T.@test true")
         st0 = jlparse(code; rule=:statement)
-        transformed = JETLS.remove_macrocalls(new_style_macro_context, world, st0)
+        transformed = JETLSCore.remove_macrocalls(new_style_macro_context, world, st0)
         @test JS.head(transformed) === :macrocall
     end
 
     let st0 = jlparse("@inline x"; rule=:statement)
-        transformed = JETLS.remove_macrocalls(same_named_macro_context, world, st0)
+        transformed = JETLSCore.remove_macrocalls(same_named_macro_context, world, st0)
         @test JS.head(transformed) === :block
     end
 
@@ -536,9 +536,9 @@ end
                 end
             end
             """; rule=:statement)
-        transformed = JETLS.remove_macrocalls(new_style_macro_context, world, st0; strip_static=true)
+        transformed = JETLSCore.remove_macrocalls(new_style_macro_context, world, st0; strip_static=true)
         macrocalls = String[]
-        JETLS.traverse(transformed) do node::JS.SyntaxTree
+        JETLSCore.traverse(transformed) do node::JS.SyntaxTree
             JS.head(node) === :macrocall || return nothing
             push!(macrocalls, JS.sourcetext(node[1]))
             return nothing
@@ -556,9 +556,9 @@ end
                 end
             end
             """; rule=:statement)
-        transformed = JETLS.remove_macrocalls(context_module, world, st0)
+        transformed = JETLSCore.remove_macrocalls(context_module, world, st0)
         macrocalls = String[]
-        JETLS.traverse(transformed) do node::JS.SyntaxTree
+        JETLSCore.traverse(transformed) do node::JS.SyntaxTree
             JS.head(node) === :macrocall || return nothing
             push!(macrocalls, JS.sourcetext(node[1]))
             return nothing
@@ -567,12 +567,12 @@ end
     end
 end
 
-select_target_identifier(code::AbstractString, pos::Int) = JETLS.select_target_identifier(jlparse(code), pos)
+select_target_identifier(code::AbstractString, pos::Int) = JETLSCore.select_target_identifier(jlparse(code), pos)
 function get_target_identifier(code::AbstractString; kwargs...)
-    clean_code, positions = JETLS.get_text_and_positions(code; kwargs...)
+    clean_code, positions = JETLSCore.get_text_and_positions(code; kwargs...)
     @assert length(positions) == 1
-    fi = JETLS.FileInfo(1, clean_code, @__FILE__)
-    target_node = select_target_identifier(clean_code, JETLS.xy_to_offset(fi, positions[1]))
+    fi = JETLSCore.FileInfo(1, clean_code, @__FILE__)
+    target_node = select_target_identifier(clean_code, JETLSCore.xy_to_offset(fi, positions[1]))
     return fi, target_node
 end
 
@@ -583,7 +583,7 @@ end
         fi, node = get_target_identifier(code)
         @test (node !== nothing) && (JS.head(node) === :identifier)
         @test JS.sourcetext(node) == "test_func"
-        let range = JETLS.jsobj_to_range(node, fi)
+        let range = JETLSCore.jsobj_to_range(node, fi)
             @test range.start.line == 0 && range.start.character == 0
             @test range.var"end".line == 0 && range.var"end".character == sizeof("test_func")
         end
@@ -598,7 +598,7 @@ end
         @test length(JS.children(node)) == 2
         @test JS.sourcetext(JS.children(node)[1]) == "obj"
         @test JS.sourcetext(JS.children(node)[2]) == "property"
-        let range = JETLS.jsobj_to_range(node, fi)
+        let range = JETLSCore.jsobj_to_range(node, fi)
             @test range.start.line == 0 && range.start.character == 0
             @test range.var"end".line == 0 && range.var"end".character == sizeof("obj.property")
         end
@@ -610,7 +610,7 @@ end
         fi, node = get_target_identifier(code)
         @test node !== nothing
         @test JS.head(node) === :.
-        let range = JETLS.jsobj_to_range(node, fi)
+        let range = JETLSCore.jsobj_to_range(node, fi)
             @test range.start.line == 0 && range.start.character == 0
             @test range.var"end".line == 0 && range.var"end".character == sizeof("Core.Compiler.tmeet")
         end
@@ -622,7 +622,7 @@ end
         fi, node = get_target_identifier(code)
         @test node !== nothing
         @test JS.head(node) === :.
-        let range = JETLS.jsobj_to_range(node, fi)
+        let range = JETLSCore.jsobj_to_range(node, fi)
             @test range.start.line == 0 && range.start.character == 0
             @test range.var"end".line == 0 && range.var"end".character == sizeof("Core.Compiler")
         end
@@ -634,7 +634,7 @@ end
         fi, node = get_target_identifier(code)
         @test node !== nothing
         @test JS.head(node) === :identifier
-        let range = JETLS.jsobj_to_range(node, fi)
+        let range = JETLSCore.jsobj_to_range(node, fi)
             @test range.start.line == 0 && range.start.character == 0
             @test range.var"end".line == 0 && range.var"end".character == sizeof("Core")
         end
@@ -646,7 +646,7 @@ end
         fi, node = get_target_identifier(code)
         @test node !== nothing
         @test JS.head(node) === :identifier
-        let range = JETLS.jsobj_to_range(node, fi)
+        let range = JETLSCore.jsobj_to_range(node, fi)
             @test range.start.line == 0 && range.start.character == 0 # include @-mark
             @test range.var"end".line == 0 && range.var"end".character == sizeof("@inline")
         end
@@ -657,7 +657,7 @@ end
         """
         fi, node = get_target_identifier(code)
         @test node !== nothing
-        let range = JETLS.jsobj_to_range(node, fi)
+        let range = JETLSCore.jsobj_to_range(node, fi)
             @test range.start.line == 0 && range.start.character == 0 # include `Base.`
             @test range.var"end".line == 0 && range.var"end".character == sizeof("Base.@inline")
         end
@@ -668,7 +668,7 @@ end
         """
         fi, node = get_target_identifier(code)
         @test node !== nothing
-        let range = JETLS.jsobj_to_range(node, fi)
+        let range = JETLSCore.jsobj_to_range(node, fi)
             @test range.start.line == 0 && range.start.character == 0
             @test range.var"end".line == 0 && range.var"end".character == sizeof("text")
         end
@@ -691,16 +691,16 @@ end
     end
 end
 
-select_target_string(code::AbstractString, pos::Int) = JETLS.select_target_string(jlparse(code), pos)
+select_target_string(code::AbstractString, pos::Int) = JETLSCore.select_target_string(jlparse(code), pos)
 function get_target_string(code::AbstractString; kwargs...)
-    clean_code, positions = JETLS.get_text_and_positions(code; kwargs...)
+    clean_code, positions = JETLSCore.get_text_and_positions(code; kwargs...)
     @assert length(positions) == 1
-    return select_target_string(clean_code, JETLS.xy_to_offset(clean_code, positions[1], @__FILE__))
+    return select_target_string(clean_code, JETLSCore.xy_to_offset(clean_code, positions[1], @__FILE__))
 end
 @testset "`select_target_string`" begin
     let node = get_target_string("include(\"fo│o.jl\")")
         @test node !== nothing
-        @test JETLS.is_string_literal(node)
+        @test JETLSCore.is_string_literal(node)
         @test node.value == "foo.jl"
     end
     let node = get_target_string("x = \"hello│ world\"")
@@ -711,12 +711,12 @@ end
     @test isnothing(get_target_string("foo│()"))
 end
 
-select_enclosing_call(code::AbstractString, pos::Int) = JETLS.select_enclosing_call(jlparse(code), pos)
+select_enclosing_call(code::AbstractString, pos::Int) = JETLSCore.select_enclosing_call(jlparse(code), pos)
 function get_enclosing_call(code::AbstractString; kwargs...)
-    clean_code, positions = JETLS.get_text_and_positions(code; kwargs...)
+    clean_code, positions = JETLSCore.get_text_and_positions(code; kwargs...)
     @assert length(positions) == 1
-    fi = JETLS.FileInfo(1, clean_code, @__FILE__)
-    return select_enclosing_call(clean_code, JETLS.xy_to_offset(fi, positions[1]))
+    fi = JETLSCore.FileInfo(1, clean_code, @__FILE__)
+    return select_enclosing_call(clean_code, JETLSCore.xy_to_offset(fi, positions[1]))
 end
 @testset "`select_enclosing_call`" begin
     # cursor right after `)` resolves via the `offset - 1` retry
@@ -805,12 +805,12 @@ end
 end
 
 select_target_for_type_query(code::AbstractString, pos::Int) =
-    JETLS.select_target_for_type_query(jlparse(code), pos)
+    JETLSCore.select_target_for_type_query(jlparse(code), pos)
 function get_target_for_type_query(code::AbstractString; kwargs...)
-    clean_code, positions = JETLS.get_text_and_positions(code; kwargs...)
+    clean_code, positions = JETLSCore.get_text_and_positions(code; kwargs...)
     @assert length(positions) == 1
-    fi = JETLS.FileInfo(1, clean_code, @__FILE__)
-    return select_target_for_type_query(clean_code, JETLS.xy_to_offset(fi, positions[1]))
+    fi = JETLSCore.FileInfo(1, clean_code, @__FILE__)
+    return select_target_for_type_query(clean_code, JETLSCore.xy_to_offset(fi, positions[1]))
 end
 @testset "`select_target_for_type_query`" begin
     # identifier path mirrors `select_target_identifier`
@@ -851,11 +851,11 @@ end
     @test isnothing(get_target_for_type_query("│"))
 end
 
-get_dotprefix_identifier(code::AbstractString, pos::Int) = JETLS.select_dotprefix_identifier(jlparse(code), pos)
+get_dotprefix_identifier(code::AbstractString, pos::Int) = JETLSCore.select_dotprefix_identifier(jlparse(code), pos)
 function get_dotprefix_identifier(code::AbstractString; kwargs...)
-    clean_code, positions = JETLS.get_text_and_positions(code; kwargs...)
+    clean_code, positions = JETLSCore.get_text_and_positions(code; kwargs...)
     @assert length(positions) == 1
-    return get_dotprefix_identifier(clean_code, JETLS.xy_to_offset(clean_code, positions[1], @__FILE__))
+    return get_dotprefix_identifier(clean_code, JETLSCore.xy_to_offset(clean_code, positions[1], @__FILE__))
 end
 @testset "`select_dotprefix_identifier`" begin
     @test isnothing(get_dotprefix_identifier("isnothing│"))
@@ -889,7 +889,7 @@ end
 end
 
 @testset "`try_extract_field_line`" begin
-    let fieldline = JETLS.try_extract_field_line(jsparse("""
+    let fieldline = JETLSCore.try_extract_field_line(jsparse("""
             struct A
                 xs::Vector{Int}
             end
@@ -897,7 +897,7 @@ end
         @test !isnothing(fieldline)
         @test JS.sourcetext(fieldline) == "xs::Vector{Int}"
     end
-    let fieldline = JETLS.try_extract_field_line(jsparse("""
+    let fieldline = JETLSCore.try_extract_field_line(jsparse("""
             struct A{T}
                 xs::Vector{T}
             end
@@ -905,7 +905,7 @@ end
         @test !isnothing(fieldline)
         @test JS.sourcetext(fieldline) == "xs::Vector{T}"
     end
-    let fieldline = JETLS.try_extract_field_line(jsparse("""
+    let fieldline = JETLSCore.try_extract_field_line(jsparse("""
             struct A <: AbstractVector{Int}
                 xs::Vector{Int}
             end
@@ -913,7 +913,7 @@ end
         @test !isnothing(fieldline)
         @test JS.sourcetext(fieldline) == "xs::Vector{Int}"
     end
-    let fieldline = JETLS.try_extract_field_line(jsparse("""
+    let fieldline = JETLSCore.try_extract_field_line(jsparse("""
             struct A{T} <: AbstractVector{T}
                 xs::Vector{T}
             end
@@ -921,7 +921,7 @@ end
         @test !isnothing(fieldline)
         @test JS.sourcetext(fieldline) == "xs::Vector{T}"
     end
-    let fieldline = JETLS.try_extract_field_line(jsparse("""
+    let fieldline = JETLSCore.try_extract_field_line(jsparse("""
             mutable struct A
                 x::Int
             end
@@ -929,7 +929,7 @@ end
         @test !isnothing(fieldline)
         @test JS.sourcetext(fieldline) == "x::Int"
     end
-    let fieldline = JETLS.try_extract_field_line(jsparse("""
+    let fieldline = JETLSCore.try_extract_field_line(jsparse("""
             mutable struct A
                 const x::Int
             end
@@ -937,7 +937,7 @@ end
         @test !isnothing(fieldline)
         @test JS.sourcetext(fieldline) == "const x::Int"
     end
-    let fieldline = JETLS.try_extract_field_line(jsparse("""
+    let fieldline = JETLSCore.try_extract_field_line(jsparse("""
             struct A
                 xs
             end
@@ -945,7 +945,7 @@ end
         @test !isnothing(fieldline)
         @test JS.sourcetext(fieldline) == "xs"
     end
-    let fieldline = JETLS.try_extract_field_line(jsparse("""
+    let fieldline = JETLSCore.try_extract_field_line(jsparse("""
             begin
                 struct A
                     xs
@@ -962,8 +962,8 @@ end
                 end
             end
         """)
-        @test isnothing(JETLS.try_extract_field_line(node, :A, :xs))
-        fieldline = JETLS.try_extract_field_line(node, :A, :xs; interpolated=true)
+        @test isnothing(JETLSCore.try_extract_field_line(node, :A, :xs))
+        fieldline = JETLSCore.try_extract_field_line(node, :A, :xs; interpolated=true)
         @test !isnothing(fieldline)
         @test JS.sourcetext(fieldline) == "xs::Vector{Int}"
     end
@@ -971,7 +971,7 @@ end
 
 @testset "iterate_toplevel_tree" begin
     let cnt = Ref(0), func1 = Ref(false), struct1 = Ref(false)
-        JETLS.iterate_toplevel_tree(jlparse("""
+        JETLSCore.iterate_toplevel_tree(jlparse("""
             module Module1
             func1(x) = x
             struct Struct1 end
@@ -995,7 +995,7 @@ end
     let cnt = Ref(0), func1 = Ref(false), struct1 = Ref(false),
         outer_doc = Ref{Union{Nothing,JS.SyntaxTree}}(nothing),
         inner_doc = Ref{Union{Nothing,JS.SyntaxTree}}(nothing)
-        JETLS.iterate_toplevel_tree(jlparse("""
+        JETLSCore.iterate_toplevel_tree(jlparse("""
             \"\"\"
             Docstring for `module Module1`
             \"\"\"
@@ -1010,7 +1010,7 @@ end
             cnt[] += 1
             if JS.head(st0) === :string
                 inner_doc[] = st0
-            elseif JETLS.is_string_literal(st0)
+            elseif JETLSCore.is_string_literal(st0)
                 outer_doc[] = st0
             else
                 s = JS.sourcetext(st0)
@@ -1027,7 +1027,7 @@ end
         doc = inner_doc[]
         @test doc !== nothing
         @test any(JS.children(doc)) do c
-            JS.head(c) === :identifier && JETLS.get_name_val(c) == "SIGNATURES"
+            JS.head(c) === :identifier && JETLSCore.get_name_val(c) == "SIGNATURES"
         end
     end
 end
@@ -1047,7 +1047,7 @@ end
     # The repaired tree must be acceptable to scope-resolution lowering;
     # otherwise the repair didn't achieve its purpose.
     lowers_ok(st) = try
-        JETLS.jl_lower_for_scope_resolution(@__MODULE__, Base.get_world_counter(), st;
+        JETLSCore.jl_lower_for_scope_resolution(@__MODULE__, Base.get_world_counter(), st;
             trim_error_nodes=false, recover_from_macro_errors=false)
         return true
     catch
@@ -1057,7 +1057,7 @@ end
     # `:.`: `(. lhs (inert (error)))` collapses to `lhs` so the surrounding
     # tree stays usable for downstream lowering / type queries.
     let st = jlparse("function f(binfo); g(binfo.); end")
-        trimmed = JETLS.trim_error_nodes(st)
+        trimmed = JETLSCore.trim_error_nodes(st)
         @test find_first_head(trimmed, :error) === nothing
         @test find_first_head(trimmed, :.) === nothing
         call = find_first_head(trimmed, :call)
@@ -1065,18 +1065,18 @@ end
         # `g(binfo)` after repair → `(call g binfo)`.
         @test JS.numchildren(call) == 2
         @test JS.head(call[2]) === :identifier
-        @test JETLS.get_name_val(call[2]) == "binfo"
+        @test JETLSCore.get_name_val(call[2]) == "binfo"
         @test lowers_ok(trimmed)
     end
 
     # `:&&` / `:||`: 1-child residue collapses to the surviving operand.
     let st = jlparse("function f(a); g(a && ); end")
-        trimmed = JETLS.trim_error_nodes(st)
+        trimmed = JETLSCore.trim_error_nodes(st)
         @test find_first_head(trimmed, :&&) === nothing
         @test lowers_ok(trimmed)
     end
     let st = jlparse("function f(a); g(a || ); end")
-        trimmed = JETLS.trim_error_nodes(st)
+        trimmed = JETLSCore.trim_error_nodes(st)
         @test find_first_head(trimmed, :||) === nothing
         @test lowers_ok(trimmed)
     end
@@ -1085,24 +1085,24 @@ end
     # prefix form `f(::T)` is preserved. Disambiguation recovers the parser's
     # infix/prefix flag from source provenance after trimming.
     let st = jlparse("function f(); g(binfo::); end")
-        trimmed = JETLS.trim_error_nodes(st)
+        trimmed = JETLSCore.trim_error_nodes(st)
         @test find_first_head(trimmed, :(::)) === nothing
         @test lowers_ok(trimmed)
     end
     let st = jlparse("f(::Int) = 1")
-        trimmed = JETLS.trim_error_nodes(st)
+        trimmed = JETLSCore.trim_error_nodes(st)
         ascription = find_first_head(trimmed, :(::))
         @test ascription !== nothing
-        @test JETLS.is_source_prefix_op_call(ascription)
+        @test JETLSCore.is_source_prefix_op_call(ascription)
         @test JS.numchildren(ascription) == 1
         @test JS.head(ascription[1]) === :identifier
-        @test JETLS.get_name_val(ascription[1]) == "Int"
+        @test JETLSCore.get_name_val(ascription[1]) == "Int"
         @test lowers_ok(trimmed)
     end
 
     # No-op on well-formed input: every legitimate shape passes through unchanged.
     let st = jlparse("function f(a::Int, b); a.x + (a && b) || a; end")
-        @test JETLS.trim_error_nodes(st) === st
+        @test JETLSCore.trim_error_nodes(st) === st
     end
 end
 
@@ -1111,12 +1111,12 @@ end
             st::JS.SyntaxTree -> JS.setmeta!(st[1], :mutated, true),
             st::JS.SyntaxTree -> push!(JS.children(st[1]), st[1][1]),
             st::JS.SyntaxTree -> setfield!(st[1][1], :value, :mutated))
-        fi = JETLS.FileInfo(#=version=#1, "f(x) = x + 1", "test.jl"; cache_tree0=true)
-        @test JETLS.build_syntax_tree(fi) === fi.syntax_tree0
-        @test JETLS.check_syntax_tree0(fi) === nothing
+        fi = JETLSCore.FileInfo(#=version=#1, "f(x) = x + 1", "test.jl"; cache_tree0=true)
+        @test JETLSCore.build_syntax_tree(fi) === fi.syntax_tree0
+        @test JETLSCore.check_syntax_tree0(fi) === nothing
         mutate!(fi.syntax_tree0::JS.SyntaxTree)
-        @test_throws ErrorException JETLS.check_syntax_tree0(fi)
-        @test_throws ErrorException JETLS.build_syntax_tree(fi)
+        @test_throws ErrorException JETLSCore.check_syntax_tree0(fi)
+        @test_throws ErrorException JETLSCore.build_syntax_tree(fi)
     end
 end
 
