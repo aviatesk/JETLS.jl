@@ -209,3 +209,7 @@ module __demo__; const JETLSCore = parentmodule(@__MODULE__); end
         end
     end
 end
+
+# The `JETLS` app package enters this package through `invokelatest` on this signature,
+# which the workload above does not cache on its own
+precompile(run_command, (String, Vector{String}, String, Module))
