@@ -329,7 +329,7 @@ are reported only once full analysis has established the module context of the
 file. JETLS then refreshes the live diagnostics to include them, so they appear
 without further edits. Global names are likewise resolved against the
 definitions that full analysis has loaded, except that completion of global
-names also offers the global names defined by the current contents of files in
+names also offers the global names defined by the current contents of files
 in the same analysis unit. Hover and type inlay hints also run type inference
 on the current top-level form on demand in that context.
 
