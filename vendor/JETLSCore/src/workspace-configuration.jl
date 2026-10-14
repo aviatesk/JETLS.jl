@@ -1,0 +1,154 @@
+const WORKSPACE_CONFIGURATION_NAMESPACE = "jetls"
+
+struct LoadLSPConfigHandler
+    server::Server
+    source::String
+    on_init::Bool
+end
+
+function (handler::LoadLSPConfigHandler)(server::Server, @nospecialize(config_value))
+    tracker = ConfigChangeTracker()
+    if config_value === nothing
+        delete_lsp_config!(tracker, server)
+    else
+        store_lsp_config!(tracker, server, config_value, handler.source)
+    end
+    handle_lsp_config_change!(server, tracker, handler.source, handler.on_init)
+end
+
+struct WorkspaceConfigurationCaller <: RequestCaller
+    handler::LoadLSPConfigHandler
+end
+
+function request_workspace_configuration(
+        handler::LoadLSPConfigHandler,
+        server::Server,
+        section::Union{Nothing,String}=nothing
+    )
+    id = unique_id("WorkspaceConfigurationRequest")
+    addrequest!(server, id=>WorkspaceConfigurationCaller(handler))
+    return send(server, ConfigurationRequest(;
+        id,
+        params = ConfigurationParams(;
+            items = ConfigurationItem[ConfigurationItem(; section)])))
+end
+
+function handle_workspace_configuration_response(
+        server::Server, msg::Dict{Symbol,Any}, caller::WorkspaceConfigurationCaller
+    )
+    if handle_response_error(server, msg, "workspace/configuration")
+    elseif haskey(msg, :result)
+        result = msg[:result]
+        if result isa Vector && !isempty(result)
+            config_value = first(result)
+            caller.handler(server, config_value)
+        elseif @static JETLS_DEV_MODE ? true : false
+            @info "workspace/configuration returned empty result"
+        end
+    else
+        show_error_message(server, "Unexpected response from workspace/configuration request")
+    end
+    # Complete initialization with existing settings so a failed or empty response
+    # does not keep later configuration change notifications suppressed.
+    if caller.handler.on_init && !load(server.state.config_manager).initialized
+        handle_lsp_config_change!(server, ConfigChangeTracker(), caller.handler.source, true)
+    end
+end
+
+function load_lsp_config!(server::Server, source::AbstractString; on_init::Bool=false)
+    handler = LoadLSPConfigHandler(server, source, on_init)
+    request_workspace_configuration(handler, server, WORKSPACE_CONFIGURATION_NAMESPACE)
+    nothing
+end
+
+unmatched_key_in_lsp_config_msg(path::Vector{String}) =
+    unmatched_key_msg("LSP configuration contains an unknown key:", path)
+
+function store_lsp_config!(tracker::ConfigChangeTracker, server::Server, @nospecialize(config_value), source::AbstractString)
+    config_value === nothing && return delete_lsp_config!(tracker, server)
+    config_dict = try
+        validate_config_data(config_value)
+    catch err
+        err isa InvalidConfigDataError || rethrow(err)
+        error_message = sprint(locked_showerror, err)
+        show_error_message(server,
+            lazy"Unexpected config data was passed from $source, deleting LSP configuration: $error_message")
+        return delete_lsp_config!(tracker, server)
+    end
+    for msg in migrate_deprecated_config!(config_dict)
+        show_warning_message(server, msg)
+    end
+    store!(server.state.config_manager) do old_data::ConfigManagerData
+        new_lsp_config = parse_config_dict(config_dict)
+        if new_lsp_config isa AbstractString
+            show_error_message(server, new_lsp_config)
+            return old_data, nothing
+        end
+        new_data = ConfigManagerData(old_data; lsp_config=new_lsp_config)
+        track_setting_changes(tracker, old_data.settings, new_data.settings)
+        return new_data, nothing
+    end
+end
+
+function delete_lsp_config!(tracker::ConfigChangeTracker, server::Server)
+    store!(server.state.config_manager) do old_data::ConfigManagerData
+        new_data = ConfigManagerData(old_data; lsp_config=EMPTY_CONFIG)
+        track_setting_changes(tracker, old_data.settings, new_data.settings)
+        return new_data, nothing
+    end
+end
+
+function load_lsp_config!(
+        server::Server, @nospecialize(settings), source::AbstractString;
+        on_init::Bool = false
+    )
+    if supports(server, :workspace, :configuration)
+        load_lsp_config!(server, source; on_init)
+    else
+        tracker = ConfigChangeTracker()
+        store_lsp_config!(tracker, server, settings, source)
+        handle_lsp_config_change!(server, tracker, source, on_init)
+    end
+end
+
+function handle_lsp_config_change!(server::Server, tracker::ConfigChangeTracker, source::AbstractString, on_init::Bool)
+    if on_init
+        initialize_config!(server.state.config_manager)
+    elseif load(server.state.config_manager).initialized
+        # Don't notify even if values different from defaults are loaded on initialization
+        # N.B. We can't just use `!on_init` here because our server is concurrent,
+        # and `workspace/didChangeConfiguration` may be handled before the initial `workspace/configuration`.
+        notify_config_changes(server, tracker, source)
+    end
+    apply_config_changes!(server, tracker)
+end
+
+function handle_DidChangeConfigurationNotification(server::Server, msg::DidChangeConfigurationNotification)
+    source = "[LSP] workspace/didChangeConfiguration"
+    # In a case when client doesn't support the pull model configuration,
+    # use `msg.params.settings` as the fallback
+    load_lsp_config!(server, msg.params.settings, source)
+end
+
+"""
+    did_change_configuration_registration(server::Server) -> Registration
+    did_change_configuration_registration(init_options::InitOptions) -> Registration
+
+Dynamic registration of `workspace/didChangeConfiguration`. When the client
+declares the configuration section it stores JETLS settings under (via the
+`configuration_section` initialization option), register with that `section`
+so clients honoring `DidChangeConfigurationRegistrationOptions` only send the
+notification when the relevant settings actually change. Without the
+declaration, register without a section filter, i.e. clients are expected to
+send the notification for any configuration change.
+"""
+function did_change_configuration_registration(init_options::InitOptions)
+    section = init_options.configuration_section
+    return Registration(;
+        id = unique_id("DidChangeConfigurationRegistration"),
+        method = "workspace/didChangeConfiguration",
+        registerOptions = section === nothing ? nothing :
+            DidChangeConfigurationRegistrationOptions(; section))
+end
+did_change_configuration_registration(server::Server) =
+    did_change_configuration_registration(server.state.init_options)

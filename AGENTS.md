@@ -82,7 +82,7 @@ so they use underscores.
   ...
   ```
 
-- When modifying config structs in `src/types.jl`, follow the schema
+- When modifying config structs in `JETLSCore/src/types.jl`, follow the schema
   regeneration procedure in [DEVELOPMENT.md](./DEVELOPMENT.md#configuration-schema).
 
 - Avoid unnecessary logs:
@@ -121,10 +121,10 @@ This is run in CI and will cause failures if new warnings are introduced.
 
 To check only some of the packages in this repository, pass their names with
 `-p`, which may be repeated. Include the packages that depend on the changed
-ones as well, e.g. `JETLS` when changing `LSP` or `TOMLSource`:
+ones as well, e.g. `JETLSCore` when changing `LSP` or `TOMLSource`:
 
 ```bash
-./scripts/selfcheck.sh -p JETLS -p LSP
+./scripts/selfcheck.sh -p JETLSCore -p LSP
 ```
 
 See `./scripts/selfcheck.sh --help` for the package names and other options.
@@ -153,8 +153,9 @@ use the [`write-test`](./.agents/skills/write-test/SKILL.md) skill.
 
 # Environment-related issues
 
-For AI agents: never modify [`Project.toml`](./Project.toml) or
-[`test/Project.toml`](./test/Project.toml) by yourself.
+For AI agents: never modify [`Project.toml`](./Project.toml),
+[`JETLSCore/Project.toml`](./JETLSCore/Project.toml), or
+[`JETLSCore/test/Project.toml`](./JETLSCore/test/Project.toml) by yourself.
 
 If test failures look environment-related, first ensure the test was run from
 the root directory of this project. Never attempt dependency or project-file

@@ -1,3 +1,0 @@
-To run a specific test file, such as test_xxx.jl, from the command line, use
-
-   julia runtests.jl xxx

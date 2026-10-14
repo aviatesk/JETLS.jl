@@ -99,8 +99,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `VirtualProcessResult.toplevel_warning_reports`, a
   `Vector{ToplevelWarningReport}`, and are not also emitted as `@warn` logs.
   Parser warnings now produce nonfatal `ParseWarningReport`s. Unsupported
-  `include(mapexpr, filename)` calls produce `UnsupportedFeatureReport`s and
-  analyze the included file without applying `mapexpr`.
+  `include(mapexpr, filename)` and `Base.include(mapexpr, mod, filename)` calls
+  produce `UnsupportedFeatureReport`s and analyze the included file without
+  applying `mapexpr`, in the current or explicitly specified module,
+  respectively.
 
 - The explanatory text of top-level reports is wrapped at 90 columns, or at
   the terminal width when results are shown in a narrower REPL. Error
@@ -143,6 +145,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is attached to an expression that cannot be documented, such as an `if`
   block. The analysis now stops with the error that Julia raises for such
   code, `cannot document the following expression`.
+
+- Fixed top-level analysis concretizing the code after a `try` block, such as
+  a `Base.ScopedValues.@with` block, within the block's exception handler and
+  dynamic scope when the block contains definitions. Such code could read the
+  scoped values set by the block, and an error thrown by it ran the code after
+  the block again.
+
+- Fixed a `WARNING: Detected access to binding ... in a world prior to its
+  definition world` message that top-level analysis (e.g. `report_file`) could
+  print when reading a constant declared earlier in the same top-level block,
+  such as a `global const` inside a `let` block.
+
+- Fixed a `WARNING: Detected access to binding ... in a world prior to its
+  definition world` message that `report_opt` could print when reporting a
+  runtime dispatch to a function defined after JET was loaded.
+
+- Fixed top-level analysis treating any function named `include` as Julia's
+  file loader instead of executing its body. Custom wrappers now run their
+  own logic, such as path transformations, before calls to the standard
+  `include` are intercepted during recursive interpretation.
+
+- Fixed printing of a report about an `include` call with arguments that no
+  `include` method accepts, such as `include(Symbol("file.jl"))`, which threw
+  a `TypeError` instead of showing the `MethodError`.
+
+- Fixed reports about an `include` call, such as a failure to read the
+  included file or a `RecursiveIncludeErrorReport`, pointing to the first line
+  of the enclosing top-level statement when the call is inside a block or a
+  function. They now point to the line of the `include` call, or to the line
+  that calls the enclosing function when that function is defined in another
+  file.
+
+- Fixed reports in code checked by Test.jl macros, such as the body of a
+  `@testset` or a multi-line `@test` expression, pointing to the first line of
+  the enclosing top-level statement since 0.12.1. They now point to the line
+  of the reported code.
 
 ## [0.12.3]
 

@@ -1,4 +1,4 @@
-name: Test app commands
+name: Test jetls app
 
 on:
   workflow_call:
@@ -37,17 +37,17 @@ jobs:
           using Pkg
           app_project = joinpath(first(DEPOT_PATH), "environments", "apps", "JETLS")
           Pkg.activate(app_project)
-          using JETLS
-          @assert !JETLS.JETLS_DEV_MODE
-          @assert !JETLS.JETLS_TEST_MODE
-          @assert JETLS.PrecompileTools.workload_enabled(JETLS)
+          using JETLSCore
+          @assert !JETLSCore.JETLS_DEV_MODE
+          @assert !JETLSCore.JETLS_TEST_MODE
+          @assert JETLSCore.PrecompileTools.workload_enabled(JETLSCore)
       - name: Test installed executable
         run: |
           julia_version="$(julia --startup-file=no -e 'print(VERSION)')"
           test "$(jetls --version)" = "jetls version $(cat JETLS_VERSION), julia version $julia_version"
 
-  test_jetls_serve:
-    name: Test jetls serve
+  test_app_commands:
+    name: Test jetls app commands
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -57,51 +57,6 @@ jobs:
           arch: x64
       - uses: julia-actions/cache@v3
       - uses: julia-actions/julia-buildpkg@latest
-      - name: run test
-        run: |
-          julia --startup-file=no --project=./test ./test/app/test_jetls_serve.jl
-
-  test_jetls_check:
-    name: Test jetls check
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: julia-actions/setup-julia@v3
+      - uses: julia-actions/julia-runtest@latest
         with:
-          version: "1" # most stable version
-          arch: x64
-      - uses: julia-actions/cache@v3
-      - uses: julia-actions/julia-buildpkg@latest
-      - name: run test
-        run: |
-          julia --startup-file=no --project=./test ./test/app/test_jetls_check.jl
-
-  test_jetls_test:
-    name: Test jetls test
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: julia-actions/setup-julia@v3
-        with:
-          version: "1" # most stable version
-          arch: x64
-      - uses: julia-actions/cache@v3
-      - uses: julia-actions/julia-buildpkg@latest
-      - name: run test
-        run: |
-          julia --startup-file=no --project=./test ./test/app/test_jetls_test.jl
-
-  test_jetls_schema:
-    name: Test jetls schema
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: julia-actions/setup-julia@v3
-        with:
-          version: "1" # most stable version
-          arch: x64
-      - uses: julia-actions/cache@v3
-      - uses: julia-actions/julia-buildpkg@latest
-      - name: run test
-        run: |
-          julia --startup-file=no --project=./test ./test/app/test_jetls_schema.jl
+          coverage: false

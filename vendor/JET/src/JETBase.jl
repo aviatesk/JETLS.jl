@@ -51,7 +51,7 @@ using LoweredCodeUtils: LoweredCodeUtils, add_ssa_preds!, callee_matches
 
 using JuliaInterpreter: Frame, Interpreter, JuliaInterpreter, _INACTIVE_EXCEPTION
 
-using MacroTools: @capture, normalise, striplines
+using MacroTools: @capture, @q, normalise, striplines
 
 using InteractiveUtils: InteractiveUtils
 
@@ -217,6 +217,9 @@ end
 const State     = Union{InferenceState,OptimizedIRState}
 const StateAtPC = Tuple{State,Int}
 const LineTable = Union{Vector{Any},Vector{LineInfoNode}}
+
+analysis_world(sv::InferenceState) = sv.world.this
+analysis_world(sv::OptimizedIRState) = CC.get_inference_world(sv.opt.inlining.interp)
 
 get_stmt((sv, pc)::Tuple{InferenceState,Int}) = sv.src.code[pc]
 get_stmt((sv, pc)::Tuple{OptimizedIRState,Int}) = sv.ir.stmts[pc][:stmt]
@@ -418,6 +421,7 @@ function run_signature_analysis_jobs!(
 end
 
 include("toplevel/virtualprocess.jl")
+include("toplevel/test-macros.jl")
 
 # results
 # =======

@@ -1,0 +1,696 @@
+# Document synchronization
+# ========================
+
+const NOTEBOOK_DOCUMENT_SYNC_REGISTRATION_ID = "jetls-notebook-document-sync"
+const NOTEBOOK_DOCUMENT_SYNC_REGISTRATION_METHOD = "notebookDocument/sync"
+
+notebook_document_sync_selector() =
+    NotebookDocumentSyncOptionsNotebookSelectorItem[
+        NotebookDocumentSyncOptionsNotebookSelectorItem(;
+            notebook = "jupyter-notebook",
+            cells = NotebookDocumentSyncOptionsNotebookSelectorCellsItem[
+                NotebookDocumentSyncOptionsNotebookSelectorCellsItem(; language = "julia")])]
+
+function notebook_document_sync_options()
+    return NotebookDocumentSyncOptions(;
+        notebookSelector = notebook_document_sync_selector(),
+        save = true)
+end
+
+function notebook_document_sync_registration()
+    return Registration(;
+        id = NOTEBOOK_DOCUMENT_SYNC_REGISTRATION_ID,
+        method = NOTEBOOK_DOCUMENT_SYNC_REGISTRATION_METHOD,
+        registerOptions = NotebookDocumentSyncRegistrationOptions(;
+            notebookSelector = notebook_document_sync_selector(),
+            save = true))
+end
+
+get_notebook_info(state::ServerState, uri::URI, default=nothing) =
+    get(load(state.notebook_cache), uri, default)
+
+get_notebook_uri_for_cell(state::ServerState, cell_uri::URI, default=nothing) =
+    get(load(state.cell_to_notebook), cell_uri, default)
+
+# Per-file caches (`document_symbol_cache`, `binding_occurrences_cache`,
+# `per_file_diagnostics_cache`) key on a single canonical URI per logical file.
+# For notebooks, every cell URI shares the same concat-source `FileInfo`, so the
+# canonical key is the notebook URI. Cache accessors and their invalidations
+# both run input through this helper so reads, writes, and invalidations always
+# meet on the same key.
+canonical_cache_uri(state::ServerState, uri::URI) =
+    something(get_notebook_uri_for_cell(state, uri), uri)
+
+"""
+    notebook_cell_version(state::ServerState, cell_uri::URI) -> Union{Int,Nothing}
+
+Return the client-tracked text-document version of the notebook cell identified by
+`cell_uri`, or `nothing` if `cell_uri` is not a known notebook cell. This is the per-cell
+version the client expects in edits, as opposed to the notebook-document version stored in
+the cell's concat-source `FileInfo`.
+"""
+function notebook_cell_version(state::ServerState, cell_uri::URI)
+    notebook_uri = @something get_notebook_uri_for_cell(state, cell_uri) return nothing
+    notebook_info = @something get_notebook_info(state, notebook_uri) return nothing
+    for cell in notebook_info.cells
+        cell.uri == cell_uri && return cell.version
+    end
+    return nothing
+end
+
+function concatenate_cells(cells::Vector{NotebookCellInfo})
+    source = ""
+    cell_ranges = CellRange[]
+    current_line = 0
+    for cell in cells
+        cell.kind == NotebookCellKind.Code || continue
+        isempty(cell.text) && continue
+        if !isempty(cell_ranges)
+            # A blank line keeps a string ending the previous cell from being parsed as
+            # the docstring of this cell's first expression; cells are evaluated separately.
+            source *= "\n"
+            current_line += 1
+        end
+        source *= cell.text * "\n"
+        push!(cell_ranges, CellRange(cell.uri, current_line))
+        current_line += count(==('\n'), cell.text) + 1
+    end
+    return ConcatenatedNotebook(source, cell_ranges)
+end
+
+function cache_notebook_file_info!(server::Server, notebook_uri::URI, notebook_info::NotebookInfo)
+    state = server.state
+    parsed_stream = ParseStream!(notebook_info.concat.source)
+    fi = FileInfo(notebook_info.version, parsed_stream, notebook_uri, notebook_info.encoding;
+        cache_tree0=true, inferred_context_cache=InferredContextCache())
+    store!(state.file_cache) do cache
+        Base.PersistentDict(cache, notebook_uri => fi), fi
+    end
+    invalidate_per_file_caches!(state, notebook_uri)
+    schedule_workspace_diagnostics!(server)
+    return fi
+end
+
+function cache_notebook_saved_file_info!(server::Server, notebook_uri::URI, notebook_info::NotebookInfo)
+    state = server.state
+    parsed_stream = ParseStream!(notebook_info.concat.source)
+    sfi = SavedFileInfo(parsed_stream, notebook_uri, state.encoding)
+    return store!(state.saved_file_cache) do cache
+        Base.PersistentDict(cache, notebook_uri => sfi), sfi
+    end
+end
+
+# Cells inserted via a structure change carry no text/version of their own; those arrive
+# separately in `structure.didOpen` and get filled in during cell reconstruction from the
+# `cell_texts`/`cell_versions` maps (see `handle_DidChangeNotebookDocumentNotification`).
+cells_from_lsp(cells::Vector{NotebookCell}) =
+    NotebookCellInfo[NotebookCellInfo(cell.document, cell.kind, 0, "") for cell in cells]
+
+function apply_cell_structure_change!(
+        cells::Vector{NotebookCellInfo},
+        cell_texts::Dict{URI,String},
+        cell_versions::Dict{URI,Int},
+        structure::NotebookDocumentChangeEventCellsStructure
+    )
+    array_change = structure.array
+    start_idx = array_change.start + 1
+    delete_count = array_change.deleteCount
+    if delete_count > 0
+        deleteat!(cells, start_idx:start_idx+delete_count-1)
+    end
+    new_cells = array_change.cells
+    if new_cells !== nothing
+        splice!(cells, start_idx:start_idx-1, cells_from_lsp(new_cells))
+    end
+    did_open = structure.didOpen
+    if did_open !== nothing
+        for doc in did_open
+            cell_texts[doc.uri] = doc.text
+            cell_versions[doc.uri] = doc.version
+        end
+    end
+    did_close = structure.didClose
+    if did_close !== nothing
+        for doc in did_close
+            delete!(cell_texts, doc.uri)
+            delete!(cell_versions, doc.uri)
+        end
+    end
+end
+
+function apply_cell_data_change!(cells::Vector{NotebookCellInfo}, data::Vector{NotebookCell})
+    for updated_cell in data
+        for (i, cell) in enumerate(cells)
+            if cell.uri == updated_cell.document
+                cells[i] = NotebookCellInfo(updated_cell.document, updated_cell.kind, cell.version, cell.text)
+                break
+            end
+        end
+    end
+end
+
+# NOTE: This function implements incremental text change application because VS Code's
+# notebook client sends incremental changes by default. Unlike regular text documents where
+# servers can specify `TextDocumentSyncKind.Full` to receive full content on each change,
+# `NotebookDocumentSyncOptions` does not provide an equivalent option for cell text content.
+function apply_cell_text_change!(
+        cell_texts::Dict{URI,String},
+        cell_versions::Dict{URI,Int},
+        text_content::Vector{NotebookDocumentChangeEventCellsTextContentItem},
+        encoding::PositionEncodingKind.Ty
+    )
+    for content_change in text_content
+        doc_uri = content_change.document.uri
+        cell_versions[doc_uri] = content_change.document.version
+        current_text = get(cell_texts, doc_uri, "")
+        for change_event in content_change.changes
+            if change_event.range === nothing
+                current_text = change_event.text
+            else
+                current_text = apply_text_change(
+                    current_text, change_event.range, change_event.text, encoding)
+            end
+        end
+        cell_texts[doc_uri] = current_text
+    end
+end
+
+function handle_DidOpenNotebookDocumentNotification(
+        server::Server, msg::DidOpenNotebookDocumentNotification
+    )
+    state = server.state
+    notebook_doc = msg.params.notebookDocument
+    notebook_uri = notebook_doc.uri
+    cell_texts = Dict{URI,String}(doc.uri => doc.text for doc in msg.params.cellTextDocuments)
+    cell_versions = Dict{URI,Int}(doc.uri => doc.version for doc in msg.params.cellTextDocuments)
+    cells = NotebookCellInfo[
+        NotebookCellInfo(cell.document, cell.kind,
+            get(cell_versions, cell.document, 0), get(cell_texts, cell.document, ""))
+        for cell in notebook_doc.cells]
+    concat = concatenate_cells(cells)
+    notebook_info = NotebookInfo(
+        notebook_doc.version, notebook_doc.notebookType, state.encoding, cells, concat)
+    store!(state.notebook_cache) do cache::Base.PersistentDict{URI,NotebookInfo}
+        Base.PersistentDict(cache, notebook_uri => notebook_info), nothing
+    end
+    store!(state.cell_to_notebook) do mapping::Base.PersistentDict{URI,URI}
+        for cell in cells
+            mapping = Base.PersistentDict(mapping, cell.uri => notebook_uri)
+        end
+        mapping, nothing
+    end
+    cache_notebook_file_info!(server, notebook_uri, notebook_info)
+    cache_notebook_saved_file_info!(server, notebook_uri, notebook_info)
+    request_analysis!(server, notebook_uri, #=invalidate=#false)
+    nothing
+end
+
+function handle_DidChangeNotebookDocumentNotification(
+        server::Server, msg::DidChangeNotebookDocumentNotification
+    )
+    state = server.state
+    notebook_uri = msg.params.notebookDocument.uri
+    cells_change = msg.params.change.cells
+    infos = store!(state.notebook_cache) do cache::Base.PersistentDict{URI,NotebookInfo}
+        notebook_info = get(cache, notebook_uri, nothing)
+        if notebook_info === nothing
+            @static JETLS_DEV_MODE && @warn "Received notebookDocument/didChange for unknown notebook" notebook_uri
+            return cache, nothing
+        end
+        cells = copy(notebook_info.cells)
+        cell_texts = Dict{URI,String}(cell.uri => cell.text for cell in cells)
+        cell_versions = Dict{URI,Int}(cell.uri => cell.version for cell in cells)
+        if cells_change !== nothing
+            structure = cells_change.structure
+            structure !== nothing && apply_cell_structure_change!(cells, cell_texts, cell_versions, structure)
+            data = cells_change.data
+            data !== nothing && apply_cell_data_change!(cells, data)
+            text_content = cells_change.textContent
+            text_content !== nothing && apply_cell_text_change!(cell_texts, cell_versions, text_content, notebook_info.encoding)
+        end
+        updated_cells = NotebookCellInfo[
+            NotebookCellInfo(cell.uri, cell.kind,
+                get(cell_versions, cell.uri, cell.version), get(cell_texts, cell.uri, cell.text))
+            for cell in cells]
+        concat = concatenate_cells(updated_cells)
+        new_notebook_info = NotebookInfo(notebook_info;
+            version = msg.params.notebookDocument.version,
+            cells = updated_cells,
+            concat)
+        Base.PersistentDict(cache, notebook_uri => new_notebook_info), (notebook_info, new_notebook_info)
+    end
+    infos === nothing && return nothing
+    prev_notebook_info, next_notebook_info = infos
+    store!(state.cell_to_notebook) do mapping::Base.PersistentDict{URI,URI}
+        structure = cells_change === nothing ? nothing : cells_change.structure
+        if structure !== nothing
+            did_close = structure.didClose
+            if did_close !== nothing
+                for doc in did_close
+                    mapping = Base.delete(mapping, doc.uri)
+                end
+            end
+        end
+        for cell in next_notebook_info.cells
+            mapping = Base.PersistentDict(mapping, cell.uri => notebook_uri)
+        end
+        mapping, nothing
+    end
+    clear_removed_cell_push_diagnostics!(server, prev_notebook_info, next_notebook_info)
+    cache_notebook_file_info!(server, notebook_uri, next_notebook_info)
+    nothing
+end
+
+function handle_DidSaveNotebookDocumentNotification(
+        server::Server, msg::DidSaveNotebookDocumentNotification
+    )
+    notebook_uri = msg.params.notebookDocument.uri
+    notebook_info = @something get_notebook_info(server.state, notebook_uri) begin
+        JETLS_DEV_MODE && @warn "Received notebookDocument/didSave for unknown notebook" notebook_uri
+        return nothing
+    end
+    cache_notebook_saved_file_info!(server, notebook_uri, notebook_info)
+    request_analysis!(server, notebook_uri, #=invalidate=#true)
+    nothing
+end
+
+function handle_DidCloseNotebookDocumentNotification(
+        server::Server, msg::DidCloseNotebookDocumentNotification
+    )
+    state = server.state
+    notebook_uri = msg.params.notebookDocument.uri
+    store!(state.notebook_cache) do cache::Base.PersistentDict{URI,NotebookInfo}
+        Base.delete(cache, notebook_uri), nothing
+    end
+    store!(state.cell_to_notebook) do mapping::Base.PersistentDict{URI,URI}
+        for (; uri) in msg.params.cellTextDocuments
+            mapping = Base.delete(mapping, uri)
+        end
+        mapping, nothing
+    end
+    store!(state.file_cache) do cache
+        Base.delete(cache, notebook_uri), nothing
+    end
+    store!(state.saved_file_cache) do cache
+        Base.delete(cache, notebook_uri), nothing
+    end
+    # Once the notebook is gone, `localize_notebook_diagnostics!` no longer maps its live
+    # diagnostics to cells, and publishes would carry them under the notebook URI itself.
+    forget_workspace_live_diagnostics!(state, notebook_uri)
+    clear_cell_push_diagnostics!(server, msg.params.cellTextDocuments)
+    # Disk content isn't analyzable as Julia, so keeping the analysis cache around
+    # would only enable the JSON-as-Julia bug guarded against in `_store_unsynced_file_info!`.
+    cleanup_analysis_state!(server, notebook_uri)
+    request_diagnostic_refresh!(server)
+    nothing
+end
+
+# Diagnostic
+# ==========
+
+is_notebook_uri(state::ServerState, uri::URI) = haskey(load(state.notebook_cache), uri)
+
+is_notebook_cell_uri(state::ServerState, uri::URI) = haskey(load(state.cell_to_notebook), uri)
+
+# URI-only check: does this URI point to a Jupyter notebook (`.ipynb`) file on disk?
+is_notebook_uri(uri::URI) = uri.scheme == "file" && endswith(uri.path, ".ipynb")
+
+function localize_notebook_diagnostics!(uri2diagnostics::URI2Diagnostics, state::ServerState)
+    notebook_uris_to_delete = URI[]
+    for uri in keys(uri2diagnostics)
+        is_notebook_uri(state, uri) || continue
+        notebook_uri = uri
+        notebook_info = @something get_notebook_info(state, notebook_uri) continue
+        cell_diagnostics = localize_notebook_diagnostics_for_uri(state, uri2diagnostics, notebook_uri)
+        for cell in notebook_info.cells
+            cell.kind == NotebookCellKind.Code || continue
+            diagnostics = get!(Vector{Diagnostic}, uri2diagnostics, cell.uri)
+            cell_diags = get(Vector{Diagnostic}, cell_diagnostics, cell.uri)
+            append!(diagnostics, cell_diags)
+        end
+        push!(notebook_uris_to_delete, notebook_uri)
+    end
+    for notebook_uri in notebook_uris_to_delete
+        delete!(uri2diagnostics, notebook_uri)
+    end
+end
+
+function localize_notebook_diagnostics_for_uri(
+        state::ServerState, uri2diagnostics::URI2Diagnostics, notebook_uri::URI
+    )
+    cell_diagnostics = Dict{URI,Vector{Diagnostic}}()
+    notebook_info = @something get_notebook_info(state, notebook_uri) return cell_diagnostics
+    isempty(notebook_info.concat.cell_ranges) && return cell_diagnostics
+    concat = notebook_info.concat
+    for diag in uri2diagnostics[notebook_uri]
+        cell_uri, cell_diag = @something localize_diagnostic(diag, state, concat) continue
+        push!(get!(Vector{Diagnostic}, cell_diagnostics, cell_uri), cell_diag)
+    end
+    return cell_diagnostics
+end
+
+function localize_diagnostic(
+        diag::Diagnostic, state::ServerState, concat::ConcatenatedNotebook
+    )
+    cell_uri, local_range = @something global_to_cell_range(concat, diag.range) return nothing
+    local_related_information = related_information = diag.relatedInformation
+    if !isnothing(related_information)
+        local_related_information =
+            localize_related_information(related_information, state, concat)
+    end
+    local_data = localize_diagnostic_data(diag.data, concat)
+    return cell_uri => Diagnostic(diag;
+        range = local_range,
+        relatedInformation = local_related_information,
+        data = local_data)
+end
+
+function localize_range(range::Range, concat::ConcatenatedNotebook)
+    _, local_range = @something global_to_cell_range(concat, range) return range
+    return local_range
+end
+
+function localize_diagnostic_data(@nospecialize(data), concat::ConcatenatedNotebook)
+    if data isa AbstractRefFieldData
+        return AbstractRefFieldData(localize_range(data.ref_name_range, concat))
+    elseif data isa DeleteRangeData
+        return DeleteRangeData(data.kind, localize_range(data.delete_range, concat))
+    elseif data isa OrphanedDocstringData
+        return OrphanedDocstringData(TextEdit[
+            TextEdit(edit; range = localize_range(edit.range, concat))
+            for edit in data.attach_edits])
+    elseif data isa UnusedVariableData
+        assignment_range = data.assignment_range
+        if assignment_range !== nothing
+            assignment_range = localize_range(assignment_range, concat)
+        end
+        lhs_eq_range = data.lhs_eq_range
+        if lhs_eq_range !== nothing
+            lhs_eq_range = localize_range(lhs_eq_range, concat)
+        end
+        return_insert_position = data.return_insert_position
+        if return_insert_position !== nothing
+            _, local_position = @something global_to_cell_position(
+                concat, return_insert_position) return data
+            return_insert_position = local_position
+        end
+        return UnusedVariableData(
+            data.is_tuple_unpacking, assignment_range, lhs_eq_range,
+            return_insert_position, data.return_insert_text)
+    end
+    return data
+end
+
+function localize_related_information(
+        relatedInformation::Vector{DiagnosticRelatedInformation},
+        state::ServerState, concat::ConcatenatedNotebook
+    )
+    isempty(relatedInformation) && return relatedInformation
+    result = nothing
+    for (i, info) in enumerate(relatedInformation)
+        info_uri = info.location.uri
+        info_range = info.location.range
+        is_cell = find_cell_range_by_uri(concat, info_uri) !== nothing
+        if !is_cell && !is_notebook_uri(state, info_uri)
+            continue
+        end
+        local_uri, local_range = @something global_to_cell_range(concat, info_range) continue
+        if isnothing(result)
+            result = copy(relatedInformation)
+        end
+        result[i] = DiagnosticRelatedInformation(;
+            location = Location(; uri = local_uri, range = local_range),
+            message = info.message)
+    end
+    return result
+end
+
+function localize_notebook_diagnostics(
+        state::ServerState, concat::ConcatenatedNotebook, cell_uri::URI,
+        diagnostics::Vector{Diagnostic}
+    )
+    result = Diagnostic[]
+    for diag in diagnostics
+        localized_cell_uri, cell_diag = @something localize_diagnostic(diag, state, concat) continue
+        localized_cell_uri == cell_uri || continue
+        push!(result, cell_diag)
+    end
+    return result
+end
+
+# Push diagnostics aren't auto-cleared on close; republish empty for each cell.
+function clear_cell_push_diagnostics!(server::Server, cells::Vector{TextDocumentIdentifier})
+    for cell in cells
+        send(server, PublishDiagnosticsNotification(;
+            params = PublishDiagnosticsParams(;
+                uri = cell.uri,
+                diagnostics = empty_diagnostics)))
+    end
+end
+
+# Publishes target the current code cells only (see `localize_notebook_diagnostics!`), so
+# a cell that was removed or stopped being a code cell would keep what was pushed to it.
+function clear_removed_cell_push_diagnostics!(
+        server::Server, prev_notebook_info::NotebookInfo, next_notebook_info::NotebookInfo
+    )
+    code_cell_uris = Set{URI}(cell.uri for cell in next_notebook_info.cells if cell.kind == NotebookCellKind.Code)
+    for cell in prev_notebook_info.cells
+        cell.kind == NotebookCellKind.Code || continue
+        cell.uri in code_cell_uris && continue
+        send(server, PublishDiagnosticsNotification(;
+            params = PublishDiagnosticsParams(;
+                uri = cell.uri,
+                diagnostics = empty_diagnostics)))
+    end
+end
+
+# Document symbol
+# ===============
+
+"""
+    localize_document_symbols(
+            state::ServerState, uri::URI, symbols::Vector{DocumentSymbol}
+        ) -> Vector{DocumentSymbol}
+
+When `uri` is a notebook cell, convert each symbol's ranges from notebook-global
+coordinates to cell-local coordinates and drop symbols whose `selectionRange`
+does not belong to that cell. Returns `symbols` unchanged when `uri` is not a
+notebook cell URI.
+"""
+function localize_document_symbols(
+        state::ServerState, uri::URI, symbols::Vector{DocumentSymbol}
+    )
+    notebook_uri = @something get_notebook_uri_for_cell(state, uri) return symbols
+    notebook_info = @something get_notebook_info(state, notebook_uri) return symbols
+    return _localize_document_symbols(notebook_info.concat, uri, symbols)
+end
+
+function _localize_document_symbols(
+        concat::ConcatenatedNotebook, cell_uri::URI, symbols::Vector{DocumentSymbol}
+    )
+    new_symbols = DocumentSymbol[]
+    for symbol in symbols
+        new_symbol = localize_document_symbol(concat, cell_uri, symbol)
+        isnothing(new_symbol) || push!(new_symbols, new_symbol)
+    end
+    return new_symbols
+end
+
+function localize_document_symbol(
+        concat::ConcatenatedNotebook, cell_uri::URI, symbol::DocumentSymbol
+    )
+    sel_cell_uri, new_selection_range =
+        @something global_to_cell_range(concat, symbol.selectionRange) return nothing
+    sel_cell_uri == cell_uri || return nothing
+    range_result = global_to_cell_range(concat, symbol.range)
+    new_range = isnothing(range_result) ? new_selection_range : range_result[2]
+    children = symbol.children
+    new_children = isnothing(children) ? nothing : _localize_document_symbols(concat, cell_uri, children)
+    return DocumentSymbol(symbol;
+        range = new_range,
+        selectionRange = new_selection_range,
+        children = @somereal new_children Some(nothing))
+end
+
+# Inlay hint
+# ==========
+
+"""
+    localize_inlay_hints(
+            state::ServerState, uri::URI, inlay_hints::Vector{InlayHint}
+        ) -> Vector{InlayHint}
+
+When `uri` is a notebook cell, convert each hint's `position` and the ranges of
+its `textEdits` from notebook-global coordinates to cell-local coordinates, and
+drop hints whose position does not belong to that cell. Returns `inlay_hints`
+unchanged when `uri` is not a notebook cell URI.
+"""
+function localize_inlay_hints(
+        state::ServerState, uri::URI, inlay_hints::Vector{InlayHint}
+    )
+    notebook_uri = @something get_notebook_uri_for_cell(state, uri) return inlay_hints
+    notebook_info = @something get_notebook_info(state, notebook_uri) return inlay_hints
+    return _localize_inlay_hints(uri, inlay_hints, notebook_info)
+end
+function _localize_inlay_hints(
+        uri::URI, inlay_hints::Vector{InlayHint}, notebook_info::NotebookInfo
+    )
+    new_hints = InlayHint[]
+    concat = notebook_info.concat
+    for hint in inlay_hints
+        pos_result = @something global_to_cell_position(concat, hint.position) continue
+        hint_cell_uri, cell_pos = pos_result
+        hint_cell_uri == uri || continue
+        textEdits = hint.textEdits
+        new_textEdits = if textEdits === nothing
+            nothing
+        else
+            edits = TextEdit[]
+            for edit in textEdits
+                range_result = global_to_cell_range(concat, edit.range)
+                isnothing(range_result) && continue
+                edit_cell_uri, cell_range = range_result
+                edit_cell_uri == uri || continue
+                push!(edits, TextEdit(edit; range = cell_range))
+            end
+            edits
+        end
+        push!(new_hints, InlayHint(hint;
+            position = cell_pos,
+            textEdits = @somereal new_textEdits Some(nothing)))
+    end
+    return new_hints
+end
+
+# Position
+# ========
+
+function find_cell_range_by_uri(concat::ConcatenatedNotebook, cell_uri::URI)
+    for range in concat.cell_ranges
+        if range.cell_uri == cell_uri
+            return range
+        end
+    end
+    return nothing
+end
+
+function cell_to_global_position(concat::ConcatenatedNotebook, cell_uri::URI, cell_pos::Position)
+    cell_range = @something find_cell_range_by_uri(concat, cell_uri) return nothing
+    line = cell_pos.line + cell_range.line_offset
+    character = cell_pos.character
+    return Position(; line, character)
+end
+
+function find_cell_for_line(concat::ConcatenatedNotebook, notebook_line::UInt)
+    for (i, range) in enumerate(concat.cell_ranges)
+        next_line_offset = i < length(concat.cell_ranges) ?
+            concat.cell_ranges[i+1].line_offset : typemax(Int)
+        if range.line_offset <= notebook_line < next_line_offset
+            return range
+        end
+    end
+    return nothing
+end
+
+function global_to_cell_position(concat::ConcatenatedNotebook, notebook_pos::Position)
+    cell_range = @something find_cell_for_line(concat, notebook_pos.line) return nothing
+    line = notebook_pos.line - cell_range.line_offset
+    character = notebook_pos.character
+    return cell_range.cell_uri, Position(; line, character)
+end
+
+function global_to_cell_range(concat::ConcatenatedNotebook, range::Range)
+    start_result = @something global_to_cell_position(concat, range.start) return nothing
+    cell_uri, start_pos = start_result
+    end_result = @something global_to_cell_position(concat, range.var"end") return nothing
+    _, end_pos = end_result
+    return cell_uri, Range(; start = start_pos, var"end" = end_pos)
+end
+
+"""
+    adjust_position(state::ServerState, cell_uri::URI, cell_pos::Position) -> global_pos::Position
+
+Convert a cell-local position to a global position in the concatenated notebook source.
+If `cell_uri` is not a notebook cell, returns `cell_pos` unchanged.
+"""
+function adjust_position(state::ServerState, cell_uri::URI, cell_pos::Position)
+    notebook_uri = @something get_notebook_uri_for_cell(state, cell_uri) return cell_pos
+    notebook_info = @something get_notebook_info(state, notebook_uri) return cell_pos
+    return @something cell_to_global_position(notebook_info.concat, cell_uri, cell_pos) return cell_pos
+end
+
+function adjust_position(snapshot::DocumentSnapshot, uri::URI, pos::Position)
+    notebook = snapshot.notebook
+    notebook === nothing && return pos
+    uri == snapshot.cache_uri && return pos
+    return @something cell_to_global_position(notebook, uri, pos) pos
+end
+
+function adjust_range(state::ServerState, uri::URI, range::Range)
+    return Range(;
+        start = adjust_position(state, uri, range.start),
+        var"end" = adjust_position(state, uri, range.var"end"))
+end
+
+function adjust_range(snapshot::DocumentSnapshot, uri::URI, range::Range)
+    return Range(;
+        start = adjust_position(snapshot, uri, range.start),
+        var"end" = adjust_position(snapshot, uri, range.var"end"))
+end
+
+"""
+    unadjust_position(state::ServerState, uri::URI, pos::Position) -> (resolved_cell_uri::URI, cell_pos::Position)
+
+Convert a global position `pos` in the concatenated notebook source back to a cell-local
+position. `uri` can be either a cell URI or a notebook URI.
+The returned `resolved_cell_uri` is the URI of the cell that actually contains `cell_pos`,
+which may differ from `uri` (e.g. go-to-definition across cells).
+If `uri` is not a notebook-related URI, returns `(uri, pos)` unchanged.
+"""
+function unadjust_position(state::ServerState, uri::URI, pos::Position)
+    notebook_info = get_notebook_info(state, uri)
+    if notebook_info === nothing
+        notebook_uri = @something get_notebook_uri_for_cell(state, uri) return (uri, pos)
+        notebook_info = @something get_notebook_info(state, notebook_uri) return (uri, pos)
+    end
+    return @something global_to_cell_position(notebook_info.concat, pos) return (uri, pos)
+end
+
+function unadjust_position(snapshot::DocumentSnapshot, uri::URI, pos::Position)
+    notebook = @something snapshot.notebook return (uri, pos)
+    return @something global_to_cell_position(notebook, pos) (uri, pos)
+end
+
+"""
+    unadjust_range(state::ServerState, uri::URI, range::Range) -> (resolved_cell_uri::URI, cell_range::Range)
+
+Convert a global `range` in the concatenated notebook source back to a cell-local range.
+`uri` can be either a cell URI or a notebook URI.
+The returned `resolved_cell_uri` is the URI of the cell containing the start position of
+`cell_range`. Start and end positions are assumed to be in the same cell.
+If `uri` is not a notebook-related URI, returns `(uri, range)` unchanged.
+"""
+function unadjust_range(state::ServerState, uri::URI, range::Range)
+    start_uri, start_pos = unadjust_position(state, uri, range.start)
+    _, end_pos = unadjust_position(state, uri, range.var"end")
+    return start_uri, Range(; start = start_pos, var"end" = end_pos)
+end
+
+function unadjust_range(snapshot::DocumentSnapshot, uri::URI, range::Range)
+    notebook = @something snapshot.notebook return (uri, range)
+    return @something global_to_cell_range(notebook, range) (uri, range)
+end
+
+"""
+    unadjust_location(state::ServerState, cell_uri::URI, loc::Location) -> cell_loc::Location
+
+Convert a `Location` whose URI is the notebook URI back to a cell-local
+location. If `cell_uri` is not a notebook cell, or `loc.uri` does not
+match the notebook URI, returns `loc` unchanged.
+"""
+function unadjust_location(state::ServerState, cell_uri::URI, loc::Location)
+    notebook_uri = @something get_notebook_uri_for_cell(state, cell_uri) return loc
+    loc.uri == notebook_uri || return loc
+    uri, range = unadjust_range(state, cell_uri, loc.range)
+    return Location(; uri, range)
+end

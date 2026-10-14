@@ -4,7 +4,9 @@ using Test
 using TestRunner
 using TestRunner: JS
 
-const TESTFILE = normpath(pkgdir(TestRunner), "test", "testfile.jl")
+const TEST_RUNNER_DIR = pkgdir(TestRunner)::String
+
+const TESTFILE = normpath(TEST_RUNNER_DIR, "test", "testfile.jl")
 @test isfile(TESTFILE)
 
 module SimpleRunnerModule end
@@ -38,10 +40,20 @@ module DependencyRunnerModule end
 end
 
 module ModuleHandlingModule end
-let testmodule_file = normpath(pkgdir(TestRunner), "test", "testfile_module.jl")
+let testmodule_file = normpath(TEST_RUNNER_DIR, "test", "testfile_module.jl")
     @test isfile(testmodule_file)
     result = @testset "module test runner" runtest(testmodule_file, (:(@test sin(0) == 0),); topmodule=ModuleHandlingModule)
     @test result.n_passed == 1
+end
+
+module DocumentedModuleHandlingModule end
+let testmodule_file = normpath(TEST_RUNNER_DIR, "test", "testfile_documented_module.jl")
+    @test isfile(testmodule_file)
+    result = @testset "documented module test runner" runtest(testmodule_file, (:(@test sin(0) == 0),); topmodule=DocumentedModuleHandlingModule)
+    @test result.n_passed == 1
+    mod = @invokelatest getglobal(DocumentedModuleHandlingModule, :testfile_documented_module)
+    multidoc = Base.Docs.meta(mod)[Base.Docs.Binding(mod, nameof(mod))]
+    @test only(multidoc.docs[Union{}].text) == "Documented test module.\n"
 end
 
 module ComplexRunnerModule end
@@ -136,7 +148,7 @@ end
 module SyntaxErrorModule end
 @testset "syntax error handling" begin
     # Test that syntax errors in user files are properly reported
-    syntax_error_file = normpath(pkgdir(TestRunner), "test", "testfile_syntax_error.jl")
+    syntax_error_file = normpath(TEST_RUNNER_DIR, "test", "testfile_syntax_error.jl")
     @test isfile(syntax_error_file)
 
     @test_throws JS.ParseError runtest(syntax_error_file, ["syntax error test"]; topmodule=SyntaxErrorModule)
@@ -157,7 +169,7 @@ module LineFilterModule1 end
 module LineFilterModule2 end
 @testset "line number based filtering" begin
     # Test that lines argument filters pattern matches correctly
-    line_filter_file = normpath(pkgdir(TestRunner), "test", "testfile_line_filter.jl")
+    line_filter_file = normpath(TEST_RUNNER_DIR, "test", "testfile_line_filter.jl")
     @test isfile(line_filter_file)
     # Without line filter, both tests should match
     let result = @testset "without line filter" runtest(line_filter_file, [:(@test startswith(s, "julia"))]; topmodule=LineFilterModule1)
@@ -175,7 +187,7 @@ module LinePatternModule2 end
 module LinePatternModule3 end
 @testset "line number patterns" begin
     # Test that integer and range patterns work
-    line_pattern_file = normpath(pkgdir(TestRunner), "test", "testfile_line_patterns.jl")
+    line_pattern_file = normpath(TEST_RUNNER_DIR, "test", "testfile_line_patterns.jl")
     @test isfile(line_pattern_file)
 
     # Test single line number
@@ -233,7 +245,7 @@ end
 
 module IncludeMapexprPathModule end
 @testset "mapexpr include paths ignore the caller's SOURCE_PATH" begin
-    mktempdir() do dir
+    mktempdir() do dir::String
         caller = joinpath(dir, "caller")
         mkdir(caller)
         write(joinpath(dir, "child.jl"), "answer = 42\n")
@@ -475,7 +487,7 @@ end
 module WorldAgeTest end
 @testset "world age issue" begin
     testfile = joinpath(@__DIR__, "testfile_world_age.jl")
-    result = @testset "test world age" runtest(testfile, [":(@inferred funcsin(Ref{Any}(42)))"]; topmodule=WorldAgeTest)
+    @testset "test world age" runtest(testfile, [":(@inferred funcsin(Ref{Any}(42)))"]; topmodule=WorldAgeTest)
     @test true # no exception should be thrown
 end
 

@@ -6,6 +6,7 @@ on:
       - master
     paths:
       - "src/**"
+      - "JETLSCore/src/**"
       - "docs/**"
       - "CHANGELOG.md"
       - ".github/workflows/Documentation.yml"
@@ -15,6 +16,7 @@ on:
       - release
     paths:
       - "src/**"
+      - "JETLSCore/src/**"
       - "docs/**"
       - "CHANGELOG.md"
       - ".github/workflows/Documentation.yml"

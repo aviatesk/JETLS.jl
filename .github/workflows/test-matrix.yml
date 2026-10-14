@@ -59,9 +59,12 @@ jobs:
       - uses: julia-actions/julia-buildpkg@latest
       - uses: julia-actions/julia-runtest@latest
         with:
+          project: JETLSCore
           coverage: ${{ inputs.coverage }}
       - uses: julia-actions/julia-processcoverage@v1
         if: inputs.coverage
+        with:
+          directories: JETLSCore/src
       - uses: codecov/codecov-action@v7
         if: inputs.coverage
         with:
@@ -104,9 +107,12 @@ jobs:
       - uses: julia-actions/julia-buildpkg@latest
       - uses: julia-actions/julia-runtest@latest
         with:
+          project: JETLSCore
           coverage: ${{ inputs.coverage }}
       - uses: julia-actions/julia-processcoverage@v1
         if: inputs.coverage
+        with:
+          directories: JETLSCore/src
       - uses: codecov/codecov-action@v7
         if: inputs.coverage
         with:

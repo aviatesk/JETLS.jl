@@ -1,0 +1,1270 @@
+# initialization
+# ==============
+
+const NUMERIC_CHARACTERS = tuple(string.('0':'9')...)
+const METHOD_COMPLETION_TRIGGER_CHARACTERS = ("(", ",", " ")
+const COMPLETION_TRIGGER_CHARACTERS = [
+    "@",  # macro completion
+    "\\", # LaTeX completion
+    "^",  # LaTeX superscript completion (e.g. `\^a`)
+    ":",  # emoji completion
+    ";",  # keyword argument completion
+    ".",  # property / module-member completion
+    METHOD_COMPLETION_TRIGGER_CHARACTERS...,
+    NUMERIC_CHARACTERS..., # allow these characters to be recognized by `CompletionContext.triggerCharacter`
+]
+
+completion_options() = CompletionOptions(;
+    triggerCharacters = COMPLETION_TRIGGER_CHARACTERS,
+    resolveProvider = true,
+    completionItem = ServerCompletionItemOptions(;
+        labelDetailsSupport = true))
+
+const COMPLETION_REGISTRATION_ID = "jetls-completion"
+const COMPLETION_REGISTRATION_METHOD = "textDocument/completion"
+
+function completion_registration()
+    (; triggerCharacters, resolveProvider, completionItem) = completion_options()
+    return Registration(;
+        id = COMPLETION_REGISTRATION_ID,
+        method = COMPLETION_REGISTRATION_METHOD,
+        registerOptions = CompletionRegistrationOptions(;
+            documentSelector = DEFAULT_DOCUMENT_SELECTOR,
+            triggerCharacters,
+            resolveProvider,
+            completionItem))
+end
+
+# completion utils
+# ================
+
+function completion_is(ci::CompletionItem, ckind::Symbol)
+    # `ckind` is :global, :local, :argument, or :sparam.  Implementation likely
+    # to change with changes to the information we put in CompletionItem.
+    labelDetails = ci.labelDetails
+    @assert labelDetails !== nothing
+    return (labelDetails.description === String(ckind) ||
+        (labelDetails.description === "argument" && ckind === :local))
+end
+
+# TODO use `let` block when Revise can handle it...
+const sort_texts, max_sort_text = let
+    sort_texts = Dict{Int, String}()
+    for i = 1:1000
+        sort_texts[i] = lpad(i, 4, '0')
+    end
+    _, max_sort_text = maximum(sort_texts)
+    sort_texts, max_sort_text
+end
+const max_sort_text1 = "10000"
+const max_sort_text2 = "100000"
+const max_sort_text3 = "1000000"
+function get_sort_text(offset::Int)
+    return get(sort_texts, offset, max_sort_text)
+end
+
+# Per-request shared context
+# ==========================
+
+"""
+    CompletionCtx
+
+Per-request scratch space that the four completion routines (`call_completions!`,
+`global_completions!`, `local_completions!`, `add_emoji_latex_completions!`) share.
+
+Computes once and caches:
+- syntax tree (`st0`) — feeding multiple routines that each used to call
+  `build_syntax_tree(fi)` on their own.
+- `get_context_info` projection — `context_module`, `world`, `postprocessor`.
+- `offset` / `soft_scope` — derived from `pos`, `request_uri`, and `snapshot`.
+
+Two heavier pieces are built lazily on first request:
+- `InferredTreeContext` — shared between any routines that actually need
+  type info at the cursor (always `call_completions!`, optionally
+  `global_completions!` for dot-prefix). `build_inferred_context_for_range` keys
+  off the toplevel statement containing the cursor, so a single context
+  serves every routine here.
+- `cursor_bindings` result — shared between `local_completions!` and the
+  kwarg branch of `call_completions!`.
+
+A future refactor that unifies `cursor_bindings` and `build_inferred_context_for_range`
+at the `jl_lower_for_scope_resolution` level can replace the lazy accessors
+without disturbing call sites.
+"""
+mutable struct CompletionCtx
+    const state::ServerState
+    const request_uri::URI
+    const pos::Position
+    const context::Union{Nothing,CompletionContext}
+    const snapshot::DocumentSnapshot
+    const cancel_flag::AbstractCancelFlag
+
+    # Eagerly populated by the constructor.
+    const offset::Int
+    const st0_top::SyntaxTree
+    const context_module::Module
+    const world::UInt
+    const postprocessor::LSPostProcessor
+    const soft_scope::Bool
+
+    # Lazily populated. `isdefiend` check distinguishes "not yet computed" from
+    # "computed but the underlying build returned `nothing`".
+    inferred_ctx::Union{Nothing,InferredTreeContext}
+    cursor_bindings::Union{Nothing,Vector{Tuple{JL.BindingInfo,SyntaxTree,Int}}}
+
+    function CompletionCtx(
+            state::ServerState, request_uri::URI, snapshot::DocumentSnapshot,
+            pos::Position, context::Union{Nothing,CompletionContext};
+            context_module::Union{Nothing,Module} = nothing,
+            cancel_flag::AbstractCancelFlag = DUMMY_CANCEL_FLAG
+        )
+        (; fi, cache_uri) = snapshot
+        st0_top = build_syntax_tree(fi)
+        info = get_context_info(state, cache_uri, pos)
+        context_mod = something(context_module, info.context_module)
+        offset = xy_to_offset(fi, pos)
+        soft_scope = cache_uri != request_uri
+        return new(state, request_uri, pos, context, snapshot, cancel_flag,
+            offset, st0_top, context_mod, info.world, info.postprocessor, soft_scope)
+    end
+end
+
+function completion_edit_range(comp_ctx::CompletionCtx, range::Range)
+    return last(unadjust_range(comp_ctx.snapshot, comp_ctx.request_uri, range))
+end
+
+# Why not query the inferred-context cache with `offset:offset` directly:
+# It filters toplevel subtrees by `rng ⊆ JS.byte_range(toplevel)`, and the
+# cursor can sit past the toplevel's `last_byte` in incomplete code (e.g.
+# `sin(42,│\n` — parser ends the `:call` at byte 7, cursor at byte 8 is
+# outside). `lowerable_toplevel_at` has an `offset - 1` retry that handles
+# this, so we go through it and build the context for the selected toplevel.
+function get_inferred_ctx!(comp_ctx::CompletionCtx; caller::AbstractString)
+    isdefined(comp_ctx, :inferred_ctx) && return comp_ctx.inferred_ctx
+    toplevel = lowerable_toplevel_at(comp_ctx.st0_top, comp_ctx.offset)
+    return comp_ctx.inferred_ctx = toplevel === nothing ? nothing :
+        build_inferred_context_for_tree(toplevel, comp_ctx.context_module;
+            world=comp_ctx.world, caller, cache=comp_ctx.snapshot.fi.inferred_context_cache)
+end
+
+# Property completion only needs the prefix type. Build inference from a virtual
+# source where the cursor's incomplete `.partial` accessor is removed, instead of
+# teaching generic AST repair every parser-recovery shape around `prefix.│`.
+function get_dotprefix_inferred_ctx(
+        comp_ctx::CompletionCtx, dotprefix::SyntaxTree; caller::AbstractString
+    )
+    fi = comp_ctx.snapshot.fi
+    hole_start = JS.last_byte(dotprefix) + 1
+    hole_end = property_completion_hole_end(fi, comp_ctx.offset, hole_start)
+    textbuf = copy(fi.parsed_stream.textbuf)
+    if hole_start ≤ hole_end
+        deleteat!(textbuf, hole_start:hole_end)
+    end
+    virtual_fi = FileInfo(fi.version, textbuf, fi.filename, fi.encoding)
+    virtual_st0_top = build_syntax_tree(virtual_fi)
+    virtual_st0 = @something lowerable_toplevel_at(virtual_st0_top, JS.first_byte(dotprefix)) return nothing
+    return build_inferred_context_for_tree(virtual_st0, comp_ctx.context_module;
+        world=comp_ctx.world, caller, cache=nothing)
+end
+
+function property_completion_hole_end(fi::FileInfo, offset::Int, hole_start::Int)
+    hole_end = max(hole_start - 1, offset - 1)
+    tok = @something token_at_offset(fi.parsed_stream, offset) return hole_end
+    if JS.kind(tok) === JS.K"Identifier" && JS.first_byte(tok) ≥ hole_start
+        hole_end = max(hole_end, JS.last_byte(tok))
+    end
+    return hole_end
+end
+
+function get_cursor_bindings_cached!(comp_ctx::CompletionCtx)
+    isdefined(comp_ctx, :cursor_bindings) && return comp_ctx.cursor_bindings
+    return comp_ctx.cursor_bindings = cursor_bindings(
+        comp_ctx.st0_top, comp_ctx.offset, comp_ctx.context_module, comp_ctx.world;
+        soft_scope=comp_ctx.soft_scope)
+end
+
+# Typical completion UI
+# =====================
+
+# `to|` ->
+# ```
+#    ┌───┬──────────────────────────┬────────────────────────────┐
+#    │(1)│to_completion(2)     (3) >│(4)...                      │
+#    │(1)│to_indices(2)        (3)  │# Typical completion UI ─(5)│
+#    │(1)│touch(2)             (3)  │                          │ │
+#    └───┴──────────────────────────┤to|                       │ │
+#                                   │...                     ──┘ │
+#                                   └────────────────────────────┘
+# ```
+# - (1) Icon corresponding to CompletionItem's `ci.kind`
+# - (2) `ci.labelDetails.detail`
+# - (3) `ci.labelDetails.description`
+# - (4) `ci.detail` (possibly at (3))
+# - (5) `ci.documentation`
+#
+# Sending (4) and (5) to the client can happen eagerly in response to <TAB>
+# (textDocument/completion), or lazily, on selection in the list
+# (completionItem/resolve).  The LSP specification notes that more can be deferred
+# in later versions.
+
+# local completions
+# =================
+
+function to_completion(
+        binding::JL.BindingInfo, st::SyntaxTree, sort_offset::Int,
+        uri::URI, fi::FileInfo
+    )
+    label_kind = CompletionItemKind.Variable
+    label_detail = label_desc = nothing
+
+    # `:typevar` is defensive; current completion scopes expose `:static_parameter`.
+    if binding.is_const
+        label_kind = CompletionItemKind.Constant
+    elseif binding.kind in (:typevar, :static_parameter)
+        label_kind = CompletionItemKind.TypeParameter
+    end
+
+    if binding.kind in (:argument, :local, :global)
+        label_desc = String(binding.kind)
+    elseif binding.kind === :typevar
+        label_desc = "typevar"
+    elseif binding.kind === :static_parameter
+        label_desc = "sparam"
+    end
+
+    typenode = binding.type
+    if !isnothing(typenode)
+        label_detail = "::" * JS.sourcetext(typenode)
+    end
+
+    io = IOBuffer()
+    println(io, "``````julia")
+    JL.showprov(io, st; include_location=false)
+    println(io)
+    println(io, "``````")
+    (; line, character) = jsobj_to_range(st, fi).start
+    line += 1; character += 1
+    showtext = "`@ " * simple_loc_text(uri; line) * "`"
+    println(io, create_source_location_link(uri, showtext; line, character))
+    value = String(take!(io))
+    documentation = MarkupContent(; kind = MarkupKind.Markdown, value)
+
+    CompletionItem(;
+        label = binding.name,
+        labelDetails = CompletionItemLabelDetails(;
+            detail = label_detail,
+            description = label_desc),
+        kind = label_kind,
+        documentation,
+        sortText = get_sort_text(sort_offset))
+end
+
+# Returns `true` when the request was explicitly invoked
+# (`Ctrl+Space`-style), or when it was auto-triggered by a character the
+# caller has opted into (`@` for macros, `.` for property/module-member).
+# Numeric / whitespace trigger characters etc. don't fire auto-completion.
+function should_invoke_auto_completion(context::CompletionContext;
+        allow_macro::Bool=false, allow_dot::Bool=false)
+    context.triggerKind == CompletionTriggerKind.Invoked && return true
+    allow_macro && context.triggerCharacter == "@" && return true
+    allow_dot && context.triggerCharacter == "." && return true
+    return false
+end
+should_invoke_auto_completion(::Nothing; _kwargs...) = true
+
+function local_completions!(
+        items::Dict{String,CompletionItem}, comp_ctx::CompletionCtx,
+    )
+    should_invoke_auto_completion(comp_ctx.context) || return nothing
+    is_cancelled(comp_ctx.cancel_flag) && return false
+
+    # NOTE don't bail out even if `length(fi.parsed_stream.diagnostics) ≠ 0`
+    # so that we can get some completions even for incomplete code
+    cbs = @something get_cursor_bindings_cached!(comp_ctx) return nothing
+    for (bi, st, dist) in cbs
+        ci = to_completion(bi, st, dist, comp_ctx.request_uri, comp_ctx.snapshot.fi)
+        prev_ci = get(items, ci.label, nothing)
+        # Name collisions: overrule existing global completions with our own,
+        # unless our completion is also a global, in which case the existing
+        # completion from JET will have more information.
+        if isnothing(prev_ci) || (completion_is(prev_ci, :global) && !completion_is(ci, :global))
+            items[ci.label] = ci
+        end
+    end
+    return nothing
+end
+
+# global completions
+# ==================
+
+function global_completions!(
+        items::Dict{String,CompletionItem}, comp_ctx::CompletionCtx,
+    )
+    (; state, pos, context, st0_top, world, postprocessor) = comp_ctx
+    fi = comp_ctx.snapshot.fi
+    context_module = comp_ctx.context_module
+    should_invoke_auto_completion(context; allow_macro=true, allow_dot=true) || return nothing
+
+    prev_token = token_before_offset(fi, pos)
+    prev_kind = isnothing(prev_token) ? nothing : JS.kind(prev_token)
+    is_macro_invoke = false
+
+    # Case: `@│`
+    if prev_kind === JS.K"@"
+        edit_start_pos = offset_to_xy(fi, JS.first_byte(prev_token))
+        is_macro_invoke = true
+    # Case `│` (empty program)
+    elseif isnothing(prev_token)
+        edit_start_pos = Position(; line=0, character=0)
+    elseif JS.is_identifier(prev_kind)
+        pprev_token = prev_tok(prev_token)
+        if !isnothing(pprev_token) && JS.kind(pprev_token) === JS.K"@"
+            # Case: `@macr│`
+            edit_start_pos = offset_to_xy(fi, JS.first_byte(pprev_token))
+            is_macro_invoke = true
+        else
+            edit_start_pos = offset_to_xy(fi, JS.first_byte(prev_token))
+        end
+    else
+        # When completion is triggered within unknown scope (e.g., comment),
+        # it's difficult to properly specify `edit_start_pos`.
+        # Simply specify only the `label` and let the client handle it appropriately.
+        edit_start_pos = nothing
+    end
+
+    # if we are in macro name context, then we don't need the local completions
+    # since macros are always defined top-level
+    is_completed = is_macro_invoke
+
+    dotprefix = select_dotprefix_identifier(st0_top, comp_ctx.offset)
+    if !isnothing(dotprefix)
+        rng = JS.byte_range(dotprefix)
+        is_cancelled(comp_ctx.cancel_flag) && return false
+        ctx = get_dotprefix_inferred_ctx(comp_ctx, dotprefix; caller="global_completions!")
+        prefixtyp = ctx === nothing ? nothing : get_type_for_range(ctx, rng)
+        # A `Union{}` prefix type is uninformative (the prefix throws or is dead code);
+        # treat it like `nothing` so module/const prefixes such as `Base.` still complete.
+        if prefixtyp === nothing || prefixtyp === Union{}
+            prefixtyp = resolve_global_const(context_module, world, dotprefix)
+        end
+        # Module prefix → enumerate that module's globals below.
+        # Otherwise → property completion (abstract-call
+        # `propertynames` / `getproperty` on the prefix's type).
+        if prefixtyp isa Core.Const && prefixtyp.val isa Module
+            context_module = prefixtyp.val::Module
+            # disable local completions for dot-prefixed code
+            is_completed |= true
+        else
+            if prefixtyp !== nothing
+                prefix = JS.sourcetext(dotprefix)
+                add_property_completions!(items, comp_ctx, prefixtyp, prefix)
+            end
+            return #=isIncomplete=#false
+        end
+    end
+    resolver_id = unique_id("GlobalCompletionResolverInfo_resovler_id")
+    store!(state.completion_resolver_info, context_module) do _, ctx_mod::Module
+        GlobalCompletionResolverInfo(resolver_id, ctx_mod, world, postprocessor), nothing
+    end
+
+    is_cancelled(comp_ctx.cancel_flag) && return false
+    prioritized_names = let s = Set{Symbol}()
+        pnames = Base.invoke_in_world(
+            world, Base.unsorted_names, context_module; all=true)::Vector{Symbol}
+        sizehint!(s, length(pnames))
+        for name in pnames
+            startswith(String(name), "#") && continue
+            push!(s, name)
+        end
+        s
+    end
+
+    is_cancelled(comp_ctx.cancel_flag) && return false
+    all_names = Base.invoke_in_world(world, Base.unsorted_names, context_module;
+        all=true, imported=true, usings=true)::Vector{Symbol}
+
+    is_cancelled(comp_ctx.cancel_flag) && return false
+    live_names = live_global_names(comp_ctx, context_module)
+
+    is_cancelled(comp_ctx.cancel_flag) && return false
+    union!(prioritized_names, live_names)
+    live_only_names = setdiff!(live_names, all_names)
+    append!(all_names, live_only_names)
+
+    is_cancelled(comp_ctx.cancel_flag) && return false
+    for name in all_names
+        if context_module === FallbackAnalysisContext && name === :FallbackAnalysisContext
+            continue
+        end
+        s = String(name)
+        startswith(s, "#") && continue
+
+        startswith_at = startswith(s, "@")
+
+        if is_macro_invoke && !startswith_at
+            # If we are in a macro invocation context, we only want to complete macros.
+            # Conversely, we allow macros to be completed in any context.
+            continue
+        end
+
+        resolveName = newText = label = s
+        kind = detail = filterText = nothing
+        insertTextFormat = InsertTextFormat.PlainText
+        if startswith_at
+            if endswith(s, "_str")
+                detail = "[string macro]"
+                strname = replace(lstrip(s, '@'), r"_str$" => "")
+                label = strname * "\"\""
+                if supports(state, :textDocument, :completion, :completionItem, :snippetSupport)
+                    newText = strname * "\"\${1:str}\"\$0" # ${0:flags}?
+                    insertTextFormat = InsertTextFormat.Snippet
+                else
+                    newText = label
+                end
+                filterText = strname
+                resolveName = s
+            else
+                detail = "[macro]"
+            end
+            kind = CompletionItemKind.Function
+        end
+        if name in prioritized_names
+            sortText = max_sort_text1
+        else
+            sortText = max_sort_text2
+        end
+        textEdit = if isnothing(edit_start_pos)
+            nothing
+        else
+            range = completion_edit_range(comp_ctx, Range(;
+                start = edit_start_pos,
+                var"end" = pos))
+            TextEdit(; range, newText)
+        end
+
+        labelDetails = CompletionItemLabelDetails(; description = "global")
+
+        # N.B. Don't set `kind` here to prevent Zed from applying highlights to the `label` at this stage.
+        # The determination of `kind` involves reflection such as `getglobal`, so it is lazily resolved (see `resolve_completion_item`)
+        items[s] = CompletionItem(;
+            label,
+            labelDetails,
+            kind,
+            detail,
+            sortText,
+            filterText,
+            insertTextFormat,
+            textEdit,
+            data = name in live_only_names ? nothing :
+                GlobalCompletionData(resolver_id, resolveName))
+    end
+
+    return is_completed ? #=isIncomplete=#false : nothing
+end
+
+# Globals of `context_module` introduced by the live contents of synchronized documents in
+# the analysis unit, which full-analysis may not reflect yet (e.g. unsaved definitions).
+# Unsynchronized files are skipped: full-analysis loads their on-disk contents, and lowering
+# all of them would delay completion.
+function live_global_names(comp_ctx::CompletionCtx, context_module::Module)
+    (; state, snapshot, cancel_flag) = comp_ctx
+    names = Set{Symbol}()
+    analysis_info = get_analysis_info(state.analysis_manager, snapshot.cache_uri)
+    for uri in collect_search_uris(snapshot.cache_uri, analysis_info)
+        is_cancelled(cancel_flag) && break
+        fi = uri == snapshot.cache_uri ? snapshot.fi :
+            @something get_file_info(state, uri) continue
+        iterate_toplevel_tree(build_syntax_tree(fi)) do st0::SyntaxTree
+            is_cancelled(cancel_flag) && return traversal_terminator
+            binding_occurrences = @something get_binding_occurrences!(state, uri, fi, st0) return
+            for (binfo, occurrences) in binding_occurrences
+                binfo.kind === :global && binfo.mod === context_module || continue
+                all(o -> o.kind === :use, occurrences) && continue
+                push!(names, Symbol(binfo.name))
+            end
+        end
+    end
+    return names
+end
+
+# Property completions
+# ====================
+
+# Try property completion for `prefix.│` / `prefix.partial│`. Asks inference
+# what `propertynames(::T)` returns for the dot prefix's inferred type `T`;
+# if that's a `Core.Const(::Tuple{Vararg{Symbol}})`, those are the property
+# names. This subsumes both the default `fieldnames` path and `propertynames`
+# overrides (e.g. `Regex` returning `(:pattern, :compile_options, …)`) —
+# inference handles both uniformly.
+#
+# Each name's type detail (`getproperty(::T, Core.Const(:name))`) is deferred
+# to `resolve_property_completion_item` so the abstract-call only fires for
+# the property the user actually focuses, not all of them up front.
+function add_property_completions!(
+        items::Dict{String,CompletionItem}, comp_ctx::CompletionCtx,
+        @nospecialize(prefixtyp), prefix::AbstractString
+    )
+    # Union of `propertynames(::T)` across union components. Intersection would be safer in
+    # theory ("only properties available on every side"), but it falls flat on the very
+    # common `Union{T, Nothing}` case — `propertynames(::Nothing)` is empty, so the
+    # intersection vanishes. Names that exist only on a subset of components are kept;
+    # if the user accesses one when the value happens to be the other side it'll error
+    # at runtime, which is the same trade-off Julia itself accepts.
+    #
+    # `ordered` preserves source declaration order (each component's `propertynames` is
+    # appended in its own order, with `seen` dropping duplicates), so the `sortText` below
+    # renders the completion list in the order the user wrote the fields.
+    ordered = Symbol[]
+    seen = Set{Symbol}()
+    for typ in union_components(prefixtyp)
+        is_cancelled(comp_ctx.cancel_flag) && return false
+        rt = abstract_call_const(propertynames, Any[typ], comp_ctx.world)
+        rt isa Core.Const || continue
+        names = rt.val
+        names isa Tuple{Vararg{Symbol}} || continue
+        for n in names
+            n in seen && continue
+            push!(seen, n)
+            push!(ordered, n)
+        end
+    end
+    isempty(ordered) && return false
+
+    resolver_id = unique_id("PropertyCompletionResolverInfo_resovler_id")
+    store!(comp_ctx.state.completion_resolver_info) do _
+        resolver_info = PropertyCompletionResolverInfo(
+            resolver_id, prefixtyp, comp_ctx.world, comp_ctx.postprocessor)
+        resolver_info, nothing
+    end
+
+    for (i, name) in enumerate(ordered)
+        label = String(name)
+        items[label] = CompletionItem(;
+            label,
+            labelDetails = CompletionItemLabelDetails(; description = "property"),
+            kind = CompletionItemKind.Property,
+            sortText = get_sort_text(i),
+            data = PropertyCompletionData(resolver_id, label, prefix))
+    end
+    return true
+end
+
+function union_components(@nospecialize(prefixtyp))
+    typ = CC.widenconst(prefixtyp)
+    typ === Union{} && return Any[]
+    return typ isa Union ? Base.uniontypes(typ) : Any[typ]
+end
+
+# LaTeX and emoji completions
+# ===========================
+
+"""
+    get_backslash_offset(fi::FileInfo, pos::Position) -> offset::Int, is_emoji::Bool
+
+Get the byte `offset` of a backslash if the token immediately before the cursor
+consists of a backslash and colon.
+`is_emoji` indicates that a backslash is followed by the emoji completion trigger (`:`).
+Returns `nothing` if such a token does not exist or if another token appears
+immediately before the cursor.
+
+Examples:
+0. `┃...`           returns `nothing`
+1. `\\┃ beta`       returns byte offset of `\\` and `false`
+2. `\\alph┃`        returns byte offset of `\\` and `false`
+3. `\\  ┃`          returns `nothing` (whitespace before cursor)
+4. `\\:┃`           returns byte offset of `\\` and `true`
+5. `\\:smile┃       returns byte offset of `\\` and `true`
+6. `\\:+1┃          returns byte offset of `\\` and `true`
+7. `alpha┃`         returns `nothing`  (no backslash before cursor)
+8. `\\alpha  bet┃a` returns `nothing` (no backslash immediately before token with cursor)
+9. `# \\┃`          returns byte offset of `\\` and `false` or `true` if followed by `:` (comment scope)
+"""
+function get_backslash_offset(fi::FileInfo, pos::Position)
+    # Search backwards from cursor position for backslash
+    textbuf = fi.parsed_stream.textbuf
+    separators = (UInt8(' '), UInt8('\t'), UInt8('\n'), UInt8('"'), UInt8('\''))
+    semicolon = false
+    cursor_byte = xy_to_offset(fi, pos)-1
+    for i = cursor_byte:-1:1
+        c = textbuf[i]
+        if c == UInt8(':')
+            semicolon = true
+        elseif c == UInt8('\\')
+            return i, semicolon
+        elseif c in separators
+            break
+        else
+            semicolon = false
+        end
+    end
+end
+
+# Add LaTeX and emoji completions to the items dictionary. Returns `nothing` when
+# the cursor is not in a backslash context, otherwise the `isIncomplete` flag.
+function add_emoji_latex_completions!(
+        items::Dict{String,CompletionItem}, comp_ctx::CompletionCtx,
+    )
+    (; state, pos) = comp_ctx
+    fi = comp_ctx.snapshot.fi
+    backslash_offset, emojionly = @something get_backslash_offset(fi, pos) return nothing
+    backslash_pos = offset_to_xy(fi, backslash_offset)
+    edit_range = completion_edit_range(comp_ctx, Range(;
+        start = backslash_pos,
+        var"end" = pos))
+
+    # Filter server-side by the text typed since the backslash: non-VSCode clients
+    # (Zed, Helix) build their completion filter query from word characters before
+    # the cursor only, so keys containing `\`/`^`/`:` can never be matched by
+    # client-side filtering (aviatesk/JETLS.jl#821). Returning a filtered list with
+    # `isIncomplete = true` moves the filtering to the server; clients re-request
+    # it on each keystroke.
+    typed = String(fi.parsed_stream.textbuf[backslash_offset:comp_ctx.offset-1])
+
+    # HACK Some clients (e.g., Zed) don't properly use `sortText` for completion items
+    # containing `\\` or `:`, falling back to `label`-based sorting. For these clients,
+    # we strip `\\` and `:` from `label` so sorting works correctly.
+    # Other clients (e.g., VSCode) properly handles `\` character appearing in `sortText`,
+    # so we keep `label` as-is.
+    strip_prefix = @somereal(
+        get_config(state, :completion, :latex_emoji, :strip_prefix),
+        # auto-detect based on client
+        getobjpath(state, :init_params, :clientInfo, :name) ∈ ("Zed", "Zed Dev"))
+
+    create_ci = function (key, val, is_emoji::Bool)
+        description = is_emoji ? "emoji" : "latex-symbol"
+        helpText = strip_prefix ? rstrip(lstrip(lstrip(key, '\\'), ':'), ':') : key
+        return CompletionItem(;
+            label = helpText,
+            labelDetails = CompletionItemLabelDetails(;
+                description),
+            kind = CompletionItemKind.Snippet,
+            documentation = val,
+            sortText = helpText,
+            filterText = helpText,
+            textEdit = TextEdit(;
+                range = edit_range,
+                newText = val))
+    end
+
+    emojionly || foreach(REPL.REPLCompletions.latex_symbols) do (key, val)
+        is_subsequence(typed, key) || return
+        items[key] = create_ci(key, val, false)
+    end
+    foreach(REPL.REPLCompletions.emoji_symbols) do (key, val)
+        is_subsequence(typed, key) || return
+        items[key] = create_ci(key, val, true)
+    end
+
+    # the list is filtered server-side, so further typing must recompute it
+    return #=isIncomplete=#true
+end
+
+# Subsequence predicate matching what client-side fuzzy matchers (VSCode, nucleo)
+# use as their filter condition: every character of `typed` must appear in `key`
+# in order (e.g. `\lpha` matches `\alpha`). Matching is case-insensitive so the
+# server retains every candidate accepted by clients such as Helix. This only
+# decides which candidates survive; ranking is left to the client's own scoring.
+function is_subsequence(typed::String, key::String)
+    next = @something iterate(typed) return true
+    for c in key
+        (tc, ts) = next
+        if lowercase(c) == lowercase(tc)
+            next = @something iterate(typed, ts) return true
+        end
+    end
+    return false
+end
+
+# `^` is registered as a trigger character solely so that clients reopen the
+# completion menu right after `\^` (LaTeX superscript completion): most clients
+# dismiss the menu when `^` is typed since it is not an identifier character.
+# When a `^`-triggered request was not consumed by `add_emoji_latex_completions!`,
+# the cursor is after a plain `^` (e.g. `x^│`): suppress the remaining completion
+# kinds so that typing the exponentiation operator doesn't pop up an unrelated menu.
+function suppress_plain_caret_trigger(context::Union{Nothing,CompletionContext})
+    context === nothing && return nothing
+    context.triggerKind == CompletionTriggerKind.TriggerCharacter || return nothing
+    context.triggerCharacter == "^" || return nothing
+    return #=isIncomplete=#false
+end
+
+# keyword completions
+# ===================
+
+function get_keyword_doc(kwname::Symbol)
+    if kwname in (Symbol("true"), Symbol("false"))
+        return MarkupContent(;
+            kind = MarkupKind.Markdown,
+            value = string(@doc true))
+    end
+    kwdocstr = Base.Docs.keywords[kwname]
+    kwdocobj = kwdocstr.object
+    if kwdocobj isa Markdown.MD
+        docmd = kwdocobj
+    else
+        docmd = Markdown.parse(kwdocstr.text[1])
+    end
+    return MarkupContent(;
+        kind = MarkupKind.Markdown,
+        value = string(docmd))
+end
+
+const KEYWORD_COMPLETIONS = Dict{String,CompletionItem}()
+const KEYWORD_DOCS = Dict{String,MarkupContent}()
+let keywords = Set{String}()
+    union!(keywords, REPL.REPLCompletions.sorted_keywords, REPL.REPLCompletions.sorted_keyvals)
+    for keyword in keywords
+        documentation = get_keyword_doc(Symbol(keyword))
+        KEYWORD_COMPLETIONS[keyword] = CompletionItem(;
+            label = keyword,
+            labelDetails = CompletionItemLabelDetails(; description = "keyword"),
+            kind = CompletionItemKind.Keyword,
+            sortText = max_sort_text3,
+            documentation)
+    end
+    for keyword in keys(Base.Docs.keywords)
+        KEYWORD_DOCS[String(keyword)] = get_keyword_doc(keyword)
+    end
+end
+
+const var_quote_doc = get_keyword_doc(Symbol("var\"name\""))
+
+function keyword_completions!(
+        items::Dict{String,CompletionItem}, comp_ctx::CompletionCtx,
+    )
+    (; state, context) = comp_ctx
+    should_invoke_auto_completion(context) || return nothing
+
+    merge!(items, KEYWORD_COMPLETIONS)
+    if supports(state, :textDocument, :completion, :completionItem, :snippetSupport)
+        items["var\"\""] = CompletionItem(;
+            label = "var\"\"",
+            labelDetails = CompletionItemLabelDetails(; description = "keyword"),
+            kind = CompletionItemKind.Keyword,
+            sortText = max_sort_text3,
+            insertText = "var\"\${1:name}\"\$0",
+            insertTextFormat = InsertTextFormat.Snippet,
+            documentation = var_quote_doc)
+    else
+        items["var\"\""] = CompletionItem(;
+            label = "var\"\"",
+            labelDetails = CompletionItemLabelDetails(; description = "keyword"),
+            kind = CompletionItemKind.Keyword,
+            sortText = max_sort_text3,
+            documentation = var_quote_doc)
+    end
+    return nothing
+end
+
+# call completions (method signatures and keyword arguments)
+# ==========================================================
+
+function extract_param_text(p::SyntaxTree)
+     k = JS.head(p)
+    if k === :identifier
+        return get_name_val(p)
+    elseif k === :(::)
+        n = JS.numchildren(p)
+        if n == 1
+            typ = JS.sourcetext(p[1])
+            return String("::" * typ)
+        elseif n == 2
+            name = @something extract_param_text(p[1]) return nothing
+            typ = JS.sourcetext(p[2])
+            return String(name * "::" * typ)
+        else
+            return nothing
+        end
+    elseif k === :var && JS.numchildren(p) == 1
+        inner = p[1]
+        if JS.head(inner) === :identifier
+            return get_name_val(inner)
+        end
+    end
+    return nothing
+end
+
+escape_snippet_text(s::AbstractString) =
+    replace(s, '\\' => "\\\\", '$' => "\\\$", '}' => "\\}")
+
+function make_insert_text(msig::AbstractString, num_existing_args::Int, use_snippet::Bool)
+    mnode = JS.parsestmt(JS.SyntaxTree, msig; ignore_errors=true)
+    mnode = unwrap_funcdef_sig(mnode)
+    JS.head(mnode) in CALL_HEADS || return nothing
+    params, kwp_i, _ = flatten_args(mnode)
+    pos_params_count = kwp_i - 1
+    remaining_start = num_existing_args + 1
+    remaining_start > pos_params_count && return nothing
+    parts = String[]
+    snippet_idx = 1
+    for i in remaining_start:pos_params_count
+        p = params[i]
+        k = JS.head(p)
+        k in (:(=), :kw) && continue
+        if k === :... && JS.numchildren(p) ≥ 1
+            inner = p[1]
+            text = extract_param_text(inner)
+            isnothing(text) && continue
+            text = text * "..."
+        else
+            text = extract_param_text(p)
+            isnothing(text) && continue
+        end
+        if use_snippet
+            push!(parts, "\${$(snippet_idx):$(escape_snippet_text(text))}")
+            snippet_idx += 1
+        else
+            push!(parts, text)
+        end
+    end
+    isempty(parts) && return nothing
+    return join(parts, ", ")
+end
+
+function cursor_equals_position(ca::CallArgs, b::Int)
+    for arg in ca.args
+        br = JS.byte_range(arg)
+        first(br) ≤ b ≤ last(br) + 1 || continue
+        JS.head(arg) in (:(=), :kw) || return nothing
+        JS.numchildren(arg) ≥ 2 || return nothing
+        rhs = arg[2]
+        after_equals = if JS.head(rhs) === :error
+            lhs_end = JS.last_byte(arg[1])
+            b > lhs_end + 1
+        else
+            b ≥ JS.first_byte(rhs)
+        end
+        return after_equals
+    end
+    return nothing
+end
+
+function extract_kwarg_name_str(p::SyntaxTree)
+    node = @something extract_kwarg_name(p; sig=true) return nothing
+    return get_name_val(node)
+end
+
+function should_insert_spaces_around_equal(fi::FileInfo, ca::CallArgs)
+    has_whitespaces = has_equals = 0
+    for i in values(ca.kw_map)
+        kwnode = ca.args[i]
+        JS.head(kwnode) === :kw || continue
+        has_equals += 1
+        pos = offset_to_xy(fi, JS.first_byte(kwnode))
+        tok = @something token_at_offset(fi, pos) continue
+        while JS.is_whitespace(this(tok))
+            tok = @something next_tok(tok) @goto next
+        end
+        JS.kind(this(tok)) === JS.K"Identifier" || continue
+        tok = @something next_tok(tok) continue
+        JS.is_whitespace(this(tok)) || continue
+        tok = @something next_tok(tok) continue
+        JS.kind(this(tok)) === JS.K"=" || continue
+        tok = @something next_tok(tok) continue
+        JS.is_whitespace(this(tok)) || continue
+        has_whitespaces += 1
+        @label next
+    end
+    return has_whitespaces ≥ has_equals - has_whitespaces
+end
+
+function call_completions!(
+        items::Dict{String,CompletionItem}, comp_ctx::CompletionCtx,
+    )
+    (; state, pos, context, st0_top, context_module, world, postprocessor) = comp_ctx
+    fi = comp_ctx.snapshot.fi
+    b = comp_ctx.offset
+    call = @something cursor_call(fi.parsed_stream, st0_top, b) return nothing
+    ca = CallArgs(call, b)
+
+    equals_pos = cursor_equals_position(ca, b)
+    should_complete_method_sigs = !ca.has_semicolon && !isnothing(context) &&
+        context.triggerCharacter ∈ METHOD_COMPLETION_TRIGGER_CHARACTERS
+    should_complete_kwargs = !(equals_pos === true) # is not after `=`
+
+    should_complete_method_sigs || should_complete_kwargs || return nothing
+    is_cancelled(comp_ctx.cancel_flag) && return false
+
+    ctx = get_inferred_ctx!(comp_ctx; caller="call_completions!")
+    fntyp = ctx === nothing ? nothing : get_type_for_range(ctx, JS.byte_range(call[1]))
+    if fntyp === nothing
+        fntyp = resolve_global_const(context_module, world, call[1])
+    end
+    fntyp isa Core.Const || return nothing
+
+    is_cancelled(comp_ctx.cancel_flag) && return false
+    argtypes = @something collect_call_argtypes(ctx, ca) return nothing
+    fixup_argtypes!(argtypes, fntyp)
+    is_cancelled(comp_ctx.cancel_flag) && return false
+    matches = @something find_all_matches(argtypes; world) return nothing
+    isempty(matches) && return nothing
+    is_cancelled(comp_ctx.cancel_flag) && return false
+
+    num_existing_args = ca.kw_i - 1
+    has_equals = equals_pos === false
+    local method_sig_comp_info, kwarg_comp_info
+    if should_complete_method_sigs
+        local resolver_id = unique_id("MethodSignatureCompletionResolverInfo_resovler_id")
+        store!(state.completion_resolver_info) do _
+            MethodSignatureCompletionResolverInfo(resolver_id, world, matches, postprocessor), nothing
+        end
+        method_sig_comp_info = (;
+            resolver_id,
+            use_snippet = supports(state, :textDocument, :completion, :completionItem, :snippetSupport))
+    else
+        @assert should_complete_kwargs
+        kwarg_comp_info = (;
+            existing_kws = Set{String}(keys(ca.kw_map)),
+            seen_kwarg_names = Set{String}(),
+            insert_spaces = should_insert_spaces_around_equal(fi, ca),
+            local_bindings = has_equals ? nothing : get_cursor_bindings_cached!(comp_ctx))
+    end
+
+    method_sig_sort_idx = 1
+    for (i, match) in enumerate(matches)
+        is_cancelled(comp_ctx.cancel_flag) && return false
+
+        m = match.method
+        startswith(String(m.name), '@') && continue
+        compatible_method(m, ca, world) || continue
+        msig = @something get_sig_str(m, ca, world) continue
+
+        if @isdefined(method_sig_comp_info) # i.e. should_complete_method_sigs
+            local (; resolver_id, use_snippet) = method_sig_comp_info
+            msig_label = postprocessor(msig)
+            base_text = make_insert_text(msig_label, num_existing_args, use_snippet)
+            newText = if isnothing(base_text)
+                ""
+            else
+                triggerCharacter = (context::CompletionContext).triggerCharacter
+                prefix = (num_existing_args > 0 && triggerCharacter == ",") ? " " : ""
+                prefix * base_text
+            end
+            label = String(msig_label)
+            items[label] = CompletionItem(;
+                label,
+                labelDetails = CompletionItemLabelDetails(; description = "method"),
+                kind = CompletionItemKind.Method,
+                textEdit = TextEdit(; range=Range(pos, pos), newText),
+                insertTextFormat = use_snippet ? InsertTextFormat.Snippet : InsertTextFormat.PlainText,
+                sortText = get_sort_text(method_sig_sort_idx),
+                data = MethodSignatureCompletionData(resolver_id, i),
+            )
+            method_sig_sort_idx += 1
+        elseif @isdefined(kwarg_comp_info) # i.e. should_complete_kwargs
+            (; existing_kws, seen_kwarg_names, insert_spaces, local_bindings) = kwarg_comp_info
+            mnode = JS.parsestmt(JS.SyntaxTree, msig; ignore_errors=true)
+            mnode = unwrap_funcdef_sig(mnode)
+            JS.head(mnode) in CALL_HEADS || continue
+            params, kwp_i, has_semicolon = flatten_args(mnode)
+            kwname_sort_idx = 1
+            for j in kwp_i:lastindex(params)
+                p = params[j]
+                JS.head(p) === :... && continue
+                kwarg_name = @something extract_kwarg_name_str(p) continue
+                kwarg_name in existing_kws && continue
+                kwarg_name in seen_kwarg_names && continue
+                push!(seen_kwarg_names, kwarg_name)
+                if has_equals
+                    suffix = ""
+                else
+                    local_var_existing = !isnothing(local_bindings) &&
+                        any(((binding,_,_),)->binding.name==kwarg_name, local_bindings)
+                    if local_var_existing
+                        suffix = ""
+                    else
+                        suffix = insert_spaces ? " = " : "="
+                    end
+                end
+                items[kwarg_name] = CompletionItem(;
+                    label = kwarg_name,
+                    labelDetails = CompletionItemLabelDetails(; description = "keyword argument"),
+                    insertText = kwarg_name * suffix,
+                    sortText = has_semicolon ? get_sort_text(kwname_sort_idx) : max_sort_text1,
+                )
+                kwname_sort_idx += 1
+            end
+        else error("Unreachable") end
+    end
+    if should_complete_kwargs && ca.has_semicolon
+        return #=isIncomplete=#false
+    elseif should_complete_method_sigs && method_sig_sort_idx > 1
+        return #=isIncomplete=#true
+    end
+    return nothing
+end
+
+# completion resolver
+# ===================
+
+function lookup_doc_for_match(match::Core.MethodMatch, world::UInt)
+    m = match.method
+    Base.invoke_in_world(world, isdefinedglobal, m.module, m.name) || return nothing
+    mfunc = Base.invoke_in_world(world, getglobal, m.module, m.name)
+    sig = @something method_doc_sig(m) return nothing
+    return lookup_doc_for_value(mfunc, sig, world)
+end
+
+const builtin_functions = Core.Builtin[getglobal(Core, n) for n in names(Core) if getglobal(Core, n) isa Core.Builtin]
+const builtin_types = Type[getglobal(Core, n) for n in names(Core) if getglobal(Core, n) isa Type]
+
+# Spec quirks around lazy-resolvable properties (see aviatesk/JETLS.jl#711):
+# - 3.16.0+ with `resolveSupport.properties` declared: the list is exhaustive —
+#   any property not in it cannot be resolved lazily (the resolved value is
+#   silently dropped or even mis-rendered).
+# - Pre-3.16.0 (no `resolveSupport`): only `documentation` and `detail` are
+#   lazy-resolvable. We honor this for backward compatibility.
+function supports_completion_item_resolve(state::ServerState, property::AbstractString)
+    if getobjpath(state, :init_params, :clientInfo, :name) ∈ ("Zed", "Zed Dev")
+        # Special case: Zed under-declares `resolveSupport` but actually applies lazy
+        # updates for every non-`label` field, so opt it into the full set unconditionally.
+        return true
+    end
+    properties = getcapability(state, :textDocument, :completion, :completionItem,
+        :resolveSupport, :properties)
+    if properties !== nothing
+        return property in properties
+    end
+    return property in ("documentation", "detail")
+end
+
+function resolve_completion_item(
+        state::ServerState, item::CompletionItem;
+        cancel_flag::AbstractCancelFlag = DUMMY_CANCEL_FLAG
+    )
+    completion_resolver_info = @something load(state.completion_resolver_info) return item
+    data = item.data
+    if (data isa GlobalCompletionData &&
+        completion_resolver_info isa GlobalCompletionResolverInfo &&
+        data.resolver_id == completion_resolver_info.id)
+        return resolve_global_completion_item(state, item, data, completion_resolver_info)
+    elseif (data isa MethodSignatureCompletionData &&
+            completion_resolver_info isa MethodSignatureCompletionResolverInfo &&
+            data.resolver_id == completion_resolver_info.id)
+        return resolve_method_signature_completion_item(
+            state, item, data, completion_resolver_info; cancel_flag)
+    elseif (data isa PropertyCompletionData &&
+            completion_resolver_info isa PropertyCompletionResolverInfo &&
+            data.resolver_id == completion_resolver_info.id)
+        return resolve_property_completion_item(
+            state, item, data, completion_resolver_info; cancel_flag)
+    else
+        return item
+    end
+end
+
+function resolve_property_completion_item(
+        state::ServerState, item::CompletionItem, data::PropertyCompletionData,
+        completion_resolver_info::PropertyCompletionResolverInfo;
+        cancel_flag::AbstractCancelFlag = DUMMY_CANCEL_FLAG
+    )
+    supports_labelDetails = supports_completion_item_resolve(state, "labelDetails")
+    supports_detail = supports_completion_item_resolve(state, "detail")
+    supports_documentation = supports_completion_item_resolve(state, "documentation")
+    supports_labelDetails || supports_detail || supports_documentation || return item
+
+    (; prefixtyp, world, postprocessor) = completion_resolver_info
+
+    # `Union` (tmerge) the per-component `getproperty(::T, Core.Const(name))` result, so a
+    # `Union{Foo, Bar}` prefix shows the union of field types rather than just one side's.
+    name = Core.Const(Symbol(data.label))
+    rawtyp = Union{}
+    for comp in union_components(prefixtyp)
+        is_cancelled(cancel_flag) && return item
+        gp_rt = @something abstract_call_const(getproperty, Any[comp, name], world) continue
+        rawtyp = CC.tmerge(rawtyp, gp_rt)
+    end
+    is_cancelled(cancel_flag) && return item
+    typstr = truncate_typstr(
+        postprocessor(sprint(show, rawtyp; context = :compact => true)),
+        #=maxdepth=#3, #=maxwidth=#20)
+    detail = " ::" * typstr
+    full_typstr = postprocessor(string(rawtyp))
+    io = IOBuffer()
+    print(io, "```julia\n", data.prefix, ".", data.label, " :: ", full_typstr, "\n```")
+    fdoc = lookup_field_doc(prefixtyp, Symbol(data.label), world)
+    if fdoc isa Markdown.MD
+        print(io, "\n\n---\n\n", postprocessor(fdoc))
+    end
+    value = String(take!(io))
+
+    labelDetails = supports_labelDetails ?
+        CompletionItemLabelDetails(; detail, description = "property") : item.labelDetails
+    detail = supports_detail ? detail : item.detail
+    documentation = supports_documentation ?
+        MarkupContent(; kind = MarkupKind.Markdown, value) : item.documentation
+    return CompletionItem(item; labelDetails, detail, documentation)
+end
+
+function resolve_global_completion_item(
+        state::ServerState, item::CompletionItem, data::GlobalCompletionData,
+        completion_resolver_info::GlobalCompletionResolverInfo
+    )
+    supports_labelDetails = supports_completion_item_resolve(state, "labelDetails")
+    supports_kind = supports_completion_item_resolve(state, "kind")
+    supports_detail = supports_completion_item_resolve(state, "detail")
+    supports_documentation = supports_completion_item_resolve(state, "documentation")
+    supports_labelDetails || supports_kind || supports_detail || supports_documentation || return item
+
+    (; context_module, world, postprocessor) = completion_resolver_info
+    name = Symbol(data.name)
+    doc = lookup_doc_for_binding(context_module, name, #=sig=#nothing, world)
+    (; labelDetails, detail) = item
+    kind = item.kind
+    if isnothing(detail) || isnothing(kind)
+        if Base.invoke_in_world(world, isdefinedglobal, context_module, name)::Bool
+            obj = Base.invoke_in_world(world, getglobal, context_module, name)
+            if obj isa JET.AbstractBindingState
+                # Classify by the analyzed const value when available; otherwise fall
+                # through to the `isconst` branch (these placeholders are always `const`).
+                statetyp = abstract_binding_state_typ(obj)
+                obj = statetyp isa Core.Const ? statetyp.val : nothing
+            end
+            if obj isa Type
+                if obj in builtin_types
+                    detail = "[builtin type]"
+                    kind = CompletionItemKind.Constant
+                else
+                    detail = "[type]"
+                    kind = CompletionItemKind.Struct
+                end
+            elseif obj isa Function
+                if obj isa Core.Builtin && obj in builtin_functions
+                    detail = "[builtin function]"
+                    kind = CompletionItemKind.Constant
+                else
+                    detail = "[function]"
+                    kind = CompletionItemKind.Function
+                end
+            elseif obj isa Module
+                detail = "[module]"
+                kind = CompletionItemKind.Module
+            elseif Base.invoke_in_world(world, isconst, context_module, name)
+                detail = "[constant variable]"
+                kind = CompletionItemKind.Constant
+            else
+                detail = "[variable]"
+                kind = CompletionItemKind.Variable
+            end
+        end
+    end
+
+    if !isnothing(detail) && supports_labelDetails
+        labelDetails = CompletionItemLabelDetails(; description = "global " * detail)
+    end
+    supports_kind || (kind = item.kind)
+    supports_detail || (detail = item.detail)
+    documentation = supports_documentation && doc !== nothing ?
+        MarkupContent(; kind = MarkupKind.Markdown, value = postprocessor(doc)) :
+        item.documentation
+
+    return CompletionItem(item; labelDetails, kind, detail, documentation)
+end
+
+function resolve_method_signature_completion_item(
+        state::ServerState, item::CompletionItem, data::MethodSignatureCompletionData,
+        completion_resolver_info::MethodSignatureCompletionResolverInfo;
+        cancel_flag::AbstractCancelFlag = DUMMY_CANCEL_FLAG
+    )
+    supports_labelDetails = supports_completion_item_resolve(state, "labelDetails")
+    supports_detail = supports_completion_item_resolve(state, "detail")
+    supports_documentation = supports_completion_item_resolve(state, "documentation")
+    supports_labelDetails || supports_detail || supports_documentation || return item
+
+    (; world, matches, postprocessor) = completion_resolver_info
+    1 ≤ data.match_idx ≤ length(matches) || return item # just to make sure
+    match = matches[data.match_idx]
+    doc = @something lookup_doc_for_match(match, world) return item
+    is_cancelled(cancel_flag) && return item
+    docstr = postprocessor(string(doc))
+    _, result = infer_match!(world, match)
+    resulttyp = @something result.result return item
+    rettyp = CC.widenconst(resulttyp)
+    # TODO Show effects and exception type?
+    typstr = truncate_typstr(
+        postprocessor(sprint(show, rettyp; context = :compact => true)),
+        #=maxdepth=#3, #=maxwidth=#20)
+    detail = " -> " * typstr
+    full_typstr = postprocessor(string(rettyp))
+    value = """
+    ```julia
+    $(item.label) -> $(full_typstr)
+    ```
+    ---
+    """ * docstr
+
+    labelDetails = supports_labelDetails ?
+        CompletionItemLabelDetails(; detail, description = "method") : item.labelDetails
+    detail = supports_detail ? detail : item.detail
+    documentation = supports_documentation ?
+        MarkupContent(; kind = MarkupKind.Markdown, value) : item.documentation
+
+    return CompletionItem(item; labelDetails, detail, documentation)
+end
+
+# request handler
+# ===============
+
+function get_completion_items(
+        state::ServerState, uri::URI, snapshot::DocumentSnapshot,
+        pos::Position, context::Union{Nothing,CompletionContext};
+        context_module::Union{Nothing,Module} = nothing,
+        cancel_flag::AbstractCancelFlag = DUMMY_CANCEL_FLAG,
+    )
+    comp_ctx = CompletionCtx(state, uri, snapshot, pos, context; context_module, cancel_flag)
+    return get_completion_items(comp_ctx)
+end
+
+function get_completion_items(comp_ctx::CompletionCtx)
+    context = comp_ctx.context
+    items = Dict{String,CompletionItem}()
+    # order matters; see local_completions!
+    isIncomplete = @something(
+        add_emoji_latex_completions!(items, comp_ctx),
+        suppress_plain_caret_trigger(context),
+        call_completions!(items, comp_ctx),
+        global_completions!(items, comp_ctx),
+        local_completions!(items, comp_ctx),
+        keyword_completions!(items, comp_ctx),
+        false)
+    # Once the request is cancelled, a routine returns `false` to skip the remaining ones
+    if is_cancelled(comp_ctx.cancel_flag)
+        return nothing
+    end
+    return collect(values(items)), isIncomplete
+end
+
+function handle_CompletionRequest(
+        server::Server, msg::CompletionRequest, snapshot::DocumentSnapshot, cancel_flag::CancelFlag
+    )
+    if is_cancelled(cancel_flag)
+        return send(server, CompletionResponse(;
+            id = msg.id, result = nothing, error = request_cancelled_error()))
+    end
+    uri = msg.params.textDocument.uri
+    pos = adjust_position(snapshot, uri, msg.params.position)
+    items, isIncomplete = @something get_completion_items(
+            server.state, uri, snapshot, pos, msg.params.context; cancel_flag) begin
+        return send(server, CompletionResponse(;
+            id = msg.id, result = nothing, error = request_cancelled_error()))
+    end
+    # For method signature completions, set `isIncomplete = true` so that when
+    # the user continues typing (e.g., an identifier), the client will re-request
+    # and trigger global/local completions instead of continuing to filter
+    # method signatures.
+    return send(server,
+        CompletionResponse(;
+            id = msg.id,
+            result = CompletionList(; isIncomplete, items)))
+end
+
+function handle_CompletionResolveRequest(
+        server::Server, msg::CompletionResolveRequest, cancel_flag::CancelFlag
+    )
+    item = resolve_completion_item(server.state, msg.params; cancel_flag)
+    if is_cancelled(cancel_flag)
+        return send(server, CompletionResolveResponse(;
+            id = msg.id, result = nothing, error = request_cancelled_error()))
+    end
+    return send(server, CompletionResolveResponse(; id = msg.id, result = item))
+end

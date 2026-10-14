@@ -22,10 +22,10 @@ Options:
   --check           Verify that FILE matches the generated schema"""
 
 const TARGETS = Dict(
-    "--config-toml" => JETLS.JETLSConfig,
-    "--settings" => JETLS.JETLSConfig,
-    "--init-options" => JETLS.InitOptions,
-    "--vscode-configuration" => JETLS.JETLSConfig
+    "--config-toml" => JETLSCore.JETLSConfig,
+    "--settings" => JETLSCore.JETLSConfig,
+    "--init-options" => JETLSCore.InitOptions,
+    "--vscode-configuration" => JETLSCore.JETLSConfig
 )
 
 function parse_arguments(args::Vector{String})
@@ -62,7 +62,7 @@ function generate_schema_dict(target_arg::String, ctx::SchemaContext)
     end
     target = TARGETS[target_arg]
     if target_arg == "--settings"
-        skip!(ctx, JETLS.JETLSConfig, :initialization_options)
+        skip!(ctx, JETLSCore.JETLSConfig, :initialization_options)
     end
     # Inline all $defs/$ref for config-toml schema so that TOML language servers
     # (e.g. Tombi) that don't support $ref resolution can still use it

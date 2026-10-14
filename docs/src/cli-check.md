@@ -74,7 +74,8 @@ EOF
 ```
 
 By default, the source is analyzed like an unsaved buffer in the language
-server (see [How each file is analyzed](@ref analysis/full/files)) and is
+server (see
+[Unsaved buffers and notebooks](@ref analysis/full/files/unsaved)) and is
 displayed as `<stdin>`. With [`--stdin-filename`](@ref cli-check/options/stdin-filename),
 it is analyzed as the file at the given path instead.
 

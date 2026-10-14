@@ -242,12 +242,34 @@ platforms, including Windows; backslashes are not interpreted as separators.
 path = "test/fixtures/**"
 ```
 
-Save-time diagnostics produced by full analysis, including
-[`toplevel` diagnostics](@ref diagnostic/reference/toplevel) and
-[`inference` diagnostics](@ref diagnostic/reference/inference), are unavailable
-for the matched files. Live analysis keeps working with a fallback module
-context; see [Files without full analysis](@ref analysis/live/fallback) for what
-remains available.
+Matched files receive no code-loading or inference diagnostics. Instead, they
+report [`toplevel/analysis-skipped`](@ref diagnostic/reference/toplevel/analysis-skipped)
+at their first line. Live analysis keeps working with a fallback module
+context; see [Files without full analysis](@ref analysis/live/fallback) for
+what remains available.
+
+The exclusion also applies to files reached through `include`. The optional
+`on_include` field selects what full analysis does at such an `include`:
+
+- `"stop"` (default): full analysis reports
+  [`toplevel/analysis-stopped`](@ref diagnostic/reference/toplevel/analysis-stopped)
+  at the call site and stops that analysis unit before loading the excluded
+  file.
+- `"skip"`: full analysis reports
+  [`toplevel/analysis-skipped`](@ref diagnostic/reference/toplevel/analysis-skipped)
+  at the call site and continues without loading the excluded file. Use this
+  only when the code after the `include` does not depend on the excluded file,
+  e.g. for a test file that runs its own test set; otherwise, the missing
+  definitions cause false diagnostics in the rest of the unit.
+
+```toml
+# Analyze `test/runtests.jl` except for an expensive test file it includes
+[[initialization_options.analysis_overrides]]
+path = "test/test_expensive.jl"
+on_include = "skip"
+```
+
+See [Excluding files from full analysis](@ref analysis/full/exclude).
 
 !!! warning
     `analysis_overrides` is provided as a temporary workaround and may be

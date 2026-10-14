@@ -33,6 +33,7 @@ jobs:
       testrunner: ${{ steps.filter.outputs.testrunner }}
       selfcheck: ${{ steps.filter.outputs.selfcheck }}
       schemas: ${{ steps.filter.outputs.schemas }}
+      sources: ${{ steps.filter.outputs.sources }}
       vendor_deps: ${{ steps.filter.outputs.vendor_deps }}
       docs: ${{ steps.filter.outputs.docs }}
     steps:
@@ -48,12 +49,14 @@ jobs:
           IGNORED_PATHS: |
             Compiler/README.md
             HierarchicalTestSets/README.md
+            JETLSCore/README.md
             LSP/README.md
             LSP/specification.md
             TOMLSource/README.md
             TestRunner/README.md
           JETLS_PATHS: |
             src/**
+            JETLSCore/**
             test/**
             LSP/**
             HierarchicalTestSets/**
@@ -84,9 +87,11 @@ jobs:
             HierarchicalTestSets/**
             Compiler/**
             Project.toml
+            JETLSCore/Project.toml
             .github/workflows/TestRunner.jl.yml
           SELFCHECK_PATHS: |
             src/**
+            JETLSCore/**
             LSP/**
             HierarchicalTestSets/**
             MarkdownSource/**
@@ -99,12 +104,19 @@ jobs:
             .github/workflows/selfcheck.yml
           SCHEMAS_PATHS: |
             src/**
+            JETLSCore/src/**
+            JETLSCore/Project.toml
             schemas/**
             scripts/schema/**
             Project.toml
             .github/workflows/check-schemas.yml
+          SOURCES_PATHS: |
+            *Project.toml
+            scripts/check-sources.jl
+            .github/workflows/check-sources.yml
           VENDOR_DEPS_PATHS: |
             src/**
+            JETLSCore/**
             test/**
             LSP/**
             TOMLSource/**
@@ -115,6 +127,7 @@ jobs:
             .github/workflows/vendor-deps.jl.yml
           DOCS_PATHS: |
             src/**
+            JETLSCore/src/**
             docs/**
             CHANGELOG.md
             .github/workflows/Documentation.yml
@@ -154,14 +167,17 @@ jobs:
             echo "testrunner=$(changed "$TESTRUNNER_PATHS")"
             echo "selfcheck=$(changed "$SELFCHECK_PATHS")"
             echo "schemas=$(changed "$SCHEMAS_PATHS")"
+            echo "sources=$(changed "$SOURCES_PATHS")"
             echo "vendor_deps=$(changed "$VENDOR_DEPS_PATHS")"
             echo "docs=$(changed "$DOCS_PATHS")"
           } >> "$GITHUB_OUTPUT"
 
+  # The jobs below need `!cancelled()`: without a status check function, `success()` is
+  # implied, which fails for pull requests since it also covers the skipped `verified_tree`.
   jetls:
     name: JETLS.jl
     needs: changes
-    if: needs.changes.outputs.jetls == 'true'
+    if: ${{ !cancelled() && needs.changes.outputs.jetls == 'true' }}
     uses: ./.github/workflows/JETLS.jl.yml
     with:
       include-nightly: false
@@ -170,7 +186,7 @@ jobs:
   test_nightly:
     name: JETLS.jl nightly
     needs: changes
-    if: needs.changes.outputs.jetls == 'true'
+    if: ${{ !cancelled() && needs.changes.outputs.jetls == 'true' }}
     uses: ./.github/workflows/test-matrix.yml
     with:
       include-stable: false
@@ -179,60 +195,66 @@ jobs:
   lsp:
     name: LSP.jl
     needs: changes
-    if: github.event_name == 'pull_request' && needs.changes.outputs.lsp == 'true'
+    if: ${{ !cancelled() && github.event_name == 'pull_request' && needs.changes.outputs.lsp == 'true' }}
     uses: ./.github/workflows/LSP.jl.yml
 
   # `push` runs are handled by `HierarchicalTestSets.jl.yml` itself to keep its own status badge.
   hierarchical_testsets:
     name: HierarchicalTestSets.jl
     needs: changes
-    if: github.event_name == 'pull_request' && needs.changes.outputs.hierarchical_testsets == 'true'
+    if: ${{ !cancelled() && github.event_name == 'pull_request' && needs.changes.outputs.hierarchical_testsets == 'true' }}
     uses: ./.github/workflows/HierarchicalTestSets.jl.yml
 
   # `push` runs are handled by `MarkdownSource.jl.yml` itself to keep its own status badge.
   markdownsource:
     name: MarkdownSource.jl
     needs: changes
-    if: github.event_name == 'pull_request' && needs.changes.outputs.markdownsource == 'true'
+    if: ${{ !cancelled() && github.event_name == 'pull_request' && needs.changes.outputs.markdownsource == 'true' }}
     uses: ./.github/workflows/MarkdownSource.jl.yml
 
   # `push` runs are handled by `TOMLSource.jl.yml` itself to keep its own status badge.
   tomlsource:
     name: TOMLSource.jl
     needs: changes
-    if: github.event_name == 'pull_request' && needs.changes.outputs.tomlsource == 'true'
+    if: ${{ !cancelled() && github.event_name == 'pull_request' && needs.changes.outputs.tomlsource == 'true' }}
     uses: ./.github/workflows/TOMLSource.jl.yml
 
   # `push` runs are handled by `TestRunner.jl.yml` itself to keep its own status badge.
   testrunner:
     name: TestRunner.jl
     needs: changes
-    if: github.event_name == 'pull_request' && needs.changes.outputs.testrunner == 'true'
+    if: ${{ !cancelled() && github.event_name == 'pull_request' && needs.changes.outputs.testrunner == 'true' }}
     uses: ./.github/workflows/TestRunner.jl.yml
 
   selfcheck:
     name: Self diagnostics
     needs: changes
-    if: needs.changes.outputs.selfcheck == 'true'
+    if: ${{ !cancelled() && needs.changes.outputs.selfcheck == 'true' }}
     uses: ./.github/workflows/selfcheck.yml
 
   check_schemas:
     name: Check schemas
     needs: changes
-    if: needs.changes.outputs.schemas == 'true'
+    if: ${{ !cancelled() && needs.changes.outputs.schemas == 'true' }}
     uses: ./.github/workflows/check-schemas.yml
+
+  check_sources:
+    name: Check sources
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.sources == 'true' }}
+    uses: ./.github/workflows/check-sources.yml
 
   vendor_deps:
     name: vendor-deps.jl
     needs: changes
-    if: needs.changes.outputs.vendor_deps == 'true'
+    if: ${{ !cancelled() && needs.changes.outputs.vendor_deps == 'true' }}
     uses: ./.github/workflows/vendor-deps.jl.yml
 
   # `push` runs are handled by `Documentation.yml` itself since they deploy.
   docs:
     name: Documentation
     needs: changes
-    if: github.event_name == 'pull_request' && needs.changes.outputs.docs == 'true'
+    if: ${{ !cancelled() && github.event_name == 'pull_request' && needs.changes.outputs.docs == 'true' }}
     permissions:
       actions: write
       contents: write
@@ -255,6 +277,7 @@ jobs:
       - testrunner
       - selfcheck
       - check_schemas
+      - check_sources
       - vendor_deps
       - docs
     runs-on: ubuntu-latest

@@ -1,0 +1,672 @@
+# initialization
+# ==============
+
+signature_help_options() = SignatureHelpOptions(;
+    triggerCharacters = ["(", ",", ";", "\"", "=", " "],
+    retriggerCharacters = ["."])
+
+const SIGNATURE_HELP_REGISTRATION_ID = "jetls-signature-help"
+const SIGNATURE_HELP_REGISTRATION_METHOD = "textDocument/signatureHelp"
+const CALL_HEADS = (:call, :macrocall, :.)
+
+function signature_help_registration()
+    (; triggerCharacters, retriggerCharacters) = signature_help_options()
+    return Registration(;
+        id = SIGNATURE_HELP_REGISTRATION_ID,
+        method = SIGNATURE_HELP_REGISTRATION_METHOD,
+        registerOptions = SignatureHelpRegistrationOptions(;
+            documentSelector = DEFAULT_DOCUMENT_SELECTOR,
+            triggerCharacters,
+            retriggerCharacters))
+end
+
+# utils
+# =====
+
+"""
+    flatten_args(call::SyntaxTree) -> (args::SyntaxList, first_kwarg_i::Int, has_semicolon::Bool) or nothing
+
+Return `(args::SyntaxList, first_kwarg_i::Int, has_semicolon::Bool)`,
+one `SyntaxTree` per argument to call.
+Ignore function name and `:error` (e.g. missing closing paren).
+`has_semicolon` is true if the call contains a `:parameters` node (explicit semicolon).
+"""
+function flatten_args(call::SyntaxTree)
+    while JS.head(call) === :where
+        call = call[1]
+    end
+    if !(JS.head(call) in CALL_HEADS)
+        # Operator-like methods (e.g. `<:`, `>:`) parse as their own head rather
+        # than `:call`, skip them for now
+        return nothing
+    end
+    usable = (arg::SyntaxTree) -> JS.head(arg) !== :error && !is_synthesized_value(arg)
+    # In new EST, dotcall `f.(args)` is represented as `:.` with children
+    # `[func, tuple(args...)]`, so we unwrap the tuple to get the actual args.
+    if JS.head(call) === :. && JS.numchildren(call) ≥ 2 && JS.head(call[2]) === :tuple
+        orig = filter(usable, JS.children(call[2]))
+    else
+        orig = filter(usable, JS.children(call)[2:end])
+    end
+
+    args = JS.SyntaxList()
+    kw_children = JS.SyntaxList()
+    has_semicolon = false
+    for i in eachindex(orig)
+        if JS.head(orig[i]) === :parameters
+            has_semicolon = true
+            for p in filter(usable, JS.children(orig[i]))
+                push!(kw_children, p)
+            end
+        else
+            push!(args, orig[i])
+        end
+    end
+    kw_i = length(args) + 1
+    for p in kw_children
+        push!(args, p)
+    end
+    return args, kw_i, has_semicolon
+end
+
+"""
+Get `:identifier` tree from a kwarg tree (child of `:call` or `:parameters`).
+`sig`: treat this as a signature rather than a call
+```
+               a => a
+         (= a 1) => a
+        (kw a 1) => a
+  (= (:: a T) 1) => a  # only when sig=true
+ (kw (:: a T) 1) => a  # only when sig=true
+```
+"""
+function extract_kwarg_name(arg::SyntaxTree; sig::Bool=false)
+    ret = identifier_like(arg)
+    isnothing(ret) || return ret
+    if JS.head(arg) === :(=) || JS.head(arg) === :kw
+        arg1 = arg[1]
+        ret = identifier_like(arg1)
+        isnothing(ret) || return ret
+        if sig && JS.head(arg1) === :(::)
+            ret = identifier_like(arg1[1])
+            isnothing(ret) || return ret
+        end
+    elseif JS.head(arg) === :...
+        return nothing
+    end
+    @static JETLS_DEBUG_LOWERING && @info "Unknown kwarg form" arg
+    return nothing
+end
+
+function identifier_like(st::SyntaxTree)
+    if JS.head(st) === :identifier
+        return st
+    elseif JS.head(st) === :var
+        inner = st[1]
+        if JS.head(inner) === :identifier
+            return inner
+        end
+    end
+    return nothing
+end
+
+"""
+Best-effort mapping of kwname to position in `args`.  `args[kw_i]` and later are
+after the semicolon.  False negatives are fine here; false positives would hide
+signatures.
+
+If `sig`, then `=`/`kw` trees before the semicolon should be interpreted as
+optional positional args instead of kwargs.
+
+Keywords should be ignored if `cursor` is within the keyword's name.
+
+Note: the `=` form doesn't always correspond to a keyword arg after macro
+expansion, but signature help is only used on unexpanded code.
+"""
+function find_kws(args::SyntaxList, kw_i::Int; sig=false, cursor::Int=-1)
+    out = Dict{String, Int}()
+    for i in (sig ? (kw_i:lastindex(args)) : eachindex(args))
+        JS.head(args[i]) ∉ (:(=), :kw) && i < kw_i && continue
+        n = extract_kwarg_name(args[i]; sig)
+        if !isnothing(n) && !(JS.first_byte(n) <= cursor <= JS.last_byte(n) + 1)
+            nv = get_name_val(n)
+            if nv !== nothing
+                out[nv] = i
+            end
+        end
+    end
+    return out
+end
+
+"""
+    CallArgs
+
+Information from a call site's arguments for filtering method signatures.
+- `args`: Every valid child of the `:call` and its `:parameters` if present
+- `kw_i`: Index where `:parameters` (semicolon) args begin; `length(args)+1` if no semicolon
+- `pos_map`: Map from index in `args` to `(min, max)` possible positional arg index.
+             `:(=)` / `:kw` forms are excluded. `max` is `nothing` when a splat precedes.
+             e.g. `f(a, k=1, b..., c)` -> `{1 => (1, 1), 3 => (2, nothing), 4 => (2, nothing)}`
+- `pos_args_lb`: Number of definite positional args (excludes splats)
+- `pos_args_ub`: Upper bound on positional args; `nothing` if splat is present
+- `kw_map`: kwname => index in `args`. Excludes any WIP kw (see `find_kws`)
+- `has_semicolon`: whether the call contains an explicit semicolon (`:parameters`)
+- `kind`: Item in `CALL_HEADS`
+"""
+struct CallArgs
+    args::SyntaxList
+    kw_i::Int
+    pos_map::Dict{Int, Tuple{Int, Union{Int, Nothing}}}
+    pos_args_lb::Int
+    pos_args_ub::Union{Int, Nothing}
+    kw_map::Dict{String, Int}
+    has_semicolon::Bool
+    kind::Symbol
+    function CallArgs(st0::SyntaxTree, cursor::Int=-1)
+        @assert -1 ∉ JS.byte_range(st0)
+        args, kw_i, has_semicolon = @something flatten_args(st0) begin
+            println(stderr, JS.sourcetext(st0))
+            error("CallArgs: Expected mnode that can be flattened")
+        end
+        pos_map = Dict{Int, Tuple{Int, Union{Int, Nothing}}}()
+        lb = 0; ub = 0
+        for i in eachindex(args[1:kw_i-1])
+            if JS.head(args[i]) === :...
+                ub = nothing
+                pos_map[i] = (lb + 1, ub)
+            elseif JS.head(args[i]) ∉ (:(=), :kw)
+                lb += 1
+                !isnothing(ub) && (ub += 1)
+                pos_map[i] = (lb, ub)
+            end
+        end
+        kw_map = find_kws(args, kw_i; sig=false, cursor)
+        new(args, kw_i, pos_map, lb, ub, kw_map, has_semicolon, JS.head(st0))
+    end
+end
+
+"""
+    compatible_method(m::Method, ca::CallArgs, world::UInt) -> Bool
+
+Return `false` if we can definitely rule out `f(args...|` from being a call to `m`.
+
+This is an analysis based on the number of arguments and keyword names, and fundamentally
+the type-based filtering performed by `find_all_matches` is generally more accurate.
+However, especially in cases involving splats like `func(xs...,1,2,3|)`, when `find_all_matches`
+cannot analyze the type of `xs`, it cannot perform effective method filtering, whereas
+this method can filter out candidates like `func(::Int,::Int)` using the information after
+the splat (`1,2,3`), making it beneficial in some cases.
+"""
+function compatible_method(m::Method, ca::CallArgs, world::UInt)
+    msig = @something get_sig_str(m, ca, world) return false
+    mnode = JS.parsestmt(JS.SyntaxTree, msig; ignore_errors=true)
+
+    params, kwp_i, _ = @something flatten_args(mnode) return false
+    has_var_params = kwp_i > 1 && JS.head(params[kwp_i - 1]) === :...
+    has_var_kwp = kwp_i <= length(params) && JS.head(params[end]) === :...
+
+    kwp_map = find_kws(params, kwp_i; sig=true)
+
+    !has_var_params && (ca.pos_args_lb >= kwp_i) && return false
+    !has_var_kwp && (keys(ca.kw_map) ⊈ keys(kwp_map)) && return false
+    if ca.has_semicolon
+        # Filter out methods where user hasn't provided enough positional args
+        # e.g., g(42;│) should not match g(x, y) which requires 2 positional args
+        if !has_var_params
+            required_pos_args = count(i::Int->JS.head(params[i]) ∉ (:(=), :kw, :...), 1:kwp_i-1)
+            !isnothing(ca.pos_args_ub) && ca.pos_args_ub < required_pos_args && return false
+        end
+    end
+    return true
+end
+
+const keyword_matchers = let
+    keyword_syms = [
+        :baremodule, :begin, :break, :catch, :ccall, :const, :continue, :do, :else, :elseif,
+        :end, :export, :var"false", :finally, :for, :function, :global, :if, :import,
+        :let, :local, :macro, :module, :public, :quote, :return, :struct, :var"true",
+        :try, :using, :while]
+    map(keyword_syms) do kw::Symbol
+        kws = String(kw)
+        kws => Regex("\\b" * kws * "\\b" * "((?:::[^,)]*)?,?)") => SubstitutionString("var\"$kws\"\\1")
+    end
+end
+
+# TODO: (later) This should use type information from args (which we already
+# have from m's params).  For now, just parse the method signature like we
+# do in make_siginfo.
+function get_sig_str(m::Method, ca::CallArgs, world::UInt)
+    @static if VERSION ≥ v"1.13.0-DEV.710"
+        msig = Base.invoke_in_world(world, sprint, show, m; context=(:compact=>true, :print_method_signature_only=>true))::String
+    else
+        # methodshow prints "f(x::T) [unparseable stuff]"
+        # parse the first part and put the remainder in documentation
+        mstr = Base.invoke_in_world(world, sprint, show, m; context=(:compact=>true))::String
+        msig_locinfo = split(mstr, " @ ")
+        length(msig_locinfo) == 2 || return nothing
+        msig = strip(msig_locinfo[1])
+    end
+    @static if VERSION < v"1.13.0-DEV.5"
+        # HACK: Use JuliaLang/julia#57268 for v1.12. Delete me.
+        for (_, rep) in keyword_matchers
+            msig = replace(msig, rep)
+        end
+    end
+    if ca.kind === :macrocall # hack. TODO delete
+        msig = replace(msig, "__source__::LineNumberNode, __module__::Module, "=>"",
+                       "__source__::LineNumberNode, __module__::Module"=>""; count=1)
+    end
+    return msig
+end
+
+# LSP objects and handler
+# =======================
+
+function make_paraminfo(
+        param::SyntaxTree, active_argtree::Union{Nothing,SyntaxTree},
+        @nospecialize(active_argtype), postprocessor::LSPostProcessor
+    )
+    label = let r = JS.byte_range(param)
+        UInt[UInt(r.start-1), UInt(r.stop)]
+    end
+    docs = backtick(JS.sourcetext(param))
+    if !isnothing(active_argtree)
+        argrepr = JS.sourcetext(active_argtree)
+        if !isnothing(active_argtype)
+            argrepr = string('(', argrepr, ')', " :: ", postprocessor(string(active_argtype)))
+        end
+        docs *= " ← " * backtick(argrepr)
+    end
+    documentation = MarkupContent(;
+        kind = MarkupKind.Markdown,
+        value = docs)
+    # do clients tolerate string labels better?
+    # if !isa(label, String)
+    #     label = string(p.source.file[label[1]+1:label[2]])
+    # end
+    return ParameterInformation(; label, documentation)
+end
+
+# active_arg is either an argument index, or :next (available pos. arg), or :none
+function make_siginfo(
+        m::Method, ca::CallArgs, world::UInt,
+        active_arg::Union{Nothing,Bool,Int}, argtypes::Vector{Any};
+        postprocessor::LSPostProcessor = LSPostProcessor(),
+        no_active_parameter_support::Bool = false
+    )
+    msig = @something get_sig_str(m, ca, world)
+    msig = postprocessor(msig)
+    mnode = JS.parsestmt(JS.SyntaxTree, msig; ignore_errors=true)
+    label = String(msig)
+    documentation = let
+        mdl = postprocessor(string(Base.parentmodule(m)))
+        file, line = Base.updated_methodloc(m)
+        filename = to_full_path(file)
+        MarkupContent(;
+            kind = MarkupKind.Markdown,
+            value = "@ `$(mdl)` " * create_source_location_link(filename2uri(filename); line))
+    end
+
+    # We could show the full docs, but there isn't a way to resolve items lazily
+    # like completions, so we might be sending many copies.  The user may have
+    # seen this already in the completions UI, too.
+    # documentation = MarkupContent(;
+    #     kind = MarkupKind.Markdown,
+    #     value = string(Base.Docs.doc(Base.Docs.Binding(m.var"module", m.name))))
+
+    params, kwp_i, _ = @something flatten_args(mnode) begin
+        println(stderr, JS.sourcetext(mnode))
+        error("make_siginfo: Expected mnode that can be flattened")
+    end
+    maybe_var_params = kwp_i > 1 && JS.head(params[kwp_i - 1]) === :... ?
+        kwp_i - 1 : nothing
+    maybe_var_kwp = kwp_i <= length(params) && JS.head(params[end]) === :... ?
+        lastindex(params) : nothing
+    kwp_map = find_kws(params, kwp_i; sig=true)
+    noActiveParameter = no_active_parameter_support ? null : nothing
+
+    # Map active arg to active param, or nothing
+    activeParameter =
+        if active_arg === nothing # none
+            nothing
+        elseif active_arg isa Bool # next arg if able
+            if active_arg # After semicolon
+                # Find the first keyword parameter not in the given keyword argument list;
+                # fallback to variadic keyword parameter
+                local active_kw = maybe_var_kwp
+                rev_kwp_map = Pair{Int,String}[]
+                for (kw, i) in kwp_map
+                    push!(rev_kwp_map, i=>kw)
+                end
+                sort!(rev_kwp_map; by=first)
+                for (i, kw) in rev_kwp_map
+                    if kw ∉ keys(ca.kw_map)
+                        active_kw = i
+                        break
+                    end
+                end
+                if isnothing(active_kw)
+                    noActiveParameter
+                else
+                    active_kw
+                end
+            else
+                if isempty(params)
+                    noActiveParameter
+                else
+                    # If the argument list is larger than the positional parameter list,
+                    # use the last parameter position, which is likely a vararg parameter.
+                    max(1, ca.kw_i ≥ kwp_i ? kwp_i-1 : ca.kw_i)
+                end
+            end
+        elseif active_arg in keys(ca.pos_map)
+            lb, ub = get(ca.pos_map, active_arg, (1, nothing))
+            if !isnothing(maybe_var_params) && lb >= maybe_var_params
+                maybe_var_params
+            else
+                lb == ub ? lb : nothing
+            end
+        elseif JS.head(ca.args[active_arg]) === :...
+            # splat after semicolon
+            maybe_var_kwp
+        elseif JS.head(ca.args[active_arg]) in (:(=), :kw) || active_arg >= ca.kw_i
+            kwname = extract_kwarg_name(ca.args[active_arg])
+            # `extract_kwarg_name` returns `nothing` for unrecognized forms like `a.b=`
+            if isnothing(kwname)
+                maybe_var_kwp
+            else
+                # we don't have a backwards mapping
+                out = get(kwp_map, get_name_val(kwname), nothing)
+                if isnothing(out)
+                    isnothing(maybe_var_kwp) ? noActiveParameter : maybe_var_kwp
+                else
+                    out
+                end
+            end
+        else
+            @static JETLS_DEBUG_LOWERING && @info "No active arg" active_arg ca.args[active_arg]
+            nothing
+        end
+
+    parameters = ParameterInformation[]
+    for (i, param) in enumerate(params)
+        isactive = !isnothing(activeParameter) && activeParameter == i
+        active_argtree = if isactive && checkbounds(Bool, ca.args, activeParameter)
+            ca.args[activeParameter]
+        else
+            nothing
+        end
+        active_argtype = if isactive && checkbounds(Bool, argtypes, activeParameter)
+            argtypes[activeParameter]
+        else
+            nothing
+        end
+        push!(parameters, make_paraminfo(param, active_argtree, active_argtype, postprocessor))
+    end
+    if activeParameter isa Int
+        activeParameter = UInt(activeParameter - 1) # shift to 0-based
+    end
+    return SignatureInformation(; label, documentation, parameters, activeParameter)
+end
+
+const empty_siginfos = SignatureInformation[]
+
+function is_relevant_call(call::SyntaxTree)
+    JS.head(call) in CALL_HEADS &&
+        # don't show help for a+b, M', etc., where call[1] isn't the function
+        !(is_source_infix_op_call(call) || is_source_postfix_op_call(call)) &&
+        # `:.` is also used for member access (Base.sin) — only treat it as a
+        # call when the second child is `:tuple` (i.e. broadcasting f.(args))
+        !(JS.head(call) === :. && (JS.numchildren(call) < 2 || JS.head(call[2]) !== :tuple))
+end
+
+# If parents of our call are like (macro/function (where (where... (call |) ...))),
+# we're actually in a declaration, and shouldn't show signature help.
+function call_is_decl(_bas::SyntaxList, i::Int, _basᵢ::SyntaxTree = _bas[i])
+    JS.head(_basᵢ) != :call && return false
+    j = i + 1
+    while j <= lastindex(_bas) && JS.head(_bas[j]) === :where
+        j += 1
+    end
+    return j <= lastindex(_bas) &&
+        # `=` covers short-form function definitions like `f(x) = 1`
+        JS.head(_bas[j]) in (:macro, :function, :(=)) &&
+        _bas[j-1] === _bas[j][1]
+end
+
+# Find cases where a macro call is not surrounded by parentheses
+# and the current cursor position is on a different line from the `@` macro call
+function is_crossline_noparen_macrocall(call::SyntaxTree, cursor_byte::Int)
+    return noparen_macrocall(call) && let source_file = JS.sourcefile(call)
+        # Check if cursor is on a different line from the @ symbol
+        source_file isa JS.SourceFile && JS.numchildren(call) ≥ 1 &&
+            JS.source_line(source_file, JS.first_byte(call[1])) ≠ JS.source_line(source_file, cursor_byte)
+    end
+end
+
+"""
+Return the nearest call in `st0` containing cursor byte b (if any).
+
+Some adjustment is done if there's trivia before the cursor in an unterminated
+call expression, e.g. `foo(#=hi=# |`, `@bar |`.  A more accurate description
+would be: return the nearest call in `st0` such that stuff inserted at the
+cursor would be descendents of it.
+"""
+function cursor_call(ps::JS.ParseStream, st0::SyntaxTree, b::Int)
+    # disable signature help if invoked within comment scope
+    tc = token_before_offset(ps, b)
+    if !isnothing(tc) && JS.kind(tc) === JS.K"Comment"
+        return nothing
+    end
+
+    let bas = byte_ancestors(st0, b),
+        i = findfirst(is_relevant_call, bas)
+        if !isnothing(i)
+            basᵢ = bas[i]
+            if call_is_decl(bas, i, basᵢ)
+                return nothing
+            elseif is_crossline_noparen_macrocall(basᵢ, b)
+                # Consider cases like:
+                # @testset begin
+                #     ... | ...
+                # end
+                return nothing
+            elseif any(j::Int->JS.head(bas[j]) in (:do, :->), 1:i)
+                # bail out if this is actually within a `do` block body
+                return nothing
+            end
+            return basᵢ
+        end
+    end
+
+    # `i` is nothing.  Eat preceding whitespace and check again.
+    let pnb = prev_nontrivia_byte(ps, b-1; pass_newlines=true)
+        (isnothing(pnb) || pnb == b) && return nothing
+        bas = byte_ancestors(st0, pnb)
+        # If the previous nontrivia byte is part of a call or macrocall, and it is
+        # missing a closing paren, use that.
+        i = findfirst(st::SyntaxTree -> is_relevant_call(st) && !noparen_macrocall(st), bas)
+        if !isnothing(i)
+            basᵢ = bas[i]
+            if JS.head(JS.children(basᵢ)[end]) === :error
+                return call_is_decl(bas, i, basᵢ) ? nothing : basᵢ
+            end
+        end
+    end
+
+    # If the previous nontrivia byte within this line is part of an
+    # unparenthesized macrocall, use that.
+    let pnb_line = prev_nontrivia_byte(ps, b-1; pass_newlines=false, strict=true)
+        (isnothing(pnb_line) || pnb_line == b) && return nothing
+        # Don't provide completion if the current position is within a newline token and crosses over that newline
+        pnt_line = prev_nontrivia(ps, b-1; pass_newlines=false) # include the current token (`strict=false`)
+        if !isnothing(pnt_line) && any(==(UInt8('\n')), @view ps.textbuf[JS.first_byte(pnt_line):b-1])
+            return nothing
+        end
+        bas = byte_ancestors(st0, pnb_line)
+        i = findfirst(noparen_macrocall, bas)
+        return isnothing(i) ? nothing : bas[i]
+    end
+end
+
+"""
+    collect_call_argtypes(ctx, ca::CallArgs) -> argtypes::Union{Vector{Any},Nothing}
+
+Look up the inferred type of every positional argument in `ca` against `ctx`
+(the [`InferredTreeContext`](@ref) for the toplevel containing the call) and
+return them as `argtypes::Vector{Any}`. Neither `ca` nor `argtypes` include
+the type of the function object itself.
+
+`ctx === nothing` means the [`TypeAnnotation`](@ref) pipeline couldn't infer
+the surrounding toplevel; every arg degrades to `Any` and the bailout below
+appends `Vararg{Any}` so `find_all_matches` returns the function's full
+overload set (the same broadening signature help wants while the user is
+still typing).
+
+For a splat `xs...`, the operand `xs` is queried directly: when its type is
+a vararg-free concrete `Tuple{...}` the elements are splayed; otherwise we
+fall through to the `Vararg{Any}` bailout below.
+
+Returns `nothing` when a positional argument is inferred as `Union{}`
+(e.g. `f(throw(), …)`): such a call doesn't fit the "find a call target"
+context, so callers should treat `nothing` as "skip this call".
+"""
+function collect_call_argtypes(ctx::Union{Nothing,InferredTreeContext}, ca::CallArgs)
+    argtypes = Any[]
+    for i in sort!(collect(keys(ca.pos_map)))
+        arg = ca.args[i]
+        if JS.head(arg) === :...
+            JS.numchildren(arg) >= 1 || @goto bailout
+            inner = arg[1]
+            argtype = CC.widenconst(@something (ctx === nothing ?
+                nothing : get_type_for_range(ctx, JS.byte_range(inner))) @goto bailout)
+            argtype === Union{} && return nothing
+            argtype isa DataType || @goto bailout
+            argtype.name === Tuple.name || @goto bailout
+            any(Base.isvarargtype, argtype.parameters) && @goto bailout
+            for j = 1:length(argtype.parameters)
+                push!(argtypes, argtype.parameters[j])
+            end
+        else
+            argtype = CC.widenconst(@something ctx === nothing ?
+                nothing : get_type_for_range(ctx, JS.byte_range(arg)) Any)
+            argtype === Union{} && return nothing
+            push!(argtypes, argtype)
+        end
+    end
+    if !ca.has_semicolon
+        @label bailout
+        push!(argtypes, Vararg{Any})
+    end
+    return argtypes
+end
+
+function fixup_argtypes!(argtypes::Vector{Any}, fntyp::Core.Const)
+    fn = fntyp.val
+    if fn isa Function && startswith(String(nameof(fn)), '@')
+        pushfirst!(argtypes, LineNumberNode, Module) # TODO The new style macro?
+    end
+    pushfirst!(argtypes, CC.widenconst(fntyp))
+    return argtypes
+end
+
+function find_all_matches(
+        argtypes::Vector{Any}; world::UInt = Base.get_world_counter(), limit::Int = -1
+    )
+    atype = Tuple{argtypes...}
+    return CC.findall(atype, CC.InternalMethodTable(world); limit)
+end
+
+function cursor_siginfos(
+        fi::FileInfo, b::Int, context_module::Module;
+        world::UInt = Base.get_world_counter(),
+        postprocessor::LSPostProcessor = LSPostProcessor(),
+        no_active_parameter_support::Bool = false
+    )
+    st0 = build_syntax_tree(fi)
+    call = cursor_call(fi.parsed_stream, st0, b)
+    isnothing(call) && return empty_siginfos
+    after_semicolon = let
+        params_i = findfirst(st::SyntaxTree -> JS.head(st) === :parameters, JS.children(call))
+        !isnothing(params_i) && b > JS.first_byte(call[params_i])
+    end
+
+    # `ctx === nothing` covers two TypeAnnotation gaps that signature help
+    # still needs to handle:
+    # - (a) the surrounding toplevel failed to lower (e.g. method def with unused where-vars)
+    # - (b) the call's head is a macro identifier that doesn't survive macroexpansion.
+    # Both fall back to a global-binding lookup of `call[1]`.
+    ctx = build_inferred_context_for_range(st0, context_module, JS.byte_range(call);
+        world, caller="cursor_siginfos", cache=fi.inferred_context_cache)
+    fntyp = ctx === nothing ? nothing : get_type_for_range(ctx, JS.byte_range(call[1]))
+    if fntyp === nothing
+        fntyp = resolve_global_const(context_module, world, call[1])
+    end
+    fntyp isa Core.Const || return empty_siginfos
+
+    ca = CallArgs(call, b)
+
+    argtypes = @something collect_call_argtypes(ctx, ca) return empty_siginfos
+    argtypes′ = copy(argtypes)
+    fixup_argtypes!(argtypes, fntyp)
+    matches = @something find_all_matches(argtypes; world) return empty_siginfos
+    isempty(matches) && return empty_siginfos
+
+    # Influence parameter highlighting by selecting the active argument (which
+    # may be mapped to a parameter in make_siginfo).  If cursor is after all
+    # pos. args and not after semicolon, ask for the next param, which may not
+    # exist.  Otherwise, highlight the param for the arg we're in.
+    #
+    # We don't keep commas---do we want the green node here?
+    no_args = ca.kw_i == 1
+    past_pos_args = no_args || b > JS.last_byte(ca.args[ca.kw_i - 1]) + 1
+    if past_pos_args && !after_semicolon
+        active_arg = false # before semicolon, highlight next positional arg
+    else
+        active_arg = findfirst(a::SyntaxTree -> JS.first_byte(a) <= b <= JS.last_byte(a) + 1, ca.args)
+        if active_arg === nothing && after_semicolon
+            active_arg = true # after semicolon, highlight next keyword arg
+        end
+    end
+
+    out = SignatureInformation[]
+    for match in matches
+        m = match.method
+        compatible_method(m, ca, world) || continue
+        push!(out, make_siginfo(m, ca, world, active_arg, argtypes′;
+            postprocessor, no_active_parameter_support))
+    end
+    return out
+end
+
+"""
+`textDocument/signatureHelp` is requested when one of the negotiated trigger characters is typed.
+Some clients, e.g. Eglot (emacs), requests it more frequently.
+"""
+function handle_SignatureHelpRequest(
+        server::Server, msg::SignatureHelpRequest, snapshot::DocumentSnapshot,
+        cancel_flag::CancelFlag,
+    )
+    if is_cancelled(cancel_flag)
+        return send(server, SignatureHelpResponse(;
+            id = msg.id, result = nothing, error = request_cancelled_error()))
+    end
+    state = server.state
+    (; fi, cache_uri) = snapshot
+    pos = adjust_position(snapshot, msg.params.textDocument.uri, msg.params.position)
+    (; context_module, world, postprocessor) = get_context_info(state, cache_uri, pos)
+    b = xy_to_offset(fi, pos)
+    no_active_parameter_support = supports(state,
+        :textDocument, :signatureHelp, :signatureInformation, :noActiveParameterSupport)
+    signatures = cursor_siginfos(fi, b, context_module;
+        world, postprocessor, no_active_parameter_support)
+    activeSignature = activeParameter = nothing
+    return send(server,
+        SignatureHelpResponse(;
+            id = msg.id,
+            result = isempty(signatures) ? null :
+                SignatureHelp(;
+                    signatures,
+                    activeSignature,
+                    activeParameter)))
+end

@@ -1,0 +1,562 @@
+const CODE_ACTION_REGISTRATION_ID = "jetls-code-action"
+const CODE_ACTION_REGISTRATION_METHOD = "textDocument/codeAction"
+
+const SUPPORTED_CODE_ACTION_KINDS = CodeActionKind.Ty[CodeActionKind.QuickFix]
+
+function code_action_options()
+    return CodeActionOptions(;
+        codeActionKinds = SUPPORTED_CODE_ACTION_KINDS,
+        resolveProvider = false)
+end
+
+function code_action_registration(server::Server)
+    documentSelector = copy(DEFAULT_DOCUMENT_SELECTOR)
+    config_filter = config_document_sync_filter(server)
+    config_filter === nothing || push!(documentSelector, config_filter)
+    return Registration(;
+        id = CODE_ACTION_REGISTRATION_ID,
+        method = CODE_ACTION_REGISTRATION_METHOD,
+        registerOptions = CodeActionRegistrationOptions(;
+            documentSelector,
+            codeActionKinds = SUPPORTED_CODE_ACTION_KINDS,
+            resolveProvider = false))
+end
+
+function code_action_kind_matches(requested::CodeActionKind.Ty, kind::CodeActionKind.Ty)
+    requested == CodeActionKind.Empty && return true
+    return kind == requested || startswith(kind, requested * ".")
+end
+
+function code_action_kind_requested(
+        only::Union{Nothing,Vector{CodeActionKind.Ty}},
+        kind::Union{Nothing,CodeActionKind.Ty}
+    )
+    only === nothing && return true
+    kind === nothing && return false
+    return any(requested -> code_action_kind_matches(requested, kind), only)
+end
+
+function handle_CodeActionRequest(
+        server::Server, msg::CodeActionRequest, cancel_flag::CancelFlag)
+    uri = msg.params.textDocument.uri
+    code_actions = Union{CodeAction,Command}[]
+    only = msg.params.context.only
+    wants_quickfix_actions = code_action_kind_requested(only, CodeActionKind.QuickFix)
+    wants_kindless_actions = code_action_kind_requested(only, nothing)
+    wants_quickfix_actions || wants_kindless_actions ||
+        return send(server, CodeActionResponse(; id = msg.id, result = code_actions))
+    if is_config_document_uri(server.state, uri)
+        wants_quickfix_actions && deprecated_config_code_actions!(
+            code_actions, server, uri, msg.params.context.diagnostics)
+        return send(server, CodeActionResponse(; id = msg.id, result = code_actions))
+    end
+    if wants_quickfix_actions
+        diagnostics = msg.params.context.diagnostics
+        allow_unused_underscore = get_config(server, :diagnostic, :allow_unused_underscore)
+        unused_variable_code_actions!(code_actions, uri, diagnostics; allow_unused_underscore)
+        delete_range_code_actions!(code_actions, uri, diagnostics)
+        sort_imports_code_actions!(code_actions, uri, diagnostics)
+        ambiguous_soft_scope_code_actions!(code_actions, uri, diagnostics)
+        orphaned_docstring_code_actions!(code_actions, uri, diagnostics)
+        abstract_ref_field_code_actions!(code_actions, uri, diagnostics)
+        missing_concretization_code_actions!(code_actions, server, diagnostics)
+    end
+    if wants_kindless_actions
+        result = get_file_info(server.state, uri, cancel_flag)
+        if result isa ResponseError
+            return send(server, CodeActionResponse(; id = msg.id, result = nothing, error = result))
+        elseif !isnothing(result)
+            fi = result
+            range = adjust_range(server.state, uri, msg.params.range)
+            testrunner_code_actions!(code_actions, uri, fi, range)
+            macro_expansion_code_actions!(code_actions, server, uri, fi, range)
+            type_annotation_code_actions!(code_actions, server, uri, fi, range)
+        end
+        # When the file info is unavailable (`isnothing(result)`), skip the kindless actions
+        # but still return any quickfix actions accumulated above, since those are derived
+        # from the request's diagnostics and do not depend on the file cache.
+    end
+    return send(server, CodeActionResponse(; id = msg.id, result = code_actions))
+end
+
+first_syntax_node(nodes::SyntaxList) = isempty(nodes) ? nothing : nodes[1]
+
+function macrocall_at_range(st0_top::SyntaxTree, range::UnitRange{Int})
+    macrocall = first_syntax_node(byte_ancestors(
+        st -> JS.head(st) === :macrocall, st0_top, range))
+    macrocall !== nothing && return macrocall
+    first(range) > 1 || return nothing
+    return first_syntax_node(byte_ancestors(
+        st -> JS.head(st) === :macrocall, st0_top, first(range)-1))
+end
+
+function macro_expansion_code_actions!(
+        code_actions::Vector{Union{CodeAction,Command}}, server::Server, uri::URI,
+        fi::FileInfo, range::Range
+    )
+    supports(server, :window, :showDocument, :support) || return code_actions
+    st0_top = build_syntax_tree(fi)
+    byte_range = range_to_byte_range(fi, range; collapse_empty = true)
+    macrocall = macrocall_at_range(st0_top, byte_range)
+    # `@doc` (a docstring) wraps the whole documented form; its expansion is just
+    # doc-registration machinery, so don't offer it as a macro view.
+    if macrocall !== nothing && !is_doc0_any(macrocall)
+        push_code_view_action!(code_actions, COMMAND_OPEN_MACRO_EXPANSION,
+            "Show macro expansion for `$(macrocall_name(macrocall))`",
+            macro_expansion_content_uri(uri, macrocall))
+    end
+    toplevel = lowerable_toplevel_at(st0_top, first(byte_range))
+    if toplevel !== nothing && toplevel_contains_macrocall(toplevel)
+        push_code_view_action!(code_actions, COMMAND_OPEN_MACRO_EXPANSION,
+            "Expand all macros in this top-level form",
+            macro_expansion_content_uri(uri, toplevel; toplevel=true))
+    end
+    return code_actions
+end
+
+# Offer on any lowerable top-level form that type-annotation features do not skip.
+# No annotations appear if nothing was inferred (e.g. a literal-bound assignment).
+function type_annotation_code_actions!(
+        code_actions::Vector{Union{CodeAction,Command}}, server::Server, uri::URI,
+        fi::FileInfo, range::Range
+    )
+    supports(server, :window, :showDocument, :support) || return code_actions
+    st0_top = build_syntax_tree(fi)
+    byte_range = range_to_byte_range(fi, range; collapse_empty = true)
+    tree = @something lowerable_toplevel_at(st0_top, first(byte_range)) return code_actions
+    is_type_annotation_skipped_toplevel(tree) && return code_actions
+    push_code_view_action!(code_actions, COMMAND_OPEN_TYPE_ANNOTATION,
+        "Show inferred type annotations", type_annotation_content_uri(uri, tree))
+    return code_actions
+end
+
+function push_code_view_action!(
+        code_actions::Vector{Union{CodeAction,Command}},
+        command::String, title::String, content_uri::URI)
+    push!(code_actions, CodeAction(;
+        title,
+        command = Command(;
+            title, command,
+            arguments = Any[string(content_uri)])))
+    return code_actions
+end
+
+function toplevel_contains_macrocall(st0::SyntaxTree)
+    found = traverse(st0) do st::SyntaxTree
+        JS.head(st) === :macrocall || return nothing
+        return TraversalReturn(true; terminate=true)
+    end
+    return found === true
+end
+
+function macrocall_name(macrocall::SyntaxTree)
+    JS.numchildren(macrocall) >= 1 || return "macro"
+    return JS.sourcetext(macrocall[1])
+end
+
+function unused_variable_code_actions!(
+        code_actions::Vector{Union{CodeAction,Command}},
+        uri::URI,
+        diagnostics::Vector{Diagnostic};
+        allow_unused_underscore::Bool = true
+    )
+    for diagnostic in diagnostics
+        code = diagnostic.code
+        if code == LOWERING_UNUSED_ARGUMENT_CODE || code == LOWERING_UNUSED_LOCAL_CODE
+            has_return_insert = false
+            if code == LOWERING_UNUSED_LOCAL_CODE
+                has_return_insert = add_explicit_return_unused_var_code_action!(
+                    code_actions, uri, diagnostic)
+            end
+            is_kwarg = let data = diagnostic.data
+                data isa UnusedArgumentData && data.is_kwarg
+            end
+            if !is_kwarg
+                add_rename_unused_var_code_action!(code_actions, uri, diagnostic;
+                    allow_unused_underscore)
+            end
+            if code == LOWERING_UNUSED_LOCAL_CODE
+                add_delete_unused_var_code_action!(code_actions, uri, diagnostic;
+                    allow_delete_statement = !has_return_insert)
+            end
+        elseif code == LOWERING_UNUSED_ASSIGNMENT_CODE
+            has_return_insert = add_explicit_return_unused_var_code_action!(
+                code_actions, uri, diagnostic)
+            add_delete_unused_var_code_action!(code_actions, uri, diagnostic;
+                allow_delete_statement = !has_return_insert)
+        end
+    end
+    return code_actions
+end
+
+const DELETE_RANGE_TITLES = Dict{Symbol,String}(
+    :unreachable_code => "Delete unreachable code",
+    :unused_import    => "Remove unused import",
+    :unused_label     => "Remove unused label",
+)
+
+function delete_range_code_actions!(
+        code_actions::Vector{Union{CodeAction,Command}},
+        uri::URI,
+        diagnostics::Vector{Diagnostic}
+    )
+    for diagnostic in diagnostics
+        data = diagnostic.data
+        data isa DeleteRangeData || continue
+        title = @something get(DELETE_RANGE_TITLES, data.kind, nothing) continue
+        push!(code_actions, CodeAction(;
+            title,
+            kind = CodeActionKind.QuickFix,
+            diagnostics = Diagnostic[diagnostic],
+            isPreferred = true,
+            edit = WorkspaceEdit(;
+                changes = Dict{URI,Vector{TextEdit}}(
+                    uri => TextEdit[TextEdit(;
+                        range = data.delete_range,
+                        newText = "")]))))
+    end
+    return code_actions
+end
+
+function abstract_ref_field_code_actions!(
+        code_actions::Vector{Union{CodeAction,Command}}, uri::URI,
+        diagnostics::Vector{Diagnostic}
+    )
+    for diagnostic in diagnostics
+        diagnostic.code == TOPLEVEL_ABSTRACT_FIELD_CODE || continue
+        data = diagnostic.data
+        data isa AbstractRefFieldData || continue
+        push!(code_actions, CodeAction(;
+            title = "Replace `Ref` with `Base.RefValue`",
+            kind = CodeActionKind.QuickFix,
+            diagnostics = Diagnostic[diagnostic],
+            edit = WorkspaceEdit(;
+                changes = Dict{URI,Vector{TextEdit}}(
+                    uri => TextEdit[TextEdit(;
+                        range = data.ref_name_range,
+                        newText = "Base.RefValue")]))))
+    end
+    return code_actions
+end
+
+# Add rename actions for unused bindings (both local and arguments)
+function add_rename_unused_var_code_action!(
+        code_actions::Vector{Union{CodeAction,Command}}, uri::URI, diagnostic::Diagnostic;
+        allow_unused_underscore::Bool = true
+    )
+    range = diagnostic.range
+    if allow_unused_underscore
+        insert_pos = Position(; line=range.start.line, character=range.start.character)
+        edit = WorkspaceEdit(;
+            changes = Dict{URI,Vector{TextEdit}}(
+                uri => TextEdit[TextEdit(;
+                    range = Range(; start=insert_pos, var"end"=insert_pos),
+                    newText = "_")]))
+        title = "Prefix with '_' to indicate intentionally unused"
+    else
+        edit = WorkspaceEdit(;
+            changes = Dict{URI,Vector{TextEdit}}(
+                uri => TextEdit[TextEdit(; range, newText = "_")]))
+        title = "Replace with '_' to indicate intentionally unused"
+    end
+    push!(code_actions, CodeAction(;
+        title,
+        kind = CodeActionKind.QuickFix,
+        diagnostics = Diagnostic[diagnostic],
+        isPreferred = true,
+        edit))
+end
+
+function add_explicit_return_unused_var_code_action!(
+        code_actions::Vector{Union{CodeAction,Command}}, uri::URI, diagnostic::Diagnostic
+    )
+    data = diagnostic.data
+    if data isa UnusedVariableData && !data.is_tuple_unpacking &&
+            data.return_insert_position !== nothing && data.return_insert_text !== nothing
+        position = data.return_insert_position
+        push!(code_actions, CodeAction(;
+            title = "Insert explicit return",
+            kind = CodeActionKind.QuickFix,
+            diagnostics = Diagnostic[diagnostic],
+            isPreferred = true,
+            edit = WorkspaceEdit(;
+                changes = Dict{URI,Vector{TextEdit}}(
+                    uri => TextEdit[TextEdit(;
+                        range = Range(; start=position, var"end"=position),
+                        newText = data.return_insert_text)]))))
+        return true
+    end
+    return false
+end
+
+function add_delete_unused_var_code_action!(
+        code_actions::Vector{Union{CodeAction,Command}}, uri::URI, diagnostic::Diagnostic;
+        allow_delete_statement::Bool = true
+    )
+    data = diagnostic.data
+    if data isa UnusedVariableData && !data.is_tuple_unpacking
+        if data.lhs_eq_range !== nothing
+            push!(code_actions, CodeAction(;
+                title = "Delete assignment",
+                kind = CodeActionKind.QuickFix,
+                diagnostics = Diagnostic[diagnostic],
+                edit = WorkspaceEdit(;
+                    changes = Dict{URI,Vector{TextEdit}}(
+                        uri => TextEdit[TextEdit(;
+                            range = data.lhs_eq_range,
+                            newText = "")]))))
+        end
+        if data.assignment_range !== nothing && allow_delete_statement
+            push!(code_actions, CodeAction(;
+                title = "Delete statement",
+                kind = CodeActionKind.QuickFix,
+                diagnostics = Diagnostic[diagnostic],
+                edit = WorkspaceEdit(;
+                    changes = Dict{URI,Vector{TextEdit}}(
+                        uri => TextEdit[TextEdit(;
+                            range = data.assignment_range,
+                            newText = "")]))))
+        end
+    end
+end
+
+function sort_imports_code_actions!(
+        code_actions::Vector{Union{CodeAction,Command}},
+        uri::URI, diagnostics::Vector{Diagnostic}
+    )
+    for diagnostic in diagnostics
+        diagnostic.code == LOWERING_UNSORTED_IMPORT_NAMES_CODE || continue
+        data = diagnostic.data
+        data isa UnsortedImportData || continue
+        push!(code_actions, CodeAction(;
+            title = "Sort import names",
+            kind = CodeActionKind.QuickFix,
+            diagnostics = Diagnostic[diagnostic],
+            isPreferred = true,
+            edit = WorkspaceEdit(;
+                changes = Dict{URI,Vector{TextEdit}}(
+                    uri => TextEdit[TextEdit(; range=diagnostic.range, newText=data.new_text)]))))
+    end
+    return code_actions
+end
+
+function ambiguous_soft_scope_code_actions!(
+        code_actions::Vector{Union{CodeAction,Command}}, uri::URI,
+        diagnostics::Vector{Diagnostic}
+    )
+    for diagnostic in diagnostics
+        diagnostic.code == LOWERING_AMBIGUOUS_SOFT_SCOPE_CODE || continue
+        data = diagnostic.data
+        data isa AmbiguousSoftScopeData || continue
+        insert_pos = Position(; line = diagnostic.range.start.line, character = 0)
+        insert_range = Range(; start = insert_pos, var"end" = insert_pos)
+        push!(code_actions, CodeAction(;
+            title = "Insert `global $(data.name)` declaration",
+            kind = CodeActionKind.QuickFix,
+            diagnostics = Diagnostic[diagnostic],
+            edit = WorkspaceEdit(;
+                changes = Dict{URI,Vector{TextEdit}}(
+                    uri => TextEdit[TextEdit(;
+                        range = insert_range,
+                        newText = data.indent * "global $(data.name)\n")]))))
+        push!(code_actions, CodeAction(;
+            title = "Insert `local $(data.name)` declaration",
+            kind = CodeActionKind.QuickFix,
+            diagnostics = Diagnostic[diagnostic],
+            edit = WorkspaceEdit(;
+                changes = Dict{URI,Vector{TextEdit}}(
+                    uri => TextEdit[TextEdit(;
+                        range = insert_range,
+                        newText = data.indent * "local $(data.name)\n")]))))
+    end
+    return code_actions
+end
+
+function orphaned_docstring_code_actions!(
+        code_actions::Vector{Union{CodeAction,Command}}, uri::URI,
+        diagnostics::Vector{Diagnostic}
+    )
+    for diagnostic in diagnostics
+        diagnostic.code == LOWERING_ORPHANED_DOCSTRING_CODE || continue
+        data = diagnostic.data
+        data isa OrphanedDocstringData || continue
+        push!(code_actions, CodeAction(;
+            title = "Attach docstring to the following definition",
+            kind = CodeActionKind.QuickFix,
+            diagnostics = Diagnostic[diagnostic],
+            isPreferred = true,
+            edit = WorkspaceEdit(;
+                changes = Dict{URI,Vector{TextEdit}}(uri => data.attach_edits))))
+    end
+    return code_actions
+end
+
+function missing_concretization_code_actions!(
+        code_actions::Vector{Union{CodeAction,Command}}, server::Server,
+        diagnostics::Vector{Diagnostic}
+    )
+    for diagnostic in diagnostics
+        diagnostic.code == TOPLEVEL_MISSING_CONCRETIZATION_CODE || continue
+        data = diagnostic.data
+        data isa MissingConcretizationData || continue
+        config_path = @something jetls_config_path_for_code_action(server) continue
+        path = @something concretization_pattern_path_for_code_action(server, data.assignment_file) continue
+        edit = @something jetls_config_workspace_edit(
+            server, config_path, data.pattern, path) continue
+        creates_config = edit.documentChanges !== nothing &&
+            any(change -> change isa CreateFile, edit.documentChanges)
+        action = creates_config ? "Create" : "Add"
+        title = "$action `.JETLSConfig.toml` concretization pattern for `$(data.name)`"
+        push!(code_actions, CodeAction(;
+            title,
+            kind = CodeActionKind.QuickFix,
+            diagnostics = Diagnostic[diagnostic],
+            isPreferred = true,
+            edit))
+    end
+    return code_actions
+end
+
+function jetls_config_path_for_code_action(server::Server)
+    isdefined(server.state, :root_path) || return nothing
+    return joinpath(server.state.root_path, CONFIG_FILE)
+end
+
+function concretization_pattern_path_for_code_action(
+        server::Server, filename::AbstractString
+    )
+    path = @something relative_workspace_path_for_config(server, filename) return nothing
+    return escape_path_for_glob(path)
+end
+
+function jetls_config_workspace_edit(
+        server::Server, config_path::String, pattern::String, path::String
+    )
+    config_uri = filepath2uri(config_path)
+    config_document = get_config_document(server.state, config_uri)
+    # The live buffer may hold unsaved changes or outlive a file deleted on disk
+    if config_document !== nothing || isfile(config_path)
+        if config_document === nothing
+            text = read(config_path, String)
+            version = null
+            configured = @something parse_configured_concretization_patterns(text) return nothing
+        else
+            text = config_document.text
+            version = config_document.version
+            config_data = @something config_document.config_data return nothing
+            configured = @something configured_concretization_patterns(config_data) return nothing
+        end
+        appended = jetls_config_append_text(text, configured, pattern, path)
+        if appended === nothing
+            text_edit = @something jetls_config_inline_array_edit(
+                text, configured, pattern, path, server.state.encoding) return nothing
+        else
+            position = _offset_to_xy(
+                Vector{UInt8}(text), sizeof(text) + 1, server.state.encoding)
+            text_edit = TextEdit(;
+                range = Range(; start=position, var"end"=position),
+                newText = appended)
+        end
+        return text_document_workspace_edit(server, config_uri, version, text_edit)
+    end
+    supports_create_file_workspace_edit(server) || return nothing
+    text_edit = TextEdit(;
+        range = Range(;
+            start = Position(; line=0, character=0),
+            var"end" = Position(; line=0, character=0)),
+        newText = format_jetls_concretization_pattern(pattern, path))
+    create_file = CreateFile(; uri = config_uri)
+    text_document = OptionalVersionedTextDocumentIdentifier(;
+        uri = config_uri, version = null)
+    document_edit = TextDocumentEdit(;
+        textDocument = text_document,
+        edits = TextEdit[text_edit])
+    return WorkspaceEdit(;
+        documentChanges = Union{TextDocumentEdit, CreateFile, RenameFile, DeleteFile}[
+            create_file, document_edit])
+end
+
+function jetls_config_append_text(text::String, pattern::String, path::String)
+    configured = @something parse_configured_concretization_patterns(text) return nothing
+    return jetls_config_append_text(text, configured, pattern, path)
+end
+
+function jetls_config_append_text(
+        text::String, configured::Vector, pattern::String, path::String
+    )
+    has_concretization_pattern(configured, pattern, path) && return nothing
+    sep = isempty(text) ? "" : endswith(text, '\n') ? "\n" : "\n\n"
+    appended = sep * format_jetls_concretization_pattern(pattern, path)
+    added_concretization_pattern(configured, text * appended, pattern, path) || return nothing
+    return appended
+end
+
+function parse_configured_concretization_patterns(text::String)
+    config_data = @something tryparse_config_data(text) return nothing
+    return configured_concretization_patterns(config_data)
+end
+
+function configured_concretization_patterns(config_data::Dict{String,Any})
+    full_analysis = get(config_data, "full_analysis", Dict{String,Any}())
+    full_analysis isa Dict{String,Any} || return nothing
+    configured = get(full_analysis, "concretization_patterns", Any[])
+    configured isa Vector || return nothing
+    all(@nospecialize(pattern_config) -> pattern_config isa Dict{String,Any},
+        configured) || return nothing
+    return configured
+end
+
+function has_concretization_pattern(
+        configured::Vector, pattern::String, path::String
+    )
+    return any(configured) do @nospecialize pattern_config
+        pattern_config = pattern_config::Dict{String,Any}
+        return isequal(get(pattern_config, "pattern", nothing), pattern) &&
+            isequal(get(pattern_config, "path", nothing), path)
+    end
+end
+
+function format_jetls_concretization_pattern(pattern::String, path::String)
+    io = IOBuffer()
+    println(io, "[[full_analysis.concretization_patterns]]")
+    TOML.print(io, Dict("pattern" => pattern))
+    TOML.print(io, Dict("path" => path))
+    return String(take!(io))
+end
+
+function added_concretization_pattern(
+        old_configured::Vector, updated_text::String, pattern::String, path::String
+    )
+    updated = @something parse_configured_concretization_patterns(updated_text) return false
+    return length(updated) == length(old_configured) + 1 &&
+        has_concretization_pattern(updated, pattern, path)
+end
+
+function jetls_config_inline_array_edit(
+        text::String, pattern::String, path::String, encoding::PositionEncodingKind.Ty
+    )
+    configured = @something parse_configured_concretization_patterns(text) return nothing
+    return jetls_config_inline_array_edit(text, configured, pattern, path, encoding)
+end
+
+function jetls_config_inline_array_edit(
+        text::String, configured::Vector, pattern::String, path::String,
+        encoding::PositionEncodingKind.Ty
+    )
+    has_concretization_pattern(configured, pattern, path) && return nothing
+    doc = TS.tryparse(text)
+    doc isa TS.Document || return nothing
+    edit = @something TS.prepend_array_element(
+        doc, ["full_analysis", "concretization_patterns"],
+        Dict("pattern" => pattern, "path" => path)) return nothing
+    text_edit = source_text_edit(Vector{UInt8}(text), edit, encoding)
+    updated = apply_text_change(text, text_edit.range, text_edit.newText, encoding)
+    added_concretization_pattern(configured, updated, pattern, path) || return nothing
+    return text_edit
+end
+
+function supports_create_file_workspace_edit(server::Server)
+    supports(server, :workspace, :workspaceEdit, :documentChanges) || return false
+    operations = getcapability(server, :workspace, :workspaceEdit, :resourceOperations)
+    return operations !== nothing && ResourceOperationKind.Create in operations
+end
