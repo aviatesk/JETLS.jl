@@ -29,34 +29,54 @@ TOML = "1.0.3"
 Revise = "3.17"
 
 [sources.JuliaSyntax]
-path = "../JuliaSyntax"
+subdir = "vendor/JuliaSyntax"
+rev = "b654719b1ef2ce0bc09a946e7cf2b4e5228567eb"
+url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.Glob]
-path = "../Glob"
+subdir = "vendor/Glob"
+rev = "b654719b1ef2ce0bc09a946e7cf2b4e5228567eb"
+url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.TOMLSource]
-path = "../TOMLSource"
+subdir = "vendor/TOMLSource"
+rev = "b654719b1ef2ce0bc09a946e7cf2b4e5228567eb"
+url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.Compiler]
-path = "../Compiler"
+subdir = "vendor/Compiler"
+rev = "b654719b1ef2ce0bc09a946e7cf2b4e5228567eb"
+url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.JET]
-path = "../JET"
+subdir = "vendor/JET"
+rev = "b654719b1ef2ce0bc09a946e7cf2b4e5228567eb"
+url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.LSP]
-path = "../LSP"
+subdir = "vendor/LSP"
+rev = "b654719b1ef2ce0bc09a946e7cf2b4e5228567eb"
+url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.TestRunner]
-path = "../TestRunner"
+subdir = "vendor/TestRunner"
+rev = "b654719b1ef2ce0bc09a946e7cf2b4e5228567eb"
+url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.Preferences]
-path = "../Preferences"
+subdir = "vendor/Preferences"
+rev = "b654719b1ef2ce0bc09a946e7cf2b4e5228567eb"
+url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.PrecompileTools]
-path = "../PrecompileTools"
+subdir = "vendor/PrecompileTools"
+rev = "b654719b1ef2ce0bc09a946e7cf2b4e5228567eb"
+url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.JuliaLowering]
-path = "../JuliaLowering"
+subdir = "vendor/JuliaLowering"
+rev = "b654719b1ef2ce0bc09a946e7cf2b4e5228567eb"
+url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.Revise]
 rev = "32638add42"
