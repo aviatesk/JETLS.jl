@@ -1,0 +1,926 @@
+"""
+Test file for exercising the `jetls check` command.
+
+This test spawns actual `julia -m JETLS check` processes and verifies:
+
+1. Basic diagnostic output
+2. CLI options (--exit-severity, --show-severity, --context-lines)
+3. Configuration file (.JETLSConfig.toml) application
+
+To run this test independently:
+    julia --startup-file=no --project=./test ./test/test_jetls_check.jl
+"""
+module test_jetls_check
+
+using Test
+using JETLS
+using JETLSCore
+using JETLSCore.LSP
+
+const JULIA_CMD = normpath(Sys.BINDIR, "julia")
+const JETLS_DIR = pkgdir(JETLS)
+
+function build_check_args(
+        args::Vector{String};
+        root::Union{String,Nothing} = nothing,
+        skip_analysis::Bool = true
+    )
+    check_args = String[]
+    if root !== nothing
+        push!(check_args, "--root=$root")
+    end
+    push!(check_args, "--progress=none")
+    skip_analysis && push!(check_args, "--skip-full-analysis")
+    append!(check_args, args)
+    return check_args
+end
+
+function capture_jetls_check(f::Function)
+    return mktemp() do stdout_path, stdout_io
+        mktemp() do stderr_path, stderr_io
+            exitcode = redirect_stdout(stdout_io) do
+                redirect_stderr(stderr_io) do
+                    Int(f())
+                end
+            end
+            flush(stdout_io)
+            flush(stderr_io)
+            return (;
+                exitcode,
+                stdout = read(stdout_path, String),
+                stderr = read(stderr_path, String),
+            )
+        end
+    end
+end
+
+function run_jetls_check(
+        args::Vector{String};
+        root::Union{String,Nothing} = nothing,
+        skip_analysis::Bool = true,
+        input::Union{String,Nothing} = nothing
+    )
+    check_args = build_check_args(args; root, skip_analysis)
+    return capture_jetls_check() do
+        input === nothing && return JETLSCore.run_check(check_args)
+        mktemp() do input_path, input_io
+            write(input_io, input)
+            close(input_io)
+            open(input_path) do io
+                redirect_stdin(io) do
+                    JETLSCore.run_check(check_args)
+                end
+            end
+        end
+    end
+end
+
+function run_jetls_check_process(
+        args::Vector{String};
+        root::Union{String,Nothing} = nothing,
+        skip_analysis::Bool = true
+    )
+    cmd_args = String[
+        JULIA_CMD,
+        "--startup-file=no",
+        "--project=$JETLS_DIR",
+        "-m",
+        "JETLS",
+        "check",
+    ]
+    append!(cmd_args, build_check_args(args; root, skip_analysis))
+    cmd = ignorestatus(Cmd(cmd_args))
+    stdout_buf = IOBuffer()
+    stderr_buf = IOBuffer()
+    proc = run(pipeline(cmd; stdout=stdout_buf, stderr=stderr_buf); wait=true)
+    return (;
+        exitcode = proc.exitcode,
+        stdout = String(take!(stdout_buf)),
+        stderr = String(take!(stderr_buf)),
+    )
+end
+
+function write_test_file(dir::String, filename::String, content::String)
+    filepath = joinpath(dir, filename)
+    write(filepath, content)
+    return filepath
+end
+
+function write_config_file(dir::String, content::String)
+    filepath = joinpath(dir, ".JETLSConfig.toml")
+    write(filepath, content)
+    return filepath
+end
+
+@testset "process boundary" begin
+    mktempdir() do dir
+        filepath = write_test_file(dir, "test.jl", """
+            module TestModule
+            function foo()
+                x = 1
+                return nothing
+            end
+            end
+            """)
+
+        let result = run_jetls_check_process([filepath]; root=dir)
+            @test result.exitcode == 0
+            @test occursin("lowering/unused-local", result.stdout)
+            @test endswith(result.stdout, "\n\n# Check passed (--exit-severity=warn)\n")
+        end
+        let result = run_jetls_check_process(
+                ["--exit-severity=info", filepath]; root=dir
+            )
+            @test result.exitcode == 1
+            @test occursin("lowering/unused-local", result.stdout)
+            @test endswith(result.stdout, "\n\n# Check failed (--exit-severity=info)\n")
+        end
+    end
+end
+
+@testset "analysis failure" begin
+    mktempdir() do dir
+        filepath = joinpath(dir, "missing.jl")
+        result = run_jetls_check_process([filepath]; root=dir, skip_analysis=false)
+        @test result.exitcode == 1
+        @test occursin("missing.jl", result.stderr)
+        @test !occursin("# Check ", result.stdout)
+    end
+end
+
+@testset "basic functionality" begin
+    mktempdir() do dir
+        filepath = write_test_file(dir, "test.jl", """
+            module TestModule
+            function foo()
+                x = 1
+                return nothing
+            end
+            end
+            """)
+
+        result = run_jetls_check([filepath]; root=dir)
+        @test occursin("lowering/unused-local", result.stdout)
+        @test occursin("test.jl", result.stdout)
+
+        # Relative path should be resolved relative to --root
+        result = run_jetls_check(["test.jl"]; root=dir)
+        @test occursin("lowering/unused-local", result.stdout)
+        @test occursin("test.jl", result.stdout)
+    end
+end
+
+@testset "multi-line diagnostic message rendering" begin
+    mktempdir() do dir
+        filepath = write_test_file(dir, "test.jl", "func(1, 2)\n")
+        uri = JETLSCore.filepath2uri(filepath)
+        message = "MethodError: no matching method found `func(::Int64, ::Int64)`\n\n" *
+            "The function `func` exists.\n\nClosest candidates are:\n- `func(::Int64)`"
+        diagnostic = Diagnostic(;
+            range = Range(;
+                start = Position(; line=0, character=0),
+                var"end" = Position(; line=0, character=10)),
+            severity = DiagnosticSeverity.Warning,
+            message,
+            code = "inference/method-error")
+        uri2diagnostics = JETLSCore.URI2Diagnostics(uri => [diagnostic])
+        result = capture_jetls_check() do
+            JETLSCore.print_diagnostics(uri2diagnostics, dir, 1,
+                DiagnosticSeverity.Error, DiagnosticSeverity.Information)
+        end
+        # the summary line carries the severity tag inline
+        @test occursin("`func(::Int64, ::Int64)` [warn:inference/method-error]", result.stdout)
+        # continuation lines form a separate `#`-prefixed block
+        @test occursin("# The function `func` exists.", result.stdout)
+        @test occursin("# Closest candidates are:", result.stdout)
+        @test occursin("# - `func(::Int64)`", result.stdout)
+        @test !occursin("exists. [warn", result.stdout)
+    end
+end
+
+@testset "--exit-severity" begin
+    mktempdir() do dir
+        # Create a file with info-level diagnostic (unused local)
+        filepath = write_test_file(dir, "test.jl", """
+            module TestModule
+            function foo()
+                x = 1
+                return nothing
+            end
+            end
+            """)
+
+        # Default exit-severity is warn, so info diagnostic should not cause exit 1
+        let result = run_jetls_check([filepath]; root=dir)
+            @test result.exitcode == 0
+            @test occursin("lowering/unused-local", result.stdout)
+            @test endswith(result.stdout, "\n\n# Check passed (--exit-severity=warn)\n")
+        end
+
+        # With exit-severity=info, info diagnostic should cause exit 1
+        let result = run_jetls_check(["--exit-severity=info", filepath]; root=dir)
+            @test result.exitcode == 1
+            @test occursin("lowering/unused-local", result.stdout)
+            @test endswith(result.stdout, "\n\n# Check failed (--exit-severity=info)\n")
+        end
+
+        for (level, canonical, exitcode, status) in (
+                ("1", "error", 0, "passed"),
+                ("warning", "warn", 0, "passed"),
+                ("information", "info", 1, "failed"),
+                ("4", "hint", 1, "failed"))
+            result = run_jetls_check(["--exit-severity=$level", filepath]; root=dir)
+            @test result.exitcode == exitcode
+            @test endswith(result.stdout, "\n\n# Check $status (--exit-severity=$canonical)\n")
+        end
+    end
+end
+
+@testset "--show-severity" begin
+    mktempdir() do dir
+        filepath = write_test_file(dir, "test.jl", """
+            module TestModule
+            function foo()
+                x = 1
+                return nothing
+            end
+            end
+            """)
+
+        let result = run_jetls_check([filepath]; root=dir)
+            @test result.exitcode == 0
+            @test occursin("lowering/unused-local", result.stdout)
+            @test occursin("Found 1 diagnostic in 1 file (1 info)", result.stdout)
+            @test !occursin("# Hidden:", result.stdout)
+        end
+
+        let result = run_jetls_check(["--show-severity=warn", filepath]; root=dir)
+            @test result.exitcode == 0
+            @test !occursin("lowering/unused-local", result.stdout)
+            @test endswith(result.stdout,
+                "# No diagnostics displayed\n" *
+                "# Hidden: 1 info (use --show-severity=hint to show all)\n" *
+                "# Check passed (--exit-severity=warn)\n")
+        end
+
+        for options in (["--exit-severity=info", "--show-severity=warn"],
+                        ["--show-severity=warn", "--exit-severity=info"])
+            result = run_jetls_check([options; filepath]; root=dir)
+            @test result.exitcode == 1
+            @test !occursin("lowering/unused-local", result.stdout)
+            @test endswith(result.stdout,
+                "# No diagnostics displayed\n" *
+                "# Hidden: 1 info (use --show-severity=hint to show all)\n" *
+                "# Check failed (--exit-severity=info)\n")
+        end
+
+        write_config_file(dir, """
+            [[diagnostic.patterns]]
+            pattern = "lowering/unused-local"
+            match_by = "code"
+            match_type = "literal"
+            severity = "warn"
+            """)
+        let result = run_jetls_check(["--show-severity=error", filepath]; root=dir)
+            @test result.exitcode == 1
+            @test !occursin("lowering/unused-local", result.stdout)
+            @test endswith(result.stdout,
+                "# No diagnostics displayed\n" *
+                "# Hidden: 1 warning (use --show-severity=hint to show all)\n" *
+                "# Check failed (--exit-severity=warn)\n")
+        end
+    end
+
+    mktempdir() do dir
+        filepath = write_test_file(dir, "test.jl", """
+            module TestModule
+            function foo()
+                @static if false
+                    return 1
+                else
+                    return nothing
+                end
+            end
+            end
+            """)
+
+        for (options, exit_severity) in (
+                (String[], "warn"),
+                (["--exit-severity=error"], "error"),
+                (["--exit-severity=info"], "info"))
+            result = run_jetls_check([options; filepath]; root=dir)
+            @test result.exitcode == 0
+            @test !occursin("lowering/inactive-code", result.stdout)
+            @test endswith(result.stdout,
+                "# No diagnostics displayed\n" *
+                "# Hidden: 1 hint (use --show-severity=hint to show all)\n" *
+                "# Check passed (--exit-severity=$exit_severity)\n")
+        end
+
+        let result = run_jetls_check(["--show-severity=hint", filepath]; root=dir)
+            @test result.exitcode == 0
+            @test occursin("lowering/inactive-code", result.stdout)
+            @test occursin("Found 1 diagnostic in 1 file (1 hint)", result.stdout)
+            @test !occursin("# Hidden:", result.stdout)
+        end
+
+        let result = run_jetls_check(["--exit-severity=hint", filepath]; root=dir)
+            @test result.exitcode == 1
+            @test !occursin("lowering/inactive-code", result.stdout)
+            @test endswith(result.stdout,
+                "# No diagnostics displayed\n" *
+                "# Hidden: 1 hint (use --show-severity=hint to show all)\n" *
+                "# Check failed (--exit-severity=hint)\n")
+        end
+
+        for options in (["--exit-severity=hint", "--show-severity=info"],
+                        ["--show-severity=info", "--exit-severity=hint"])
+            result = run_jetls_check([options; filepath]; root=dir)
+            @test result.exitcode == 1
+            @test !occursin("lowering/inactive-code", result.stdout)
+            @test endswith(result.stdout,
+                "# No diagnostics displayed\n" *
+                "# Hidden: 1 hint (use --show-severity=hint to show all)\n" *
+                "# Check failed (--exit-severity=hint)\n")
+        end
+    end
+
+    mktempdir() do dir
+        filepath = write_test_file(dir, "test.jl", "module TestModule\nend\n")
+        for (options, exit_severity) in (
+                (String[], "warn"),
+                (["--show-severity=error"], "warn"),
+                (["--exit-severity=hint"], "hint"))
+            result = run_jetls_check([options; filepath]; root=dir)
+            @test result.exitcode == 0
+            @test endswith(result.stdout, "# No diagnostics found\n# Check passed (--exit-severity=$exit_severity)\n")
+        end
+    end
+end
+
+@testset "diagnostic statistics" begin
+    mktempdir() do dir
+        range = Range(;
+            start = Position(; line=0, character=0),
+            var"end" = Position(; line=0, character=1))
+        uri2diagnostics = JETLSCore.URI2Diagnostics()
+        for (filename, severities) in (
+                ("warnings.jl", (DiagnosticSeverity.Error, DiagnosticSeverity.Warning, DiagnosticSeverity.Warning)),
+                ("hints.jl", (DiagnosticSeverity.Information, DiagnosticSeverity.Information, DiagnosticSeverity.Hint, DiagnosticSeverity.Hint, DiagnosticSeverity.Hint)))
+            uri2diagnostics[JETLSCore.filepath2uri(joinpath(dir, filename))] =
+                Diagnostic[
+                    Diagnostic(; range, severity, message="Diagnostic $i")
+                    for (i, severity) in enumerate(severities)]
+        end
+
+        for (show_severity, summary) in (
+                (DiagnosticSeverity.Error,
+                    "# Found 1 diagnostic in 1 file (1 error)\n" *
+                    "# Hidden: 2 warnings, 2 info, 3 hints (use --show-severity=hint to show all)\n\n"),
+                (DiagnosticSeverity.Warning,
+                    "# Found 3 diagnostics in 1 file (1 error, 2 warnings)\n" *
+                    "# Hidden: 2 info, 3 hints (use --show-severity=hint to show all)\n\n"),
+                (DiagnosticSeverity.Information,
+                    "# Found 5 diagnostics in 2 files (1 error, 2 warnings, 2 info)\n" *
+                    "# Hidden: 3 hints (use --show-severity=hint to show all)\n\n"),
+                (DiagnosticSeverity.Hint,
+                    "# Found 8 diagnostics in 2 files (1 error, 2 warnings, 2 info, 3 hints)\n\n"))
+            result = capture_jetls_check() do
+                JETLSCore.print_stats(uri2diagnostics, 2, 1.0, show_severity)
+                return 0
+            end
+            @test endswith(result.stdout, summary)
+        end
+    end
+end
+
+@testset "--context-lines" begin
+    mktempdir() do dir
+        filepath = write_test_file(dir, "test.jl", """
+            module TestModule
+            function foo()
+                x = 1
+                return nothing
+            end
+            end
+            """)
+
+        # With context-lines=0, should show minimal context
+        let result = run_jetls_check(["--context-lines=0", filepath]; root=dir)
+            @test occursin("lowering/unused-local", result.stdout)
+            # Should not show "function foo()" line (which is context)
+            lines = split(result.stdout, '\n')
+            diagnostic_lines = filter(l -> occursin("x = 1", l), lines)
+            @test !isempty(diagnostic_lines)
+            @test occursin("    x = 1\n#   ╙", result.stdout)
+            @test !occursin("    x = 1\n#   └┘", result.stdout)
+        end
+    end
+
+    mktempdir() do dir
+        filepath = write_test_file(dir, "test.jl", """
+            module TestModule
+            function foo()
+                xyz = 1
+                return nothing
+            end
+            end
+            """)
+
+        let result = run_jetls_check(["--context-lines=0", filepath]; root=dir)
+            @test occursin("lowering/unused-local", result.stdout)
+            @test occursin("    xyz = 1\n#   └─┘", result.stdout)
+            @test !occursin("    xyz = 1\n#   └──┘", result.stdout)
+        end
+    end
+end
+
+@testset "configuration file" begin
+    mktempdir() do dir
+        filepath = write_test_file(dir, "test.jl", """
+            module TestModule
+            function foo()
+                x = 1
+                return nothing
+            end
+            end
+            """)
+
+        # Without config, should show diagnostic
+        let result = run_jetls_check([filepath]; root=dir)
+            @test occursin("lowering/unused-local", result.stdout)
+        end
+
+        # With config to disable diagnostic
+        write_config_file(dir, """
+            [[diagnostic.patterns]]
+            pattern = "lowering/unused-local"
+            match_by = "code"
+            match_type = "literal"
+            severity = "off"
+            """)
+        let result = run_jetls_check([filepath]; root=dir)
+            @test !occursin("lowering/unused-local", result.stdout)
+            @test occursin("No diagnostics found", result.stdout)
+        end
+    end
+end
+
+@testset "analysis override lowering context" begin
+    mktempdir() do dir
+        filepath = write_test_file(dir, "test.jl", "f(x) = @somereal x\n")
+        write_config_file(dir, """
+            [[initialization_options.analysis_overrides]]
+            path = "test.jl"
+            module_name = "JETLSCore"
+            """)
+
+        result = run_jetls_check([filepath]; root=dir)
+        @test result.exitcode == 0
+        @test !occursin("lowering/macro-expansion-error", result.stdout)
+        @test occursin("No diagnostics found", result.stdout)
+    end
+end
+
+@testset "analysis override stops included code" begin
+    mktempdir() do dir
+        marker = joinpath(dir, "executed")
+        filepath = write_test_file(dir, "main.jl", """
+            include("excluded.jl")
+            @eval write($(repr(marker)), "after")
+            """)
+        write_test_file(dir, "excluded.jl", "@eval write($(repr(marker)), \"excluded\")")
+        config = """
+            [[initialization_options.analysis_overrides]]
+            path = "excluded.jl"
+            """
+        write_config_file(dir, config)
+        let result = run_jetls_check([filepath]; root=dir, skip_analysis=false)
+            @test result.exitcode == 1
+            @test occursin("toplevel/analysis-stopped", result.stdout)
+            @test occursin("excluded.jl", result.stdout)
+            @test !isfile(marker)
+        end
+
+        write_config_file(dir, config * """
+            [[diagnostic.patterns]]
+            pattern = "toplevel/analysis-stopped"
+            match_by = "code"
+            match_type = "literal"
+            severity = "off"
+            """)
+        let result = run_jetls_check([filepath]; root=dir, skip_analysis=false)
+            @test result.exitcode == 0
+            @test !occursin("toplevel/analysis-stopped", result.stdout)
+            @test !isfile(marker)
+        end
+    end
+end
+
+@testset "analysis override skips included code" begin
+    mktempdir() do dir
+        marker = joinpath(dir, "executed")
+        filepath = write_test_file(dir, "main.jl", """
+            include("excluded.jl")
+            after() = undefined_after()
+            """)
+        write_test_file(dir, "excluded.jl", "@eval write($(repr(marker)), \"excluded\")")
+        write_config_file(dir, """
+            [[initialization_options.analysis_overrides]]
+            path = "excluded.jl"
+            on_include = "skip"
+            """)
+        result = run_jetls_check([filepath]; root=dir, skip_analysis=false)
+        @test occursin("[info:toplevel/analysis-skipped]", result.stdout)
+        @test !occursin("toplevel/analysis-stopped", result.stdout)
+        @test occursin("[warn:inference/undef-global-var]", result.stdout)
+        @test !isfile(marker)
+    end
+end
+
+@testset "files excluded by analysis overrides" begin
+    mktempdir() do dir
+        filepath = write_test_file(dir, "excluded.jl", """
+            excluded() = undefined_in_excluded()
+            unused_local() = (x = 1; nothing)
+            """)
+        write_config_file(dir, """
+            [[initialization_options.analysis_overrides]]
+            path = "excluded.jl"
+            """)
+        result = run_jetls_check([filepath]; root=dir, skip_analysis=false)
+        @test result.exitcode == 0
+        @test occursin("[info:toplevel/analysis-skipped]", result.stdout)
+        @test occursin("`excluded.jl`", result.stdout)
+        @test occursin("[info:lowering/unused-local]", result.stdout)
+        @test !occursin("undef-global-var", result.stdout)
+    end
+end
+
+@testset "multiple files" begin
+    mktempdir() do dir
+        file1 = write_test_file(dir, "file1.jl", """
+            module File1
+            function foo()
+                x = 1
+                return nothing
+            end
+            end
+            """)
+        file2 = write_test_file(dir, "file2.jl", """
+            module File2
+            function bar()
+                y = 2
+                return nothing
+            end
+            end
+            """)
+
+        result = run_jetls_check([file1, file2]; root=dir)
+        @test occursin("file1.jl", result.stdout)
+        @test occursin("file2.jl", result.stdout)
+        @test occursin("Analyzed 2 files", result.stdout)
+        @test occursin("Found 2 diagnostics in 2 files", result.stdout)
+    end
+end
+
+function write_test_package(dir::String)
+    pkgdir = mkpath(joinpath(dir, "SomePkg"))
+    write_test_file(pkgdir, "Project.toml", """
+        name = "SomePkg"
+        uuid = "5a1c9c3e-2a4b-4c55-9f0e-6f1d2b3c4d5e"
+        """)
+    write_test_file(mkpath(joinpath(pkgdir, "src")), "SomePkg.jl", """
+        module SomePkg
+        function foo()
+            x = 1
+            return nothing
+        end
+        end
+        """)
+    return pkgdir
+end
+
+@testset "package directory" begin
+    mktempdir() do dir
+        pkgdir = write_test_package(dir)
+
+        # a single package directory becomes the root path
+        for path in (pkgdir, pkgdir * "/")
+            result = run_jetls_check([path])
+            @test result.exitcode == 0
+            @test occursin("# @ src/SomePkg.jl:3,5", result.stdout)
+            @test occursin("lowering/unused-local", result.stdout)
+        end
+        let result = cd(() -> run_jetls_check(["SomePkg"]), dir)
+            @test occursin("# @ src/SomePkg.jl:3,5", result.stdout)
+        end
+
+        # without paths, the package at the root path is analyzed
+        let result = run_jetls_check(String[]; root=pkgdir)
+            @test occursin("# @ src/SomePkg.jl:3,5", result.stdout)
+        end
+        let result = cd(() -> run_jetls_check(String[]), pkgdir)
+            @test occursin("# @ src/SomePkg.jl:3,5", result.stdout)
+        end
+
+        # mixed with files, relative paths are resolved against the working directory
+        write_test_file(mkpath(joinpath(pkgdir, "test")), "runtests.jl", """
+            function bar()
+                y = 2
+                return nothing
+            end
+            """)
+        let result = cd(() -> run_jetls_check(["SomePkg", "SomePkg/test/runtests.jl"]), dir)
+            @test occursin("# @ src/SomePkg.jl:3,5", result.stdout)
+            @test occursin("# @ test/runtests.jl:2,5", result.stdout)
+            @test occursin("Analyzed 2 files", result.stdout)
+        end
+
+        write_config_file(pkgdir, """
+            [[diagnostic.patterns]]
+            pattern = "lowering/unused-local"
+            match_by = "code"
+            match_type = "literal"
+            severity = "off"
+            """)
+        let result = run_jetls_check([pkgdir])
+            @test !occursin("lowering/unused-local", result.stdout)
+            @test occursin("No diagnostics found", result.stdout)
+        end
+        # explicit `--root` takes precedence over the package directory
+        let result = run_jetls_check([pkgdir]; root=dir)
+            @test occursin("# @ SomePkg/src/SomePkg.jl:3,5", result.stdout)
+            @test occursin("lowering/unused-local", result.stdout)
+        end
+        # multiple package directories keep the working directory as the root path
+        let otherdir = mkpath(joinpath(dir, "other"))
+            write_test_package(otherdir)
+            result = cd(() -> run_jetls_check(["SomePkg", "other/SomePkg"]), dir)
+            @test occursin("# @ SomePkg/src/SomePkg.jl:3,5", result.stdout)
+            @test occursin("# @ other/SomePkg/src/SomePkg.jl:3,5", result.stdout)
+        end
+    end
+end
+
+@testset "invalid package directory" begin
+    mktempdir() do dir
+        let result = run_jetls_check(String[]; root=dir)
+            @test result.exitcode == 1
+            @test occursin("Project.toml not found", result.stderr)
+            @test !occursin("# Check ", result.stdout)
+        end
+
+        write_test_file(dir, "Project.toml", "[deps]\n")
+        let result = run_jetls_check([dir])
+            @test result.exitcode == 1
+            @test occursin("Project.toml has no package name", result.stderr)
+            @test !occursin("# Check ", result.stdout)
+        end
+
+        write_test_file(dir, "Project.toml", "name = \"SomePkg\"\n")
+        let result = run_jetls_check([dir])
+            @test result.exitcode == 1
+            @test occursin("Package entry file not found", result.stderr)
+            @test !occursin("# Check ", result.stdout)
+        end
+    end
+end
+
+@testset "stdin" begin
+    input = """
+        function foo()
+            x = 1
+            return undefined_name
+        end
+        """
+
+    mktempdir() do dir
+        # `-` alone doesn't fall back to checking the package at the root path
+        let result = run_jetls_check(["-"]; root=dir, input)
+            @test result.exitcode == 1
+            @test occursin("Analyzed 1 file", result.stdout)
+            @test occursin("# @ <stdin>:2,5", result.stdout)
+            @test occursin("lowering/unused-local", result.stdout)
+        end
+        let result = run_jetls_check(["-"]; root=dir, input, skip_analysis=false)
+            @test result.exitcode == 1
+            @test occursin("# @ <stdin>:3,12", result.stdout)
+            @test occursin("inference/undef-global-var", result.stdout)
+        end
+
+        # the source is checked as `--stdin-filename`, which doesn't need to exist
+        let result = run_jetls_check(["--stdin-filename=scratch.jl", "-"]; root=dir, input)
+            @test occursin("# @ scratch.jl:2,5", result.stdout)
+            @test occursin("lowering/unused-local", result.stdout)
+            @test !isfile(joinpath(dir, "scratch.jl"))
+        end
+
+        filepath = write_test_file(dir, "test.jl", "module TestModule\nend\n")
+        let result = run_jetls_check(["--stdin-filename=test.jl", "-", filepath]; root=dir, input)
+            @test occursin("Analyzed 1 file", result.stdout)
+            @test occursin("# @ test.jl:2,5", result.stdout)
+            @test occursin("    x = 1", result.stdout)
+        end
+
+        let result = run_jetls_check(["--stdin-filename=scratch.jl"]; root=dir)
+            @test result.exitcode == 1
+            @test occursin("--stdin-filename requires `-`", result.stderr)
+            @test !occursin("# Check ", result.stdout)
+        end
+    end
+
+    # the full analysis of the package reads the source from stdin instead of the disk
+    mktempdir() do dir
+        pkgdir = mkpath(joinpath(dir, "SomePkg"))
+        write_test_file(pkgdir, "Project.toml", """
+            name = "SomePkg"
+            uuid = "5a1c9c3e-2a4b-4c55-9f0e-6f1d2b3c4d5e"
+            """)
+        srcdir = mkpath(joinpath(pkgdir, "src"))
+        write_test_file(srcdir, "SomePkg.jl", """
+            module SomePkg
+            include("sub.jl")
+            end
+            """)
+        write_test_file(srcdir, "sub.jl", "sub() = 1\n")
+        result = run_jetls_check(["--stdin-filename=src/sub.jl", "-"];
+            root=pkgdir, input="sub() = undefined_name\n", skip_analysis=false)
+        @test result.exitcode == 1
+        @test occursin("# @ src/sub.jl:1,1", result.stdout)
+        @test occursin("`SomePkg.undefined_name` is not defined [warn:inference/undef-global-var]", result.stdout)
+    end
+end
+
+@testset "toplevel warnings" begin
+    mktempdir() do dir
+        write_test_file(dir, "sub.jl", """
+            struct SubStruct
+                x::Any
+            end
+            """)
+        filepath = write_test_file(dir, "test.jl", """
+            struct MainStruct
+                x::Any
+            end
+            f() = 1
+            f() = 2
+            include("sub.jl")
+            """)
+
+        result = run_jetls_check(["--show-severity=hint", filepath]; root=dir, skip_analysis=false)
+        @test occursin("`MainStruct` has abstract field `x::Any`", result.stdout)
+        @test occursin("`SubStruct` has abstract field `x::Any`", result.stdout)
+        @test occursin("# @ sub.jl:2,5", result.stdout)
+        @test occursin("toplevel/method-overwrite", result.stdout)
+    end
+end
+
+@testset "toplevel report messages fit the terminal width" begin
+    mktempdir() do dir
+        write_test_file(dir, "included.jl", "x = 1\n")
+        filepath = write_test_file(dir, "test.jl", """
+            include(identity, "included.jl")
+            """)
+
+        result = withenv("COLUMNS" => "60") do
+            run_jetls_check([filepath]; root=dir, skip_analysis=false)
+        end
+        @test occursin("toplevel/unsupported-feature", result.stdout)
+        lines = split(result.stdout, '\n')
+        i = findfirst(contains("JET does not support"), lines)
+        @test i !== nothing
+        i = i::Int # TODO failfast and fix
+        body = lines[i:(findnext(!startswith("# "), lines, i)::Int)-1]
+        @test length(body) > 1
+        @test all(line -> textwidth(line) ≤ 60, body)
+    end
+end
+
+@testset "package extension files" begin
+    mktempdir() do dir
+        write_test_file(dir, "Project.toml", "name = \"SomePkg\"\n")
+        mkpath(joinpath(dir, "ext"))
+        filepath = write_test_file(dir, joinpath("ext", "SomePkgWeakDepExt.jl"), """
+            module SomePkgWeakDepExt
+            using SomePkg: SomePkg
+            using WeakDep: WeakDep
+            end
+            """)
+
+        result = run_jetls_check([filepath]; root=dir, skip_analysis=false)
+        @test result.exitcode == 1
+        @test occursin("[warn:toplevel/analysis-skipped]", result.stdout)
+        @test !occursin("toplevel/error", result.stdout)
+    end
+end
+
+function with_active_project(f, project::Union{Nothing,String})
+    old_project = Base.active_project(false)
+    Base.set_active_project(project)
+    try
+        return f()
+    finally
+        Base.set_active_project(old_project)
+    end
+end
+
+# An environment providing `DefineX.@defx`, which defines `x` when expanded
+function write_definex_env(dir::String)
+    uuid = "9c3b1d2e-4f5a-4b6c-8d7e-0f1a2b3c4d5e"
+    write_test_file(mkpath(joinpath(dir, "DefineX")), "Project.toml", """
+        name = "DefineX"
+        uuid = "$uuid"
+        version = "0.1.0"
+        """)
+    write_test_file(mkpath(joinpath(dir, "DefineX", "src")), "DefineX.jl", """
+        module DefineX
+        macro defx()
+            return :(\$(esc(:x)) = 1)
+        end
+        end
+        """)
+    envdir = mkpath(joinpath(dir, "env"))
+    write_test_file(envdir, "Manifest.toml", """
+        manifest_format = "2.0"
+
+        [[deps.DefineX]]
+        path = "../DefineX"
+        uuid = "$uuid"
+        version = "0.1.0"
+        """)
+    return write_test_file(envdir, "Project.toml", """
+        [deps]
+        DefineX = "$uuid"
+        """)
+end
+
+@testset "active project for files without an environment" begin
+    mktempdir() do dir
+        project = write_definex_env(dir)
+        filepath = write_test_file(mkpath(joinpath(dir, "scripts")), "script.jl", """
+            using DefineX
+            DefineX.@defx
+            println(x)
+            """)
+
+        result = with_active_project(nothing) do
+            run_jetls_check([filepath]; root=dir, skip_analysis=false)
+        end
+        @test occursin("`x` is not defined", result.stdout)
+
+        result = with_active_project(project) do
+            run_jetls_check([filepath]; root=dir, skip_analysis=false)
+        end
+        @test !occursin("`x` is not defined", result.stdout)
+    end
+end
+
+@testset "parse errors" begin
+    mktempdir() do dir
+        filepath = write_test_file(dir, "test.jl", "f(x) = println(x\n")
+        result = run_jetls_check([filepath]; root=dir)
+        @test result.exitcode == 1
+        @test occursin("syntax/parse-error", result.stdout)
+        @test occursin("test.jl", result.stdout)
+        @test occursin("Found 1 diagnostic in 1 file", result.stdout)
+        @test endswith(result.stdout, "\n\n# Check failed (--exit-severity=warn)\n")
+    end
+end
+
+@testset "parse warnings" begin
+    mktempdir() do dir
+        filepath = write_test_file(dir, "test.jl", """
+            x = 1e-400
+            function foo()
+                y = 1
+                return nothing
+            end
+            """)
+        result = run_jetls_check([filepath]; root=dir)
+        @test occursin("syntax/parse-warning", result.stdout)
+        @test !occursin("syntax/parse-error", result.stdout)
+        # parse warnings don't short-circuit lowering
+        @test occursin("lowering/unused-local", result.stdout)
+    end
+end
+
+@testset "invalid arguments" begin
+    let result = run_jetls_check(["/nonexistent/path/file.jl"])
+        @test result.exitcode == 1 || occursin("error", lowercase(result.stderr))
+        @test !occursin("# Check ", result.stdout)
+    end
+    mktempdir() do dir
+        filepath = write_test_file(dir, "test.jl", "x = 1")
+        result = run_jetls_check(["--exit-severity=invalid", filepath]; root=dir)
+        @test result.exitcode == 1
+        @test occursin("Invalid value", result.stderr)
+        @test !occursin("# Check ", result.stdout)
+        result = run_jetls_check(["--show-severity=invalid", filepath]; root=dir)
+        @test result.exitcode == 1
+        @test occursin("Invalid value", result.stderr)
+        @test !occursin("# Check ", result.stdout)
+    end
+end
+
+end # module test_jetls_check

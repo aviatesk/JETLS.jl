@@ -23,7 +23,7 @@ function rename_description_to_markdown!(schema_dict::Dict)
 end
 
 function generate_vscode_schemas(ctx::SchemaContext)
-    expanded_schema = generate_schema(JETLS.JETLSConfig; ctx = ctx, inline_all_defs = true)
+    expanded_schema = generate_schema(JETLSCore.JETLSConfig; ctx = ctx, inline_all_defs = true)
     rename_description_to_markdown!(expanded_schema.doc)
 
     init_options_schema = deepcopy(expanded_schema.doc["properties"]["initialization_options"])

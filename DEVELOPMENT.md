@@ -25,17 +25,36 @@ without restarting the server.
 > analyzed. The `release` branch avoids this by vendoring dependencies with
 > rewritten UUIDs.
 
+## Package structure
+
+The `JETLS` package at the repository root is the entry point of the `jetls`
+app. It handles `--version`, `schema`, and the help messages by itself and
+loads [`JETLSCore`](./JETLSCore/), which implements the language server, only
+for the other commands, so that these stay fast.
+The root package also depends on `TestRunner` without loading it, since
+`JETLSCore` runs `julia -m TestRunner` in the environment of the root package.
+Preferences such as `JETLS_DEV_MODE` belong to `JETLSCore`.
+
 ## `[sources]` dependencies
 
 In JETLS, since we need to use packages that aren’t yet registered
 (e.g., [JuliaLowering.jl](https://github.com/JuliaLang/julia/tree/master/JuliaLowering)) or
 specific branches of [JET.jl](https://github.com/aviatesk/JET.jl) and
 [JuliaSyntax.jl](https://github.com/JuliaLang/julia/tree/master/JuliaSyntax),
-the [Project.toml](./Project.toml) includes
+[JETLSCore/Project.toml](./JETLSCore/Project.toml) includes
 [`[sources]` section](https://pkgdocs.julialang.org/v1/toml-files/#The-[sources]-section).
 The `[sources]` section allows simply running `Pkg.instantiate()` to install all
 the required versions of these packages on any environment, including the CI
 setup especially.
+
+[TestRunner/Project.toml](./TestRunner/Project.toml) declares the same
+`[sources]` entry for JuliaSyntax. When Pkg merges the `[sources]` of a package
+across the workspace, it keeps those of the first project it visits, in an order
+that depends on the checkout path, and drops the `subdir` of the others, so every
+project that depends on a package with a `subdir` source has to declare it.
+Keep such entries identical when updating them:
+[`scripts/check-sources.jl`](./scripts/check-sources.jl), which CI runs, checks
+this.
 
 On the other hand, it can sometimes be convenient to `Pkg.develop` some of the
 packages listed in the `[sources]` section and edit their source code while
@@ -48,8 +67,9 @@ julia> Pkg.develop("JET")
 ERROR: `path` and `url` are conflicting specifications
 ...
 ```
-To work around this, you can temporarily comment out the `[sources]` section and
-run `Pkg.develop("JET")`.
+To work around this, you can temporarily comment out the entry in the `[sources]`
+section of `JETLSCore/Project.toml` and run `Pkg.develop("JET")` with the
+`JETLSCore` project activated (`--project=JETLSCore`).
 This lets you use any local JET implementation. After running `Pkg.develop("JET")`,
 you can restore the `[sources]` section, and perform any most of `Pkg`
 operations without any issues onward.
@@ -59,7 +79,8 @@ The same applies to the other packages listed in `[sources]`.
 
 Some of JETLS's test cases depend on specific implementation details of dependency packages
 (especially JET and JS/JL), and may fail unless those dependency packages are
-from the exact commits specified in [Project.toml](./Project.toml), as mentioned above.
+from the exact commits specified in
+[JETLSCore/Project.toml](./JETLSCore/Project.toml), as mentioned above.
 
 It should be noted that during development, if the versions of those packages
 already installed in your locally cloned JETLS environment are not updated to
@@ -84,7 +105,7 @@ to also show hints. See `./scripts/selfcheck.sh --help` for details.
 ## `JETLS_DEV_MODE`
 
 JETLS has a development mode that can be enabled through the `JETLS_DEV_MODE`
-[preference](https://github.com/JuliaPackaging/Preferences.jl).
+[preference](https://github.com/JuliaPackaging/Preferences.jl) of `JETLSCore`.
 When this mode is enabled, the language server enables several features to aid
 in development:
 - Automatic loading of Revise when starting the server
@@ -109,11 +130,11 @@ You can override `JETLS_DEV_MODE` locally using Preferences.jl:
 ```julia-repl
 julia> using Preferences
 
-julia> Preferences.set_preferences!("JETLS", "JETLS_DEV_MODE" => false; force = true)
+julia> Preferences.set_preferences!("JETLSCore", "JETLS_DEV_MODE" => false; force = true)
 ```
 Alternatively, create a `LocalPreferences.toml` file in the repository root:
 ```toml
-[JETLS]
+[JETLSCore]
 JETLS_DEV_MODE = false
 ```
 
@@ -132,7 +153,7 @@ recovery in message handling, ensuring that errors are properly raised during
 tests rather than being suppressed.
 
 This mode is exported by the test environment and automatically enabled there
-(see [`test/Project.toml`](./test/Project.toml)).
+(see [`JETLSCore/test/Project.toml`](./JETLSCore/test/Project.toml)).
 
 The error handling behavior in `handle_message` follows this logic:
 - When `!JETLS_TEST_MODE`: Errors are caught and logged, allowing the server to continue running
@@ -156,7 +177,7 @@ of time. In such cases, you can disable precompilation by adding the following
 settings to your LocalPreferences.toml:
 > LocalPreferences.toml
 ```toml
-[JETLS]
+[JETLSCore]
 precompile_workload = false # Disable precompilation for JETLS
 
 [JET]
@@ -187,13 +208,13 @@ in VSCode[^vscode],
 then add the following diff to unregister the already enabled completion feature.
 Make a small edit to the file the language server is currently analyzing to send
 some request from the client to the server. This will allow Revise to apply this
-diff to the server process via the dev mode callback (see the `JETLS.main` entrypoint),
+diff to the server process via the dev mode callback (see `JETLSCore.run_serve`),
 which should disable the completion feature:
 ```diff
-diff --git a/src/completions.jl b/src/completions.jl
+diff --git a/JETLSCore/src/completions.jl b/JETLSCore/src/completions.jl
 index 29d0db5..728da8f 100644
---- a/src/completions.jl
-+++ b/src/completions.jl
+--- a/JETLSCore/src/completions.jl
++++ b/JETLSCore/src/completions.jl
 @@ -21,6 +21,11 @@ completion_options() = CompletionOptions(;
  const COMPLETION_REGISTRATION_ID = "jetls-completion"
  const COMPLETION_REGISTRATION_METHOD = "textDocument/completion"
@@ -209,7 +230,7 @@ index 29d0db5..728da8f 100644
 
 > [!tip]
 > You can add the diff above anywhere Revise can track and apply changes, i.e.
-> any top-level scope in the `JETLS` module namespace or any subroutine
+> any top-level scope in the `JETLSCore` module namespace or any subroutine
 > of `_handle_message` that is reachable upon the request handling.
 
 > [!warning]
@@ -223,10 +244,10 @@ index 29d0db5..728da8f 100644
 
 After that, delete that diff and add the following diff:
 ```diff
-diff --git a/src/completions.jl b/src/completions.jl
+diff --git a/JETLSCore/src/completions.jl b/JETLSCore/src/completions.jl
 index 29d0db5..7609a6a 100644
---- a/src/completions.jl
-+++ b/src/completions.jl
+--- a/JETLSCore/src/completions.jl
++++ b/JETLSCore/src/completions.jl
 @@ -9,6 +9,7 @@ const COMPLETION_TRIGGER_CHARACTERS = [
      "@",  # macro completion
      "\\", # LaTeX completion
@@ -252,7 +273,7 @@ For these reasons, when adding new LSP features, check whether the feature
 supports dynamic/static registration, and if it does, actively opt-in to use it.
 That is, register it via the `client/registerCapability` request in response to
 notifications sent from the client, most likely `InitializedNotification`.
-The `JETLS.register` utility is especially useful for this purpose.
+The `JETLSCore.register` utility is especially useful for this purpose.
 
 ## Profiling
 
@@ -342,7 +363,7 @@ Use `--top=N` to control how many entries to show (default: 50).
 ## Configuration schema
 
 The configuration schema is generated from the config structs
-in `src/types.jl` by `scripts/schema/generate.jl`, which produces
+in `JETLSCore/src/types.jl` by `scripts/schema/generate.jl`, which produces
 standalone schema files under `schemas/`:
 
 - `config-toml.schema.json` (complete schema for `.JETLSConfig.toml`)

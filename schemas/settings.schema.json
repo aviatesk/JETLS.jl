@@ -15,7 +15,7 @@
     "Glob.FilenameMatch{Core.String}": {
       "type": "string"
     },
-    "JETLS.JETLSConfig": {
+    "JETLSCore.JETLSConfig": {
       "additionalProperties": false,
       "properties": {
         "code_lens": {
@@ -318,6 +318,6 @@
       "type": "object"
     }
   },
-  "$ref": "#/$defs/JETLS.JETLSConfig",
+  "$ref": "#/$defs/JETLSCore.JETLSConfig",
   "$schema": "https://json-schema.org/draft/2020-12/schema"
 }

@@ -438,7 +438,7 @@ function update_workspace_project!(
 end
 
 const DEVELOPMENT_PREFERENCE_KEYS = (
-    "JETLS" => "JETLS_DEV_MODE",
+    "JETLSCore" => "JETLS_DEV_MODE",
     "Revise" => "revise_structs",
 )
 
@@ -472,6 +472,29 @@ function validate_no_development_preferences(project::Dict{String, Any})
         end
     end
     return nothing
+end
+
+# Pkg 1.12 does not follow the `[sources]` of dependencies, so list in the root project the URL
+# sources that its subpackage dependencies declare for packages that are not vendored, e.g.
+# Revise, which JETLSCore loads only in its development mode.
+function add_unvendored_url_sources!(project::Dict{String, Any}, uuid_mapping::Dict{UUID, UUID})
+    for workspace_name in get(get(project, "workspace", Dict{String, Any}()), "projects", String[])
+        member_path = joinpath(CURRENT_DIR, workspace_name, "Project.toml")
+        isfile(member_path) || continue
+        member = TOML.parsefile(member_path)
+        haskey(project["deps"], get(member, "name", "")) || continue
+        member_deps = get(member, "deps", Dict{String, Any}())
+        for (dep_name, source) in get(member, "sources", Dict{String, Any}())
+            haskey(source, "url") || continue
+            dep_uuid = get(member_deps, dep_name, nothing)
+            dep_uuid isa String || continue
+            haskey(uuid_mapping, UUID(dep_uuid)) && continue
+            haskey(project["sources"], dep_name) && continue
+            project["deps"][dep_name] = dep_uuid
+            project["sources"][dep_name] = source
+            @info "Added unvendored source for $dep_name from $workspace_name/Project.toml"
+        end
+    end
 end
 
 function update_project_with_vendored_deps(
@@ -530,6 +553,7 @@ function update_project_with_vendored_deps(
             end
         end
     end
+    add_unvendored_url_sources!(project, uuid_mapping)
 
     main_path = joinpath(CURRENT_DIR, "Project.toml")
     @info "Writing vendored Project.toml to $main_path"
@@ -710,8 +734,8 @@ function parse_args(args::Vector{String})
 end
 
 function vendor_loaded_packages(use_local_path::Bool, rev::Union{String, Nothing})
-    @info "Loading JETLS to populate Base.loaded_modules..."
-    @eval using JETLS
+    @info "Loading JETLSCore to populate Base.loaded_modules..."
+    @eval using JETLSCore
 
     @info "Identifying packages to vendor..."
     packages = collect_packages_to_vendor()

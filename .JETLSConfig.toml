@@ -28,17 +28,17 @@ pattern = ".*"
 match_by = "message"
 match_type = "regex"
 severity = "off"
-path = "src/utils/JETLSTestModule.jl"
+path = "JETLSCore/src/utils/JETLSTestModule.jl"
 
 # TODO [JETLS]
 # When Revise updates the `Server` type graph, analyzing `run_serve` in the latest world
 # sees an impossible assignment from latest `Server(endpoint)` to the old typed global.
 [[diagnostic.patterns]]
-pattern = "no matching method found `convert.*@world.JETLS[.]Server.*::JETLS[.]Server"
+pattern = "no matching method found `convert.*@world.JETLSCore[.]Server.*::JETLSCore[.]Server"
 match_by = "message"
 match_type = "regex"
 severity = "off"
-path = "src/app/cli-serve.jl"
+path = "JETLSCore/src/app/cli-serve.jl"
 
 # Markdown elements hold content of any kind, e.g. strings, elements, and interpolated
 # values, in `Vector{Any}` or untyped fields, `MD.meta` holds metadata of any kind, and
@@ -92,9 +92,12 @@ path = "TestRunner/test/_testfile*.jl"
 reuse_native_inference = true
 
 [[initialization_options.analysis_overrides]]
-module_name = "JETLS"
-path = "src/**/*.jl"
+module_name = "JETLSCore"
+path = "JETLSCore/src/**/*.jl"
 full_analysis = true
+[[initialization_options.analysis_overrides]]
+path = "JETLSCore/test/**/*.jl"
+module_name = "JETLSTestModule"
 [[initialization_options.analysis_overrides]]
 path = "test/**/*.jl"
 module_name = "JETLSTestModule"

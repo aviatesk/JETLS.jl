@@ -1,0 +1,71 @@
+using Test
+
+using JETLSCore
+JETLSCore.show_setup_info("Testing JETLS with the following setup:")
+
+# test the basic server setup and lifecycle before running the tests
+include("setup.jl")
+@testset "basic lifecycle" begin
+    @test withserver(Returns(true))
+end
+
+@testset "AtomicContainers" include("AtomicContainers/test_AtomicContainers.jl")
+@testset "FixedSizeQueues" include("FixedSizeQueues/test_FixedSizeQueues.jl")
+
+@testset HierarchicalTestSet "JETLS" verbose=true begin
+    @testset "utils" verbose=true begin
+        @testset "general" include("utils/test_general.jl")
+        @testset "ast" include("utils/test_ast.jl")
+        @testset "binding" include("utils/test_binding.jl")
+        @testset "docs" include("utils/test_docs.jl")
+        @testset "lsp" include("utils/test_lsp.jl")
+        @testset "server" include("utils/test_server.jl")
+        @testset "path" include("utils/test_path.jl")
+        @testset "markdown" include("utils/test_markdown.jl")
+        @testset "string" include("utils/test_string.jl")
+        @testset "jl-syntax-macros" include("utils/test_jl_syntax_macros.jl")
+        @testset "native-inference" include("utils/test_native_inference.jl")
+    end
+    @testset "analysis" verbose=true begin
+        @testset "full analysis" include("analysis/test_full_analysis.jl")
+        @testset "instantiation progress" include("analysis/test_instantiation_progress.jl")
+        @testset "occurrence" include("analysis/test_occurrence_analysis.jl")
+        @testset "cfg" include("analysis/test_cfg_analysis.jl")
+        @testset "LSAnalyzer" include("analysis/test_Analyzer.jl")
+        @testset "Closure2Opaque" include("analysis/test_Closure2Opaque.jl")
+        @testset "TypeAnnotation" include("analysis/test_TypeAnnotation.jl")
+    end
+    @testset "types" include("test_types.jl")
+    @testset "config" include("test_config.jl")
+    @testset "config deprecation" include("test_config_deprecation.jl")
+    @testset "URIs2" include("test_URIs2.jl")
+    @testset "initialize" include("test_initialize.jl")
+    @testset "registration" include("test_registration.jl")
+    @testset "document synchronization" include("test_document_synchronization.jl")
+    @testset "completions" include("test_completions.jl")
+    @testset "signature help" include("test_signature_help.jl")
+    @testset "declaration" include("test_declaration.jl")
+    @testset "definition" include("test_definition.jl")
+    @testset "type definition" include("test_type_definition.jl")
+    @testset "document highlight" include("test_document_highlight.jl")
+    @testset "document symbol" include("test_document_symbol.jl")
+    @testset "workspace symbol" include("test_workspace_symbol.jl")
+    @testset "references" include("test_references.jl")
+    @testset "hover" include("test_hover.jl")
+    @testset "inlay hint" include("test_inlay_hint.jl")
+    @testset "semantic tokens" include("test_semantic_tokens.jl")
+    @testset "lowering diagnostic" include("test_lowering_diagnostic.jl")
+    @testset "code action" include("test_code_action.jl")
+    @testset "text document content" include("test_text_document_content.jl")
+    @testset "code views" include("test_code_views.jl")
+    @testset "formatting" include("test_formatting.jl")
+    @testset "diagnostic" include("test_diagnostic.jl")
+    @testset "did-change-watched-files" include("test_did_change_watched_files.jl")
+    @testset "rename" include("test_rename.jl")
+    @testset "code lens" include("test_code_lens.jl")
+    @testset "document link" include("test_document_link.jl")
+    @testset "testrunner" include("test_testrunner.jl")
+    @testset "full lifecycle" include("test_full_lifecycle.jl")
+    @testset "unsaved buffer" include("test_unsaved_buffer.jl")
+    @testset "notebook" include("test_notebook.jl")
+end

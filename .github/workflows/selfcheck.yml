@@ -18,7 +18,7 @@ jobs:
         working-directory: .
         run: |
           echo '
-          [JETLS]
+          [JETLSCore]
           JETLS_DEV_MODE = true
           ' > LocalPreferences.toml
       - uses: julia-actions/julia-buildpkg@latest

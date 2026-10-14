@@ -1,0 +1,1974 @@
+module test_jl_syntax_macros
+
+using Test
+using JETLSCore: JETLSCore, JL, JS
+
+include("../jsjl-utils.jl")
+
+module lowering_module
+macro lazy_wrapper(idx)
+    return :(let idx = $(esc(idx))
+        lazy"idx=$idx"
+    end)
+end
+end
+
+baremodule something_hygiene_module
+using Base: @something
+isnothing(_) = true
+something(_) = :shadowed
+end
+
+function jlexpand(
+        context_module::Module, code::AbstractString; recursive::Bool = true
+    )
+    st0 = jlparse(code; rule=:statement)
+    world = Base.get_world_counter()
+    st0 = JL.rebase_layers(st0, context_module)
+    return JL.expand_forms_1(st0, world, recursive)
+end
+jlexpand(code::AbstractString; kwargs...) = jlexpand(lowering_module, code; kwargs...)
+
+function jlresolve(context_module::Module, code::AbstractString; world::UInt=Base.get_world_counter())
+    st0 = jlparse(code; rule=:statement)
+    return JETLSCore.jl_lower_for_scope_resolution(context_module, world, st0;
+        recover_from_macro_errors=false, convert_closures=true)
+end
+jlresolve(code::AbstractString) = jlresolve(lowering_module, code)
+
+# `JL.eval` evaluates thunks with `jl_eval_thunk`, which older Julia runtimes don't provide
+function jleval(context_module::Module, code::AbstractString)
+    st5 = JL.lower(context_module, jlparse(code; rule=:statement))
+    return Core.eval(context_module, JL.to_lowered_expr(st5))
+end
+jleval(code::AbstractString) = jleval(lowering_module, code)
+
+children_heads(st::JS.SyntaxTree) = Symbol[JS.head(c) for c in JS.children(st)]
+
+function has_qualified_name(
+        st::JS.SyntaxTree, qualifier::Symbol, name::AbstractString
+    )
+    found = Ref(false)
+    JETLSCore.traverse(st) do node::JS.SyntaxTree
+        if (JS.head(node) === qualifier && JS.numchildren(node) == 1 &&
+            JETLSCore.get_name_val(node[1]) == name)
+            found[] = true
+        end
+        return nothing
+    end
+    return found[]
+end
+
+# Look up the first binding matching `kind`/`name` in the resolved scope and
+# verify its last provenance entry's sourcetext is `name` — i.e. the user-
+# written identifier survived macro expansion with its byte range intact, so
+# downstream LSP analyses (`is_from_user_ast` etc.) can recognize it as
+# user code. Used by every macro stub's "binding resolution preserves
+# provenance" testset.
+function assert_binding_provenance(
+        res, kind::Symbol, name::AbstractString;
+        world::UInt = Base.get_world_counter()
+    )
+    binding_occurrences = JETLSCore.compute_binding_occurrences(
+        res.ctx3, res.st3, world; include_global_bindings=true)
+    binfo = nothing
+    for (b, _) in binding_occurrences
+        if b.kind === kind && b.name == name
+            binfo = b
+            break
+        end
+    end
+    @test binfo !== nothing
+    binfo === nothing && return nothing
+    provs = JS.flattened_provenance(JL.binding_ex(res.ctx3, binfo.id))
+    @test JS.sourcetext(last(provs)) == name
+    return (binfo, provs)
+end
+
+function source_range(code::AbstractString, text::AbstractString)
+    range = findfirst(text, code)
+    @test range !== nothing
+    return @something range error("`$text` is not found in source")
+end
+
+function assert_binding_provenance_range(
+        res, kind::Symbol, name::AbstractString,
+        byte_range::AbstractUnitRange{<:Integer}
+    )
+    ret = assert_binding_provenance(res, kind, name)
+    ret === nothing && return nothing
+    _, provs = ret
+    @test JS.byte_range(last(provs)) == byte_range
+    return ret
+end
+
+# Negative counterpart of `assert_binding_provenance`: verifies that no
+# binding of the given kind/name exists. Used for identifiers that the macro
+# stub intentionally drops (e.g. kwarg keys in logging macros, which are
+# metadata symbols and not user references).
+function assert_no_binding(
+        res, kind::Symbol, name::AbstractString;
+        world::UInt = Base.get_world_counter()
+    )
+    binding_occurrences = JETLSCore.compute_binding_occurrences(
+        res.ctx3, res.st3, world; include_global_bindings=true)
+    found = any(binding_occurrences) do (b, _)
+        b.kind === kind && b.name == name
+    end
+    @test !found
+end
+
+# Run `f()` (typically a macro-expand call) with `MACRO_DIAGNOSTIC_SINK` bound to
+# a fresh vector, then return that vector so tests can inspect the collected
+# `MacroDiagnostic` entries.
+function collect_macro_diagnostics(f)
+    sink = JETLSCore.MacroDiagnostic[]
+    Base.ScopedValues.@with JETLSCore.MACRO_DIAGNOSTIC_SINK => sink f()
+    return sink
+end
+
+@testset "@kwdef" begin
+    @testset "macro expansion" begin
+        # parametric with defaults
+        let st1 = jlexpand("""
+                @kwdef struct A{T <: Real}
+                    a::T = 1.0
+                    b::Int
+                end
+                """)
+            @test JS.head(st1) === :block
+            ks = children_heads(st1)
+            @test count(==(:struct), ks) == 1
+            # parametric: 2 constructors (S(...) and S{T}(...) where {T})
+            @test count(==(:function), ks) == 2
+
+            # struct fields should have defaults stripped
+            st_struct = st1[findfirst(==(:struct), ks)]
+            body = st_struct[3]
+            for field in JS.children(body)
+                @test JS.head(field) !== :(=)
+            end
+        end
+
+        # non-parametric with defaults
+        let st1 = jlexpand("""
+                @kwdef struct A
+                    a::Float64 = 1.0
+                end
+                """)
+            @test JS.head(st1) === :block
+            ks = children_heads(st1)
+            @test count(==(:struct), ks) == 1
+            # non-parametric: only 1 constructor
+            @test count(==(:function), ks) == 1
+        end
+
+        # no defaults: keyword constructor is still generated
+        let st1 = jlexpand("""
+                @kwdef struct A
+                    a::Int
+                end
+                """)
+            @test JS.head(st1) === :block
+            ks = children_heads(st1)
+            @test count(==(:struct), ks) == 1
+            @test count(==(:function), ks) == 1
+        end
+
+        # non-parametric with subtype declaration
+        let st1 = jlexpand("""
+                @kwdef mutable struct A <: Base.AbstractLock
+                    a::Int = 10
+                end
+                """)
+            @test JS.head(st1) === :block
+            ks = children_heads(st1)
+            @test count(==(:struct), ks) == 1
+            @test count(==(:function), ks) == 1
+        end
+
+        # parametric with subtype declaration
+        let st1 = jlexpand("""
+                @kwdef struct A{T <: Real} <: Number
+                    a::T = 1.0
+                end
+                """)
+            @test JS.head(st1) === :block
+            ks = children_heads(st1)
+            @test count(==(:struct), ks) == 1
+            @test count(==(:function), ks) == 2
+        end
+
+        # mutable struct with const field default
+        let st1 = jlexpand("""
+                @kwdef mutable struct A{T <: Real}
+                    const a::T = 1.0
+                    b::Int
+                end
+                """)
+            @test JS.head(st1) === :block
+            ks = children_heads(st1)
+            @test count(==(:struct), ks) == 1
+            @test count(==(:function), ks) == 2
+
+            st_struct = st1[findfirst(==(:struct), ks)]
+            body = st_struct[3]
+            # `const a::T` should remain, but no `=`
+            has_const = false
+            for field in JS.children(body)
+                @test JS.head(field) !== :(=)
+                if JS.head(field) === :const
+                    has_const = true
+                end
+            end
+            @test has_const
+        end
+    end
+
+    @testset "full lowering succeeds" begin
+        for code in [
+            "@kwdef struct A{T <: Real}\n    a::T = 1.0\nend\n",
+            "@kwdef struct A\n    a::Float64 = 1.0\nend\n",
+            "@kwdef mutable struct A{T}\n    const a::T = 1.0\n    b::Int\nend\n",
+            "@kwdef struct A\n    a::Int\nend\n",
+            "@kwdef mutable struct A <: Base.AbstractLock\n    a::Int = 10\nend\n",
+            "@kwdef struct A{T <: Real} <: Number\n    a::T = 1.0\nend\n",
+        ]
+            @test jlresolve(code) isa NamedTuple
+        end
+    end
+
+    @testset "binding resolution" begin
+        world = Base.get_world_counter()
+        for code in [
+            "@kwdef struct MyStruct{T <: Real}\n    a::T = 1.0\nend\n",
+            "@kwdef struct MyStruct\n    a::Float64 = 1.0\nend\n",
+            "@kwdef mutable struct MyStruct{T}\n    const a::T = 1.0\n    b::Int\nend\n",
+            "@kwdef struct MyStruct\n    a::Int\nend\n",
+            "@kwdef mutable struct MyStruct <: Base.AbstractLock\n    a::Int = 10\nend\n",
+            "@kwdef struct MyStruct{T <: Real} <: Number\n    a::T = 1.0\nend\n",
+        ]
+            st0 = jlparse(code)
+            offset = findfirst("MyStruct", code).start
+            result = JETLSCore.select_target_binding(st0, offset, lowering_module, world)
+            @test result !== nothing
+            binfo = JL.get_binding(result.ctx3, result.binding)
+            @test binfo.name == "MyStruct"
+            @test binfo.kind === :global
+        end
+    end
+end
+
+@testset "@NamedTuple" begin
+    @testset "macro expansion" begin
+        for code in ("@NamedTuple{a::Int, b}", "@NamedTuple begin\n    a::Int\n    b\nend")
+            let st1 = jlexpand(code)
+                @test JS.head(st1) === :curly
+                @test has_qualified_name(st1, :core, "NamedTuple")
+                @test has_qualified_name(st1, :core, "Tuple")
+                @test has_qualified_name(st1, :core, "Any")
+            end
+        end
+    end
+
+    @testset "validation" begin
+        for (code, msg) in (
+                ("@NamedTuple", "@NamedTuple expects exactly one argument"),
+                ("@NamedTuple a b", "@NamedTuple expects exactly one argument"),
+                ("@NamedTuple (a::Int, b)", "@NamedTuple expects {...} or begin...end"),
+                ("@NamedTuple{a.b::Int}", "must contain a sequence of name or name::type expressions"),
+                ("@NamedTuple{a::Int = 1}", "must contain a sequence of name or name::type expressions"),
+                ("@NamedTuple{a::Int, a}", "duplicate field name `a`"),
+            )
+            let diags = collect_macro_diagnostics() do
+                    jlexpand(code)
+                end
+                @test length(diags) == 1
+                d = only(diags)
+                @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
+                @test occursin(msg, d.msg)
+            end
+        end
+    end
+
+    @testset "binding resolution preserves provenance" begin
+        let res = jlresolve("f(x::@NamedTuple{a::Foo, b::Vector{Bar}}) = x")
+            assert_binding_provenance(res, :global, "Foo")
+            assert_binding_provenance(res, :global, "Bar")
+            assert_no_binding(res, :global, "a")
+            assert_no_binding(res, :global, "b")
+        end
+        let res = jlresolve("const T = @NamedTuple begin\n    a::Foo\n    b\nend")
+            assert_binding_provenance(res, :global, "Foo")
+            assert_no_binding(res, :global, "a")
+            assert_no_binding(res, :global, "b")
+        end
+        let res = jlresolve("f(x::@NamedTuple{a::T}) where T = x")
+            assert_binding_provenance(res, :static_parameter, "T")
+            assert_no_binding(res, :global, "T")
+        end
+    end
+
+    @testset "runtime semantics" begin
+        @test jleval("@NamedTuple{a::Int, b}") === @NamedTuple{a::Int, b}
+        @test jleval("@NamedTuple begin\n    a::Int\n    b::Vector{Float64}\nend") ===
+            @NamedTuple{a::Int, b::Vector{Float64}}
+        @test jleval("@NamedTuple{}") === @NamedTuple{}
+        # Malformed and duplicate fields are dropped
+        @test jleval("@NamedTuple{a::Int, a, b.c, d::String}") === @NamedTuple{a::Int, d::String}
+
+        @testset "generated helper hygiene" begin
+            @test jleval("""
+                let NamedTuple = 1, Tuple = 2, Any = 3
+                    @NamedTuple{a::Int, b}
+                end
+                """) === @NamedTuple{a::Int, b}
+        end
+    end
+end
+
+@testset "@Kwargs" begin
+    @testset "macro expansion" begin
+        let st1 = jlexpand("@Kwargs{a::Int, b}")
+            @test JS.head(st1) === :let
+            @test has_qualified_name(st1, :top, "Pairs")
+            @test has_qualified_name(st1, :core, "NamedTuple")
+        end
+    end
+
+    @testset "validation" begin
+        for (code, msg) in (
+                ("@Kwargs", "@Kwargs expects exactly one argument"),
+                ("@Kwargs (a::Int, b)", "@Kwargs expects {...} or begin...end"),
+                ("@Kwargs{a.b::Int}", "@Kwargs must contain a sequence of name or name::type expressions"),
+                ("@Kwargs{a::Int, a}", "@Kwargs: duplicate field name `a`"),
+            )
+            let diags = collect_macro_diagnostics() do
+                    jlexpand(code)
+                end
+                @test length(diags) == 1
+                d = only(diags)
+                @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
+                @test occursin(msg, d.msg)
+            end
+        end
+    end
+
+    @testset "binding resolution preserves provenance" begin
+        let res = jlresolve("const T = @Kwargs{a::Foo, b}")
+            assert_binding_provenance(res, :global, "Foo")
+            assert_no_binding(res, :global, "a")
+            assert_no_binding(res, :global, "b")
+            assert_no_binding(res, :global, "NT")
+        end
+        let res = jlresolve("f(x::@Kwargs{a::T}) where T = x")
+            assert_binding_provenance(res, :static_parameter, "T")
+            assert_no_binding(res, :global, "T")
+        end
+    end
+
+    @testset "runtime semantics" begin
+        @test jleval("@Kwargs{init::Int}") === @Kwargs{init::Int}
+        @test jleval("@Kwargs begin\n    a::Int\n    b\nend") === @Kwargs{a::Int, b}
+        @test jleval("@Kwargs{}") === @Kwargs{}
+
+        @testset "generated helper hygiene" begin
+            @test jleval("""
+                let NT = Int, keytype = 1, eltype = 2, Pairs = 3, Nothing = 4
+                    @Kwargs{a::NT}
+                end
+                """) === @Kwargs{a::Int}
+        end
+    end
+end
+
+@testset "@lock" begin
+    @testset "macro expansion" begin
+        let st1 = jlexpand("@lock lk begin x = 1; x end")
+            @test JS.head(st1) === :block
+            @test JS.numchildren(st1) == 2
+            @test JS.sourcetext(st1[1]) == "lk"
+            @test JS.head(st1[2]) === :let
+        end
+    end
+
+    @testset "validation" begin
+        for code in ("@lock", "@lock lk", "@lock lk body extra")
+            let diags = collect_macro_diagnostics() do
+                    jlexpand(code)
+                end
+                @test length(diags) == 1
+                d = only(diags)
+                @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
+                @test occursin("@lock expects exactly two arguments", d.msg)
+            end
+        end
+    end
+
+    @testset "scope isolation + provenance" begin
+        let res = jlresolve("""
+                function f()
+                    @lock lk begin
+                        guarded = 1
+                        guarded
+                    end
+                    guarded
+                end
+                """)
+            assert_binding_provenance(res, :global, "lk")
+            assert_binding_provenance(res, :local, "guarded")
+            assert_binding_provenance(res, :global, "guarded")
+        end
+
+        let res = jlresolve("""
+                function f()
+                    @lock (lk = 1) begin
+                        guarded = 1
+                    end
+                    lk
+                end
+                """)
+            assert_binding_provenance(res, :local, "lk")
+            assert_no_binding(res, :global, "lk")
+        end
+    end
+end
+
+@testset "Threads.@spawn" begin
+    @testset "macro expansion" begin
+        # Single-argument form: returns the body unchanged.
+        let st1 = jlexpand("Threads.@spawn sin(xxx)")
+            @test JS.head(st1) === :call
+            @test JS.sourcetext(st1[1]) == "sin"
+            @test JS.sourcetext(st1[2]) == "xxx"
+        end
+
+        # Two-argument form: emits `block(threadpool, body)`.
+        let st1 = jlexpand("Threads.@spawn :default sin(xxx)")
+            @test JS.head(st1) === :block
+            @test JS.numchildren(st1) == 2
+            @test JS.head(st1[1]) === :inert
+            @test JS.head(st1[2]) === :call
+        end
+
+        # `$x` in the body must be unwrapped: a surviving `:$` outside of a
+        # quote context would fail later lowering passes.
+        let st1 = jlexpand("Threads.@spawn sin(\$xxx)")
+            @test JS.head(st1) === :call
+            @test all(c -> JS.head(c) !== :$, JS.children(st1))
+            @test JS.sourcetext(st1[2]) == "xxx"
+        end
+
+        # All allowed threadpool literals are accepted.
+        for tp in (":interactive", ":default", ":samepool")
+            @test jlexpand("Threads.@spawn $tp 1+1") isa JS.SyntaxTree
+        end
+
+        # A bare identifier is accepted (e.g. `def = :default; @spawn def body`).
+        @test jlexpand("Threads.@spawn pool 1+1") isa JS.SyntaxTree
+    end
+
+    @testset "error cases" begin
+        # Unsupported literal threadpool surfaces as an Error diagnostic via the
+        # sink — Base defers this check to runtime, but we flag it statically.
+        # Expansion still succeeds.
+        let diags = collect_macro_diagnostics() do
+                jlexpand("Threads.@spawn :foo 1+1")
+            end
+            @test length(diags) == 1
+            d = only(diags)
+            @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
+            @test occursin("unsupported threadpool in @spawn: foo", d.msg)
+        end
+
+        # Zero arguments and 3+ arguments both fall through to the variadic fallback
+        # method: report via the sink and wrap the args (if any) in a block so they
+        # still reach scope analysis.
+        for code in ("Threads.@spawn", "Threads.@spawn :default :foo 1+1")
+            let diags = collect_macro_diagnostics() do
+                    jlexpand(code)
+                end
+                @test length(diags) == 1
+                d = only(diags)
+                @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
+                @test occursin("wrong number of arguments in @spawn", d.msg)
+            end
+        end
+
+        # Anything other than `:default`/`:interactive`/`:samepool` literals or
+        # a bare identifier is flagged via the sink (Error severity). Expansion
+        # still completes so the body reaches scope analysis.
+        for code in (
+                "Threads.@spawn 42 body",          # numeric literal
+                "Threads.@spawn 1.0 body",         # float literal
+                "Threads.@spawn \"default\" body", # string literal
+                "Threads.@spawn true body",        # bool literal
+                "Threads.@spawn 'a' body",         # char literal
+                "Threads.@spawn f() body",         # call expression
+                "Threads.@spawn M.pool body",      # qualified access
+                "Threads.@spawn :(foo()) body",    # quoted non-symbol expression
+            )
+            let diags = collect_macro_diagnostics() do
+                    jlexpand(code)
+                end
+                @test length(diags) == 1
+                d = only(diags)
+                @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
+                @test occursin("threadpool argument in @spawn must be", d.msg)
+            end
+        end
+    end
+
+    @testset "binding resolution preserves provenance" begin
+        # The whole point of the new-style stub: identifiers inside the
+        # expansion must keep accurate byte ranges so that downstream LSP
+        # analyses (notably `lowering/undef-global-var`) can accept them via
+        # `is_from_user_ast`. With the old-style macro the inner `xxx` ends up
+        # with a `0:0` byte range and gets filtered out.
+        let res = jlresolve("spawnfunc() = Threads.@spawn :default sin(xxx)")
+            assert_binding_provenance(res, :global, "xxx")
+        end
+    end
+end
+
+@testset "@label" begin
+    # The label form covers the macrocall, and its identifier keeps the
+    # caller's hygiene layer.
+    let code = "@label foo", st1 = jlexpand(code)
+        @test JS.head(st1) === :symboliclabel
+        @test JS.byte_range(st1) == source_range(code, "@label foo")
+        @test JS.byte_range(st1[1]) == source_range(code, "foo")
+        @test st1.context.layer === st1[1].context.layer
+    end
+
+    # Non-identifier argument: report via sink, let the expression flow through.
+    let diags = collect_macro_diagnostics() do
+            jlexpand("@label 42")
+        end
+        @test length(diags) == 1
+        d = only(diags)
+        @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
+        @test occursin("requires an identifier", d.msg)
+    end
+
+    # The block forms (`@label expr`, `@label name expr`) are intentionally not
+    # supported; the variadic fallback reports via sink and wraps args in a block.
+    let diags = collect_macro_diagnostics() do
+            jlexpand("@label foo body")
+        end
+        @test length(diags) == 1
+        d = only(diags)
+        @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
+        @test occursin("only supports the `@label name` form", d.msg)
+    end
+
+    # Full lowering succeeds when paired with `@goto`.
+    @test jlresolve("""
+        function f()
+            @goto start
+            @label start
+        end
+        """) isa NamedTuple
+
+    # JuliaLowering matches gotos and labels by name and hygiene layer when a
+    # `try` has `finally`; a jump within the block must be accepted.
+    @test jlresolve("""
+        function f(c)
+            try
+                c && @goto done
+                @label done
+            finally
+            end
+        end
+        """) isa NamedTuple
+end
+
+@testset "@something" begin
+    @testset "macro expansion" begin
+        let st1 = jlexpand("@something 1")
+            @test has_qualified_name(st1, :top, "something")
+            @test has_qualified_name(st1, :top, "isnothing")
+        end
+    end
+
+    @testset "binding resolution preserves provenance" begin
+        let res = jlresolve("somefunc(xxx) = @something(xxx, yyy)")
+            assert_binding_provenance(res, :argument, "xxx")
+            assert_binding_provenance(res, :global, "yyy")
+        end
+    end
+
+    @testset "runtime semantics" begin
+        # Drive the new-style macro definition end-to-end via `JL.eval` and check the
+        # results match `Base.@something`'s contract: returns the first non-`nothing`
+        # argument (unwrapped from `Some` if present), short-circuits later arguments,
+        # and throws when every argument is `nothing` (or no arguments are supplied).
+
+        # Returns the first non-`nothing` argument
+        @test jleval("@something 1") === 1
+        @test jleval("@something \"abc\"") === "abc"
+        @test jleval("@something nothing 2") === 2
+        @test jleval("@something nothing nothing 3") === 3
+
+        # `Some`-wrapped value is unwrapped; `Some(nothing)` returns `nothing` (the canonical "explicit `nothing`" sentinel)
+        @test jleval("@something Some(42)") === 42
+        @test jleval("@something nothing Some(7)") === 7
+        @test jleval("@something Some(nothing)") === nothing
+
+        @testset "generated helper hygiene" begin
+            @test Base.include_string(something_hygiene_module, "@something 1") === 1
+            @test jleval(something_hygiene_module, "@something 1") === 1
+            @test jleval("""
+                let something = typeof, isnothing = isone
+                    @something 1
+                end
+                """) === 1
+            @test jleval("""
+                let val_1 = 99
+                    @something(nothing, val_1, :fallback)
+                end
+                """) === 99
+        end
+
+        # All-`nothing` (and the zero-argument form) throws
+        @test_throws ArgumentError jleval("@something nothing")
+        @test_throws ArgumentError jleval("@something nothing nothing")
+        @test_throws ArgumentError jleval("@something")
+
+        # Short-circuit: later arguments are not evaluated once an earlier one produces a non-`nothing` value.
+        @test jleval("""let counter = Ref(false)
+            r = @something 42 (counter[] = true; 99)
+            (r, counter[])
+        end""") === (42, false)
+        @test jleval("""let counter = Ref(false)
+            r = @something nothing (counter[] = true; 99)
+            (r, counter[])
+        end""") === (99, true)
+    end
+end
+
+@testset "@lazy_str" begin
+    @testset "macro expansion" begin
+        let st1 = jlexpand("lazy\"abc\"")
+            @test has_qualified_name(st1, :top, "LazyString")
+        end
+    end
+
+    @testset "validation" begin
+        let diags = collect_macro_diagnostics() do
+                jlexpand("lazy\"\$\"")
+            end
+            @test length(diags) == 1
+            d = only(diags)
+            @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
+            @test occursin("@lazy_str", d.msg)
+        end
+        @test collect_macro_diagnostics() do
+            jlresolve(lowering_module, "f(idx) = @lazy_wrapper idx")
+        end |> isempty
+    end
+
+    @testset "binding resolution preserves provenance" begin
+        let code = "lazyfunc() = lazy\"value \$(xxx) \$(yyy + 1)\""
+            res = jlresolve(code)
+            assert_binding_provenance_range(res, :global, "xxx", source_range(code, "xxx"))
+            assert_binding_provenance_range(res, :global, "yyy", source_range(code, "yyy"))
+        end
+        let code = "lazyfunc() = lazy\"\\\"\$key\""
+            res = jlresolve(code)
+            assert_binding_provenance_range(res, :global, "key", source_range(code, "key"))
+        end
+        for code in (
+                "lazyfunc() = lazy\"前置 \\\"\$key\"",
+                "lazyfunc() = lazy\"\"\"前置 \$key\"\"\"",
+            )
+            res = jlresolve(code)
+            assert_binding_provenance_range(res, :global, "key", source_range(code, "key"))
+        end
+        let code = join((
+                "lazyfunc() = lazy\"\"\"",
+                "    This is",
+                "        \$triple_key",
+                "    \"\"\"",
+            ), '\n')
+            res = jlresolve(code)
+            assert_binding_provenance_range(res, :global, "triple_key", source_range(code, "triple_key"))
+        end
+    end
+
+    @testset "interpolations in old-style macro output" begin
+        let code = "Base.@constprop :none lazyfunc(c) = lazy\"a \$(c.name) b\""
+            st5 = JL.lower(lowering_module, jlparse(code; rule=:statement))
+            @test_logs min_level=Base.CoreLogging.Warn JL.to_lowered_expr(st5)
+        end
+    end
+
+    @testset "unquoted source mapping" begin
+        for value in ("\"\$key", "\"\"\"\$key\"\"\"")
+            source_map = JETLSCore._lazy_str_source_map(value, value; quoted=false)
+            @test source_map == Dict(i => i for i in 1:ncodeunits(value)+1)
+        end
+    end
+
+    @testset "runtime semantics" begin
+        let ls = jleval("lazy\"\"")
+            @test ls isa LazyString
+            @test String(ls) === ""
+        end
+        let ls = jleval("lazy\"abc\"")
+            @test ls isa LazyString
+            @test String(ls) === "abc"
+        end
+        let ls = jleval("""
+                let LazyString = typeof
+                    lazy\"abc\"
+                end
+                """)
+            @test ls isa LazyString
+            @test String(ls) === "abc"
+        end
+        let ls = jleval("lazy\"a \$(1 + 2)\"")
+            @test ls isa LazyString
+            @test String(ls) === "a 3"
+        end
+        let ls = jleval("let x = 4; lazy\"x=\$x\"; end")
+            @test ls isa LazyString
+            @test String(ls) === "x=4"
+        end
+        let ls = jleval(lowering_module, "let idx = 4; @lazy_wrapper idx; end")
+            @test ls isa LazyString
+            @test String(ls) === "idx=4"
+        end
+    end
+end
+
+@testset "@assert" begin
+    @testset "macro expansion" begin
+        # Bare condition: lowered to `cond ? nothing : throw(AssertionError(...))`
+        # so the false branch terminates control flow.
+        let st1 = jlexpand("@assert x == 1")
+            @test JS.head(st1) === :if
+        end
+
+        # Condition + user message uses the message as the AssertionError arg.
+        let st1 = jlexpand("@assert x == 1 \"failed\"")
+            @test JS.head(st1) === :if
+            @test has_qualified_name(st1, :core, "throw")
+            @test has_qualified_name(st1, :core, "AssertionError")
+        end
+
+        # Base silently ignores extra trailing message arguments; extras are
+        # piled into a leading block so they remain visible to the resolver.
+        let st1 = jlexpand("@assert x == 1 \"a\" \"b\"")
+            @test JS.head(st1) === :block
+            @test JS.head(st1[end]) === :if
+        end
+    end
+
+    @testset "validation" begin
+        # Zero-argument form: report via sink, recover with `nothing`.
+        let diags = collect_macro_diagnostics() do
+                jlexpand("@assert")
+            end
+            @test length(diags) == 1
+            d = only(diags)
+            @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
+            @test occursin("at least one argument is required", d.msg)
+        end
+    end
+
+    @testset "binding resolution preserves provenance" begin
+        # Identifiers in the condition and the message must both be visible
+        # to the resolver as user-written.
+        let res = jlresolve("@assert sin(xxx) == 0 \"oops: \$yyy\"")
+            assert_binding_provenance(res, :global, "xxx")
+            assert_binding_provenance(res, :global, "yyy")
+        end
+    end
+
+    @testset "generated helper hygiene" begin
+        @test_throws AssertionError jleval("""
+            let throw = identity, AssertionError = typeof
+                @assert false "boom"
+            end
+            """)
+    end
+end
+
+@testset "@show" begin
+    @testset "macro expansion" begin
+        # Zero-arg form: real `@show` returns `nothing`; the stub emits a
+        # placeholder `:value` node.
+        let st1 = jlexpand("@show")
+            @test JS.head(st1) === :value
+        end
+
+        # Single-arg form: returned unchanged so it slots into expressions like
+        # `x = @show foo` without an extra block wrapper.
+        let st1 = jlexpand("@show xxx")
+            @test JS.head(st1) === :identifier
+            @test JS.sourcetext(st1) == "xxx"
+        end
+
+        # Multi-arg form: each user expression flows through a `block`.
+        let st1 = jlexpand("@show xxx yyy zzz")
+            @test JS.head(st1) === :block
+            @test JS.numchildren(st1) == 3
+        end
+    end
+
+    @testset "binding resolution preserves provenance" begin
+        let res = jlresolve("@show sin(xxx) cos(yyy)")
+            assert_binding_provenance(res, :global, "xxx")
+            assert_binding_provenance(res, :global, "yyy")
+        end
+    end
+end
+
+# `@logmsg` is not exported from `Base`, so a module that uses it must
+# `using Logging` (or `using Base.CoreLogging`). The other logging macros
+# (`@debug`/`@info`/`@warn`/`@error`) are exported from `Base` by default.
+module logging_module
+    using Logging
+end
+logging_expand(code::AbstractString) = jlexpand(logging_module, code)
+logging_resolve(code::AbstractString) = jlresolve(logging_module, code)
+
+@testset "@debug / @info / @warn / @error" begin
+    @testset "macro expansion" begin
+        for name in ("@debug", "@info", "@warn", "@error")
+            # Bare message: wrapped in a `block` so the trailing
+            # `nothing::value` matches the macros' "always returns
+            # `nothing`" contract.
+            let st1 = logging_expand("$name \"msg\"")
+                @test JS.head(st1) === :block
+                @test JS.head(st1[end]) === :value
+            end
+
+            # Mixed kwargs / bare positional / splat: kwarg RHS and the splat
+            # operand both flow through, the wrapping `:(=)` and `:...`
+            # nodes are dropped so they don't reach later lowering passes.
+            let st1 = logging_expand("$name \"msg\" xxx yyy=zzz extras...")
+                @test JS.head(st1) === :block
+                @test all(c -> JS.head(c) ∉ (:(=), :...), JS.children(st1))
+            end
+
+            # The message itself can be a `begin`/`end` block (per the
+            # docstring's lazy-evaluation example); it flows through unchanged.
+            let st1 = logging_expand("$name begin x = 1; \"got \$x\" end")
+                @test JS.head(st1) === :block
+                @test JS.head(st1[1]) === :block
+            end
+        end
+    end
+
+    @testset "validation" begin
+        # Zero-arg form for each macro: report via sink, recover with `nothing`.
+        for name in ("@debug", "@info", "@warn", "@error")
+            let diags = collect_macro_diagnostics() do
+                    logging_expand(name)
+                end
+                @test length(diags) == 1
+                d = only(diags)
+                @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
+                @test occursin("$name requires at least one argument", d.msg)
+            end
+        end
+
+        # Duplicate kwarg names are flagged via the sink at expansion time; without
+        # this, they'd surface only as a generic `syntax: field name "k" repeated`
+        # error from lowering the synthesized `(; k=1, k=2)` named tuple. Metadata
+        # keys (`_module`, `_group`, ...) are checked the same way. Expansion still
+        # completes so the kwarg RHS reaches scope analysis.
+        for name in ("@debug", "@info", "@warn", "@error")
+            for code in ("$name \"msg\" k=1 k=2",
+                         "$name \"msg\" _module=a _module=b")
+                let diags = collect_macro_diagnostics() do
+                        logging_expand(code)
+                    end
+                    @test length(diags) == 1
+                    d = only(diags)
+                    @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
+                    @test occursin("provided more than once", d.msg)
+                end
+            end
+        end
+    end
+
+    @testset "binding resolution preserves provenance" begin
+        # Identifiers in the message (including string interpolations), the
+        # kwarg values, the bare positional args, and any splat operand should
+        # all stay visible to scope resolution as user-written. The kwarg
+        # *key* `ppp`, on the other hand, is a metadata symbol — it must not
+        # reach scope resolution.
+        for name in ("@debug", "@info", "@warn", "@error")
+            let res = logging_resolve("$name \"msg: \$xxx\" yyy ppp=fff(qqq) eee...")
+                assert_binding_provenance(res, :global, "xxx")
+                assert_binding_provenance(res, :global, "yyy")
+                assert_binding_provenance(res, :global, "fff")
+                assert_binding_provenance(res, :global, "qqq")
+                assert_binding_provenance(res, :global, "eee")
+                assert_no_binding(res, :global, "ppp")
+            end
+        end
+    end
+end
+
+@testset "@logmsg" begin
+    @testset "macro expansion" begin
+        # Both `level` and `message` flow through a `block`; the trailing
+        # `nothing::value` matches the macro's return contract.
+        let st1 = logging_expand("@logmsg lvl \"msg\" xxx yyy=zzz")
+            @test JS.head(st1) === :block
+            @test JS.head(st1[end]) === :value
+        end
+    end
+
+    @testset "validation" begin
+        # 0 and 1 arg both fall through to the variadic fallback, since
+        # `@logmsg` requires both a `level` and a `message`.
+        for code in ("@logmsg", "@logmsg lvl")
+            let diags = collect_macro_diagnostics() do
+                    logging_expand(code)
+                end
+                @test length(diags) == 1
+                d = only(diags)
+                @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
+                @test occursin("@logmsg requires at least two arguments", d.msg)
+            end
+        end
+
+        # Duplicate kwargs are flagged the same way as for the level-implicit
+        # logging macros: Error severity via sink, expansion still completes.
+        let diags = collect_macro_diagnostics() do
+                logging_expand("@logmsg lvl \"msg\" foo=1 foo=2")
+            end
+            @test length(diags) == 1
+            d = only(diags)
+            @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
+            @test occursin("provided more than once", d.msg)
+        end
+    end
+
+    @testset "binding resolution preserves provenance" begin
+        # The level expression must stay visible — `@logmsg` is the only
+        # logging macro that takes a user-written level, and it's frequently
+        # a custom `LogLevel` constant whose definition site we want to track.
+        # The kwarg key `yyy` is a metadata symbol and must not surface as a
+        # binding.
+        let res = logging_resolve("@logmsg lvl \"msg: \$xxx\" yyy=zzz")
+            assert_binding_provenance(res, :global, "lvl")
+            assert_binding_provenance(res, :global, "xxx")
+            assert_binding_provenance(res, :global, "zzz")
+            assert_no_binding(res, :global, "yyy")
+        end
+    end
+end
+
+# Helper: walk the EST and return the first `:core` / `:top` node whose
+# inner `:identifier` matches `name`. Used to verify that the expansion
+# synthesizes `Core.invoke` / `Base.invokelatest` (and the synthesized
+# `getproperty` / `setindex!` / etc. references).
+function find_named_ref(st::JS.SyntaxTree, h::Symbol, name::AbstractString)
+    if JS.head(st) === h && JS.numchildren(st) >= 1
+        inner = st[1]
+        if JS.head(inner) === :identifier && JETLSCore.get_name_val(inner) == name
+            return st
+        end
+    end
+    for c in JS.children(st)
+        r = find_named_ref(c, h, name)
+        r === nothing || return r
+    end
+    return nothing
+end
+
+@testset "@invoke / @invokelatest" begin
+    @testset "@invoke macro expansion" begin
+        # `f(args...)` -> `Core.invoke(f, Tuple{T1, ...}, args...)`.
+        let st1 = jlexpand("@invoke f(x::T, y)")
+            @test JS.head(st1) === :call
+            @test find_named_ref(st1, :core, "invoke") !== nothing
+            @test find_named_ref(st1, :core, "Tuple") !== nothing
+            # Annotation-less arg `y` falls back to `Core.Typeof(y)`.
+            @test find_named_ref(st1, :core, "Typeof") !== nothing
+        end
+
+        # `x.f` -> `Core.invoke(Base.getproperty, Tuple{...}, x, :f)`.
+        let st1 = jlexpand("@invoke x.f")
+            @test JS.head(st1) === :call
+            @test find_named_ref(st1, :core, "invoke") !== nothing
+            @test find_named_ref(st1, :top, "getproperty") !== nothing
+        end
+
+        # `xs[i]` -> `Core.invoke(Base.getindex, Tuple{...}, xs, i)`.
+        let st1 = jlexpand("@invoke xs[i]")
+            @test find_named_ref(st1, :top, "getindex") !== nothing
+        end
+
+        # `x.f = v` -> `Core.invoke(Base.setproperty!, Tuple{...}, x, :f, v)`.
+        let st1 = jlexpand("@invoke x.f = v")
+            @test find_named_ref(st1, :top, "setproperty!") !== nothing
+        end
+
+        # `xs[i] = v` -> `Core.invoke(Base.setindex!, Tuple{...}, xs, v, i)`.
+        let st1 = jlexpand("@invoke xs[i] = v")
+            @test find_named_ref(st1, :top, "setindex!") !== nothing
+        end
+
+        # kwargs survive as a `:parameters` block on the synthesized call.
+        let st1 = jlexpand("@invoke f(x::T; k=v)")
+            @test any(c -> JS.head(c) === :parameters, JS.children(st1))
+        end
+    end
+
+    @testset "@invokelatest macro expansion" begin
+        # `f(args...)` -> `Base.invokelatest(f, args...)`. Note no `Tuple{...}`
+        # — types are not part of `invokelatest`'s signature.
+        let st1 = jlexpand("@invokelatest f(x, y)")
+            @test JS.head(st1) === :call
+            @test find_named_ref(st1, :top, "invokelatest") !== nothing
+            @test find_named_ref(st1, :core, "Tuple") === nothing
+        end
+
+        let st1 = jlexpand("@invokelatest x.f")
+            @test find_named_ref(st1, :top, "invokelatest") !== nothing
+            @test find_named_ref(st1, :top, "getproperty") !== nothing
+        end
+
+        let st1 = jlexpand("@invokelatest xs[i] = v")
+            @test find_named_ref(st1, :top, "setindex!") !== nothing
+        end
+
+        # kwargs survive on the synthesized call.
+        let st1 = jlexpand("@invokelatest f(x; k=v)")
+            @test any(c -> JS.head(c) === :parameters, JS.children(st1))
+        end
+    end
+
+    @testset "validation" begin
+        for name in ("@invoke", "@invokelatest")
+            # Zero / multiple arguments fall through to the variadic fallback,
+            # reported via sink. Args (if any) are wrapped in a block.
+            for code in ("$name", "$name f(x) g(y)")
+                let diags = collect_macro_diagnostics() do
+                        jlexpand(code)
+                    end
+                    @test length(diags) == 1
+                    d = only(diags)
+                    @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
+                    @test occursin("expects exactly one argument", d.msg)
+                end
+            end
+
+            # Bare identifier / literal isn't one of the allowed call shapes;
+            # the `ex` flows through as-is so identifiers reach scope analysis.
+            for code in ("$name 42", "$name foo")
+                let diags = collect_macro_diagnostics() do
+                        jlexpand(code)
+                    end
+                    @test length(diags) == 1
+                    d = only(diags)
+                    @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
+                    @test occursin("expected a `:call` expression", d.msg)
+                end
+            end
+
+            # `=` form requires the LHS to be `x.f` or `xs[i]`.
+            let diags = collect_macro_diagnostics() do
+                    jlexpand("$name a = b")
+                end
+                @test length(diags) == 1
+                d = only(diags)
+                @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
+                @test occursin("setproperty!", d.msg)
+            end
+        end
+    end
+
+    @testset "binding resolution preserves provenance" begin
+        for name in ("@invoke", "@invokelatest")
+            # `f`, the positional arg, and (for `@invoke`) the `::T` annotation
+            # should all remain visible to scope resolution.
+            let res = jlresolve("$name fff(xxx::TTT)")
+                assert_binding_provenance(res, :global, "fff")
+                assert_binding_provenance(res, :global, "xxx")
+                assert_binding_provenance(res, :global, "TTT")
+            end
+            # In setter forms, both the receiver and the rhs identifier survive.
+            let res = jlresolve("$name xs[iii] = vvv")
+                assert_binding_provenance(res, :global, "xs")
+                assert_binding_provenance(res, :global, "iii")
+                assert_binding_provenance(res, :global, "vvv")
+            end
+        end
+    end
+end
+
+module test_lowering_module; using Test; end
+test_macro_expand(code::AbstractString) = jlexpand(test_lowering_module, code)
+test_macro_lower(code::AbstractString) = jlresolve(test_lowering_module, code)
+
+@testset "Test.@test" begin
+    @testset "macro expansion" begin
+        # Bare expression: returned unchanged.
+        let st1 = test_macro_expand("@test x == 1")
+            @test JS.head(st1) === :call
+            @test strip(JS.sourcetext(st1)) == "x == 1"
+        end
+
+        # Keyword arguments keep only the RHS so the `:(=)` node doesn't reach
+        # later lowering passes, but identifiers in the RHS still flow through
+        # to scope resolution.
+        for kw in ("broken=true", "skip=cond", "context=ctx", "atol=0.1")
+            let st1 = test_macro_expand("@test x $kw")
+                @test JS.head(st1) === :block
+                @test all(c -> JS.head(c) !== :(=), JS.children(st1))
+            end
+        end
+    end
+
+    @testset "validation" begin
+        # `broken`/`skip`/`context` may each appear at most once. Base hard-errors;
+        # we report as Error severity via the sink but keep expansion going so the
+        # RHS values still reach scope analysis.
+        for kw in ("broken", "skip", "context")
+            let diags = collect_macro_diagnostics() do
+                    test_macro_expand("@test x $(kw)=true $(kw)=false")
+                end
+                @test length(diags) == 1
+                d = only(diags)
+                @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
+                @test occursin("cannot set `$kw` keyword multiple times", d.msg)
+            end
+        end
+
+        # `skip` and `broken` are mutually exclusive — Error severity, recovery
+        # keeps both RHS in the block.
+        let diags = collect_macro_diagnostics() do
+                test_macro_expand("@test x skip=true broken=true")
+            end
+            @test length(diags) == 1
+            d = only(diags)
+            @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
+            @test occursin("cannot set both `skip` and `broken`", d.msg)
+        end
+
+        # Non-`key=value` positional arguments are reported via sink; the malformed
+        # kw is skipped, the test body still expands.
+        let diags = collect_macro_diagnostics() do
+                test_macro_expand("@test x foo")
+            end
+            @test length(diags) == 1
+            d = only(diags)
+            @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
+            @test occursin("expected `keyword=value`", d.msg)
+        end
+    end
+
+    @testset "binding resolution preserves provenance" begin
+        let res = test_macro_lower("@test sin(xxx) == 1.0")
+            assert_binding_provenance(res, :global, "xxx")
+        end
+        # Identifiers inside kw RHS values must keep their provenance so
+        # downstream LSP analyses (undef-var, references, ...) see them as
+        # user-written. With the kw fully dropped, `yyy` would be invisible.
+        let res = test_macro_lower("@test sin(xxx) == 1.0 broken=yyy")
+            assert_binding_provenance(res, :global, "xxx")
+            assert_binding_provenance(res, :global, "yyy")
+        end
+    end
+end
+
+@testset "Test.@testset" begin
+    @testset "macro expansion" begin
+        # Body is wrapped in a `let` block so that bindings introduced inside
+        # the testset don't leak into the enclosing scope.
+        let st1 = test_macro_expand("""
+                @testset "x" begin
+                    a = 1
+                    @test a == 1
+                end
+                """)
+            @test JS.head(st1) === :block
+            @test children_heads(st1) == [:value, :let]
+            let_st = st1[2]
+            @test JS.numchildren(let_st) == 2
+            @test JS.head(let_st[1]) === :block # bindings (empty)
+            @test JS.head(let_st[2]) === :block # body
+        end
+
+        # No description form.
+        let st1 = test_macro_expand("@testset begin a = 1 end")
+            @test children_heads(st1) == [:let]
+        end
+
+        # The testset type, description, and option values are evaluated ahead of the body.
+        let st1 = test_macro_expand("""
+                @testset MyType "x" verbose=true begin
+                    @test true
+                end
+                """)
+            @test children_heads(st1) == [:identifier, :value, :value, :let]
+        end
+
+        # `for` loop form: the for sits inside the let body block, and the description
+        # is evaluated per iteration ahead of the body, which gets its own scope.
+        let st1 = test_macro_expand("""
+                @testset "x\$(i)" for i = 1:10
+                    @test i > 0
+                end
+                """)
+            @test children_heads(st1) == [:let]
+            for_st = st1[1][2][1]
+            @test JS.head(for_st) === :for
+            @test children_heads(for_st[2]) == [:string, :let]
+        end
+    end
+
+    @testset "validation" begin
+        # No-argument form: report via sink, recover with `nothing`.
+        let diags = collect_macro_diagnostics() do
+                test_macro_expand("@testset")
+            end
+            @test length(diags) == 1
+            d = only(diags)
+            @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
+            @test occursin("No arguments to @testset", d.msg)
+        end
+
+        # Body argument that's not `for`/`begin`/`call`/`let`: reported via sink,
+        # the body still flows through the `let` wrapper so identifiers reach scope.
+        for body in ("42", "\"x\"", "x = 1")
+            let diags = collect_macro_diagnostics() do
+                    test_macro_expand("@testset \"name\" $body")
+                end
+                @test length(diags) == 1
+                d = only(diags)
+                @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
+                @test occursin("body argument must be", d.msg)
+            end
+        end
+
+        # Multiple descriptions / testset types are surfaced via the macro-diagnostic
+        # sink (mirroring `Base.@testset`'s `depwarn`); expansion still succeeds with
+        # the last value winning.
+        let diags = collect_macro_diagnostics() do
+                test_macro_expand("@testset \"a\" \"b\" begin end")
+            end
+            @test length(diags) == 1
+            d = only(diags)
+            @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Warning
+            @test occursin("Multiple descriptions provided to @testset", d.msg)
+            @test JS.sourcetext(d.node) == "\"b\""
+        end
+        let diags = collect_macro_diagnostics() do
+                test_macro_expand("@testset Foo Bar begin end")
+            end
+            @test length(diags) == 1
+            d = only(diags)
+            @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Warning
+            @test occursin("Multiple testset types provided to @testset", d.msg)
+            @test JS.sourcetext(d.node) == "Bar"
+        end
+
+        # Duplicate options surface as warnings (Base accepts them silently); expansion
+        # still succeeds with the last value winning, mirroring Base's `Dict` semantics.
+        let diags = collect_macro_diagnostics() do
+                test_macro_expand("@testset verbose=true verbose=false begin end")
+            end
+            @test length(diags) == 1
+            d = only(diags)
+            @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Warning
+            @test occursin("option `verbose` provided more than once", d.msg)
+            @test strip(JS.sourcetext(d.node)) == "verbose=false"
+        end
+
+        # Unexpected leading arguments (e.g. integer literals) are reported via
+        # sink and skipped; the testset body still expands.
+        let diags = collect_macro_diagnostics() do
+                test_macro_expand("@testset 42 begin end")
+            end
+            @test length(diags) == 1
+            d = only(diags)
+            @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
+            @test occursin("unexpected argument", d.msg)
+        end
+
+        # A `let` form rejects every customization; expansion still succeeds.
+        let diags = collect_macro_diagnostics() do
+                test_macro_expand("@testset MyType \"x\" verbose=true let v = 1 end")
+            end
+            @test length(diags) == 3
+            @test all(d -> d.severity == JETLSCore.LSP.DiagnosticSeverity.Error, diags)
+            @test all(d -> occursin("with a `let` argument cannot be customized", d.msg), diags)
+            @test Set(strip(JS.sourcetext(d.node)) for d in diags) == Set(["MyType", "\"x\"", "verbose=true"])
+        end
+        let diags = collect_macro_diagnostics() do
+                test_macro_expand("@testset let v = 1 end")
+            end
+            @test isempty(diags)
+        end
+
+        # Qualified testset types (e.g. `Test.DefaultTestSet`) are accepted.
+        @test test_macro_expand("@testset Test.DefaultTestSet \"x\" begin end") isa JS.SyntaxTree
+
+        # Interpolated descriptions are accepted.
+        @test test_macro_expand("@testset \"name-\$i\" begin end") isa JS.SyntaxTree
+    end
+
+    @testset "scope isolation + provenance" begin
+        # A binding introduced in one `@testset` body must not be visible from
+        # a sibling `@testset`, mirroring the `try`/`catch` scope of the real macro.
+        let res = test_macro_lower("""
+                function f()
+                    # A local `leaked` exists for the first testset, and the second
+                    # testset's reference resolves to a separate global binding.
+                    @testset "a" begin
+                        leaked = 1
+                        @test leaked == 1
+                    end
+                    @testset "b" begin
+                        @test leaked == 1
+                    end
+                end
+                """)
+            local_result = assert_binding_provenance(res, :local, "leaked")
+            @test local_result !== nothing &&
+                JS.source_location(last(local_result[2]))[1] == 5
+
+            global_result = assert_binding_provenance(res, :global, "leaked")
+            @test global_result !== nothing &&
+                JS.source_location(last(global_result[2]))[1] == 9
+        end
+
+        let code = """
+                @testset MyTestSet "case: \$(i)" rng=xxx for i in 1:2
+                    @test true
+                end
+                """
+            res = test_macro_lower(code)
+            assert_binding_provenance(res, :global, "MyTestSet")
+            assert_binding_provenance(res, :global, "xxx")
+            local_result = assert_binding_provenance(res, :local, "i")
+            if local_result !== nothing
+                world = Base.get_world_counter()
+                occurrences = JETLSCore.compute_binding_occurrences(res.ctx3, res.st3, world)
+                desc_range = source_range(code, "\"case: \$(i)\"")
+                @test any(occurrences[local_result[1]]) do occurrence
+                    occurrence.kind === :use && JS.byte_range(occurrence.tree) ⊆ desc_range
+                end
+            end
+        end
+
+        # The body's assignments don't capture same-named identifiers in the description.
+        let res = test_macro_lower("""
+                @testset "\$(x)" for i in 1:2
+                    x = i
+                end
+                """)
+            global_result = assert_binding_provenance(res, :global, "x")
+            @test global_result !== nothing && JS.source_location(last(global_result[2]))[1] == 1
+            local_result = assert_binding_provenance(res, :local, "x")
+            @test local_result !== nothing && JS.source_location(last(local_result[2]))[1] == 2
+        end
+    end
+end
+
+@testset "Test.@test_throws" begin
+    @testset "macro expansion" begin
+        # Both args flow through a `block` so identifiers in either get scope analysis.
+        let st1 = test_macro_expand("@test_throws BoundsError xxx[4]")
+            @test JS.head(st1) === :block
+            @test JS.numchildren(st1) == 2
+        end
+    end
+
+    @testset "validation" begin
+        # `@test_throws` strictly requires two positional arguments; other shapes
+        # report via sink and wrap (or drop) the args.
+        for code in ("@test_throws", "@test_throws BoundsError",
+                     "@test_throws BoundsError xxx yyy")
+            let diags = collect_macro_diagnostics() do
+                    test_macro_expand(code)
+                end
+                @test length(diags) == 1
+                d = only(diags)
+                @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
+                @test occursin("@test_throws expects exactly two arguments", d.msg)
+            end
+        end
+    end
+
+    @testset "binding resolution preserves provenance" begin
+        let res = test_macro_lower("@test_throws BoundsError getindex(xxx)")
+            assert_binding_provenance(res, :global, "xxx")
+        end
+    end
+end
+
+@testset "Test.@test_broken / Test.@test_skip" begin
+    @testset "macro expansion" begin
+        for name in ("@test_broken", "@test_skip")
+            let st1 = test_macro_expand("$name xxx == 1")
+                @test JS.head(st1) === :call
+                @test strip(JS.sourcetext(st1)) == "xxx == 1"
+            end
+            # Keyword arguments keep only the RHS in a block so identifiers
+            # there still flow through to scope resolution.
+            let st1 = test_macro_expand("$name foo(xxx) atol=0.1")
+                @test JS.head(st1) === :block
+                @test all(c -> JS.head(c) !== :(=), JS.children(st1))
+            end
+        end
+    end
+
+    @testset "validation" begin
+        # Non-`key=value` positional arguments are reported via sink; the
+        # malformed kw is skipped, the body still expands.
+        for name in ("@test_broken", "@test_skip")
+            let diags = collect_macro_diagnostics() do
+                    test_macro_expand("$name xxx foo")
+                end
+                @test length(diags) == 1
+                d = only(diags)
+                @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
+                @test occursin("expected `keyword=value`", d.msg)
+            end
+        end
+    end
+
+    @testset "binding resolution preserves provenance" begin
+        for name in ("@test_broken", "@test_skip")
+            let res = test_macro_lower("$name sin(xxx) == 1.0")
+                assert_binding_provenance(res, :global, "xxx")
+            end
+            let res = test_macro_lower("$name sin(xxx) == 1.0 atol=yyy")
+                assert_binding_provenance(res, :global, "xxx")
+                assert_binding_provenance(res, :global, "yyy")
+            end
+        end
+    end
+end
+
+@testset "Test.@test_warn / Test.@test_nowarn" begin
+    @testset "macro expansion" begin
+        let st1 = test_macro_expand("@test_warn \"oops\" foo(xxx)")
+            @test JS.head(st1) === :block
+            @test JS.numchildren(st1) == 2
+        end
+        let st1 = test_macro_expand("@test_nowarn foo(xxx)")
+            @test JS.head(st1) === :call
+            @test JS.sourcetext(st1[1]) == "foo"
+            @test JS.sourcetext(st1[2]) == "xxx"
+        end
+    end
+
+    @testset "binding resolution preserves provenance" begin
+        let res = test_macro_lower("@test_warn \"oops\" sin(xxx)")
+            assert_binding_provenance(res, :global, "xxx")
+        end
+    end
+end
+
+@testset "Test.@test_logs" begin
+    @testset "macro expansion" begin
+        # Patterns + body all flow through a `block`.
+        let st1 = test_macro_expand("@test_logs (:info, \"msg\") foo(xxx)")
+            @test JS.head(st1) === :block
+            @test JS.numchildren(st1) == 2
+        end
+
+        # Keyword arguments (e.g. `min_level=Logging.Warn`) keep only the RHS so
+        # the `:(=)` node doesn't reach later lowering passes.
+        let st1 = test_macro_expand("@test_logs min_level=yyy foo(xxx)")
+            @test JS.head(st1) === :block
+            @test all(c -> JS.head(c) !== :(=), JS.children(st1))
+        end
+    end
+
+    @testset "validation" begin
+        let diags = collect_macro_diagnostics() do
+                test_macro_expand("@test_logs")
+            end
+            @test length(diags) == 1
+            d = only(diags)
+            @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
+            @test occursin("@test_logs needs at least one argument", d.msg)
+        end
+    end
+
+    @testset "binding resolution preserves provenance" begin
+        # Both the pattern's RHS keyword value and the body must keep accurate
+        # byte ranges so downstream LSP analyses accept them as user-written.
+        let res = test_macro_lower("@test_logs (:info, \"msg\") min_level=yyy sin(xxx)")
+            assert_binding_provenance(res, :global, "xxx")
+            assert_binding_provenance(res, :global, "yyy")
+        end
+    end
+end
+
+@testset "Test.@test_deprecated" begin
+    @testset "macro expansion" begin
+        let st1 = test_macro_expand("@test_deprecated foo(xxx)")
+            @test JS.head(st1) === :call
+        end
+        let st1 = test_macro_expand("@test_deprecated r\"warn\" foo(xxx)")
+            @test JS.head(st1) === :block
+            @test JS.numchildren(st1) == 2
+        end
+    end
+
+    @testset "validation" begin
+        for code in ("@test_deprecated", "@test_deprecated a b c")
+            let diags = collect_macro_diagnostics() do
+                    test_macro_expand(code)
+                end
+                @test length(diags) == 1
+                d = only(diags)
+                @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
+                @test occursin("@test_deprecated expects one or two arguments", d.msg)
+            end
+        end
+    end
+end
+
+@testset "Test.@inferred" begin
+    @testset "macro expansion" begin
+        let st1 = test_macro_expand("@inferred foo(xxx)")
+            @test JS.head(st1) === :call
+        end
+        let st1 = test_macro_expand("@inferred Int foo(xxx)")
+            @test JS.head(st1) === :block
+            @test JS.numchildren(st1) == 2
+        end
+    end
+
+    @testset "validation" begin
+        for code in ("@inferred", "@inferred Int foo(x) extra")
+            let diags = collect_macro_diagnostics() do
+                    test_macro_expand(code)
+                end
+                @test length(diags) == 1
+                d = only(diags)
+                @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
+                @test occursin("@inferred expects one or two arguments", d.msg)
+            end
+        end
+    end
+
+    @testset "binding resolution preserves provenance" begin
+        let res = test_macro_lower("@inferred Int sin(xxx)")
+            assert_binding_provenance(res, :global, "xxx")
+        end
+    end
+end
+
+@testset "Base.@assume_effects" begin
+    @testset "macro expansion" begin
+        # Function-definition body is returned unchanged.
+        let st1 = jlexpand("Base.@assume_effects :foldable f(x) = x + 1")
+            @test JS.head(st1) === :(=)
+            @test JS.head(st1[1]) === :call # f(x)
+        end
+
+        # `@ccall` body is passed through; the new-style `@ccall` macro then
+        # handles its own expansion downstream.
+        let st1 = jlexpand("Base.@assume_effects :total @ccall foo()::Cvoid")
+            @test st1 isa JS.SyntaxTree
+        end
+
+        # Call-site annotation: the body expression is returned unchanged.
+        let st1 = jlexpand("Base.@assume_effects :foldable foo(xxx)")
+            @test JS.head(st1) === :call
+            @test JS.sourcetext(st1[1]) == "foo"
+            @test JS.sourcetext(st1[2]) == "xxx"
+        end
+
+        # Multiple settings, including negation and shortcuts.
+        let st1 = jlexpand("Base.@assume_effects :total !:nothrow foo(xxx)")
+            @test JS.head(st1) === :call
+            @test JS.sourcetext(st1[2]) == "xxx"
+        end
+
+        # Declaration form (no body): expands to a no-op placeholder.
+        let st1 = jlexpand("Base.@assume_effects :foldable")
+            @test JS.head(st1) === :value
+        end
+    end
+
+    @testset "validation" begin
+        # Zero-argument form: report via sink, recover with `nothing`.
+        let diags = collect_macro_diagnostics() do
+                jlexpand("Base.@assume_effects")
+            end
+            @test length(diags) == 1
+            d = only(diags)
+            @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
+            @test occursin("at least one argument is required", d.msg)
+        end
+
+        # Unknown setting name (in non-final position) surfaces as Error severity
+        # via the sink. Effects metadata doesn't affect LSP analyses, so the body
+        # still expands normally.
+        let diags = collect_macro_diagnostics() do
+                jlexpand("Base.@assume_effects :badname foo()")
+            end
+            @test length(diags) == 1
+            d = only(diags)
+            @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
+            @test occursin("unrecognized effect setting `:badname`", d.msg)
+        end
+
+        # Setting in non-final position must look like a setting form — Error via sink.
+        for bad in ("42", "\"foldable\"", "foo()")
+            let diags = collect_macro_diagnostics() do
+                    jlexpand("Base.@assume_effects $bad foo()")
+                end
+                @test length(diags) == 1
+                d = only(diags)
+                @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
+                @test occursin("expected an effect setting", d.msg)
+            end
+        end
+
+        # `:nortcall` and `:consistent_overlay` are not accepted as standalone
+        # inputs — they're internal-only (set via shortcuts).
+        for setting in (":nortcall", ":consistent_overlay")
+            let diags = collect_macro_diagnostics() do
+                    jlexpand("Base.@assume_effects $setting foo()")
+                end
+                @test length(diags) == 1
+                d = only(diags)
+                @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
+                @test occursin("unrecognized effect setting", d.msg)
+            end
+        end
+
+        # An unrecognized last argument is treated as a body (call-site
+        # annotation), not as a typo'd setting — matches Base's behavior.
+        @test jlexpand("Base.@assume_effects :foldable badname") isa JS.SyntaxTree
+    end
+
+    @testset "all recognized settings accepted" begin
+        for setting in (":consistent", ":effect_free", ":nothrow",
+                        ":terminates_globally", ":terminates_locally",
+                        ":notaskstate", ":inaccessiblememonly",
+                        ":noub", ":noub_if_noinbounds",
+                        ":foldable", ":removable", ":total")
+            @test jlexpand("Base.@assume_effects $setting f() = 1") isa JS.SyntaxTree
+            # Negated form should also be accepted.
+            @test jlexpand("Base.@assume_effects !$setting f() = 1") isa JS.SyntaxTree
+        end
+    end
+
+    @testset "binding resolution preserves provenance" begin
+        # The whole point of the new-style stub: identifiers inside the body
+        # must keep accurate byte ranges so downstream LSP analyses can accept
+        # them as user-written via `is_from_user_ast`.
+        let res = jlresolve("g() = Base.@assume_effects :foldable sin(xxx)")
+            assert_binding_provenance(res, :global, "xxx")
+        end
+    end
+end
+
+module static_eval_module
+const STATIC_COND_FLAG = true
+const STATIC_BINDINGS = (:Int, :Bool)
+end
+
+module static_macro_module
+using JETLSCore: JL, JS, SyntaxTree
+const STATIC_COND_FLAG = false
+function var"@static_condition"(ctx::JL.MacroContext)
+    return JL.@ast(ctx, ctx.macrocall, true::value)
+end
+function var"@wrapped_static"(ctx::JL.MacroContext, ex::SyntaxTree)
+    mc = ctx.macrocall::SyntaxTree
+    src = JS.sourceref(mc)
+    sc = JS.SyntaxContext(nothing, nothing, JS.edition(mc), false)
+    return JL.@ast(ctx, mc, [:macrocall(src; context=sc)
+        "@static"::identifier mc[2] ex])
+end
+function var"@generated_static"(ctx::JL.MacroContext)
+    mc = ctx.macrocall::SyntaxTree
+    sc = JS.SyntaxContext(nothing, nothing, JS.edition(mc), false)
+    src = SyntaxTree(:tombstone, nothing, nothing, JS.sourceref(mc), sc)
+    return JL.@ast(ctx, src, [:macrocall
+        "@static"::identifier mc[2]
+        [:?
+            "STATIC_COND_FLAG"::identifier
+            true::value
+            false::value]])
+end
+end
+
+module static_caller_module
+using ..static_macro_module: @generated_static, @static_condition, @wrapped_static
+const STATIC_COND_FLAG = true
+end
+
+@testset "@static" begin
+    @testset "macro expansion" begin
+        # Taken `if` branch survives as its source block; the dropped branch and the
+        # condition disappear at expansion time.
+        let st1 = jlexpand("@static if true; sin(xxx); end")
+            @test JS.head(st1) === :block
+            @test JS.sourcetext(st1[1]) == "sin(xxx)"
+        end
+
+        # No `else` and a false condition: expands to `nothing`, like Base.
+        let st1 = jlexpand("@static if false; aaa; end")
+            @test JS.head(st1) === :value
+        end
+
+        # `elseif` chains keep folding until a branch is taken.
+        let st1 = jlexpand("@static if false; aaa; elseif true; bbb; else; ccc; end")
+            @test JS.head(st1) === :block
+            @test JS.sourcetext(st1[1]) == "bbb"
+        end
+        let st1 = jlexpand("@static if false; aaa; elseif false; bbb; else; ccc; end")
+            @test JS.head(st1) === :block
+            @test JS.sourcetext(st1[1]) == "ccc"
+        end
+
+        # Ternary forms, including right-nested chains.
+        let st1 = jlexpand("@static true ? aaa : bbb")
+            @test JS.sourcetext(st1) == "aaa"
+        end
+        let st1 = jlexpand("@static false ? aaa : true ? bbb : ccc")
+            @test JS.sourcetext(st1) == "bbb"
+        end
+
+        # `&&` / `||` short-circuit forms, including right-nested chains.
+        let st1 = jlexpand("@static true && sin(xxx)")
+            @test JS.head(st1) === :call
+            @test JS.sourcetext(st1) == "sin(xxx)"
+        end
+        let st1 = jlexpand("@static false && sin(xxx)")
+            @test JS.head(st1) === :value
+            @test st1.value === false
+        end
+        let st1 = jlexpand("@static true || sin(xxx)")
+            @test JS.head(st1) === :value
+            @test st1.value === true
+        end
+        let st1 = jlexpand("@static false || false || sin(xxx)")
+            @test JS.head(st1) === :call
+            @test JS.sourcetext(st1) == "sin(xxx)"
+        end
+
+        # A direct call evaluates in its base context module.
+        let st1 = jlexpand(static_eval_module, "@static STATIC_COND_FLAG ? aaa : bbb")
+            @test JS.sourcetext(st1) == "aaa"
+        end
+
+        # For an `@static` emitted by another macro, the immediate hygiene layer is
+        # the defining module, but `__module__` semantics require the caller's base
+        # layer.
+        let code = "@wrapped_static STATIC_COND_FLAG ? caller_branch : macro_branch"
+            st1 = jlexpand(static_caller_module, code; recursive=false)
+            sc = st1.context::JS.SyntaxContext
+            @test JS.syntax_module(st1) === static_macro_module
+            @test JS.base_layer(sc).mod === static_caller_module
+            st1 = jlexpand(static_caller_module, code)
+            @test JS.sourcetext(st1) == "caller_branch"
+        end
+
+        # A condition generated by the wrapper carries the wrapper's intermediate
+        # layer, but legacy `@static` still evaluates it in the caller module.
+        let code = "@generated_static"
+            st1 = jlexpand(static_caller_module, code; recursive=false)
+            cond = st1[3][1]
+            sc = cond.context::JS.SyntaxContext
+            @test JS.syntax_module(cond) === static_macro_module
+            @test JS.base_layer(sc).mod === static_caller_module
+            st1 = jlexpand(static_caller_module, code)
+            @test JS.head(st1) === :value
+            @test st1.value === true
+        end
+    end
+
+    @static if VERSION >= v"1.14-"
+        @testset "new-style condition macros" begin
+            let diags = collect_macro_diagnostics() do
+                    st1 = jlexpand(static_caller_module, "@static if @static_condition(); aaa(); end")
+                    @test JS.head(st1) === :block
+                    @test JS.sourcetext(st1[1]) == "aaa()"
+                end
+                @test isempty(diags)
+            end
+        end
+    end
+
+    @testset "closure conditions" begin
+        # This requires native code execution of conditions for v1.12&v1.13 compatibility
+        for (condition, taken, dropped) in (
+                ("all(s -> isdefined(Core, s), STATIC_BINDINGS)", "aaa()", "bbb()"),
+                ("any(s -> !isdefined(Core, s), STATIC_BINDINGS)", "bbb()", "aaa()"),
+                ("let flag = STATIC_COND_FLAG; any(_ -> flag, STATIC_BINDINGS); end",
+                 "aaa()", "bbb()"),
+            )
+            code = "@static if $condition; aaa(); else; bbb(); end"
+            diags = collect_macro_diagnostics() do
+                st1 = jlexpand(static_eval_module, code)
+                @test JS.head(st1) === :block
+                @test JS.sourcetext(st1[1]) == taken
+                @test JS.byte_range(st1[1]) == source_range(code, taken)
+            end
+            d = only(diags)
+            @test d.code == JETLSCore.LOWERING_INACTIVE_CODE
+            @test occursin(dropped, JS.sourcetext(d.node))
+        end
+    end
+
+    @testset "inactive branch hints" begin
+        # Each dropped branch is reported as `lowering/inactive-code` at Hint
+        # severity so clients can gray it out.
+        let diags = collect_macro_diagnostics() do
+                jlexpand("@static if false; aaa; else; bbb; end")
+            end
+            d = only(diags)
+            @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Hint
+            @test d.code == JETLSCore.LOWERING_INACTIVE_CODE
+            @test occursin("Inactive `@static` branch", d.msg)
+            @test occursin("`false`", d.msg)
+            @test occursin("aaa", JS.sourcetext(d.node))
+            @test !occursin("bbb", JS.sourcetext(d.node))
+        end
+        let diags = collect_macro_diagnostics() do
+                jlexpand("@static if true; aaa; else; bbb; end")
+            end
+            d = only(diags)
+            @test d.code == JETLSCore.LOWERING_INACTIVE_CODE
+            @test occursin("`true`", d.msg)
+            @test !occursin("aaa", JS.sourcetext(d.node))
+            @test occursin("bbb", JS.sourcetext(d.node))
+        end
+
+        # No `else` and a false condition: the then-block is still inactive.
+        let diags = collect_macro_diagnostics() do
+                jlexpand("@static if false; aaa; end")
+            end
+            @test occursin("aaa", JS.sourcetext(only(diags).node))
+        end
+
+        # Fully taken conditional: nothing is dropped, nothing is reported.
+        for code in ("@static if true; aaa; end", "@static true && sin(xxx)")
+            @test isempty(collect_macro_diagnostics() do
+                jlexpand(code)
+            end)
+        end
+
+        # `elseif` chains report once per dropped segment.
+        let diags = collect_macro_diagnostics() do
+                jlexpand("@static if false; aaa; elseif true; bbb; else; ccc; end")
+            end
+            @test length(diags) == 2
+            @test occursin("aaa", JS.sourcetext(diags[1].node))
+            @test occursin("ccc", JS.sourcetext(diags[2].node))
+        end
+
+        # Taking an early branch drops the whole remaining chain — including
+        # conditions that were consequently never evaluated — as one range.
+        let diags = collect_macro_diagnostics() do
+                jlexpand("@static if true; aaa; elseif undefined_var_xyz; bbb; end")
+            end
+            d = only(diags)
+            @test d.code == JETLSCore.LOWERING_INACTIVE_CODE
+            @test occursin("undefined_var_xyz", JS.sourcetext(d.node))
+            @test occursin("bbb", JS.sourcetext(d.node))
+        end
+
+        # Short-circuit and ternary forms.
+        let diags = collect_macro_diagnostics() do
+                jlexpand("@static false && sin(xxx)")
+            end
+            @test occursin("sin(xxx)", JS.sourcetext(only(diags).node))
+        end
+        let diags = collect_macro_diagnostics() do
+                jlexpand("@static true || sin(xxx)")
+            end
+            @test occursin("sin(xxx)", JS.sourcetext(only(diags).node))
+        end
+        let diags = collect_macro_diagnostics() do
+                jlexpand("@static true ? aaa : bbb")
+            end
+            @test occursin("bbb", JS.sourcetext(only(diags).node))
+        end
+    end
+
+    @testset "validation" begin
+        # Non-conditional argument: Base throws `ArgumentError("invalid @static
+        # macro")`; report via sink and flow the argument through.
+        let diags = collect_macro_diagnostics() do
+                @test JS.head(jlexpand("@static foo(xxx)")) === :call
+            end
+            @test length(diags) == 1
+            d = only(diags)
+            @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
+            @test occursin("invalid @static macro", d.msg)
+        end
+
+        # Zero arguments and 2+ arguments fall through to the variadic fallback.
+        for code in ("@static", "@static true extra")
+            let diags = collect_macro_diagnostics() do
+                    jlexpand(code)
+                end
+                @test length(diags) == 1
+                d = only(diags)
+                @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
+                @test occursin("invalid @static macro", d.msg)
+            end
+        end
+
+        # Unevaluable condition: report via sink and recover with the runtime
+        # conditional so the condition and both branches reach scope analysis.
+        let diags = collect_macro_diagnostics() do
+                st1 = jlexpand("@static if undefined_var_xyz; aaa; else; bbb; end")
+                @test JS.head(st1) === :if
+            end
+            @test length(diags) == 1
+            d = only(diags)
+            @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
+            @test occursin("failed to evaluate condition", d.msg)
+        end
+
+        # Non-`Bool` condition: same recovery shape.
+        let diags = collect_macro_diagnostics() do
+                @test JS.head(jlexpand("@static if 1; aaa; end")) === :if
+            end
+            @test length(diags) == 1
+            d = only(diags)
+            @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
+            @test occursin("did not evaluate to a Bool", d.msg)
+        end
+    end
+
+    @testset "binding resolution preserves provenance" begin
+        # The taken branch keeps byte-accurate provenance; identifiers in the
+        # dropped branch vanish from the analysis entirely.
+        let res = jlresolve(
+                "staticfunc() = @static VERSION ≥ v\"1.0\" ? sin(xxx) : cos(yyy)")
+            assert_binding_provenance(res, :global, "xxx")
+            assert_no_binding(res, :global, "yyy")
+        end
+    end
+
+    @testset "runtime semantics" begin
+        @test jleval("@static true ? 1 : 2") === 1
+        @test jleval("@static false ? 1 : 2") === 2
+        @test jleval("@static true && 3") === 3
+        @test jleval("@static false && 3") === false
+        @test jleval("@static true && false && 3") === false
+        @test jleval("@static true || 3") === true
+        @test jleval("@static false || true || 3") === true
+        @test jleval("@static false || 3") === 3
+        @test jleval("@static if false; 1; elseif true; 2; else; 3; end") === 2
+        # The dropped branch must never reach lowering: `break` outside a loop
+        # would fail to lower if it survived expansion.
+        @test jleval("@static if true; :taken; else; break; end") === :taken
+    end
+end
+
+end # module test_jl_syntax_macros
