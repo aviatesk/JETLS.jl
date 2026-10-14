@@ -22,15 +22,27 @@ using Sockets: Sockets
 const JULIA_CMD = normpath(Sys.BINDIR, "julia")
 const JETLS_DIR = pkgdir(JETLS)
 
-function withserverprocess(f)
-    cmd = `$JULIA_CMD --startup-file=no --project=$JETLS_DIR -m JETLS serve`
-    proc = open(cmd; write=true, read=true)
-    try
-        return f(proc)
-    finally
-        if !process_exited(proc)
-            @error "Server process did not exit gracefully, killing it"
-            kill(proc)
+# The server communicates via stdin/stdout unless `stdio = false`, and its log is shown only
+# when `f` throws or the server does not exit with `exitcode`, to keep passing runs quiet.
+function withserverprocess(f, args::Cmd=``; stdio::Bool=true, exitcode::Int=0)
+    mktemp() do log_path, log_io
+        serve_cmd = `$JULIA_CMD --startup-file=no --project=$JETLS_DIR -m JETLS serve $args`
+        cmd = pipeline(serve_cmd; stderr=log_io)
+        proc = stdio ? open(cmd; write=true, read=true) : run(cmd; wait=false)
+        completed = false
+        try
+            ret = f(proc)
+            completed = true
+            return ret
+        finally
+            exited = process_exited(proc)
+            if !exited
+                @error "Server process did not exit gracefully, killing it"
+                kill(proc)
+            end
+            if !(completed && exited && proc.exitcode == exitcode)
+                @error "Server log" log = read(log_path, String)
+            end
         end
     end
 end
@@ -41,7 +53,7 @@ function with_timeout(f, timeout, sth)
         elapsed > timeout && error("Timeout waiting for " * sth)
         res = f(elapsed)
         if res !== nothing
-            @info "Waited $sth" elapsed
+            @debug "Waited $sth" elapsed
             return res
         end
         sleep(1.0)
@@ -166,7 +178,7 @@ withserverprocess() do proc; mktempdir() do root_dir
 end; end
 
 # test a very simple, abnormal server lifecycle
-withserverprocess() do proc; mktempdir() do root_dir
+withserverprocess(; exitcode=1) do proc; mktempdir() do root_dir
     # Send initialization request
     initialize_msg = """{
         "jsonrpc": "2.0",
@@ -213,65 +225,64 @@ for pipe_flag in ("--pipe-connect", "--pipe")
         pipe_path = @static Sys.iswindows() ?
             "\\\\.\\pipe\\$pipe_name" : joinpath(pipe_dir, "$pipe_name.sock")
         server_socket = Sockets.listen(pipe_path)
-        cmd = `$JULIA_CMD --startup-file=no --project=$JETLS_DIR -m JETLS serve $pipe_flag=$pipe_path`
-        proc = run(cmd; wait=false)
-        conn = nothing
         try
-            accept_task = @async Sockets.accept(server_socket)
-            conn = with_timeout(#=timeout=#STARTUP_TIMEOUT, "pipe connection") do _
-                process_exited(proc) &&
-                    error("Server exited (code $(proc.exitcode)) before connecting")
-                istaskdone(accept_task) || return nothing
-                return fetch(accept_task)
+            withserverprocess(`$pipe_flag=$pipe_path`; stdio=false) do proc
+                conn = nothing
+                try
+                    accept_task = @async Sockets.accept(server_socket)
+                    conn = with_timeout(#=timeout=#STARTUP_TIMEOUT, "pipe connection") do _
+                        process_exited(proc) &&
+                            error("Server exited (code $(proc.exitcode)) before connecting")
+                        istaskdone(accept_task) || return nothing
+                        return fetch(accept_task)
+                    end
+
+                    initialize_msg = """{
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "method": "initialize",
+                        "params": {
+                            "processId": $(getpid()),
+                            "capabilities": {},
+                            "workspaceFolders": [{
+                                "uri": "$(JETLSCore.LSP.URIs2.filepath2uri(root_dir))",
+                                "name": "test-workspace"
+                            }]
+                        }
+                    }"""
+                    write_lsp_message(conn, initialize_msg)
+                    initialization = read_lsp_response(conn, 1)
+                    @test occursin("\"id\":1", initialization.response)
+                    @test occursin("\"result\"", initialization.response)
+
+                    shutdown_msg = """{
+                        "jsonrpc": "2.0",
+                        "id": 2,
+                        "method": "shutdown",
+                        "params": null
+                    }"""
+                    write_lsp_message(conn, shutdown_msg)
+                    shutdown = read_lsp_response(conn, 2)
+                    @test occursin("\"result\":null", shutdown.response)
+
+                    exit_msg = """{
+                        "jsonrpc": "2.0",
+                        "method": "exit",
+                        "params": null
+                    }"""
+                    write_lsp_message(conn, exit_msg)
+
+                    @test with_timeout(#=timeout=#DEFAULT_TIMEOUT, "server shutdown") do _
+                        process_running(proc) && return nothing
+                        return true
+                    end
+                    @test process_exited(proc) && proc.exitcode == 0
+                finally
+                    isnothing(conn) || close(conn)
+                end
             end
-
-            initialize_msg = """{
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "initialize",
-                "params": {
-                    "processId": $(getpid()),
-                    "capabilities": {},
-                    "workspaceFolders": [{
-                        "uri": "$(JETLSCore.LSP.URIs2.filepath2uri(root_dir))",
-                        "name": "test-workspace"
-                    }]
-                }
-            }"""
-            write_lsp_message(conn, initialize_msg)
-            initialization = read_lsp_response(conn, 1)
-            @test occursin("\"id\":1", initialization.response)
-            @test occursin("\"result\"", initialization.response)
-
-            shutdown_msg = """{
-                "jsonrpc": "2.0",
-                "id": 2,
-                "method": "shutdown",
-                "params": null
-            }"""
-            write_lsp_message(conn, shutdown_msg)
-            shutdown = read_lsp_response(conn, 2)
-            @test occursin("\"result\":null", shutdown.response)
-
-            exit_msg = """{
-                "jsonrpc": "2.0",
-                "method": "exit",
-                "params": null
-            }"""
-            write_lsp_message(conn, exit_msg)
-
-            @test with_timeout(#=timeout=#DEFAULT_TIMEOUT, "server shutdown") do _
-                process_running(proc) && return nothing
-                return true
-            end
-            @test process_exited(proc) && proc.exitcode == 0
         finally
-            isnothing(conn) || close(conn)
             close(server_socket)
-            if !process_exited(proc)
-                @error "Server process did not exit gracefully, killing it"
-                kill(proc)
-            end
         end
     end; end
 end
