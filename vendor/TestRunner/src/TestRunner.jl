@@ -271,6 +271,10 @@ function _selective_run(interp::TRInterpreter, sntop::JS.SyntaxNode)
     ret = nothing
     while !isempty(vnodes)
         node = pop!(vnodes)
+        docnode = nothing
+        if JS.kind(node) == JS.K"doc" && JS.kind(node[end]) == JS.K"module"
+            docnode, node = node, node[end]
+        end
         lnn = LineNumberNode(JS.source_line(node), interp.filename)
 
         if JS.kind(node) == JS.K"module"
@@ -286,6 +290,11 @@ function _selective_run(interp::TRInterpreter, sntop::JS.SyntaxNode)
                 for newsn in children
                     _selective_run(newinterp, newsn)
                 end
+            end
+            if docnode !== nothing
+                # Document the module from within itself, as `Base.Docs.moduledoc` does
+                Core.eval(newcontext, Expr(:macrocall, GlobalRef(Core, Symbol("@doc")), lnn,
+                                           Expr(docnode[1]), Expr(ModuleName)))
             end
             ret = newcontext
             continue

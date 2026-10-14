@@ -1,0 +1,174 @@
+const EXECUTE_COMMAND_REGISTRATION_ID = "jetls-execute-command"
+const EXECUTE_COMMAND_REGISTRATION_METHOD = "workspace/executeCommand"
+
+const COMMAND_TESTRUNNER_RUN_TESTSET = "jetls.testrunner.run@testset"
+const COMMAND_TESTRUNNER_RUN_TESTCASE = "jetls.testrunner.run@test"
+const COMMAND_TESTRUNNER_CLEAR_RESULT = "jetls.testrunner.clearResult"
+const COMMAND_TESTRUNNER_OPEN_LOGS = "jetls.testrunner.openLogs"
+const COMMAND_SHOW_MESSAGE = "jetls.showMessage"
+const COMMAND_OPEN_MACRO_EXPANSION = "jetls.openMacroExpansion"
+const COMMAND_OPEN_TYPE_ANNOTATION = "jetls.openTypeAnnotation"
+
+const SUPPORTED_COMMANDS = [
+    COMMAND_TESTRUNNER_RUN_TESTSET,
+    COMMAND_TESTRUNNER_RUN_TESTCASE,
+    COMMAND_TESTRUNNER_OPEN_LOGS,
+    COMMAND_TESTRUNNER_CLEAR_RESULT,
+    COMMAND_SHOW_MESSAGE,
+    COMMAND_OPEN_MACRO_EXPANSION,
+    COMMAND_OPEN_TYPE_ANNOTATION,
+]
+
+function execute_command_options()
+    return ExecuteCommandOptions(;
+        commands = SUPPORTED_COMMANDS)
+end
+
+function execute_command_registration()
+    return Registration(;
+        id = EXECUTE_COMMAND_REGISTRATION_ID,
+        method = EXECUTE_COMMAND_REGISTRATION_METHOD,
+        registerOptions = ExecuteCommandRegistrationOptions(;
+            commands = SUPPORTED_COMMANDS))
+end
+
+function handle_ExecuteCommandRequest(server::Server, msg::ExecuteCommandRequest)
+    command = msg.params.command
+    if command == COMMAND_TESTRUNNER_RUN_TESTSET
+        return execute_testrunner_run_testset_command(server, msg)
+    elseif command == COMMAND_TESTRUNNER_RUN_TESTCASE
+        return execute_testrunner_run_testcase_command(server, msg)
+    elseif command == COMMAND_TESTRUNNER_OPEN_LOGS
+        return execute_testrunner_open_logs_command(server, msg)
+    elseif command == COMMAND_TESTRUNNER_CLEAR_RESULT
+        return execute_testrunner_clear_result_command(server, msg)
+    elseif command == COMMAND_SHOW_MESSAGE
+        return execute_show_message_command(server, msg)
+    elseif command == COMMAND_OPEN_MACRO_EXPANSION
+        return execute_open_macro_expansion_command(server, msg)
+    elseif command == COMMAND_OPEN_TYPE_ANNOTATION
+        return execute_open_type_annotation_command(server, msg)
+    end
+    return send(server,
+        invalid_execute_command_response(msg, "Unknown execution command: $command"))
+end
+
+function invalid_execute_command_response(msg::ExecuteCommandRequest, message::AbstractString,
+                                          code::Int=ErrorCodes.InvalidParams)
+    return ExecuteCommandResponse(;
+        id = msg.id,
+        result = nothing,
+        error = ResponseError(; code, message))
+end
+
+# E.g. uri = URI(@tryparsearg server msg[1]::String)
+macro tryparsearg(server, ex)
+    Meta.isexpr(ex, :(::)) || error("invalid forms")
+    length(ex.args) == 2 || error("invalid forms")
+    ref, T = ex.args
+    Meta.isexpr(ref, :ref) || error("invalid forms")
+    length(ref.args) == 2 || error("invalid forms")
+    msg, idx = ref.args
+    return :(let server = $(esc(server)),
+                 msg = $(esc(msg)),
+                 idx = $(esc(idx)),
+                 T = $(esc(T))
+        arguments = @something msg.params.arguments begin
+            return send(server, invalid_execute_command_response(msg,
+                "Expected `arguments` parameter to be set for `workspace/executeCommand` request"))
+        end
+        if !(1 ≤ idx ≤ length(arguments))
+            return send(server, invalid_execute_command_response(msg,
+                lazy"Expected `1 ≤ $idx ≤ length(arguments)` for `workspace/executeCommand` request"))
+        end
+        arg = arguments[idx]
+        arg isa T || return send(server, invalid_execute_command_response(msg,
+            lazy"Expected `arguments[$idx]::$T` for `workspace/executeCommand` request"))
+        arg
+    end)
+end
+
+function execute_testrunner_run_testset_command(server::Server, msg::ExecuteCommandRequest)
+    uri = URI(@tryparsearg server msg[1]::String)
+    idx = @tryparsearg server msg[2]::Int
+    tsn = @tryparsearg server msg[3]::String
+    error_msg = testrunner_run_testset_from_uri(server, uri, idx, tsn)
+    if error_msg !== nothing
+        show_error_message(server, error_msg)
+        return send(server,
+            ExecuteCommandResponse(;
+                id = msg.id,
+                result = nothing,
+                error = request_failed_error(error_msg)))
+    end
+    return send(server, ExecuteCommandResponse(; id = msg.id, result = null))
+end
+
+function execute_testrunner_run_testcase_command(server::Server, msg::ExecuteCommandRequest)
+    uri = URI(@tryparsearg server msg[1]::String)
+    tcl = @tryparsearg server msg[2]::Int
+    tct = @tryparsearg server msg[3]::String
+    error_msg = testrunner_run_testcase_from_uri(server, uri, tcl, tct)
+    if error_msg !== nothing
+        show_error_message(server, error_msg)
+        return send(server,
+            ExecuteCommandResponse(;
+                id = msg.id,
+                result = nothing,
+                error = request_failed_error(error_msg)))
+    end
+    return send(server, ExecuteCommandResponse(; id = msg.id, result = null))
+end
+
+function execute_testrunner_open_logs_command(server::Server, msg::ExecuteCommandRequest)
+    source_uri = URI(@tryparsearg server msg[1]::String)
+    idx = @tryparsearg server msg[2]::Int
+    tsn = @tryparsearg server msg[3]::String
+    logs = get_testsetinfo_logs(server.state, source_uri, idx)
+    if logs === nothing
+        show_warning_message(server,
+            "The test result is no longer available. Re-run the testset to view its logs.")
+    else
+        open_testsetinfo_logs!(server, tsn, logs; source_uri, testset_index=idx)
+    end
+    return send(server, ExecuteCommandResponse(; id = msg.id, result = null))
+end
+
+function execute_testrunner_clear_result_command(server::Server, msg::ExecuteCommandRequest)
+    uri = URI(@tryparsearg server msg[1]::String)
+    idx = @tryparsearg server msg[2]::Int
+    tsn = @tryparsearg server msg[3]::String
+    try_clear_testrunner_result!(server, uri, idx, tsn)
+    return send(server, ExecuteCommandResponse(; id = msg.id, result = null))
+end
+
+function execute_open_macro_expansion_command(server::Server, msg::ExecuteCommandRequest)
+    uri = URI(@tryparsearg server msg[1]::String)
+    request_open_macro_expansion(server, uri)
+    return send(server, ExecuteCommandResponse(; id = msg.id, result = null))
+end
+
+function execute_open_type_annotation_command(server::Server, msg::ExecuteCommandRequest)
+    uri = URI(@tryparsearg server msg[1]::String)
+    request_open_type_annotation(server, uri)
+    return send(server, ExecuteCommandResponse(; id = msg.id, result = null))
+end
+
+function execute_show_message_command(server::Server, msg::ExecuteCommandRequest)
+    message = @tryparsearg server msg[1]::String
+    arguments = msg.params.arguments
+    type = MessageType.Info
+    if arguments !== nothing && length(arguments) ≥ 2
+        type_arg = arguments[2]
+        type_arg isa MessageType.Ty || return send(server,
+            invalid_execute_command_response(msg,
+                lazy"Expected `arguments[2]::$(MessageType.Ty)` for `workspace/executeCommand` request"))
+        1 ≤ type_arg ≤ 5 || return send(server,
+            invalid_execute_command_response(msg,
+                "Expected `arguments[2]` to be in 1..5 (see `MessageType`)"))
+        type = type_arg
+    end
+    send(server, ShowMessageNotification(;
+        params = ShowMessageParams(; type, message)))
+    return send(server, ExecuteCommandResponse(; id = msg.id, result = null))
+end

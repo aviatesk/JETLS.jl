@@ -1,62 +1,114 @@
 name = "JETLSCore"
-uuid = "d3d7b685-bb06-4d0a-88d8-0ccf75a29734"
+JuliaSyntax = "avi/JETLS-JSJL-head-2026-10-09"
 version = "0.1.0"
 JET = "avi/JET-JETLS-head-2026-10-12"
 JuliaLowering = "avi/JETLS-JSJL-head-2026-10-09"
-JuliaSyntax = "avi/JETLS-JSJL-head-2026-10-09"
-Revise = "master"
 authors = ["Shuhei Kadowaki <aviatesk@gmail.com>"]
+Revise = "master"
+uuid = "d3d7b685-bb06-4d0a-88d8-0ccf75a29734"
+
+[compat]
+REPL = "1.11.0"
+Test = "1.11.0"
+JuliaSyntax = "2"
+Glob = "1.4"
+TOMLSource = "0.1"
+Sockets = "1.11.0"
+Compiler = "0.1.1"
+JET = "0.12.1"
+LSP = "0.1"
+Pkg = "1.11.0"
+TestRunner = "0.1"
+Preferences = "1.4.3"
+PrecompileTools = "1.3.2"
+Markdown = "1.11.0"
+JuliaLowering = "1"
+Profile = "1.11.0"
+julia = "1.12.2 - 1.13"
+TOML = "1.0.3"
+Revise = "3.17"
+
+[sources.JuliaSyntax]
+path = "../vendor/JuliaSyntax"
+
+[sources.Glob]
+path = "../vendor/Glob"
+
+[sources.TOMLSource]
+path = "../vendor/TOMLSource"
+
+[sources.Compiler]
+path = "../vendor/Compiler"
+
+[sources.JET]
+path = "../vendor/JET"
+
+[sources.LSP]
+path = "../vendor/LSP"
+
+[sources.CodeTracking]
+path = "../vendor/CodeTracking"
+
+[sources.MacroTools]
+path = "../vendor/MacroTools"
+
+[sources.LoweredCodeUtils]
+path = "../vendor/LoweredCodeUtils"
+
+[sources.TestRunner]
+path = "../vendor/TestRunner"
+
+[sources.PrecompileTools]
+path = "../vendor/PrecompileTools"
+
+[sources.Preferences]
+path = "../vendor/Preferences"
+
+[sources.JuliaInterpreter]
+path = "../vendor/JuliaInterpreter"
+
+[sources.StructTypes]
+path = "../vendor/StructTypes"
+
+[sources.JuliaLowering]
+path = "../vendor/JuliaLowering"
+
+[sources.Parsers]
+path = "../vendor/Parsers"
+
+[sources.JSON3]
+path = "../vendor/JSON3"
+
+[sources.Revise]
+rev = "32638add42"
+url = "https://github.com/timholy/Revise.jl"
+
+[deps]
+REPL = "3fa0cd96-eef1-5676-8a61-b3b8758bbffb"
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+JuliaSyntax = "02a177f8-2b16-5240-a0b4-02ed40703cda"
+Glob = "a6ef924f-2b2c-5d99-b812-8edbc1441234"
+TOMLSource = "7718a0b2-46c0-5f25-a46d-52644d8fb185"
+Sockets = "6462fe0b-24de-5631-8697-dd941f90decc"
+Compiler = "8499cccf-07fb-5365-ac3a-39ae87615c05"
+JET = "d18a8d2a-b6cf-5b35-ae77-db04d04d451d"
+LSP = "ba3d5f2d-0240-5843-8ab5-e1c74856c201"
+CodeTracking = "29b28462-3302-58bb-873a-3f58224955cc"
+MacroTools = "73a1cfca-4736-53e3-b924-35a7291c571e"
+LoweredCodeUtils = "01ede001-ea10-5720-9c31-2e53839707a9"
+Pkg = "44cfe95a-1eb2-52ea-b672-e2afdf69b78f"
+TestRunner = "65a77010-ae58-5cc9-8243-71cff1cf0f92"
+Preferences = "cc588e5a-7be0-5224-8a6a-549b21958db9"
+PrecompileTools = "32931bc0-5014-5544-84d5-53636ff9f6c5"
+JuliaInterpreter = "87c368a4-672f-5de1-91ff-3cc7fc652fab"
+Markdown = "d6f4376e-aef5-505a-96c1-9c027394607a"
+StructTypes = "66bcceda-d870-5865-93dd-65803322e79e"
+JuliaLowering = "7ba39d99-9390-5ff4-b3a7-c9cea37c1861"
+Parsers = "2bf889ff-109e-5fa9-9ba3-339ee07cbe67"
+JSON3 = "00ac8d46-747e-5902-8e12-fdfc767369c7"
+Profile = "9abbd945-dff8-562f-b5e8-e1ebf5ef1b79"
+TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
+Revise = "295af30f-e4ad-537b-8983-00126c2a3abe"
 
 [workspace]
 projects = ["test"]
-
-[deps]
-Compiler = "807dbc54-b67e-4c79-8afb-eafe4df6f2e1"
-Glob = "c27321d9-0574-5035-807b-f59d2c89b15c"
-JET = "c3a54625-cd67-489e-a8e7-0a5a0ff4e31b"
-JuliaLowering = "f3c80556-a63f-4383-b822-37d64f81a311"
-JuliaSyntax = "70703baa-626e-46a2-a12c-08ffd08c73b4"
-LSP = "880dcf91-6fde-4251-87fc-bfd84012291a"
-Markdown = "d6f4376e-aef5-505a-96c1-9c027394607a"
-Pkg = "44cfe95a-1eb2-52ea-b672-e2afdf69b78f"
-PrecompileTools = "aea7be01-6a6a-4083-8856-8a6e6704d82a"
-Preferences = "21216c6a-2e73-6563-6e65-726566657250"
-Profile = "9abbd945-dff8-562f-b5e8-e1ebf5ef1b79"
-REPL = "3fa0cd96-eef1-5676-8a61-b3b8758bbffb"
-Revise = "295af30f-e4ad-537b-8983-00126c2a3abe"
-Sockets = "6462fe0b-24de-5631-8697-dd941f90decc"
-TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
-TOMLSource = "fbc9d53b-f647-41b7-9740-8c31078b51cf"
-Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
-TestRunner = "4efbe77e-ddf3-4ce7-be91-16409ca9e85f"
-
-[sources]
-Compiler = {path = "../Compiler"}
-JET = {rev = "a2d1eab480", url = "https://github.com/aviatesk/JET.jl"}
-JuliaLowering = {rev = "c54e29d033", subdir = "JuliaLowering", url = "https://github.com/JuliaLang/julia"}
-JuliaSyntax = {rev = "c54e29d033", subdir = "JuliaSyntax", url = "https://github.com/JuliaLang/julia"}
-LSP = {path = "../LSP"}
-Revise = {rev = "32638add42", url = "https://github.com/timholy/Revise.jl"}
-TOMLSource = {path = "../TOMLSource"}
-TestRunner = {path = "../TestRunner"}
-
-[compat]
-Compiler = "0.1.1"
-Glob = "1.4"
-JET = "0.12.1"
-JuliaLowering = "1"
-JuliaSyntax = "2"
-LSP = "0.1"
-Markdown = "1.11.0"
-Pkg = "1.11.0"
-PrecompileTools = "1.3.2"
-Preferences = "1.4.3"
-Profile = "1.11.0"
-REPL = "1.11.0"
-Revise = "3.17"
-Sockets = "1.11.0"
-TOML = "1.0.3"
-TOMLSource = "0.1"
-Test = "1.11.0"
-TestRunner = "0.1"
-julia = "1.12.2 - 1.13"

@@ -1,0 +1,1419 @@
+# DocumentSymbol feature implementation
+#
+# The basic approach is to first analyze `st0` and collect top-level symbols through surface
+# AST level analysis.
+# Then, for top-level trees that introduce local scopes, we perform scope analysis
+# (i.e. get `ctx3`) to collect bindings for each local scope.
+#
+# A drawback of this approach is that macro expansion is not performed in the top-level
+# surface AST level analysis, so cases like `@enum` cannot be fully handled.
+# However, if we were to analyze `st1` after macro expansion, we would need to analyze
+# much more complex ASTs than `st0`, and the algorithmic complexity would increase
+# significantly, especially since `:escape` and `:hygienic-scope` are introduced at
+# unspecified locations.
+# The current approach of performing scope analysis only on trees that introduce local
+# scopes seems to achieve a good trade-off between implementation complexity and analysis
+# result accuracy.
+#
+# To compensate for the lack of macro expansion, this algorithm includes special-case
+# handling for common macros like `@enum`.
+
+const DOCUMENT_SYMBOL_REGISTRATION_ID = "jetls-document-symbol"
+const DOCUMENT_SYMBOL_REGISTRATION_METHOD = "textDocument/documentSymbol"
+
+function document_symbol_options()
+    return DocumentSymbolOptions()
+end
+
+function document_symbol_registration()
+    return Registration(;
+        id = DOCUMENT_SYMBOL_REGISTRATION_ID,
+        method = DOCUMENT_SYMBOL_REGISTRATION_METHOD,
+        registerOptions = DocumentSymbolRegistrationOptions(;
+            documentSelector = DEFAULT_DOCUMENT_SELECTOR,
+        )
+    )
+end
+
+function handle_DocumentSymbolRequest(
+        server::Server, msg::DocumentSymbolRequest, cancel_flag::CancelFlag)
+    state = server.state
+    uri = msg.params.textDocument.uri
+    result = get_file_info(state, uri, cancel_flag)
+    if isnothing(result)
+        return send(server, DocumentSymbolResponse(; id = msg.id, result = null))
+    elseif result isa ResponseError
+        return send(server, DocumentSymbolResponse(; id = msg.id, result = nothing, error = result))
+    end
+    fi = result
+    symbols = get_document_symbols!(state, uri, fi)
+    symbols = localize_document_symbols(state, uri, symbols)
+    result = map(strip_name_from_detail, symbols)
+    return send(server, DocumentSymbolResponse(; id = msg.id, result))
+end
+
+function strip_name_from_detail(sym::DocumentSymbol)
+    detail = sym.detail
+    if detail !== nothing && startswith(detail, sym.name)
+        rest = lstrip(detail[ncodeunits(sym.name)+1:end])
+        detail = isempty(rest) ? nothing : String(rest)
+    end
+    children = sym.children
+    if children !== nothing
+        children = map(strip_name_from_detail, children)
+    end
+    return DocumentSymbol(sym; detail, children)
+end
+
+function get_document_symbols!(state::ServerState, uri::URI, fi::FileInfo)
+    cache_uri = canonical_cache_uri(state, uri)
+    return store!(state.document_symbol_cache) do cache::DocumentSymbolCacheData
+        if haskey(cache, cache_uri)
+            symbols = cache[cache_uri]
+            return cache, symbols
+        end
+        st0 = build_syntax_tree(fi)
+        pos = Position(; line=0, character=0)
+        (; context_module, world) = get_context_info(state, uri, pos)
+        symbols = extract_document_symbols(st0, fi, context_module, world)
+        return DocumentSymbolCacheData(cache, cache_uri => symbols), symbols
+    end
+end
+
+function invalidate_document_symbol_cache!(state::ServerState, uri::URI)
+    cache_uri = canonical_cache_uri(state, uri)
+    store!(state.document_symbol_cache) do cache::DocumentSymbolCacheData
+        if haskey(cache, cache_uri)
+            Base.delete(cache, cache_uri), nothing
+        else
+            cache, nothing
+        end
+    end
+end
+
+function extract_document_symbols(
+        st0_top::SyntaxTree, fi::FileInfo, context_module::Module, world::UInt
+    )
+    @assert JS.head(st0_top) === :toplevel
+    symbols = DocumentSymbol[]
+    extract_toplevel_symbols!(symbols, st0_top, fi, context_module, world)
+    sort!(symbols; by = s::DocumentSymbol -> (s.range.start.line, s.range.start.character))
+    return symbols
+end
+
+function extract_toplevel_symbols!(
+        symbols::Vector{DocumentSymbol}, st0::SyntaxTree, fi::FileInfo,
+        context_module::Module, world::UInt
+    )
+    for i = 1:JS.numchildren(st0)
+        extract_toplevel_symbol!(symbols, st0[i], fi, context_module, world)
+    end
+end
+
+function extract_toplevel_symbol!(
+        symbols::Vector{DocumentSymbol}, st0::SyntaxTree, fi::FileInfo,
+        context_module::Module, world::UInt
+    )
+    k = JS.head(st0)
+    if k === :module
+        extract_module_symbol!(symbols, st0, fi, context_module, world)
+    elseif k === :function
+        extract_function_symbol!(symbols, st0, fi, context_module, world)
+    elseif k === :macro
+        extract_macro_symbol!(symbols, st0, fi, context_module, world)
+    elseif k === :struct
+        extract_struct_symbol!(symbols, st0, fi, context_module, world)
+    elseif k === :abstract
+        extract_abstract_type_symbol!(symbols, st0, fi)
+    elseif k === :primitive
+        extract_primitive_type_symbol!(symbols, st0, fi)
+    elseif k === :const
+        extract_const_symbols!(symbols, st0, fi, context_module, world)
+    elseif k === :global
+        extract_global_symbols!(symbols, st0, fi, context_module, world)
+    elseif k === :(=)
+        extract_toplevel_assignment_symbols!(symbols, st0, fi, context_module, world)
+    elseif k === :let
+        extract_let_symbol!(symbols, st0, fi, context_module, world)
+    elseif k === :while
+        extract_while_symbol!(symbols, st0, fi, context_module, world)
+    elseif k === :for
+        extract_for_symbol!(symbols, st0, fi, context_module, world)
+    elseif k === :if
+        extract_if_symbol!(symbols, st0, fi, context_module, world)
+    elseif k === :toplevel || k === :block
+        extract_toplevel_symbols!(symbols, st0, fi, context_module, world)
+    elseif k === :macrocall
+        extract_macrocall_symbol!(symbols, st0, fi, context_module, world)
+    end
+    return nothing
+end
+
+function extract_module_symbol!(
+        symbols::Vector{DocumentSymbol}, st0::SyntaxTree, fi::FileInfo,
+        parent_context_module::Module, world::UInt
+    )
+    JS.numchildren(st0) ≥ 3 || return nothing
+    name_node = st0[2]
+    name = @something get_name_val(name_node) return nothing
+    context_module = parent_context_module
+    if invokelatest(isdefinedglobal, parent_context_module, Symbol(name))
+        childmod = invokelatest(getglobal, parent_context_module, Symbol(name))
+        if childmod isa Module
+            context_module = childmod
+        end
+    end
+    children = DocumentSymbol[]
+    body = st0[end]
+    if JS.head(body) === :block
+        extract_toplevel_symbols!(children, body, fi, context_module, world)
+    end
+    is_baremodule = has_source_flags(st0, JS.BARE_MODULE_FLAG)
+    detail = (is_baremodule ? "baremodule " : "module ") * name
+    push!(symbols, DocumentSymbol(;
+        name,
+        detail,
+        kind = SymbolKind.Module,
+        range = jsobj_to_range(st0, fi),
+        selectionRange = jsobj_to_range(name_node, fi),
+        children = @somereal children Some(nothing)))
+    return nothing
+end
+
+function extract_function_symbol!(
+        symbols::Vector{DocumentSymbol}, st0::SyntaxTree, fi::FileInfo,
+        context_module::Module, world::UInt;
+        range_node::SyntaxTree = st0
+    )
+    JS.numchildren(st0) ≥ 1 || return nothing
+    sig = st0[1]
+    name, name_node = @something extract_function_name(sig) return nothing
+    children = @something extract_scoped_children(
+        st0, fi, context_module, world) Some(nothing)
+    is_short_form = has_source_flags(st0, JS.SHORT_FORM_FUNCTION_FLAG)
+    detail = is_short_form ? JS.sourcetext(sig) * " =" : "function " * JS.sourcetext(sig)
+    push!(symbols, DocumentSymbol(;
+        name,
+        detail,
+        kind = SymbolKind.Function,
+        range = jsobj_to_range(range_node, fi),
+        selectionRange = jsobj_to_range(name_node, fi),
+        children))
+    return nothing
+end
+
+function extract_function_name(sig::SyntaxTree)
+    sig = unwrap_funcdef_sig(sig)
+    k = JS.head(sig)
+    if k === :call
+        JS.numchildren(sig) ≥ 1 || return nothing
+        callee = sig[1]
+        if JS.head(callee) === :(::)
+            JS.numchildren(callee) ≥ 1 || return nothing
+            callee = callee[1]
+        end
+        if is_mainfunc0(callee)
+            return ("@main", callee)
+        end
+        name = @something extract_dotted_name(callee) return nothing
+        return (name, callee)
+    elseif is_mainfunc0(sig)
+        # No-parens form: @main(args...) — entire signature is a macrocall
+        return ("@main", sig)
+    elseif k === :tuple
+        return nothing
+    elseif k === :identifier
+        name = @something get_name_val(sig) return nothing
+        return (name, sig)
+    elseif k === :.
+        name = @something extract_dotted_name(sig) return nothing
+        return (name, sig)
+    end
+    return nothing
+end
+
+function extract_dotted_name(node::SyntaxTree)
+    k = JS.head(node)
+    if k === :identifier
+        return get_name_val(node)
+    elseif k === :.
+        JS.numchildren(node) ≥ 2 || return nothing
+        lhs = @something extract_dotted_name(node[1]) return nothing
+        rhs_node = node[2]
+        rhs = @something if JS.head(rhs_node) in (:quote, :inert) && JS.numchildren(rhs_node) ≥ 1
+            get_name_val(rhs_node[1])
+        else
+            get_name_val(rhs_node)
+        end return nothing
+        return lhs * "." * rhs
+    elseif k === :curly
+        JS.numchildren(node) ≥ 1 || return nothing
+        return extract_dotted_name(node[1])
+    end
+    return nothing
+end
+
+function extract_macro_symbol!(
+        symbols::Vector{DocumentSymbol}, st0::SyntaxTree, fi::FileInfo,
+        context_module::Module, world::UInt
+    )
+    JS.numchildren(st0) ≥ 1 || return nothing
+    sig_orig = st0[1]
+    sig = unwrap_funcdef_sig(sig_orig)
+    if JS.head(sig) === :call
+        JS.numchildren(sig) ≥ 1 || return nothing
+        callee = sig[1]
+        name = @something get_name_val(callee) return nothing
+        name_node = callee
+    elseif JS.head(sig) === :identifier
+        name = @something get_name_val(sig) return nothing
+        name_node = sig
+    else
+        return nothing
+    end
+    name = "@" * name
+    detail = "macro " * JS.sourcetext(sig_orig)
+    children = @something extract_scoped_children(st0, fi, context_module, world) Some(nothing)
+    push!(symbols, DocumentSymbol(;
+        name,
+        detail,
+        kind = SymbolKind.Function,
+        range = jsobj_to_range(st0, fi),
+        selectionRange = jsobj_to_range(name_node, fi),
+        children))
+    return nothing
+end
+
+function extract_struct_symbol!(
+        symbols::Vector{DocumentSymbol}, st0::SyntaxTree, fi::FileInfo,
+        context_module::Module, world::UInt
+    )
+    JS.numchildren(st0) ≥ 2 || return nothing
+    sig_node = st0[2]
+    name_node = sig_node
+    if JS.head(name_node) === :<:
+        JS.numchildren(name_node) ≥ 1 || return nothing
+        name_node = name_node[1]
+    end
+    if JS.head(name_node) === :curly
+        JS.numchildren(name_node) ≥ 1 || return nothing
+        name_node = name_node[1]
+    end
+    name = @something get_name_val(name_node) return nothing
+    is_mutable = has_source_flags(st0, JS.MUTABLE_FLAG)
+    detail = (is_mutable ? "mutable struct " : "struct ") * lstrip(JS.sourcetext(sig_node))
+    children = DocumentSymbol[]
+    if JS.numchildren(st0) ≥ 3
+        body = st0[3]
+        for i = 1:JS.numchildren(body)
+            child = body[i]
+            child_k = JS.head(child)
+            if child_k === :function
+                extract_function_symbol!(children, child, fi, context_module, world)
+            elseif child_k === :(=)
+                extract_toplevel_assignment_symbols!(
+                    children, child, fi, context_module, world)
+            else
+                extract_struct_field!(children, child, fi)
+            end
+        end
+    end
+    push!(symbols, DocumentSymbol(;
+        name,
+        detail,
+        kind = SymbolKind.Struct,
+        range = jsobj_to_range(st0, fi),
+        selectionRange = jsobj_to_range(name_node, fi),
+        children = @somereal children Some(nothing)))
+    return nothing
+end
+
+function extract_struct_field!(
+        symbols::Vector{DocumentSymbol}, st0::SyntaxTree, fi::FileInfo
+    )
+    field_node = st0
+    k = JS.head(st0)
+    if k === :const && JS.numchildren(st0) ≥ 1
+        field_node = st0[1]
+        k = JS.head(field_node)
+    end
+    name_node = field_node
+    if k === :(::) && JS.numchildren(field_node) ≥ 1
+        name_node = field_node[1]
+    end
+    name = @something get_name_val(name_node) return nothing
+    detail = lstrip(JS.sourcetext(st0))
+    push!(symbols, DocumentSymbol(;
+        name,
+        detail,
+        kind = SymbolKind.Field,
+        range = jsobj_to_range(st0, fi),
+        selectionRange = jsobj_to_range(name_node, fi)))
+    return nothing
+end
+
+function extract_abstract_type_symbol!(
+        symbols::Vector{DocumentSymbol}, st0::SyntaxTree, fi::FileInfo
+    )
+    JS.numchildren(st0) ≥ 1 || return nothing
+    name_node = def_node = st0[1]
+    if JS.head(name_node) === :<:
+        JS.numchildren(name_node) ≥ 1 || return nothing
+        name_node = name_node[1]
+    end
+    if JS.head(name_node) === :curly
+        JS.numchildren(name_node) ≥ 1 || return nothing
+        name_node = name_node[1]
+    end
+    name = @something get_name_val(name_node) return nothing
+    detail = "abstract type " * lstrip(JS.sourcetext(def_node))
+    push!(symbols, DocumentSymbol(;
+        name,
+        detail,
+        kind = SymbolKind.Interface,
+        range = jsobj_to_range(st0, fi),
+        selectionRange = jsobj_to_range(name_node, fi)))
+    return nothing
+end
+
+function extract_primitive_type_symbol!(
+        symbols::Vector{DocumentSymbol}, st0::SyntaxTree, fi::FileInfo
+    )
+    JS.numchildren(st0) ≥ 2 || return nothing
+    def_node = st0[1]
+    bits_node = st0[2]
+    name_node = def_node
+    if JS.head(name_node) === :<:
+        JS.numchildren(name_node) ≥ 1 || return nothing
+        name_node = name_node[1]
+    end
+    name = @something get_name_val(name_node) return nothing
+    detail = "primitive type " * lstrip(JS.sourcetext(def_node)) * " " * JS.sourcetext(bits_node)
+    push!(symbols, DocumentSymbol(;
+        name,
+        detail,
+        kind = SymbolKind.Number,
+        range = jsobj_to_range(st0, fi),
+        selectionRange = jsobj_to_range(name_node, fi)))
+    return nothing
+end
+
+function extract_const_symbols!(
+        symbols::Vector{DocumentSymbol}, st0::SyntaxTree, fi::FileInfo,
+        context_module::Module, world::UInt
+    )
+    JS.numchildren(st0) ≥ 1 || return nothing
+    assign = st0[1]
+    JS.head(assign) === :(=) || return nothing
+    JS.numchildren(assign) ≥ 2 || return nothing
+    lhs = assign[1]
+    rhs = assign[2]
+    range = jsobj_to_range(st0, fi)
+    detail = lstrip(JS.sourcetext(st0))
+    extract_assignment_symbols!(
+        symbols, lhs, rhs, range, SymbolKind.Constant, detail, fi, context_module, world)
+    return nothing
+end
+
+function extract_global_symbols!(
+        symbols::Vector{DocumentSymbol}, st0::SyntaxTree, fi::FileInfo,
+        context_module::Module, world::UInt
+    )
+    JS.numchildren(st0) ≥ 1 || return nothing
+    inner = st0[1]
+    inner_kind = JS.head(inner)
+    if inner_kind === :function
+        extract_function_symbol!(symbols, inner, fi, context_module, world; range_node = st0)
+        return nothing
+    elseif inner_kind === :(=) && JS.numchildren(inner) ≥ 2 && is_short_function_lhs(inner[1])
+        extract_short_function_symbol!(
+            symbols, inner, fi, context_module, world; range_node = st0)
+        return nothing
+    end
+    range = jsobj_to_range(st0, fi)
+    detail = lstrip(JS.sourcetext(st0))
+    if inner_kind === :(=)
+        JS.numchildren(inner) ≥ 2 || return nothing
+        lhs = inner[1]
+        rhs = inner[2]
+        extract_assignment_symbols!(
+            symbols, lhs, rhs, range, SymbolKind.Variable, detail, fi,
+            context_module, world)
+    else
+        extract_assignment_symbols!(
+            symbols, inner, nothing, range, SymbolKind.Variable, detail, fi,
+            context_module, world)
+    end
+    return nothing
+end
+
+function extract_assignment_symbols!(
+        symbols::Vector{DocumentSymbol}, lhs::SyntaxTree,
+        rhs::Union{SyntaxTree,Nothing}, range::Range, kind::SymbolKind.Ty,
+        detail::AbstractString, fi::FileInfo, context_module::Module, world::UInt
+    )
+    children = if rhs !== nothing && JS.head(rhs) === :let
+        let_children = DocumentSymbol[]
+        extract_let_symbol!(let_children, rhs, fi, context_module, world)
+        @somereal let_children Some(nothing)
+    else
+        nothing
+    end
+    lhs_kind = JS.head(lhs)
+    if lhs_kind === :tuple
+        # Handle named tuple destructuring: `(; x, y) = ...`
+        if JS.numchildren(lhs) == 1 && JS.head(lhs[1]) === :parameters
+            params = lhs[1]
+            for i = 1:JS.numchildren(params)
+                name_node = params[i]
+                name = @something get_name_val(name_node) continue
+                push!(symbols, DocumentSymbol(;
+                    name,
+                    detail,
+                    kind,
+                    range,
+                    selectionRange = jsobj_to_range(name_node, fi),
+                    children))
+            end
+        else
+            # Handle regular tuple destructuring: `x, y = ...` or `(a, b) = ...`
+            for i = 1:JS.numchildren(lhs)
+                name_node = lhs[i]
+                if JS.head(name_node) === :(::)
+                    JS.numchildren(name_node) ≥ 1 || continue
+                    name_node = name_node[1]
+                end
+                name = @something get_name_val(name_node) continue
+                push!(symbols, DocumentSymbol(;
+                    name,
+                    detail,
+                    kind,
+                    range,
+                    selectionRange = jsobj_to_range(name_node, fi),
+                    children))
+            end
+        end
+    else
+        name_node = lhs
+        if lhs_kind === :(::)
+            JS.numchildren(lhs) ≥ 1 || return nothing
+            name_node = lhs[1]
+        end
+        name = @something get_name_val(name_node) return nothing
+        push!(symbols, DocumentSymbol(;
+            name,
+            detail,
+            kind,
+            range,
+            selectionRange = jsobj_to_range(name_node, fi),
+            children))
+    end
+    if rhs !== nothing && JS.head(rhs) === :block
+        extract_toplevel_symbols!(symbols, rhs, fi, context_module, world)
+    end
+    return nothing
+end
+
+function extract_toplevel_assignment_symbols!(
+        symbols::Vector{DocumentSymbol}, st0::SyntaxTree, fi::FileInfo,
+        context_module::Module, world::UInt
+    )
+    JS.numchildren(st0) ≥ 2 || return nothing
+    lhs = st0[1]
+    JS.head(lhs) in (:., :ref) && return nothing # Skip property assignment like obj.field = value
+    if is_short_function_lhs(lhs)
+        extract_short_function_symbol!(symbols, st0, fi, context_module, world)
+        return nothing
+    end
+    rhs = st0[2]
+    range = jsobj_to_range(st0, fi)
+    detail = lstrip(JS.sourcetext(st0))
+    kind = is_anonymous_function_rhs(rhs) ? SymbolKind.Function : SymbolKind.Variable
+    extract_assignment_symbols!(
+        symbols, lhs, rhs, range, kind, detail, fi, context_module, world)
+    return nothing
+end
+
+function is_short_function_lhs(lhs::SyntaxTree)
+    lhs = unwrap_funcdef_sig(lhs)
+    return JS.head(lhs) === :call || is_mainfunc0(lhs)
+end
+
+# Short-form function definition: `f(x) = x` or `f(x) where T = x`
+function extract_short_function_symbol!(
+        symbols::Vector{DocumentSymbol}, st0::SyntaxTree, fi::FileInfo,
+        context_module::Module, world::UInt;
+        range_node::SyntaxTree = st0
+    )
+    JS.numchildren(st0) ≥ 2 || return nothing
+    sig = st0[1]
+    name, name_node = @something extract_function_name(sig) return nothing
+    children = @something extract_scoped_children(st0, fi, context_module, world) Some(nothing)
+    detail = lstrip(JS.sourcetext(sig)) * " ="
+    push!(symbols, DocumentSymbol(;
+        name,
+        detail,
+        kind = SymbolKind.Function,
+        range = jsobj_to_range(range_node, fi),
+        selectionRange = jsobj_to_range(name_node, fi),
+        children))
+    return nothing
+end
+
+extract_let_symbol!(args...) = extract_namespace_symbol!(args..., "let ")
+
+extract_while_symbol!(args...) = extract_namespace_symbol!(args..., "while ")
+
+extract_for_symbol!(args...) = extract_namespace_symbol!(args..., "for ")
+
+function extract_namespace_symbol!(
+        symbols::Vector{DocumentSymbol}, st0::SyntaxTree, fi::FileInfo,
+        context_module::Module, world::UInt, prefix::AbstractString
+    )
+    JS.numchildren(st0) ≥ 2 || return nothing
+    children = @something extract_scoped_children(st0, fi, context_module, world) return nothing
+    body = st0[end]
+    if JS.head(body) === :block
+        extract_macrocalls_from_block!(children, body, fi, context_module, world)
+    end
+    push!(symbols, DocumentSymbol(;
+        name = " ",
+        detail = rstrip(prefix * lstrip(JS.sourcetext(st0[1]))),
+        kind = SymbolKind.Namespace,
+        range = jsobj_to_range(st0, fi),
+        selectionRange = jsobj_to_range(st0[1], fi),
+        children))
+    return nothing
+end
+
+function extract_if_symbol!(
+        symbols::Vector{DocumentSymbol}, st0::SyntaxTree, fi::FileInfo,
+        context_module::Module, world::UInt;
+        prefix::AbstractString = "if ",
+        range_node::SyntaxTree = st0
+    )
+    JS.numchildren(st0) ≥ 2 || return nothing
+    children = DocumentSymbol[]
+    extract_if_children!(children, st0, fi, context_module, world)
+    isempty(children) && return nothing
+    push!(symbols, DocumentSymbol(;
+        name = " ",
+        detail = rstrip(prefix * lstrip(JS.sourcetext(st0[1]))),
+        kind = SymbolKind.Namespace,
+        range = jsobj_to_range(range_node, fi),
+        selectionRange = jsobj_to_range(st0[1], fi),
+        children))
+    return nothing
+end
+
+function extract_if_children!(
+        children::Vector{DocumentSymbol}, st0::SyntaxTree, fi::FileInfo,
+        context_module::Module, world::UInt
+    )
+    for i in 2:JS.numchildren(st0)
+        child = st0[i]
+        k = JS.head(child)
+        if k === :block
+            extract_toplevel_symbols!(children, child, fi, context_module, world)
+        elseif k === :elseif || k === :if
+            extract_if_children!(children, child, fi, context_module, world)
+        end
+    end
+    return nothing
+end
+
+function extract_macrocalls_from_block!(
+        symbols::Vector{DocumentSymbol}, st::SyntaxTree, fi::FileInfo,
+        context_module::Module, world::UInt
+    )
+    for i = 1:JS.numchildren(st)
+        child = st[i]
+        if JS.head(child) === :macrocall
+            extract_macrocall_symbol!(symbols, child, fi, context_module, world)
+        end
+    end
+    return nothing
+end
+
+function extract_macrocall_symbol!(
+        symbols::Vector{DocumentSymbol}, st0::SyntaxTree, fi::FileInfo,
+        context_module::Module, world::UInt
+    )
+    macro_name = get_macrocall_name(st0)
+    if macro_name == "@enum"
+        extract_enum_symbol!(symbols, st0, fi)
+    elseif macro_name == "@static"
+        extract_static_if_symbol!(symbols, st0, fi, context_module, world)
+    elseif macro_name == "@testset"
+        extract_testset_symbol!(symbols, st0, fi, context_module, world)
+    elseif macro_name == "@test"
+        extract_test_symbol!(symbols, st0, fi)
+    else
+        extract_toplevel_symbols!(symbols, st0, fi, context_module, world)
+    end
+    return nothing
+end
+
+function extract_static_if_symbol!(
+        symbols::Vector{DocumentSymbol}, st0::SyntaxTree, fi::FileInfo,
+        context_module::Module, world::UInt
+    )
+    JS.numchildren(st0) ≥ 3 || return nothing
+    if_node = st0[3]
+    JS.head(if_node) === :if || return nothing
+    extract_if_symbol!(symbols, if_node, fi, context_module, world;
+        prefix = "@static if ", range_node = st0)
+    return nothing
+end
+
+function get_macrocall_name(st0::SyntaxTree)
+    JS.numchildren(st0) ≥ 1 || return nothing
+    macro_node = st0[1]
+    if JS.head(macro_node) === :.
+        JS.numchildren(macro_node) ≥ 2 || return nothing
+        rhs = macro_node[2]
+        if JS.head(rhs) in (:quote, :inert) && JS.numchildren(rhs) ≥ 1
+            return get_name_val(rhs[1])
+        else
+            return get_name_val(rhs)
+        end
+    else
+        return get_name_val(macro_node)
+    end
+end
+
+function extract_testset_symbol!(
+        symbols::Vector{DocumentSymbol}, st0::SyntaxTree, fi::FileInfo,
+        context_module::Module, world::UInt
+    )
+    JS.numchildren(st0) ≥ 3 || return nothing
+
+    # Find the description string node (may not be at a fixed position if
+    # CustomTestSet or options are present before the description)
+    description_node = nothing
+    for i = 3:JS.numchildren(st0)-1
+        child = st0[i]
+        if is_string_literal(child) || JS.head(child) === :string
+            description_node = child
+            break
+        end
+    end
+    description = if isnothing(description_node)
+        ""
+    elseif is_string_literal(description_node)
+        description_node.value::String
+    else
+        @something extract_string_content(description_node) ""
+    end
+
+    body = st0[end]
+    body_kind = JS.head(body)
+    children = DocumentSymbol[]
+    if body_kind === :block
+        extract_toplevel_symbols!(children, body, fi, context_module, world)
+    elseif body_kind === :for || body_kind === :let
+        JS.numchildren(body) ≥ 2 || return nothing
+        body_block = body[end]
+        if JS.head(body_block) === :block
+            extract_toplevel_symbols!(children, body_block, fi, context_module, world)
+        end
+    elseif body_kind === :call
+        # Function call: @testset "desc" test_func()
+        # No children to extract, the test function itself is the body
+    else
+        extract_toplevel_symbol!(children, body, fi, context_module, world)
+    end
+
+    # For @testset let, use bindings node as selection range since there's no description
+    selection_node = !isnothing(description_node) ? description_node :
+        body_kind === :let ? body[1] : body
+
+    push!(symbols, DocumentSymbol(;
+        name = isempty(description) ? "@testset" : ("@testset \"$(description)\""),
+        detail = first(split(JS.sourcetext(st0), '\n')),
+        kind = SymbolKind.Event,
+        range = jsobj_to_range(st0, fi),
+        selectionRange = jsobj_to_range(selection_node, fi),
+        children = @somereal children Some(nothing)))
+    return nothing
+end
+
+function extract_string_content(st0::SyntaxTree)
+    JS.head(st0) === :string || return nothing
+    JS.numchildren(st0) ≥ 1 || return nothing
+    first_child = st0[1]
+    if JS.numchildren(st0) == 1 && is_string_literal(first_child)
+        # Simple string without interpolation
+        return first_child.value::String
+    else
+        # Interpolated string - extract content from source text
+        src = JS.sourcetext(st0)
+        return startswith(src, '"') && endswith(src, '"') ? strip(src, '"') : src
+    end
+end
+
+function extract_test_symbol!(symbols::Vector{DocumentSymbol}, st0::SyntaxTree, fi::FileInfo)
+    JS.numchildren(st0) ≥ 3 || return nothing
+    expr_node = st0[3]
+    expr_text = lstrip(JS.sourcetext(expr_node))
+    push!(symbols, DocumentSymbol(;
+        name = expr_text,
+        detail = "@test " * expr_text,
+        kind = SymbolKind.Boolean,
+        range = jsobj_to_range(st0, fi),
+        selectionRange = jsobj_to_range(expr_node, fi)))
+    return nothing
+end
+
+function extract_enum_symbol!(symbols::Vector{DocumentSymbol}, st0::SyntaxTree, fi::FileInfo)
+    JS.numchildren(st0) ≥ 3 || return nothing
+    type_node = st0[3]
+    name_node = type_node
+    if JS.head(type_node) === :(::)
+        JS.numchildren(type_node) ≥ 1 || return nothing
+        name_node = type_node[1]
+    end
+    name = @something get_name_val(name_node) return nothing
+    children = DocumentSymbol[]
+    for i = 4:JS.numchildren(st0)
+        extract_enum_value!(children, st0[i], name, fi)
+    end
+    push!(symbols, DocumentSymbol(;
+        name,
+        detail = "@enum " * lstrip(JS.sourcetext(type_node)),
+        kind = SymbolKind.Enum,
+        range = jsobj_to_range(st0, fi),
+        selectionRange = jsobj_to_range(name_node, fi),
+        children = @somereal children Some(nothing)))
+    return nothing
+end
+
+function extract_enum_value!(
+        symbols::Vector{DocumentSymbol}, st0::SyntaxTree, enum_name::String, fi::FileInfo
+    )
+    if JS.head(st0) === :block
+        for i = 1:JS.numchildren(st0)
+            extract_enum_value!(symbols, st0[i], enum_name, fi)
+        end
+        return nothing
+    end
+    name_node = st0
+    if JS.head(st0) === :(=)
+        JS.numchildren(st0) ≥ 1 || return nothing
+        name_node = st0[1]
+    end
+    name = @something get_name_val(name_node) return nothing
+    push!(symbols, DocumentSymbol(;
+        name,
+        detail = name * "::" * enum_name,
+        kind = SymbolKind.EnumMember,
+        range = jsobj_to_range(st0, fi),
+        selectionRange = jsobj_to_range(name_node, fi)))
+    return nothing
+end
+
+# Binding-based extraction for scoped children (function body, let block, etc.)
+function extract_scoped_children(
+        st0::SyntaxTree, fi::FileInfo, context_module::Module, world::UInt;
+        soft_scope::Bool = false
+    )
+    (; ctx3) = try
+        jl_lower_for_scope_resolution(context_module, world, st0; soft_scope)
+    catch
+        return nothing
+    end
+    parent_map, node_map = build_node_maps(st0)
+    # Pass the root construct's range so that scope analysis doesn't create
+    # duplicate Namespace symbols for the root construct itself
+    root_range = (JS.first_byte(st0), JS.last_byte(st0))
+    return @somereal extract_local_symbols_from_scopes(ctx3, parent_map, node_map, fi, root_range) Some(nothing)
+end
+
+build_node_maps(st0::SyntaxTree) =
+    build_node_maps!(Dict{Tuple{Int,Int},SyntaxTree}(),
+                     Dict{Tuple{Int,Int},SyntaxTree}(), st0, nothing)
+function build_node_maps!(
+        parent_map::Dict{Tuple{Int,Int},SyntaxTree},
+        node_map::Dict{Tuple{Int,Int},SyntaxTree},
+        st0::SyntaxTree,
+        parent::Union{Nothing,SyntaxTree}
+    )
+    fb, lb = JS.first_byte(st0), JS.last_byte(st0)
+    if !(iszero(fb) && iszero(lb))
+        if parent !== nothing
+            parent_map[(fb,lb)] = parent
+        end
+        node_map[(fb,lb)] = st0
+    end
+    for i in 1:JS.numchildren(st0)
+        build_node_maps!(parent_map, node_map, st0[i], st0)
+    end
+    return parent_map, node_map
+end
+
+function binding_provenance_range(ctx3::JL.VariableAnalysisContext, bid::Int)
+    provs = JS.flattened_provenance(JL.binding_ex(ctx3, bid))
+    isempty(provs) && return nothing
+    prov = last(provs)
+    return (JS.first_byte(prov), JS.last_byte(prov))
+end
+
+function build_func_to_scopes(ctx3::JL.VariableAnalysisContext)
+    # Keyed by binding id: scopes of every definition of a binding (JL keys
+    # `closure_bindings` per definition-site lambda) merge under the one
+    # symbol rendered for it.
+    func_to_scopes = Dict{Int,Vector{Int}}()
+    main_by_range = Dict{Tuple{Int,Int},Int}()
+    main_by_lambda_name = Dict{Tuple{Int,String},Set{Int}}()
+    helper_scopes = Pair{JL.ClosureKey,Vector{Int}}[]
+    for (func_key, cb) in ctx3.closure_bindings
+        bid = func_key.binding
+        scope_ids = Int[lb.scope_id for lb in cb.lambdas]
+        if !isempty(scope_ids)
+            append!(get!(Vector{Int}, func_to_scopes, bid), scope_ids)
+        end
+        binfo = JL.get_binding(ctx3, bid)
+        # Detect kw body/sorter pattern: #funcname#N or #kw_body#funcname#N
+        if occursin(r"^#(?:kw_body#)?.+#\d+$", binfo.name)
+            push!(helper_scopes, func_key => scope_ids)
+        else
+            key = (func_key.lam, binfo.name)
+            push!(get!(Set{Int}, main_by_lambda_name, key), bid)
+            range = @something binding_provenance_range(ctx3, bid) continue
+            main_by_range[range] = bid
+        end
+    end
+    # Prefer provenance ranges, which distinguish same-named definitions in a
+    # lambda. A binding shared by nested redefinitions retains only its first
+    # provenance, so fall back to an unambiguous definition-site lambda match.
+    for (helper_key, scope_ids) in helper_scopes
+        isempty(scope_ids) && continue
+        helper_bid = helper_key.binding
+        provs = JS.flattened_provenance(JL.binding_ex(ctx3, helper_bid))
+        isempty(provs) && continue
+        prov = last(provs)
+        range = (JS.first_byte(prov), JS.last_byte(prov))
+        main_bid = get(main_by_range, range, nothing)
+        if main_bid === nothing
+            name = @something get_name_val(prov) continue
+            candidates = get(main_by_lambda_name, (helper_key.lam, name), nothing)
+            candidates === nothing && continue
+            length(candidates) == 1 || continue
+            main_bid = only(candidates)
+        end
+        haskey(func_to_scopes, main_bid) || continue
+        append!(func_to_scopes[main_bid], scope_ids)
+    end
+    return func_to_scopes
+end
+
+struct LocalScopeContext
+    ctx3::JL.VariableAnalysisContext
+    parent_map::Dict{Tuple{Int,Int},SyntaxTree}
+    node_map::Dict{Tuple{Int,Int},SyntaxTree}
+    scope_children::Dict{Int,Vector{Int}}
+    func_scope_ids::Set{Int}
+    func_to_scopes::Dict{Int,Vector{Int}}
+    fi::FileInfo
+    seen::Set{Tuple{Int,Int}}
+    root_range::Tuple{Int,Int}
+    static_param_names::Set{String}
+end
+function LocalScopeContext(
+        lctx::LocalScopeContext;
+        ctx3::JL.VariableAnalysisContext = lctx.ctx3,
+        parent_map::Dict{Tuple{Int, Int}, SyntaxTree} = lctx.parent_map,
+        node_map::Dict{Tuple{Int, Int}, SyntaxTree} = lctx.node_map,
+        scope_children::Dict{Int, Vector{Int}} = lctx.scope_children,
+        func_scope_ids::Set{Int} = lctx.func_scope_ids,
+        func_to_scopes::Dict{Int, Vector{Int}} = lctx.func_to_scopes,
+        fi::FileInfo = lctx.fi,
+        seen::Set{Tuple{Int, Int}} = lctx.seen,
+        root_range::Tuple{Int, Int} = lctx.root_range,
+        static_param_names::Set{String} = lctx.static_param_names
+    )
+    return LocalScopeContext(
+        ctx3, parent_map, node_map, scope_children, func_scope_ids, func_to_scopes,
+        fi, seen, root_range, static_param_names
+    )
+end
+
+function extract_local_symbols_from_scopes(
+        ctx3::JL.VariableAnalysisContext, parent_map::Dict{Tuple{Int,Int},SyntaxTree},
+        node_map::Dict{Tuple{Int,Int},SyntaxTree},
+        fi::FileInfo, root_range::Tuple{Int,Int}=(0,0)
+    )
+    scopes = ctx3.scopes
+    isempty(scopes) && return nothing
+    func_to_scopes = build_func_to_scopes(ctx3)
+    func_scope_ids = Set{Int}()
+    for scope_ids in values(func_to_scopes)
+        union!(func_scope_ids, scope_ids)
+    end
+    # Build scope tree from parent_id relationships (for hierarchical nesting)
+    scope_children = Dict{Int,Vector{Int}}()
+    for scope in scopes
+        scope.parent_id == 0 && continue
+        1 ≤ scope.parent_id ≤ length(scopes) || continue
+        push!(get!(Vector{Int}, scope_children, scope.parent_id), scope.id)
+    end
+    # Root scopes: not nested function scopes, and parent is outside our scope set.
+    # Descendant scopes are discovered through `scope_children` via `extract_child_scope_symbols!`.
+    root_scope_ids = Int[]
+    for scope in scopes
+        scope.id in func_scope_ids && continue
+        is_root = scope.parent_id == 0 || !(1 ≤ scope.parent_id ≤ length(scopes))
+        is_root || continue
+        push!(root_scope_ids, scope.id)
+    end
+    # Collect static parameter names once from all scopes upfront.
+    # This is needed because `where` clauses create intermediate scope_blocks
+    # with the type parameter as `:local`, while the function lambda scope
+    # has the same name as `:static_parameter`.
+    static_param_names = collect_static_param_names(
+        ctx3, root_scope_ids, scope_children, func_scope_ids)
+    lctx = LocalScopeContext(ctx3, parent_map, node_map, scope_children, func_scope_ids,
+        func_to_scopes, fi, Set{Tuple{Int,Int}}(), root_range, static_param_names)
+    return extract_local_scope_bindings(lctx, root_scope_ids)
+end
+
+function extract_local_scope_bindings(lctx::LocalScopeContext, scope_ids::Vector{Int})
+    symbols = DocumentSymbol[]
+    extract_local_scope_bindings!(symbols, lctx, scope_ids)
+    return symbols
+end
+function extract_local_scope_bindings!(
+        symbols::Vector{DocumentSymbol}, lctx::LocalScopeContext,
+        scope_ids::Vector{Int}
+    )
+    (; ctx3, parent_map, func_to_scopes) = lctx
+    for scope_id in scope_ids
+        1 ≤ scope_id ≤ length(ctx3.scopes) || continue
+        scope = ctx3.scopes[scope_id]
+        for (_, bid) in scope.vars
+            binfo = JL.get_binding(ctx3, bid)
+            binfo.is_internal && continue
+            contains(binfo.name, '#') && continue
+            binfo.kind === :global && continue
+            # Skip non-static_parameter bindings if a static_parameter with the same name exists
+            if binfo.kind !== :static_parameter && binfo.name in lctx.static_param_names
+                continue
+            end
+            binding_node = JL.binding_ex(ctx3, bid)
+            prov = JS.flattened_provenance(binding_node)
+            isempty(prov) && continue
+            source_node = first(prov)
+            # TODO This is a variable introduced in macro expanded code
+            # For now we completely ignore such cases, but in the future we might want to
+            # include such variables as document-symbols too.
+            # For example, variables like `group` that are implicitly introduced in cases like
+            # `@info "log" x = x` may not be useful in most cases, but in cases like
+            # `func(x) = (@asis y = 42; x + y)` using `macro asis(x); :($(esc(x))); end`,
+            # we might want `y` to appear in the outline.
+            if length(prov) > 1
+                if !(is_nospecialize_or_specialize_macrocall3(source_node) ||
+                     # After pruning st0 the `@nospecialize` textref can survive in st0 macrocall shape.
+                     is_nospecialize_or_specialize_macrocall0(source_node))
+                    continue
+                end
+            end
+            fb, lb = JS.first_byte(source_node), JS.last_byte(source_node)
+            (iszero(fb) && iszero(lb)) && continue
+            # Skip duplicates (e.g., from kwsorter scope merging)
+            (fb, lb) in lctx.seen && continue
+            push!(lctx.seen, (fb, lb))
+            range = jsobj_to_range(source_node, lctx.fi)
+            selectionRange = range
+            detail = nothing
+            anon_scope_ids = nothing
+            is_func = haskey(func_to_scopes, bid)
+            if is_func
+                kind = SymbolKind.Function
+                parent = get(parent_map, (fb,lb), nothing)
+                if !isnothing(parent) && JS.head(parent) === :call
+                    call_fb, call_lb = JS.first_byte(parent), JS.last_byte(parent)
+                    grandparent = get(parent_map, (call_fb, call_lb), nothing)
+                    is_short_form = !isnothing(grandparent) && JS.head(grandparent) === :(=)
+                    detail = is_short_form ?
+                        JS.sourcetext(parent) * " =" :
+                        "function " * JS.sourcetext(parent)
+                end
+            elseif binfo.kind === :static_parameter
+                kind = SymbolKind.TypeParameter
+                parent = get(parent_map, (fb,lb), nothing)
+                if !isnothing(parent) && JS.head(parent) === :<:
+                    detail = JS.sourcetext(parent)
+                end
+            elseif binfo.kind === :argument
+                if JS.head(source_node) === :macrocall
+                    detail = JS.sourcetext(source_node)
+                else
+                    detail = extract_argument_detail(parent_map, fb, lb)
+                end
+                # Why doesn't LSP provide `SymbolKind.Argument`?
+                # It's absolutely necessary before `SymbolKind.Event`...
+                # Anyway, here we use `SymbolKind.Object` to make it clear
+                # that this is different from :local bindings
+                kind = SymbolKind.Object
+            else
+                anon_scope_ids = find_anon_func_scope_ids(parent_map, fb, lb, func_to_scopes, ctx3)
+                if anon_scope_ids !== nothing
+                    kind = SymbolKind.Function
+                    parent = get(parent_map, (fb, lb), nothing)
+                    detail = !isnothing(parent) ? lstrip(JS.sourcetext(parent)) : nothing
+                else
+                    kind = SymbolKind.Variable
+                    detail = extract_local_variable_detail(parent_map, fb, lb)
+                end
+            end
+            children_symbols = nothing
+            if is_func
+                child_scope_ids = func_to_scopes[bid]
+                child_lctx = LocalScopeContext(lctx;
+                    seen = Set{Tuple{Int,Int}}(), root_range = (0, 0),
+                    static_param_names = collect_static_param_names(
+                        ctx3, child_scope_ids, lctx.scope_children, lctx.func_scope_ids))
+                children_symbols = extract_local_scope_bindings(child_lctx, child_scope_ids)
+            elseif anon_scope_ids !== nothing
+                child_lctx = LocalScopeContext(lctx;
+                    seen = Set{Tuple{Int,Int}}(), root_range = (0, 0),
+                    static_param_names = collect_static_param_names(
+                        ctx3, anon_scope_ids, lctx.scope_children, lctx.func_scope_ids))
+                children_symbols = extract_local_scope_bindings(child_lctx, anon_scope_ids)
+            end
+            push!(symbols, DocumentSymbol(;
+                name = binfo.name,
+                detail,
+                kind,
+                range,
+                selectionRange,
+                children = @somereal children_symbols Some(nothing)))
+        end
+        # Process child scopes to create hierarchical scope symbols
+        extract_child_scope_symbols!(symbols, lctx, scope_id)
+    end
+    return symbols
+end
+
+collect_static_param_names(args...) = collect_static_param_names!(Set{String}(), args...)
+function collect_static_param_names!(
+        names::Set{String}, ctx3::JL.VariableAnalysisContext,
+        scope_ids::Vector{Int}, scope_children::Dict{Int,Vector{Int}},
+        func_scope_ids::Set{Int}
+    )
+    for scope_id in scope_ids
+        1 ≤ scope_id ≤ length(ctx3.scopes) || continue
+        for (_, bid) in ctx3.scopes[scope_id].vars
+            binfo = JL.get_binding(ctx3, bid)
+            binfo.kind === :static_parameter && push!(names, binfo.name)
+        end
+        child_ids = @something get(scope_children, scope_id, nothing) continue
+        # Filter out nested function scopes to avoid crossing function boundaries
+        non_func_child_ids = filter(id::Int -> id ∉ func_scope_ids, child_ids)
+        isempty(non_func_child_ids) && continue
+        collect_static_param_names!(names, ctx3, non_func_child_ids, scope_children, func_scope_ids)
+    end
+    return names
+end
+
+function extract_child_scope_symbols!(
+        symbols::Vector{DocumentSymbol}, lctx::LocalScopeContext, scope_id::Int
+    )
+    (; ctx3, seen) = lctx
+    child_ids = @something get(lctx.scope_children, scope_id, nothing) return nothing
+    # Group child scopes by their st0 source construct (for/let/while/try).
+    # Multiple lowered scope_blocks may map to the same source construct
+    # (e.g. a for loop creates scope_blocks for both iteration vars and body).
+    # Scopes without a construct (or whose construct is already processed)
+    # are collected as "transparent" and their bindings are inlined.
+    construct_groups = Dict{Tuple{Int,Int},Tuple{SyntaxTree,Vector{Int}}}()
+    transparent_ids = Int[]
+    for child_id in child_ids
+        child_id in lctx.func_scope_ids && continue
+        1 ≤ child_id ≤ length(ctx3.scopes) || continue
+        construct = find_scope_construct(ctx3.scopes[child_id], lctx.parent_map, lctx.node_map)
+        if construct === nothing
+            push!(transparent_ids, child_id)
+            continue
+        end
+        key = (JS.first_byte(construct), JS.last_byte(construct))
+        if key == lctx.root_range || key in seen
+            push!(transparent_ids, child_id)
+            continue
+        end
+        group = get!(construct_groups, key) do
+            (construct, Int[])
+        end
+        push!(group[2], child_id)
+    end
+    for (key, (construct, group_ids)) in construct_groups
+        construct_kind = JS.head(construct)
+        if construct_kind in (:function, :(=)) && defines_closure(lctx, group_ids)
+            append!(transparent_ids, group_ids)
+            continue
+        end
+        key in seen || push!(seen, key)
+        if construct_kind === :try
+            push_try_namespace_symbol!(symbols, construct, lctx, group_ids)
+        elseif construct_kind in (:function, :(=))
+            push_method_symbol!(symbols, construct, lctx, group_ids)
+        else
+            child_symbols = @somereal extract_local_scope_bindings(lctx, group_ids) continue
+            push_namespace_symbol!(symbols, construct, child_symbols, lctx.fi)
+        end
+    end
+    if !isempty(transparent_ids)
+        extract_local_scope_bindings!(symbols, lctx, transparent_ids)
+    end
+    return nothing
+end
+
+function defines_closure(lctx::LocalScopeContext, scope_ids::Vector{Int})
+    (; ctx3) = lctx
+    for scope_id in scope_ids
+        1 ≤ scope_id ≤ length(ctx3.scopes) || continue
+        if ctx3.scopes[scope_id].lambda_id == scope_id
+            scope_id in lctx.func_scope_ids && return true
+        else
+            child_ids = @something get(lctx.scope_children, scope_id, nothing) continue
+            defines_closure(lctx, child_ids) && return true
+        end
+    end
+    return false
+end
+
+function push_method_symbol!(
+        symbols::Vector{DocumentSymbol}, construct::SyntaxTree,
+        lctx::LocalScopeContext, group_ids::Vector{Int}
+    )
+    JS.numchildren(construct) ≥ 1 || return nothing
+    sig = construct[1]
+    name, name_node = @something extract_function_name(sig) return nothing
+    is_short_form = JS.head(construct) === :(=) ||
+        has_source_flags(construct, JS.SHORT_FORM_FUNCTION_FLAG)
+    sig_text = lstrip(JS.sourcetext(sig))
+    detail = is_short_form ? sig_text * " =" : "function " * sig_text
+    construct_range = (JS.first_byte(construct), JS.last_byte(construct))
+    range_node = get(lctx.parent_map, construct_range, nothing)
+    if range_node === nothing || JS.head(range_node) !== :global
+        range_node = construct
+    end
+    child_lctx = LocalScopeContext(lctx;
+        seen = Set{Tuple{Int,Int}}(), root_range = construct_range,
+        static_param_names = collect_static_param_names(
+            lctx.ctx3, group_ids, lctx.scope_children, lctx.func_scope_ids))
+    children = extract_local_scope_bindings(child_lctx, group_ids)
+    push!(symbols, DocumentSymbol(;
+        name,
+        detail,
+        kind = SymbolKind.Function,
+        range = jsobj_to_range(range_node, lctx.fi),
+        selectionRange = jsobj_to_range(name_node, lctx.fi),
+        children = @somereal children Some(nothing)))
+    return nothing
+end
+
+function push_namespace_symbol!(
+        symbols::Vector{DocumentSymbol}, construct::SyntaxTree,
+        children::Vector{DocumentSymbol}, fi::FileInfo
+    )
+    JS.numchildren(construct) ≥ 1 || return nothing
+    k = JS.head(construct)
+    prefix = k === :for ? "for " :
+             k === :while ? "while " :
+             k === :let ? "let " : ""
+    detail = rstrip(prefix * lstrip(JS.sourcetext(construct[1])))
+    push!(symbols, DocumentSymbol(;
+        name = " ",
+        detail,
+        kind = SymbolKind.Namespace,
+        range = jsobj_to_range(construct, fi),
+        selectionRange = jsobj_to_range(construct[1], fi),
+        children))
+    return nothing
+end
+
+# EST try node children are positional:
+#   [try_body, catch_var, catch_body, finally_body, else_body]
+# Missing parts use synthesized `:value` placeholders.
+const TRY_CLAUSE_POSITIONS =
+    (("try", 1), ("catch", 3), ("else", 5), ("finally", 4))
+
+function push_try_namespace_symbol!(
+        symbols::Vector{DocumentSymbol}, try_node::SyntaxTree,
+        lctx::LocalScopeContext, group_ids::Vector{Int}
+    )
+    (; ctx3, fi) = lctx
+    nc = JS.numchildren(try_node)
+    classified = Dict{String,Vector{Int}}()
+    for id in group_ids
+        clause_kind = _classify_try_clause(ctx3, id, try_node)
+        push!(get!(Vector{Int}, classified, clause_kind), id)
+    end
+    clause_children = DocumentSymbol[]
+    parts = String[]
+    for (clause_kind, child_idx) in TRY_CLAUSE_POSITIONS
+        child_idx ≤ nc || continue
+        child = try_node[child_idx]
+        is_synthesized_value(child) && continue
+        push!(parts, clause_kind)
+        clause_ids = @something get(classified, clause_kind, nothing) continue
+        clause_symbols = @somereal extract_local_scope_bindings(lctx, clause_ids) continue
+        push!(clause_children, DocumentSymbol(;
+            name = " ",
+            detail = clause_kind,
+            kind = SymbolKind.Namespace,
+            range = jsobj_to_range(child, fi),
+            selectionRange = jsobj_to_range(child, fi),
+            children = clause_symbols))
+    end
+    isempty(clause_children) && return nothing
+    push!(symbols, DocumentSymbol(;
+        name = " ",
+        detail = join(parts, " ... "),
+        kind = SymbolKind.Namespace,
+        range = jsobj_to_range(try_node, fi),
+        selectionRange = jsobj_to_range(try_node, fi),
+        children = clause_children))
+    return nothing
+end
+
+function _classify_try_clause(
+        ctx3::JL.VariableAnalysisContext, scope_id::Int,
+        try_node::SyntaxTree
+    )
+    1 ≤ scope_id ≤ length(ctx3.scopes) || return "try"
+    scope = ctx3.scopes[scope_id]
+    prov = JS.flattened_provenance(scope.node_id)
+    isempty(prov) && return "try"
+    source_node = first(prov)
+    fb = JS.first_byte(source_node)
+    lb = JS.last_byte(source_node)
+    nc = JS.numchildren(try_node)
+    for (clause_kind, child_idx) in TRY_CLAUSE_POSITIONS
+        child_idx ≤ nc || continue
+        child = try_node[child_idx]
+        if JS.first_byte(child) == fb && JS.last_byte(child) == lb
+            return clause_kind
+        end
+    end
+    return "try"
+end
+
+function find_scope_construct(
+        scope::JL.ScopeInfo,
+        parent_map::Dict{Tuple{Int,Int},SyntaxTree},
+        node_map::Dict{Tuple{Int,Int},SyntaxTree}
+    )
+    prov = JS.flattened_provenance(scope.node_id)
+    isempty(prov) && return nothing
+    source_node = first(prov)
+    k = JS.head(source_node)
+    fb, lb = JS.first_byte(source_node), JS.last_byte(source_node)
+    (iszero(fb) && iszero(lb)) && return nothing
+    if k in (:for, :while, :let, :try)
+        # Look up the actual st0 node via node_map, since the provenance node
+        # lives in the lowered graph and has different children.
+        return get(node_map, (fb, lb), nothing)
+    elseif k === :function
+        node = get(node_map, (fb, lb), nothing)
+        if node !== nothing && JS.head(node) in (:function, :(=))
+            return node
+        end
+    elseif k === :block
+        # In the new EST, try clause scopes have `block` provenance
+        # pointing to the block child of the try node.
+        # Walk up parent_map to find the enclosing try node.
+        node = get(parent_map, (fb, lb), nothing)
+        if node !== nothing && JS.head(node) === :try
+            return node
+        end
+    end
+    return nothing
+end
+
+function extract_argument_detail(
+        parent_map::Dict{Tuple{Int,Int},SyntaxTree}, fb::Int, lb::Int
+    )
+    parent = get(parent_map, (fb, lb), nothing)
+    detail = nothing
+    if !isnothing(parent) && (JS.head(parent) in (:(::), :kw, :...) ||
+            is_nospecialize_or_specialize_macrocall0(parent))
+        detail = lstrip(JS.sourcetext(parent))
+        fb, lb = JS.first_byte(parent), JS.last_byte(parent)
+        parent = get(parent_map, (fb, lb), nothing)
+    end
+    # Handle keyword arguments: `f(; kw)` or `f(; kw=default)`
+    # Only use parameters if we don't already have a more specific detail
+    if isnothing(detail) && !isnothing(parent) && JS.head(parent) === :parameters
+        detail = lstrip(JS.sourcetext(parent))
+    end
+    return detail
+end
+
+function extract_local_variable_detail(
+        parent_map::Dict{Tuple{Int,Int},SyntaxTree}, fb::Int, lb::Int
+    )
+    parent = get(parent_map, (fb, lb), nothing)
+    detail = nothing
+    # Handle type annotation: `x::T` or `x::T = value`
+    if !isnothing(parent) && JS.head(parent) === :(::)
+        detail = lstrip(JS.sourcetext(parent))
+        fb, lb = JS.first_byte(parent), JS.last_byte(parent)
+        parent = get(parent_map, (fb, lb), nothing)
+    end
+    # Handle named tuple destructuring: `(; x, y) = ...`
+    if !isnothing(parent) && JS.head(parent) === :parameters
+        fb, lb = JS.first_byte(parent), JS.last_byte(parent)
+        parent = get(parent_map, (fb, lb), nothing)
+    end
+    # Handle tuple destructuring: `x, y = ...` or `(a, b) = ...`
+    if !isnothing(parent) && JS.head(parent) === :tuple
+        fb, lb = JS.first_byte(parent), JS.last_byte(parent)
+        parent = get(parent_map, (fb, lb), nothing)
+    end
+    # Handle assignment: `x = value` or for-loop iteration: `for x in xs`
+    if !isnothing(parent) && JS.head(parent) === :(=)
+        fb, lb = JS.first_byte(parent), JS.last_byte(parent)
+        grandparent = get(parent_map, (fb, lb), nothing)
+        if !isnothing(grandparent) && JS.head(grandparent) === :for
+            detail = "for " * lstrip(JS.sourcetext(parent))
+        else
+            detail = first(split(strip(JS.sourcetext(parent)), '\n'))
+        end
+        parent = grandparent
+    end
+    # Handle local declaration: `local x` or `local x, y`
+    if !isnothing(parent) && JS.head(parent) === :local
+        detail = lstrip(JS.sourcetext(parent))
+    end
+    return detail
+end
+
+is_anonymous_function_rhs(st::SyntaxTree) = JS.head(st) === :-> ||
+    (JS.head(st) === :function && JS.numchildren(st) ≥ 1 && JS.head(st[1]) !== :call)
+
+function find_anon_func_scope_ids(
+        parent_map::Dict{Tuple{Int,Int},SyntaxTree}, fb::Int, lb::Int,
+        func_to_scopes::Dict{Int,Vector{Int}}, ctx3::JL.VariableAnalysisContext
+    )
+    parent = @something get(parent_map, (fb, lb), nothing) return nothing
+    JS.head(parent) === :(=) || return nothing
+    JS.numchildren(parent) ≥ 2 || return nothing
+    rhs = parent[2]
+    is_anonymous_function_rhs(rhs) || return nothing
+    anon_body = rhs[JS.numchildren(rhs)]
+    anon_fb, anon_lb = JS.first_byte(anon_body), JS.last_byte(anon_body)
+    for (func_bid, scope_ids) in func_to_scopes
+        binfo = JL.get_binding(ctx3, func_bid)
+        binfo.is_internal || continue
+        for scope_id in scope_ids
+            1 ≤ scope_id ≤ length(ctx3.scopes) || continue
+            scope_node = ctx3.scopes[scope_id].node_id
+            if JS.first_byte(scope_node) == anon_fb && JS.last_byte(scope_node) == anon_lb
+                return scope_ids
+            end
+        end
+    end
+    return nothing
+end

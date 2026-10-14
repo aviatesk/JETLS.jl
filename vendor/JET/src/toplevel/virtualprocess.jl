@@ -926,10 +926,17 @@ function virtual_process(interp::ConcreteInterpreter,
     # Note that we can't use the CassetteOverlay-like mechanism here for a cleaner
     # implementation, since Preferences.jl might be called within `macroexpand` or `lower`
     # of the main `_virtual_process!` loop, where we don't have control over execution.
+    # Registering the virtual module in the internal `uuid_cache` keeps the override in effect
+    # after this analysis, e.g. when a language server expands macros in the virtual module,
+    # whereas the documented `main_uuid` is effective only while it is set.
     pkgid = config.pkgid
     old_main_uuid = Preferences.main_uuid[]
     if pkgid !== nothing && pkgid.uuid !== nothing
-        Preferences.main_uuid[] = pkgid.uuid
+        if actual2virtual !== nothing
+            register_preferences_uuid!(context, pkgid.uuid)
+        else
+            Preferences.main_uuid[] = pkgid.uuid
+        end
     end
     res = VirtualProcessResult(actual2virtual)
     world = Base.get_world_counter()
@@ -957,6 +964,23 @@ function virtual_process(interp::ConcreteInterpreter,
     unique!(aggregation_policy(ToplevelAbstractAnalyzer(interp)), res.inference_error_reports)
 
     return res
+end
+
+const PREFERENCES_PKGID = Base.PkgId(Base.UUID("21216c6a-2e73-6563-6e65-726566657250"), "Preferences")
+
+# The analyzed code uses the copy of Preferences.jl loaded under its registered UUID, which
+# is not JET's own copy when JET is vendored under another UUID in JETLS releases.
+# The entries are never removed: virtual modules stay bound in `Main` and are never released,
+# so removing them would not free anything. Remove them, including the entries `get_uuid`
+# caches for their submodules, if virtual modules ever become releasable.
+function register_preferences_uuid!(virtual::Module, uuid::Base.UUID)
+    preferences = Base.maybe_root_module(PREFERENCES_PKGID)
+    preferences isa Module || return nothing
+    @invokelatest(isdefinedglobal(preferences, :uuid_cache)) || return nothing
+    uuid_cache = @invokelatest getglobal(preferences, :uuid_cache)
+    uuid_cache isa Dict{Module,Base.UUID} || return nothing
+    uuid_cache[virtual] = uuid
+    return nothing
 end
 
 # analysis is initiated or entered into new file
@@ -1313,6 +1337,39 @@ function eval_with_err_handling(state::InterpretationState, x::Expr)
     end
 end
 
+# Make the virtualized module of the analyzed package look like the root module that loading
+# the package defines, so that `pathof`, `pkgdir` and `pkgversion` work for it and its
+# submodules, wherever they are called from. Like package loading, this gives the module a
+# UUID, makes it its own parent, and registers the analyzed file as its origin in
+# `Base.pkgorigins`. The UUID is derived from the package UUID rather than being the package
+# UUID itself, so that the origin is not shared with the actual package when it is loaded in
+# this process from another path, e.g. by Revise. Preferences.jl thus needs the package UUID
+# to be registered separately.
+function setup_package_module!(state::InterpretationState, pkgmod::Module)
+    pkgid = @something state.config.pkgid return nothing
+    state.res.actual2virtual === nothing && return nothing
+    nameof(pkgmod) === Symbol(pkgid.name) || return nothing
+    vpkgid = virtual_package_id(pkgid)
+    @ccall jl_set_module_uuid(pkgmod::Any, convert(NTuple{2,UInt64}, vpkgid.uuid::Base.UUID)::NTuple{2,UInt64})::Cvoid
+    @ccall jl_set_module_parent(pkgmod::Any, pkgmod::Any)::Cvoid
+    @lock Base.require_lock begin
+        origin = get!(Base.PkgOrigin, Base.pkgorigins, vpkgid)
+        origin.path = state.filename
+        # `pkgversion` caches the version here, which may be stale since the last analysis
+        origin.version = nothing
+    end
+    if pkgid.uuid !== nothing
+        register_preferences_uuid!(pkgmod, pkgid.uuid)
+    end
+    return nothing
+end
+
+function virtual_package_id(pkgid::PkgId)
+    key = pkgid.uuid === nothing ? pkgid.name : string(pkgid.uuid)
+    return PkgId(Base.uuid5(VIRTUAL_PACKAGE_UUID_NAMESPACE, key), pkgid.name)
+end
+const VIRTUAL_PACKAGE_UUID_NAMESPACE = Base.UUID("2f1c5d24-7b0e-4a39-9d6e-8c3b1a5f0e72")
+
 # If `x` is a `function`/`=` definition whose signature contains `@main`,
 # rewrite the `@main` macrocall to a plain `main` identifier. This avoids
 # macro expansion failure when multiple standalone files defining `@main`
@@ -1397,315 +1454,6 @@ function lower_with_err_handling(interp::ConcreteInterpreter, ::JS.SyntaxNode, x
         end
         return lwr
     end
-end
-
-const TEST_MACRO_NAMES = Set{Symbol}((
-    Symbol("@test"),
-    Symbol("@test_broken"),
-    Symbol("@test_skip"),
-    Symbol("@test_throws"),
-    Symbol("@test_logs"),
-    Symbol("@test_warn"),
-    Symbol("@test_nowarn"),
-    Symbol("@test_deprecated"),
-    Symbol("@inferred"),
-    Symbol("@testset"),
-))
-
-function test_macro_name(mod::Module, @nospecialize(mac))
-    if mac isa GlobalRef
-        mac.mod === Test || return nothing
-        return mac.name
-    elseif mac isa Symbol
-        @invokelatest(isdefinedglobal(mod, mac)) || return nothing
-        isdefinedglobal(Test, mac) || return nothing
-        @invokelatest(getglobal(mod, mac)) === getglobal(Test, mac) || return nothing
-        return mac
-    elseif isexpr(mac, :., 2)
-        modname, name = mac.args
-        name isa QuoteNode || return nothing
-        name = name.value
-        name isa Symbol || return nothing
-        modname isa Symbol || return nothing
-        @invokelatest(isdefinedglobal(mod, modname)) || return nothing
-        @invokelatest(getglobal(mod, modname)) === Test || return nothing
-        return name
-    end
-    return nothing
-end
-
-# Prevent the synthetic result of a Test macro replacement from affecting the
-# surrounding inference result while preserving its runtime value.
-hide_test_replacement_value(@nospecialize(value)) =
-    Expr(:call, GlobalRef(Base, :inferencebarrier), value)
-
-function is_anonymous_test_function(@nospecialize(ex))
-    isexpr(ex, :->, 2) && return true
-    isexpr(ex, :function, 2) || return false
-    sig = first(ex.args)
-    while isexpr(sig, (:(::), :where)) && !isempty(sig.args)
-        sig = first(sig.args)
-    end
-    return isexpr(sig, :tuple)
-end
-
-# Calls and access syntax preserve their operands through ordinary closure capture.
-const THUNK_SAFE_TEST_CALL_HEADS = (:call, :ref, :., :parameters, :kw, :...)
-
-# These heads do not introduce bindings by themselves and are safe when all children are safe.
-const THUNK_SAFE_TEST_CONTROL_HEADS = (:block, :&&, :||, :if, :comparison)
-
-# Literal construction does not observe or modify the enclosing lexical scope.
-const THUNK_SAFE_TEST_LITERAL_HEADS = (
-    :tuple, :vect, :vcat, :hcat, :ncat, :typed_vcat, :typed_hcat, :typed_ncat,
-    :row, :nrow, :string,
-)
-
-# `where` binds type variables only within its type expression; these heads do not define
-# names in the surrounding scope.
-const THUNK_SAFE_TEST_TYPE_HEADS = (:curly, :(::), :where)
-
-# Virtual processing concretizes top-level closure definitions so that later inference can
-# use their methods. When a closure is defined in a conditional branch of a test expression,
-# realizing that definition also selects the preceding condition for concrete execution.
-# Outlining the test expression into a zero-argument function instead leaves its nested
-# closures inside an ordinary method body, where inference can analyze the control flow
-# without concretely executing the condition.
-#
-# Introducing a function scope is only safe for expression forms whose enclosing-scope
-# behavior is implemented by closure capture. In particular, bindings, named definitions,
-# control transfers, and unknown macro syntax must remain inline, so this is intentionally a
-# positive list of reads, calls, expression-level control flow, and anonymous functions.
-function is_test_expression_thunk_safe(@nospecialize(ex))
-    ex isa Expr || return true
-    isexpr(ex, (:quote, :inert)) && return true
-    is_anonymous_test_function(ex) && return true
-    if isexpr(ex, :do, 2)
-        call, closure = ex.args
-        return is_test_expression_thunk_safe(call) &&
-            is_anonymous_test_function(closure)
-    end
-    (ex.head ∈ THUNK_SAFE_TEST_CALL_HEADS ||
-     ex.head ∈ THUNK_SAFE_TEST_CONTROL_HEADS ||
-     ex.head ∈ THUNK_SAFE_TEST_LITERAL_HEADS ||
-     ex.head ∈ THUNK_SAFE_TEST_TYPE_HEADS) || return false
-    return all(is_test_expression_thunk_safe, ex.args)
-end
-
-# Unconditional anonymous functions do not force unrelated control flow to be concretized,
-# so only detect definitions nested under short-circuit or branch semantics.
-function has_conditionally_defined_test_function(
-        @nospecialize(ex), conditional::Bool = false)
-    ex isa Expr || return false
-    isexpr(ex, (:quote, :inert)) && return false
-    is_anonymous_test_function(ex) && return conditional
-    if isexpr(ex, :do, 2)
-        call, closure = ex.args
-        return has_conditionally_defined_test_function(call, conditional) ||
-            conditional && is_anonymous_test_function(closure)
-    elseif isexpr(ex, (:&&, :||), 2)
-        return has_conditionally_defined_test_function(first(ex.args), conditional) ||
-            has_conditionally_defined_test_function(last(ex.args), true)
-    elseif isexpr(ex, :if)
-        isempty(ex.args) && return false
-        has_conditionally_defined_test_function(first(ex.args), conditional) && return true
-        return any(ex.args[2:end]) do @nospecialize(branch)
-            has_conditionally_defined_test_function(branch, true)
-        end
-    elseif isexpr(ex, :comparison)
-        for (i, arg) in enumerate(ex.args)
-            has_conditionally_defined_test_function(arg, conditional || i ≥ 5) &&
-                return true
-        end
-        return false
-    end
-    return any(arg -> has_conditionally_defined_test_function(arg, conditional), ex.args)
-end
-
-# `conditionally_evaluated` accounts for control flow introduced by the replacement itself,
-# such as the `if skip` surrounding the tested expression for `@test skip=...`.
-function should_wrap_test_expression_in_thunk(
-        @nospecialize(ex); conditionally_evaluated::Bool = false)
-    return is_test_expression_thunk_safe(ex) &&
-        has_conditionally_defined_test_function(ex, conditionally_evaluated)
-end
-
-function wrap_test_expression_in_thunk(@nospecialize(ex))
-    thunk = gensym(:test_expression)
-    ret = quote
-        let $thunk = () -> $ex
-            $thunk()
-        end
-    end
-    return Base.remove_linenums!(ret)
-end
-
-function maybe_wrap_test_expression_in_thunk(@nospecialize(ex))
-    should_wrap_test_expression_in_thunk(ex) || return ex
-    return wrap_test_expression_in_thunk(ex)
-end
-
-function discard_test_expression_value(@nospecialize(ex))
-    ret = quote
-        try
-            $ex
-        catch
-        end
-        $(hide_test_replacement_value(nothing))
-    end
-    return Base.remove_linenums!(ret)
-end
-
-function preserve_test_expression_value(@nospecialize(exs...))
-    value = gensym(:test_value)
-    ret = quote
-        let $value = nothing
-            try
-                $(exs[1:end-1]...)
-                $value = $(last(exs))
-            catch
-            end
-            $(hide_test_replacement_value(value))
-        end
-    end
-    return Base.remove_linenums!(ret)
-end
-
-macro_argument_value(@nospecialize(ex)) = isexpr(ex, :(=), 2) ? last(ex.args) : ex
-
-function replace_test(@nospecialize(ex), kws::Vector{Any})
-    broken = Any[kw.args[2] for kw in kws if isexpr(kw, :(=), 2) && kw.args[1] === :broken]
-    skip = Any[kw.args[2] for kw in kws if isexpr(kw, :(=), 2) && kw.args[1] === :skip]
-    kws = Any[kw for kw in kws if !(isexpr(kw, :(=), 2) && kw.args[1] ∈ (:skip, :broken))]
-    length(broken) ≤ 1 || return nothing
-    length(skip) ≤ 1 || return nothing
-    isempty(skip) || isempty(broken) || return nothing
-    try
-        Test.test_expr!("@test", ex, kws...)
-    catch
-        return nothing
-    end
-    if !isempty(skip)
-        skip = only(skip)
-        if should_wrap_test_expression_in_thunk(ex; conditionally_evaluated = true)
-            thunk = gensym(:test_expression)
-            test_expr = discard_test_expression_value(Expr(:call, thunk))
-            ret = quote
-                let $thunk = () -> $ex
-                    if $skip
-                        $(hide_test_replacement_value(nothing))
-                    else
-                        $test_expr
-                    end
-                end
-            end
-        else
-            test_expr = discard_test_expression_value(ex)
-            ret = quote
-                if $skip
-                    $(hide_test_replacement_value(nothing))
-                else
-                    $test_expr
-                end
-            end
-        end
-        return Base.remove_linenums!(ret)
-    end
-    test_expr = discard_test_expression_value(maybe_wrap_test_expression_in_thunk(ex))
-    if !isempty(broken)
-        return Expr(:block, only(broken), test_expr)
-    end
-    return test_expr
-end
-
-function replace_test_macrocall(name::Symbol, args::Vector{Any})
-    exs = args[3:end]
-    if name === Symbol("@test")
-        isempty(exs) && return nothing
-        return replace_test(first(exs), Any[exs[2:end]...])
-    elseif name === Symbol("@test_broken")
-        isempty(exs) && return nothing
-        ex, kws = first(exs), exs[2:end]
-        try
-            Test.test_expr!("@test_broken", ex, kws...)
-        catch
-            return nothing
-        end
-        return discard_test_expression_value(maybe_wrap_test_expression_in_thunk(ex))
-    elseif name === Symbol("@test_skip")
-        isempty(exs) && return nothing
-        ex, kws = first(exs), exs[2:end]
-        try
-            Test.test_expr!("@test_skip", ex, kws...)
-        catch
-            return nothing
-        end
-        return hide_test_replacement_value(nothing)
-    elseif name === Symbol("@test_throws")
-        length(exs) == 2 || return nothing
-        ex = maybe_wrap_test_expression_in_thunk(Expr(:block, exs...))
-        return discard_test_expression_value(ex)
-    elseif name === Symbol("@test_logs")
-        isempty(exs) && return nothing
-        values = Any[macro_argument_value(ex) for ex in exs[1:end-1]]
-        push!(values, maybe_wrap_test_expression_in_thunk(last(exs)))
-        return preserve_test_expression_value(values...)
-    elseif name === Symbol("@test_warn")
-        length(exs) == 2 || return nothing
-        exs = Any[exs...]
-        exs[end] = maybe_wrap_test_expression_in_thunk(last(exs))
-        return preserve_test_expression_value(exs...)
-    elseif name === Symbol("@test_nowarn")
-        length(exs) == 1 || return nothing
-        return preserve_test_expression_value(
-            maybe_wrap_test_expression_in_thunk(only(exs)))
-    elseif name === Symbol("@test_deprecated")
-        1 ≤ length(exs) ≤ 2 || return nothing
-        exs = Any[exs...]
-        exs[end] = maybe_wrap_test_expression_in_thunk(last(exs))
-        return preserve_test_expression_value(exs...)
-    elseif name === Symbol("@inferred")
-        1 ≤ length(exs) ≤ 2 || return nothing
-        exs = Any[exs...]
-        exs[end] = maybe_wrap_test_expression_in_thunk(last(exs))
-        return preserve_test_expression_value(exs...)
-    elseif name === Symbol("@testset")
-        isempty(exs) && return nothing
-        values = Any[macro_argument_value(ex) for ex in exs[1:end-1]]
-        body = last(exs)
-        if isexpr(body, :for, 2)
-            body = copy(body)
-            body.args[2] = Expr(:block, values..., body.args[2])
-            empty!(values)
-        end
-        ret = quote
-            let
-                try
-                    $(values...)
-                    $body
-                catch
-                end
-                $(hide_test_replacement_value(nothing))
-            end
-        end
-        return Base.remove_linenums!(ret)
-    end
-    return nothing
-end
-
-function replace_test_macrocalls(@nospecialize(x), mod::Module)
-    x isa Expr || return x
-    isexpr(x, (:quote, :inert)) && return x
-    if isexpr(x, :macrocall)
-        name = test_macro_name(mod, first(x.args))
-        name ∈ TEST_MACRO_NAMES || return x
-        replaced = Expr(:macrocall, x.args[1], x.args[2],
-            map(@nospecialize(arg) -> replace_test_macrocalls(arg, mod), x.args[3:end])...)
-        replacement = replace_test_macrocall(name, replaced.args)
-        return @something replacement replaced
-    end
-    return Expr(x.head,
-        map(@nospecialize(arg) -> replace_test_macrocalls(arg, mod), x.args)...)
 end
 
 function _virtual_process!(interp::ConcreteInterpreter,
@@ -1875,6 +1623,9 @@ function process_toplevel!(interp::ConcreteInterpreter, toplevelnode::JS.SyntaxN
             end
             x.args[end] = Expr(:block, lnn) # empty module's code body
             newcontext = eval_with_err_handling(state, x)::Module
+            if state.pkg_mod_depth == 0
+                setup_package_module!(state, newcontext)
+            end
             newstate = InterpretationState(state;
                                            context = newcontext,
                                            pkg_mod_depth = state.pkg_mod_depth + 1,
@@ -1966,7 +1717,8 @@ function ModuleUsage(m::ModuleUsage;
 end
 
 function pattern_match_module_usage(usage::Expr)
-    modpath = namepath = alias = nothing
+    local modpath
+    local namepath = local alias = nothing
     if @capture(usage, import modpath__)
         head = :import
     elseif @capture(usage, using modpath__)
@@ -2458,6 +2210,7 @@ function select_dependencies!(
 
         # Mark necessary control flows.
         changed |= LoweredCodeUtils.add_control_flow!(concretize, src, cfg, postdomtree)
+        changed |= LoweredCodeUtils.add_handler_exits!(concretize, src, edges, ())
         changed |= add_ssa_preds!(concretize, src, edges, ())
 
         changed || break
@@ -2572,6 +2325,15 @@ function usemodule_with_err_handling(interp::ConcreteInterpreter, ex::Expr, worl
                         Base.invoke_in_world(world, Core.eval, mod, require_ex)
                     end; end
                     push!(dependencies, dep)
+                    # Preferences.jl may be loaded only now, directly or as a dependency of `dep`
+                    actual2virtual = state.res.actual2virtual
+                    if actual2virtual !== nothing && pkgid.uuid !== nothing
+                        register_preferences_uuid!(last(actual2virtual), pkgid.uuid)
+                        pkgmod = Base.moduleroot(mod)
+                        if Base.PkgId(pkgmod) == virtual_package_id(pkgid)
+                            register_preferences_uuid!(pkgmod, pkgid.uuid)
+                        end
+                    end
                 end
                 pushfirst!(modpath, :.)
             end
@@ -2812,9 +2574,18 @@ function JuliaInterpreter.evaluate_call!(
         interp::ConcreteInterpreter, frame::Frame, fargs::Vector{Any}, enter_generated::Bool
     )
     f = fargs[1]
+    state = InterpretationState(interp)
     if isinclude(f)
         popfirst!(fargs)
-        return handle_include(interp, f, fargs)
+        # `curline` is the first line of the top-level statement, which may contain the
+        # call in a nested block or a callee; reports and `try_read_file` overloads read it
+        curline = state.curline
+        state.curline = something(line_in_file(frame, state.filename), curline)
+        try
+            return handle_include(interp, f, fargs)
+        finally
+            state.curline = curline
+        end
     elseif f === Base._ccallable
         # skip concrete-interpretation of `jl_extern_c`, but only when the method dispatch
         # would succeed; otherwise the call goes through and raises the `MethodError`
@@ -2822,7 +2593,6 @@ function JuliaInterpreter.evaluate_call!(
             return nothing
         end
     end
-    state = InterpretationState(interp)
     if f === Base.rethrow
         # Even native calls must rethrow the interpreted frame's active exception.
         restore_callee_error!(state, frame, fargs)
@@ -2834,7 +2604,22 @@ function JuliaInterpreter.evaluate_call!(
         interp::Interpreter, frame::Frame, fargs::Vector{Any}, enter_generated::Bool)
 end
 
-isinclude(@nospecialize f) = f isa Base.IncludeInto || (isa(f, Function) && nameof(f) === :include)
+isinclude(@nospecialize f) = f isa Base.IncludeInto || f === Base.include || f === Core.include
+
+# the line of the innermost frame in `filename`, i.e. where the current call is written in
+# the file being analyzed when it happens in a callee defined elsewhere
+function line_in_file(frame::Frame, filename::String)
+    f = frame
+    while f !== nothing
+        loc = CodeTracking.whereis(f)
+        if loc !== nothing
+            file, line = loc
+            file == filename && return line
+        end
+        f = f.caller
+    end
+    return nothing
+end
 
 function handle_include(interp::ConcreteInterpreter, @nospecialize(include_func), args::Vector{Any})
     state = InterpretationState(interp)
@@ -2844,13 +2629,14 @@ function handle_include(interp::ConcreteInterpreter, @nospecialize(include_func)
     include_context = include_func isa Base.IncludeInto ? include_func.m : state.context
 
     function abort_method_error!(args::Vector{Any})
-        err = MethodError(include_func, args)
+        err = MethodError(include_func, Tuple(args), state.world)
         local report = ActualErrorWrapped(err, [], filename, line)
         abort_toplevel_analysis!(state, report)
     end
 
     nargs = length(args)
     fname = nothing
+    mapexpr_signature = nothing
     if nargs == 1
         fname = only(args)
     elseif nargs == 2
@@ -2859,17 +2645,27 @@ function handle_include(interp::ConcreteInterpreter, @nospecialize(include_func)
             include_context = x
             # TODO propagate appropriate `dependencies` to `newstate`
         elseif isa(x, Function)
-            push!(state.res.toplevel_warning_reports, UnsupportedFeatureReport(
-                "JET does not support `include(mapexpr::Function, filename::String)`. " *
-                "The included file is analyzed without applying `mapexpr`.", filename, line))
+            mapexpr_signature = "include(mapexpr::Function, filename::String)"
         else
             abort_method_error!(args)
         end
+    elseif nargs == 3 && include_func === Base.include
+        mapexpr, mod, fname = args
+        if !(isa(mapexpr, Function) && isa(mod, Module))
+            abort_method_error!(args)
+        end
+        include_context = mod
+        mapexpr_signature = "include(mapexpr::Function, mod::Module, filename::String)"
     else
         abort_method_error!(args)
     end
     if !isa(fname, String)
         abort_method_error!(args)
+    end
+    if mapexpr_signature !== nothing
+        push!(state.res.toplevel_warning_reports, UnsupportedFeatureReport(
+            "JET does not support `$mapexpr_signature`. " *
+            "The included file is analyzed without applying `mapexpr`.", filename, line))
     end
 
     include_file = normpath(dirname(filename), fname)

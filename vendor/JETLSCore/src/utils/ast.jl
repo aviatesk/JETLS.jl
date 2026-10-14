@@ -1,0 +1,1682 @@
+function build_syntax_tree(fi::FileInfo)
+    syntax_tree0 = fi.syntax_tree0
+    if syntax_tree0 !== nothing
+        @static JETLS_TEST_MODE && check_syntax_tree0(fi)
+        return syntax_tree0
+    end
+    return JS.build_tree(JS.SyntaxTree, fi.parsed_stream; filename=fi.filename)
+end
+
+@static if JETLS_TEST_MODE
+# Requests share a cached `syntax_tree0` without copying it, so tests fingerprint each
+# cached tree when it is built and check that no request has mutated it since.
+const SYNTAX_TREE0_FINGERPRINTS = WeakKeyDict{SyntaxTree,UInt}()
+
+function syntax_tree_fingerprint(root::SyntaxTree)
+    h = zero(UInt)
+    seen = Base.IdSet{SyntaxTree}()
+    stack = SyntaxTree[root]
+    while !isempty(stack)
+        st = pop!(stack)
+        st in seen && continue
+        push!(seen, st)
+        for i = 1:fieldcount(SyntaxTree)
+            h = hash(objectid(getfield(st, i)), h)
+        end
+        cs = getfield(st, :children)
+        if cs !== nothing
+            for c in cs
+                h = hash(objectid(c), h)
+            end
+            append!(stack, cs)
+        end
+        src = getfield(st, :source)
+        src isa SyntaxTree && push!(stack, src)
+    end
+    return h
+end
+
+function register_syntax_tree0!(st0::SyntaxTree)
+    SYNTAX_TREE0_FINGERPRINTS[st0] = syntax_tree_fingerprint(st0)
+    return st0
+end
+
+function check_syntax_tree0(fi::FileInfo)
+    st0 = @something fi.syntax_tree0 return nothing
+    fingerprint = @something get(SYNTAX_TREE0_FINGERPRINTS, st0, nothing) return nothing
+    syntax_tree_fingerprint(st0) == fingerprint ||
+        error(lazy"The cached syntax tree of $(fi.filename) has been mutated")
+    return nothing
+end
+end # @static if JETLS_TEST_MODE
+
+has_source_flags(st::SyntaxTree, flags::UInt16) = JS.has_flags(JS.prov_end(st), flags)
+is_source_infix_op_call(st::SyntaxTree) = JS.is_infix_op_call(JS.prov_end(st))
+is_source_prefix_op_call(st::SyntaxTree) = JS.is_prefix_op_call(JS.prov_end(st))
+is_source_postfix_op_call(st::SyntaxTree) = JS.is_postfix_op_call(JS.prov_end(st))
+
+"""
+    is_compound_assignment(st::SyntaxTree) -> Bool
+
+Whether `st` is an updating assignment like `x += 1` or `x .+= 1`, whose head is the
+operator-specific symbol (e.g. `:+=`).
+"""
+is_compound_assignment(st::SyntaxTree) =
+    !JS.is_leaf(st) && JS.head(JS.prov_end(st)) in (Symbol("op="), Symbol(".op="))
+
+"""
+    is_synthesized_value(st::SyntaxTree) -> Bool
+
+Whether `st` is a `:value` node synthesized by the surface-tree conversion, macro
+expansion, or lowering (e.g. the `LineNumberNode` argument of a `:macrocall`, or the
+mutability flag of a `:struct`), as opposed to a literal written in the source.
+"""
+function is_synthesized_value(st::SyntaxTree)
+    JS.head(st) === :value || return false
+    st.value isa Union{Nothing,LineNumberNode,JL.MacroSource} && return true
+    textref = JS.prov_end(st)
+    # values converted from `Expr` (e.g. old-style macro output) only carry line info
+    textref.source isa JS.SourceRef || return true
+    # string literals are rebased onto their enclosing `string`/`cmdstring` nodes
+    return JS.head(textref) ∉ (:value, :string, :cmdstring)
+end
+
+"""
+    is_string_literal(st::SyntaxTree) -> Bool
+
+Whether `st` is a non-interpolated string literal written in the source.
+"""
+is_string_literal(st::SyntaxTree) =
+    JS.head(st) === :value && st.value isa String && !is_synthesized_value(st)
+
+"""
+    provenance_ancestor(st::SyntaxTree, h::Symbol) -> Union{Nothing,SyntaxTree}
+
+The nearest node with head `h` on `st`'s provenance chain, starting from `st` itself.
+"""
+function provenance_ancestor(st::SyntaxTree, h::Symbol)
+    while true
+        JS.head(st) === h && return st
+        source = st.source
+        source isa SyntaxTree || return nothing
+        st = source
+    end
+end
+
+# heads whose `value` holds the identifier name (see `JL.syntax_name`)
+const NAME_VAL_HEADS = (
+    :identifier, :placeholder, :symbol, :core, :top, :globalref, :symboliclabel,
+    :symbolicgoto)
+
+has_name_val(st::SyntaxTree) = JS.head(st) in NAME_VAL_HEADS
+get_name_val(st::SyntaxTree, default=nothing) = has_name_val(st) ? st.value::String : default
+name_val(st::SyntaxTree) = st.value::String
+
+var_id(st::SyntaxTree) = JL.syntax_id(st)
+
+get_source_text(ps::JS.ParseStream) = JS.sourcetext(JS.SourceFile(ps))
+document_text(fi::FileInfo) = get_source_text(fi.parsed_stream)
+document_range(fi::FileInfo) = jsobj_to_range(fi.parsed_stream, fi)
+
+"""
+    trim_error_nodes(st0::SyntaxTree) -> SyntaxTree
+
+Strip parser-recovery (`:error`) nodes from `st0` and fix the structural shapes that
+the strip would otherwise leave malformed for JuliaLowering — i.e. [`without_heads`](@ref)
+and [`repair_after_trim`](@ref) in sequence. Apply this to a surface AST before handing it
+to a lowering pass that needs to tolerate incomplete user input.
+"""
+trim_error_nodes(st0::SyntaxTree) = repair_after_trim(without_heads(st0, (:error,)))
+
+function _without_heads(st::SyntaxTree, heads::Tuple{Vararg{Symbol}})
+    if JS.head(st) in heads
+        return (nothing, true)
+    elseif JS.is_leaf(st)
+        return (st, false)
+    end
+    new_children = JS.SyntaxList()
+    changed = false
+    for child in JS.children(st)
+        new_child, child_changed = _without_heads(child, heads)
+        changed |= child_changed
+        isnothing(new_child) || push!(new_children, new_child)
+    end
+    # `mknode` preserves the provenance chain, so downstream repairs can recover
+    # parser flags after trimming.
+    new_node = changed ? JS.mknode(st, new_children) : st
+    return (new_node, changed)
+end
+
+"""
+    without_heads(st::SyntaxTree, heads::Tuple{Vararg{Symbol}}) -> trimmed::SyntaxTree
+
+Return a tree where all nodes with `heads` are trimmed.
+Should not modify any nodes, and should not create new nodes unnecessarily.
+"""
+function without_heads(st::SyntaxTree, heads::Tuple{Vararg{Symbol}})
+    return (JS.head(st) in heads ?
+        JL.@ast(_, st, [:tombstone]) :
+        _without_heads(st, heads)[1])::SyntaxTree
+end
+
+"""
+    repair_after_trim(st0::SyntaxTree) -> SyntaxTree
+
+Walk `st0` and fix structural shapes that JuliaLowering would reject after
+[`without_heads`](@ref) has trimmed parser-recovery (`:error`) nodes. Each
+repair rule replaces a now-malformed parent with a substitute (typically one
+of its surviving children) so that downstream passes can keep processing the
+surrounding tree.
+
+Currently handled:
+
+- `:.` — `lhs.│` parses as `(. lhs (inert (error)))`; after trim the empty
+  `:inert` makes JuliaLowering reject the dot as "invalid `.` syntax", so
+  the node is collapsed to `lhs`.
+- `:&&` / `:||` — short-circuit nodes that always carry ≥ 2 operands in valid parses.
+  A single-child residue (e.g. `(&& a)` from `a &&│`) trips a `numchildren > 1` assertion
+  in JuliaLowering, so the node is collapsed to its surviving operand.
+- `:(::)` — collapses 1-child residue to its lhs only for the infix form (`value::│`);
+  the anonymous prefix form (`f(::T)`) keeps its lone child intact.
+
+Not yet handled because the malformed shape needs more than a child-collapse:
+
+- `:->`, `:if`, `:for`, compound assignments (e.g. `:+=`) — either a
+  structural rewrite or context-aware reasoning is required.
+
+Add new branches in [`_repair_node`](@ref) when these cause downstream
+breakage in practice.
+"""
+function repair_after_trim(st0::SyntaxTree)
+    return _repair_after_trim(st0)::SyntaxTree
+end
+
+function _repair_after_trim(st0::SyntaxTree)
+    JS.is_leaf(st0) && return st0
+    new_children = JS.SyntaxList()
+    changed = false
+    for child in JS.children(st0)
+        new_child = _repair_after_trim(child)
+        push!(new_children, new_child)
+        changed |= new_child !== child
+    end
+    repaired = _repair_node(st0, new_children)
+    repaired !== nothing && return repaired
+    return changed ? JS.mknode(st0, new_children) : st0
+end
+
+# Per-kind repair rules. Each rule returns the replacement node when it applies,
+# or `nothing` to fall through to the default reconstruction.
+function _repair_node(st0::SyntaxTree, new_children::JS.SyntaxList)
+    k = JS.head(st0)
+    if k === :. && length(new_children) == 2 && _is_empty_non_leaf(new_children[2])
+        return new_children[1]
+    elseif k in (:&&, :||) && length(new_children) == 1
+        return new_children[1]
+    elseif k === :(::) && length(new_children) == 1 && is_source_infix_op_call(st0)
+        # `(:: x)` can mean either a trimmed `value::│` (infix, the user was typing
+        # a type annotation) or an anonymous `::T` (prefix, valid as a function arg slot).
+        # The parser's infix/prefix flag, recovered from source provenance after trimming,
+        # disambiguates them, so we only collapse the infix case.
+        return new_children[1]
+    end
+    return nothing
+end
+
+_is_empty_non_leaf(st0::SyntaxTree) = !JS.is_leaf(st0) && JS.numchildren(st0) == 0
+
+function _unwrap_interpolations(st::SyntaxTree)
+    k = JS.head(st)
+    if k === :$
+        if JS.numchildren(st) >= 1
+            new_child, _ = _unwrap_interpolations(st[1])
+            return (new_child, true)
+        end
+        return (st, false)
+    elseif JS.is_leaf(st)
+        return (st, false)
+    end
+    new_children = JS.SyntaxList()
+    changed = false
+    for child in JS.children(st)
+        new_child, child_changed = _unwrap_interpolations(child)
+        changed |= child_changed
+        push!(new_children, new_child)
+    end
+    return (changed ? JS.mknode(st, new_children) : st, changed)
+end
+
+"""
+Return a tree where `:\$` interpolation nodes are replaced by their content.
+Unlike `without_heads` which removes nodes entirely, this preserves the child
+so that parent nodes (e.g. dot expressions like `x.\$name`) remain well-formed.
+"""
+function unwrap_interpolations(st::SyntaxTree)
+    return first(_unwrap_interpolations(st))
+end
+
+function is_macrocall_st0(st0::SyntaxTree, names::AbstractString...; from::Union{Nothing,Module}=nothing)
+    JS.head(st0) === :macrocall || return false
+    JS.numchildren(st0) >= 1 || return false
+    macro_name = st0[1]
+    nv = if has_name_val(macro_name)
+        name_val(macro_name)
+    else
+        JS.sourcetext(macro_name)
+    end
+    return nv in names && (isnothing(from) || macro_name.mod === from)
+end
+
+is_mainfunc0(st0::SyntaxTree) = is_macrocall_st0(st0, "@main")
+
+function resolve_macrocall_object(context_module::Module, world::UInt, st0::SyntaxTree)
+    JS.head(st0) === :macrocall || return nothing
+    JS.numchildren(st0) >= 1 || return nothing
+    macro_const = resolve_global_const(context_module, world, st0[1])
+    macro_const isa Core.Const || return nothing
+    return macro_const.val
+end
+
+function is_macro_object_binding(
+        macro_object, world::UInt, defining_module::Module, name::Symbol
+    )
+    Base.invoke_in_world(world, isdefinedglobal, defining_module, name) || return false
+    target = Base.invoke_in_world(world, getglobal, defining_module, name)
+    return macro_object === target
+end
+
+function is_macrocall_binding0(
+        context_module::Module, world::UInt, st0::SyntaxTree,
+        defining_module::Module, name::Symbol
+    )
+    macro_object = @something resolve_macrocall_object(context_module, world, st0) return false
+    return is_macro_object_binding(macro_object, world, defining_module, name)
+end
+
+is_generated0(context_module::Module, world::UInt, st0::SyntaxTree) =
+    is_macrocall_binding0(context_module, world, st0, Base, Symbol("@generated"))
+
+is_ateval0(context_module::Module, world::UInt, st0::SyntaxTree) =
+    is_macrocall_binding0(context_module, world, st0, Base, Symbol("@eval"))
+
+is_nospecialize_or_specialize_macrocall0(st0::SyntaxTree) =
+    is_macrocall_st0(st0, "@nospecialize", "@specialize")
+
+is_macro0(st0::SyntaxTree) = JS.head(st0) === :macro
+
+function is_new_style_macrocall0(
+        context_module::Module, world::UInt, st0::SyntaxTree
+    )
+    macro_object = @something resolve_macrocall_object(context_module, world, st0) return false
+    return any(NEW_STYLE_MACRO_BINDINGS) do (defining_module, name)
+        is_macro_object_binding(macro_object, world, defining_module, name)
+    end
+end
+
+is_doc0(st0::SyntaxTree) = is_macrocall_st0(st0, "@doc"; from=Core)
+is_doc0_any(st0::SyntaxTree) = is_macrocall_st0(st0, "@doc") # Explicit `@doc` can have any module set.
+
+is_cmd0(st0::SyntaxTree) = is_macrocall_st0(st0, "@cmd"; from=Core)
+
+is_static0(context_module::Module, world::UInt, st0::SyntaxTree) =
+    is_macrocall_binding0(context_module, world, st0, Base, Symbol("@static"))
+
+"""
+    collect_import_names(st0::SyntaxTree) -> Vector{Pair{SyntaxTree, String}}
+
+Return pairs of `(node, sort_key)` for the named items of an
+`import`/`using`/`export`/`public` statement: the child node representing
+each item alongside its sort key (see [`get_import_sort_key`](@ref)).
+For `using M: a, b` returns entries for `a` and `b`; for `using M.A` (no
+`:`) returns entries for the imported path nodes.
+"""
+function collect_import_names(st0::SyntaxTree)
+    kind = JS.head(st0)
+    names = Pair{SyntaxTree, String}[]
+    if kind in (:import, :using)
+        nchildren = JS.numchildren(st0)
+        if nchildren == 1
+            child = st0[1]
+            if JS.head(child) === :(:)
+                for i = 2:JS.numchildren(child)
+                    name = child[i]
+                    push!(names, name => get_import_sort_key(name))
+                end
+            end
+        elseif nchildren > 1
+            for i = 1:nchildren
+                name = st0[i]
+                push!(names, name => get_import_sort_key(name))
+            end
+        end
+    elseif kind in (:export, :public)
+        for i = 1:JS.numchildren(st0)
+            name = st0[i]
+            push!(names, name => get_import_sort_key(name))
+        end
+    end
+    return names
+end
+
+"""
+    foreach_local_import_identifier(f, st0::SyntaxTree)
+
+Invoke `f(id_st)` once for each locally-introduced identifier of an
+`import`/`using` statement `st0`. Covers every form that actually binds
+a name in the current scope:
+
+- `using A` / `import A` — `A`
+- `using A, B` / `import A, B` — `A`, `B`
+- `using A.B` / `import A.B` / `using .A.B` — the trailing component
+- `using A: x, y` / `import A: x, y` — each listed name
+- `using A: x as y` — the alias `y`
+- `import A: x as y` — likewise
+"""
+function foreach_local_import_identifier(f, st0::SyntaxTree)
+    kind = JS.head(st0)
+    kind in (:import, :using) || return
+    nchildren = JS.numchildren(st0)
+    if nchildren == 1 && JS.head(st0[1]) === :(:)
+        child = st0[1]
+        for i = 2:JS.numchildren(child)
+            id_st = get_local_import_identifier(child[i])
+            id_st === nothing || f(id_st)
+        end
+    else
+        # Direct children are `:.` paths (one per comma-separated module),
+        # e.g. `using A` → `[(. A)]`, `using A, B` → `[(. A), (. B)]`,
+        # `using .A.B` → `[(. . A B)]`. The locally-introduced name is the
+        # last component of each path.
+        for i = 1:nchildren
+            id_st = get_local_import_identifier(st0[i])
+            id_st === nothing || f(id_st)
+        end
+    end
+    return
+end
+
+"""
+    get_local_import_identifier(st0::SyntaxTree) -> Union{SyntaxTree, Nothing}
+
+Return the `:identifier` node that represents the local binding introduced
+by a single element of an `import`/`using` statement, or `nothing` if the
+element is not a well-formed name path. Accepts both the top-level module
+path children (`using A.B` → path `A.B`) and the names listed after `:`
+(`using A: foo` → path `foo`):
+- path with a bare `:identifier` — the identifier itself
+- dotted path `:.` — the trailing component (skipping the relative `.`
+  or `..` prefixes of forms like `.A` / `..A.B`)
+- `:as` (inside a colon list) — the alias
+"""
+function get_local_import_identifier(st0::SyntaxTree)
+    kind = JS.head(st0)
+    if kind === :as
+        # `using M: a as b` -> identifier for "b"
+        return st0[2]
+    elseif kind === :identifier
+        return st0
+    elseif kind === :.
+        npath = JS.numchildren(st0)
+        if npath >= 1
+            last_st = st0[npath]
+            if JS.head(last_st) === :identifier
+                return last_st
+            end
+        end
+        return nothing
+    else
+        return nothing
+    end
+end
+
+function get_import_sort_key(st0::SyntaxTree)
+    kind = JS.head(st0)
+    if kind === :as
+        return get_import_sort_key(st0[1])
+    elseif kind === :.
+        parts = String[]
+        for i = 1:JS.numchildren(st0)
+            child = st0[i]
+            ckind = JS.head(child)
+            if ckind === :identifier
+                push!(parts, JS.sourcetext(child))
+            end
+        end
+        return join(parts, ".")
+    elseif kind === :identifier
+        return JS.sourcetext(st0)
+    else
+        return JS.sourcetext(st0)
+    end
+end
+
+"""
+    is_import_eval_call(st3::SyntaxTree) -> Bool
+
+Return `true` when `st3` is a `:call` to JuliaLowering's `eval_import` /
+`eval_using` runtime helpers, which `import` / `using` statements desugar into.
+The module-path components are carried as `:inert` arguments of these calls.
+Because they are compiler-generated rather than user-authored quoted code, inert
+traversals skip such calls so module paths are not mistaken for ordinary global
+references (e.g. `import A.B` nested in an `if`/`begin` block).
+"""
+function is_import_eval_call(st3::SyntaxTree)
+    JS.head(st3) === :call || return false
+    JS.numchildren(st3) ≥ 1 || return false
+    head = st3[1]
+    JS.head(head) === :value || return false
+    val = head.value
+    return val === JL.eval_import || val === JL.eval_using
+end
+
+function is_nospecialize_or_specialize_macrocall3(st3::SyntaxTree)
+    JS.head(st3) === :macrocall || return false
+    JS.numchildren(st3) >= 1 || return false
+    macro_name = st3[1]
+    JS.head(macro_name) === :macro_name || return false
+    JS.numchildren(st3) >= 2 || return false
+    macro_name = macro_name[2]
+    JS.head(macro_name) === :identifier || return false
+    return get_name_val(macro_name) in ("nospecialize", "specialize")
+end
+
+function _remove_macrocalls(
+        context_module::Union{Nothing,Module}, world::UInt, st0::SyntaxTree;
+        strip_static::Bool = false
+    )
+    if JS.head(st0) === :macrocall
+        is_new_style = context_module !== nothing &&
+            is_new_style_macrocall0(context_module, world, st0)
+        strip_current_static = strip_static && context_module !== nothing &&
+            is_static0(context_module, world, st0)
+        if is_new_style && !strip_current_static
+            # Preserve this macrocall, but still remove old-style macros and `@static`
+            # calls nested in its arguments.
+            new_children = JS.SyntaxList()
+            push!(new_children, st0[1])
+            changed = false
+            for i = 2:JS.numchildren(st0)
+                child, child_changed = _remove_macrocalls(
+                    context_module, world, st0[i]; strip_static)
+                changed |= child_changed
+                push!(new_children, child)
+            end
+            return (changed ? JS.mknode(st0, new_children) : st0, changed)
+        elseif is_mainfunc0(st0)
+            # `@main` functions are desugared by `desugar_main_macrocall` below,
+            # so there's no need to remove them here
+            return st0, false
+        elseif is_cmd0(st0)
+            # `` `foo` `` parses to `Core.@cmd(LineNumberNode, CmdString)` where
+            # `CmdString` is an opaque leaf JuliaLowering has no rule for at
+            # statement position. Strip-to-block would result in lowering failure,
+            # so leave the macrocall intact and let `Core.@cmd` expansion run.
+            # Expansion collapses interpolations' provenance, which means features like
+            # rename/references can't pinpoint a name used inside a cmd literal --
+            # but binding occurrence analysis still get correct results.
+            return st0, false
+        end
+        new_children = JS.SyntaxList()
+        for i = 2:JS.numchildren(st0)
+            # `$` interpolations at macrocall-argument position are legal only
+            # because the macro will typically splice the argument into a
+            # `quote`/`:(...)` (`@eval`, code-generating macros, user-defined
+            # macros that build a quoted expression, etc.). Once we lift the
+            # arguments out of the macrocall into a bare `block`, any surviving
+            # `$` would be out of context and fail lowering, so unwrap
+            # interpolations on the lifted child.
+            stripped, _ = _remove_macrocalls(
+                context_module, world, st0[i]; strip_static)
+            push!(new_children, _unwrap_interpolations(stripped)[1])
+        end
+        return JL.@ast(_, st0, [:block new_children...]), true
+    elseif JS.is_leaf(st0)
+        return st0, false
+    end
+    (st0, changed) = desugar_main_macrocall(st0)
+    new_children = JS.SyntaxList()
+    inner_context = if JS.head(st0) === :module && JS.numchildren(st0) >= 2
+        module_const = context_module === nothing ? nothing :
+            resolve_global_const(context_module, world, st0[2])
+        module_const isa Core.Const && module_const.val isa Module ?
+            module_const.val : nothing
+    else
+        context_module
+    end
+    for c in JS.children(st0)
+        child_context = JS.head(st0) === :module && JS.head(c) === :block ?
+            inner_context : context_module
+        nc, cc = _remove_macrocalls(child_context, world, c; strip_static)
+        changed |= cc
+        push!(new_children, nc)
+    end
+    return (changed ? JS.mknode(st0, new_children) : st0, changed)
+end
+
+"""
+    desugar_main_macrocall(st0::SyntaxTree) -> Tuple{SyntaxTree, Bool}
+
+If `st0` is a `function (@main)(args...) ... end`, `(@main)(args...) = ...`,
+`function @main(args...) ... end`, or `@main(args...) = ...` definition, replace
+the `@main` macrocall with a plain `main` identifier and return the rewritten
+tree with `true`. Otherwise return `(st0, false)`.
+This avoids macro expansion failure when multiple standalone files defining
+`@main` are analyzed in the same session — the second file's sandbox module
+already has `main` imported from the first, causing `@main` expansion to error.
+"""
+function desugar_main_macrocall(st0::SyntaxTree)
+    k = JS.head(st0)
+    if k === :function
+        JS.numchildren(st0) >= 1 || return (st0, false)
+        call_node = st0[1]
+    elseif k === :(=)
+        JS.numchildren(st0) >= 2 || return (st0, false)
+        call_node = st0[1]
+    else
+        return (st0, false)
+    end
+    if JS.head(call_node) === :call
+        # Parenthesized form: (@main)(args...) — macrocall is the callee
+        JS.numchildren(call_node) >= 1 || return (st0, false)
+        is_mainfunc0(call_node[1]) || return (st0, false)
+        main_id = JS.newleaf(call_node[1], :identifier, "main")
+        new_call_children = JS.SyntaxList()
+        push!(new_call_children, main_id)
+        for i in 2:JS.numchildren(call_node)
+            push!(new_call_children, call_node[i])
+        end
+        new_call = JS.newnode(call_node, :call, new_call_children)
+    elseif is_mainfunc0(call_node)
+        # No-parens form: @main(args...) — entire signature is a macrocall
+        main_id = JS.newleaf(call_node[1], :identifier, "main")
+        new_call_children = JS.SyntaxList()
+        push!(new_call_children, main_id)
+        for i in 2:JS.numchildren(call_node)
+            is_synthesized_value(call_node[i]) && continue
+            push!(new_call_children, call_node[i])
+        end
+        new_call = JS.newnode(call_node, :call, new_call_children)
+    else
+        return (st0, false)
+    end
+    new_children = JS.SyntaxList()
+    push!(new_children, new_call)
+    for i in 2:JS.numchildren(st0)
+        push!(new_children, st0[i])
+    end
+    return (JS.newnode(st0, k, new_children), true)
+end
+
+"""
+    remove_macrocalls(
+        context_module::Module, world::UInt, st0::SyntaxTree;
+        strip_static::Bool=false
+    ) -> SyntaxTree
+
+Convert each old-style `macrocall` node to a `block` node, keeping the arguments intact
+so that identifiers passed to macros retain their original source locations. Macro names
+are resolved from `context_module`; calls whose macro object matches a binding in
+`NEW_STYLE_MACRO_BINDINGS` are preserved. The transformed tree can then be fed into
+scope/binding resolution to drive LSP features such as find-references,
+document-highlight, rename, and go-to-definition.
+
+With `strip_static=true`, `@static` conditionals are also rewritten to plain runtime
+conditionals (keeping every branch) rather than expanded to the single branch selected
+for the current platform. This lets occurrence analysis see identifiers used in the
+condition and in every branch — scope-aware, since each branch is resolved within its
+enclosing scope — instead of dropping the ones not taken here (which would otherwise be
+misreported as unused).
+
+This is useful because JuliaLowering's macro expansion (for old-style macros) loses
+fine-grained provenance information, reducing it to line-level granularity. For example,
+in `@noop foo`, highlighting `foo` would incorrectly highlight `@noop foo` entirely
+if macro expansion were performed. By removing macrocalls before lowering, we preserve
+precise source locations for bindings outside of macrocalls, at the cost of discarding
+any bindings or control flow the macros themselves would have introduced.
+
+!!! note "Usage scope"
+    The transformed tree is intended only for scope/binding resolution. It
+    intentionally does not preserve semantic validity: replacing a macrocall with a
+    raw `block` can place statements like `return` into expression contexts that are
+    not legal Julia (e.g. `x = (begin ...; return nothing; end)`). Feeding the
+    transformed tree into flow-sensitive analyses such as `analyze_local_def_use!`
+    or `analyze_unreachable!` can therefore produce nonsensical results and must
+    be avoided.
+
+!!! note "Assumption on macro behavior"
+    Macros are treated as if `@m expr` behaved like `begin expr end` — i.e. they
+    neither introduce new syntactic structures, bind new names, nor alter control
+    flow. Macros that merely rewrite control flow (e.g. `@something`/`@assert`
+    into conditional `return`/`throw`) are a known limitation rather than a
+    handled case: scope resolution on the transformed tree can be incorrect in
+    their vicinity — e.g. reachability and post-macro-only bindings — though it
+    still yields useful results for source-level LSP features in practice.
+
+!!! note "Future direction"
+    This transform is a workaround for old-style macros that lose provenance
+    during expansion. Macros with new-style JuliaLowering implementations (listed
+    in `NEW_STYLE_MACRO_BINDINGS`) already preserve provenance and are therefore
+    exempt from removal, and `@main` is handled separately by
+    `desugar_main_macrocall`. As more macros migrate to the new style, the scope
+    of this transformation is expected to shrink.
+"""
+function remove_macrocalls(
+        context_module::Module, world::UInt, st0::SyntaxTree;
+        strip_static::Bool = false
+    )
+    return first(_remove_macrocalls(context_module, world, st0; strip_static))
+end
+
+# Iteratively peel a function-definition signature's `where {…}` clauses and outer `::T`
+# return-type annotation, returning the innermost unwrapped node — usually a `:call`, but
+# callers should check (e.g. `f::Int = …` peels to an `:identifier`). Parameter type
+# annotations like `f(x::T)` live inside the call's args, so this pass doesn't touch them.
+# On malformed input (a wrapper with no children) the wrapper is returned as-is, so callers'
+# head checks naturally filter it without a separate `nothing` branch.
+function unwrap_funcdef_sig(node::SyntaxTree)
+    while true
+        k = JS.head(node)
+        if (k === :where || k === :(::)) && JS.numchildren(node) ≥ 1
+            node = node[1]
+        else
+            return node
+        end
+    end
+end
+
+function foreach_struct_inner_constructor(@specialize(callback), st0::SyntaxTree)
+    name_node = @something struct_name_node(st0) return true
+    name = @something get_name_val(name_node) return true
+    JS.numchildren(st0) ≥ 3 || return true
+    body = st0[3]
+    for i = 1:JS.numchildren(body)
+        keep_going = foreach_wrapped_function_name(body[i]) do constructor_node::SyntaxTree
+            get_name_val(constructor_node) == name || return true
+            return callback(name_node, constructor_node)
+        end
+        keep_going || return false
+    end
+    return true
+end
+
+function struct_name_node(st0::SyntaxTree)
+    JS.head(st0) === :struct && JS.numchildren(st0) ≥ 2 || return nothing
+    node = st0[2]
+    if JS.head(node) === :<: && JS.numchildren(node) ≥ 1
+        node = node[1]
+    end
+    if JS.head(node) === :curly && JS.numchildren(node) ≥ 1
+        node = node[1]
+    end
+    return JS.head(node) === :identifier ? node : nothing
+end
+
+function foreach_wrapped_function_name(@specialize(callback), st0::SyntaxTree)
+    name_node = function_definition_name_node(st0)
+    name_node === nothing || return callback(name_node)
+    JS.head(st0) in (:macrocall, :block) || return true
+    start = JS.head(st0) === :macrocall ? 3 : 1
+    for i = start:JS.numchildren(st0)
+        foreach_wrapped_function_name(callback, st0[i]) || return false
+    end
+    return true
+end
+
+function function_definition_name_node(st0::SyntaxTree)
+    k = JS.head(st0)
+    if (k === :function || k === :(=)) && JS.numchildren(st0) ≥ 1
+        sig = unwrap_funcdef_sig(st0[1])
+        JS.head(sig) === :call && JS.numchildren(sig) ≥ 1 || return nothing
+        node = sig[1]
+        while JS.head(node) in (:(::), :curly) && JS.numchildren(node) ≥ 1
+            node = node[1]
+        end
+        return JS.head(node) === :identifier ? node : nothing
+    end
+    return nothing
+end
+
+# Collect the `name_val` of every `:identifier` node reachable from `st` into `names`.
+function collect_identifier_names!(names::Set{String}, st::SyntaxTree)
+    traverse(st) do node
+        if JS.head(node) === :identifier
+            name = get_name_val(node)
+            name === nothing || push!(names, name)
+        end
+        return
+    end
+    return names
+end
+
+# `:core` leaves can't appear in user-written source (`Core.x` lowers through
+# `:globalref`), so these match only lowering-generated references.
+function is_core_ref(node::SyntaxTree, name::String)
+    return JS.head(node) === :core && get_name_val(node) == name
+end
+
+function is_core_svec_call(call_node::SyntaxTree)
+    JS.numchildren(call_node) >= 1 || return false
+    return is_core_ref(call_node[1], "svec")
+end
+
+"""
+Like `Base.unique`, but over node identities, and with this comment promising
+that the lowest-index copy of each node is kept.
+"""
+function deduplicate_syntaxlist(sl::SyntaxList)
+    sl2 = JS.SyntaxList()
+    seen = Set{SyntaxTree}()
+    for st in sl
+        if !(st in seen)
+            push!(sl2, st)
+            push!(seen, st)
+        end
+    end
+    return sl2
+end
+
+"""
+    traverse(callback, st::SyntaxTree, postorder::Bool=false)
+
+Traverse a `SyntaxTree`, calling `callback(node)` on each node.
+By default traverses in pre-order (parent before children).
+Pass `postorder=true` to visit children before their parent.
+
+The `callback` can control traversal by returning one of:
+- `traversal_terminator`: stop traversal immediately.
+- `traversal_no_recurse`: skip children of the current node (pre-order only).
+- `TraversalReturn(val)`: store `val` as the return value and continue.
+- `TraversalReturn(val; terminate=true)`: store `val` and stop immediately.
+- anything else: continue normally.
+
+The stored value from the last `TraversalReturn` is returned from `traverse`
+(or `nothing` if no `TraversalReturn` was used).
+"""
+function traverse(@specialize(callback), st::SyntaxTree, postorder::Bool=false)
+    stack = JS.SyntaxList(st)
+    if postorder
+        _traverse_postorder(callback, stack)
+    else
+        _traverse_preorder(callback, stack)
+    end
+end
+
+struct TraversalReturn{T}
+    val::T
+    terminate::Bool
+    TraversalReturn(val::T; terminate::Bool=false) where T = new{T}(val, terminate)
+end
+struct TraversalTerminator end
+struct TraversalNoRecurse end
+const traversal_terminator = TraversalTerminator()
+const traversal_no_recurse = TraversalNoRecurse()
+
+function _traverse_preorder(@specialize(callback), stack::SyntaxList)
+    local retval = nothing
+    while !isempty(stack)
+        x = pop!(stack)
+        # Force inlining: keeps the callback's branches inside this loop, lets
+        # LLVM fold the small-Union return-tag dispatch, and avoids the
+        # per-iteration GC root spill that a Julia call boundary requires
+        ret = @inline callback(x)
+        if ret isa TraversalReturn
+            retval = ret.val
+            ret.terminate ? break : continue
+        end
+        ret === traversal_terminator && break
+        ret === traversal_no_recurse && continue
+        if JS.numchildren(x) === 0
+            continue
+        end
+        for i = JS.numchildren(x):-1:1
+            push!(stack, x[i])
+        end
+    end
+    return retval
+end
+
+function _traverse_postorder(@specialize(callback), stack::SyntaxList)
+    local retval = nothing
+    output = JS.SyntaxList()
+    while !isempty(stack)
+        x = pop!(stack)
+        push!(output, x)
+        for i = 1:JS.numchildren(x)
+            push!(stack, x[i])
+        end
+    end
+    while !isempty(output)
+        x = pop!(output)
+        # See the `_traverse_preorder` comment above
+        ret = @inline callback(x)
+        if ret isa TraversalReturn
+            retval = ret.val
+            ret.terminate ? break : continue
+        end
+        ret === traversal_terminator && break
+    end
+    return retval
+end
+
+# TODO use something like `JuliaInterpreter.ExprSplitter`
+
+"""
+    iterate_toplevel_tree(callback, st0_top::SyntaxTree)
+
+Walk each lowerable top-level subtree of `st0_top` (descending into `:toplevel`,
+`:module`, and docstring wrappers) and invoke `callback(st0)` on every leaf.
+
+The `callback` can control iteration by returning one of:
+- `traversal_terminator`: stop iteration immediately.
+- `TraversalReturn(val)`: store `val` as the return value and continue.
+- `TraversalReturn(val; terminate=true)`: store `val` and stop immediately.
+- anything else: continue.
+
+The stored value from the last `TraversalReturn` is returned (or `nothing` if no
+`TraversalReturn` was used).
+"""
+function iterate_toplevel_tree(callback, st0_top::SyntaxTree)
+    retval = nothing
+    sl = JS.SyntaxList(st0_top)
+    while !isempty(sl)
+        st0 = pop!(sl)
+        if JS.head(st0) === :toplevel
+            for i = JS.numchildren(st0):-1:1 # reversed since we use `pop!`
+                push!(sl, st0[i])
+            end
+        elseif JS.head(st0) === :module
+            # The body `:block` is typically the last child, but trailing
+            # `:error` nodes from incomplete code can push it earlier.
+            stblk_idx = @something findlast(i::Int -> JS.head(st0[i]) === :block,
+                1:JS.numchildren(st0)) continue
+            stblk = st0[stblk_idx]
+            for i = JS.numchildren(stblk):-1:1 # reversed since we use `pop!`
+                push!(sl, stblk[i])
+            end
+        elseif is_doc0_any(st0)
+            # Dispatch the macro arguments of a `@doc` macrocall as their own
+            # lowerable trees:
+            # - the documented expression is reached directly, so cursor-based features and
+            #   per-statement diagnostics keep accurate source positions, which otherwise
+            #   could be lost during the expansion of `@doc` (an old-style macro)
+            # - the docstring node (a `:string` with interpolations as children) is
+            #   lowered too, so identifier interpolations like `$(SIGNATURES)` from
+            #   `DocStringExtensions` resolve as global `:use` occurrences
+            for i = JS.numchildren(st0):-1:3 # reversed since we use `pop!`
+                # The first two children of any macrocall are the macro name and the line
+                # node, both of which carry the macrocall's full byte range as provenance
+                # and would otherwise capture cursor-based lookups for any offset inside
+                # the doc-wrapped form; start at `i = 3` to skip them.
+                child = st0[i]
+                # Signature targets like `f(x)` or `f(::T)` are valid as `@doc`
+                # arguments, but standalone lowering treats them as normal expressions.
+                # TODO: Once `@doc` can be promoted to a new-style stub without breaking
+                # nested old-style macros (JuliaLang/JuliaLowering.jl#108), remove this
+                # split-side workaround.
+                JS.head(child) in (:call, :where, :(::)) && continue
+                push!(sl, child)
+            end
+        else # st0 is lowerable tree
+            ret = callback(st0)
+            if ret isa TraversalReturn
+                retval = ret.val
+                ret.terminate ? break : continue
+            end
+            ret === traversal_terminator && break
+        end
+    end
+    return retval
+end
+
+"""
+    byte_ancestors([flt,] st::SyntaxTree, rng::UnitRange{Int})
+    byte_ancestors([flt,] st::SyntaxTree, byte::Integer)
+
+Get a SyntaxList of `SyntaxTree`s containing certain bytes.
+
+Output should be topologically sorted, children first.  If we know that parent
+ranges contain all child ranges, and that siblings don't have overlapping ranges
+(this is not true after lowering, but appears to be true after parsing), each
+tree in the result will be a child of the next.
+
+An optional filter function `flt` can be provided to include only nodes
+that satisfy the predicate.
+"""
+byte_ancestors(args...) = byte_ancestors(Returns(true), args...)
+
+function byte_ancestors(flt, st::SyntaxTree, rng::UnitRange{<:Integer})
+    sl = JS.SyntaxList()
+    if rng ⊆ JS.byte_range(st) && flt(st)
+        push!(sl, st)
+    end
+    traverse(st) do st′
+        # Synthesized EST `:value` nodes can share the same byte range as their parent
+        # (e.g. module's baremodule flag, struct's mutability flag).
+        # Skip them to avoid polluting the ancestor chain.
+        is_synthesized_value(st′) && return nothing
+        if rng ⊆ JS.byte_range(st′) && flt(st′)
+            push!(sl, st′)
+        end
+    end
+    # delete later duplicates when sorted parent->child
+    return reverse!(deduplicate_syntaxlist(sl))
+end
+byte_ancestors(flt, st::SyntaxTree, byte::Integer) = byte_ancestors(flt, st, byte:byte)
+
+"""
+    lowerable_toplevel_at(st0_top::SyntaxTree, offset::Integer) -> st::Union{SyntaxTree, Nothing}
+
+Return the lowerable top-level subtree of `st0_top` whose byte range contains `offset`, or
+`nothing` if no such subtree exists. Equivalent to running [`iterate_toplevel_tree`](@ref)
+and picking the first hit whose byte range contains `offset`, with an `offset - 1` retry
+for cursor positions just past the last token of a statement (e.g. `export foo│\\n`).
+"""
+function lowerable_toplevel_at(st0_top::SyntaxTree, offset::Integer)
+    result = _lowerable_toplevel_at(st0_top, offset)
+    result !== nothing && return result
+    return offset > 1 ? _lowerable_toplevel_at(st0_top, offset - 1) : nothing
+end
+
+function _lowerable_toplevel_at(st0_top::SyntaxTree, offset::Integer)
+    return iterate_toplevel_tree(st0_top) do st0::SyntaxTree
+        offset in JS.byte_range(st0) || return nothing
+        return TraversalReturn(st0; terminate=true)
+    end
+end
+
+"""
+GreenTreeCursor, but flattened to only include terminal RawGreenNodes.
+
+ParseStream's `.output` is a post-order DFS of the green tree with relative
+positions only.  To interpret this as a linear list of tokens in source order,
+just ignore any non-terminal node, and accumulate the byte lengths of terminals.
+"""
+struct TokenCursor
+    tokens::Vector{JS.RawGreenNode}
+    position::UInt32
+    next_byte::UInt32
+end
+function TokenCursor(ps::JS.ParseStream)
+    tokens = filter(tok::JS.RawGreenNode -> !JS.is_non_terminal(tok) && JS.kind(tok) !== JS.K"TOMBSTONE", ps.output)
+    next_byte = 1
+    if !isempty(tokens)
+        next_byte += tokens[1].byte_span
+    end
+    return TokenCursor(tokens, 1, next_byte)
+end
+
+@inline Base.iterate(tc::TokenCursor) = isempty(tc.tokens) ? nothing : (tc, (tc.position, tc.next_byte))
+@inline function Base.iterate(tc::TokenCursor, state)
+    s_pos, s_byte = state
+    s_pos >= lastindex(tc.tokens) && return nothing
+    out = (s_pos + 1, s_byte + tc.tokens[s_pos + 1].byte_span)
+    return TokenCursor(tc.tokens, out...), out
+end
+Base.eltype(::Type{TokenCursor}) = TokenCursor
+Base.length(tc::TokenCursor) = length(tc.tokens)
+function Base.show(io::IO, tc::TokenCursor)
+    print(io, "TokenCursor at position ", tc.position, " ")
+    show(io, this(tc))
+end
+next_tok(tc::TokenCursor) =
+    @something(iterate(tc, (tc.position, tc.next_byte)), return nothing)[1]
+prev_tok(tc::TokenCursor) = tc.position <= 1 ? nothing :
+    TokenCursor(tc.tokens, tc.position - 1, tc.next_byte - tc.tokens[tc.position].byte_span)
+this(tc::TokenCursor) = tc.tokens[tc.position]
+JS.first_byte(tc::TokenCursor) =
+    tc.position <= 1 ? 1 : Int((prev_tok(tc)::TokenCursor).next_byte)
+JS.last_byte(tc::TokenCursor) = Int(tc.next_byte) - 1
+JS.byte_range(tc::TokenCursor) = JS.first_byte(tc):JS.last_byte(tc)
+JS.kind(tc::TokenCursor) = JS.kind(this(tc))
+
+"""
+    token_at_offset(fi::FileInfo, offset::Integer)
+
+Get the current token index at a given byte offset in a parsed file.
+
+Example:
+- `al│pha beta gamma` (`b`=3) returns the index of `alpha`
+- `│alpha beta gamma` (`b`=1) returns the index of `alpha`
+- `alpha│ beta gamma` (`b`=6) returns the index of ` ` (whitespace)
+- `alpha │beta gamma` (`b`=7) returns the index of `beta`
+"""
+function token_at_offset(ps::JS.ParseStream, offset::Integer)
+    for tc in TokenCursor(ps)
+        start_byte = tc.next_byte - this(tc).byte_span
+        if start_byte ≤ offset < tc.next_byte
+            return tc
+        end
+    end
+    return nothing
+end
+token_at_offset(fi::FileInfo, pos::Position) =
+    token_at_offset(fi.parsed_stream, xy_to_offset(fi, pos))
+
+"""
+Similar to `token_at_offset`, but when you need token `a` from `a| b c`
+"""
+token_before_offset(ps::JS.ParseStream, offset::Integer) = token_at_offset(ps, offset - 1)
+token_before_offset(fi::FileInfo, pos::Position) =
+    token_before_offset(fi.parsed_stream, xy_to_offset(fi, pos))
+
+"""
+    prev_nontrivia_byte(ps::JS.ParseStream, b::Integer; pass_newlines::Bool=false, strict::Bool=false)
+
+Return the last byte position of the previous non-trivia token at or before byte `b`.
+Returns `nothing` if no non-trivia token is found or if `b` is beyond the input or before position 1.
+
+Trivia includes whitespace and comments. When `pass_newlines=false` (default),
+newlines are treated as non-trivia and will stop the search.
+
+When `strict=true`, the token at position `b` is excluded from the search,
+ensuring only strictly previous tokens are considered.
+
+# Example
+```julia
+# Given: "x  # comment\\ny"
+#         ^  ^          ^
+#         1  4          14
+
+# From position 5 (in comment):
+prev_nontrivia_byte(ps, 5)  # returns 1 (from within comment)
+
+# From position 13 (at newline):
+prev_nontrivia_byte(ps, 13)                      # returns 13 (newline)
+prev_nontrivia_byte(ps, 13; pass_newlines=true)  # returns 1 ('x')
+
+# From position 14 (at 'y'):
+prev_nontrivia_byte(ps, 14)               # returns 14 (already at 'y')
+prev_nontrivia_byte(ps, 14; strict=true)  # returns 13 (newline, excludes position 14)
+
+# Out of bounds:
+prev_nontrivia_byte(ps, 0)   # returns nothing (before input)
+prev_nontrivia_byte(ps, 20)  # returns nothing (beyond input)
+```
+"""
+prev_nontrivia_byte(args...; kwargs...) =
+    JS.last_byte(@something prev_nontrivia(args...; kwargs...) return nothing)
+
+"""
+    prev_nontrivia(ps::JS.ParseStream, b::Integer; pass_newlines::Bool=false, strict::Bool=false)
+
+Find the previous non-trivia token at or before byte position `b`.
+Returns the `tc::TokenCursor` for that token, or `nothing` if no non-trivia token is found
+or if `b` is beyond the input or before position 1.
+
+Trivia includes whitespace and comments. When `pass_newlines=false` (default),
+newlines are treated as non-trivia and will stop the search.
+
+When `strict=true`, the token at position `b` is excluded from the search,
+ensuring only strictly previous tokens are considered.
+
+# Example
+```julia
+# Given: "x  # comment\\ny"
+#         ^  ^          ^
+#         1  4          14
+
+# From position 5 (in comment):
+prev_nontrivia(ps, 5)  # returns TokenCursor for 'x'
+
+# From position 13 (at newline):
+prev_nontrivia(ps, 13)                      # returns TokenCursor for newline
+prev_nontrivia(ps, 13; pass_newlines=true)  # returns TokenCursor for 'x'
+
+# From position 14 (at 'y'):
+prev_nontrivia(ps, 14)               # returns TokenCursor for 'y'
+prev_nontrivia(ps, 14; strict=true)  # returns TokenCursor for newline (excludes 'y')
+
+# Out of bounds:
+prev_nontrivia(ps, 0)   # returns nothing (before input)
+prev_nontrivia(ps, 20)  # returns nothing (beyond input)
+```
+"""
+prev_nontrivia(args...; kwargs...) = find_nontrivia(#=prev_or_next=#true, args...; kwargs...)
+
+"""
+    next_nontrivia_byte(ps::JS.ParseStream, b::Integer; pass_newlines::Bool=false, strict::Bool=false)
+
+Return the first byte position of the next non-trivia token at or after byte `b`.
+Returns `nothing` if no non-trivia token is found or if `b` is beyond the input.
+
+Trivia includes whitespace and comments. When `pass_newlines=false` (default),
+newlines are treated as non-trivia and will stop the search.
+
+When `strict=true`, the token at position `b` is excluded from the search,
+ensuring only strictly next tokens are considered.
+
+# Example
+```julia
+# Given: "x # comment\\ny #= block =# z"
+#         ^ ^          ^ ^           ^
+#         1 3         13 15          27
+
+# From position 1 (at 'x'):
+next_nontrivia_byte(ps, 1)               # returns 1 (already at 'x')
+next_nontrivia_byte(ps, 1; strict=true)  # returns 13 (newline, excludes 'x')
+
+# From position 3 (in comment):
+next_nontrivia_byte(ps, 3)                      # returns 13 (stops at newline)
+next_nontrivia_byte(ps, 3; pass_newlines=true)  # returns 14 (skip to 'y')
+
+# From position 15 (in block comment):
+next_nontrivia_byte(ps, 15)  # returns 27 (comments are trivia)
+
+# Out of bounds:
+next_nontrivia_byte(ps, 0)   # returns nothing
+next_nontrivia_byte(ps, 40)  # returns nothing
+```
+"""
+next_nontrivia_byte(args...; kwargs...) =
+    JS.first_byte(@something next_nontrivia(args...; kwargs...) return nothing)
+
+"""
+    next_nontrivia(ps::JS.ParseStream, b::Integer; pass_newlines=false, strict=false)
+
+Find the next non-trivia token at or after byte position `b`.
+Returns the `tc::TokenCursor` for that token, or `nothing` if no non-trivia token is found
+or if `b` is beyond the input.
+
+Trivia includes whitespace and comments. When `pass_newlines=false` (default),
+newlines are treated as non-trivia and will stop the search.
+
+When `strict=true`, the token at position `b` is excluded from the search,
+ensuring only strictly next tokens are considered.
+
+# Example
+```julia
+# Given: "x # comment\\ny #= block =# z"
+#         ^ ^          ^ ^           ^
+#         1 3         13 15          27
+
+# From position 1 (at 'x'):
+next_nontrivia(ps, 1)               # returns TokenCursor for 'x'
+next_nontrivia(ps, 1; strict=true)  # returns TokenCursor for newline (excludes 'x')
+
+# From position 3 (in comment):
+next_nontrivia(ps, 3)                      # returns TokenCursor for newline (stops at newline)
+next_nontrivia(ps, 3; pass_newlines=true)  # returns TokenCursor for 'y'
+
+# From position 15 (in block comment):
+next_nontrivia(ps, 15)  # returns TokenCursor for 'z' (comments are trivia)
+
+# Out of bounds:
+next_nontrivia(ps, 0)   # returns nothing
+next_nontrivia(ps, 40)  # returns nothing
+```
+"""
+next_nontrivia(args...; kwargs...) = find_nontrivia(#=prev_or_next=#false, args...; kwargs...)
+
+function find_nontrivia(prev_or_next::Bool, ps::JS.ParseStream, b::Integer; pass_newlines::Bool=false, strict::Bool=false)
+    tc = @something token_at_offset(ps, b) return nothing
+    if !strict && !is_trivia(tc, pass_newlines)
+        return tc
+    end
+    while true
+        tc = @something (prev_or_next ? prev_tok(tc) : next_tok(tc)) return nothing
+        is_trivia(tc, pass_newlines) && continue
+        return tc
+    end
+end
+
+function is_trivia(tc::TokenCursor, pass_newlines::Bool)
+    k = JS.kind(tc)
+    JS.is_whitespace(k) && (pass_newlines || k !== JS.K"NewlineWs")
+end
+
+"""
+    get_line_indent(fi::FileInfo, line::Integer) -> String
+
+Get the leading whitespace (indentation) of the given 0-indexed line.
+
+# Examples
+- `"    export a, b"` line 0 → `"    "`
+- `"begin\\n    export a, b"` line 1 → `"    "`
+- `"begin\\n    export a, b"` line 0 → `""`
+"""
+function get_line_indent(fi::FileInfo, line::Integer)
+    textbuf = fi.parsed_stream.textbuf
+    byte = xy_to_offset(fi, Position(; line, character = 0))
+    n = length(textbuf)
+    i = byte
+    while i <= n
+        b = textbuf[i]
+        b == UInt8(' ') || b == UInt8('\t') || break
+        i += 1
+    end
+    return String(textbuf[byte:i-1])
+end
+
+# TODO: This is used so that `r"foo"|` or `r"foo" |` don't show signature help,
+# but this edge case might be acceptable given that `r"foo" anything|` shouldn't
+# show signature help
+is_special_macrocall(st0::SyntaxTree) =
+    JS.head(st0) === :macrocall && JS.numchildren(st0) >= 1 &&
+    let mname = JS.head(st0[1]) === :. && JS.numchildren(st0[1]) === 2 ? st0[1][2] : st0[1]
+        mname_s = get_name_val(mname, "")
+        endswith(mname_s, "_str") || endswith(mname_s, "_cmd")
+    end
+
+noparen_macrocall(st0::SyntaxTree) =
+    JS.head(st0) === :macrocall &&
+    !has_source_flags(st0, JS.PARENS_FLAG) &&
+    !is_special_macrocall(st0)
+
+"""
+    select_target_identifier(st0::SyntaxTree, offset::Integer) -> target::Union{SyntaxTree,Nothing}
+
+Determine the identifier node that the user most likely intends to navigate to,
+or `nothing` if no suitable one is found. `st0` must be a `SyntaxTree` before
+lowering.
+
+For dot expressions, walks up through `:.` to pick the larger dotted prefix
+(`Base.Compi│ler.tmeet` → `Base.Compiler`). Cursor positions at token boundaries
+like `var│` or `func│(5)` are handled by [`select_target_node`](@ref)'s
+`offset - 1` fallback.
+"""
+function select_target_identifier(st0::SyntaxTree, offset::Integer)
+    filter = function (bas)
+        JS.head(first(bas)) === :identifier
+    end
+    selector = function (bas)
+        target = first(bas)
+        for i = 2:length(bas)
+            basᵢ = bas[i]
+            # EST wraps the RHS identifier of dot expressions in `:inert`
+            JS.head(basᵢ) === :inert && continue
+            if (JS.head(basᵢ) === :. &&
+                basᵢ[1] !== target) # e.g. don't allow jumps to `tmeet` from `Base.Compi│ler.tmeet`
+                target = basᵢ
+            else
+                return target
+            end
+        end
+        # Unreachable: we always have toplevel node
+        return nothing
+    end
+    return select_target_node(filter, selector, st0, offset)
+end
+
+function select_target_string(st0::SyntaxTree, offset::Integer)
+    filter = function (bas)
+        is_string_literal(first(bas))
+    end
+    selector = function (bas)
+        return first(bas)
+    end
+    return select_target_node(filter, selector, st0, offset)
+end
+
+"""
+    select_enclosing_call(st0::SyntaxTree, offset::Integer) ->
+        target::Union{SyntaxTree, Nothing}
+
+Innermost surface form whose value is the result of a callable application
+whose byte range contains `offset`. Covers:
+
+- `:call` / `:dotcall` — `f(args)`, `obj.f(args)`
+- `:ref` — `arr[idx]`, `T[a, b, c]` (typed comma-separated literal)
+- `:tuple` — `(a, b, c)`
+- `:vect` — `[a, b, c]`
+- `:vcat` / `:hcat` — `[a; b]` / `[a b]`
+- `:comprehension` — `[x for y in z]`
+- `:typed_vcat` / `:typed_hcat` / `:typed_comprehension` — typed
+  variants of the above
+
+All of these lower to a `:call` (`getindex`, `Core.tuple`, `Base.vect`,
+`Base.vcat`, `Base.hcat`, `Base.collect`, …) and so carry an inferred
+return type that downstream features can query.
+
+Probes both `offset` and `offset - 1`, picking the more specific (smaller
+byte range) match when both yield a hit. This makes `func(args)│` and
+`outer(inner(x)│)` symmetric — both resolve to the form that just closed
+at the cursor, rather than to whichever enclosing form also happens to
+span that byte.
+"""
+function select_enclosing_call(st0::SyntaxTree, offset::Integer)
+    a = _innermost_call_at(st0, offset)
+    offset > 0 || return a
+    b = _innermost_call_at(st0, offset - 1)
+    a === nothing && return b
+    b === nothing && return a
+    return length(JS.byte_range(a)) <= length(JS.byte_range(b)) ? a : b
+end
+
+"""
+    _OPERATOR_CALL_HEADS
+
+Non-`:call` / `:dotcall` surface heads whose lowered form is a single
+dispatched operator: `xs[i]│` → `getindex`, `(a, b)│` → `Core.tuple`,
+`[a, b]│` → `Base.vect`, `[a; b]│` → `Base.vcat`, `[a for x in xs]│` →
+`Base.collect`, etc. Used by features that want to look up the dispatched
+method directly from the surface (go-to-definition Phase 4, hover
+operator-dispatch doc, …) — the surface's own byte range maps to the
+lowered call's `:matches` annotation without any walk-up.
+"""
+const _OPERATOR_CALL_HEADS = (
+    :ref, :tuple, :vect, :vcat, :hcat, :comprehension,
+    :typed_vcat, :typed_hcat, :typed_comprehension)
+
+const _CALL_LIKE_HEADS = (
+    :call, :dotcall, :ref, :tuple, :vect, :vcat, :hcat, :comprehension,
+    :typed_vcat, :typed_hcat, :typed_comprehension)
+
+function _innermost_call_at(st0::SyntaxTree, offset::Integer)
+    for b in byte_ancestors(st0, offset)
+        JS.head(b) in _CALL_LIKE_HEADS && return b
+    end
+    return nothing
+end
+
+"""
+    enclosing_call_for_matches(st0::SyntaxTree, node::SyntaxTree) ->
+        SyntaxTree | nothing
+
+Call node whose `:matches` annotation answers a query about `node`.
+Returns `nothing` when `node` isn't (and isn't the callee of) a call.
+
+Two recognized shapes:
+- `node` itself is `:call` / `:dotcall` (`func(args)│`) — returns `node`.
+- `node` is the full callee of an enclosing call (`func│(args)`, `Foo.bar│(args)`) —
+  returns the enclosing call.
+
+`byte_ancestors` walks from the cursor outward; the first call whose `child[1]` byte range
+exactly matches `node`'s range is the call we want.
+The exact-match check rejects mid-callee positions like `Foo│.bar(x)` where `node` is
+`Foo` and `child[1]` is the larger `Foo.bar`.
+"""
+function enclosing_call_for_matches(st0::SyntaxTree, node::SyntaxTree)
+    JS.head(node) in (:call, :dotcall) && return node
+    rng = JS.byte_range(node)
+    for st in byte_ancestors(st0, first(rng))
+        JS.head(st) in (:call, :dotcall) || continue
+        JS.numchildren(st) >= 1 || continue
+        JS.byte_range(st[1]) == rng && return st
+    end
+    return nothing
+end
+
+"""
+    select_target_for_type_query(st0::SyntaxTree, offset::Integer) ->
+        target::Union{SyntaxTree, Nothing}
+
+Pick the AST node whose `JS.byte_range` should be passed to `get_type_for_range` for the
+cursor at `offset`. Falls back through:
+
+1. [`select_target_identifier`](@ref) — handles identifiers and dot-chain expressions
+   (`Base.Compi│ler.tmeet` → `Base.Compiler`).
+2. [`select_enclosing_call`](@ref) — handles cursor positions that aren't on an identifier
+   but are inside (or right after) a call expression (`func(args)│` → the `func(args)` call,
+   whose type is the call's return type).
+
+Intended as the canonical cursor → AST resolver for TypeAnnotation-based features
+(type definition, hover-type, etc.).
+"""
+select_target_for_type_query(st0::SyntaxTree, offset::Integer) =
+    @something(
+        select_target_identifier(st0, offset),
+        return select_enclosing_call(st0, offset))
+
+"""
+    resolve_path_string_literal(string_node::SyntaxTree, basedir::AbstractString)
+        -> Union{Nothing, @NamedTuple{value::String, path::String}}
+
+If `string_node` is a non-interpolated string literal whose value joins with
+`basedir` to form an existing path, return its raw `value` and the resolved
+`path`. Otherwise return `nothing`.
+"""
+function resolve_path_string_literal(
+        string_node::SyntaxTree, basedir::AbstractString
+    )
+    value = string_node.value
+    value isa String || return nothing
+    path = joinpath(basedir, value)
+    ispath(path) || return nothing
+    return (; value, path)
+end
+
+"""
+    string_literal_payload_range(string_node::SyntaxTree) -> Union{Nothing, UnitRange{Int}}
+
+Byte range of the content of a non-interpolated string literal, excluding its
+delimiters (the byte range of `string_node` itself includes them).
+Returns `nothing` when the literal is malformed, e.g. unterminated.
+"""
+function string_literal_payload_range(string_node::SyntaxTree)
+    source = JS.prov_end(string_node)
+    JS.head(source) === :string && JS.numchildren(source) >= 2 || return nothing
+    opening, closing = source[1], source[end]
+    JS.head(opening) in (Symbol("\""), Symbol("\"\"\"")) || return nothing
+    JS.head(closing) === JS.head(opening) || return nothing
+    return JS.last_byte(opening)+1:JS.first_byte(closing)-1
+end
+
+function select_target_node(filter, selector, st0::SyntaxTree, offset::Integer)
+    bas = @somereal byte_ancestors(st0, offset) @goto minus1
+    if !filter(bas)
+        @label minus1
+        offset > 0 || return nothing
+        # Support cases like `var│`, `func│(5)`
+        bas = @somereal byte_ancestors(st0, offset - 1) return nothing
+        if !filter(bas)
+            return nothing
+        end
+    end
+    return selector(bas)
+end
+
+"""
+    select_dotprefix_identifier(st::SyntaxTree, offset::Integer) -> dotprefix::Union{SyntaxTree,Nothing}
+
+If the code at `offset` position is dot accessor code, get the code being dot accessed.
+For example, `Base.show_│` returns the `SyntaxTree` of `Base`.
+If it's not dot accessor code, return `nothing`.
+"""
+function select_dotprefix_identifier(st::SyntaxTree, offset::Integer)
+    bas = byte_ancestors(st, offset-1)
+    dotprefix = nothing
+    for i = 1:length(bas)
+        basᵢ = bas[i]
+        if JS.head(basᵢ) === :.
+            dotprefix = basᵢ
+        elseif dotprefix !== nothing
+            break
+        end
+    end
+    if dotprefix !== nothing && JS.numchildren(dotprefix) ≥ 2
+        return dotprefix[1]
+    end
+    return nothing
+end
+
+"""
+    jsobj_to_range(
+            obj, fi::Union{FileInfo,SavedFileInfo};
+            adjust_first::Integer = 0, adjust_last::Integer = 0
+        ) -> range::LSP.Range
+
+Returns the position information of a JuliaSyntax object in the source file in `LSP.Range` format.
+
+# Arguments
+- `obj`: A JuliaSyntax object with byte range information (typically a `SyntaxNode` or
+  `SyntaxTree`, must respond to `JS.first_byte`, `JS.last_byte`, and `JS.kind`)
+- `fi::FileInfo`: The file info containing the parsed content
+
+# Keyword Arguments
+- `adjust_first::Integer = 0`: Adjustment to apply to the first byte position
+- `adjust_last::Integer = 0`: Adjustment to apply to the last byte position
+
+# Returns
+`LSP.Range`: The position range of the object in the source file, with character positions
+calculated according to the specified encoding.
+
+# Details
+The function converts byte offsets from JuliaSyntax to LSP-compatible positions using
+the encoding specified by `fi`.
+
+Note that `+1` is added to `JS.last_byte(obj)` when calculating the end position
+(additionally, if `adjust_last` is specified, that value is also added).
+`JS.last_byte(obj)` returns the 1-based byte index of the last byte that belongs to
+the object. To create a range that includes this byte, we need the position after it,
+since LSP uses half-open intervals [start, end) where the end position is exclusive.
+This follows the standard convention where the end position points to the first
+character/byte that is NOT part of the range.
+"""
+function jsobj_to_range(
+        obj, fi::Union{FileInfo,SavedFileInfo};
+        adjust_first::Integer = 0, adjust_last::Integer = 0
+    )
+    fb = JS.first_byte(obj)
+    lb = JS.last_byte(obj)
+    if iszero(fb)
+        line, _ = JS.source_location(obj)
+        rng = line_range(line)
+        if iszero(lb)
+            return rng
+        else
+            return Range(rng; var"end" = offset_to_xy(fi, lb+1+adjust_last))
+        end
+    else
+        spos = offset_to_xy(fi, fb+adjust_first)
+        if iszero(lb)
+            epos = Position(; line=spos.line, character=Int(typemax(Int32)))
+        else
+            epos = offset_to_xy(fi, lb+1+adjust_last)
+        end
+        return Range(; start = spos, var"end" = epos)
+    end
+end
+
+byte_range_to_range(rng::UnitRange{Int}, fi::Union{FileInfo,SavedFileInfo}) =
+    Range(; start = offset_to_xy(fi, first(rng)), var"end" = offset_to_xy(fi, last(rng)+1))
+
+"""
+    line_absorbing_delete_range(obj, fi::FileInfo) -> Range
+
+Build a delete range covering the bytes of `obj`. When `obj` is the only
+non-whitespace content on its line, the range is extended to absorb the
+surrounding indentation and the trailing newline so that deletion does not
+leave a stray blank line behind. Otherwise, the result equals
+[`jsobj_to_range(obj, fi)`](@ref jsobj_to_range).
+
+Intended for `data.delete_range` of a `DeleteRangeData` quick-fix that
+removes a whole statement (e.g. `using M: x`, `@label foo`).
+"""
+function line_absorbing_delete_range(obj, fi::FileInfo)
+    fb = JS.first_byte(obj)
+    lb = JS.last_byte(obj)
+    textbuf = fi.parsed_stream.textbuf
+    line_start = fb
+    while line_start > 1 && textbuf[line_start - 1] != UInt8('\n')
+        c = textbuf[line_start - 1]
+        if c != UInt8(' ') && c != UInt8('\t')
+            return jsobj_to_range(obj, fi)
+        end
+        line_start -= 1
+    end
+    after_end = lb + 1
+    while after_end ≤ length(textbuf) && textbuf[after_end] != UInt8('\n')
+        c = textbuf[after_end]
+        if c != UInt8(' ') && c != UInt8('\t')
+            return jsobj_to_range(obj, fi)
+        end
+        after_end += 1
+    end
+    if after_end ≤ length(textbuf) && textbuf[after_end] == UInt8('\n')
+        after_end += 1
+    end
+    return Range(;
+        start = offset_to_xy(fi, line_start),
+        var"end" = offset_to_xy(fi, after_end))
+end
+
+"""
+    try_extract_field_line(node::JS.SyntaxNode, structname::Symbol, fname::Symbol;
+                           interpolated::Bool = false) -> Union{Nothing,JS.SyntaxNode}
+
+Find the definition of the field `fname` of the struct `structname` within `node`.
+With `interpolated = true`, match the structs whose names are interpolated instead, as in
+`@eval struct \$name ... end`.
+"""
+function try_extract_field_line(
+        node::JS.SyntaxNode, structname::Symbol, fname::Symbol; interpolated::Bool = false
+    )
+    if JS.kind(node) === JS.K"struct" && JS.numchildren(node) ≥ 2
+        structnm = node[1]
+        if JS.kind(structnm) === JS.K"<:" && JS.numchildren(structnm) ≥ 1
+            structnm = structnm[1]
+        end
+        if JS.kind(structnm) === JS.K"curly" && JS.numchildren(structnm) ≥ 1
+            structnm = structnm[1]
+        end
+        if (interpolated ? JS.kind(structnm) === JS.K"$" :
+            (let data = structnm.data; data !== nothing && data.val === structname; end))
+            for i = 1:JS.numchildren(node[2])
+                retfield = field = node[2][i]
+                if JS.kind(field) === JS.K"const" && JS.numchildren(field) ≥ 1
+                    field = field[1]
+                end
+                if JS.kind(field) === JS.K"::" && JS.numchildren(field) ≥ 1
+                    field = field[1]
+                end
+                if let data = field.data; data !== nothing && data.val === fname; end
+                    return retfield
+                end
+            end
+        end
+        return nothing
+    else
+        for i = 1:JS.numchildren(node)
+            return @something try_extract_field_line(node[i], structname, fname; interpolated) continue
+        end
+        return nothing
+    end
+end
+
+"""
+    is_from_user_ast(provs::SyntaxList) -> Bool
+
+Determine whether a binding with the given provenances originates from user-written code.
+
+When a binding has multiple provenances (e.g., due to macro expansion), this function
+checks if the final provenance location falls within the byte range of the first provenance.
+If so, the binding likely corresponds to an identifier the user actually wrote, even though
+it was processed by a macro.
+
+This allows diagnostics to report on user-written identifiers like `x` in
+`func(@nospecialize x) = ()`, while filtering out purely macro-generated bindings
+like internal variables from `@ast`.
+
+!!! note
+    This currently does not support old-style macros due to JuliaLowering limitations.
+"""
+function is_from_user_ast(provs::SyntaxList)
+    length(provs) == 1 && return true
+    fprov, lprov = first(provs), last(provs)
+    JS.sourcefile(lprov) == JS.sourcefile(fprov) || return false
+    return JS.byte_range(lprov) ⊆ JS.byte_range(fprov)
+end
+
+function is_noreturn_call(
+        ctx3::JL.VariableAnalysisContext, st3::SyntaxTree,
+        allow_noreturn_optimization::Vector{Symbol}
+    )
+    JS.head(st3) === :call || return false
+    JS.numchildren(st3) >= 1 || return false
+    func = st3[1]
+    if JS.head(func) === :bindingid
+        binfo = JL.get_binding(ctx3, var_id(func))
+        if binfo.kind === :global && Symbol(binfo.name) in allow_noreturn_optimization
+            return true
+        end
+    elseif JS.head(func) in (:core, :top, :globalref)
+        name = get_name_val(func)
+        if name !== nothing && Symbol(name) in allow_noreturn_optimization
+            return true
+        end
+    end
+    for i in 2:JS.numchildren(st3)
+        is_noreturn_call(ctx3, st3[i], allow_noreturn_optimization) && return true
+    end
+    return false
+end

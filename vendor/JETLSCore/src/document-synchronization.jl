@@ -1,0 +1,276 @@
+# TODO: Full analysis for `file:` documents is retriggered by `didSave`. Clients
+# without `textDocument.synchronization.didSave` only update the live cache on
+# `didChange`, leaving analysis stale after edits. Add a change-based fallback.
+
+const DID_OPEN_TEXT_DOCUMENT_REGISTRATION_ID = "jetls-did-open-text-document"
+const DID_OPEN_TEXT_DOCUMENT_REGISTRATION_METHOD = "textDocument/didOpen"
+const DID_CHANGE_TEXT_DOCUMENT_REGISTRATION_ID = "jetls-did-change-text-document"
+const DID_CHANGE_TEXT_DOCUMENT_REGISTRATION_METHOD = "textDocument/didChange"
+const DID_SAVE_TEXT_DOCUMENT_REGISTRATION_ID = "jetls-did-save-text-document"
+const DID_SAVE_TEXT_DOCUMENT_REGISTRATION_METHOD = "textDocument/didSave"
+const DID_CLOSE_TEXT_DOCUMENT_REGISTRATION_ID = "jetls-did-close-text-document"
+const DID_CLOSE_TEXT_DOCUMENT_REGISTRATION_METHOD = "textDocument/didClose"
+
+const JULIA_TEXT_DOCUMENT_SYNC_SELECTOR = DocumentFilter[
+    TextDocumentFilterLanguage(; language = "julia", scheme = "file"),
+    [TextDocumentFilterLanguage(; language = "julia", scheme) for scheme in UNSAVED_DOCUMENT_SCHEMES]...,
+]
+
+function config_document_sync_filter(server::Server)
+    state = server.state
+    isdefined(state, :root_path) || return nothing
+    pattern = if supports(server, :textDocument, :filters, :relativePatternSupport)
+        RelativePattern(;
+            baseUri = filepath2uri(state.root_path),
+            pattern = CONFIG_FILE)
+    else
+        CONFIG_FILE_GLOB_PATTERN
+    end
+    return TextDocumentFilterPattern(; scheme = "file", pattern)
+end
+
+function text_document_sync_options(server::Server)
+    return TextDocumentSyncOptions(;
+        openClose = true,
+        change = TextDocumentSyncKind.Full,
+        save = supports(server, :textDocument, :synchronization, :didSave) ?
+            SaveOptions(; includeText = true) : nothing)
+end
+
+function text_document_sync_registrations(server::Server)
+    sync_selector = copy(JULIA_TEXT_DOCUMENT_SYNC_SELECTOR)
+    config_filter = config_document_sync_filter(server)
+    config_filter === nothing || push!(sync_selector, config_filter)
+
+    open_close_selector = copy(sync_selector)
+    if supports_text_document_content(server)
+        append!(open_close_selector,
+            TextDocumentFilterScheme[
+                TextDocumentFilterScheme(; scheme) for scheme in TEXT_DOCUMENT_CONTENT_SCHEMES])
+    end
+
+    registrations = Registration[
+        Registration(;
+            id = DID_OPEN_TEXT_DOCUMENT_REGISTRATION_ID,
+            method = DID_OPEN_TEXT_DOCUMENT_REGISTRATION_METHOD,
+            registerOptions = TextDocumentRegistrationOptions(;
+                documentSelector = open_close_selector)),
+        Registration(;
+            id = DID_CHANGE_TEXT_DOCUMENT_REGISTRATION_ID,
+            method = DID_CHANGE_TEXT_DOCUMENT_REGISTRATION_METHOD,
+            registerOptions = TextDocumentChangeRegistrationOptions(;
+                documentSelector = sync_selector,
+                syncKind = TextDocumentSyncKind.Full)),
+        Registration(;
+            id = DID_CLOSE_TEXT_DOCUMENT_REGISTRATION_ID,
+            method = DID_CLOSE_TEXT_DOCUMENT_REGISTRATION_METHOD,
+            registerOptions = TextDocumentRegistrationOptions(;
+                documentSelector = open_close_selector)),
+    ]
+    if supports(server, :textDocument, :synchronization, :didSave)
+        push!(
+            registrations, Registration(;
+                id = DID_SAVE_TEXT_DOCUMENT_REGISTRATION_ID,
+                method = DID_SAVE_TEXT_DOCUMENT_REGISTRATION_METHOD,
+                registerOptions = TextDocumentSaveRegistrationOptions(;
+                    documentSelector = DocumentFilter[
+                        TextDocumentFilterLanguage(; language = "julia", scheme = "file")],
+                    includeText = true)))
+    end
+    return registrations
+end
+
+function ParseStream!(s::Union{AbstractString,Vector{UInt8}})
+    stream = JS.ParseStream(s)
+    JS.parse!(stream; rule=:all)
+    return stream
+end
+
+# Drop every per-file cache entry for `uri`. Called whenever a file's content
+# changes (didChange/didOpen, notebook cell edits, watched-file events).
+# Full-analysis updates invalidate semantic caches separately because not all
+# per-file caches depend on module context.
+function invalidate_per_file_caches!(state::ServerState, uri::URI)
+    invalidate_document_symbol_cache!(state, uri)
+    invalidate_binding_occurrences_cache!(state, uri)
+    invalidate_per_file_diagnostics_cache!(state, uri)
+end
+
+function clear_inferred_context_cache!(state::ServerState, uri::URI)
+    uri = canonical_cache_uri(state, uri)
+    store!(state.file_cache) do cache
+        fi = @something get(cache, uri, nothing) return cache, nothing
+        fi.inferred_context_cache === nothing && return cache, nothing
+        new_fi = FileInfo(fi; inferred_context_cache=InferredContextCache())
+        return Base.PersistentDict(cache, uri => new_fi), nothing
+    end
+end
+
+"""
+    cache_file_info!(server::Server, uri::URI, version::Int, text::Union{AbstractString,Vector{UInt8}})
+    cache_file_info!(server::Server, uri::URI, version::Int, parsed_stream::JS.ParseStream)
+
+Cache or update file information in the server state's file cache.
+Computes testsetinfos atomically as part of the caching operation,
+preserving test results from previous testsetinfos where possible.
+"""
+cache_file_info!(server::Server, uri::URI, version::Int, text::Union{AbstractString,Vector{UInt8}}) =
+    cache_file_info!(server, uri, version, ParseStream!(text))
+function cache_file_info!(
+        server::Server, uri::URI, version::Int, parsed_stream::JS.ParseStream
+    )
+    state = server.state
+    prev_fi = get_file_info(state, uri)
+    prev_testsetinfos = prev_fi === nothing ? EMPTY_TESTSETINFOS : prev_fi.testsetinfos
+
+    filename = uri2filename(uri)
+    fi0 = FileInfo(version, parsed_stream, filename, state.encoding;
+        cache_tree0=true, inferred_context_cache=InferredContextCache())
+    testsetinfos, any_deleted = compute_testsetinfos!(
+        server, fi0.syntax_tree0::SyntaxTree, prev_testsetinfos)
+    fi = FileInfo(fi0; testsetinfos)
+    store!(state.file_cache) do cache
+        Base.PersistentDict(cache, uri => fi), nothing
+    end
+
+    invalidate_per_file_caches!(state, uri)
+    schedule_workspace_diagnostics!(server)
+
+    any_deleted && notify_diagnostics!(server; ensure_cleared=uri)
+
+    return fi
+end
+
+"""
+    cache_saved_file_info!(state::ServerState, uri::URI, text::String)
+    cache_saved_file_info!(state::ServerState, uri::URI, parsed_stream::JS.ParseStream)
+
+Cache or update saved file information in the server state's saved file cache.
+This is used to track the last saved state of a file. If the file already exists
+in the cache, updates its parsed stream and clears cached syntax representations.
+Otherwise, creates a new `SavedFileInfo` entry in the cache.
+"""
+cache_saved_file_info!(state::ServerState, uri::URI, text::String) =
+    cache_saved_file_info!(state, uri, ParseStream!(text))
+function cache_saved_file_info!(state::ServerState, uri::URI, parsed_stream::JS.ParseStream)
+    sfi = SavedFileInfo(parsed_stream, uri, state.encoding)
+    store!(state.saved_file_cache) do cache
+        Base.PersistentDict(cache, uri => sfi), sfi
+    end
+end
+
+is_rejected_text_document(state::ServerState, uri::URI) =
+    haskey(load(state.rejected_text_documents), uri)
+
+function mark_text_document_rejected!(state::ServerState, uri::URI)
+    store!(state.rejected_text_documents) do documents
+        Base.PersistentDict(documents, uri => nothing), nothing
+    end
+    return nothing
+end
+
+function delete_rejected_text_document!(state::ServerState, uri::URI)
+    return store!(state.rejected_text_documents) do documents
+        haskey(documents, uri) || return documents, false
+        return Base.delete(documents, uri), true
+    end
+end
+
+function handle_DidOpenTextDocumentNotification(server::Server, msg::DidOpenTextDocumentNotification)
+    textDocument = msg.params.textDocument
+    uri = textDocument.uri
+    is_text_document_content_uri(uri) &&
+        return mark_text_document_content_opened!(server, uri) # turn on the `opened` flag
+    if is_config_document_uri(server.state, uri)
+        cache_config_document!(server.state, uri, textDocument.version, textDocument.text)
+        update_config_diagnostics!(server, uri)
+        return nothing
+    end
+    if textDocument.languageId != "julia"
+        mark_text_document_rejected!(server.state, uri)
+        return nothing
+    end
+    delete_rejected_text_document!(server.state, uri)
+    parsed_stream = ParseStream!(textDocument.text)
+    cache_file_info!(server, uri, textDocument.version, parsed_stream)
+    cache_saved_file_info!(server.state, uri, parsed_stream)
+    invalidate_unsynced_file_cache!(server.state, uri)
+    notify_diagnostics_on_open!(server, uri)
+    request_analysis!(server, uri, #=invalidate=#false)
+end
+
+function handle_DidChangeTextDocumentNotification(server::Server, msg::DidChangeTextDocumentNotification)
+    (; textDocument, contentChanges) = msg.params
+    uri = textDocument.uri
+    # Read-only `jetls-*:` virtual documents never carry user edits to sync, so just ignore it.
+    is_text_document_content_uri(uri) && return nothing
+    text = last(contentChanges).text
+    if is_config_document_uri(server.state, uri)
+        cache_config_document!(server.state, uri, textDocument.version, text)
+        update_config_diagnostics!(server, uri)
+        return nothing
+    end
+    is_synchronized(server.state, uri) || return nothing
+    for contentChange in contentChanges
+        @assert contentChange.range === contentChange.rangeLength === nothing # since `change = TextDocumentSyncKind.Full`
+    end
+    cache_file_info!(server, uri, textDocument.version, text)
+    # Unsaved buffers (untitled: scheme) never receive didSave, so trigger analysis
+    # on every content change with a longer debounce to avoid excessive re-analysis.
+    isunsaveduri(uri) && request_analysis!(server, uri, #=invalidate=#true; debounce=3.0)
+end
+
+function handle_DidSaveTextDocumentNotification(server::Server, msg::DidSaveTextDocumentNotification)
+    uri = msg.params.textDocument.uri
+    is_config_document_uri(server.state, uri) && return nothing
+    cache = load(server.state.saved_file_cache)
+    haskey(cache, uri) || return nothing
+    text = msg.params.text
+    if text isa String
+        cache_saved_file_info!(server.state, uri, text)
+    else
+        @static JETLS_TEST_MODE || @warn """
+        The client is not respecting the `capabilities.textDocumentSync.save.includeText`
+        option specified by this server during initialization. Falling back to the
+        synchronized document content for save notifications.
+        """ maxlog=1
+        fi = @something get_file_info(server.state, uri) return nothing
+        cache_saved_file_info!(server.state, uri, fi.parsed_stream)
+    end
+    request_analysis!(server, uri, #=invalidate=#true)
+end
+
+function handle_DidCloseTextDocumentNotification(server::Server, msg::DidCloseTextDocumentNotification)
+    uri = msg.params.textDocument.uri
+    is_text_document_content_uri(uri) &&
+        return mark_text_document_content_closed!(server, uri) # turn off the `opened` flag
+    if is_config_document_uri(server.state, uri)
+        delete_config_document!(server.state, uri)
+        # Rediagnose from disk, or clear the diagnostics when `diagnostic.all_files` is off
+        update_config_diagnostics!(server, uri)
+        return nothing
+    end
+    delete_rejected_text_document!(server.state, uri) && return nothing
+    is_synchronized(server.state, uri) || return nothing
+    store!(server.state.file_cache) do cache
+        Base.delete(cache, uri), nothing
+    end
+    store!(server.state.saved_file_cache) do cache
+        Base.delete(cache, uri), nothing
+    end
+    # Extra diagnostics should only be published for open files
+    clear_extra_diagnostics!(server, uri)
+    # With `all_files=false` the publish below clears the file on the client, so its live
+    # diagnostics have to go too: reopening it at the same version before the next scan
+    # would otherwise match their fingerprint and never republish them.
+    get_config(server.state, :diagnostic, :all_files) ||
+        forget_workspace_live_diagnostics!(server.state, uri)
+    # Republish textDocument/publishDiagnostics for cases with `diagnostic.all_files === false`,
+    # where diagnostics for this file must be suppressed.
+    notify_diagnostics!(server; ensure_cleared=uri)
+    if isunsaveduri(uri)
+        cleanup_analysis_state!(server, uri)
+    end
+    # Reschedule the workspace diagnostics push so this closed file is picked up again
+    request_diagnostic_refresh!(server)
+end
