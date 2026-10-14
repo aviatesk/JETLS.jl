@@ -1,12 +1,12 @@
 # Generates the TOML schema block embedded in `src/configuration.md` via its `@eval`
-# code block. Entries and default values are derived from `JETLS.JETLSConfig` /
-# `JETLS.DEFAULT_CONFIG`, and the docs build fails when this file drifts from the
+# code block. Entries and default values are derived from `JETLSCore.JETLSConfig` /
+# `JETLSCore.DEFAULT_CONFIG`, and the docs build fails when this file drifts from the
 # actual configuration structs:
 # - the displayed block, as well as its variant with all the commented-out entries
 #   enabled, must be valid TOML and parse into a valid `JETLSConfig`
 # - the entries must cover exactly the options reachable from `JETLSConfig`
 
-using JETLS
+using JETLSCore
 using Markdown
 using TOML
 
@@ -35,7 +35,7 @@ function toml_repr(@nospecialize x)
 end
 
 function default_entry(path::Symbol...; comment::String, note::String = "", validate::Bool = true)
-    value = JETLS.getobjpath(JETLS.DEFAULT_CONFIG, path...)
+    value = JETLSCore.getobjpath(JETLSCore.DEFAULT_CONFIG, path...)
     code = string(last(path), " = ", toml_repr(value))
     comment = string(comment, ", default: ", toml_repr(value), note)
     return SchemaRow(join(path, '.'), code, comment, false, validate)
@@ -97,15 +97,15 @@ function option_keys!(acc::Set{String}, ::Type{T}, prefix::String) where {T}
         key = isempty(prefix) ? name : string(prefix, '.', name)
         key in SKIP_OPTIONS && continue
         S = strip_sentinels(fieldtype(T, i))
-        if S == JETLS.FormatterConfig
+        if S == JETLSCore.FormatterConfig
             push!(acc, key) # the string preset form
             option_keys!(
-                acc, JETLS.CustomFormatterConfig,
-                string(key, '.', JETLS.CUSTOM_FORMATTER_ALIAS)
+                acc, JETLSCore.CustomFormatterConfig,
+                string(key, '.', JETLSCore.CUSTOM_FORMATTER_ALIAS)
             )
-        elseif S <: JETLS.ConfigSection
+        elseif S <: JETLSCore.ConfigSection
             option_keys!(acc, S, key)
-        elseif S <: Vector && eltype(S) <: JETLS.ConfigSection
+        elseif S <: Vector && eltype(S) <: JETLSCore.ConfigSection
             push!(acc, key) # the array itself (e.g. `patterns = []`)
             option_keys!(acc, eltype(S), key)
         else
@@ -130,9 +130,9 @@ function toml_keys!(acc::Set{String}, dict::AbstractDict{String}, prefix::String
 end
 
 function assert_valid_config(toml_text::String)
-    config_dict = JETLS.validate_config_data(TOML.parse(toml_text))
-    result = JETLS.parse_config_dict(config_dict)
-    result isa JETLS.JETLSConfig ||
+    config_dict = JETLSCore.validate_config_data(TOML.parse(toml_text))
+    result = JETLSCore.parse_config_dict(config_dict)
+    result isa JETLSCore.JETLSConfig ||
         error("the schema block is not a valid configuration: ", result)
     return result
 end
@@ -209,7 +209,7 @@ let rows = Union{Nothing, SchemaRow}[
     end
 
     expected = Set{String}()
-    option_keys!(expected, JETLS.JETLSConfig, "")
+    option_keys!(expected, JETLSCore.JETLSConfig, "")
 
     if covered != expected
         error(

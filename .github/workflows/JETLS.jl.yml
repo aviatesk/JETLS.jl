@@ -28,11 +28,13 @@ jobs:
       - name: enable JETLS_DEV_MODE for tests
         run: |
           echo '
-          [JETLS]
+          [JETLSCore]
           JETLS_DEV_MODE = true
-          ' > test/LocalPreferences.toml
+          ' > JETLSCore/test/LocalPreferences.toml
       - uses: julia-actions/julia-buildpkg@latest
       - uses: julia-actions/julia-runtest@latest
+        with:
+          project: JETLSCore
 
   JET_DEV_MODE:
     name: Test with `JET_DEV_MODE = true`
@@ -53,6 +55,8 @@ jobs:
           ' > LocalPreferences.toml
       - uses: julia-actions/julia-buildpkg@latest
       - uses: julia-actions/julia-runtest@latest
+        with:
+          project: JETLSCore
 
   JETLS_DEBUG_LOWERING:
     name: Test with `JETLS_DEBUG_LOWERING = true`
@@ -68,11 +72,13 @@ jobs:
         working-directory: .
         run: |
           echo '
-          [JETLS]
+          [JETLSCore]
           JETLS_DEBUG_LOWERING = true
           ' > LocalPreferences.toml
       - uses: julia-actions/julia-buildpkg@latest
       - uses: julia-actions/julia-runtest@latest
+        with:
+          project: JETLSCore
 
   JULIA_NUM_THREADS:
     name: Test with `JULIA_NUM_THREADS = 4,2`
@@ -86,6 +92,8 @@ jobs:
       - uses: julia-actions/cache@v3
       - uses: julia-actions/julia-buildpkg@latest
       - uses: julia-actions/julia-runtest@latest
+        with:
+          project: JETLSCore
         env:
           JULIA_NUM_THREADS: "4,2"
 

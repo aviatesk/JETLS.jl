@@ -1,0 +1,694 @@
+const CONFIG_FILE = ".JETLSConfig.toml"
+const CONFIG_FILE_GLOB_PATTERN = "**/$CONFIG_FILE"
+
+function is_config_document_uri(state::ServerState, uri::URI)
+    filepath = @something uri2filepath(uri) return false
+    return is_workspace_root_file(state, filepath, CONFIG_FILE)
+end
+
+get_config_document(state::ServerState, uri::URI) =
+    get(load(state.config_document_cache), uri, nothing)
+
+function tryparse_config_data(text::String)
+    config_data = TOML.tryparse(text)
+    config_data isa TOML.ParserError && return nothing
+    try
+        return validate_config_data(config_data)
+    catch err
+        err isa InvalidConfigDataError || rethrow(err)
+        return nothing
+    end
+end
+
+function cache_config_document!(
+        state::ServerState, uri::URI, version::Int, text::String
+    )
+    info = ConfigDocumentInfo(version, text, tryparse_config_data(text))
+    store!(state.config_document_cache) do cache
+        Base.PersistentDict(cache, uri => info), nothing
+    end
+    return info
+end
+
+function delete_config_document!(state::ServerState, uri::URI)
+    store!(state.config_document_cache) do cache
+        Base.delete(cache, uri), nothing
+    end
+    return nothing
+end
+
+@generated function merge_and_track(
+        on_difference,
+        old_config::T,
+        new_config::T,
+        path::Tuple{Vararg{Symbol}}
+    ) where {T<:ConfigSection}
+    entries = Expr[
+        :(merge_and_track(
+            on_difference,
+            getfield(old_config, $(QuoteNode(fname))),
+            getfield(new_config, $(QuoteNode(fname))),
+            (path..., $(QuoteNode(fname)))))
+        for fname in fieldnames(T)]
+    :(T($(entries...)))
+end
+
+function unique_config_sections_keep_last(config::Vector{T}) where {T<:ConfigSection}
+    seen = Set{Any}()
+    result = T[]
+    sizehint!(result, length(config))
+    for item in Iterators.reverse(config)
+        key = merge_key_value(item)
+        key in seen && continue
+        push!(seen, key)
+        push!(result, item)
+    end
+    return reverse!(result)
+end
+
+function merge_and_track(
+        on_difference,
+        old_config::Vector{T},
+        new_config::Vector{T},
+        path::Tuple{Vararg{Symbol}}
+    ) where {T<:ConfigSection}
+    old_config = unique_config_sections_keep_last(old_config)
+    new_config = unique_config_sections_keep_last(new_config)
+    old_keys = Any[merge_key_value(item) for item in old_config]
+    new_keys = Any[merge_key_value(item) for item in new_config]
+    isequal(old_keys, new_keys) || on_difference(old_keys, new_keys, path)
+
+    old_by_key = Dict{Any,T}(merge_key_value(item) => item for item in old_config)
+    new_keys_set = Set{Any}(new_keys)
+    result = T[]
+    sizehint!(result, length(old_config) + length(new_config))
+    for old_item in old_config
+        key = merge_key_value(old_item)
+        key in new_keys_set && continue
+        push!(result, merge_and_track(on_difference, old_item, nothing, path))
+    end
+    for new_item in new_config
+        key = merge_key_value(new_item)
+        if haskey(old_by_key, key)
+            push!(result, merge_and_track(on_difference, old_by_key[key], new_item, path))
+        else
+            push!(result, merge_and_track(on_difference, nothing, new_item, path))
+        end
+    end
+    return result
+end
+
+function merge_and_track(
+        on_difference,
+        old_config::Vector{T},
+        ::Nothing,
+        path::Tuple{Vararg{Symbol}}
+    ) where {T<:ConfigSection}
+    for old_item in old_config
+        merge_and_track(on_difference, old_item, nothing, path)
+    end
+    return old_config
+end
+
+function merge_and_track(
+        on_difference,
+        ::Nothing,
+        new_config::Vector{T},
+        path::Tuple{Vararg{Symbol}}
+    ) where {T<:ConfigSection}
+    new_config = unique_config_sections_keep_last(new_config)
+    return T[
+        merge_and_track(on_difference, nothing, new_item, path)
+        for new_item in new_config
+    ]
+end
+
+@generated function merge_and_track(
+        on_difference,
+        old_val::T,
+        ::Nothing,
+        path::Tuple{Vararg{Symbol}}
+    ) where T <: ConfigSection
+    entries = Expr[
+        :(merge_and_track(
+            on_difference,
+            getfield(old_val, $(QuoteNode(fname))),
+            nothing,
+            (path..., $(QuoteNode(fname)))))
+        for fname in fieldnames(T)]
+    :(T($(entries...)))
+end
+
+@generated function merge_and_track(
+        on_difference,
+        ::Nothing,
+        new_val::T,
+        path::Tuple{Vararg{Symbol}}
+    ) where T <: ConfigSection
+    entries = Expr[
+        :(merge_and_track(
+            on_difference,
+            nothing,
+            getfield(new_val, $(QuoteNode(fname))),
+            (path..., $(QuoteNode(fname)))))
+        for fname in fieldnames(T)]
+    :(T($(entries...)))
+end
+
+function merge_and_track(on_difference, old_val, new_val, path::Tuple{Vararg{Symbol}})
+    if old_val === missing
+        changed = new_val !== missing
+    elseif new_val === missing
+        changed = true
+    else
+        changed = (old_val != new_val)::Bool
+    end
+    changed && on_difference(old_val, new_val, path)
+    return new_val === nothing ? old_val : new_val
+end
+
+"""
+    track_setting_changes(on_difference, old_config, new_config) -> merged_config
+
+Recursively compares two configuration objects and invokes `on_difference(old_val, new_val, path)`
+for each leaf value that differs.
+"""
+track_setting_changes(on_difference, old_val, new_val) =
+    merge_and_track(on_difference, old_val, new_val, ())
+
+"""
+    merge_settings(base::JETLSConfig, overlay::JETLSConfig)
+
+Merges two configuration objects, with `overlay` taking precedence over `base`.
+If a field in `overlay` is `nothing`, the corresponding field from `base` is retained.
+"""
+merge_settings(base::JETLSConfig, overlay::JETLSConfig) =
+    merge_and_track(Returns(nothing), base, overlay, ())
+
+"""
+    InvalidKeyError(path, expected_keys)
+
+Thrown by [`parse_config_from_dict`](@ref) when a config dict contains a key that does not
+match any field of the target [`ConfigSection`](@ref). `path` is the dotted key path to the
+offending entry (e.g. `["diagnostic", "patterns"]`); `expected_keys` is the list of
+field names of the target type at that path.
+"""
+struct InvalidKeyError <: Exception
+    path::Vector{String}
+    expected_keys::Vector{String}
+end
+function Base.showerror(io::IO, e::InvalidKeyError)
+    print(io, "InvalidKeyError: invalid key `", join(e.path, "."), "`",
+          ", expected one of: ", join((string('`', k, '`') for k in e.expected_keys), ", "))
+end
+
+struct InvalidConfigDataError <: Exception
+    path::String
+    expected_type::String
+    actual_type::String
+end
+function Base.showerror(io::IO, e::InvalidConfigDataError)
+    print(io, "Invalid configuration data")
+    isempty(e.path) || print(io, " at `", e.path, "`")
+    print(io, ": expected `", e.expected_type, "`, got `", e.actual_type, "`")
+end
+
+config_data_path(path::String, key::String) =
+    isempty(path) ? key : string(path, '.', key)
+config_data_path(path::String, index::Int) = string(path, '[', index, ']')
+
+function invalid_config_data(path::String, expected_type::String, @nospecialize(value))
+    throw(InvalidConfigDataError(path, expected_type, string(typeof(value))))
+end
+
+function validate_config_data(@nospecialize(value), path::String)
+    if value isa Dict{String,Any}
+        for (key, child) in value
+            validate_config_data(child, config_data_path(path, key))
+        end
+    elseif value isa AbstractDict
+        invalid_config_data(path, "Dict{String,Any}", value)
+    elseif value isa Vector
+        for (index, child) in pairs(value)
+            validate_config_data(child, config_data_path(path, index))
+        end
+    elseif value isa AbstractVector
+        invalid_config_data(path, "Vector", value)
+    elseif value isa String
+    elseif value isa AbstractString
+        invalid_config_data(path, "String", value)
+    end
+    return nothing
+end
+
+"""
+    validate_config_data(config_data) -> Dict{String,Any}
+
+Validate that untyped configuration data uses the concrete container and string
+representations produced by `JSON3` and `TOML`. Returns the original dictionary,
+or throws [`InvalidConfigDataError`](@ref) with the path of the invalid value.
+"""
+function validate_config_data(@nospecialize(config_data))
+    config_data isa Dict{String,Any} ||
+        invalid_config_data("", "Dict{String,Any}", config_data)
+    validate_config_data(config_data, "")
+    return config_data
+end
+
+"""
+    parse_config_from_dict(::Type{T}, d::Dict{String,Any}, path=String[])
+        where T<:ConfigSection -> T
+
+Recursively populate a [`ConfigSection`](@ref) struct from a config dict (typically
+parsed from `.JETLSConfig.toml` or `workspace/configuration`). Throws
+[`InvalidKeyError`](@ref) — carrying the full dotted path — on unknown keys; missing
+fields keep the struct's `@kwdef` defaults. `path` is threaded through nested calls
+so any error surfaced downstream knows where in the dict it originated; callers
+typically leave it at the default.
+"""
+function parse_config_from_dict(
+        ::Type{T}, d::Dict{String,Any}, path::Vector{String} = String[]
+    ) where T<:ConfigSection
+    valid_keys = String[String(name) for name in fieldnames(T)]
+    for key in keys(d)
+        key in valid_keys || throw(InvalidKeyError(String[path; key], valid_keys))
+    end
+    kwargs = Pair{Symbol,Any}[]
+    for fname in fieldnames(T)
+        sname = String(fname)
+        haskey(d, sname) || continue
+        v = parse_config_field(T, fname, d[sname], String[path; sname])
+        push!(kwargs, fname => v)
+    end
+    return T(; kwargs...)
+end
+
+function parse_config_field(
+        ::Type{T}, fname::Symbol, @nospecialize(x), path::Vector{String}
+    ) where T<:ConfigSection
+    if T === FullAnalysisConfig && fname === :auto_instantiate
+        return parse_auto_instantiate(x, path)
+    elseif T === FullAnalysisConfig && fname === :concretization_timeout
+        return parse_concretization_timeout(x, path)
+    elseif T === TestRunnerConfig && fname === :env
+        return parse_testrunner_env(x, path)
+    end
+    return parse_config_dict_value(fieldtype(T, fname), x, path)
+end
+
+function parse_testrunner_env(@nospecialize(x), path::Vector{String})
+    x === nothing && return nothing
+    x isa Dict{String,Any} ||
+        parse_dict_error(path, "expected a table of environment variables, got $(typeof(x))")
+    env = Dict{String,String}()
+    for (key, value) in x
+        key in TESTRUNNER_RESERVED_ENV_KEYS && parse_dict_error(String[path; key],
+            "`$key` cannot be set because JETLS uses it to load TestRunner.jl")
+        value isa String ||
+            parse_dict_error(String[path; key], "expected String, got $(typeof(value))")
+        env[key] = value
+    end
+    return env
+end
+
+function parse_auto_instantiate(@nospecialize(x), path::Vector{String})
+    x === nothing && return nothing
+    x isa String && x in AUTO_INSTANTIATE_VALUES && return x
+    parse_dict_error(path, string(
+        "expected one of ", join((repr(v) for v in AUTO_INSTANTIATE_VALUES), ", "),
+        ", got ", repr(x)))
+end
+
+function parse_concretization_timeout(@nospecialize(x), path::Vector{String})
+    x === nothing && return nothing
+    x isa String && x == "inf" && return Inf
+    if x isa Real && !(x isa Bool)
+        timeout = Float64(x)
+        isfinite(timeout) && timeout > 0 && return timeout
+    end
+    parse_dict_error(path, "expected a positive finite number of seconds or \"inf\", got $(repr(x))")
+end
+
+# Format an error message rooted at `path` (or unrooted at the top level). Messages
+# share the capital-prefix convention with `DiagnosticConfigError` thrown from
+# `parse_diagnostic_pattern` / `parse_analysis_override`.
+function parse_dict_error(path::Vector{String}, msg::AbstractString)
+    if isempty(path)
+        error(uppercasefirst(msg))
+    else
+        error("Invalid value at `", join(path, "."), "`: ", msg)
+    end
+end
+
+# Drives `parse_config_from_dict`'s field-by-field hydration: turns the raw dict value `x`
+# into the field's declared type `T`. Handles the small type tree we actually use — Maybe,
+# nested `ConfigSection`, vectors of `ConfigSection`, the formatter union, and plain
+# `convert`-able leaves. `ConcretizationPattern` / `DiagnosticPattern` /
+# `AnalysisOverride` need bespoke validation and are inlined here for the same reason
+# `Maybe{FormatterConfig}` is — the set of special cases is small and closed, so a
+# dispatch hook would be over-built.
+function parse_config_dict_value(
+        T::Type, @nospecialize(x), path::Vector{String} = String[]
+    )
+    x === nothing && Nothing <: T && return nothing
+    if T isa Union
+        non_nothing = Type[U for U in Base.uniontypes(T) if U !== Nothing]
+        if length(non_nothing) == 1
+            # `Maybe{T}` for a single concrete `T` — dispatch directly so inner errors
+            # (e.g. `DiagnosticConfigError`, `InvalidKeyError`) bubble up unswallowed.
+            return parse_config_dict_value(non_nothing[1], x, path)
+        end
+        # `Maybe{FormatterConfig}` is the only union we parse from a dict that mixes a plain
+        # string and an alias-tagged option type. Hard-code it rather than building a
+        # general alias dispatch.
+        if String <: T && CustomFormatterConfig <: T
+            if x isa String
+                return convert(String, x)
+            elseif x isa Dict{String,Any}
+                haskey(x, CUSTOM_FORMATTER_ALIAS) ||
+                    parse_dict_error(path, "expected formatter table key `$(CUSTOM_FORMATTER_ALIAS)`, got keys $(collect(keys(x)))")
+                return parse_config_from_dict(
+                    CustomFormatterConfig, x[CUSTOM_FORMATTER_ALIAS], String[path; CUSTOM_FORMATTER_ALIAS])
+            else
+                parse_dict_error(path, "expected formatter string or table, got $(typeof(x))")
+            end
+        end
+        # Generic multi-type union (e.g. `Maybe{Union{Missing,Bool}}`): try each
+        # non-`Nothing` branch in order; the first one that converts wins.
+        for U in non_nothing
+            try
+                return parse_config_dict_value(U, x, path)
+            catch
+                continue
+            end
+        end
+        parse_dict_error(path, "expected $T, got $(typeof(x))")
+    end
+    if T <: ConfigSection
+        x isa Dict{String,Any} ||
+            parse_dict_error(path, "expected a table for $T, got $(typeof(x))")
+        T === ConcretizationPattern && return parse_concretization_pattern(x, path)
+        T === DiagnosticPattern && return parse_diagnostic_pattern(x)
+        T === AnalysisOverride && return parse_analysis_override(x)
+        return parse_config_from_dict(T, x, path)
+    end
+    if T <: Vector
+        x isa Vector || parse_dict_error(path, "expected a vector for $T, got $(typeof(x))")
+        E = eltype(T)
+        return E[parse_config_dict_value(E, e, path) for e in x]
+    end
+    try
+        return convert(T, x)
+    catch e
+        e isa MethodError || rethrow(e)
+        parse_dict_error(path, "expected $T, got $(typeof(x))")
+    end
+end
+
+function parse_concretization_pattern(x::Dict{String,Any}, path::Vector{String})
+    valid_keys = ("pattern", "path")
+    for key in keys(x)
+        key in valid_keys || parse_dict_error(
+            path, "unknown field `$key`, expected `pattern` or `path`")
+    end
+    haskey(x, "pattern") || parse_dict_error(path, "missing required field `pattern`")
+    pattern_value = x["pattern"]
+    pattern_value isa String ||
+        parse_dict_error(String[path; "pattern"], "expected String, got $(typeof(pattern_value))")
+    pattern = parse_concretization_pattern_string(pattern_value, String[path; "pattern"])
+    path_glob = if haskey(x, "path")
+        path_value = x["path"]
+        path_value isa String ||
+            parse_dict_error(String[path; "path"], "expected String, got $(typeof(path_value))")
+        try
+            Glob.FilenameMatch(path_value, "dp")
+        catch e
+            parse_dict_error(String[path; "path"],
+                "invalid glob pattern `$path_value`: $(sprint(locked_showerror, e))")
+        end
+    else
+        nothing
+    end
+    return ConcretizationPattern(pattern, path_glob, String(pattern_value))
+end
+
+function parse_concretization_pattern_string(s::String, path::Vector{String})
+    ret = Meta.parse(strip(s); raise=false)
+    ret === nothing &&
+        parse_dict_error(path, "expected a Julia expression pattern, got no expression")
+    if Meta.isexpr(ret, :error) || Meta.isexpr(ret, :incomplete)
+        err = ret.args[1]
+        parse_dict_error(path, "failed to parse Julia expression pattern `$s`: $err")
+    end
+    return ret
+end
+
+"""
+    parse_config_dict(config_dict::Dict{String,Any}, filepath=nothing)
+        -> Union{JETLSConfig,String}
+
+Parse a validated raw `JETLSConfig` dict from `workspace/configuration`
+(`filepath=nothing`) or `.JETLSConfig.toml` (`filepath` set). Returns the parsed
+config on success, or a user-facing error message string on failure — covering
+unknown keys (with the full dotted path), invalid `[diagnostic]` patterns, and any
+other parse error.
+"""
+function parse_config_dict(
+        config_dict::Dict{String,Any},
+        filepath::Union{Nothing,AbstractString} = nothing
+    )
+    try
+        return parse_config_from_dict(JETLSConfig, config_dict)
+    catch e
+        if e isa InvalidKeyError
+            if isnothing(filepath)
+                return unmatched_key_in_lsp_config_msg(e.path)
+            else
+                return unmatched_key_in_config_file_msg(filepath, e.path)
+            end
+        elseif e isa DiagnosticConfigError
+            if isnothing(filepath)
+                return "Invalid diagnostic configuration: $(e.msg)"
+            else
+                return """
+                Invalid diagnostic configuration in $filepath:
+                $(e.msg)
+                """
+            end
+        end
+        error_message = sprint(locked_showerror, e)
+        if isnothing(filepath)
+            return "Failed to parse LSP configuration: $error_message"
+        else
+            return """
+            Failed to load configuration file at $filepath:
+            $error_message
+            """
+        end
+    end
+end
+
+"""
+    get_config(server::Server, key_path...) -> config
+    get_config(state::ServerState, key_path...) -> config
+    get_config(manager::ConfigManager, key_path...) -> config
+
+Retrieves the current configuration value.
+Among the registered configuration files, fetches the value in order of priority.
+
+Even when the specified configuration is not explicitly set, a default value is returned,
+so `config` is guaranteed to not be `nothing`.
+"""
+Base.@constprop :aggressive get_config(server::Server, key_path::Symbol...) = get_config(server.state, key_path...)
+Base.@constprop :aggressive get_config(state::ServerState, key_path::Symbol...) = get_config(state.config_manager, key_path...)
+Base.@constprop :aggressive get_config(manager::ConfigManager, key_path::Symbol...) =
+    @something getobjpath(load(manager).filled_settings, key_path...) error(lazy"Invalid default configuration value found at $key_path")
+
+function initialize_config!(manager::ConfigManager)
+    store!(manager) do old_data::ConfigManagerData
+        return ConfigManagerData(old_data; initialized=true), nothing
+    end
+end
+
+struct ConfigChange
+    path::String
+    old_val
+    new_val
+    ConfigChange(path::AbstractString, @nospecialize(old_val), @nospecialize(new_val)) = new(path, old_val, new_val)
+end
+
+mutable struct ConfigChangeTracker
+    const changed_settings::Vector{ConfigChange}
+    # `path` globs of the added or removed `full_analysis.concretization_patterns` entries
+    const changed_concretization_globs::Vector{Maybe{Glob.FilenameMatch{String}}}
+    diagnostic_setting_changed::Bool
+    concretization_timeout_changed::Bool
+end
+ConfigChangeTracker() = ConfigChangeTracker(
+    ConfigChange[], Maybe{Glob.FilenameMatch{String}}[], false, false)
+
+function (tracker::ConfigChangeTracker)(old_val, new_val, path::Tuple{Vararg{Symbol}})
+    @nospecialize old_val new_val
+    if old_val !== new_val
+        path_str = join(path, ".")
+        push!(tracker.changed_settings, ConfigChange(path_str, old_val, new_val))
+        if !isempty(path) && first(path) === :diagnostic
+            tracker.diagnostic_setting_changed = true
+        elseif path === (:full_analysis, :concretization_patterns)
+            if old_val isa Vector{Any} && new_val isa Vector{Any}
+                # `merge_and_track` reports the merge keys of the patterns here
+                for key in symdiff(old_val, new_val)
+                    glob = key isa Tuple{Maybe{Glob.FilenameMatch{String}},String} ? first(key) : nothing
+                    push!(tracker.changed_concretization_globs, glob)
+                end
+            else
+                push!(tracker.changed_concretization_globs, nothing)
+            end
+        elseif path === (:full_analysis, :concretization_timeout)
+            tracker.concretization_timeout_changed = true
+        end
+    end
+end
+
+function changed_settings_message(changed_settings::Vector{ConfigChange})
+    applied = String[]
+    pending_restart = String[]
+    for config_change in changed_settings
+        old_repr = repr(config_change.old_val)
+        new_repr = repr(config_change.new_val)
+        entry = "`$(config_change.path)` (`$old_repr` => `$new_repr`)"
+        if startswith(config_change.path, "initialization_options")
+            push!(pending_restart, entry)
+        else
+            push!(applied, entry)
+        end
+    end
+    parts = String[]
+    if !isempty(applied)
+        push!(parts, "Changes applied: " * join(applied, ", "))
+    end
+    if !isempty(pending_restart)
+        push!(parts, "Changes pending server restart: " * join(pending_restart, ", "))
+    end
+    return join(parts, ".\n")
+end
+
+function notify_config_changes(
+        server::Server,
+        tracker::ConfigChangeTracker,
+        source::AbstractString
+    )
+    if !isempty(tracker.changed_settings)
+        show_info_message(server, """
+            Configuration changed.
+            Source: $source
+            $(changed_settings_message(tracker.changed_settings))
+            """)
+    end
+end
+
+# Applies the settings `tracker` recorded as changed, whichever source they came from
+# (LSP configuration or a `.JETLSConfig.toml`).
+function apply_config_changes!(server::Server, tracker::ConfigChangeTracker)
+    apply_auto_instantiate_change!(server)
+    if tracker.diagnostic_setting_changed
+        clear_per_file_diagnostics_cache!(server.state)
+        notify_diagnostics!(server; ensure_cleared = true)
+        request_diagnostic_refresh!(server)
+    end
+    if tracker.concretization_timeout_changed || !isempty(tracker.changed_concretization_globs)
+        # Live diagnostics only change once the reanalysis stores a new module context,
+        # and storing it requests the refresh (see `request_diagnostic_refresh!` callers).
+        request_reanalysis_for_tracked_entries!(server, tracker)
+    end
+end
+
+unmatched_key_msg(header_msg::AbstractString, path::Vector{String}) =
+    string(header_msg, "\n`", join(path, "."), "`")
+
+# Rewrite raw user config dicts so deprecated key paths land at their new
+# location, and deprecated values are replaced, before `parse_config_from_dict`
+# sees them. Returns a list of user-facing warnings — one per deprecation
+# actually present.
+#
+# The struct schema only knows the current key paths and values, so callers must
+# invoke this *before* parsing. Already-migrated values win over the legacy alias.
+function migrate_deprecated_config!(
+        config_dict::Dict{String,Any},
+        deprecated_configs::Vector{Pair{Vector{String},Union{Nothing,Vector{String}}}} = deprecated_configurations,
+        deprecated_values::Vector{Pair{Vector{String},Pair{Any,Any}}} = deprecated_configuration_values
+    )
+    warnings = String[]
+    for (old_path, new_path) in deprecated_configs
+        popped = @something pop_nested!(config_dict, old_path) continue
+        old_value = something(popped)
+        if new_path !== nothing
+            new_parent = ensure_nested_dict!(config_dict, @view new_path[1:end-1])
+            if new_parent !== nothing && !haskey(new_parent, new_path[end])
+                new_parent[new_path[end]] = old_value
+            end
+        end
+        push!(warnings, deprecated_config_key_message(old_path, new_path))
+    end
+    for (path, (old_value, new_value)) in deprecated_values
+        parent = @something get_nested_dict(config_dict, @view path[1:end-1]) continue
+        is_deprecated_value(get(parent, path[end], nothing), old_value) || continue
+        parent[path[end]] = new_value
+        push!(warnings, deprecated_config_value_message(path, old_value, new_value))
+    end
+    return warnings
+end
+
+# `isequal(1, true)` holds, but `1` is not the deprecated `true`.
+is_deprecated_value(@nospecialize(value), @nospecialize(old_value)) =
+    typeof(value) === typeof(old_value) && isequal(value, old_value)
+
+function get_nested_dict(d::Dict{String,Any}, path)
+    for key in path
+        d = @something get(d, key, nothing) return nothing
+        d isa Dict{String,Any} || return nothing
+    end
+    return d
+end
+
+function deprecated_config_key_message(
+        old_path::Vector{String}, new_path::Union{Nothing,Vector{String}}
+    )
+    new_path === nothing && return "`" * join(old_path, ".") * "` is deprecated and no " *
+        "longer has any effect; please remove it from your config."
+    return "`" * join(old_path, ".") * "` is deprecated; use `" * join(new_path, ".") *
+        "` instead."
+end
+
+function deprecated_config_value_message(
+        path::Vector{String}, @nospecialize(old_value), @nospecialize(new_value)
+    )
+    return "`" * TS.format_value(old_value) * "` for `" * join(path, ".") *
+        "` is deprecated; use `" * TS.format_value(new_value) * "` instead."
+end
+
+# Pop `path[end]` from the nested location in `d`. Empty parent dicts along the
+# walk are pruned bottom-up so the schema doesn't reject leftover table headers
+# (e.g. an empty `[completion.method_signature]` after removing its only key).
+# Returns `Some(value)` on success, or `nothing` if any step is missing.
+function pop_nested!(d::Dict{String,Any}, path)
+    isempty(path) && return nothing
+    if length(path) == 1
+        return haskey(d, path[1]) ? Some(pop!(d, path[1])) : nothing
+    end
+    child = get(d, path[1], nothing)
+    child isa Dict{String,Any} || return nothing
+    result = pop_nested!(child, @view path[2:end])
+    isempty(child) && pop!(d, path[1])
+    return result
+end
+
+# Follow `path` into `d`, creating missing intermediate dicts. Returns `nothing`
+# if an existing non-dict value blocks the path.
+function ensure_nested_dict!(d::Dict{String,Any}, path)
+    for k in path
+        d = get!(() -> Dict{String,Any}(), d, k)
+        d isa Dict{String,Any} || return nothing
+    end
+    return d
+end

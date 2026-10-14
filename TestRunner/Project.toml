@@ -72,6 +72,9 @@ subdir = "vendor/JSON3"
 rev = "5b0854c66113dde260e3f9a253be8e57e0b49ae0"
 url = "https://github.com/aviatesk/JETLS.jl"
 
+[sources]
+JuliaSyntax = {rev = "c54e29d033", subdir = "JuliaSyntax", url = "https://github.com/JuliaLang/julia"}
+
 [compat]
 Compiler = "0.1"
 JSON3 = "1.14.3"

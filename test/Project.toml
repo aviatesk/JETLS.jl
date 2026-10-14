@@ -1,5 +1,19 @@
+[deps]
+HierarchicalTestSets = "de7161c7-0535-45f7-a846-78c8a451aff9"
+JETLS = "a3b70258-0602-4ee2-b5a6-54c2470400db"
+JETLSCore = "d3d7b685-bb06-4d0a-88d8-0ccf75a29734"
+Sockets = "6462fe0b-24de-5631-8697-dd941f90decc"
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
-[preferences.JETLS]
+[sources]
+HierarchicalTestSets = {path = "../HierarchicalTestSets"}
+JETLS = {path = ".."}
+JETLSCore = {path = "../JETLSCore"}
+
+[compat]
+Test = "1.11.0"
+
+[preferences.JETLSCore]
 JETLS_DEV_MODE = false
 JETLS_TEST_MODE = true
 [deps]

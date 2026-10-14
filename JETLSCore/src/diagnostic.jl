@@ -1,0 +1,3187 @@
+# configuration
+# =============
+
+# parse and validation
+# --------------------
+
+struct DiagnosticConfigError <: Exception
+    msg::AbstractString
+end
+Base.showerror(io::IO, e::DiagnosticConfigError) = print(io, "DiagnosticConfigError: ", e.msg)
+
+function parse_diagnostic_severity(
+        @nospecialize(severity_value), pattern::AbstractString
+    )
+    if severity_value isa Int
+        if 0 ≤ severity_value ≤ 4
+            return severity_value
+        else
+            throw(DiagnosticConfigError(
+                lazy"Invalid severity value \"$severity_value\" for diagnostic pattern \"$pattern\". Valid integer values are: 0 (off), 1 (error), 2 (warning), 3 (information), 4 (hint)"))
+        end
+    elseif severity_value isa String
+        severity_str = lowercase(severity_value)
+        if severity_str == "off"
+            return 0
+        elseif severity_str == "error"
+            return DiagnosticSeverity.Error
+        elseif severity_str == "warning" || severity_str == "warn"
+            return DiagnosticSeverity.Warning
+        elseif severity_str == "information" || severity_str == "info"
+            return DiagnosticSeverity.Information
+        elseif severity_str == "hint"
+            return DiagnosticSeverity.Hint
+        else
+            throw(DiagnosticConfigError(
+                lazy"Invalid severity value \"$severity_value\" for diagnostic pattern \"$pattern\". Valid string values are: \"off\", \"error\", \"warning\"/\"warn\", \"information\"/\"info\", \"hint\""))
+        end
+    else
+        throw(DiagnosticConfigError(
+            lazy"Invalid severity value \"$severity_value\" for diagnostic pattern \"$pattern\". Severity must be an integer (0-4) or string"))
+    end
+end
+
+function parse_diagnostic_pattern(x::Dict{String,Any})
+    if !haskey(x, "pattern")
+        throw(DiagnosticConfigError("Missing required field `pattern` in diagnostic pattern"))
+    end
+    pattern_value = x["pattern"]
+    if !(pattern_value isa String)
+        throw(DiagnosticConfigError(
+            lazy"Invalid `pattern` value. Must be a string, got $(typeof(pattern_value))"))
+    end
+
+    for key in keys(x)
+        if key ∉ ("pattern", "match_by", "match_type", "severity", "path")
+            throw(DiagnosticConfigError(
+                lazy"Unknown field \"$key\" in diagnostic pattern for pattern \"$pattern_value\". Valid fields are: pattern, match_by, match_type, severity, path"))
+        end
+    end
+
+    if !haskey(x, "match_by")
+        throw(DiagnosticConfigError(
+            lazy"Missing required field `match_by` in diagnostic pattern for pattern \"$pattern_value\""))
+    end
+    match_by = x["match_by"]
+    if !(match_by isa String)
+        throw(DiagnosticConfigError(
+            lazy"Invalid `match_by` value for pattern \"$pattern_value\". Must be a string, got $(typeof(match_by))"))
+    end
+    if !(match_by in ("code", "message"))
+        throw(DiagnosticConfigError(
+            lazy"Invalid `match_by` value \"$match_by\" for pattern \"$pattern_value\". Must be \"code\" or \"message\""))
+    end
+
+    if !haskey(x, "match_type")
+        throw(DiagnosticConfigError(
+            lazy"Missing required field `match_type` in diagnostic pattern for pattern \"$pattern_value\""))
+    end
+    match_type = x["match_type"]
+    if !(match_type isa String)
+        throw(DiagnosticConfigError(
+            lazy"Invalid `match_type` value for pattern \"$pattern_value\". Must be a string, got $(typeof(match_type))"))
+    end
+    if !(match_type in ("literal", "regex"))
+        throw(DiagnosticConfigError(
+            lazy"Invalid `match_type` value \"$match_type\" for pattern \"$pattern_value\". Must be \"literal\" or \"regex\""))
+    end
+
+    pattern = if match_type == "regex"
+        try
+            Regex(pattern_value)
+        catch e
+            throw(DiagnosticConfigError(
+                lazy"Invalid regex pattern \"$pattern_value\": $(sprint(locked_showerror, e))"))
+        end
+    else
+        pattern_value
+    end
+
+    if !haskey(x, "severity")
+        throw(DiagnosticConfigError(
+            lazy"Missing required field `severity` in diagnostic pattern for pattern \"$pattern_value\""))
+    end
+    severity = parse_diagnostic_severity(x["severity"], pattern_value)
+
+    path_glob = if haskey(x, "path")
+        path_value = x["path"]
+        if !(path_value isa String)
+            throw(DiagnosticConfigError(
+                lazy"Invalid `path` value for pattern \"$pattern_value\". Must be a string, got $(typeof(path_value))"))
+        end
+        try
+            Glob.FilenameMatch(path_value, "dp")
+        catch e
+            throw(DiagnosticConfigError(
+                lazy"Invalid glob pattern \"$path_value\" for pattern \"$pattern_value\": $(sprint(locked_showerror, e))"))
+        end
+    else
+        nothing
+    end
+
+    return DiagnosticPattern(pattern, match_by, match_type, severity, path_glob, pattern_value)
+end
+
+# application
+# -----------
+
+"""
+    calculate_match_specificity(pattern, target, is_message_match) -> UInt
+
+Calculate the specificity score for a diagnostic pattern match.
+
+# Priority Strategy
+Higher specificity scores indicate more specific matches that should take precedence.
+The scoring follows this priority order (highest to lowest):
+
+1. **Message literal match**: `4`
+2. **Message regex match**: `3`
+3. **Code literal match**: `2`
+4. **Code regex match**: `1`
+
+Message-based patterns receive a priority bonus because they allow more fine-grained
+control over specific diagnostic instances, whereas code-based patterns are more
+categorical.
+
+# Returns
+- `0` if the pattern does not match the target
+- An unsigned integer representing the match specificity if the pattern matches
+"""
+function calculate_match_specificity(
+        pattern::Union{Regex,String},
+        target::String,
+        is_message_match::Bool
+    )
+    local specificity::UInt8
+    if pattern isa String
+        specificity = pattern == target ? 2 : 0
+    else
+        specificity = occursin(pattern, target) ? 1 : 0
+    end
+    specificity == 0 && return specificity
+    if is_message_match
+        specificity += 2
+    end
+    return specificity
+end
+
+function diagnostic_code_match_specificity(pattern::Union{Regex,String}, code::String)
+    specificity = calculate_match_specificity(pattern, code, #=is_message_match=#false)
+    for alias in get(DIAGNOSTIC_CODE_ALIASES, code, String[])
+        specificity = max(specificity, calculate_match_specificity(pattern, alias, #=is_message_match=#false))
+    end
+    return specificity
+end
+
+function _apply_diagnostic_config(
+        diagnostic::Diagnostic, manager::ConfigManager, uri::URI,
+        root_path::Union{Nothing,String}
+    )
+    code = diagnostic.code
+    if !(code isa String)
+        @static if JETLS_DEV_MODE
+            @warn "Diagnostic code must be a string" code code_type = typeof(code)
+        elseif JETLS_TEST_MODE
+            error(lazy"Diagnostic code must be a string, got $(typeof(code)): $code")
+        end
+        return diagnostic
+    elseif code ∉ ALL_DIAGNOSTIC_CODES
+        @static if JETLS_DEV_MODE
+            @warn "Diagnostic code is not registered" code
+        elseif JETLS_TEST_MODE
+            error(lazy"Diagnostic code is not registered: $code")
+        end
+        return diagnostic
+    end
+
+    patterns = get_config(manager, :diagnostic, :patterns)
+    if isempty(patterns)
+        # Diagnostics with severity=0 are off by default; filter them out
+        return diagnostic.severity == 0 ? missing : diagnostic
+    end
+
+    filepath = uri2filename(uri)
+    path_for_glob = glob_candidate_path(filepath, root_path)
+    severity = nothing
+    best_specificity = 0
+    for pattern_config in patterns
+        globpath = pattern_config.path
+        if globpath !== nothing && !occursin(globpath, path_for_glob)
+            continue
+        end
+        is_message_match = pattern_config.match_by == "message"
+        specificity = if is_message_match
+            target = get_raw_message(diagnostic)
+            calculate_match_specificity(pattern_config.pattern, target, is_message_match)
+        else
+            diagnostic_code_match_specificity(pattern_config.pattern, code)
+        end
+        if specificity != 0 && specificity >= best_specificity
+            best_specificity = specificity
+            severity = pattern_config.severity
+        end
+    end
+
+    if severity === nothing
+        return diagnostic.severity == 0 ? missing : diagnostic
+    elseif severity == 0
+        return missing
+    elseif severity == diagnostic.severity
+        return nothing
+    else
+        return Diagnostic(diagnostic; severity)
+    end
+end
+
+function apply_diagnostic_config!(
+        diagnostics::Vector{Diagnostic}, manager::ConfigManager, uri::URI,
+        root_path::Union{Nothing,String}
+    )
+    get_config(manager, :diagnostic, :enabled) || return empty!(diagnostics)
+    i = 1
+    while i <= length(diagnostics)
+        applied = _apply_diagnostic_config(diagnostics[i], manager, uri, root_path)
+        if applied === missing
+            deleteat!(diagnostics, i)
+            continue
+        end
+        if applied !== nothing
+            diagnostics[i] = applied
+        end
+        i += 1
+    end
+    return diagnostics
+end
+
+function diagnostic_code_description(code::AbstractString)
+    return CodeDescription(;
+        href = URI("https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/$code"))
+end
+
+function apply_markdown_message!(diagnostics::Vector{Diagnostic})
+    for i = 1:length(diagnostics)
+        diagnostic = diagnostics[i]
+        message = diagnostic.message
+        if message isa String
+            diagnostics[i] = Diagnostic(diagnostic;
+                message = MarkupContent(;
+                    kind = MarkupKind.Markdown,
+                    value = message))
+        end
+    end
+end
+
+# utilities
+# =========
+
+# TODO Move this logic to `filename2uri`?
+function to_valid_uri(filename::AbstractString)
+    if isunsavedfile(filename)
+        return filename2uri(filename)
+    else
+        return filepath2uri(to_full_path(filename))
+    end
+end
+
+function jet_frame_to_location(frame)
+    frame.file === :none && return nothing
+    return Location(;
+        uri = something(jet_frame_to_uri(frame)),
+        range = jet_frame_to_range(frame))
+end
+
+function jet_frame_to_uri(frame)
+    frame.file === :none && return nothing
+    return to_valid_uri(String(frame.file))
+end
+
+function jet_frame_to_range(frame)
+    line = JET.fixed_line_number(frame)
+    return line_range(line)
+end
+
+# 1 based line to LSP-compatible line range
+function line_range(line::Int)
+    line = line < 1 ? 0 : line - 1
+    start = Position(; line, character=0)
+    var"end" = Position(; line, character=Int(typemax(Int32)))
+    return Range(; start, var"end")
+end
+function lines_range((start_line, end_line)::Pair{Int,Int})
+    start_line = start_line < 1 ? 0 : start_line - 1
+    end_line = end_line < 1 ? 0 : end_line - 1
+    start = Position(; line=start_line, character=0)
+    var"end" = Position(; line=end_line, character=Int(typemax(Int32)))
+    return Range(; start, var"end")
+end
+
+get_raw_message(diagnostic::Diagnostic) = diagnostic.message isa String ? diagnostic.message : diagnostic.message.value
+
+# syntax diagnostics
+# ==================
+
+function parsed_stream_to_diagnostics(fi::FileInfo)
+    diagnostics = Diagnostic[]
+    for diagnostic in fi.parsed_stream.diagnostics
+        push!(diagnostics, jsdiag_to_lspdiag(diagnostic, fi))
+    end
+    return diagnostics
+end
+
+function jsdiag_to_lspdiag(diagnostic::JS.Diagnostic, fi::FileInfo)
+    code = diagnostic.level === :error ? SYNTAX_PARSE_ERROR_CODE : SYNTAX_PARSE_WARNING_CODE
+    return Diagnostic(;
+        range = jsobj_to_range(diagnostic, fi),
+        severity =
+            diagnostic.level === :error ? DiagnosticSeverity.Error :
+            diagnostic.level === :warning ? DiagnosticSeverity.Warning :
+            diagnostic.level === :note ? DiagnosticSeverity.Information :
+            DiagnosticSeverity.Hint,
+        message = diagnostic.message,
+        source = DIAGNOSTIC_SOURCE_LIVE,
+        code,
+        codeDescription = diagnostic_code_description(code))
+end
+
+# JET diagnostics
+# ===============
+
+function jet_result_to_diagnostics!(
+        uri2diagnostics::URI2Diagnostics, result::JET.JETToplevelResult,
+        world::UInt, postprocessor::JET.PostProcessor;
+        markdown_rendering::Bool = false,
+        displaysize::Union{Nothing,Tuple{Int,Int}} = nothing
+    )
+    report = result.res.toplevel_error_report
+    if report !== nothing && report.file != "none"
+        diagnostic = jet_toplevel_error_report_to_diagnostic(report, world, postprocessor;
+            markdown_rendering, displaysize)
+        diagnostic === nothing || push!(uri2diagnostics[to_valid_uri(report.file)], diagnostic)
+    end
+    for report in result.res.toplevel_warning_reports
+        diagnostic = @something jet_toplevel_warning_report_to_diagnostic(report, postprocessor;
+            markdown_rendering, displaysize) continue
+        uri = to_valid_uri(report.file)
+        haskey(uri2diagnostics, uri) || continue
+        push!(uri2diagnostics[uri], diagnostic)
+    end
+    displayable_reports = collect_displayable_reports(result.res.inference_error_reports, keys(uri2diagnostics))
+    jet_inference_error_reports_to_diagnostics!(uri2diagnostics, displayable_reports, world, postprocessor)
+    return uri2diagnostics
+end
+
+# toplevel diagnostic
+# -------------------
+
+function toplevel_report_message(
+        f, postprocessor::JET.PostProcessor;
+        markdown_rendering::Bool = false,
+        displaysize::Union{Nothing,Tuple{Int,Int}} = nothing
+    )
+    buf = IOBuffer()
+    io = IOContext(buf,
+        :limit=>true, :summary_line=>true, :markdown_rendering=>markdown_rendering)
+    if displaysize !== nothing
+        io = IOContext(io, :displaysize=>displaysize)
+    end
+    f(io)
+    return postprocessor(String(take!(buf)))
+end
+
+# A fatal JET report stops the unit even though its diagnostic is a warning.
+struct AnalysisStoppedReport <: JET.ToplevelErrorReport
+    file::String
+    line::Int
+    excluded_file::String
+end
+
+function JET.print_report(io::IO, report::AnalysisStoppedReport)
+    JET.print_summary(io, "Full analysis of this unit stopped because a file is excluded by `analysis_overrides`.")
+    JET.print_wrapped(io, "The excluded file `$(report.excluded_file)` was not analyzed. " *
+        "Code after this point and method bodies are not analyzed.")
+    return nothing
+end
+
+function jet_toplevel_error_report_to_diagnostic(
+        @nospecialize(report::JET.ToplevelErrorReport), world::UInt,
+        postprocessor::JET.PostProcessor;
+        markdown_rendering::Bool = false,
+        displaysize::Union{Nothing,Tuple{Int,Int}} = nothing
+    )
+    report isa JET.ParseErrorReport && return nothing # reported as `JETLS/live` diagnostics
+    if report isa JET.MissingConcretizationErrorReport
+        data = missing_concretization_data(report)
+        message = missing_concretization_message(report, data, postprocessor; markdown_rendering, displaysize)
+        code = TOPLEVEL_MISSING_CONCRETIZATION_CODE
+    else
+        data = nothing
+        message = toplevel_report_message(postprocessor; markdown_rendering, displaysize) do io
+            with_base_render_lock(Base.invoke_in_world, world, JET.print_report, io, report)
+        end
+        code = report isa AnalysisStoppedReport ? TOPLEVEL_ANALYSIS_STOPPED_CODE :
+            report isa JET.ConcretizationTimeoutErrorReport ?
+            TOPLEVEL_CONCRETIZATION_TIMEOUT_CODE : TOPLEVEL_ERROR_CODE
+    end
+    return Diagnostic(;
+        range = line_range(report.line),
+        severity = report isa AnalysisStoppedReport ?
+            DiagnosticSeverity.Warning : DiagnosticSeverity.Error,
+        message,
+        source = DIAGNOSTIC_SOURCE_SAVE,
+        code,
+        codeDescription = diagnostic_code_description(code),
+        data)
+end
+
+function jet_toplevel_warning_report_to_diagnostic(
+        @nospecialize(report::JET.ToplevelWarningReport), postprocessor::JET.PostProcessor;
+        markdown_rendering::Bool = false,
+        displaysize::Union{Nothing,Tuple{Int,Int}} = nothing
+    )
+    report isa JET.ParseWarningReport && return nothing # reported as `JETLS/live` diagnostics
+    report isa JET.UnsupportedFeatureReport ||
+        error(lazy"No diagnostic code is defined for report: $report")
+    message = toplevel_report_message(postprocessor; markdown_rendering, displaysize) do io
+        with_base_render_lock(JET.print_report, io, report)
+    end
+    return Diagnostic(;
+        range = line_range(report.line),
+        severity = DiagnosticSeverity.Warning,
+        message,
+        source = DIAGNOSTIC_SOURCE_SAVE,
+        code = TOPLEVEL_UNSUPPORTED_FEATURE_CODE,
+        codeDescription = diagnostic_code_description(TOPLEVEL_UNSUPPORTED_FEATURE_CODE))
+end
+
+function package_extension_analysis_skipped_diagnostic(;
+        markdown_rendering::Bool = false,
+        displaysize::Union{Nothing,Tuple{Int,Int}} = nothing
+    )
+    message = toplevel_report_message(JET.PostProcessor(); markdown_rendering, displaysize) do io
+        JET.print_summary(io, "JETLS does not support full analysis of package extensions yet.")
+        JET.print_wrapped(io,
+            "This file is not analyzed, so diagnostics that require full analysis " *
+            "are not reported for it.")
+    end
+    return _analysis_skipped_diagnostic(message, DiagnosticSeverity.Warning)
+end
+
+function analysis_exclusion_diagnostic(
+        uri::URI, exclusion::AnalysisExclusion;
+        markdown_rendering::Bool = false,
+        displaysize::Union{Nothing,Tuple{Int,Int}} = nothing
+    )
+    (; excluded_uri, pattern) = exclusion
+    message = toplevel_report_message(JET.PostProcessor(); markdown_rendering, displaysize) do io
+        if excluded_uri == uri
+            JET.print_summary(io,
+                "Full analysis of this file is disabled by `analysis_overrides`.")
+            JET.print_wrapped(io,
+                "This file matches the path pattern `$pattern`, so diagnostics that " *
+                "require full analysis are not reported for it.")
+        else
+            JET.print_summary(io,
+                "Full analysis of this file is disabled because the entry file of its " *
+                "analysis unit is excluded by `analysis_overrides`.")
+            JET.print_wrapped(io,
+                "The entry file `$(uri2filename(excluded_uri))` matches the path pattern " *
+                "`$pattern`, so diagnostics that require full analysis are not reported " *
+                "for this file.")
+        end
+    end
+    return _analysis_skipped_diagnostic(message, DiagnosticSeverity.Information)
+end
+
+function unincluded_file_diagnostic(
+        unincluded::UnincludedFile;
+        markdown_rendering::Bool = false,
+        displaysize::Union{Nothing,Tuple{Int,Int}} = nothing
+    )
+    entryfile = uri2filename(unincluded.entry_uri)
+    message = toplevel_report_message(JET.PostProcessor(); markdown_rendering, displaysize) do io
+        JET.print_summary(io,
+            "Full analysis does not cover this file, which is not `include`d by its " *
+            "analysis unit.")
+        JET.print_wrapped(io,
+            "No `include` from the entry file `$entryfile` reaches this file, so " *
+            "diagnostics that require full analysis are not reported for it. `include` " *
+            "the file, or remove it if it is no longer used.")
+    end
+    return _analysis_skipped_diagnostic(message, DiagnosticSeverity.Information)
+end
+
+function analysis_skipped_diagnostic(server::Server, uri::URI, reason::AnalysisSkipReason)
+    markdown_rendering = supports(server, :textDocument, :diagnostic, :markupMessageSupport)
+    displaysize = server.state.cli_mode ? cli_message_displaysize() : nothing
+    if reason isa AnalysisExclusion
+        return analysis_exclusion_diagnostic(uri, reason; markdown_rendering, displaysize)
+    else
+        return unincluded_file_diagnostic(reason; markdown_rendering, displaysize)
+    end
+end
+
+_analysis_skipped_diagnostic(message::String, severity::DiagnosticSeverity.Ty) = Diagnostic(;
+    range = line_range(1),
+    severity,
+    message,
+    source = DIAGNOSTIC_SOURCE_SAVE,
+    code = TOPLEVEL_ANALYSIS_SKIPPED_CODE,
+    codeDescription = diagnostic_code_description(TOPLEVEL_ANALYSIS_SKIPPED_CODE))
+
+# `nothing` when JET could not derive a pattern for the assignment: any pattern guessed
+# here would be one that never matches, so no quick fix is offered
+function missing_concretization_data(report::JET.MissingConcretizationErrorReport)
+    assignment = @something report.assignment return nothing
+    pattern = @something assignment.pattern return nothing
+    return MissingConcretizationData(
+        String(report.var.name), sprint(Base.show_unquoted, pattern), assignment.file)
+end
+
+function missing_concretization_message(
+        report::JET.MissingConcretizationErrorReport,
+        data::Union{Nothing,MissingConcretizationData},
+        postprocessor::JET.PostProcessor;
+        markdown_rendering::Bool = false,
+        displaysize::Union{Nothing,Tuple{Int,Int}} = nothing
+    )
+    return toplevel_report_message(postprocessor; markdown_rendering, displaysize) do io
+        (; isconst, var, assignment) = report
+        (; mod, name) = var
+        JET.print_summary(io, "`$mod.$name` must have a concrete value for JETLS top-level analysis.")
+        if assignment === nothing
+            JET.println_wrapped(io, "JETLS could not identify the assignment that defines this binding.")
+        else
+            JET.println_wrapped(io,
+                "JETLS did not evaluate the assignment at " *
+                "`$(assignment.file):$(assignment.line)` that defines this binding.")
+        end
+        if !isconst
+            println(io)
+            JET.println_wrapped(io,
+                "Declaring `$name` as `const` may fix this when JETLS can infer " *
+                "the concrete value of its right-hand side without evaluating it.")
+        end
+        println(io)
+        if data === nothing
+            JET.print_wrapped(io,
+                "Configure `full_analysis.concretization_patterns` in `.JETLSConfig.toml` " *
+                "manually to evaluate the relevant top-level statement. JETLS could not " *
+                "derive a safe pattern for this assignment.")
+        else
+            JET.print_wrapped(io,
+                "Configure `full_analysis.concretization_patterns` in `.JETLSConfig.toml` " *
+                "to evaluate this assignment. The preferred quick fix can add the derived " *
+                "pattern `$(data.pattern)`.")
+        end
+    end
+end
+
+# inference diagnostic
+# --------------------
+
+function jet_inference_error_reports_to_diagnostics!(
+        uri2diagnostics::URI2Diagnostics, reports::Vector{JET.InferenceErrorReport},
+        world::UInt, postprocessor::JET.PostProcessor
+    )
+    for report in reports
+        diagnostic = jet_inference_error_report_to_diagnostic(report, world, postprocessor)
+        topframeidx = first(inference_error_report_stack(report))
+        topframe = report.vst[topframeidx]
+        topframe.file === :none && continue # TODO Figure out why this is necessary
+        uri = jet_frame_to_uri(topframe)
+        push!(uri2diagnostics[uri], diagnostic) # collect_displayable_reports asserts that this `uri` key exists for `uri2diagnostics`
+    end
+    return uri2diagnostics
+end
+
+function jet_inference_error_report_to_diagnostic(
+        @nospecialize(report::JET.InferenceErrorReport),
+        world::UInt, postprocessor::JET.PostProcessor
+    )
+    rstack = inference_error_report_stack(report)
+    topframe = report.vst[first(rstack)]
+    message = JET.with_bufferring(:limit=>true) do io
+        with_base_render_lock(Base.invoke_in_world, world, JET.print_report_message, io, report)
+    end |> postprocessor
+    relatedInformation = DiagnosticRelatedInformation[]
+    for related_frame in inference_error_report_related_frames(report)
+        frame = report.vst[related_frame.idx]
+        location = @something jet_frame_to_location(frame) continue
+        sig = Base.invoke_in_world(world,
+            sprint, JET.print_frame_sig, frame, JET.PrintConfig())::String
+        label = related_frame_label(related_frame.kind)
+        local message = postprocessor(label * ": " * sig)
+        push!(relatedInformation, DiagnosticRelatedInformation(; location, message))
+    end
+    code = inference_error_report_code(report)
+    return Diagnostic(;
+        range = jet_frame_to_range(topframe),
+        severity = inference_error_report_severity(report),
+        message,
+        source = DIAGNOSTIC_SOURCE_SAVE,
+        code,
+        codeDescription = diagnostic_code_description(code),
+        relatedInformation)
+end
+
+function related_frame_label(kind::RelatedFrameKind)
+    kind === RelatedOriginFrame && return "origin"
+    kind === RelatedViaFrame && return "via"
+    kind === RelatedEntryFrame && return "entry"
+    error(lazy"unknown related frame kind: $kind")
+end
+
+function inference_error_report_code(@nospecialize report::JET.InferenceErrorReport)
+    if report isa UndefVarErrorReport
+        if report.var isa GlobalRef
+            return INFERENCE_UNDEF_GLOBAL_VAR_CODE
+        else
+            return INFERENCE_UNDEF_STATIC_PARAM_CODE
+        end
+    elseif report isa FieldErrorReport
+        return INFERENCE_FIELD_ERROR_CODE
+    elseif report isa BoundsErrorReport
+        return INFERENCE_BOUNDS_ERROR_CODE
+    elseif report isa MethodErrorReport
+        return INFERENCE_METHOD_ERROR_CODE
+    elseif report isa UndefKeywordErrorReport
+        return INFERENCE_UNDEF_KEYWORD_CODE
+    elseif report isa TypeAssertErrorReport
+        return INFERENCE_TYPE_ERROR_TYPE_ASSERT_CODE
+    elseif report isa KeywordTypeErrorReport
+        return INFERENCE_TYPE_ERROR_KEYWORD_CODE
+    elseif report isa NonBooleanCondErrorReport
+        return INFERENCE_TYPE_ERROR_NON_BOOL_COND_CODE
+    end
+    error(lazy"No diagnostic code is defined for report: $report")
+end
+
+# toplevel warning diagnostic
+# ===========================
+
+abstract type ToplevelWarningReport end
+
+toplevel_warning_report_to_uri(report::ToplevelWarningReport) = toplevel_warning_report_to_uri_impl(report)::URI
+toplevel_warning_report_to_uri_impl(::ToplevelWarningReport) =
+    error("Missing `toplevel_warning_report_to_uri_impl(::ToplevelWarningReport)` interface")
+
+toplevel_warning_report_to_diagnostic(report::ToplevelWarningReport, fi::Union{FileInfo,SavedFileInfo}, postprocessor::JET.PostProcessor) =
+    toplevel_warning_report_to_diagnostic_impl(report, fi, postprocessor)::Diagnostic
+toplevel_warning_report_to_diagnostic_impl(::ToplevelWarningReport, ::Union{FileInfo,SavedFileInfo}, ::JET.PostProcessor) =
+    error("Missing `toplevel_warning_report_to_diagnostic_impl(::ToplevelWarningReport, ::Union{FileInfo,SavedFileInfo}, ::JET.PostProcessor)` interface")
+
+function toplevel_warning_reports_to_diagnostics!(
+        uri2diagnostics::URI2Diagnostics, reports::Vector{ToplevelWarningReport},
+        server::Server, postprocessor::JET.PostProcessor
+    )
+    for report in reports
+        uri = toplevel_warning_report_to_uri(report)
+        haskey(uri2diagnostics, uri) || continue
+        # Positions in reports refer to the text full-analysis read: the saved content for
+        # synced files and the on-disk content otherwise, never the live buffer content
+        fi = @something(
+            get_saved_file_info(server.state, uri),
+            get_unsynced_file_info!(server.state, uri),
+            continue)
+        diagnostic = toplevel_warning_report_to_diagnostic(report, fi, postprocessor)
+        push!(uri2diagnostics[uri], diagnostic)
+    end
+    return uri2diagnostics
+end
+
+struct MethodOverwriteReport <: ToplevelWarningReport
+    mod::Module
+    sig::Type
+    filepath::String
+    lines::Pair{Int,Int}
+    original_filepath::String
+    original_lines::Pair{Int,Int}
+    MethodOverwriteReport(
+        mod::Module, @nospecialize(sig::Type), filepath::AbstractString, lines::Pair{Int,Int},
+        original_filepath::AbstractString, original_lines::Pair{Int,Int}
+    ) = new(mod, sig, filepath, lines, original_filepath, original_lines)
+end
+
+toplevel_warning_report_to_uri_impl(report::MethodOverwriteReport) = to_valid_uri(report.filepath)
+
+function toplevel_warning_report_to_diagnostic_impl(report::MethodOverwriteReport, ::Union{FileInfo,SavedFileInfo}, postprocessor::JET.PostProcessor)
+    sig_str = postprocessor(@invokelatest sprint(Base.show_tuple_as_call, Symbol(""), report.sig))
+    mod_str = postprocessor(sprint(show, report.mod))
+    message = "Method definition $sig_str in module $mod_str overwritten"
+    relatedInformation = DiagnosticRelatedInformation[
+        DiagnosticRelatedInformation(;
+            location = Location(;
+                uri = to_valid_uri(report.original_filepath),
+                range = lines_range(report.original_lines)),
+            message = "The first method definition $sig_str")
+    ]
+    return Diagnostic(;
+        range = lines_range(report.lines),
+        severity = DiagnosticSeverity.Warning,
+        message,
+        source = DIAGNOSTIC_SOURCE_SAVE,
+        code = TOPLEVEL_METHOD_OVERWRITE_CODE,
+        codeDescription = diagnostic_code_description(TOPLEVEL_METHOD_OVERWRITE_CODE),
+        relatedInformation)
+end
+
+struct AbstractFieldReport <: ToplevelWarningReport
+    filepath::String
+    fieldline::Union{Int,JS.SyntaxNode}
+    typ::Type
+    fname::Symbol
+    ft
+    AbstractFieldReport(
+        filepath::AbstractString, fieldline::Union{Int,JS.SyntaxNode}, @nospecialize(typ::Type), fname::Symbol, @nospecialize(ft)
+    ) = new(filepath, fieldline, typ, fname, ft)
+end
+
+toplevel_warning_report_to_uri_impl(report::AbstractFieldReport) = to_valid_uri(report.filepath)
+
+function abstract_ref_field_data(report::AbstractFieldReport, fi::Union{FileInfo,SavedFileInfo})
+    fieldline = report.fieldline
+    fieldline isa JS.SyntaxNode || return nothing
+    report.ft isa DataType || return nothing
+    report.ft.name === Base.typename(Ref) || return nothing
+
+    field = fieldline
+    if JS.kind(field) === JS.K"const" && JS.numchildren(field) >= 1
+        field = field[1]
+    end
+    JS.kind(field) === JS.K"::" && JS.numchildren(field) >= 2 || return nothing
+    fieldtype_node = field[2]
+    JS.kind(fieldtype_node) === JS.K"curly" || return nothing
+    JS.numchildren(fieldtype_node) == 2 || return nothing
+    ref_name = fieldtype_node[1]
+    JS.kind(ref_name) === JS.K"Identifier" || return nothing
+    ref_name_data = ref_name.data
+    ref_name_data !== nothing && ref_name_data.val === :Ref || return nothing
+    return AbstractRefFieldData(jsobj_to_range(ref_name, fi))
+end
+
+function toplevel_warning_report_to_diagnostic_impl(report::AbstractFieldReport, fi::Union{FileInfo,SavedFileInfo}, postprocessor::JET.PostProcessor)
+    typ_str = postprocessor(sprint(show, report.typ))
+    ft_str = postprocessor(sprint(show, report.ft))
+    message = "`$typ_str` has abstract field `$(report.fname)::$ft_str`"
+    fieldline = report.fieldline
+    range = fieldline isa Int ? line_range(fieldline) : jsobj_to_range(fieldline, fi)
+    return Diagnostic(;
+        range,
+        severity = DiagnosticSeverity.Hint,
+        message,
+        source = DIAGNOSTIC_SOURCE_SAVE,
+        code = TOPLEVEL_ABSTRACT_FIELD_CODE,
+        codeDescription = diagnostic_code_description(TOPLEVEL_ABSTRACT_FIELD_CODE),
+        data = abstract_ref_field_data(report, fi))
+end
+
+struct IncludeSkippedReport <: ToplevelWarningReport
+    filepath::String
+    line::Int
+    excluded_file::String
+end
+
+toplevel_warning_report_to_uri_impl(report::IncludeSkippedReport) = to_valid_uri(report.filepath)
+
+function toplevel_warning_report_to_diagnostic_impl(report::IncludeSkippedReport, ::Union{FileInfo,SavedFileInfo}, postprocessor::JET.PostProcessor)
+    message = toplevel_report_message(postprocessor) do io
+        JET.print_summary(io, "Full analysis skipped this `include` because the file is excluded by `analysis_overrides`.")
+        JET.print_wrapped(io, "The definitions in the excluded file `$(report.excluded_file)` " *
+            "are not available to the code after this point.")
+    end
+    relatedInformation = DiagnosticRelatedInformation[
+        DiagnosticRelatedInformation(;
+            location = Location(;
+                uri = to_valid_uri(report.excluded_file),
+                range = line_range(1)),
+            message = "The excluded file")
+    ]
+    return Diagnostic(;
+        range = line_range(report.line),
+        severity = DiagnosticSeverity.Information,
+        message,
+        source = DIAGNOSTIC_SOURCE_SAVE,
+        code = TOPLEVEL_ANALYSIS_SKIPPED_CODE,
+        codeDescription = diagnostic_code_description(TOPLEVEL_ANALYSIS_SKIPPED_CODE),
+        relatedInformation)
+end
+
+# lowering diagnostic
+# ===================
+
+const JL_MACRO_FILE = only(methods(JL.expand_macro, (JL.MacroExpansionContext, SyntaxTree))).file
+function scrub_expand_macro_stacktrace(stacktrace::Vector{Base.StackTraces.StackFrame})
+    idx = @something findfirst(stacktrace) do stackframe::Base.StackTraces.StackFrame
+        stackframe.func === :expand_macro && stackframe.file === JL_MACRO_FILE
+    end return stacktrace
+    return stacktrace[1:idx-1]
+end
+
+function stacktrace_to_related_information(stacktrace::Vector{Base.StackTraces.StackFrame})
+    relatedInformation = DiagnosticRelatedInformation[]
+    for stackframe in stacktrace
+        stackframe.file === :none && continue
+        uri = to_valid_uri(String(stackframe.file))
+        range = line_range(stackframe.line)
+        location = Location(; uri, range)
+        message = let linfo = stackframe.linfo
+            linfo isa Core.CodeInstance && (linfo = linfo.def)
+            if linfo isa Core.MethodInstance
+                sprint(Base.show_tuple_as_call, Symbol(""), linfo.specTypes)
+            else
+                String(stackframe.func)
+            end
+        end
+        push!(relatedInformation, DiagnosticRelatedInformation(; location, message))
+    end
+    return relatedInformation
+end
+
+function emit_macro_diagnostics!(
+        diagnostics::Vector{Diagnostic}, fi::FileInfo, macro_diags::Vector{MacroDiagnostic}
+    )
+    isempty(macro_diags) && return diagnostics
+    for d in macro_diags
+        push!(diagnostics, Diagnostic(;
+            range = jsobj_to_range(d.node, fi),
+            severity = d.severity,
+            message = d.msg,
+            source = DIAGNOSTIC_SOURCE_LIVE,
+            code = d.code,
+            codeDescription = diagnostic_code_description(d.code),
+            tags = d.code == LOWERING_INACTIVE_CODE ?
+                DiagnosticTag.Ty[DiagnosticTag.Unnecessary] : nothing))
+    end
+    return diagnostics
+end
+
+# TODO Use actual file cache (with proper character encoding)
+function provenances_to_related_information!(relatedInformation::Vector{DiagnosticRelatedInformation}, provs, msg)
+    for prov in provs
+        filename = JS.filename(prov)
+        uri = to_valid_uri(filename)
+        sr = JS.sourceref(prov)
+        if sr isa JS.SourceRef
+            # use precise location information if available
+            sf = JS.sourcefile(sr)
+            code = JS.sourcetext(sf)
+            location = Location(;
+                uri,
+                range = Range(;
+                    start = offset_to_xy(code, JS.first_byte(sr), filename),
+                    var"end" = offset_to_xy(code, JS.last_byte(sr), filename)))
+            message = JS.sourcetext(sr)
+        else
+            location = Location(;
+                uri,
+                range = line_range(first(JS.source_location(prov))))
+            message = msg
+        end
+        push!(relatedInformation, DiagnosticRelatedInformation(; location, message))
+    end
+    return relatedInformation
+end
+
+# Compute a mapping from source locations to the set of identifier names found in keyword
+# argument type annotations.
+# `:kw` nodes are produced by JuliaSyntax for both true keyword arguments
+# (`f(; y=1)`) and positional arguments with default values (`f(y=1)`); only the former
+# sit under a `:parameters` node, so we track that during the walk.
+# An explicit stack is used (instead of recursion) so we don't risk overflowing
+# the C stack on pathologically deep user input.
+function compute_kwarg_type_annotation_names(st0::SyntaxTree)
+    type_names = Dict{Tuple{Int,Int},Set{String}}()
+    locations = Set{Tuple{Int,Int}}()
+    stack = Tuple{SyntaxTree,Bool}[(st0, false)]
+    while !isempty(stack)
+        (node, in_parameters) = pop!(stack)
+        k = JS.head(node)
+        if k === :kw && in_parameters
+            JS.numchildren(node) >= 1 || continue
+            child = node[1]
+            push!(locations, JS.source_location(child))
+            if JS.head(child) === :(::) && JS.numchildren(child) >= 2
+                names = Set{String}()
+                collect_identifier_names!(names, child[2])
+                isempty(names) || (type_names[JS.source_location(child)] = names)
+            end
+            continue
+        end
+        next_in_parameters = k === :parameters
+        for i = JS.numchildren(node):-1:1
+            push!(stack, (node[i], next_in_parameters))
+        end
+    end
+    return type_names, locations
+end
+
+# Check if a keyword argument's type annotation constrains a `where`-clause static parameter
+# that is actually used in the function body.
+# For example, in `f(; dtype::Type{T}=Float32) where {T} = T.(xs)`, `dtype` is not directly
+# used in the body but it constrains `T` which is used, so `dtype` should not be reported.
+# NOTE: This exception is only for keyword arguments. Positional arguments can be replaced with
+# `_::Type{T}` or `::Type{T}` to suppress the unused warning.
+function is_kwarg_constraining_used_sparam(
+        kwarg_type_names::Dict{Tuple{Int,Int},Set{String}},
+        prov_loc::Tuple{Int,Int},
+        ctx3::JL.VariableAnalysisContext
+    )
+    names = @something get(kwarg_type_names, prov_loc, nothing) return false
+    for binfo in ctx3.bindings.info
+        binfo.kind === :static_parameter || continue
+        binfo.is_read || continue
+        binfo.name in names && return true
+    end
+    return false
+end
+
+function has_matching_argument_binding(
+        binding_occurrences::Dict{JL.BindingInfo,Set{BindingOccurrence}},
+        name::String, range::Range, fi::FileInfo, ctx3::JL.VariableAnalysisContext
+    )
+    for (binfo2, _) in binding_occurrences
+        binfo2.kind === :argument || continue
+        binfo2.name == name || continue
+        provs2 = JS.flattened_provenance(JL.binding_ex(ctx3, binfo2.id))
+        is_from_user_ast(provs2) || continue
+        jsobj_to_range(last(provs2), fi) == range && return true
+    end
+    return false
+end
+
+is_assignment_expression(st::SyntaxTree) =
+    JS.head(st) === :(=) || is_compound_assignment(st)
+
+same_syntax_range(a::SyntaxTree, b::SyntaxTree) =
+    JS.head(a) === JS.head(b) && JS.byte_range(a) == JS.byte_range(b)
+
+function is_last_child(parent::SyntaxTree, child::SyntaxTree)
+    n = JS.numchildren(parent)
+    n == 0 && return false
+    return same_syntax_range(parent[n], child)
+end
+
+function is_tail_branch_child(parent::SyntaxTree, child::SyntaxTree)
+    for i in 2:JS.numchildren(parent)
+        same_syntax_range(parent[i], child) && return true
+    end
+    return false
+end
+
+function assignment_expression_for_prov(st0::SyntaxTree, prov::SyntaxTree)
+    assignments = byte_ancestors(is_assignment_expression, st0, JS.byte_range(prov))
+    isempty(assignments) && return nothing
+    return first(assignments)
+end
+
+function is_struct_type_parameter_declaration(st0::SyntaxTree, prov::SyntaxTree)
+    ancestors = byte_ancestors(st0, JS.byte_range(prov))
+    for i = 2:length(ancestors)
+        curly = ancestors[i]
+        JS.head(curly) === :curly || continue
+        is_type_parameter = false
+        for j = 2:JS.numchildren(curly)
+            param = curly[j]
+            pk = JS.head(param)
+            if (pk === :<: || pk === :>:) && JS.numchildren(param) >= 1
+                param = param[1]
+            end
+            if JS.byte_range(prov) ⊆ JS.byte_range(param)
+                is_type_parameter = true
+                break
+            end
+        end
+        is_type_parameter || continue
+        for j = i+1:length(ancestors)
+            parent = ancestors[j]
+            JS.head(parent) === :struct || continue
+            JS.numchildren(parent) >= 2 || continue
+            sig = parent[2]
+            if JS.head(sig) === :<: && JS.numchildren(sig) >= 1
+                sig = sig[1]
+            end
+            same_syntax_range(sig, curly) && return true
+        end
+    end
+    return false
+end
+
+function tail_returned_assignment_kind(
+        st0::SyntaxTree, assignment::Union{Nothing,SyntaxTree}
+    )
+    isnothing(assignment) && return :none
+    ancestors = byte_ancestors(st0, JS.byte_range(assignment))
+    simple = true
+    for i in 1:length(ancestors)-1
+        child = ancestors[i]
+        parent = ancestors[i+1]
+        pk = JS.head(parent)
+        if pk === :return
+            return :tail
+        elseif pk === :block
+            is_last_child(parent, child) || return :none
+        elseif pk === :function
+            is_last_child(parent, child) || return :none
+            return simple ? :simple : :tail
+        elseif pk === :if || pk === :elseif || pk === :?
+            is_tail_branch_child(parent, child) || return :none
+            simple = false
+        else
+            return :none
+        end
+    end
+    return :none
+end
+
+function unused_local_binding_message(bn::String, tail_kind::Symbol)
+    if tail_kind !== :none
+        return "Local binding `$bn` is not read; consider `return $bn` to return it explicitly"
+    end
+    return "Unused local binding `$bn`"
+end
+
+function unused_assignment_message(bn::String, tail_kind::Symbol)
+    if tail_kind !== :none
+        return "Value assigned to `$bn` is returned implicitly; consider `return $bn` to return the binding explicitly"
+    end
+    return "Value assigned to `$bn` is never used"
+end
+
+function return_insert_data(
+        assignment::SyntaxTree, fi::FileInfo, bn::String, tail_kind::Symbol
+    )
+    tail_kind === :simple || return nothing, nothing
+    range = jsobj_to_range(assignment, fi)
+    indent = get_line_indent(fi, range.start.line)
+    return range.var"end", "\n$(indent)return $bn"
+end
+
+function collect_binding_ids!(ids::Set{JL.IdTag}, st::SyntaxTree)
+    traverse(st) do node::SyntaxTree
+        JS.head(node) === :bindingid && push!(ids, JL.syntax_id(node))
+        return nothing
+    end
+    return ids
+end
+
+function method_typevars(ctx3::JL.VariableAnalysisContext, method::SyntaxTree)
+    JS.head(method) === :method && JS.numchildren(method) == 3 || return nothing
+    arg_types = method[2]
+    is_core_svec_call(arg_types) || return nothing
+    lambda = method[3]
+    JS.head(lambda) === :lambda && JS.numchildren(lambda) >= 3 || return nothing
+    sparams = lambda[3]
+    JS.head(sparams) === :block || return nothing
+    typevar_ids = JL.IdTag[]
+    for sparam in JS.children(sparams)
+        JS.head(sparam) === :bindingid || continue
+        sp_id = JL.syntax_id(sparam)
+        typevar_id = get(ctx3.sp_typevars, sp_id, nothing)
+        typevar_id === nothing || push!(typevar_ids, typevar_id)
+    end
+    isempty(typevar_ids) && return nothing
+    return arg_types, typevar_ids
+end
+
+function analyze_unconstrained_static_parameters!(
+        diagnostics::Vector{Diagnostic}, fi::FileInfo, ctx3::JL.VariableAnalysisContext,
+        st3::SyntaxTree, reported::Set{LoweringDiagnosticKey}
+    )
+    methods = Tuple{SyntaxTree,Vector{JL.IdTag}}[]
+    traverse(st3) do node::SyntaxTree
+        result = method_typevars(ctx3, node)
+        result === nothing || push!(methods, result)
+        return nothing
+    end
+    for (arg_types, typevar_ids) in methods
+        arg_type_ids = collect_binding_ids!(Set{JL.IdTag}(), arg_types)
+        constrained = Bool[id in arg_type_ids for id in typevar_ids]
+        # A constrained type variable's bounds also constrain the type variables they
+        # reference, but only those declared earlier: in `f(::T) where {T<:S, S}` the
+        # `S` bound of `T` resolves to the later declaration without constraining it
+        # (mirroring `JL.select_used_typevars`)
+        todo = findall(constrained)
+        while !isempty(todo)
+            i = pop!(todo)
+            deps = @something get(ctx3.tv_deps, typevar_ids[i], nothing) continue
+            for j = 1:i-1
+                constrained[j] && continue
+                typevar_ids[j] in deps || continue
+                constrained[j] = true
+                push!(todo, j)
+            end
+        end
+        for i = eachindex(typevar_ids)
+            constrained[i] && continue
+            binfo = JL.get_binding(ctx3, typevar_ids[i])
+            binfo.is_internal && continue
+            bn = binfo.name
+            startswith(bn, "#") && continue
+            provs = JS.flattened_provenance(JL.binding_ex(ctx3, binfo.id))
+            is_from_user_ast(provs) || continue
+            source = last(provs)
+            JS.sourcetext(source) == "_" && continue
+            range = jsobj_to_range(source, fi)
+            key = LoweringDiagnosticKey(range, :static_parameter, bn)
+            key in reported ? continue : push!(reported, key)
+            push!(diagnostics, Diagnostic(;
+                range,
+                severity = DiagnosticSeverity.Warning,
+                message = "Method definition declares type variable `$bn` but does not use it in the type of any function parameter",
+                source = DIAGNOSTIC_SOURCE_LIVE,
+                code = LOWERING_UNCONSTRAINED_STATIC_PARAMETER_CODE,
+                codeDescription = diagnostic_code_description(
+                    LOWERING_UNCONSTRAINED_STATIC_PARAMETER_CODE)))
+        end
+    end
+    return diagnostics
+end
+
+function analyze_unused_bindings!(
+        diagnostics::Vector{Diagnostic}, fi::FileInfo, st0::SyntaxTree, ctx3::JL.VariableAnalysisContext,
+        binding_occurrences::Dict{JL.BindingInfo,Set{BindingOccurrence}},
+        has_implicit_args::Bool, reported::Set{LoweringDiagnosticKey},
+        kwarg_type_names::Dict{Tuple{Int,Int},Set{String}},
+        kwarg_locations::Set{Tuple{Int,Int}};
+        allow_unused_underscore::Bool,
+        inactive_branch_names::Set{String} = Set{String}()
+    )
+    for (binfo, occurrences) in binding_occurrences
+        bk = binfo.kind
+        bk === :global && continue
+        if any(occurrence::BindingOccurrence->occurrence.kind===:use, occurrences)
+            continue
+        end
+        bn = binfo.name
+        # A use in a `@static` branch dropped on this platform is absent from the lowered
+        # tree, so the binding looks unused here; don't report it (see
+        # `collect_inactive_branch_names`).
+        bn in inactive_branch_names && continue
+        if has_implicit_args && bn in _IMPLICIT_BINDING_NAMES
+            continue
+        end
+        if allow_unused_underscore && startswith(bn, '_')
+            continue
+        end
+        provs = JS.flattened_provenance(JL.binding_ex(ctx3, binfo.id))
+        is_from_user_ast(provs) || continue
+        prov = last(provs)
+        is_argument = bk === :argument
+        if is_argument
+            prov_loc = JS.source_location(prov)
+            if is_kwarg_constraining_used_sparam(kwarg_type_names, prov_loc, ctx3)
+                continue
+            end
+        end
+        range = jsobj_to_range(prov, fi)
+        key = LoweringDiagnosticKey(range, bk, bn)
+        key in reported ? continue : push!(reported, key)
+        if bk === :local && has_matching_argument_binding(binding_occurrences, bn, range, fi, ctx3)
+            # When `:argument` and `:local` bindings are merged at the same
+            # location (keyword dependent defaults), only the `:argument`
+            # diagnostic should be reported.
+            continue
+        end
+        if is_argument
+            message = "Unused argument `$bn`"
+            code = LOWERING_UNUSED_ARGUMENT_CODE
+            data = UnusedArgumentData(prov_loc in kwarg_locations)
+        else
+            assignment = assignment_expression_for_prov(st0, prov)
+            tail_kind = tail_returned_assignment_kind(st0, assignment)
+            message = unused_local_binding_message(bn, tail_kind)
+            code = LOWERING_UNUSED_LOCAL_CODE
+            data = assignment === nothing ? nothing :
+                compute_unused_variable_data(assignment, fi, bn, tail_kind)
+        end
+        push!(diagnostics, Diagnostic(;
+            range,
+            severity = DiagnosticSeverity.Information,
+            message,
+            source = DIAGNOSTIC_SOURCE_LIVE,
+            code,
+            codeDescription = diagnostic_code_description(code),
+            tags = DiagnosticTag.Ty[DiagnosticTag.Unnecessary],
+            data))
+    end
+end
+
+function analyze_unused_assignments!(
+        diagnostics::Vector{Diagnostic}, fi::FileInfo, st0::SyntaxTree,
+        dead_store_info::Dict{JL.BindingInfo, DeadStoreInfo},
+        reported::Set{LoweringDiagnosticKey};
+        allow_unused_underscore::Bool,
+        inactive_branch_names::Set{String} = Set{String}()
+    )
+    for (binfo, dsinfo) in dead_store_info
+        binfo.kind === :local || continue
+        binfo.is_internal && continue
+        startswith(binfo.name, '#') && continue
+        bn = binfo.name
+        # See `analyze_unused_bindings!`: a value read only in a `@static` branch dropped
+        # on this platform looks dead here, but isn't on the platform taking that branch.
+        bn in inactive_branch_names && continue
+        if allow_unused_underscore && startswith(bn, '_')
+            continue
+        end
+        for dead_def_tree in dsinfo.dead_defs
+            provs = JL.flattened_provenance(dead_def_tree)
+            is_from_user_ast(provs) || continue
+            prov = last(provs)
+            assignment = assignment_expression_for_prov(st0, prov)
+            if assignment === nothing && is_struct_type_parameter_declaration(st0, prov)
+                continue
+            end
+            range = jsobj_to_range(prov, fi)
+            key = LoweringDiagnosticKey(range, binfo.kind, bn)
+            key in reported ? continue : push!(reported, key)
+            tail_kind = tail_returned_assignment_kind(st0, assignment)
+            push!(diagnostics, Diagnostic(;
+                range,
+                severity = DiagnosticSeverity.Information,
+                message = unused_assignment_message(bn, tail_kind),
+                source = DIAGNOSTIC_SOURCE_LIVE,
+                code = LOWERING_UNUSED_ASSIGNMENT_CODE,
+                codeDescription = diagnostic_code_description(
+                    LOWERING_UNUSED_ASSIGNMENT_CODE),
+                tags = DiagnosticTag.Ty[DiagnosticTag.Unnecessary],
+                data = assignment === nothing ? nothing :
+                    compute_unused_variable_data(assignment, fi, bn, tail_kind)))
+        end
+    end
+end
+
+const DefUsedNamesCacheData = Base.PersistentDict{UInt,Dict{Module,DefUsedNames}}
+const DefUsedNamesCache = LWContainer{DefUsedNamesCacheData, LWStats}
+
+# This analysis reports `lowering/undef-global-var` on a change basis, utilizing an already
+# analyzed analysis context. Full-analysis also reports similar diagnostics as
+# `inference/undef-global-var`. These two diagnostics have the following differences:
+# - `inference/undef-global-var` (full-analysis): Triggered on a save basis. Since it's not
+#   integrated with JuliaLowering, position information can only be reported on a line basis.
+#   On the other hand, it can also report cases like `Base.undefvar` and generally is more correct.
+# - `lowering/undef-global-var` (lowering analysis): Triggered on a change basis, so feedback is
+#   faster. Since it's based on JuliaLowering, position information is accurate. However, it
+#   cannot analyze cases like `Base.undefvar`, so it basically detects a subset of what
+#   full-analysis reports.
+# Per-file phase: collect undef-global candidates while `ctx3` is alive. Filters
+# against `world`/`analyzer` here so the cached candidates need no link back to
+# the lowering context. The cross-file phase consumes these via
+# `emit_undef_global_diagnostics!` with a unit-wide def-name set.
+function collect_undef_global_candidates!(
+        candidates::Vector{UndefGlobalCandidate}, fi::FileInfo,
+        binding_occurrences::Dict{JL.BindingInfo,Set{BindingOccurrence}},
+        world::UInt, analyzer::Union{Nothing,LSAnalyzer}, postprocessor::LSPostProcessor,
+        reported::Set{LoweringDiagnosticKey}
+    )
+    for (binfo, occurrences) in binding_occurrences
+        bk = binfo.kind
+        bk === :global || continue
+        binfo.is_internal && continue
+        startswith(binfo.name, '#') && continue
+        any(is_definition_occurrence, occurrences) && continue
+        # Lowering may create global bindings without source-level uses, such as
+        # struct names. Only actual reads can be undefined-global candidates.
+        any(o -> o.kind === :use, occurrences) || continue
+        bmod = binfo.mod
+        isnothing(bmod) && continue
+        Base.invoke_in_world(world, isdefinedglobal, bmod, Symbol(binfo.name))::Bool && continue
+        if !isnothing(analyzer)
+            bp = Base.lookup_binding_partition(world, GlobalRef(bmod, Symbol(binfo.name)))
+            haskey(JET.AnalyzerState(analyzer).binding_states, bp) && continue
+        end
+        bn = binfo.name
+        message = postprocessor("`$(bmod).$(bn)` is not defined")
+        for occ in sort!(collect(occurrences); by = o -> JS.first_byte(o.tree))
+            occ.kind === :use || continue
+            provs = JS.flattened_provenance(occ.tree)
+            is_from_user_ast(provs) || continue
+            range = jsobj_to_range(last(provs), fi)
+            key = LoweringDiagnosticKey(range, bk, bn)
+            key in reported ? continue : push!(reported, key)
+            push!(candidates, UndefGlobalCandidate(bmod, bn, range, message))
+        end
+    end
+end
+
+# Cross-file phase: emit a `Diagnostic` for each candidate whose name isn't defined
+# elsewhere in the analysis unit. Pure Set lookup — no re-lowering.
+function emit_undef_global_diagnostics!(
+        diagnostics::Vector{Diagnostic}, candidates::Vector{UndefGlobalCandidate},
+        mod_def_used_names::Dict{Module,DefUsedNames},
+    )
+    code = LOWERING_UNDEF_GLOBAL_VAR_CODE
+    cdesc = diagnostic_code_description(code)
+    for c in candidates
+        def_used_names = get(mod_def_used_names, c.bmod, nothing)
+        if def_used_names !== nothing && c.name in def_used_names.def
+            continue
+        end
+        push!(diagnostics, Diagnostic(;
+            range = c.range,
+            severity = DiagnosticSeverity.Warning,
+            message = c.message,
+            source = DIAGNOSTIC_SOURCE_LIVE,
+            code,
+            codeDescription = cdesc))
+    end
+end
+
+# This analysis reports `lowering/undef-local-var` on a change basis, based on
+# `analyze_all_lambdas`, which analyzes local binding definedness with the event
+# based binding assignment reachability analysis.
+# Severity levels (encoded in each entry of `UndefInfo.undef_uses`):
+# - Warning: `true => tree` → strict undef (guaranteed UndefVarError on some path)
+# - Information: `false => tree` → maybe undef (possible UndefVarError)
+function analyze_undefined_local_bindings!(
+        diagnostics::Vector{Diagnostic}, uri::URI, fi::FileInfo,
+        undef_info::Dict{JL.BindingInfo, UndefInfo},
+        reported::Set{LoweringDiagnosticKey}
+    )
+    for (binfo, uinfo) in undef_info
+        binfo.kind === :local || continue # defensive check (already filtered in analyze_undef)
+        binfo.is_read || continue # optimization: skip expensive checks below if not read
+        binfo.is_internal && continue
+        startswith(binfo.name, '#') && continue
+        isempty(uinfo.undef_uses) && continue
+        # Compute relatedInformation once per variable (shared across all undef uses)
+        relatedInformation = DiagnosticRelatedInformation[]
+        for def_tree in uinfo.defs
+            def_provs = JL.flattened_provenance(def_tree)
+            isempty(def_provs) && continue
+            innermost = last(def_provs)
+            uri2filename(uri) == JS.filename(innermost) || continue
+            def_range = jsobj_to_range(innermost, fi)
+            push!(relatedInformation, DiagnosticRelatedInformation(;
+                location = Location(uri, def_range),
+                message = "`$(binfo.name)` is defined here"))
+        end
+        related = @somereal relatedInformation Some(nothing)
+        for (is_strict_undef, undef_use_tree) in uinfo.undef_uses
+            provs = JL.flattened_provenance(undef_use_tree)
+            is_from_user_ast(provs) || continue
+            range = jsobj_to_range(last(provs), fi)
+            key = LoweringDiagnosticKey(range, binfo.kind, binfo.name)
+            key in reported ? continue : push!(reported, key)
+            push!(diagnostics, Diagnostic(;
+                range,
+                severity = is_strict_undef ?
+                    DiagnosticSeverity.Warning :
+                    DiagnosticSeverity.Information,
+                message = is_strict_undef ?
+                    "Variable `$(binfo.name)` is used before it is defined" :
+                    "Variable `$(binfo.name)` may be used before it is defined",
+                source = DIAGNOSTIC_SOURCE_LIVE,
+                code = LOWERING_UNDEF_LOCAL_VAR_CODE,
+                codeDescription = diagnostic_code_description(
+                    LOWERING_UNDEF_LOCAL_VAR_CODE),
+                relatedInformation = related))
+        end
+    end
+end
+
+function compute_unused_variable_data(
+        assignment::SyntaxTree, fi::FileInfo, bn::String, tail_kind::Symbol
+    )
+    JS.numchildren(assignment) ≥ 2 || return nothing
+
+    lhs = assignment[1]
+
+    # Check for destructuring patterns (tuple unpacking)
+    is_tuple = JS.head(lhs) === :tuple
+    if is_tuple
+        return UnusedVariableData(true, nothing, nothing, nothing, nothing)
+    end
+
+    # lhs_eq_range: from LHS start to actual RHS start in source (exclusive).
+    # We scan forward from after the LHS to find the `=` sign and any
+    # following whitespace.  This is needed because some nodes (e.g. character
+    # literals) have a byte range that excludes delimiters, so
+    # `first_byte(rhs)` may point past the opening delimiter.
+    assignment_range = jsobj_to_range(assignment, fi)
+    lhs_eq_range = if JS.head(assignment) === :(=)
+        lhs_start = offset_to_xy(fi, JS.first_byte(lhs))
+        textbuf = fi.parsed_stream.textbuf
+        eq_byte = @something findnext(==(UInt8('=')), textbuf, JS.last_byte(lhs) + 1) return nothing
+        rhs_byte = eq_byte + 1
+        while rhs_byte ≤ length(textbuf) && textbuf[rhs_byte] in (UInt8(' '), UInt8('\t'))
+            rhs_byte += 1
+        end
+        rhs_start = offset_to_xy(fi, rhs_byte)
+        Range(; start=lhs_start, var"end"=rhs_start)
+    else
+        nothing
+    end
+    return_insert_position, return_insert_text = return_insert_data(
+        assignment, fi, bn, tail_kind)
+    return UnusedVariableData(
+        false, assignment_range, lhs_eq_range, return_insert_position, return_insert_text)
+end
+
+function analyze_captured_boxes!(
+        diagnostics::Vector{Diagnostic}, uri::URI, fi::FileInfo,
+        ctx4::JL.ClosureConversionCtx, st3::SyntaxTree,
+        reported::Set{LoweringDiagnosticKey}
+    )
+    for binfo in ctx4.bindings.info
+        JL.is_boxed(binfo) || continue
+        binfo.is_internal && continue
+        startswith(binfo.name, '#') && continue
+        is_captured_binding(binfo, ctx4) || continue
+        bn = binfo.name
+        provs = JL.flattened_provenance(JL.binding_ex(ctx4, binfo.id))
+        is_from_user_ast(provs) || continue
+        range = jsobj_to_range(last(provs), fi)
+        key = LoweringDiagnosticKey(range, :boxed, bn)
+        key in reported ? continue : push!(reported, key)
+        code = LOWERING_CAPTURED_BOXED_VARIABLE_CODE
+        relatedInformation = find_capture_sites(st3, binfo, ctx4, uri, fi)
+        push!(diagnostics, Diagnostic(;
+            range,
+            severity = DiagnosticSeverity.Information,
+            message = "`$bn` is captured and boxed",
+            source = DIAGNOSTIC_SOURCE_LIVE,
+            code,
+            codeDescription = diagnostic_code_description(code),
+            relatedInformation))
+    end
+end
+
+# Normally JuliaLowering only applies binding analysis to variables that are actually captured,
+# but currently there are some edge cases where incorrect bindings are introduced, resulting
+# in false positive captured boxes being reported.
+# This check is basically a band-aid, and the fundamental issue should be resolved on the
+# JuliaLowering side.
+function is_captured_binding(binfo::JL.BindingInfo, ctx4::JL.ClosureConversionCtx)
+    for (_, closure_bindings) in ctx4.closure_bindings
+        for lambda in closure_bindings.lambdas
+            haskey(lambda.locals_capt, binfo.id) && return true
+        end
+    end
+    return false
+end
+
+function find_capture_sites(
+        st3::SyntaxTree, binfo::JL.BindingInfo, ctx4::JL.ClosureConversionCtx,
+        uri::URI, fi::FileInfo
+    )
+    relatedInformation = DiagnosticRelatedInformation[]
+    for (_, closure_bindings) in ctx4.closure_bindings
+        for lambda in closure_bindings.lambdas
+            haskey(lambda.locals_capt, binfo.id) || continue
+            lambda.locals_capt[binfo.id] || continue
+            # Find the lambda in st3 that has matching lambda_bindings.self
+            traverse(st3) do node3::SyntaxTree
+                JS.head(node3) === :lambda || return nothing
+                JS.numchildren(node3) >= 1 || return nothing
+                lbnode = node3[1]
+                JS.head(lbnode) === :lambdabindings || return nothing
+                lambda_bindings = JL.lambda_bindings(lbnode)
+                lambda_bindings.self == lambda.self || return nothing
+                # Find references to binfo.id inside this lambda
+                traverse(node3) do inner::SyntaxTree
+                    if JS.head(inner) === :bindingid && JL.syntax_id(inner) == binfo.id
+                        varprov = last(JL.flattened_provenance(inner))
+                        push!(relatedInformation, DiagnosticRelatedInformation(;
+                            location = Location(; uri, range = jsobj_to_range(varprov, fi)),
+                            message = "Captured by closure"))
+                    end
+                end
+                return traversal_no_recurse
+            end
+        end
+    end
+    return @somereal relatedInformation Some(nothing)
+end
+
+function analyze_ambiguous_soft_scope!(
+        diagnostics::Vector{Diagnostic}, fi::FileInfo, ctx3::JL.VariableAnalysisContext,
+        reported::Set{LoweringDiagnosticKey}
+    )
+    for binfo in ctx3.bindings.info
+        binfo.is_ambiguous_local || continue
+        binfo.is_internal && continue
+        bn = binfo.name
+        startswith(bn, '#') && continue
+        provs = JS.flattened_provenance(JL.binding_ex(ctx3, binfo.id))
+        is_from_user_ast(provs) || continue
+        prov = last(provs)
+        range = jsobj_to_range(prov, fi)
+        key = LoweringDiagnosticKey(range, :ambiguous, bn)
+        key in reported ? continue : push!(reported, key)
+        indent = get_line_indent(fi, range.start.line)
+        push!(diagnostics, Diagnostic(;
+            range,
+            severity = DiagnosticSeverity.Warning,
+            message = "Assignment to `$bn` in soft scope is ambiguous " *
+                      "because a global variable by the same name exists: " *
+                      "`$bn` will be treated as a new local. " *
+                      "Disambiguate by using `local $bn` to suppress this " *
+                      "warning or `global $bn` to assign to the existing " *
+                      "global variable.",
+            source = DIAGNOSTIC_SOURCE_LIVE,
+            code = LOWERING_AMBIGUOUS_SOFT_SCOPE_CODE,
+            codeDescription = diagnostic_code_description(LOWERING_AMBIGUOUS_SOFT_SCOPE_CODE),
+            data = AmbiguousSoftScopeData(bn, indent)))
+    end
+end
+
+const SORT_IMPORTS_MAX_LINE_LENGTH = 92
+const SORT_IMPORTS_INDENT = "    "
+
+function analyze_unsorted_imports!(
+        diagnostics::Vector{Diagnostic}, fi::FileInfo, st0::SyntaxTree
+    )
+    traverse(st0) do st0′::SyntaxTree
+        kind = JS.head(st0′)
+        if kind ∉ (:import, :using, :export, :public)
+            return nothing
+        end
+        name_keys = collect_import_names(st0′)
+        if !issorted(name_keys; by=last)
+            range = jsobj_to_range(st0′, fi)
+            sorted_name_keys = sort!(name_keys; by=last)
+            base_indent = get_line_indent(fi, range.start.line)
+            new_text = generate_sorted_import_text(st0′, sorted_name_keys, base_indent)
+            push!(diagnostics, Diagnostic(;
+                range,
+                severity = DiagnosticSeverity.Hint,
+                message = "Names are not sorted alphabetically",
+                source = DIAGNOSTIC_SOURCE_LIVE,
+                code = LOWERING_UNSORTED_IMPORT_NAMES_CODE,
+                codeDescription = diagnostic_code_description(LOWERING_UNSORTED_IMPORT_NAMES_CODE),
+                data = UnsortedImportData(new_text)))
+        end
+        return traversal_no_recurse
+    end
+    return diagnostics
+end
+
+function generate_sorted_import_text(
+        node::SyntaxTree, sorted_name_keys::Vector{Pair{SyntaxTree,String}},
+        base_indent::String
+    )
+    kind = JS.head(node)
+    keyword = kind === :import ? "import" :
+              kind === :using ? "using" :
+              kind === :export ? "export" : "public"
+    if kind in (:import, :using)
+        nchildren = JS.numchildren(node)
+        if nchildren == 1 && JS.head(node[1]) === :(:)
+            module_path = lstrip(JS.sourcetext(node[1][1]))
+            prefix = "$keyword $module_path: "
+        else
+            prefix = "$keyword "
+        end
+    else
+        prefix = "$keyword "
+    end
+    name_texts = String[lstrip(JS.sourcetext(n)) for (n,_) in sorted_name_keys]
+    single_line = prefix * join(name_texts, ", ")
+    if length(base_indent) + length(single_line) <= SORT_IMPORTS_MAX_LINE_LENGTH
+        return single_line
+    end
+    continuation_indent = base_indent * SORT_IMPORTS_INDENT
+    lines = String[prefix * name_texts[1]]
+    current_line_idx = 1
+    for i = 2:length(name_texts)
+        name = name_texts[i]
+        current_indent = current_line_idx == 1 ? base_indent : continuation_indent
+        potential_line = lines[current_line_idx] * ", " * name
+        if length(current_indent) + length(potential_line) <= SORT_IMPORTS_MAX_LINE_LENGTH
+            lines[current_line_idx] = potential_line
+        else
+            lines[current_line_idx] *= ","
+            push!(lines, continuation_indent * name)
+            current_line_idx += 1
+        end
+    end
+    return join(lines, "\n")
+end
+
+# JuliaSyntax attaches a string literal as a docstring only inside top-level, `module`,
+# `begin`/`quote` and `struct` bodies, and only when the documented expression starts on
+# the next line. A string literal anywhere else in a position whose value is discarded
+# documents nothing. `raw"..."` strings are never attached without `@doc`.
+# Strings in `begin` blocks passed to macros are not reported, since macros like
+# `ArgParse.@add_arg_table!` give them a meaning.
+function analyze_orphaned_docstrings!(
+        diagnostics::Vector{Diagnostic}, uri::URI, fi::FileInfo, st0_top::SyntaxTree;
+        check_toplevel::Bool = true
+    )
+    check_toplevel && check_orphaned_docstrings!(diagnostics, fi, st0_top,
+        JS.numchildren(st0_top), :docstring; fix_first = false)
+    for child in JS.children(st0_top)
+        walk_orphaned_docstrings!(diagnostics, uri, fi, child, :toplevel, true,
+            :undocumented)
+    end
+    return diagnostics
+end
+
+# `doc_target` tracks whether `st0` is (part of) the expression documented by `@doc`:
+# `:documented`, `:undocumented`, or `:unknown` when it is wrapped by a macro that may
+# handle field docstrings itself.
+function walk_orphaned_docstrings!(
+        diagnostics::Vector{Diagnostic}, uri::URI, fi::FileInfo, st0::SyntaxTree,
+        parent_kind::Symbol, global_scope::Bool, doc_target::Symbol
+    )
+    JS.is_leaf(st0) && return diagnostics
+    kind = JS.head(st0)
+    kind === :quote && return diagnostics
+    if kind === :macrocall
+        is_string_macrocall0(st0) && return diagnostics
+        is_doc = is_doc0_any(st0)
+        transparent = is_doc || is_macrocall_st0(st0, "@static", "Base.@static")
+        child_doc_target = is_doc ? :documented :
+            doc_target === :documented || is_macrocall_st0(st0, "@kwdef", "Base.@kwdef") ?
+            doc_target : :unknown
+        for i = 2:JS.numchildren(st0)
+            child = st0[i]
+            transparent || JS.head(child) !== :block || continue
+            walk_orphaned_docstrings!(diagnostics, uri, fi, child, kind,
+                global_scope & transparent, child_doc_target)
+        end
+        return diagnostics
+    elseif kind === :toplevel
+        check_orphaned_docstrings!(diagnostics, fi, st0, JS.numchildren(st0),
+            global_scope ? :docstring : :local)
+    elseif kind === :struct
+        doc_target === :undocumented &&
+            check_undocumented_struct_fields!(diagnostics, uri, fi, st0)
+    elseif kind === :block
+        if parent_kind === :module
+            check_orphaned_docstrings!(diagnostics, fi, st0, JS.numchildren(st0), :docstring;
+                fix_first = false)
+        elseif parent_kind === :struct
+            check_orphaned_docstrings!(diagnostics, fi, st0, JS.numchildren(st0), :struct)
+        else
+            context = !global_scope ? :local :
+                startswith(JS.sourcetext(st0), "begin") ? :docstring : :block
+            check_orphaned_docstrings!(diagnostics, fi, st0, JS.numchildren(st0)-1, context)
+        end
+    end
+    child_global_scope = kind === :module ||
+        (global_scope && kind in (:toplevel, :block, :if, :elseif))
+    for child in JS.children(st0)
+        walk_orphaned_docstrings!(diagnostics, uri, fi, child, kind, child_global_scope,
+            :undocumented)
+    end
+    return diagnostics
+end
+
+function is_string_macrocall0(st0::SyntaxTree)
+    JS.head(st0) === :macrocall || return false
+    JS.numchildren(st0) >= 1 || return false
+    macro_name = st0[1]
+    return has_name_val(macro_name) && endswith(name_val(macro_name), "_str")
+end
+
+# `context` is one of:
+# - `:docstring`: a global-scope body where adjacent docstrings are attached
+# - `:block`: a global-scope body where docstrings are attached only with `@doc`
+#   (e.g. `if` blocks)
+# - `:struct`: a struct body, where attached field docstrings remain plain strings
+# - `:local`: a local-scope body, where docstrings are never attached
+# A string opening a file or module is usually a header describing the whole file rather
+# than the following definition, so `fix_first = false` offers no fix for it.
+function check_orphaned_docstrings!(
+        diagnostics::Vector{Diagnostic}, fi::FileInfo, stmts::SyntaxTree, nchecked::Int,
+        context::Symbol; fix_first::Bool = true
+    )
+    for i = 1:nchecked
+        st0 = stmts[i]
+        is_raw = is_macrocall_st0(st0, "@raw_str")
+        is_string_literal(st0) || JS.head(st0) === :string || is_raw || continue
+        next = i < JS.numchildren(stmts) ? stmts[i+1] : nothing
+        if (context === :struct && !is_raw && next !== nothing &&
+            count_gap_newlines(fi, st0, next) ≤ 1)
+            continue
+        end
+        reason = context === :local ? "docstrings are not recognized in local scope" :
+            next === nothing ? "no expression follows it" :
+            is_raw ? "`raw` strings are recognized as docstrings only with `@doc`" :
+            context === :block ? "docstrings in this block are recognized only with `@doc`" :
+            "the documented expression must start on the next line"
+        attach_edits = nothing
+        fixable = context === :docstring || context === :block ||
+            (context === :struct && !is_raw)
+        if fixable && (i > 1 || fix_first) && next !== nothing && is_documentable0(next)
+            attach_edits = orphaned_docstring_attach_edits(fi, st0, next;
+                insert_doc = is_raw || context === :block)
+        end
+        push!(diagnostics, Diagnostic(;
+            range = jsobj_to_range(st0, fi),
+            severity = DiagnosticSeverity.Information,
+            message = "Docstring is not attached to any definition: $reason",
+            source = DIAGNOSTIC_SOURCE_LIVE,
+            code = LOWERING_ORPHANED_DOCSTRING_CODE,
+            codeDescription = diagnostic_code_description(LOWERING_ORPHANED_DOCSTRING_CODE),
+            data = attach_edits === nothing ? nothing : OrphanedDocstringData(attach_edits)))
+    end
+    return diagnostics
+end
+
+function count_gap_newlines(fi::FileInfo, st0::SyntaxTree, next::SyntaxTree)
+    gap = JS.last_byte(st0)+1:JS.first_byte(next)-1
+    return count(==(UInt8('\n')), @view fi.parsed_stream.textbuf[gap])
+end
+
+function is_documentable0(st0::SyntaxTree)
+    kind = JS.head(st0)
+    if kind === :macrocall
+        return !is_doc0_any(st0) && !is_string_macrocall0(st0)
+    end
+    return kind in (:function, :macro, :struct, :abstract, :primitive, :module, :const,
+        :global, :(=), :(::), :., :identifier)
+end
+
+# Attach the docstring by prefixing it with `@doc` when the context requires it, and by
+# deleting the blank lines before `next`. Comments or other code in between make the
+# intended target unclear, so no edits are offered then.
+function orphaned_docstring_attach_edits(
+        fi::FileInfo, st0::SyntaxTree, next::SyntaxTree; insert_doc::Bool
+    )
+    textbuf = fi.parsed_stream.textbuf
+    first_newline = last_newline = 0
+    for i = JS.last_byte(st0)+1:JS.first_byte(next)-1
+        b = textbuf[i]
+        if b == UInt8('\n')
+            first_newline == 0 && (first_newline = i)
+            last_newline = i
+        elseif !(b == UInt8(' ') || b == UInt8('\t') || b == UInt8('\r'))
+            return nothing
+        end
+    end
+    first_newline == 0 && return nothing
+    edits = TextEdit[]
+    if insert_doc
+        pos = offset_to_xy(fi, JS.first_byte(st0))
+        push!(edits, TextEdit(;
+            range = Range(; start = pos, var"end" = pos),
+            newText = "@doc "))
+    end
+    if first_newline != last_newline
+        push!(edits, TextEdit(;
+            range = byte_range_to_range(first_newline+1:last_newline, fi),
+            newText = ""))
+    end
+    return isempty(edits) ? nothing : edits
+end
+
+# Field docstrings are collected only by the `@doc` call documenting the struct itself, so
+# they are discarded when the struct has no docstring (JuliaLang/julia#39825).
+function check_undocumented_struct_fields!(
+        diagnostics::Vector{Diagnostic}, uri::URI, fi::FileInfo, st0::SyntaxTree
+    )
+    name = @something struct_name_node(st0) return diagnostics
+    body = st0[JS.numchildren(st0)]
+    JS.head(body) === :block || return diagnostics
+    relatedInformation = DiagnosticRelatedInformation[]
+    for i = 1:JS.numchildren(body)-1
+        doc = body[i]
+        is_string_literal(doc) || JS.head(doc) === :string || continue
+        field_name = @something struct_field_name_node(body[i+1]) continue
+        count_gap_newlines(fi, doc, body[i+1]) <= 1 || continue
+        push!(relatedInformation, DiagnosticRelatedInformation(;
+            location = Location(uri, jsobj_to_range(doc, fi)),
+            message = "Discarded docstring of field `$(JS.sourcetext(field_name))`"))
+    end
+    isempty(relatedInformation) && return diagnostics
+    struct_name = JS.sourcetext(name)
+    push!(diagnostics, Diagnostic(;
+        range = jsobj_to_range(name, fi),
+        severity = DiagnosticSeverity.Information,
+        message = "Field docstrings of `$struct_name` are discarded because " *
+                  "`$struct_name` has no docstring",
+        source = DIAGNOSTIC_SOURCE_LIVE,
+        code = LOWERING_ORPHANED_DOCSTRING_CODE,
+        codeDescription = diagnostic_code_description(LOWERING_ORPHANED_DOCSTRING_CODE),
+        relatedInformation))
+    return diagnostics
+end
+
+function struct_field_name_node(st0::SyntaxTree)
+    kind = JS.head(st0)
+    if kind in (:const, :(=), :(::)) && JS.numchildren(st0) >= 1
+        return struct_field_name_node(st0[1])
+    end
+    return kind === :identifier ? st0 : nothing
+end
+
+# Reachability-based unreachable-code detection. `unreachable_statements`
+# is the set of `:block` children that the per-lambda CFG built in
+# `analyze_all_lambdas` determined to be in unreachable blocks.
+#
+# Walking `:block` nodes here only serves to (a) locate consecutive runs
+# of unreachable statements that came from the same source position and
+# (b) recover the "transition point" — the last reachable sibling — to
+# anchor the auto-fix delete range. The reachability decision itself is
+# entirely the CFG's, which means cases like
+# `return f(@goto label); @label label; ...` are correctly recognized as
+# reachable via the goto edge.
+function analyze_unreachable_code!(
+        diagnostics::Vector{Diagnostic}, fi::FileInfo, st3::SyntaxTree,
+        unreachable_statements::Set{SyntaxTree}
+    )
+    isempty(unreachable_statements) && return
+    traverse(st3) do st3′::SyntaxTree
+        JS.head(st3′) === :block || return nothing
+        nchildren = JS.numchildren(st3′)
+        first_unreach_idx = 0
+        for i in 1:nchildren
+            if st3′[i] in unreachable_statements
+                first_unreach_idx = i
+                break
+            end
+        end
+        first_unreach_idx == 0 && return nothing
+        # When the entire block is unreachable from its first child, the block itself is
+        # unreachable in the parent's iteration; let the parent handle the report so we do
+        # not double-count.
+        first_unreach_idx == 1 && return nothing
+        terminator = st3′[first_unreach_idx - 1]
+        terminator_end = last(JS.byte_range(terminator))
+
+        first_range = last_range = nothing
+        for j in first_unreach_idx:nchildren
+            child = st3′[j]
+            # `break` (not `continue`): a reachable sibling marks the end of the unreachable
+            # run; subsequent unreachable runs in the same block are intentionally not
+            # folded into this diagnostic's range.
+            child in unreachable_statements || break
+            # `continue` (not `break`): filter out lowering-introduced sibling statements
+            # whose source position is not strictly after the terminator (e.g. a loop's
+            # iterate-step assignment whose source provenance points back to the loop
+            # header, or a macro-introduced wrapper whose range encompasses the user-written
+            # terminator-bearing argument), but keep iterating — genuine user-visible
+            # unreachable code may still follow the artifact.
+            first(JS.byte_range(child)) > terminator_end || continue
+            provs = JL.flattened_provenance(child)
+            is_from_user_ast(provs) || continue
+            range = jsobj_to_range(last(provs), fi)
+            if isnothing(first_range)
+                first_range = range
+            end
+            last_range = range
+        end
+        if !isnothing(first_range) && !isnothing(last_range)
+            merged_range = Range(;
+                start = first_range.start,
+                var"end" = last_range.var"end")
+            terminator_lsp_range = jsobj_to_range(terminator, fi)
+            delete_range = Range(;
+                start = terminator_lsp_range.var"end",
+                var"end" = last_range.var"end")
+            push!(diagnostics, Diagnostic(;
+                range = merged_range,
+                severity = DiagnosticSeverity.Information,
+                message = "Unreachable code",
+                source = DIAGNOSTIC_SOURCE_LIVE,
+                code = LOWERING_UNREACHABLE_CODE,
+                codeDescription = diagnostic_code_description(LOWERING_UNREACHABLE_CODE),
+                tags = DiagnosticTag.Ty[DiagnosticTag.Unnecessary],
+                data = DeleteRangeData(:unreachable_code, delete_range)))
+        end
+        return nothing
+    end
+end
+
+# `@goto`/`@label` resolution is normally validated by JuliaLowering's
+# `compile_body` (linear IR pass), which JETLS doesn't run. Mirror that
+# check against `st3` so unresolved gotos still surface as diagnostics.
+function analyze_unresolved_gotos!(
+        diagnostics::Vector{Diagnostic}, fi::FileInfo, st3::SyntaxTree
+    )
+    traverse(st3) do st3′::SyntaxTree
+        JS.head(st3′) in (:lambda, :toplevel_lambda) || return nothing
+        JS.numchildren(st3′) >= 4 || return nothing
+        check_lambda_gotos!(diagnostics, fi, st3′[4])
+        return nothing
+    end
+end
+
+function check_lambda_gotos!(
+        diagnostics::Vector{Diagnostic}, fi::FileInfo, body3::SyntaxTree
+    )
+    gotos, labels = collect_gotos_labels(body3)
+    label_names = Set{String}(name for (name, _) in labels)
+    referenced = Set{String}()
+    for (name, st) in gotos
+        if name in label_names
+            push!(referenced, name)
+            continue
+        end
+        push!(diagnostics, Diagnostic(;
+            range = jsobj_to_range(st, fi),
+            severity = DiagnosticSeverity.Error,
+            message = "label `$name` referenced but not defined",
+            source = DIAGNOSTIC_SOURCE_LIVE,
+            code = LOWERING_ERROR_CODE,
+            codeDescription = diagnostic_code_description(LOWERING_ERROR_CODE)))
+    end
+    for (name, st) in labels
+        name in referenced && continue
+        # Skip macro-generated labels — only report user-written ones.
+        provs = JL.flattened_provenance(st)
+        is_from_user_ast(provs) || continue
+        label_call = @something provenance_ancestor(st, :macrocall) continue
+        get_macrocall_name(label_call) == "@label" || continue
+        JS.numchildren(label_call) >= 2 || continue
+        delete_range = line_absorbing_delete_range(label_call, fi)
+        push!(diagnostics, Diagnostic(;
+            range = jsobj_to_range(label_call[end], fi),
+            severity = DiagnosticSeverity.Information,
+            message = "Unused label `$name`",
+            source = DIAGNOSTIC_SOURCE_LIVE,
+            code = LOWERING_UNUSED_LABEL_CODE,
+            codeDescription = diagnostic_code_description(LOWERING_UNUSED_LABEL_CODE),
+            tags = DiagnosticTag.Ty[DiagnosticTag.Unnecessary],
+            data = DeleteRangeData(:unused_label, delete_range)))
+    end
+end
+
+function collect_gotos_labels(st3::SyntaxTree)
+    gotos = Tuple{String,SyntaxTree}[]
+    labels = Tuple{String,SyntaxTree}[]
+    collect_gotos_labels!(gotos, labels, st3)
+    return gotos, labels
+end
+function collect_gotos_labels!(
+        gotos::Vector{Tuple{String,SyntaxTree}}, labels::Vector{Tuple{String,SyntaxTree}},
+        st3::SyntaxTree
+    )
+    traverse(st3) do node
+        k = JS.head(node)
+        if k === :lambda
+            # Nested lambdas have their own goto/label scope; handled separately.
+            return traversal_no_recurse
+        elseif k === :symboliclabel
+            push!(labels, (name_val(node), node))
+            return traversal_no_recurse
+        elseif k === :symbolicgoto
+            push!(gotos, (name_val(node), node))
+            return traversal_no_recurse
+        elseif k === :symbolicblock || k === :break
+            # `:symbolicblock`'s first child is a lowering-internal label
+            # (e.g. `loop-exit`) used by `:break`, not reachable via `@goto`;
+            # `:break`'s first child is a label name reference, not a declaration.
+            # In both cases recurse only into the body (the second child).
+            if JS.numchildren(node) >= 2
+                collect_gotos_labels!(gotos, labels, node[2])
+            end
+            return traversal_no_recurse
+        end
+        return
+    end
+    return
+end
+
+function analyze_lowered_code!(
+        diagnostics::Vector{Diagnostic}, candidates::Vector{UndefGlobalCandidate},
+        uri::URI, fi::FileInfo, res::NamedTuple, world::UInt,
+        analyzer::Union{Nothing,LSAnalyzer}, postprocessor::LSPostProcessor;
+        skip_analysis_requiring_context::Bool = false,
+        allow_unused_underscore::Bool = true,
+        allow_noreturn_optimization::Vector{Symbol} = Symbol[],
+        inactive_branch_names::Set{String} = Set{String}()
+    )
+    (; ctx3, ctx4, st0, st3) = res
+    binding_occurrences = compute_binding_occurrences(ctx3, st3, world;
+        include_global_bindings=true)
+
+    reported = Set{LoweringDiagnosticKey}() # to prevent duplicate reports for unused default or keyword arguments
+    (kwarg_type_names, kwarg_locations) = compute_kwarg_type_annotation_names(st0)
+
+    analyze_unconstrained_static_parameters!(diagnostics, fi, ctx3, st3, reported)
+
+    has_implicit_args = is_macro0(st0) || !isempty(generated_method_ids(ctx3, st3))
+    analyze_unused_bindings!(
+        diagnostics, fi, st0, ctx3, binding_occurrences, has_implicit_args, reported,
+        kwarg_type_names, kwarg_locations;
+        allow_unused_underscore, inactive_branch_names)
+
+    (; undef_info, dead_store_info, unreachable_statements) =
+        analyze_all_lambdas(ctx3, st3; allow_noreturn_optimization)
+    analyze_undefined_local_bindings!(diagnostics, uri, fi, undef_info, reported)
+    analyze_unused_assignments!(diagnostics, fi, st0, dead_store_info, reported;
+        allow_unused_underscore, inactive_branch_names)
+
+    analyze_captured_boxes!(diagnostics, uri, fi, ctx4, st3, reported)
+    analyze_unreachable_code!(diagnostics, fi, st3, unreachable_statements)
+    analyze_unresolved_gotos!(diagnostics, fi, st3)
+
+    if !skip_analysis_requiring_context
+        collect_undef_global_candidates!(candidates, fi, binding_occurrences,
+            world, analyzer, postprocessor, reported)
+        analyze_ambiguous_soft_scope!(diagnostics, fi, ctx3, reported)
+    end
+
+    return diagnostics
+end
+
+function per_stmt_diagnostics!(
+        diagnostics::Vector{Diagnostic}, candidates::Vector{UndefGlobalCandidate},
+        uri::URI, fi::FileInfo, st0::SyntaxTree, context_module::Module, world::UInt,
+        analyzer::Union{Nothing,LSAnalyzer}, postprocessor::LSPostProcessor;
+        skip_analysis_requiring_context::Bool = false,
+        allow_unused_underscore::Bool = true,
+        soft_scope::Bool = false
+    )
+    @assert JS.head(st0) ∉ (:toplevel, :module)
+
+    analyze_unsorted_imports!(diagnostics, fi, st0)
+
+    (st0, _) = desugar_main_macrocall(st0)
+    macro_diags = MacroDiagnostic[]
+    res = Base.ScopedValues.@with MACRO_DIAGNOSTIC_SINK => macro_diags try
+        jl_lower_for_scope_resolution(context_module, world, st0;
+            recover_from_macro_errors=false, convert_closures=true, soft_scope)
+    catch err
+        # JL wraps old-style macro invocation failures in `LoadError` (JuliaLang/julia#62862)
+        if err isa LoadError && err.error isa JL.MacroExpansionError
+            err = err.error
+        end
+        if err isa JL.LoweringError
+            if !err.internal
+                for (st, msg) in zip(err.sts, err.msgs)
+                    push!(diagnostics, Diagnostic(;
+                        range = jsobj_to_range(st, fi),
+                        severity = DiagnosticSeverity.Error,
+                        message = msg,
+                        source = DIAGNOSTIC_SOURCE_LIVE,
+                        code = LOWERING_ERROR_CODE,
+                        codeDescription = diagnostic_code_description(LOWERING_ERROR_CODE)))
+                end
+            end
+        elseif err isa JL.MacroExpansionError
+            if !skip_analysis_requiring_context
+                st = scrub_expand_macro_stacktrace(stacktrace(catch_backtrace()))
+                msg = err.msg
+                inner = err.err
+                if msg == "Macro not found" && inner isa UndefVarError
+                    msg = "Macro name `$(inner.var)` not found"
+                    relatedInformation = nothing
+                else
+                    msg *= "\n" * sprint(locked_showerror, inner)
+                    relatedInformation = stacktrace_to_related_information(st)
+                end
+                provs = JS.flattened_provenance(err.ex)
+                provs′ = @view provs[2:end]
+                if !isempty(provs′)
+                    relatedInformation = @something relatedInformation DiagnosticRelatedInformation[]
+                    provenances_to_related_information!(relatedInformation, provs′, msg)
+                end
+                push!(diagnostics, Diagnostic(;
+                    range = jsobj_to_range(first(provs), fi),
+                    severity = DiagnosticSeverity.Error,
+                    message = msg,
+                    source = DIAGNOSTIC_SOURCE_LIVE,
+                    code = LOWERING_MACRO_EXPANSION_ERROR_CODE,
+                    codeDescription = diagnostic_code_description(LOWERING_MACRO_EXPANSION_ERROR_CODE),
+                    relatedInformation))
+            end
+        else
+            @static JETLS_DEBUG_LOWERING && @warn "Error in lowering (with macrocall nodes)"
+            @static JETLS_DEBUG_LOWERING && locked_showerror(stderr, err)
+            @static JETLS_DEBUG_LOWERING && locked_show_backtrace(stderr, catch_backtrace())
+        end
+        nothing # signal primary-attempt failure to the fallback path
+    end
+    skip_analysis_requiring_context || emit_macro_diagnostics!(diagnostics, fi, macro_diags)
+    inactive_branch_names = collect_inactive_branch_names(macro_diags)
+
+    if res === nothing
+        # Fallback expansion runs *outside* the sink scope: `remove_macrocalls`
+        # only strips old-style macrocalls, so any new-style stub that reported via
+        # the sink during the primary attempt would push the same entry again here
+        # — emitting twice. With the sink unbound, those `push_macro_*!` calls
+        # become no-ops, and stubs that genuinely throw simply re-throw and we bail.
+        st0 = remove_macrocalls(context_module, world, st0)
+        res = try
+            jl_lower_for_scope_resolution(context_module, world, st0;
+                recover_from_macro_errors=false, convert_closures=true, soft_scope)
+        catch
+            return diagnostics
+        end
+    end
+
+    allow_noreturn_optimization = Symbol[]
+    noreturn_globals = (
+        (:throw, Core.throw),
+        (:error, Base.error),
+        (:rethrow, Base.rethrow),
+        (:exit,  Base.exit),
+    )
+    for (name, expected) in noreturn_globals
+        if (Base.invoke_in_world(world, isdefinedglobal, context_module, name)::Bool &&
+            Base.invoke_in_world(world, getglobal, context_module, name) === expected)
+            push!(allow_noreturn_optimization, name)
+        end
+    end
+
+    return analyze_lowered_code!(
+        diagnostics, candidates, uri, fi, res, world, analyzer, postprocessor;
+        skip_analysis_requiring_context, allow_unused_underscore, allow_noreturn_optimization,
+        inactive_branch_names)
+end
+
+# Names of identifiers appearing in `@static` branches dropped at expansion time — the
+# regions reported as `lowering/inactive-code` via the macro-diagnostic sink. A local
+# binding or argument whose only use lives in such a dropped branch is absent from the
+# lowered tree and would otherwise be misreported as unused. The unused-binding /
+# unused-assignment analyses skip any binding whose name is in this set. Suppressing by
+# name is conservative: it can only hide a genuinely unused warning when the same name
+# happens to recur in a dropped branch, never introduce a false one.
+#
+# Only the dropped branches are walked — uses in the branch taken on this platform
+# survive into the lowered tree, so those bindings are never misreported and need no
+# suppression. `@static` reports *every* dropped branch via `push_inactive_code!`
+# (each arm of an `if`/`elseif`/`else` chain or short-circuit `&&`/`||`, including a
+# dropped `elseif`'s condition), so walking the inactive nodes misses no vanished use.
+let empty_names = Set{String}()
+    global function collect_inactive_branch_names(macro_diags::Vector{MacroDiagnostic})
+        any(d->d.code == LOWERING_INACTIVE_CODE, macro_diags) || return empty_names
+        names = Set{String}()
+        for d in macro_diags
+            d.code == LOWERING_INACTIVE_CODE || continue
+            traverse(d.node) do s
+                if JS.head(s) === :identifier
+                    nv = get_name_val(s)
+                    nv === nothing || push!(names, nv)
+                end
+                return nothing
+            end
+        end
+        return names
+    end
+end
+
+function compute_unit_def_used_names(
+        server::Server, search_uris::Set{URI}, snapshot::Union{Nothing,DocumentSnapshot},
+        cancel_flag::CancelFlag, skip_context_check::Bool
+    )
+    state = server.state
+    mod_def_used_names = Dict{Module,DefUsedNames}()
+    for search_uri in search_uris
+        is_cancelled(cancel_flag) && break
+        skip_context_check || has_analyzed_context(state, search_uri) || continue
+        search_fi = @something begin
+            snapshot !== nothing && search_uri == snapshot.cache_uri ? snapshot.fi : nothing
+        end begin
+            get_file_info(state, search_uri)
+        end begin
+            get_unsynced_file_info!(state, search_uri)
+        end continue
+        cached = get(load(state.per_file_diagnostics_cache),
+            canonical_cache_uri(state, search_uri), nothing)
+        if cached !== nothing && cached.file_identity == search_fi.identity
+            merge_def_used_names!(mod_def_used_names, cached.result.def_used_names)
+            continue
+        end
+        search_st0_top = build_syntax_tree(search_fi)
+
+        iterate_toplevel_tree(search_st0_top) do st0::SyntaxTree
+            is_cancelled(cancel_flag) && return traversal_terminator
+            binding_occurrences = @something get_binding_occurrences!(
+                state, search_uri, search_fi, st0) return
+            context_module = get_context_module(state, search_uri, offset_to_xy(search_fi, JS.first_byte(st0)))
+            update_def_used_names!(mod_def_used_names, context_module, binding_occurrences)
+        end
+    end
+    return mod_def_used_names
+end
+
+function merge_def_used_names!(
+        dst::Dict{Module,DefUsedNames}, src::Dict{Module,DefUsedNames}
+    )
+    for (context_module, names) in src
+        dst_names = get!(DefUsedNames, dst, context_module)
+        union!(dst_names.def, names.def)
+        union!(dst_names.used, names.used)
+        union!(dst_names.method_def, names.method_def)
+    end
+    return dst
+end
+
+function update_def_used_names!(
+        mod_def_used_names::Dict{Module,DefUsedNames}, context_module::Module,
+        binding_occurrences::BindingOccurrencesResult
+    )
+    for (binfo_key, occurrences) in binding_occurrences
+        binfo_key.kind === :global || continue
+        has_method_def = any(o -> o.kind === :method_def, occurrences)
+        if any(o -> o.kind === :use, occurrences)
+            def_used_names = get!(DefUsedNames, mod_def_used_names, context_module)
+            push!(def_used_names.used, binfo_key.name)
+            has_method_def && push!(def_used_names.method_def, binfo_key.name)
+        elseif any(is_definition_occurrence, occurrences)
+            def_used_names = get!(DefUsedNames, mod_def_used_names, context_module)
+            push!(def_used_names.def, binfo_key.name)
+            has_method_def && push!(def_used_names.method_def, binfo_key.name)
+        end
+    end
+    return mod_def_used_names
+end
+
+# Memoizes `compute_unit_def_used_names` per analysis-unit key. Lock-serialized writes
+# from `LWContainer` make the cache safe to share across worker threads (e.g.
+# `run_per_file_diagnostics!` in cli-check).
+function compute_def_used_names!(
+        cache::DefUsedNamesCache, server::Server, search_uris::Set{URI},
+        snapshot::Union{Nothing,DocumentSnapshot};
+        cancel_flag::CancelFlag = DUMMY_CANCEL_FLAG,
+        skip_context_check::Bool = false # used by tests only
+    )
+    # `Base.PersistentDict` uses `===` to compare keys (HAMT looks up via object identity),
+    # so a `Set{URI}` key would never hit the cache across calls even when the elements
+    # match. Hash the URI set up-front to get an immutable key that `===`-equates by value.
+    key = snapshot === nothing ? hash(search_uris) :
+        hash((search_uris, snapshot.cache_uri, snapshot.fi.identity))
+    return store!(cache) do data::DefUsedNamesCacheData
+        if haskey(data, key)
+            return data, data[key]
+        end
+        result = compute_unit_def_used_names(
+            server, search_uris, snapshot, cancel_flag, skip_context_check)
+        # a cancelled aggregation is partial, and must not be reused by later files
+        is_cancelled(cancel_flag) && return data, result
+        return DefUsedNamesCacheData(data, key => result), result
+    end
+end
+
+# Detects unused imports by scanning all workspace files for usages of imported names.
+# This analysis can be slow if implemented naively, but achieves practical performance through:
+# - Early return for files without import/using statements (~1ms depending on file size)
+# - Per-file diagnostic summaries for cached files
+# - Binding occurrences caching (see `BindingOccurrencesCache`)
+# - Per-unit used-name memoization via `used_names_cache`, which lets a single
+#   workspace diagnostics scan reuse the expensive `mod_used_names` aggregation
+#   across every import-bearing file in the same analysis unit
+# - Unchanged file skipping in the workspace diagnostics worker
+function analyze_unused_imports!(
+        diagnostics::Vector{Diagnostic}, def_used_names_cache::DefUsedNamesCache,
+        server::Server, uri::URI, snapshot::Union{Nothing,DocumentSnapshot},
+        mod_imported_names::Dict{Module,Dict{String,Vector{ImportInfo}}};
+        cancel_flag::CancelFlag = DUMMY_CANCEL_FLAG,
+        skip_context_check::Bool = false # used by tests only
+    )
+    isempty(mod_imported_names) && return diagnostics
+
+    search_uris = collect_search_uris(server, uri)
+    mod_def_used_names = compute_def_used_names!(
+        def_used_names_cache, server, search_uris, snapshot;
+        cancel_flag, skip_context_check)
+    is_cancelled(cancel_flag) && return diagnostics
+
+    for (context_module, imported_names) in mod_imported_names
+        def_used_names = get(mod_def_used_names, context_module, nothing)
+        for (name, infos) in imported_names
+            def_used_names !== nothing && name in def_used_names.used && continue
+            for info in infos
+                if (def_used_names !== nothing && info.import_kind === :import &&
+                    name in def_used_names.method_def)
+                    continue
+                end
+                push!(diagnostics, Diagnostic(;
+                    range = info.name_range,
+                    severity = DiagnosticSeverity.Information,
+                    message = "Unused import `$name`",
+                    source = DIAGNOSTIC_SOURCE_LIVE,
+                    code = LOWERING_UNUSED_IMPORT_CODE,
+                    codeDescription = diagnostic_code_description(LOWERING_UNUSED_IMPORT_CODE),
+                    tags = DiagnosticTag.Ty[DiagnosticTag.Unnecessary],
+                    data = DeleteRangeData(:unused_import, info.delete_range)))
+            end
+        end
+    end
+
+    return diagnostics
+end
+
+function collect_explicit_imports_by_module(
+        state::ServerState, uri::URI, fi::FileInfo, st0_top::SyntaxTree
+    )
+    mod_imported_names = Dict{Module,Dict{String,Vector{ImportInfo}}}()
+    traverse(st0_top) do st0::SyntaxTree
+        JS.head(st0) ∈ (:import, :using) || return nothing
+        context_module = get_context_module(state, uri, offset_to_xy(fi, JS.first_byte(st0)))
+        for (name, name_range, delete_range) in collect_explicit_import_names(st0, fi)
+            imported_names =
+                get!(Dict{String,Vector{ImportInfo}}, mod_imported_names, context_module)
+            push!(get!(Vector{ImportInfo}, imported_names, name),
+                ImportInfo(uri, name_range, delete_range,
+                    JS.head(st0) === :import ? :import : :using))
+        end
+        return TraversalNoRecurse()
+    end
+    return mod_imported_names
+end
+
+# Returns tuples of (name, name_range, delete_range).
+# For single imports like `using M: x`, delete_range covers the entire import statement.
+# For multiple imports like `using M: x, y`, delete_range covers the name plus comma/whitespace.
+function collect_explicit_import_names(st0::SyntaxTree, fi::FileInfo)
+    kind = JS.head(st0)
+    names = Tuple{String,Range,Range}[]
+    kind ∈ (:import, :using) || return names
+    if JS.numchildren(st0) == 1
+        child = st0[1]
+        ckind = JS.head(child)
+        if ckind === :(:)
+            # `using M: a, b` or `import M: a, b`
+            nnames = JS.numchildren(child) - 1
+            for i = 2:JS.numchildren(child)
+                name_child = child[i]
+                id_st = @something get_local_import_identifier(name_child) continue
+                name = JS.sourcetext(id_st)
+                name_range = jsobj_to_range(id_st, fi)
+                if nnames == 1
+                    # Single import: delete entire statement
+                    delete_range = line_absorbing_delete_range(st0, fi)
+                else
+                    # Multiple imports: delete name with comma
+                    idx = i - 1  # 1-based index among names
+                    if idx == nnames
+                        # Last name: delete ", name" (previous comma to end of name)
+                        prev_child = child[i - 1]
+                        delete_first = JS.last_byte(prev_child) + 1
+                        delete_last = JS.last_byte(name_child)
+                    else
+                        # Not last: delete "name, " (name to before next name)
+                        # Use identifier positions, not importpath, since importpath
+                        # includes leading whitespace
+                        next_child = child[i + 1]
+                        next_id = @something get_local_import_identifier(next_child) continue
+                        delete_first = JS.first_byte(id_st)
+                        delete_last = JS.first_byte(next_id) - 1
+                    end
+                    delete_range = Range(;
+                        start = offset_to_xy(fi, delete_first),
+                        var"end" = offset_to_xy(fi, delete_last + 1))
+                end
+                push!(names, (name, name_range, delete_range))
+            end
+        elseif ckind === :. && kind === :import
+            # `import M.a` or `import M.a.b` - last component is the imported name
+            # Note: `using M.a` brings all exports from module M.a, so it's not explicit
+            npath = JS.numchildren(child)
+            if npath >= 2
+                last_st = child[npath]
+                if JS.head(last_st) === :identifier
+                    # Single import: delete entire statement
+                    name_range = jsobj_to_range(last_st, fi)
+                    delete_range = line_absorbing_delete_range(st0, fi)
+                    push!(names, (JS.sourcetext(last_st), name_range, delete_range))
+                end
+            end
+            # `import M` (single identifier) - skip (no explicit names)
+        end
+    end
+    return names
+end
+
+# Runs `per_stmt_diagnostics!` over every top-level statement of `file_info`, returning
+# the per-file diagnostics together with the undef-global candidates collected while
+# `ctx3` is alive. `analyze_unused_imports!` and the cross-file emit step run later in
+# `toplevel_lowering_diagnostics!` because they depend on sibling files in the unit.
+function compute_per_file_diagnostics(
+        server::Server, uri::URI, file_info::FileInfo, st0_top::SyntaxTree,
+        cancel_flag::CancelFlag;
+        lookup_func = nothing
+    )
+    diagnostics = Diagnostic[]
+    candidates = UndefGlobalCandidate[]
+    skip_analysis_requiring_context = !has_analyzed_context(server.state, uri; lookup_func)
+    def_used_names = Dict{Module,DefUsedNames}()
+    explicit_imports = skip_analysis_requiring_context ?
+        Dict{Module,Dict{String,Vector{ImportInfo}}}() :
+        collect_explicit_imports_by_module(server.state, uri, file_info, st0_top)
+    allow_unused_underscore = get_config(server, :diagnostic, :allow_unused_underscore)
+    soft_scope = is_notebook_cell_uri(server.state, uri) ||
+        # the workspace diagnostics worker computes notebooks on the notebook URI
+        is_notebook_uri(server.state, uri)
+    # the last expression of a notebook cell is displayed, so top-level strings are not
+    # necessarily orphaned there
+    analyze_orphaned_docstrings!(diagnostics, uri, file_info, st0_top; check_toplevel = !soft_scope)
+    iterate_toplevel_tree(st0_top) do st0::SyntaxTree
+        is_cancelled(cancel_flag) && return traversal_terminator
+        pos = offset_to_xy(file_info, JS.first_byte(st0))
+        (; context_module, world, analyzer, postprocessor) =
+            get_context_info(server.state, uri, pos; lookup_func)
+        per_stmt_diagnostics!(diagnostics, candidates, uri, file_info, st0,
+            context_module, world, analyzer, postprocessor;
+            skip_analysis_requiring_context, allow_unused_underscore, soft_scope)
+        if !skip_analysis_requiring_context
+            binding_occurrences = if lookup_func === nothing
+                get_binding_occurrences!(server.state, uri, file_info, st0)
+            else
+                get_binding_occurrences!(server.state, uri, file_info, st0; lookup_func)
+            end
+            binding_occurrences !== nothing &&
+                update_def_used_names!(def_used_names, context_module, binding_occurrences)
+        end
+    end
+    return PerFileDiagnosticsResult(diagnostics, candidates, def_used_names, explicit_imports)
+end
+
+# Cached accessor for the per-file `PerFileDiagnosticsResult`. The cached `diagnostics`
+# vector is treated as read-only; callers must copy before mutating (e.g. before appending
+# cross-file diagnostics). The cached `undef_global_candidates` are pre-filtered against
+# the lowering-time world + analyzer state, so the cross-file phase only needs to filter
+# them against the unit's `DefUsedNames` set. Cache misses and cancelled computations
+# both return without caching; only a fully computed result is stored.
+function get_per_file_diagnostics!(
+        server::Server, uri::URI, file_info::FileInfo, cancel_flag::CancelFlag;
+        lookup_func = nothing
+    )
+    cache_uri = canonical_cache_uri(server.state, uri)
+    return store!(server.state.per_file_diagnostics_cache) do cache::PerFileDiagnosticsCacheData
+        cached = get(cache, cache_uri, nothing)
+        if cached !== nothing && cached.file_identity == file_info.identity
+            return cache, cached.result
+        end
+        st0_top = build_syntax_tree(file_info)
+        result = compute_per_file_diagnostics(
+            server, uri, file_info, st0_top, cancel_flag; lookup_func)
+        if is_cancelled(cancel_flag)
+            return cache, result
+        end
+        entry = PerFileDiagnosticsCacheEntry(file_info.identity, result)
+        return PerFileDiagnosticsCacheData(cache, cache_uri => entry), result
+    end
+end
+
+function get_per_file_diagnostics!(
+        server::Server, uri::URI, file_info::FileInfo, st0_top::SyntaxTree,
+        cancel_flag::CancelFlag;
+        lookup_func = nothing
+    )
+    cache_uri = canonical_cache_uri(server.state, uri)
+    return store!(server.state.per_file_diagnostics_cache) do cache::PerFileDiagnosticsCacheData
+        cached = get(cache, cache_uri, nothing)
+        if cached !== nothing && cached.file_identity == file_info.identity
+            return cache, cached.result
+        end
+        result = compute_per_file_diagnostics(
+            server, uri, file_info, st0_top, cancel_flag; lookup_func)
+        if is_cancelled(cancel_flag)
+            return cache, result
+        end
+        entry = PerFileDiagnosticsCacheEntry(file_info.identity, result)
+        return PerFileDiagnosticsCacheData(cache, cache_uri => entry), result
+    end
+end
+
+function invalidate_per_file_diagnostics_cache!(state::ServerState, uri::URI)
+    cache_uri = canonical_cache_uri(state, uri)
+    store!(state.per_file_diagnostics_cache) do cache::PerFileDiagnosticsCacheData
+        if haskey(cache, cache_uri)
+            Base.delete(cache, cache_uri), nothing
+        else
+            cache, nothing
+        end
+    end
+end
+
+function clear_per_file_diagnostics_cache!(state::ServerState)
+    store!(state.per_file_diagnostics_cache) do _::PerFileDiagnosticsCacheData
+        PerFileDiagnosticsCacheData(), nothing
+    end
+end
+
+# Runs the cross-file phase of lowering diagnostics: emits undef-global diagnostics
+# from cached candidates filtered against the unit's def names, and detects unused
+# imports against the unit's used names. Both consult `compute_def_used_names!`
+# which is memoized per-unit on `def_used_names_cache`.
+function cross_file_diagnostics!(
+        diagnostics::Vector{Diagnostic}, def_used_names_cache::DefUsedNamesCache,
+        server::Server, uri::URI, snapshot::Union{Nothing,DocumentSnapshot},
+        per_file::PerFileDiagnosticsResult;
+        cancel_flag::CancelFlag = DUMMY_CANCEL_FLAG,
+        skip_context_check::Bool = false # used by tests only
+    )
+    search_uris = collect_search_uris(server, uri)
+    mod_def_used_names = compute_def_used_names!(def_used_names_cache, server, search_uris, snapshot; cancel_flag, skip_context_check)
+    is_cancelled(cancel_flag) && return diagnostics
+    emit_undef_global_diagnostics!(diagnostics, per_file.undef_global_candidates, mod_def_used_names)
+    analyze_unused_imports!(diagnostics, def_used_names_cache, server, uri, snapshot, per_file.explicit_imports; cancel_flag, skip_context_check)
+    return diagnostics
+end
+
+function toplevel_lowering_diagnostics!(
+        def_used_names_cache::DefUsedNamesCache, server::Server, uri::URI,
+        file_info::FileInfo, snapshot::Union{Nothing,DocumentSnapshot}, cancel_flag::CancelFlag;
+        lookup_func = nothing
+    )
+    per_file = get_per_file_diagnostics!(server, uri, file_info, cancel_flag; lookup_func)
+    is_cancelled(cancel_flag) && return per_file.diagnostics
+    diagnostics = copy(per_file.diagnostics)
+    if has_analyzed_context(server.state, uri; lookup_func)
+        cross_file_diagnostics!(diagnostics, def_used_names_cache, server, uri, snapshot, per_file; cancel_flag)
+    end
+    return diagnostics
+end
+
+# textDocument/publishDiagnostics
+# ===============================
+
+function get_full_diagnostics(server::Server; ensure_cleared::Union{Bool,URI} = false)
+    state = server.state
+    uri2diagnostics = URI2Diagnostics()
+    for (uri, analysis_info) in load(state.analysis_manager.cache)
+        if analysis_info isa OutOfScope
+            reason = @something analysis_info.skip_reason continue
+            push!(get!(Vector{Diagnostic}, uri2diagnostics, uri),
+                analysis_skipped_diagnostic(server, uri, reason))
+            continue
+        end
+        diagnostics = get!(Vector{Diagnostic}, uri2diagnostics, uri)
+        analysis_result = analysis_info
+        full_diagnostics = get(analysis_result.uri2diagnostics, uri, nothing)
+        if full_diagnostics !== nothing
+            append!(diagnostics, full_diagnostics)
+        end
+    end
+    merge_extra_diagnostics!(uri2diagnostics, server)
+    merge_workspace_live_diagnostics!(uri2diagnostics, server)
+    if ensure_cleared isa URI && !haskey(uri2diagnostics, ensure_cleared)
+        uri2diagnostics[ensure_cleared] = Diagnostic[]
+    end
+    localize_notebook_diagnostics!(uri2diagnostics, state)
+    return uri2diagnostics
+end
+
+# `get_full_diagnostics` restricted to `uris` and the code cells of the notebooks among
+# them, for `notify_diagnostics!(server, uris)`, which publishes nothing else.
+function get_full_diagnostics(server::Server, uris::Set{URI})
+    state = server.state
+    target_uris = Set{URI}()
+    for uri in uris
+        push!(target_uris, uri)
+        notebook_info = @something get_notebook_info(state, uri) continue
+        for cell in notebook_info.cells
+            cell.kind == NotebookCellKind.Code && push!(target_uris, cell.uri)
+        end
+    end
+    analysis_cache = load(state.analysis_manager.cache)
+    extra_diagnostics = load(state.extra_diagnostics)
+    published = load(state.workspace_diagnostics_worker.published)
+    pull = pull_diagnostics_enabled(server)
+    uri2diagnostics = URI2Diagnostics()
+    for uri in target_uris
+        diagnostics = Diagnostic[]
+        analysis_info = get(analysis_cache, uri, nothing)
+        if analysis_info isa AnalysisResult
+            full_diagnostics = get(analysis_info.uri2diagnostics, uri, nothing)
+            full_diagnostics === nothing || append!(diagnostics, full_diagnostics)
+        elseif analysis_info isa OutOfScope
+            reason = analysis_info.skip_reason
+            if reason !== nothing
+                push!(diagnostics, analysis_skipped_diagnostic(server, uri, reason))
+            end
+        end
+        for (_, extra_uri2diagnostics) in extra_diagnostics
+            extra = get(extra_uri2diagnostics, uri, nothing)
+            extra === nothing || append!(diagnostics, extra)
+        end
+        live = get(published, uri, nothing)
+        if live !== nothing && !(pull && is_synchronized(state, uri))
+            append!(diagnostics, live.diagnostics)
+        end
+        uri2diagnostics[uri] = diagnostics
+    end
+    localize_notebook_diagnostics!(uri2diagnostics, state)
+    return uri2diagnostics
+end
+
+function merge_extra_diagnostics!(uri2diagnostics::URI2Diagnostics, server::Server)
+    for (_, extra_uri2diagnostics) in load(server.state.extra_diagnostics)
+        merge_diagnostics!(uri2diagnostics, extra_uri2diagnostics)
+    end
+    return uri2diagnostics
+end
+
+# Live diagnostics travel with the rest of the push set, since `publishDiagnostics`
+# replaces everything the server reported for a URI. Open files are left out for a
+# client that pulls them (see `pull_diagnostics_enabled`).
+function merge_workspace_live_diagnostics!(uri2diagnostics::URI2Diagnostics, server::Server)
+    state = server.state
+    pull = pull_diagnostics_enabled(server)
+    for (uri, live) in load(state.workspace_diagnostics_worker.published)
+        pull && is_synchronized(state, uri) && continue
+        append!(get!(Vector{Diagnostic}, uri2diagnostics, uri), live.diagnostics)
+    end
+    return uri2diagnostics
+end
+
+# The document version lets the client discard or re-anchor a publish that raced with an
+# edit. It is the version the live diagnostics were computed from, never the current one:
+# the other parts of a publish (`JETLS/save`, `JETLS/extra`) are not tied to a version,
+# and claiming a newer text than the live part was computed for would defeat the check.
+# Notebook cells get no version: their live diagnostics are computed on the notebook.
+function pushed_document_version(server::Server, uri::URI)
+    pull_diagnostics_enabled(server) && return nothing
+    is_synchronized(server.state, uri) || return nothing
+    published = load(server.state.workspace_diagnostics_worker.published)
+    live = @something get(published, uri, nothing) return nothing
+    return live.version
+end
+
+function merge_diagnostics!(uri2diagnostics::URI2Diagnostics, other_uri2diagnostics::URI2Diagnostics)
+    for (uri, diagnostics) in other_uri2diagnostics
+        append!(get!(Vector{Diagnostic}, uri2diagnostics, uri), diagnostics)
+    end
+    return uri2diagnostics
+end
+
+const empty_diagnostics = Diagnostic[]
+
+"""
+    notify_diagnostics!(server::Server; ensure_cleared::Union{Bool,URI} = false)
+
+Send `textDocument/publishDiagnostics` notifications to the client. This combines
+diagnostics from full-analysis with extra diagnostics provided by sources like the
+test runner.
+
+When `ensure_cleared` is a URI, guarantees that a notification is sent for that URI
+even if it no longer has any diagnostics, ensuring the client clears any previously
+displayed diagnostics for that URI. With `ensure_cleared=true`, also clears diagnostics
+for unopened files suppressed by `diagnostic.all_files=false`, but skips files whose
+cached diagnostics are empty.
+"""
+function notify_diagnostics!(server::Server; ensure_cleared::Union{Bool,URI} = false)
+    notify_diagnostics!(server, get_full_diagnostics(server; ensure_cleared); ensure_cleared)
+end
+
+# Publishes only `uris`, each with its complete diagnostic set (empty when nothing is left).
+# A notebook URI stands for its code cells, which is what the client knows.
+function notify_diagnostics!(server::Server, uris::Set{URI})
+    state = server.state
+    uri2diagnostics = get_full_diagnostics(server, uris)
+    selected = URI2Diagnostics()
+    for uri in uris
+        notebook_info = get_notebook_info(state, uri)
+        if notebook_info === nothing
+            selected[uri] = get(uri2diagnostics, uri, empty_diagnostics)
+            continue
+        end
+        for cell in notebook_info.cells
+            cell.kind == NotebookCellKind.Code || continue
+            selected[cell.uri] = get(uri2diagnostics, cell.uri, empty_diagnostics)
+        end
+    end
+    notify_diagnostics!(server, selected)
+end
+
+function notify_diagnostics!(server::Server, uri2diagnostics::URI2Diagnostics; ensure_cleared::Union{Bool,URI} = false)
+    state = server.state
+    all_files = get_config(state, :diagnostic, :all_files)
+    root_path = isdefined(state, :root_path) ? state.root_path : nothing
+    for (uri, diagnostics) in uri2diagnostics
+        if !all_files && !is_synchronized(state, canonical_cache_uri(state, uri)) &&
+                get_config_document(state, uri) === nothing
+            if (ensure_cleared isa URI && uri == ensure_cleared) ||
+                (ensure_cleared === true && !isempty(diagnostics))
+                send(server, PublishDiagnosticsNotification(;
+                    params = PublishDiagnosticsParams(;
+                        uri,
+                        diagnostics = empty_diagnostics)))
+            end
+            continue
+        end
+        apply_diagnostic_config!(diagnostics, state.config_manager, uri, root_path)
+        if supports(server, :textDocument, :diagnostic, :markupMessageSupport)
+            apply_markdown_message!(diagnostics)
+        end
+        send(server, PublishDiagnosticsNotification(;
+            params = PublishDiagnosticsParams(;
+                uri,
+                version = pushed_document_version(server, uri),
+                diagnostics)))
+    end
+end
+
+function notify_temporary_diagnostics!(server::Server, temp_uri2diagnostics::URI2Diagnostics)
+    uri2diagnostics = get_full_diagnostics(server)
+    merge_diagnostics!(uri2diagnostics, temp_uri2diagnostics)
+    notify_diagnostics!(server, uri2diagnostics)
+end
+
+clear_extra_diagnostics!(server::Server, args...) = clear_extra_diagnostics!(server.state, args...)
+clear_extra_diagnostics!(state::ServerState, args...) = clear_extra_diagnostics!(state.extra_diagnostics, args...)
+function clear_extra_diagnostics!(extra_diagnostics::ExtraDiagnostics, key::ExtraDiagnosticsKey)
+    return store!(extra_diagnostics) do data
+        if haskey(data, key)
+            new_data = copy(data)
+            delete!(new_data, key)
+            return new_data, true
+        end
+        return data, false
+    end
+end
+function clear_extra_diagnostics!(extra_diagnostics::ExtraDiagnostics, uri::URI) # bulk deletion
+    return store!(extra_diagnostics) do data
+        any_deleted = false
+        new_data = nothing
+        for key in keys(data)
+            if to_uri(key) == uri
+                if new_data === nothing
+                    new_data = copy(data)
+                end
+                delete!(new_data, key)
+                any_deleted |= true
+            end
+        end
+        return something(new_data, data), any_deleted
+    end
+end
+
+# Workspace diagnostics (`JETLS/live` push)
+# =========================================
+#
+# `JETLS/live` diagnostics are pushed via `textDocument/publishDiagnostics` for open and
+# unopened workspace files alike, by the worker below, unless the client pulls those of
+# open files (see `textDocument/diagnostic` below).
+
+# Scans are spaced by at least this many seconds: every keystroke in an open file is a
+# change point for the file and its unit siblings, and a scan that turns out to change
+# nothing still costs a walk over the workspace.
+const WORKSPACE_DIAGNOSTICS_MIN_INTERVAL = 1.0
+
+function start_workspace_diagnostics_worker!(server::Server)
+    @static JETLS_DEV_MODE && @info "Starting workspace diagnostics worker"
+    worker_task = server.state.workspace_diagnostics_worker.worker_task
+    isassigned(worker_task) &&
+        error("The server has already started a workspace diagnostics worker")
+    task = Threads.@spawn :default try
+        workspace_diagnostics_worker(server)
+    catch err
+        @error "Critical error happened in workspace diagnostics worker"
+        locked_display_error(stderr, err, catch_backtrace())
+    end
+    worker_task[] = task
+    return task
+end
+
+# A change arriving during a scan cancels it (see `schedule_workspace_diagnostics!`); the
+# abandoned scan counts as a run, so the redo is spaced like any other and continuous
+# typing does not keep the worker spinning. Open files are published before the rest of
+# the workspace is swept (see `publish_workspace_diagnostics!`), so a cancellation mostly
+# cuts that sweep short. What it computed for files whose inputs did not move is still
+# published, and per-file results stay cached, so the redo only repeats the cross-file
+# checks of the files the change affected.
+function workspace_diagnostics_worker(server::Server)
+    worker = server.state.workspace_diagnostics_worker
+    last_run_time = 0.0
+    while true
+        wait(worker.wakeup)
+        is_cancelled(worker.shutdown_flag) && break
+        remaining = WORKSPACE_DIAGNOSTICS_MIN_INTERVAL - (time() - last_run_time)
+        remaining > 0 && sleep(remaining)
+        is_cancelled(worker.shutdown_flag) && break
+        cancel_flag = CancelFlag(false)
+        @atomic :release worker.cancel_flag = cancel_flag
+        @tryinvokelatest publish_workspace_diagnostics!(server, cancel_flag)
+        last_run_time = time()
+        GC.safepoint()
+    end
+end
+
+function stop_workspace_diagnostics_worker(server::Server)
+    worker = server.state.workspace_diagnostics_worker
+    isassigned(worker.worker_task) || return nothing
+    cancel!(worker.shutdown_flag)
+    cancel!(@atomic :acquire worker.cancel_flag)
+    notify(worker.wakeup)
+    wait(worker.worker_task[])
+    return nothing
+end
+
+# The `Event` keeps the wake-up until the worker gets to it, so a change made during a
+# scan is never lost.
+function schedule_workspace_diagnostics!(server::Server)
+    worker = server.state.workspace_diagnostics_worker
+    cancel!(@atomic :acquire worker.cancel_flag)
+    notify(worker.wakeup)
+    return nothing
+end
+
+# Fingerprints the inputs of a file's live diagnostics: the worker skips files whose
+# fingerprint did not move, and `textDocument/diagnostic` returns it as the `resultId`.
+# Every unit member's text identity is folded in so a sibling edit invalidates this file's
+# cached diagnostics and the cross-file analyses
+# (`analyze_undefined_global_uses_for_file!`, `analyze_unused_imports!`) rerun; so are
+# the `[diagnostic]` config, so a config change recomputes every file, and the module
+# context of the unit (`analysis_context_hash`), so a file computed before full-analysis
+# resolved its module context is recomputed once the context is known.
+const LiveDiagnosticsFingerprintCache = IdDict{Dict{URI,JET.AnalyzedFileInfo},String}
+
+function compute_live_diagnostics_fingerprint(
+        server::Server, uri::URI,
+        fingerprint_cache::LiveDiagnosticsFingerprintCache = LiveDiagnosticsFingerprintCache()
+    )
+    state = server.state
+    this_uri = canonical_cache_uri(state, uri)
+    analysis_info = get_analysis_info(state.analysis_manager, this_uri)
+    if analysis_info isa AnalysisResult
+        cached = get(fingerprint_cache, analysis_info.analyzed_file_infos, nothing)
+        cached !== nothing && return cached
+    end
+    fingerprint = compute_live_diagnostics_fingerprint(
+        state, this_uri, analysis_info, #=this_fi=#nothing)
+    if analysis_info isa AnalysisResult
+        fingerprint_cache[analysis_info.analyzed_file_infos] = fingerprint
+    end
+    return fingerprint
+end
+
+function compute_live_diagnostics_fingerprint(
+        state::ServerState, this_uri::URI, analysis_info::Union{Nothing,AnalysisInfo},
+        this_fi::Union{Nothing,FileInfo}
+    )
+    search_uris = collect_search_uris(this_uri, analysis_info)
+    config_hash = hash(get_config(state, :diagnostic))
+    context_hash = analysis_context_hash(analysis_info)
+    file_hash = zero(UInt)
+    for search_uri in search_uris
+        search_fi = @something begin
+            search_uri == this_uri ? this_fi : nothing
+        end begin
+            get_file_info(state, search_uri)
+        end begin
+            get_unsynced_file_info!(state, search_uri)
+        end continue
+        file_hash ⊻= hash((search_uri, search_fi.identity))
+    end
+    return string(hash((file_hash, config_hash, context_hash)))
+end
+
+# Live diagnostics take only the module context from full-analysis, so an analysis result
+# that keeps every unit member's `module_range_infos` (e.g. the final result following an
+# intermediate one) leaves the fingerprint alone, just as `update_analysis_cache!` keeps
+# the per-file caches then.
+function analysis_context_hash(analysis_info::Union{Nothing,AnalysisInfo})
+    if analysis_info isa AnalysisResult
+        context_hash = zero(UInt)
+        for (analyzed_uri, analyzed_file_info) in analysis_info.analyzed_file_infos
+            context_hash ⊻= hash((analyzed_uri, analyzed_file_info.module_range_infos))
+        end
+        return context_hash
+    elseif analysis_info isa OutOfScope
+        return hash(analysis_info.module_context)
+    else
+        return zero(UInt)
+    end
+end
+
+# Computes the raw live diagnostics of a file. Falls back to parsed-stream diagnostics
+# when the file has parse errors, otherwise runs the lowering-based analyses and reports
+# any parse warnings alongside them.
+function compute_live_diagnostics!(
+        def_used_names_cache::DefUsedNamesCache, server::Server, uri::URI, fi::FileInfo,
+        snapshot::Union{Nothing,DocumentSnapshot}, cancel_flag::CancelFlag;
+        lookup_func = nothing
+    )
+    JS.any_error(fi.parsed_stream) && return parsed_stream_to_diagnostics(fi)
+    diagnostics = toplevel_lowering_diagnostics!(
+        def_used_names_cache, server, uri, fi, snapshot, cancel_flag; lookup_func)
+    isempty(fi.parsed_stream.diagnostics) && return diagnostics
+    # `diagnostics` may be the per-file cache's own vector
+    return append!(parsed_stream_to_diagnostics(fi), diagnostics)
+end
+
+# Rescans the workspace, recomputes the files whose fingerprint moved, and republishes
+# those whose diagnostics actually changed, plus the files whose diagnostics have to go
+# away (deleted, closed with `all_files=false`, or out of every analysis unit). A sibling
+# edit moves the fingerprint of every file in its unit, so most recomputations reproduce
+# the previous diagnostics; the `Diagnostic` equality is far cheaper than serializing the
+# publish and having the client re-merge it. An open file is republished whenever its
+# document version moved, even with the same diagnostics: the client may have discarded
+# the previous publish as out of date, and the suppression would otherwise never retry
+# it. Each publish carries the file's complete diagnostic set, since `publishDiagnostics`
+# replaces everything the server reported for a URI.
+#
+# Open files are recomputed, stored and published before the rest of the workspace. The
+# next keystroke then cancels only the sweep over the unopened files, and the file being
+# edited is not held back by a sweep that grows with the workspace. A cancelled phase
+# still stores and publishes the results that the change did not make stale
+# (`retain_current_live_diagnostics!`).
+function publish_workspace_diagnostics!(server::Server, cancel_flag::CancelFlag)
+    state = server.state
+    worker = state.workspace_diagnostics_worker
+    published = load(worker.published)
+    pull = pull_diagnostics_enabled(server)
+    # `all_files=false` silences unopened files only; the scan forgets them (and clears
+    # them once more after `handle_lsp_config_change!` did).
+    all_files = get_config(state, :diagnostic, :all_files)
+    uris_to_search = all_files ? collect_workspace_uris(server) : Set{URI}()
+    if !pull
+        # open files outside every analysis unit still get their syntax diagnostics;
+        # notebooks are keyed by the notebook URI, and `notify_diagnostics!` localizes them
+        union!(uris_to_search, keys(load(state.file_cache)))
+    end
+    open_uris = Set{URI}()
+    unopened_uris = Set{URI}()
+    for uri in uris_to_search
+        if !is_synchronized(state, uri)
+            push!(unopened_uris, uri)
+        elseif !pull # otherwise served by `textDocument/diagnostic`
+            push!(open_uris, uri)
+        end
+    end
+    fingerprint_cache = LiveDiagnosticsFingerprintCache()
+    def_used_names_cache = DefUsedNamesCache()
+    for uris in (open_uris, unopened_uris)
+        updates = Dict{URI,WorkspaceLiveDiagnostics}()
+        changed = Set{URI}()
+        completed = recompute_live_diagnostics!(updates, changed, server, uris, published,
+            fingerprint_cache, def_used_names_cache, cancel_flag)
+        if !completed
+            is_cancelled(worker.shutdown_flag) && return nothing
+            retain_current_live_diagnostics!(updates, changed, server)
+        end
+        if !isempty(updates)
+            store!(worker.published) do current::WorkspaceLiveDiagnosticsData
+                for (uri, live) in updates
+                    current = WorkspaceLiveDiagnosticsData(current, uri => live)
+                end
+                current, nothing
+            end
+            isempty(changed) || notify_diagnostics!(server, changed)
+        end
+        completed || return nothing
+    end
+    removals = Set{URI}()
+    for uri in keys(published)
+        gone = if is_synchronized(state, uri)
+            pull || get_file_info(state, uri) === nothing
+        else
+            get_unsynced_file_info!(state, uri) === nothing
+        end
+        (!(uri in uris_to_search) || gone) && push!(removals, uri)
+    end
+    isempty(removals) && return nothing
+    store!(worker.published) do current::WorkspaceLiveDiagnosticsData
+        for uri in removals
+            haskey(current, uri) && (current = Base.delete(current, uri))
+        end
+        current, nothing
+    end
+    # A removed entry of a file that `all_files=false` silences is cleared on the client
+    # all the same: a publish of the scan that raced with `didClose` may have landed after
+    # the clearing publish of the close. Any other removal republishes what is left of the
+    # file (`JETLS/save` and `JETLS/extra`), as a file handed over to the client's pull
+    # must keep those.
+    changed = Set{URI}()
+    for uri in removals
+        if all_files || is_synchronized(state, canonical_cache_uri(state, uri))
+            push!(changed, uri)
+        else
+            send(server, PublishDiagnosticsNotification(;
+                params = PublishDiagnosticsParams(; uri, diagnostics = empty_diagnostics)))
+        end
+    end
+    isempty(changed) || notify_diagnostics!(server, changed)
+    nothing
+end
+
+# After a cancellation, keeps only the results whose inputs did not move since they were
+# computed, typically those of analysis units other than the one being edited: they are
+# not stale, so they are stored and published rather than recomputed by the redo. The
+# fingerprints are taken afresh, since the scan's `LiveDiagnosticsFingerprintCache` still
+# holds the ones from before the change that cancelled it.
+function retain_current_live_diagnostics!(
+        updates::Dict{URI,WorkspaceLiveDiagnostics}, changed::Set{URI}, server::Server
+    )
+    fingerprint_cache = LiveDiagnosticsFingerprintCache()
+    for uri in collect(keys(updates))
+        fingerprint = compute_live_diagnostics_fingerprint(server, uri, fingerprint_cache)
+        fingerprint == updates[uri].fingerprint && continue
+        delete!(updates, uri)
+        delete!(changed, uri)
+    end
+    return updates
+end
+
+# Recomputes the files of `uris` whose fingerprint moved into `updates`, and collects into
+# `changed` those to republish. Returns `false` when cancelled; `updates` then holds the
+# files fully computed before the cancellation.
+function recompute_live_diagnostics!(
+        updates::Dict{URI,WorkspaceLiveDiagnostics}, changed::Set{URI},
+        server::Server, uris::Set{URI}, published::WorkspaceLiveDiagnosticsData,
+        fingerprint_cache::LiveDiagnosticsFingerprintCache,
+        def_used_names_cache::DefUsedNamesCache, cancel_flag::CancelFlag
+    )
+    state = server.state
+    for uri in uris
+        is_cancelled(cancel_flag) && return false
+        synchronized = is_synchronized(state, uri)
+        # The fingerprint is taken before the inputs it covers. An edit landing in
+        # between then leaves the stored fingerprint behind the text, and the next scan
+        # (already scheduled by that edit) recomputes the file; a fingerprint taken after
+        # the inputs could instead match that scan and pin the stale diagnostics.
+        fingerprint = compute_live_diagnostics_fingerprint(server, uri, fingerprint_cache)
+        prev = get(published, uri, nothing)
+        prev !== nothing && prev.fingerprint == fingerprint && continue
+        fi = @something if synchronized
+            get_file_info(state, uri)
+        else
+            get_unsynced_file_info!(state, uri)
+        end continue # cleaned up by the caller with the other stale entries
+        diagnostics = compute_live_diagnostics!(
+            def_used_names_cache, server, uri, fi, #=snapshot=#nothing, cancel_flag)
+        is_cancelled(cancel_flag) && return false
+        version = synchronized ? fi.version : nothing
+        updates[uri] = WorkspaceLiveDiagnostics(fingerprint, version, diagnostics)
+        if prev !== nothing && prev.version == version && prev.diagnostics == diagnostics
+            continue
+        end
+        push!(changed, uri)
+    end
+    return true
+end
+
+# Hand live diagnostics over to the client's pull, and restore cached full-analysis
+# diagnostics suppressed while the file was closed: a generation cache hit will not
+# publish them again. Combine both changes into a single publish for this file only.
+function notify_diagnostics_on_open!(server::Server, uri::URI)
+    state = server.state
+    cleared = pull_diagnostics_enabled(server) && forget_workspace_live_diagnostics!(state, uri)
+    cached = !get_config(state, :diagnostic, :all_files) &&
+        get_analysis_info(state.analysis_manager, uri) isa AnalysisResult
+    (cleared || cached) && notify_diagnostics!(server, Set{URI}((uri,)))
+    nothing
+end
+
+function forget_workspace_live_diagnostics!(state::ServerState, uri::URI)
+    return store!(state.workspace_diagnostics_worker.published) do data::WorkspaceLiveDiagnosticsData
+        haskey(data, uri) || return data, false
+        Base.delete(data, uri), true
+    end
+end
+
+# textDocument/diagnostic
+# =======================
+#
+# Offered only when the `pull_diagnostics` initialization option is set. Pulling splits
+# the same diagnostics between a client-managed set (open files) and a server-managed one
+# (unopened files), which cannot be kept consistent across clients in general; a client
+# integration opts in when it is known to manage the pulled set by its editor state,
+# which the VSCode extension does by clearing it when a tab closes, something the server
+# cannot tell from `textDocument/didClose`. The worker above then leaves open files out,
+# handing a file over on open (`notify_diagnostics_on_open!`) and back on close (the
+# next scan), and change points ask the client to re-pull (`request_diagnostic_refresh!`).
+
+pull_diagnostics_enabled(server::Server) =
+    get_init_option(server.state.init_options, :pull_diagnostics) &&
+    getcapability(server, :textDocument, :diagnostic) !== nothing
+
+const DIAGNOSTIC_REGISTRATION_ID = "jetls-diagnostic"
+const DIAGNOSTIC_REGISTRATION_METHOD = "textDocument/diagnostic"
+
+function diagnostic_options()
+    return DiagnosticOptions(;
+        identifier = "JETLS/diagnostic",
+        interFileDependencies = true,
+        workspaceDiagnostics = false)
+end
+
+function diagnostic_registration()
+    (; identifier, interFileDependencies, workspaceDiagnostics) = diagnostic_options()
+    return Registration(;
+        id = DIAGNOSTIC_REGISTRATION_ID,
+        method = DIAGNOSTIC_REGISTRATION_METHOD,
+        registerOptions = DiagnosticRegistrationOptions(;
+            documentSelector = DEFAULT_DOCUMENT_SELECTOR,
+            identifier,
+            interFileDependencies,
+            workspaceDiagnostics)
+    )
+end
+
+function handle_DocumentDiagnosticRequest(
+        server::Server, msg::DocumentDiagnosticRequest,
+        snapshot::Union{Nothing,DocumentSnapshot}, cancel_flag::CancelFlag
+    )
+    if snapshot === nothing
+        return send(server, DocumentDiagnosticResponse(;
+            id = msg.id,
+            result = RelatedFullDocumentDiagnosticReport(; items = empty_diagnostics)))
+    end
+    uri = msg.params.textDocument.uri
+    resultId = compute_live_diagnostics_fingerprint(server, snapshot)
+    if msg.params.previousResultId == resultId
+        return send(server,
+            DocumentDiagnosticResponse(;
+                id = msg.id,
+                result = RelatedUnchangedDocumentDiagnosticReport(; resultId)))
+    end
+    if is_cancelled(cancel_flag)
+        return send(server, DocumentDiagnosticResponse(; id = msg.id, result = nothing, error = request_cancelled_error()))
+    end
+    def_used_names_cache = DefUsedNamesCache()
+    diagnostics = compute_live_diagnostics!(
+        def_used_names_cache, server, snapshot.cache_uri, snapshot.fi, snapshot, cancel_flag)
+    if is_cancelled(cancel_flag)
+        return send(server, DocumentDiagnosticResponse(; id = msg.id, result = nothing, error = request_cancelled_error()))
+    end
+    root_path = isdefined(server.state, :root_path) ? server.state.root_path : nothing
+    diagnostics = postprocess_pull_diagnostics(server, uri, snapshot, diagnostics, root_path)
+    return send(server,
+        DocumentDiagnosticResponse(;
+            id = msg.id,
+            result = RelatedFullDocumentDiagnosticReport(;
+                resultId,
+                items = diagnostics)))
+end
+
+# `textDocument/diagnostic` computes the requested document from its snapshot, so the
+# snapshot's identity stands for the document in place of the current one.
+function compute_live_diagnostics_fingerprint(server::Server, snapshot::DocumentSnapshot)
+    state = server.state
+    this_uri = snapshot.cache_uri
+    analysis_info = get_analysis_info(state.analysis_manager, this_uri)
+    return compute_live_diagnostics_fingerprint(state, this_uri, analysis_info, snapshot.fi)
+end
+
+# Applies config-based filtering, notebook localization, and markdown rendering for
+# `textDocument/diagnostic` (`notify_diagnostics!` does the same for pushed diagnostics).
+function postprocess_pull_diagnostics(
+        server::Server, uri::URI, snapshot::DocumentSnapshot, diagnostics::Vector{Diagnostic},
+        root_path::Union{Nothing,String},
+    )
+    state = server.state
+    apply_diagnostic_config!(diagnostics, state.config_manager, uri, root_path)
+    notebook = snapshot.notebook
+    if notebook !== nothing && uri != snapshot.cache_uri
+        diagnostics = localize_notebook_diagnostics(state, notebook, uri, diagnostics)
+    end
+    if supports(server, :textDocument, :diagnostic, :markupMessageSupport)
+        apply_markdown_message!(diagnostics)
+    end
+    return diagnostics
+end
+
+# workspace/diagnostic/refresh
+# ============================
+
+struct DiagnosticRefreshRequestCaller <: RequestCaller end
+
+# Reschedules the push and, for a client that pulls open files, asks it to re-pull them.
+function request_diagnostic_refresh!(server::Server)
+    schedule_workspace_diagnostics!(server)
+    pull_diagnostics_enabled(server) || return nothing
+    supports(server, :workspace, :diagnostics, :refreshSupport) || return nothing
+    id = unique_id("WorkspaceDiagnosticRefreshRequest")
+    addrequest!(server, id=>DiagnosticRefreshRequestCaller())
+    return send(server, WorkspaceDiagnosticRefreshRequest(; id))
+end
+
+function handle_diagnostic_refresh_response(
+        server::Server, msg::Dict{Symbol,Any}, ::DiagnosticRefreshRequestCaller
+    )
+    if handle_response_error(server, msg, "refresh diagnostics")
+    else
+        # just valid request response cycle
+    end
+end

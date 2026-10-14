@@ -1,14 +1,15 @@
 #!/bin/bash
 
-PACKAGES=(JETLS HierarchicalTestSets LSP MarkdownSource TOMLSource TestRunner)
+PACKAGES=(JETLS JETLSCore HierarchicalTestSets LSP MarkdownSource TOMLSource TestRunner)
 
 print_help() {
     cat <<EOF
 Usage: ./scripts/selfcheck.sh [OPTIONS]
 
 Run JETLS self-diagnostics on the packages of this repository, or only on
-those given by -p. Other options are passed through to jetls check and
-override the defaults --root=<project root> and --show-severity=warn.
+those given by -p, along with the test suites of the subpackages. Other
+options are passed through to jetls check and override the defaults
+--root=<project root> and --show-severity=warn.
 
 Packages:
   ${PACKAGES[*]}
@@ -80,6 +81,7 @@ if [[ ${#PACKAGE_NAMES[@]} -eq 0 ]]; then
     PACKAGE_NAMES=("${PACKAGES[@]}")
 fi
 PACKAGE_PATHS=()
+TEST_PATHS=()
 for name in "${PACKAGE_NAMES[@]}"; do
     if ! is_package "$name"; then
         echo "Error: Unknown package: $name (expected one of: ${PACKAGES[*]})" >&2
@@ -87,8 +89,11 @@ for name in "${PACKAGE_NAMES[@]}"; do
     fi
     if [[ "$name" == JETLS ]]; then
         PACKAGE_PATHS+=("$PROJECT_ROOT")
+    elif [[ "$name" == JETLSCore ]]; then
+        PACKAGE_PATHS+=("$PROJECT_ROOT/$name")
     else
         PACKAGE_PATHS+=("$PROJECT_ROOT/$name")
+        TEST_PATHS+=("$PROJECT_ROOT/$name/test/runtests.jl")
     fi
 done
 
@@ -98,4 +103,5 @@ exec "$JULIA" --startup-file=no --project="$PROJECT_ROOT" --threads="$THREADS" \
     $QUIET \
     --show-severity=warn \
     "${PACKAGE_PATHS[@]}" \
+    "${TEST_PATHS[@]}" \
     "${EXTRA_ARGS[@]}"

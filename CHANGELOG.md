@@ -19,7 +19,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## Unreleased
 
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
-- Diff: [`53cd4a5...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/53cd4a5...HEAD)
+- Diff: [`ab294bc...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/ab294bc...HEAD)
 
 ### Announcement
 
@@ -27,6 +27,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > JETLS supports Julia 1.12.2 through 1.13.
 > It does not support Julia 1.12.1 or earlier, nor Julia 1.14+/nightly.
 
+<!-- Added: 2026-09-25 / Remove after: 2026-10-25 -->
 > [!note]
 > The official Zed extension for Julia, [JuliaEditorSupport/zed-julia](https://github.com/JuliaEditorSupport/zed-julia), now uses JETLS as its default language server since v0.2.0.
 > Install the `Julia` extension from Zed's extensions view: like `jetls-client`, it installs and updates the pinned JETLS release automatically, so Zed users no longer need to [install `jetls`](https://aviatesk.github.io/JETLS.jl/release/#index/server-installation) or keep it up to date manually (still needed if you also use the `jetls` CLI, e.g. `jetls check`).
@@ -35,6 +36,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > Please report extension-specific problems (installation, startup, extension UI) to [JuliaEditorSupport/zed-julia issues](https://github.com/JuliaEditorSupport/zed-julia/issues);
 > language-feature issues belong here as before.
 
+<!-- Added: 2026-10-11 / Remove after: 2026-11-11 -->
 > [!note]
 > TestRunner.jl is now developed in this repository as a [subpackage](https://github.com/aviatesk/JETLS.jl/tree/master/TestRunner) and released together with JETLS, and [aviatesk/TestRunner.jl](https://github.com/aviatesk/TestRunner.jl) is no longer updated.
 > Installing JETLS is all you need to run tests with TestRunner.jl: the [TestRunner integration](https://aviatesk.github.io/JETLS.jl/release/testrunner/) keeps using the TestRunner.jl bundled with JETLS, and the new [`jetls test`](https://aviatesk.github.io/JETLS.jl/release/testrunner/#testrunner/cli) command runs tests with it from the command line:
@@ -64,6 +66,103 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > Note that `analysis_overrides` is provided as a temporary workaround and may be removed or changed at any time. A proper fix is being worked on.
 >
 > Note: Path glob patterns use `/` as the separator on all platforms, including Windows; backslashes are not supported as separators.
+
+### Added
+
+- Added the `on_include` field to [`analysis_overrides`](https://aviatesk.github.io/JETLS.jl/release/launching/#init-options/analysis_overrides) entries.
+  With `on_include = "skip"`, full analysis skips an `include` of a matched file and continues with the rest of the analysis unit, reporting [`toplevel/analysis-skipped`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/toplevel/analysis-skipped) as information at the call.
+  This suits files whose definitions the rest of the unit does not use, such as an expensive test file included from `test/runtests.jl`:
+  ```toml
+  [[initialization_options.analysis_overrides]]
+  path = "test/test_expensive.jl"
+  on_include = "skip"
+  ```
+  The default `on_include = "stop"` stops the unit with `toplevel/analysis-stopped` (see the fix below).
+  Like `analysis_overrides` itself, `on_include` is experimental and may be removed or changed at any time.
+
+### Changed
+
+- [`toplevel/abstract-field`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/toplevel/abstract-field) is now reported as a hint instead of information, since abstract fields are often intentional.
+  `jetls check` no longer shows it by default (use `--show-severity=hint` to show it), and editors render it less prominently.
+  To restore the previous severity, configure it with [`diagnostic.patterns`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/diagnostic/patterns):
+  ```toml
+  [[diagnostic.patterns]]
+  pattern = "toplevel/abstract-field"
+  match_by = "code"
+  match_type = "literal"
+  severity = "info"
+  ```
+
+- Files excluded by [`analysis_overrides`](https://aviatesk.github.io/JETLS.jl/release/launching/#init-options/analysis_overrides) now report [`toplevel/analysis-skipped`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/toplevel/analysis-skipped) as information at their first line, naming the matched pattern, so that the exclusion is visible.
+  The files of a package or its tests whose entry file is excluded report it as well, naming the entry file.
+  Passing such files to `jetls check` now reports it along with the diagnostics that do not require full analysis, instead of failing with `could not find any files to analyze`.
+  Package extension files keep reporting it as a warning.
+
+- Files under the `src/` or `test/` directory of a package that no `include` from `src/<name>.jl` or `test/runtests.jl` reaches now report [`toplevel/analysis-skipped`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/toplevel/analysis-skipped) as information at their first line, naming the entry file, since such files are often no longer used.
+  Saving such a file no longer reanalyzes the whole package or its tests.
+
+- Changing [`full_analysis.concretization_patterns`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/full_analysis/concretization_patterns) now reanalyzes only the analysis units containing files the added or removed patterns apply to, instead of every analyzed unit.
+  Package source analysis is no longer rerun, since it does not use the configured patterns.
+
+- Reduced the startup latency of `jetls check` and of language server sessions by precompiling more of what they always run, such as loading the configuration, handling the `initialized` notification, publishing diagnostics, and full analysis.
+  For example, `jetls check` on a small script now finishes in about 1.5 seconds instead of 2.8 seconds.
+
+- The `jetls` commands that do not need the language server, namely `jetls --help`, `jetls --version`, `jetls schema`, and the `--help` of each command, now finish in about 0.1 seconds instead of 0.9 seconds.
+  Clients that check the installed version before starting the server, such as [the Zed extension](https://github.com/JuliaEditorSupport/zed-julia), start it about 0.8 seconds faster accordingly.
+
+### Fixed
+
+- Fixed [`analysis_overrides`](https://aviatesk.github.io/JETLS.jl/release/launching/#init-options/analysis_overrides) being ignored when full analysis reached an excluded file through `include`, or when the excluded file was the entry file of a package or its tests.
+  Full analysis now stops that unit before loading the excluded file and reports the new [`toplevel/analysis-stopped`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/toplevel/analysis-stopped) warning at the `include` call, unless the override sets `on_include = "skip"` (see above).
+  Diagnostics from top-level code before the include are kept, but code after it and method bodies are not analyzed. Other analysis units are unaffected.
+  Since this is a warning, it causes `jetls check` to fail by default.
+  Like `analysis_overrides` itself, `toplevel/analysis-stopped` is experimental and may be removed or changed at any time.
+  The files of a package or its tests whose entry file is excluded are no longer analyzed, and report `toplevel/analysis-skipped` instead.
+
+- Fixed a `WARNING: Detected access to binding ... in a world prior to its definition world` message that full analysis could print for scripts that define a `global const` inside a `let` block and use it within the same block, e.g. during `jetls check`.
+
+- Fixed the [TestRunner integration](https://aviatesk.github.io/JETLS.jl/release/testrunner/) and [`jetls test`](https://aviatesk.github.io/JETLS.jl/release/testrunner/#testrunner/cli) running all tests in a test file whose module has a docstring, instead of only the selected ones.
+
+- Fixed full-analysis diagnostics in code checked by Test.jl macros, such as the body of a `@testset` or a multi-line `@test` expression, being reported on the first line of the enclosing top-level statement, e.g. the outermost `@testset`, so that diagnostics with the same message on different lines were reported only once.
+  They are now reported on the line of the code that causes them:
+  ```julia
+  f(x::Int) = x
+  @testset "outer" begin    # previously, both `f` calls were reported here, only once
+      @testset "inner" begin
+          f("julia")        # now reported here
+      end
+      @test begin
+          y = "julia"
+          f(y) == 1         # and here
+      end
+  end
+  ```
+
+- Fixed diagnostics on an `include` call inside a block or a function being reported on the first line of the enclosing top-level statement instead of on the `include` call.
+
+- Fixed full analysis failing without reporting any diagnostics when the analyzed code calls `include` with arguments that no `include` method accepts, such as `include(Symbol("file.jl"))`, or calls `Base.include(mapexpr, mod, path)`.
+  The former is now reported as [`toplevel/error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/toplevel/error), and the latter as [`toplevel/unsupported-feature`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/toplevel/unsupported-feature), with the included file analyzed in `mod` without applying `mapexpr`.
+
+- Fixed full analysis of a package stopping with `ArgumentError: Module Main does not correspond to a loaded package!` at top-level uses of [Preferences.jl](https://github.com/JuliaPackaging/Preferences.jl) such as `@load_preference`, which left the rest of the package unanalyzed.
+  `@load_preference` no longer reports [`lowering/macro-expansion-error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/macro-expansion-error) with the same error either.
+  (Closed https://github.com/aviatesk/JETLS.jl/issues/478)
+
+- Fixed `pathof`, `pkgdir`, and `pkgversion` returning `nothing` for the module of the analyzed package and its submodules during full analysis, which stopped the analysis with errors such as `MethodError: no method matching dirname(::Nothing)` at code like `include(joinpath(dirname(pathof(@__MODULE__)), "file.jl"))` and left the rest of the package unanalyzed.
+  They now return the location and version of the analyzed package, also when called from functions defined in the package.
+  (Closed https://github.com/aviatesk/JETLS.jl/issues/630)
+
+- Fixed test files of a package with a `test/Project.toml`, e.g. a [`[workspace]`](https://pkgdocs.julialang.org/v1/toml-files/#Workspaces) member of the package, being analyzed on their own unless `test/runtests.jl` had been analyzed first, without what `test/runtests.jl` loads and defines before including them, which caused false diagnostics such as `` `@testset` not defined ``.
+  They are now analyzed from `test/runtests.jl` in the environment of `test/Project.toml`, as [documented](https://aviatesk.github.io/JETLS.jl/release/analysis/#analysis/full/files) for package test files.
+  As for packages without a `test/Project.toml`, files under `test/` that `test/runtests.jl` does not include are not analyzed and report [`toplevel/analysis-skipped`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/toplevel/analysis-skipped) instead.
+
+## 2026-10-11
+
+- Commit: [`ab294bc`](https://github.com/aviatesk/JETLS.jl/commit/ab294bc)
+- Diff: [`53cd4a5...ab294bc`](https://github.com/aviatesk/JETLS.jl/compare/53cd4a5...ab294bc)
+- Installation:
+  ```bash
+  julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="2026-10-11")'
+  ```
 
 ### Added
 

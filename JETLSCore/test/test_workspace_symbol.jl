@@ -1,0 +1,81 @@
+module test_workspace_symbol
+
+using Test
+using JETLSCore: JETLSCore, JS
+using JETLSCore.LSP
+using JETLSCore.LSP.URIs2
+
+module lowering_module end
+function get_workspace_symbols(code::AbstractString)
+    fi = JETLSCore.FileInfo(1, code, @__FILE__, PositionEncodingKind.UTF8; cache_tree0 = true)
+    st0 = JETLSCore.build_syntax_tree(fi)
+    workspace_symbols = WorkspaceSymbol[]
+    world = Base.get_world_counter()
+    doc_symbols = JETLSCore.extract_document_symbols(st0, fi, lowering_module, world)
+    uri = URI("file:///$(@__FILE__)")
+    JETLSCore.flatten_document_symbols!(workspace_symbols, doc_symbols, uri, nothing)
+    JETLSCore.check_syntax_tree0(fi)
+    return workspace_symbols
+end
+
+@testset "workspace symbol" begin
+    code = """
+    module Foo
+        function bar(x)
+            y = x + 1
+            return y
+        end
+        const BAZ = 42
+    end
+    """
+
+    workspace_symbols = get_workspace_symbols(code)
+
+    @test length(workspace_symbols) >= 3
+    names = [s.name for s in workspace_symbols]
+    @test "Foo" in names
+    @test "bar" in names
+    @test "BAZ" in names
+
+    # containerName is set from DocumentSymbol.detail
+    foo_sym = first(filter(s -> s.name == "Foo", workspace_symbols))
+    @test foo_sym.containerName == "module Foo"
+    @test foo_sym.kind == SymbolKind.Module
+
+    bar_sym = first(filter(s -> s.name == "bar", workspace_symbols))
+    @test bar_sym.containerName == "function bar(x)"
+    @test bar_sym.kind == SymbolKind.Function
+
+    baz_sym = first(filter(s -> s.name == "BAZ", workspace_symbols))
+    @test baz_sym.containerName == "const BAZ = 42"
+    @test baz_sym.kind == SymbolKind.Constant
+end
+
+@testset "namespace symbols excluded" begin
+    code = """
+    if cond
+        foo() = 1
+    end
+    """
+    workspace_symbols = get_workspace_symbols(code)
+    @test length(workspace_symbols) == 1
+    @test workspace_symbols[1].name == "foo"
+    @test !any(s -> s.kind == SymbolKind.Namespace, workspace_symbols)
+end
+
+@testset "global method defined in let block" begin
+    code = """
+    let
+        sentence = "Hi"
+        global hi() = println(sentence)
+    end
+
+    hello() = hi()
+    """
+    workspace_symbols = get_workspace_symbols(code)
+    hi_sym = only(filter(s -> s.name == "hi", workspace_symbols))
+    @test hi_sym.kind == SymbolKind.Function
+    @test hi_sym.location.range.start == Position(; line=2, character=4)
+end
+
+end # module test_workspace_symbol
