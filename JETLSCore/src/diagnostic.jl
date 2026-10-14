@@ -652,6 +652,8 @@ function inference_error_report_code(@nospecialize report::JET.InferenceErrorRep
         return INFERENCE_TYPE_ERROR_KEYWORD_CODE
     elseif report isa NonBooleanCondErrorReport
         return INFERENCE_TYPE_ERROR_NON_BOOL_COND_CODE
+    elseif report isa FailingTestReport
+        return INFERENCE_FAILING_TEST_CODE
     end
     error(lazy"No diagnostic code is defined for report: $report")
 end

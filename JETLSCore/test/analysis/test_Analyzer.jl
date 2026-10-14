@@ -1627,6 +1627,104 @@ lookup_or_missing(k) = get(LOOKUP_TABLE, k, missing)
     end
 end
 
+function analyze_test_text(text::String; jetconfigs...)
+    interp = JET.JETConcreteInterpreter(LSAnalyzer(; report_target_modules=nothing))
+    result = JET.analyze_and_report_text!(interp, text; jetconfigs...)
+    @test isnothing(result.res.toplevel_error_report)
+    return get_reports(result)
+end
+
+@testset "FailingTestReport" begin
+    let reports = analyze_test_text("""
+            using Test
+            @testset "false" begin
+                s = string(42)
+                @test s isa Int
+            end
+            @testset "non-boolean" begin
+                v = [1, 2, 3]
+                @test length(v)
+            end
+            """)
+        @test length(reports) == 2
+        r1, r2 = sort(reports; by = r -> r.vst[end].line)
+        @test r1 isa FailingTestReport && r1.t === Bool
+        @test sprint(JET.print_report_message, r1) ==
+            "this test always fails since its expression evaluates to `false`"
+        @test r2 isa FailingTestReport && r2.t === Int
+        @test sprint(JET.print_report_message, r2) ==
+            "this test always fails since its expression evaluates to non-boolean `$Int`"
+    end
+
+    # tests that may pass are not reported
+    let reports = analyze_test_text("""
+            using Test
+            @testset "may pass" begin
+                x = rand((0, nothing))
+                @test x isa Int
+                @test x == 0
+                @test true
+            end
+            """)
+        @test isempty(reports)
+    end
+
+    # tests expected to fail are not reported
+    let reports = analyze_test_text("""
+            using Test
+            @testset "broken" begin
+                @test_broken false
+                @test false broken=true
+                @test_skip false
+            end
+            """)
+        @test isempty(reports)
+    end
+
+    # a test in a function body may fail only for some specializations
+    let reports = analyze_test_text("""
+            using Test
+            check_int(x) = @test x isa Int
+            @testset "function body" begin
+                check_int(1)
+                check_int(nothing)
+            end
+            """)
+        @test isempty(reports)
+    end
+
+    # the code after `@test ex` is analyzed assuming `ex` holds, and the code after a test
+    # that always fails is not analyzed
+    let reports = analyze_test_text("""
+            using Test
+            @testset "fail-fast" begin
+                x = rand((0, nothing))
+                @test x isa Int
+                sin(x)
+                @test x isa String
+                sin("julia")
+            end
+            """)
+        r = only(reports)
+        @test r isa FailingTestReport && r.t === Bool
+        @test r.vst[end].line == 6
+    end
+
+    # test sets that specify `failfast=false` are analyzed as declared
+    let reports = analyze_test_text("""
+            using Test
+            @testset "not fail-fast" failfast=false begin
+                x = rand((0, nothing))
+                @test x isa String
+                sin(x)
+            end
+            """)
+        @test length(reports) == 2
+        @test count(r -> r isa FailingTestReport, reports) == 1
+        @test count(r -> r isa NoMethodMatchReport, reports) == 1
+    end
+end
+
 @testset "report_target_modules" begin
     let result = analyze_call(; report_target_modules=()) do
             TestTargetModule.func()

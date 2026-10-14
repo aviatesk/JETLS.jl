@@ -255,6 +255,7 @@ Here is a summary table of the diagnostics explained in this section:
 | [`inference/type-error/keyword`](@ref diagnostic/reference/inference/type-error/keyword)                       | `Warning`             | `JETLS/save`  | Keyword argument value type mismatch                   |
 | [`inference/type-error/type-assert`](@ref diagnostic/reference/inference/type-error/type-assert)               | `Warning`             | `JETLS/save`  | Type assertion failures                                |
 | [`inference/type-error/non-bool-cond`](@ref diagnostic/reference/inference/type-error/non-bool-cond)           | `Warning`             | `JETLS/save`  | Non-boolean value used in boolean context              |
+| [`inference/failing-test`](@ref diagnostic/reference/inference/failing-test)                                   | `Warning`             | `JETLS/save`  | `@test` that always fails                              |
 | [`testrunner/test-failure`](@ref diagnostic/reference/testrunner/test-failure)                                 | `Error`               | `JETLS/extra` | Test failures from TestRunner integration              |
 | [`config/deprecated-key`](@ref diagnostic/reference/config/deprecated-key)                                     | `Warning`             | `JETLS/extra` | Deprecated keys in `.JETLSConfig.toml`                 |
 | [`config/deprecated-value`](@ref diagnostic/reference/config/deprecated-value)                                 | `Warning`             | `JETLS/extra` | Deprecated values in `.JETLSConfig.toml`               |
@@ -1574,6 +1575,9 @@ before the code runs:
 - [`inference/undef-keyword`](@ref diagnostic/reference/inference/undef-keyword) → `UndefKeywordError`
 - [`inference/type-error/*`](@ref diagnostic/reference/inference/type-error) → `TypeError` (failing type assertion, non-boolean condition, or keyword-value type mismatch)
 
+In addition, [`inference/failing-test`](@ref diagnostic/reference/inference/failing-test)
+reports a `@test` that always fails.
+
 #### [Undefined global variable (`inference/undef-global-var`)](@id diagnostic/reference/inference/undef-global-var)
 
 **Default severity**: `Warning`
@@ -1842,6 +1846,56 @@ end
 `inference/type-error/non-bool-cond`. It is kept for existing documentation
 links and diagnostic pattern configurations for now, but this compatibility
 support may be removed in a future release.
+
+#### [Failing test (`inference/failing-test`)](@id diagnostic/reference/inference/failing-test)
+
+**Default severity:** `Warning`
+
+`@test`s whose expression is inferred to always evaluate to `false` or to a
+non-boolean value. Test.jl records such a test as a failure whenever it runs.
+
+Examples:
+
+```julia
+using Test
+
+@testset "example" begin
+    s = string(42)
+    @test s isa Int  # this test always fails since its expression evaluates to `false`
+                     # (JETLS inference/failing-test)
+end
+
+@testset "example" begin
+    v = [1, 2, 3]
+    @test length(v)  # this test always fails since its expression evaluates to non-boolean `Int64`
+                     # (JETLS inference/failing-test)
+end
+```
+
+Only the tests in top-level code, including the code in `@testset`s, are
+reported, not those in function bodies. Tests expected to fail, i.e.
+`@test_broken` and `@test ex broken=true`, are not reported. Note that
+`@test false` is reported as well, so use e.g. `error("unreachable")` to mark
+code that should not be reached.
+
+JETLS analyzes test sets as if they were declared with `failfast=true`, where
+a failing test aborts the test set. So it analyzes the code after `@test ex`
+assuming that `ex` is `true`, and does not analyze the code after a test that
+always fails:
+
+```julia
+@testset "example" begin
+    x = rand((0, nothing))
+    @test x isa Int
+    sin(x)  # not reported as `sin(::Nothing)`, since `x` is an `Int` here
+    @test x isa String  # this test always fails since its expression evaluates to `false`
+                        # (JETLS inference/failing-test)
+    sin("julia")  # not analyzed
+end
+```
+
+Test sets that specify `failfast=false` and test sets of a custom type, e.g.
+`@testset MyTestSet "example" begin ... end`, are analyzed as declared.
 
 ### [Configuration diagnostic (`config/*`)](@id diagnostic/reference/config)
 

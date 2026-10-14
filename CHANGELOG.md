@@ -67,6 +67,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 >
 > Note: Path glob patterns use `/` as the separator on all platforms, including Windows; backslashes are not supported as separators.
 
+### Added
+
+- Added [`inference/failing-test`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/inference/failing-test) diagnostic that reports a `@test` that always fails, i.e. whose expression is inferred to evaluate to `false` or to a non-boolean value:
+  ```julia
+  @testset "foo" begin
+      v = [1, 2, 3]
+      @test length(v)  # this test always fails since its expression evaluates to non-boolean `Int64`
+  end
+  ```
+  `@test_broken`, `@test ex broken=true`, and tests in function bodies are not reported.
+  ([aviatesk/JET.jl#896](https://github.com/aviatesk/JET.jl/pull/896))
+
+### Changed
+
+- Full analysis now analyzes test sets as if they were declared with `failfast=true`, so it analyzes the code after `@test ex` assuming that `ex` is `true`:
+  ```julia
+  @testset "foo" begin
+      x = rand((0, nothing))
+      @test x isa Int
+      sin(x)  # no longer reported as `sin(::Nothing)`
+  end
+  ```
+  The code after a test that always fails is not analyzed, while `inference/failing-test` reports such a test.
+  Test sets that specify `failfast=false` and test sets of a custom type are analyzed as declared.
+  ([aviatesk/JET.jl#895](https://github.com/aviatesk/JET.jl/pull/895), [aviatesk/JET.jl#896](https://github.com/aviatesk/JET.jl/pull/896))
+
 ## 2026-10-14
 
 - Commit: [`64dd358`](https://github.com/aviatesk/JETLS.jl/commit/64dd358)

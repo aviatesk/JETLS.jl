@@ -753,6 +753,24 @@ end
     end
 end
 
+@testset "failing test diagnostic" begin
+    let code = """
+        using Test
+        @testset "failing" begin
+            v = [1, 2, 3]
+            @test length(v)
+        end
+        """
+        withscript(code) do script_path
+            diagnostics = get_open_diagnostics(dirname(script_path), script_path, code)
+            diag = only(filter(diag -> diag.code == JETLSCore.INFERENCE_FAILING_TEST_CODE, diagnostics))
+            @test diag.range.start.line == 3
+            @test diag.severity == DiagnosticSeverity.Warning
+            @test diag.message == "this test always fails since its expression evaluates to non-boolean `$Int`"
+        end
+    end
+end
+
 @testset "failures to read included files are reported on the `include` calls" begin
     let code = """
         begin

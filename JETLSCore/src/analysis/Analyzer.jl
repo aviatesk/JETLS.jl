@@ -4,9 +4,9 @@ export LSAnalyzer
 export inference_error_report_related_frames, inference_error_report_related_stack,
     inference_error_report_severity, inference_error_report_stack,
     reset_report_target_modules!
-export AmbiguousMethodReport, BoundsErrorReport, FieldErrorReport, KeywordTypeErrorReport,
-    MethodErrorReport, NoMethodMatchReport, NonBooleanCondErrorReport, TypeAssertErrorReport,
-    TypeErrorReport, UndefKeywordErrorReport, UndefVarErrorReport,
+export AmbiguousMethodReport, BoundsErrorReport, FailingTestReport, FieldErrorReport,
+    KeywordTypeErrorReport, MethodErrorReport, NoMethodMatchReport, NonBooleanCondErrorReport,
+    TypeAssertErrorReport, TypeErrorReport, UndefKeywordErrorReport, UndefVarErrorReport,
     UnsupportedKeywordArgReport
 export RelatedEntryFrame, RelatedFrame, RelatedFrameKind, RelatedOriginFrame, RelatedViaFrame
 
@@ -488,6 +488,9 @@ function after_abstract_call_gf_by_type(
     if !should_analyze(analyzer, sv)
         return nothing
     end
+    if func === JET.check_test_value
+        report_failing_test!(analyzer, sv, arginfo.argtypes)
+    end
     func_ref = Ref{Any}(func)
     function _after_abstract_call_gf_by_type(analyzer′::LSAnalyzer, sv′::CC.InferenceState)
         ret′ = ret[]
@@ -801,6 +804,7 @@ Subtypes:
   * `TypeAssertErrorReport`: Statically failing type assertions
   * `NonBooleanCondErrorReport`: Non-boolean value in a boolean context
   * `KeywordTypeErrorReport`: Keyword argument value type mismatch
+- `FailingTestReport`: Top-level `@test`s that always fail
 """
 abstract type JETLSErrorReport <: InferenceErrorReport end
 abstract type MethodErrorReport <: JETLSErrorReport end
@@ -1787,6 +1791,44 @@ function report_non_boolean_cond!(analyzer::LSAnalyzer, sv::CC.InferenceState, @
             add_new_report!(analyzer, sv.result, NonBooleanCondErrorReport(sv, t, 0, #=uncovered=#check_uncovered))
         end
     end
+end
+
+# FailingTestReport
+# -----------------
+
+# Top-level analysis replaces `@test ex` with code that passes the value of `ex` to
+# `JET.check_test_value`, so a call to it whose argument is inferred to be `false` or of a
+# non-boolean type is a test that always fails.
+@jetreport struct FailingTestReport <: JETLSErrorReport
+    @nospecialize t # `Bool` for an expression that always evaluates to `false`
+end
+inference_error_report_stack_impl(r::FailingTestReport) = length(r.vst):-1:1
+inference_error_report_severity_impl(::FailingTestReport) = DiagnosticSeverity.Warning
+function JETInterface.print_report_message(io::IO, (; t)::FailingTestReport)
+    print(io, "this test always fails since its expression evaluates to ")
+    if t === Bool
+        print(io, "`false`")
+    else
+        print(io, "non-boolean `", t, "`")
+    end
+end
+
+function report_failing_test!(analyzer::LSAnalyzer, sv::CC.InferenceState, argtypes::Vector{Any})
+    # A test in a function body is inferred for each specialization, e.g. for each member of
+    # a union split at the call site, where a failure for some argument types does not mean
+    # that the test always fails. So report only the tests in top-level code.
+    sv.linfo.def isa Module || return false
+    length(argtypes) == 2 || return false
+    value = CC.widenconditional(argtypes[2])
+    if value isa Const && value.val === false
+        add_new_report!(analyzer, sv.result, FailingTestReport(sv, Bool))
+        return true
+    end
+    t = CC.widenconst(value)
+    t === Union{} && return false
+    CC.hasintersect(t, Bool) && return false
+    add_new_report!(analyzer, sv.result, FailingTestReport(sv, t))
+    return true
 end
 
 # Constructor
