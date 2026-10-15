@@ -218,6 +218,11 @@ function collect_type_inlay_hints!(
         if JS.head(node) === :ref && JS.numchildren(node) >= 1
             push!(paren_wrap_ranges, JS.byte_range(node[1]))
         end
+        # The macro name and line node of an implicit docstring span the whole macrocall,
+        # whose documenting value should not be hinted (see the postorder pass).
+        if JS.head(node) === :macrocall && is_documenting_doc0(node)
+            push!(callee_ranges, JS.byte_range(node))
+        end
         if JS.head(node) in (:call, :dotcall) && JS.numchildren(node) >= 1
             push!(callee_ranges, JS.byte_range(node[1]))
             # Infix `^`: `::` is tighter than `^` (so `x::T^2` parses correctly
@@ -362,6 +367,8 @@ function collect_type_inlay_hints!(
         if k === :macrocall && JS.numchildren(node) >= 1 && is_funcdef_decl(node[end])
             return nothing
         end
+        # Neither should documenting `@doc` macrocalls, which only register documentation.
+        k === :macrocall && is_documenting_doc0(node) && return nothing
         # Emit dedicated hints for registered for-loop iteration variables.
         if k === :for && JS.numchildren(node) >= 1
             spec = node[1]

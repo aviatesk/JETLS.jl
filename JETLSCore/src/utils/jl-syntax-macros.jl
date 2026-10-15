@@ -153,6 +153,7 @@ const NEW_STYLE_MACRO_BINDINGS = (
     Base => Symbol("@locals"),
     Base => Symbol("@nospecialize"),
     # src/utils/jl-syntax-macros.jl
+    Core => Symbol("@doc"),
     Base => Symbol("@assert"),
     Base => Symbol("@assume_effects"),
     Base => Symbol("@inbounds"),
@@ -653,6 +654,154 @@ function Base.var"@show"(__context__::JL.MacroContext, exs::SyntaxTree...)
     isempty(exs) && return JL.@ast(__context__, mc, nothing::value)
     length(exs) == 1 && return JL.@ast(__context__, mc, exs[1])
     return JL.@ast(__context__, mc, [:block exs...])
+end
+
+# Stubs for `Core.@doc`. The real macro dispatches through the `Core.atdoc` global, which
+# packages like DocStringExtensions replace in `__init__`. Global values are not
+# world-partitioned, so expanding at an analysis world older than such a package load
+# fails with a world-age `MethodError`.
+#
+# For the one-argument (lookup) form, the name the lookup resolves to a binding flows
+# through as a plain reference, so it participates in references, rename, undef-var
+# analysis, etc., while `Base.inferencebarrier` stands in for the returned documentation
+# object. Beyond that name, only what Base evaluates is referenced: the argument types of
+# a looked-up signature, with its `where` type parameters bound, but not the parameters of
+# a parametric type. Forms that look up syntax rather than a binding (e.g. `@doc x::T`,
+# which looks up `::`) keep only the placeholder.
+#
+# For the two-argument (documenting) form, the docstring and the documented expression
+# flow through, so definitions and docstring interpolations are analyzed. A documented
+# signature is neither defined nor called, so it is referenced like a lookup instead.
+function Core.var"@doc"(__context__::JL.MacroContext)
+    mc = __context__.macrocall::SyntaxTree
+    push_macro_error!(mc, "@doc requires at least one argument")
+    return JL.@ast(__context__, mc, nothing::value)
+end
+
+function Core.var"@doc"(__context__::JL.MacroContext, ex::SyntaxTree)
+    # the legacy `@doc str -> ex` documenting form
+    if JS.head(ex) === :-> && JS.numchildren(ex) == 2
+        return Core.var"@doc"(__context__, ex[1], ex[2])
+    end
+    mc = __context__.macrocall::SyntaxTree
+    src = _macro_generated_source(__context__)
+    docobj = JL.@ast(__context__, src,
+        [:call [:top "inferencebarrier"::identifier] nothing::value])
+    target = @something _doc_lookup_target(ex) return JL.@ast(__context__, mc, docobj)
+    sig = @something _doc_lookup_signature(
+        __context__, src, ex) return JL.@ast(__context__, mc, [:block target docobj])
+    return JL.@ast(__context__, mc, [:block target sig docobj])
+end
+
+function Core.var"@doc"(__context__::JL.MacroContext, meta::SyntaxTree, ex::SyntaxTree)
+    mc = __context__.macrocall::SyntaxTree
+    src = _macro_generated_source(__context__)
+    items = _doc_documented!(SyntaxTree[meta], __context__, src, ex)
+    return JL.@ast(__context__, mc, [:block items... nothing::value])
+end
+
+# `define` only controls whether Base evaluates the definition, which is analyzed either
+# way.
+function Core.var"@doc"(
+        __context__::JL.MacroContext, meta::SyntaxTree, ex::SyntaxTree, define::SyntaxTree
+    )
+    if !(JS.head(define) === :value && define.value isa Bool)
+        push_macro_error!(define, "@doc expects a `Bool` literal as its third argument")
+    end
+    return Core.var"@doc"(__context__, meta, ex)
+end
+
+# Like Base, drop the leading two arguments, which nested macro calls may produce.
+function Core.var"@doc"(
+        __context__::JL.MacroContext, ::SyntaxTree, ::SyntaxTree,
+        meta::SyntaxTree, ex::SyntaxTree, args::SyntaxTree...
+    )
+    return Core.var"@doc"(__context__, meta, ex, args...)
+end
+
+# Mirrors `_docm` and `multidoc` in Base: signatures are referenced like lookups, `::` is
+# undocumentable, and each element of a tuple or a single-expression block is documented
+# on its own.
+function _doc_documented!(
+        items::Vector{SyntaxTree}, ctx::JL.MacroContext, src::SyntaxTree, ex::SyntaxTree
+    )
+    k = JS.head(ex)
+    if k === :call || k === :where
+        target = _doc_lookup_target(ex)
+        target === nothing || push!(items, target)
+        sig = _doc_lookup_signature(ctx, src, ex)
+        sig === nothing || push!(items, sig)
+    elseif k === :tuple
+        for i = 1:JS.numchildren(ex)
+            _doc_documented!(items, ctx, src, ex[i])
+        end
+    elseif k === :block && JS.numchildren(ex) == 1
+        _doc_documented!(items, ctx, src, ex[1])
+    elseif k !== :(::)
+        push!(items, ex)
+    end
+    return items
+end
+
+# Mirrors `namify` in Base's lookup: signatures, macrocalls, and parametric types are
+# looked up by their head name, and a `(x::T)(args...)` signature by `T`.
+function _doc_lookup_target(ex::SyntaxTree)
+    k = JS.head(ex)
+    if k === :identifier
+        return ex
+    elseif k === :. && JS.numchildren(ex) == 2 && JS.head(ex[2]) === :inert
+        return ex
+    elseif (k === :call && JS.numchildren(ex) ≥ 1 &&
+            JS.head(ex[1]) === :(::) && JS.numchildren(ex[1]) ≥ 1)
+        callee = ex[1]
+        return _doc_lookup_target(callee[JS.numchildren(callee)])
+    elseif k in (:call, :where, :curly, :macrocall) && JS.numchildren(ex) ≥ 1
+        return _doc_lookup_target(ex[1])
+    end
+    return nothing
+end
+
+# Mirrors `Base.Docs.signature`, collapsed into a single `Tuple` since only the referenced
+# types matter here. As in Base, the parameters of a curly callee serve as the type
+# parameters when no `where` clause is given.
+function _doc_lookup_signature(
+        ctx::JL.MacroContext, src::SyntaxTree, ex::SyntaxTree; in_where::Bool = false
+    )
+    k = JS.head(ex)
+    if k === :where && JS.numchildren(ex) ≥ 2
+        sig = @something _doc_lookup_signature(ctx, src, ex[1]; in_where=true) return nothing
+        tvars = SyntaxTree[ex[i] for i = 2:JS.numchildren(ex)]
+        return JL.@ast(ctx, src, [:where sig tvars...])
+    elseif (k === :call || k === :macrocall) && JS.numchildren(ex) ≥ 1
+        types = SyntaxTree[]
+        for i = (k === :macrocall ? 3 : 2):JS.numchildren(ex)
+            arg = ex[i]
+            JS.head(arg) === :parameters && continue
+            argtype = _doc_lookup_argtype(ctx, src, arg)
+            argtype === nothing || push!(types, argtype)
+        end
+        sig = JL.@ast(ctx, src, [:curly [:core "Tuple"::identifier] types...])
+        callee = ex[1]
+        if !in_where && JS.head(callee) === :curly
+            tvars = SyntaxTree[callee[i] for i = 2:JS.numchildren(callee)]
+            sig = JL.@ast(ctx, src, [:where sig tvars...])
+        end
+        return sig
+    end
+    return nothing
+end
+
+# Mirrors `Base.Docs.argtype`, with `nothing` standing for `Any`.
+function _doc_lookup_argtype(ctx::JL.MacroContext, src::SyntaxTree, arg::SyntaxTree)
+    JS.numchildren(arg) ≥ 1 || return nothing
+    k = JS.head(arg)
+    if k === :(::)
+        return arg[JS.numchildren(arg)]
+    elseif k === :...
+        argtype = @something _doc_lookup_argtype(ctx, src, arg[1]) return nothing
+        return JL.@ast(ctx, src, [:curly [:core "Vararg"::identifier] argtype])
+    end
+    return _doc_lookup_argtype(ctx, src, arg[1])
 end
 
 # Stubs for `Base.CoreLogging.@debug` / `@info` / `@warn` / `@error` / `@logmsg`.

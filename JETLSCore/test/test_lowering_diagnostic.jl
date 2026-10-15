@@ -1200,6 +1200,17 @@ end
             someinterface(::Type{<:Integer})
             """; code = JETLSCore.LOWERING_ERROR_CODE)
         @test isempty(diagnostics)
+
+        # The argument types of a documented signature are analyzed, but its argument names
+        # are not.
+        diagnostics = get_lowering_diagnostics("""
+            \"\"\"
+                sin(x::Undefined)
+            \"\"\"
+            sin(x::Undefined)
+            """; code = JETLSCore.LOWERING_UNDEF_GLOBAL_VAR_CODE)
+        @test length(diagnostics) == 1
+        @test occursin("Undefined", only(diagnostics).message)
     end
 
     @testset "macro not found error diagnostics" begin

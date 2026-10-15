@@ -1464,6 +1464,22 @@ end
                     @test apply_inlay_hints(code, get_type_inlay_hints(code)) == expected
                 end
             end
+
+            @testset "documenting @doc" begin
+                let code = """
+                    \"\"\"Docstring\"\"\"
+                    sin(x::$Int)
+                    """
+                    @test isempty(get_type_inlay_hints(code))
+                end
+                let code = """
+                    if true
+                        @doc "Docstring" struct Foo end
+                    end
+                    """
+                    @test all(h -> h.position.line != 1, get_type_inlay_hints(code))
+                end
+            end
         end
     end
 

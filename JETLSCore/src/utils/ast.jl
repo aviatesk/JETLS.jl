@@ -316,6 +316,16 @@ end
 is_doc0(st0::SyntaxTree) = is_macrocall_st0(st0, "@doc"; from=Core)
 is_doc0_any(st0::SyntaxTree) = is_macrocall_st0(st0, "@doc") # Explicit `@doc` can have any module set.
 
+is_documenting_doc0(st0::SyntaxTree) = JS.numchildren(st0) ≥ 4 && is_doc0_any(st0)
+
+# Whether the `@doc` macrocall `st0` documents an expression that standalone lowering would
+# misinterpret, e.g. a signature `f(::T)` as a call, so it must be lowered as a whole
+# through the `@doc` stub rather than split by `iterate_toplevel_tree`.
+function is_unsplittable_doc0(st0::SyntaxTree)
+    JS.numchildren(st0) ≥ 3 || return false
+    return JS.head(st0[JS.numchildren(st0)]) in (:call, :where, :(::), :tuple, :->)
+end
+
 is_cmd0(st0::SyntaxTree) = is_macrocall_st0(st0, "@cmd"; from=Core)
 
 is_static0(context_module::Module, world::UInt, st0::SyntaxTree) =
@@ -893,12 +903,11 @@ function iterate_toplevel_tree(callback, st0_top::SyntaxTree)
             for i = JS.numchildren(stblk):-1:1 # reversed since we use `pop!`
                 push!(sl, stblk[i])
             end
-        elseif is_doc0_any(st0)
+        elseif is_doc0_any(st0) && !is_unsplittable_doc0(st0)
             # Dispatch the macro arguments of a `@doc` macrocall as their own
             # lowerable trees:
-            # - the documented expression is reached directly, so cursor-based features and
-            #   per-statement diagnostics keep accurate source positions, which otherwise
-            #   could be lost during the expansion of `@doc` (an old-style macro)
+            # - the documented expression is reached directly, e.g. a documented module is
+            #   descended into
             # - the docstring node (a `:string` with interpolations as children) is
             #   lowered too, so identifier interpolations like `$(SIGNATURES)` from
             #   `DocStringExtensions` resolve as global `:use` occurrences
@@ -907,14 +916,7 @@ function iterate_toplevel_tree(callback, st0_top::SyntaxTree)
                 # node, both of which carry the macrocall's full byte range as provenance
                 # and would otherwise capture cursor-based lookups for any offset inside
                 # the doc-wrapped form; start at `i = 3` to skip them.
-                child = st0[i]
-                # Signature targets like `f(x)` or `f(::T)` are valid as `@doc`
-                # arguments, but standalone lowering treats them as normal expressions.
-                # TODO: Once `@doc` can be promoted to a new-style stub without breaking
-                # nested old-style macros (JuliaLang/JuliaLowering.jl#108), remove this
-                # split-side workaround.
-                JS.head(child) in (:call, :where, :(::)) && continue
-                push!(sl, child)
+                push!(sl, st0[i])
             end
         else # st0 is lowerable tree
             ret = callback(st0)

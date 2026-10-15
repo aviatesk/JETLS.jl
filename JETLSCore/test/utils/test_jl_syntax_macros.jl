@@ -11,6 +11,10 @@ macro lazy_wrapper(idx)
         lazy"idx=$idx"
     end)
 end
+macro expect_symbol(x)
+    x isa Symbol || error("expected a symbol: $x")
+    return esc(x)
+end
 end
 
 baremodule something_hygiene_module
@@ -821,6 +825,170 @@ end
         let res = jlresolve("@show sin(xxx) cos(yyy)")
             assert_binding_provenance(res, :global, "xxx")
             assert_binding_provenance(res, :global, "yyy")
+        end
+    end
+end
+
+@testset "@doc" begin
+    @testset "macro expansion" begin
+        let st1 = jlexpand("@doc xxx")
+            @test JS.head(st1) === :block
+            @test children_heads(st1) == [:identifier, :call]
+        end
+
+        let st1 = jlexpand("@doc xxx(yyy::zzz)")
+            @test JS.head(st1) === :block
+            @test children_heads(st1) == [:identifier, :curly, :call]
+        end
+
+        let st1 = jlexpand("@doc xxx(::T) where T")
+            @test JS.head(st1) === :block
+            @test children_heads(st1) == [:identifier, :where, :call]
+        end
+
+        # Lookups of syntax rather than bindings keep only the placeholder.
+        for code in ("@doc true", "@doc xxx::Int")
+            let st1 = jlexpand(code)
+                @test JS.head(st1) === :call
+            end
+        end
+
+        let st1 = jlexpand("@doc \"docstring\" xxx(yyy) = yyy")
+            @test JS.head(st1) === :block
+            @test children_heads(st1) == [:value, :(=), :value]
+        end
+
+        # A documented signature is referenced like a lookup.
+        let st1 = jlexpand("@doc \"docstring\" xxx(yyy::zzz)")
+            @test JS.head(st1) === :block
+            @test children_heads(st1) == [:value, :identifier, :curly, :value]
+        end
+
+        let st1 = jlexpand("@doc \"docstring\" -> xxx")
+            @test JS.head(st1) === :block
+            @test children_heads(st1) == [:value, :identifier, :value]
+        end
+
+        # Nested old-style macros receive plain symbols (JuliaLang/JuliaLowering.jl#108).
+        let st1 = jlexpand("@doc \"docstring\" @expect_symbol xxx")
+            @test JS.head(st1) === :block
+            @test children_heads(st1) == [:value, :identifier, :value]
+        end
+    end
+
+    @testset "validation" begin
+        let diags = collect_macro_diagnostics() do
+                jlexpand("@doc()")
+            end
+            @test length(diags) == 1
+            @test occursin("@doc requires at least one argument", only(diags).msg)
+        end
+        let diags = collect_macro_diagnostics() do
+                jlexpand("@doc(\"docstring\", xxx, yyy)")
+            end
+            @test length(diags) == 1
+            @test occursin("`Bool` literal", only(diags).msg)
+        end
+        let diags = collect_macro_diagnostics() do
+                jlexpand("@doc(\"docstring\", xxx, false)")
+            end
+            @test isempty(diags)
+        end
+    end
+
+    @testset "binding resolution preserves provenance" begin
+        let res = jlresolve("@doc xxx")
+            assert_binding_provenance(res, :global, "xxx")
+        end
+        let res = jlresolve("@doc xxx.yyy")
+            assert_binding_provenance(res, :global, "xxx")
+        end
+        # Base evaluates the argument types of a looked-up signature, but neither argument
+        # names nor default values.
+        let res = jlresolve("@doc xxx(aaa, bbb::yyy = ccc, ddd::zzz...; eee = fff)")
+            assert_binding_provenance(res, :global, "xxx")
+            assert_binding_provenance(res, :global, "yyy")
+            assert_binding_provenance(res, :global, "zzz")
+            for name in ("aaa", "bbb", "ccc", "ddd", "eee", "fff")
+                assert_no_binding(res, :global, name)
+            end
+        end
+        let res = jlresolve("@doc xxx(::T, ::yyy) where T<:zzz")
+            assert_binding_provenance(res, :global, "yyy")
+            assert_binding_provenance(res, :global, "zzz")
+            assert_no_binding(res, :global, "T")
+        end
+        let res = jlresolve("@doc xxx{T}(::T)")
+            assert_binding_provenance(res, :global, "xxx")
+            assert_no_binding(res, :global, "T")
+        end
+        # Base looks up a parametric type by its head and never evaluates its parameters.
+        let res = jlresolve("@doc Vector{xxx}")
+            assert_binding_provenance(res, :global, "Vector")
+            assert_no_binding(res, :global, "xxx")
+        end
+        let res = jlresolve("@doc @xxx")
+            assert_binding_provenance(res, :global, "@xxx")
+        end
+        let res = jlresolve("@doc @xxx(::yyy)")
+            assert_binding_provenance(res, :global, "@xxx")
+            assert_binding_provenance(res, :global, "yyy")
+        end
+        let res = jlresolve("@doc xxx::yyy")
+            assert_no_binding(res, :global, "xxx")
+            assert_no_binding(res, :global, "yyy")
+        end
+        let res = jlresolve("@doc \"\$(xxx)\" yyy(zzz) = www")
+            assert_binding_provenance(res, :global, "xxx")
+            assert_binding_provenance(res, :global, "yyy")
+            assert_binding_provenance(res, :global, "www")
+        end
+        let res = jlresolve("@doc \"docstring\" xxx(yyy::zzz)")
+            assert_binding_provenance(res, :global, "xxx")
+            assert_binding_provenance(res, :global, "zzz")
+            assert_no_binding(res, :global, "yyy")
+        end
+        let res = jlresolve("@doc \"docstring\" (::xxx)(yyy)")
+            assert_binding_provenance(res, :global, "xxx")
+            assert_no_binding(res, :global, "yyy")
+        end
+        let res = jlresolve("@doc \"docstring\" (xxx(yyy::zzz), www)")
+            assert_binding_provenance(res, :global, "xxx")
+            assert_binding_provenance(res, :global, "zzz")
+            assert_binding_provenance(res, :global, "www")
+            assert_no_binding(res, :global, "yyy")
+        end
+        let res = jlresolve("@doc \"docstring\" -> xxx() = yyy")
+            assert_binding_provenance(res, :global, "yyy")
+        end
+        let res = jlresolve("@doc(\"docstring\", xxx() = yyy, false)")
+            assert_binding_provenance(res, :global, "yyy")
+        end
+        let res = jlresolve("@doc(aaa, bbb, \"docstring\", xxx)")
+            assert_binding_provenance(res, :global, "xxx")
+            assert_no_binding(res, :global, "aaa")
+            assert_no_binding(res, :global, "bbb")
+        end
+    end
+
+    # Old-style `Core.@doc` calls whatever the `Core.atdoc` global holds, and packages
+    # like DocStringExtensions replace it in `__init__`. Expanding at a world older than
+    # the replacement used to fail with a world-age `MethodError`, since global values
+    # are not world-partitioned. The `@eval` defines the replacement after `world`.
+    @testset "`Core.atdoc` replaced after the analysis world" begin
+        world = Base.get_world_counter()
+        atdoc = Core.atdoc
+        Core.atdoc!(@eval (args...) -> $atdoc(args...))
+        try
+            let res = jlresolve(lowering_module, "function f(); @doc xxx; end"; world)
+                assert_binding_provenance(res, :global, "xxx"; world)
+            end
+            let code = "if true; @doc \"docstring\" xxx() = yyy; end",
+                res = jlresolve(lowering_module, code; world)
+                assert_binding_provenance(res, :global, "yyy"; world)
+            end
+        finally
+            Core.atdoc!(atdoc)
         end
     end
 end

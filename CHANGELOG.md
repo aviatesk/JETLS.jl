@@ -95,6 +95,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Hover, inlay hints, and other features that show inferred types now also infer the code after `@test ex` assuming that `ex` is `true`, so they show `x` as `Int64` after `@test x isa Int` in the example above.
 
+### Fixed
+
+- Fixed false [`lowering/macro-expansion-error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/macro-expansion-error) diagnostics on `@doc` docstrings inside blocks such as `if` blocks and on `@doc` lookups such as `string(@doc sin)` when JETLS also analyzes code that loads [DocStringExtensions.jl](https://github.com/JuliaDocs/DocStringExtensions.jl), e.g. a `docs/make.jl` using Documenter.jl.
+
+- Fixed missing references, rename edits, and [`lowering/undef-global-var`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/undef-global-var) diagnostics for docstrings that document a method signature:
+  ```julia
+  """
+      someinterface(::Type{<:Integer})
+
+  Docstring for `someinterface` on integer types.
+  """
+  someinterface(::Type{<:Integer})
+  ```
+  The documented signature on the last line now counts as a reference to `someinterface` and `Integer`, so renaming `someinterface` also updates it, and a misspelled argument type there is reported at its exact location.
+
 ## 2026-10-14
 
 - Commit: [`64dd358`](https://github.com/aviatesk/JETLS.jl/commit/64dd358)
