@@ -138,13 +138,23 @@ end
     end
 end
 
-@testset "analysis failure" begin
+@testset "invalid input files" begin
     mktempdir() do dir
-        filepath = joinpath(dir, "missing.jl")
-        result = run_jetls_check_process([filepath]; root=dir, skip_analysis=false)
-        @test result.exitcode == 1
-        @test occursin("missing.jl", result.stderr)
-        @test !occursin("# Check ", result.stdout)
+        validpath = write_test_file(dir, "valid.jl", "x = 1")
+        missingpath = joinpath(dir, "missing.jl")
+        unreadablepath = write_test_file(dir, "unreadable.jl", "x = 1")
+        chmod(unreadablepath, 0o000)
+        cases = Pair{String,String}[missingpath => "File not found: $missingpath"]
+        # File permissions don't prevent reading on Windows or for root
+        isreadable(unreadablepath) ||
+            push!(cases, unreadablepath => "Failed to read file: $unreadablepath")
+        for (path, message) in cases, skip_analysis in (false, true)
+            # All inputs are validated before any of them is analyzed
+            result = run_jetls_check([validpath, path]; root=dir, skip_analysis)
+            @test result.exitcode == 1
+            @test occursin(message, result.stderr)
+            @test isempty(result.stdout)
+        end
     end
 end
 
