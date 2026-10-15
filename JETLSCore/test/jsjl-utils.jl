@@ -1,4 +1,4 @@
-using JETLSCore: JS, JL
+using JETLSCore: JS, JL, SyntaxTree
 
 function parsedstream(s::AbstractString; rule::Symbol=:all)
     stream = JS.ParseStream(s)
@@ -12,14 +12,14 @@ jsparse(parsed_stream::JS.ParseStream; filename::AbstractString=@__FILE__, first
 
 jlparse(s::AbstractString; rule::Symbol=:all, kwargs...) = jlparse(parsedstream(s; rule); kwargs...)
 jlparse(parsed_stream::JS.ParseStream; filename::AbstractString=@__FILE__, first_line::Int=1) =
-    JS.build_tree(JS.SyntaxTree, parsed_stream; filename, first_line)
+    JS.build_tree(SyntaxTree, parsed_stream; filename, first_line)
 
 # For interactive use
 # ===================
 
 # dump all intermediate ctx and st into the global scope for inspection
 # use `stop` if some lowering pass mutates ctx in a way you don't want
-function jldebug(context_module::Module, st0_in::JS.SyntaxTree, stop::Int=5)
+function jldebug(context_module::Module, st0_in::SyntaxTree, stop::Int=5)
     global st0, st1, st2, st3, st4, st5
     global ctx2, ctx3, ctx4, ctx5
     st0 = JL.rebase_layers(st0_in, context_module)

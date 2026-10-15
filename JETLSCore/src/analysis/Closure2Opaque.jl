@@ -1,6 +1,6 @@
 module Closure2Opaque
 
-using ..JETLSCore: JL, JS, SyntaxTree, get_name_val, var_id
+using ..JETLSCore: BS, JL, JS, SyntaxList, SyntaxTree, get_name_val, var_id
 
 export rewrite_local_closures_to_opaque
 
@@ -53,7 +53,7 @@ function _rewrite_local_closures_to_opaque(
         lambda_scope_id = JL.lambda_bindings(st3[1]).scope_id
     end
     let lambda_scope_id=lambda_scope_id
-        return JS.mapchildren(st3) do c::SyntaxTree
+        return BS.mapchildren(st3) do c::SyntaxTree
             _rewrite_local_closures_to_opaque(ctx, c, multis, lambda_scope_id)
         end
     end
@@ -65,7 +65,7 @@ function rewrite_closure_block(
     )
     children_old = JS.children(blk3)
     n = length(children_old)
-    new_children = JS.SyntaxList()
+    new_children = SyntaxList()
     consumed = falses(n)
     for i = 1:n
         consumed[i] && continue
@@ -209,7 +209,7 @@ function local_closure_key(
 end
 
 function find_matching_method_defs(
-        children_old::JL.SyntaxList, fd_idx::Int, target_var_id::Int, consumed::BitVector
+        children_old::SyntaxList, fd_idx::Int, target_var_id::Int, consumed::BitVector
     )
     # Search both directions; method_defs may appear before or after function_decl.
     for j = fd_idx+1:length(children_old)
@@ -258,7 +258,7 @@ function try_build_oc_assignment(
     # The inner argtypes svec is `core.svec(function_type, user_arg_types...)`.
     # Skip the `core.svec` callee (idx 1) and the function-type marker (idx 2);
     # the rest are the user-visible argtypes.
-    user_argtypes = JS.SyntaxList()
+    user_argtypes = SyntaxList()
     for i = 3:JS.numchildren(inner_argtypes)
         push!(user_argtypes, inner_argtypes[i])
     end

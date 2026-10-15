@@ -1597,7 +1597,7 @@ end
 
 @testset "extract_param_text" begin
     function parse_param(s::AbstractString)
-        call = JS.parsestmt(JS.SyntaxTree, "f($s)")
+        call = JS.parsestmt(SyntaxTree, "f($s)")
         return JS.children(call)[2]
     end
 

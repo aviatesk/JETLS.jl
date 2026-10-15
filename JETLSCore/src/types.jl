@@ -75,7 +75,7 @@ struct InferredTreeContext
     inferred_tree::SyntaxTree
     annotations::TreeAnnotations
     # `byte_range => kind` for the surface node each lowered node was lowered
-    # from (first element of `JS.flattened_provenance`). First-write-wins,
+    # from (first element of `BS.flattened_provenance`). First-write-wins,
     # mirroring a `traverse`-then-pick-first lookup.
     surface_kind_index::Dict{UnitRange{Int}, Symbol}
     # Every lowered node keyed by its own `byte_range`, in preorder. The
@@ -152,7 +152,7 @@ struct FileInfo
             inferred_context_cache::Union{Nothing,InferredContextCache} = nothing
         )
         syntax_tree0 = cache_tree0 ?
-            JS.build_tree(JS.SyntaxTree, parsed_stream; filename) : nothing
+            JS.build_tree(SyntaxTree, parsed_stream; filename) : nothing
         @static if JETLS_TEST_MODE
             syntax_tree0 === nothing || register_syntax_tree0!(syntax_tree0)
         end
