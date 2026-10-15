@@ -33,10 +33,10 @@ for arg in "$@"; do
 done
 
 julia --startup-file=no --project="$SCRIPT_DIR" \
-    "$SCRIPT_DIR/generate.jl" --config-toml "$PROJECT_ROOT/schemas/config-toml.schema.json" $CHECK_FLAG
+    "$SCRIPT_DIR/generate-schemas.jl" --config-toml "$PROJECT_ROOT/schemas/config-toml.schema.json" $CHECK_FLAG
 julia --startup-file=no --project="$SCRIPT_DIR" \
-    "$SCRIPT_DIR/generate.jl" --settings "$PROJECT_ROOT/schemas/settings.schema.json" $CHECK_FLAG
+    "$SCRIPT_DIR/generate-schemas.jl" --settings "$PROJECT_ROOT/schemas/settings.schema.json" $CHECK_FLAG
 julia --startup-file=no --project="$SCRIPT_DIR" \
-    "$SCRIPT_DIR/generate.jl" --init-options "$PROJECT_ROOT/schemas/init-options.schema.json" $CHECK_FLAG
+    "$SCRIPT_DIR/generate-schemas.jl" --init-options "$PROJECT_ROOT/schemas/init-options.schema.json" $CHECK_FLAG
 julia --startup-file=no --project="$SCRIPT_DIR" \
-    "$SCRIPT_DIR/generate.jl" --vscode-configuration "$PROJECT_ROOT/schemas/vscode-configuration.json" $CHECK_FLAG
+    "$SCRIPT_DIR/generate-schemas.jl" --vscode-configuration "$PROJECT_ROOT/schemas/vscode-configuration.json" $CHECK_FLAG

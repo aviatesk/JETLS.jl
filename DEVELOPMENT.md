@@ -363,7 +363,7 @@ Use `--top=N` to control how many entries to show (default: 50).
 ## Configuration schema
 
 The configuration schema is generated from the config structs
-in `JETLSCore/src/types.jl` by `scripts/schema/generate.jl`, which produces
+in `JETLSCore/src/types.jl` by `scripts/schema/generate-schemas.jl`, which produces
 standalone schema files under `schemas/`:
 
 - `config-toml.schema.json` (complete schema for `.JETLSConfig.toml`)
