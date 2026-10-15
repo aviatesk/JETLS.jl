@@ -8,51 +8,14 @@ using JETLSCore.LSP.URIs2
 
 include("setup.jl")
 include("jsjl-utils.jl")
+include("lowering-diagnostic-utils.jl")
 
 module lowering_module
 const B = Base
 macro generated_label()
     return :(@label generated)
 end
-end
-
-function get_lowering_diagnostics(
-        text::AbstractString;
-        code::Union{AbstractString,Nothing} = nothing,
-        context_module::Module=lowering_module,
-        world::UInt = Base.get_world_counter(),
-        kwargs...
-    )
-    filename = joinpath(@__DIR__, "test_lowering_diagnostic.jl")
-    server = JETLSCore.Server()
-    uri = filepath2uri(filename)
-    fi = JETLSCore.cache_file_info!(server, uri, 1, text)
-    st0_top = JETLSCore.build_syntax_tree(fi)
-    @assert JS.head(st0_top) === :toplevel
-    diagnostics = LSP.Diagnostic[]
-    candidates = JETLSCore.UndefGlobalCandidate[]
-    def_used_names = Dict{Module,JETLSCore.DefUsedNames}()
-    JETLSCore.iterate_toplevel_tree(st0_top) do st0::JS.SyntaxTree
-        JETLSCore.per_stmt_diagnostics!(diagnostics, candidates, uri, fi,
-            st0, context_module, world, #=analyzer=#nothing, JETLSCore.LSPostProcessor();
-            kwargs...)
-        binding_occurrences = JETLSCore.get_binding_occurrences!(server.state, uri, fi, st0)
-        binding_occurrences !== nothing &&
-            JETLSCore.update_def_used_names!(def_used_names, context_module, binding_occurrences)
-    end
-    explicit_imports = JETLSCore.collect_explicit_imports_by_module(server.state, uri, fi, st0_top)
-    # Mirror the cross-file phase. `skip_context_check=true` because the test server
-    # has no populated `analysis_manager` — we want this single file to count as
-    # part of its own unit anyway.
-    per_file = JETLSCore.PerFileDiagnosticsResult(
-        diagnostics, candidates, def_used_names, explicit_imports)
-    JETLSCore.cross_file_diagnostics!(diagnostics, JETLSCore.DefUsedNamesCache(),
-        server, uri, #=snapshot=#nothing, per_file; skip_context_check=true)
-    if code !== nothing
-        filter!(d -> d.code == code, diagnostics)
-    end
-    return diagnostics
-end
+end # lowering_module
 
 macro gen_unused(x)
     quote
@@ -1423,6 +1386,14 @@ end
             end
         end
     """; context_module=@__MODULE__))
+
+    # Globals defined by another top-level statement count as defined.
+    @test isempty(get_lowering_diagnostics("""
+        defined_in_other_statement() = "Hello, world"
+        let res = defined_in_other_statement()
+            println(res)
+        end
+        """; context_module=@__MODULE__))
 
     # Undefined identifiers used as docstring interpolations should be reported
     let diagnostics = get_lowering_diagnostics("""
