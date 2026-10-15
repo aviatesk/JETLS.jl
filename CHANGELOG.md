@@ -95,6 +95,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Hover, inlay hints, and other features that show inferred types now also infer the code after `@test ex` assuming that `ex` is `true`, so they show `x` as `Int64` after `@test x isa Int` in the example above.
 
+- [Go to definition](https://aviatesk.github.io/JETLS.jl/release/features/#features/go-to-definition) on a string literal that names an existing file, such as the path in `include("utils/binding.jl")` or `joinpath(@__DIR__, "data.toml")`, now jumps to that file instead of to the definition of the function it is passed to.
+  The path is resolved relative to the directory of the current file, and go to definition on `include` itself still jumps to the definition of `include`.
+
 ### Fixed
 
 - Fixed false [`lowering/macro-expansion-error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/macro-expansion-error) diagnostics on `@doc` docstrings inside blocks such as `if` blocks and on `@doc` lookups such as `string(@doc sin)` when JETLS also analyzes code that loads [DocStringExtensions.jl](https://github.com/JuliaDocs/DocStringExtensions.jl), e.g. a `docs/make.jl` using Documenter.jl.
@@ -109,6 +112,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   someinterface(::Type{<:Integer})
   ```
   The documented signature on the last line now counts as a reference to `someinterface` and `Integer`, so renaming `someinterface` also updates it, and a misspelled argument type there is reported at its exact location.
+
+- Fixed rename failing with an error when invoked on a long string literal such as a docstring.
 
 ## 2026-10-14
 

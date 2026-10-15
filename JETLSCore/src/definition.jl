@@ -127,6 +127,10 @@ represents the cursor's origin (used by callers to compute
 Returns `nothing` when no definition could be produced at `pos`.
 
 Lookup order:
+0. String literals naming an existing file relative to the current file's directory
+   (`include("pa│th.jl")`, `joinpath(@__DIR__, "pa│th.toml")`, …): jump to that file.
+   The `include` callee itself (`inc│lude("path.jl")`) still resolves to the `include`
+   method via the phases below.
 1. Call-site matches via the [`TypeAnnotation`](@ref) pipeline: when the cursor is on
    (or right after) a call site, jump to just the methods CC's dispatch picked for the
    inferred argtypes (`func│(1.0)` and `func(1.0)│` → `func(::Float64)` only). Runs
@@ -152,6 +156,10 @@ function find_definition(
     state = server.state
     st0 = build_syntax_tree(fi)
     offset = xy_to_offset(fi, pos)
+
+    path_jump = find_path_string_definition(uri, st0, offset)
+    path_jump === nothing || return path_jump
+
     (; world) = ctx_info = get_context_info(state, uri, pos)
     # `context_module` kwarg overrides the analysis-derived module — exposed
     # for tests so they can seed the lookup with a pre-populated module
@@ -218,6 +226,21 @@ function find_definition(
     end
 
     return nothing
+end
+
+# Phase 0: jump to the file a string literal names. Without this, the cursor on the
+# string falls back to its enclosing call, e.g. `include("pa│th.jl")` → `include`.
+function find_path_string_definition(uri::URI, st0::SyntaxTree, offset::Int)
+    string_node = @something select_target_string(st0, offset) return nothing
+    resolved = @something(
+        resolve_path_string_literal(string_node, dirname(uri2filename(uri))),
+        return nothing)
+    isfile(resolved.path) || return nothing
+    file_start = Position(; line = 0, character = 0)
+    location = Location(;
+        uri = filename2uri(resolved.path),
+        range = Range(; start = file_start, var"end" = file_start))
+    return Location[location], string_node
 end
 
 # Phase 1: jump to the methods CC's dispatch picked at a call site —

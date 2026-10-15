@@ -499,4 +499,38 @@ end
     end
 end
 
+@testset "'Definition' for path string literals" begin
+    mktempdir() do dir
+        target = joinpath(dir, "foo.jl")
+        touch(target)
+        filename = joinpath(dir, "main.jl")
+        @testset "jumps to the file: $text" for text in (
+                "include(\"fo│o.jl\")",
+                "include(\"foo.jl\"│)",
+                "include_dependency(\"fo│o.jl\")",
+                "read(joinpath(@__DIR__, \"fo│o.jl\"))",
+                "path = \"\"\"fo│o.jl\"\"\"",
+            )
+            clean_text, positions = JETLSCore.get_text_and_positions(text)
+            locations, origin = @something find_definition(clean_text, only(positions); filename)
+            @test length(locations) == 1
+            @test only(locations).uri == filename2uri(target)
+            @test only(locations).range.start == Position(; line = 0, character = 0)
+            @test JETLSCore.is_string_literal(origin)
+        end
+        @testset "does not jump to the file: $text" for text in (
+                "inc│lude(\"foo.jl\")",
+                "include(\"miss│ing.jl\")",
+                "include(\"│.\")",
+                "\"$("a"^300)│\"\nf() = 1",
+                "\"a\\0│b\"",
+            )
+            clean_text, positions = JETLSCore.get_text_and_positions(text)
+            result = find_definition(clean_text, only(positions); filename)
+            @test result === nothing ||
+                all(loc -> !startswith(uri2filename(loc.uri), dir), first(result))
+        end
+    end
+end
+
 end # module test_definition
