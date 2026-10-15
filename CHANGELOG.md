@@ -93,6 +93,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   Test sets that specify `failfast=false` and test sets of a custom type are analyzed as declared.
   ([aviatesk/JET.jl#895](https://github.com/aviatesk/JET.jl/pull/895), [aviatesk/JET.jl#896](https://github.com/aviatesk/JET.jl/pull/896))
 
+- Hover, inlay hints, and other features that show inferred types now also infer the code after `@test ex` assuming that `ex` is `true`, so they show `x` as `Int64` after `@test x isa Int` in the example above.
+
 ## 2026-10-14
 
 - Commit: [`64dd358`](https://github.com/aviatesk/JETLS.jl/commit/64dd358)

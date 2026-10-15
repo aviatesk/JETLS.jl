@@ -1181,6 +1181,15 @@ end
 # `@test_logs`) we keep only the kw RHS so any user-written identifier there still gets
 # scope-resolved (e.g. `broken=flag` flows `flag` through to undef-var / reference
 # analysis), and drop the `:(=)` wrapper itself so it doesn't reach later lowering passes.
+#
+# `@test ex` without `broken` or `skip` expands to
+# `ex === true ? Base.inferencebarrier(nothing) : throw(Test.FailFastError())`, as full
+# analysis analyzes test sets as fail-fast, where a failing test aborts the test set. This
+# lets inference narrow types in the code after the test with the tested condition, e.g. for
+# hover and inlay hints, while `Base.inferencebarrier` keeps the synthetic value of the
+# expansion from affecting the inference of the surrounding code, as full analysis does.
+# Unlike full analysis, the stubs cannot see the enclosing test set, so test sets that
+# specify `failfast=false` and test sets of a custom type are analyzed as fail-fast too.
 function Test.var"@test"(__context__::JL.MacroContext, ex::SyntaxTree, kws::SyntaxTree...)
     mc = __context__.macrocall::SyntaxTree
     seen_broken = seen_skip = seen_context = nothing
@@ -1209,6 +1218,12 @@ function Test.var"@test"(__context__::JL.MacroContext, ex::SyntaxTree, kws::Synt
     if seen_skip !== nothing && seen_broken !== nothing
         push_macro_error!(mc,
             "invalid test macro call: cannot set both `skip` and `broken` keywords")
+    end
+    if seen_broken === nothing && seen_skip === nothing
+        src = _macro_generated_source(__context__)
+        ex = JL.@ast(__context__, src, [:if [:call [:core "==="::identifier] ex true::value]
+            [:call [:top "inferencebarrier"::identifier] nothing::value]
+            [:call [:core "throw"::identifier] [:call Test.FailFastError::value]]])
     end
     isempty(rhss) && return JL.@ast(__context__, mc, ex)
     return JL.@ast(__context__, mc, [:block rhss... ex])

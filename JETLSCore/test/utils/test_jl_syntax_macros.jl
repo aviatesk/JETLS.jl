@@ -1111,10 +1111,13 @@ test_macro_lower(code::AbstractString) = jlresolve(test_lowering_module, code)
 
 @testset "Test.@test" begin
     @testset "macro expansion" begin
-        # Bare expression: returned unchanged.
+        # Without `broken` or `skip`: a branch on `ex === true`, which lets inference narrow
+        # types after the test.
         let st1 = test_macro_expand("@test x == 1")
-            @test JS.head(st1) === :call
-            @test strip(JS.sourcetext(st1)) == "x == 1"
+            @test JS.head(st1) === :if
+            cond = st1[1]
+            @test JS.head(cond) === :call
+            @test strip(JS.sourcetext(cond[2])) == "x == 1"
         end
 
         # Keyword arguments keep only the RHS so the `:(=)` node doesn't reach
