@@ -1,7 +1,7 @@
 name = "JETLSCore"
 uuid = "d3d7b685-bb06-4d0a-88d8-0ccf75a29734"
 version = "0.1.0"
-JET = "avi/JET-JETLS-head-2026-10-12"
+JET = "avi/JET-JETLS-head-2026-10-14"
 JuliaLowering = "avi/JETLS-JSJL-head-2026-10-09"
 JuliaSyntax = "avi/JETLS-JSJL-head-2026-10-09"
 Revise = "master"
