@@ -7,6 +7,7 @@ authors = ["Shuhei Kadowaki <aviatesk@gmail.com>"]
 projects = ["test"]
 
 [deps]
+BaseSyntax = "a901ca6a-331f-4dff-b5f6-9ec4ddfd738c"
 Compiler = "807dbc54-b67e-4c79-8afb-eafe4df6f2e1"
 JSON3 = "0f8b85d8-7281-11e9-16c2-39a750bddbf1"
 JuliaInterpreter = "aa1ae85d-cabe-5617-a682-6adf51b2e16a"
@@ -17,9 +18,11 @@ PrecompileTools = "aea7be01-6a6a-4083-8856-8a6e6704d82a"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [sources]
-JuliaSyntax = {rev = "c54e29d033", subdir = "JuliaSyntax", url = "https://github.com/JuliaLang/julia"}
+BaseSyntax = {rev = "768c39785a", subdir = "BaseSyntax", url = "https://github.com/JuliaLang/julia"}
+JuliaSyntax = {rev = "768c39785a", subdir = "JuliaSyntax", url = "https://github.com/JuliaLang/julia"}
 
 [compat]
+BaseSyntax = "0.1"
 Compiler = "0.1"
 JSON3 = "1.14.3"
 JuliaInterpreter = "0.11, 0.12"
