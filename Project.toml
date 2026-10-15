@@ -4,7 +4,7 @@ version = "0.0.0"
 authors = ["Shuhei Kadowaki <aviatesk@gmail.com>"]
 
 [workspace]
-projects = ["HierarchicalTestSets", "JETLSCore", "LSP", "MarkdownSource", "TOMLSource", "TestRunner", "docs", "scripts", "scripts/schema", "test"]
+projects = ["HierarchicalTestSets", "JETLSCore", "LSP", "MarkdownSource", "TOMLSource", "TestRunner", "docs", "scripts", "test"]
 
 [deps]
 JETLSCore = "d3d7b685-bb06-4d0a-88d8-0ccf75a29734"

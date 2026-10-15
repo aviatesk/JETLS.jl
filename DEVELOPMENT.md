@@ -363,7 +363,7 @@ Use `--top=N` to control how many entries to show (default: 50).
 ## Configuration schema
 
 The configuration schema is generated from the config structs
-in `JETLSCore/src/types.jl` by `scripts/schema/generate-schemas.jl`, which produces
+in `JETLSCore/src/types.jl` by `scripts/generate-schema.jl`, which produces
 standalone schema files under `schemas/`:
 
 - `config-toml.schema.json` (complete schema for `.JETLSConfig.toml`)
@@ -381,7 +381,7 @@ When you modify the config structs, update `schemas/description.toml`
 with descriptions for any new or changed fields, then regenerate all
 schemas by running:
 ```bash
-./scripts/schema/regenerate.sh
+./scripts/generate-schemas.sh
 ```
 
 The script supports a `--check` flag that exits with an error

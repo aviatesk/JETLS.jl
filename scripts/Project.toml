@@ -1,2 +1,14 @@
 [deps]
+JETLSCore = "d3d7b685-bb06-4d0a-88d8-0ccf75a29734"
+JSON = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
 JSON3 = "0f8b85d8-7281-11e9-16c2-39a750bddbf1"
+OrderedCollections = "bac558e1-5e72-5ebc-8fee-abe8a469f55d"
+Struct2JSONSchema = "6b9a66ba-ce23-4e49-9189-ad500babf267"
+TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
+
+[sources]
+JETLSCore = {path = "../JETLSCore"}
+Struct2JSONSchema = {rev = "avi/JS-compatibility", url = "https://github.com/aviatesk/Struct2JSONSchema.jl"}
+
+[compat]
+Struct2JSONSchema = "0.6"

@@ -107,7 +107,9 @@ jobs:
             JETLSCore/src/**
             JETLSCore/Project.toml
             schemas/**
-            scripts/schema/**
+            scripts/Project.toml
+            scripts/generate-schema.jl
+            scripts/generate-schemas.sh
             Project.toml
             .github/workflows/check-schemas.yml
           SOURCES_PATHS: |

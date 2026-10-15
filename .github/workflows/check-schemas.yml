@@ -14,7 +14,7 @@ jobs:
           version: "1.12"
           arch: x64
       - uses: julia-actions/cache@v3
-      - name: Instantiate schema project
-        run: julia --startup-file=no --project=scripts/schema -e 'using Pkg; Pkg.instantiate()'
+      - name: Instantiate scripts project
+        run: julia --startup-file=no --project=scripts -e 'using Pkg; Pkg.instantiate()'
       - name: Check schemas
-        run: ./scripts/schema/regenerate.sh --check
+        run: ./scripts/generate-schemas.sh --check

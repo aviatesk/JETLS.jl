@@ -1,5 +1,5 @@
 const HELP_MSG = """
-Usage: julia --project=scripts/schema scripts/schema/generate-schemas.jl [OPTIONS] TARGET FILE
+Usage: julia --project=scripts scripts/generate-schema.jl [OPTIONS] TARGET FILE
 
 Generate a JSON Schema for JETLS configuration.
 
@@ -56,7 +56,7 @@ function attach_description!(ctx::SchemaContext, desc_path)
     return desc
 end
 
-const description_toml = joinpath(dirname(dirname(@__DIR__)), "schemas", "description.toml")
+const description_toml = joinpath(dirname(@__DIR__), "schemas", "description.toml")
 
 function setup_ctx!(ctx::SchemaContext)
     auto_optional_nothing!(ctx)
@@ -310,7 +310,7 @@ function (@main)(args::Vector{String})
     schema_dict = generate_schema_dict(target_arg, gen_ctx)
 
     if check_mode
-        update_cmd = "julia --startup-file=no --project=scripts/schema scripts/schema/generate-schemas.jl $(target_arg) $(file_path)"
+        update_cmd = "julia --startup-file=no --project=scripts scripts/generate-schema.jl $(target_arg) $(file_path)"
         return check_json_file(file_path, schema_dict, update_cmd)
     else
         write_json_file(file_path, schema_dict, "Generated schema written to $file_path")
