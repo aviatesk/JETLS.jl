@@ -35,8 +35,6 @@ end
 
 length_utf16(s::AbstractString) = sum(c::Char -> codepoint(c) < 0x10000 ? 1 : 2, collect(s); init=0)
 
-module EmptyModule end
-
 # A context module where `@static` conditions referencing `DEV_MODE` can be evaluated.
 module static_dev_mode_module
     const DEV_MODE = false
@@ -1066,7 +1064,7 @@ end
     end
 
     @testset "before full-analysis" begin
-        # `@sprintf` is not available yet for EmptyModule (simulating the lowering analysis behavior before full-analysis complete)
+        # `@sprintf` is not available yet before full-analysis completes
         # https://github.com/aviatesk/JETLS.jl/issues/522
         let diagnostics = get_lowering_diagnostics("""
                 let
@@ -1074,11 +1072,11 @@ end
                     @info @sprintf("OLR: %.1f W/m², SW_in: %.1f W/m², net: %.1f W/m²",
                                     OLR, SW_in, SW_in - OLR)
                 end
-                """; context_module=EmptyModule, skip_analysis_requiring_context=true)
+                """; context_module=nothing)
             @test isempty(diagnostics)
         end
 
-        # The file-local constant has not been loaded into EmptyModule yet, so `@static`
+        # The file-local constant has not been loaded yet, so `@static`
         # cannot evaluate it during pre-analysis lowering. Suppress that transient error
         # until full analysis establishes the file context.
         let diagnostics = get_lowering_diagnostics("""
@@ -1086,7 +1084,7 @@ end
                 @static if DEV_MODE
                     inactive_call()
                 end
-                """; context_module=EmptyModule, skip_analysis_requiring_context=true)
+                """; context_module=nothing)
             @test isempty(diagnostics)
         end
     end
@@ -2078,7 +2076,7 @@ end
             walk(st) = walk(st-1)
             walk(5)
         end
-        """; context_module=JETLSCore.JETLSTestModule)
+        """; context_module=Test)
         ds = filter(d -> d.code == JETLSCore.LOWERING_CAPTURED_BOXED_VARIABLE_CODE, diagnostics)
         @test length(ds) == 1
         d = only(ds)
@@ -2186,8 +2184,7 @@ end
 
 function get_unused_import_diagnostics(text::AbstractString)
     return get_lowering_diagnostics(text;
-        code = JETLSCore.LOWERING_UNUSED_IMPORT_CODE,
-        skip_analysis_requiring_context = true)
+        code = JETLSCore.LOWERING_UNUSED_IMPORT_CODE)
 end
 
 @testset HierarchicalTestSet "unused imports detection" begin
@@ -2983,28 +2980,6 @@ end
         ds = filter(d -> d.code == JETLSCore.LOWERING_AMBIGUOUS_SOFT_SCOPE_CODE, diagnostics)
         @test length(ds) == 1
     end
-
-    @testset "soft scope mode (notebook)" begin
-        # With soft_scope=true, ambiguous soft scope diagnostic should not fire
-        let diagnostics = get_lowering_diagnostics("""
-            for _ = 1:10
-                x = 2
-            end
-            """; context_module=soft_scope_module, soft_scope=true)
-            ds = filter(d -> d.code == JETLSCore.LOWERING_AMBIGUOUS_SOFT_SCOPE_CODE, diagnostics)
-            @test isempty(ds)
-        end
-
-        # Without soft_scope, the same code should produce the diagnostic
-        let diagnostics = get_lowering_diagnostics("""
-            for _ = 1:10
-                x = 2
-            end
-            """; context_module=soft_scope_module, soft_scope=false)
-            ds = filter(d -> d.code == JETLSCore.LOWERING_AMBIGUOUS_SOFT_SCOPE_CODE, diagnostics)
-            @test length(ds) == 1
-        end
-    end
 end
 
 @testset HierarchicalTestSet "unresolved goto detection" begin
@@ -3171,7 +3146,7 @@ end
             @label spare
             return 1
         end
-        """; context_module=JETLSCore.JETLSTestModule)
+        """; context_module=Test)
         ds = filter(d -> d.code == JETLSCore.LOWERING_UNUSED_LABEL_CODE, diagnostics)
         @test length(ds) == 1
         d = only(ds)

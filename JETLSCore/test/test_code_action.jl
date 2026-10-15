@@ -256,9 +256,7 @@ end
 function get_unused_import_code_actions(marked_text::AbstractString)
     text, positions = JETLSCore.get_text_and_positions(marked_text)
     uri = LOWERING_DIAGNOSTICS_URI
-    diagnostics = get_lowering_diagnostics(text;
-        code = JETLSCore.LOWERING_UNUSED_IMPORT_CODE,
-        skip_analysis_requiring_context = true)
+    diagnostics = get_lowering_diagnostics(text; code = JETLSCore.LOWERING_UNUSED_IMPORT_CODE)
     code_actions = Union{CodeAction,Command}[]
     JETLSCore.delete_range_code_actions!(code_actions, uri, diagnostics)
     return code_actions, uri, positions
