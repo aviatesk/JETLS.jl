@@ -120,6 +120,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Fixed rename failing with an error when invoked on a long string literal such as a docstring.
 
+- Fixed false [`inference/*`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/inference) diagnostics in closures for types that their arguments and the variables they capture never have:
+  ```julia
+  function check(proc::Base.Process)
+      mktempdir() do _
+          # previously reported: FieldError: type `Base.ProcessChain` has no field `exitcode`
+          process_exited(proc) && proc.exitcode == 0
+      end
+  end
+  ```
+  Full analysis now analyzes a closure where the types of its arguments are known, with the types of the variables it captures:
+  ```julia
+  function f(name::String)
+      foreach(1:3) do i                  # analyzed where `foreach` calls it, with `i::Int`
+          println(name, i)
+      end
+      g = () -> sin(name)                # analyzed where it is created: reports `sin(::String)`
+      h = (n::Integer) -> sin(name) + n  # likewise, since its argument type is declared
+      k = n -> sin(name) + n             # analyzed only where the analyzed code calls it
+      return g, h, k
+  end
+  ```
+
 ## 2026-10-14
 
 - Commit: [`64dd358`](https://github.com/aviatesk/JETLS.jl/commit/64dd358)

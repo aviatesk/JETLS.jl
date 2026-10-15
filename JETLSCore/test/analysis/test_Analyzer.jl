@@ -1627,6 +1627,108 @@ lookup_or_missing(k) = get(LOOKUP_TABLE, k, missing)
     end
 end
 
+function make_sin_closure()
+    x = "julia"
+    return () -> sin(x)
+end
+function make_typed_closure()
+    x = "julia"
+    return (n::Integer) -> sin(x) + n
+end
+function make_untyped_closure()
+    x = "julia"
+    return n -> sin(x) + n
+end
+function make_safe(x::String)
+    enabled = true
+    return () -> enabled ? nothing : sin(x)
+end
+function make_unsafe(x::String)
+    enabled = false
+    return () -> enabled ? nothing : sin(x)
+end
+make_task(c) = @async undefined_in_task(c)
+struct HasX
+    x::Int
+end
+struct NoX
+    y::Int
+end
+ready(h::HasX) = h.x > 0
+ready(n::NoX) = n.y > 0
+takes_ints_and_hasx(::Vector{Int}, ::HasX) = nothing
+function foreach_ready(hs::Vector{HasX})
+    xs = Int[]
+    foreach(hs) do h
+        ready(h) && takes_ints_and_hasx(xs, h)
+    end
+end
+
+@testset "closures are inferred where they are constructed" begin
+    let result = @analyze_call make_sin_closure()
+        r = only(get_reports(result))
+        @test r isa NoMethodMatchReport
+    end
+
+    # so is a closure whose argument types are all declared, but not one with undeclared
+    # argument types, which is inferred only where it is called
+    let result = @analyze_call make_typed_closure()
+        @test only(get_reports(result)) isa NoMethodMatchReport
+    end
+    let result = @analyze_call make_untyped_closure()
+        @test isempty(get_reports(result))
+    end
+
+    # the body of a `Task` that the analyzed code never calls
+    let result = @analyze_call make_task(1)
+        r = only(get_reports(result))
+        @test r isa UndefVarErrorReport && r.var == GlobalRef(@__MODULE__, :undefined_in_task)
+    end
+
+    # a closure with arguments is not inferred with `Any` arguments, which `ready(h)` would
+    # refine to `Union{HasX,NoX}`
+    let result = @analyze_call foreach_ready(HasX[])
+        @test isempty(get_reports(result))
+    end
+
+    @testset "captured constants" begin
+        let result = analyze_call(make_safe, (String,))
+            @test isempty(get_reports(result))
+            @test isempty(analyze_signature(make_safe))
+        end
+        let result = analyze_call(make_unsafe, (String,))
+            @test only(get_reports(result)) isa NoMethodMatchReport
+            @test only(analyze_signature(make_unsafe)) isa NoMethodMatchReport
+        end
+    end
+
+    @testset "closure body invalidation" begin
+        let mod = Module(gensym(:ClosureInvalidation))
+            make, entry = Core.eval(mod, quote
+                body(x) = x
+                make(x::String) = () -> body(x)
+                entry(x::String) = make(x)
+                (make, entry)
+            end)
+            analyzer = LSAnalyzer(; report_target_modules=nothing)
+            result = JET.analyze_and_report_call!(analyzer, make, (String,))
+            @test isempty(get_reports(result))
+            ci = get(CC.code_cache(analyzer), result.result.linfo, nothing)::Core.CodeInstance
+            @test ci.owner === CC.cache_owner(analyzer)
+            @test ci.max_world == typemax(UInt)
+            result = JET.analyze_and_report_call!(analyzer, entry, (String,))
+            @test isempty(get_reports(result))
+
+            Core.eval(mod, :(body(x) = sin(x)))
+            @test ci.max_world < Base.get_world_counter()
+            updated_analyzer = LSAnalyzer(; report_target_modules=nothing)
+            @test CC.cache_owner(updated_analyzer) === CC.cache_owner(analyzer)
+            result = JET.analyze_and_report_call!(updated_analyzer, entry, (String,))
+            @test any(r -> r isa NoMethodMatchReport, get_reports(result))
+        end
+    end
+end
+
 function analyze_test_text(text::String; jetconfigs...)
     interp = JET.JETConcreteInterpreter(LSAnalyzer(; report_target_modules=nothing))
     result = JET.analyze_and_report_text!(interp, text; jetconfigs...)
