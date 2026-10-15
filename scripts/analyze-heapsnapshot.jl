@@ -18,12 +18,6 @@ struct HeapEdge
     to_node::Int
 end
 
-function HeapEdge(type::String, name_or_index::Real, from_node::Int, to_node::Int)
-    # JSON3 may return large pointer-like values as Float64 that exceed Int64 range
-    idx = unsafe_trunc(Int, name_or_index)
-    HeapEdge(type, idx, from_node, to_node)
-end
-
 struct HeapSnapshot
     nodes::Vector{HeapNode}
     edges::Vector{HeapEdge}
@@ -35,34 +29,51 @@ struct TypeSummary
     shallow_size::Int
 end
 
+const RawHeapSnapshot = @NamedTuple begin
+    snapshot::@NamedTuple begin
+        meta::@NamedTuple begin
+            node_fields::Vector{String}
+            node_types::Vector{Union{Vector{String},String}}
+            edge_fields::Vector{String}
+            edge_types::Vector{Union{Vector{String},String}}
+        end
+        node_count::Int
+        edge_count::Int
+    end
+    # Julia writes these as unsigned, e.g. `-1` element indices as `typemax(UInt)`
+    nodes::Vector{UInt}
+    edges::Vector{UInt}
+    strings::Vector{String}
+end
+
 function parse_heapsnapshot(path::String; parse_edges::Bool=false)
     data = open(path) do io
-        JSON3.read(io)
+        JSON3.read(io, RawHeapSnapshot)
     end
 
-    snapshot = data["snapshot"]
-    meta = snapshot["meta"]
-    node_fields = meta["node_fields"]
-    node_types = meta["node_types"][1]
-    edge_fields = meta["edge_fields"]
-    edge_types = meta["edge_types"][1]
-    strings = data["strings"]
-    nodes_array = data["nodes"]
-    edges_array = data["edges"]
+    snapshot = data.snapshot
+    meta = snapshot.meta
+    node_fields = meta.node_fields
+    node_types = meta.node_types[1]::Vector{String}
+    edge_fields = meta.edge_fields
+    edge_types = meta.edge_types[1]::Vector{String}
+    strings = data.strings
+    nodes_array = data.nodes
+    edges_array = data.edges
 
     node_field_count = length(node_fields)
     edge_field_count = length(edge_fields)
-    node_count = snapshot["node_count"]
+    node_count = snapshot.node_count
 
-    type_idx = findfirst(==("type"), node_fields)
-    name_idx = findfirst(==("name"), node_fields)
-    id_idx = findfirst(==("id"), node_fields)
-    self_size_idx = findfirst(==("self_size"), node_fields)
-    edge_count_idx = findfirst(==("edge_count"), node_fields)
+    type_idx = findfirst(==("type"), node_fields)::Int
+    name_idx = findfirst(==("name"), node_fields)::Int
+    id_idx = findfirst(==("id"), node_fields)::Int
+    self_size_idx = findfirst(==("self_size"), node_fields)::Int
+    edge_count_idx = findfirst(==("edge_count"), node_fields)::Int
 
-    edge_type_idx = findfirst(==("type"), edge_fields)
-    edge_name_idx = findfirst(==("name_or_index"), edge_fields)
-    edge_to_node_idx = findfirst(==("to_node"), edge_fields)
+    edge_type_idx = findfirst(==("type"), edge_fields)::Int
+    edge_name_idx = findfirst(==("name_or_index"), edge_fields)::Int
+    edge_to_node_idx = findfirst(==("to_node"), edge_fields)::Int
 
     nodes = Vector{HeapNode}(undef, node_count)
     for i in 1:node_count
@@ -81,8 +92,7 @@ function parse_heapsnapshot(path::String; parse_edges::Bool=false)
     retainers = Dict{Int,Vector{Int}}()
 
     if parse_edges
-        edge_count = snapshot["edge_count"]
-        resize!(edges, edge_count)
+        resize!(edges, snapshot.edge_count)
 
         edge_idx = 1
         for from_node in 1:node_count
@@ -93,11 +103,11 @@ function parse_heapsnapshot(path::String; parse_edges::Bool=false)
                 name_or_index_raw = edges_array[base + edge_name_idx]
                 # For "element" edges, name_or_index is an array index; otherwise it's a string index
                 name_or_index = if etype == "element"
-                    name_or_index_raw
+                    name_or_index_raw % Int
                 else
                     strings[name_or_index_raw + 1]
                 end
-                to_node_offset = edges_array[base + edge_to_node_idx]
+                to_node_offset = Int(edges_array[base + edge_to_node_idx])
                 to_node = to_node_offset ÷ node_field_count + 1
 
                 edges[edge_idx] = HeapEdge(etype, name_or_index, from_node, to_node)
@@ -277,7 +287,7 @@ function print_retainer_chain(snapshot::HeapSnapshot, node_idx::Int; max_depth::
             edge_label = edge.name_or_index isa String ? edge.name_or_index : "[$(edge.name_or_index)]"
             println("  " ^ depth, "← ($(edge.type): $edge_label) ($(from_node.type)) $(from_node.name) [@$(from_node.id)]")
 
-            print_chain(edge.from_node, depth + 1, visited)
+            var"#self#"(edge.from_node, depth + 1, visited)
         end
     end
 
