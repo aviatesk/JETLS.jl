@@ -26,6 +26,30 @@ function traverse_dir(f, dir::AbstractString)
     return nothing
 end
 
+safe_ispath(path::AbstractString) = safe_path_query(ispath, path)
+safe_isfile(path::AbstractString) = safe_path_query(isfile, path)
+
+function safe_path_query(query::Union{typeof(ispath),typeof(isfile)}, path::AbstractString)
+    try
+        return query(path)
+    catch err
+        err isa Union{Base.IOError,ArgumentError} || rethrow()
+        return false
+    end
+end
+
+"""
+    safe_ispath(path::AbstractString) -> Bool
+    safe_isfile(path::AbstractString) -> Bool
+
+Like `ispath` and `isfile`, but return `false` instead of throwing when the file system
+rejects `path`, e.g. for a component longer than `NAME_MAX` (`IOError`) or embedded NULs
+(`ArgumentError`). Use these for paths built from arbitrary strings, such as string
+literals in source code or values in `Project.toml`; for other paths, such an error reports
+a real problem that should not be hidden.
+"""
+safe_ispath, safe_isfile
+
 """
     paths_equal(path1::AbstractString, path2::AbstractString) -> Bool
 

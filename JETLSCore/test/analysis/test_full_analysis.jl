@@ -381,6 +381,9 @@ end
     @test find_env_package("name = \"Foo\"\nuuid = \"$uuid\"\n") === nothing
     @test find_env_package("name = \"Foo\"\nuuid = \"invalid\"\n", "src/Foo.jl") === nothing
     @test find_env_package("[deps]\n", "src/Foo.jl") === nothing
+    for entryfile in ("a"^300 * ".jl", "a\\u0000b.jl")
+        @test find_env_package("name = \"Foo\"\nuuid = \"$uuid\"\nentryfile = \"$entryfile\"\n") === nothing
+    end
 end
 
 @testset "package files after instantiating the environment for a script" begin

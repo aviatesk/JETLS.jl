@@ -1433,14 +1433,7 @@ function resolve_path_string_literal(
     value = string_node.value
     value isa String || return nothing
     path = joinpath(basedir, value)
-    # `ispath` throws on values that can't be paths at all, e.g. docstrings with lines
-    # longer than `NAME_MAX` (`IOError`) or embedded NULs (`ArgumentError`).
-    try
-        ispath(path) || return nothing
-    catch err
-        err isa Union{Base.IOError,ArgumentError} || rethrow()
-        return nothing
-    end
+    safe_ispath(path) || return nothing
     return (; value, path)
 end
 
