@@ -54,7 +54,7 @@ range_of(code::AbstractString, s::AbstractString) =
 function range_of_kind(code::AbstractString, kind::Symbol)
     fi = JETLSCore.FileInfo(1, code, @__FILE__)
     st0_top = JETLSCore.build_syntax_tree(fi)
-    return @something JETLSCore.traverse(st0_top) do node::JS.SyntaxTree
+    return @something JETLSCore.traverse(st0_top) do node::JETLSCore.SyntaxTree
         JS.head(node) === kind || return nothing
         return JETLSCore.TraversalReturn(JS.byte_range(node); terminate=true)
     end error(lazy"no surface node of kind $kind in $code")
@@ -71,7 +71,7 @@ widenconst(typ) = CC.widenconst(@something typ return nothing)
 function query_all_types(fi::JETLSCore.FileInfo, ctx::InferredTreeContext, text::AbstractString)
     st0_top = JETLSCore.build_syntax_tree(fi)
     types = Any[]
-    JETLSCore.traverse(st0_top) do node::JS.SyntaxTree
+    JETLSCore.traverse(st0_top) do node::JETLSCore.SyntaxTree
         if JS.sourcetext(node) == text
             push!(types, get_type_for_range(ctx, JS.byte_range(node)))
         end
@@ -174,7 +174,7 @@ end
             st0_top = JETLSCore.build_syntax_tree(fi)
             results = []
             world = Base.get_world_counter()
-            JETLSCore.iterate_toplevel_tree(st0_top) do st0::JS.SyntaxTree
+            JETLSCore.iterate_toplevel_tree(st0_top) do st0::JETLSCore.SyntaxTree
                 r = get_inferrable_tree(st0, Main, world)
                 r === nothing || push!(results, (; r..., st0))
                 return nothing
@@ -182,7 +182,7 @@ end
             @test length(results) == 3
             for (; ctx3, st3, st0) in results
                 @test ctx3 isa JL.VariableAnalysisContext
-                @test st3 isa JS.SyntaxTree
+                @test st3 isa JETLSCore.SyntaxTree
                 @test infer_toplevel_tree(ctx3, st3, st0, @__MODULE__) isa JETLSCore.SyntaxTree
             end
             JETLSCore.check_syntax_tree0(fi)
@@ -196,7 +196,7 @@ end
             fi = JETLSCore.FileInfo(1, code, @__FILE__; cache_tree0 = true)
             st0_top = JETLSCore.build_syntax_tree(fi)
             world = Base.get_world_counter()
-            JETLSCore.iterate_toplevel_tree(st0_top) do st0::JS.SyntaxTree
+            JETLSCore.iterate_toplevel_tree(st0_top) do st0::JETLSCore.SyntaxTree
                 @test isnothing(get_inferrable_tree(st0, @__MODULE__, world))
                 return nothing
             end
@@ -300,7 +300,7 @@ end
     end
 
     # Single-method local closures are converted to `OpaqueClosure` form via
-    # `JL.rewrite_local_closures_to_opaque` before `convert_closures`, so CC
+    # `rewrite_local_closures_to_opaque` before `convert_closures`, so CC
     # resolves both the body and the call site precisely (synthetic-struct
     # closures would collapse both to `Any` since their type isn't materialized
     # in `context_module`).

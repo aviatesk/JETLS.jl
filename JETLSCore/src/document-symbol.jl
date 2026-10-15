@@ -853,7 +853,7 @@ function build_node_maps!(
 end
 
 function binding_provenance_range(ctx3::JL.VariableAnalysisContext, bid::Int)
-    provs = JS.flattened_provenance(JL.binding_ex(ctx3, bid))
+    provs = BS.flattened_provenance(JL.binding_ex(ctx3, bid))
     isempty(provs) && return nothing
     prov = last(provs)
     return (JS.first_byte(prov), JS.last_byte(prov))
@@ -890,7 +890,7 @@ function build_func_to_scopes(ctx3::JL.VariableAnalysisContext)
     for (helper_key, scope_ids) in helper_scopes
         isempty(scope_ids) && continue
         helper_bid = helper_key.binding
-        provs = JS.flattened_provenance(JL.binding_ex(ctx3, helper_bid))
+        provs = BS.flattened_provenance(JL.binding_ex(ctx3, helper_bid))
         isempty(provs) && continue
         prov = last(provs)
         range = (JS.first_byte(prov), JS.last_byte(prov))
@@ -1001,7 +1001,7 @@ function extract_local_scope_bindings!(
                 continue
             end
             binding_node = JL.binding_ex(ctx3, bid)
-            prov = JS.flattened_provenance(binding_node)
+            prov = BS.flattened_provenance(binding_node)
             isempty(prov) && continue
             source_node = first(prov)
             # TODO This is a variable introduced in macro expanded code
@@ -1285,7 +1285,7 @@ function _classify_try_clause(
     )
     1 ≤ scope_id ≤ length(ctx3.scopes) || return "try"
     scope = ctx3.scopes[scope_id]
-    prov = JS.flattened_provenance(scope.node_id)
+    prov = BS.flattened_provenance(scope.node_id)
     isempty(prov) && return "try"
     source_node = first(prov)
     fb = JS.first_byte(source_node)
@@ -1306,7 +1306,7 @@ function find_scope_construct(
         parent_map::Dict{Tuple{Int,Int},SyntaxTree},
         node_map::Dict{Tuple{Int,Int},SyntaxTree}
     )
-    prov = JS.flattened_provenance(scope.node_id)
+    prov = BS.flattened_provenance(scope.node_id)
     isempty(prov) && return nothing
     source_node = first(prov)
     k = JS.head(source_node)

@@ -4,7 +4,7 @@ function build_syntax_tree(fi::FileInfo)
         @static JETLS_TEST_MODE && check_syntax_tree0(fi)
         return syntax_tree0
     end
-    return JS.build_tree(JS.SyntaxTree, fi.parsed_stream; filename=fi.filename)
+    return JS.build_tree(SyntaxTree, fi.parsed_stream; filename=fi.filename)
 end
 
 @static if JETLS_TEST_MODE
@@ -50,10 +50,15 @@ function check_syntax_tree0(fi::FileInfo)
 end
 end # @static if JETLS_TEST_MODE
 
-has_source_flags(st::SyntaxTree, flags::UInt16) = JS.has_flags(JS.prov_end(st), flags)
-is_source_infix_op_call(st::SyntaxTree) = JS.is_infix_op_call(JS.prov_end(st))
-is_source_prefix_op_call(st::SyntaxTree) = JS.is_prefix_op_call(JS.prov_end(st))
-is_source_postfix_op_call(st::SyntaxTree) = JS.is_postfix_op_call(JS.prov_end(st))
+newleaf(prov::SyntaxTree, head::Symbol, @nospecialize(value)) =
+    BS.@mknode(; head, value, source=prov, context=prov.context)
+newnode(prov::SyntaxTree, head::Symbol, children::SyntaxList) =
+    BS.@mknode(; head, children, source=prov, context=prov.context)
+
+has_source_flags(st::SyntaxTree, flags::UInt16) = JS.has_flags(BS.prov_end(st), flags)
+is_source_infix_op_call(st::SyntaxTree) = JS.is_infix_op_call(BS.prov_end(st))
+is_source_prefix_op_call(st::SyntaxTree) = JS.is_prefix_op_call(BS.prov_end(st))
+is_source_postfix_op_call(st::SyntaxTree) = JS.is_postfix_op_call(BS.prov_end(st))
 
 """
     is_compound_assignment(st::SyntaxTree) -> Bool
@@ -62,7 +67,7 @@ Whether `st` is an updating assignment like `x += 1` or `x .+= 1`, whose head is
 operator-specific symbol (e.g. `:+=`).
 """
 is_compound_assignment(st::SyntaxTree) =
-    !JS.is_leaf(st) && JS.head(JS.prov_end(st)) in (Symbol("op="), Symbol(".op="))
+    !JS.is_leaf(st) && JS.head(BS.prov_end(st)) in (Symbol("op="), Symbol(".op="))
 
 """
     is_synthesized_value(st::SyntaxTree) -> Bool
@@ -74,9 +79,9 @@ mutability flag of a `:struct`), as opposed to a literal written in the source.
 function is_synthesized_value(st::SyntaxTree)
     JS.head(st) === :value || return false
     st.value isa Union{Nothing,LineNumberNode,JL.MacroSource} && return true
-    textref = JS.prov_end(st)
+    textref = BS.prov_end(st)
     # values converted from `Expr` (e.g. old-style macro output) only carry line info
-    textref.source isa JS.SourceRef || return true
+    textref.source isa BS.SourceRef || return true
     # string literals are rebased onto their enclosing `string`/`cmdstring` nodes
     return JS.head(textref) ∉ (:value, :string, :cmdstring)
 end
@@ -88,20 +93,6 @@ Whether `st` is a non-interpolated string literal written in the source.
 """
 is_string_literal(st::SyntaxTree) =
     JS.head(st) === :value && st.value isa String && !is_synthesized_value(st)
-
-"""
-    provenance_ancestor(st::SyntaxTree, h::Symbol) -> Union{Nothing,SyntaxTree}
-
-The nearest node with head `h` on `st`'s provenance chain, starting from `st` itself.
-"""
-function provenance_ancestor(st::SyntaxTree, h::Symbol)
-    while true
-        JS.head(st) === h && return st
-        source = st.source
-        source isa SyntaxTree || return nothing
-        st = source
-    end
-end
 
 # heads whose `value` holds the identifier name (see `JL.syntax_name`)
 const NAME_VAL_HEADS = (
@@ -134,16 +125,16 @@ function _without_heads(st::SyntaxTree, heads::Tuple{Vararg{Symbol}})
     elseif JS.is_leaf(st)
         return (st, false)
     end
-    new_children = JS.SyntaxList()
+    new_children = SyntaxList()
     changed = false
     for child in JS.children(st)
         new_child, child_changed = _without_heads(child, heads)
         changed |= child_changed
         isnothing(new_child) || push!(new_children, new_child)
     end
-    # `mknode` preserves the provenance chain, so downstream repairs can recover
+    # `@mknode` preserves the provenance chain, so downstream repairs can recover
     # parser flags after trimming.
-    new_node = changed ? JS.mknode(st, new_children) : st
+    new_node = changed ? BS.@mknode(st; children=new_children) : st
     return (new_node, changed)
 end
 
@@ -193,7 +184,7 @@ end
 
 function _repair_after_trim(st0::SyntaxTree)
     JS.is_leaf(st0) && return st0
-    new_children = JS.SyntaxList()
+    new_children = SyntaxList()
     changed = false
     for child in JS.children(st0)
         new_child = _repair_after_trim(child)
@@ -202,12 +193,12 @@ function _repair_after_trim(st0::SyntaxTree)
     end
     repaired = _repair_node(st0, new_children)
     repaired !== nothing && return repaired
-    return changed ? JS.mknode(st0, new_children) : st0
+    return changed ? BS.@mknode(st0; children=new_children) : st0
 end
 
 # Per-kind repair rules. Each rule returns the replacement node when it applies,
 # or `nothing` to fall through to the default reconstruction.
-function _repair_node(st0::SyntaxTree, new_children::JS.SyntaxList)
+function _repair_node(st0::SyntaxTree, new_children::SyntaxList)
     k = JS.head(st0)
     if k === :. && length(new_children) == 2 && _is_empty_non_leaf(new_children[2])
         return new_children[1]
@@ -236,14 +227,14 @@ function _unwrap_interpolations(st::SyntaxTree)
     elseif JS.is_leaf(st)
         return (st, false)
     end
-    new_children = JS.SyntaxList()
+    new_children = SyntaxList()
     changed = false
     for child in JS.children(st)
         new_child, child_changed = _unwrap_interpolations(child)
         changed |= child_changed
         push!(new_children, new_child)
     end
-    return (changed ? JS.mknode(st, new_children) : st, changed)
+    return (changed ? BS.@mknode(st; children=new_children) : st, changed)
 end
 
 """
@@ -509,7 +500,7 @@ function _remove_macrocalls(
         if is_new_style && !strip_current_static
             # Preserve this macrocall, but still remove old-style macros and `@static`
             # calls nested in its arguments.
-            new_children = JS.SyntaxList()
+            new_children = SyntaxList()
             push!(new_children, st0[1])
             changed = false
             for i = 2:JS.numchildren(st0)
@@ -518,7 +509,7 @@ function _remove_macrocalls(
                 changed |= child_changed
                 push!(new_children, child)
             end
-            return (changed ? JS.mknode(st0, new_children) : st0, changed)
+            return (changed ? BS.@mknode(st0; children=new_children) : st0, changed)
         elseif is_mainfunc0(st0)
             # `@main` functions are desugared by `desugar_main_macrocall` below,
             # so there's no need to remove them here
@@ -533,7 +524,7 @@ function _remove_macrocalls(
             # but binding occurrence analysis still get correct results.
             return st0, false
         end
-        new_children = JS.SyntaxList()
+        new_children = SyntaxList()
         for i = 2:JS.numchildren(st0)
             # `$` interpolations at macrocall-argument position are legal only
             # because the macro will typically splice the argument into a
@@ -551,7 +542,7 @@ function _remove_macrocalls(
         return st0, false
     end
     (st0, changed) = desugar_main_macrocall(st0)
-    new_children = JS.SyntaxList()
+    new_children = SyntaxList()
     inner_context = if JS.head(st0) === :module && JS.numchildren(st0) >= 2
         module_const = context_module === nothing ? nothing :
             resolve_global_const(context_module, world, st0[2])
@@ -567,7 +558,7 @@ function _remove_macrocalls(
         changed |= cc
         push!(new_children, nc)
     end
-    return (changed ? JS.mknode(st0, new_children) : st0, changed)
+    return (changed ? BS.@mknode(st0; children=new_children) : st0, changed)
 end
 
 """
@@ -596,32 +587,32 @@ function desugar_main_macrocall(st0::SyntaxTree)
         # Parenthesized form: (@main)(args...) — macrocall is the callee
         JS.numchildren(call_node) >= 1 || return (st0, false)
         is_mainfunc0(call_node[1]) || return (st0, false)
-        main_id = JS.newleaf(call_node[1], :identifier, "main")
-        new_call_children = JS.SyntaxList()
+        main_id = newleaf(call_node[1], :identifier, "main")
+        new_call_children = SyntaxList()
         push!(new_call_children, main_id)
         for i in 2:JS.numchildren(call_node)
             push!(new_call_children, call_node[i])
         end
-        new_call = JS.newnode(call_node, :call, new_call_children)
+        new_call = newnode(call_node, :call, new_call_children)
     elseif is_mainfunc0(call_node)
         # No-parens form: @main(args...) — entire signature is a macrocall
-        main_id = JS.newleaf(call_node[1], :identifier, "main")
-        new_call_children = JS.SyntaxList()
+        main_id = newleaf(call_node[1], :identifier, "main")
+        new_call_children = SyntaxList()
         push!(new_call_children, main_id)
         for i in 2:JS.numchildren(call_node)
             is_synthesized_value(call_node[i]) && continue
             push!(new_call_children, call_node[i])
         end
-        new_call = JS.newnode(call_node, :call, new_call_children)
+        new_call = newnode(call_node, :call, new_call_children)
     else
         return (st0, false)
     end
-    new_children = JS.SyntaxList()
+    new_children = SyntaxList()
     push!(new_children, new_call)
     for i in 2:JS.numchildren(st0)
         push!(new_children, st0[i])
     end
-    return (JS.newnode(st0, k, new_children), true)
+    return (newnode(st0, k, new_children), true)
 end
 
 """
@@ -781,7 +772,7 @@ Like `Base.unique`, but over node identities, and with this comment promising
 that the lowest-index copy of each node is kept.
 """
 function deduplicate_syntaxlist(sl::SyntaxList)
-    sl2 = JS.SyntaxList()
+    sl2 = SyntaxList()
     seen = Set{SyntaxTree}()
     for st in sl
         if !(st in seen)
@@ -810,7 +801,7 @@ The stored value from the last `TraversalReturn` is returned from `traverse`
 (or `nothing` if no `TraversalReturn` was used).
 """
 function traverse(@specialize(callback), st::SyntaxTree, postorder::Bool=false)
-    stack = JS.SyntaxList(st)
+    stack = SyntaxTree[st]
     if postorder
         _traverse_postorder(callback, stack)
     else
@@ -854,7 +845,7 @@ end
 
 function _traverse_postorder(@specialize(callback), stack::SyntaxList)
     local retval = nothing
-    output = JS.SyntaxList()
+    output = SyntaxList()
     while !isempty(stack)
         x = pop!(stack)
         push!(output, x)
@@ -894,7 +885,7 @@ The stored value from the last `TraversalReturn` is returned (or `nothing` if no
 """
 function iterate_toplevel_tree(callback, st0_top::SyntaxTree)
     retval = nothing
-    sl = JS.SyntaxList(st0_top)
+    sl = SyntaxTree[st0_top]
     while !isempty(sl)
         st0 = pop!(sl)
         if JS.head(st0) === :toplevel
@@ -954,7 +945,7 @@ that satisfy the predicate.
 byte_ancestors(args...) = byte_ancestors(Returns(true), args...)
 
 function byte_ancestors(flt, st::SyntaxTree, rng::UnitRange{<:Integer})
-    sl = JS.SyntaxList()
+    sl = SyntaxList()
     if rng ⊆ JS.byte_range(st) && flt(st)
         push!(sl, st)
     end
@@ -1451,7 +1442,7 @@ delimiters (the byte range of `string_node` itself includes them).
 Returns `nothing` when the literal is malformed, e.g. unterminated.
 """
 function string_literal_payload_range(string_node::SyntaxTree)
-    source = JS.prov_end(string_node)
+    source = BS.prov_end(string_node)
     JS.head(source) === :string && JS.numchildren(source) >= 2 || return nothing
     opening, closing = source[1], source[end]
     JS.head(opening) in (Symbol("\""), Symbol("\"\"\"")) || return nothing

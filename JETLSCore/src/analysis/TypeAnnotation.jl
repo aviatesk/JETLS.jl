@@ -154,7 +154,7 @@ using Compiler: Compiler as CC
 using JET: JET
 using ..JETLSCore: InferredContextCache, InferredContextCacheData, SyntaxTree,
     TraversalReturn, TreeAnnotations
-using ..JETLSCore: Analyzer, JL, JS
+using ..JETLSCore: Analyzer, BS, JL, JS
 using ..JETLSCore: is_user_lowering_error, report_lowering_bug
 using ..JETLSCore: get_name_val, is_string_literal, iterate_toplevel_tree,
     jl_lower_for_scope_resolution, load, rewrite_local_closures_to_opaque, store!, traverse,
@@ -920,16 +920,23 @@ function register_oc_body_trees!(
     for i = 1:length(src.code)
         stmt = src.code[i]
         node = block_citree[i]
-        stmt isa Method || continue
-        ocmeth = stmt
-        if ocmeth.is_for_opaque_closure
-            JS.head(node) === :opaque_closure_method || continue
-            body_citree = @something find_code_info_child(node) continue
-            haskey(oc_body_trees, ocmeth) && continue # avoid re-recursing on cycles
-            oc_body_trees[ocmeth] = body_citree
-            inner_src = Base.uncompressed_ir(ocmeth)
-            register_oc_body_trees!(oc_body_trees, body_citree, inner_src)
+        # `:opaque_closure_method` is the 5th argument of `:new_opaque_closure`,
+        # which may be the RHS of an assignment
+        if Meta.isexpr(stmt, :(=), 2) && JS.head(node) === :(=) && JS.numchildren(node) == 2
+            stmt = stmt.args[2]
+            node = node[2]
         end
+        Meta.isexpr(stmt, :new_opaque_closure) && length(stmt.args) >= 5 || continue
+        JS.head(node) === :new_opaque_closure && JS.numchildren(node) >= 5 || continue
+        ocmeth = stmt.args[5]
+        ocmeth isa Method && ocmeth.is_for_opaque_closure || continue
+        oc_node = node[5]
+        JS.head(oc_node) === :opaque_closure_method || continue
+        body_citree = @something find_code_info_child(oc_node) continue
+        haskey(oc_body_trees, ocmeth) && continue # avoid re-recursing on cycles
+        oc_body_trees[ocmeth] = body_citree
+        inner_src = Base.uncompressed_ir(ocmeth)
+        register_oc_body_trees!(oc_body_trees, body_citree, inner_src)
     end
     return oc_body_trees
 end
@@ -1550,7 +1557,7 @@ function collect_provenance_indexes(inferred_tree::SyntaxTree, annotations::Tree
     surface_kind_index = Dict{UnitRange{Int},Symbol}()
     macrocall_types = Dict{UnitRange{Int},Vector{Any}}()
     traverse(inferred_tree) do st::SyntaxTree
-        provs = JS.flattened_provenance(st)
+        provs = BS.flattened_provenance(st)
         if !isempty(provs)
             prov = first(provs)
             prov_rng = JS.byte_range(prov)

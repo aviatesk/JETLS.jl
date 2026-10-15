@@ -7,12 +7,12 @@
 """
     mapchildren(f, ex, indices::UnitRange{Int})
 
-Like `JS.mapchildren(f, ex)`, but applies `f` only to children at the
+Like `BS.mapchildren(f, ex)`, but applies `f` only to children at the
 given `indices`, leaving other children unchanged.
 """
 function mapchildren(f, ex::SyntaxTree, indices::UnitRange{<:Integer})
     i = Ref(0)
-    JS.mapchildren(ex) do c
+    BS.mapchildren(ex) do c
         i[] += 1
         i[] in indices ? f(c) : c
     end
@@ -21,10 +21,10 @@ end
 # `@ast` copies the source tree's `SyntaxContext`. Use a `:tombstone` provenance
 # anchor without a scope layer so generated syntax receives the macro-definition
 # layer while retaining the original macrocall's source range.
-function _macro_generated_source(ctx::JL.MacroContext)
+function _macro_generated_source(ctx::BS.MacroContext)
     mc = ctx.macrocall::SyntaxTree
-    sc = JS.SyntaxContext(nothing, nothing, JS.edition(mc), false)
-    return SyntaxTree(:tombstone, nothing, nothing, JS.sourceref(mc), sc)
+    sc = BS.SyntaxContext(nothing, nothing, BS.edition(mc), false)
+    return SyntaxTree(:tombstone, nothing, nothing, BS.sourceref(mc), sc)
 end
 
 const macro_issue_contract = """
@@ -149,24 +149,24 @@ const NEW_STYLE_MACRO_BINDINGS = (
     Base => Symbol("@eval"),
     Base => Symbol("@generated"),
     Base => Symbol("@goto"),
+    Base => Symbol("@inline"),
     Base => Symbol("@isdefined"),
+    Base => Symbol("@label"),
     Base => Symbol("@locals"),
+    Base => Symbol("@noinline"),
     Base => Symbol("@nospecialize"),
     # src/utils/jl-syntax-macros.jl
     Core => Symbol("@doc"),
     Base => Symbol("@assert"),
     Base => Symbol("@assume_effects"),
     Base => Symbol("@inbounds"),
-    Base => Symbol("@inline"),
     Base => Symbol("@invoke"),
     Base => Symbol("@invokelatest"),
     Base => Symbol("@Kwargs"),
     Base => Symbol("@kwdef"),
-    Base => Symbol("@label"),
     Base => Symbol("@lazy_str"),
     Base => Symbol("@lock"),
     Base => Symbol("@NamedTuple"),
-    Base => Symbol("@noinline"),
     Base => Symbol("@propagate_inbounds"),
     Base => Symbol("@show"),
     Base => Symbol("@something"),
@@ -190,61 +190,42 @@ const NEW_STYLE_MACRO_BINDINGS = (
     Test => Symbol("@testset"),
 )
 
-function Base.var"@specialize"(__context__::JL.MacroContext)
+function Base.var"@specialize"(__context__::BS.MacroContext)
     JL.@ast(__context__,
             __context__.macrocall::SyntaxTree,
             [:meta "specialize"::identifier])
 end
 
-function Base.var"@specialize"(__context__::JL.MacroContext, ex::SyntaxTree)
+function Base.var"@specialize"(__context__::BS.MacroContext, ex::SyntaxTree)
     JL.@ast(__context__, __context__.macrocall::SyntaxTree, ex)
 end
 
 function Base.var"@specialize"(
-        __context__::JL.MacroContext,
+        __context__::BS.MacroContext,
         ex1::SyntaxTree, ex2::SyntaxTree, exs::SyntaxTree...
     )
     JL.@ast(__context__, __context__.macrocall::SyntaxTree,
             [:block ex1 ex2 exs...])
 end
 
-# `@inline` / `@noinline` / `Base.@propagate_inbounds` decorate a function definition
-# or a code block with codegen hints. The standard expansion rewrites the wrapped function
-# body to inject `Expr(:meta, …)` markers; that produces synthetic nodes whose byte ranges
-# don't anchor in the source, breaking surface lookups (inlay hints, hover, …) on the inner
-# funcdef. For static analysis the markers have no semantic effect, so we drop them and let
-# the wrapped expression flow through with its own provenance intact.
-# The 0-arg form keeps the `:meta` so scope resolution treats it like the original.
-function Base.var"@inline"(__context__::JL.MacroContext)
-    JL.@ast(__context__, __context__.macrocall::SyntaxTree,
-            [:meta "inline"::identifier])
-end
-
-function Base.var"@inline"(__context__::JL.MacroContext, ex::SyntaxTree)
+# `Base.@propagate_inbounds` decorates a function definition, and `@inbounds` a code block,
+# with codegen hints. The standard expansions inject `Expr(:meta, …)` or `Expr(:inbounds, …)`
+# markers around the wrapped expression; that produces synthetic nodes whose byte ranges
+# don't anchor in the source, breaking surface lookups (inlay hints, hover, …) on the
+# wrapped code. For static analysis the markers have no semantic effect, so we drop them
+# and let the wrapped expression flow through with its own provenance intact.
+function Base.var"@propagate_inbounds"(__context__::BS.MacroContext, ex::SyntaxTree)
     JL.@ast(__context__, ex, ex)
 end
 
-function Base.var"@noinline"(__context__::JL.MacroContext)
-    JL.@ast(__context__, __context__.macrocall::SyntaxTree,
-            [:meta "noinline"::identifier])
-end
-
-function Base.var"@noinline"(__context__::JL.MacroContext, ex::SyntaxTree)
-    JL.@ast(__context__, ex, ex)
-end
-
-function Base.var"@propagate_inbounds"(__context__::JL.MacroContext, ex::SyntaxTree)
-    JL.@ast(__context__, ex, ex)
-end
-
-function Base.var"@inbounds"(__context__::JL.MacroContext, ex::SyntaxTree)
+function Base.var"@inbounds"(__context__::BS.MacroContext, ex::SyntaxTree)
     JL.@ast(__context__, ex, ex)
 end
 
 # Keep the lock expression in the enclosing scope, but wrap only the protected
 # body in a local scope to mirror the `try` scope introduced by Base's macro.
 function Base.var"@lock"(
-        __context__::JL.MacroContext, lock::SyntaxTree, body::SyntaxTree
+        __context__::BS.MacroContext, lock::SyntaxTree, body::SyntaxTree
     )
     mc = __context__.macrocall::SyntaxTree
     return JL.@ast(__context__, mc,
@@ -255,7 +236,7 @@ function Base.var"@lock"(
                 [:block body]]])
 end
 
-function Base.var"@lock"(__context__::JL.MacroContext, args::SyntaxTree...)
+function Base.var"@lock"(__context__::BS.MacroContext, args::SyntaxTree...)
     mc = __context__.macrocall::SyntaxTree
     push_macro_error!(mc, "`@lock` expects exactly two arguments: `lock body`")
     isempty(args) && return JL.@ast(__context__, mc, nothing::value)
@@ -292,13 +273,13 @@ end
 # rejected so the user gets immediate LSP feedback.
 const _SPAWN_THREADPOOLS = ("interactive", "default", "samepool")
 
-function Base.Threads.var"@spawn"(__context__::JL.MacroContext, ex::SyntaxTree)
+function Base.Threads.var"@spawn"(__context__::BS.MacroContext, ex::SyntaxTree)
     return JL.@ast(__context__, __context__.macrocall::SyntaxTree,
         unwrap_interpolations(ex))
 end
 
 function Base.Threads.var"@spawn"(
-        __context__::JL.MacroContext,
+        __context__::BS.MacroContext,
         threadpool::SyntaxTree, ex::SyntaxTree
     )
     _validate_spawn_threadpool(threadpool)
@@ -331,40 +312,13 @@ function _validate_spawn_threadpool(threadpool::SyntaxTree)
     nothing
 end
 
-function Base.Threads.var"@spawn"(__context__::JL.MacroContext, args::SyntaxTree...)
+function Base.Threads.var"@spawn"(__context__::BS.MacroContext, args::SyntaxTree...)
     mc = __context__.macrocall::SyntaxTree
     push_macro_error!(mc, "wrong number of arguments in `@spawn`")
     # Recovery: flow whatever the user wrote through scope analysis. 0-arg →
     # `nothing`, ≥3-arg → a block of every arg so identifiers inside stay visible.
     isempty(args) && return JL.@ast(__context__, mc, nothing::value)
     return JL.@ast(__context__, mc, [:block args... nothing::value])
-end
-
-# New-style implementation of `Base.@label`. Mirrors `Base.@goto` in
-# `JuliaLowering/src/syntax_macros.jl`: `@label name` lowers to a
-# `:symboliclabel` so that scope analysis treats the name as a goto target.
-#
-# The block forms documented in `Base.@label` (`@label expr`, `@label name
-# expr`) are intentionally not supported here — the goto-target form is the
-# common case and the only one needed for most LSP analyses.
-function Base.var"@label"(__context__::JL.MacroContext, ex::SyntaxTree)
-    if JS.head(ex) !== :identifier
-        push_macro_error!(ex, "`@label` requires an identifier")
-        # Recovery: let the expression flow through so any identifier inside still
-        # reaches scope analysis. Goto-target semantics are lost.
-        return JL.@ast(__context__, __context__.macrocall::SyntaxTree, ex)
-    end
-    # The `@label` form is the label's provenance; the identifier keeps its own
-    # hygiene layer.
-    return JL.@ast(__context__, __context__.macrocall::SyntaxTree, [:symboliclabel ex])
-end
-
-function Base.var"@label"(__context__::JL.MacroContext, args::SyntaxTree...)
-    mc = __context__.macrocall::SyntaxTree
-    push_macro_error!(mc,
-        "`@label` currently only supports the `@label name` form")
-    isempty(args) && return JL.@ast(__context__, mc, nothing::value)
-    return JL.@ast(__context__, mc, [:block args...])
 end
 
 # New-style implementation of `Base.@something`. The macro is sometimes called with arguments
@@ -374,7 +328,7 @@ end
 # CFG, so LSP analyses (`lowering/unreachable-code`, `lowering/undef-local-var`, ...)
 # account for which paths each arg's body actually executes on.  The fresh `val_i` names
 # live in the macro's scope layer so they cannot clash with user code.
-function Base.var"@something"(__context__::JL.MacroContext, args::SyntaxTree...)
+function Base.var"@something"(__context__::BS.MacroContext, args::SyntaxTree...)
     src = _macro_generated_source(__context__)
     expr = JL.@ast(__context__, src,
         [:call
@@ -406,7 +360,7 @@ end
 # loop using JuliaSyntax, then copy each parsed interpolation back into the macro
 # context with source ranges remapped when source text is available and scope adopted
 # from the call site.
-function Base.var"@lazy_str"(__context__::JL.MacroContext, text::SyntaxTree)
+function Base.var"@lazy_str"(__context__::BS.MacroContext, text::SyntaxTree)
     mc = __context__.macrocall::SyntaxTree
     if !(JS.head(text) === :value && text.value isa String)
         push_macro_error!(text, "`@lazy_str` expects a string literal")
@@ -422,7 +376,7 @@ function Base.var"@lazy_str"(__context__::JL.MacroContext, text::SyntaxTree)
         [:call [:top "LazyString"::identifier] parts...])
 end
 
-function Base.var"@lazy_str"(__context__::JL.MacroContext, args::SyntaxTree...)
+function Base.var"@lazy_str"(__context__::BS.MacroContext, args::SyntaxTree...)
     mc = __context__.macrocall::SyntaxTree
     push_macro_error!(mc, "`@lazy_str` expects exactly one string argument")
     isempty(args) && return JL.@ast(__context__, mc, nothing::value)
@@ -430,7 +384,7 @@ function Base.var"@lazy_str"(__context__::JL.MacroContext, args::SyntaxTree...)
 end
 
 function _lazy_str_parts(
-        ctx::JL.MacroContext, text::SyntaxTree, value::String, source_map::Dict{Int,Int}
+        ctx::BS.MacroContext, text::SyntaxTree, value::String, source_map::Dict{Int,Int}
     )
     parts = SyntaxTree[]
     isempty(value) && return parts
@@ -550,53 +504,53 @@ function _lazy_str_literal_part(
         text::SyntaxTree, value::String,
         source_map::Dict{Int,Int}, startidx::Int, stopidx::Int
     )
-    src = JS.sourceref(text)
-    srcref = src isa JS.SourceRef ?
+    src = BS.sourceref(text)
+    srcref = src isa BS.SourceRef ?
         _lazy_str_source_ref(text, src, value, source_map, startidx, stopidx) : text
     return SyntaxTree(:value, nothing, value[startidx:stopidx], srcref, text.context)
 end
 
 function _lazy_str_parse_interpolation(
-        ctx::JL.MacroContext, text::SyntaxTree, value::String,
+        ctx::BS.MacroContext, text::SyntaxTree, value::String,
         source_map::Dict{Int,Int}, idx::Int
     )
     parsed, nextidx = try
-        JS.parseatom(JS.SyntaxTree, value, idx; ignore_errors=false)
+        JS.parseatom(SyntaxTree, value, idx; ignore_errors=false)
     catch err
         msg = first(split(sprint(locked_showerror, err), '\n'))
         push_macro_error!(text, "`@lazy_str`: failed to parse interpolation: $msg")
         return nothing
     end
-    src = JS.sourceref(text)
-    copied = if src isa JS.SourceRef
+    src = BS.sourceref(text)
+    copied = if src isa BS.SourceRef
         _lazy_str_copy_with_source(parsed, text, src, value, source_map)
     else
         parsed
     end
     # `adopt_scope` would keep the scope-less parse context's `unexpanded`, leaving
     # interpolations from old-style macro output attributed to the parsed string
-    return JS.fill_context(copied, (ctx.macrocall::SyntaxTree).context), nextidx
+    return BS.fill_context(copied, (ctx.macrocall::SyntaxTree).context), nextidx
 end
 
 function _lazy_str_copy_with_source(
-        node::JS.SyntaxTree, text::SyntaxTree, src::JS.SourceRef,
+        node::SyntaxTree, text::SyntaxTree, src::BS.SourceRef,
         value::String, source_map::Dict{Int,Int}
     )
     srcref = _lazy_str_source_ref(text, src, value, source_map, JS.first_byte(node), JS.last_byte(node))
     children = if JS.is_leaf(node)
         nothing
     else
-        cs = JS.SyntaxList()
+        cs = SyntaxList()
         for child in JS.children(node)
             push!(cs, _lazy_str_copy_with_source(child, text, src, value, source_map))
         end
         cs
     end
-    return JL.@mknode(node; source=srcref, children)
+    return BS.@mknode(node; source=srcref, children)
 end
 
 function _lazy_str_source_ref(
-        text::SyntaxTree, src::JS.SourceRef, value::String, source_map::Dict{Int,Int},
+        text::SyntaxTree, src::BS.SourceRef, value::String, source_map::Dict{Int,Int},
         startidx::Int, stopbyte::Int
     )
     stopidx = thisind(value, stopbyte)
@@ -605,7 +559,7 @@ function _lazy_str_source_ref(
     raw_after = get(source_map, afteridx, afteridx)
     first_byte = JS.first_byte(text) + raw_start - 1
     last_byte = JS.first_byte(text) + raw_after - 2
-    return JS.SourceRef(src.file, UInt32(first_byte), UInt32(last_byte))
+    return BS.SourceRef(src.code, UInt32(first_byte), UInt32(last_byte))
 end
 
 # Stub for `Base.@assert`. Mirrors the real expansion
@@ -619,14 +573,14 @@ end
 # accepts any number of trailing message arguments and silently uses only the first;
 # we mirror that leniency, but route extras through a leading `block` so identifiers
 # inside (e.g. an interpolated `"got $y"`) still get scope-resolved.
-function Base.var"@assert"(__context__::JL.MacroContext)
+function Base.var"@assert"(__context__::BS.MacroContext)
     mc = __context__.macrocall::SyntaxTree
     push_macro_error!(mc, "`@assert`: at least one argument is required")
     return JL.@ast(__context__, mc, nothing::value)
 end
 
 function Base.var"@assert"(
-        __context__::JL.MacroContext, ex::SyntaxTree, msgs::SyntaxTree...
+        __context__::BS.MacroContext, ex::SyntaxTree, msgs::SyntaxTree...
     )
     src = _macro_generated_source(__context__)
     msg_arg = isempty(msgs) ?
@@ -649,7 +603,7 @@ end
 # user-written expression to flow through with its provenance intact, so we
 # drop the printing and route the args through a `block` whose final value
 # naturally matches Base's return semantics.
-function Base.var"@show"(__context__::JL.MacroContext, exs::SyntaxTree...)
+function Base.var"@show"(__context__::BS.MacroContext, exs::SyntaxTree...)
     mc = __context__.macrocall::SyntaxTree
     isempty(exs) && return JL.@ast(__context__, mc, nothing::value)
     length(exs) == 1 && return JL.@ast(__context__, mc, exs[1])
@@ -672,13 +626,13 @@ end
 # For the two-argument (documenting) form, the docstring and the documented expression
 # flow through, so definitions and docstring interpolations are analyzed. A documented
 # signature is neither defined nor called, so it is referenced like a lookup instead.
-function Core.var"@doc"(__context__::JL.MacroContext)
+function Core.var"@doc"(__context__::BS.MacroContext)
     mc = __context__.macrocall::SyntaxTree
     push_macro_error!(mc, "`@doc` requires at least one argument")
     return JL.@ast(__context__, mc, nothing::value)
 end
 
-function Core.var"@doc"(__context__::JL.MacroContext, ex::SyntaxTree)
+function Core.var"@doc"(__context__::BS.MacroContext, ex::SyntaxTree)
     # the legacy `@doc str -> ex` documenting form
     if JS.head(ex) === :-> && JS.numchildren(ex) == 2
         return Core.var"@doc"(__context__, ex[1], ex[2])
@@ -693,7 +647,7 @@ function Core.var"@doc"(__context__::JL.MacroContext, ex::SyntaxTree)
     return JL.@ast(__context__, mc, [:block target sig docobj])
 end
 
-function Core.var"@doc"(__context__::JL.MacroContext, meta::SyntaxTree, ex::SyntaxTree)
+function Core.var"@doc"(__context__::BS.MacroContext, meta::SyntaxTree, ex::SyntaxTree)
     mc = __context__.macrocall::SyntaxTree
     src = _macro_generated_source(__context__)
     items = _doc_documented!(SyntaxTree[meta], __context__, src, ex)
@@ -703,7 +657,7 @@ end
 # `define` only controls whether Base evaluates the definition, which is analyzed either
 # way.
 function Core.var"@doc"(
-        __context__::JL.MacroContext, meta::SyntaxTree, ex::SyntaxTree, define::SyntaxTree
+        __context__::BS.MacroContext, meta::SyntaxTree, ex::SyntaxTree, define::SyntaxTree
     )
     if !(JS.head(define) === :value && define.value isa Bool)
         push_macro_error!(define, "`@doc` expects a `Bool` literal as its third argument")
@@ -713,7 +667,7 @@ end
 
 # Like Base, drop the leading two arguments, which nested macro calls may produce.
 function Core.var"@doc"(
-        __context__::JL.MacroContext, ::SyntaxTree, ::SyntaxTree,
+        __context__::BS.MacroContext, ::SyntaxTree, ::SyntaxTree,
         meta::SyntaxTree, ex::SyntaxTree, args::SyntaxTree...
     )
     return Core.var"@doc"(__context__, meta, ex, args...)
@@ -723,7 +677,7 @@ end
 # undocumentable, and each element of a tuple or a single-expression block is documented
 # on its own.
 function _doc_documented!(
-        items::Vector{SyntaxTree}, ctx::JL.MacroContext, src::SyntaxTree, ex::SyntaxTree
+        items::Vector{SyntaxTree}, ctx::BS.MacroContext, src::SyntaxTree, ex::SyntaxTree
     )
     k = JS.head(ex)
     if k === :call || k === :where
@@ -765,7 +719,7 @@ end
 # types matter here. As in Base, the parameters of a curly callee serve as the type
 # parameters when no `where` clause is given.
 function _doc_lookup_signature(
-        ctx::JL.MacroContext, src::SyntaxTree, ex::SyntaxTree; in_where::Bool = false
+        ctx::BS.MacroContext, src::SyntaxTree, ex::SyntaxTree; in_where::Bool = false
     )
     k = JS.head(ex)
     if k === :where && JS.numchildren(ex) ≥ 2
@@ -792,7 +746,7 @@ function _doc_lookup_signature(
 end
 
 # Mirrors `Base.Docs.argtype`, with `nothing` standing for `Any`.
-function _doc_lookup_argtype(ctx::JL.MacroContext, src::SyntaxTree, arg::SyntaxTree)
+function _doc_lookup_argtype(ctx::BS.MacroContext, src::SyntaxTree, arg::SyntaxTree)
     JS.numchildren(arg) ≥ 1 || return nothing
     k = JS.head(arg)
     if k === :(::)
@@ -833,48 +787,48 @@ end
 # overrides never reach that named tuple: Base lets the last one win, so their
 # duplicates are only warned about.
 function Base.CoreLogging.var"@debug"(
-        __context__::JL.MacroContext, message::SyntaxTree, exs::SyntaxTree...
+        __context__::BS.MacroContext, message::SyntaxTree, exs::SyntaxTree...
     )
     return _logmsg_stub(__context__, (message, exs...), "@debug", 1)
 end
 
-function Base.CoreLogging.var"@debug"(__context__::JL.MacroContext)
+function Base.CoreLogging.var"@debug"(__context__::BS.MacroContext)
     mc = __context__.macrocall::SyntaxTree
     push_macro_error!(mc, "`@debug` requires at least one argument: a `message`")
     return JL.@ast(__context__, mc, nothing::value)
 end
 
 function Base.CoreLogging.var"@info"(
-        __context__::JL.MacroContext, message::SyntaxTree, exs::SyntaxTree...
+        __context__::BS.MacroContext, message::SyntaxTree, exs::SyntaxTree...
     )
     return _logmsg_stub(__context__, (message, exs...), "@info", 1)
 end
 
-function Base.CoreLogging.var"@info"(__context__::JL.MacroContext)
+function Base.CoreLogging.var"@info"(__context__::BS.MacroContext)
     mc = __context__.macrocall::SyntaxTree
     push_macro_error!(mc, "`@info` requires at least one argument: a `message`")
     return JL.@ast(__context__, mc, nothing::value)
 end
 
 function Base.CoreLogging.var"@warn"(
-        __context__::JL.MacroContext, message::SyntaxTree, exs::SyntaxTree...
+        __context__::BS.MacroContext, message::SyntaxTree, exs::SyntaxTree...
     )
     return _logmsg_stub(__context__, (message, exs...), "@warn", 1)
 end
 
-function Base.CoreLogging.var"@warn"(__context__::JL.MacroContext)
+function Base.CoreLogging.var"@warn"(__context__::BS.MacroContext)
     mc = __context__.macrocall::SyntaxTree
     push_macro_error!(mc, "`@warn` requires at least one argument: a `message`")
     return JL.@ast(__context__, mc, nothing::value)
 end
 
 function Base.CoreLogging.var"@error"(
-        __context__::JL.MacroContext, message::SyntaxTree, exs::SyntaxTree...
+        __context__::BS.MacroContext, message::SyntaxTree, exs::SyntaxTree...
     )
     return _logmsg_stub(__context__, (message, exs...), "@error", 1)
 end
 
-function Base.CoreLogging.var"@error"(__context__::JL.MacroContext)
+function Base.CoreLogging.var"@error"(__context__::BS.MacroContext)
     mc = __context__.macrocall::SyntaxTree
     push_macro_error!(mc, "`@error` requires at least one argument: a `message`")
     return JL.@ast(__context__, mc, nothing::value)
@@ -884,13 +838,13 @@ end
 # expression (a `LogLevel` constant or computed value), so it still needs to
 # flow through to scope resolution.
 function Base.CoreLogging.var"@logmsg"(
-        __context__::JL.MacroContext, level::SyntaxTree, message::SyntaxTree,
+        __context__::BS.MacroContext, level::SyntaxTree, message::SyntaxTree,
         exs::SyntaxTree...
     )
     return _logmsg_stub(__context__, (level, message, exs...), "@logmsg", 2)
 end
 
-function Base.CoreLogging.var"@logmsg"(__context__::JL.MacroContext, args::SyntaxTree...)
+function Base.CoreLogging.var"@logmsg"(__context__::BS.MacroContext, args::SyntaxTree...)
     mc = __context__.macrocall::SyntaxTree
     push_macro_error!(mc,
         "`@logmsg` requires at least two arguments: a `level` and a `message`")
@@ -902,7 +856,7 @@ const _LOGMSG_METADATA_KEYS = (:_group, :_id, :_module, :_file, :_line)
 
 # `nfixed` leading `exs` (the level and the message) are not key-value pairs.
 function _logmsg_stub(
-        ctx::JL.MacroContext, exs::Tuple{Vararg{SyntaxTree}}, name::AbstractString,
+        ctx::BS.MacroContext, exs::Tuple{Vararg{SyntaxTree}}, name::AbstractString,
         nfixed::Int
     )
     mc = ctx.macrocall::SyntaxTree
@@ -988,7 +942,7 @@ end
 # surface-syntax call. The same call shapes Base's `destructure_callex` handles are
 # accepted (`f(args...; kwargs...)`, `x.f`, `xs[i]`, `x.f = v`, `xs[i] = v`); other shapes
 # are rejected at expansion time with a clear message.
-function Base.var"@invoke"(__context__::JL.MacroContext, ex::SyntaxTree)
+function Base.var"@invoke"(__context__::BS.MacroContext, ex::SyntaxTree)
     destructured = _destructure_invoke_callex(__context__, ex, "@invoke")
     destructured === nothing &&
         return JL.@ast(__context__, __context__.macrocall::SyntaxTree, ex)
@@ -996,7 +950,7 @@ function Base.var"@invoke"(__context__::JL.MacroContext, ex::SyntaxTree)
     return _build_invoke_call(__context__, ex, f, args, kwargs)
 end
 
-function Base.var"@invoke"(__context__::JL.MacroContext, args::SyntaxTree...)
+function Base.var"@invoke"(__context__::BS.MacroContext, args::SyntaxTree...)
     mc = __context__.macrocall::SyntaxTree
     push_macro_error!(mc,
         "`@invoke` expects exactly one argument: `f(args...; kwargs...)` (or one of `x.f`, `xs[i]`, `x.f = v`, `xs[i] = v`)")
@@ -1004,7 +958,7 @@ function Base.var"@invoke"(__context__::JL.MacroContext, args::SyntaxTree...)
     return JL.@ast(__context__, mc, [:block args...])
 end
 
-function Base.var"@invokelatest"(__context__::JL.MacroContext, ex::SyntaxTree)
+function Base.var"@invokelatest"(__context__::BS.MacroContext, ex::SyntaxTree)
     destructured = _destructure_invoke_callex(__context__, ex, "@invokelatest")
     destructured === nothing &&
         return JL.@ast(__context__, __context__.macrocall::SyntaxTree, ex)
@@ -1012,7 +966,7 @@ function Base.var"@invokelatest"(__context__::JL.MacroContext, ex::SyntaxTree)
     return _build_invokelatest_call(__context__, f, args, kwargs)
 end
 
-function Base.var"@invokelatest"(__context__::JL.MacroContext, args::SyntaxTree...)
+function Base.var"@invokelatest"(__context__::BS.MacroContext, args::SyntaxTree...)
     mc = __context__.macrocall::SyntaxTree
     push_macro_error!(mc,
         "`@invokelatest` expects exactly one argument: `f(args...; kwargs...)` (or one of `x.f`, `xs[i]`, `x.f = v`, `xs[i] = v`)")
@@ -1027,7 +981,7 @@ end
 # Returns `nothing` when `ex` doesn't match any accepted shape; the caller is
 # responsible for falling back to a recovery expansion.
 function _destructure_invoke_callex(
-        ctx::JL.MacroContext, ex::SyntaxTree, m::AbstractString
+        ctx::BS.MacroContext, ex::SyntaxTree, m::AbstractString
     )
     k = JS.head(ex)
     if k === :call
@@ -1086,7 +1040,7 @@ end
 # arg has its annotation stripped, with `T` going into the types tuple; a bare `x` arg
 # gets `Core.Typeof(x)` as its placeholder type.
 function _build_invoke_call(
-        ctx::JL.MacroContext, srcref::SyntaxTree,
+        ctx::BS.MacroContext, srcref::SyntaxTree,
         f::SyntaxTree, args::Vector{SyntaxTree}, kwargs::Vector{SyntaxTree}
     )
     types = SyntaxTree[]
@@ -1123,7 +1077,7 @@ end
 # optimization (which special-cases globally-bound `f` via `GlobalRef`) since it doesn't
 # affect what user identifiers reach scope/type analysis.
 function _build_invokelatest_call(
-        ctx::JL.MacroContext,
+        ctx::BS.MacroContext,
         f::SyntaxTree, args::Vector{SyntaxTree}, kwargs::Vector{SyntaxTree}
     )
     mc = ctx.macrocall::SyntaxTree
@@ -1143,7 +1097,7 @@ end
 # New-style `@kwdef` macro that preserves provenance information.
 # This strips default values from struct fields and generates keyword constructors,
 # matching the semantics of Base.@kwdef.
-function Base.var"@kwdef"(__context__::JL.MacroContext, ex::SyntaxTree)
+function Base.var"@kwdef"(__context__::BS.MacroContext, ex::SyntaxTree)
     if JS.head(ex) !== :struct
         push_macro_error!(ex, "Invalid usage of `@kwdef`")
         # Recovery: let the argument flow through unchanged so e.g. a half-typed
@@ -1176,7 +1130,7 @@ function Base.var"@kwdef"(__context__::JL.MacroContext, ex::SyntaxTree)
 end
 
 function _kwdef_collect_fields!(
-        ctx::JL.MacroContext, body::SyntaxTree, field_names::Vector{SyntaxTree},
+        ctx::BS.MacroContext, body::SyntaxTree, field_names::Vector{SyntaxTree},
         field_defaults::Vector{Union{Nothing,SyntaxTree}},
         stripped::Vector{SyntaxTree}
     )
@@ -1230,7 +1184,7 @@ function _kwdef_extract_name(st::SyntaxTree)
 end
 
 function _kwdef_make_constructors(
-        ctx::JL.MacroContext, type_sig::SyntaxTree, field_names::Vector{SyntaxTree},
+        ctx::BS.MacroContext, type_sig::SyntaxTree, field_names::Vector{SyntaxTree},
         field_defaults::Vector{Union{Nothing,SyntaxTree}}
     )
     mc = __source__ = ctx.macrocall::SyntaxTree
@@ -1293,13 +1247,13 @@ end
 #
 # Base throws on any malformed declaration and lets duplicate field names fail when the
 # type is constructed; we report both and build the type from the remaining fields.
-function Base.var"@NamedTuple"(__context__::JL.MacroContext, ex::SyntaxTree)
+function Base.var"@NamedTuple"(__context__::BS.MacroContext, ex::SyntaxTree)
     nt = _namedtuple_type(__context__, ex, "@NamedTuple")
     nt === nothing && return JL.@ast(__context__, __context__.macrocall::SyntaxTree, ex)
     return nt
 end
 
-function Base.var"@NamedTuple"(__context__::JL.MacroContext, args::SyntaxTree...)
+function Base.var"@NamedTuple"(__context__::BS.MacroContext, args::SyntaxTree...)
     mc = __context__.macrocall::SyntaxTree
     push_macro_error!(mc, "`@NamedTuple` expects exactly one argument: `{...}` or `begin ... end`")
     isempty(args) && return JL.@ast(__context__, mc, nothing::value)
@@ -1309,7 +1263,7 @@ end
 # New-style implementation of `Base.@Kwargs`, mirroring Base's
 # `let NT = @NamedTuple{...}; Base.Pairs{keytype(NT), eltype(NT), Nothing, NT} end`.
 # `NT` lives in the macro's scope layer so it cannot clash with user code.
-function Base.var"@Kwargs"(__context__::JL.MacroContext, ex::SyntaxTree)
+function Base.var"@Kwargs"(__context__::BS.MacroContext, ex::SyntaxTree)
     nt = _namedtuple_type(__context__, ex, "@Kwargs")
     nt === nothing && return JL.@ast(__context__, __context__.macrocall::SyntaxTree, ex)
     src = _macro_generated_source(__context__)
@@ -1324,7 +1278,7 @@ function Base.var"@Kwargs"(__context__::JL.MacroContext, ex::SyntaxTree)
                 "NT"::identifier]]])
 end
 
-function Base.var"@Kwargs"(__context__::JL.MacroContext, args::SyntaxTree...)
+function Base.var"@Kwargs"(__context__::BS.MacroContext, args::SyntaxTree...)
     mc = __context__.macrocall::SyntaxTree
     push_macro_error!(mc, "`@Kwargs` expects exactly one argument: `{...}` or `begin ... end`")
     isempty(args) && return JL.@ast(__context__, mc, nothing::value)
@@ -1333,7 +1287,7 @@ end
 
 # Returns `nothing` (with the issue reported via the sink) when `ex` is not a `{...}` or
 # `begin...end` form.
-function _namedtuple_type(ctx::JL.MacroContext, ex::SyntaxTree, macroname::String)
+function _namedtuple_type(ctx::BS.MacroContext, ex::SyntaxTree, macroname::String)
     if JS.head(ex) ∉ (:braces, :block)
         push_macro_error!(ex, "`$macroname` expects `{...}` or `begin ... end`")
         return nothing
@@ -1392,7 +1346,7 @@ end
 # expansion from affecting the inference of the surrounding code, as full analysis does.
 # Unlike full analysis, the stubs cannot see the enclosing test set, so test sets that
 # specify `failfast=false` and test sets of a custom type are analyzed as fail-fast too.
-function Test.var"@test"(__context__::JL.MacroContext, ex::SyntaxTree, kws::SyntaxTree...)
+function Test.var"@test"(__context__::BS.MacroContext, ex::SyntaxTree, kws::SyntaxTree...)
     mc = __context__.macrocall::SyntaxTree
     seen_broken = seen_skip = seen_context = nothing
     rhss = SyntaxTree[]
@@ -1434,7 +1388,7 @@ function Test.var"@test"(__context__::JL.MacroContext, ex::SyntaxTree, kws::Synt
 end
 
 function Test.var"@test_broken"(
-        __context__::JL.MacroContext, ex::SyntaxTree, kws::SyntaxTree...
+        __context__::BS.MacroContext, ex::SyntaxTree, kws::SyntaxTree...
     )
     mc = __context__.macrocall::SyntaxTree
     rhss = SyntaxTree[]
@@ -1449,7 +1403,7 @@ end
 
 # The real macro does not evaluate `ex`, but the stub keeps it for scope analysis.
 function Test.var"@test_skip"(
-        __context__::JL.MacroContext, ex::SyntaxTree, kws::SyntaxTree...
+        __context__::BS.MacroContext, ex::SyntaxTree, kws::SyntaxTree...
     )
     mc = __context__.macrocall::SyntaxTree
     rhss = SyntaxTree[]
@@ -1463,7 +1417,7 @@ function Test.var"@test_skip"(
 end
 
 function Test.var"@test_throws"(
-        __context__::JL.MacroContext, extype::SyntaxTree, ex::SyntaxTree
+        __context__::BS.MacroContext, extype::SyntaxTree, ex::SyntaxTree
     )
     return _check_test_exception(__context__, ex, extype)
 end
@@ -1473,7 +1427,7 @@ const _TEST_THROWS_ACCEPTS_PATTERN =
 
 @static if _TEST_THROWS_ACCEPTS_PATTERN
 function Test.var"@test_throws"(
-        __context__::JL.MacroContext,
+        __context__::BS.MacroContext,
         extype::SyntaxTree, pattern::SyntaxTree, ex::SyntaxTree
     )
     return _check_test_exception(__context__, ex, extype, pattern)
@@ -1484,7 +1438,7 @@ end
 # are evaluated after the test expression. The `try` block evaluating the test expression
 # starts with a call to `JET.enter_test_exception`, which marks the expression as expected
 # to throw (see `test_exception_ranges`).
-function _check_test_exception(ctx::JL.MacroContext, ex::SyntaxTree, args::SyntaxTree...)
+function _check_test_exception(ctx::BS.MacroContext, ex::SyntaxTree, args::SyntaxTree...)
     src = _macro_generated_source(ctx)
     return JL.@ast(ctx, src, [:block
         [:try [:block [:call JET.enter_test_exception::value] ex] false::value [:block]]
@@ -1492,7 +1446,7 @@ function _check_test_exception(ctx::JL.MacroContext, ex::SyntaxTree, args::Synta
         [:call [:top "inferencebarrier"::identifier] nothing::value]])
 end
 
-function Test.var"@test_throws"(__context__::JL.MacroContext, args::SyntaxTree...)
+function Test.var"@test_throws"(__context__::BS.MacroContext, args::SyntaxTree...)
     mc = __context__.macrocall::SyntaxTree
     push_macro_error!(mc, _TEST_THROWS_ACCEPTS_PATTERN ?
         "`@test_throws` expects two or three arguments: `extype [pattern] ex`" :
@@ -1502,16 +1456,16 @@ function Test.var"@test_throws"(__context__::JL.MacroContext, args::SyntaxTree..
 end
 
 function Test.var"@test_warn"(
-        __context__::JL.MacroContext, msg::SyntaxTree, ex::SyntaxTree
+        __context__::BS.MacroContext, msg::SyntaxTree, ex::SyntaxTree
     )
     return _scope_test_expression(__context__, msg, ex)
 end
 
-function Test.var"@test_nowarn"(__context__::JL.MacroContext, ex::SyntaxTree)
+function Test.var"@test_nowarn"(__context__::BS.MacroContext, ex::SyntaxTree)
     return _scope_test_expression(__context__, ex)
 end
 
-function Test.var"@test_logs"(__context__::JL.MacroContext, args::SyntaxTree...)
+function Test.var"@test_logs"(__context__::BS.MacroContext, args::SyntaxTree...)
     mc = __context__.macrocall::SyntaxTree
     if isempty(args)
         push_macro_error!(mc, "`@test_logs` needs at least one argument")
@@ -1534,17 +1488,17 @@ end
 
 # The real macro catches the exception thrown by `ex` when deprecation warnings are enabled,
 # as `Pkg.test` does.
-function Test.var"@test_deprecated"(__context__::JL.MacroContext, ex::SyntaxTree)
+function Test.var"@test_deprecated"(__context__::BS.MacroContext, ex::SyntaxTree)
     return _preserve_test_expression_value(__context__, ex)
 end
 
 function Test.var"@test_deprecated"(
-        __context__::JL.MacroContext, pattern::SyntaxTree, ex::SyntaxTree
+        __context__::BS.MacroContext, pattern::SyntaxTree, ex::SyntaxTree
     )
     return _preserve_test_expression_value(__context__, pattern, ex)
 end
 
-function Test.var"@test_deprecated"(__context__::JL.MacroContext, args::SyntaxTree...)
+function Test.var"@test_deprecated"(__context__::BS.MacroContext, args::SyntaxTree...)
     mc = __context__.macrocall::SyntaxTree
     push_macro_error!(mc,
         "`@test_deprecated` expects one or two arguments: `[pattern] expr`")
@@ -1552,42 +1506,42 @@ function Test.var"@test_deprecated"(__context__::JL.MacroContext, args::SyntaxTr
     return JL.@ast(__context__, mc, [:block args...])
 end
 
-function Test.var"@inferred"(__context__::JL.MacroContext, ex::SyntaxTree)
+function Test.var"@inferred"(__context__::BS.MacroContext, ex::SyntaxTree)
     return _scope_test_expression(__context__, ex)
 end
 
 function Test.var"@inferred"(
-        __context__::JL.MacroContext, allow::SyntaxTree, ex::SyntaxTree
+        __context__::BS.MacroContext, allow::SyntaxTree, ex::SyntaxTree
     )
     return _scope_test_expression(__context__, allow, ex)
 end
 
-function Test.var"@inferred"(__context__::JL.MacroContext, args::SyntaxTree...)
+function Test.var"@inferred"(__context__::BS.MacroContext, args::SyntaxTree...)
     mc = __context__.macrocall::SyntaxTree
     push_macro_error!(mc, "`@inferred` expects one or two arguments: `[allow] ex`")
     isempty(args) && return JL.@ast(__context__, mc, nothing::value)
     return JL.@ast(__context__, mc, [:block args...])
 end
 
-function _catch_test_exception(ctx::JL.MacroContext, exs::SyntaxTree...)
+function _catch_test_exception(ctx::BS.MacroContext, exs::SyntaxTree...)
     src = _macro_generated_source(ctx)
     return JL.@ast(ctx, src, [:try [:block exs...] false::value [:block]])
 end
 
-function _discard_test_expression_value(ctx::JL.MacroContext, exs::SyntaxTree...)
+function _discard_test_expression_value(ctx::BS.MacroContext, exs::SyntaxTree...)
     src = _macro_generated_source(ctx)
     return JL.@ast(ctx, src, [:block
         _catch_test_exception(ctx, exs...)
         [:call [:top "inferencebarrier"::identifier] nothing::value]])
 end
 
-function _preserve_test_expression_value(ctx::JL.MacroContext, exs::SyntaxTree...)
+function _preserve_test_expression_value(ctx::BS.MacroContext, exs::SyntaxTree...)
     src = _macro_generated_source(ctx)
     return JL.@ast(ctx, src, [:call [:top "inferencebarrier"::identifier]
         _catch_test_exception(ctx, exs...)])
 end
 
-function _scope_test_expression(ctx::JL.MacroContext, exs::SyntaxTree...)
+function _scope_test_expression(ctx::BS.MacroContext, exs::SyntaxTree...)
     src = _macro_generated_source(ctx)
     return JL.@ast(ctx, src, [:let [:block] [:block exs...]])
 end
@@ -1609,7 +1563,7 @@ function _validate_test_kw(kw::SyntaxTree)
     return name_val(name)
 end
 
-function Test.var"@testset"(__context__::JL.MacroContext, args::SyntaxTree...)
+function Test.var"@testset"(__context__::BS.MacroContext, args::SyntaxTree...)
     mc = __context__.macrocall::SyntaxTree
     if isempty(args)
         push_macro_error!(mc, "No arguments to `@testset`")
@@ -1730,14 +1684,14 @@ const _ASSUME_EFFECTS_SETTINGS = (
     "removable", "total",
 )
 
-function Base.var"@assume_effects"(__context__::JL.MacroContext)
+function Base.var"@assume_effects"(__context__::BS.MacroContext)
     mc = __context__.macrocall::SyntaxTree
     push_macro_error!(mc, "`@assume_effects`: at least one argument is required")
     return JL.@ast(__context__, mc, nothing::value)
 end
 
 function Base.var"@assume_effects"(
-        __context__::JL.MacroContext, args::SyntaxTree...
+        __context__::BS.MacroContext, args::SyntaxTree...
     )
     mc = __context__.macrocall::SyntaxTree
     for i in 1:length(args)-1
@@ -1816,7 +1770,7 @@ end
 const _STATIC_IF_HEADS = (:if, :elseif, :?)
 const _STATIC_COND_HEADS = (:if, :elseif, :?, :&&, :||)
 
-function Base.var"@static"(__context__::JL.MacroContext, ex::SyntaxTree)
+function Base.var"@static"(__context__::BS.MacroContext, ex::SyntaxTree)
     mc = __context__.macrocall::SyntaxTree
     if JS.head(ex) ∉ _STATIC_COND_HEADS
         push_macro_error!(ex, "invalid `@static` macro")
@@ -1848,7 +1802,7 @@ function Base.var"@static"(__context__::JL.MacroContext, ex::SyntaxTree)
     end
 end
 
-function Base.var"@static"(__context__::JL.MacroContext, args::SyntaxTree...)
+function Base.var"@static"(__context__::BS.MacroContext, args::SyntaxTree...)
     mc = __context__.macrocall::SyntaxTree
     push_macro_error!(mc, "invalid `@static` macro")
     isempty(args) && return JL.@ast(__context__, mc, nothing::value)
@@ -1862,12 +1816,12 @@ end
 # otherwise, keep JuliaLowering's support for new-style macros in the condition.
 # Base lets evaluation errors propagate out of expansion; we recover per the macro issue
 # contract.
-function _static_eval_cond(ctx::JL.MacroContext, cond::SyntaxTree)
-    sc = (ctx.macrocall::SyntaxTree).context::JS.SyntaxContext
-    base_mod = (JS.base_layer(sc)::JS.ScopeLayer).mod
+function _static_eval_cond(ctx::BS.MacroContext, cond::SyntaxTree)
+    sc = (ctx.macrocall::SyntaxTree).context::BS.SyntaxContext
+    base_mod = (BS.base_layer(sc)::BS.ScopeLayer).mod
     val = try
         @static if VERSION >= v"1.14-"
-            eval_cond = JS.fill_context(cond, JS.SyntaxContext(base_mod, sc.edition))
+            eval_cond = BS.fill_context(cond, BS.SyntaxContext(base_mod, sc.edition))
             JL.eval(base_mod, eval_cond)
         else
             Core.eval(base_mod, JL.est_to_expr(cond))
