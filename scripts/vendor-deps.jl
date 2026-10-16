@@ -1,5 +1,14 @@
 #!/usr/bin/env julia
 
+const DEVELOPMENT_PREFERENCE_KEYS = (
+    "JETLSCore" => "JETLS_DEV_MODE",
+)
+
+# Dependencies loaded only in development mode, which installed releases never enable
+const DEVELOPMENT_DEPENDENCIES = (
+    "JETLSCore" => "Revise",
+)
+
 using Pkg
 using TOML
 using UUIDs
@@ -41,8 +50,8 @@ function is_extension_module(pkgid::Base.PkgId, mod::Module)
     return pkg_name != pkgid.name
 end
 
-# Loading JETLSCore alone misses dependencies that it loads only under development
-# preferences, e.g. Revise, which releases still need to vendor to resolve them.
+# Loading JETLSCore alone misses dependencies that it does not load unconditionally,
+# which releases still need to vendor to resolve them.
 function load_release_dependencies()
     dependencies = Pkg.dependencies()
     queue = collect(values(Pkg.project().dependencies))
@@ -457,11 +466,6 @@ function update_workspace_project!(
     end
 end
 
-const DEVELOPMENT_PREFERENCE_KEYS = (
-    "JETLSCore" => "JETLS_DEV_MODE",
-    "Revise" => "revise_structs",
-)
-
 function remove_development_preferences!(project::Dict{String, Any})::Bool
     preferences = get(project, "preferences", nothing)
     preferences isa Dict{String, Any} || return false
@@ -477,6 +481,21 @@ function remove_development_preferences!(project::Dict{String, Any})::Bool
         end
     end
     modified && isempty(preferences) && delete!(project, "preferences")
+    return modified
+end
+
+function remove_development_dependencies!(project::Dict{String, Any})::Bool
+    modified = false
+    for (package_name, dep_name) in DEVELOPMENT_DEPENDENCIES
+        get(project, "name", nothing) == package_name || continue
+        for section in ("deps", "compat", "sources")
+            entries = get(project, section, nothing)
+            if entries isa Dict{String, Any} && haskey(entries, dep_name)
+                delete!(entries, dep_name)
+                modified = true
+            end
+        end
+    end
     return modified
 end
 
@@ -665,6 +684,16 @@ function vendor_dependencies_from_branch(config::Config)
         catch e
             @warn "Could not fetch $workspace_project_path from $(config.source_branch): $e"
         end
+
+        workspace_project_file = joinpath(workspace_path, "Project.toml")
+        isfile(workspace_project_file) || continue
+        workspace_project_data = TOML.parsefile(workspace_project_file)
+        if remove_development_dependencies!(workspace_project_data)
+            open(workspace_project_file, "w") do io
+                TOML.print(io, workspace_project_data)
+            end
+            @info "Removed development-only dependencies from $workspace_project_path"
+        end
     end
 
     @info "\n[Step 2/5] Cleaning manifest files..."
@@ -700,6 +729,8 @@ function print_help()
       - Replace Project.toml files with versions from BRANCH when available,
         then rewrite their vendored dependency metadata
       - Remove development-only preferences from the root Project.toml
+      - Remove development-only dependencies, e.g. Revise, from the subpackage
+        Project.toml files
       - Save fetched project files as Project.toml.bak before rewriting them
       - Run Pkg.update() before rebuilding the vendored dependency set
       - Replace package directories in vendor/ and remove stale directories

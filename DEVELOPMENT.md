@@ -121,10 +121,11 @@ controlled by `JETLS_TEST_MODE`, not `JETLS_DEV_MODE`.
 See the "[`JETLS_TEST_MODE`](#jetls_test_mode)" section for details.
 
 `JETLS_DEV_MODE` defaults to `false` when no preference is configured. The
-master development project exports `JETLS_DEV_MODE = true` and
-`Revise.revise_structs = true`, so local checkouts automatically enable the
-Revise-based analysis used to develop JETLS. These development-only exported
-preferences are removed by `scripts/vendor-deps.jl` when preparing a release.
+master development project exports `JETLS_DEV_MODE = true`, so local checkouts
+automatically enable the Revise-based analysis used to develop JETLS. This
+development-only exported preference is removed by `scripts/vendor-deps.jl`
+when preparing a release, together with the Revise dependency of `JETLSCore`,
+so installed releases do not support `JETLS_DEV_MODE`.
 
 You can override `JETLS_DEV_MODE` locally using Preferences.jl:
 ```julia-repl
@@ -498,8 +499,9 @@ The `prepare-release.sh` script automates the following steps:
    ```
    This generates `vendor/` with local path references in `[sources]`.
 
-   The vendoring step also removes the development-only `JETLS_DEV_MODE` and
-   `Revise.revise_structs` preferences from the release `Project.toml`.
+   The vendoring step also removes the development-only `JETLS_DEV_MODE`
+   preference from the release `Project.toml` and the Revise dependency of
+   `JETLSCore`.
 
 3. Commit and push the vendor directory
    ```bash
