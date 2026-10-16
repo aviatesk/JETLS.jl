@@ -41,6 +41,26 @@ function is_extension_module(pkgid::Base.PkgId, mod::Module)
     return pkg_name != pkgid.name
 end
 
+# Loading JETLSCore alone misses dependencies that it loads only under development
+# preferences, e.g. Revise, which releases still need to vendor to resolve them.
+function load_release_dependencies()
+    dependencies = Pkg.dependencies()
+    queue = collect(values(Pkg.project().dependencies))
+    seen = Set{UUID}()
+    while !isempty(queue)
+        uuid = pop!(queue)
+        uuid in seen && continue
+        push!(seen, uuid)
+        info = dependencies[uuid]
+        pkgid = Base.PkgId(uuid, info.name)
+        if should_vendor(uuid, info.name) && !haskey(Base.loaded_modules, pkgid)
+            @info "Loading $(info.name), which loading JETLSCore does not load"
+            Base.require(pkgid)
+        end
+        append!(queue, values(info.dependencies))
+    end
+end
+
 function collect_packages_to_vendor()
     packages = Pair{String, UUID}[]
     for (pkgid, mod) in Base.loaded_modules
@@ -474,27 +494,28 @@ function validate_no_development_preferences(project::Dict{String, Any})
     return nothing
 end
 
-# Pkg 1.12 does not follow the `[sources]` of dependencies, so list in the root project the URL
-# sources that its subpackage dependencies declare for packages that are not vendored, e.g.
-# Revise, which JETLSCore loads only in its development mode.
-function add_unvendored_url_sources!(project::Dict{String, Any}, uuid_mapping::Dict{UUID, UUID})
-    for workspace_name in get(get(project, "workspace", Dict{String, Any}()), "projects", String[])
-        member_path = joinpath(CURRENT_DIR, workspace_name, "Project.toml")
-        isfile(member_path) || continue
-        member = TOML.parsefile(member_path)
-        haskey(project["deps"], get(member, "name", "")) || continue
-        member_deps = get(member, "deps", Dict{String, Any}())
-        for (dep_name, source) in get(member, "sources", Dict{String, Any}())
-            haskey(source, "url") || continue
-            dep_uuid = get(member_deps, dep_name, nothing)
-            dep_uuid isa String || continue
-            haskey(uuid_mapping, UUID(dep_uuid)) && continue
-            haskey(project["sources"], dep_name) && continue
-            project["deps"][dep_name] = dep_uuid
-            project["sources"][dep_name] = source
-            @info "Added unvendored source for $dep_name from $workspace_name/Project.toml"
+# `Pkg.Apps.add` on Julia 1.12 and 1.13.0 resolves the app environment before it installs
+# any registry, so every package that a release resolves must be vendored or a stdlib.
+function validate_no_unvendored_dependencies(
+        vendored_packages::Vector{Pair{String, UUID}},
+        uuid_mapping::Dict{UUID, UUID}
+    )
+    vendored_uuids = Set{UUID}(values(uuid_mapping))
+    project_paths = [joinpath(CURRENT_DIR, "Project.toml")]
+    for (pkg_name, original_uuid) in vendored_packages
+        haskey(uuid_mapping, original_uuid) || continue
+        push!(project_paths, joinpath(VENDOR_DIR, pkg_name, "Project.toml"))
+    end
+    for project_path in project_paths
+        project = TOML.parsefile(project_path)
+        for (dep_name, dep_uuid_str) in get(project, "deps", Dict{String, Any}())
+            dep_uuid = UUID(dep_uuid_str)
+            Pkg.Types.is_stdlib(dep_uuid) && continue
+            dep_uuid in vendored_uuids && continue
+            error("Dependency $dep_name [$dep_uuid] of $(relpath(project_path, CURRENT_DIR)) is not vendored, so installing the release would require a registry")
         end
     end
+    return nothing
 end
 
 function update_project_with_vendored_deps(
@@ -553,7 +574,6 @@ function update_project_with_vendored_deps(
             end
         end
     end
-    add_unvendored_url_sources!(project, uuid_mapping)
 
     main_path = joinpath(CURRENT_DIR, "Project.toml")
     @info "Writing vendored Project.toml to $main_path"
@@ -736,6 +756,7 @@ end
 function vendor_loaded_packages(use_local_path::Bool, rev::Union{String, Nothing})
     @info "Loading JETLSCore to populate Base.loaded_modules..."
     @eval using JETLSCore
+    load_release_dependencies()
 
     @info "Identifying packages to vendor..."
     packages = collect_packages_to_vendor()
@@ -792,6 +813,7 @@ function vendor_loaded_packages(use_local_path::Bool, rev::Union{String, Nothing
     project = Pkg.Types.read_project(project_path)
     Pkg.Types.write_project(project, project_path)
     validate_no_development_preferences(TOML.parsefile(project_path))
+    validate_no_unvendored_dependencies(packages, uuid_mapping)
 
     @info "Vendor isolation complete!"
     @info "Vendored packages are in: $VENDOR_DIR"

@@ -100,6 +100,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- Fixed installation on Julia 1.12 and 1.13.0 failing with `Unsatisfiable requirements detected for package Preferences` when no registry is installed, e.g. in the managed installation of [`jetls-client`](https://marketplace.visualstudio.com/items?itemName=aviatesk.jetls-client).
+  (Closed https://github.com/aviatesk/JETLS.jl/issues/988)
+
 - Fixed false [`lowering/macro-expansion-error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/macro-expansion-error) diagnostics on `@doc` docstrings inside blocks such as `if` blocks and on `@doc` lookups such as `string(@doc sin)` when JETLS also analyzes code that loads [DocStringExtensions.jl](https://github.com/JuliaDocs/DocStringExtensions.jl), e.g. a `docs/make.jl` using Documenter.jl.
 
 - Fixed missing references, rename edits, and [`lowering/undef-global-var`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/undef-global-var) diagnostics for docstrings that document a method signature:
