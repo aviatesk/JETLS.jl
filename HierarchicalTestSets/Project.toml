@@ -7,4 +7,4 @@ authors = ["Shuhei Kadowaki <aviatesk@gmail.com>"]
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [compat]
-Test = "1.11.0"
+Test = "<0.0.1, 1, 1.11.0"
