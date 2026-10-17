@@ -92,12 +92,17 @@ jobs:
           SELFCHECK_PATHS: |
             src/**
             JETLSCore/**
+            test/**
             LSP/**
             HierarchicalTestSets/**
             MarkdownSource/**
             TOMLSource/**
             TestRunner/**
             Compiler/**
+            docs/*.jl
+            docs/Project.toml
+            scripts/*.jl
+            scripts/Project.toml
             Project.toml
             .JETLSConfig.toml
             scripts/selfcheck.sh

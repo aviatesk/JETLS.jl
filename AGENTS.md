@@ -119,15 +119,17 @@ The standard command is:
 
 This is run in CI and will cause failures if new warnings are introduced.
 
-To check only some of the packages in this repository, pass their names with
-`-p`, which may be repeated. Include the packages that depend on the changed
-ones as well, e.g. `JETLSCore` when changing `LSP` or `TOMLSource`:
+To check only some of the projects in this repository, pass their names with
+`-p`, which may be repeated. Include the projects that depend on the changed
+ones as well, e.g. `JETLSCore` when changing `LSP` or `TOMLSource`, and
+`docs` and `scripts` when changing the `JETLSCore` APIs they use, such as the
+config structs:
 
 ```bash
 ./scripts/selfcheck.sh -p JETLSCore -p LSP
 ```
 
-See `./scripts/selfcheck.sh --help` for the package names and other options.
+See `./scripts/selfcheck.sh --help` for the project names and other options.
 
 # Running test
 
