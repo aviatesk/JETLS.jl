@@ -154,6 +154,23 @@ function is_user_lowering_error(@nospecialize err)
     return false
 end
 
+# JuliaLowering wraps whatever a new-style macro throws into `JL.MacroExpansionError` while
+# keeping the original backtrace. The macro stubs in `jl-syntax-macros.jl` must never throw
+# (see `macro_issue_contract`), so a stub frame in the failed expansion means a JETLS bug.
+thrown_by_macro_stub(bt::Vector{<:Union{Base.InterpreterIP,Ptr{Cvoid}}}) =
+    any(is_macro_stub_frame, macro_expansion_stacktrace(bt))
+
+function is_macro_stub_frame(frame::Base.StackTraces.StackFrame)
+    parentmodule(frame) === JETLSCore || return false
+    linfo = frame.linfo
+    linfo isa Core.CodeInstance && (linfo = linfo.def)
+    linfo isa Core.MethodInstance || return false
+    spec_types = Base.unwrap_unionall(linfo.specTypes)
+    spec_types isa DataType || return false
+    params = spec_types.parameters
+    return length(params) ≥ 2 && params[2] <: JL.MacroContext
+end
+
 """
     report_lowering_bug(err)
 

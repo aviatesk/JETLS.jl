@@ -812,32 +812,17 @@ end
 # ===================
 
 const JL_MACRO_FILE = only(methods(JL.expand_macro, (JL.MacroExpansionContext, SyntaxTree))).file
-function scrub_expand_macro_stacktrace(stacktrace::Vector{Base.StackTraces.StackFrame})
-    idx = @something findfirst(stacktrace) do stackframe::Base.StackTraces.StackFrame
-        stackframe.func === :expand_macro && stackframe.file === JL_MACRO_FILE
-    end return stacktrace
-    return stacktrace[1:idx-1]
-end
 
-# JuliaLowering wraps whatever a new-style macro throws into `JL.MacroExpansionError` while
-# keeping the original backtrace. The macro stubs in `jl-syntax-macros.jl` must never throw
-# (see `macro_issue_contract`), so a stub frame above the innermost `JL.expand_macro` means
-# a JETLS bug. The backtrace is walked lazily since symbolizing it whole takes milliseconds.
-function thrown_by_macro_stub(bt::Vector)
+# Like `stacktrace(bt)`, but only the frames above the innermost `JL.expand_macro`, i.e.
+# those of the macro expansion that threw (all frames if there is none). Frames are looked
+# up lazily since symbolizing a whole backtrace takes milliseconds.
+function macro_expansion_stacktrace(bt::Vector{<:Union{Base.InterpreterIP,Ptr{Cvoid}}})
+    stack = Base.StackTraces.StackFrame[]
     for ip in bt, frame in Base.StackTraces.lookup(ip)
-        frame.func === :expand_macro && frame.file === JL_MACRO_FILE && return false
-        is_macro_stub_frame(frame) && return true
+        frame.func === :expand_macro && frame.file === JL_MACRO_FILE && return stack
+        frame.from_c || push!(stack, frame)
     end
-    return false
-end
-
-function is_macro_stub_frame(frame::Base.StackTraces.StackFrame)
-    parentmodule(frame) === JETLSCore || return false
-    linfo = frame.linfo
-    linfo isa Core.CodeInstance && (linfo = linfo.def)
-    linfo isa Core.MethodInstance || return false
-    params = (Base.unwrap_unionall(linfo.specTypes)::DataType).parameters
-    return length(params) ≥ 2 && params[2] <: JL.MacroContext
+    return stack
 end
 
 function stacktrace_to_related_information(stacktrace::Vector{Base.StackTraces.StackFrame})
@@ -2076,7 +2061,7 @@ function per_stmt_diagnostics!(
             end
         elseif err isa JL.MacroExpansionError && is_user_lowering_error(err)
             if !skip_analysis_requiring_context
-                st = scrub_expand_macro_stacktrace(stacktrace(catch_backtrace()))
+                st = macro_expansion_stacktrace(catch_backtrace())
                 msg = err.msg
                 inner = err.err
                 if msg == "Macro not found" && inner isa UndefVarError
