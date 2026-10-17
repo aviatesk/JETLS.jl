@@ -155,7 +155,7 @@ Should not modify any nodes, and should not create new nodes unnecessarily.
 """
 function without_heads(st::SyntaxTree, heads::Tuple{Vararg{Symbol}})
     return (JS.head(st) in heads ?
-        JL.@ast(_, st, [:tombstone]) :
+        JL.@ast(_, st, (::tombstone)) :
         _without_heads(st, heads)[1])::SyntaxTree
 end
 

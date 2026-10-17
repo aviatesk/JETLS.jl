@@ -154,8 +154,8 @@ using Compiler: Compiler as CC
 using JET: JET
 using ..JETLSCore: InferredContextCache, InferredContextCacheData, SyntaxTree,
     TraversalReturn, TreeAnnotations
-using ..JETLSCore: Analyzer, JETLS_DEV_MODE, JL, JS
-using ..JETLSCore: locked_showerror
+using ..JETLSCore: Analyzer, JL, JS
+using ..JETLSCore: is_user_lowering_error, report_lowering_bug
 using ..JETLSCore: get_name_val, is_string_literal, iterate_toplevel_tree,
     jl_lower_for_scope_resolution, load, rewrite_local_closures_to_opaque, store!, traverse,
     unwrap_funcdef_sig
@@ -983,7 +983,8 @@ function get_inferrable_tree(st0::SyntaxTree, context_module::Module, world::UIn
     (; ctx3, st3) = try
         jl_lower_for_scope_resolution(context_module, world, st0;
             trim_error_nodes=true, recover_from_macro_errors=false)
-    catch
+    catch err
+        is_user_lowering_error(err) || report_lowering_bug(err)
         return nothing
     end
     return (; ctx3, st3)
@@ -1118,9 +1119,8 @@ function infer_lowered_tree(
         ctx4, st4 = JL.convert_closures(ctx3, st3_oc)
         _, st5 = JL.linearize_ir(ctx4, st4)
         st5
-    catch e
-        @static JETLS_DEV_MODE && @error "infer_toplevel_tree: Lowering failed" e
-        @static JETLS_DEV_MODE && locked_showerror(stderr, e, catch_backtrace())
+    catch err
+        is_user_lowering_error(err) || report_lowering_bug(err)
         return nothing
     end
     lwr = JL.to_lowered_expr(inferrable_tree)

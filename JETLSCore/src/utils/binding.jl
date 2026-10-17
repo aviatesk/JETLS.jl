@@ -115,6 +115,7 @@ function jl_lower_for_scope_resolution(
         JL.expand_forms_1(st0, world, true)
     catch err
         recover_from_macro_errors || rethrow(err)
+        is_user_lowering_error(err) || report_lowering_bug(err)
         st0 = remove_macrocalls(context_module, world, st0)
         st0 = JL.rebase_layers(st0, context_module)
         JL.expand_forms_1(st0, world, true)
@@ -135,6 +136,48 @@ function _jl_lower_for_scope_resolution(
 end
 
 """
+    is_user_lowering_error(err) -> Bool
+
+Return whether `err`, thrown while lowering, reports a problem in the code being lowered,
+i.e. a non-internal `JL.LoweringError` or a `JL.MacroExpansionError`, rather than a bug in
+JuliaLowering or in how JETLS drives it. Callers that give up on lowering failures should
+pass the other errors to [`report_lowering_bug`](@ref).
+"""
+function is_user_lowering_error(@nospecialize err)
+    # JL wraps old-style macro invocation failures in `LoadError` (JuliaLang/julia#62862)
+    if err isa LoadError
+        err = err.error
+    end
+    return (err isa JL.LoweringError && !err.internal) || err isa JL.MacroExpansionError
+end
+
+"""
+    report_lowering_bug(err)
+
+Report `err`, a lowering error that is not [`is_user_lowering_error`](@ref): rethrow it in
+`JETLS_TEST_MODE` so that tests catch the bug, and log it in `JETLS_DEV_MODE`.
+Must be called within the `catch` block that caught `err`.
+"""
+function report_lowering_bug(@nospecialize err)
+    @static if JETLS_TEST_MODE
+        rethrow()
+    elseif JETLS_DEV_MODE
+        bt = catch_backtrace()
+        errmsg = try
+            sprint(locked_showerror, err)
+        catch
+            # `showerror` of an internal `JL.LoweringError` may throw while printing the
+            # invalid trees it reports
+            err isa JL.LoweringError ? join(err.msgs, '\n') : string(typeof(err))
+        end
+        @warn "Unexpected error in lowering: $errmsg"
+        locked_show_backtrace(stderr, bt)
+        println(stderr)
+    end
+    return nothing
+end
+
+"""
 Find the list of (BindingInfo, SyntaxTree, distance::Int) to suggest as
 completions given a parsed SyntaxTree and a cursor position.
 
@@ -150,7 +193,8 @@ function cursor_bindings(
     (st0, _) = desugar_main_macrocall(st0)
     (; ctx3, st2, st3) = try
         jl_lower_for_scope_resolution(context_module, world, st0; soft_scope)
-    catch
+    catch err
+        is_user_lowering_error(err) || report_lowering_bug(err)
         return nothing # lowering failed, e.g. because of incomplete input
     end
 
@@ -328,7 +372,8 @@ function select_target_binding(
     (; ctx3, st3) = try
         # Remove macros to preserve precise source locations
         jl_lower_for_scope_resolution(context_module, world, st0′; soft_scope)
-    catch
+    catch err
+        is_user_lowering_error(err) || report_lowering_bug(err)
         return nothing
     end
     primary = _select_target_binding(ctx3, st3, offset)
@@ -521,7 +566,8 @@ function resolve_inert_tree(
     end
     ires = try
         jl_lower_for_scope_resolution(context_module, world, input; soft_scope)
-    catch
+    catch err
+        is_user_lowering_error(err) || report_lowering_bug(err)
         return nothing
     end
     argument_remap = synthetic_parameter_remap(ires.ctx3, ires.st3, parameters)
@@ -827,7 +873,8 @@ function select_macrocall_binding(
     macrocall_name = macrocall[1]
     (; ctx3, st3) = try
         jl_lower_for_scope_resolution(context_module, world, macrocall_name; soft_scope)
-    catch
+    catch err
+        is_user_lowering_error(err) || report_lowering_bug(err)
         return nothing
     end
     for binfo in ctx3.bindings.info
@@ -870,7 +917,8 @@ function select_export_public_binding(
     name_node = parent[i]
     (; ctx3, st3) = try
         jl_lower_for_scope_resolution(context_module, world, name_node; soft_scope)
-    catch
+    catch err
+        is_user_lowering_error(err) || report_lowering_bug(err)
         return nothing
     end
     for binfo in ctx3.bindings.info
@@ -912,7 +960,8 @@ function select_import_using_binding(
     name_node = @something find_name_node_at(offset, bas[1]) return nothing
     (; ctx3, st3) = try
         jl_lower_for_scope_resolution(context_module, world, name_node; soft_scope)
-    catch
+    catch err
+        is_user_lowering_error(err) || report_lowering_bug(err)
         return nothing
     end
     for binfo in ctx3.bindings.info

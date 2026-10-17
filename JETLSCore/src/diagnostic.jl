@@ -2043,17 +2043,15 @@ function per_stmt_diagnostics!(
         if err isa LoadError && err.error isa JL.MacroExpansionError
             err = err.error
         end
-        if err isa JL.LoweringError
-            if !err.internal
-                for (st, msg) in zip(err.sts, err.msgs)
-                    push!(diagnostics, Diagnostic(;
-                        range = jsobj_to_range(st, fi),
-                        severity = DiagnosticSeverity.Error,
-                        message = msg,
-                        source = DIAGNOSTIC_SOURCE_LIVE,
-                        code = LOWERING_ERROR_CODE,
-                        codeDescription = diagnostic_code_description(LOWERING_ERROR_CODE)))
-                end
+        if err isa JL.LoweringError && !err.internal
+            for (st, msg) in zip(err.sts, err.msgs)
+                push!(diagnostics, Diagnostic(;
+                    range = jsobj_to_range(st, fi),
+                    severity = DiagnosticSeverity.Error,
+                    message = msg,
+                    source = DIAGNOSTIC_SOURCE_LIVE,
+                    code = LOWERING_ERROR_CODE,
+                    codeDescription = diagnostic_code_description(LOWERING_ERROR_CODE)))
             end
         elseif err isa JL.MacroExpansionError
             if !skip_analysis_requiring_context
@@ -2083,9 +2081,7 @@ function per_stmt_diagnostics!(
                     relatedInformation))
             end
         else
-            @static JETLS_DEV_MODE && @warn "Error in lowering (with macrocall nodes)"
-            @static JETLS_DEV_MODE && locked_showerror(stderr, err)
-            @static JETLS_DEV_MODE && locked_show_backtrace(stderr, catch_backtrace())
+            report_lowering_bug(err)
         end
         nothing # signal primary-attempt failure to the fallback path
     end
@@ -2102,7 +2098,8 @@ function per_stmt_diagnostics!(
         res = try
             jl_lower_for_scope_resolution(context_module, world, st0;
                 recover_from_macro_errors=false, convert_closures=true, soft_scope)
-        catch
+        catch err
+            is_user_lowering_error(err) || report_lowering_bug(err)
             return diagnostics
         end
     end

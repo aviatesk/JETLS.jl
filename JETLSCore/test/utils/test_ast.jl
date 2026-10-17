@@ -1115,6 +1115,15 @@ end
         @test lowers_ok(trimmed)
     end
 
+    # An `:error` root, e.g. the macro name of a lone `@`, becomes a valid `:tombstone` leaf.
+    let st = jlparse("@")
+        name = find_first_head(st, :macrocall)[1]
+        @test JS.head(name) === :error
+        trimmed = JETLSCore.trim_error_nodes(name)
+        @test JS.head(trimmed) === :tombstone
+        @test JS.is_leaf(trimmed)
+    end
+
     # No-op on well-formed input: every legitimate shape passes through unchanged.
     let st = jlparse("function f(a::Int, b); a.x + (a && b) || a; end")
         @test JETLSCore.trim_error_nodes(st) === st
