@@ -201,9 +201,9 @@ end
 Find the list of (BindingInfo, SyntaxTree, distance::Int) to suggest as
 completions given a parsed SyntaxTree and a cursor position.
 
-JuliaLowering throws away the mapping from scopes to bindings (scopes are stored
-as an ephemeral stack.)  We work around this by taking all available bindings
-and filtering out any that aren't declared in a scope containing the cursor.
+Walks JuliaLowering's scope tree from the innermost scope containing the cursor
+outwards, so that each name resolves to the binding Julia's scoping rules would
+pick, among those that pass [`is_relevant`](@ref).
 """
 function cursor_bindings(
         st0_top::SyntaxTree, offset::Int, context_module::Module, world::UInt;
@@ -211,76 +211,56 @@ function cursor_bindings(
     )
     st0 = @something lowerable_toplevel_at(st0_top, offset) return nothing
     (st0, _) = desugar_main_macrocall(st0)
-    (; ctx3, st2, st3) = try
+    (; ctx3, st3) = try
         jl_lower_for_scope_resolution(context_module, world, st0; soft_scope)
     catch err
         is_user_lowering_error(err) || report_lowering_bug(err)
         return nothing # lowering failed, e.g. because of incomplete input
     end
 
-    # Note that ctx.bindings are only available after resolve_scopes, and
-    # scope-blocks are not present in st3 after resolve_scopes.
     global_nodes = user_written_global_nodes(ctx3, st3)
-    binding_nodes = Tuple{JL.BindingInfo, SyntaxTree}[]
-    for binfo in ctx3.bindings.info
-        node = binfo.kind === :global ?
-            get(global_nodes, binfo.id, nothing) : JL.binding_ex(ctx3, binfo.id)
-        node === nothing && continue
-        is_relevant(ctx3, binfo, node, offset) || continue
-        push!(binding_nodes, (binfo, node))
-    end
-
-    # for each binding: binfo, all syntaxtrees containing it, and the scope it belongs to
-    bscopeinfos = Tuple{JL.BindingInfo, SyntaxTree, Union{SyntaxTree, Nothing}}[]
-    for (binfo, node) in binding_nodes
-        # TODO: find tree parents instead of byte parents?
-        bas = byte_ancestors(st2, JS.byte_range(node)) do st2′::SyntaxTree
-            # find the innermost hard scope containing this binding decl.  we shouldn't
-            # be in multiple overlapping scopes that are not direct ancestors; that
-            # should indicate a provenance failure
-            JS.head(st2′) in (:scope_block, :lambda, :module, :toplevel)
+    seen = Set{String}()
+    res = Tuple{JL.BindingInfo, SyntaxTree, Int}[]
+    scope_id = innermost_scope_id(ctx3, offset)
+    while scope_id != 0
+        scope = ctx3.scopes[scope_id]
+        for id in sort!(collect(values(scope.vars)))
+            binfo = ctx3.bindings.info[id]
+            binfo.name in seen && continue
+            node = binfo.kind === :global ?
+                get(global_nodes, binfo.id, nothing) : JL.binding_ex(ctx3, binfo.id)
+            node === nothing && continue
+            is_relevant(ctx3, binfo, node, offset) || continue
+            push!(seen, binfo.name)
+            # distance from the cursor
+            push!(res, (binfo, node, abs(offset - JS.last_byte(node))))
         end
-        push!(bscopeinfos, (binfo, node, isempty(bas) ? nothing : first(bas)))
+        scope_id = scope.parent_id
     end
+    return res
+end
 
-    cursor_scopes = byte_ancestors(st2, offset)
-
-    # ignore scopes we aren't in
-    filter!(((_, _, bs),) -> isnothing(bs) || bs in cursor_scopes,
-            bscopeinfos)
-
-    # Now eliminate duplicates by name.
-    # - Prefer any local binding belonging to a tighter scope (lower bdistance)
-    # - If a static parameter and a local of the same name exist in the same
-    #   scope (impossible in julia), the local is internal and should be ignored
-    bdistances = map(((_, _, bs),) -> if isnothing(bs)
-                         lastindex(cursor_scopes) + 1
-                     else
-                         findfirst(cs -> bs === cs, cursor_scopes)
-                     end,
-                     bscopeinfos)
-
-    seen = Dict{String, Int}()
-    for i in eachindex(bscopeinfos)
-        (binfo, _, _) = bscopeinfos[i]
-
-        prev = get(seen, binfo.name, nothing)
-        # `:typevar` is defensive; current cursor scopes expose `:static_parameter`.
-        if (isnothing(prev)
-            || bdistances[i] < bdistances[prev]
-            || binfo.kind in (:typevar, :static_parameter))
-            seen[binfo.name] = i
-        elseif @static JETLS_DEV_MODE ? true : false
-            @info "Found two bindings with the same name:" binfo bscopeinfos[prev][1]
+# A lambda's tree covers only its body statements, which excludes the signature and any
+# whitespace before `end`, so its extent is taken from the enclosing `method_defs` instead.
+# That extent is shared with the lambdas generated for the same definition (keyword sorters,
+# default-argument forwarders), whose own trees span the whole definition, so ties are broken
+# by the tighter own tree, then by the later, i.e. deeper, scope.
+function innermost_scope_id(ctx3::JL.VariableAnalysisContext, offset::Int)
+    scope_id, scope_key = 1, (typemax(Int), typemax(Int))
+    for scope in ctx3.scopes
+        own = JS.byte_range(scope.node_id)
+        extent = own
+        if JS.head(scope.node_id) === :lambda && scope.parent_id != 0
+            parent = ctx3.scopes[scope.parent_id].node_id
+            JS.head(parent) === :method_defs && (extent = JS.byte_range(parent))
+        end
+        offset in extent || continue
+        key = (length(extent), length(own))
+        if key ≤ scope_key
+            scope_id, scope_key = scope.id, key
         end
     end
-
-    return map(values(seen)) do i
-        (binfo, node, _) = bscopeinfos[i]
-        # distance from the cursor
-        dist = abs(offset - JS.last_byte(node))
-        return (binfo, node, dist)
-    end
+    return scope_id
 end
 
 # Implicit binding names introduced by JuliaLowering for macros (`__module__`,

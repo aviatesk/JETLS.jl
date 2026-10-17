@@ -236,6 +236,56 @@ end
         end
         @test cnt[] == 2
     end
+
+    # argument shadowing a global assigned in the same top-level statement
+    let code = """
+        begin
+            x = 1
+            function f(x)
+                │
+            end
+        end
+        """
+        test_single_cv(code, ["x"], kind=:argument)
+    end
+end
+
+@testset "shadowing in methods with generated lambdas" begin
+    # `completion_is(c, :local)` also accepts arguments
+    is_local(c) = @test c.labelDetails.description == "local"
+
+    # keyword sorters and default-argument forwarders redeclare the arguments in
+    # lambdas spanning the whole definition
+    let code = """
+        function f(x; y=1)
+            let x = 3
+                │
+            end
+        end
+        """
+        with_completion(code) do _, cv
+            cv_has(cv, [(is_local, "x")])
+        end
+    end
+    let code = """
+        function f(x, y=1)
+            for x in 1:y
+                │
+            end
+        end
+        """
+        with_completion(code) do _, cv
+            cv_has(cv, [(is_local, "x")])
+        end
+    end
+    let code = """
+        function f(x::T; y::T=x) where T
+            │
+        end
+        """
+        test_single_cv(code, ["x", "y"], kind=:argument)
+        test_single_cv(code, ["T"], kind=:sparam)
+    end
 end
 
 @testset "cursor in new symbol" begin
