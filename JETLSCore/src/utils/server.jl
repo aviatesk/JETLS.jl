@@ -86,7 +86,7 @@ send(server, WorkDoneProgressCreateRequest(; id, params))
 
 # See also
 - [`poprequest!`](@ref) - Retrieve and remove a registered `RequestCaller` when handling the response
-- [`handle_ResponseMessage`](@ref) - The main handler that uses these request callers
+- [`handler_concurrent_message`](@ref) - The main handler that uses these request callers
 """
 addrequest!(server::Server, (id, caller)) = addrequest!(server, id, caller)
 function addrequest!(server::Server, id::String, caller::RequestCaller)
@@ -120,7 +120,7 @@ handle_requested_response(server, msg, request_caller)
 
 # See also
 - [`addrequest!`](@ref) - Register a `RequestCaller` when sending a request to the client
-- [`handle_ResponseMessage`](@ref) - The main handler that processes client responses
+- [`handler_concurrent_message`](@ref) - The main handler that processes client responses
 """
 function poprequest!(server::Server, @nospecialize id)
     id isa String || return nothing
