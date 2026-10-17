@@ -145,6 +145,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   end
   ```
 
+- Fixed the related information of [`lowering/macro-expansion-error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/macro-expansion-error) diagnostics, which lists the stack frames of the macro that threw:
+  it no longer includes a frame of JETLS's internal macro invocation showing a module name such as `Main.var"##JETVirtualModule#142"`, and the frames of a macro defined in an unsaved buffer now point to the buffer instead of a nonexistent file.
+
 ## 2026-10-14
 
 - Commit: [`64dd358`](https://github.com/aviatesk/JETLS.jl/commit/64dd358)

@@ -173,7 +173,7 @@ This function:
 """
 to_full_path(file::Symbol) = to_full_path(String(file))
 function to_full_path(file::AbstractString)
-    file = Base.fixup_stdlib_path(file)
+    file = Base.fixup_stdlib_path(String(file))
     file = something(Base.find_source_file(file), file)
     # TODO we should probably make this configurable
     return fix_build_path(abspath(file))
