@@ -154,8 +154,8 @@ using Compiler: Compiler as CC
 using JET: JET
 using ..JETLSCore: InferredContextCache, InferredContextCacheData, SyntaxTree,
     TraversalReturn, TreeAnnotations
-using ..JETLSCore: Analyzer, JETLS_DEBUG_LOWERING, JETLS_DEV_MODE, JL, JS
-using ..JETLSCore: locked_show_backtrace, locked_showerror
+using ..JETLSCore: Analyzer, JETLS_DEV_MODE, JL, JS
+using ..JETLSCore: locked_showerror
 using ..JETLSCore: get_name_val, is_string_literal, iterate_toplevel_tree,
     jl_lower_for_scope_resolution, load, rewrite_local_closures_to_opaque, store!, traverse,
     unwrap_funcdef_sig
@@ -964,15 +964,12 @@ is_type_annotation_skipped_toplevel(st0::SyntaxTree) =
 
 """
     get_inferrable_tree(
-            st0::SyntaxTree, context_module::Module;
-            world::UInt = Base.get_world_counter(),
-            caller::AbstractString = "get_inferrable_tree"
+            st0::SyntaxTree, context_module::Module, world::UInt
         ) -> (; ctx3::JL.VariableAnalysisContext, st3::SyntaxTree) | nothing
 
 [`TypeAnnotation`](@ref) pipeline step 1: lower `st0` for scope resolution against `mod`,
 returning the `(ctx3, st3)` pair that [`infer_toplevel_tree`](@ref) consumes.
-Returns `nothing` if lowering throws (typically a parse error or an unready macro context);
-errors are routed through `JETLS_DEBUG_LOWERING` rather than propagated.
+Returns `nothing` if lowering throws (typically a parse error or an unready macro context).
 
 `:error` nodes are stripped from `st0` before lowering so incomplete source
 still produces a usable tree — JuliaSyntax keeps parsing past errors and
@@ -982,16 +979,11 @@ JuliaLowering happily lowers what's left. For example, in
 
 See the [`TypeAnnotation`](@ref) module docstring for the full pipeline.
 """
-function get_inferrable_tree(
-        st0::SyntaxTree, context_module::Module, world::UInt;
-        caller::AbstractString = "get_inferrable_tree"
-    )
+function get_inferrable_tree(st0::SyntaxTree, context_module::Module, world::UInt)
     (; ctx3, st3) = try
         jl_lower_for_scope_resolution(context_module, world, st0;
             trim_error_nodes=true, recover_from_macro_errors=false)
-    catch err
-        @static JETLS_DEBUG_LOWERING && @warn "Error in lowering ($caller)" err
-        @static JETLS_DEBUG_LOWERING && locked_show_backtrace(stderr, catch_backtrace())
+    catch
         return nothing
     end
     return (; ctx3, st3)
@@ -1713,7 +1705,6 @@ end
     build_inferred_context_for_tree(
             st0::SyntaxTree, context_module::Module;
             world::UInt = Base.get_world_counter(),
-            caller::AbstractString = "build_inferred_context_for_tree",
             cache::Union{Nothing,InferredContextCache} = nothing
         ) -> ctx::InferredTreeContext | nothing
 
@@ -1733,20 +1724,19 @@ same key, but unrelated cache hits/misses are not blocked.
 function build_inferred_context_for_tree(
         st0::SyntaxTree, context_module::Module;
         world::UInt = Base.get_world_counter(),
-        caller::AbstractString = "build_inferred_context_for_tree",
         cache::Union{Nothing,InferredContextCache} = nothing
     )
     is_type_annotation_skipped_toplevel(st0) && return nothing
     top_rng = JS.byte_range(st0)
     if cache === nothing
-        return build_inferred_context(st0, context_module; world, caller)
+        return build_inferred_context(st0, context_module; world)
     end
     key = (context_module, world, top_rng)
     entries = load(cache)
     haskey(entries, key) && return entries[key]
     # Build outside the cache lock: racing requests may duplicate inference
     # for the same key, but they don't block unrelated cache hits/misses.
-    new_ctx = build_inferred_context(st0, context_module; world, caller)
+    new_ctx = build_inferred_context(st0, context_module; world)
     return store!(cache) do entries
         if haskey(entries, key)
             return entries, entries[key]
@@ -1759,7 +1749,6 @@ end
     build_inferred_context_for_range(
             st0_top::SyntaxTree, context_module::Module, rng::UnitRange{<:Integer};
             world::UInt = Base.get_world_counter(),
-            caller::AbstractString = "build_inferred_context_for_range",
             cache::Union{Nothing,InferredContextCache} = nothing
         ) -> ctx::InferredTreeContext | nothing
 
@@ -1783,22 +1772,20 @@ same key, but unrelated cache hits/misses are not blocked.
 function build_inferred_context_for_range(
         st0_top::SyntaxTree, context_module::Module, rng::UnitRange{<:Integer};
         world::UInt = Base.get_world_counter(),
-        caller::AbstractString = "build_inferred_context_for_range",
         cache::Union{Nothing,InferredContextCache} = nothing
     )
     return iterate_toplevel_tree(st0_top) do st0::SyntaxTree
         rng ⊆ JS.byte_range(st0) || return nothing
-        ctx = build_inferred_context_for_tree(st0, context_module; world, caller, cache)
+        ctx = build_inferred_context_for_tree(st0, context_module; world, cache)
         return TraversalReturn(ctx; terminate=true)
     end
 end
 
 function build_inferred_context(
         st0::SyntaxTree, context_module::Module;
-        world::UInt = Base.get_world_counter(),
-        caller::AbstractString = "build_inferred_context"
+        world::UInt = Base.get_world_counter()
     )
-    (; ctx3, st3) = @something get_inferrable_tree(st0, context_module, world; caller) return nothing
+    (; ctx3, st3) = @something get_inferrable_tree(st0, context_module, world) return nothing
     interp = @something _infer_toplevel_tree(ctx3, st3, st0, context_module; world) return nothing
     inferred = interp.toptree
     annotations = interp.annotations

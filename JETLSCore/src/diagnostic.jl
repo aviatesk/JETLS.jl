@@ -2083,9 +2083,9 @@ function per_stmt_diagnostics!(
                     relatedInformation))
             end
         else
-            @static JETLS_DEBUG_LOWERING && @warn "Error in lowering (with macrocall nodes)"
-            @static JETLS_DEBUG_LOWERING && locked_showerror(stderr, err)
-            @static JETLS_DEBUG_LOWERING && locked_show_backtrace(stderr, catch_backtrace())
+            @static JETLS_DEV_MODE && @warn "Error in lowering (with macrocall nodes)"
+            @static JETLS_DEV_MODE && locked_showerror(stderr, err)
+            @static JETLS_DEV_MODE && locked_show_backtrace(stderr, catch_backtrace())
         end
         nothing # signal primary-attempt failure to the fallback path
     end

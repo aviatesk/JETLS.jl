@@ -309,7 +309,7 @@ end
     let code = """
         function fo│
         """
-        @expect_jl_err test_single_cv(code, String[])
+        test_single_cv(code, String[])
     end
     let # XXX somehow wrapping within `module A ... end` is necessary to get `xx` completion for this incomplete code
         code = """

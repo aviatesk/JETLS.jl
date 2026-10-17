@@ -115,9 +115,6 @@ function jl_lower_for_scope_resolution(
         JL.expand_forms_1(st0, world, true)
     catch err
         recover_from_macro_errors || rethrow(err)
-        @static JETLS_DEBUG_LOWERING && @warn "Error in macro expansion; trimming and retrying"
-        @static JETLS_DEBUG_LOWERING && locked_showerror(stderr, err)
-        @static JETLS_DEBUG_LOWERING && locked_show_backtrace(stderr, catch_backtrace())
         st0 = remove_macrocalls(context_module, world, st0)
         st0 = JL.rebase_layers(st0, context_module)
         JL.expand_forms_1(st0, world, true)
@@ -153,9 +150,7 @@ function cursor_bindings(
     (st0, _) = desugar_main_macrocall(st0)
     (; ctx3, st2, st3) = try
         jl_lower_for_scope_resolution(context_module, world, st0; soft_scope)
-    catch err
-        @static JETLS_DEBUG_LOWERING && @warn "Error in lowering" err
-        @static JETLS_DEBUG_LOWERING && locked_show_backtrace(stderr, catch_backtrace())
+    catch
         return nothing # lowering failed, e.g. because of incomplete input
     end
 
@@ -211,7 +206,7 @@ function cursor_bindings(
             || bdistances[i] < bdistances[prev]
             || binfo.kind in (:typevar, :static_parameter))
             seen[binfo.name] = i
-        elseif @static JETLS_DEBUG_LOWERING ? true : false
+        elseif @static JETLS_DEV_MODE ? true : false
             @info "Found two bindings with the same name:" binfo bscopeinfos[prev][1]
         end
     end
@@ -313,30 +308,27 @@ contains `(; ctx3, st3, st0, binding)` where `binding` satisfies
 """
 function select_target_binding(
         st0_top::SyntaxTree, offset::Int, context_module::Module, world::UInt;
-        caller::AbstractString = "select_target_binding",
         soft_scope::Bool = false
     )
     st0 = @something lowerable_toplevel_at(st0_top, offset) return nothing
 
     macrocall_result = select_macrocall_binding(
-        st0, offset, context_module, world; caller, soft_scope)
+        st0, offset, context_module, world; soft_scope)
     macrocall_result !== nothing && return macrocall_result
 
     export_public_result = select_export_public_binding(
-        st0, offset, context_module, world; caller, soft_scope)
+        st0, offset, context_module, world; soft_scope)
     export_public_result !== nothing && return export_public_result
 
     import_using_result = select_import_using_binding(
-        st0, offset, context_module, world; caller, soft_scope)
+        st0, offset, context_module, world; soft_scope)
     import_using_result !== nothing && return import_using_result
 
     st0′ = remove_macrocalls(context_module, world, st0; strip_static=true)
     (; ctx3, st3) = try
         # Remove macros to preserve precise source locations
         jl_lower_for_scope_resolution(context_module, world, st0′; soft_scope)
-    catch err
-        @static JETLS_DEBUG_LOWERING && @warn "Error in lowering ($caller)" err
-        @static JETLS_DEBUG_LOWERING && locked_show_backtrace(stderr, catch_backtrace())
+    catch
         return nothing
     end
     primary = _select_target_binding(ctx3, st3, offset)
@@ -817,7 +809,6 @@ end
 
 function select_macrocall_binding(
         st0::SyntaxTree, offset::Int, context_module::Module, world::UInt;
-        caller::AbstractString = "select_macrocall_binding",
         soft_scope::Bool = false
     )
     is_macrocall_name = (offset::Int) -> (st0′::SyntaxTree) ->
@@ -836,9 +827,7 @@ function select_macrocall_binding(
     macrocall_name = macrocall[1]
     (; ctx3, st3) = try
         jl_lower_for_scope_resolution(context_module, world, macrocall_name; soft_scope)
-    catch err
-        @static JETLS_DEBUG_LOWERING && @warn "Error in lowering ($caller)" err
-        @static JETLS_DEBUG_LOWERING && locked_show_backtrace(stderr, catch_backtrace())
+    catch
         return nothing
     end
     for binfo in ctx3.bindings.info
@@ -856,7 +845,6 @@ end
 # cursor so callers receive a normal `(ctx3, st3, st0, binding)` tuple.
 function select_export_public_binding(
         st0::SyntaxTree, offset::Int, context_module::Module, world::UInt;
-        caller::AbstractString = "select_export_public_binding",
         soft_scope::Bool = false
     )
     find_name_node = (offset::Int) -> (st0′::SyntaxTree) -> begin
@@ -882,9 +870,7 @@ function select_export_public_binding(
     name_node = parent[i]
     (; ctx3, st3) = try
         jl_lower_for_scope_resolution(context_module, world, name_node; soft_scope)
-    catch err
-        @static JETLS_DEBUG_LOWERING && @warn "Error in lowering ($caller)" err
-        @static JETLS_DEBUG_LOWERING && locked_show_backtrace(stderr, catch_backtrace())
+    catch
         return nothing
     end
     for binfo in ctx3.bindings.info
@@ -902,7 +888,6 @@ end
 # single matching identifier to synthesize a normal binding tuple.
 function select_import_using_binding(
         st0::SyntaxTree, offset::Int, context_module::Module, world::UInt;
-        caller::AbstractString = "select_import_using_binding",
         soft_scope::Bool = false
     )
     find_name_node_at = function (offset::Int, st0′::SyntaxTree)
@@ -927,9 +912,7 @@ function select_import_using_binding(
     name_node = @something find_name_node_at(offset, bas[1]) return nothing
     (; ctx3, st3) = try
         jl_lower_for_scope_resolution(context_module, world, name_node; soft_scope)
-    catch err
-        @static JETLS_DEBUG_LOWERING && @warn "Error in lowering ($caller)" err
-        @static JETLS_DEBUG_LOWERING && locked_show_backtrace(stderr, catch_backtrace())
+    catch
         return nothing
     end
     for binfo in ctx3.bindings.info

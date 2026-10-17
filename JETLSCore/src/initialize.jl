@@ -590,6 +590,6 @@ function show_initialization_info(server::Server, msg::AbstractString)
     root_path = isdefined(state, :root_path) ? state.root_path : nothing
     root_env_path = isdefined(state, :root_env_path) ? state.root_env_path : nothing
     Base.CoreLogging.with_logger(Base.CoreLogging.ConsoleLogger(stderr; show_limited=false)) do
-        @info msg Sys.BINDIR pkgdir(JETLS_MODULE[]) Threads.nthreads() JETLS_VERSION=JETLS_VERSION[] JETLS_DEV_MODE JETLS_TEST_MODE JETLS_DEBUG_LOWERING init_options workspaceFolders root_path root_env_path
+        @info msg Sys.BINDIR pkgdir(JETLS_MODULE[]) Threads.nthreads() JETLS_VERSION=JETLS_VERSION[] JETLS_DEV_MODE JETLS_TEST_MODE init_options workspaceFolders root_path root_env_path
     end
 end

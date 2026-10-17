@@ -78,8 +78,7 @@ function prepare_local_binding_rename(
     offset = xy_to_offset(fi, pos)
 
     (; ctx3, binding) = @something begin
-        select_target_binding(st0_top, offset, context_module, world;
-            caller="local_binding_rename_preparation", soft_scope)
+        select_target_binding(st0_top, offset, context_module, world; soft_scope)
     end return nothing
 
     binfo = JL.get_binding(ctx3, binding)
@@ -100,8 +99,7 @@ function prepare_global_binding_rename(
     offset = xy_to_offset(fi, pos)
 
     (; ctx3, binding) = @something begin
-        select_target_binding(st0_top, offset, context_module, world;
-            caller="global_binding_rename_preparation", soft_scope)
+        select_target_binding(st0_top, offset, context_module, world; soft_scope)
     end return nothing
 
     binfo = JL.get_binding(ctx3, binding)
@@ -203,8 +201,7 @@ function get_local_binding_rename(
     offset = xy_to_offset(fi, pos)
 
     (; ctx3, st3, binding) = @something begin
-        select_target_binding(st0_top, offset, context_module, world;
-            caller="local_binding_rename", soft_scope)
+        select_target_binding(st0_top, offset, context_module, world; soft_scope)
     end return nothing
 
     binfo = JL.get_binding(ctx3, binding)
@@ -265,8 +262,7 @@ function get_global_binding_rename(
     offset = xy_to_offset(fi, pos)
 
     (; ctx3, binding) = @something begin
-        select_target_binding(st0_top, offset, context_module, world;
-            caller="global_binding_rename", soft_scope)
+        select_target_binding(st0_top, offset, context_module, world; soft_scope)
     end return nothing
 
     binfo = JL.get_binding(ctx3, binding)

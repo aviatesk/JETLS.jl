@@ -175,7 +175,7 @@ function find_definition(
     else
         rng = JS.byte_range(node)
         ctx = build_inferred_context_for_range(st0, context_module, rng;
-            world, caller="find_definition", cache=fi.inferred_context_cache)
+            world, cache=fi.inferred_context_cache)
     end
 
     # Phase 1: matches-narrowing. Runs *before* the binding pass so
@@ -271,8 +271,7 @@ function find_binding_definitions(
         soft_scope::Bool = false
     )
     binding_result = @something select_target_binding(
-        st0, offset, context_module, world;
-        caller="find_definition", soft_scope) return nothing
+        st0, offset, context_module, world; soft_scope) return nothing
     (; ctx3, st3, binding) = binding_result
     binfo = JL.get_binding(ctx3, binding)
     if binfo.kind === :global

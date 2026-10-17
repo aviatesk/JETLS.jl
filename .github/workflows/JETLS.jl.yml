@@ -58,28 +58,6 @@ jobs:
         with:
           project: JETLSCore
 
-  JETLS_DEBUG_LOWERING:
-    name: Test with `JETLS_DEBUG_LOWERING = true`
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: julia-actions/setup-julia@v3
-        with:
-          version: "1"
-          arch: x64
-      - uses: julia-actions/cache@v3
-      - name: set LocalPreferences.toml
-        working-directory: .
-        run: |
-          echo '
-          [JETLSCore]
-          JETLS_DEBUG_LOWERING = true
-          ' > LocalPreferences.toml
-      - uses: julia-actions/julia-buildpkg@latest
-      - uses: julia-actions/julia-runtest@latest
-        with:
-          project: JETLSCore
-
   JULIA_NUM_THREADS:
     name: Test with `JULIA_NUM_THREADS = 4,2`
     runs-on: ubuntu-latest

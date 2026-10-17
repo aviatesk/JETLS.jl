@@ -91,10 +91,7 @@ function extract_kwarg_name(arg::SyntaxTree; sig::Bool=false)
             ret = identifier_like(arg1[1])
             isnothing(ret) || return ret
         end
-    elseif JS.head(arg) === :...
-        return nothing
     end
-    @static JETLS_DEBUG_LOWERING && @info "Unknown kwarg form" arg
     return nothing
 end
 
@@ -384,7 +381,7 @@ function make_siginfo(
                 end
             end
         else
-            @static JETLS_DEBUG_LOWERING && @info "No active arg" active_arg ca.args[active_arg]
+            @static JETLS_DEV_MODE && @warn "No active arg" active_arg ca.args[active_arg]
             nothing
         end
 
@@ -597,7 +594,7 @@ function cursor_siginfos(
     # - (b) the call's head is a macro identifier that doesn't survive macroexpansion.
     # Both fall back to a global-binding lookup of `call[1]`.
     ctx = build_inferred_context_for_range(st0, context_module, JS.byte_range(call);
-        world, caller="cursor_siginfos", cache=fi.inferred_context_cache)
+        world, cache=fi.inferred_context_cache)
     fntyp = ctx === nothing ? nothing : get_type_for_range(ctx, JS.byte_range(call[1]))
     if fntyp === nothing
         fntyp = resolve_global_const(context_module, world, call[1])
