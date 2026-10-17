@@ -143,9 +143,12 @@ function file_language(file::String)
     return ext == ".jl" ? "julia" : ext == ".toml" ? "toml" : ""
 end
 
-# Some code actions depend on the client capabilities, e.g. the one that creates
-# `.JETLSConfig.toml` is offered only to clients that can create files
+# The capabilities of a client that renders the messages as Markdown, as the hovers do, so
+# that e.g. stack traces are formatted as code blocks, and that can create files, to which
+# the quick fix that creates `.JETLSConfig.toml` is offered
 const DIAGNOSTICS_BLOCK_CAPABILITIES = JETLSCore.ClientCapabilities(;
+    textDocument = JETLSCore.TextDocumentClientCapabilities(;
+        diagnostic = JETLSCore.DiagnosticClientCapabilities(; markupMessageSupport = true)),
     workspace = JETLSCore.WorkspaceClientCapabilities(;
         workspaceEdit = JETLSCore.WorkspaceEditClientCapabilities(;
             documentChanges = true,
@@ -161,6 +164,9 @@ function analyze_diagnostics_block(
     logger = Base.CoreLogging.SimpleLogger(stderr, Base.CoreLogging.Warn)
     return Base.CoreLogging.with_logger(logger) do
         server = JETLSCore.start_cli_server(root)
+        server.state.init_params = JETLSCore.InitializeParams(;
+            processId = getpid(), rootUri = JETLSCore.filepath2uri(root),
+            capabilities = DIAGNOSTICS_BLOCK_CAPABILITIES)
         try
             result = JETLSCore.collect_check_diagnostics!(
                 server, root, JETLSCore.InputSource[], input, progress_ctx;
@@ -182,9 +188,6 @@ function analyze_diagnostics_block(
             sort!(diagnostics; by = function (diagnostic::Diagnostic)
                 return (diagnostic.severity, diagnostic.range.start.line, diagnostic.range.start.character)
             end)
-            server.state.init_params = JETLSCore.InitializeParams(;
-                processId = getpid(), rootUri = JETLSCore.filepath2uri(root),
-                capabilities = DIAGNOSTICS_BLOCK_CAPABILITIES)
             code_actions = map(diagnostics) do diagnostic::Diagnostic
                 return JETLSCore.quickfix_code_actions!(
                     Union{CodeAction,Command}[], server, uri, Diagnostic[diagnostic])
