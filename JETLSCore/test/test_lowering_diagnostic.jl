@@ -1256,7 +1256,7 @@ end
         @test diagnostic.range.var"end".character == sizeof("x = @m_throw 42")
         # only the frame of the macro, not the JuliaLowering frame that invokes it
         info = only(something(diagnostic.relatedInformation))
-        @test info.message == "var\"@m_throw\"(::LineNumberNode, ::Module, ::Any)"
+        @test info.message == "`var\"@m_throw\"(::LineNumberNode, ::Module, ::Any)`"
         @test info.location.uri == filepath2uri(@__FILE__)
     end
 
@@ -1271,7 +1271,7 @@ end
         relatedInformation = something(only(diagnostics).relatedInformation)
         @test any(relatedInformation) do info
             info.location.uri == filename2uri("Untitled-1") &&
-                info.message == "var\"@m_unsaved_error\"(::LineNumberNode, ::Module, ::Any)"
+                info.message == "`var\"@m_unsaved_error\"(::LineNumberNode, ::Module, ::Any)`"
         end
     end
 

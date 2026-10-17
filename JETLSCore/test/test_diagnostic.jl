@@ -1028,7 +1028,7 @@ end
                     if !isempty(diag.relatedInformation)
                         related = first(diag.relatedInformation)
                         @test related.location.uri == uri
-                        @test occursin("first method definition", related.message)
+                        @test related.message == "The first method definition `duplicate(::$Int)`"
                     end
                     break
                 end

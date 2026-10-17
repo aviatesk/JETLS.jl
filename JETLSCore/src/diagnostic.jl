@@ -718,7 +718,7 @@ function toplevel_warning_report_to_diagnostic_impl(report::MethodOverwriteRepor
             location = Location(;
                 uri = to_valid_uri(report.original_filepath),
                 range = lines_range(report.original_lines)),
-            message = "The first method definition $sig_str")
+            message = "The first method definition `$sig_str`")
     ]
     return Diagnostic(;
         range = lines_range(report.lines),
@@ -848,7 +848,7 @@ function stacktrace_to_related_information(
                 String(stackframe.func)
             end
         end
-        message = postprocessor(sig)
+        message = postprocessor("`" * sig * "`")
         push!(relatedInformation, DiagnosticRelatedInformation(; location, message))
     end
     return relatedInformation
