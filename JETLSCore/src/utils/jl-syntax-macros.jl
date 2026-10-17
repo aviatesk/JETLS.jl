@@ -823,15 +823,19 @@ end
 #   to `Symbol(ex) => ex` at expansion time, but for scope analysis only the
 #   value side matters).
 #
-# Duplicate kwarg names are rejected at expansion time. Base would let the
-# expansion succeed and only fail at lowering of the synthesized
-# `(; k=1, k=2)` named tuple with a generic `syntax: field name "k" repeated`
+# Duplicate keys are rejected at expansion time. Kwarg names and the keys Base
+# generates for positional arguments share one namespace, so `@info "msg" x x`
+# and `@info "msg" x x=1` collide just like `@info "msg" x=1 x=2`. Base would
+# let the expansion succeed and only fail at lowering of the synthesized
+# `(; x=…, x=…)` named tuple with a generic `syntax: field name "x" repeated`
 # error; surfacing the duplicate as a `lowering/macro-expansion-error` here
-# anchors the diagnostic on the user's `@info` call site instead.
+# anchors the diagnostic on the user's `@info` call site instead. The metadata
+# overrides never reach that named tuple: Base lets the last one win, so their
+# duplicates are only warned about.
 function Base.CoreLogging.var"@debug"(
         __context__::JL.MacroContext, message::SyntaxTree, exs::SyntaxTree...
     )
-    return _logmsg_stub(__context__, (message, exs...), "@debug")
+    return _logmsg_stub(__context__, (message, exs...), "@debug", 1)
 end
 
 function Base.CoreLogging.var"@debug"(__context__::JL.MacroContext)
@@ -843,7 +847,7 @@ end
 function Base.CoreLogging.var"@info"(
         __context__::JL.MacroContext, message::SyntaxTree, exs::SyntaxTree...
     )
-    return _logmsg_stub(__context__, (message, exs...), "@info")
+    return _logmsg_stub(__context__, (message, exs...), "@info", 1)
 end
 
 function Base.CoreLogging.var"@info"(__context__::JL.MacroContext)
@@ -855,7 +859,7 @@ end
 function Base.CoreLogging.var"@warn"(
         __context__::JL.MacroContext, message::SyntaxTree, exs::SyntaxTree...
     )
-    return _logmsg_stub(__context__, (message, exs...), "@warn")
+    return _logmsg_stub(__context__, (message, exs...), "@warn", 1)
 end
 
 function Base.CoreLogging.var"@warn"(__context__::JL.MacroContext)
@@ -867,7 +871,7 @@ end
 function Base.CoreLogging.var"@error"(
         __context__::JL.MacroContext, message::SyntaxTree, exs::SyntaxTree...
     )
-    return _logmsg_stub(__context__, (message, exs...), "@error")
+    return _logmsg_stub(__context__, (message, exs...), "@error", 1)
 end
 
 function Base.CoreLogging.var"@error"(__context__::JL.MacroContext)
@@ -883,7 +887,7 @@ function Base.CoreLogging.var"@logmsg"(
         __context__::JL.MacroContext, level::SyntaxTree, message::SyntaxTree,
         exs::SyntaxTree...
     )
-    return _logmsg_stub(__context__, (level, message, exs...), "@logmsg")
+    return _logmsg_stub(__context__, (level, message, exs...), "@logmsg", 2)
 end
 
 function Base.CoreLogging.var"@logmsg"(__context__::JL.MacroContext, args::SyntaxTree...)
@@ -894,29 +898,38 @@ function Base.CoreLogging.var"@logmsg"(__context__::JL.MacroContext, args::Synta
     return JL.@ast(__context__, mc, [:block args... nothing::value])
 end
 
+const _LOGMSG_METADATA_KEYS = (:_group, :_id, :_module, :_file, :_line)
+
+# `nfixed` leading `exs` (the level and the message) are not key-value pairs.
 function _logmsg_stub(
-        ctx::JL.MacroContext, exs::Tuple{Vararg{SyntaxTree}}, name::AbstractString
+        ctx::JL.MacroContext, exs::Tuple{Vararg{SyntaxTree}}, name::AbstractString,
+        nfixed::Int
     )
     mc = ctx.macrocall::SyntaxTree
     children = SyntaxTree[]
-    seen_kws = Set{String}()
-    for ex in exs
+    seen_keys = Set{Symbol}()
+    seen_metadata_keys = Set{Symbol}()
+    for (i, ex) in enumerate(exs)
         k = JS.head(ex)
         if k === :(=)
             if JS.numchildren(ex) != 2
                 push_macro_error!(ex, "$name: malformed keyword argument")
                 continue
             end
-            key = ex[1]
-            kwname = JS.head(key) === :identifier ? get_name_val(key) : nothing
-            if kwname !== nothing
-                if kwname in seen_kws
-                    # Base would let the synthesized `(; k=…, k=…)` named tuple fail
-                    # lowering; flag the dup here but keep the RHS in `children` so
-                    # any identifier inside still gets scope-resolved.
-                    push_macro_error!(ex, "$name: keyword `$kwname` provided more than once")
-                else
-                    push!(seen_kws, kwname)
+            if i > nfixed
+                let key = _logmsg_key(ex[1], name)
+                    if key !== nothing
+                        if key in _LOGMSG_METADATA_KEYS
+                            if key in seen_metadata_keys
+                                push_macro_warning!(ex,
+                                    "$name: metadata key `$key` provided more than once; only the last one is used")
+                            else
+                                push!(seen_metadata_keys, key)
+                            end
+                        else
+                            _check_logmsg_key!(seen_keys, key, ex, name)
+                        end
+                    end
                 end
             end
             push!(children, ex[2])
@@ -927,10 +940,45 @@ function _logmsg_stub(
                 push_macro_error!(ex, "$name: malformed splat argument")
             end
         else
+            if i > nfixed
+                let key = _logmsg_key(ex, name)
+                    if key !== nothing
+                        _check_logmsg_key!(seen_keys, key, ex, name)
+                    end
+                end
+            end
             push!(children, ex)
         end
     end
     return JL.@ast(ctx, mc, [:block children... nothing::value])
+end
+
+# Mirrors the `Symbol(ex)` conversion Base's `process_logmsg_exs` applies to both kwarg
+# names and positional arguments, so e.g. `a+b` and `a + b` produce the same key.
+# Base lets a failing conversion (e.g. `@info "msg" "a\0b"`) propagate out of expansion;
+# we recover per the macro issue contract.
+function _logmsg_key(ex::SyntaxTree, name::AbstractString)
+    expr = JL.est_to_expr(ex)
+    return try
+        Symbol(expr)
+    catch err
+        msg = first(split(sprint(locked_showerror, err), '\n'))
+        push_macro_error!(ex, "$name: invalid key: $msg")
+        nothing
+    end
+end
+
+function _check_logmsg_key!(
+        seen_keys::Set{Symbol}, key::Union{Nothing,Symbol}, ex::SyntaxTree,
+        name::AbstractString
+    )
+    if key === nothing
+        return
+    elseif key in seen_keys
+        push_macro_error!(ex, "$name: key `$key` provided more than once")
+    else
+        push!(seen_keys, key)
+    end
 end
 
 # New-style implementations of `Base.@invoke` / `Base.@invokelatest`. These match Base's

@@ -1043,22 +1043,62 @@ logging_resolve(code::AbstractString) = jlresolve(logging_module, code)
             end
         end
 
-        # Duplicate kwarg names are flagged via the sink at expansion time; without
-        # this, they'd surface only as a generic `syntax: field name "k" repeated`
-        # error from lowering the synthesized `(; k=1, k=2)` named tuple. Metadata
-        # keys (`_module`, `_group`, ...) are checked the same way. Expansion still
-        # completes so the kwarg RHS reaches scope analysis.
+        # Duplicate keys are flagged via the sink at expansion time; without this,
+        # they'd surface only as a generic `syntax: field name "k" repeated` error
+        # from lowering the synthesized `(; k=1, k=2)` named tuple. Positional
+        # arguments share the namespace of kwarg names under their `Symbol(ex)` key.
+        # Expansion still completes so the values reach scope analysis.
         for name in ("@debug", "@info", "@warn", "@error")
-            for code in ("$name \"msg\" k=1 k=2",
-                         "$name \"msg\" _module=a _module=b")
+            for (code, key) in (("$name \"msg\" k=1 k=2", "k"),
+                                ("$name \"msg\" sin sin", "sin"),
+                                ("$name sin sin sin", "sin"),
+                                ("$name \"msg\" x x=1", "x"),
+                                ("$name \"msg\" x=1 x", "x"),
+                                ("$name \"msg\" \"x\" x", "x"),
+                                ("$name \"msg\" a+b a + b", "a + b"))
                 let diags = collect_macro_diagnostics() do
                         logging_expand(code)
                     end
                     @test length(diags) == 1
                     d = only(diags)
                     @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
-                    @test occursin("provided more than once", d.msg)
+                    @test occursin("key `$key` provided more than once", d.msg)
                 end
+            end
+
+            # Accepted by Base: the message is not a key-value pair, splats are
+            # opaque, and metadata keys never reach the named tuple.
+            for code in ("$name sin sin",
+                         "$name \"msg\" xs... xs...",
+                         "$name \"msg\" :x x",
+                         "$name \"msg\" _module=a _module")
+                let diags = collect_macro_diagnostics() do
+                        logging_expand(code)
+                    end
+                    @test isempty(diags)
+                end
+            end
+
+            # Base's `Symbol(ex)` key conversion throws for keys containing `\0`.
+            for code in ("$name \"msg\" \"a\\0b\"", "$name \"msg\" '\\0'", "$name \"msg\" \"\\0\"=1")
+                let diags = collect_macro_diagnostics() do
+                        logging_expand(code)
+                    end
+                    @test length(diags) == 1
+                    d = only(diags)
+                    @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
+                    @test occursin("Symbol name may not contain \\0", d.msg)
+                end
+            end
+
+            # Base lets the last metadata override win.
+            let diags = collect_macro_diagnostics() do
+                    logging_expand("$name \"msg\" _module=a _module=b")
+                end
+                @test length(diags) == 1
+                d = only(diags)
+                @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Warning
+                @test occursin("metadata key `_module` provided more than once", d.msg)
             end
         end
     end
@@ -1106,15 +1146,24 @@ end
             end
         end
 
-        # Duplicate kwargs are flagged the same way as for the level-implicit
+        # Duplicate keys are flagged the same way as for the level-implicit
         # logging macros: Error severity via sink, expansion still completes.
-        let diags = collect_macro_diagnostics() do
-                logging_expand("@logmsg lvl \"msg\" foo=1 foo=2")
+        for code in ("@logmsg lvl \"msg\" foo=1 foo=2", "@logmsg lvl \"msg\" foo foo")
+            let diags = collect_macro_diagnostics() do
+                    logging_expand(code)
+                end
+                @test length(diags) == 1
+                d = only(diags)
+                @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
+                @test occursin("key `foo` provided more than once", d.msg)
             end
-            @test length(diags) == 1
-            d = only(diags)
-            @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
-            @test occursin("provided more than once", d.msg)
+        end
+
+        # Neither the level nor the message is a key-value pair.
+        let diags = collect_macro_diagnostics() do
+                logging_expand("@logmsg x x x")
+            end
+            @test isempty(diags)
         end
     end
 

@@ -98,6 +98,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - [Go to definition](https://aviatesk.github.io/JETLS.jl/release/features/#features/go-to-definition) on a string literal that names an existing file, such as the path in `include("utils/binding.jl")` or `joinpath(@__DIR__, "data.toml")`, now jumps to that file instead of to the definition of the function it is passed to.
   The path is resolved relative to the directory of the current file, and go to definition on `include` itself still jumps to the definition of `include`.
 
+- [`lowering/macro-expansion-error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/macro-expansion-error) now reports logging macro calls whose positional arguments repeat a key, such as `@info "msg" x x` and `@info "msg" x x=1`, which Julia rejects with `syntax: field name "x" repeated in named tuple`.
+
 ### Fixed
 
 - Fixed installation on Julia 1.12 and 1.13.0 failing with `Unsatisfiable requirements detected for package Preferences` when no registry is installed, e.g. in the managed installation of [`jetls-client`](https://marketplace.visualstudio.com/items?itemName=aviatesk.jetls-client).
