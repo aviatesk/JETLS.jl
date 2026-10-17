@@ -139,16 +139,19 @@ end
     is_user_lowering_error(err) -> Bool
 
 Return whether `err`, thrown while lowering, reports a problem in the code being lowered,
-i.e. a non-internal `JL.LoweringError` or a `JL.MacroExpansionError`, rather than a bug in
-JuliaLowering or in how JETLS drives it. Callers that give up on lowering failures should
-pass the other errors to [`report_lowering_bug`](@ref).
+i.e. a non-internal `JL.LoweringError` or a `JL.MacroExpansionError` not thrown by JETLS's
+own macro stubs, rather than a bug in JuliaLowering or in JETLS. Callers that give up on
+lowering failures should pass the other errors to [`report_lowering_bug`](@ref).
+Must be called within the `catch` block that caught `err`.
 """
 function is_user_lowering_error(@nospecialize err)
     # JL wraps old-style macro invocation failures in `LoadError` (JuliaLang/julia#62862)
     if err isa LoadError
         err = err.error
     end
-    return (err isa JL.LoweringError && !err.internal) || err isa JL.MacroExpansionError
+    err isa JL.LoweringError && return !err.internal
+    err isa JL.MacroExpansionError && return !thrown_by_macro_stub(catch_backtrace())
+    return false
 end
 
 """
