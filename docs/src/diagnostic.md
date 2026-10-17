@@ -185,7 +185,9 @@ loaded code as the second step of [full analysis](@ref analysis/full).
 Inference only covers code that loaded successfully: after a `toplevel/error`
 (e.g. a missing dependency), JETLS skips inference of method bodies entirely and
 reports `inference/*` diagnostics only for top-level code before the error. See
-[`inference/*`](@ref diagnostic/reference/inference) for the diagnostic codes.
+[How loaded code is inferred](@ref analysis/full/inference) for the code that
+inference reaches, and [`inference/*`](@ref diagnostic/reference/inference) for
+the diagnostic codes.
 
 ###### [Configuration (`config/*`)](@id diagnostic/stage/config)
 

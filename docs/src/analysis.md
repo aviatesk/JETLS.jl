@@ -108,6 +108,104 @@ end
 See [`[full_analysis] concretization_patterns`](@ref config/full_analysis/concretization_patterns)
 for how to let JETLS evaluate such bindings.
 
+### [How loaded code is inferred](@id analysis/full/inference)
+
+Type inference starts from two kinds of code and follows the calls from them:
+
+- The methods that the analyzed code defines, each of which is inferred on its
+  own (see [Signature analysis](@ref analysis/full/inference/signature)).
+- The top-level code that [script analysis](@ref analysis/full/modes/script)
+  does not execute, which is inferred in the order it is loaded.
+  [Package analysis](@ref analysis/full/modes/package) executes all top-level
+  code instead, so it does not infer the calls in top-level code.
+
+Inference follows the calls into `Base` and other packages to infer what they
+return, but JETLS reports only errors in the code of the analysis unit. An
+error that occurs inside a function of another package is not
+reported[^errors_in_other_packages], except for the errors of basic operations
+such as field accesses, which are reported at the operation in your code:
+
+```julia
+struct Point
+    x::Float64
+end
+gety(p::Point) = p.y                       # reported: `Point` has no field `y`
+sum_strings(xs::Vector{String}) = sum(xs)  # not reported, although `sum` fails in `Base`
+```
+
+[^errors_in_other_packages]:
+    When the cause of an error inside a function of another package is clearly
+    in your code, such as `sum(xs)` for `xs::Vector{String}` above, JETLS may
+    report the error at the call in your code in the future.
+
+#### [Signature analysis](@id analysis/full/inference/signature)
+
+Each method that the analyzed code defines is inferred on its own, from its
+signature, with the declared types of its arguments and `Any` for the
+arguments without declared types. So JETLS reports errors in a method even if
+the analyzed code never calls it, as long as they occur for any values of the
+declared types:
+
+```julia
+f(x) = sin(x)          # not reported: `x` can be a number
+g(s::String) = sin(s)  # reported: `sin(::String)`, although `g` is never called
+h(x) = sin("julia")    # reported regardless of `x`
+```
+
+Errors that depend on the types of the arguments without declared types, such
+as the one in `f("julia")`, are reported only through
+[call-site inference](@ref analysis/full/inference/call-site).
+
+#### [Call-site inference](@id analysis/full/inference/call-site)
+
+When inference reaches a call, it infers the called method with the argument
+types of the call. An error found in the called method is reported where it
+occurs, and the related information of the diagnostic shows the calls that lead
+to it:
+
+```julia
+k(x) = cos(x)  # reported: `cos(::String)`, with the call below as the entry
+k("julia")
+```
+
+Inference also reaches your code through functions of other packages, e.g. the
+`do` block passed to `foreach`. It does not follow a call whose callee it
+cannot determine, such as a call through `invokelatest`, so the code reached
+only through such calls is not analyzed with the argument types of the call:
+
+```julia
+m(x) = tan(x)  # not reported, since inference does not follow the call below
+(@main)(::Vector{String}) = invokelatest(m, "julia")
+```
+
+#### [Closures](@id analysis/full/inference/closures)
+
+A closure, including a `do` block, is analyzed with the types of the variables
+it captures, where the types of its arguments are known:
+
+```julia
+function f(name::String)
+    foreach(1:3) do i                  # analyzed where `foreach` calls it, with `i::Int`
+        println(name, i)
+    end
+    g = () -> sin(name)                # analyzed where it is created: reports `sin(::String)`
+    h = (n::Integer) -> sin(name) + n  # likewise, since its argument type is declared
+    k = n -> sin(name) + n             # analyzed only where the analyzed code calls it
+    return g, h, k
+end
+```
+
+- A closure whose argument types are all declared, including one that takes no
+  arguments, is analyzed where it is created, even if the analyzed code never
+  calls it. An explicit `::Any` counts as undeclared.
+- Any other closure is analyzed only through
+  [call-site inference](@ref analysis/full/inference/call-site), since the
+  types of its arguments are known only there. Such a closure that the analyzed
+  code never calls, e.g. one that is only returned or stored for later use, is
+  not analyzed.
+- The body of a task, e.g. of `@async` or `Threads.@spawn`, is analyzed where
+  the task is created.
+
 ### [How each file is analyzed](@id analysis/full/files)
 
 JETLS classifies a file by the nearest `Project.toml` found by searching

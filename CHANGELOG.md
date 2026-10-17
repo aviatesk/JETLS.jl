@@ -79,6 +79,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `@test_broken`, `@test ex broken=true`, and tests in function bodies are not reported.
   ([aviatesk/JET.jl#896](https://github.com/aviatesk/JET.jl/pull/896))
 
+- Added the [How loaded code is inferred](https://aviatesk.github.io/JETLS.jl/release/analysis/#analysis/full/inference) section to the Analysis documentation, which explains which code full analysis infers and with which types: the methods your code defines are inferred from their signatures, the methods it calls are inferred with the argument types of the calls, and closures are analyzed where the types of their arguments are known.
+  It also explains why some errors are not reported, e.g. those that depend on the types of arguments without declared types.
+
 ### Changed
 
 - Full analysis now analyzes test sets as if they were declared with `failfast=true`, so it analyzes the code after `@test ex` assuming that `ex` is `true`:
