@@ -1254,6 +1254,25 @@ end
         @test diagnostic.range.start.character == sizeof("x = ")
         @test diagnostic.range.var"end".line == 0
         @test diagnostic.range.var"end".character == sizeof("x = @m_throw 42")
+        # only the frame of the macro, not the JuliaLowering frame that invokes it
+        info = only(something(diagnostic.relatedInformation))
+        @test info.message == "var\"@m_throw\"(::LineNumberNode, ::Module, ::Any)"
+        @test info.location.uri == filepath2uri(@__FILE__)
+    end
+
+    @testset "macro expansion error diagnostics for a macro in an unsaved buffer" begin
+        mod = Module()
+        include_string(mod, """
+            macro m_unsaved_error(_)
+                error("Error in unsaved buffer")
+            end
+            """, "Untitled-1")
+        diagnostics = get_lowering_diagnostics("@m_unsaved_error 42"; context_module=mod)
+        relatedInformation = something(only(diagnostics).relatedInformation)
+        @test any(relatedInformation) do info
+            info.location.uri == filename2uri("Untitled-1") &&
+                info.message == "var\"@m_unsaved_error\"(::LineNumberNode, ::Module, ::Any)"
+        end
     end
 
     @testset "nested macro expansion error diagnostics" begin

@@ -276,8 +276,11 @@ end
 
 # TODO Move this logic to `filename2uri`?
 function to_valid_uri(filename::AbstractString)
-    if isunsavedfile(filename)
-        return filename2uri(filename)
+    # Stack frames prepend `./` to relative file names, e.g. `./Untitled-1` for the methods
+    # defined in an unsaved buffer
+    unsaved_filename = chopprefix(filename, "./")
+    if isunsavedfile(unsaved_filename)
+        return filename2uri(unsaved_filename)
     else
         return filepath2uri(to_full_path(filename))
     end
@@ -812,27 +815,32 @@ end
 # ===================
 
 const JL_MACRO_FILE = only(methods(JL.expand_macro, (JL.MacroExpansionContext, SyntaxTree))).file
+const JL_INVOKE_IN_WORLD_FILE = only(methods(JL._invoke_in_world)).file
 
-# Like `stacktrace(bt)`, but only the frames above the innermost `JL.expand_macro`, i.e.
-# those of the macro expansion that threw (all frames if there is none). Frames are looked
-# up lazily since symbolizing a whole backtrace takes milliseconds.
+# Like `stacktrace(bt)`, but only the frames of the macro expansion that threw, i.e. those
+# above the innermost `JL._invoke_in_world`, through which `JL.expand_macro` calls macros,
+# or `JL.expand_macro` (all frames if there is none). Frames are looked up lazily since
+# symbolizing a whole backtrace takes milliseconds.
 function macro_expansion_stacktrace(bt::Vector{<:Union{Base.InterpreterIP,Ptr{Cvoid}}})
     stack = Base.StackTraces.StackFrame[]
     for ip in bt, frame in Base.StackTraces.lookup(ip)
+        frame.func === :_invoke_in_world && frame.file === JL_INVOKE_IN_WORLD_FILE && return stack
         frame.func === :expand_macro && frame.file === JL_MACRO_FILE && return stack
         frame.from_c || push!(stack, frame)
     end
     return stack
 end
 
-function stacktrace_to_related_information(stacktrace::Vector{Base.StackTraces.StackFrame})
+function stacktrace_to_related_information(
+        stacktrace::Vector{Base.StackTraces.StackFrame}, postprocessor::LSPostProcessor
+    )
     relatedInformation = DiagnosticRelatedInformation[]
     for stackframe in stacktrace
         stackframe.file === :none && continue
         uri = to_valid_uri(String(stackframe.file))
         range = line_range(stackframe.line)
         location = Location(; uri, range)
-        message = let linfo = stackframe.linfo
+        sig = let linfo = stackframe.linfo
             linfo isa Core.CodeInstance && (linfo = linfo.def)
             if linfo isa Core.MethodInstance
                 sprint(Base.show_tuple_as_call, Symbol(""), linfo.specTypes)
@@ -840,6 +848,7 @@ function stacktrace_to_related_information(stacktrace::Vector{Base.StackTraces.S
                 String(stackframe.func)
             end
         end
+        message = postprocessor(sig)
         push!(relatedInformation, DiagnosticRelatedInformation(; location, message))
     end
     return relatedInformation
@@ -2069,7 +2078,7 @@ function per_stmt_diagnostics!(
                     relatedInformation = nothing
                 else
                     msg *= "\n" * sprint(locked_showerror, inner)
-                    relatedInformation = stacktrace_to_related_information(st)
+                    relatedInformation = stacktrace_to_related_information(st, postprocessor)
                 end
                 provs = JS.flattened_provenance(err.ex)
                 provs′ = @view provs[2:end]
