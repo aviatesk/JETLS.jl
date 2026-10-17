@@ -132,7 +132,7 @@ Additional concretization patterns are therefore needed only for script analysis
 
 For example, suppose `scripts/random-type.jl` contains:
 
-```julia
+```@diagnostics; file = "scripts/random-type.jl", codes = ["toplevel/missing-concretization"]
 RandomType = rand((Bool, Int))
 
 struct Container

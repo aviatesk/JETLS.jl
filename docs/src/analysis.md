@@ -97,11 +97,11 @@ needs the value of the assigned binding cannot be loaded unless that value
 can be inferred. Otherwise, JETLS reports
 [`toplevel/missing-concretization`](@ref diagnostic/reference/toplevel/missing-concretization):
 
-```julia
+```@diagnostics; codes = ["toplevel/missing-concretization"]
 read_config() = Base.get_bool_env("USE_FLOAT64", true; throw=true)
 data = rand(read_config() ? Float64 : Float32, 10)
 struct Samples
-    values::typeof(data)  # toplevel/missing-concretization
+    values::typeof(data)
 end
 ```
 
@@ -125,7 +125,7 @@ error that occurs inside a function of another package is not
 reported[^errors_in_other_packages], except for the errors of basic operations
 such as field accesses, which are reported at the operation in your code:
 
-```julia
+```@diagnostics; codes = ["inference/field-error"]
 struct Point
     x::Float64
 end
@@ -146,7 +146,7 @@ arguments without declared types. So JETLS reports errors in a method even if
 the analyzed code never calls it, as long as they occur for any values of the
 declared types:
 
-```julia
+```@diagnostics; codes = ["inference/method-error"]
 f(x) = sin(x)          # not reported: `x` can be a number
 g(s::String) = sin(s)  # reported: `sin(::String)`, although `g` is never called
 h(x) = sin("julia")    # reported regardless of `x`
@@ -163,7 +163,7 @@ types of the call. An error found in the called method is reported where it
 occurs, and the related information of the diagnostic shows the calls that lead
 to it:
 
-```julia
+```@diagnostics; codes = ["inference/method-error"]
 k(x) = cos(x)  # reported: `cos(::String)`, with the call below as the entry
 k("julia")
 ```
@@ -173,7 +173,7 @@ Inference also reaches your code through functions of other packages, e.g. the
 cannot determine, such as a call through `invokelatest`, so the code reached
 only through such calls is not analyzed with the argument types of the call:
 
-```julia
+```@diagnostics; absent_codes = ["inference/method-error"]
 m(x) = tan(x)  # not reported, since inference does not follow the call below
 (@main)(::Vector{String}) = invokelatest(m, "julia")
 ```
@@ -183,7 +183,7 @@ m(x) = tan(x)  # not reported, since inference does not follow the call below
 A closure, including a `do` block, is analyzed with the types of the variables
 it captures, where the types of its arguments are known:
 
-```julia
+```@diagnostics; codes = ["inference/method-error"]
 function f(name::String)
     foreach(1:3) do i                  # analyzed where `foreach` calls it, with `i::Int`
         println(name, i)

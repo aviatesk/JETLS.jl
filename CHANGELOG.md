@@ -84,6 +84,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
+- The examples in the [Diagnostic](https://aviatesk.github.io/JETLS.jl/release/diagnostic/) and [Analysis](https://aviatesk.github.io/JETLS.jl/release/analysis/) documentation now show the diagnostics that JETLS reports for them as editors display them: each diagnostic is underlined with its message shown inline, and hovering it shows its full message, related information, and quick fixes.
+  The examples are analyzed when the documentation is built, so they stay in sync with the actual diagnostics.
+
 - Full analysis now analyzes test sets as if they were declared with `failfast=true`, so it analyzes the code after `@test ex` assuming that `ex` is `true`:
   ```julia
   @testset "foo" begin

@@ -428,7 +428,35 @@ function run_check_analysis(
         skip_analysis::Bool, context_lines::Int,
         exit_severity::DiagnosticSeverity.Ty, show_severity::DiagnosticSeverity.Ty
     )
+    start_time = time()
+
     server = start_cli_server(root_path)
+    result = try
+        collect_check_diagnostics!(server, root_path, files, stdin_source, progress_ctx; skip_analysis)
+    finally
+        cleanup_cli_tasks(server)
+    end
+    uri2diagnostics, total_uris = @something result return 1
+
+    elapsed_time = time() - start_time
+    print_stats(uri2diagnostics, total_uris, elapsed_time, show_severity)
+    has_errors = print_diagnostics(uri2diagnostics, root_path, context_lines, exit_severity, show_severity;
+        stdin_source)
+
+    exit_severity_str =
+        exit_severity == DiagnosticSeverity.Error ? "error" :
+        exit_severity == DiagnosticSeverity.Warning ? "warn" :
+        exit_severity == DiagnosticSeverity.Information ? "info" : "hint"
+    println(stdout, "# Check ", has_errors ? "failed" : "passed", " (--exit-severity=", exit_severity_str, ")")
+
+    return has_errors
+end
+
+function collect_check_diagnostics!(
+        server::Server, root_path::String, files::Vector{InputSource},
+        stdin_source::Union{Nothing,InputSource}, progress_ctx::ProgressContext;
+        skip_analysis::Bool
+    )
     if stdin_source !== nothing
         # Cache it as `textDocument/didOpen` does: the saved file cache makes the full
         # analysis read this text instead of the file on disk at `--stdin-filename`.
@@ -440,8 +468,6 @@ function run_check_analysis(
         start_signature_analysis_workers!(server)
         start_analysis_worker!(server)
     end
-
-    start_time = time()
 
     if skip_analysis
         analysis_uris = Set{URI}(file.uri for file in files)
@@ -457,7 +483,7 @@ function run_check_analysis(
                 analysis_info isa OutOfScope && analysis_info.skip_reason !== nothing
             end
             @error "Full analysis failed: could not find any files to analyze"
-            return 1
+            return nothing
         end
         # Requested files get the diagnostics that live analysis reports for them in the
         # editor, even when they are excluded by `analysis_overrides` or no analysis unit
@@ -475,20 +501,7 @@ function run_check_analysis(
         unique!(d::Diagnostic -> (d.range, d.message, d.code), diagnostics)
     end
 
-    elapsed_time = time() - start_time
-    print_stats(uri2diagnostics, total_uris, elapsed_time, show_severity)
-    has_errors = print_diagnostics(uri2diagnostics, root_path, context_lines, exit_severity, show_severity;
-        stdin_source)
-
-    cleanup_cli_tasks(server)
-
-    exit_severity_str =
-        exit_severity == DiagnosticSeverity.Error ? "error" :
-        exit_severity == DiagnosticSeverity.Warning ? "warn" :
-        exit_severity == DiagnosticSeverity.Information ? "info" : "hint"
-    println(stdout, "# Check ", has_errors ? "failed" : "passed", " (--exit-severity=", exit_severity_str, ")")
-
-    return has_errors
+    return uri2diagnostics, total_uris
 end
 
 function start_cli_server(root_path::AbstractString)
