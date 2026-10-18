@@ -802,7 +802,7 @@ end
 function scrub_backtrace(bt::Vector{BacktraceElm})
     runtest_idx = @something let
             findfirst(ip::BacktraceElm ->
-                Test.ip_has_file_and_func(ip, @__FILE__, (:runtest, :runtests)), bt)
+                any(is_runtest_frame, Base.StackTraces.lookup(ip)), bt)
         end return bt
     internal_idx = @something let
             findfirst(ip::BacktraceElm -> ip_has_file(ip, @__FILE__), bt)
@@ -813,6 +813,9 @@ function scrub_backtrace(bt::Vector{BacktraceElm})
     internal_idx < runtest_idx || return bt
     return append!(bt[1:internal_idx-1], bt[runtest_idx:end])
 end
+
+is_runtest_frame(fr::Base.StackTraces.StackFrame) =
+    fr.func in (:runtest, :runtests) && string(fr.file) == @__FILE__
 
 function ip_has_file(ip::BacktraceElm, file::String)
     return any(Base.StackTraces.lookup(ip)) do fr::Base.StackTraces.StackFrame

@@ -245,6 +245,26 @@ end
     end
 end
 
+@testset "related information" begin
+    content = """
+    using Test
+    f() = error("boom")
+    @testset "error" begin
+        @test f() == 1
+    end
+    """
+    with_test_file(content) do testfile
+        result = run_testrunner_process(["--json", testfile, "error"])
+        @test result.exitcode == 1
+        json_result = JSON3.read(result.stdout, TestRunnerResult)
+        relatedInformation = something(only(json_result.diagnostics).relatedInformation)
+        # only the frames of the test code, not those of TestRunner itself
+        @test [info.message for info in relatedInformation] == ["error(::String)", "f()"]
+        @test relatedInformation[2].filename == testfile
+        @test relatedInformation[2].line == 2
+    end
+end
+
 @testset "--read-stdin" begin
     # Pass source via stdin; file path is still required for `@__FILE__` etc.
     let source = """
