@@ -29,8 +29,29 @@ function Test.record(trts::TestRunnerTestSet, @nospecialize res)
         end
         errors_and_fails[res] = excs
         empty!(interp.current_exceptions)
+    elseif res isa Test.Fail && Test.TESTSET_PRINT_ENABLE[]
+        # `Test` cannot find where the test code starts in the backtrace of the failure
+        # since the test code is interpreted, so show the failure here instead
+        print_fail(trts.dts, res)
+        return Test.record(trts.dts, res; print_result=false)
     end
     Test.record(trts.dts, res)
+end
+
+# Mirrors how `Test.record(::Test.DefaultTestSet, ::Test.Fail)` shows a failure
+function print_fail(dts::Test.DefaultTestSet, res::Test.Fail)
+    bt = scrub_backtrace(Test.scrub_backtrace(backtrace(), dts.file, Test.extract_file(res.source)))
+    @static if VERSION ≥ v"1.13.0-"
+        println()
+    end
+    print(dts.description, ": ")
+    print(res)
+    @static if VERSION ≥ v"1.13.0-"
+        Base.show_backtrace(stdout, bt; prefix="  ")
+    else
+        Base.show_backtrace(stdout, bt)
+    end
+    println()
 end
 function Test.finish(trts::TestRunnerTestSet)
     if Test.get_testset_depth() != 0
