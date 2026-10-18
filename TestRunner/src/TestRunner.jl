@@ -801,6 +801,8 @@ const JULIAINTERPRETER_INTERPRET_FILE = let
     Symbol(normpath(jlfile, "..", "interpret.jl"))
 end
 
+# Keep only the frames of the code that the interpreted test code calls natively, dropping
+# those of the interpreter running the test code and of TestRunner itself
 function scrub_backtrace(bt::Vector{BacktraceElm})
     runtest_idx = @something let
             findfirst(ip::BacktraceElm ->
@@ -813,7 +815,7 @@ function scrub_backtrace(bt::Vector{BacktraceElm})
                 Test.ip_has_file_and_func(ip, JULIAINTERPRETER_INTERPRET_FILE, (:step_expr!,:eval_rhs,)), bt)
         end return bt
     internal_idx < runtest_idx || return bt
-    return append!(bt[1:internal_idx-1], bt[runtest_idx:end])
+    return bt[1:internal_idx-1]
 end
 
 is_runtest_frame(fr::Base.StackTraces.StackFrame) =

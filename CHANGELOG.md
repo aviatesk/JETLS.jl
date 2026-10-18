@@ -165,8 +165,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Fixed the related information of [`lowering/macro-expansion-error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/macro-expansion-error) diagnostics, which lists the stack frames of the macro that threw:
   it no longer includes a frame of JETLS's internal macro invocation showing a module name such as `Main.var"##JETVirtualModule#142"`, and the frames of a macro defined in an unsaved buffer now point to the buffer instead of a nonexistent file.
 
-- Fixed the related information of [`testrunner/test-failure`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/testrunner/test-failure) diagnostics, which lists the stack frames of the error that a test threw:
-  it no longer includes the frames of TestRunner.jl itself, and the frames of functions defined in an unsaved buffer now point to the buffer instead of a nonexistent file.
+- Fixed the stack traces of failed tests and errors in the related information of [`testrunner/test-failure`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/testrunner/test-failure) diagnostics, the output of [`jetls test`](https://aviatesk.github.io/JETLS.jl/release/testrunner/#testrunner/cli), and the logs of the [TestRunner integration](https://aviatesk.github.io/JETLS.jl/release/testrunner/):
+  they no longer include the frames of TestRunner.jl itself and of the interpreter running the tests, and in the related information, the frames of functions defined in an unsaved buffer now point to the buffer instead of a nonexistent file.
+  The stack traces of failed tests in test sets of a custom type, such as `@testset MyTestSet "name" begin ... end`, still include such frames.
 
 - Fixed [`testrunner/test-failure`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/testrunner/test-failure) diagnostics and the output of [`jetls test`](https://aviatesk.github.io/JETLS.jl/release/testrunner/#testrunner/cli) not showing the exception that a test threw when the test is in a test set of a custom type, such as `@testset MyTestSet "name" begin ... end`.
   `Base.current_exceptions()` in a `catch` block of test code also returns the exceptions being handled now, instead of an empty stack.
