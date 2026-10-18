@@ -27,6 +27,14 @@ const LINE_TestModuleDefinitionRange = (@__LINE__) - 3
     @test loc.range.start.line == LINE_TestModuleDefinitionRange-1
 end
 
+@testset "module location in an unsaved buffer" begin
+    mod = Module()
+    include_string(mod, "\nmodule M_unsaved end", "Untitled-1")
+    loc = JETLSCore.Location(mod.M_unsaved)
+    @test loc.uri == filename2uri("Untitled-1")
+    @test loc.range.start.line == 1
+end
+
 # Full-analysis helper for end-to-end request/response tests. Most testsets in
 # this file use the lightweight `definition_test` (which skips the LSP roundtrip
 # and the workspace full-analysis).

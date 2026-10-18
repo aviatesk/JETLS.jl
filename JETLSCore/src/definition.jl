@@ -73,7 +73,7 @@ end
 
 function LSP.Location(mod::Module)
     (; file, line) = Base.moduleloc(mod)
-    uri = filename2uri(to_full_path(file))
+    uri = to_valid_uri(String(file))
     return Location(;
         uri,
         range = Range(;
