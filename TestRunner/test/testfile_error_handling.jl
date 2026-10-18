@@ -24,3 +24,22 @@ test_func(x) = @test sin(x) == 0
 @testset "Exception outside of `@testset`" begin
     test_func(Inf)
 end
+
+struct WrapperTestSet <: Test.AbstractTestSet
+    dts::Test.DefaultTestSet
+end
+WrapperTestSet(desc::AbstractString; kws...) = WrapperTestSet(Test.DefaultTestSet(desc; kws...))
+Test.record(ts::WrapperTestSet, res) = Test.record(ts.dts, res)
+Test.finish(ts::WrapperTestSet) = Test.finish(ts.dts)
+@testset WrapperTestSet "Exceptions in a custom test set" begin
+    @test sin(Inf) == π
+    v = sin(Inf)
+end
+
+@testset "`current_exceptions` in a `catch` block" begin
+    try
+        sin(Inf)
+    catch
+        @test only(Base.current_exceptions()).exception isa DomainError
+    end
+end

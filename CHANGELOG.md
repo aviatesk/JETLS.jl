@@ -168,6 +168,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Fixed the related information of [`testrunner/test-failure`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/testrunner/test-failure) diagnostics, which lists the stack frames of the error that a test threw:
   it no longer includes the frames of TestRunner.jl itself, and the frames of functions defined in an unsaved buffer now point to the buffer instead of a nonexistent file.
 
+- Fixed [`testrunner/test-failure`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/testrunner/test-failure) diagnostics and the output of [`jetls test`](https://aviatesk.github.io/JETLS.jl/release/testrunner/#testrunner/cli) not showing the exception that a test threw when the test is in a test set of a custom type, such as `@testset MyTestSet "name" begin ... end`.
+  `Base.current_exceptions()` in a `catch` block of test code also returns the exceptions being handled now, instead of an empty stack.
+
 ## 2026-10-14
 
 - Commit: [`64dd358`](https://github.com/aviatesk/JETLS.jl/commit/64dd358)

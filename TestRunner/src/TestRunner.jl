@@ -708,12 +708,14 @@ end
 # `JI.evaluate_call!(::JI.NonRecursiveInterpreter, ...)`
 # but includes a few important adjustments specific to TestRunner's virtual process:
 # - Special handling for `include` calls: recursively apply the virtual process to included files.
-# - `rethrow` is left to JuliaInterpreter: exceptions caught by interpreted handlers do
-#   not live on the task's native exception stack, so it needs to re-raise the one being
-#   handled by the interpreted frames.
+# - `rethrow` and `current_exceptions` are left to JuliaInterpreter: exceptions caught by
+#   interpreted handlers do not live on the task's native exception stack, so they need to
+#   work on the ones being handled by the interpreted frames. JuliaInterpreter models only
+#   `current_exceptions()` without arguments.
 function JI.evaluate_call!(interp::TRInterpreter, frame::JI.Frame, fargs::Vector{Any},
                            enter_generated::Bool)
-    if fargs[1] === Base.rethrow
+    if fargs[1] === Base.rethrow ||
+       (fargs[1] === Base.current_exceptions && length(fargs) == 1)
         return @invoke JI.evaluate_call!(interp::JI.Interpreter, frame::JI.Frame,
                                          fargs::Vector{Any}, enter_generated::Bool)
     end
