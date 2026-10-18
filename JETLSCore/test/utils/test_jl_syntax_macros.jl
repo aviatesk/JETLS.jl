@@ -277,11 +277,11 @@ end
 
     @testset "validation" begin
         for (code, msg) in (
-                ("@NamedTuple", "@NamedTuple expects exactly one argument"),
-                ("@NamedTuple a b", "@NamedTuple expects exactly one argument"),
-                ("@NamedTuple (a::Int, b)", "@NamedTuple expects {...} or begin...end"),
-                ("@NamedTuple{a.b::Int}", "must contain a sequence of name or name::type expressions"),
-                ("@NamedTuple{a::Int = 1}", "must contain a sequence of name or name::type expressions"),
+                ("@NamedTuple", "`@NamedTuple` expects exactly one argument"),
+                ("@NamedTuple a b", "`@NamedTuple` expects exactly one argument"),
+                ("@NamedTuple (a::Int, b)", "`@NamedTuple` expects `{...}` or `begin ... end`"),
+                ("@NamedTuple{a.b::Int}", "must contain a sequence of `name` or `name::type` expressions"),
+                ("@NamedTuple{a::Int = 1}", "must contain a sequence of `name` or `name::type` expressions"),
                 ("@NamedTuple{a::Int, a}", "duplicate field name `a`"),
             )
             let diags = collect_macro_diagnostics() do
@@ -342,10 +342,10 @@ end
 
     @testset "validation" begin
         for (code, msg) in (
-                ("@Kwargs", "@Kwargs expects exactly one argument"),
-                ("@Kwargs (a::Int, b)", "@Kwargs expects {...} or begin...end"),
-                ("@Kwargs{a.b::Int}", "@Kwargs must contain a sequence of name or name::type expressions"),
-                ("@Kwargs{a::Int, a}", "@Kwargs: duplicate field name `a`"),
+                ("@Kwargs", "`@Kwargs` expects exactly one argument"),
+                ("@Kwargs (a::Int, b)", "`@Kwargs` expects `{...}` or `begin ... end`"),
+                ("@Kwargs{a.b::Int}", "`@Kwargs` must contain a sequence of `name` or `name::type` expressions"),
+                ("@Kwargs{a::Int, a}", "`@Kwargs`: duplicate field name `a`"),
             )
             let diags = collect_macro_diagnostics() do
                     jlexpand(code)
@@ -404,7 +404,7 @@ end
                 @test length(diags) == 1
                 d = only(diags)
                 @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
-                @test occursin("@lock expects exactly two arguments", d.msg)
+                @test occursin("`@lock` expects exactly two arguments", d.msg)
             end
         end
     end
@@ -482,7 +482,7 @@ end
             @test length(diags) == 1
             d = only(diags)
             @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
-            @test occursin("unsupported threadpool in @spawn: foo", d.msg)
+            @test occursin("unsupported threadpool in `@spawn`: `:foo`", d.msg)
         end
 
         # Zero arguments and 3+ arguments both fall through to the variadic fallback
@@ -495,7 +495,7 @@ end
                 @test length(diags) == 1
                 d = only(diags)
                 @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
-                @test occursin("wrong number of arguments in @spawn", d.msg)
+                @test occursin("wrong number of arguments in `@spawn`", d.msg)
             end
         end
 
@@ -518,7 +518,7 @@ end
                 @test length(diags) == 1
                 d = only(diags)
                 @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
-                @test occursin("threadpool argument in @spawn must be", d.msg)
+                @test occursin("threadpool argument in `@spawn` must be", d.msg)
             end
         end
     end
@@ -665,7 +665,7 @@ end
             @test length(diags) == 1
             d = only(diags)
             @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
-            @test occursin("@lazy_str", d.msg)
+            @test occursin("`@lazy_str`", d.msg)
         end
         @test collect_macro_diagnostics() do
             jlresolve(lowering_module, "f(idx) = @lazy_wrapper idx")
@@ -881,7 +881,7 @@ end
                 jlexpand("@doc()")
             end
             @test length(diags) == 1
-            @test occursin("@doc requires at least one argument", only(diags).msg)
+            @test occursin("`@doc` requires at least one argument", only(diags).msg)
         end
         let diags = collect_macro_diagnostics() do
                 jlexpand("@doc(\"docstring\", xxx, yyy)")
@@ -1039,7 +1039,7 @@ logging_resolve(code::AbstractString) = jlresolve(logging_module, code)
                 @test length(diags) == 1
                 d = only(diags)
                 @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
-                @test occursin("$name requires at least one argument", d.msg)
+                @test occursin("`$name` requires at least one argument", d.msg)
             end
         end
 
@@ -1142,7 +1142,7 @@ end
                 @test length(diags) == 1
                 d = only(diags)
                 @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
-                @test occursin("@logmsg requires at least two arguments", d.msg)
+                @test occursin("`@logmsg` requires at least two arguments", d.msg)
             end
         end
 
@@ -1454,7 +1454,7 @@ end
             @test length(diags) == 1
             d = only(diags)
             @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
-            @test occursin("No arguments to @testset", d.msg)
+            @test occursin("No arguments to `@testset`", d.msg)
         end
 
         # Body argument that's not `for`/`begin`/`call`/`let`: reported via sink,
@@ -1479,7 +1479,7 @@ end
             @test length(diags) == 1
             d = only(diags)
             @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Warning
-            @test occursin("Multiple descriptions provided to @testset", d.msg)
+            @test occursin("Multiple descriptions provided to `@testset`", d.msg)
             @test JS.sourcetext(d.node) == "\"b\""
         end
         let diags = collect_macro_diagnostics() do
@@ -1488,7 +1488,7 @@ end
             @test length(diags) == 1
             d = only(diags)
             @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Warning
-            @test occursin("Multiple testset types provided to @testset", d.msg)
+            @test occursin("Multiple testset types provided to `@testset`", d.msg)
             @test JS.sourcetext(d.node) == "Bar"
         end
 
@@ -1615,7 +1615,7 @@ end
                 @test length(diags) == 1
                 d = only(diags)
                 @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
-                @test occursin("@test_throws expects exactly two arguments", d.msg)
+                @test occursin("`@test_throws` expects exactly two arguments", d.msg)
             end
         end
     end
@@ -1714,7 +1714,7 @@ end
             @test length(diags) == 1
             d = only(diags)
             @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
-            @test occursin("@test_logs needs at least one argument", d.msg)
+            @test occursin("`@test_logs` needs at least one argument", d.msg)
         end
     end
 
@@ -1747,7 +1747,7 @@ end
                 @test length(diags) == 1
                 d = only(diags)
                 @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
-                @test occursin("@test_deprecated expects one or two arguments", d.msg)
+                @test occursin("`@test_deprecated` expects one or two arguments", d.msg)
             end
         end
     end
@@ -1772,7 +1772,7 @@ end
                 @test length(diags) == 1
                 d = only(diags)
                 @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
-                @test occursin("@inferred expects one or two arguments", d.msg)
+                @test occursin("`@inferred` expects one or two arguments", d.msg)
             end
         end
     end
@@ -2127,7 +2127,7 @@ end
             @test length(diags) == 1
             d = only(diags)
             @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
-            @test occursin("invalid @static macro", d.msg)
+            @test occursin("invalid `@static` macro", d.msg)
         end
 
         # Zero arguments and 2+ arguments fall through to the variadic fallback.
@@ -2138,7 +2138,7 @@ end
                 @test length(diags) == 1
                 d = only(diags)
                 @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
-                @test occursin("invalid @static macro", d.msg)
+                @test occursin("invalid `@static` macro", d.msg)
             end
         end
 
@@ -2161,7 +2161,7 @@ end
             @test length(diags) == 1
             d = only(diags)
             @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
-            @test occursin("did not evaluate to a Bool", d.msg)
+            @test occursin("did not evaluate to a `Bool`", d.msg)
         end
     end
 

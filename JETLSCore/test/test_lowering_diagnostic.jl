@@ -1341,7 +1341,7 @@ end
         diagnostic = only(diagnostics)
         @test diagnostic.severity == LSP.DiagnosticSeverity.Warning
         @test diagnostic.source == JETLSCore.DIAGNOSTIC_SOURCE_LIVE
-        @test occursin("Multiple descriptions provided to @testset", diagnostic.message)
+        @test occursin("Multiple descriptions provided to `@testset`", diagnostic.message)
         # The diagnostic covers the redundant `"b"` argument, including quotes.
         @test diagnostic.range.start.character == sizeof("@testset \"a\" ")
         @test diagnostic.range.var"end".character == sizeof("@testset \"a\" \"b\"")

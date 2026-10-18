@@ -257,7 +257,7 @@ end
 
 function Base.var"@lock"(__context__::JL.MacroContext, args::SyntaxTree...)
     mc = __context__.macrocall::SyntaxTree
-    push_macro_error!(mc, "@lock expects exactly two arguments: `lock body`")
+    push_macro_error!(mc, "`@lock` expects exactly two arguments: `lock body`")
     isempty(args) && return JL.@ast(__context__, mc, nothing::value)
     return JL.@ast(__context__, mc, [:block args...])
 end
@@ -321,19 +321,19 @@ function _validate_spawn_threadpool(threadpool::SyntaxTree)
                 # Base defers the threadpool check to runtime; flag it statically as an
                 # error but keep expanding so the body (and threadpool identifier, if any)
                 # still reaches scope analysis.
-                push_macro_error!(threadpool, "unsupported threadpool in @spawn: $name")
+                push_macro_error!(threadpool, "unsupported threadpool in `@spawn`: `:$name`")
                 return
             end
         end
     end
     push_macro_error!(threadpool,
-        "threadpool argument in @spawn must be `:default`, `:interactive`, `:samepool`, or a bare variable")
+        "threadpool argument in `@spawn` must be `:default`, `:interactive`, `:samepool`, or a bare variable")
     nothing
 end
 
 function Base.Threads.var"@spawn"(__context__::JL.MacroContext, args::SyntaxTree...)
     mc = __context__.macrocall::SyntaxTree
-    push_macro_error!(mc, "wrong number of arguments in @spawn")
+    push_macro_error!(mc, "wrong number of arguments in `@spawn`")
     # Recovery: flow whatever the user wrote through scope analysis. 0-arg →
     # `nothing`, ≥3-arg → a block of every arg so identifiers inside stay visible.
     isempty(args) && return JL.@ast(__context__, mc, nothing::value)
@@ -349,7 +349,7 @@ end
 # common case and the only one needed for most LSP analyses.
 function Base.var"@label"(__context__::JL.MacroContext, ex::SyntaxTree)
     if JS.head(ex) !== :identifier
-        push_macro_error!(ex, "@label requires an identifier")
+        push_macro_error!(ex, "`@label` requires an identifier")
         # Recovery: let the expression flow through so any identifier inside still
         # reaches scope analysis. Goto-target semantics are lost.
         return JL.@ast(__context__, __context__.macrocall::SyntaxTree, ex)
@@ -362,7 +362,7 @@ end
 function Base.var"@label"(__context__::JL.MacroContext, args::SyntaxTree...)
     mc = __context__.macrocall::SyntaxTree
     push_macro_error!(mc,
-        "@label currently only supports the `@label name` form")
+        "`@label` currently only supports the `@label name` form")
     isempty(args) && return JL.@ast(__context__, mc, nothing::value)
     return JL.@ast(__context__, mc, [:block args...])
 end
@@ -409,7 +409,7 @@ end
 function Base.var"@lazy_str"(__context__::JL.MacroContext, text::SyntaxTree)
     mc = __context__.macrocall::SyntaxTree
     if !(JS.head(text) === :value && text.value isa String)
-        push_macro_error!(text, "@lazy_str expects a string literal")
+        push_macro_error!(text, "`@lazy_str` expects a string literal")
         return JL.@ast(__context__, mc, text)
     end
     value = text.value::String
@@ -424,7 +424,7 @@ end
 
 function Base.var"@lazy_str"(__context__::JL.MacroContext, args::SyntaxTree...)
     mc = __context__.macrocall::SyntaxTree
-    push_macro_error!(mc, "@lazy_str expects exactly one string argument")
+    push_macro_error!(mc, "`@lazy_str` expects exactly one string argument")
     isempty(args) && return JL.@ast(__context__, mc, nothing::value)
     return JL.@ast(__context__, mc, [:block args...])
 end
@@ -443,7 +443,7 @@ function _lazy_str_parts(
         end
         atom_start = nextind(value, dollar)
         if atom_start > lastindex(value)
-            push_macro_error!(text, "@lazy_str: invalid interpolation")
+            push_macro_error!(text, "`@lazy_str`: invalid interpolation")
             push!(parts, _lazy_str_literal_part(text, value, source_map, dollar, lastindex(value)))
             return parts
         end
@@ -564,7 +564,7 @@ function _lazy_str_parse_interpolation(
         JS.parseatom(JS.SyntaxTree, value, idx; ignore_errors=false)
     catch err
         msg = first(split(sprint(locked_showerror, err), '\n'))
-        push_macro_error!(text, "@lazy_str: failed to parse interpolation: $msg")
+        push_macro_error!(text, "`@lazy_str`: failed to parse interpolation: $msg")
         return nothing
     end
     src = JS.sourceref(text)
@@ -621,7 +621,7 @@ end
 # inside (e.g. an interpolated `"got $y"`) still get scope-resolved.
 function Base.var"@assert"(__context__::JL.MacroContext)
     mc = __context__.macrocall::SyntaxTree
-    push_macro_error!(mc, "@assert: at least one argument is required")
+    push_macro_error!(mc, "`@assert`: at least one argument is required")
     return JL.@ast(__context__, mc, nothing::value)
 end
 
@@ -674,7 +674,7 @@ end
 # signature is neither defined nor called, so it is referenced like a lookup instead.
 function Core.var"@doc"(__context__::JL.MacroContext)
     mc = __context__.macrocall::SyntaxTree
-    push_macro_error!(mc, "@doc requires at least one argument")
+    push_macro_error!(mc, "`@doc` requires at least one argument")
     return JL.@ast(__context__, mc, nothing::value)
 end
 
@@ -706,7 +706,7 @@ function Core.var"@doc"(
         __context__::JL.MacroContext, meta::SyntaxTree, ex::SyntaxTree, define::SyntaxTree
     )
     if !(JS.head(define) === :value && define.value isa Bool)
-        push_macro_error!(define, "@doc expects a `Bool` literal as its third argument")
+        push_macro_error!(define, "`@doc` expects a `Bool` literal as its third argument")
     end
     return Core.var"@doc"(__context__, meta, ex)
 end
@@ -840,7 +840,7 @@ end
 
 function Base.CoreLogging.var"@debug"(__context__::JL.MacroContext)
     mc = __context__.macrocall::SyntaxTree
-    push_macro_error!(mc, "@debug requires at least one argument: a `message`")
+    push_macro_error!(mc, "`@debug` requires at least one argument: a `message`")
     return JL.@ast(__context__, mc, nothing::value)
 end
 
@@ -852,7 +852,7 @@ end
 
 function Base.CoreLogging.var"@info"(__context__::JL.MacroContext)
     mc = __context__.macrocall::SyntaxTree
-    push_macro_error!(mc, "@info requires at least one argument: a `message`")
+    push_macro_error!(mc, "`@info` requires at least one argument: a `message`")
     return JL.@ast(__context__, mc, nothing::value)
 end
 
@@ -864,7 +864,7 @@ end
 
 function Base.CoreLogging.var"@warn"(__context__::JL.MacroContext)
     mc = __context__.macrocall::SyntaxTree
-    push_macro_error!(mc, "@warn requires at least one argument: a `message`")
+    push_macro_error!(mc, "`@warn` requires at least one argument: a `message`")
     return JL.@ast(__context__, mc, nothing::value)
 end
 
@@ -876,7 +876,7 @@ end
 
 function Base.CoreLogging.var"@error"(__context__::JL.MacroContext)
     mc = __context__.macrocall::SyntaxTree
-    push_macro_error!(mc, "@error requires at least one argument: a `message`")
+    push_macro_error!(mc, "`@error` requires at least one argument: a `message`")
     return JL.@ast(__context__, mc, nothing::value)
 end
 
@@ -893,7 +893,7 @@ end
 function Base.CoreLogging.var"@logmsg"(__context__::JL.MacroContext, args::SyntaxTree...)
     mc = __context__.macrocall::SyntaxTree
     push_macro_error!(mc,
-        "@logmsg requires at least two arguments: a `level` and a `message`")
+        "`@logmsg` requires at least two arguments: a `level` and a `message`")
     isempty(args) && return JL.@ast(__context__, mc, nothing::value)
     return JL.@ast(__context__, mc, [:block args... nothing::value])
 end
@@ -913,7 +913,7 @@ function _logmsg_stub(
         k = JS.head(ex)
         if k === :(=)
             if JS.numchildren(ex) != 2
-                push_macro_error!(ex, "$name: malformed keyword argument")
+                push_macro_error!(ex, "`$name`: malformed keyword argument")
                 continue
             end
             if i > nfixed
@@ -922,7 +922,7 @@ function _logmsg_stub(
                         if key in _LOGMSG_METADATA_KEYS
                             if key in seen_metadata_keys
                                 push_macro_warning!(ex,
-                                    "$name: metadata key `$key` provided more than once; only the last one is used")
+                                    "`$name`: metadata key `$key` provided more than once; only the last one is used")
                             else
                                 push!(seen_metadata_keys, key)
                             end
@@ -937,7 +937,7 @@ function _logmsg_stub(
             if JS.numchildren(ex) >= 1
                 push!(children, ex[1])
             else
-                push_macro_error!(ex, "$name: malformed splat argument")
+                push_macro_error!(ex, "`$name`: malformed splat argument")
             end
         else
             if i > nfixed
@@ -963,7 +963,7 @@ function _logmsg_key(ex::SyntaxTree, name::AbstractString)
         Symbol(expr)
     catch err
         msg = first(split(sprint(locked_showerror, err), '\n'))
-        push_macro_error!(ex, "$name: invalid key: $msg")
+        push_macro_error!(ex, "`$name`: invalid key: $msg")
         nothing
     end
 end
@@ -975,7 +975,7 @@ function _check_logmsg_key!(
     if key === nothing
         return
     elseif key in seen_keys
-        push_macro_error!(ex, "$name: key `$key` provided more than once")
+        push_macro_error!(ex, "`$name`: key `$key` provided more than once")
     else
         push!(seen_keys, key)
     end
@@ -999,7 +999,7 @@ end
 function Base.var"@invoke"(__context__::JL.MacroContext, args::SyntaxTree...)
     mc = __context__.macrocall::SyntaxTree
     push_macro_error!(mc,
-        "@invoke expects exactly one argument: `f(args...; kwargs...)` (or one of `x.f`, `xs[i]`, `x.f = v`, `xs[i] = v`)")
+        "`@invoke` expects exactly one argument: `f(args...; kwargs...)` (or one of `x.f`, `xs[i]`, `x.f = v`, `xs[i] = v`)")
     isempty(args) && return JL.@ast(__context__, mc, nothing::value)
     return JL.@ast(__context__, mc, [:block args...])
 end
@@ -1015,7 +1015,7 @@ end
 function Base.var"@invokelatest"(__context__::JL.MacroContext, args::SyntaxTree...)
     mc = __context__.macrocall::SyntaxTree
     push_macro_error!(mc,
-        "@invokelatest expects exactly one argument: `f(args...; kwargs...)` (or one of `x.f`, `xs[i]`, `x.f = v`, `xs[i] = v`)")
+        "`@invokelatest` expects exactly one argument: `f(args...; kwargs...)` (or one of `x.f`, `xs[i]`, `x.f = v`, `xs[i] = v`)")
     isempty(args) && return JL.@ast(__context__, mc, nothing::value)
     return JL.@ast(__context__, mc, [:block args...])
 end
@@ -1074,11 +1074,11 @@ function _destructure_invoke_callex(
             return f, args, SyntaxTree[]
         end
         push_macro_error!(ex,
-            "$m: expected a `setproperty!` expression `x.f = v` or `setindex!` expression `x[i] = v`")
+            "`$m`: expected a `setproperty!` expression `x.f = v` or `setindex!` expression `x[i] = v`")
         return nothing
     end
     push_macro_error!(ex,
-        "$m: expected a `:call` expression `f(args...; kwargs...)`")
+        "`$m`: expected a `:call` expression `f(args...; kwargs...)`")
     return nothing
 end
 
@@ -1145,7 +1145,7 @@ end
 # matching the semantics of Base.@kwdef.
 function Base.var"@kwdef"(__context__::JL.MacroContext, ex::SyntaxTree)
     if JS.head(ex) !== :struct
-        push_macro_error!(ex, "Invalid usage of @kwdef")
+        push_macro_error!(ex, "Invalid usage of `@kwdef`")
         # Recovery: let the argument flow through unchanged so e.g. a half-typed
         # struct or an accidentally-decorated function still reaches scope analysis.
         return JL.@ast(__context__, __context__.macrocall::SyntaxTree, ex)
@@ -1280,7 +1280,7 @@ function _kwdef_make_constructors(
     else
         # Recovery: emit no constructors. The bare (stripped) struct definition
         # still reaches downstream lowering.
-        push_macro_error!(type_sig, "Invalid type signature for @kwdef")
+        push_macro_error!(type_sig, "Invalid type signature for `@kwdef`")
         return SyntaxTree[]
     end
 end
@@ -1301,7 +1301,7 @@ end
 
 function Base.var"@NamedTuple"(__context__::JL.MacroContext, args::SyntaxTree...)
     mc = __context__.macrocall::SyntaxTree
-    push_macro_error!(mc, "@NamedTuple expects exactly one argument: {...} or begin...end")
+    push_macro_error!(mc, "`@NamedTuple` expects exactly one argument: `{...}` or `begin ... end`")
     isempty(args) && return JL.@ast(__context__, mc, nothing::value)
     return JL.@ast(__context__, mc, [:block args...])
 end
@@ -1326,7 +1326,7 @@ end
 
 function Base.var"@Kwargs"(__context__::JL.MacroContext, args::SyntaxTree...)
     mc = __context__.macrocall::SyntaxTree
-    push_macro_error!(mc, "@Kwargs expects exactly one argument: {...} or begin...end")
+    push_macro_error!(mc, "`@Kwargs` expects exactly one argument: `{...}` or `begin ... end`")
     isempty(args) && return JL.@ast(__context__, mc, nothing::value)
     return JL.@ast(__context__, mc, [:block args...])
 end
@@ -1335,7 +1335,7 @@ end
 # `begin...end` form.
 function _namedtuple_type(ctx::JL.MacroContext, ex::SyntaxTree, macroname::String)
     if JS.head(ex) ∉ (:braces, :block)
-        push_macro_error!(ex, "$macroname expects {...} or begin...end")
+        push_macro_error!(ex, "`$macroname` expects `{...}` or `begin ... end`")
         return nothing
     end
     names = SyntaxTree[]
@@ -1350,12 +1350,12 @@ function _namedtuple_type(ctx::JL.MacroContext, ex::SyntaxTree, macroname::Strin
             name, type = decl[1], decl[2]
         else
             push_macro_error!(decl,
-                "$macroname must contain a sequence of name or name::type expressions")
+                "`$macroname` must contain a sequence of `name` or `name::type` expressions")
             continue
         end
         namestr = name_val(name)
         if namestr in seen
-            push_macro_error!(name, "$macroname: duplicate field name `$namestr`")
+            push_macro_error!(name, "`$macroname`: duplicate field name `$namestr`")
             continue
         end
         push!(seen, namestr)
@@ -1462,7 +1462,7 @@ end
 function Test.var"@test_throws"(__context__::JL.MacroContext, args::SyntaxTree...)
     mc = __context__.macrocall::SyntaxTree
     push_macro_error!(mc,
-        "@test_throws expects exactly two arguments: `extype` and `ex`")
+        "`@test_throws` expects exactly two arguments: `extype` and `ex`")
     isempty(args) && return JL.@ast(__context__, mc, nothing::value)
     return JL.@ast(__context__, mc, [:block args...])
 end
@@ -1481,7 +1481,7 @@ end
 function Test.var"@test_logs"(__context__::JL.MacroContext, args::SyntaxTree...)
     mc = __context__.macrocall::SyntaxTree
     if isempty(args)
-        push_macro_error!(mc, "@test_logs needs at least one argument")
+        push_macro_error!(mc, "`@test_logs` needs at least one argument")
         return JL.@ast(__context__, mc, nothing::value)
     end
     body = last(args)
@@ -1513,7 +1513,7 @@ end
 function Test.var"@test_deprecated"(__context__::JL.MacroContext, args::SyntaxTree...)
     mc = __context__.macrocall::SyntaxTree
     push_macro_error!(mc,
-        "@test_deprecated expects one or two arguments: `[pattern] expr`")
+        "`@test_deprecated` expects one or two arguments: `[pattern] expr`")
     isempty(args) && return JL.@ast(__context__, mc, nothing::value)
     return JL.@ast(__context__, mc, [:block args...])
 end
@@ -1531,7 +1531,7 @@ end
 
 function Test.var"@inferred"(__context__::JL.MacroContext, args::SyntaxTree...)
     mc = __context__.macrocall::SyntaxTree
-    push_macro_error!(mc, "@inferred expects one or two arguments: `[allow] ex`")
+    push_macro_error!(mc, "`@inferred` expects one or two arguments: `[allow] ex`")
     isempty(args) && return JL.@ast(__context__, mc, nothing::value)
     return JL.@ast(__context__, mc, [:block args...])
 end
@@ -1556,7 +1556,7 @@ end
 function Test.var"@testset"(__context__::JL.MacroContext, args::SyntaxTree...)
     mc = __context__.macrocall::SyntaxTree
     if isempty(args)
-        push_macro_error!(mc, "No arguments to @testset")
+        push_macro_error!(mc, "No arguments to `@testset`")
         return JL.@ast(__context__, mc, nothing::value)
     end
 
@@ -1565,7 +1565,7 @@ function Test.var"@testset"(__context__::JL.MacroContext, args::SyntaxTree...)
         # Recovery: let the body flow through anyway. Wrapped in `let` below so its
         # bindings still get the testset-local scope treatment.
         push_macro_error!(body,
-            "@testset: body argument must be a `for`, `begin`/`end`, function call, or `let` expression")
+            "`@testset`: body argument must be a `for`, `begin`/`end`, function call, or `let` expression")
     end
 
     desc = testsettype = nothing
@@ -1577,11 +1577,11 @@ function Test.var"@testset"(__context__::JL.MacroContext, args::SyntaxTree...)
         if k === :identifier || k === :.
             # Mirror `Base.@testset`'s `depwarn` on extra testset types — the last one wins.
             testsettype === nothing || push_macro_warning!(arg,
-                "Multiple testset types provided to @testset. This is deprecated and may error in the future.")
+                "Multiple testset types provided to `@testset`. This is deprecated and may error in the future.")
             testsettype = arg
         elseif (k === :value && arg.value isa String) || k === :string
             desc === nothing || push_macro_warning!(arg,
-                "Multiple descriptions provided to @testset. This is deprecated and may error in the future.")
+                "Multiple descriptions provided to `@testset`. This is deprecated and may error in the future.")
             desc = arg
         elseif k === :(=)
             # Base's `parse_testset_args` silently appends duplicate options to the
@@ -1591,7 +1591,7 @@ function Test.var"@testset"(__context__::JL.MacroContext, args::SyntaxTree...)
             if name === nothing
                 continue # malformed option already reported via sink
             elseif name in seen_options
-                push_macro_warning!(arg, "@testset: option `$name` provided more than once")
+                push_macro_warning!(arg, "`@testset`: option `$name` provided more than once")
             else
                 push!(seen_options, name)
             end
@@ -1599,12 +1599,12 @@ function Test.var"@testset"(__context__::JL.MacroContext, args::SyntaxTree...)
         else
             # Recovery: skip the unrecognized arg — Base would error here but we
             # prefer to keep the testset's body analyzable.
-            push_macro_error!(arg, "@testset: unexpected argument")
+            push_macro_error!(arg, "`@testset`: unexpected argument")
             continue
         end
         # Base rejects a described or typed `let` form, and options there fail in
         # lowering; report every customization but keep expanding.
-        JS.head(body) === :let && push_macro_error!(arg, "@testset with a `let` argument cannot be customized")
+        JS.head(body) === :let && push_macro_error!(arg, "`@testset` with a `let` argument cannot be customized")
     end
 
     # Keep the values the real macro evaluates to construct the testset, so that
@@ -1639,12 +1639,12 @@ end
 
 function _validate_testset_option(arg::SyntaxTree)
     if JS.numchildren(arg) != 2
-        push_macro_error!(arg, "@testset: malformed option")
+        push_macro_error!(arg, "`@testset`: malformed option")
         return nothing
     end
     name = arg[1]
     if !(JS.head(name) === :identifier && has_name_val(name))
-        push_macro_error!(name, "@testset: option name must be an identifier")
+        push_macro_error!(name, "`@testset`: option name must be an identifier")
         return nothing
     end
     return name_val(name)
@@ -1666,7 +1666,7 @@ const _ASSUME_EFFECTS_SETTINGS = (
 
 function Base.var"@assume_effects"(__context__::JL.MacroContext)
     mc = __context__.macrocall::SyntaxTree
-    push_macro_error!(mc, "@assume_effects: at least one argument is required")
+    push_macro_error!(mc, "`@assume_effects`: at least one argument is required")
     return JL.@ast(__context__, mc, nothing::value)
 end
 
@@ -1698,10 +1698,10 @@ function _validate_assume_effect_setting(setting::SyntaxTree)
     name = _extract_assume_effect_setting_name(setting)
     if name === nothing
         push_macro_error!(setting,
-            "@assume_effects: expected an effect setting (e.g. `:consistent`, `!:nothrow`)")
+            "`@assume_effects`: expected an effect setting (e.g. `:consistent`, `!:nothrow`)")
     elseif name ∉ _ASSUME_EFFECTS_SETTINGS
         push_macro_error!(setting,
-            "@assume_effects: unrecognized effect setting `:$name`")
+            "`@assume_effects`: unrecognized effect setting `:$name`")
     end
     return nothing
 end
@@ -1753,7 +1753,7 @@ const _STATIC_COND_HEADS = (:if, :elseif, :?, :&&, :||)
 function Base.var"@static"(__context__::JL.MacroContext, ex::SyntaxTree)
     mc = __context__.macrocall::SyntaxTree
     if JS.head(ex) ∉ _STATIC_COND_HEADS
-        push_macro_error!(ex, "invalid @static macro")
+        push_macro_error!(ex, "invalid `@static` macro")
         return JL.@ast(__context__, mc, ex)
     end
     x = ex
@@ -1784,7 +1784,7 @@ end
 
 function Base.var"@static"(__context__::JL.MacroContext, args::SyntaxTree...)
     mc = __context__.macrocall::SyntaxTree
-    push_macro_error!(mc, "invalid @static macro")
+    push_macro_error!(mc, "invalid `@static` macro")
     isempty(args) && return JL.@ast(__context__, mc, nothing::value)
     return JL.@ast(__context__, mc, [:block args...])
 end
@@ -1808,10 +1808,10 @@ function _static_eval_cond(ctx::JL.MacroContext, cond::SyntaxTree)
         end
     catch err
         msg = first(split(sprint(locked_showerror, err), '\n'))
-        push_macro_error!(cond, "@static: failed to evaluate condition: $msg")
+        push_macro_error!(cond, "`@static`: failed to evaluate condition: $msg")
         return nothing
     end
     val isa Bool && return val
-    push_macro_error!(cond, "@static: condition did not evaluate to a Bool")
+    push_macro_error!(cond, "`@static`: condition did not evaluate to a `Bool`")
     return nothing
 end

@@ -103,6 +103,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - [`lowering/macro-expansion-error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/macro-expansion-error) now reports logging macro calls whose positional arguments repeat a key, such as `@info "msg" x x` and `@info "msg" x x=1`, which Julia rejects with `syntax: field name "x" repeated in named tuple`.
 
+- The [`lowering/macro-expansion-error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/macro-expansion-error) messages for invalid macro calls now quote macro names and code in backticks like other diagnostic messages, e.g. `` No arguments to `@testset` ``.
+  Update any [`diagnostic.patterns`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/diagnostic/patterns) entries that match their previous message style.
+
 ### Fixed
 
 - Fixed installation on Julia 1.12 and 1.13.0 failing with `Unsatisfiable requirements detected for package Preferences` when no registry is installed, e.g. in the managed installation of [`jetls-client`](https://marketplace.visualstudio.com/items?itemName=aviatesk.jetls-client).
