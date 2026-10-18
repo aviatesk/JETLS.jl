@@ -127,6 +127,41 @@ module ExceptionTest4 end
     @test occursin(SIN_DOMAIN_ERROR, results11.backtrace)
 end
 
+# The results of a test set of a custom type are recorded to it directly, not through
+# `TestRunnerTestSet`, so they show the exceptions `Base.current_exceptions()` returns
+module ExceptionTest5 end
+@testset "Exception handling 5" TestRunner.TestRunnerMetaTestSet begin
+    testfile = joinpath(@__DIR__, "testfile_error_handling.jl")
+    result = try
+        @testset TestRunnerTestSet "Exception handling testset 5" runtest(testfile, ["Exceptions in a custom test set"]; topmodule=ExceptionTest5)
+    catch e
+        e
+    end
+    @test result isa Test.DefaultTestSet # testset for `TestRunnerMetaTestSet`
+    counts = Test.get_test_counts(result)
+    @test counts.cumulative_errors == 2
+    @test counts.cumulative_broken == counts.cumulative_passes == counts.cumulative_fails == 0
+    results1 = only(result.results)
+    @test results1 isa Test.DefaultTestSet # testset for `WrapperTestSet`
+    @test length(results1.results) == 2
+    test_error, nontest_error = results1.results
+    @test test_error isa Test.Error
+    @test test_error.test_type === :test_error
+    @test occursin("DomainError with Inf", test_error.backtrace)
+    @test nontest_error isa Test.Error
+    @test nontest_error.test_type === :nontest_error
+    @test occursin("DomainError with Inf", nontest_error.backtrace)
+end
+
+module CurrentExceptionsTest end
+@testset "`current_exceptions` in interpreted code" TestRunner.TestRunnerMetaTestSet begin
+    testfile = joinpath(@__DIR__, "testfile_error_handling.jl")
+    result = @testset TestRunnerTestSet "current_exceptions testset" runtest(testfile, ["`current_exceptions` in a `catch` block"]; topmodule=CurrentExceptionsTest)
+    counts = Test.get_test_counts(result)
+    @test counts.cumulative_passes == 1
+    @test counts.cumulative_errors == counts.cumulative_broken == counts.cumulative_fails == 0
+end
+
 module ParseErrorTest end
 @testset "Errors outside of the interpreter" TestRunner.TestRunnerMetaTestSet begin
     testfile = joinpath(@__DIR__, "testfile_syntax_error.jl")
