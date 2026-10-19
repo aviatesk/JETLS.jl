@@ -1442,6 +1442,7 @@ end
 function analyze_captured_boxes!(
         diagnostics::Vector{Diagnostic}, uri::URI, fi::FileInfo,
         ctx4::JL.ClosureConversionCtx, st3::SyntaxTree,
+        binding_occurrences::Dict{JL.BindingInfo,Set{BindingOccurrence}},
         reported::Set{LoweringDiagnosticKey}
     )
     for binfo in ctx4.bindings.info
@@ -1456,7 +1457,8 @@ function analyze_captured_boxes!(
         key = LoweringDiagnosticKey(range, :boxed, bn)
         key in reported ? continue : push!(reported, key)
         code = LOWERING_CAPTURED_BOXED_VARIABLE_CODE
-        relatedInformation = find_capture_sites(st3, binfo, ctx4, uri, fi)
+        relatedInformation = captured_box_related_information(
+            st3, binfo, ctx4, binding_occurrences, range, uri, fi)
         push!(diagnostics, Diagnostic(;
             range,
             severity = DiagnosticSeverity.Information,
@@ -1482,11 +1484,40 @@ function is_captured_binding(binfo::JL.BindingInfo, ctx4::JL.ClosureConversionCt
     return false
 end
 
+function captured_box_related_information(
+        st3::SyntaxTree, binfo::JL.BindingInfo, ctx4::JL.ClosureConversionCtx,
+        binding_occurrences::Dict{JL.BindingInfo,Set{BindingOccurrence}},
+        binding_range::Range, uri::URI, fi::FileInfo
+    )
+    capture_ranges = find_capture_sites(st3, binfo, ctx4, fi)
+    assignment_ranges = Set{Range}()
+    for occurrence in get(binding_occurrences, binfo, ())
+        occurrence.kind === :def || continue
+        provs = JL.flattened_provenance(occurrence.tree)
+        is_from_user_ast(provs) || continue
+        push!(assignment_ranges, jsobj_to_range(last(provs), fi))
+    end
+    related = Pair{Range,String}[]
+    for range in capture_ranges
+        message = range in assignment_ranges ? "Assigned in closure" : "Captured by closure"
+        push!(related, range => message)
+    end
+    for range in assignment_ranges
+        (range == binding_range || range in capture_ranges) && continue
+        push!(related, range => "Assigned here")
+    end
+    isempty(related) && return nothing
+    sort!(related; by = p->p.first.start)
+    return DiagnosticRelatedInformation[
+        DiagnosticRelatedInformation(; location = Location(; uri, range), message)
+        for (range, message) in related]
+end
+
 function find_capture_sites(
         st3::SyntaxTree, binfo::JL.BindingInfo, ctx4::JL.ClosureConversionCtx,
-        uri::URI, fi::FileInfo
+        fi::FileInfo
     )
-    relatedInformation = DiagnosticRelatedInformation[]
+    capture_ranges = Set{Range}()
     for (_, closure_bindings) in ctx4.closure_bindings
         for lambda in closure_bindings.lambdas
             haskey(lambda.locals_capt, binfo.id) || continue
@@ -1503,16 +1534,14 @@ function find_capture_sites(
                 traverse(node3) do inner::SyntaxTree
                     if JS.head(inner) === :bindingid && JL.syntax_id(inner) == binfo.id
                         varprov = last(JL.flattened_provenance(inner))
-                        push!(relatedInformation, DiagnosticRelatedInformation(;
-                            location = Location(; uri, range = jsobj_to_range(varprov, fi)),
-                            message = "Captured by closure"))
+                        push!(capture_ranges, jsobj_to_range(varprov, fi))
                     end
                 end
                 return traversal_no_recurse
             end
         end
     end
-    return @somereal relatedInformation Some(nothing)
+    return capture_ranges
 end
 
 function analyze_ambiguous_soft_scope!(
@@ -2027,7 +2056,7 @@ function analyze_lowered_code!(
     analyze_unused_assignments!(diagnostics, fi, st0, dead_store_info, reported;
         allow_unused_underscore, inactive_branch_names)
 
-    analyze_captured_boxes!(diagnostics, uri, fi, ctx4, st3, reported)
+    analyze_captured_boxes!(diagnostics, uri, fi, ctx4, st3, binding_occurrences, reported)
     analyze_unreachable_code!(diagnostics, fi, st3, unreachable_statements)
     analyze_unresolved_gotos!(diagnostics, fi, st3)
 

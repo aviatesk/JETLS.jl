@@ -109,6 +109,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - The [`lowering/macro-expansion-error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/macro-expansion-error) messages for invalid macro calls now quote macro names and code in backticks like other diagnostic messages, e.g. `` No arguments to `@testset` ``.
   Update any [`diagnostic.patterns`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/diagnostic/patterns) entries that match their previous message style.
 
+- [`lowering/captured-boxed-variable`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/captured-boxed-variable) now also shows the other assignments to the boxed variable in its related information, which are what make the variable boxed:
+  ```julia
+  function captured_variable()
+      x = 1  # `x` is captured and boxed
+      f = () -> println(x)  # Captured by closure
+      x = 2  # Assigned here
+      return f
+  end
+  ```
+  An assignment inside a closure, such as `x += 1` in `() -> (x += 1)`, is shown once as "Assigned in closure" instead of being listed twice as "Captured by closure".
+
 ### Fixed
 
 - Fixed installation on Julia 1.12 and 1.13.0 failing with `Unsatisfiable requirements detected for package Preferences` when no registry is installed, e.g. in the managed installation of [`jetls-client`](https://marketplace.visualstudio.com/items?itemName=aviatesk.jetls-client).

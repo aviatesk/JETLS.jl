@@ -597,7 +597,7 @@ end
 ```
 
 The diagnostic includes `relatedInformation` showing where the variable is
-captured:
+captured by closures and where else it is assigned:
 ```@diagnostics; codes = ["lowering/captured-boxed-variable"]
 function multi_capture()
     x = 1

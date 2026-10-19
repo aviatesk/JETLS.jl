@@ -1945,11 +1945,14 @@ end
         @test diagnostic.severity == DiagnosticSeverity.Information
         @test diagnostic.range.start.line == 1
         @test diagnostic.range.var"end".line == 1
-        @test length(diagnostic.relatedInformation) == 1
-        ri = only(diagnostic.relatedInformation)
-        @test ri.message == "Captured by closure"
-        @test ri.location.range.start.line == 2
-        @test ri.location.range.start.character == length("    f = () -> ") # points to `x`, not `() -> x`
+        @test length(diagnostic.relatedInformation) == 2
+        ri1, ri2 = diagnostic.relatedInformation
+        @test ri1.message == "Captured by closure"
+        @test ri1.location.range.start.line == 2
+        @test ri1.location.range.start.character == length("    f = () -> ") # points to `x`, not `() -> x`
+        @test ri2.message == "Assigned here"
+        @test ri2.location.range.start.line == 3
+        @test ri2.location.range.start.character == length("    ")
     end
 
     # Multiple captured variables
@@ -1988,9 +1991,8 @@ end
         @test length(diagnostics) == 1
         diagnostic = only(diagnostics)
         @test diagnostic.message == "`x` is captured and boxed"
-        # Should have 2 related information entries (one for each closure)
-        @test diagnostic.relatedInformation !== nothing
-        @test length(diagnostic.relatedInformation) == 2
+        @test [(ri.message, ri.location.range.start.line) for ri in diagnostic.relatedInformation] ==
+            [("Captured by closure", 2), ("Captured by closure", 3), ("Assigned here", 4)]
     end
 
     # Nested closure
@@ -2008,8 +2010,8 @@ end
         @test length(diagnostics) == 1
         diagnostic = only(diagnostics)
         @test diagnostic.message == "`x` is captured and boxed"
-        @test diagnostic.relatedInformation !== nothing
-        @test length(diagnostic.relatedInformation) == 2
+        @test [(ri.message, ri.location.range.start.line) for ri in diagnostic.relatedInformation] ==
+            [("Captured by closure", 3), ("Assigned here", 6)]
     end
 
     # do block capture
@@ -2028,6 +2030,72 @@ end
         @test diagnostic.message == "`x` is captured and boxed"
     end
 
+    # Assignments in different branches are reported without implying an order
+    let diagnostics = get_lowering_diagnostics("""
+        function branches(c)
+            if c
+                x = 1
+            else
+                x = 2
+            end
+            return () -> x
+        end
+        """)
+        diagnostic = only(diagnostics)
+        @test diagnostic.message == "`x` is captured and boxed"
+        @test diagnostic.range.start.line == 2
+        @test [(ri.message, ri.location.range.start.line) for ri in diagnostic.relatedInformation] ==
+            [("Assigned here", 4), ("Captured by closure", 6)]
+    end
+
+    # Assignment inside the closure is reported once, not as a separate capture
+    let diagnostics = get_lowering_diagnostics("""
+        function counter()
+            x = 0
+            inc! = () -> (x += 1)
+            inc!()
+            return x
+        end
+        """)
+        diagnostic = only(diagnostics)
+        @test diagnostic.message == "`x` is captured and boxed"
+        ri = only(diagnostic.relatedInformation)
+        @test ri.message == "Assigned in closure"
+        @test ri.location.range.start.line == 2
+        @test ri.location.range.start.character == length("    inc! = () -> (")
+    end
+    let diagnostics = get_lowering_diagnostics("""
+        function assign_in_closure_first()
+            g = () -> (x = 1)
+            x = 2
+            g()
+            return x
+        end
+        """)
+        diagnostic = only(diagnostics)
+        @test diagnostic.message == "`x` is captured and boxed"
+        @test diagnostic.range.start.line == 2
+        ri = only(diagnostic.relatedInformation)
+        @test ri.message == "Assigned in closure"
+        @test ri.location.range.start.line == 1
+    end
+
+    # A single assignment boxed for other reasons has no other assignment to report
+    let diagnostics = get_lowering_diagnostics("""
+        function capture_before_assign()
+            f = () -> x
+            x = 1
+            return f
+        end
+        """; code = JETLSCore.LOWERING_CAPTURED_BOXED_VARIABLE_CODE)
+        diagnostic = only(diagnostics)
+        @test diagnostic.message == "`x` is captured and boxed"
+        @test diagnostic.range.start.line == 2
+        ri = only(diagnostic.relatedInformation)
+        @test ri.message == "Captured by closure"
+        @test ri.location.range.start.line == 1
+    end
+
     # From performance tips
     let diagnostics = get_lowering_diagnostics("""
         function abmult1(r::Int)
@@ -2041,6 +2109,9 @@ end
         @test length(diagnostics) == 1
         diagnostic = only(diagnostics)
         @test diagnostic.message == "`r` is captured and boxed"
+        @test diagnostic.range.start.line == 0
+        @test [(ri.message, ri.location.range.start.line) for ri in diagnostic.relatedInformation] ==
+            [("Assigned here", 2), ("Captured by closure", 4)]
     end
     let diagnostics = get_lowering_diagnostics("""
         function abmult2(r::Int)
