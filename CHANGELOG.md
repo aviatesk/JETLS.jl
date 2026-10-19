@@ -67,6 +67,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 >
 > Note: Path glob patterns use `/` as the separator on all platforms, including Windows; backslashes are not supported as separators.
 
+### Changed
+
+- The messages of [`testrunner/test-failure`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/testrunner/test-failure) diagnostics now start with a summary of the failure instead of its location, e.g.:
+  ```
+  Test failed: evaluated to `(1, 12) == (1, 12, 0)`
+  Test threw an exception: ArgumentError: invalid base 10 digit 'v' in "v1"
+  ```
+  The rest of the message shows what `Test` prints for the failure, such as the expression and the stack trace.
+
+### Fixed
+
+- Fixed the messages of [`testrunner/test-failure`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/testrunner/test-failure) diagnostics losing their line breaks and formatting in clients that render diagnostic messages as Markdown, e.g. Sublime LSP: the expression and the stack trace are now shown in a code block.
+
 ## 2026-10-18
 
 - Commit: [`8888185`](https://github.com/aviatesk/JETLS.jl/commit/8888185)

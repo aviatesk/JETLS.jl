@@ -404,7 +404,54 @@ function testrunner_diagnostic(result::Union{Test.Fail,Test.Error})
         end
     end
     message = sprint(show, result)
-    return TestRunnerDiagnostic(filename, line, message, relatedInformation)
+    i = findfirst('\n', message)
+    details = i === nothing ? "" : rstrip(message[nextind(message, i):end])
+    return TestRunnerDiagnostic(
+        filename, line, message, testrunner_summary(result), details, relatedInformation)
+end
+
+# The diagnostics are reported at the location of the failure, which the first line of the
+# `show` output starts with, so the summary describes the failure instead
+function testrunner_summary(result::Test.Fail)
+    (; test_type, data) = result
+    if test_type === :test
+        if data !== nothing && data != result.orig_expr && !occursin('\n', data)
+            return "Test failed: evaluated to $(code_span(data))"
+        end
+    elseif test_type === :test_throws_nothing
+        return "Test failed: no exception thrown"
+    elseif test_type === :test_throws_wrong
+        return "Test failed: wrong exception thrown"
+    end
+    return "Test failed"
+end
+
+function testrunner_summary(result::Test.Error)
+    test_type = result.test_type
+    if test_type === :test_error || test_type === :nontest_error
+        context = test_type === :test_error ?
+            "Test threw an exception" : "Got an exception outside of a `@test`"
+        # the first line of the error message
+        message = first(eachsplit(result.backtrace, '\n'))
+        return isempty(message) ? context : "$context: $message"
+    elseif test_type === :test_nonbool
+        value = result.value
+        occursin('\n', value) && return "Test expression evaluated to a non-Boolean"
+        return "Test expression evaluated to a non-Boolean: $(code_span(value))"
+    elseif test_type === :test_unbroken
+        return "Unexpected pass: change `@test_broken` to `@test` if no longer broken"
+    elseif test_type === :test_interrupted
+        return "Test interrupted"
+    end
+    return "Error during test"
+end
+
+# The delimiters are longer than any backtick run in `code`, which would otherwise end the
+# code span
+function code_span(code::AbstractString)
+    n = maximum(m -> length(m.match), eachmatch(r"`+", code); init = 0)
+    delimiter = '`'^(n + 1)
+    return iszero(n) ? "$delimiter$code$delimiter" : "$delimiter $code $delimiter"
 end
 
 function runtest_internal(filename::String, patterns::Vector{Any}, filter_lines, verbose::Bool, project,

@@ -1933,6 +1933,23 @@ TestRunner diagnostics come from manually running tests via the
 Test failures reported by [TestRunner integration](@ref testrunner) that happened during
 running individual `@testset` blocks or `@test` cases.
 
+Example of running the `@testset`:
+
+```@diagnostics; file = "test/runtests.jl", codes = ["testrunner/test-failure"]
+using Test
+
+function parse_version(s::AbstractString)
+    major, minor = split(s, '.')
+    return (parse(Int, major), parse(Int, minor))
+end
+
+@testset "parse_version" begin
+    @test parse_version("1.12") == (1, 12)
+    @test parse_version("1.12.0") == (1, 12, 0)
+    @test parse_version("v1.12") == (1, 12)
+end
+```
+
 !!! note
     Diagnostics from `@test` cases automatically disappear after 10 seconds,
     while `@testset` diagnostics persist until you run the testset again,

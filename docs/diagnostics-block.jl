@@ -14,7 +14,8 @@
 #   reported, e.g. for examples of code that is not reported
 # Either `codes` or `absent_codes` is required, so that every block tests the diagnostics.
 # The codes must have their sections in the diagnostic reference, which the diagnostics
-# link to.
+# link to. When they include `testrunner/*` codes, the `@testset`s of the code are also run
+# with TestRunner, as their code lenses run them in an editor.
 #
 # The `@diagnostics-file` and `@diagnostics-setup` code blocks write their code to `file` in
 # `workspace`, e.g. `.JETLSConfig.toml` or the files of a package, for the later
@@ -214,8 +215,11 @@ function analyze_diagnostics_block(
             result = @something JETLSCore.collect_check_diagnostics!(
                 server, root, JETLSCore.InputSource[], input, progress_ctx;
                 skip_analysis = false) error("In ", source, ": failed to analyze the `@diagnostics` block")
-            diagnostics = select_diagnostics!(
-                get(result[1], uri, Diagnostic[]), root, codes, absent_codes, source)
+            diagnostics = get(result[1], uri, Diagnostic[])
+            if any(code -> startswith(code, "testrunner/"), [codes; absent_codes])
+                append!(diagnostics, testrunner_diagnostics(server, uri, code, source))
+            end
+            diagnostics = select_diagnostics!(diagnostics, root, codes, absent_codes, source)
             code_actions = map(diagnostics) do diagnostic
                 return JETLSCore.quickfix_code_actions!(
                     Union{CodeAction,Command}[], server, uri, Diagnostic[diagnostic])
@@ -225,6 +229,36 @@ function analyze_diagnostics_block(
             JETLSCore.cleanup_cli_tasks(server)
         end
     end
+end
+
+# Runs the outermost `@testset`s of the code with TestRunner, as their "▶ Run" code lenses
+# do, since running a `@testset` also runs the nested ones
+function testrunner_diagnostics(
+        server::JETLSCore.Server, uri::URI, code::String, source::String
+    )
+    fi = JETLSCore.get_file_info(server.state, uri)::JETLSCore.FileInfo
+    launcher = JETLSCore.testrunner_launcher(server)
+    launcher isa String && error("In ", source, ": ", launcher)
+    filepath = JETLSCore.uri2filename(uri)
+    test_env_path = JETLSCore.find_uri_env_path(server.state, uri)
+    root_path = JETLSCore.testrunner_root_path(server.state, uri)
+    markdown_rendering =
+        JETLSCore.supports(server, :textDocument, :diagnostic, :markupMessageSupport)
+    diagnostics = Diagnostic[]
+    outer = 1:0
+    for testsetinfo in fi.testsetinfos
+        byte_range = JETLSCore.JS.byte_range(testsetinfo.st0)
+        first(byte_range) in outer && continue
+        outer = byte_range
+        cmd = JETLSCore.testrunner_testset_cmd(launcher, filepath,
+            String(JETLSCore.testset_name(testsetinfo)), JETLSCore.testset_line(testsetinfo),
+            test_env_path, root_path)
+        result = JETLSCore.read_testrunner_result(server, cmd, code)
+        result isa String && error("In ", source, ": ", result)
+        uri2diagnostics = JETLSCore.testrunner_result_to_diagnostics(result; markdown_rendering)
+        append!(diagnostics, get(uri2diagnostics, uri, Diagnostic[]))
+    end
+    return diagnostics
 end
 
 function analyze_config_diagnostics_block(

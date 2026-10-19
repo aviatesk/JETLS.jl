@@ -265,6 +265,37 @@ end
     end
 end
 
+@testset "summary and details" begin
+    content = """
+    using Test
+    f() = error("boom")
+    @testset "failures" begin
+        @test 1 + 1 == 3
+        @test f() == 1
+        @test_throws ArgumentError 1 + 1
+    end
+    """
+    with_test_file(content) do testfile
+        result = run_testrunner_process(["--json", testfile, "failures"])
+        @test result.exitcode == 1
+        json_result = JSON3.read(result.stdout, TestRunnerResult)
+        fail, error, throws_nothing = json_result.diagnostics
+        @test fail.summary == "Test failed: evaluated to `2 == 3`"
+        @test startswith(fail.message, "Test Failed at $testfile:4\n")
+        @test fail.details == "  Expression: 1 + 1 == 3\n   Evaluated: 2 == 3"
+        @test error.summary == "Test threw an exception: boom"
+        @test startswith(error.details, "  Test threw exception\n  Expression: f() == 1\n")
+        @test occursin("Stacktrace:", error.details)
+        @test throws_nothing.summary == "Test failed: no exception thrown"
+    end
+end
+
+@testset "code_span" begin
+    code_span = TestRunner.App.code_span
+    @test code_span("2 == 3") == "`2 == 3`"
+    @test code_span("`ls` == `ls -l`") == "`` `ls` == `ls -l` ``"
+end
+
 @testset "stack traces in logs" begin
     content = """
     using Test

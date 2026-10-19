@@ -131,10 +131,27 @@ end
     relatedInformation = [
         RelatedInformation(joinpath(".", "Untitled-1"), 2, "f()"),
         RelatedInformation(joinpath(".", "none"), 1, "g()")]
-    diagnostic = JETLSCore.TestRunnerDiagnostic("Untitled-1", 4, "Error During Test", relatedInformation)
+    diagnostic = JETLSCore.TestRunnerDiagnostic(
+        "Untitled-1", 4, "Error During Test", "Test failed", "", relatedInformation)
     info = only(something(JETLSCore.testrunner_diagnostic_to_related_information(diagnostic)))
     @test info.location.uri == filename2uri("Untitled-1")
     @test info.message == "f()"
+end
+
+@testset "testrunner_diagnostic_message" begin
+    let diagnostic = JETLSCore.TestRunnerDiagnostic(
+            "runtests.jl", 2, "Test Failed at runtests.jl:2\n  Expression: 1 == 2",
+            "Test failed", "  Expression: 1 == 2", nothing)
+        @test JETLSCore.testrunner_diagnostic_message(diagnostic) ==
+            "Test failed\n\n  Expression: 1 == 2"
+        @test JETLSCore.testrunner_diagnostic_message(diagnostic; markdown_rendering = true) ==
+            "Test failed\n\n```\n  Expression: 1 == 2\n```\n"
+    end
+    let diagnostic = JETLSCore.TestRunnerDiagnostic(
+            "runtests.jl", 2, "Interrupted", "Test interrupted", "", nothing)
+        @test JETLSCore.testrunner_diagnostic_message(diagnostic; markdown_rendering = true) ==
+            "Test interrupted"
+    end
 end
 
 @testset "read_testrunner_result" begin

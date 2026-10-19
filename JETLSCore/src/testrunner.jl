@@ -404,7 +404,26 @@ function testrunner_diagnostic_to_related_information(diagnostic::TestRunnerDiag
     return relatedInformation
 end
 
-function testrunner_result_to_diagnostics(result::TestRunnerResult)
+# As in the messages of top-level reports of JET, the summary is followed by a blank line and
+# the details, which are put in a code block for Markdown rendering to keep their layout
+function testrunner_diagnostic_message(
+        diagnostic::TestRunnerDiagnostic; markdown_rendering::Bool = false
+    )
+    (; summary, details) = diagnostic
+    isempty(details) && return summary
+    return sprint() do io::IO
+        print(io, summary, "\n\n")
+        if markdown_rendering
+            JET.print_markdown_codeblock(io, details)
+        else
+            print(io, details)
+        end
+    end
+end
+
+function testrunner_result_to_diagnostics(
+        result::TestRunnerResult; markdown_rendering::Bool = false
+    )
     uri2diagnostics = URI2Diagnostics()
     for diag in result.diagnostics
         uri = to_valid_uri(diag.filename)
@@ -412,7 +431,7 @@ function testrunner_result_to_diagnostics(result::TestRunnerResult)
         diagnostic = Diagnostic(;
             range = line_range(diag.line),
             severity = DiagnosticSeverity.Error,
-            message = diag.message,
+            message = testrunner_diagnostic_message(diag; markdown_rendering),
             source = DIAGNOSTIC_SOURCE_EXTRA,
             code = TESTRUNNER_TEST_FAILURE_CODE,
             codeDescription = diagnostic_code_description(TESTRUNNER_TEST_FAILURE_CODE),
@@ -711,7 +730,8 @@ function _testrunner_run_testset(
     end
 
     if !isempty(result.diagnostics)
-        val = testrunner_result_to_diagnostics(result)
+        markdown_rendering = supports(server, :textDocument, :diagnostic, :markupMessageSupport)
+        val = testrunner_result_to_diagnostics(result; markdown_rendering)
         store!(server.state.extra_diagnostics) do data
             return ExtraDiagnosticsData(data, key=>val), nothing
         end
@@ -789,7 +809,8 @@ function _testrunner_run_testcase(
     # The `Server` (or `FileInfo`) doesn't track the state of each `@test`,
     # so we can't map editor state to diagnostics.
     # Show error information to the user as temporary diagnostics.
-    uri2diagnostics = testrunner_result_to_diagnostics(result)
+    markdown_rendering = supports(server, :textDocument, :diagnostic, :markupMessageSupport)
+    uri2diagnostics = testrunner_result_to_diagnostics(result; markdown_rendering)
     notify_temporary_diagnostics!(server, uri2diagnostics)
     Threads.@spawn begin
         sleep(10)
