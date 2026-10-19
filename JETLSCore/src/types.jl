@@ -719,6 +719,9 @@ const DIAGNOSTIC_CODE_ALIASES = Dict{String,Vector{String}}(
     ],
 )
 
+const DEPRECATED_DIAGNOSTIC_CODES = Dict{String,String}(
+    alias => code for (code, aliases) in DIAGNOSTIC_CODE_ALIASES for alias in aliases)
+
 struct DiagnosticPattern <: ConfigSection
     pattern::Union{Regex,String}
     match_by::String

@@ -15,6 +15,9 @@ const DEPRECATIONS = JETLSCore.DeprecatedConfigurations([
 const VALUE_DEPRECATIONS = JETLSCore.DeprecatedConfigurationValues([
     ["full_analysis", "auto_instantiate"] => (true => "always"),
 ])
+const OLD_CODE = JETLSCore.DEPRECATED_INFERENCE_NON_BOOLEAN_COND_CODE
+const NEW_CODE = JETLSCore.INFERENCE_TYPE_ERROR_NON_BOOL_COND_CODE
+const CODE_DEPRECATIONS = Dict{String,String}(OLD_CODE => NEW_CODE)
 
 function fix_deprecated(text::String, path::Vector{String})
     doc = TS.parse(text)
@@ -133,6 +136,68 @@ end
         "[testrunner\n", PositionEncodingKind.UTF16))
 end
 
+diagnostic_pattern(code::String, match_by::String, match_type::String) = """
+    [[diagnostic.patterns]]
+    pattern = "$code"
+    match_by = "$match_by"
+    match_type = "$match_type"
+    severity = "off"
+    """
+
+@testset "deprecated diagnostic codes in `diagnostic.patterns`" begin
+    text = diagnostic_pattern(OLD_CODE, "code", "literal") * "\n" *
+        diagnostic_pattern(OLD_CODE, "code", "regex") * "\n" *
+        diagnostic_pattern(OLD_CODE, "message", "literal") * "\n" *
+        diagnostic_pattern(OLD_CODE, "code", "literal")
+    let doc = TS.parse(text)
+        found = JETLSCore.find_deprecated_configs(
+            doc, DEPRECATIONS, VALUE_DEPRECATIONS, CODE_DEPRECATIONS)
+        @test [deprecated.index for deprecated in found] == [1, 4]
+        # Each pattern is fixed on its own, even if another one has the same code
+        for deprecated in found
+            edit = JETLSCore.deprecated_config_fix(doc, deprecated)::TS.SourceEdit
+            @test TS.parse(TS.apply(text, edit)).data["diagnostic"]["patterns"][
+                deprecated.index]["pattern"] == NEW_CODE
+            @test JETLSCore.deprecated_config_fix_title(doc, deprecated) ==
+                "Replace `\"$OLD_CODE\"` with `\"$NEW_CODE\"`"
+        end
+    end
+    @test JETLSCore.fix_deprecated_configs(
+            text, DEPRECATIONS, VALUE_DEPRECATIONS, CODE_DEPRECATIONS) ==
+        diagnostic_pattern(NEW_CODE, "code", "literal") * "\n" *
+        diagnostic_pattern(OLD_CODE, "code", "regex") * "\n" *
+        diagnostic_pattern(OLD_CODE, "message", "literal") * "\n" *
+        diagnostic_pattern(NEW_CODE, "code", "literal")
+    let text = """
+            diagnostic.patterns = [
+                { pattern = "$OLD_CODE", match_by = "code", match_type = "literal" },
+            ]
+            """
+        @test JETLSCore.fix_deprecated_configs(
+                text, DEPRECATIONS, VALUE_DEPRECATIONS, CODE_DEPRECATIONS) ==
+            replace(text, OLD_CODE => NEW_CODE)
+    end
+
+    let d = JETLSCore.tryparse_config_data(text)::Dict{String,Any}
+        @test JETLSCore.migrate_deprecated_config!(d) ==
+            [JETLSCore.deprecated_diagnostic_code_message(OLD_CODE, NEW_CODE)]
+        @test [pattern["pattern"] for pattern in d["diagnostic"]["patterns"]] ==
+            [NEW_CODE, OLD_CODE, OLD_CODE, NEW_CODE]
+        @test JETLSCore.parse_config_dict(d) isa JETLSCore.JETLSConfig
+    end
+
+    let diagnostic = only(JETLSCore.deprecated_config_diagnostics(
+            diagnostic_pattern(OLD_CODE, "code", "literal"), PositionEncodingKind.UTF16))
+        @test diagnostic.range == Range(;
+            start = Position(; line = 1, character = 10),
+            var"end" = Position(; line = 1, character = 12 + length(OLD_CODE)))
+        @test diagnostic.code == JETLSCore.CONFIG_DEPRECATED_VALUE_CODE
+        @test diagnostic.tags == [DiagnosticTag.Deprecated]
+        @test diagnostic.message ==
+            JETLSCore.deprecated_diagnostic_code_message(OLD_CODE, NEW_CODE)
+    end
+end
+
 function nested_config(path::Vector{String}, @nospecialize(value))
     config = Dict{String,Any}(path[end] => value)
     for key in Iterators.reverse(path[1:end-1])
@@ -165,6 +230,10 @@ end
         @test err isa ErrorException &&
             occursin("Invalid value at `$(join(path, "."))`", err.msg)
         @test config_parse_error(nested_config(path, new_value)) === nothing
+    end
+    for (old_code, new_code) in JETLSCore.DEPRECATED_DIAGNOSTIC_CODES
+        @test old_code ∉ JETLSCore.ALL_DIAGNOSTIC_CODES
+        @test new_code ∈ JETLSCore.ALL_DIAGNOSTIC_CODES
     end
 end
 

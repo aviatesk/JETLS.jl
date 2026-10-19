@@ -1820,7 +1820,9 @@ end
 `inference/non-boolean-cond` is a deprecated code alias for
 `inference/type-error/non-bool-cond`. It is kept for existing documentation
 links and diagnostic pattern configurations for now, but this compatibility
-support may be removed in a future release.
+support may be removed in a future release. A diagnostic pattern that matches
+it literally is reported as
+[`config/deprecated-value`](@ref diagnostic/reference/config/deprecated-value).
 
 #### [Failing test (`inference/failing-test`)](@id diagnostic/reference/inference/failing-test)
 
@@ -1914,6 +1916,18 @@ release.
 ```@diagnostics; file = ".JETLSConfig.toml", codes = ["config/deprecated-value"]
 [full_analysis]
 auto_instantiate = true
+```
+
+It is also reported on a deprecated diagnostic code that a
+[diagnostic pattern](@ref config/diagnostic/patterns) matches literally with
+`match_by = "code"` and `match_type = "literal"`:
+
+```@diagnostics; file = ".JETLSConfig.toml", codes = ["config/deprecated-value"]
+[[diagnostic.patterns]]
+pattern = "inference/non-boolean-cond"
+match_by = "code"
+match_type = "literal"
+severity = "off"
 ```
 
 !!! tip "Code action available"
