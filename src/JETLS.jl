@@ -178,7 +178,6 @@ const schema_help_message = """
       jetls schema --init-options   # initialization options schema
     """
 
-@doc help_message
 function (@main)(args::Vector{String})::Cint
     command = isempty(args) ? "" : first(args)
     command_args = args[2:end]

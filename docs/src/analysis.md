@@ -285,9 +285,10 @@ A script is loaded in the environment of the nearest `Project.toml`. A script
 without one is analyzed as `julia script.jl` would run it: dependency packages
 are loaded from the default environment (e.g. `@v1.13`) and the standard
 library. When the JETLS process has an active project, set with `--project`
-given to Julia before `--` or with the `JULIA_PROJECT` environment variable,
-they are loaded from it first, as `julia --project script.jl` would. The same
-applies to the other documents that are analyzed without a project, such as
+given to Julia [before `--`](@ref cli/julia-flags) or with the `JULIA_PROJECT`
+environment variable, they are loaded from it first, as
+`julia --project script.jl` would. The same applies to the other documents
+that are analyzed without a project, such as
 [files opened without a workspace folder](@ref analysis/full/files/outside-root).
 
 ```bash

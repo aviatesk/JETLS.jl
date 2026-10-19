@@ -71,6 +71,7 @@ const pages = Any[
         "TestRunner integration" => "testrunner.md",
         "Notebook support"       => "notebook.md",
         "JETLS configuration"    => "configuration.md",
+        "The jetls executable"   => "cli.md",
         "Launching JETLS"        => "launching.md",
         "Diagnostic CLI"         => "cli-check.md",
         "CHANGELOG"              => "CHANGELOG.md",
