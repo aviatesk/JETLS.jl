@@ -1,4 +1,4 @@
-version = "1.6.0"
+version = "1.6.1"
 name = "Preferences"
 authors = ["Elliot Saba <elliot.saba@juliacomputing.com>", "contributors"]
 uuid = "cc588e5a-7be0-5224-8a6a-549b21958db9"

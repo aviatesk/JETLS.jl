@@ -1,22 +1,11 @@
-# Launching JETLS
+# [Launching JETLS](@id launching)
 
 This guide explains how to launch the JETLS language server using
 `jetls serve` and describes the available communication channels.
+See [The `jetls` executable](@ref cli) for the other commands and the Julia
+runtime flags shared by all of them.
 
-## The `jetls` executable
-
-The `jetls` executable is the main entry point for JETLS, providing four commands:
-
-- `jetls serve` - Start the language server for editor integration (this page)
-- [`jetls check`](@ref cli-check) - Run diagnostics from the command line
-- [`jetls test`](@ref testrunner/cli) - Run tests with TestRunner.jl from the command line
-- [`jetls schema`](@ref config/schema-cli) - Print JSON Schema for JETLS configuration
-
-The executable can be installed as an
-[executable app](https://pkgdocs.julialang.org/dev/apps/) via Pkg.jl:
-```bash
-julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="release")'
-```
+## [Command reference](@id launching/reference)
 
 > `jetls serve --help`
 ```@eval

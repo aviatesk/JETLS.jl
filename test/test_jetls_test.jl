@@ -94,7 +94,7 @@ end
         filepath = write_test_file(dir, TESTFILE_CONTENT)
         result = run_jetls_test(["--json", filepath, "pass"])
         @test result.exitcode == 0
-        json = JSON3.read(result.stdout)
+        json = JSON3.read(result.stdout, JETLSCore.TestRunner.App.TestRunnerResult)
         @test json.stats.n_passed == 1
         @test json.stats.n_failed == 0
     end

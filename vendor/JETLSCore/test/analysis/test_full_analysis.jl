@@ -381,6 +381,9 @@ end
     @test find_env_package("name = \"Foo\"\nuuid = \"$uuid\"\n") === nothing
     @test find_env_package("name = \"Foo\"\nuuid = \"invalid\"\n", "src/Foo.jl") === nothing
     @test find_env_package("[deps]\n", "src/Foo.jl") === nothing
+    for entryfile in ("a"^300 * ".jl", "a\\u0000b.jl")
+        @test find_env_package("name = \"Foo\"\nuuid = \"$uuid\"\nentryfile = \"$entryfile\"\n") === nothing
+    end
 end
 
 @testset "package files after instantiating the environment for a script" begin
@@ -687,6 +690,7 @@ end
                 @test diagnostic.source == JETLSCore.DIAGNOSTIC_SOURCE_SAVE
                 @test diagnostic.range == JETLSCore.line_range(3)
                 @test occursin("excluded.jl", diagnostic.message)
+                @test only(diagnostic.relatedInformation).location.uri == excluded_uri
                 @test any(result.uri2diagnostics[entry_uri]) do d
                     d.code == JETLSCore.INFERENCE_UNDEF_GLOBAL_VAR_CODE &&
                         occursin("missing_before_include", d.message)
@@ -735,6 +739,7 @@ end
             @test diagnostic.severity == DiagnosticSeverity.Warning
             @test diagnostic.source == JETLSCore.DIAGNOSTIC_SOURCE_SAVE
             @test diagnostic.range == JETLSCore.line_range(3)
+            @test only(diagnostic.relatedInformation).location.uri == filepath2uri(excluded_path)
             @test !execution.context_refreshed
             @test isfile(started)
             @test !isfile(marker)

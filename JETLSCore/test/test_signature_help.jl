@@ -398,6 +398,13 @@ end
     @test 0 == n_si(@__MODULE__, "sin(throw(),│)")
 end
 
+@testset "source location of a method defined in an unsaved buffer" begin
+    mod = Module()
+    include_string(mod, "f_unsaved(x) = x", "Untitled-1")
+    siginfo = only(siginfos(mod, "f_unsaved(│)"))
+    @test occursin("($(filename2uri("Untitled-1"))#L1)", siginfo.documentation.value)
+end
+
 include("setup.jl")
 
 module M_snapshot

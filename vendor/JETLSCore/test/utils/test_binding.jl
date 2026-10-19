@@ -11,6 +11,43 @@ module lowering_module
 const B = Base
 end
 
+module user_macro_module
+using JETLSCore: JL, JS
+var"@throwing"(::JL.MacroContext, ::JS.SyntaxTree) = error("user macro failed")
+end
+
+# Stands in for a buggy macro stub in `jl-syntax-macros.jl`
+@eval JETLSCore var"@throwing_stub_for_test"(::JL.MacroContext, ::JS.SyntaxTree) = error("stub failed")
+
+@testset "is_user_lowering_error" begin
+    function lowering_error(mod::Module, code::AbstractString)
+        try
+            JETLSCore.jl_lower_for_scope_resolution(mod, Base.get_world_counter(),
+                jlparse(code; rule=:statement); recover_from_macro_errors=false)
+        catch err
+            return err, JETLSCore.is_user_lowering_error(err)
+        end
+        return nothing
+    end
+
+    let (err, is_user) = lowering_error(lowering_module, "function fo")
+        @test err isa JETLSCore.JL.LoweringError
+        @test is_user
+    end
+    let (err, is_user) = lowering_error(lowering_module, "@undefined_macro x")
+        @test err isa JETLSCore.JL.MacroExpansionError
+        @test is_user
+    end
+    let (err, is_user) = lowering_error(user_macro_module, "@throwing x")
+        @test err isa JETLSCore.JL.MacroExpansionError
+        @test is_user
+    end
+    let (err, is_user) = lowering_error(JETLSCore, "@throwing_stub_for_test x")
+        @test err isa JETLSCore.JL.MacroExpansionError
+        @test !is_user
+    end
+end
+
 function with_target_binding(f, text::AbstractString; kwargs...)
     clean_code, positions = JETLSCore.get_text_and_positions(text; kwargs...)
     st0_top = jlparse(clean_code)

@@ -14,6 +14,10 @@ Depth = 3
 
 ## `StructTypes.StructType`
 
+```@docs
+StructTypes.StructType
+```
+
 In general, custom Julia types tend to be one of: 1) "data types", 2) "interface types" or sometimes 3) "custom types" or 4) "abstract types" with a known set of concrete subtypes. Data types tend to be "collection of fields" kind of types; fields are generally public and directly accessible, they might also be made to model "objects" in the object-oriented sense. In any case, the type is "nominal" in the sense that it's "made up" of the fields it has, sometimes even if just for making it more convenient to pass them around together in functions.
 
 Interface types, on the other hand, are characterized by **private** fields; they contain optimized representations "under the hood" to provide various features/functionality and are useful via interface methods implemented: iteration, `getindex`, accessor methods, etc. Many package-provided libraries or Base-provided structures are like this: `Dict`, `Array`, `Socket`, etc. For these types, their underlying fields are mostly cryptic and provide little value to users directly, and are often explictly documented as being implementation details and not to be relied upon directly under warning of breakage.
@@ -32,6 +36,10 @@ when serializing/deserializing, an extra key-value pair is added to encode the t
 Each of these 4 kinds of struct type categories will be now be detailed.
 
 ### DataTypes
+
+```@docs
+StructTypes.DataType
+```
 
 You'll remember that "data types" are Julia structs that are "made up" of their fields. In the object-oriented world,
 this would be characterized by marking a field as `public`. A quick example is:
@@ -74,12 +82,17 @@ Support functions for `StructTypes.DataType`s:
 StructTypes.names
 StructTypes.excludes
 StructTypes.omitempties
+StructTypes.defaults
 StructTypes.keywordargs
 StructTypes.idproperty
 StructTypes.fieldprefix
 ```
 
 ### Interface Types
+
+```@docs
+StructTypes.InterfaceType
+```
 
 For interface types, we don't want the internal fields of a type exposed, so an alternative API is to define the closest "basic" type that our custom type should map to. This is done by choosing one of the following definitions:
 ```julia
@@ -129,6 +142,12 @@ StructTypes.BoolType
 StructTypes.NullType
 ```
 
+#### `StructTypes.NoStructType`
+
+```@docs
+StructTypes.NoStructType
+```
+
 ### CustomStruct
 
 ```@docs
@@ -165,14 +184,18 @@ The `StructType` of a type can be set using the following utility macros
 StructTypes.@Struct
 ```
 
-And similarly for 
-- `StructTypes.@Mutable`
-- `StructTypes.@CustomStruct`
-- `StructTypes.@OrderedStruct`
-- `StructTypes.@AbstractType`
-- `StructTypes.@DictType`
-- `StructTypes.@ArrayType`
-- `StructTypes.@StringType`
-- `StructTypes.@NumberType`
-- `StructTypes.@BoolType`
-- `StructTypes.@NullType`
+The corresponding macros are available for the other struct types:
+
+```@docs
+StructTypes.@Mutable
+StructTypes.@CustomStruct
+StructTypes.@OrderedStruct
+StructTypes.@AbstractType
+StructTypes.@DictType
+StructTypes.@ArrayType
+StructTypes.@StringType
+StructTypes.@NumberType
+StructTypes.@BoolType
+StructTypes.@NullType
+StructTypes.@register_struct_subtype
+```

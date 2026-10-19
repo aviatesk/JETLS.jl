@@ -124,6 +124,19 @@ end
     end
 end
 
+@testset "testrunner_diagnostic_to_related_information" begin
+    RelatedInformation = JETLSCore.TestRunner.App.TestRunnerDiagnosticRelatedInformation
+    # stack frames of the methods defined in an unsaved buffer and of those without
+    # location information
+    relatedInformation = [
+        RelatedInformation(joinpath(".", "Untitled-1"), 2, "f()"),
+        RelatedInformation(joinpath(".", "none"), 1, "g()")]
+    diagnostic = JETLSCore.TestRunnerDiagnostic("Untitled-1", 4, "Error During Test", relatedInformation)
+    info = only(something(JETLSCore.testrunner_diagnostic_to_related_information(diagnostic)))
+    @test info.location.uri == filename2uri("Untitled-1")
+    @test info.message == "f()"
+end
+
 @testset "read_testrunner_result" begin
     @static if Sys.iswindows()
         @test_skip "process-backed TestRunner test is Unix-only"

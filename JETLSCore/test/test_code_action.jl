@@ -9,49 +9,14 @@ using JETLSCore.TOML
 
 include("setup.jl")
 include("jsjl-utils.jl")
+include("lowering-diagnostic-utils.jl")
 
 module lowering_module end
 
-function get_lowering_diagnostics(
-        text::AbstractString;
-        code::Union{AbstractString,Nothing} = nothing,
-        context_module::Module = lowering_module,
-        world::UInt = Base.get_world_counter(),
-        kwargs...
-    )
-    filename = joinpath(@__DIR__, "test_code_action.jl")
-    server = JETLSCore.Server()
-    uri = filepath2uri(filename)
-    fi = JETLSCore.cache_file_info!(server, uri, 1, text)
-    st0_top = JETLSCore.build_syntax_tree(fi)
-    diagnostics = LSP.Diagnostic[]
-    candidates = JETLSCore.UndefGlobalCandidate[]
-    def_used_names = Dict{Module,JETLSCore.DefUsedNames}()
-    JETLSCore.iterate_toplevel_tree(st0_top) do st0::JS.SyntaxTree
-        JETLSCore.per_stmt_diagnostics!(diagnostics, candidates, uri, fi,
-            st0, context_module, world, #=analyzer=#nothing, JETLSCore.LSPostProcessor();
-            kwargs...)
-        binding_occurrences = JETLSCore.get_binding_occurrences!(server.state, uri, fi, st0)
-        binding_occurrences !== nothing &&
-            JETLSCore.update_def_used_names!(def_used_names, context_module, binding_occurrences)
-    end
-    explicit_imports = JETLSCore.collect_explicit_imports_by_module(server.state, uri, fi, st0_top)
-    # Mirror the cross-file phase. `skip_context_check=true` because the test server
-    # has no populated `analysis_manager` — we want this single file to count as
-    # part of its own unit anyway.
-    per_file = JETLSCore.PerFileDiagnosticsResult(
-        diagnostics, candidates, def_used_names, explicit_imports)
-    JETLSCore.cross_file_diagnostics!(diagnostics, JETLSCore.DefUsedNamesCache(),
-        server, uri, #=snapshot=#nothing, per_file; skip_context_check=true)
-    if code !== nothing
-        filter!(d -> d.code == code, diagnostics)
-    end
-    return diagnostics, uri
-end
-
 function get_unused_var_code_actions(marked_text::AbstractString; kwargs...)
     text, positions = JETLSCore.get_text_and_positions(marked_text)
-    diagnostics, uri = get_lowering_diagnostics(text; kwargs...)
+    uri = LOWERING_DIAGNOSTICS_URI
+    diagnostics = get_lowering_diagnostics(text; kwargs...)
     code_actions = Union{CodeAction,Command}[]
     JETLSCore.unused_variable_code_actions!(code_actions, uri, diagnostics; kwargs...)
     return code_actions, uri, positions
@@ -217,7 +182,8 @@ end
 end
 
 function get_sort_imports_code_actions(text::AbstractString)
-    diagnostics, uri = get_lowering_diagnostics(text;
+    uri = LOWERING_DIAGNOSTICS_URI
+    diagnostics = get_lowering_diagnostics(text;
         code = JETLSCore.LOWERING_UNSORTED_IMPORT_NAMES_CODE)
     code_actions = Union{CodeAction,Command}[]
     JETLSCore.sort_imports_code_actions!(code_actions, uri, diagnostics)
@@ -289,9 +255,8 @@ end
 
 function get_unused_import_code_actions(marked_text::AbstractString)
     text, positions = JETLSCore.get_text_and_positions(marked_text)
-    diagnostics, uri = get_lowering_diagnostics(text;
-        code = JETLSCore.LOWERING_UNUSED_IMPORT_CODE,
-        skip_analysis_requiring_context = true)
+    uri = LOWERING_DIAGNOSTICS_URI
+    diagnostics = get_lowering_diagnostics(text; code = JETLSCore.LOWERING_UNUSED_IMPORT_CODE)
     code_actions = Union{CodeAction,Command}[]
     JETLSCore.delete_range_code_actions!(code_actions, uri, diagnostics)
     return code_actions, uri, positions
@@ -364,7 +329,8 @@ end
 
 function get_unreachable_code_actions(marked_text::AbstractString)
     text, positions = JETLSCore.get_text_and_positions(marked_text)
-    diagnostics, uri = get_lowering_diagnostics(text;
+    uri = LOWERING_DIAGNOSTICS_URI
+    diagnostics = get_lowering_diagnostics(text;
         code = JETLSCore.LOWERING_UNREACHABLE_CODE)
     code_actions = Union{CodeAction,Command}[]
     JETLSCore.delete_range_code_actions!(code_actions, uri, diagnostics)
@@ -417,7 +383,8 @@ end
 
 function get_unused_label_code_actions(marked_text::AbstractString)
     text, positions = JETLSCore.get_text_and_positions(marked_text)
-    diagnostics, uri = get_lowering_diagnostics(text;
+    uri = LOWERING_DIAGNOSTICS_URI
+    diagnostics = get_lowering_diagnostics(text;
         code = JETLSCore.LOWERING_UNUSED_LABEL_CODE)
     code_actions = Union{CodeAction,Command}[]
     JETLSCore.delete_range_code_actions!(code_actions, uri, diagnostics)
@@ -461,7 +428,8 @@ end
 
 function get_ambiguous_soft_scope_code_actions(marked_text::AbstractString)
     text, positions = JETLSCore.get_text_and_positions(marked_text)
-    diagnostics, uri = get_lowering_diagnostics(text;
+    uri = LOWERING_DIAGNOSTICS_URI
+    diagnostics = get_lowering_diagnostics(text;
         code = JETLSCore.LOWERING_AMBIGUOUS_SOFT_SCOPE_CODE,
         context_module = soft_scope_module)
     code_actions = Union{CodeAction,Command}[]

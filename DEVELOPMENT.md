@@ -90,12 +90,12 @@ the latest ones, you may see some tests fail. In such cases, make sure to run
 ## Self diagnostics
 
 [`scripts/selfcheck.sh`](./scripts/selfcheck.sh) runs `jetls check` from the
-local checkout on JETLS and the subpackages in this repository, along with the
-test suites of the subpackages, applying the root
+local checkout on JETLS and the subpackages in this repository along with their
+test suites, and on the Julia files in `docs` and `scripts`, applying the root
 [`.JETLSConfig.toml`](./.JETLSConfig.toml). CI runs it as well and fails if it
 reports any warning.
-To check only some of the packages and their tests, e.g. the ones you are
-editing, pass their names with `-p`, which may be repeated:
+To check only some of these projects, e.g. the ones you are editing, pass their
+names with `-p`, which may be repeated:
 ```bash
 ./scripts/selfcheck.sh -p LSP -p TOMLSource
 ```
@@ -121,10 +121,11 @@ controlled by `JETLS_TEST_MODE`, not `JETLS_DEV_MODE`.
 See the "[`JETLS_TEST_MODE`](#jetls_test_mode)" section for details.
 
 `JETLS_DEV_MODE` defaults to `false` when no preference is configured. The
-master development project exports `JETLS_DEV_MODE = true` and
-`Revise.revise_structs = true`, so local checkouts automatically enable the
-Revise-based analysis used to develop JETLS. These development-only exported
-preferences are removed by `scripts/vendor-deps.jl` when preparing a release.
+master development project exports `JETLS_DEV_MODE = true`, so local checkouts
+automatically enable the Revise-based analysis used to develop JETLS. This
+development-only exported preference is removed by `scripts/vendor-deps.jl`
+when preparing a release, together with the Revise dependency of `JETLSCore`,
+so installed releases do not support `JETLS_DEV_MODE`.
 
 You can override `JETLS_DEV_MODE` locally using Preferences.jl:
 ```julia-repl
@@ -363,7 +364,7 @@ Use `--top=N` to control how many entries to show (default: 50).
 ## Configuration schema
 
 The configuration schema is generated from the config structs
-in `JETLSCore/src/types.jl` by `scripts/schema/generate.jl`, which produces
+in `JETLSCore/src/types.jl` by `scripts/generate-schema.jl`, which produces
 standalone schema files under `schemas/`:
 
 - `config-toml.schema.json` (complete schema for `.JETLSConfig.toml`)
@@ -381,7 +382,7 @@ When you modify the config structs, update `schemas/description.toml`
 with descriptions for any new or changed fields, then regenerate all
 schemas by running:
 ```bash
-./scripts/schema/regenerate.sh
+./scripts/generate-schemas.sh
 ```
 
 The script supports a `--check` flag that exits with an error
@@ -498,8 +499,9 @@ The `prepare-release.sh` script automates the following steps:
    ```
    This generates `vendor/` with local path references in `[sources]`.
 
-   The vendoring step also removes the development-only `JETLS_DEV_MODE` and
-   `Revise.revise_structs` preferences from the release `Project.toml`.
+   The vendoring step also removes the development-only `JETLS_DEV_MODE`
+   preference from the release `Project.toml` and the Revise dependency of
+   `JETLSCore`.
 
 3. Commit and push the vendor directory
    ```bash

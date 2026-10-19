@@ -181,9 +181,61 @@ function preserve_test_expression_value(@nospecialize(exs...))
     end
 end
 
+"""
+    check_test_value(value)
+
+Do nothing when executed. `JETAnalyzer` reports a call to this function in top-level code
+as a test that always fails if `value`, the value of a test expression, is inferred to be
+`false` or of a non-boolean type (see `FailingTestReport`).
+"""
+check_test_value(@nospecialize(_)) = nothing
+
+checked_test_value(@nospecialize(value)) =
+    Expr(:call, GlobalRef(@__MODULE__, :check_test_value), value)
+
+# A failing or erroring test aborts a fail-fast test set, so the code after the test runs
+# only when the test expression evaluates to `true`. Expressing this as a branch lets
+# inference narrow the types in the subsequent code with the tested condition, which is
+# preserved through the `let` binding.
+function assert_test_expression_value(@nospecialize(ex))
+    value = gensym(:test_value)
+    return @q begin
+        let $value = $ex
+            $(checked_test_value(value))
+            $(GlobalRef(Core, :(===)))($value, true) ||
+                $(GlobalRef(Core, :throw))($(GlobalRef(Test, :FailFastError))())
+        end
+        $(hide_test_replacement_value(nothing))
+    end
+end
+
 macro_argument_value(@nospecialize(ex)) = isexpr(ex, :(=), 2) ? last(ex.args) : ex
 
-function replace_test(@nospecialize(ex), kws::Vector{Any})
+"""
+    testset_failfast(args::Vector{Any}, failfast::Union{Nothing,Bool})
+
+Return the fail-fast mode of the `@testset` call with the macro call arguments `args`,
+nested in a test set of the fail-fast mode `failfast`.
+
+The fail-fast mode is `true` if a failing test aborts the test set, `false` if it does not
+or that cannot be determined, and `nothing` for a custom test set type, whose behavior on
+test failures is unknown. As in Test.jl, a test set inherits the mode of the enclosing test
+set unless it specifies `failfast`, and a test set without an explicit type inherits the
+type of the enclosing test set. Only a literal `failfast=true` enables the fail-fast mode.
+"""
+function testset_failfast(args::Vector{Any}, failfast::Union{Nothing,Bool})
+    options = args[3:end-1]
+    any(@nospecialize(arg) -> arg isa Symbol || isexpr(arg, :.), options) && return nothing
+    failfast === nothing && return nothing
+    for arg in options
+        if isexpr(arg, :(=), 2) && arg.args[1] === :failfast
+            failfast = arg.args[2] === true
+        end
+    end
+    return failfast
+end
+
+function replace_test(@nospecialize(ex), kws::Vector{Any}, failfast::Bool)
     broken = Any[kw.args[2] for kw in kws if isexpr(kw, :(=), 2) && kw.args[1] === :broken]
     skip = Any[kw.args[2] for kw in kws if isexpr(kw, :(=), 2) && kw.args[1] === :skip]
     kws = Any[kw for kw in kws if !(isexpr(kw, :(=), 2) && kw.args[1] ∈ (:skip, :broken))]
@@ -199,7 +251,7 @@ function replace_test(@nospecialize(ex), kws::Vector{Any})
         skip = only(skip)
         if should_wrap_test_expression_in_thunk(ex; conditionally_evaluated = true)
             thunk = gensym(:test_expression)
-            test_expr = discard_test_expression_value(Expr(:call, thunk))
+            test_expr = discard_test_expression_value(checked_test_value(Expr(:call, thunk)))
             ret = @q begin
                 let $thunk = () -> $ex
                     if $skip
@@ -210,7 +262,7 @@ function replace_test(@nospecialize(ex), kws::Vector{Any})
                 end
             end
         else
-            test_expr = discard_test_expression_value(ex)
+            test_expr = discard_test_expression_value(checked_test_value(ex))
             ret = @q begin
                 if $skip
                     $(hide_test_replacement_value(nothing))
@@ -221,18 +273,21 @@ function replace_test(@nospecialize(ex), kws::Vector{Any})
         end
         return ret
     end
-    test_expr = discard_test_expression_value(maybe_wrap_test_expression_in_thunk(ex))
+    ex = maybe_wrap_test_expression_in_thunk(ex)
     if !isempty(broken)
-        return Expr(:block, only(broken), test_expr)
+        return Expr(:block, only(broken), discard_test_expression_value(ex))
+    elseif failfast
+        return assert_test_expression_value(ex)
     end
-    return test_expr
+    return discard_test_expression_value(checked_test_value(ex))
 end
 
 """
-    replace_test_macrocall(name::Symbol, args::Vector{Any}) -> Union{Expr,Nothing}
+    replace_test_macrocall(name::Symbol, args::Vector{Any}, failfast::Bool)
 
 Return the replacement for the Test.jl macro call `name` with the macro call arguments
-`args`, or `nothing` if the call is malformed.
+`args`, or `nothing` if the call is malformed. `failfast` tells whether the call is in a
+test set that a failing test aborts (see `testset_failfast`).
 
 The replacements evaluate the arguments of the macro call, catching exceptions as Test.jl
 does. Their values pass through `Base.inferencebarrier` so that the synthetic values do not
@@ -244,7 +299,20 @@ the return type check of `@inferred`, are omitted.
 The replacements look like the following, where gensym'ed names are shortened, and the
 line numbers of the user code and blocks that wrap a single expression are omitted.
 
-`@test f(x) == 1` and `@test_broken f(x) == 1` become:
+`@test f(x) == 1` becomes the following, where `JET.check_test_value` lets `JETAnalyzer`
+report the test if it always fails (see `FailingTestReport`):
+```julia
+begin
+    try
+        JET.check_test_value(f(x) == 1)
+    catch
+    end
+    Base.inferencebarrier(nothing)
+end
+```
+Keyword arguments other than `broken` and `skip` are passed to the tested call as Test.jl
+does, so `@test a ≈ b atol=0.1` tests `≈(a, b, atol = 0.1)`. The values of the tests
+expected to fail are not checked, so `@test_broken f(x) == 1` becomes:
 ```julia
 begin
     try
@@ -254,8 +322,6 @@ begin
     Base.inferencebarrier(nothing)
 end
 ```
-Keyword arguments other than `broken` and `skip` are passed to the tested call as Test.jl
-does, so `@test a ≈ b atol=0.1` tests `≈(a, b, atol = 0.1)`.
 
 `@test f(x) broken=Sys.iswindows()` becomes:
 ```julia
@@ -278,11 +344,24 @@ if Sys.iswindows()
 else
     begin
         try
-            f(x)
+            JET.check_test_value(f(x))
         catch
         end
         Base.inferencebarrier(nothing)
     end
+end
+```
+
+In a fail-fast test set, the code after `@test ex` runs only when `ex` evaluates to `true`,
+and an exception thrown by `ex` also aborts the test set. So `@test x isa Int` becomes the
+following, which lets inference narrow `x` to `Int` in the subsequent code:
+```julia
+begin
+    let value = x isa Int
+        JET.check_test_value(value)
+        value === true || throw(Test.FailFastError())
+    end
+    Base.inferencebarrier(nothing)
 end
 ```
 
@@ -397,7 +476,7 @@ let thunk = () -> all(y -> y > 0, x)
     else
         begin
             try
-                thunk()
+                JET.check_test_value(thunk())
             catch
             end
             Base.inferencebarrier(nothing)
@@ -406,11 +485,11 @@ let thunk = () -> all(y -> y > 0, x)
 end
 ```
 """
-function replace_test_macrocall(name::Symbol, args::Vector{Any})
+function replace_test_macrocall(name::Symbol, args::Vector{Any}, failfast::Bool)
     exs = args[3:end]
     if name === Symbol("@test")
         isempty(exs) && return nothing
-        return replace_test(first(exs), Any[exs[2:end]...])
+        return replace_test(first(exs), Any[exs[2:end]...], failfast)
     elseif name === Symbol("@test_broken")
         isempty(exs) && return nothing
         ex, kws = first(exs), exs[2:end]
@@ -481,7 +560,8 @@ function replace_test_macrocall(name::Symbol, args::Vector{Any})
 end
 
 """
-    replace_test_macrocalls(x, mod::Module)
+    replace_test_macrocalls(x, mod::Module, failfast::Union{Nothing,Bool} = false,
+                            failfast_modes::Union{Nothing,Dict} = nothing)
 
 Replace the Test.jl macro calls in the top-level expression `x` with lightweight code that
 evaluates the test expressions but omits the construction and recording of test results.
@@ -495,19 +575,41 @@ out, while quoted code and the arguments of other macros are left as is. A malfo
 is kept with its arguments replaced, so that the ordinary macro expansion reports the
 error.
 
+`failfast` is the fail-fast mode of the test set enclosing `x` (see `testset_failfast`).
+It applies to all code lexically within a `@testset` call, including the bodies of the
+functions defined there. If `failfast_modes` is given, the fail-fast mode at each line of
+`x` is recorded in it, so that an `include` call at the line can pass the mode on to the
+included file.
+
 See `replace_test_macrocall` for the replacement of each macro.
 """
-function replace_test_macrocalls(@nospecialize(x), mod::Module)
+function replace_test_macrocalls(
+        @nospecialize(x), mod::Module, failfast::Union{Nothing,Bool} = false,
+        failfast_modes::Union{Nothing,Dict{Int,Union{Nothing,Bool}}} = nothing)
+    if x isa LineNumberNode
+        failfast_modes === nothing || (failfast_modes[x.line] = failfast)
+        return x
+    end
     x isa Expr || return x
     isexpr(x, (:quote, :inert)) && return x
     if isexpr(x, :macrocall)
         name = test_macro_name(mod, first(x.args))
         name ∈ TEST_MACRO_NAMES || return x
-        replaced = Expr(:macrocall, x.args[1], x.args[2],
-            map(@nospecialize(arg) -> replace_test_macrocalls(arg, mod), x.args[3:end])...)
-        replacement = replace_test_macrocall(name, replaced.args)
+        inner_failfast =
+            name === Symbol("@testset") ? testset_failfast(x.args, failfast) : failfast
+        source = x.args[2]
+        if failfast_modes !== nothing && source isa LineNumberNode
+            # The body of a one-line `@testset`, e.g. `@testset "x" include("x.jl")`, has no
+            # line number of its own but shares the line of the macro call.
+            failfast_modes[source.line] = inner_failfast
+        end
+        args = Any[replace_test_macrocalls(arg, mod, inner_failfast, failfast_modes)
+                   for arg in x.args[3:end]]
+        replaced = Expr(:macrocall, x.args[1], source, args...)
+        replacement = replace_test_macrocall(name, replaced.args, failfast === true)
         return @something replacement replaced
     end
-    return Expr(x.head,
-        map(@nospecialize(arg) -> replace_test_macrocalls(arg, mod), x.args)...)
+    args = Any[replace_test_macrocalls(arg, mod, failfast, failfast_modes)
+               for arg in x.args]
+    return Expr(x.head, args...)
 end

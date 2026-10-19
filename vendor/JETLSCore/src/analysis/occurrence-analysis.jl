@@ -501,7 +501,8 @@ function compute_full_binding_occurrences(
         st0′ = remove_macrocalls(context_module, world, st0; strip_static=true)
         (; ctx3, st3) = try
             jl_lower_for_scope_resolution(context_module, world, st0′; soft_scope)
-        catch
+        catch err
+            is_user_lowering_error(err) || report_lowering_bug(err)
             return nothing
         end
         generated_resolutions = collect_generated_inert_resolutions(ctx3, st3, world)
@@ -615,7 +616,8 @@ function collect_macrocall_occurrences!(
         (; ctx3) = try
             jl_lower_for_scope_resolution(
                 context_module, world, macrocall_name; soft_scope)
-        catch
+        catch err
+            is_user_lowering_error(err) || report_lowering_bug(err)
             return traversal_no_recurse
         end
         for binfo in ctx3.bindings.info

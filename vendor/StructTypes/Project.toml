@@ -1,4 +1,4 @@
-version = "1.11.0"
+version = "1.11.1"
 name = "StructTypes"
 authors = ["Jacob Quinn"]
 uuid = "66bcceda-d870-5865-93dd-65803322e79e"

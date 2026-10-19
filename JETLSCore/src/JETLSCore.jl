@@ -46,9 +46,8 @@ end
 using Preferences: Preferences
 const JETLS_DEV_MODE = Preferences.@load_preference("JETLS_DEV_MODE", false)
 const JETLS_TEST_MODE = Preferences.@load_preference("JETLS_TEST_MODE", false)
-const JETLS_DEBUG_LOWERING = Preferences.@load_preference("JETLS_DEBUG_LOWERING", false)
 function show_setup_info(msg::AbstractString)
-    @info msg Sys.BINDIR pkgdir(JETLS_MODULE[]) Threads.nthreads() JETLS_VERSION=JETLS_VERSION[] JETLS_DEV_MODE JETLS_TEST_MODE JETLS_DEBUG_LOWERING
+    @info msg Sys.BINDIR pkgdir(JETLS_MODULE[]) Threads.nthreads() JETLS_VERSION=JETLS_VERSION[] JETLS_DEV_MODE JETLS_TEST_MODE
 end
 
 const server_world_age = Ref{UInt}(typemax(UInt))

@@ -283,6 +283,11 @@ function to_valid_uri(filename::AbstractString)
     end
 end
 
+# Stack frames prepend `./` (`.\` on Windows) to relative file names, e.g. `./Untitled-1`
+# for the methods defined in an unsaved buffer and `./none` for those without location
+# information
+stackframe_filename(file::AbstractString) = chopprefix(file, "." * Base.Filesystem.path_separator)
+
 function jet_frame_to_location(frame)
     frame.file === :none && return nothing
     return Location(;
@@ -402,6 +407,14 @@ function JET.print_report(io::IO, report::AnalysisStoppedReport)
     return nothing
 end
 
+excluded_file_related_information(excluded_file::AbstractString) =
+    DiagnosticRelatedInformation[
+        DiagnosticRelatedInformation(;
+            location = Location(;
+                uri = to_valid_uri(excluded_file),
+                range = line_range(1)),
+            message = "The excluded file")]
+
 function jet_toplevel_error_report_to_diagnostic(
         @nospecialize(report::JET.ToplevelErrorReport), world::UInt,
         postprocessor::JET.PostProcessor;
@@ -423,13 +436,15 @@ function jet_toplevel_error_report_to_diagnostic(
             TOPLEVEL_CONCRETIZATION_TIMEOUT_CODE : TOPLEVEL_ERROR_CODE
     end
     return Diagnostic(;
+        message,
         range = line_range(report.line),
         severity = report isa AnalysisStoppedReport ?
             DiagnosticSeverity.Warning : DiagnosticSeverity.Error,
-        message,
-        source = DIAGNOSTIC_SOURCE_SAVE,
         code,
         codeDescription = diagnostic_code_description(code),
+        source = DIAGNOSTIC_SOURCE_SAVE,
+        relatedInformation = report isa AnalysisStoppedReport ?
+            excluded_file_related_information(report.excluded_file) : nothing,
         data)
 end
 
@@ -652,6 +667,8 @@ function inference_error_report_code(@nospecialize report::JET.InferenceErrorRep
         return INFERENCE_TYPE_ERROR_KEYWORD_CODE
     elseif report isa NonBooleanCondErrorReport
         return INFERENCE_TYPE_ERROR_NON_BOOL_COND_CODE
+    elseif report isa FailingTestReport
+        return INFERENCE_FAILING_TEST_CODE
     end
     error(lazy"No diagnostic code is defined for report: $report")
 end
@@ -713,7 +730,7 @@ function toplevel_warning_report_to_diagnostic_impl(report::MethodOverwriteRepor
             location = Location(;
                 uri = to_valid_uri(report.original_filepath),
                 range = lines_range(report.original_lines)),
-            message = "The first method definition $sig_str")
+            message = "The first method definition `$sig_str`")
     ]
     return Diagnostic(;
         range = lines_range(report.lines),
@@ -789,42 +806,48 @@ function toplevel_warning_report_to_diagnostic_impl(report::IncludeSkippedReport
         JET.print_wrapped(io, "The definitions in the excluded file `$(report.excluded_file)` " *
             "are not available to the code after this point.")
     end
-    relatedInformation = DiagnosticRelatedInformation[
-        DiagnosticRelatedInformation(;
-            location = Location(;
-                uri = to_valid_uri(report.excluded_file),
-                range = line_range(1)),
-            message = "The excluded file")
-    ]
     return Diagnostic(;
+        message,
         range = line_range(report.line),
         severity = DiagnosticSeverity.Information,
-        message,
-        source = DIAGNOSTIC_SOURCE_SAVE,
         code = TOPLEVEL_ANALYSIS_SKIPPED_CODE,
         codeDescription = diagnostic_code_description(TOPLEVEL_ANALYSIS_SKIPPED_CODE),
-        relatedInformation)
+        source = DIAGNOSTIC_SOURCE_SAVE,
+        relatedInformation = excluded_file_related_information(report.excluded_file))
 end
 
 # lowering diagnostic
 # ===================
 
 const JL_MACRO_FILE = only(methods(JL.expand_macro, (JL.MacroExpansionContext, SyntaxTree))).file
-function scrub_expand_macro_stacktrace(stacktrace::Vector{Base.StackTraces.StackFrame})
-    idx = @something findfirst(stacktrace) do stackframe::Base.StackTraces.StackFrame
-        stackframe.func === :expand_macro && stackframe.file === JL_MACRO_FILE
-    end return stacktrace
-    return stacktrace[1:idx-1]
+const JL_INVOKE_IN_WORLD_FILE = only(methods(JL._invoke_in_world)).file
+
+# Like `stacktrace(bt)`, but only the frames of the macro expansion that threw (all frames
+# if there is none). Frames are looked up lazily since symbolizing a whole backtrace takes
+# milliseconds.
+function macro_expansion_stacktrace(bt::Vector{<:Union{Base.InterpreterIP,Ptr{Cvoid}}})
+    stack = Base.StackTraces.StackFrame[]
+    for ip in bt, frame in Base.StackTraces.lookup(ip)
+        # the macro, which `JL.expand_macro` calls through `JL._invoke_in_world`, threw
+        frame.func === :_invoke_in_world && frame.file === JL_INVOKE_IN_WORLD_FILE && return stack
+        # `JL.expand_macro` itself threw, e.g. for a macro name that is not found
+        frame.func === :expand_macro && frame.file === JL_MACRO_FILE && return stack
+        frame.from_c || push!(stack, frame)
+    end
+    return stack
 end
 
-function stacktrace_to_related_information(stacktrace::Vector{Base.StackTraces.StackFrame})
+function stacktrace_to_related_information(
+        stacktrace::Vector{Base.StackTraces.StackFrame}, postprocessor::LSPostProcessor
+    )
     relatedInformation = DiagnosticRelatedInformation[]
     for stackframe in stacktrace
-        stackframe.file === :none && continue
-        uri = to_valid_uri(String(stackframe.file))
+        filename = stackframe_filename(String(stackframe.file))
+        filename == "none" && continue
+        uri = to_valid_uri(filename)
         range = line_range(stackframe.line)
         location = Location(; uri, range)
-        message = let linfo = stackframe.linfo
+        sig = let linfo = stackframe.linfo
             linfo isa Core.CodeInstance && (linfo = linfo.def)
             if linfo isa Core.MethodInstance
                 sprint(Base.show_tuple_as_call, Symbol(""), linfo.specTypes)
@@ -832,6 +855,7 @@ function stacktrace_to_related_information(stacktrace::Vector{Base.StackTraces.S
                 String(stackframe.func)
             end
         end
+        message = postprocessor(sig)
         push!(relatedInformation, DiagnosticRelatedInformation(; location, message))
     end
     return relatedInformation
@@ -1421,6 +1445,7 @@ end
 function analyze_captured_boxes!(
         diagnostics::Vector{Diagnostic}, uri::URI, fi::FileInfo,
         ctx4::JL.ClosureConversionCtx, st3::SyntaxTree,
+        binding_occurrences::Dict{JL.BindingInfo,Set{BindingOccurrence}},
         reported::Set{LoweringDiagnosticKey}
     )
     for binfo in ctx4.bindings.info
@@ -1435,7 +1460,8 @@ function analyze_captured_boxes!(
         key = LoweringDiagnosticKey(range, :boxed, bn)
         key in reported ? continue : push!(reported, key)
         code = LOWERING_CAPTURED_BOXED_VARIABLE_CODE
-        relatedInformation = find_capture_sites(st3, binfo, ctx4, uri, fi)
+        relatedInformation = captured_box_related_information(
+            st3, binfo, ctx4, binding_occurrences, range, uri, fi)
         push!(diagnostics, Diagnostic(;
             range,
             severity = DiagnosticSeverity.Information,
@@ -1461,11 +1487,40 @@ function is_captured_binding(binfo::JL.BindingInfo, ctx4::JL.ClosureConversionCt
     return false
 end
 
+function captured_box_related_information(
+        st3::SyntaxTree, binfo::JL.BindingInfo, ctx4::JL.ClosureConversionCtx,
+        binding_occurrences::Dict{JL.BindingInfo,Set{BindingOccurrence}},
+        binding_range::Range, uri::URI, fi::FileInfo
+    )
+    capture_ranges = find_capture_sites(st3, binfo, ctx4, fi)
+    assignment_ranges = Set{Range}()
+    for occurrence in get(binding_occurrences, binfo, ())
+        occurrence.kind === :def || continue
+        provs = JL.flattened_provenance(occurrence.tree)
+        is_from_user_ast(provs) || continue
+        push!(assignment_ranges, jsobj_to_range(last(provs), fi))
+    end
+    related = Pair{Range,String}[]
+    for range in capture_ranges
+        message = range in assignment_ranges ? "Assigned in closure" : "Captured by closure"
+        push!(related, range => message)
+    end
+    for range in assignment_ranges
+        (range == binding_range || range in capture_ranges) && continue
+        push!(related, range => "Assigned here")
+    end
+    isempty(related) && return nothing
+    sort!(related; by = p->p.first.start)
+    return DiagnosticRelatedInformation[
+        DiagnosticRelatedInformation(; location = Location(; uri, range), message)
+        for (range, message) in related]
+end
+
 function find_capture_sites(
         st3::SyntaxTree, binfo::JL.BindingInfo, ctx4::JL.ClosureConversionCtx,
-        uri::URI, fi::FileInfo
+        fi::FileInfo
     )
-    relatedInformation = DiagnosticRelatedInformation[]
+    capture_ranges = Set{Range}()
     for (_, closure_bindings) in ctx4.closure_bindings
         for lambda in closure_bindings.lambdas
             haskey(lambda.locals_capt, binfo.id) || continue
@@ -1482,16 +1537,14 @@ function find_capture_sites(
                 traverse(node3) do inner::SyntaxTree
                     if JS.head(inner) === :bindingid && JL.syntax_id(inner) == binfo.id
                         varprov = last(JL.flattened_provenance(inner))
-                        push!(relatedInformation, DiagnosticRelatedInformation(;
-                            location = Location(; uri, range = jsobj_to_range(varprov, fi)),
-                            message = "Captured by closure"))
+                        push!(capture_ranges, jsobj_to_range(varprov, fi))
                     end
                 end
                 return traversal_no_recurse
             end
         end
     end
-    return @somereal relatedInformation Some(nothing)
+    return capture_ranges
 end
 
 function analyze_ambiguous_soft_scope!(
@@ -2006,7 +2059,7 @@ function analyze_lowered_code!(
     analyze_unused_assignments!(diagnostics, fi, st0, dead_store_info, reported;
         allow_unused_underscore, inactive_branch_names)
 
-    analyze_captured_boxes!(diagnostics, uri, fi, ctx4, st3, reported)
+    analyze_captured_boxes!(diagnostics, uri, fi, ctx4, st3, binding_occurrences, reported)
     analyze_unreachable_code!(diagnostics, fi, st3, unreachable_statements)
     analyze_unresolved_gotos!(diagnostics, fi, st3)
 
@@ -2041,21 +2094,19 @@ function per_stmt_diagnostics!(
         if err isa LoadError && err.error isa JL.MacroExpansionError
             err = err.error
         end
-        if err isa JL.LoweringError
-            if !err.internal
-                for (st, msg) in zip(err.sts, err.msgs)
-                    push!(diagnostics, Diagnostic(;
-                        range = jsobj_to_range(st, fi),
-                        severity = DiagnosticSeverity.Error,
-                        message = msg,
-                        source = DIAGNOSTIC_SOURCE_LIVE,
-                        code = LOWERING_ERROR_CODE,
-                        codeDescription = diagnostic_code_description(LOWERING_ERROR_CODE)))
-                end
+        if err isa JL.LoweringError && !err.internal
+            for (st, msg) in zip(err.sts, err.msgs)
+                push!(diagnostics, Diagnostic(;
+                    range = jsobj_to_range(st, fi),
+                    severity = DiagnosticSeverity.Error,
+                    message = msg,
+                    source = DIAGNOSTIC_SOURCE_LIVE,
+                    code = LOWERING_ERROR_CODE,
+                    codeDescription = diagnostic_code_description(LOWERING_ERROR_CODE)))
             end
-        elseif err isa JL.MacroExpansionError
+        elseif err isa JL.MacroExpansionError && is_user_lowering_error(err)
             if !skip_analysis_requiring_context
-                st = scrub_expand_macro_stacktrace(stacktrace(catch_backtrace()))
+                st = macro_expansion_stacktrace(catch_backtrace())
                 msg = err.msg
                 inner = err.err
                 if msg == "Macro not found" && inner isa UndefVarError
@@ -2063,7 +2114,7 @@ function per_stmt_diagnostics!(
                     relatedInformation = nothing
                 else
                     msg *= "\n" * sprint(locked_showerror, inner)
-                    relatedInformation = stacktrace_to_related_information(st)
+                    relatedInformation = stacktrace_to_related_information(st, postprocessor)
                 end
                 provs = JS.flattened_provenance(err.ex)
                 provs′ = @view provs[2:end]
@@ -2081,9 +2132,7 @@ function per_stmt_diagnostics!(
                     relatedInformation))
             end
         else
-            @static JETLS_DEBUG_LOWERING && @warn "Error in lowering (with macrocall nodes)"
-            @static JETLS_DEBUG_LOWERING && locked_showerror(stderr, err)
-            @static JETLS_DEBUG_LOWERING && locked_show_backtrace(stderr, catch_backtrace())
+            report_lowering_bug(err)
         end
         nothing # signal primary-attempt failure to the fallback path
     end
@@ -2100,7 +2149,8 @@ function per_stmt_diagnostics!(
         res = try
             jl_lower_for_scope_resolution(context_module, world, st0;
                 recover_from_macro_errors=false, convert_closures=true, soft_scope)
-        catch
+        catch err
+            is_user_lowering_error(err) || report_lowering_bug(err)
             return diagnostics
         end
     end

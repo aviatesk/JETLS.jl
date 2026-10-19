@@ -114,6 +114,13 @@ result to the method dispatch picked for the inferred argument types —
 Bare cursors on the function name (`sin│`) still return every
 definition.
 
+When the cursor is on a string literal that names an existing file,
+such as the path in `include("utils/binding.jl")` or
+`joinpath(@__DIR__, "data.toml")`, JETLS jumps to that file. The path is
+resolved relative to the current document's directory, as with
+[document links](@ref features/document-link). Go to definition on
+`include` itself still jumps to the definition of `include`.
+
 JETLS also implements go to declaration (`textDocument/declaration`),
 which jumps to declaration sites (e.g., `import`/`using`, `local x`, or
 empty `function foo end`) when distinct from the definition, and falls

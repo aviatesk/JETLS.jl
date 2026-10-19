@@ -72,6 +72,7 @@ builtin_type_mapping = Dict(
         Base.Cwstring,
         Base.Regex,
         Base.VersionNumber,
+        UUID,
     },
     StructTypes.NumberType() => Union{
         Core.Number, # Should all of `Number` and its subtypes be Numbers by default?
@@ -825,6 +826,22 @@ StructTypes.defaults(::Type{Defaultable}) = (b="b",)
     @test StructTypes.constructfrom(Defaultable, (a="a", b="c")) == Defaultable("a", "c")
 end
 
+struct DefaultedFields
+    value::Int
+end
+StructTypes.StructType(::Type{DefaultedFields}) = StructTypes.Struct()
+StructTypes.defaults(::Type{DefaultedFields}) = (value=10, extra=20)
+
+@testset "applyfield with defaults for unknown names" begin
+    calls = Ref(0)
+    callback = (i, nm, FT) -> (calls[] += 1; 99)
+    @test StructTypes.applyfield(callback, DefaultedFields, :extra) === false
+    @test calls[] == 0
+    @test StructTypes.applyfield(callback, DefaultedFields, :value) === true
+    @test calls[] == 1
+    @test StructTypes.constructfrom(DefaultedFields, Dict{Symbol, Int}()).value == 10
+end
+
 # CustomStruct subtypes
 abstract type Vehicle2 end
 
@@ -859,4 +876,43 @@ end
 
 @testset "struct type on complex" begin
     @test StructTypes.StructType(ComplexF64) == StructTypes.Struct()
+end
+
+struct CustomColumn{T, S}
+    values::Vector{T}
+end
+StructTypes.StructType(::Type{<:CustomColumn}) = StructTypes.CustomStruct()
+StructTypes.lowertype(::Type{<:CustomColumn}) = Dict{String, Any}
+StructTypes.lower(c::CustomColumn{T, S}) where {T, S} = Dict{String, Any}(
+    "type" => string(T), "storage" => string(S), "values" => c.values)
+
+mutable struct MutableColumn
+    type::String
+    values::Vector{Int}
+    MutableColumn() = new()
+end
+StructTypes.StructType(::Type{MutableColumn}) = StructTypes.Mutable()
+
+struct ImmutableColumn
+    type::String
+    values::Vector{Int}
+end
+StructTypes.StructType(::Type{ImmutableColumn}) = StructTypes.Struct()
+
+struct LowersToNamedTuple
+    x::NamedTuple
+end
+StructTypes.StructType(::Type{LowersToNamedTuple}) = StructTypes.CustomStruct()
+StructTypes.lower(x::LowersToNamedTuple) = x.x
+
+@testset "constructfrom with CustomStruct sources" begin
+    c = CustomColumn{Int, Nothing}([1, 2])
+    @test StructTypes.constructfrom(Dict{String, Any}, c) ==
+        Dict("type" => string(Int), "storage" => "Nothing", "values" => [1, 2])
+    @test StructTypes.constructfrom(Dict{Symbol, Any}, c)[:storage] == "Nothing"
+    w = LowersToNamedTuple((type="Int64", values=[1, 2]))
+    m = StructTypes.constructfrom(MutableColumn, w)
+    @test (m.type, m.values) == ("Int64", [1, 2])
+    s = StructTypes.constructfrom(ImmutableColumn, w)
+    @test (s.type, s.values) == ("Int64", [1, 2])
 end

@@ -92,12 +92,17 @@ jobs:
           SELFCHECK_PATHS: |
             src/**
             JETLSCore/**
+            test/**
             LSP/**
             HierarchicalTestSets/**
             MarkdownSource/**
             TOMLSource/**
             TestRunner/**
             Compiler/**
+            docs/*.jl
+            docs/Project.toml
+            scripts/*.jl
+            scripts/Project.toml
             Project.toml
             .JETLSConfig.toml
             scripts/selfcheck.sh
@@ -107,7 +112,9 @@ jobs:
             JETLSCore/src/**
             JETLSCore/Project.toml
             schemas/**
-            scripts/schema/**
+            scripts/Project.toml
+            scripts/generate-schema.jl
+            scripts/generate-schemas.sh
             Project.toml
             .github/workflows/check-schemas.yml
           SOURCES_PATHS: |

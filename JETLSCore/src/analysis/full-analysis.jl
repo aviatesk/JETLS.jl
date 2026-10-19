@@ -1313,6 +1313,19 @@ function redirect_keyword_slurp_match(@nospecialize(analyzer), match::Core.Metho
     return @something Base._which(kwsig; method_table, world, raise=false) match
 end
 
+# Signature analysis would infer the undeclared argument types of a closure method, and the
+# variables the closure captures, as `Any`. So it skips such closure methods, which are
+# analyzed where they are called, or where the closures are constructed if all their argument
+# types are declared; see `CC.abstract_eval_new(::LSAnalyzer, ...)`.
+function should_analyze_signature(@nospecialize sig)
+    sig′ = Base.unwrap_unionall(sig)
+    sig′ isa DataType || return true
+    isempty(sig′.parameters) && return true
+    selftype = sig′.parameters[1]
+    is_closure_type(selftype) || return true
+    return !is_parametric_closure_type(selftype) && declared_argtypes(sig) !== nothing
+end
+
 function signature_analysis_match(@nospecialize(analyzer), @nospecialize(sig), world::UInt)
     method_table = CC.method_table(analyzer)
     match = @something Base._which(sig; method_table, world, raise=false) return nothing
@@ -1495,6 +1508,7 @@ function analyze_package_with_revise(
         end
     end
 
+    filter!(workitem -> should_analyze_signature(workitem.siginfo.sig), workitems)
     n_sigs = length(workitems)
     progress = ReviseAnalysisProgress(n_sigs)
     inf_world = CC.get_inference_world(analyzer)

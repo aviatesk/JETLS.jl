@@ -260,7 +260,7 @@ end
 
 const STDIN_URI = URI(; scheme="untitled", path="Untitled-stdin")
 
-struct StdinSource
+struct InputSource
     uri::URI
     text::String
 end
@@ -350,16 +350,28 @@ function run_check(args::Vector{String})
     base_path = root_path_opt !== nothing ? abspath(root_path_opt) : pwd()
     isempty(paths) && !read_stdin && push!(paths, base_path)
 
+    files = InputSource[]
     package_dirs = String[]
-    for (i, path) in enumerate(paths)
+    for path in paths
         path = isabspath(path) ? path : joinpath(base_path, path)
         if isdir(path)
             path = abspath(path)
-            paths[i] = @something find_package_entry_file(path) return 1
+            filepath = @something find_package_entry_file(path) return 1
             push!(package_dirs, path)
+        elseif isfile(path)
+            filepath = abspath(path)
         else
-            paths[i] = path
+            @error "File not found: $path"
+            return 1
         end
+        text = try
+            read(filepath, String)
+        catch err
+            err isa SystemError || rethrow()
+            @error "Failed to read file: $filepath ($(Libc.strerror(err.errnum)))"
+            return 1
+        end
+        push!(files, InputSource(filepath2uri(filepath), text))
     end
 
     root_path = if root_path_opt === nothing && length(package_dirs) == 1
@@ -374,7 +386,7 @@ function run_check(args::Vector{String})
         else
             filepath2uri(isabspath(stdin_filename) ? stdin_filename : joinpath(base_path, stdin_filename))
         end
-        StdinSource(stdin_uri, read(stdin, String))
+        InputSource(stdin_uri, read(stdin, String))
     end
 
     progress_ctx = ProgressContext(progress_mode, stderr)
@@ -384,7 +396,7 @@ function run_check(args::Vector{String})
                exit_severity = exit_severity,
                show_severity = show_severity
         Base.CoreLogging.with_logger(logger) do
-            run_check_analysis(root_path, paths, stdin_source, progress_ctx;
+            run_check_analysis(root_path, files, stdin_source, progress_ctx;
                 skip_analysis, context_lines, exit_severity, show_severity)
         end
     end
@@ -411,12 +423,40 @@ function find_package_entry_file(dir::String)
 end
 
 function run_check_analysis(
-        root_path::String, paths::Vector{String}, stdin_source::Union{Nothing,StdinSource},
-        progress_ctx::ProgressContext;
+        root_path::String, files::Vector{InputSource},
+        stdin_source::Union{Nothing,InputSource}, progress_ctx::ProgressContext;
         skip_analysis::Bool, context_lines::Int,
         exit_severity::DiagnosticSeverity.Ty, show_severity::DiagnosticSeverity.Ty
     )
+    start_time = time()
+
     server = start_cli_server(root_path)
+    result = try
+        collect_check_diagnostics!(server, root_path, files, stdin_source, progress_ctx; skip_analysis)
+    finally
+        cleanup_cli_tasks(server)
+    end
+    uri2diagnostics, total_uris = @something result return 1
+
+    elapsed_time = time() - start_time
+    print_stats(uri2diagnostics, total_uris, elapsed_time, show_severity)
+    has_errors = print_diagnostics(uri2diagnostics, root_path, context_lines, exit_severity, show_severity;
+        stdin_source)
+
+    exit_severity_str =
+        exit_severity == DiagnosticSeverity.Error ? "error" :
+        exit_severity == DiagnosticSeverity.Warning ? "warn" :
+        exit_severity == DiagnosticSeverity.Information ? "info" : "hint"
+    println(stdout, "# Check ", has_errors ? "failed" : "passed", " (--exit-severity=", exit_severity_str, ")")
+
+    return has_errors
+end
+
+function collect_check_diagnostics!(
+        server::Server, root_path::String, files::Vector{InputSource},
+        stdin_source::Union{Nothing,InputSource}, progress_ctx::ProgressContext;
+        skip_analysis::Bool
+    )
     if stdin_source !== nothing
         # Cache it as `textDocument/didOpen` does: the saved file cache makes the full
         # analysis read this text instead of the file on disk at `--stdin-filename`.
@@ -429,24 +469,13 @@ function run_check_analysis(
         start_analysis_worker!(server)
     end
 
-    start_time = time()
-
     if skip_analysis
-        analysis_uris = Set{URI}()
-        for path in paths
-            filepath = abspath(path)
-            if !isfile(filepath)
-                @error "File not found: $filepath"
-                return 1
-            end
-            uri = filepath2uri(filepath)
-            push!(analysis_uris, uri)
-        end
+        analysis_uris = Set{URI}(file.uri for file in files)
         stdin_source === nothing || push!(analysis_uris, stdin_source.uri)
     else
         # Full analysis phase (textDocument/publishDiagnostics equivalent)
         requested_uris = @with_cli_LOAD_PATH run_full_analysis(
-            server, root_path, paths, stdin_source, progress_ctx)
+            server, root_path, files, stdin_source, progress_ctx)
         analysis_uris = collect_workspace_uris(server)
         manager = server.state.analysis_manager
         if isempty(analysis_uris) && !any(requested_uris) do uri::URI
@@ -454,7 +483,7 @@ function run_check_analysis(
                 analysis_info isa OutOfScope && analysis_info.skip_reason !== nothing
             end
             @error "Full analysis failed: could not find any files to analyze"
-            return 1
+            return nothing
         end
         # Requested files get the diagnostics that live analysis reports for them in the
         # editor, even when they are excluded by `analysis_overrides` or no analysis unit
@@ -472,20 +501,7 @@ function run_check_analysis(
         unique!(d::Diagnostic -> (d.range, d.message, d.code), diagnostics)
     end
 
-    elapsed_time = time() - start_time
-    print_stats(uri2diagnostics, total_uris, elapsed_time, show_severity)
-    has_errors = print_diagnostics(uri2diagnostics, root_path, context_lines, exit_severity, show_severity;
-        stdin_source)
-
-    cleanup_cli_tasks(server)
-
-    exit_severity_str =
-        exit_severity == DiagnosticSeverity.Error ? "error" :
-        exit_severity == DiagnosticSeverity.Warning ? "warn" :
-        exit_severity == DiagnosticSeverity.Information ? "info" : "hint"
-    println(stdout, "# Check ", has_errors ? "failed" : "passed", " (--exit-severity=", exit_severity_str, ")")
-
-    return has_errors
+    return uri2diagnostics, total_uris
 end
 
 function start_cli_server(root_path::AbstractString)
@@ -515,29 +531,29 @@ function start_cli_server(root_path::AbstractString)
 end
 
 function run_full_analysis(
-        server::Server, root_path::AbstractString, paths::Vector{String},
-        stdin_source::Union{Nothing,StdinSource}, progress_ctx::ProgressContext
+        server::Server, root_path::AbstractString, files::Vector{InputSource},
+        stdin_source::Union{Nothing,InputSource}, progress_ctx::ProgressContext
     )
-    uris = URI[filepath2uri(abspath(path)) for path in paths]
-    stdin_source === nothing || push!(uris, stdin_source.uri)
-    total_files = length(uris)
-    for (idx, uri) in enumerate(uris)
+    sources = stdin_source === nothing ? files : InputSource[files; stdin_source]
+    total_files = length(sources)
+    for (idx, source) in enumerate(sources)
+        uri = source.uri
         display_name = "[$idx/$total_files] $(cli_display_path(uri, root_path))"
         with_progress(progress_ctx, "Full analysis", display_name) do cancellable_token
             if stdin_source === nothing || uri != stdin_source.uri
-                cache_file_info!(server, uri, 1, read(uri2filepath(uri)::String))
+                cache_file_info!(server, uri, 1, source.text)
             end
             request_analysis!(server, uri, false;
                 wait=true, notify_diagnostics=false, cancellable_token, debounce=0.0)
         end
     end
-    return uris
+    return URI[source.uri for source in sources]
 end
 
 cli_display_path(uri::URI, root_path::AbstractString) =
     uri == STDIN_URI ? "<stdin>" : relpath(uri2filepath(uri)::String, root_path)
 
-function cli_source_text(uri::URI, stdin_source::Union{Nothing,StdinSource})
+function cli_source_text(uri::URI, stdin_source::Union{Nothing,InputSource})
     if stdin_source !== nothing && uri == stdin_source.uri
         return stdin_source.text
     end
@@ -713,7 +729,7 @@ function print_diagnostics(
         uri2diagnostics::URI2Diagnostics, root_path::String,
         context_lines::Int, exit_severity::DiagnosticSeverity.Ty,
         show_severity::DiagnosticSeverity.Ty;
-        stdin_source::Union{Nothing,StdinSource} = nothing
+        stdin_source::Union{Nothing,InputSource} = nothing
     )
     has_errors = false
     printed_diagnostic = false

@@ -416,7 +416,6 @@ function get_lazy_type_inlay_hints(code::AbstractString, mod::Module=Main)
     JETLSCore.iterate_toplevel_tree(st0_top) do st0::JS.SyntaxTree
         ctx = @something JETLSCore.build_inferred_context_for_range(
             st0_top, mod, JS.byte_range(st0);
-            caller="get_lazy_type_inlay_hints",
             cache=inferred_context_cache) return nothing
         JETLSCore.collect_type_inlay_hints!(
             hints, st0, ctx, fi, uri, range, JETLSCore.LSPostProcessor();
@@ -442,8 +441,7 @@ function get_type_inlay_hints(
             var"end" = Position(; line=10000, character=0))
     JETLSCore.iterate_toplevel_tree(st0_top) do st0::JS.SyntaxTree
         ctx = @something JETLSCore.build_inferred_context_for_range(
-            st0_top, mod, JS.byte_range(st0);
-            caller="get_type_inlay_hints") return nothing
+            st0_top, mod, JS.byte_range(st0)) return nothing
         # Disable production truncation here — these tests exercise the full
         # type-resolution pipeline and assert on the unclipped type strings.
         # Truncation is its own concern and should be tested separately.
@@ -1462,6 +1460,22 @@ end
                 let code = "Base.@assume_effects :nothrow @noinline f(x::$Int) = x * 2\n"
                     expected = "Base.@assume_effects :nothrow @noinline f(x::$Int)::$Int = (x::$Int * 2)::$Int\n"
                     @test apply_inlay_hints(code, get_type_inlay_hints(code)) == expected
+                end
+            end
+
+            @testset "documenting @doc" begin
+                let code = """
+                    \"\"\"Docstring\"\"\"
+                    sin(x::$Int)
+                    """
+                    @test isempty(get_type_inlay_hints(code))
+                end
+                let code = """
+                    if true
+                        @doc "Docstring" struct Foo end
+                    end
+                    """
+                    @test all(h -> h.position.line != 1, get_type_inlay_hints(code))
                 end
             end
         end

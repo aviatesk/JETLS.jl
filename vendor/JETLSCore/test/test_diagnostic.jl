@@ -753,6 +753,70 @@ end
     end
 end
 
+@testset "failing test diagnostic" begin
+    let code = """
+        using Test
+        @testset "failing" begin
+            v = [1, 2, 3]
+            @test length(v)
+        end
+        """
+        withscript(code) do script_path
+            diagnostics = get_open_diagnostics(dirname(script_path), script_path, code)
+            diag = only(filter(diag -> diag.code == JETLSCore.INFERENCE_FAILING_TEST_CODE, diagnostics))
+            @test diag.range.start.line == 3
+            @test diag.severity == DiagnosticSeverity.Warning
+            @test diag.message == "this test always fails since its expression evaluates to non-boolean `$Int`"
+        end
+    end
+end
+
+@testset "closures are analyzed where they are called or constructed" begin
+    let code = """
+        struct HasX
+            x::Int
+        end
+        struct NoX
+            y::Int
+        end
+        ready(h::HasX) = h.x > 0
+        ready(n::NoX) = n.y > 0
+        apply(f) = f(HasX(1))
+        apply() do v::HasX
+            foreach(1:1) do _
+                ready(v) && v.x == 1
+            end
+        end
+        function foreach_ready(hs::Vector{HasX})
+            foreach(hs) do h
+                ready(h) && h.x > 0
+            end
+        end
+        function make_closure()
+            s = "julia"
+            return () -> sin(s)
+        end
+        make_noncapturing_closure() = () -> cos("julia")
+        function make_safe(x::String)
+            enabled = true
+            return () -> enabled ? nothing : sin(x)
+        end
+        make_typed_noncapturing_closure() = (n::Integer) -> tan("julia")
+        make_untyped_noncapturing_closure() = n -> atan("julia")
+        """
+        withscript(code) do script_path
+            diagnostics = get_open_diagnostics(dirname(script_path), script_path, code)
+            # neither the captured `v` nor the argument `h` is analyzed as `Any`, which `ready`
+            # would refine to `Union{HasX,NoX}`
+            @test !any(diag -> diag.code == JETLSCore.INFERENCE_FIELD_ERROR_CODE, diagnostics)
+            # a closure with undeclared argument types, which the analyzed code never calls,
+            # is not analyzed
+            diags = filter(diag -> diag.code == JETLSCore.INFERENCE_METHOD_ERROR_CODE, diagnostics)
+            @test sort!([diag.range.start.line for diag in diags]) == [21, 23, 28]
+        end
+    end
+end
+
 @testset "failures to read included files are reported on the `include` calls" begin
     let code = """
         begin
@@ -964,7 +1028,7 @@ end
                     if !isempty(diag.relatedInformation)
                         related = first(diag.relatedInformation)
                         @test related.location.uri == uri
-                        @test occursin("first method definition", related.message)
+                        @test related.message == "The first method definition `duplicate(::$Int)`"
                     end
                     break
                 end

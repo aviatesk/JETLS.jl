@@ -1,7 +1,7 @@
 name = "JETLSCore"
 JuliaSyntax = "avi/JETLS-JSJL-head-2026-10-09"
 version = "0.1.0"
-JET = "avi/JET-JETLS-head-2026-10-12"
+JET = "avi/JET-JETLS-head-2026-10-14"
 JuliaLowering = "avi/JETLS-JSJL-head-2026-10-09"
 authors = ["Shuhei Kadowaki <aviatesk@gmail.com>"]
 Revise = "master"
@@ -26,96 +26,91 @@ JuliaLowering = "1"
 Profile = "1.11.0"
 julia = "1.12.2 - 1.13"
 TOML = "1.0.3"
-Revise = "3.17"
 
 [sources.JuliaSyntax]
 subdir = "vendor/JuliaSyntax"
-rev = "b654719b1ef2ce0bc09a946e7cf2b4e5228567eb"
+rev = "28f9ade325674d450eced8588572ce570218705c"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.Glob]
 subdir = "vendor/Glob"
-rev = "b654719b1ef2ce0bc09a946e7cf2b4e5228567eb"
+rev = "28f9ade325674d450eced8588572ce570218705c"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.TOMLSource]
 subdir = "vendor/TOMLSource"
-rev = "b654719b1ef2ce0bc09a946e7cf2b4e5228567eb"
+rev = "28f9ade325674d450eced8588572ce570218705c"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.Compiler]
 subdir = "vendor/Compiler"
-rev = "b654719b1ef2ce0bc09a946e7cf2b4e5228567eb"
+rev = "28f9ade325674d450eced8588572ce570218705c"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.JET]
 subdir = "vendor/JET"
-rev = "b654719b1ef2ce0bc09a946e7cf2b4e5228567eb"
+rev = "28f9ade325674d450eced8588572ce570218705c"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.LSP]
 subdir = "vendor/LSP"
-rev = "b654719b1ef2ce0bc09a946e7cf2b4e5228567eb"
+rev = "28f9ade325674d450eced8588572ce570218705c"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.CodeTracking]
 subdir = "vendor/CodeTracking"
-rev = "b654719b1ef2ce0bc09a946e7cf2b4e5228567eb"
+rev = "28f9ade325674d450eced8588572ce570218705c"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.MacroTools]
 subdir = "vendor/MacroTools"
-rev = "b654719b1ef2ce0bc09a946e7cf2b4e5228567eb"
+rev = "28f9ade325674d450eced8588572ce570218705c"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.LoweredCodeUtils]
 subdir = "vendor/LoweredCodeUtils"
-rev = "b654719b1ef2ce0bc09a946e7cf2b4e5228567eb"
+rev = "28f9ade325674d450eced8588572ce570218705c"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.TestRunner]
 subdir = "vendor/TestRunner"
-rev = "b654719b1ef2ce0bc09a946e7cf2b4e5228567eb"
+rev = "28f9ade325674d450eced8588572ce570218705c"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.PrecompileTools]
 subdir = "vendor/PrecompileTools"
-rev = "b654719b1ef2ce0bc09a946e7cf2b4e5228567eb"
+rev = "28f9ade325674d450eced8588572ce570218705c"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.Preferences]
 subdir = "vendor/Preferences"
-rev = "b654719b1ef2ce0bc09a946e7cf2b4e5228567eb"
+rev = "28f9ade325674d450eced8588572ce570218705c"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.JuliaInterpreter]
 subdir = "vendor/JuliaInterpreter"
-rev = "b654719b1ef2ce0bc09a946e7cf2b4e5228567eb"
+rev = "28f9ade325674d450eced8588572ce570218705c"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.StructTypes]
 subdir = "vendor/StructTypes"
-rev = "b654719b1ef2ce0bc09a946e7cf2b4e5228567eb"
+rev = "28f9ade325674d450eced8588572ce570218705c"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.JuliaLowering]
 subdir = "vendor/JuliaLowering"
-rev = "b654719b1ef2ce0bc09a946e7cf2b4e5228567eb"
+rev = "28f9ade325674d450eced8588572ce570218705c"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.Parsers]
 subdir = "vendor/Parsers"
-rev = "b654719b1ef2ce0bc09a946e7cf2b4e5228567eb"
+rev = "28f9ade325674d450eced8588572ce570218705c"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.JSON3]
 subdir = "vendor/JSON3"
-rev = "b654719b1ef2ce0bc09a946e7cf2b4e5228567eb"
+rev = "28f9ade325674d450eced8588572ce570218705c"
 url = "https://github.com/aviatesk/JETLS.jl"
-
-[sources.Revise]
-rev = "32638add42"
-url = "https://github.com/timholy/Revise.jl"
 
 [deps]
 REPL = "3fa0cd96-eef1-5676-8a61-b3b8758bbffb"
@@ -142,7 +137,6 @@ Parsers = "2bf889ff-109e-5fa9-9ba3-339ee07cbe67"
 JSON3 = "00ac8d46-747e-5902-8e12-fdfc767369c7"
 Profile = "9abbd945-dff8-562f-b5e8-e1ebf5ef1b79"
 TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
-Revise = "295af30f-e4ad-537b-8983-00126c2a3abe"
 
 [workspace]
 projects = ["test"]

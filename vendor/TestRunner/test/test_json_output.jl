@@ -245,6 +245,51 @@ end
     end
 end
 
+@testset "related information" begin
+    content = """
+    using Test
+    f() = error("boom")
+    @testset "error" begin
+        @test f() == 1
+    end
+    """
+    with_test_file(content) do testfile
+        result = run_testrunner_process(["--json", testfile, "error"])
+        @test result.exitcode == 1
+        json_result = JSON3.read(result.stdout, TestRunnerResult)
+        relatedInformation = something(only(json_result.diagnostics).relatedInformation)
+        # only the frames of the test code, not those of TestRunner itself
+        @test [info.message for info in relatedInformation] == ["error(::String)", "f()"]
+        @test relatedInformation[2].filename == testfile
+        @test relatedInformation[2].line == 2
+    end
+end
+
+@testset "stack traces in logs" begin
+    content = """
+    using Test
+    check(x) = @test x == 8
+    f() = error("boom")
+    @testset "failures" begin
+        @test 5 == 8
+        check(5)
+        @test f() == 1
+    end
+    """
+    with_test_file(content) do testfile
+        result = run_testrunner_process(["--json", testfile, "failures"])
+        @test result.exitcode == 1
+        json_result = JSON3.read(result.stdout, TestRunnerResult)
+        logs = json_result.logs
+        # the frames of the code that the test code calls, but not those of the
+        # interpreter running the test code and of TestRunner itself
+        @test occursin("check(x::$Int)", logs)
+        @test occursin("f()", logs)
+        @test !occursin("JuliaInterpreter", logs)
+        @test !occursin("TestRunner", logs)
+    end
+end
+
 @testset "--read-stdin" begin
     # Pass source via stdin; file path is still required for `@__FILE__` etc.
     let source = """

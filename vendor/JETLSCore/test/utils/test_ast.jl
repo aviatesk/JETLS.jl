@@ -1030,6 +1030,21 @@ end
             JS.head(c) === :identifier && JETLSCore.get_name_val(c) == "SIGNATURES"
         end
     end
+
+    # A documented signature can't be lowered standalone, so the whole doc-wrapped form is
+    # yielded for the `@doc` stub to handle.
+    let sts = JS.SyntaxTree[]
+        JETLSCore.iterate_toplevel_tree(jlparse("""
+            \"\"\"
+            Docstring for `func1(::Int)`
+            \"\"\"
+            func1(::Int)
+            """)) do st0
+            push!(sts, st0)
+        end
+        @test length(sts) == 1
+        @test JETLSCore.is_doc0_any(only(sts))
+    end
 end
 
 # Find the first descendant (or `st` itself) whose head matches `h`.
@@ -1098,6 +1113,15 @@ end
         @test JS.head(ascription[1]) === :identifier
         @test JETLSCore.get_name_val(ascription[1]) == "Int"
         @test lowers_ok(trimmed)
+    end
+
+    # An `:error` root, e.g. the macro name of a lone `@`, becomes a valid `:tombstone` leaf.
+    let st = jlparse("@")
+        name = find_first_head(st, :macrocall)[1]
+        @test JS.head(name) === :error
+        trimmed = JETLSCore.trim_error_nodes(name)
+        @test JS.head(trimmed) === :tombstone
+        @test JS.is_leaf(trimmed)
     end
 
     # No-op on well-formed input: every legitimate shape passes through unchanged.

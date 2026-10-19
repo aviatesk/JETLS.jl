@@ -708,12 +708,14 @@ end
 # `JI.evaluate_call!(::JI.NonRecursiveInterpreter, ...)`
 # but includes a few important adjustments specific to TestRunner's virtual process:
 # - Special handling for `include` calls: recursively apply the virtual process to included files.
-# - `rethrow` is left to JuliaInterpreter: exceptions caught by interpreted handlers do
-#   not live on the task's native exception stack, so it needs to re-raise the one being
-#   handled by the interpreted frames.
+# - `rethrow` and `current_exceptions` are left to JuliaInterpreter: exceptions caught by
+#   interpreted handlers do not live on the task's native exception stack, so they need to
+#   work on the ones being handled by the interpreted frames. JuliaInterpreter models only
+#   `current_exceptions()` without arguments.
 function JI.evaluate_call!(interp::TRInterpreter, frame::JI.Frame, fargs::Vector{Any},
                            enter_generated::Bool)
-    if fargs[1] === Base.rethrow
+    if fargs[1] === Base.rethrow ||
+       (fargs[1] === Base.current_exceptions && length(fargs) == 1)
         return @invoke JI.evaluate_call!(interp::JI.Interpreter, frame::JI.Frame,
                                          fargs::Vector{Any}, enter_generated::Bool)
     end
@@ -799,10 +801,12 @@ const JULIAINTERPRETER_INTERPRET_FILE = let
     Symbol(normpath(jlfile, "..", "interpret.jl"))
 end
 
+# Keep only the frames of the code that the interpreted test code calls natively, dropping
+# those of the interpreter running the test code and of TestRunner itself
 function scrub_backtrace(bt::Vector{BacktraceElm})
     runtest_idx = @something let
             findfirst(ip::BacktraceElm ->
-                Test.ip_has_file_and_func(ip, @__FILE__, (:runtest, :runtests)), bt)
+                any(is_runtest_frame, Base.StackTraces.lookup(ip)), bt)
         end return bt
     internal_idx = @something let
             findfirst(ip::BacktraceElm -> ip_has_file(ip, @__FILE__), bt)
@@ -811,8 +815,11 @@ function scrub_backtrace(bt::Vector{BacktraceElm})
                 Test.ip_has_file_and_func(ip, JULIAINTERPRETER_INTERPRET_FILE, (:step_expr!,:eval_rhs,)), bt)
         end return bt
     internal_idx < runtest_idx || return bt
-    return append!(bt[1:internal_idx-1], bt[runtest_idx:end])
+    return bt[1:internal_idx-1]
 end
+
+is_runtest_frame(fr::Base.StackTraces.StackFrame) =
+    fr.func in (:runtest, :runtests) && string(fr.file) == @__FILE__
 
 function ip_has_file(ip::BacktraceElm, file::String)
     return any(Base.StackTraces.lookup(ip)) do fr::Base.StackTraces.StackFrame

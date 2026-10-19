@@ -3241,6 +3241,36 @@ end
             end)
             loop_values = @invokelatest getglobal(mod, :loop_values)
             @test loop_values == [1, 2]
+
+            Core.eval(mod, :(const failfast_steps = Int[]))
+            eval_replaced_test_macro(mod, quote
+                @testset failfast=true begin
+                    push!(failfast_steps, 1)
+                    @test true
+                    push!(failfast_steps, 2)
+                    @test false
+                    push!(failfast_steps, 3)
+                end
+                @testset failfast=true begin
+                    push!(failfast_steps, 4)
+                    @test error("x")
+                    push!(failfast_steps, 5)
+                end
+            end)
+            failfast_steps = @invokelatest getglobal(mod, :failfast_steps)
+            @test failfast_steps == [1, 2, 4]
+        end
+
+        let failfast_of(ex::Expr, failfast) = JET.testset_failfast(ex.args, failfast)
+            @test failfast_of(:(@testset failfast=true begin end), false) === true
+            @test failfast_of(:(@testset "name" failfast=true begin end), false) === true
+            @test failfast_of(:(@testset begin end), true) === true
+            @test failfast_of(:(@testset begin end), false) === false
+            @test failfast_of(:(@testset failfast=false begin end), true) === false
+            @test failfast_of(:(@testset failfast=flag begin end), false) === false
+            @test failfast_of(:(@testset MyTestSet failfast=true begin end), false) === nothing
+            @test failfast_of(:(@testset M.MyTestSet begin end), true) === nothing
+            @test failfast_of(:(@testset failfast=true begin end), nothing) === nothing
         end
 
         let ex = :(pred(x) && any(items) do item
@@ -3375,6 +3405,183 @@ end
         end
         @test any(res.res.inference_error_reports) do report
             is_global_undef_var(report, :undefined_in_test) && last(report.vst).line == 7
+        end
+    end
+
+    @testset "failfast" begin
+        # a failing test aborts a fail-fast test set, so the code after `@test x isa Int`
+        # runs only when `x` is an `Int`
+        let res = @analyze_toplevel context = vmod virtualize = false testset_failfast = false begin
+                @testset "failfast" failfast=true begin
+                    x = rand((0, nothing))
+                    @test x isa Int
+                    sin(x)
+                    @testset "inherited" begin
+                        y = rand((0, nothing))
+                        @test y isa Int
+                        sin(y)
+                    end
+                    foreach((rand((0, nothing)),)) do z
+                        @test z isa Int
+                        sin(z)
+                    end
+                end
+            end
+            @test isnothing(res.res.toplevel_error_report)
+            @test isempty(res.res.inference_error_reports)
+        end
+
+        let res = @analyze_toplevel context = vmod virtualize = false testset_failfast = false begin
+                @testset "default" begin
+                    x = rand((0, nothing))
+                    @test x isa Int
+                    sin(x)
+                end
+            end
+            @test isnothing(res.res.toplevel_error_report)
+            @test any(report -> report isa JET.MethodErrorReport,
+                res.res.inference_error_reports)
+        end
+
+        # `testset_failfast = true`, the default, analyzes test sets as fail-fast unless they
+        # specify `failfast=false`
+        let res = @analyze_toplevel context = vmod virtualize = false begin
+                @testset "default" begin
+                    x = rand((0, nothing))
+                    @test x isa Int
+                    sin(x)
+                    @testset "disabled" failfast=false begin
+                        y = rand((0, nothing))
+                        @test y isa Int
+                        sin(y)
+                    end
+                end
+            end
+            @test isnothing(res.res.toplevel_error_report)
+            @test only(res.res.inference_error_reports) isa JET.MethodErrorReport
+        end
+
+        let res = @analyze_toplevel context = vmod virtualize = false testset_failfast = false begin
+                @testset "failfast" failfast=true begin
+                    @testset "disabled" failfast=false begin
+                        x = rand((0, nothing))
+                        @test x isa Int
+                        sin(x)
+                    end
+                end
+            end
+            @test isnothing(res.res.toplevel_error_report)
+            @test any(report -> report isa JET.MethodErrorReport,
+                res.res.inference_error_reports)
+        end
+
+        # included files inherit the fail-fast mode of the test set enclosing `include`
+        mktempdir() do dir
+            testset = """
+                @testset "inner" begin
+                    x = rand((0, nothing))
+                    @test x isa Int
+                    sin(x)
+                end
+                """
+            for name in ("grandchild", "oneline", "default", "disabled", "custom")
+                write(joinpath(dir, "$name.jl"), testset)
+            end
+            write(joinpath(dir, "child.jl"), testset * "include(\"grandchild.jl\")\n")
+            text = """
+                using Test
+                @testset "failfast" failfast=true begin
+                    include("child.jl")
+                end
+                @testset "failfast one-line" failfast=true include("oneline.jl")
+                @testset "default" begin
+                    include("default.jl")
+                end
+                @testset "outer" failfast=true begin
+                    @testset "disabled" failfast=false begin
+                        include("disabled.jl")
+                    end
+                end
+                @testset Test.DefaultTestSet failfast=true begin
+                    include("custom.jl")
+                end
+                """
+            reported_files(res) = Set(basename(String(last(report.vst).file))
+                                      for report in res.res.inference_error_reports)
+            res = report_text(text, joinpath(dir, "main.jl"); testset_failfast = false)
+            @test isnothing(res.res.toplevel_error_report)
+            @test reported_files(res) == Set(("default.jl", "disabled.jl", "custom.jl"))
+            res = report_text(text, joinpath(dir, "main.jl"))
+            @test isnothing(res.res.toplevel_error_report)
+            @test reported_files(res) == Set(("disabled.jl", "custom.jl"))
+        end
+    end
+
+    @testset "failing tests" begin
+        # analyze the tests after a test that always fails
+        let res = @analyze_toplevel context = vmod virtualize = false testset_failfast = false begin
+                @testset "failing tests" begin
+                    x = nothing
+                    @test x isa Int
+                    y = rand((0, nothing))
+                    @test y
+                    @test x isa Int skip=rand(Bool)
+                    @test false
+                end
+            end
+            @test isnothing(res.res.toplevel_error_report)
+            reports = res.res.inference_error_reports
+            @test length(reports) == 4
+            @test all(report -> report isa JET.FailingTestReport, reports)
+            @test count(report -> report.t === Bool, reports) == 3
+            @test count(report -> report.t === Union{Nothing,Int}, reports) == 1
+        end
+
+        # tests that may pass or are expected to fail
+        let res = @analyze_toplevel context = vmod virtualize = false begin
+                @testset "not failing tests" begin
+                    x = nothing
+                    y = rand((0, nothing))
+                    @test y isa Int
+                    @test_broken x isa Int
+                    @test x isa Int broken=true
+                    @test_skip x isa Int
+                    # inferred separately for `z::Int` and `z::Nothing`
+                    foreach((rand((0, nothing)),)) do z
+                        @test z isa Int
+                    end
+                end
+            end
+            @test isnothing(res.res.toplevel_error_report)
+            @test isempty(res.res.inference_error_reports)
+        end
+
+        # a failing test aborts a fail-fast test set, so the code after it is unreachable
+        let res = @analyze_toplevel context = vmod virtualize = false begin
+                @testset "failfast" failfast=true begin
+                    x = rand((0, nothing))
+                    @test x
+                    sin(x)
+                end
+            end
+            @test isnothing(res.res.toplevel_error_report)
+            report = only(res.res.inference_error_reports)
+            @test report isa JET.FailingTestReport && report.t === Union{Nothing,Int}
+        end
+
+        # a top-level `@test` in an included fail-fast file throws uncaught on failure, which
+        # is reported by `FailingTestReport` rather than `UncaughtExceptionReport`
+        mktempdir() do dir
+            write(joinpath(dir, "child.jl"), "@test nothing\n")
+            res = report_text("""
+                using Test
+                @testset "failfast" failfast=true begin
+                    include("child.jl")
+                end
+                """, joinpath(dir, "main.jl"))
+            @test isnothing(res.res.toplevel_error_report)
+            report = only(res.res.inference_error_reports)
+            @test report isa JET.FailingTestReport && report.t === Nothing
         end
     end
 

@@ -6,10 +6,9 @@ makedocs(;
     pages=[
         "Home" => "index.md",
     ],
-    repo="https://github.com/JuliaData/StructTypes.jl/blob/{commit}{path}#L{line}",
+    repo=Documenter.Remotes.GitHub("JuliaData", "StructTypes.jl"),
     sitename="StructTypes.jl",
     authors="Jacob Quinn",
-    assets=String[],
 )
 
 deploydocs(;

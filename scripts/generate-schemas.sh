@@ -2,9 +2,9 @@
 
 print_help() {
     cat <<'EOF'
-Usage: ./scripts/schema/regenerate.sh [OPTIONS]
+Usage: ./scripts/generate-schemas.sh [OPTIONS]
 
-Regenerate all JETLS configuration schemas.
+Generate all JETLS configuration schemas.
 
 Options:
   -h, --help    Show this help message and exit
@@ -15,7 +15,7 @@ EOF
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 CHECK_FLAG=""
 for arg in "$@"; do
@@ -33,10 +33,10 @@ for arg in "$@"; do
 done
 
 julia --startup-file=no --project="$SCRIPT_DIR" \
-    "$SCRIPT_DIR/generate.jl" --config-toml "$PROJECT_ROOT/schemas/config-toml.schema.json" $CHECK_FLAG
+    "$SCRIPT_DIR/generate-schema.jl" --config-toml "$PROJECT_ROOT/schemas/config-toml.schema.json" $CHECK_FLAG
 julia --startup-file=no --project="$SCRIPT_DIR" \
-    "$SCRIPT_DIR/generate.jl" --settings "$PROJECT_ROOT/schemas/settings.schema.json" $CHECK_FLAG
+    "$SCRIPT_DIR/generate-schema.jl" --settings "$PROJECT_ROOT/schemas/settings.schema.json" $CHECK_FLAG
 julia --startup-file=no --project="$SCRIPT_DIR" \
-    "$SCRIPT_DIR/generate.jl" --init-options "$PROJECT_ROOT/schemas/init-options.schema.json" $CHECK_FLAG
+    "$SCRIPT_DIR/generate-schema.jl" --init-options "$PROJECT_ROOT/schemas/init-options.schema.json" $CHECK_FLAG
 julia --startup-file=no --project="$SCRIPT_DIR" \
-    "$SCRIPT_DIR/generate.jl" --vscode-configuration "$PROJECT_ROOT/schemas/vscode-configuration.json" $CHECK_FLAG
+    "$SCRIPT_DIR/generate-schema.jl" --vscode-configuration "$PROJECT_ROOT/schemas/vscode-configuration.json" $CHECK_FLAG

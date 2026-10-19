@@ -1,6 +1,8 @@
 using Documenter
 using JETLS
 
+include("diagnostics-block.jl")
+
 const devbranch = get(ENV, "DOCUMENTER_DEVBRANCH", "master")
 const release_date = get(ENV, "DOCUMENTER_RELEASE_DATE", "")
 const release_commit = get(ENV, "DOCUMENTER_RELEASE_COMMIT", "")
@@ -69,6 +71,7 @@ const pages = Any[
         "TestRunner integration" => "testrunner.md",
         "Notebook support"       => "notebook.md",
         "JETLS configuration"    => "configuration.md",
+        "The jetls executable"   => "cli.md",
         "Launching JETLS"        => "launching.md",
         "Diagnostic CLI"         => "cli-check.md",
         "CHANGELOG"              => "CHANGELOG.md",
@@ -85,7 +88,7 @@ makedocs(;
     format = Documenter.HTML(;
         prettyurls = get(ENV, "CI", "false") == "true",
         canonical = "https://aviatesk.github.io/JETLS.jl",
-        assets = ["assets/extras.css"],
+        assets = ["assets/extras.css", "assets/diagnostics.js"],
         size_threshold_ignore = ["diagnostic.md", "CHANGELOG.md"],
     ),
     pages,

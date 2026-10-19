@@ -773,6 +773,12 @@ end
             rename_prep = JETLSCore.prepare_file_rename(state, furi, fi, positions[1])
             @test isnothing(rename_prep)
         end
+
+        # string literals that can't be paths at all must not throw
+        for code = ("\"│$("a"^300)\"\nf() = 1", "\"│a\\0b\"")
+            fi, positions, furi = rename_testcase(code, 1; filename = joinpath(dir, "main.jl"))
+            @test isnothing(JETLSCore.prepare_file_rename(state, furi, fi, only(positions)))
+        end
     end
 end
 

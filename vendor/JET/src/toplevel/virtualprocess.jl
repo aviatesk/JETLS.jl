@@ -496,6 +496,26 @@ These options apply to all entry points described in the
   by JET is not counted.
   Set `Inf` to disable the timeout.
 ---
+- `testset_failfast::Bool = true` \\
+  When `true`, JET analyzes test sets as if they were declared with
+  `failfast=true`, i.e. as if the tests were run with `JULIA_TEST_FAILFAST=true`.
+  Since a failing test aborts a fail-fast test set, JET analyzes the code after
+  `@test ex` assuming that `ex` is `true`, and does not report errors in the
+  cases that the test rules out:
+  ```julia
+  @testset "foo" begin
+      x = rand((0, nothing))
+      @test x isa Int
+      sin(x) # not reported as `sin(::Nothing)`, since `x` is an `Int` here
+  end
+  ```
+  Test sets that specify `failfast=false`, test sets of a custom type, and the
+  test sets nested in them are analyzed as declared. When `false`, JET analyzes
+  as fail-fast only the test sets that specify `failfast=true`, the test sets
+  nested in them, and the files included from them.
+  Note that the code after a test that always fails is not analyzed, while
+  JET reports such a test.
+---
 - `toplevel_logger::Union{Nothing,IO} = nothing` \\
   If an `IO` object is provided, JET writes top-level analysis logs to it.
   Set the logging level with the `$(repr(JET_LOGGER_LEVEL))` `IO` property.
@@ -529,6 +549,7 @@ struct ToplevelConfig
     analyze_from_definitions::Union{Bool,Symbol}
     concretization_patterns::Vector{Any}
     concretization_timeout::Float64
+    testset_failfast::Bool
     virtualize::Bool
     toplevel_logger # ::Union{Nothing,IO}
     function ToplevelConfig(
@@ -537,6 +558,7 @@ struct ToplevelConfig
         analyze_from_definitions::Union{Bool,Symbol} = false,
         concretization_patterns = Any[],
         concretization_timeout::Real = DEFAULT_CONCRETIZATION_TIMEOUT,
+        testset_failfast::Bool = true,
         virtualize::Bool = true,
         toplevel_logger::Union{Nothing,IO} = nothing,
         __jetconfigs...)
@@ -555,6 +577,7 @@ struct ToplevelConfig
             analyze_from_definitions,
             concretization_patterns,
             Float64(concretization_timeout),
+            testset_failfast,
             virtualize,
             toplevel_logger)
     end
@@ -729,6 +752,12 @@ mutable struct InterpretationState
     # removed whenever its frame exits, whether by returning or by unwinding.
     const caught_callee_errors::IdDict{Frame,Vector{CalleeError}}
     native_calls::Bool # the current statement was selected by `concretization_patterns`
+    # The fail-fast mode of the test set enclosing the code of this file (see
+    # `testset_failfast`), which is inherited from the test set enclosing the `include` call
+    const failfast::Union{Nothing,Bool}
+    # The fail-fast modes of the test sets enclosing each line of the code processed so far,
+    # from which an `include` call finds the mode for the included file
+    const failfast_modes::Dict{Int,Union{Nothing,Bool}}
 end
 function InterpretationState(
         state::InterpretationState;
@@ -737,7 +766,8 @@ function InterpretationState(
         world::UInt = state.world,
         dependencies::Set{Symbol} = state.dependencies,
         context::Module = state.context,
-        pkg_mod_depth::Int = state.pkg_mod_depth
+        pkg_mod_depth::Int = state.pkg_mod_depth,
+        failfast::Union{Nothing,Bool} = state.failfast
     )
     # these fields should be shared across all states
     config::ToplevelConfig = state.config
@@ -757,7 +787,9 @@ function InterpretationState(
         concretization_deadline,
         #=callee_error=#nothing,
         #=caught_callee_errors=#IdDict{Frame,Vector{CalleeError}}(),
-        #=native_calls=#false)
+        #=native_calls=#false,
+        failfast,
+        #=failfast_modes=#Dict{Int,Union{Nothing,Bool}}())
 end
 
 """
@@ -944,7 +976,9 @@ function virtual_process(interp::ConcreteInterpreter,
         filename, #=curline=#0, world, #=dependencies=#Set{Symbol}(), context, config,
         res, #=pkg_mod_depth=#0, #=files_stack=#String[],
         #=concretization_deadline=#typemax(UInt64), #=callee_error=#nothing,
-        #=caught_callee_errors=#IdDict{Frame,Vector{CalleeError}}(), #=native_calls=#false)
+        #=caught_callee_errors=#IdDict{Frame,Vector{CalleeError}}(), #=native_calls=#false,
+        #=failfast=#config.testset_failfast,
+        #=failfast_modes=#Dict{Int,Union{Nothing,Bool}}())
     interp = ConcreteInterpreter(interp, state)
     try
         virtual_process!(interp, x, overrideex)
@@ -1546,7 +1580,7 @@ function process_toplevel!(interp::ConcreteInterpreter, toplevelnode::JS.SyntaxN
         end
 
         x = desugar_main_macrocall(x)
-        x = replace_test_macrocalls(x, state.context)
+        x = replace_test_macrocalls(x, state.context, state.failfast, state.failfast_modes)
 
         # although we will lower `x` after special-handling `:toplevel` and `:module` expressions,
         # expand `macrocall`s here because macro can arbitrarily generate those expressions
@@ -2685,10 +2719,12 @@ function handle_include(interp::ConcreteInterpreter, @nospecialize(include_func)
             "expected AbstractString, JuliaSyntax.SyntaxNode, or nothing"))
     end
 
+    failfast = get(state.failfast_modes, line, state.failfast)
     newstate = InterpretationState(state;
                                    filename = include_file,
                                    curline = 0,
-                                   context = include_context)
+                                   context = include_context,
+                                   failfast)
     newinterp = ConcreteInterpreter(interp, newstate)
     pause_concretization_timeout(state) do
         virtual_process!(newinterp, included)

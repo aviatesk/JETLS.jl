@@ -14,7 +14,7 @@ JuliaSyntax = "02a177f8-2b16-5240-a0b4-02ed40703cda"
 
 [sources.JuliaSyntax]
 subdir = "vendor/JuliaSyntax"
-rev = "b654719b1ef2ce0bc09a946e7cf2b4e5228567eb"
+rev = "28f9ade325674d450eced8588572ce570218705c"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [targets]

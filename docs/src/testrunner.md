@@ -361,8 +361,9 @@ jetls test --project=test test/runtests.jl "my tests"
 ```
 
 Note that `jetls --project=<path> -- test ...` does not select the environment
-of the tests, since the options before `--` apply to the Julia process running
-JETLS, not to the one running the tests. `jetls test` warns about it.
+of the tests, since the [options before `--`](@ref cli/julia-flags) apply to
+the Julia process running JETLS, not to the one running the tests. `jetls test`
+warns about it.
 
 #### [`--root=<path>`](@id testrunner/cli/options/root)
 
