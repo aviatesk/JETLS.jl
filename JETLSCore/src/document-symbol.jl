@@ -819,7 +819,8 @@ function extract_scoped_children(
     )
     (; ctx3) = try
         jl_lower_for_scope_resolution(context_module, world, st0; soft_scope)
-    catch
+    catch err
+        is_user_lowering_error(err) || report_lowering_bug(err)
         return nothing
     end
     parent_map, node_map = build_node_maps(st0)

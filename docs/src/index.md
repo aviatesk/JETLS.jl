@@ -43,8 +43,7 @@ Choose the instructions that match how you plan to use JETLS:
 
 ## [Server installation](@id index/server-installation)
 
-The [`jetls` executable app](https://pkgdocs.julialang.org/dev/apps/) is the
-main entry point for running JETLS.
+The [`jetls` executable app](@ref cli) is the main entry point for running JETLS.
 
 ### [Prerequisites](@id index/server-installation/prerequisites)
 

@@ -19,7 +19,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## Unreleased
 
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
-- Diff: [`ab294bc...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/ab294bc...HEAD)
+- Diff: [`64dd358...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/64dd358...HEAD)
 
 ### Announcement
 
@@ -66,6 +66,120 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > Note that `analysis_overrides` is provided as a temporary workaround and may be removed or changed at any time. A proper fix is being worked on.
 >
 > Note: Path glob patterns use `/` as the separator on all platforms, including Windows; backslashes are not supported as separators.
+
+### Added
+
+- Added [`inference/failing-test`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/inference/failing-test) diagnostic that reports a `@test` that always fails, i.e. whose expression is inferred to evaluate to `false` or to a non-boolean value:
+  ```julia
+  @testset "foo" begin
+      v = [1, 2, 3]
+      @test length(v)  # this test always fails since its expression evaluates to non-boolean `Int64`
+  end
+  ```
+  `@test_broken`, `@test ex broken=true`, and tests in function bodies are not reported.
+  ([aviatesk/JET.jl#896](https://github.com/aviatesk/JET.jl/pull/896))
+
+- Added the [How loaded code is inferred](https://aviatesk.github.io/JETLS.jl/release/analysis/#analysis/full/inference) section to the Analysis documentation, which explains which code full analysis infers and with which types: the methods your code defines are inferred from their signatures, the methods it calls are inferred with the argument types of the calls, and closures are analyzed where the types of their arguments are known.
+  It also explains why some errors are not reported, e.g. those that depend on the types of arguments without declared types.
+
+### Changed
+
+- The examples in the [Diagnostic](https://aviatesk.github.io/JETLS.jl/release/diagnostic/) and [Analysis](https://aviatesk.github.io/JETLS.jl/release/analysis/) documentation now show the diagnostics that JETLS reports for them as editors display them: each diagnostic is underlined with its message shown inline, and hovering it shows its full message, related information, and quick fixes.
+  The examples are analyzed when the documentation is built, so they stay in sync with the actual diagnostics.
+
+- Full analysis now analyzes test sets as if they were declared with `failfast=true`, so it analyzes the code after `@test ex` assuming that `ex` is `true`:
+  ```julia
+  @testset "foo" begin
+      x = rand((0, nothing))
+      @test x isa Int
+      sin(x)  # no longer reported as `sin(::Nothing)`
+  end
+  ```
+  The code after a test that always fails is not analyzed, while `inference/failing-test` reports such a test.
+  Test sets that specify `failfast=false` and test sets of a custom type are analyzed as declared.
+  ([aviatesk/JET.jl#895](https://github.com/aviatesk/JET.jl/pull/895), [aviatesk/JET.jl#896](https://github.com/aviatesk/JET.jl/pull/896))
+
+- Hover, inlay hints, and other features that show inferred types now also infer the code after `@test ex` assuming that `ex` is `true`, so they show `x` as `Int64` after `@test x isa Int` in the example above.
+
+- [Go to definition](https://aviatesk.github.io/JETLS.jl/release/features/#features/go-to-definition) on a string literal that names an existing file, such as the path in `include("utils/binding.jl")` or `joinpath(@__DIR__, "data.toml")`, now jumps to that file instead of to the definition of the function it is passed to.
+  The path is resolved relative to the directory of the current file, and go to definition on `include` itself still jumps to the definition of `include`.
+
+- [`lowering/macro-expansion-error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/macro-expansion-error) now reports logging macro calls whose positional arguments repeat a key, such as `@info "msg" x x` and `@info "msg" x x=1`, which Julia rejects with `syntax: field name "x" repeated in named tuple`.
+
+- The [`lowering/macro-expansion-error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/macro-expansion-error) messages for invalid macro calls now quote macro names and code in backticks like other diagnostic messages, e.g. `` No arguments to `@testset` ``.
+  Update any [`diagnostic.patterns`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/diagnostic/patterns) entries that match their previous message style.
+
+- [`lowering/captured-boxed-variable`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/captured-boxed-variable) now also shows the other assignments to the boxed variable in its related information, which are what make the variable boxed:
+  ```julia
+  function captured_variable()
+      x = 1  # `x` is captured and boxed
+      f = () -> println(x)  # Captured by closure
+      x = 2  # Assigned here
+      return f
+  end
+  ```
+  An assignment inside a closure, such as `x += 1` in `() -> (x += 1)`, is shown once as "Assigned in closure" instead of being listed twice as "Captured by closure".
+
+### Fixed
+
+- Fixed installation on Julia 1.12 and 1.13.0 failing with `Unsatisfiable requirements detected for package Preferences` when no registry is installed, e.g. in the managed installation of [`jetls-client`](https://marketplace.visualstudio.com/items?itemName=aviatesk.jetls-client).
+  (Closed https://github.com/aviatesk/JETLS.jl/issues/988)
+
+- Fixed false [`lowering/macro-expansion-error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/macro-expansion-error) diagnostics on `@doc` docstrings inside blocks such as `if` blocks and on `@doc` lookups such as `string(@doc sin)` when JETLS also analyzes code that loads [DocStringExtensions.jl](https://github.com/JuliaDocs/DocStringExtensions.jl), e.g. a `docs/make.jl` using Documenter.jl.
+
+- Fixed missing references, rename edits, and [`lowering/undef-global-var`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/undef-global-var) diagnostics for docstrings that document a method signature:
+  ```julia
+  """
+      someinterface(::Type{<:Integer})
+
+  Docstring for `someinterface` on integer types.
+  """
+  someinterface(::Type{<:Integer})
+  ```
+  The documented signature on the last line now counts as a reference to `someinterface` and `Integer`, so renaming `someinterface` also updates it, and a misspelled argument type there is reported at its exact location.
+
+- Fixed rename failing with an error when invoked on a long string literal such as a docstring.
+
+- Fixed false [`inference/*`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/inference) diagnostics in closures for types that their arguments and the variables they capture never have:
+  ```julia
+  function check(proc::Base.Process)
+      mktempdir() do _
+          # previously reported: FieldError: type `Base.ProcessChain` has no field `exitcode`
+          process_exited(proc) && proc.exitcode == 0
+      end
+  end
+  ```
+  Full analysis now analyzes a closure where the types of its arguments are known, with the types of the variables it captures:
+  ```julia
+  function f(name::String)
+      foreach(1:3) do i                  # analyzed where `foreach` calls it, with `i::Int`
+          println(name, i)
+      end
+      g = () -> sin(name)                # analyzed where it is created: reports `sin(::String)`
+      h = (n::Integer) -> sin(name) + n  # likewise, since its argument type is declared
+      k = n -> sin(name) + n             # analyzed only where the analyzed code calls it
+      return g, h, k
+  end
+  ```
+
+- Fixed the related information of [`lowering/macro-expansion-error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/macro-expansion-error) diagnostics, which lists the stack frames of the macro that threw:
+  it no longer includes a frame of JETLS's internal macro invocation showing a module name such as `Main.var"##JETVirtualModule#142"`, and the frames of a macro defined in an unsaved buffer now point to the buffer instead of a nonexistent file.
+
+- Fixed the stack traces of failed tests and errors in the related information of [`testrunner/test-failure`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/testrunner/test-failure) diagnostics, the output of [`jetls test`](https://aviatesk.github.io/JETLS.jl/release/testrunner/#testrunner/cli), and the logs of the [TestRunner integration](https://aviatesk.github.io/JETLS.jl/release/testrunner/):
+  they no longer include the frames of TestRunner.jl itself and of the interpreter running the tests, and in the related information, the frames of functions defined in an unsaved buffer now point to the buffer instead of a nonexistent file.
+  The stack traces of failed tests in test sets of a custom type, such as `@testset MyTestSet "name" begin ... end`, still include such frames.
+
+- Fixed [`testrunner/test-failure`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/testrunner/test-failure) diagnostics and the output of [`jetls test`](https://aviatesk.github.io/JETLS.jl/release/testrunner/#testrunner/cli) not showing the exception that a test threw when the test is in a test set of a custom type, such as `@testset MyTestSet "name" begin ... end`.
+  `Base.current_exceptions()` in a `catch` block of test code also returns the exceptions being handled now, instead of an empty stack.
+
+## 2026-10-14
+
+- Commit: [`64dd358`](https://github.com/aviatesk/JETLS.jl/commit/64dd358)
+- Diff: [`ab294bc...64dd358`](https://github.com/aviatesk/JETLS.jl/compare/ab294bc...64dd358)
+- Installation:
+  ```bash
+  julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="2026-10-14")'
+  ```
 
 ### Added
 

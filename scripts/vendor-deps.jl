@@ -1,5 +1,14 @@
 #!/usr/bin/env julia
 
+const DEVELOPMENT_PREFERENCE_KEYS = (
+    "JETLSCore" => "JETLS_DEV_MODE",
+)
+
+# Dependencies loaded only in development mode, which installed releases never enable
+const DEVELOPMENT_DEPENDENCIES = (
+    "JETLSCore" => "Revise",
+)
+
 using Pkg
 using TOML
 using UUIDs
@@ -39,6 +48,26 @@ function is_extension_module(pkgid::Base.PkgId, mod::Module)
     pkg_name === nothing && return true
 
     return pkg_name != pkgid.name
+end
+
+# Loading JETLSCore alone misses dependencies that it does not load unconditionally,
+# which releases still need to vendor to resolve them.
+function load_release_dependencies()
+    dependencies = Pkg.dependencies()
+    queue = collect(values(Pkg.project().dependencies))
+    seen = Set{UUID}()
+    while !isempty(queue)
+        uuid = pop!(queue)
+        uuid in seen && continue
+        push!(seen, uuid)
+        info = dependencies[uuid]
+        pkgid = Base.PkgId(uuid, info.name)
+        if should_vendor(uuid, info.name) && !haskey(Base.loaded_modules, pkgid)
+            @info "Loading $(info.name), which loading JETLSCore does not load"
+            Base.require(pkgid)
+        end
+        append!(queue, values(info.dependencies))
+    end
 end
 
 function collect_packages_to_vendor()
@@ -437,11 +466,6 @@ function update_workspace_project!(
     end
 end
 
-const DEVELOPMENT_PREFERENCE_KEYS = (
-    "JETLSCore" => "JETLS_DEV_MODE",
-    "Revise" => "revise_structs",
-)
-
 function remove_development_preferences!(project::Dict{String, Any})::Bool
     preferences = get(project, "preferences", nothing)
     preferences isa Dict{String, Any} || return false
@@ -460,6 +484,21 @@ function remove_development_preferences!(project::Dict{String, Any})::Bool
     return modified
 end
 
+function remove_development_dependencies!(project::Dict{String, Any})::Bool
+    modified = false
+    for (package_name, dep_name) in DEVELOPMENT_DEPENDENCIES
+        get(project, "name", nothing) == package_name || continue
+        for section in ("deps", "compat", "sources")
+            entries = get(project, section, nothing)
+            if entries isa Dict{String, Any} && haskey(entries, dep_name)
+                delete!(entries, dep_name)
+                modified = true
+            end
+        end
+    end
+    return modified
+end
+
 function validate_no_development_preferences(project::Dict{String, Any})
     preferences = get(project, "preferences", nothing)
     preferences isa Dict{String, Any} || return nothing
@@ -474,27 +513,28 @@ function validate_no_development_preferences(project::Dict{String, Any})
     return nothing
 end
 
-# Pkg 1.12 does not follow the `[sources]` of dependencies, so list in the root project the URL
-# sources that its subpackage dependencies declare for packages that are not vendored, e.g.
-# Revise, which JETLSCore loads only in its development mode.
-function add_unvendored_url_sources!(project::Dict{String, Any}, uuid_mapping::Dict{UUID, UUID})
-    for workspace_name in get(get(project, "workspace", Dict{String, Any}()), "projects", String[])
-        member_path = joinpath(CURRENT_DIR, workspace_name, "Project.toml")
-        isfile(member_path) || continue
-        member = TOML.parsefile(member_path)
-        haskey(project["deps"], get(member, "name", "")) || continue
-        member_deps = get(member, "deps", Dict{String, Any}())
-        for (dep_name, source) in get(member, "sources", Dict{String, Any}())
-            haskey(source, "url") || continue
-            dep_uuid = get(member_deps, dep_name, nothing)
-            dep_uuid isa String || continue
-            haskey(uuid_mapping, UUID(dep_uuid)) && continue
-            haskey(project["sources"], dep_name) && continue
-            project["deps"][dep_name] = dep_uuid
-            project["sources"][dep_name] = source
-            @info "Added unvendored source for $dep_name from $workspace_name/Project.toml"
+# `Pkg.Apps.add` on Julia 1.12 and 1.13.0 resolves the app environment before it installs
+# any registry, so every package that a release resolves must be vendored or a stdlib.
+function validate_no_unvendored_dependencies(
+        vendored_packages::Vector{Pair{String, UUID}},
+        uuid_mapping::Dict{UUID, UUID}
+    )
+    vendored_uuids = Set{UUID}(values(uuid_mapping))
+    project_paths = [joinpath(CURRENT_DIR, "Project.toml")]
+    for (pkg_name, original_uuid) in vendored_packages
+        haskey(uuid_mapping, original_uuid) || continue
+        push!(project_paths, joinpath(VENDOR_DIR, pkg_name, "Project.toml"))
+    end
+    for project_path in project_paths
+        project = TOML.parsefile(project_path)
+        for (dep_name, dep_uuid_str) in get(project, "deps", Dict{String, Any}())
+            dep_uuid = UUID(dep_uuid_str)
+            Pkg.Types.is_stdlib(dep_uuid) && continue
+            dep_uuid in vendored_uuids && continue
+            error("Dependency $dep_name [$dep_uuid] of $(relpath(project_path, CURRENT_DIR)) is not vendored, so installing the release would require a registry")
         end
     end
+    return nothing
 end
 
 function update_project_with_vendored_deps(
@@ -553,7 +593,6 @@ function update_project_with_vendored_deps(
             end
         end
     end
-    add_unvendored_url_sources!(project, uuid_mapping)
 
     main_path = joinpath(CURRENT_DIR, "Project.toml")
     @info "Writing vendored Project.toml to $main_path"
@@ -645,6 +684,16 @@ function vendor_dependencies_from_branch(config::Config)
         catch e
             @warn "Could not fetch $workspace_project_path from $(config.source_branch): $e"
         end
+
+        workspace_project_file = joinpath(workspace_path, "Project.toml")
+        isfile(workspace_project_file) || continue
+        workspace_project_data = TOML.parsefile(workspace_project_file)
+        if remove_development_dependencies!(workspace_project_data)
+            open(workspace_project_file, "w") do io
+                TOML.print(io, workspace_project_data)
+            end
+            @info "Removed development-only dependencies from $workspace_project_path"
+        end
     end
 
     @info "\n[Step 2/5] Cleaning manifest files..."
@@ -680,6 +729,8 @@ function print_help()
       - Replace Project.toml files with versions from BRANCH when available,
         then rewrite their vendored dependency metadata
       - Remove development-only preferences from the root Project.toml
+      - Remove development-only dependencies, e.g. Revise, from the subpackage
+        Project.toml files
       - Save fetched project files as Project.toml.bak before rewriting them
       - Run Pkg.update() before rebuilding the vendored dependency set
       - Replace package directories in vendor/ and remove stale directories
@@ -736,6 +787,7 @@ end
 function vendor_loaded_packages(use_local_path::Bool, rev::Union{String, Nothing})
     @info "Loading JETLSCore to populate Base.loaded_modules..."
     @eval using JETLSCore
+    load_release_dependencies()
 
     @info "Identifying packages to vendor..."
     packages = collect_packages_to_vendor()
@@ -792,6 +844,7 @@ function vendor_loaded_packages(use_local_path::Bool, rev::Union{String, Nothing
     project = Pkg.Types.read_project(project_path)
     Pkg.Types.write_project(project, project_path)
     validate_no_development_preferences(TOML.parsefile(project_path))
+    validate_no_unvendored_dependencies(packages, uuid_mapping)
 
     @info "Vendor isolation complete!"
     @info "Vendored packages are in: $VENDOR_DIR"

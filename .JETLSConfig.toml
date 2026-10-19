@@ -98,9 +98,6 @@ full_analysis = true
 [[initialization_options.analysis_overrides]]
 path = "JETLSCore/test/**/*.jl"
 module_name = "JETLSTestModule"
-[[initialization_options.analysis_overrides]]
-path = "test/**/*.jl"
-module_name = "JETLSTestModule"
 
 [[initialization_options.analysis_overrides]]
 module_name = "LSP"

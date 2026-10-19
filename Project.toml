@@ -4,7 +4,7 @@ version = "2026.10.14"
 authors = ["Shuhei Kadowaki <aviatesk@gmail.com>"]
 
 [workspace]
-projects = ["HierarchicalTestSets", "JETLSCore", "LSP", "MarkdownSource", "TOMLSource", "TestRunner", "docs", "scripts", "scripts/schema", "test"]
+projects = ["HierarchicalTestSets", "JETLSCore", "LSP", "MarkdownSource", "TOMLSource", "TestRunner", "docs", "scripts", "test"]
 
 [deps]
 CodeTracking = "29b28462-3302-58bb-873a-3f58224955cc"

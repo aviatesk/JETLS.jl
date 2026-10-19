@@ -393,8 +393,9 @@ end
 function testrunner_diagnostic_to_related_information(diagnostic::TestRunnerDiagnostic)
     relatedInformation = DiagnosticRelatedInformation[]
     for info in @something diagnostic.relatedInformation return nothing
-        info.filename == "none" && continue
-        uri = to_valid_uri(info.filename)
+        filename = stackframe_filename(info.filename)
+        filename == "none" && continue
+        uri = to_valid_uri(filename)
         range = line_range(info.line)
         location = Location(; uri, range)
         message = info.message

@@ -26,7 +26,6 @@ jobs:
         shell: julia --color=yes --startup-file=no {0}
         run: |
           using Pkg
-          Pkg.Registry.add("General")
           Pkg.Apps.add(; path=pwd())
           open(ENV["GITHUB_PATH"], "a") do io
               println(io, joinpath(first(DEPOT_PATH), "bin"))
@@ -34,8 +33,16 @@ jobs:
       - name: Test installed configuration
         shell: julia --color=yes --startup-file=no {0}
         run: |
-          using Pkg
+          using Pkg, TOML
           app_project = joinpath(first(DEPOT_PATH), "environments", "apps", "JETLS")
+          # Julia 1.12 and 1.13.0 resolve the app environment before installing any registry
+          manifest = TOML.parsefile(joinpath(app_project, "Manifest.toml"))
+          for (name, entries) in manifest["deps"], entry in entries
+              name == "JETLS" && continue
+              haskey(entry, "git-tree-sha1") || continue
+              @assert get(entry, "repo-url", nothing) == "https://github.com/aviatesk/JETLS.jl" &&
+                  startswith(get(entry, "repo-subdir", ""), "vendor/") "$name is not installed from a vendored source"
+          end
           Pkg.activate(app_project)
           using JETLSCore
           @assert !JETLSCore.JETLS_DEV_MODE

@@ -51,15 +51,7 @@ function handle_CodeActionRequest(
         return send(server, CodeActionResponse(; id = msg.id, result = code_actions))
     end
     if wants_quickfix_actions
-        diagnostics = msg.params.context.diagnostics
-        allow_unused_underscore = get_config(server, :diagnostic, :allow_unused_underscore)
-        unused_variable_code_actions!(code_actions, uri, diagnostics; allow_unused_underscore)
-        delete_range_code_actions!(code_actions, uri, diagnostics)
-        sort_imports_code_actions!(code_actions, uri, diagnostics)
-        ambiguous_soft_scope_code_actions!(code_actions, uri, diagnostics)
-        orphaned_docstring_code_actions!(code_actions, uri, diagnostics)
-        abstract_ref_field_code_actions!(code_actions, uri, diagnostics)
-        missing_concretization_code_actions!(code_actions, server, diagnostics)
+        quickfix_code_actions!(code_actions, server, uri, msg.params.context.diagnostics)
     end
     if wants_kindless_actions
         result = get_file_info(server.state, uri, cancel_flag)
@@ -77,6 +69,21 @@ function handle_CodeActionRequest(
         # from the request's diagnostics and do not depend on the file cache.
     end
     return send(server, CodeActionResponse(; id = msg.id, result = code_actions))
+end
+
+function quickfix_code_actions!(
+        code_actions::Vector{Union{CodeAction,Command}}, server::Server, uri::URI,
+        diagnostics::Vector{Diagnostic}
+    )
+    allow_unused_underscore = get_config(server, :diagnostic, :allow_unused_underscore)
+    unused_variable_code_actions!(code_actions, uri, diagnostics; allow_unused_underscore)
+    delete_range_code_actions!(code_actions, uri, diagnostics)
+    sort_imports_code_actions!(code_actions, uri, diagnostics)
+    ambiguous_soft_scope_code_actions!(code_actions, uri, diagnostics)
+    orphaned_docstring_code_actions!(code_actions, uri, diagnostics)
+    abstract_ref_field_code_actions!(code_actions, uri, diagnostics)
+    missing_concretization_code_actions!(code_actions, server, diagnostics)
+    return code_actions
 end
 
 first_syntax_node(nodes::SyntaxList) = isempty(nodes) ? nothing : nodes[1]

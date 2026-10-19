@@ -111,6 +111,24 @@ end
     @test !JETLSCore.is_abstract_fieldtype(Vector{TypeVar(:T)}) # For cases like `struct A{T}; xs::Vector{T}; end`
 end
 
+func_with_keyword(x; kw = 1) = x + kw
+capturing_closure(a) = x -> x + a
+noncapturing_closure() = x -> x + 1
+
+@testset "is_closure_type" begin
+    @test JETLSCore.is_closure_type(typeof(capturing_closure(1)))
+    @test JETLSCore.is_closure_type(typeof(capturing_closure(1)).name.wrapper)
+    @test JETLSCore.is_closure_type(typeof(noncapturing_closure()))
+    @test !JETLSCore.is_closure_type(typeof(sin))
+    @test !JETLSCore.is_closure_type(typeof(func_with_keyword))
+    # the keyword body of `func_with_keyword`
+    let name = only(name for name in names(@__MODULE__; all = true)
+                    if occursin(r"^#func_with_keyword#\d+$", String(name)))
+        @test !JETLSCore.is_closure_type(typeof(getglobal(@__MODULE__, name)))
+    end
+    @test !JETLSCore.is_closure_type(Int)
+end
+
 maybenothing(x) = rand((x, nothing))
 maybemissing(x) = rand((x, missing))
 maybenothing(c::Bool, x) = c ? x : nothing

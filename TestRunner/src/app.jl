@@ -2,7 +2,8 @@ module App
 
 # Import necessary modules
 using Test: Test
-using ..TestRunner: JS, TestRunnerTestSet, errors_and_fails, last_toplevel_testset, runtest
+using ..TestRunner: JS, TestRunnerTestSet, errors_and_fails, is_runtest_frame,
+    last_toplevel_testset, runtest
 using JSON3: JSON3
 
 include("testrunner-types.jl")
@@ -387,6 +388,8 @@ function testrunner_diagnostic(result::Union{Test.Fail,Test.Error})
                 st = stacktrace(exc.backtrace)
                 relatedInformation = TestRunnerDiagnosticRelatedInformation[]
                 for sf in st
+                    # the frames from here are those of TestRunner itself
+                    is_runtest_frame(sf) && break
                     linfo = sf.linfo
                     if linfo isa Core.CodeInstance
                         linfo = linfo.def

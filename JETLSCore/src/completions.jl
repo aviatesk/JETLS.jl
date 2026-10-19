@@ -139,20 +139,18 @@ end
 # `sin(42,│\n` — parser ends the `:call` at byte 7, cursor at byte 8 is
 # outside). `lowerable_toplevel_at` has an `offset - 1` retry that handles
 # this, so we go through it and build the context for the selected toplevel.
-function get_inferred_ctx!(comp_ctx::CompletionCtx; caller::AbstractString)
+function get_inferred_ctx!(comp_ctx::CompletionCtx)
     isdefined(comp_ctx, :inferred_ctx) && return comp_ctx.inferred_ctx
     toplevel = lowerable_toplevel_at(comp_ctx.st0_top, comp_ctx.offset)
     return comp_ctx.inferred_ctx = toplevel === nothing ? nothing :
         build_inferred_context_for_tree(toplevel, comp_ctx.context_module;
-            world=comp_ctx.world, caller, cache=comp_ctx.snapshot.fi.inferred_context_cache)
+            world=comp_ctx.world, cache=comp_ctx.snapshot.fi.inferred_context_cache)
 end
 
 # Property completion only needs the prefix type. Build inference from a virtual
 # source where the cursor's incomplete `.partial` accessor is removed, instead of
 # teaching generic AST repair every parser-recovery shape around `prefix.│`.
-function get_dotprefix_inferred_ctx(
-        comp_ctx::CompletionCtx, dotprefix::SyntaxTree; caller::AbstractString
-    )
+function get_dotprefix_inferred_ctx(comp_ctx::CompletionCtx, dotprefix::SyntaxTree)
     fi = comp_ctx.snapshot.fi
     hole_start = JS.last_byte(dotprefix) + 1
     hole_end = property_completion_hole_end(fi, comp_ctx.offset, hole_start)
@@ -164,7 +162,7 @@ function get_dotprefix_inferred_ctx(
     virtual_st0_top = build_syntax_tree(virtual_fi)
     virtual_st0 = @something lowerable_toplevel_at(virtual_st0_top, JS.first_byte(dotprefix)) return nothing
     return build_inferred_context_for_tree(virtual_st0, comp_ctx.context_module;
-        world=comp_ctx.world, caller, cache=nothing)
+        world=comp_ctx.world, cache=nothing)
 end
 
 function property_completion_hole_end(fi::FileInfo, offset::Int, hole_start::Int)
@@ -340,7 +338,7 @@ function global_completions!(
     if !isnothing(dotprefix)
         rng = JS.byte_range(dotprefix)
         is_cancelled(comp_ctx.cancel_flag) && return false
-        ctx = get_dotprefix_inferred_ctx(comp_ctx, dotprefix; caller="global_completions!")
+        ctx = get_dotprefix_inferred_ctx(comp_ctx, dotprefix)
         prefixtyp = ctx === nothing ? nothing : get_type_for_range(ctx, rng)
         # A `Union{}` prefix type is uninformative (the prefix throws or is dead code);
         # treat it like `nothing` so module/const prefixes such as `Base.` still complete.
@@ -885,7 +883,7 @@ function call_completions!(
     should_complete_method_sigs || should_complete_kwargs || return nothing
     is_cancelled(comp_ctx.cancel_flag) && return false
 
-    ctx = get_inferred_ctx!(comp_ctx; caller="call_completions!")
+    ctx = get_inferred_ctx!(comp_ctx)
     fntyp = ctx === nothing ? nothing : get_type_for_range(ctx, JS.byte_range(call[1]))
     if fntyp === nothing
         fntyp = resolve_global_const(context_module, world, call[1])

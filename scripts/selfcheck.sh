@@ -1,22 +1,22 @@
 #!/bin/bash
 
-PACKAGES=(JETLS JETLSCore HierarchicalTestSets LSP MarkdownSource TOMLSource TestRunner)
+PROJECTS=(JETLS JETLSCore HierarchicalTestSets LSP MarkdownSource TOMLSource TestRunner docs scripts)
 
 print_help() {
     cat <<EOF
 Usage: ./scripts/selfcheck.sh [OPTIONS]
 
-Run JETLS self-diagnostics on the packages of this repository, or only on
-those given by -p, along with the test suites of the subpackages. Other
-options are passed through to jetls check and override the defaults
---root=<project root> and --show-severity=warn.
+Run JETLS self-diagnostics on the projects of this repository, or only on
+those given by -p: the packages along with their test suites, and the Julia
+files in docs and scripts. Other options are passed through to jetls check
+and override the defaults --root=<project root> and --show-severity=warn.
 
-Packages:
-  ${PACKAGES[*]}
+Projects:
+  ${PROJECTS[*]}
 
 Options:
   -h, --help              Show this help message and exit
-  -p, --package NAME      Check only the package NAME; may be repeated
+  -p, --project NAME      Check only the project NAME; may be repeated
   --threads=COUNT         Set the Julia thread count (default: auto)
   --no-quiet              Enable log messages (suppressed by default)
 
@@ -34,7 +34,7 @@ JULIA="${JULIA:-julia}"
 # Defaults
 THREADS="auto"
 QUIET="--quiet"
-PACKAGE_NAMES=()
+PROJECT_NAMES=()
 EXTRA_ARGS=()
 
 while [[ $# -gt 0 ]]; do
@@ -43,16 +43,16 @@ while [[ $# -gt 0 ]]; do
             print_help
             exit 0
             ;;
-        -p|--package)
+        -p|--project)
             if [[ $# -lt 2 ]]; then
                 echo "Error: $1 requires a value" >&2
                 exit 1
             fi
-            PACKAGE_NAMES+=("$2")
+            PROJECT_NAMES+=("$2")
             shift
             ;;
-        --package=*)
-            PACKAGE_NAMES+=("${1#--package=}")
+        --project=*)
+            PROJECT_NAMES+=("${1#--project=}")
             ;;
         --threads=*)
             THREADS="${1#--threads=}"
@@ -67,9 +67,9 @@ while [[ $# -gt 0 ]]; do
     shift
 done
 
-is_package() {
+is_project() {
     local name
-    for name in "${PACKAGES[@]}"; do
+    for name in "${PROJECTS[@]}"; do
         if [[ "$name" == "$1" ]]; then
             return 0
         fi
@@ -77,23 +77,26 @@ is_package() {
     return 1
 }
 
-if [[ ${#PACKAGE_NAMES[@]} -eq 0 ]]; then
-    PACKAGE_NAMES=("${PACKAGES[@]}")
+if [[ ${#PROJECT_NAMES[@]} -eq 0 ]]; then
+    PROJECT_NAMES=("${PROJECTS[@]}")
 fi
 PACKAGE_PATHS=()
-TEST_PATHS=()
-for name in "${PACKAGE_NAMES[@]}"; do
-    if ! is_package "$name"; then
-        echo "Error: Unknown package: $name (expected one of: ${PACKAGES[*]})" >&2
+FILE_PATHS=()
+for name in "${PROJECT_NAMES[@]}"; do
+    if ! is_project "$name"; then
+        echo "Error: Unknown project: $name (expected one of: ${PROJECTS[*]})" >&2
         exit 1
     fi
     if [[ "$name" == JETLS ]]; then
         PACKAGE_PATHS+=("$PROJECT_ROOT")
+        FILE_PATHS+=("$PROJECT_ROOT/test/runtests.jl")
     elif [[ "$name" == JETLSCore ]]; then
         PACKAGE_PATHS+=("$PROJECT_ROOT/$name")
+    elif [[ "$name" == docs || "$name" == scripts ]]; then
+        FILE_PATHS+=("$PROJECT_ROOT/$name"/*.jl)
     else
         PACKAGE_PATHS+=("$PROJECT_ROOT/$name")
-        TEST_PATHS+=("$PROJECT_ROOT/$name/test/runtests.jl")
+        FILE_PATHS+=("$PROJECT_ROOT/$name/test/runtests.jl")
     fi
 done
 
@@ -103,5 +106,5 @@ exec "$JULIA" --startup-file=no --project="$PROJECT_ROOT" --threads="$THREADS" \
     $QUIET \
     --show-severity=warn \
     "${PACKAGE_PATHS[@]}" \
-    "${TEST_PATHS[@]}" \
+    "${FILE_PATHS[@]}" \
     "${EXTRA_ARGS[@]}"

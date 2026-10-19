@@ -29,6 +29,8 @@ jetls check - <<< 'f(x) = undefined_name + x'
 jetls --threads=4,2 -- check src/SomePkg.jl test/runtests.jl
 ```
 
+The options before `--` are [Julia runtime flags](@ref cli/julia-flags).
+
 ## [Command reference](@id cli-check/reference)
 
 > `jetls check --help`
@@ -207,20 +209,6 @@ jetls check --progress=none src/SomePkg.jl
 # Force simple output even in terminal
 jetls check --progress=simple src/SomePkg.jl
 ```
-
-### [Julia runtime flags](@id cli-check/options/julia-flags)
-
-Since `jetls` is an executable Julia app, you can pass Julia runtime flags
-before `--` to configure the Julia runtime. This is especially useful for
-controlling threading behavior. JETLS's signature analysis phase is
-parallelized, so increasing thread count may improve analysis performance.
-
-```bash
-# Run with 4 default threads and 2 interactive threads
-jetls --threads=4,2 -- check src/SomePkg.jl
-```
-
-For more details on available runtime flags, see the [Pkg documentation on runtime flags](https://pkgdocs.julialang.org/v1/apps/#Runtime-Julia-Flags).
 
 ## [Configuration](@id cli-check/configuration)
 

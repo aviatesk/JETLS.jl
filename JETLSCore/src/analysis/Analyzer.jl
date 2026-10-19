@@ -1,12 +1,13 @@
 module Analyzer
 
 export LSAnalyzer
-export inference_error_report_related_frames, inference_error_report_related_stack,
-    inference_error_report_severity, inference_error_report_stack,
+export declared_argtypes, inference_error_report_related_frames,
+    inference_error_report_related_stack, inference_error_report_severity,
+    inference_error_report_stack, is_parametric_closure_type,
     reset_report_target_modules!
-export AmbiguousMethodReport, BoundsErrorReport, FieldErrorReport, KeywordTypeErrorReport,
-    MethodErrorReport, NoMethodMatchReport, NonBooleanCondErrorReport, TypeAssertErrorReport,
-    TypeErrorReport, UndefKeywordErrorReport, UndefVarErrorReport,
+export AmbiguousMethodReport, BoundsErrorReport, FailingTestReport, FieldErrorReport,
+    KeywordTypeErrorReport, MethodErrorReport, NoMethodMatchReport, NonBooleanCondErrorReport,
+    TypeAssertErrorReport, TypeErrorReport, UndefKeywordErrorReport, UndefVarErrorReport,
     UnsupportedKeywordArgReport
 export RelatedEntryFrame, RelatedFrame, RelatedFrameKind, RelatedOriginFrame, RelatedViaFrame
 
@@ -289,6 +290,36 @@ end
 # utilities
 # =========
 
+# Lowering parameterizes a closure type by the types of its captured variables, while the
+# types of named functions are never parametric.
+function is_parametric_closure_type(@nospecialize typ)
+    typ = Base.unwrap_unionall(typ)
+    return typ isa DataType && typ <: Function && Base.isgensym(nameof(typ)) &&
+        typ.name.wrapper isa UnionAll
+end
+
+# The declared types of the arguments of a method with the signature `sig`, as argument types
+# to call the method with, or `nothing` if some argument has no declared type, where an
+# explicit `::Any` is indistinguishable from no declaration.
+function declared_argtypes(@nospecialize sig)
+    sig′ = Base.unwrap_unionall(sig)
+    sig′ isa DataType || return nothing
+    argtypes = Any[]
+    for i = 2:length(sig′.parameters)
+        param = sig′.parameters[i]
+        isva = Base.isvarargtype(param)
+        argtype = isva ? Base.unwrapva(param) : param
+        while argtype isa TypeVar
+            argtype = argtype.ub
+        end
+        argtype === Any && return nothing
+        argtype = Base.rewrap_unionall(argtype, sig)
+        CC.has_free_typevars(argtype) && return nothing
+        push!(argtypes, isva ? Vararg{argtype} : argtype)
+    end
+    return argtypes
+end
+
 function should_analyze(analyzer::LSAnalyzer, sv::CC.InferenceState)
     report_target_modules = analyzer.report_target_modules
     return isnothing(report_target_modules) || CC.frame_module(sv) ∈ report_target_modules
@@ -488,6 +519,9 @@ function after_abstract_call_gf_by_type(
     if !should_analyze(analyzer, sv)
         return nothing
     end
+    if func === JET.check_test_value
+        report_failing_test!(analyzer, sv, arginfo.argtypes)
+    end
     func_ref = Ref{Any}(func)
     function _after_abstract_call_gf_by_type(analyzer′::LSAnalyzer, sv′::CC.InferenceState)
         ret′ = ret[]
@@ -531,6 +565,64 @@ function CC.abstract_call_gf_by_type(
     after_abstract_call_gf_by_type(analyzer, ret, func, arginfo, sv, max_methods)
     return ret
 end
+end
+
+"""
+    CC.abstract_eval_new(analyzer::LSAnalyzer, e::Expr, sstate, sv) -> RTEffects
+
+Infers the methods of a closure whose argument types are all declared where the closure is
+constructed, if its type is parameterized by the types of its captured variables.
+
+Signature analysis infers the undeclared argument types of a closure method, and the
+variables the closure captures, as `Any`, which hides errors and also reports errors for
+types that they never have. So it skips the methods of closures with undeclared argument
+types and of closures with captured variables (see `JETLSCore.should_analyze_signature`):
+- A closure method with undeclared argument types is analyzed only where the analyzed code
+  calls it, e.g. a `do` block passed to `mktemp`, and is not analyzed if the analyzed code
+  never calls it.
+- A closure method whose argument types are all declared, including one without arguments,
+  is analyzed here instead, even if the analyzed code never calls it, e.g. a closure
+  returned to the caller. Here, the closure type carries the inferred types of the captured
+  variables, e.g. `var"#1#2"{Base.Process}`, as `TypeAnnotation` infers a closure rewritten
+  to an opaque closure where it is constructed. The reports from the closure method
+  propagate to the construction site.
+
+An explicit `::Any` is indistinguishable from no declaration (see
+[`declared_argtypes`](@ref)). A closure wrapped in a `Task`, e.g. the body of `@async`,
+is also analyzed where the `Task` is constructed (see `JET.analyze_task_parallel_code!`).
+"""
+function CC.abstract_eval_new(
+        analyzer::LSAnalyzer, e::Expr, sstate::CC.StatementState, sv::CC.AbsIntState
+    )
+    ret = @invoke CC.abstract_eval_new(analyzer::ToplevelAbstractAnalyzer, e::Expr,
+        sstate::CC.StatementState, sv::CC.AbsIntState)
+    if sv isa CC.InferenceState && should_analyze(analyzer, sv)
+        infer_constructed_closure!(analyzer, ret.rt, sstate, sv)
+    end
+    return ret
+end
+
+function infer_constructed_closure!(
+        analyzer::LSAnalyzer, @nospecialize(rt), sstate::CC.StatementState,
+        sv::CC.InferenceState
+    )
+    closuretype = CC.widenconst(rt)
+    is_parametric_closure_type(closuretype) || return nothing
+    matches = @something CC.findall(Tuple{closuretype,Vararg{Any}}, CC.method_table(analyzer)) return nothing
+    si = CC.StmtInfo(#=used=#true, sstate.saw_latestworld)
+    for match in matches
+        argtypes = @something declared_argtypes((match::Core.MethodMatch).method.sig) continue
+        # Call the closure value rather than its type, so that constant propagation can use
+        # the constant values of the captured variables.
+        arginfo = CC.ArgInfo(nothing, Any[rt, argtypes...])
+        call = CC.abstract_call(analyzer, arginfo, si, sv)
+        CC.Future{Any}(call, analyzer, sv) do call, _, sv
+            # The construction's statement info is not a call, so retain these edges separately.
+            CC.add_edges!(sv.edges, call.info)
+            return nothing
+        end
+    end
+    return nothing
 end
 
 """
@@ -801,6 +893,7 @@ Subtypes:
   * `TypeAssertErrorReport`: Statically failing type assertions
   * `NonBooleanCondErrorReport`: Non-boolean value in a boolean context
   * `KeywordTypeErrorReport`: Keyword argument value type mismatch
+- `FailingTestReport`: Top-level `@test`s that always fail
 """
 abstract type JETLSErrorReport <: InferenceErrorReport end
 abstract type MethodErrorReport <: JETLSErrorReport end
@@ -1787,6 +1880,44 @@ function report_non_boolean_cond!(analyzer::LSAnalyzer, sv::CC.InferenceState, @
             add_new_report!(analyzer, sv.result, NonBooleanCondErrorReport(sv, t, 0, #=uncovered=#check_uncovered))
         end
     end
+end
+
+# FailingTestReport
+# -----------------
+
+# Top-level analysis replaces `@test ex` with code that passes the value of `ex` to
+# `JET.check_test_value`, so a call to it whose argument is inferred to be `false` or of a
+# non-boolean type is a test that always fails.
+@jetreport struct FailingTestReport <: JETLSErrorReport
+    @nospecialize t # `Bool` for an expression that always evaluates to `false`
+end
+inference_error_report_stack_impl(r::FailingTestReport) = length(r.vst):-1:1
+inference_error_report_severity_impl(::FailingTestReport) = DiagnosticSeverity.Warning
+function JETInterface.print_report_message(io::IO, (; t)::FailingTestReport)
+    print(io, "this test always fails since its expression evaluates to ")
+    if t === Bool
+        print(io, "`false`")
+    else
+        print(io, "non-boolean `", t, "`")
+    end
+end
+
+function report_failing_test!(analyzer::LSAnalyzer, sv::CC.InferenceState, argtypes::Vector{Any})
+    # A test in a function body is inferred for each specialization, e.g. for each member of
+    # a union split at the call site, where a failure for some argument types does not mean
+    # that the test always fails. So report only the tests in top-level code.
+    sv.linfo.def isa Module || return false
+    length(argtypes) == 2 || return false
+    value = CC.widenconditional(argtypes[2])
+    if value isa Const && value.val === false
+        add_new_report!(analyzer, sv.result, FailingTestReport(sv, Bool))
+        return true
+    end
+    t = CC.widenconst(value)
+    t === Union{} && return false
+    CC.hasintersect(t, Bool) && return false
+    add_new_report!(analyzer, sv.result, FailingTestReport(sv, t))
+    return true
 end
 
 # Constructor

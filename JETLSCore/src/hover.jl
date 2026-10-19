@@ -129,7 +129,7 @@ function _get_hover(
     type_query_rng = funcdef !== nothing ? JS.byte_range(funcdef) :
         JS.byte_range(symbol_literal_node === nothing ? display_node : node)
     ctx = build_inferred_context_for_range(st0_top, context_module, type_query_rng;
-        world, caller="get_hover", cache=fi.inferred_context_cache)
+        world, cache=fi.inferred_context_cache)
     is_cancelled(cancel_flag) && return nothing
 
     type_str = typ = display_typ = nothing

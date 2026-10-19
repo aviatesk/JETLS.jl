@@ -265,7 +265,7 @@ function collect_type_annotation_hints(
     tree_range = Range(; start = startpos, var"end" = endpos)
     (; context_module, postprocessor, world) = get_context_info(state, uri, startpos)
     ctx = @something build_inferred_context_for_tree(tree, context_module;
-        world, caller="type_annotation", cache=fi.inferred_context_cache) return nothing
+        world, cache=fi.inferred_context_cache) return nothing
     hints = InlayHint[]
     # Unlike the glanceable inline hints, a written-out view shows the full
     # inferred type rather than a `…`-clipped one, so truncation is disabled.

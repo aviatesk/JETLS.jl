@@ -262,6 +262,21 @@ end
                 @test any(ref -> ref.range.start == positions[4] && ref.range.var"end" == positions[6], refs)
             end
         end
+
+        # A documented signature references the function and its argument types.
+        let code = """
+            struct │MyType│ end
+            function │myfunc│ end
+
+            \"\"\"Docstring\"\"\"
+            │myfunc│(x::│MyType│)
+            """
+            clean_code, positions = JETLSCore.get_text_and_positions(code)
+            @test length(positions) == 8
+            for pos in positions
+                @test length(find_references(clean_code, pos)) == 2
+            end
+        end
     end
 
     @testset "ordinary inert references" begin

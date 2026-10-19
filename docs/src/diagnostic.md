@@ -185,7 +185,9 @@ loaded code as the second step of [full analysis](@ref analysis/full).
 Inference only covers code that loaded successfully: after a `toplevel/error`
 (e.g. a missing dependency), JETLS skips inference of method bodies entirely and
 reports `inference/*` diagnostics only for top-level code before the error. See
-[`inference/*`](@ref diagnostic/reference/inference) for the diagnostic codes.
+[How loaded code is inferred](@ref analysis/full/inference) for the code that
+inference reaches, and [`inference/*`](@ref diagnostic/reference/inference) for
+the diagnostic codes.
 
 ###### [Configuration (`config/*`)](@id diagnostic/stage/config)
 
@@ -215,8 +217,9 @@ diagnostic, you'll find:
 
 - A description of what the diagnostic detects
 - Its default severity level and source
-- Code examples demonstrating when the diagnostic is reported
-- Example diagnostic messages (shown in code comments)
+- Code examples demonstrating when the diagnostic is reported, displayed with
+  the diagnostics that JETLS reports for them where possible; hover over a
+  diagnostic to see its full message, related information, and quick fixes
 
 Here is a summary table of the diagnostics explained in this section:
 
@@ -255,6 +258,7 @@ Here is a summary table of the diagnostics explained in this section:
 | [`inference/type-error/keyword`](@ref diagnostic/reference/inference/type-error/keyword)                       | `Warning`             | `JETLS/save`  | Keyword argument value type mismatch                   |
 | [`inference/type-error/type-assert`](@ref diagnostic/reference/inference/type-error/type-assert)               | `Warning`             | `JETLS/save`  | Type assertion failures                                |
 | [`inference/type-error/non-bool-cond`](@ref diagnostic/reference/inference/type-error/non-bool-cond)           | `Warning`             | `JETLS/save`  | Non-boolean value used in boolean context              |
+| [`inference/failing-test`](@ref diagnostic/reference/inference/failing-test)                                   | `Warning`             | `JETLS/save`  | `@test` that always fails                              |
 | [`testrunner/test-failure`](@ref diagnostic/reference/testrunner/test-failure)                                 | `Error`               | `JETLS/extra` | Test failures from TestRunner integration              |
 | [`config/deprecated-key`](@ref diagnostic/reference/config/deprecated-key)                                     | `Warning`             | `JETLS/extra` | Deprecated keys in `.JETLSConfig.toml`                 |
 | [`config/deprecated-value`](@ref diagnostic/reference/config/deprecated-value)                                 | `Warning`             | `JETLS/extra` | Deprecated values in `.JETLSConfig.toml`               |
@@ -273,9 +277,9 @@ syntax that prevents the code from being parsed.
 
 Example:
 
-```julia
+```@diagnostics; codes = ["syntax/parse-error"]
 function parse_error(x)
-    println(x  # Expected `)` or `,` (JETLS syntax/parse-error)
+    println(x
 end
 ```
 
@@ -291,8 +295,8 @@ not prevent the code from being analyzed further.
 
 Example:
 
-```julia
-import Base: (sin)  # parentheses are not required here (JETLS syntax/parse-warning)
+```@diagnostics; codes = ["syntax/parse-warning"]
+import Base: (sin)
 ```
 
 ### [Lowering diagnostic (`lowering/*`)](@id diagnostic/reference/lowering)
@@ -308,15 +312,15 @@ General lowering errors that don't fit into more specific categories.
 
 Examples:
 
-```julia
+```@diagnostics; codes = ["lowering/error"]
 macro lowering_error(x)
-    $(x)  # `$` expression outside string or quote block (JETLS lowering/error)
+    $(x)
 end
 
 function unresolved_goto()
     @label retry
-    inner = () -> @goto retry  # label `retry` referenced but not defined (JETLS lowering/error)
-    inner()                    # (`@goto` cannot cross function boundaries)
+    inner = () -> @goto retry  # `@goto` cannot cross function boundaries
+    inner()
 end
 ```
 
@@ -327,19 +331,18 @@ end
 Issues detected during macro expansion. The macro name being unresolved
 or a macro body throwing surfaces as `Error` severity:
 
-```julia
+```@diagnostics; codes = ["lowering/macro-expansion-error"]
 function macro_expand_error()
-    @undefined_macro ex  # Macro name `@undefined_macro` not found (JETLS lowering/macro-expansion-error)
+    @undefined_macro ex
 end
 ```
 
-```julia
+```@diagnostics; codes = ["lowering/macro-expansion-error"]
 macro myinline(ex)
     Meta.isexpr(ex, :function) || error("Expected long function definition")
     return :(@inline $ex)
 end
-@myinline callsin(x) = sin(x)  # Error expanding macro
-                               # Expected long function definition (JETLS lowering/macro-expansion-error)
+@myinline callsin(x) = sin(x)
 ```
 
 For a subset of Base macros (`@spawn`, `@test`, `@info`, `@testset`, ...),
@@ -350,26 +353,20 @@ keep running on the rest of the macrocall. The severity mirrors what
 Base would do — `Error` for cases Base rejects, `Warning` for cases Base
 accepts silently or only deprecates:
 
-```julia
+```@diagnostics; codes = ["lowering/macro-expansion-error"]
+using Test
+
 # Error: Base also rejects.
-Threads.@spawn :badname body   # unsupported threadpool in @spawn: badname
-                               # (JETLS lowering/macro-expansion-error)
+Threads.@spawn :badname body
 
-@info "msg" k=1 k=2            # @info: keyword `k` provided more than once
-                               # (JETLS lowering/macro-expansion-error)
+@info "msg" k=1 k=2
 
-@test x skip=true broken=true  # invalid test macro call: cannot set both
-                               # `skip` and `broken` keywords
-                               # (JETLS lowering/macro-expansion-error)
+@test x skip=true broken=true
 
 # Warning: Base accepts silently or only deprecates.
-@testset "a" "b" begin end     # Multiple descriptions provided to @testset.
-                               # This is deprecated and may error in the future.
-                               # (JETLS lowering/macro-expansion-error)
+@testset "a" "b" begin end
 
 @testset verbose=true verbose=false begin end
-                               # @testset: option `verbose` provided more than once
-                               # (JETLS lowering/macro-expansion-error)
 ```
 
 #### [Undefined global variable (`lowering/undef-global-var`)](@id diagnostic/reference/lowering/undef-global-var)
@@ -381,9 +378,9 @@ This diagnostic provides immediate feedback as you type.
 
 Example:
 
-```julia
+```@diagnostics; codes = ["lowering/undef-global-var"]
 function undef_global_var()
-    ret = sin(undefined_var)  # `Main.undefined_var` is not defined (JETLS lowering/undef-global-var)
+    ret = sin(undefined_var)
     return ret
 end
 ```
@@ -409,20 +406,18 @@ The severity depends on the certainty of the undefined usage:
 
 Examples:
 
-```julia
+```@diagnostics; codes = ["lowering/undef-local-var"]
 function strict_undef()
-    println(x)  # Variable `x` is used before it is defined (JETLS lowering/undef-local-var)
-                # Severity: Warning (strict undef)
-    x = 1       # RelatedInformation: `x` is defined here
+    println(x)
+    x = 1
     return x
 end
 
 function maybe_undef(cond)
     if cond
-        y = 1   # RelatedInformation: `y` is defined here
+        y = 1
     end
-    return y  # Variable `y` may be used before it is defined (JETLS lowering/undef-local-var)
-              # Severity: Information (maybe undef)
+    return y
 end
 ```
 
@@ -432,7 +427,7 @@ pointing to definition sites to help understand the control flow.
 !!! tip "Workaround: Using `@isdefined` guard"
     When a variable is conditionally assigned, you can rewrite the program logic
     using `@isdefined` so that the compiler can track the definedness:
-    ```julia
+    ```@diagnostics; absent_codes = ["lowering/undef-local-var"]
     function guarded(cond)
         if cond
             y = 42
@@ -448,7 +443,7 @@ pointing to definition sites to help understand the control flow.
     under a condition and later used under the same condition, no diagnostic
     is emitted. This works with simple variables, `&&` chains, and nested
     `if` blocks:
-    ```julia
+    ```@diagnostics; absent_codes = ["lowering/undef-local-var"]
     function correlated(cond)
         if cond
             y = 42
@@ -461,21 +456,44 @@ pointing to definition sites to help understand the control flow.
     ```
     This is limited to conditions that are simple local variables or `&&`
     chains of local variables (e.g. `if x && z`). Compound expressions
-    like `if x > 0` are not tracked as correlated conditions.
+    like `if x > 0` are not tracked as correlated conditions:
+    ```@diagnostics; codes = ["lowering/undef-local-var"]
+    function compound_condition(x)
+        if x > 0
+            y = sin(x)
+        end
+        if x > 0
+            return cos(y)
+        end
+    end
+    ```
+    To make such conditions correlated, assign the result of the compound
+    expression to a local variable and use it as the conditions:
+    ```@diagnostics; absent_codes = ["lowering/undef-local-var"]
+    function compound_condition(x)
+        positive = x > 0
+        if positive
+            y = sin(x)
+        end
+        if positive
+            return cos(y)  # No diagnostic: both branches check `positive`
+        end
+    end
+    ```
 
 !!! tip "Workaround: Using `@assert @isdefined` as a hint"
     There are cases where you know a variable is always defined at a
     certain point, but the analysis cannot prove it. This includes
-    compound conditions (e.g. `if !isnothing(x)`), complex control flow, or
-    general runtime invariants that the compiler cannot figure out
-    statically. In such cases, you can use
-    `@assert @isdefined(var) "..."` as a hint:
-    ```julia
-    function compound_condition(x)
-        if !isnothing(x)
+    different conditions that are correlated at runtime (e.g. `x > 1`
+    implies `x > 0`), complex control flow, or general runtime invariants
+    that the compiler cannot figure out statically. In such cases, you can
+    use `@assert @isdefined(var) "..."` as a hint:
+    ```@diagnostics; absent_codes = ["lowering/undef-local-var"]
+    function implied_condition(x)
+        if x > 0
             y = sin(x)
         end
-        if !isnothing(x)
+        if x > 1
             @assert @isdefined(y) "compiler hint"
             return cos(y)  # No diagnostic after the assertion
         end
@@ -490,7 +508,7 @@ pointing to definition sites to help understand the control flow.
     as noreturn. If an else branch calls one of these, the analysis
     knows code after the branch can only be reached when the variable
     is defined:
-    ```julia
+    ```@diagnostics; absent_codes = ["lowering/undef-local-var"]
     function guarded(x)
         if x > 0
             y = x
@@ -522,50 +540,21 @@ runs:
 
 Example ([A Common Confusion](https://docs.julialang.org/en/v1/manual/variables-and-scoping/#A-Common-Confusion-2479cb3548c466db) adapted from the Julia manual):
 
-```@eval
-using Markdown
-
-mktemp() do file, io
-    code = """
-    # Print the numbers 1 through 5
-    global i = 0
-    while i < 5
-        i += 1  # Assignment to `i` in soft scope is ambiguous (JETLS lowering/ambiguous-soft-scope)
-                # Variable `i` may be used before it is defined (JETLS lowering/undef-local-var)
-        println(i)
-    end
-    """
-    write(io, code)
-    close(io)
-    err = IOBuffer()
-    try
-        run(pipeline(`$(Base.julia_cmd()) --startup-file=no --color=no $file`; stderr=err))
-    catch
-    end
-    output = String(take!(err))
-    lines = split(output, '\n')
-    idx = findfirst(l -> startswith(l, "Stacktrace:"), lines)
-    if idx !== nothing
-        lines = lines[1:idx]
-    end
-    push!(lines, "...")
-    output = join(lines, '\n')
-    output = replace(output, file=>"ambiguous-scope.jl")
-
-    Markdown.parse("""
-    > `ambiguous-scope.jl`
-    ``````julia
-    $(code)
-    ``````
-
-    This diagnostic matches the warning that Julia itself emits at runtime.
-    Running the example above as a file produces:
-    > `julia ambiguous-scope.jl`
-    ``````
-    $(output)
-    ``````
-    """)
+> `ambiguous-scope.jl`
+```@diagnostics; workspace = "ambiguous-scope", file = "ambiguous-scope.jl", codes = ["lowering/ambiguous-soft-scope", "lowering/undef-local-var"]
+# Print the numbers 1 through 5
+global i = 0
+while i < 5
+    i += 1
+    println(i)
 end
+```
+
+This diagnostic matches the warning that Julia itself emits at runtime.
+Running the example above as a file produces:
+
+> `julia ambiguous-scope.jl`
+```@diagnostics-run; workspace = "ambiguous-scope", file = "ambiguous-scope.jl"
 ```
 
 !!! note "Why is `lowering/undef-local-var` also reported?"
@@ -597,25 +586,25 @@ compiler optimizations.[^performance_tip]
     see Julia's [Performance Tips on captured variables](https://docs.julialang.org/en/v1/manual/performance-tips/#man-performance-captured).
 
 Example:
-```julia
+```@diagnostics; codes = ["lowering/captured-boxed-variable"]
 function captured_variable()
-    x = 1           # `x` is captured and boxed (JETLS lowering/captured-boxed-variable)
+    x = 1
     f = () ->
-        println(x)  # RelatedInformation: Closure at L3:9 captures `x`
-    x = 2           # (`x` is reassigned after capture)
+        println(x)
+    x = 2  # `x` is reassigned after capture
     return f
 end
 ```
 
 The diagnostic includes `relatedInformation` showing where the variable is
-captured:
-```julia
+captured by closures and where else it is assigned:
+```@diagnostics; codes = ["lowering/captured-boxed-variable"]
 function multi_capture()
-    x = 1               # `x` is captured and boxed (JETLS lowering/captured-boxed-variable)
+    x = 1
     f = () ->
-        println(x)      # RelatedInformation: Closure at L3:9 captures `x`
+        println(x)
     g = () ->
-        println(x + 1)  # RelatedInformation: Closure at L5:9 captures `x`
+        println(x + 1)
     x = 2
     return f, g
 end
@@ -623,7 +612,7 @@ end
 
 Variables captured by closures but assigned only once before closure definition
 do not require boxing and are not reported:
-```julia
+```@diagnostics; absent_codes = ["lowering/captured-boxed-variable"]
 function not_boxed()
     x = 1
     f = () -> x  # OK: `x` is only assigned once
@@ -633,7 +622,7 @@ end
 
 !!! tip "Workaround"
     When you need to capture a variable that changes, consider using a `let` block:
-    ```julia
+    ```@diagnostics; absent_codes = ["lowering/captured-boxed-variable"]
     function with_let()
         x = 1
         f = let x = x
@@ -646,7 +635,7 @@ end
 
     or mutable container like `Ref` to avoid direct assignment to the captured
     variable:
-    ```julia
+    ```@diagnostics; absent_codes = ["lowering/captured-boxed-variable"]
     function with_mut()
         x = Ref(1)
         f = () -> x[]
@@ -678,9 +667,8 @@ evaluating such a method definition.
 
 Example:
 
-```julia
-f(::T) where {T,S} = S  # Method definition declares type variable `S` but does not use it in the type of any function parameter
-                        # (JETLS lowering/unconstrained-static-parameter)
+```@diagnostics; codes = ["lowering/unconstrained-static-parameter"]
+f(::T) where {T,S} = S
 ```
 
 This diagnostic is about whether the type variable can be deduced at the call
@@ -688,17 +676,16 @@ site, not whether the static parameter is referenced in the method body. A
 static parameter that appears in a function parameter type is not reported,
 even if the body does not use it:
 
-```julia
+```@diagnostics; absent_codes = ["lowering/unconstrained-static-parameter"]
 f(::T) where T = nothing  # OK: `T` appears in a function parameter type
 ```
 
 Bounds on constrained type variables are also considered, but a bound reference
 only constrains type variables declared earlier in the `where` clause:
 
-```julia
+```@diagnostics; codes = ["lowering/unconstrained-static-parameter"]
 f(::T) where {S,T<:S} = S  # OK: `S` constrains the dispatched type variable `T`
-f(::T) where {T<:S,S} = S  # Method definition declares type variable `S` but does not use it in the type of any function parameter
-                           # (JETLS lowering/unconstrained-static-parameter)
+f(::T) where {T<:S,S} = S
 ```
 
 #### [Orphaned docstring (`lowering/orphaned-docstring`)](@id diagnostic/reference/lowering/orphaned-docstring)
@@ -719,28 +706,28 @@ scope (e.g. in function bodies) are never attached.
 
 Examples:
 
-```julia
+```@diagnostics; codes = ["lowering/orphaned-docstring"]
 """
     foo()
-"""  # Docstring is not attached to any definition: the documented expression must start on the next line
-     # (JETLS lowering/orphaned-docstring)
+"""
+
 foo() = nothing
 
 @static if Sys.iswindows()
     """
         bar()
-    """              # Docstring is not attached to any definition: docstrings in this block are recognized only with `@doc`
-    bar() = nothing  # (JETLS lowering/orphaned-docstring)
+    """
+    bar() = nothing
 end
 
 raw"""
     baz(path)
-"""                  # Docstring is not attached to any definition: `raw` strings are recognized as docstrings only with `@doc`
-baz(path) = nothing  # (JETLS lowering/orphaned-docstring)
+"""
+baz(path) = nothing
 
 function qux()
-    "Python-style docstring"  # Docstring is not attached to any definition: docstrings are not recognized in local scope
-    nothing                   # (JETLS lowering/orphaned-docstring)
+    "Python-style docstring"
+    nothing
 end
 ```
 
@@ -749,9 +736,9 @@ since Julia then discards them[^field_docstrings]. The diagnostic is reported
 on the struct name, with the discarded field docstrings listed as related
 information:
 
-```julia
-struct Point            # Field docstrings of `Point` are discarded because `Point` has no docstring
-    "The x coordinate"  # (JETLS lowering/orphaned-docstring)
+```@diagnostics; codes = ["lowering/orphaned-docstring"]
+struct Point
+    "The x coordinate"
     x::Float64
     "The y coordinate"
     y::Float64
@@ -795,8 +782,8 @@ By default, arguments with names starting with `_` are not reported; see
 
 Example:
 
-```julia
-function unused_argument(x, y)  # Unused argument `y` (JETLS lowering/unused-argument)
+```@diagnostics; codes = ["lowering/unused-argument"]
+function unused_argument(x, y)
     return x + 1
 end
 ```
@@ -817,9 +804,9 @@ By default, variables with names starting with `_` are not reported; see
 
 Example:
 
-```julia
+```@diagnostics; codes = ["lowering/unused-local"]
 function unused_local()
-    x = 10  # Unused local binding `x` (JETLS lowering/unused-local)
+    x = 10
     return println(10)
 end
 ```
@@ -830,7 +817,7 @@ is not read. For example, the function below returns the assignment
 expression's value by Julia's implicit return rule, but the binding `s`
 itself is not read after the assignment:
 
-```julia
+```@diagnostics; codes = ["lowering/unused-local"]
 function wrapped(x)
     s = "($x)"  # consider `return s` to return the binding explicitly
 end
@@ -860,21 +847,22 @@ This diagnostic does not overlap with
 `unused-assignment` reports specific assignments to variables that *are*
 used elsewhere. For example:
 
-```julia
+```@diagnostics; codes = ["lowering/unused-assignment"]
 function f(x::Bool)
     if x
         z = "Hi"
         println(z)  # z is used here, so `lowering/unused-local` is NOT reported
     end
     if x
-        z = "Hey"   # but this assignment's value is never read → `lowering/lunused-assignment`
+        z = "Hey"   # but this assignment's value is never read → `lowering/unused-assignment`
     end
+    return nothing
 end
 ```
 
 Compare with a fully unused variable, which only triggers `unused-local`:
 
-```julia
+```@diagnostics; codes = ["lowering/unused-local"]
 function g()
     y = 42  # y is never used anywhere → `lowering/unused-local`
 end
@@ -885,13 +873,13 @@ diagnostic explains that the value is returned implicitly. For example, the
 final assignment below returns the assignment expression's value, but the
 binding `s` itself is not read after that assignment:
 
-```julia
+```@diagnostics; codes = ["lowering/unused-assignment"]
 function build_string(xs)
     s = "("
     for x in xs
         s *= x
     end
-    s *= ")"  # consider `return s` to return the binding explicitly
+    s *= ")"
 end
 ```
 
@@ -919,8 +907,8 @@ tag.[^unnecessary_tag]
 
 Example:
 
-```julia
-using Base: sin, cos  # Unused import `cos` (JETLS lowering/unused-import)
+```@diagnostics; codes = ["lowering/unused-import"]
+using Base: sin, cos
 
 examplefunc() = sin(1.0)  # Only `sin` is used
 ```
@@ -938,27 +926,44 @@ module.
     If it's the only name in the statement, the entire statement is removed.
 
 !!! warning "Limitation"
-    Usages introduced only through macro expansion cannot be detected. For
-    example, in the following code, `sin` appears unused even though it is
-    used inside the macro-generated code:
-    ```julia
-    using Base: sin  # Incorrectly reported as unused
+    A name used in macro-generated code is detected when the macro body refers
+    to it in a quoted expression, e.g. `sin` in `:(sin($(esc(x))))`. Usages
+    that cannot be traced back to the imported binding are not detected, such
+    as a name that the macro builds from a `Symbol` value, a name in an
+    `esc`-ed quoted expression, or a name in the code passed to two-argument
+    `@eval`. For example, in the following code, `sin`, `cos`, and `tan` are
+    reported as unused even though the generated code uses them:
+    ```@diagnostics; codes = ["lowering/unused-import"]
+    using Base: cos,
+                sin,
+                tan
 
     macro gensincall(x)
-        :(sin($(esc(x))))
+        Expr(:call, :sin, esc(x))  # `sin` is built from a `Symbol` value
     end
-    @gensincall 42
+    macro gencoscall(x)
+        esc(:(cos($x)))            # `cos` is in an `esc`-ed quoted expression
+    end
+    @eval (@__MODULE__) tan(42)    # `tan` is in two-argument `@eval`
     ```
 
-    Workarounds include using the binding directly in the macro body:
-    ```julia
+    Workarounds include putting the bindings themselves into the generated
+    code instead of their names, e.g. by interpolating them:
+    ```@diagnostics; absent_codes = ["lowering/unused-import"]
+    using Base: cos, sin, tan
+
     macro gensincall(x)
-        f = sin  # `sin` is used here
-        :($f($(esc(x))))
+        Expr(:call, sin, esc(x))   # `sin` is used here
     end
+    macro gencoscall(x)
+        esc(:($cos($x)))           # `cos` is used here
+    end
+    @eval (@__MODULE__) $tan(42)   # `tan` is used here
     ```
     or passing the binding as part of the macro argument:
-    ```julia
+    ```@diagnostics; absent_codes = ["lowering/unused-import"]
+    using Base: sin
+
     macro gencall(ex)
         :($(esc(ex)))
     end
@@ -975,9 +980,9 @@ tag.[^unnecessary_tag]
 
 Example:
 
-```julia
+```@diagnostics; codes = ["lowering/unused-label"]
 function unused_label()
-    @label spare  # Unused label `spare` (JETLS lowering/unused-label)
+    @label spare
     return 1
 end
 ```
@@ -986,10 +991,10 @@ Because `@goto` cannot cross function boundaries, a `@label` in an outer
 function is also unused even when an inner closure references the same
 name:
 
-```julia
+```@diagnostics; codes = ["lowering/unused-label"]
 function outer()
-    @label here  # Unused label `here` (JETLS lowering/unused-label)
-    inner = () -> @goto here  # also reported as `lowering/error`
+    @label here
+    inner = () -> @goto here
     inner()
 end
 ```
@@ -1007,11 +1012,11 @@ code is marked with the `Unnecessary` tag.[^unnecessary_tag]
 
 Example:
 
-```julia
+```@diagnostics; codes = ["lowering/unreachable-code"]
 function after_return()
     return 1
-    x = 2  # Unreachable code (JETLS lowering/unreachable-code)
-    y = 3  # Also unreachable
+    x = 2
+    y = 3
 end
 
 function all_branches_return(x)
@@ -1020,24 +1025,24 @@ function all_branches_return(x)
     else
         return -1
     end
-    println("unreachable")  # Unreachable code (JETLS lowering/unreachable-code)
+    println("unreachable")
 end
 
 function after_continue()
     for i = 1:10
         continue
-        println(i)  # Unreachable code (JETLS lowering/unreachable-code)
+        println(i)
     end
 end
 
 function after_throw()
     throw(ErrorException("error"))
-    cleanup()  # Unreachable code (JETLS lowering/unreachable-code)
+    cleanup()
 end
 
 function after_error()
     error("something went wrong")
-    cleanup()  # Unreachable code (JETLS lowering/unreachable-code)
+    cleanup()
 end
 
 function after_rethrow()
@@ -1045,7 +1050,7 @@ function after_rethrow()
         do_something()
     catch
         rethrow()
-        println("unreachable")  # Unreachable code (JETLS lowering/unreachable-code)
+        println("unreachable")
     end
 end
 ```
@@ -1075,11 +1080,10 @@ the `Unnecessary` tag,[^unnecessary_tag] so editors render it grayed out.
 
 Example (analyzed on a non-Windows machine):
 
-```julia
+```@diagnostics; codes = ["lowering/inactive-code"]
 function home_dir()
     @static if Sys.iswindows()
-        ENV["USERPROFILE"]  # Inactive `@static` branch (condition evaluated to `false`)
-                            # (JETLS lowering/inactive-code)
+        ENV["USERPROFILE"]
     else
         ENV["HOME"]
     end
@@ -1107,10 +1111,10 @@ Expected sort order:
 
 Example:
 
-```julia
-import Foo: c, a, b  # Names are not sorted alphabetically (JETLS lowering/unsorted-import-names)
+```@diagnostics; codes = ["lowering/unsorted-import-names"]
+import Foo: c, a, b
 
-export bar, @foo  # Names are not sorted alphabetically (JETLS lowering/unsorted-import-names)
+export bar, @foo
 ```
 
 !!! tip "Code action available"
@@ -1144,16 +1148,14 @@ Common examples include:
 
 Examples:
 
-```julia
-struct ToplevelError  # JET could not execute this top-level code: UndefVarError: `Unexisting` not defined in `JETLS`
-                      #
-                      # Suggestion: check for spelling errors or missing imports. (JETLS toplevel/error)
+```@diagnostics; codes = ["toplevel/error"]
+struct ToplevelError
     x::Unexisting
 end
+```
 
-using UnexistingPkg  # Package JETLS does not have UnexistingPkg in its dependencies.
-                     # [...]
-                     # (JETLS toplevel/error)
+```@diagnostics; codes = ["toplevel/error"]
+using UnexistingPkg
 ```
 
 JETLS stops loading your code as soon as it encounters a top-level error, so
@@ -1187,13 +1189,11 @@ evaluates all top-level code.
 
 For example, suppose `scripts/random-type.jl` contains:
 
-```julia
+```@diagnostics; file = "scripts/random-type.jl", codes = ["toplevel/missing-concretization"]
 RandomType = rand((Bool, Int))
 
 struct Container
-    value::RandomType  # `Main.RandomType` must have a concrete value for JETLS top-level analysis.
-                       # [...]
-                       # (JETLS toplevel/missing-concretization)
+    value::RandomType
 end
 ```
 
@@ -1236,15 +1236,13 @@ configuration to allow JETLS to evaluate the assignment during full analysis.
 
     For example, suppose `scripts/load-types.jl` contains:
 
-    ```julia
+    ```@diagnostics; file = "scripts/load-types.jl", codes = ["toplevel/error"]
     const type_name = :SomeType
     load_types() = @eval using SomeModule: $type_name
     load_types()
 
     struct Container
-        value::SomeType  # JET could not execute this top-level code: UndefVarError: `SomeType` not defined in `Main`
-                         # [...]
-                         # (JETLS toplevel/error)
+        value::SomeType
     end
     ```
 
@@ -1352,13 +1350,12 @@ overwrites the previous method.
 
 Example:
 
-```julia
+```@diagnostics; codes = ["toplevel/method-overwrite"]
 function duplicate(x::Int)
     return x + 1
 end
 
-function duplicate(x::Int, y::Int=2)  # Method definition duplicate(x::Int) in module MyPkg overwritten
-                                      # (JETLS toplevel/method-overwrite)
+function duplicate(x::Int, y::Int=2)
     return x + y
 end
 ```
@@ -1380,21 +1377,19 @@ prominent.
 
 Example:
 
-```julia
+```@diagnostics; codes = ["toplevel/abstract-field"]
 struct MyStruct
-    xs::Vector{Integer}  # `MyStruct` has abstract field `xs::Vector{Integer}`
-                         # (JETLS toplevel/abstract-field)
+    xs::Vector{Integer}
 end
 
 struct AnotherStruct
-    data::AbstractVector{Int}  # `AnotherStruct` has abstract field `data::AbstractVector{Int}`
-                               # (JETLS toplevel/abstract-field)
+    data::AbstractVector{Int}
 end
 ```
 
 To fix this, use concrete types or parameterize your struct:
 
-```julia
+```@diagnostics; absent_codes = ["toplevel/abstract-field"]
 struct MyStruct
     xs::Vector{Int}  # Concrete element type
 end
@@ -1431,12 +1426,13 @@ JETLS analyzes the included file without applying the function.
 
 Example:
 
-```julia
-include(rewrite, "generated.jl")  # JET analyzes this code approximately because it uses an unsupported feature.
-                                  #
-                                  # JET does not support `include(mapexpr::Function, filename::String)`.
-                                  # The included file is analyzed without applying `mapexpr`.
-                                  # (JETLS toplevel/unsupported-feature)
+```@diagnostics-setup; workspace = "unsupported-feature", file = "generated.jl"
+generated() = nothing
+```
+
+```@diagnostics; workspace = "unsupported-feature", file = "main.jl", codes = ["toplevel/unsupported-feature"]
+rewrite(@nospecialize ex) = identity.(Ref{Any}(ex))
+include(rewrite, "generated.jl")
 ```
 
 #### [Analysis skipped (`toplevel/analysis-skipped`)](@id diagnostic/reference/toplevel/analysis-skipped)
@@ -1487,11 +1483,17 @@ and [`lowering/unused-import`](@ref diagnostic/reference/lowering/unused-import)
 
 Example (`ext/MyPkgSomeDepExt.jl`):
 
-```julia
-module MyPkgSomeDepExt  # JETLS does not support full analysis of package extensions yet.
-                        #
-                        # This file is not analyzed, so diagnostics that require full analysis are not reported for it.
-                        # (JETLS toplevel/analysis-skipped)
+```@diagnostics-setup; workspace = "MyPkg", file = "Project.toml"
+name = "MyPkg"
+uuid = "5f3c8a2e-7b1d-4e6a-9c0f-2d8b4a6e1c37"
+```
+
+```@diagnostics-setup; workspace = "MyPkg", file = "src/MyPkg.jl"
+module MyPkg end
+```
+
+```@diagnostics; workspace = "MyPkg", file = "ext/MyPkgSomeDepExt.jl", codes = ["toplevel/analysis-skipped"]
+module MyPkgSomeDepExt
 
 using MyPkg, SomeDep
 
@@ -1502,21 +1504,30 @@ Example (`test/runtests.jl`, where each test file runs its own test set and
 the later tests do not depend on `test/test_expensive.jl`), with the following
 `.JETLSConfig.toml`:
 
-```toml
+```@diagnostics-file; workspace = "MyPkg", file = ".JETLSConfig.toml"
 [[initialization_options.analysis_overrides]]
 path = "test/test_expensive.jl"
 on_include = "skip"
 ```
 
-```julia
+```@diagnostics-setup; workspace = "MyPkg", file = "test/test_basics.jl"
+@test true
+```
+
+```@diagnostics-setup; workspace = "MyPkg", file = "test/test_expensive.jl"
+@test true
+```
+
+```@diagnostics-setup; workspace = "MyPkg", file = "test/test_utilities.jl"
+@test true
+```
+
+```@diagnostics; workspace = "MyPkg", file = "test/runtests.jl", codes = ["toplevel/analysis-skipped"]
 using Test
 
 @testset "MyPkg.jl" begin
     @testset "basics" include("test_basics.jl")
-    @testset "expensive" include("test_expensive.jl")  # Full analysis skipped this `include` because the file is excluded by `analysis_overrides`.
-                                                       #
-                                                       # The definitions in the excluded file `/path/to/test/test_expensive.jl` are not available to the code after this point.
-                                                       # (JETLS toplevel/analysis-skipped)
+    @testset "expensive" include("test_expensive.jl")
     @testset "utilities" include("test_utilities.jl")
 end
 ```
@@ -1529,7 +1540,8 @@ Reported at an `include` call when full analysis reaches a file excluded by
 [`analysis_overrides`](@ref init-options/analysis_overrides) with
 `on_include = "stop"` (the default). Full analysis stops the whole analysis
 unit before loading the file, rather than skipping the include and continuing
-with missing definitions.
+with missing definitions. The diagnostic links to the excluded file as related
+information.
 
 Code after that point and method bodies are not analyzed. Diagnostics from
 top-level code before it are kept, and other analysis units are unaffected.
@@ -1547,16 +1559,13 @@ Since its default severity is `Warning`, it causes
 
 Example (`main.jl`), with the following `.JETLSConfig.toml`:
 
-```toml
+```@diagnostics-file; workspace = "analysis-stopped", file = ".JETLSConfig.toml"
 [[initialization_options.analysis_overrides]]
 path = "generated.jl"
 ```
 
-```julia
-include("generated.jl")  # Full analysis of this unit stopped because a file is excluded by `analysis_overrides`.
-                         #
-                         # The excluded file `/path/to/generated.jl` was not analyzed. Code after this point and method bodies are not analyzed.
-                         # (JETLS toplevel/analysis-stopped)
+```@diagnostics; workspace = "analysis-stopped", file = "main.jl", codes = ["toplevel/analysis-stopped"]
+include("generated.jl")
 ```
 
 ### [Inference diagnostic (`inference/*`)](@id diagnostic/reference/inference)
@@ -1574,6 +1583,9 @@ before the code runs:
 - [`inference/undef-keyword`](@ref diagnostic/reference/inference/undef-keyword) → `UndefKeywordError`
 - [`inference/type-error/*`](@ref diagnostic/reference/inference/type-error) → `TypeError` (failing type assertion, non-boolean condition, or keyword-value type mismatch)
 
+In addition, [`inference/failing-test`](@ref diagnostic/reference/inference/failing-test)
+reports a `@test` that always fails.
+
 #### [Undefined global variable (`inference/undef-global-var`)](@id diagnostic/reference/inference/undef-global-var)
 
 **Default severity**: `Warning`
@@ -1584,9 +1596,9 @@ diagnostic can detect comprehensive cases including qualified references
 
 Example:
 
-```julia
+```@diagnostics; codes = ["inference/undef-global-var"]
 function undef_global_var(x)
-    Base.Math.sinkernel(x)  # `Base.Math.sinkernel` is not defined (JETLS inference/undef-global-var)
+    Base.Math.sinkernel(x)
 end
 ```
 
@@ -1604,13 +1616,13 @@ attempts to access a field that doesn't exist on a struct type.
 
 Example:
 
-```julia
+```@diagnostics; codes = ["inference/field-error"]
 struct MyStruct
     property::Int
 end
 function field_error()
     x = MyStruct(42)
-    return x.propert  # FieldError: type `MyStruct` has no field `propert`, available fields: `property` (JETLS inference/field-error)
+    return x.propert
 end
 ```
 
@@ -1628,9 +1640,9 @@ such as `getfield(x, i)` or tuple indexing `tpl[i]`.
 
 Example:
 
-```julia
+```@diagnostics; codes = ["inference/bounds-error"]
 function bounds_error(tpl::Tuple{Int})
-    return tpl[2]  # BoundsError: attempt to access Tuple{Int64} at index [2] (JETLS inference/bounds-error)
+    return tpl[2]
 end
 ```
 
@@ -1646,67 +1658,38 @@ When no method matches, the diagnostic explains that the function exists but
 has no method for the inferred combination of argument types. It also includes
 up to three closest candidates:
 
-```julia
-sin('4')  # MethodError: no matching method found `sin(::Char)`
-          #
-          # The function `sin` exists, but no method is defined for this combination of argument types.
-          #
-          # Closest candidates are:
-          # - `sin(!Matched::ComplexF16)`
-          #   @ Base math.jl:1527
-          # - `sin(!Matched::BigFloat)`
-          #   @ Base mpfr.jl:946
-          # - `sin(!Matched::Missing)`
-          #   @ Base math.jl:1548
-          # - ...
-          # (JETLS inference/method-error)
+```@diagnostics; codes = ["inference/method-error"]
+sin('4')
 ```
 
 When multiple union-split signatures fail to find matches, the diagnostic will
 report all failed signatures:
 
-```julia
+```@diagnostics; codes = ["inference/method-error"]
 only_int(x::Int) = 2x
 
 function union_split_method_error(x::Union{Int,String})
-    return only_int(x)  # MethodError: no matching method found `only_int(::String)` (1/2 union split)
-                        #
-                        # The function `only_int` exists, but no method is defined for this combination of argument types.
-                        #
-                        # Closest candidates are:
-                        # - `only_int(!Matched::Int64)`
-                        #   @ Main Untitled-30064817009:1
-                        # (JETLS inference/method-error)
+    return only_int(x)
 end
 ```
 
 Passing a keyword argument that the called method does not accept, which
 raises a `MethodError` at runtime, is also reported under this code:
 
-```julia
+```@diagnostics; codes = ["inference/method-error"]
 kwfunc(; kw1=nothing, kw2=nothing) = (kw1, kw2)
 
-kwfunc(; kw3=42)  # unsupported keyword argument `kw3` in `kwfunc(; kw3::Int64)`
-                  # (JETLS inference/method-error)
+kwfunc(; kw3=42)
 ```
 
 Ambiguous calls are identified separately and include the conflicting methods
 and, when available, a possible disambiguating signature:
 
-```julia
+```@diagnostics; codes = ["inference/method-error"]
 ambiguous(x, y::Int) = x + y
 ambiguous(x::Int, y) = x - y
 
-ambiguous(1, 2)  # MethodError: `ambiguous(::Int64, ::Int64)` is ambiguous.
-                 #
-                 # Candidates:
-                 # - `ambiguous(x::Int64, y)`
-                 #   @ Main Untitled-30064817009:7
-                 # - `ambiguous(x, y::Int64)`
-                 #   @ Main Untitled-30064817009:6
-                 #
-                 # Possible fix, define: `ambiguous(::Int64, ::Int64)`
-                 # (JETLS inference/method-error)
+ambiguous(1, 2)
 ```
 
 Within a union-split call, ambiguous branches are reported separately from
@@ -1721,10 +1704,10 @@ default value). Julia raises an `UndefKeywordError` at runtime in this case.
 
 Examples:
 
-```julia
+```@diagnostics; codes = ["inference/undef-keyword"]
 required_keyword(pos; key) = (pos, key)
 
-required_keyword(42)  # missing keyword argument `key` (JETLS inference/undef-keyword)
+required_keyword(42)
 ```
 
 To avoid false positives, this is only reported when the keyword is
@@ -1747,11 +1730,10 @@ a `TypeError` at runtime in this case.
 
 Examples:
 
-```julia
+```@diagnostics; codes = ["inference/type-error/keyword"]
 typed_keyword(; key::Int=0) = key
 
-typed_keyword(; key=1.0)  # TypeError: in keyword argument `key`, expected `Int64`, got a value of type `Float64`
-                          # (JETLS inference/type-error/keyword)
+typed_keyword(; key=1.0)
 ```
 
 To avoid false positives, this is only reported when the value type can never
@@ -1767,10 +1749,9 @@ runtime when a value does not satisfy a type assertion like `x::T`.
 
 Example:
 
-```julia
+```@diagnostics; codes = ["inference/type-error/type-assert"]
 let x = rand()
-    o = x::Int  # TypeError: in typeassert, expected Int64, got a value of type Float64
-                # (JETLS inference/type-error/type-assert)
+    o = x::Int
     o
 end
 ```
@@ -1789,11 +1770,10 @@ Julia requires conditions to be strictly `Bool`; using other types will raise a
 
 Examples:
 
-```julia
+```@diagnostics; codes = ["inference/type-error/non-bool-cond"]
 function non_boolean_example()
     x = 1
-    if x  # non-boolean `Int64` found in boolean context
-          # (JETLS inference/type-error/non-bool-cond)
+    if x
         return "truthy"
     end
 end
@@ -1801,10 +1781,9 @@ end
 
 When union-split types include non-boolean branches:
 
-```julia
+```@diagnostics; codes = ["inference/type-error/non-bool-cond"]
 function is_enabled(flags::Dict{String,Bool}, name::String)
-    if get(flags, name, nothing)  # non-boolean `Nothing` found in boolean context (1/2 union split)
-                                  # (JETLS inference/type-error/non-bool-cond)
+    if get(flags, name, nothing)
         return true
     end
     return false
@@ -1822,7 +1801,7 @@ end
     not reported when its argument types do not involve `Missing`, even if the
     callee itself returns `missing`:
 
-    ```julia
+    ```@diagnostics; absent_codes = ["inference/type-error/non-bool-cond"]
     parse_flag(s::String) = s == "yes" ? true : s == "no" ? false : missing
 
     function use_flag(s::String)
@@ -1842,6 +1821,55 @@ end
 `inference/type-error/non-bool-cond`. It is kept for existing documentation
 links and diagnostic pattern configurations for now, but this compatibility
 support may be removed in a future release.
+
+#### [Failing test (`inference/failing-test`)](@id diagnostic/reference/inference/failing-test)
+
+**Default severity:** `Warning`
+
+`@test`s whose expression is inferred to always evaluate to `false` or to a
+non-boolean value. Test.jl records such a test as a failure whenever it runs.
+
+Examples:
+
+```@diagnostics; codes = ["inference/failing-test"]
+using Test
+
+@testset "example" begin
+    s = string(42)
+    @test s isa Int
+end
+
+@testset "example" begin
+    v = [1, 2, 3]
+    @test length(v)
+end
+```
+
+Only the tests in top-level code, including the code in `@testset`s, are
+reported, not those in function bodies. Tests expected to fail, i.e.
+`@test_broken` and `@test ex broken=true`, are not reported. Note that
+`@test false` is reported as well, so use e.g. `error("unreachable")` to mark
+code that should not be reached.
+
+JETLS analyzes test sets as if they were declared with `failfast=true`, where
+a failing test aborts the test set. So it analyzes the code after `@test ex`
+assuming that `ex` is `true`, and does not analyze the code after a test that
+always fails:
+
+```@diagnostics; codes = ["inference/failing-test"]
+using Test
+
+@testset "example" begin
+    x = rand((0, nothing))
+    @test x isa Int
+    sin(x)  # not reported as `sin(::Nothing)`, since `x` is an `Int` here
+    @test x isa String
+    sin("julia")  # not analyzed
+end
+```
+
+Test sets that specify `failfast=false` and test sets of a custom type, e.g.
+`@testset MyTestSet "example" begin ... end`, are analyzed as declared.
 
 ### [Configuration diagnostic (`config/*`)](@id diagnostic/reference/config)
 

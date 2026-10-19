@@ -23,6 +23,10 @@ function eachint(f, xs::Vector{Int})
 end
 end
 
+module type_annotate_test_module
+using Test
+end
+
 # Run the full TypeAnnotation pipeline through its exported driver and return
 # `(fi, ctx)` for the toplevel containing byte 1 — i.e. the *first* top-level
 # statement in `code`. The tests below either pass single-toplevel snippets
@@ -875,6 +879,43 @@ end
             fi, ctx = type_annotate(code)
             types = query_all_types(fi, ctx, "s.value")
             @test any(t -> widenconst(t) === Int, types)
+        end
+    end
+
+    @testset "narrowing after `@test`" begin
+        let code = """
+            @testset "narrowing" begin
+                x = rand((0, nothing))
+                @test x isa Int
+                sin(x)
+            end
+            """
+            _, ctx = type_annotate(code, type_annotate_test_module)
+            @test widenconst(get_type_for_range(ctx, range_of(code, "sin(x)")[5:5])) === Int
+        end
+
+        # the synthetic value of the expansion is hidden from inference
+        let code = """
+            @testset "value" begin
+                res = @test rand(Bool)
+            end
+            """
+            _, ctx = type_annotate(code, type_annotate_test_module)
+            @test get_type_for_range(ctx, range_of(code, "res")) === Any
+        end
+
+        # tests expected to fail do not narrow
+        for test in ("@test_broken x isa Int", "@test x isa Int broken=true",
+                     "@test x isa Int skip=true")
+            code = """
+                @testset "narrowing" begin
+                    x = rand((0, nothing))
+                    $test
+                    sin(x)
+                end
+                """
+            _, ctx = type_annotate(code, type_annotate_test_module)
+            @test widenconst(get_type_for_range(ctx, range_of(code, "sin(x)")[5:5])) === Union{Nothing,Int}
         end
     end
 
