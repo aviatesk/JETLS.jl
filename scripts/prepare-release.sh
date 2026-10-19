@@ -124,7 +124,19 @@ echo "Source commit SHA: $SOURCE_COMMIT"
 git checkout release
 git pull "$REMOTE" release
 git checkout -b "releases/$JETLS_VERSION"
-git merge "$SOURCE_COMMIT" -X theirs -m "Merge $SOURCE_BRANCH into releases/$JETLS_VERSION"
+MERGE_MESSAGE="Merge $SOURCE_BRANCH into releases/$JETLS_VERSION"
+if ! git merge "$SOURCE_COMMIT" -X theirs -m "$MERGE_MESSAGE"; then
+    # `-X theirs` leaves modify/delete conflicts, so resolve them toward the source branch too
+    git diff --name-only --diff-filter=U -z | while IFS= read -r -d '' path; do
+        if git cat-file -e ":3:$path" 2>/dev/null; then
+            git checkout --theirs -- "$path"
+            git add -- "$path"
+        else
+            git rm --quiet -- "$path"
+        fi
+    done
+    git commit -m "$MERGE_MESSAGE"
+fi
 
 # Step 2: Vendor dependency packages with local paths
 echo "==> Step 2: Vendoring dependencies (local paths)"
