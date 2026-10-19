@@ -1856,15 +1856,15 @@ a failing test aborts the test set. So it analyzes the code after `@test ex`
 assuming that `ex` is `true`, and does not analyze the code after a test that
 always fails:
 
-```@diagnostics; codes = ["inference/failing-test"]
+```@diagnostics; codes = ["inference/failing-test"], absent_codes = ["inference/method-error"]
 using Test
 
 @testset "example" begin
     x = rand((0, nothing))
     @test x isa Int
-    sin(x)  # not reported as `sin(::Nothing)`, since `x` is an `Int` here
+    @test sin(x) == 0  # `sin(::Nothing)` is not reported, since `x` is an `Int` here
     @test x isa String
-    sin("julia")  # not analyzed
+    @test sin("julia") == "sin"  # not analyzed
 end
 ```
 
@@ -1891,17 +1891,17 @@ Reported on a deprecated key of `.JETLSConfig.toml`. JETLS reads a deprecated
 key that has a replacement as the replacement, and ignores one that has none,
 but the key may stop being recognized in a future release.
 
-```toml
+```@diagnostics; file = ".JETLSConfig.toml", codes = ["config/deprecated-key"]
 [testrunner]
-executable = "testrunner"  # `testrunner.executable` is deprecated and no longer has any effect; please remove it from your config.
-                           # (JETLS config/deprecated-key)
+executable = "testrunner"
 ```
 
 !!! tip "Code action available"
-    Use the "Remove deprecated `testrunner.executable`" code action to remove
-    the key, along with any table it leaves empty. For a key that has a
-    replacement, the "Replace `…` with `…`" code action moves its value to the
-    new key instead.
+    Use the "Remove deprecated `…`" code action to remove the key, along with
+    any table it leaves empty. For a key that has a replacement, the
+    "Replace `…` with `…`" code action moves its value to the new key instead.
+    If the new key is already set, the key is removed and the value of the new
+    key is kept.
 
 #### [Deprecated configuration value (`config/deprecated-value`)](@id diagnostic/reference/config/deprecated-value)
 
@@ -1911,14 +1911,14 @@ Reported on a deprecated value of a `.JETLSConfig.toml` setting. JETLS reads
 the value as its replacement, but the value may stop being accepted in a future
 release.
 
-```toml
+```@diagnostics; file = ".JETLSConfig.toml", codes = ["config/deprecated-value"]
 [full_analysis]
-auto_instantiate = true  # `true` for `full_analysis.auto_instantiate` is deprecated; use `"always"` instead.
-                         # (JETLS config/deprecated-value)
+auto_instantiate = true
 ```
 
 !!! tip "Code action available"
-    Use the "Replace `true` with `"always"`" code action to replace the value.
+    Use the "Replace `…` with `…`" code action to replace the value with the
+    new one.
 
 ### [TestRunner diagnostic (`testrunner/*`)](@id diagnostic/reference/testrunner)
 
