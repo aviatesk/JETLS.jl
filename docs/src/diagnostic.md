@@ -1540,7 +1540,8 @@ Reported at an `include` call when full analysis reaches a file excluded by
 [`analysis_overrides`](@ref init-options/analysis_overrides) with
 `on_include = "stop"` (the default). Full analysis stops the whole analysis
 unit before loading the file, rather than skipping the include and continuing
-with missing definitions.
+with missing definitions. The diagnostic links to the excluded file as related
+information.
 
 Code after that point and method bodies are not analyzed. Diagnostics from
 top-level code before it are kept, and other analysis units are unaffected.

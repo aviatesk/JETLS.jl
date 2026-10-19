@@ -407,6 +407,14 @@ function JET.print_report(io::IO, report::AnalysisStoppedReport)
     return nothing
 end
 
+excluded_file_related_information(excluded_file::AbstractString) =
+    DiagnosticRelatedInformation[
+        DiagnosticRelatedInformation(;
+            location = Location(;
+                uri = to_valid_uri(excluded_file),
+                range = line_range(1)),
+            message = "The excluded file")]
+
 function jet_toplevel_error_report_to_diagnostic(
         @nospecialize(report::JET.ToplevelErrorReport), world::UInt,
         postprocessor::JET.PostProcessor;
@@ -428,13 +436,15 @@ function jet_toplevel_error_report_to_diagnostic(
             TOPLEVEL_CONCRETIZATION_TIMEOUT_CODE : TOPLEVEL_ERROR_CODE
     end
     return Diagnostic(;
+        message,
         range = line_range(report.line),
         severity = report isa AnalysisStoppedReport ?
             DiagnosticSeverity.Warning : DiagnosticSeverity.Error,
-        message,
-        source = DIAGNOSTIC_SOURCE_SAVE,
         code,
         codeDescription = diagnostic_code_description(code),
+        source = DIAGNOSTIC_SOURCE_SAVE,
+        relatedInformation = report isa AnalysisStoppedReport ?
+            excluded_file_related_information(report.excluded_file) : nothing,
         data)
 end
 
@@ -796,21 +806,14 @@ function toplevel_warning_report_to_diagnostic_impl(report::IncludeSkippedReport
         JET.print_wrapped(io, "The definitions in the excluded file `$(report.excluded_file)` " *
             "are not available to the code after this point.")
     end
-    relatedInformation = DiagnosticRelatedInformation[
-        DiagnosticRelatedInformation(;
-            location = Location(;
-                uri = to_valid_uri(report.excluded_file),
-                range = line_range(1)),
-            message = "The excluded file")
-    ]
     return Diagnostic(;
+        message,
         range = line_range(report.line),
         severity = DiagnosticSeverity.Information,
-        message,
-        source = DIAGNOSTIC_SOURCE_SAVE,
         code = TOPLEVEL_ANALYSIS_SKIPPED_CODE,
         codeDescription = diagnostic_code_description(TOPLEVEL_ANALYSIS_SKIPPED_CODE),
-        relatedInformation)
+        source = DIAGNOSTIC_SOURCE_SAVE,
+        relatedInformation = excluded_file_related_information(report.excluded_file))
 end
 
 # lowering diagnostic

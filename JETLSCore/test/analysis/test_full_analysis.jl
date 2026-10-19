@@ -690,6 +690,7 @@ end
                 @test diagnostic.source == JETLSCore.DIAGNOSTIC_SOURCE_SAVE
                 @test diagnostic.range == JETLSCore.line_range(3)
                 @test occursin("excluded.jl", diagnostic.message)
+                @test only(diagnostic.relatedInformation).location.uri == excluded_uri
                 @test any(result.uri2diagnostics[entry_uri]) do d
                     d.code == JETLSCore.INFERENCE_UNDEF_GLOBAL_VAR_CODE &&
                         occursin("missing_before_include", d.message)
@@ -738,6 +739,7 @@ end
             @test diagnostic.severity == DiagnosticSeverity.Warning
             @test diagnostic.source == JETLSCore.DIAGNOSTIC_SOURCE_SAVE
             @test diagnostic.range == JETLSCore.line_range(3)
+            @test only(diagnostic.relatedInformation).location.uri == filepath2uri(excluded_path)
             @test !execution.context_refreshed
             @test isfile(started)
             @test !isfile(marker)
