@@ -18,37 +18,59 @@ Parsers = "2bf889ff-109e-5fa9-9ba3-339ee07cbe67"
 JSON3 = "00ac8d46-747e-5902-8e12-fdfc767369c7"
 
 [sources.JuliaSyntax]
-path = "../vendor/JuliaSyntax"
+subdir = "vendor/JuliaSyntax"
+rev = "28f9ade325674d450eced8588572ce570218705c"
+url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.Compiler]
-path = "../vendor/Compiler"
+subdir = "vendor/Compiler"
+rev = "28f9ade325674d450eced8588572ce570218705c"
+url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.CodeTracking]
-path = "../vendor/CodeTracking"
+subdir = "vendor/CodeTracking"
+rev = "28f9ade325674d450eced8588572ce570218705c"
+url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.MacroTools]
-path = "../vendor/MacroTools"
+subdir = "vendor/MacroTools"
+rev = "28f9ade325674d450eced8588572ce570218705c"
+url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.LoweredCodeUtils]
-path = "../vendor/LoweredCodeUtils"
+subdir = "vendor/LoweredCodeUtils"
+rev = "28f9ade325674d450eced8588572ce570218705c"
+url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.PrecompileTools]
-path = "../vendor/PrecompileTools"
+subdir = "vendor/PrecompileTools"
+rev = "28f9ade325674d450eced8588572ce570218705c"
+url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.Preferences]
-path = "../vendor/Preferences"
+subdir = "vendor/Preferences"
+rev = "28f9ade325674d450eced8588572ce570218705c"
+url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.JuliaInterpreter]
-path = "../vendor/JuliaInterpreter"
+subdir = "vendor/JuliaInterpreter"
+rev = "28f9ade325674d450eced8588572ce570218705c"
+url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.StructTypes]
-path = "../vendor/StructTypes"
+subdir = "vendor/StructTypes"
+rev = "28f9ade325674d450eced8588572ce570218705c"
+url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.Parsers]
-path = "../vendor/Parsers"
+subdir = "vendor/Parsers"
+rev = "28f9ade325674d450eced8588572ce570218705c"
+url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.JSON3]
-path = "../vendor/JSON3"
+subdir = "vendor/JSON3"
+rev = "28f9ade325674d450eced8588572ce570218705c"
+url = "https://github.com/aviatesk/JETLS.jl"
 
 [compat]
 Compiler = "0.1"

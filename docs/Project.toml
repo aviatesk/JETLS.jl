@@ -5,7 +5,9 @@ JETLSCore = "8d6afe4c-923b-5912-b63d-b990009c9e74"
 JETLS = "a3b70258-0602-4ee2-b5a6-54c2470400db"
 
 [sources.JETLSCore]
-path = "../vendor/JETLSCore"
+subdir = "vendor/JETLSCore"
+rev = "28f9ade325674d450eced8588572ce570218705c"
+url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.JETLS]
 path = ".."
