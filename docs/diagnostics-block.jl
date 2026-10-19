@@ -427,12 +427,13 @@ end
 
 # Related information messages are plain text, but the hover renders them as Markdown, so
 # shows the signatures of stack frames as code, including those labeled as `entry: h()` in
-# inference diagnostics
+# inference diagnostics, and the names of inlined frames, which have no signatures
 function related_message(message::String)
     m = match(r"^((?:origin|via|entry): )?(.*)$"s, message)::RegexMatch
     label, sig = something(m[1], ""), m[2]::AbstractString
     occursin('\n', sig) && return message
-    Meta.isexpr(Meta.parse(sig; raise = false), (:call, :where)) || return message
+    ex = Meta.parse(sig; raise = false)
+    ex isa Symbol || Meta.isexpr(ex, (:call, :where)) || return message
     return string(label, '`', sig, '`')
 end
 
