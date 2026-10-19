@@ -1284,6 +1284,27 @@ end
         @test info.message == "error(::String)"
     end
 
+    @testset "macro expansion error diagnostics shown in the world of the expansion" begin
+        # the server runs in a world that predates the definitions of the analyzed code
+        server_world = Base.get_world_counter()
+        mod = Module()
+        include_string(mod, """
+            struct MacroCheckError <: Exception
+                msg::String
+            end
+            Base.showerror(io::IO, err::MacroCheckError) = print(io, "MacroCheckError: ", err.msg)
+            macro m_custom_error(_)
+                throw(MacroCheckError("custom message"))
+            end
+            """, "Untitled-1")
+        diagnostics = Base.invoke_in_world(server_world,
+            get_lowering_diagnostics, "@m_custom_error 42"; context_module=mod)
+        diagnostic = only(diagnostics)
+        @test diagnostic.message == "Error expanding macro\nMacroCheckError: custom message"
+        info = only(something(diagnostic.relatedInformation))
+        @test info.message == "var\"@m_custom_error\"(::LineNumberNode, ::Module, ::Any)"
+    end
+
     @testset "nested macro expansion error diagnostics" begin
         diagnostics = get_lowering_diagnostics("""let
             @m_outer_error missing

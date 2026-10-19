@@ -256,6 +256,8 @@ end
     with_test_file(content) do testfile
         result = run_testrunner_process(["--json", testfile, "error"])
         @test result.exitcode == 1
+        # no warning about accessing `f` in a world prior to its definition
+        @test isempty(result.stderr)
         json_result = JSON3.read(result.stdout, TestRunnerResult)
         relatedInformation = something(only(json_result.diagnostics).relatedInformation)
         # only the frames of the test code, not those of TestRunner itself

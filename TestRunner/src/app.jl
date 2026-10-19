@@ -394,9 +394,14 @@ function testrunner_diagnostic(result::Union{Test.Fail,Test.Error})
                     if linfo isa Core.CodeInstance
                         linfo = linfo.def
                     end
-                    local message = linfo isa Core.MethodInstance ?
-                        sprint(Base.show_tuple_as_call, Symbol(""), linfo.specTypes) :
+                    local message = if linfo isa Core.MethodInstance
+                        # The test code defines its functions in worlds newer than this code
+                        # runs in, and showing their types looks up their bindings
+                        sig = linfo.specTypes
+                        @invokelatest sprint(Base.show_tuple_as_call, Symbol(""), sig)
+                    else
                         string(sf.func)
+                    end
                     push!(relatedInformation, TestRunnerDiagnosticRelatedInformation(
                         string(sf.file), sf.line, message))
                 end

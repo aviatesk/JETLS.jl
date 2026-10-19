@@ -837,8 +837,11 @@ function macro_expansion_stacktrace(bt::Vector{<:Union{Base.InterpreterIP,Ptr{Cv
     return stack
 end
 
+# The signatures are shown in `world`, where the macro was expanded, since the server world
+# predates the definitions of the analyzed code, and showing them looks up their bindings
 function stacktrace_to_related_information(
-        stacktrace::Vector{Base.StackTraces.StackFrame}, postprocessor::LSPostProcessor
+        stacktrace::Vector{Base.StackTraces.StackFrame}, world::UInt,
+        postprocessor::LSPostProcessor
     )
     relatedInformation = DiagnosticRelatedInformation[]
     for stackframe in stacktrace
@@ -850,7 +853,8 @@ function stacktrace_to_related_information(
         sig = let linfo = stackframe.linfo
             linfo isa Core.CodeInstance && (linfo = linfo.def)
             if linfo isa Core.MethodInstance
-                sprint(Base.show_tuple_as_call, Symbol(""), linfo.specTypes)
+                Base.invoke_in_world(world,
+                    sprint, Base.show_tuple_as_call, Symbol(""), linfo.specTypes)::String
             else
                 String(stackframe.func)
             end
@@ -2113,8 +2117,12 @@ function per_stmt_diagnostics!(
                     msg = "Macro name `$(inner.var)` not found"
                     relatedInformation = nothing
                 else
-                    msg *= "\n" * sprint(locked_showerror, inner)
-                    relatedInformation = stacktrace_to_related_information(st, postprocessor)
+                    # in `world`, which has e.g. the `showerror` methods of the analyzed code
+                    errmsg = sprint() do io::IO
+                        with_base_render_lock(Base.invoke_in_world, world, showerror, io, inner)
+                    end
+                    msg *= "\n" * postprocessor(errmsg)
+                    relatedInformation = stacktrace_to_related_information(st, world, postprocessor)
                 end
                 provs = JS.flattened_provenance(err.ex)
                 provs′ = @view provs[2:end]
