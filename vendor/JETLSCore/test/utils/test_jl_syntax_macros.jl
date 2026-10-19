@@ -11,6 +11,10 @@ macro lazy_wrapper(idx)
         lazy"idx=$idx"
     end)
 end
+macro expect_symbol(x)
+    x isa Symbol || error("expected a symbol: $x")
+    return esc(x)
+end
 end
 
 baremodule something_hygiene_module
@@ -273,11 +277,11 @@ end
 
     @testset "validation" begin
         for (code, msg) in (
-                ("@NamedTuple", "@NamedTuple expects exactly one argument"),
-                ("@NamedTuple a b", "@NamedTuple expects exactly one argument"),
-                ("@NamedTuple (a::Int, b)", "@NamedTuple expects {...} or begin...end"),
-                ("@NamedTuple{a.b::Int}", "must contain a sequence of name or name::type expressions"),
-                ("@NamedTuple{a::Int = 1}", "must contain a sequence of name or name::type expressions"),
+                ("@NamedTuple", "`@NamedTuple` expects exactly one argument"),
+                ("@NamedTuple a b", "`@NamedTuple` expects exactly one argument"),
+                ("@NamedTuple (a::Int, b)", "`@NamedTuple` expects `{...}` or `begin ... end`"),
+                ("@NamedTuple{a.b::Int}", "must contain a sequence of `name` or `name::type` expressions"),
+                ("@NamedTuple{a::Int = 1}", "must contain a sequence of `name` or `name::type` expressions"),
                 ("@NamedTuple{a::Int, a}", "duplicate field name `a`"),
             )
             let diags = collect_macro_diagnostics() do
@@ -338,10 +342,10 @@ end
 
     @testset "validation" begin
         for (code, msg) in (
-                ("@Kwargs", "@Kwargs expects exactly one argument"),
-                ("@Kwargs (a::Int, b)", "@Kwargs expects {...} or begin...end"),
-                ("@Kwargs{a.b::Int}", "@Kwargs must contain a sequence of name or name::type expressions"),
-                ("@Kwargs{a::Int, a}", "@Kwargs: duplicate field name `a`"),
+                ("@Kwargs", "`@Kwargs` expects exactly one argument"),
+                ("@Kwargs (a::Int, b)", "`@Kwargs` expects `{...}` or `begin ... end`"),
+                ("@Kwargs{a.b::Int}", "`@Kwargs` must contain a sequence of `name` or `name::type` expressions"),
+                ("@Kwargs{a::Int, a}", "`@Kwargs`: duplicate field name `a`"),
             )
             let diags = collect_macro_diagnostics() do
                     jlexpand(code)
@@ -400,7 +404,7 @@ end
                 @test length(diags) == 1
                 d = only(diags)
                 @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
-                @test occursin("@lock expects exactly two arguments", d.msg)
+                @test occursin("`@lock` expects exactly two arguments", d.msg)
             end
         end
     end
@@ -478,7 +482,7 @@ end
             @test length(diags) == 1
             d = only(diags)
             @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
-            @test occursin("unsupported threadpool in @spawn: foo", d.msg)
+            @test occursin("unsupported threadpool in `@spawn`: `:foo`", d.msg)
         end
 
         # Zero arguments and 3+ arguments both fall through to the variadic fallback
@@ -491,7 +495,7 @@ end
                 @test length(diags) == 1
                 d = only(diags)
                 @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
-                @test occursin("wrong number of arguments in @spawn", d.msg)
+                @test occursin("wrong number of arguments in `@spawn`", d.msg)
             end
         end
 
@@ -514,7 +518,7 @@ end
                 @test length(diags) == 1
                 d = only(diags)
                 @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
-                @test occursin("threadpool argument in @spawn must be", d.msg)
+                @test occursin("threadpool argument in `@spawn` must be", d.msg)
             end
         end
     end
@@ -661,7 +665,7 @@ end
             @test length(diags) == 1
             d = only(diags)
             @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
-            @test occursin("@lazy_str", d.msg)
+            @test occursin("`@lazy_str`", d.msg)
         end
         @test collect_macro_diagnostics() do
             jlresolve(lowering_module, "f(idx) = @lazy_wrapper idx")
@@ -825,6 +829,170 @@ end
     end
 end
 
+@testset "@doc" begin
+    @testset "macro expansion" begin
+        let st1 = jlexpand("@doc xxx")
+            @test JS.head(st1) === :block
+            @test children_heads(st1) == [:identifier, :call]
+        end
+
+        let st1 = jlexpand("@doc xxx(yyy::zzz)")
+            @test JS.head(st1) === :block
+            @test children_heads(st1) == [:identifier, :curly, :call]
+        end
+
+        let st1 = jlexpand("@doc xxx(::T) where T")
+            @test JS.head(st1) === :block
+            @test children_heads(st1) == [:identifier, :where, :call]
+        end
+
+        # Lookups of syntax rather than bindings keep only the placeholder.
+        for code in ("@doc true", "@doc xxx::Int")
+            let st1 = jlexpand(code)
+                @test JS.head(st1) === :call
+            end
+        end
+
+        let st1 = jlexpand("@doc \"docstring\" xxx(yyy) = yyy")
+            @test JS.head(st1) === :block
+            @test children_heads(st1) == [:value, :(=), :value]
+        end
+
+        # A documented signature is referenced like a lookup.
+        let st1 = jlexpand("@doc \"docstring\" xxx(yyy::zzz)")
+            @test JS.head(st1) === :block
+            @test children_heads(st1) == [:value, :identifier, :curly, :value]
+        end
+
+        let st1 = jlexpand("@doc \"docstring\" -> xxx")
+            @test JS.head(st1) === :block
+            @test children_heads(st1) == [:value, :identifier, :value]
+        end
+
+        # Nested old-style macros receive plain symbols (JuliaLang/JuliaLowering.jl#108).
+        let st1 = jlexpand("@doc \"docstring\" @expect_symbol xxx")
+            @test JS.head(st1) === :block
+            @test children_heads(st1) == [:value, :identifier, :value]
+        end
+    end
+
+    @testset "validation" begin
+        let diags = collect_macro_diagnostics() do
+                jlexpand("@doc()")
+            end
+            @test length(diags) == 1
+            @test occursin("`@doc` requires at least one argument", only(diags).msg)
+        end
+        let diags = collect_macro_diagnostics() do
+                jlexpand("@doc(\"docstring\", xxx, yyy)")
+            end
+            @test length(diags) == 1
+            @test occursin("`Bool` literal", only(diags).msg)
+        end
+        let diags = collect_macro_diagnostics() do
+                jlexpand("@doc(\"docstring\", xxx, false)")
+            end
+            @test isempty(diags)
+        end
+    end
+
+    @testset "binding resolution preserves provenance" begin
+        let res = jlresolve("@doc xxx")
+            assert_binding_provenance(res, :global, "xxx")
+        end
+        let res = jlresolve("@doc xxx.yyy")
+            assert_binding_provenance(res, :global, "xxx")
+        end
+        # Base evaluates the argument types of a looked-up signature, but neither argument
+        # names nor default values.
+        let res = jlresolve("@doc xxx(aaa, bbb::yyy = ccc, ddd::zzz...; eee = fff)")
+            assert_binding_provenance(res, :global, "xxx")
+            assert_binding_provenance(res, :global, "yyy")
+            assert_binding_provenance(res, :global, "zzz")
+            for name in ("aaa", "bbb", "ccc", "ddd", "eee", "fff")
+                assert_no_binding(res, :global, name)
+            end
+        end
+        let res = jlresolve("@doc xxx(::T, ::yyy) where T<:zzz")
+            assert_binding_provenance(res, :global, "yyy")
+            assert_binding_provenance(res, :global, "zzz")
+            assert_no_binding(res, :global, "T")
+        end
+        let res = jlresolve("@doc xxx{T}(::T)")
+            assert_binding_provenance(res, :global, "xxx")
+            assert_no_binding(res, :global, "T")
+        end
+        # Base looks up a parametric type by its head and never evaluates its parameters.
+        let res = jlresolve("@doc Vector{xxx}")
+            assert_binding_provenance(res, :global, "Vector")
+            assert_no_binding(res, :global, "xxx")
+        end
+        let res = jlresolve("@doc @xxx")
+            assert_binding_provenance(res, :global, "@xxx")
+        end
+        let res = jlresolve("@doc @xxx(::yyy)")
+            assert_binding_provenance(res, :global, "@xxx")
+            assert_binding_provenance(res, :global, "yyy")
+        end
+        let res = jlresolve("@doc xxx::yyy")
+            assert_no_binding(res, :global, "xxx")
+            assert_no_binding(res, :global, "yyy")
+        end
+        let res = jlresolve("@doc \"\$(xxx)\" yyy(zzz) = www")
+            assert_binding_provenance(res, :global, "xxx")
+            assert_binding_provenance(res, :global, "yyy")
+            assert_binding_provenance(res, :global, "www")
+        end
+        let res = jlresolve("@doc \"docstring\" xxx(yyy::zzz)")
+            assert_binding_provenance(res, :global, "xxx")
+            assert_binding_provenance(res, :global, "zzz")
+            assert_no_binding(res, :global, "yyy")
+        end
+        let res = jlresolve("@doc \"docstring\" (::xxx)(yyy)")
+            assert_binding_provenance(res, :global, "xxx")
+            assert_no_binding(res, :global, "yyy")
+        end
+        let res = jlresolve("@doc \"docstring\" (xxx(yyy::zzz), www)")
+            assert_binding_provenance(res, :global, "xxx")
+            assert_binding_provenance(res, :global, "zzz")
+            assert_binding_provenance(res, :global, "www")
+            assert_no_binding(res, :global, "yyy")
+        end
+        let res = jlresolve("@doc \"docstring\" -> xxx() = yyy")
+            assert_binding_provenance(res, :global, "yyy")
+        end
+        let res = jlresolve("@doc(\"docstring\", xxx() = yyy, false)")
+            assert_binding_provenance(res, :global, "yyy")
+        end
+        let res = jlresolve("@doc(aaa, bbb, \"docstring\", xxx)")
+            assert_binding_provenance(res, :global, "xxx")
+            assert_no_binding(res, :global, "aaa")
+            assert_no_binding(res, :global, "bbb")
+        end
+    end
+
+    # Old-style `Core.@doc` calls whatever the `Core.atdoc` global holds, and packages
+    # like DocStringExtensions replace it in `__init__`. Expanding at a world older than
+    # the replacement used to fail with a world-age `MethodError`, since global values
+    # are not world-partitioned. The `@eval` defines the replacement after `world`.
+    @testset "`Core.atdoc` replaced after the analysis world" begin
+        world = Base.get_world_counter()
+        atdoc = Core.atdoc
+        Core.atdoc!(@eval (args...) -> $atdoc(args...))
+        try
+            let res = jlresolve(lowering_module, "function f(); @doc xxx; end"; world)
+                assert_binding_provenance(res, :global, "xxx"; world)
+            end
+            let code = "if true; @doc \"docstring\" xxx() = yyy; end",
+                res = jlresolve(lowering_module, code; world)
+                assert_binding_provenance(res, :global, "yyy"; world)
+            end
+        finally
+            Core.atdoc!(atdoc)
+        end
+    end
+end
+
 # `@logmsg` is not exported from `Base`, so a module that uses it must
 # `using Logging` (or `using Base.CoreLogging`). The other logging macros
 # (`@debug`/`@info`/`@warn`/`@error`) are exported from `Base` by default.
@@ -871,26 +1039,66 @@ logging_resolve(code::AbstractString) = jlresolve(logging_module, code)
                 @test length(diags) == 1
                 d = only(diags)
                 @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
-                @test occursin("$name requires at least one argument", d.msg)
+                @test occursin("`$name` requires at least one argument", d.msg)
             end
         end
 
-        # Duplicate kwarg names are flagged via the sink at expansion time; without
-        # this, they'd surface only as a generic `syntax: field name "k" repeated`
-        # error from lowering the synthesized `(; k=1, k=2)` named tuple. Metadata
-        # keys (`_module`, `_group`, ...) are checked the same way. Expansion still
-        # completes so the kwarg RHS reaches scope analysis.
+        # Duplicate keys are flagged via the sink at expansion time; without this,
+        # they'd surface only as a generic `syntax: field name "k" repeated` error
+        # from lowering the synthesized `(; k=1, k=2)` named tuple. Positional
+        # arguments share the namespace of kwarg names under their `Symbol(ex)` key.
+        # Expansion still completes so the values reach scope analysis.
         for name in ("@debug", "@info", "@warn", "@error")
-            for code in ("$name \"msg\" k=1 k=2",
-                         "$name \"msg\" _module=a _module=b")
+            for (code, key) in (("$name \"msg\" k=1 k=2", "k"),
+                                ("$name \"msg\" sin sin", "sin"),
+                                ("$name sin sin sin", "sin"),
+                                ("$name \"msg\" x x=1", "x"),
+                                ("$name \"msg\" x=1 x", "x"),
+                                ("$name \"msg\" \"x\" x", "x"),
+                                ("$name \"msg\" a+b a + b", "a + b"))
                 let diags = collect_macro_diagnostics() do
                         logging_expand(code)
                     end
                     @test length(diags) == 1
                     d = only(diags)
                     @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
-                    @test occursin("provided more than once", d.msg)
+                    @test occursin("key `$key` provided more than once", d.msg)
                 end
+            end
+
+            # Accepted by Base: the message is not a key-value pair, splats are
+            # opaque, and metadata keys never reach the named tuple.
+            for code in ("$name sin sin",
+                         "$name \"msg\" xs... xs...",
+                         "$name \"msg\" :x x",
+                         "$name \"msg\" _module=a _module")
+                let diags = collect_macro_diagnostics() do
+                        logging_expand(code)
+                    end
+                    @test isempty(diags)
+                end
+            end
+
+            # Base's `Symbol(ex)` key conversion throws for keys containing `\0`.
+            for code in ("$name \"msg\" \"a\\0b\"", "$name \"msg\" '\\0'", "$name \"msg\" \"\\0\"=1")
+                let diags = collect_macro_diagnostics() do
+                        logging_expand(code)
+                    end
+                    @test length(diags) == 1
+                    d = only(diags)
+                    @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
+                    @test occursin("Symbol name may not contain \\0", d.msg)
+                end
+            end
+
+            # Base lets the last metadata override win.
+            let diags = collect_macro_diagnostics() do
+                    logging_expand("$name \"msg\" _module=a _module=b")
+                end
+                @test length(diags) == 1
+                d = only(diags)
+                @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Warning
+                @test occursin("metadata key `_module` provided more than once", d.msg)
             end
         end
     end
@@ -934,19 +1142,28 @@ end
                 @test length(diags) == 1
                 d = only(diags)
                 @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
-                @test occursin("@logmsg requires at least two arguments", d.msg)
+                @test occursin("`@logmsg` requires at least two arguments", d.msg)
             end
         end
 
-        # Duplicate kwargs are flagged the same way as for the level-implicit
+        # Duplicate keys are flagged the same way as for the level-implicit
         # logging macros: Error severity via sink, expansion still completes.
-        let diags = collect_macro_diagnostics() do
-                logging_expand("@logmsg lvl \"msg\" foo=1 foo=2")
+        for code in ("@logmsg lvl \"msg\" foo=1 foo=2", "@logmsg lvl \"msg\" foo foo")
+            let diags = collect_macro_diagnostics() do
+                    logging_expand(code)
+                end
+                @test length(diags) == 1
+                d = only(diags)
+                @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
+                @test occursin("key `foo` provided more than once", d.msg)
             end
-            @test length(diags) == 1
-            d = only(diags)
-            @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
-            @test occursin("provided more than once", d.msg)
+        end
+
+        # Neither the level nor the message is a key-value pair.
+        let diags = collect_macro_diagnostics() do
+                logging_expand("@logmsg x x x")
+            end
+            @test isempty(diags)
         end
     end
 
@@ -1111,10 +1328,13 @@ test_macro_lower(code::AbstractString) = jlresolve(test_lowering_module, code)
 
 @testset "Test.@test" begin
     @testset "macro expansion" begin
-        # Bare expression: returned unchanged.
+        # Without `broken` or `skip`: a branch on `ex === true`, which lets inference narrow
+        # types after the test.
         let st1 = test_macro_expand("@test x == 1")
-            @test JS.head(st1) === :call
-            @test strip(JS.sourcetext(st1)) == "x == 1"
+            @test JS.head(st1) === :if
+            cond = st1[1]
+            @test JS.head(cond) === :call
+            @test strip(JS.sourcetext(cond[2])) == "x == 1"
         end
 
         # Keyword arguments keep only the RHS so the `:(=)` node doesn't reach
@@ -1234,7 +1454,7 @@ end
             @test length(diags) == 1
             d = only(diags)
             @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
-            @test occursin("No arguments to @testset", d.msg)
+            @test occursin("No arguments to `@testset`", d.msg)
         end
 
         # Body argument that's not `for`/`begin`/`call`/`let`: reported via sink,
@@ -1259,7 +1479,7 @@ end
             @test length(diags) == 1
             d = only(diags)
             @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Warning
-            @test occursin("Multiple descriptions provided to @testset", d.msg)
+            @test occursin("Multiple descriptions provided to `@testset`", d.msg)
             @test JS.sourcetext(d.node) == "\"b\""
         end
         let diags = collect_macro_diagnostics() do
@@ -1268,7 +1488,7 @@ end
             @test length(diags) == 1
             d = only(diags)
             @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Warning
-            @test occursin("Multiple testset types provided to @testset", d.msg)
+            @test occursin("Multiple testset types provided to `@testset`", d.msg)
             @test JS.sourcetext(d.node) == "Bar"
         end
 
@@ -1395,7 +1615,7 @@ end
                 @test length(diags) == 1
                 d = only(diags)
                 @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
-                @test occursin("@test_throws expects exactly two arguments", d.msg)
+                @test occursin("`@test_throws` expects exactly two arguments", d.msg)
             end
         end
     end
@@ -1494,7 +1714,7 @@ end
             @test length(diags) == 1
             d = only(diags)
             @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
-            @test occursin("@test_logs needs at least one argument", d.msg)
+            @test occursin("`@test_logs` needs at least one argument", d.msg)
         end
     end
 
@@ -1527,7 +1747,7 @@ end
                 @test length(diags) == 1
                 d = only(diags)
                 @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
-                @test occursin("@test_deprecated expects one or two arguments", d.msg)
+                @test occursin("`@test_deprecated` expects one or two arguments", d.msg)
             end
         end
     end
@@ -1552,7 +1772,7 @@ end
                 @test length(diags) == 1
                 d = only(diags)
                 @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
-                @test occursin("@inferred expects one or two arguments", d.msg)
+                @test occursin("`@inferred` expects one or two arguments", d.msg)
             end
         end
     end
@@ -1907,7 +2127,7 @@ end
             @test length(diags) == 1
             d = only(diags)
             @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
-            @test occursin("invalid @static macro", d.msg)
+            @test occursin("invalid `@static` macro", d.msg)
         end
 
         # Zero arguments and 2+ arguments fall through to the variadic fallback.
@@ -1918,7 +2138,7 @@ end
                 @test length(diags) == 1
                 d = only(diags)
                 @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
-                @test occursin("invalid @static macro", d.msg)
+                @test occursin("invalid `@static` macro", d.msg)
             end
         end
 
@@ -1941,7 +2161,7 @@ end
             @test length(diags) == 1
             d = only(diags)
             @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
-            @test occursin("did not evaluate to a Bool", d.msg)
+            @test occursin("did not evaluate to a `Bool`", d.msg)
         end
     end
 

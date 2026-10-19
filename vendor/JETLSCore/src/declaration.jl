@@ -70,7 +70,7 @@ function find_declaration(
     (; context_module, world) = get_context_info(state, uri, pos)
 
     binding_result = select_target_binding(
-        st0, offset, context_module, world; caller="find_declaration", soft_scope)
+        st0, offset, context_module, world; soft_scope)
     if !isnothing(binding_result)
         (; ctx3, st3, binding) = binding_result
         binfo = JL.get_binding(ctx3, binding)

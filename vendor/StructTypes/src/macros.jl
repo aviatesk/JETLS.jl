@@ -16,7 +16,7 @@ for struct_type in (:Struct, :Mutable, :CustomStruct, :OrderedStruct, :AbstractT
         ```
         is equivalent to
         ```julia
-        StructTypes.StructType(::Type{MyStruct}) = StructType.Struct()
+        StructTypes.StructType(::Type{MyStruct}) = StructTypes.$(isolate_name($struct_type))()
         ```
         and 
         ```julia
@@ -29,7 +29,7 @@ for struct_type in (:Struct, :Mutable, :CustomStruct, :OrderedStruct, :AbstractT
         struct MyStruct
             val::Int
         end
-        StructTypes.StructType(::Type{MyStruct}) = StructType.Struct()
+        StructTypes.StructType(::Type{MyStruct}) = StructTypes.$(isolate_name($struct_type))()
         ```
         """ macro $struct_type(expr)
             return macro_constructor(expr, $struct_type)

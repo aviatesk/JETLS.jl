@@ -166,6 +166,21 @@ end
     end
 end
 
+@testset "safe_ispath and safe_isfile" begin
+    mktempdir() do dir
+        file = joinpath(dir, "file.jl")
+        touch(file)
+        @test JETLSCore.safe_ispath(dir)
+        @test !JETLSCore.safe_isfile(dir)
+        @test JETLSCore.safe_ispath(file)
+        @test JETLSCore.safe_isfile(file)
+        for path in (joinpath(dir, "missing.jl"), joinpath(dir, "a"^300), joinpath(dir, "a\0b"))
+            @test !JETLSCore.safe_ispath(path)
+            @test !JETLSCore.safe_isfile(path)
+        end
+    end
+end
+
 @testset "paths_equal" begin
     @test JETLSCore.paths_equal("project", "project")
     @test JETLSCore.paths_equal("project", joinpath("project", "src", ".."))

@@ -168,7 +168,7 @@ function type_inlay_hints!(
         overlap(Range(; start=startpos, var"end"=endpos), range) || return nothing
         (; context_module, postprocessor, world) = get_context_info(state, uri, startpos)
         ctx = @something build_inferred_context_for_tree(st0, context_module;
-            world, caller="type_inlay_hints!", cache=fi.inferred_context_cache) return nothing
+            world, cache=fi.inferred_context_cache) return nothing
         collect_type_inlay_hints!(
             inlay_hints, st0, ctx, fi, uri, range, postprocessor, nontrivia_index;
             lazy_tooltips = supports_inlay_hint_resolve(state, "tooltip"))
@@ -217,6 +217,11 @@ function collect_type_inlay_hints!(
         end
         if JS.head(node) === :ref && JS.numchildren(node) >= 1
             push!(paren_wrap_ranges, JS.byte_range(node[1]))
+        end
+        # The macro name and line node of an implicit docstring span the whole macrocall,
+        # whose documenting value should not be hinted (see the postorder pass).
+        if JS.head(node) === :macrocall && is_documenting_doc0(node)
+            push!(callee_ranges, JS.byte_range(node))
         end
         if JS.head(node) in (:call, :dotcall) && JS.numchildren(node) >= 1
             push!(callee_ranges, JS.byte_range(node[1]))
@@ -362,6 +367,8 @@ function collect_type_inlay_hints!(
         if k === :macrocall && JS.numchildren(node) >= 1 && is_funcdef_decl(node[end])
             return nothing
         end
+        # Neither should documenting `@doc` macrocalls, which only register documentation.
+        k === :macrocall && is_documenting_doc0(node) && return nothing
         # Emit dedicated hints for registered for-loop iteration variables.
         if k === :for && JS.numchildren(node) >= 1
             spec = node[1]
@@ -816,7 +823,7 @@ function resolve_inlay_hint(
     (; context_module, postprocessor, world) = get_context_info(state, data.uri, pos)
     ctx = @something build_inferred_context_for_range(
         st0_top, context_module, type_range;
-        world, caller="inlayHint/resolve", cache=fi.inferred_context_cache) return hint
+        world, cache=fi.inferred_context_cache) return hint
     typ = @something get_type_for_range(ctx, type_range) return hint
     tooltip = format_type_inlay_hint_tooltip(typ, postprocessor; include_lattice = true)
     return InlayHint(hint; tooltip)

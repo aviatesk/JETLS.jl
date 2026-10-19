@@ -164,7 +164,7 @@ function find_env_package(env_path::String, project_toml_dict::Dict{String})
         entryfile = joinpath("src", pkgname * ".jl")
     end
     pkgfile = normpath(joinpath(dirname(env_path), entryfile))
-    isfile(pkgfile) || return nothing
+    safe_isfile(pkgfile) || return nothing
     return (; pkgid = Base.PkgId(uuid, pkgname), pkgfile)
 end
 

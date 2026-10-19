@@ -48,8 +48,7 @@ function document_highlights!(
     soft_scope = is_notebook_cell_uri(state, uri)
 
     (; ctx3, st3, binding) = @something begin
-        select_target_binding(st0_top, offset, context_module, world;
-            caller="document_highlights!", soft_scope)
+        select_target_binding(st0_top, offset, context_module, world; soft_scope)
     end return highlights
 
     binfo = JL.get_binding(ctx3, binding)

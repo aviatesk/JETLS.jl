@@ -8,51 +8,14 @@ using JETLSCore.LSP.URIs2
 
 include("setup.jl")
 include("jsjl-utils.jl")
+include("lowering-diagnostic-utils.jl")
 
 module lowering_module
 const B = Base
 macro generated_label()
     return :(@label generated)
 end
-end
-
-function get_lowering_diagnostics(
-        text::AbstractString;
-        code::Union{AbstractString,Nothing} = nothing,
-        context_module::Module=lowering_module,
-        world::UInt = Base.get_world_counter(),
-        kwargs...
-    )
-    filename = joinpath(@__DIR__, "test_lowering_diagnostic.jl")
-    server = JETLSCore.Server()
-    uri = filepath2uri(filename)
-    fi = JETLSCore.cache_file_info!(server, uri, 1, text)
-    st0_top = JETLSCore.build_syntax_tree(fi)
-    @assert JS.head(st0_top) === :toplevel
-    diagnostics = LSP.Diagnostic[]
-    candidates = JETLSCore.UndefGlobalCandidate[]
-    def_used_names = Dict{Module,JETLSCore.DefUsedNames}()
-    JETLSCore.iterate_toplevel_tree(st0_top) do st0::JS.SyntaxTree
-        JETLSCore.per_stmt_diagnostics!(diagnostics, candidates, uri, fi,
-            st0, context_module, world, #=analyzer=#nothing, JETLSCore.LSPostProcessor();
-            kwargs...)
-        binding_occurrences = JETLSCore.get_binding_occurrences!(server.state, uri, fi, st0)
-        binding_occurrences !== nothing &&
-            JETLSCore.update_def_used_names!(def_used_names, context_module, binding_occurrences)
-    end
-    explicit_imports = JETLSCore.collect_explicit_imports_by_module(server.state, uri, fi, st0_top)
-    # Mirror the cross-file phase. `skip_context_check=true` because the test server
-    # has no populated `analysis_manager` — we want this single file to count as
-    # part of its own unit anyway.
-    per_file = JETLSCore.PerFileDiagnosticsResult(
-        diagnostics, candidates, def_used_names, explicit_imports)
-    JETLSCore.cross_file_diagnostics!(diagnostics, JETLSCore.DefUsedNamesCache(),
-        server, uri, #=snapshot=#nothing, per_file; skip_context_check=true)
-    if code !== nothing
-        filter!(d -> d.code == code, diagnostics)
-    end
-    return diagnostics
-end
+end # lowering_module
 
 macro gen_unused(x)
     quote
@@ -71,8 +34,6 @@ macro just_return(x)
 end
 
 length_utf16(s::AbstractString) = sum(c::Char -> codepoint(c) < 0x10000 ? 1 : 2, collect(s); init=0)
-
-module EmptyModule end
 
 # A context module where `@static` conditions referencing `DEV_MODE` can be evaluated.
 module static_dev_mode_module
@@ -1103,7 +1064,7 @@ end
     end
 
     @testset "before full-analysis" begin
-        # `@sprintf` is not available yet for EmptyModule (simulating the lowering analysis behavior before full-analysis complete)
+        # `@sprintf` is not available yet before full-analysis completes
         # https://github.com/aviatesk/JETLS.jl/issues/522
         let diagnostics = get_lowering_diagnostics("""
                 let
@@ -1111,11 +1072,11 @@ end
                     @info @sprintf("OLR: %.1f W/m², SW_in: %.1f W/m², net: %.1f W/m²",
                                     OLR, SW_in, SW_in - OLR)
                 end
-                """; context_module=EmptyModule, skip_analysis_requiring_context=true)
+                """; context_module=nothing)
             @test isempty(diagnostics)
         end
 
-        # The file-local constant has not been loaded into EmptyModule yet, so `@static`
+        # The file-local constant has not been loaded yet, so `@static`
         # cannot evaluate it during pre-analysis lowering. Suppress that transient error
         # until full analysis establishes the file context.
         let diagnostics = get_lowering_diagnostics("""
@@ -1123,7 +1084,7 @@ end
                 @static if DEV_MODE
                     inactive_call()
                 end
-                """; context_module=EmptyModule, skip_analysis_requiring_context=true)
+                """; context_module=nothing)
             @test isempty(diagnostics)
         end
     end
@@ -1200,6 +1161,17 @@ end
             someinterface(::Type{<:Integer})
             """; code = JETLSCore.LOWERING_ERROR_CODE)
         @test isempty(diagnostics)
+
+        # The argument types of a documented signature are analyzed, but its argument names
+        # are not.
+        diagnostics = get_lowering_diagnostics("""
+            \"\"\"
+                sin(x::Undefined)
+            \"\"\"
+            sin(x::Undefined)
+            """; code = JETLSCore.LOWERING_UNDEF_GLOBAL_VAR_CODE)
+        @test length(diagnostics) == 1
+        @test occursin("Undefined", only(diagnostics).message)
     end
 
     @testset "macro not found error diagnostics" begin
@@ -1282,6 +1254,34 @@ end
         @test diagnostic.range.start.character == sizeof("x = ")
         @test diagnostic.range.var"end".line == 0
         @test diagnostic.range.var"end".character == sizeof("x = @m_throw 42")
+        # only the frame of the macro, not the JuliaLowering frame that invokes it
+        info = only(something(diagnostic.relatedInformation))
+        @test info.message == "var\"@m_throw\"(::LineNumberNode, ::Module, ::Any)"
+        @test info.location.uri == filepath2uri(@__FILE__)
+    end
+
+    @testset "macro expansion error diagnostics for a macro in an unsaved buffer" begin
+        mod = Module()
+        include_string(mod, """
+            macro m_unsaved_error(_)
+                error("Error in unsaved buffer")
+            end
+            """, "Untitled-1")
+        diagnostics = get_lowering_diagnostics("@m_unsaved_error 42"; context_module=mod)
+        relatedInformation = something(only(diagnostics).relatedInformation)
+        @test any(relatedInformation) do info
+            info.location.uri == filename2uri("Untitled-1") &&
+                info.message == "var\"@m_unsaved_error\"(::LineNumberNode, ::Module, ::Any)"
+        end
+    end
+
+    @testset "macro expansion error diagnostics for a macro without location information" begin
+        mod = Module()
+        Core.eval(mod, Expr(:macro, Expr(:call, :m_none_error, :_),
+            Expr(:block, Expr(:call, :error, "Error without location information"))))
+        diagnostics = get_lowering_diagnostics("@m_none_error 42"; context_module=mod)
+        info = only(something(only(diagnostics).relatedInformation))
+        @test info.message == "error(::String)"
     end
 
     @testset "nested macro expansion error diagnostics" begin
@@ -1341,7 +1341,7 @@ end
         diagnostic = only(diagnostics)
         @test diagnostic.severity == LSP.DiagnosticSeverity.Warning
         @test diagnostic.source == JETLSCore.DIAGNOSTIC_SOURCE_LIVE
-        @test occursin("Multiple descriptions provided to @testset", diagnostic.message)
+        @test occursin("Multiple descriptions provided to `@testset`", diagnostic.message)
         # The diagnostic covers the redundant `"b"` argument, including quotes.
         @test diagnostic.range.start.character == sizeof("@testset \"a\" ")
         @test diagnostic.range.var"end".character == sizeof("@testset \"a\" \"b\"")
@@ -1412,6 +1412,14 @@ end
             end
         end
     """; context_module=@__MODULE__))
+
+    # Globals defined by another top-level statement count as defined.
+    @test isempty(get_lowering_diagnostics("""
+        defined_in_other_statement() = "Hello, world"
+        let res = defined_in_other_statement()
+            println(res)
+        end
+        """; context_module=@__MODULE__))
 
     # Undefined identifiers used as docstring interpolations should be reported
     let diagnostics = get_lowering_diagnostics("""
@@ -1937,11 +1945,14 @@ end
         @test diagnostic.severity == DiagnosticSeverity.Information
         @test diagnostic.range.start.line == 1
         @test diagnostic.range.var"end".line == 1
-        @test length(diagnostic.relatedInformation) == 1
-        ri = only(diagnostic.relatedInformation)
-        @test ri.message == "Captured by closure"
-        @test ri.location.range.start.line == 2
-        @test ri.location.range.start.character == length("    f = () -> ") # points to `x`, not `() -> x`
+        @test length(diagnostic.relatedInformation) == 2
+        ri1, ri2 = diagnostic.relatedInformation
+        @test ri1.message == "Captured by closure"
+        @test ri1.location.range.start.line == 2
+        @test ri1.location.range.start.character == length("    f = () -> ") # points to `x`, not `() -> x`
+        @test ri2.message == "Assigned here"
+        @test ri2.location.range.start.line == 3
+        @test ri2.location.range.start.character == length("    ")
     end
 
     # Multiple captured variables
@@ -1980,9 +1991,8 @@ end
         @test length(diagnostics) == 1
         diagnostic = only(diagnostics)
         @test diagnostic.message == "`x` is captured and boxed"
-        # Should have 2 related information entries (one for each closure)
-        @test diagnostic.relatedInformation !== nothing
-        @test length(diagnostic.relatedInformation) == 2
+        @test [(ri.message, ri.location.range.start.line) for ri in diagnostic.relatedInformation] ==
+            [("Captured by closure", 2), ("Captured by closure", 3), ("Assigned here", 4)]
     end
 
     # Nested closure
@@ -2000,8 +2010,8 @@ end
         @test length(diagnostics) == 1
         diagnostic = only(diagnostics)
         @test diagnostic.message == "`x` is captured and boxed"
-        @test diagnostic.relatedInformation !== nothing
-        @test length(diagnostic.relatedInformation) == 2
+        @test [(ri.message, ri.location.range.start.line) for ri in diagnostic.relatedInformation] ==
+            [("Captured by closure", 3), ("Assigned here", 6)]
     end
 
     # do block capture
@@ -2020,6 +2030,72 @@ end
         @test diagnostic.message == "`x` is captured and boxed"
     end
 
+    # Assignments in different branches are reported without implying an order
+    let diagnostics = get_lowering_diagnostics("""
+        function branches(c)
+            if c
+                x = 1
+            else
+                x = 2
+            end
+            return () -> x
+        end
+        """)
+        diagnostic = only(diagnostics)
+        @test diagnostic.message == "`x` is captured and boxed"
+        @test diagnostic.range.start.line == 2
+        @test [(ri.message, ri.location.range.start.line) for ri in diagnostic.relatedInformation] ==
+            [("Assigned here", 4), ("Captured by closure", 6)]
+    end
+
+    # Assignment inside the closure is reported once, not as a separate capture
+    let diagnostics = get_lowering_diagnostics("""
+        function counter()
+            x = 0
+            inc! = () -> (x += 1)
+            inc!()
+            return x
+        end
+        """)
+        diagnostic = only(diagnostics)
+        @test diagnostic.message == "`x` is captured and boxed"
+        ri = only(diagnostic.relatedInformation)
+        @test ri.message == "Assigned in closure"
+        @test ri.location.range.start.line == 2
+        @test ri.location.range.start.character == length("    inc! = () -> (")
+    end
+    let diagnostics = get_lowering_diagnostics("""
+        function assign_in_closure_first()
+            g = () -> (x = 1)
+            x = 2
+            g()
+            return x
+        end
+        """)
+        diagnostic = only(diagnostics)
+        @test diagnostic.message == "`x` is captured and boxed"
+        @test diagnostic.range.start.line == 2
+        ri = only(diagnostic.relatedInformation)
+        @test ri.message == "Assigned in closure"
+        @test ri.location.range.start.line == 1
+    end
+
+    # A single assignment boxed for other reasons has no other assignment to report
+    let diagnostics = get_lowering_diagnostics("""
+        function capture_before_assign()
+            f = () -> x
+            x = 1
+            return f
+        end
+        """; code = JETLSCore.LOWERING_CAPTURED_BOXED_VARIABLE_CODE)
+        diagnostic = only(diagnostics)
+        @test diagnostic.message == "`x` is captured and boxed"
+        @test diagnostic.range.start.line == 2
+        ri = only(diagnostic.relatedInformation)
+        @test ri.message == "Captured by closure"
+        @test ri.location.range.start.line == 1
+    end
+
     # From performance tips
     let diagnostics = get_lowering_diagnostics("""
         function abmult1(r::Int)
@@ -2033,6 +2109,9 @@ end
         @test length(diagnostics) == 1
         diagnostic = only(diagnostics)
         @test diagnostic.message == "`r` is captured and boxed"
+        @test diagnostic.range.start.line == 0
+        @test [(ri.message, ri.location.range.start.line) for ri in diagnostic.relatedInformation] ==
+            [("Assigned here", 2), ("Captured by closure", 4)]
     end
     let diagnostics = get_lowering_diagnostics("""
         function abmult2(r::Int)
@@ -2096,7 +2175,7 @@ end
             walk(st) = walk(st-1)
             walk(5)
         end
-        """; context_module=JETLSCore.JETLSTestModule)
+        """; context_module=Test)
         ds = filter(d -> d.code == JETLSCore.LOWERING_CAPTURED_BOXED_VARIABLE_CODE, diagnostics)
         @test length(ds) == 1
         d = only(ds)
@@ -2204,8 +2283,7 @@ end
 
 function get_unused_import_diagnostics(text::AbstractString)
     return get_lowering_diagnostics(text;
-        code = JETLSCore.LOWERING_UNUSED_IMPORT_CODE,
-        skip_analysis_requiring_context = true)
+        code = JETLSCore.LOWERING_UNUSED_IMPORT_CODE)
 end
 
 @testset HierarchicalTestSet "unused imports detection" begin
@@ -3001,28 +3079,6 @@ end
         ds = filter(d -> d.code == JETLSCore.LOWERING_AMBIGUOUS_SOFT_SCOPE_CODE, diagnostics)
         @test length(ds) == 1
     end
-
-    @testset "soft scope mode (notebook)" begin
-        # With soft_scope=true, ambiguous soft scope diagnostic should not fire
-        let diagnostics = get_lowering_diagnostics("""
-            for _ = 1:10
-                x = 2
-            end
-            """; context_module=soft_scope_module, soft_scope=true)
-            ds = filter(d -> d.code == JETLSCore.LOWERING_AMBIGUOUS_SOFT_SCOPE_CODE, diagnostics)
-            @test isempty(ds)
-        end
-
-        # Without soft_scope, the same code should produce the diagnostic
-        let diagnostics = get_lowering_diagnostics("""
-            for _ = 1:10
-                x = 2
-            end
-            """; context_module=soft_scope_module, soft_scope=false)
-            ds = filter(d -> d.code == JETLSCore.LOWERING_AMBIGUOUS_SOFT_SCOPE_CODE, diagnostics)
-            @test length(ds) == 1
-        end
-    end
 end
 
 @testset HierarchicalTestSet "unresolved goto detection" begin
@@ -3189,7 +3245,7 @@ end
             @label spare
             return 1
         end
-        """; context_module=JETLSCore.JETLSTestModule)
+        """; context_module=Test)
         ds = filter(d -> d.code == JETLSCore.LOWERING_UNUSED_LABEL_CODE, diagnostics)
         @test length(ds) == 1
         d = only(ds)

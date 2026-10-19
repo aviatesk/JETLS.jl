@@ -248,7 +248,10 @@ function JET.analyze_from_definitions!(interp::LSInterpreter, config::JET.Toplev
     end
 
     entrypoint = config.analyze_from_definitions
-    n_sigs = length(res.signature_infos)
+    indices = filter(eachindex(res.signature_infos)) do i::Int
+        JETLSCore.should_analyze_signature(res.signature_infos[i].tt)
+    end
+    n_sigs = length(indices)
     n_sigs == 0 && return
     cancellable_token = interp.execution.request.cancellable_token
     if cancellable_token !== nothing
@@ -266,7 +269,7 @@ function JET.analyze_from_definitions!(interp::LSInterpreter, config::JET.Toplev
     progress = SignatureAnalysisProgress(n_sigs)
 
     jobs = InterpreterSignatureAnalysisJob[]
-    for i = 1:n_sigs
+    for i in indices
         push!(jobs, InterpreterSignatureAnalysisJob(
             interp, res, progress, i, entrypoint,
             cancellable_token, n_sigs, Base.Event()))

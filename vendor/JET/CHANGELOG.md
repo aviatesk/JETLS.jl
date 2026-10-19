@@ -69,6 +69,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `JETInterface` now exports `has_problems`, the predicate that `call_test_ex`
   and `func_test` use to decide whether an analysis result fails a test.
 
+- Top-level analysis now reports a `@test` that always fails, i.e. whose
+  expression is inferred to evaluate to `false` or to a non-boolean value:
+  ```julia
+  @testset "foo" begin
+      x = nothing
+      @test x isa Int # reported: always `false`
+  end
+  @testset "bar" begin
+      y = rand((0, nothing))
+      @test y         # reported: non-boolean `Union{Nothing, Int64}`
+  end
+  ```
+  `@test_broken` and `@test ex broken=true` are not reported, nor are the
+  tests in function bodies. `@test false` is also reported, so use e.g.
+  `error("unreachable")` to mark code that should not be reached.
+
 ### Changed
 
 - Top-level processing now stops entirely at the first fatal parsing, macro
@@ -120,6 +136,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the unsupported feature, and `RecursiveIncludeErrorReport`s list the include
   chain. The VS Code integration keeps the summary on the first line of its
   diagnostics.
+
+- Top-level analysis now analyzes test sets as if they were declared with
+  `failfast=true`, where a failing test aborts the test set, so it analyzes the
+  code after `@test ex` assuming that `ex` is `true`:
+  ```julia
+  @testset "foo" begin
+      x = rand((0, nothing))
+      @test x isa Int
+      sin(x) # no longer reported as `sin(::Nothing)`: `x` is an `Int` here
+  end
+  ```
+  The new `testset_failfast` configuration controls this. With
+  `testset_failfast=false`, only the test sets that specify `failfast=true` are
+  analyzed this way, together with the test sets nested in them and the files
+  included from them:
+  ```julia
+  # runtests.jl
+  @testset "MyPkg" failfast=true begin
+      @testset "foo" include("foo.jl") # the test sets in foo.jl are analyzed the same way
+  end
+  ```
+  Test sets that specify `failfast=false` and test sets of a custom type, e.g.
+  `@testset MyTestSet ...`, are analyzed as declared. Note that the code after a
+  test that always fails is not analyzed.
 
 ### Deprecated
 

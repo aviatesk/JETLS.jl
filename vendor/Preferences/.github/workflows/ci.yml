@@ -23,6 +23,7 @@ jobs:
       fail-fast: false
       matrix:
         version:
+          - 'min'
           - '1.6'
           - '1' # automatically expands to the latest stable 1.x release of Julia
           - 'nightly'
@@ -36,6 +37,8 @@ jobs:
         exclude:
           - os: macOS-latest
             arch: x86
+          - os: macOS-latest
+            version: 'min'
           - os: macOS-latest
             version: '1.6'
     steps:
