@@ -48,13 +48,11 @@ function find_deprecated_configs(
         push!(found, deprecated)
     end
     for (path, (old_value, new_value)) in deprecated_values
-        deprecated = @something find_deprecated_config_value(
-            doc, path, old_value, new_value) continue
+        deprecated = @something find_deprecated_config_value(doc, path, old_value, new_value) continue
         push!(found, deprecated)
     end
     for index in eachindex(diagnostic_patterns_data(doc.data))
-        deprecated = @something find_deprecated_diagnostic_code(
-            doc, index, deprecated_codes) continue
+        deprecated = @something find_deprecated_diagnostic_code(doc, index, deprecated_codes) continue
         push!(found, deprecated)
     end
     return found
@@ -90,8 +88,7 @@ function find_deprecated_diagnostic_code(
     )
     patterns = diagnostic_patterns_data(doc.data)
     checkbounds(Bool, patterns, index) || return nothing
-    old_code, new_code = @something(
-        deprecated_diagnostic_code(patterns[index], deprecated_codes), return nothing)
+    old_code, new_code = @something deprecated_diagnostic_code(patterns[index], deprecated_codes) return nothing
     span = @something TS.value_span(doc, diagnostic_pattern_code_path(index)) return nothing
     return DeprecatedDiagnosticCode(index, old_code, new_code, span)
 end
@@ -191,12 +188,12 @@ end
 migrate_deprecated!(data::Dict{String,Any}, deprecated::DeprecatedConfigKey) =
     migrate_deprecated_config!(data,
         DeprecatedConfigurations([deprecated.old_path => deprecated.new_path]),
-        DeprecatedConfigurationValues(), Dict{String,String}())
+        DeprecatedConfigurationValues(),
+        Dict{String,String}())
 migrate_deprecated!(data::Dict{String,Any}, deprecated::DeprecatedConfigValue) =
     migrate_deprecated_config!(data,
         DeprecatedConfigurations(),
-        DeprecatedConfigurationValues([
-            deprecated.path => (deprecated.old_value => deprecated.new_value)]),
+        DeprecatedConfigurationValues([deprecated.path => (deprecated.old_value => deprecated.new_value)]),
         Dict{String,String}())
 # Only the pattern at `deprecated.index`, whereas `migrate_deprecated_config!` migrates
 # every pattern with the code
@@ -241,14 +238,12 @@ function fix_deprecated_configs(
         any_fixed |= fixed
     end
     for (path, (old_value, new_value)) in deprecated_values
-        deprecated = @something find_deprecated_config_value(
-            doc, path, old_value, new_value) continue
+        deprecated = @something find_deprecated_config_value(doc, path, old_value, new_value) continue
         doc, fixed = fixed_document(doc, deprecated)
         any_fixed |= fixed
     end
     for index in eachindex(diagnostic_patterns_data(doc.data))
-        deprecated = @something find_deprecated_diagnostic_code(
-            doc, index, deprecated_codes) continue
+        deprecated = @something find_deprecated_diagnostic_code(doc, index, deprecated_codes) continue
         doc, fixed = fixed_document(doc, deprecated)
         any_fixed |= fixed
     end
@@ -362,19 +357,16 @@ function handle_deprecated_config_prompt_response(
     )
     handle_response_error(server, msg, "fix deprecated settings") && return nothing
     result = get(msg, :result, nothing)
-    (result isa Dict && get(result, "title", nothing) == FIX_DEPRECATED_CONFIGS_TITLE) ||
-        return nothing
+    (result isa Dict && get(result, "title", nothing) == FIX_DEPRECATED_CONFIGS_TITLE) || return nothing
     uri = caller.uri
     # The file may have changed while the message was shown
     text, version = @something config_text_and_version(server, uri) return nothing
     fixed = @something fix_deprecated_configs(text) return nothing
-    text_edit = source_text_edit(
-        Vector{UInt8}(text), TS.minimal_edit(text, fixed), server.state.encoding)
+    text_edit = source_text_edit(Vector{UInt8}(text), TS.minimal_edit(text, fixed), server.state.encoding)
     edit = text_document_workspace_edit(server, uri, version, text_edit)
     id = unique_id("ApplyWorkspaceEditRequest")
     addrequest!(server, id => ApplyWorkspaceEditCaller())
     label = "Fix deprecated settings"
-    send(server, ApplyWorkspaceEditRequest(;
-        id, params = ApplyWorkspaceEditParams(; label, edit)))
+    send(server, ApplyWorkspaceEditRequest(; id, params = ApplyWorkspaceEditParams(; label, edit)))
     return nothing
 end
