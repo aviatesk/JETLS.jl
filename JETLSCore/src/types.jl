@@ -648,6 +648,7 @@ const LOWERING_UNREACHABLE_CODE = "lowering/unreachable-code"
 const LOWERING_INACTIVE_CODE = "lowering/inactive-code"
 const LOWERING_AMBIGUOUS_SOFT_SCOPE_CODE = "lowering/ambiguous-soft-scope"
 const LOWERING_ORPHANED_DOCSTRING_CODE = "lowering/orphaned-docstring"
+const LOWERING_DEPRECATED_BINDING_CODE = "lowering/deprecated-binding"
 const TOPLEVEL_ERROR_CODE = "toplevel/error"
 const TOPLEVEL_MISSING_CONCRETIZATION_CODE = "toplevel/missing-concretization"
 const TOPLEVEL_CONCRETIZATION_TIMEOUT_CODE = "toplevel/concretization-timeout"
@@ -690,6 +691,7 @@ const ALL_DIAGNOSTIC_CODES = Set{String}(String[
     LOWERING_INACTIVE_CODE,
     LOWERING_AMBIGUOUS_SOFT_SCOPE_CODE,
     LOWERING_ORPHANED_DOCSTRING_CODE,
+    LOWERING_DEPRECATED_BINDING_CODE,
     TOPLEVEL_ERROR_CODE,
     TOPLEVEL_MISSING_CONCRETIZATION_CODE,
     TOPLEVEL_CONCRETIZATION_TIMEOUT_CODE,

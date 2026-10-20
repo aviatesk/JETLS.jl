@@ -1,7 +1,7 @@
 name = "JETLSCore"
 uuid = "d3d7b685-bb06-4d0a-88d8-0ccf75a29734"
 version = "0.1.0"
-JET = "avi/JET-JETLS-head-2026-10-14"
+JET = "avi/JET-JETLS-head-2026-10-20"
 JuliaLowering = "avi/JETLS-JSJL-head-2026-10-09"
 JuliaSyntax = "avi/JETLS-JSJL-head-2026-10-09"
 Revise = "master"
@@ -32,7 +32,7 @@ TestRunner = "4efbe77e-ddf3-4ce7-be91-16409ca9e85f"
 
 [sources]
 Compiler = {path = "../Compiler"}
-JET = {rev = "322426a5f1", url = "https://github.com/aviatesk/JET.jl"}
+JET = {rev = "92a434b106", url = "https://github.com/aviatesk/JET.jl"}
 JuliaLowering = {rev = "c54e29d033", subdir = "JuliaLowering", url = "https://github.com/JuliaLang/julia"}
 JuliaSyntax = {rev = "c54e29d033", subdir = "JuliaSyntax", url = "https://github.com/JuliaLang/julia"}
 LSP = {path = "../LSP"}

@@ -1533,6 +1533,280 @@ end
     end
 end
 
+module TestDeprecatedBindingOwner
+export new_global, new_value
+const new_value = 1
+Base.@deprecate_binding old_value new_value
+global new_global = 2
+Base.@deprecate_binding old_global new_global true nothing false
+struct NewType end
+Base.@deprecate_binding OldType NewType true ", use `NewType` instead."
+module NewSub
+const x = 1
+macro submacro(x) esc(x) end
+end
+Base.@deprecate_binding OldSub NewSub
+macro newmacro(x) esc(x) end
+Base.@deprecate_binding var"@oldmacro" var"@newmacro"
+end
+
+module TestDeprecatedBindingUser
+using ..TestDeprecatedBindingOwner
+end
+
+module TestDeprecatedBindingImportOwner
+const new_value = 1
+const old_value = new_value
+const _dep_message_old_value = ", use new_value instead."
+struct NewType end
+const OldType = NewType
+end
+
+module TestDeprecatedBindingImporter
+import ..TestDeprecatedBindingImportOwner: old_value
+using ..TestDeprecatedBindingImportOwner: OldType as Renamed
+end
+
+module TestDeprecatedBindingReexporter
+import ..TestDeprecatedBindingImportOwner: old_value
+using ..TestDeprecatedBindingImportOwner: OldType as Renamed
+export old_value, Renamed
+end
+
+module TestDeprecatedBindingReexportUser
+using ..TestDeprecatedBindingReexporter
+end
+
+# Deprecated after the imports, which warn with `--depwarn=yes` otherwise
+Base.deprecate(TestDeprecatedBindingImportOwner, :old_value)
+Base.deprecate(TestDeprecatedBindingImportOwner, :OldType)
+
+module TestDeprecatedBindingCycleOwner
+export cycled
+const cycled = 1
+end
+
+module TestDeprecatedBindingCycleA
+using ..TestDeprecatedBindingCycleOwner
+export cycled
+end
+
+module TestDeprecatedBindingCycleB
+using ..TestDeprecatedBindingCycleA
+export cycled
+end
+
+# `TestDeprecatedBindingCycleA` and `TestDeprecatedBindingCycleB` re-export each other's `cycled`
+Core.eval(TestDeprecatedBindingCycleA, :(using ..TestDeprecatedBindingCycleB))
+
+module TestDeprecatedBindingCycleUser
+using ..TestDeprecatedBindingCycleA, ..TestDeprecatedBindingCycleB
+end
+
+module TestDeprecatedBindingDeprecatedCycleOwner
+export cycled
+const new_cycled = 1
+Base.@deprecate_binding cycled new_cycled
+end
+
+module TestDeprecatedBindingDeprecatedCycleA
+using ..TestDeprecatedBindingDeprecatedCycleOwner
+export cycled
+end
+
+module TestDeprecatedBindingDeprecatedCycleB
+using ..TestDeprecatedBindingDeprecatedCycleA
+export cycled
+end
+
+Core.eval(TestDeprecatedBindingDeprecatedCycleA, :(using ..TestDeprecatedBindingDeprecatedCycleB))
+
+module TestDeprecatedBindingDeprecatedCycleUser
+using ..TestDeprecatedBindingDeprecatedCycleA, ..TestDeprecatedBindingDeprecatedCycleB
+end
+
+module TestDeprecatedBindingAltOwner
+const old_value = 1 # the same value as `TestDeprecatedBindingImportOwner.old_value`
+end
+
+get_deprecated_binding_diagnostics(text::AbstractString, context_module::Module) =
+    get_lowering_diagnostics(text;
+        code = JETLSCore.LOWERING_DEPRECATED_BINDING_CODE, context_module)
+
+# Expanding a macro through a deprecated binding warns with `--depwarn=yes`
+get_deprecated_macro_diagnostics(text::AbstractString, context_module::Module) =
+    redirect_stderr(devnull) do
+        get_deprecated_binding_diagnostics(text, context_module)
+    end
+
+@testset HierarchicalTestSet "deprecated binding detection" begin
+    @testset "binding imported with `using`" begin
+        diagnostics = get_deprecated_binding_diagnostics("""
+            function f()
+                return old_value
+            end
+            """, TestDeprecatedBindingUser)
+        @test length(diagnostics) == 1
+        diagnostic = only(diagnostics)
+        @test diagnostic.source == JETLSCore.DIAGNOSTIC_SOURCE_LIVE
+        @test diagnostic.severity == DiagnosticSeverity.Information
+        @test DiagnosticTag.Deprecated in diagnostic.tags
+        @test diagnostic.message == "`$(TestDeprecatedBindingOwner).old_value` is deprecated, use new_value instead."
+        @test diagnostic.range.start.line == 1
+        @test diagnostic.range.start.character == sizeof("    return ")
+        @test diagnostic.range.var"end".line == 1
+        @test diagnostic.range.var"end".character == sizeof("    return old_value")
+    end
+
+    @testset "non-constant binding" begin
+        diagnostics = get_deprecated_binding_diagnostics("f() = old_global", TestDeprecatedBindingUser)
+        @test length(diagnostics) == 1
+        @test only(diagnostics).message == "`$(TestDeprecatedBindingOwner).old_global` is deprecated, use new_global instead."
+    end
+
+    @testset "custom message" begin
+        diagnostics = get_deprecated_binding_diagnostics("f() = OldType()", TestDeprecatedBindingUser)
+        @test length(diagnostics) == 1
+        @test only(diagnostics).message == "`$(TestDeprecatedBindingOwner).OldType` is deprecated, use `NewType` instead."
+    end
+
+    @testset "binding of the context module" begin
+        diagnostics = get_deprecated_binding_diagnostics("f() = old_value", TestDeprecatedBindingOwner)
+        @test length(diagnostics) == 1
+    end
+
+    @testset "qualified access" begin
+        diagnostics = get_deprecated_binding_diagnostics("f() = TestDeprecatedBindingOwner.old_value", TestDeprecatedBindingUser)
+        @test length(diagnostics) == 1
+        diagnostic = only(diagnostics)
+        @test diagnostic.message == "`$(TestDeprecatedBindingOwner).old_value` is deprecated, use new_value instead."
+        @test diagnostic.range.start.character == sizeof("f() = TestDeprecatedBindingOwner.")
+        @test diagnostic.range.var"end".character == sizeof("f() = TestDeprecatedBindingOwner.old_value")
+    end
+
+    @testset "deprecated module in a qualified access" begin
+        diagnostics = get_deprecated_binding_diagnostics("f() = TestDeprecatedBindingOwner.OldSub.x", TestDeprecatedBindingUser)
+        @test length(diagnostics) == 1
+        diagnostic = only(diagnostics)
+        @test diagnostic.message == "`$(TestDeprecatedBindingOwner).OldSub` is deprecated, use NewSub instead."
+        @test diagnostic.range.start.character == sizeof("f() = TestDeprecatedBindingOwner.")
+        @test diagnostic.range.var"end".character == sizeof("f() = TestDeprecatedBindingOwner.OldSub")
+    end
+
+    @testset "local binding named like the module" begin
+        @test isempty(get_deprecated_binding_diagnostics("""
+            let TestDeprecatedBindingOwner = (; old_value = 1)
+                TestDeprecatedBindingOwner.old_value
+            end
+            """, TestDeprecatedBindingUser))
+    end
+
+    @testset "not deprecated or not a use" begin
+        @test isempty(get_deprecated_binding_diagnostics("f() = new_value", TestDeprecatedBindingUser))
+        @test isempty(get_deprecated_binding_diagnostics("old_value = 1", TestDeprecatedBindingUser))
+    end
+
+    @testset "explicit import" begin
+        diagnostics = get_deprecated_binding_diagnostics("import ..TestDeprecatedBindingImportOwner: old_value", TestDeprecatedBindingImporter)
+        @test length(diagnostics) == 1
+        diagnostic = only(diagnostics)
+        @test diagnostic.message == "`$(TestDeprecatedBindingImportOwner).old_value` is deprecated, use new_value instead."
+        @test diagnostic.range.start.character == sizeof("import ..TestDeprecatedBindingImportOwner: ")
+        @test diagnostic.range.var"end".character == sizeof("import ..TestDeprecatedBindingImportOwner: old_value")
+
+        # reported at the import rather than at the uses
+        @test isempty(get_deprecated_binding_diagnostics("f() = old_value", TestDeprecatedBindingImporter))
+    end
+
+    @testset "explicit import with `as`" begin
+        diagnostics = get_deprecated_binding_diagnostics("using ..TestDeprecatedBindingImportOwner: OldType as Renamed", TestDeprecatedBindingImporter)
+        @test length(diagnostics) == 1
+        diagnostic = only(diagnostics)
+        @test diagnostic.message == "`$(TestDeprecatedBindingImportOwner).OldType` is deprecated"
+        @test diagnostic.range.start.character == sizeof("using ..TestDeprecatedBindingImportOwner: ")
+        @test diagnostic.range.var"end".character == sizeof("using ..TestDeprecatedBindingImportOwner: OldType")
+    end
+
+    @testset "quoted import" begin
+        @test isempty(get_deprecated_binding_diagnostics("ex = :(using ..TestDeprecatedBindingImportOwner: old_value)", TestDeprecatedBindingImporter))
+        @test isempty(get_deprecated_binding_diagnostics("""
+            ex = quote
+                using ..TestDeprecatedBindingImportOwner: old_value
+            end
+            """, TestDeprecatedBindingImporter))
+    end
+
+    @testset "same name imported from multiple modules" begin
+        # each statement is checked against the module it names, in either order
+        let diagnostics = get_deprecated_binding_diagnostics("""
+                using ..TestDeprecatedBindingImportOwner: old_value
+                using ..TestDeprecatedBindingAltOwner: old_value
+                """, TestDeprecatedBindingImporter)
+            @test length(diagnostics) == 1
+            @test only(diagnostics).range.start.line == 0
+        end
+        let diagnostics = get_deprecated_binding_diagnostics("""
+                using ..TestDeprecatedBindingAltOwner: old_value
+                using ..TestDeprecatedBindingImportOwner: old_value
+                """, TestDeprecatedBindingImporter)
+            @test length(diagnostics) == 1
+            @test only(diagnostics).range.start.line == 1
+        end
+    end
+
+    @testset "macro name" begin
+        for (text, name) in (("f() = @oldmacro 1", "@oldmacro"),
+                             ("f() = TestDeprecatedBindingOwner.@oldmacro 1", "@oldmacro"),
+                             ("f() = @TestDeprecatedBindingOwner.oldmacro 1", "oldmacro"))
+            diagnostics = get_deprecated_macro_diagnostics(text, TestDeprecatedBindingUser)
+            @test length(diagnostics) == 1
+            diagnostic = only(diagnostics)
+            @test diagnostic.message == "`$(TestDeprecatedBindingOwner).@oldmacro` is deprecated, use @newmacro instead."
+            @test diagnostic.range.start.character == findlast(name, text).start - 1
+            @test diagnostic.range.var"end".character == findlast(name, text).stop
+        end
+        let text = "f() = TestDeprecatedBindingOwner.OldSub.@submacro 1"
+            diagnostics = get_deprecated_macro_diagnostics(text, TestDeprecatedBindingUser)
+            @test length(diagnostics) == 1
+            @test only(diagnostics).message == "`$(TestDeprecatedBindingOwner).OldSub` is deprecated, use NewSub instead."
+        end
+        @test isempty(get_deprecated_binding_diagnostics("ex = :(@oldmacro 1)", TestDeprecatedBindingUser))
+        @test isempty(get_deprecated_binding_diagnostics("f() = TestDeprecatedBindingOwner.@newmacro 1", TestDeprecatedBindingUser))
+    end
+
+    @testset "deprecated module in an import path" begin
+        for text in ("using ..TestDeprecatedBindingOwner.OldSub",
+                     "using ..TestDeprecatedBindingOwner.OldSub: x",
+                     "import ..TestDeprecatedBindingOwner.OldSub.x")
+            diagnostics = get_deprecated_binding_diagnostics(text, TestDeprecatedBindingUser)
+            @test length(diagnostics) == 1
+            diagnostic = only(diagnostics)
+            @test diagnostic.message == "`$(TestDeprecatedBindingOwner).OldSub` is deprecated, use NewSub instead."
+            @test diagnostic.range.start.character == findfirst("OldSub", text).start - 1
+            @test diagnostic.range.var"end".character == findfirst("OldSub", text).stop
+        end
+    end
+
+    @testset "re-exported explicit import" begin
+        # reported at the import of the re-exporting module rather than at the uses
+        @test isempty(get_deprecated_binding_diagnostics("f() = old_value", TestDeprecatedBindingReexportUser))
+        @test isempty(get_deprecated_binding_diagnostics("f() = Renamed()", TestDeprecatedBindingReexportUser))
+    end
+
+    @testset "cyclic re-exports" begin
+        @test isempty(get_deprecated_binding_diagnostics("f() = cycled", TestDeprecatedBindingCycleUser))
+        diagnostics = get_deprecated_binding_diagnostics("f() = cycled", TestDeprecatedBindingDeprecatedCycleUser)
+        @test length(diagnostics) == 1
+        @test only(diagnostics).message ==
+            "`$(TestDeprecatedBindingDeprecatedCycleOwner).cycled` is deprecated, use new_cycled instead."
+    end
+
+    @testset "before full-analysis" begin
+        @test isempty(get_lowering_diagnostics("f() = old_value"; code = JETLSCore.LOWERING_DEPRECATED_BINDING_CODE, context_module = nothing))
+    end
+
+end
+
 @testset HierarchicalTestSet "Undefined local binding report" begin
     @testset "sequential assignment then use - no diagnostic" begin
         @test isempty(get_lowering_diagnostics("""
