@@ -892,6 +892,7 @@ function update_analysis_cache!(
         return new_cache, (removed, superseded)
     end
     cleanup_superseded_units!(manager, superseded_results)
+    clear_deprecated_binding_cache!(state)
     # Cached occurrences embed `binfo.mod` from the module context that was in effect when
     # they were computed. Analysis modes that use virtualized contexts
     # (scripts, old package mode) mint a fresh gensym'd virtual module on every successful
