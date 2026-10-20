@@ -1394,10 +1394,14 @@ function find_deprecated_binding!(
         cache::DeprecatedBindingCache, mod::Module, name::String, world::UInt
     )
     return get!(cache, (world, mod, name)) do
-        sym = Symbol(name)
-        Base.invoke_in_world(world, isdefinedglobal, mod, sym)::Bool || return nothing
-        return find_deprecated_binding(convert(Core.Binding, GlobalRef(mod, sym)), world)
+        find_deprecated_global(mod, Symbol(name), world)
     end
+end
+
+# The deprecated binding that the global `mod.name` resolves to in `world`, or `nothing`
+function find_deprecated_global(mod::Module, name::Symbol, world::UInt)
+    Base.invoke_in_world(world, isdefinedglobal, mod, name)::Bool || return nothing
+    return find_deprecated_binding(convert(Core.Binding, GlobalRef(mod, name)), world)
 end
 
 # The deprecated binding that `b` resolves to in `world`, or `nothing`. As with Julia's

@@ -59,6 +59,7 @@ end
 const max_sort_text1 = "10000"
 const max_sort_text2 = "100000"
 const max_sort_text3 = "1000000"
+const max_sort_text4 = "10000000"
 function get_sort_text(offset::Int)
     return get(sort_texts, offset, max_sort_text)
 end
@@ -389,6 +390,9 @@ function global_completions!(
     live_only_names = setdiff!(live_names, all_names)
     append!(all_names, live_only_names)
 
+    tag_values = getcapability(state, :textDocument, :completion, :completionItem, :tagSupport, :valueSet)
+    tag_deprecated = tag_values !== nothing && CompletionItemTag.Deprecated in tag_values
+
     is_cancelled(comp_ctx.cancel_flag) && return false
     for name in all_names
         if context_module === FallbackAnalysisContext && name === :FallbackAnalysisContext
@@ -426,7 +430,12 @@ function global_completions!(
             end
             kind = CompletionItemKind.Function
         end
-        if name in prioritized_names
+        is_live_only = name in live_only_names
+        is_deprecated = !is_live_only &&
+            find_deprecated_global(context_module, name, world) !== nothing
+        if is_deprecated
+            sortText = max_sort_text4
+        elseif name in prioritized_names
             sortText = max_sort_text1
         else
             sortText = max_sort_text2
@@ -442,19 +451,22 @@ function global_completions!(
 
         labelDetails = CompletionItemLabelDetails(; description = "global")
 
+        tags = is_deprecated && tag_deprecated ?
+            CompletionItemTag.Ty[CompletionItemTag.Deprecated] : nothing
+
         # N.B. Don't set `kind` here to prevent Zed from applying highlights to the `label` at this stage.
         # The determination of `kind` involves reflection such as `getglobal`, so it is lazily resolved (see `resolve_completion_item`)
         items[s] = CompletionItem(;
             label,
             labelDetails,
             kind,
+            tags,
             detail,
             sortText,
             filterText,
             insertTextFormat,
             textEdit,
-            data = name in live_only_names ? nothing :
-                GlobalCompletionData(resolver_id, resolveName))
+            data = is_live_only ? nothing : GlobalCompletionData(resolver_id, resolveName))
     end
 
     return is_completed ? #=isIncomplete=#false : nothing
