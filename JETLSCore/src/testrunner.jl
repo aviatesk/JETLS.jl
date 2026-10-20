@@ -370,24 +370,24 @@ end
 # `@testset` execution
 function testrunner_testset_cmd(launcher::TestRunnerLauncher, filepath::String, tsn::String, tsl::Int,
                                 test_env_path::Union{Nothing,String},
-                                root_path::Union{Nothing,String})
+                                root_path::Union{Nothing,String}, json_file::String)
     tsn = rlstrip(tsn, '"')
     # `--root-path` only matters when `filepath` is a virtual identifier
     # (no `dirname`); for saved files we omit it to avoid implying a
     # workspace-relative include base that doesn't apply.
     root_args = isnothing(root_path) ? `` : `--root-path=$root_path`
     return testrunner_cmd(launcher, test_env_path,
-        `--verbose $root_args --json --read-stdin $filepath $tsn --filter-lines=$tsl`)
+        `--verbose $root_args --json-file=$json_file --read-stdin $filepath $tsn --filter-lines=$tsl`)
 end
 
 # `@test` execution
 function testrunner_testcase_cmd(launcher::TestRunnerLauncher, filepath::String, tcl::Int,
                                  test_env_path::Union{Nothing,String},
-                                 root_path::Union{Nothing,String})
+                                 root_path::Union{Nothing,String}, json_file::String)
     # See `testrunner_testset_cmd` for the rationale behind `--root-path`.
     root_args = isnothing(root_path) ? `` : `--root-path=$root_path`
     return testrunner_cmd(launcher, test_env_path,
-        `--verbose $root_args --json --read-stdin $filepath L$tcl`)
+        `--verbose $root_args --json-file=$json_file --read-stdin $filepath L$tcl`)
 end
 
 function testrunner_diagnostic_to_related_information(diagnostic::TestRunnerDiagnostic)
@@ -587,7 +587,8 @@ function is_testsetinfo_valid(server::Server, uri::URI, fi::FileInfo, idx::Int)
 end
 
 function read_testrunner_output(
-        testrunnerproc::Base.Process, cancellable_token::Union{Nothing,CancellableToken}
+        testrunnerproc::Base.Process, output::Pipe,
+        cancellable_token::Union{Nothing,CancellableToken}
     )
     cancelled = Ref(false)
     cancellation_task = if cancellable_token === nothing
@@ -608,14 +609,14 @@ function read_testrunner_output(
         end
     end
     try
-        output = read(testrunnerproc)
+        text = read(output, String)
         process_success = success(testrunnerproc)
         if cancellation_task !== nothing
             wait(cancellation_task; throw = false)
         end
-        return (; output, process_success, cancelled = cancelled[])
+        return (; output = text, process_success, cancelled = cancelled[])
     finally
-        close(testrunnerproc)
+        close(output)
         if process_running(testrunnerproc)
             kill(testrunnerproc)
         end
@@ -627,59 +628,71 @@ function read_testrunner_output(
 end
 
 function log_testrunner_failure(
-        cmd::Cmd, proc::Base.Process, output::Vector{UInt8}, reason::Symbol;
+        cmd::Cmd, proc::Base.Process, output::String, reason::Symbol;
         parse_error::Union{Nothing,String} = nothing
     )
     details = (;
         cmd = Cmd(cmd.exec), # omit the environment, which may contain secrets
         exitcode = proc.exitcode,
         termsignal = proc.termsignal,
-        stdout_bytes = length(output),
+        output_bytes = ncodeunits(output),
         reason,
         parse_error,
     )
-    @error "TestRunner execution failed" details
+    @error "TestRunner execution failed" details output_tail = Text(last(output, 20_000))
     return nothing
 end
 
+# `make_cmd(json_file)` makes the command to run TestRunner with `--json-file=$json_file`.
+# The output of the command, with stdout and stderr merged in order, becomes the logs of
+# the result.
 function read_testrunner_result(
-        server::Server, cmd::Cmd, source::String;
+        make_cmd::Function, server::Server, source::String;
         cancellable_token::Union{Nothing,CancellableToken} = nothing
     )
-    testrunnerproc = open(pipeline(cmd; stdin = IOBuffer(source)); read = true)
-    (; output, process_success, cancelled) =
-        read_testrunner_output(testrunnerproc, cancellable_token)
-    cancelled && return "Test execution cancelled by user"
+    return mktempdir() do dir
+        json_file = joinpath(dir, "result.json")
+        cmd = make_cmd(json_file)::Cmd
+        output_pipe = Pipe()
+        testrunnerproc = run(pipeline(cmd;
+            stdin = IOBuffer(source), stdout = output_pipe, stderr = output_pipe); wait = false)
+        close(output_pipe.in)
+        (; output, process_success, cancelled) =
+            read_testrunner_output(testrunnerproc, output_pipe, cancellable_token)
+        cancelled && return "Test execution cancelled by user"
 
-    result = try
-        LSP.JSON3.read(output, TestRunnerResult)
-    catch err
-        if process_success
-            parse_error = sprint(locked_showerror, err, catch_backtrace())
-            log_testrunner_failure(cmd, testrunnerproc, output, :invalid_output; parse_error)
-        else
-            log_testrunner_failure(cmd, testrunnerproc, output, :process)
+        result = try
+            LSP.JSON3.read(read(json_file), TestRunnerResult)
+        catch err
+            if process_success
+                parse_error = sprint(locked_showerror, err, catch_backtrace())
+                log_testrunner_failure(cmd, testrunnerproc, output, :invalid_output; parse_error)
+            else
+                log_testrunner_failure(cmd, testrunnerproc, output, :process)
+            end
+            show_error_message(server, """
+            An unexpected error occurred while executing TestRunner.jl:
+            See the server log for details.
+            """)
+            return "Test execution failed"
         end
-        show_error_message(server, """
-        An unexpected error occurred while executing TestRunner.jl:
-        See the server log for details.
-        """)
-        return "Test execution failed"
-    end
 
-    expected_test_failure =
-        testrunnerproc.termsignal == 0 &&
-        testrunnerproc.exitcode == 1 &&
-        (!iszero(result.stats.n_failed) || !iszero(result.stats.n_errored))
-    if !process_success && !expected_test_failure
-        log_testrunner_failure(cmd, testrunnerproc, output, :process)
-        show_error_message(server, """
-        An unexpected error occurred while executing TestRunner.jl:
-        See the server log for details.
-        """)
-        return "Test execution failed"
+        expected_test_failure =
+            testrunnerproc.termsignal == 0 &&
+            testrunnerproc.exitcode == 1 &&
+            (!iszero(result.stats.n_failed) || !iszero(result.stats.n_errored))
+        if !process_success && !expected_test_failure
+            log_testrunner_failure(cmd, testrunnerproc, output, :process)
+            show_error_message(server, """
+            An unexpected error occurred while executing TestRunner.jl:
+            See the server log for details.
+            """)
+            return "Test execution failed"
+        end
+        return TestRunnerResult(;
+            result.filename, result.patterns, result.stats, logs = output,
+            result.diagnostics, result.testsets)
     end
-    return result
 end
 
 function _testrunner_run_testset(
@@ -698,9 +711,10 @@ function _testrunner_run_testset(
     tsl = testset_line(fi.testsetinfos[idx])
     test_env_path = find_uri_env_path(server.state, uri)
     root_path = testrunner_root_path(server.state, uri)
-    cmd = testrunner_testset_cmd(launcher, filepath, tsn, tsl, test_env_path, root_path)
     source = String(document_text(fi))
-    result = read_testrunner_result(server, cmd, source; cancellable_token)
+    result = read_testrunner_result(server, source; cancellable_token) do json_file
+        testrunner_testset_cmd(launcher, filepath, tsn, tsl, test_env_path, root_path, json_file)
+    end
     result isa String && return result
 
     ret = summary_testrunner_result(result)
@@ -801,8 +815,9 @@ function _testrunner_run_testcase(
     )
     test_env_path = find_uri_env_path(server.state, uri)
     root_path = testrunner_root_path(server.state, uri)
-    cmd = testrunner_testcase_cmd(launcher, filepath, tcl, test_env_path, root_path)
-    result = read_testrunner_result(server, cmd, source; cancellable_token)
+    result = read_testrunner_result(server, source; cancellable_token) do json_file
+        testrunner_testcase_cmd(launcher, filepath, tcl, test_env_path, root_path, json_file)
+    end
     result isa String && return result
 
     # Show the results of this `@test` case temporarily as diagnostics:

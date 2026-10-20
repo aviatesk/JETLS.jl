@@ -76,7 +76,7 @@ function (@main)(args::Vector{String})
     end
 
     patterns = String[]
-    filename = filter_lines = project = root_path = nothing
+    filename = filter_lines = project = root_path = json_file = nothing
     verbose = json_output = read_stdin = false
 
     i = 1
@@ -108,6 +108,8 @@ function (@main)(args::Vector{String})
             verbose = true
         elseif arg == "--json"
             json_output = true
+        elseif startswith(arg, "--json-file=")
+            json_file = arg[13:end]
         elseif arg == "--read-stdin"
             read_stdin = true
         elseif startswith(arg, "-") && arg != "-"
@@ -151,7 +153,7 @@ function (@main)(args::Vector{String})
     end
 
     # Run tests
-    return runtest_app(filename, parsed_patterns, filter_lines, verbose, project, json_output, read_stdin, root_path)
+    return runtest_app(filename, parsed_patterns, filter_lines, verbose, project, json_output, read_stdin, root_path, json_file)
 end
 
 function print_usage()
@@ -179,6 +181,8 @@ function print_usage()
       -f=1,5,10:20              Short form of --filter-lines
       --verbose, -v             Show verbose output
       --json                    Output results in JSON format
+      --json-file=<path>        Write results in JSON format to <path>, leaving the
+                                output of the tests on stdout and stderr
       --read-stdin              Read source for <path> from stdin instead of disk
                                 (<path> is still used for `@__FILE__`, error
                                 messages, and resolving `include`d files)
@@ -568,7 +572,35 @@ function runtest_json(
     (rd, wr) = redirect_stdout()
     # Drain the pipe while the tests run, since writes block once its buffer fills up
     logs_task = @async read(rd, String)
+    return runtest_result(filename, patterns, filter_lines, verbose, project, source, root_path) do fields
+        redirect_stdout(original_stdout)
+        close(wr)
+        logs = fetch(logs_task)
+        close(rd)
+        JSON3.write(stdout, TestRunnerResult(; fields..., logs))
+    end
+end
 
+# Unlike `runtest_json`, leave the output on stdout and stderr, so that the caller can capture
+# all of it, including what Julia writes directly to the file descriptors, e.g. the reports of
+# fatal errors that crash this process
+function runtest_json_file(
+        json_file::String, filename::String, patterns::Vector{Any}, filter_lines, verbose::Bool,
+        project, source::Union{Nothing,String}=nothing, root_path::Union{Nothing,String}=nothing
+    )
+    # resolve the path before the tests can change the working directory
+    json_file = abspath(json_file)
+    return runtest_result(filename, patterns, filter_lines, verbose, project, source, root_path) do fields
+        open(json_file, "w") do io
+            JSON3.write(io, TestRunnerResult(; fields...))
+        end
+    end
+end
+
+function runtest_result(
+        write_result::Function, filename::String, patterns::Vector{Any}, filter_lines,
+        verbose::Bool, project, source::Union{Nothing,String}, root_path::Union{Nothing,String}
+    )
     local stats::TestRunnerStats = TestRunnerStats()
     local diagnostics::Vector{TestRunnerDiagnostic} = TestRunnerDiagnostic[]
     last_toplevel_testset[] = nothing
@@ -584,33 +616,28 @@ function runtest_json(
         diagnostics = extract_diagnostics_from_exception(e)
         return 1
     finally
-        redirect_stdout(original_stdout)
-        close(wr)
-        logs = fetch(logs_task)
-        close(rd)
-        patterns = isempty(patterns) ? nothing : patterns
-        testsets = testset_results(filename, source)
-        result = TestRunnerResult(;
+        write_result((;
             filename,
-            patterns,
+            patterns = isempty(patterns) ? nothing : patterns,
             stats,
-            logs,
             diagnostics,
-            testsets)
-        JSON3.write(stdout, result)
+            testsets = testset_results(filename, source)))
     end
 end
 
 function runtest_app(
         filename::String, patterns::Vector{Any}, filter_lines, verbose::Bool, project, json_output::Bool,
-        read_stdin::Bool=false, root_path::Union{Nothing,String}=nothing
+        read_stdin::Bool=false, root_path::Union{Nothing,String}=nothing,
+        json_file::Union{Nothing,String}=nothing
     )
     source = read_stdin ? read(stdin, String) : nothing
     if source === nothing && !isfile(filename)
         error_print("File not found:", filename)
         return 1
     end
-    if json_output
+    if json_file !== nothing
+        return runtest_json_file(json_file, filename, patterns, filter_lines, verbose, project, source, root_path)
+    elseif json_output
         return runtest_json(filename, patterns, filter_lines, verbose, project, source, root_path)
     else
         runtest_internal(filename, patterns, filter_lines, verbose, project, source, root_path)

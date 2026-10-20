@@ -188,6 +188,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   ```
   (Closed https://github.com/aviatesk/JETLS.jl/issues/999)
 
+- Fixed the logs of the [TestRunner integration](https://aviatesk.github.io/JETLS.jl/release/testrunner/) missing the output that tests write to `stderr`, such as log messages of `@info` and `@warn` and deprecation warnings enabled by `--depwarn=yes`, which went to the server log instead.
+  When a test run fails unexpectedly, e.g. by a segfault, the server log now shows the end of its output, including the report of the crash.
+
 ## 2026-10-18
 
 - Commit: [`8888185`](https://github.com/aviatesk/JETLS.jl/commit/8888185)

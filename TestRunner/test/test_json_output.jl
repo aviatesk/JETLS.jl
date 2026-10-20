@@ -36,9 +36,11 @@ function with_failing_test_file(tester)
     end
 end
 
-function run_testrunner_process(args; stdin_input::Union{Nothing,AbstractString}=nothing)
+function run_testrunner_process(args; stdin_input::Union{Nothing,AbstractString}=nothing,
+                                dir::AbstractString=pwd())
     project = pkgdir(TestRunner)
     cmd = `$(Base.julia_cmd()) --startup-file=no --project=$project -e "using TestRunner; exit(TestRunner.main(ARGS))" -- $args`
+    cmd = Cmd(cmd; dir)
 
     mktemp() do out_path, _
         mktemp() do err_path, _
@@ -340,6 +342,49 @@ end
         json_result = JSON3.read(result.stdout, TestRunnerResult)
         @test json_result.stats.n_passed == 1
         @test count("x"^100, json_result.logs) == 2000
+    end
+end
+
+@testset "--json-file" begin
+    content = """
+    using Test
+    @testset "json file" begin
+        println("stdout output")
+        println(stderr, "stderr output")
+        @test true
+    end
+    """
+    with_test_file(content) do testfile
+        mktempdir() do dir
+            json_file = joinpath(dir, "result.json")
+            result = run_testrunner_process(["--json-file=$json_file", testfile, "json file"])
+            @test result.exitcode == 0
+            @test occursin("stdout output", result.stdout)
+            @test occursin("stderr output", result.stderr)
+            json_result = JSON3.read(read(json_file, String), TestRunnerResult)
+            @test json_result.patterns == ["json file"]
+            @test json_result.stats.n_passed == 1
+            @test isempty(json_result.logs)
+        end
+    end
+
+    # a relative path is resolved against the working directory where TestRunner starts,
+    # even if the tests change it
+    content = """
+    using Test
+    @testset "cd" begin
+        cd(mktempdir())
+        @test true
+    end
+    """
+    with_test_file(content) do testfile
+        mktempdir() do dir
+            mkdir(joinpath(dir, "results"))
+            result = run_testrunner_process(["--json-file=results/result.json", testfile, "cd"]; dir)
+            @test result.exitcode == 0
+            json_result = JSON3.read(read(joinpath(dir, "results", "result.json"), String), TestRunnerResult)
+            @test json_result.stats.n_passed == 1
+        end
     end
 end
 
