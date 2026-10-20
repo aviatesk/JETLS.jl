@@ -43,7 +43,6 @@ function info_print(msg::AbstractString, highlight::AbstractString)
 end
 
 function header_print(msg::AbstractString)
-    println()
     printstyled("═══ $msg ═══", bold=true, color=:cyan)
     println()
 end
@@ -488,6 +487,7 @@ function runtest_internal(filename::String, patterns::Vector{Any}, filter_lines,
     bname = basename(filename)
 
     if verbose
+        println()
         header_print("Test Configuration")
         info_print("File:", filename)
 
@@ -518,6 +518,7 @@ function runtest_internal(filename::String, patterns::Vector{Any}, filter_lines,
             info_print("No patterns specified, running all tests with `include`")
         end
 
+        println()
         header_print("Running Tests")
     end
 
