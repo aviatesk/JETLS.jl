@@ -565,6 +565,8 @@ function runtest_json(
     # Redirect stdout to capture ALL output (including info_print, header_print, etc.)
     original_stdout = stdout
     (rd, wr) = redirect_stdout()
+    # Drain the pipe while the tests run, since writes block once its buffer fills up
+    logs_task = @async read(rd, String)
 
     local stats::TestRunnerStats = TestRunnerStats()
     local diagnostics::Vector{TestRunnerDiagnostic} = TestRunnerDiagnostic[]
@@ -583,7 +585,7 @@ function runtest_json(
     finally
         redirect_stdout(original_stdout)
         close(wr)
-        logs = read(rd, String)
+        logs = fetch(logs_task)
         close(rd)
         patterns = isempty(patterns) ? nothing : patterns
         testsets = testset_results(filename, source)

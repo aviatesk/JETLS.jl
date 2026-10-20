@@ -323,6 +323,26 @@ end
     end
 end
 
+@testset "large output" begin
+    # output larger than the pipe buffer should not block the test run
+    content = """
+    using Test
+    @testset "large output" begin
+        for _ in 1:2000
+            println("x"^100)
+        end
+        @test true
+    end
+    """
+    with_test_file(content) do testfile
+        result = run_testrunner_process(["--json", testfile, "large output"])
+        @test result.exitcode == 0
+        json_result = JSON3.read(result.stdout, TestRunnerResult)
+        @test json_result.stats.n_passed == 1
+        @test count("x"^100, json_result.logs) == 2000
+    end
+end
+
 @testset "--read-stdin" begin
     # Pass source via stdin; file path is still required for `@__FILE__` etc.
     let source = """
