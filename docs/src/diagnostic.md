@@ -160,8 +160,9 @@ additionally depend on
 See [`lowering/*`](@ref diagnostic/reference/lowering) for the diagnostic codes.
 
 [^code_loading_dependency]:
-    The [`lowering/macro-expansion-error`](@ref diagnostic/reference/lowering/macro-expansion-error) and
-    [`lowering/undef-global-var`](@ref diagnostic/reference/lowering/undef-global-var)
+    The [`lowering/macro-expansion-error`](@ref diagnostic/reference/lowering/macro-expansion-error),
+    [`lowering/undef-global-var`](@ref diagnostic/reference/lowering/undef-global-var), and
+    [`lowering/deprecated-binding`](@ref diagnostic/reference/lowering/deprecated-binding)
     checks are reported only after a full analysis has established that context,
     which JETLS refreshes diagnostics to pick up. See [Live analysis](@ref analysis/live)
     for details, and [Files without full analysis](@ref analysis/live/fallback)
@@ -232,6 +233,7 @@ Here is a summary table of the diagnostics explained in this section:
 | [`lowering/undef-global-var`](@ref diagnostic/reference/lowering/undef-global-var)                             | `Warning`             | `JETLS/live`  | References to undefined global variables               |
 | [`lowering/undef-local-var`](@ref diagnostic/reference/lowering/undef-local-var)                               | `Warning/Information` | `JETLS/live`  | References to undefined local variables                |
 | [`lowering/ambiguous-soft-scope`](@ref diagnostic/reference/lowering/ambiguous-soft-scope)                     | `Warning`             | `JETLS/live`  | Assignment in soft scope shadows a global variable     |
+| [`lowering/deprecated-binding`](@ref diagnostic/reference/lowering/deprecated-binding)                         | `Information`         | `JETLS/live`  | Accesses to deprecated global bindings                 |
 | [`lowering/captured-boxed-variable`](@ref diagnostic/reference/lowering/captured-boxed-variable)               | `Information`         | `JETLS/live`  | Variables captured by closures that require boxing     |
 | [`lowering/unconstrained-static-parameter`](@ref diagnostic/reference/lowering/unconstrained-static-parameter) | `Warning`             | `JETLS/live`  | Static parameters not used in function parameter types |
 | [`lowering/orphaned-docstring`](@ref diagnostic/reference/lowering/orphaned-docstring)                         | `Information`         | `JETLS/live`  | Docstrings not attached to any definition              |
@@ -571,6 +573,70 @@ Running the example above as a file produces:
 !!! note "Notebook mode"
     This diagnostic is suppressed for [notebooks](@ref notebook), where soft
     scope semantics are enabled (matching REPL behavior).
+
+#### [Deprecated binding (`lowering/deprecated-binding`)](@id diagnostic/reference/lowering/deprecated-binding)
+
+**Default severity**: `Information`
+
+Reported when code accesses a global binding deprecated with
+`Base.@deprecate_binding` or `Base.deprecate`, either by name or as
+`Module.name`. The message includes the replacement suggested by
+`@deprecate_binding`.
+
+Example, with a dependency `Shapes` that deprecates `Point` in favor of
+`Point2D`:
+
+> `Shapes/src/Shapes.jl`
+```@diagnostics-file; workspace = "deprecated-binding", file = "Shapes/src/Shapes.jl"
+module Shapes
+
+export Point2D
+
+struct Point2D
+    x::Float64
+    y::Float64
+end
+
+Base.@deprecate_binding Point Point2D
+
+end
+```
+
+```@diagnostics-setup; workspace = "deprecated-binding", file = "Shapes/Project.toml"
+name = "Shapes"
+uuid = "8d6c1f4e-3a2b-4c5d-9e7f-1a2b3c4d5e6f"
+```
+
+```@diagnostics-setup; workspace = "deprecated-binding", file = "Project.toml"
+[deps]
+Shapes = "8d6c1f4e-3a2b-4c5d-9e7f-1a2b3c4d5e6f"
+
+[sources]
+Shapes = {path = "Shapes"}
+```
+
+> `main.jl`
+```@diagnostics; workspace = "deprecated-binding", file = "main.jl", codes = ["lowering/deprecated-binding"]
+using Shapes
+
+compute(p::Point) = sin(p.x)^2+cos(p.x)^2, sin(p.y)^2+cos(p.y)^2
+@show compute(Point(rand(), rand()))
+```
+
+As with the warning Julia prints for deprecated bindings, a deprecated binding
+imported explicitly, as with `using Module: name`, is reported at the import
+rather than at its uses:
+
+> `explicit-import.jl`
+```@diagnostics; workspace = "deprecated-binding", file = "explicit-import.jl", codes = ["lowering/deprecated-binding"]
+using Shapes: Point
+
+compute(p::Point) = sin(p.x)^2+cos(p.x)^2, sin(p.y)^2+cos(p.y)^2
+@show compute(Point(rand(), rand()))
+```
+
+Functions deprecated with `@deprecate` are not reported, since `@deprecate`
+deprecates their methods rather than their bindings.
 
 #### [Captured boxed variable (`lowering/captured-boxed-variable`)](@id diagnostic/reference/lowering/captured-boxed-variable)
 

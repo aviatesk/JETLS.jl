@@ -1355,6 +1355,361 @@ function emit_undef_global_diagnostics!(
     end
 end
 
+# Memoizes `find_deprecated_binding!` across the statements of a file
+const DeprecatedBindingCache = Dict{Tuple{UInt,Module,String},Union{Nothing,Core.Binding}}
+
+# This analysis reports `lowering/deprecated-binding` for accesses to bindings deprecated by
+# `Base.deprecate` (e.g. through `@deprecate_binding`), both by name and as `Mod.name`.
+# As with Julia's deprecation warning, a binding accessed through an explicit import is
+# reported at the import instead, by `analyze_deprecated_bindings0!`.
+function analyze_deprecated_bindings!(
+        diagnostics::Vector{Diagnostic}, fi::FileInfo, ctx3::JL.VariableAnalysisContext,
+        st3::SyntaxTree, binding_occurrences::Dict{JL.BindingInfo,Set{BindingOccurrence}},
+        world::UInt, postprocessor::LSPostProcessor, cache::DeprecatedBindingCache
+    )
+    reported = Set{Range}()
+    for (binfo, occurrences) in binding_occurrences
+        binfo.kind === :global || continue
+        bmod = binfo.mod
+        isnothing(bmod) && continue
+        all(o -> o.kind === :use, occurrences) || continue
+        deprecated = @something find_deprecated_binding!(cache, bmod, binfo.name, world) continue
+        message = deprecated_binding_message(deprecated, world, postprocessor)
+        for occ in occurrences
+            report_deprecated_binding!(diagnostics, reported, fi, occ.tree, message)
+        end
+    end
+    traverse(st3) do st
+        is_getproperty_call3(st) || return nothing
+        mod = @something resolve_lowered_module(ctx3, st[2], world) return nothing
+        deprecated = @something find_deprecated_binding!(cache, mod, name_val(st[3]), world) return nothing
+        message = deprecated_binding_message(deprecated, world, postprocessor)
+        report_deprecated_binding!(diagnostics, reported, fi, st[3], message)
+        return nothing
+    end
+    return diagnostics
+end
+
+function find_deprecated_binding!(
+        cache::DeprecatedBindingCache, mod::Module, name::String, world::UInt
+    )
+    return get!(cache, (world, mod, name)) do
+        sym = Symbol(name)
+        Base.invoke_in_world(world, isdefinedglobal, mod, sym)::Bool || return nothing
+        return find_deprecated_binding(convert(Core.Binding, GlobalRef(mod, sym)), world)
+    end
+end
+
+# The deprecated binding that `b` resolves to in `world`, or `nothing`. As with Julia's
+# deprecation warning, the resolution is not followed through an explicit import, whose
+# deprecation is reported at the import instead.
+function find_deprecated_binding(b::Core.Binding, world::UInt)
+    deprecated = nothing
+    visited = nothing
+    while true
+        bpart = Base.lookup_binding_partition(world, b)
+        if bpart.kind & Base.PARTITION_FLAG_DEPRECATED ≠ 0
+            deprecated = b
+        end
+        kind = Base.binding_kind(bpart)
+        if kind == Base.PARTITION_KIND_IMPLICIT_GLOBAL
+            b = Base.partition_restriction(bpart)::Core.Binding
+        elseif kind == Base.PARTITION_KIND_IMPLICIT_CONST
+            visited = @something visited Core.Binding[]
+            push!(visited, b)
+            b = @something implicit_const_source(b, bpart, world, visited) return deprecated
+        else
+            return deprecated
+        end
+    end
+end
+
+# Reports the deprecated bindings that `st0` refers to through syntax that lowering does not
+# leave: `import`/`using` statements and macro names. Quoted code is not executed, and thus
+# skipped.
+function analyze_deprecated_bindings0!(
+        diagnostics::Vector{Diagnostic}, fi::FileInfo, st0::SyntaxTree,
+        context_module::Module, world::UInt, postprocessor::LSPostProcessor,
+        cache::DeprecatedBindingCache
+    )
+    traverse(st0) do st0′
+        kind = JS.head(st0′)
+        if kind === :quote
+            return traversal_no_recurse
+        elseif kind === :import || kind === :using
+            analyze_deprecated_import!(diagnostics, fi, st0′, context_module, world,
+                postprocessor, cache)
+            return traversal_no_recurse
+        elseif kind === :macrocall && JS.numchildren(st0′) ≥ 1
+            analyze_deprecated_macro_name!(diagnostics, fi, st0′[1], context_module, world,
+                postprocessor, cache)
+        end
+        return nothing
+    end
+    return diagnostics
+end
+
+# Reports both the names that the `import`/`using` statement `st0` imports and the modules
+# on its paths. The statement is checked against the modules its paths resolve to in
+# `world`, rather than against the bindings it introduced, since a name imported by multiple
+# statements keeps the binding of the first one.
+function analyze_deprecated_import!(
+        diagnostics::Vector{Diagnostic}, fi::FileInfo, st0::SyntaxTree,
+        context_module::Module, world::UInt, postprocessor::LSPostProcessor,
+        cache::DeprecatedBindingCache
+    )
+    local_names = import_local_names(st0)
+    if JS.numchildren(st0) == 1 && JS.head(st0[1]) === :(:)
+        colon = st0[1]
+        mod = @something resolve_import_path!(diagnostics, fi, colon[1], context_module,
+            local_names, world, postprocessor, cache) return diagnostics
+        for i = 2:JS.numchildren(colon)
+            item = colon[i]
+            path = JS.head(item) === :as ? item[1] : item
+            name_st = @something get_local_import_identifier(path) continue
+            report_deprecated_global!(diagnostics, fi, name_st, mod, world, postprocessor, cache)
+        end
+    else
+        for i = 1:JS.numchildren(st0)
+            item = st0[i]
+            path = JS.head(item) === :as ? item[1] : item
+            resolve_import_path!(diagnostics, fi, path, context_module, local_names, world,
+                postprocessor, cache)
+        end
+    end
+    return diagnostics
+end
+
+# The names that the `import`/`using` statement `st0` binds in the importing module
+function import_local_names(st0::SyntaxTree)
+    names = Symbol[]
+    is_colon = JS.numchildren(st0) == 1 && JS.head(st0[1]) === :(:)
+    items = is_colon ? st0[1] : st0
+    for i = (is_colon ? 2 : 1):JS.numchildren(items)
+        id = @something get_local_import_identifier(items[i]) continue
+        push!(names, Symbol(name_val(id)))
+    end
+    return names
+end
+
+# Resolve the module path `path` of an `import`/`using` statement in `world`, reporting the
+# deprecated bindings it goes through, or return `nothing` if it cannot be resolved.
+function resolve_import_path!(
+        diagnostics::Vector{Diagnostic}, fi::FileInfo, path::SyntaxTree,
+        context_module::Module, local_names::Vector{Symbol}, world::UInt,
+        postprocessor::LSPostProcessor, cache::DeprecatedBindingCache
+    )
+    JS.head(path) === :. || return nothing
+    mod = nothing
+    for i = 1:JS.numchildren(path)
+        id = path[i]
+        JS.head(id) === :identifier || return nothing
+        name = name_val(id)
+        if name == "."
+            mod = mod === nothing ? context_module : parentmodule(mod)
+        elseif mod === nothing
+            # the root of an absolute path names a package rather than a binding
+            mod = @something resolve_import_root(context_module, Symbol(name), local_names,
+                world) return nothing
+        else
+            report_deprecated_global!(diagnostics, fi, id, mod, world, postprocessor, cache)
+            mod = @something global_module(mod, Symbol(name), world) return nothing
+        end
+    end
+    return mod
+end
+
+# The root module that an absolute path starting with `name` refers to. The importing
+# module does not bind it after e.g. `using Foo: x`, so the root is also looked up from the
+# modules that the bindings introduced by the statement were imported from. `Base.require`
+# and `Base.loaded_modules` are not used, since they take the lock held during package
+# loading.
+function resolve_import_root(
+        context_module::Module, name::Symbol, local_names::Vector{Symbol}, world::UInt
+    )
+    mod = global_module(context_module, name, world)
+    mod !== nothing && parentmodule(mod) === mod && return mod
+    for local_name in local_names
+        bpart = Base.lookup_binding_partition(world, GlobalRef(context_module, local_name))
+        kind = Base.binding_kind(bpart)
+        imported = if Base.is_some_explicit_imported(kind)
+            (Base.partition_restriction(bpart)::Core.Binding).globalref.mod
+        elseif Base.is_defined_const_binding(kind)
+            Base.partition_restriction(bpart)
+        else
+            continue
+        end
+        imported isa Module || continue
+        root = Base.moduleroot(imported)
+        nameof(root) === name && return root
+    end
+    return nothing
+end
+
+# Reports the macro name `st0` of a macro call, and the modules it is qualified with, as in
+# `Mod.@name`
+function analyze_deprecated_macro_name!(
+        diagnostics::Vector{Diagnostic}, fi::FileInfo, st0::SyntaxTree,
+        context_module::Module, world::UInt, postprocessor::LSPostProcessor,
+        cache::DeprecatedBindingCache
+    )
+    if JS.head(st0) === :identifier
+        mod, name_st = context_module, st0
+    elseif JS.head(st0) === :. && JS.numchildren(st0) == 2
+        mod = @something resolve_macro_prefix!(diagnostics, fi, st0[1], context_module, world,
+            postprocessor, cache) return diagnostics
+        name_st = @something inert_identifier(st0[2]) return diagnostics
+    else
+        return diagnostics
+    end
+    return report_deprecated_global!(diagnostics, fi, name_st, mod, world, postprocessor, cache)
+end
+
+# Resolve the module that the prefix `st0` of a qualified macro name refers to, reporting the
+# deprecated bindings it goes through
+function resolve_macro_prefix!(
+        diagnostics::Vector{Diagnostic}, fi::FileInfo, st0::SyntaxTree,
+        context_module::Module, world::UInt, postprocessor::LSPostProcessor,
+        cache::DeprecatedBindingCache
+    )
+    if JS.head(st0) === :identifier
+        mod, name_st = context_module, st0
+    elseif JS.head(st0) === :. && JS.numchildren(st0) == 2
+        mod = @something resolve_macro_prefix!(diagnostics, fi, st0[1], context_module, world,
+            postprocessor, cache) return nothing
+        name_st = @something inert_identifier(st0[2]) return nothing
+    else
+        return nothing
+    end
+    report_deprecated_global!(diagnostics, fi, name_st, mod, world, postprocessor, cache)
+    return global_module(mod, Symbol(name_val(name_st)), world)
+end
+
+# The names after `.` in qualified macro names are wrapped in `:inert`
+function inert_identifier(st0::SyntaxTree)
+    if JS.head(st0) === :inert && JS.numchildren(st0) == 1
+        st0 = st0[1]
+    end
+    return JS.head(st0) === :identifier ? st0 : nothing
+end
+
+function report_deprecated_global!(
+        diagnostics::Vector{Diagnostic}, fi::FileInfo, name_st::SyntaxTree, mod::Module,
+        world::UInt, postprocessor::LSPostProcessor, cache::DeprecatedBindingCache
+    )
+    deprecated = @something find_deprecated_binding!(cache, mod, name_val(name_st),
+        world) return diagnostics
+    message = deprecated_binding_message(deprecated, world, postprocessor)
+    return push!(diagnostics, deprecated_binding_diagnostic(jsobj_to_range(name_st, fi), message))
+end
+
+# `Mod.name`, which is lowered to `getproperty(Mod, :name)`
+is_getproperty_call3(st3::SyntaxTree) =
+    JS.head(st3) === :call && JS.numchildren(st3) == 3 &&
+    JS.head(st3[1]) === :top && name_val(st3[1]) == "getproperty" &&
+    JS.head(st3[3]) === :symbol
+
+# The module that `st3` refers to when it is a global binding or a `Mod.name` chain of them
+function resolve_lowered_module(
+        ctx3::JL.VariableAnalysisContext, st3::SyntaxTree, world::UInt
+    )
+    if JS.head(st3) === :bindingid
+        binfo = JL.get_binding(ctx3, st3)
+        binfo.kind === :global || return nothing
+        mod = @something binfo.mod return nothing
+        name = Symbol(binfo.name)
+    elseif is_getproperty_call3(st3)
+        mod = @something resolve_lowered_module(ctx3, st3[2], world) return nothing
+        name = Symbol(name_val(st3[3]))
+    else
+        return nothing
+    end
+    return global_module(mod, name, world)
+end
+
+# The module bound to the global `mod.name` in `world`, or `nothing`
+function global_module(mod::Module, name::Symbol, world::UInt)
+    Base.invoke_in_world(world, isdefinedglobal, mod, name)::Bool || return nothing
+    val = global_const_value(convert(Core.Binding, GlobalRef(mod, name)), world)
+    return val isa Module ? val : nothing
+end
+
+# Read from the partitions, since `getglobal` of a deprecated binding warns, or throws with
+# `--depwarn=error`
+function global_const_value(b::Core.Binding, world::UInt)
+    while true
+        bpart = Base.lookup_binding_partition(world, b)
+        kind = Base.binding_kind(bpart)
+        if Base.is_defined_const_binding(kind)
+            return Base.partition_restriction(bpart)
+        elseif Base.is_some_binding_imported(kind)
+            b = Base.partition_restriction(bpart)::Core.Binding
+        else
+            return nothing
+        end
+    end
+end
+
+# The partition of a constant implicitly imported through `using` holds only the constant,
+# and up to Julia 1.13 not its deprecation either, so find the binding it was imported from
+# among the exports of the used modules. `Base.binding_module` is not used for this, since
+# it follows explicit imports of the exporting module as well. The exports in `visited` are
+# skipped, since modules that re-export each other's implicit imports form a cycle.
+function implicit_const_source(
+        b::Core.Binding, bpart::Core.BindingPartition, world::UInt,
+        visited::Vector{Core.Binding}
+    )
+    (; mod, name) = b.globalref
+    val = Base.partition_restriction(bpart)
+    source = nothing
+    for used in @ccall(jl_module_usings(mod::Any)::Any)::Vector{Any}
+        Base.invoke_in_world(world, Base.isexported, used, name)::Bool || continue
+        exported = convert(Core.Binding, GlobalRef(used, name))
+        exported in visited && continue
+        global_const_value(exported, world) === val || continue
+        # As in Julia's implicit import resolution, a deprecated export loses to the others
+        exported_bpart = Base.lookup_binding_partition(world, exported)
+        exported_bpart.kind & Base.PARTITION_FLAG_DEPRECATED == 0 && return exported
+        source = exported
+    end
+    return source
+end
+
+function deprecated_binding_message(
+        b::Core.Binding, world::UInt, postprocessor::LSPostProcessor
+    )
+    (; mod, name) = b.globalref
+    message = "`$mod.$name` is deprecated"
+    # `@deprecate_binding` defines the rest of the message of Julia's deprecation warning
+    depmsg_name = Symbol("_dep_message_", name)
+    if Base.invoke_in_world(world, isdefinedglobal, mod, depmsg_name)::Bool
+        depmsg = Base.invoke_in_world(world, getglobal, mod, depmsg_name)
+        depmsg isa String && (message *= depmsg)
+    end
+    return postprocessor(message)
+end
+
+function report_deprecated_binding!(
+        diagnostics::Vector{Diagnostic}, reported::Set{Range}, fi::FileInfo,
+        st::SyntaxTree, message::String
+    )
+    provs = JS.flattened_provenance(st)
+    is_from_user_ast(provs) || return diagnostics
+    range = jsobj_to_range(last(provs), fi)
+    range in reported && return diagnostics
+    push!(reported, range)
+    return push!(diagnostics, deprecated_binding_diagnostic(range, message))
+end
+
+deprecated_binding_diagnostic(range::Range, message::String) = Diagnostic(;
+    range,
+    severity = DiagnosticSeverity.Information,
+    message,
+    source = DIAGNOSTIC_SOURCE_LIVE,
+    code = LOWERING_DEPRECATED_BINDING_CODE,
+    codeDescription = diagnostic_code_description(LOWERING_DEPRECATED_BINDING_CODE),
+    tags = DiagnosticTag.Ty[DiagnosticTag.Deprecated])
+
 # This analysis reports `lowering/undef-local-var` on a change basis, based on
 # `analyze_all_lambdas`, which analyzes local binding definedness with the event
 # based binding assignment reachability analysis.
@@ -2040,7 +2395,8 @@ function analyze_lowered_code!(
         skip_analysis_requiring_context::Bool = false,
         allow_unused_underscore::Bool = true,
         allow_noreturn_optimization::Vector{Symbol} = Symbol[],
-        inactive_branch_names::Set{String} = Set{String}()
+        inactive_branch_names::Set{String} = Set{String}(),
+        deprecated_binding_cache::DeprecatedBindingCache = DeprecatedBindingCache()
     )
     (; ctx3, ctx4, st0, st3) = res
     binding_occurrences = compute_binding_occurrences(ctx3, st3, world;
@@ -2070,6 +2426,8 @@ function analyze_lowered_code!(
     if !skip_analysis_requiring_context
         collect_undef_global_candidates!(candidates, fi, binding_occurrences,
             world, analyzer, postprocessor, reported)
+        analyze_deprecated_bindings!(diagnostics, fi, ctx3, st3, binding_occurrences,
+            world, postprocessor, deprecated_binding_cache)
         analyze_ambiguous_soft_scope!(diagnostics, fi, ctx3, reported)
     end
 
@@ -2082,11 +2440,14 @@ function per_stmt_diagnostics!(
         analyzer::Union{Nothing,LSAnalyzer}, postprocessor::LSPostProcessor;
         skip_analysis_requiring_context::Bool = false,
         allow_unused_underscore::Bool = true,
-        soft_scope::Bool = false
+        soft_scope::Bool = false,
+        deprecated_binding_cache::DeprecatedBindingCache = DeprecatedBindingCache()
     )
     @assert JS.head(st0) ∉ (:toplevel, :module)
 
     analyze_unsorted_imports!(diagnostics, fi, st0)
+    skip_analysis_requiring_context ||
+        analyze_deprecated_bindings0!(diagnostics, fi, st0, context_module, world, postprocessor, deprecated_binding_cache)
 
     (st0, _) = desugar_main_macrocall(st0)
     macro_diags = MacroDiagnostic[]
@@ -2180,7 +2541,7 @@ function per_stmt_diagnostics!(
     return analyze_lowered_code!(
         diagnostics, candidates, uri, fi, res, world, analyzer, postprocessor;
         skip_analysis_requiring_context, allow_unused_underscore, allow_noreturn_optimization,
-        inactive_branch_names)
+        inactive_branch_names, deprecated_binding_cache)
 end
 
 # Names of identifiers appearing in `@static` branches dropped at expansion time — the
@@ -2461,6 +2822,7 @@ function compute_per_file_diagnostics(
     # the last expression of a notebook cell is displayed, so top-level strings are not
     # necessarily orphaned there
     analyze_orphaned_docstrings!(diagnostics, uri, file_info, st0_top; check_toplevel = !soft_scope)
+    deprecated_binding_cache = DeprecatedBindingCache()
     iterate_toplevel_tree(st0_top) do st0::SyntaxTree
         is_cancelled(cancel_flag) && return traversal_terminator
         pos = offset_to_xy(file_info, JS.first_byte(st0))
@@ -2468,7 +2830,8 @@ function compute_per_file_diagnostics(
             get_context_info(server.state, uri, pos; lookup_func)
         per_stmt_diagnostics!(diagnostics, candidates, uri, file_info, st0,
             context_module, world, analyzer, postprocessor;
-            skip_analysis_requiring_context, allow_unused_underscore, soft_scope)
+            skip_analysis_requiring_context, allow_unused_underscore, soft_scope,
+            deprecated_binding_cache)
         if !skip_analysis_requiring_context
             binding_occurrences = if lookup_func === nothing
                 get_binding_occurrences!(server.state, uri, file_info, st0)
