@@ -1805,6 +1805,31 @@ get_deprecated_macro_diagnostics(text::AbstractString, context_module::Module) =
         @test isempty(get_lowering_diagnostics("f() = old_value"; code = JETLSCore.LOWERING_DEPRECATED_BINDING_CODE, context_module = nothing))
     end
 
+    @testset "cache" begin
+        cache = JETLSCore.DeprecatedBindingCache()
+        world = Base.get_world_counter()
+        deprecated = JETLSCore.find_deprecated_global!(cache, TestDeprecatedBindingUser, :old_value, world)
+        @test deprecated isa Core.Binding
+        @test deprecated.globalref == GlobalRef(TestDeprecatedBindingOwner, :old_value)
+        @test JETLSCore.find_deprecated_global!(cache, TestDeprecatedBindingUser, :new_value, world) === nothing
+        world_cache = cache.worlds[world]
+        @test world_cache[(TestDeprecatedBindingUser, :old_value)] === deprecated
+        @test world_cache[(TestDeprecatedBindingUser, :new_value)] === nothing
+
+        # only the latest worlds are kept
+        max_worlds = JETLSCore.DEPRECATED_BINDING_CACHE_MAX_WORLDS
+        worlds = [world - i for i = max_worlds:-1:0]
+        for w in worlds
+            JETLSCore.find_deprecated_global!(cache, TestDeprecatedBindingUser, :new_value, w)
+        end
+        @test sort!(collect(keys(cache.worlds))) == worlds[2:end]
+
+        state = JETLSCore.ServerState()
+        JETLSCore.find_deprecated_global!(state.deprecated_binding_cache, TestDeprecatedBindingUser, :old_value, world)
+        @test !isempty(state.deprecated_binding_cache.worlds)
+        JETLSCore.clear_deprecated_binding_cache!(state)
+        @test isempty(state.deprecated_binding_cache.worlds)
+    end
 end
 
 @testset HierarchicalTestSet "Undefined local binding report" begin

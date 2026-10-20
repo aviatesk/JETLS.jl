@@ -1355,9 +1355,6 @@ function emit_undef_global_diagnostics!(
     end
 end
 
-# Memoizes `find_deprecated_binding!` across the statements of a file
-const DeprecatedBindingCache = Dict{Tuple{UInt,Module,String},Union{Nothing,Core.Binding}}
-
 # This analysis reports `lowering/deprecated-binding` for accesses to bindings deprecated by
 # `Base.deprecate` (e.g. through `@deprecate_binding`), both by name and as `Mod.name`.
 # As with Julia's deprecation warning, a binding accessed through an explicit import is
@@ -1373,7 +1370,7 @@ function analyze_deprecated_bindings!(
         bmod = binfo.mod
         isnothing(bmod) && continue
         all(o -> o.kind === :use, occurrences) || continue
-        deprecated = @something find_deprecated_binding!(cache, bmod, binfo.name, world) continue
+        deprecated = @something find_deprecated_global!(cache, bmod, Symbol(binfo.name), world) continue
         message = deprecated_binding_message(deprecated, world, postprocessor)
         for occ in occurrences
             report_deprecated_binding!(diagnostics, reported, fi, occ.tree, message)
@@ -1382,7 +1379,7 @@ function analyze_deprecated_bindings!(
     traverse(st3) do st
         is_getproperty_call3(st) || return nothing
         mod = @something resolve_lowered_module(ctx3, st[2], world) return nothing
-        deprecated = @something find_deprecated_binding!(cache, mod, name_val(st[3]), world) return nothing
+        deprecated = @something find_deprecated_global!(cache, mod, Symbol(name_val(st[3])), world) return nothing
         message = deprecated_binding_message(deprecated, world, postprocessor)
         report_deprecated_binding!(diagnostics, reported, fi, st[3], message)
         return nothing
@@ -1390,12 +1387,37 @@ function analyze_deprecated_bindings!(
     return diagnostics
 end
 
-function find_deprecated_binding!(
-        cache::DeprecatedBindingCache, mod::Module, name::String, world::UInt
+# The worlds kept in a `DeprecatedBindingCache`. Contexts without an analysis use the latest
+# world, so the cache would otherwise grow with every world while no analysis completes.
+const DEPRECATED_BINDING_CACHE_MAX_WORLDS = 8
+
+function find_deprecated_global!(
+        cache::DeprecatedBindingCache, mod::Module, name::Symbol, world::UInt
     )
-    return get!(cache, (world, mod, name)) do
-        find_deprecated_global(mod, Symbol(name), world)
+    key = (mod, name)
+    cached = @lock cache.lock begin
+        world_cache = get(cache.worlds, world, nothing)
+        world_cache === nothing ? missing : get(world_cache, key, missing)
     end
+    cached === missing || return cached
+    deprecated = find_deprecated_global(mod, name, world)
+    @lock cache.lock begin
+        world_cache = get(cache.worlds, world, nothing)
+        if world_cache === nothing
+            if length(cache.worlds) ≥ DEPRECATED_BINDING_CACHE_MAX_WORLDS
+                delete!(cache.worlds, minimum(keys(cache.worlds)))
+            end
+            world_cache = cache.worlds[world] = DeprecatedBindingWorldCache()
+        end
+        world_cache[key] = deprecated
+    end
+    return deprecated
+end
+
+function clear_deprecated_binding_cache!(state::ServerState)
+    cache = state.deprecated_binding_cache
+    @lock cache.lock empty!(cache.worlds)
+    return nothing
 end
 
 # The deprecated binding that the global `mod.name` resolves to in `world`, or `nothing`
@@ -1601,7 +1623,7 @@ function report_deprecated_global!(
         diagnostics::Vector{Diagnostic}, fi::FileInfo, name_st::SyntaxTree, mod::Module,
         world::UInt, postprocessor::LSPostProcessor, cache::DeprecatedBindingCache
     )
-    deprecated = @something find_deprecated_binding!(cache, mod, name_val(name_st),
+    deprecated = @something find_deprecated_global!(cache, mod, Symbol(name_val(name_st)),
         world) return diagnostics
     message = deprecated_binding_message(deprecated, world, postprocessor)
     return push!(diagnostics, deprecated_binding_diagnostic(jsobj_to_range(name_st, fi), message))
@@ -2826,7 +2848,7 @@ function compute_per_file_diagnostics(
     # the last expression of a notebook cell is displayed, so top-level strings are not
     # necessarily orphaned there
     analyze_orphaned_docstrings!(diagnostics, uri, file_info, st0_top; check_toplevel = !soft_scope)
-    deprecated_binding_cache = DeprecatedBindingCache()
+    (; deprecated_binding_cache) = server.state
     iterate_toplevel_tree(st0_top) do st0::SyntaxTree
         is_cancelled(cancel_flag) && return traversal_terminator
         pos = offset_to_xy(file_info, JS.first_byte(st0))

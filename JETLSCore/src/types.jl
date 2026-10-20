@@ -1053,6 +1053,13 @@ struct PerFileDiagnosticsCacheEntry
 end
 const PerFileDiagnosticsCacheData = Base.PersistentDict{URI,PerFileDiagnosticsCacheEntry}
 const PerFileDiagnosticsCache = LWContainer{PerFileDiagnosticsCacheData, LWStats}
+# Deprecated bindings that global names resolve to, per world; see `find_deprecated_global!`
+const DeprecatedBindingWorldCache = Dict{Tuple{Module,Symbol},Union{Nothing,Core.Binding}}
+struct DeprecatedBindingCache
+    lock::ReentrantLock
+    worlds::Dict{UInt,DeprecatedBindingWorldCache}
+    DeprecatedBindingCache() = new(ReentrantLock(), Dict{UInt,DeprecatedBindingWorldCache}())
+end
 const ConfigManager = LWContainer{ConfigManagerData, LWStats}
 const UnsyncedFileCacheData = Base.PersistentDict{URI,FileInfo}
 const UnsyncedFileCache = LWContainer{UnsyncedFileCacheData, LWStats}
@@ -1131,6 +1138,8 @@ mutable struct ServerState
     const document_symbol_cache::DocumentSymbolCache
     const binding_occurrences_cache::BindingOccurrencesCache
     const per_file_diagnostics_cache::PerFileDiagnosticsCache
+    # Cleared by `update_analysis_cache!`, since the entries hold the analyzed modules.
+    const deprecated_binding_cache::DeprecatedBindingCache
     const text_document_content_cache::TextDocumentContentCache
     const analysis_manager::AnalysisManager
     const extra_diagnostics::ExtraDiagnostics
@@ -1166,6 +1175,7 @@ mutable struct ServerState
             #=document_symbol_cache=# DocumentSymbolCache(),
             #=binding_occurrences_cache=# BindingOccurrencesCache(),
             #=per_file_diagnostics_cache=# PerFileDiagnosticsCache(),
+            #=deprecated_binding_cache=# DeprecatedBindingCache(),
             #=text_document_content_cache=# TextDocumentContentCache(),
             #=analysis_manager=# AnalysisManager(),
             #=extra_diagnostics=# ExtraDiagnostics(),
