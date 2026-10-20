@@ -76,6 +76,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   origin() = Point(0, 0) # `Shapes.Point` is deprecated, use Point2D instead.
   ```
   As with the warning Julia prints, a deprecated binding imported explicitly, as with `using Shapes: Point`, is reported at the import rather than at its uses.
+  Global completion also lists such bindings after the other candidates and marks them as deprecated, which editors typically render with a strikethrough.
 
 - Added the [`config/deprecated-value`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/config/deprecated-value) warning on [diagnostic patterns](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/diagnostic/patterns) that match the deprecated `inference/non-boolean-cond` code literally (`match_by = "code"` and `match_type = "literal"`), with a quick fix that replaces it with `inference/type-error/non-bool-cond`.
   Like other deprecated settings, such patterns are also listed in the message shown when JETLS loads the configuration, with a "Fix all" action.
