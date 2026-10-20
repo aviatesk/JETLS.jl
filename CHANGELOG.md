@@ -96,6 +96,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Fixed test runs of the [TestRunner integration](https://aviatesk.github.io/JETLS.jl/release/testrunner/) never finishing when the tests write more than about 64 KB of output.
 
+- Fixed false [`lowering/undef-global-var`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/undef-global-var) reports on non-constant globals that a script imports from a module defined in the script.
+
 ## 2026-10-18
 
 - Commit: [`8888185`](https://github.com/aviatesk/JETLS.jl/commit/8888185)

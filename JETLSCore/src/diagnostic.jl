@@ -1315,7 +1315,9 @@ function collect_undef_global_candidates!(
         isnothing(bmod) && continue
         Base.invoke_in_world(world, isdefinedglobal, bmod, Symbol(binfo.name))::Bool && continue
         if !isnothing(analyzer)
-            bp = Base.lookup_binding_partition(world, GlobalRef(bmod, Symbol(binfo.name)))
+            b = convert(Core.Binding, GlobalRef(bmod, Symbol(binfo.name)))
+            # JET records the state of an imported global on the partition of its owner
+            _, (_, bp) = CC.walk_binding_partition(b, Base.lookup_binding_partition(world, b), world)
             haskey(JET.AnalyzerState(analyzer).binding_states, bp) && continue
         end
         bn = binfo.name

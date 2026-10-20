@@ -1493,6 +1493,43 @@ end
         @test diagnostic.range.var"end".character ==
             length("        \$") + length("undef_lazy_triple_interp")
     end
+
+    @testset "non-constant globals imported from a script module" begin
+        script = """
+        module Config
+        export settings
+        global settings = Dict{String,Int}()
+        end
+
+        module ExplicitConfig
+        global explicit_settings = Dict{String,Int}()
+        end
+
+        using .Config
+        using .ExplicitConfig: explicit_settings
+
+        f() = settings
+        g() = explicit_settings
+        h() = undefined_settings
+        """
+        withscript(script) do script_path
+            uri = filepath2uri(script_path)
+            withserver() do (; readmsg, server)
+                JETLSCore.cache_file_info!(server, uri, 1, script)
+                JETLSCore.cache_saved_file_info!(server.state, uri, script)
+                JETLSCore.request_analysis!(server, uri, #=invalidate=#false; wait=true, notify_diagnostics=false)
+
+                params = scan_live_diagnostics!(server, readmsg)[uri]
+                undef_global_diags = filter(params.diagnostics) do d
+                    d.code == JETLSCore.LOWERING_UNDEF_GLOBAL_VAR_CODE
+                end
+                @test length(undef_global_diags) == 1
+                diagnostic = only(undef_global_diags)
+                @test diagnostic.message == "`undefined_settings` is not defined"
+                @test diagnostic.range.start.line == 14
+            end
+        end
+    end
 end
 
 module TestLoweringUndefGlobalMacroFirst
