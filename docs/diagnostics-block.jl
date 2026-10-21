@@ -250,10 +250,11 @@ function testrunner_diagnostics(
         byte_range = JETLSCore.JS.byte_range(testsetinfo.st0)
         first(byte_range) in outer && continue
         outer = byte_range
-        cmd = JETLSCore.testrunner_testset_cmd(launcher, filepath,
-            String(JETLSCore.testset_name(testsetinfo)), JETLSCore.testset_line(testsetinfo),
-            test_env_path, root_path)
-        result = JETLSCore.read_testrunner_result(server, cmd, code)
+        result = JETLSCore.read_testrunner_result(server, code) do json_file
+            JETLSCore.testrunner_testset_cmd(launcher, filepath,
+                String(JETLSCore.testset_name(testsetinfo)), JETLSCore.testset_line(testsetinfo),
+                test_env_path, root_path, json_file)
+        end
         result isa String && error("In ", source, ": ", result)
         uri2diagnostics = JETLSCore.testrunner_result_to_diagnostics(result; markdown_rendering)
         append!(diagnostics, get(uri2diagnostics, uri, Diagnostic[]))
