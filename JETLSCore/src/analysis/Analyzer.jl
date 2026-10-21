@@ -611,7 +611,7 @@ function infer_constructed_closure!(
     matches = @something CC.findall(Tuple{closuretype,Vararg{Any}}, CC.method_table(analyzer)) return nothing
     si = CC.StmtInfo(#=used=#true, sstate.saw_latestworld)
     for match in matches
-        argtypes = @something declared_argtypes((match::Core.MethodMatch).method.sig) continue
+        argtypes = @something declared_argtypes(match.method.sig) continue
         # Call the closure value rather than its type, so that constant propagation can use
         # the constant values of the captured variables.
         arginfo = CC.ArgInfo(nothing, Any[rt, argtypes...])
@@ -1563,7 +1563,6 @@ function find_ambiguous_methods(
     coverage = Union{}
     methods = Method[]
     for match in matches
-        match = match::Core.MethodMatch
         coverage = Union{coverage,match.spec_types}
         match.method ∈ methods || push!(methods, match.method)
     end
