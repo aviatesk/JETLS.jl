@@ -697,11 +697,15 @@ end
             @test binfo.name == "@nospecialize"
             @test length(occs) == 1
         end
+        # both `Base` and `@nospecialize` of `Base`
         let boccs = get_full_binding_occurrences("Base.@nospecialize")
-            @test length(boccs) == 1
-            binfo, occs = only(boccs)
-            @test binfo.name == "Base"
-            @test length(occs) == 1
+            @test length(boccs) == 2
+            @test any(boccs) do (binfo, occs)
+                binfo.name == "Base" && length(occs) == 1
+            end
+            @test any(boccs) do (binfo, occs)
+                binfo.name == "@nospecialize" && binfo.mod === Base && length(occs) == 1
+            end
         end
     end
 

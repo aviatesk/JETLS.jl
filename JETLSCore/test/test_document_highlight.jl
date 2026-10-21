@@ -23,6 +23,18 @@ function highlight_testcase(code::AbstractString, n::Int)
     return fi, positions
 end
 
+# Analyzed in this module, so that `test_document_highlight.name` resolves
+function module_document_highlights(fi::JETLSCore.FileInfo, pos::Position)
+    state = JETLSCore.ServerState()
+    uri = filepath2uri(fi.filename)
+    JETLSCore.store!(state.file_cache) do cache
+        Base.PersistentDict(cache, uri => fi), nothing
+    end
+    JETLSCore.cache_out_of_scope!(
+        state.analysis_manager, uri, JETLSCore.OutOfScope(@__MODULE__))
+    return JETLSCore.document_highlights!(DocumentHighlight[], state, uri, fi, pos)
+end
+
 @testset HierarchicalTestSet "document_highlights!" begin
     @testset "local binding highlights" begin
         let code = """
@@ -448,6 +460,40 @@ end
                     highlight.range.var"end" == positions[6] &&
                     highlight.kind == DocumentHighlightKind.Read
                 end == 1
+            end
+        end
+
+        @testset "qualified access highlights" begin
+            let code = """
+                │qualified_func│() = 42
+                function test_document_highlight.│qualified_func│(x::Int)
+                    x
+                end
+                test_document_highlight.│qualified_func│()
+                """
+                fi, positions = highlight_testcase(code, 6)
+                highlights = module_document_highlights(fi, positions[1])
+                @test Set((h.range, h.kind) for h in highlights) == Set((
+                    (Range(; start=positions[1], var"end"=positions[2]), DocumentHighlightKind.Write),
+                    (Range(; start=positions[3], var"end"=positions[4]), DocumentHighlightKind.Write),
+                    (Range(; start=positions[5], var"end"=positions[6]), DocumentHighlightKind.Read)))
+            end
+
+            # a qualified constructor definition of a parametric type
+            let code = """
+                struct │ParamC│{T}
+                    x::T
+                end
+                function test_document_highlight.│ParamC│{T}(x::AbstractString) where T
+                    test_document_highlight.│ParamC│{T}(parse(T, x))
+                end
+                """
+                fi, positions = highlight_testcase(code, 6)
+                highlights = module_document_highlights(fi, positions[1])
+                @test Set((h.range, h.kind) for h in highlights) == Set((
+                    (Range(; start=positions[1], var"end"=positions[2]), DocumentHighlightKind.Write),
+                    (Range(; start=positions[3], var"end"=positions[4]), DocumentHighlightKind.Write),
+                    (Range(; start=positions[5], var"end"=positions[6]), DocumentHighlightKind.Read)))
             end
         end
 
