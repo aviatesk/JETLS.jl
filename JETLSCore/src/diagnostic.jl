@@ -669,6 +669,8 @@ function inference_error_report_code(@nospecialize report::JET.InferenceErrorRep
         return INFERENCE_TYPE_ERROR_NON_BOOL_COND_CODE
     elseif report isa FailingTestReport
         return INFERENCE_FAILING_TEST_CODE
+    elseif report isa DeprecatedCallReport
+        return INFERENCE_DEPRECATED_CALL_CODE
     end
     error(lazy"No diagnostic code is defined for report: $report")
 end
@@ -1507,94 +1509,13 @@ function find_deprecated_binding(b::Core.Binding, world::UInt)
     end
 end
 
-# The functions with more methods are not checked, since enumerating all methods of e.g. `+`
-# is far more expensive than finding out that there are more of them
-const DEPRECATED_FUNCTION_MAX_METHODS = 8
-
 # The message of the deprecation of the function bound to the global `mod.name` in `world`
-# when all of its methods are defined by `@deprecate`, or `nothing`. The methods are checked
-# on their roots first, so that the code of other `@noinline` methods is not decompressed.
+# when all of its methods are defined by `@deprecate`, or `nothing`
 function find_deprecated_function(mod::Module, name::Symbol, world::UInt)
     Base.invoke_in_world(world, isdefinedglobal, mod, name)::Bool || return nothing
     f = global_const_value(convert(Core.Binding, GlobalRef(mod, name)), world)
     f isa Function || return nothing
-    matches = @something Base._methods_by_ftype(
-        Tuple{typeof(f),Vararg{Any}}, DEPRECATED_FUNCTION_MAX_METHODS, world) return nothing
-    messages = String[]
-    others = nothing
-    for match in matches
-        m = (match::Core.MethodMatch).method
-        # `@deprecate` marks its methods `@noinline`, which is checked without decompression
-        CC.is_declared_noinline(m) || return nothing
-        if has_depwarn_root(m)
-            message = @something depwarn_message(Base.uncompressed_ast(m)) return nothing
-            push!(messages, message)
-        else
-            message = kwbody_depwarn_message(m, world)
-            if message === nothing
-                others = push!(@something(others, Method[]), m)
-            else
-                push!(messages, message)
-            end
-        end
-    end
-    isempty(messages) && return nothing
-    if others !== nothing
-        for m in others
-            # `@deprecate` defines methods for default arguments that call the other ones
-            calls_self = any(Base.uncompressed_ast(m).code) do @nospecialize stmt
-                Meta.isexpr(stmt, :call) && stmt.args[1] === Core.SlotNumber(1)
-            end
-            calls_self || return nothing
-        end
-    end
-    unique!(messages)
-    length(messages) == 1 && return only(messages)
-    summary = "All methods of `$(parentmodule(f)).$(nameof(f))` are deprecated:"
-    return join((summary, messages...), '\n')::String
-end
-
-# The roots of a method hold the literals of its compressed code, such as the name `depwarn`
-# of `Base.depwarn` and the message passed to it
-has_depwarn_root(m::Method) =
-    isdefined(m, :roots) && any(@nospecialize(root) -> root === :depwarn, m.roots)
-
-# The method that `@deprecate` defines without a signature takes keyword arguments, and its
-# body function `#name#N`, whose name is in the roots of the method, prints the warning
-function kwbody_depwarn_message(m::Method, world::UInt)
-    isdefined(m, :roots) || return nothing
-    prefix = string('#', m.name, '#')
-    for root in m.roots
-        root isa Symbol && startswith(String(root), prefix) || continue
-        Base.invoke_in_world(world, isdefinedglobal, m.module, root)::Bool || continue
-        bodyf = global_const_value(convert(Core.Binding, GlobalRef(m.module, root)), world)
-        bodyf isa Function || continue
-        matches = @something Base._methods_by_ftype(
-            Tuple{typeof(bodyf),Vararg{Any}}, 1, world) return nothing
-        length(matches) == 1 || return nothing
-        body = (only(matches)::Core.MethodMatch).method
-        CC.is_declared_noinline(body) && has_depwarn_root(body) || return nothing
-        return depwarn_message(Base.uncompressed_ast(body))
-    end
-    return nothing
-end
-
-# The message of the deprecation warning that `src` prints first thing, as the methods
-# defined by `@deprecate` do, or `nothing`
-function depwarn_message(src::Core.CodeInfo)
-    for stmt in src.code
-        if stmt isa Core.GotoNode || stmt isa Core.GotoIfNot || stmt isa Core.ReturnNode ||
-           stmt isa Core.EnterNode
-            return nothing
-        elseif Meta.isexpr(stmt, :call) && length(stmt.args) ≥ 2
-            callee = stmt.args[1]
-            callee isa Core.SSAValue && (callee = src.code[callee.id])
-            callee isa GlobalRef && callee.mod === Base && callee.name === :depwarn || continue
-            message = stmt.args[2]
-            return message isa String ? message : nothing
-        end
-    end
-    return nothing
+    return deprecated_function_message(f, world)
 end
 
 # Reports the deprecated bindings that `st0` refers to through syntax that lowering does not
@@ -1807,22 +1728,6 @@ function global_module(mod::Module, name::Symbol, world::UInt)
     Base.invoke_in_world(world, isdefinedglobal, mod, name)::Bool || return nothing
     val = global_const_value(convert(Core.Binding, GlobalRef(mod, name)), world)
     return val isa Module ? val : nothing
-end
-
-# Read from the partitions, since `getglobal` of a deprecated binding warns, or throws with
-# `--depwarn=error`
-function global_const_value(b::Core.Binding, world::UInt)
-    while true
-        bpart = Base.lookup_binding_partition(world, b)
-        kind = Base.binding_kind(bpart)
-        if Base.is_defined_const_binding(kind)
-            return Base.partition_restriction(bpart)
-        elseif Base.is_some_binding_imported(kind)
-            b = Base.partition_restriction(bpart)::Core.Binding
-        else
-            return nothing
-        end
-    end
 end
 
 # The partition of a constant implicitly imported through `using` holds only the constant,

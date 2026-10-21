@@ -5,10 +5,10 @@ export declared_argtypes, inference_error_report_related_frames,
     inference_error_report_related_stack, inference_error_report_severity,
     inference_error_report_stack, is_parametric_closure_type,
     reset_report_target_modules!
-export AmbiguousMethodReport, BoundsErrorReport, FailingTestReport, FieldErrorReport,
-    KeywordTypeErrorReport, MethodErrorReport, NoMethodMatchReport, NonBooleanCondErrorReport,
-    TypeAssertErrorReport, TypeErrorReport, UndefKeywordErrorReport, UndefVarErrorReport,
-    UnsupportedKeywordArgReport
+export AmbiguousMethodReport, BoundsErrorReport, DeprecatedCallReport, FailingTestReport,
+    FieldErrorReport, KeywordTypeErrorReport, MethodErrorReport, NoMethodMatchReport,
+    NonBooleanCondErrorReport, TypeAssertErrorReport, TypeErrorReport,
+    UndefKeywordErrorReport, UndefVarErrorReport, UnsupportedKeywordArgReport
 export RelatedEntryFrame, RelatedFrame, RelatedFrameKind, RelatedOriginFrame, RelatedViaFrame
 
 using Core.IR
@@ -16,7 +16,8 @@ using Compiler: Compiler as CC
 using JET.JETInterface
 using JET: JET
 
-using ..JETLSCore: AnalysisEntry, JETLS_DEV_MODE, with_base_render_lock
+using ..JETLSCore: AnalysisEntry, JETLS_DEV_MODE, deprecated_function_message,
+    deprecated_method_message, global_const_value, with_base_render_lock
 using ..LSP
 
 # JETLS internal interface
@@ -529,6 +530,7 @@ function after_abstract_call_gf_by_type(
         kwarg_reported = report_unsupported_kwarg_error!(analyzer′, sv′, func′, ret′, arginfo, max_methods)
         report_method_error!(analyzer′, sv′, ret′, arginfo, kwarg_reported, max_methods)
         report_keyword_typeerror!(analyzer′, sv′, func′, ret′, arginfo, max_methods)
+        report_deprecated_call!(analyzer′, sv′, func′, ret′, arginfo)
         return true
     end
     if isready(ret)
@@ -563,6 +565,49 @@ function CC.abstract_call_gf_by_type(
         analyzer::ToplevelAbstractAnalyzer, func::Any, arginfo::CC.ArgInfo,
         si::CC.StmtInfo, atype::Any, sv::CC.InferenceState, max_methods::Int)
     after_abstract_call_gf_by_type(analyzer, ret, func, arginfo, sv, max_methods)
+    return ret
+end
+end
+
+function after_abstract_invoke(
+        analyzer::LSAnalyzer, ret::CC.Future, arginfo::CC.ArgInfo, sv::CC.InferenceState
+    )
+    should_analyze(analyzer, sv) || return nothing
+    function _after_abstract_invoke(analyzer′::LSAnalyzer, sv′::CC.InferenceState)
+        argtypes = arginfo.argtypes
+        func = length(argtypes) ≥ 2 ? CC.singleton_type(argtypes[2]) : nothing
+        report_deprecated_call!(analyzer′, sv′, func, ret[], arginfo)
+        return true
+    end
+    if isready(ret)
+        _after_abstract_invoke(analyzer, sv)
+    else
+        push!(sv.tasks, _after_abstract_invoke)
+    end
+    return nothing
+end
+
+@static if hasmethod(CC.abstract_invoke,
+        Tuple{CC.AbstractInterpreter, CC.ArgInfo, CC.StmtInfo,
+              Union{Vector{CC.VarState}, Nothing}, CC.AbsIntState})
+function CC.abstract_invoke(
+        analyzer::LSAnalyzer, arginfo::CC.ArgInfo, si::CC.StmtInfo,
+        vtypes::Union{Vector{CC.VarState},Nothing}, sv::CC.InferenceState
+    )
+    ret = @invoke CC.abstract_invoke(
+        analyzer::ToplevelAbstractAnalyzer, arginfo::CC.ArgInfo, si::CC.StmtInfo,
+        vtypes::Union{Vector{CC.VarState},Nothing}, sv::CC.AbsIntState)
+    after_abstract_invoke(analyzer, ret, arginfo, sv)
+    return ret
+end
+else
+function CC.abstract_invoke(
+        analyzer::LSAnalyzer, arginfo::CC.ArgInfo, si::CC.StmtInfo, sv::CC.InferenceState
+    )
+    ret = @invoke CC.abstract_invoke(
+        analyzer::ToplevelAbstractAnalyzer, arginfo::CC.ArgInfo, si::CC.StmtInfo,
+        sv::CC.AbsIntState)
+    after_abstract_invoke(analyzer, ret, arginfo, sv)
     return ret
 end
 end
@@ -894,6 +939,7 @@ Subtypes:
   * `NonBooleanCondErrorReport`: Non-boolean value in a boolean context
   * `KeywordTypeErrorReport`: Keyword argument value type mismatch
 - `FailingTestReport`: Top-level `@test`s that always fail
+- `DeprecatedCallReport`: Calls to methods deprecated with `@deprecate`
 """
 abstract type JETLSErrorReport <: InferenceErrorReport end
 abstract type MethodErrorReport <: JETLSErrorReport end
@@ -1922,6 +1968,113 @@ function report_failing_test!(analyzer::LSAnalyzer, sv::CC.InferenceState, argty
     t === Union{} && return false
     CC.hasintersect(t, Bool) && return false
     add_new_report!(analyzer, sv.result, FailingTestReport(sv, t))
+    return true
+end
+
+# DeprecatedCallReport
+# --------------------
+
+# Unlike `lowering/deprecated-*`, the diagnostic of this report is not tagged with
+# `DiagnosticTag.Deprecated`, since inference diagnostics span the whole line of the call,
+# which clients would render struck through.
+@jetreport struct DeprecatedCallReport <: JETLSErrorReport
+    message::String
+end
+inference_error_report_stack_impl(r::DeprecatedCallReport) = length(r.vst):-1:1
+inference_error_report_severity_impl(::DeprecatedCallReport) = DiagnosticSeverity.Information
+JETInterface.print_report_message(io::IO, r::DeprecatedCallReport) = print(io, r.message)
+
+function report_deprecated_call!(
+        analyzer::LSAnalyzer, sv::CC.InferenceState, @nospecialize(func), call::CC.CallMeta,
+        arginfo::CC.ArgInfo
+    )
+    info = call.info
+    if isa(info, CC.ConstCallInfo)
+        info = info.call
+    end
+    world = CC.get_inference_world(analyzer)
+    messages = String[]
+    if isa(info, CC.MethodMatchInfo)
+        deprecated_call_messages!(messages, info, world) || return false
+    elseif isa(info, CC.UnionSplitInfo)
+        # The call reaches the deprecated methods whenever its arguments have the types of the
+        # splits that match only those methods
+        for matchinfo in info.split
+            deprecated_call_messages!(messages, matchinfo, world)
+        end
+    elseif isa(info, CC.InvokeCallInfo)
+        push!(messages, @something deprecated_method_message(info.match.method, world) return false)
+    else
+        return false
+    end
+    isempty(messages) && return false
+    # e.g. the methods that `@deprecate` defines for default arguments call the deprecated
+    # method, and the calls in them are not the uses of deprecated methods
+    def = sv.linfo.def
+    def isa Method && deprecated_method_message(def, world) !== nothing && return false
+    # `lowering/deprecated-function` reports the uses of a function whose methods are all
+    # deprecated, but only where the function is written as a global name, not e.g. where a
+    # function returned by another call is called
+    if func === Core.kwcall && length(arginfo.argtypes) ≥ 3
+        func = CC.singleton_type(arginfo.argtypes[3])
+    end
+    if (func isa Function && deprecated_function_message(func, world) !== nothing &&
+        writes_global_name(sv, func, world))
+        return false
+    end
+    add_new_report!(analyzer, sv.result, DeprecatedCallReport(sv, join(messages, '\n')))
+    return true
+end
+
+# Whether the current statement of `sv` writes `func` as a global name, e.g. `f` or `Mod.f`,
+# whose uses `lowering/deprecated-function` reports, as the function to call or as an
+# argument of e.g. `Core.kwcall`
+function writes_global_name(sv::CC.InferenceState, @nospecialize(func), world::UInt)
+    stmt = sv.src.code[sv.currpc]
+    Meta.isexpr(stmt, :(=)) && (stmt = stmt.args[2])
+    Meta.isexpr(stmt, :call) || return false
+    return any(stmt.args) do @nospecialize arg
+        lowered_value(sv, arg, world) === func && is_global_name(sv, arg, world)
+    end
+end
+
+# Whether `x` in the code of `sv` is a global name, e.g. `f` or `Mod.f`, which is lowered to
+# `getproperty(Mod, :f)`
+function is_global_name(sv::CC.InferenceState, @nospecialize(x), world::UInt)
+    x isa GlobalRef && return true
+    x isa Core.SSAValue || return false
+    stmt = sv.src.code[x.id]
+    stmt isa GlobalRef && return true
+    Meta.isexpr(stmt, :call) && length(stmt.args) == 3 || return false
+    f, mod, name = stmt.args
+    f isa GlobalRef && f.name === :getproperty && name isa QuoteNode || return false
+    return lowered_value(sv, mod, world) isa Module && is_global_name(sv, mod, world)
+end
+
+function lowered_value(sv::CC.InferenceState, @nospecialize(x), world::UInt)
+    if x isa Core.SSAValue
+        t = sv.ssavaluetypes[x.id]
+        return t isa Core.Const ? t.val : nothing
+    elseif x isa GlobalRef
+        return global_const_value(convert(Core.Binding, x), world)
+    end
+    return nothing
+end
+
+# Only the calls whose matching methods are all deprecated are reported, since whether a call
+# reaches a deprecated method otherwise depends on the runtime types of its arguments
+function deprecated_call_messages!(
+        messages::Vector{String}, info::CC.MethodMatchInfo, world::UInt
+    )
+    n = length(messages)
+    for match in info.results
+        message = deprecated_method_message(match.method, world)
+        if message === nothing
+            resize!(messages, n)
+            return false
+        end
+        message in messages || push!(messages, message)
+    end
     return true
 end
 

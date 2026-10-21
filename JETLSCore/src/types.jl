@@ -668,6 +668,7 @@ const INFERENCE_TYPE_ERROR_NON_BOOL_COND_CODE = "inference/type-error/non-bool-c
 const INFERENCE_TYPE_ERROR_TYPE_ASSERT_CODE = "inference/type-error/type-assert"
 const INFERENCE_TYPE_ERROR_KEYWORD_CODE = "inference/type-error/keyword"
 const INFERENCE_FAILING_TEST_CODE = "inference/failing-test"
+const INFERENCE_DEPRECATED_CALL_CODE = "inference/deprecated-call"
 const DEPRECATED_INFERENCE_NON_BOOLEAN_COND_CODE = "inference/non-boolean-cond"
 const TESTRUNNER_TEST_FAILURE_CODE = "testrunner/test-failure"
 const CONFIG_DEPRECATED_KEY_CODE = "config/deprecated-key"
@@ -712,6 +713,7 @@ const ALL_DIAGNOSTIC_CODES = Set{String}(String[
     INFERENCE_TYPE_ERROR_TYPE_ASSERT_CODE,
     INFERENCE_TYPE_ERROR_KEYWORD_CODE,
     INFERENCE_FAILING_TEST_CODE,
+    INFERENCE_DEPRECATED_CALL_CODE,
     TESTRUNNER_TEST_FAILURE_CODE,
     CONFIG_DEPRECATED_KEY_CODE,
     CONFIG_DEPRECATED_VALUE_CODE,
