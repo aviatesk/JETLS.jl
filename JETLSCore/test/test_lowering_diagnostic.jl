@@ -3751,6 +3751,17 @@ end
         unreachable = filter(d -> d.code == JETLSCore.LOWERING_UNREACHABLE_CODE, diagnostics)
         @test isempty(unreachable)
     end
+
+    # `@test_throws` catches the exception thrown by the tested expression
+    let diagnostics = get_lowering_diagnostics("""
+        @testset "foo" begin
+            @test_throws ErrorException error("boom")
+            @test true
+        end
+        """; context_module=Test)
+        unreachable = filter(d -> d.code == JETLSCore.LOWERING_UNREACHABLE_CODE, diagnostics)
+        @test isempty(unreachable)
+    end
 end
 
 macro m_static_branches()

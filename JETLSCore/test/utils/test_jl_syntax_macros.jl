@@ -1597,10 +1597,14 @@ end
 
 @testset "Test.@test_throws" begin
     @testset "macro expansion" begin
-        # Both args flow through a `block` so identifiers in either get scope analysis.
+        # Both args are evaluated in a `try`, so that the code after the test stays
+        # reachable even when `ex` always throws.
         let st1 = test_macro_expand("@test_throws BoundsError xxx[4]")
             @test JS.head(st1) === :block
-            @test JS.numchildren(st1) == 2
+            tryex = st1[1]
+            @test JS.head(tryex) === :try
+            @test children_heads(tryex[1]) == [:identifier, :ref]
+            @test strip(JS.sourcetext(tryex[1][2])) == "xxx[4]"
         end
     end
 

@@ -1452,11 +1452,17 @@ function Test.var"@test_skip"(
     return JL.@ast(__context__, mc, [:block rhss... ex])
 end
 
+# `@test_throws extype ex` expands to
+# `try extype; ex catch end; Base.inferencebarrier(nothing)` as JET's replacement does: the
+# real macro catches the expected exception, so the code after the test must stay reachable
+# even when `ex` always throws, e.g. `error(...)`.
 function Test.var"@test_throws"(
         __context__::JL.MacroContext, extype::SyntaxTree, ex::SyntaxTree
     )
-    return JL.@ast(__context__, __context__.macrocall::SyntaxTree,
-        [:block extype ex])
+    src = _macro_generated_source(__context__)
+    return JL.@ast(__context__, src, [:block
+        [:try [:block extype ex] false::value [:block]]
+        [:call [:top "inferencebarrier"::identifier] nothing::value]])
 end
 
 function Test.var"@test_throws"(__context__::JL.MacroContext, args::SyntaxTree...)
