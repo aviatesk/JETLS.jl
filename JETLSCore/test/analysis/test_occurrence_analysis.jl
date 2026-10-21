@@ -370,6 +370,54 @@ end
         end
     end
 
+    # aviatesk/JETLS.jl#1002
+    @testset "bindings used directly as default values" begin
+        with_binding_occurrences("""
+            function g(J)
+                sens = J .+ 1
+                Pf(s, sn = sens) = s * sn[1]
+                return Pf(1.0)
+            end
+            """) do binding_occurrences
+            binfos = collect(keys(binding_occurrences))
+            idx = only(findall(binfo->binfo.name=="sens", binfos))
+            occurrences = binding_occurrences[binfos[idx]]
+            @test count(occurrences) do occurrence
+                occurrence.kind === :use &&
+                JS.sourcetext(occurrence.tree) == "sens" &&
+                JS.source_location(occurrence.tree) == (3, 16)
+            end == 1
+        end
+        with_binding_occurrences("""
+            function g(J)
+                sens = J .+ 1
+                Pf(s; sn = sens) = s * sn[1]
+                return Pf(1.0)
+            end
+            """) do binding_occurrences
+            binfos = collect(keys(binding_occurrences))
+            idx = only(findall(binfo->binfo.name=="sens", binfos))
+            occurrences = binding_occurrences[binfos[idx]]
+            @test any(occurrences) do occurrence
+                occurrence.kind === :use &&
+                JS.sourcetext(occurrence.tree) == "sens" &&
+                JS.source_location(occurrence.tree) == (3, 16)
+            end
+        end
+        with_binding_occurrences("f(x, y = x) = y") do binding_occurrences
+            @test any(binding_occurrences) do (binding, occurrences)
+                binding.name == "x" && any(occurrences) do occurrence
+                    occurrence.kind === :use && JS.source_location(occurrence.tree) == (1, 10)
+                end
+            end
+            @test !any(binding_occurrences) do (binding, occurrences)
+                binding.name == "x" && any(occurrences) do occurrence
+                    occurrence.kind === :use && JS.source_location(occurrence.tree) == (1, 3)
+                end
+            end
+        end
+    end
+
     @testset "remove_macrocalls" begin
         with_binding_occurrences("func(@nospecialize args) = typeof(args)"; remove_macrocalls=true) do binding_occurrences
             @test any(binding_occurrences) do (binding, occurrences)

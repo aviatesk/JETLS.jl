@@ -135,6 +135,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   [`lowering/undef-local-var`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/undef-local-var) now reports variables used in the `else` block that are assigned only in the `catch` block,
   and [`lowering/unreachable-code`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/unreachable-code) now reports code after a `try` whose `catch` and `else` blocks both end with `return`.
 
+- Fixed false [`lowering/unused-local`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/unused-local) and [`lowering/unused-argument`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/unused-argument) reports on variables used directly as the default value of an optional argument:
+  ```julia
+  function g(J)
+      sens = J .+ 1 # `sens` was reported as unused
+      Pf(s, sn = sens) = s * sn[1]
+      return Pf(1.0)
+  end
+
+  f(x, y = x) = y # `x` was reported as unused
+  ```
+  Such uses are now also included in references, rename edits, and document highlights.
+  (Closed https://github.com/aviatesk/JETLS.jl/issues/1002)
+
 ## 2026-10-18
 
 - Commit: [`8888185`](https://github.com/aviatesk/JETLS.jl/commit/8888185)

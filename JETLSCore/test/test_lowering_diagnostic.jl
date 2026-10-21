@@ -229,6 +229,81 @@ end
         end
     end
 
+    # aviatesk/JETLS.jl#1002
+    @testset "Bindings used directly as default values" begin
+        @test isempty(get_lowering_diagnostics("f(x, y = x) = y"))
+        @test isempty(get_lowering_diagnostics("f(x, y = x, z = y) = z"))
+        @test isempty(get_lowering_diagnostics("""
+            function g(J)
+                sens = J .+ 1
+                Pf(s, sn = sens) = s * sn[1]
+                return Pf(1.0)
+            end
+            """))
+        @test isempty(get_lowering_diagnostics("""
+            function g(J)
+                Pf(s, sn = J) = s * sn[1]
+                return Pf(1.0)
+            end
+            """))
+        @test isempty(get_lowering_diagnostics("""
+            let sens = 1
+                Pf(s, sn = sens) = s * sn
+                Pf(1.0)
+            end
+            """))
+        @test isempty(get_lowering_diagnostics("""
+            function h(xs)
+                for x in xs
+                    Pf(s, sn = x) = s * sn
+                    Pf(1.0)
+                end
+            end
+            """))
+        @test isempty(get_lowering_diagnostics("""
+            function g(J)
+                sens = J .+ 1
+                Pf(s; sn = sens) = s * sn[1]
+                return Pf(1.0)
+            end
+            """))
+        @test isempty(get_lowering_diagnostics("""
+            function g(J)
+                Pf(s; sn = J) = s * sn[1]
+                return Pf(1.0)
+            end
+            """))
+        @test isempty(get_lowering_diagnostics("f(x, y = 1; k = y) = k + x"))
+        let diagnostics = get_lowering_diagnostics("f(x, y = 1, z = 2) = x + z")
+            @test length(diagnostics) == 1
+            @test only(diagnostics).message == "Unused argument `y`"
+        end
+        let diagnostics = get_lowering_diagnostics("f(; a = 1, d = a) = a")
+            @test length(diagnostics) == 1
+            @test only(diagnostics).message == "Unused argument `d`"
+        end
+        let diagnostics = get_lowering_diagnostics("""
+            function g(J)
+                sens = J .+ 1
+                Pf(s, sn = sens) = s
+                return Pf(1.0)
+            end
+            """)
+            @test length(diagnostics) == 1
+            @test only(diagnostics).message == "Unused argument `sn`"
+        end
+        let diagnostics = get_lowering_diagnostics("""
+            function g(J)
+                sens = J .+ 1
+                Pf(s; sn = sens) = s
+                return Pf(1.0)
+            end
+            """)
+            @test length(diagnostics) == 1
+            @test only(diagnostics).message == "Unused argument `sn`"
+        end
+    end
+
     @testset "tolerate bad syntax, broken macros" begin
         let diagnostics = get_lowering_diagnostics("""
             function foo(x)

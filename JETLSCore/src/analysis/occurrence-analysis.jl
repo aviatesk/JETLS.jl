@@ -338,11 +338,16 @@ function compute_binding_occurrences!(
                 for i = nc:-1:2 # reversed since we use `pop!`
                     argⱼ = st[i]
                     if JS.head(argⱼ) === :bindingid
-                        bkind = JL.get_binding(ctx3, argⱼ).kind
-                        # Skip both `:argument` and `:local` bindings.
-                        # `:local` bindings appear in kwsorter calls when
-                        # `scope_nest` is used for dependent keyword defaults.
-                        if bkind === :argument || bkind === :local
+                        argbinfo = JL.get_binding(ctx3, argⱼ)
+                        bkind = argbinfo.kind
+                        # Skip `:argument` and `:local` bindings forwarded by lowering,
+                        # which reference them at their definition site. `:local`
+                        # bindings appear in kwsorter calls when `scope_nest` is used
+                        # for dependent keyword defaults. References at other ranges
+                        # come from default values, e.g. `sens` in
+                        # `Pf(s, sn = sens) = s * sn`, and are genuine uses.
+                        if ((bkind === :argument || bkind === :local) &&
+                             JS.byte_range(argⱼ) == JS.byte_range(JL.binding_ex(ctx3, argbinfo)))
                             continue
                         end
                     end
