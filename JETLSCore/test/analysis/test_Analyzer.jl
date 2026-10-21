@@ -1806,6 +1806,32 @@ end
             "this test always fails since its expression evaluates to non-boolean `$Int`"
     end
 
+    # `@test_throws` whose expression always throws an unexpected exception
+    let reports = analyze_test_text("""
+            using Test
+            @testset "unexpected exception" begin
+                @test_throws ArgumentError parse(Int, 42)
+            end
+            """)
+        r = only(reports)
+        @test r isa FailingTestReport && r.t === MethodError && r.expected === ArgumentError
+        @test sprint(JET.print_report_message, r) ==
+            "this test always fails since its expression throws `MethodError`, not `ArgumentError`"
+    end
+
+    # the errors in the expressions of `@test_throws` are not reported, since they are
+    # expected to throw
+    let reports = analyze_test_text("""
+            using Test
+            @testset "expected exceptions" begin
+                @test_throws MethodError parse(Int, 42)
+                @test_throws UndefVarError undefined_in_test_throws
+                @test_throws "no method" parse(Int, 42)
+            end
+            """)
+        @test isempty(reports)
+    end
+
     # tests that may pass are not reported
     let reports = analyze_test_text("""
             using Test

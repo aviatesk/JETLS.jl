@@ -522,6 +522,8 @@ function after_abstract_call_gf_by_type(
     end
     if func === JET.check_test_value
         report_failing_test!(analyzer, sv, arginfo.argtypes)
+    elseif func === JET.check_test_exception
+        report_failing_test_exception!(analyzer, sv, arginfo.argtypes)
     end
     func_ref = Ref{Any}(func)
     function _after_abstract_call_gf_by_type(analyzer′::LSAnalyzer, sv′::CC.InferenceState)
@@ -1973,18 +1975,24 @@ end
 
 # Top-level analysis replaces `@test ex` with code that passes the value of `ex` to
 # `JET.check_test_value`, so a call to it whose argument is inferred to be `false` or of a
-# non-boolean type is a test that always fails.
+# non-boolean type is a test that always fails. Likewise, it replaces
+# `@test_throws extype ex` with code that passes the exception caught from `ex` to
+# `JET.check_test_exception`, so a call to it whose argument is inferred to be only of
+# exception types that do not match `extype` is a test that always fails.
 @jetreport struct FailingTestReport <: JETLSErrorReport
     @nospecialize t # `Bool` for an expression that always evaluates to `false`
+    @nospecialize expected # the expected exception of `@test_throws`, `nothing` for `@test`
 end
 inference_error_report_stack_impl(r::FailingTestReport) = length(r.vst):-1:1
 inference_error_report_severity_impl(::FailingTestReport) = DiagnosticSeverity.Warning
-function JETInterface.print_report_message(io::IO, (; t)::FailingTestReport)
-    print(io, "this test always fails since its expression evaluates to ")
-    if t === Bool
-        print(io, "`false`")
+function JETInterface.print_report_message(io::IO, (; t, expected)::FailingTestReport)
+    print(io, "this test always fails since its expression ")
+    if expected !== nothing
+        print(io, "throws `", t, "`, not `", expected, "`")
+    elseif t === Bool
+        print(io, "evaluates to `false`")
     else
-        print(io, "non-boolean `", t, "`")
+        print(io, "evaluates to non-boolean `", t, "`")
     end
 end
 
@@ -1996,13 +2004,31 @@ function report_failing_test!(analyzer::LSAnalyzer, sv::CC.InferenceState, argty
     length(argtypes) == 2 || return false
     value = CC.widenconditional(argtypes[2])
     if value isa Const && value.val === false
-        add_new_report!(analyzer, sv.result, FailingTestReport(sv, Bool))
+        add_new_report!(analyzer, sv.result, FailingTestReport(sv, Bool, nothing))
         return true
     end
     t = CC.widenconst(value)
     t === Union{} && return false
     CC.hasintersect(t, Bool) && return false
-    add_new_report!(analyzer, sv.result, FailingTestReport(sv, t))
+    add_new_report!(analyzer, sv.result, FailingTestReport(sv, t, nothing))
+    return true
+end
+
+function report_failing_test_exception!(
+        analyzer::LSAnalyzer, sv::CC.InferenceState, argtypes::Vector{Any}
+    )
+    sv.linfo.def isa Module || return false # see `report_failing_test!`
+    length(argtypes) ≥ 3 || return false
+    expected = JET.matching_test_exception_type(argtypes[3])
+    expected === nothing && return false
+    # The caught exception is inferred from the exceptions that the test expression may
+    # throw. An expression inferred not to throw is not reported for now, as inference may
+    # miss the exceptions thrown by it.
+    exct = CC.typesubtract(CC.widenconst(argtypes[2]), JET.NoTestException,
+        CC.InferenceParams(analyzer).max_union_splitting)
+    (exct === Union{} || CC.hasintersect(exct, expected)) && return false
+    add_new_report!(analyzer, sv.result,
+        FailingTestReport(sv, exct, (argtypes[3]::Const).val))
     return true
 end
 
