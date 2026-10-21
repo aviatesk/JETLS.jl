@@ -3099,6 +3099,75 @@ end
             end
         end
     end
+
+    @testset "uses from other modules" begin
+        script = """
+        module Parent
+        module Impl
+        const a = 1
+        const b = 1
+        const c = 1
+        const d = 1
+        const e = 1
+        const f = 1
+        g(x) = x
+        h(x) = x
+        macro m() :(1) end
+        macro n() :(1) end
+        end
+        using .Impl: a
+        using .Impl: b
+        using .Impl: c
+        using .Impl: d
+        using .Impl: e
+        using .Impl: f
+        using .Impl: g
+        using .Impl: h
+        using .Impl: @m
+        using .Impl: @n
+        usec() = Parent.c
+        Parent.h(x::Int) = x
+        module Child
+        using ..Parent: Parent, a, @n
+        import ..Parent.d
+        usage() = (a, Parent.b, d, Parent.@m(), @n())
+        shadowed(Parent) = Parent.e
+        Parent.g(x::Int) = x
+        end
+        end # module Parent
+        """
+        withscript(script) do script_path
+            uri = filepath2uri(script_path)
+            withserver() do (; readmsg, server)
+                JETLSCore.cache_file_info!(server, uri, 1, script)
+                JETLSCore.cache_saved_file_info!(server.state, uri, script)
+                JETLSCore.request_analysis!(server, uri, #=invalidate=#false; wait=true, notify_diagnostics=false)
+                parent = JETLSCore.get_context_module(server.state, uri, Position(; line=13, character=0))
+
+                # without the per-file diagnostics cache, the unit aggregation collects the
+                # used names from the binding occurrences itself
+                @test !haskey(JETLSCore.load(server.state.per_file_diagnostics_cache), uri)
+                uncached = JETLSCore.compute_def_used_names!(
+                    JETLSCore.DefUsedNamesCache(), server, Set((uri,)), #=snapshot=#nothing)
+                @test issubset(("a", "b", "c", "d", "g", "h", "@m", "@n"), uncached[parent].used)
+                @test "e" ∉ uncached[parent].used
+                @test "f" ∉ uncached[parent].used
+
+                params = scan_live_diagnostics!(server, readmsg)[uri]
+                unused_import_diags = filter(params.diagnostics) do d
+                    d.code == JETLSCore.LOWERING_UNUSED_IMPORT_CODE
+                end
+                @test length(unused_import_diags) == 2
+                @test Set((d.range.start.line, d.message) for d in unused_import_diags) ==
+                    Set(((17, "Unused import `e`"), (18, "Unused import `f`")))
+
+                @test haskey(JETLSCore.load(server.state.per_file_diagnostics_cache), uri)
+                cached = JETLSCore.compute_def_used_names!(
+                    JETLSCore.DefUsedNamesCache(), server, Set((uri,)), #=snapshot=#nothing)
+                @test cached[parent].used == uncached[parent].used
+            end
+        end
+    end
 end
 
 @testset HierarchicalTestSet "unreachable code detection" begin
