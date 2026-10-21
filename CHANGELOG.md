@@ -119,6 +119,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   ```
   The rest of the message shows what `Test` prints for the failure, such as the expression and the stack trace.
 
+- [`inference/method-error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/inference/method-error) now also reports calls with `invoke` or `@invoke` when no unique method is found for the signature that they specify:
+  ```julia
+  double(x::Int) = 2x
+
+  invoke_double(x::Int) = @invoke double(x::Integer) # MethodError: no matching method found `double(::Integer)`
+  ```
+
 ### Fixed
 
 - Fixed false [`lowering/undef-global-var`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/undef-global-var) reports on non-constant globals that a script imports from a module defined in the script.
