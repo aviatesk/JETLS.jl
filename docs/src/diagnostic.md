@@ -160,8 +160,10 @@ additionally depend on
 See [`lowering/*`](@ref diagnostic/reference/lowering) for the diagnostic codes.
 
 [^code_loading_dependency]:
-    The [`lowering/macro-expansion-error`](@ref diagnostic/reference/lowering/macro-expansion-error) and
-    [`lowering/undef-global-var`](@ref diagnostic/reference/lowering/undef-global-var)
+    The [`lowering/macro-expansion-error`](@ref diagnostic/reference/lowering/macro-expansion-error),
+    [`lowering/undef-global-var`](@ref diagnostic/reference/lowering/undef-global-var),
+    [`lowering/deprecated-binding`](@ref diagnostic/reference/lowering/deprecated-binding), and
+    [`lowering/deprecated-function`](@ref diagnostic/reference/lowering/deprecated-function)
     checks are reported only after a full analysis has established that context,
     which JETLS refreshes diagnostics to pick up. See [Live analysis](@ref analysis/live)
     for details, and [Files without full analysis](@ref analysis/live/fallback)
@@ -232,6 +234,8 @@ Here is a summary table of the diagnostics explained in this section:
 | [`lowering/undef-global-var`](@ref diagnostic/reference/lowering/undef-global-var)                             | `Warning`             | `JETLS/live`  | References to undefined global variables               |
 | [`lowering/undef-local-var`](@ref diagnostic/reference/lowering/undef-local-var)                               | `Warning/Information` | `JETLS/live`  | References to undefined local variables                |
 | [`lowering/ambiguous-soft-scope`](@ref diagnostic/reference/lowering/ambiguous-soft-scope)                     | `Warning`             | `JETLS/live`  | Assignment in soft scope shadows a global variable     |
+| [`lowering/deprecated-binding`](@ref diagnostic/reference/lowering/deprecated-binding)                         | `Information`         | `JETLS/live`  | Accesses to deprecated global bindings                 |
+| [`lowering/deprecated-function`](@ref diagnostic/reference/lowering/deprecated-function)                       | `Information`         | `JETLS/live`  | Uses of functions whose methods are all deprecated     |
 | [`lowering/captured-boxed-variable`](@ref diagnostic/reference/lowering/captured-boxed-variable)               | `Information`         | `JETLS/live`  | Variables captured by closures that require boxing     |
 | [`lowering/unconstrained-static-parameter`](@ref diagnostic/reference/lowering/unconstrained-static-parameter) | `Warning`             | `JETLS/live`  | Static parameters not used in function parameter types |
 | [`lowering/orphaned-docstring`](@ref diagnostic/reference/lowering/orphaned-docstring)                         | `Information`         | `JETLS/live`  | Docstrings not attached to any definition              |
@@ -258,7 +262,8 @@ Here is a summary table of the diagnostics explained in this section:
 | [`inference/type-error/keyword`](@ref diagnostic/reference/inference/type-error/keyword)                       | `Warning`             | `JETLS/save`  | Keyword argument value type mismatch                   |
 | [`inference/type-error/type-assert`](@ref diagnostic/reference/inference/type-error/type-assert)               | `Warning`             | `JETLS/save`  | Type assertion failures                                |
 | [`inference/type-error/non-bool-cond`](@ref diagnostic/reference/inference/type-error/non-bool-cond)           | `Warning`             | `JETLS/save`  | Non-boolean value used in boolean context              |
-| [`inference/failing-test`](@ref diagnostic/reference/inference/failing-test)                                   | `Warning`             | `JETLS/save`  | `@test` that always fails                              |
+| [`inference/failing-test`](@ref diagnostic/reference/inference/failing-test)                                   | `Warning`             | `JETLS/save`  | `@test` or `@test_throws` that always fails            |
+| [`inference/deprecated-call`](@ref diagnostic/reference/inference/deprecated-call)                             | `Information`         | `JETLS/save`  | Calls to methods deprecated with `@deprecate`          |
 | [`testrunner/test-failure`](@ref diagnostic/reference/testrunner/test-failure)                                 | `Error`               | `JETLS/extra` | Test failures from TestRunner integration              |
 | [`config/deprecated-key`](@ref diagnostic/reference/config/deprecated-key)                                     | `Warning`             | `JETLS/extra` | Deprecated keys in `.JETLSConfig.toml`                 |
 | [`config/deprecated-value`](@ref diagnostic/reference/config/deprecated-value)                                 | `Warning`             | `JETLS/extra` | Deprecated values in `.JETLSConfig.toml`               |
@@ -571,6 +576,127 @@ Running the example above as a file produces:
 !!! note "Notebook mode"
     This diagnostic is suppressed for [notebooks](@ref notebook), where soft
     scope semantics are enabled (matching REPL behavior).
+
+#### [Deprecated binding (`lowering/deprecated-binding`)](@id diagnostic/reference/lowering/deprecated-binding)
+
+**Default severity**: `Information`
+
+Reported when code accesses a global binding deprecated with
+`Base.@deprecate_binding` or `Base.deprecate`, either by name or as
+`Module.name`. The message includes the replacement suggested by
+`@deprecate_binding`.
+
+Example, with a dependency `Shapes` that deprecates `Point` in favor of
+`Point2D`:
+
+> `Shapes/src/Shapes.jl`
+```@diagnostics-file; workspace = "deprecated-binding", file = "Shapes/src/Shapes.jl"
+module Shapes
+
+export Point2D
+
+struct Point2D
+    x::Float64
+    y::Float64
+end
+
+Base.@deprecate_binding Point Point2D
+
+end
+```
+
+```@diagnostics-setup; workspace = "deprecated-binding", file = "Shapes/Project.toml"
+name = "Shapes"
+uuid = "8d6c1f4e-3a2b-4c5d-9e7f-1a2b3c4d5e6f"
+```
+
+```@diagnostics-setup; workspace = "deprecated-binding", file = "Project.toml"
+[deps]
+Shapes = "8d6c1f4e-3a2b-4c5d-9e7f-1a2b3c4d5e6f"
+
+[sources]
+Shapes = {path = "Shapes"}
+```
+
+> `main.jl`
+```@diagnostics; workspace = "deprecated-binding", file = "main.jl", codes = ["lowering/deprecated-binding"]
+using Shapes
+
+compute(p::Point) = sin(p.x)^2+cos(p.x)^2, sin(p.y)^2+cos(p.y)^2
+@show compute(Point(rand(), rand()))
+```
+
+As with the warning Julia prints for deprecated bindings, a deprecated binding
+imported explicitly, as with `using Module: name`, is reported at the import
+rather than at its uses:
+
+> `explicit-import.jl`
+```@diagnostics; workspace = "deprecated-binding", file = "explicit-import.jl", codes = ["lowering/deprecated-binding"]
+using Shapes: Point
+
+compute(p::Point) = sin(p.x)^2+cos(p.x)^2, sin(p.y)^2+cos(p.y)^2
+@show compute(Point(rand(), rand()))
+```
+
+Functions deprecated with `@deprecate` are reported as
+[`lowering/deprecated-function`](@ref diagnostic/reference/lowering/deprecated-function)
+instead, since `@deprecate` deprecates their methods rather than their
+bindings.
+
+#### [Deprecated function (`lowering/deprecated-function`)](@id diagnostic/reference/lowering/deprecated-function)
+
+**Default severity**: `Information`
+
+Reported when code uses a function whose methods are all deprecated with
+`Base.@deprecate`, either by name or as `Module.name`. The message is the
+deprecation warning that Julia prints when the function is called, which
+includes the suggested replacement.
+
+Example, with a dependency `Geometry` that deprecates `distance` in favor of
+`euclidean`:
+
+> `Geometry/src/Geometry.jl`
+```@diagnostics-file; workspace = "deprecated-function", file = "Geometry/src/Geometry.jl"
+module Geometry
+
+export euclidean
+
+euclidean(p, q) = sqrt(sum(abs2, p .- q))
+
+Base.@deprecate distance(p, q) euclidean(p, q)
+
+end
+```
+
+```@diagnostics-setup; workspace = "deprecated-function", file = "Geometry/Project.toml"
+name = "Geometry"
+uuid = "917b6c12-8dd0-4f9d-99be-7ad30043c932"
+```
+
+```@diagnostics-setup; workspace = "deprecated-function", file = "Project.toml"
+[deps]
+Geometry = "917b6c12-8dd0-4f9d-99be-7ad30043c932"
+
+[sources]
+Geometry = {path = "Geometry"}
+```
+
+> `main.jl`
+```@diagnostics; workspace = "deprecated-function", file = "main.jl", codes = ["lowering/deprecated-function"]
+using Geometry
+
+nearest(p, points) = argmin(q -> distance(p, q), points)
+```
+
+Unlike deprecated bindings, a deprecated function imported explicitly, as with
+`using Geometry: distance`, is reported at its uses rather than at the import,
+since Julia warns when a deprecated method is called.
+
+Functions with only some of their methods deprecated, such as `one`, of which
+Base deprecates `one(::CartesianIndex)`, are reported by
+[`inference/deprecated-call`](@ref diagnostic/reference/inference/deprecated-call)
+instead, since whether a call reaches a deprecated method depends on the types
+of its arguments.
 
 #### [Captured boxed variable (`lowering/captured-boxed-variable`)](@id diagnostic/reference/lowering/captured-boxed-variable)
 
@@ -1007,8 +1133,9 @@ end
 **Default severity**: `Information`
 
 Reported when code appears after a statement that always exits the
-current block, making subsequent code unreachable. The unreachable
-code is marked with the `Unnecessary` tag.[^unnecessary_tag]
+current block, making subsequent code unreachable. The code in the
+`else` block of a `try` whose body always exits is also reported. The
+unreachable code is marked with the `Unnecessary` tag.[^unnecessary_tag]
 
 Example:
 
@@ -1053,12 +1180,24 @@ function after_rethrow()
         println("unreachable")
     end
 end
+
+function unreachable_else()
+    try
+        return do_something()
+    catch
+        recover()
+    else
+        println("unreachable")
+    end
+end
 ```
 
 !!! tip "Code action available"
     A "Delete unreachable code" quick fix is available that removes
     the unreachable region along with surrounding whitespace, from
     the end of the terminating statement to the end of the dead code.
+    For an unreachable `else` block, it removes the whole `else` clause,
+    including the `else` keyword.
 
 !!! note "Caveat on noreturn functions"
     The analysis assumes that `error`, `rethrow`, and `exit` never return.
@@ -1584,7 +1723,7 @@ before the code runs:
 - [`inference/type-error/*`](@ref diagnostic/reference/inference/type-error) → `TypeError` (failing type assertion, non-boolean condition, or keyword-value type mismatch)
 
 In addition, [`inference/failing-test`](@ref diagnostic/reference/inference/failing-test)
-reports a `@test` that always fails.
+reports a `@test` or `@test_throws` that always fails.
 
 #### [Undefined global variable (`inference/undef-global-var`)](@id diagnostic/reference/inference/undef-global-var)
 
@@ -1694,6 +1833,16 @@ ambiguous(1, 2)
 
 Within a union-split call, ambiguous branches are reported separately from
 branches where no method matches.
+
+Calls with `invoke` are reported when no unique method is found for the
+signature that they specify, since `invoke` looks up the method for that
+signature instead of the argument types:
+
+```@diagnostics; codes = ["inference/method-error"]
+double(x::Int) = 2x
+
+invoke_double(x::Int) = @invoke double(x::Integer)
+```
 
 #### [Undefined keyword (`inference/undef-keyword`)](@id diagnostic/reference/inference/undef-keyword)
 
@@ -1820,7 +1969,9 @@ end
 `inference/non-boolean-cond` is a deprecated code alias for
 `inference/type-error/non-bool-cond`. It is kept for existing documentation
 links and diagnostic pattern configurations for now, but this compatibility
-support may be removed in a future release.
+support may be removed in a future release. A diagnostic pattern that matches
+it literally is reported as
+[`config/deprecated-value`](@ref diagnostic/reference/config/deprecated-value).
 
 #### [Failing test (`inference/failing-test`)](@id diagnostic/reference/inference/failing-test)
 
@@ -1845,6 +1996,22 @@ end
 end
 ```
 
+`@test_throws`s whose expression is inferred to throw only exceptions that do
+not match the expected exception are reported as well:
+
+```@diagnostics; codes = ["inference/failing-test"], absent_codes = ["inference/method-error"]
+using Test
+
+@testset "example" begin
+    @test_throws ArgumentError parse(Int, 42)
+end
+```
+
+Since the expression of `@test_throws` is expected to throw, the errors in it,
+e.g. the `MethodError` of `parse(Int, 42)` above, are not reported by the
+other inference diagnostics, nor are the undefined names in it by
+[`lowering/undef-global-var`](@ref diagnostic/reference/lowering/undef-global-var).
+
 Only the tests in top-level code, including the code in `@testset`s, are
 reported, not those in function bodies. Tests expected to fail, i.e.
 `@test_broken` and `@test ex broken=true`, are not reported. Note that
@@ -1856,20 +2023,66 @@ a failing test aborts the test set. So it analyzes the code after `@test ex`
 assuming that `ex` is `true`, and does not analyze the code after a test that
 always fails:
 
-```@diagnostics; codes = ["inference/failing-test"]
+```@diagnostics; codes = ["inference/failing-test"], absent_codes = ["inference/method-error"]
 using Test
 
 @testset "example" begin
     x = rand((0, nothing))
     @test x isa Int
-    sin(x)  # not reported as `sin(::Nothing)`, since `x` is an `Int` here
+    @test sin(x) == 0  # `sin(::Nothing)` is not reported, since `x` is an `Int` here
     @test x isa String
-    sin("julia")  # not analyzed
+    @test sin("julia") == "sin"  # not analyzed
 end
 ```
 
 Test sets that specify `failfast=false` and test sets of a custom type, e.g.
 `@testset MyTestSet "example" begin ... end`, are analyzed as declared.
+
+#### [Deprecated call (`inference/deprecated-call`)](@id diagnostic/reference/inference/deprecated-call)
+
+**Default severity:** `Information`
+
+Calls to methods deprecated with `Base.@deprecate`. The message is the
+deprecation warning that Julia prints when the method is called, which includes
+the suggested replacement. This covers functions with only some of their
+methods deprecated, since the inferred types of the arguments tell which
+methods a call reaches:
+
+```@diagnostics; codes = ["inference/deprecated-call"]
+unit(i::CartesianIndex) = one(i)
+```
+
+When an argument has a `Union` of a few types, JETLS considers each of the types
+separately, and reports the call if it matches only deprecated methods for any
+of them. For example, the following call is reported because it calls the
+deprecated `one(::CartesianIndex)` when `x` is a `CartesianIndex`, even though
+it calls a method that is not deprecated when `x` is an `Int`:
+
+```@diagnostics; codes = ["inference/deprecated-call"]
+unit(x::Union{CartesianIndex,Int}) = one(x)
+```
+
+On the other hand, a call whose abstract argument types also match methods that
+are not deprecated is not reported, since which of them the call reaches depends
+on the runtime types of its arguments:
+
+```@diagnostics; absent_codes = ["inference/deprecated-call"]
+abstract type Shape end
+struct Circle <: Shape end
+struct Square <: Shape end
+area(::Circle) = 1.0
+area_of_square(::Square) = 1.0
+Base.@deprecate area(s::Square) area_of_square(s)
+
+total_area(s::Shape) = area(s)
+```
+
+Such a call is still reported where JETLS analyzes the code with the arguments
+of the deprecated types, e.g. when `total_area` is called with a `Square`.
+
+Most uses of functions whose methods are all deprecated are reported by
+[`lowering/deprecated-function`](@ref diagnostic/reference/lowering/deprecated-function)
+instead.
 
 ### [Configuration diagnostic (`config/*`)](@id diagnostic/reference/config)
 
@@ -1891,17 +2104,17 @@ Reported on a deprecated key of `.JETLSConfig.toml`. JETLS reads a deprecated
 key that has a replacement as the replacement, and ignores one that has none,
 but the key may stop being recognized in a future release.
 
-```toml
+```@diagnostics; file = ".JETLSConfig.toml", codes = ["config/deprecated-key"]
 [testrunner]
-executable = "testrunner"  # `testrunner.executable` is deprecated and no longer has any effect; please remove it from your config.
-                           # (JETLS config/deprecated-key)
+executable = "testrunner"
 ```
 
 !!! tip "Code action available"
-    Use the "Remove deprecated `testrunner.executable`" code action to remove
-    the key, along with any table it leaves empty. For a key that has a
-    replacement, the "Replace `…` with `…`" code action moves its value to the
-    new key instead.
+    Use the "Remove deprecated `…`" code action to remove the key, along with
+    any table it leaves empty. For a key that has a replacement, the
+    "Replace `…` with `…`" code action moves its value to the new key instead.
+    If the new key is already set, the key is removed and the value of the new
+    key is kept.
 
 #### [Deprecated configuration value (`config/deprecated-value`)](@id diagnostic/reference/config/deprecated-value)
 
@@ -1911,14 +2124,26 @@ Reported on a deprecated value of a `.JETLSConfig.toml` setting. JETLS reads
 the value as its replacement, but the value may stop being accepted in a future
 release.
 
-```toml
+```@diagnostics; file = ".JETLSConfig.toml", codes = ["config/deprecated-value"]
 [full_analysis]
-auto_instantiate = true  # `true` for `full_analysis.auto_instantiate` is deprecated; use `"always"` instead.
-                         # (JETLS config/deprecated-value)
+auto_instantiate = true
+```
+
+It is also reported on a deprecated diagnostic code that a
+[diagnostic pattern](@ref config/diagnostic/patterns) matches literally with
+`match_by = "code"` and `match_type = "literal"`:
+
+```@diagnostics; file = ".JETLSConfig.toml", codes = ["config/deprecated-value"]
+[[diagnostic.patterns]]
+pattern = "inference/non-boolean-cond"
+match_by = "code"
+match_type = "literal"
+severity = "off"
 ```
 
 !!! tip "Code action available"
-    Use the "Replace `true` with `"always"`" code action to replace the value.
+    Use the "Replace `…` with `…`" code action to replace the value with the
+    new one.
 
 ### [TestRunner diagnostic (`testrunner/*`)](@id diagnostic/reference/testrunner)
 
@@ -1932,6 +2157,23 @@ TestRunner diagnostics come from manually running tests via the
 
 Test failures reported by [TestRunner integration](@ref testrunner) that happened during
 running individual `@testset` blocks or `@test` cases.
+
+Example of running the `@testset`:
+
+```@diagnostics; file = "test/runtests.jl", codes = ["testrunner/test-failure"]
+using Test
+
+function parse_version(s::AbstractString)
+    major, minor = split(s, '.')
+    return (parse(Int, major), parse(Int, minor))
+end
+
+@testset "parse_version" begin
+    @test parse_version("1.12") == (1, 12)
+    @test parse_version("1.12.0") == (1, 12, 0)
+    @test parse_version("v1.12") == (1, 12)
+end
+```
 
 !!! note
     Diagnostics from `@test` cases automatically disappear after 10 seconds,

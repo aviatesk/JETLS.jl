@@ -409,6 +409,7 @@ function with_completion_items(
         tester, text::AbstractString;
         context::Union{Nothing, CompletionContext} = nothing,
         context_module::Union{Nothing, Module} = nothing,
+        tag_support::Bool = true,
         kwargs...
     )
     clean_code, positions = JETLSCore.get_text_and_positions(text; kwargs...)
@@ -422,7 +423,11 @@ function with_completion_items(
                 completion = CompletionClientCapabilities(;
                     completionItem = ClientCompletionItemOptions(;
                         resolveSupport = ClientCompletionItemResolveOptions(;
-                            properties = ["documentation", "detail", "kind", "labelDetails"])
+                            properties = ["documentation", "detail", "kind", "labelDetails"]),
+                        tagSupport = tag_support ?
+                            CompletionItemTagOptions(;
+                                valueSet = CompletionItemTag.Ty[CompletionItemTag.Deprecated]) :
+                            nothing
                     )))))
     fi = JETLSCore.FileInfo(#=version=#0, clean_code, @__FILE__; cache_tree0 = true)
     JETLSCore.store!(state.file_cache) do cache
@@ -933,6 +938,68 @@ Core.eval(completion_binding_state_fixture,
         @test resolved.documentation isa MarkupContent
         @test occursin("Virtualized binding docs.", resolved.documentation.value)
         @test !occursin("AbstractBindingState", resolved.documentation.value)
+        cnt[] += 1
+    end
+    @test cnt[] == 1
+end
+
+module completion_deprecated_owner
+export new_func, new_value
+const new_value = 1
+Base.@deprecate_binding old_value new_value
+new_func(x) = x
+Base.@deprecate old_func(x) new_func(x)
+partial_func(x::String) = x
+Base.@deprecate partial_func(x::Int) new_func(x)
+default_func(x::String) = x
+Base.@deprecate default_func(x::Int, y = 1) new_func(x)
+end
+
+module completion_deprecated_user
+using ..completion_deprecated_owner
+end
+
+@testset "global completion of deprecated bindings" begin
+    is_deprecated(item::CompletionItem) =
+        item.tags !== nothing && CompletionItemTag.Deprecated in item.tags
+    find_item(items::Vector{CompletionItem}, label::String) =
+        only(filter(item -> item.label == label, items))
+
+    cnt = Ref(0)
+    with_completion_items("_value│"; context_module = completion_deprecated_user) do (; result)
+        old_item = find_item(result.items, "old_value")
+        new_item = find_item(result.items, "new_value")
+        @test is_deprecated(old_item)
+        @test !is_deprecated(new_item)
+        @test old_item.sortText > new_item.sortText
+        cnt[] += 1
+    end
+    @test cnt[] == 1
+
+    cnt[] = 0
+    with_completion_items("_func│"; context_module = completion_deprecated_user) do (; result)
+        old_item = find_item(result.items, "old_func")
+        @test is_deprecated(old_item)
+        @test !is_deprecated(find_item(result.items, "new_func"))
+        @test old_item.sortText > find_item(result.items, "new_func").sortText
+        cnt[] += 1
+    end
+    @test cnt[] == 1
+
+    cnt[] = 0
+    with_completion_items("completion_deprecated_owner.│";
+            context_module = completion_deprecated_user) do (; result)
+        @test is_deprecated(find_item(result.items, "old_value"))
+        cnt[] += 1
+    end
+    @test cnt[] == 1
+
+    cnt[] = 0
+    with_completion_items("_value│";
+            context_module = completion_deprecated_user, tag_support = false) do (; result)
+        old_item = find_item(result.items, "old_value")
+        @test !is_deprecated(old_item)
+        @test old_item.sortText > find_item(result.items, "new_value").sortText
         cnt[] += 1
     end
     @test cnt[] == 1
@@ -1797,6 +1864,39 @@ get_newText(item::CompletionItem) =
             cnt[] = 1
         end
         @test cnt[] == 1
+    end
+
+    @testset "deprecated methods" begin
+        context = CompletionContext(;
+            triggerKind = CompletionTriggerKind.TriggerCharacter,
+            triggerCharacter = "(")
+        is_deprecated(item::CompletionItem) =
+            item.tags !== nothing && CompletionItemTag.Deprecated in item.tags
+        for tag_support in (true, false)
+            local cnt = Ref(0)
+            with_completion_items("partial_func(│";
+                    context, context_module = completion_deprecated_user, tag_support) do (; result)
+                deprecated_item = only(filter(item -> occursin("::Int", item.label), result.items))
+                other_item = only(filter(item -> occursin("::String", item.label), result.items))
+                @test is_deprecated(deprecated_item) == tag_support
+                @test !is_deprecated(other_item)
+                @test deprecated_item.sortText > other_item.sortText
+                cnt[] += 1
+            end
+            @test cnt[] == 1
+        end
+        # the method for the default argument as well
+        let cnt = Ref(0)
+            with_completion_items("default_func(│";
+                    context, context_module = completion_deprecated_user) do (; result)
+                deprecated_items = filter(item -> occursin("::Int", item.label), result.items)
+                @test length(deprecated_items) == 2
+                @test all(is_deprecated, deprecated_items)
+                @test !is_deprecated(only(filter(item -> occursin("::String", item.label), result.items)))
+                cnt[] += 1
+            end
+            @test cnt[] == 1
+        end
     end
 
     @testset "Tolerate invalid calls with `Union{}`-inferred call argument types" begin

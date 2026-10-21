@@ -5,14 +5,17 @@
 # - `workspace`: analyzes the code in the workspace of this name, which is shared by the
 #   blocks with the same `workspace` in a page; the code is also written to `file` there
 # - `file`: analyzes the code as the file at this path relative to the root path, as
-#   `jetls check --stdin-filename` does
+#   `jetls check --stdin-filename` does. The code of `.JETLSConfig.toml` is instead
+#   diagnosed as the configuration file open in an editor, since `jetls check` does not
+#   report the diagnostics of the configuration file.
 # - `codes`: a vector of diagnostic codes; shows only the diagnostics with these codes, and
 #   fails the docs build when any of them is not reported
 # - `absent_codes`: a vector of diagnostic codes; fails the docs build when any of them is
 #   reported, e.g. for examples of code that is not reported
 # Either `codes` or `absent_codes` is required, so that every block tests the diagnostics.
 # The codes must have their sections in the diagnostic reference, which the diagnostics
-# link to.
+# link to. When they include `testrunner/*` codes, the `@testset`s of the code are also run
+# with TestRunner, as their code lenses run them in an editor.
 #
 # The `@diagnostics-file` and `@diagnostics-setup` code blocks write their code to `file` in
 # `workspace`, e.g. `.JETLSConfig.toml` or the files of a package, for the later
@@ -52,9 +55,17 @@ function Documenter.Selectors.runner(::Type{DiagnosticsBlocks}, node, page, doc)
     end
     codes = diagnostic_codes(kwargs, :codes, source)
     absent_codes = diagnostic_codes(kwargs, :absent_codes, source)
-    diagnostics, code_actions = analyze_diagnostics_block(code, root, uri, codes, absent_codes, source)
+    if file == JETLSCore.CONFIG_FILE
+        diagnostics, code_actions = analyze_config_diagnostics_block(
+            code, root, uri, codes, absent_codes, source)
+        classes = toml_hljs_classes(code)
+    else
+        diagnostics, code_actions = analyze_diagnostics_block(
+            code, root, uri, codes, absent_codes, source)
+        classes = hljs_classes(code)
+    end
     html = render_diagnostics_block(
-        code, root, uri, diagnostics, code_actions, diagnostic_page_href(page, doc))
+        code, classes, root, uri, diagnostics, code_actions, diagnostic_page_href(page, doc))
     node.element = Documenter.RawNode(:html, html)
     return nothing
 end
@@ -205,21 +216,10 @@ function analyze_diagnostics_block(
                 server, root, JETLSCore.InputSource[], input, progress_ctx;
                 skip_analysis = false) error("In ", source, ": failed to analyze the `@diagnostics` block")
             diagnostics = get(result[1], uri, Diagnostic[])
-            for code in codes
-                any(diagnostic -> diagnostic.code == code, diagnostics) ||
-                    error("In ", source, ": `", code, "` is not reported for the `@diagnostics` block; ",
-                        "reported codes: ", join(unique(diagnostic_code.(diagnostics)), ", "))
+            if any(code -> startswith(code, "testrunner/"), [codes; absent_codes])
+                append!(diagnostics, testrunner_diagnostics(server, uri, code, source))
             end
-            for diagnostic in diagnostics
-                diagnostic.code in absent_codes &&
-                    error("In ", source, ": `", diagnostic_code(diagnostic), "` is reported for the ",
-                        "`@diagnostics` block, which is expected to be absent: ",
-                        diagnostic_message(diagnostic, root))
-            end
-            filter!(diagnostic -> diagnostic.code in codes, diagnostics)
-            sort!(diagnostics; by = function (diagnostic)
-                return (diagnostic.severity, diagnostic.range.start.line, diagnostic.range.start.character)
-            end)
+            diagnostics = select_diagnostics!(diagnostics, root, codes, absent_codes, source)
             code_actions = map(diagnostics) do diagnostic
                 return JETLSCore.quickfix_code_actions!(
                     Union{CodeAction,Command}[], server, uri, Diagnostic[diagnostic])
@@ -229,6 +229,83 @@ function analyze_diagnostics_block(
             JETLSCore.cleanup_cli_tasks(server)
         end
     end
+end
+
+# Runs the outermost `@testset`s of the code with TestRunner, as their "▶ Run" code lenses
+# do, since running a `@testset` also runs the nested ones
+function testrunner_diagnostics(
+        server::JETLSCore.Server, uri::URI, code::String, source::String
+    )
+    fi = JETLSCore.get_file_info(server.state, uri)::JETLSCore.FileInfo
+    launcher = JETLSCore.testrunner_launcher(server)
+    launcher isa String && error("In ", source, ": ", launcher)
+    filepath = JETLSCore.uri2filename(uri)
+    test_env_path = JETLSCore.find_uri_env_path(server.state, uri)
+    root_path = JETLSCore.testrunner_root_path(server.state, uri)
+    markdown_rendering =
+        JETLSCore.supports(server, :textDocument, :diagnostic, :markupMessageSupport)
+    diagnostics = Diagnostic[]
+    outer = 1:0
+    for testsetinfo in fi.testsetinfos
+        byte_range = JETLSCore.JS.byte_range(testsetinfo.st0)
+        first(byte_range) in outer && continue
+        outer = byte_range
+        result = JETLSCore.read_testrunner_result(server, code) do json_file
+            JETLSCore.testrunner_testset_cmd(launcher, filepath,
+                String(JETLSCore.testset_name(testsetinfo)), JETLSCore.testset_line(testsetinfo),
+                test_env_path, root_path, json_file)
+        end
+        result isa String && error("In ", source, ": ", result)
+        uri2diagnostics = JETLSCore.testrunner_result_to_diagnostics(result; markdown_rendering)
+        append!(diagnostics, get(uri2diagnostics, uri, Diagnostic[]))
+    end
+    return diagnostics
+end
+
+function analyze_config_diagnostics_block(
+        code::String, root::String, uri::URI, codes::Vector{String}, absent_codes::Vector{String},
+        source::String
+    )
+    JETLSCore.TS.tryparse(code) isa JETLSCore.TS.Document ||
+        error("In ", source, ": the `@diagnostics` block is not valid TOML")
+    server = JETLSCore.Server()
+    try
+        server.state.init_params = JETLSCore.InitializeParams(;
+            processId = getpid(), rootUri = JETLSCore.filepath2uri(root),
+            capabilities = DIAGNOSTICS_BLOCK_CAPABILITIES)
+        JETLSCore.cache_config_document!(server.state, uri, 1, code)
+        diagnostics = select_diagnostics!(
+            JETLSCore.deprecated_config_diagnostics(code, server.state.encoding),
+            root, codes, absent_codes, source)
+        code_actions = map(diagnostics) do diagnostic
+            return JETLSCore.deprecated_config_code_actions!(
+                Union{CodeAction,Command}[], server, uri, Diagnostic[diagnostic])
+        end
+        return diagnostics, code_actions
+    finally
+        close(server.endpoint)
+    end
+end
+
+function select_diagnostics!(
+        diagnostics::Vector{Diagnostic}, root::String, codes::Vector{String},
+        absent_codes::Vector{String}, source::String
+    )
+    for code in codes
+        any(diagnostic -> diagnostic.code == code, diagnostics) ||
+            error("In ", source, ": `", code, "` is not reported for the `@diagnostics` block; ",
+                "reported codes: ", join(unique(diagnostic_code.(diagnostics)), ", "))
+    end
+    for diagnostic in diagnostics
+        diagnostic.code in absent_codes &&
+            error("In ", source, ": `", diagnostic_code(diagnostic), "` is reported for the ",
+                "`@diagnostics` block, which is expected to be absent: ",
+                diagnostic_message(diagnostic, root))
+    end
+    filter!(diagnostic -> diagnostic.code in codes, diagnostics)
+    return sort!(diagnostics; by = function (diagnostic)
+        return (diagnostic.severity, diagnostic.range.start.line, diagnostic.range.start.character)
+    end)
 end
 
 const DIAGNOSTIC_PAGE = "diagnostic.md"
@@ -289,6 +366,35 @@ function hljs_classes(code::String)
         # which would otherwise clear the comment class
         annot.label === :face && startswith(string(annot.value), "julia_") || continue
         classes[annot.region] .= get(HLJS_CLASSES, annot.value, nothing)
+    end
+    return classes
+end
+
+# Highlights TOML code roughly as highlight.js does, from the source locations of its items
+function toml_hljs_classes(code::String)
+    classes = Vector{Union{Nothing,String}}(nothing, ncodeunits(code))
+    bytes = codeunits(code)
+    for item in values(JETLSCore.TS.parse(code).items)
+        (; key, value, entry) = item
+        if item.kind in (JETLSCore.TS.HEADER_TABLE, JETLSCore.TS.TABLE_ARRAY_ELEMENT)
+            value === nothing || (classes[value.first:value.past_last-1] .= "hljs-section")
+            continue
+        end
+        if key !== nothing && entry !== nothing
+            # from the first segment of a dotted key
+            classes[entry.first:key.past_last-1] .= "hljs-attr"
+        end
+        if item.kind === JETLSCore.TS.SCALAR && value !== nothing
+            classes[value.first:value.past_last-1] .=
+                bytes[value.first] in (UInt8('"'), UInt8('\'')) ? "hljs-string" :
+                bytes[value.first] in (UInt8('t'), UInt8('f')) ? "hljs-literal" : "hljs-number"
+        end
+    end
+    # Every `#` outside the items, which cover the strings, starts a comment
+    for i in findall(==(UInt8('#')), bytes)
+        classes[i] === nothing || continue
+        j = something(findnext(==(UInt8('\n')), bytes, i), length(bytes) + 1)
+        classes[i:j-1] .= "hljs-comment"
     end
     return classes
 end
@@ -356,12 +462,13 @@ end
 
 # Related information messages are plain text, but the hover renders them as Markdown, so
 # shows the signatures of stack frames as code, including those labeled as `entry: h()` in
-# inference diagnostics
+# inference diagnostics, and the names of inlined frames, which have no signatures
 function related_message(message::String)
     m = match(r"^((?:origin|via|entry): )?(.*)$"s, message)::RegexMatch
     label, sig = something(m[1], ""), m[2]::AbstractString
     occursin('\n', sig) && return message
-    Meta.isexpr(Meta.parse(sig; raise = false), (:call, :where)) || return message
+    ex = Meta.parse(sig; raise = false)
+    ex isa Symbol || Meta.isexpr(ex, (:call, :where)) || return message
     return string(label, '`', sig, '`')
 end
 
@@ -505,12 +612,12 @@ function print_diagnostic_message(
 end
 
 function render_diagnostics_block(
-        code::String, root::String, uri::URI, diagnostics::Vector{Diagnostic},
-        code_actions::Vector{Vector{Union{CodeAction,Command}}}, page_href::String
+        code::String, classes::Vector{Union{Nothing,String}}, root::String, uri::URI,
+        diagnostics::Vector{Diagnostic}, code_actions::Vector{Vector{Union{CodeAction,Command}}},
+        page_href::String
     )
     textbuf = Vector{UInt8}(code)
     line_starts = JETLSCore.build_line_starts(textbuf)
-    classes = hljs_classes(code)
     byte_ranges = UnitRange{Int}[
         lsp_byte_range(code, textbuf, line_starts, diagnostic.range) for diagnostic in diagnostics]
     related_infos = Tuple{Int,JETLSCore.DiagnosticRelatedInformation}[]
@@ -535,7 +642,7 @@ function render_diagnostics_block(
     for line in 1:nlines
         linestart = line_starts[line]
         lineend = line < length(line_starts) ? line_starts[line+1] - 1 : ncodeunits(code) + 1
-        indentend = something(findnext(c::Char -> !isspace(c), code, linestart), lineend)
+        indentend = something(findnext(c -> !isspace(c), code, linestart), lineend)
         i = linestart
         while i < lineend
             covering = covering_diagnostics(byte_ranges, i, indentend)

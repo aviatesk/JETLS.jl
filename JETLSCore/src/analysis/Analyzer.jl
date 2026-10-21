@@ -5,10 +5,10 @@ export declared_argtypes, inference_error_report_related_frames,
     inference_error_report_related_stack, inference_error_report_severity,
     inference_error_report_stack, is_parametric_closure_type,
     reset_report_target_modules!
-export AmbiguousMethodReport, BoundsErrorReport, FailingTestReport, FieldErrorReport,
-    KeywordTypeErrorReport, MethodErrorReport, NoMethodMatchReport, NonBooleanCondErrorReport,
-    TypeAssertErrorReport, TypeErrorReport, UndefKeywordErrorReport, UndefVarErrorReport,
-    UnsupportedKeywordArgReport
+export AmbiguousMethodReport, BoundsErrorReport, DeprecatedCallReport, FailingTestReport,
+    FieldErrorReport, KeywordTypeErrorReport, MethodErrorReport, NoMethodMatchReport,
+    NonBooleanCondErrorReport, TypeAssertErrorReport, TypeErrorReport,
+    UndefKeywordErrorReport, UndefVarErrorReport, UnsupportedKeywordArgReport
 export RelatedEntryFrame, RelatedFrame, RelatedFrameKind, RelatedOriginFrame, RelatedViaFrame
 
 using Core.IR
@@ -16,7 +16,8 @@ using Compiler: Compiler as CC
 using JET.JETInterface
 using JET: JET
 
-using ..JETLSCore: AnalysisEntry, JETLS_DEV_MODE, with_base_render_lock
+using ..JETLSCore: AnalysisEntry, JETLS_DEV_MODE, deprecated_function_message,
+    deprecated_method_message, global_const_value, with_base_render_lock
 using ..LSP
 
 # JETLS internal interface
@@ -521,6 +522,8 @@ function after_abstract_call_gf_by_type(
     end
     if func === JET.check_test_value
         report_failing_test!(analyzer, sv, arginfo.argtypes)
+    elseif func === JET.check_test_exception
+        report_failing_test_exception!(analyzer, sv, arginfo.argtypes)
     end
     func_ref = Ref{Any}(func)
     function _after_abstract_call_gf_by_type(analyzer′::LSAnalyzer, sv′::CC.InferenceState)
@@ -529,6 +532,7 @@ function after_abstract_call_gf_by_type(
         kwarg_reported = report_unsupported_kwarg_error!(analyzer′, sv′, func′, ret′, arginfo, max_methods)
         report_method_error!(analyzer′, sv′, ret′, arginfo, kwarg_reported, max_methods)
         report_keyword_typeerror!(analyzer′, sv′, func′, ret′, arginfo, max_methods)
+        report_deprecated_call!(analyzer′, sv′, func′, ret′, arginfo)
         return true
     end
     if isready(ret)
@@ -563,6 +567,51 @@ function CC.abstract_call_gf_by_type(
         analyzer::ToplevelAbstractAnalyzer, func::Any, arginfo::CC.ArgInfo,
         si::CC.StmtInfo, atype::Any, sv::CC.InferenceState, max_methods::Int)
     after_abstract_call_gf_by_type(analyzer, ret, func, arginfo, sv, max_methods)
+    return ret
+end
+end
+
+function after_abstract_invoke(
+        analyzer::LSAnalyzer, ret::CC.Future, arginfo::CC.ArgInfo, sv::CC.InferenceState
+    )
+    should_analyze(analyzer, sv) || return nothing
+    function _after_abstract_invoke(analyzer′::LSAnalyzer, sv′::CC.InferenceState)
+        ret′ = ret[]
+        report_invoke_method_error!(analyzer′, sv′, ret′, arginfo)
+        argtypes = arginfo.argtypes
+        func = length(argtypes) ≥ 2 ? CC.singleton_type(argtypes[2]) : nothing
+        report_deprecated_call!(analyzer′, sv′, func, ret′, arginfo)
+        return true
+    end
+    if isready(ret)
+        _after_abstract_invoke(analyzer, sv)
+    else
+        push!(sv.tasks, _after_abstract_invoke)
+    end
+    return nothing
+end
+
+@static if hasmethod(CC.abstract_invoke,
+        Tuple{CC.AbstractInterpreter, CC.ArgInfo, CC.StmtInfo,
+              Union{Vector{CC.VarState}, Nothing}, CC.AbsIntState})
+function CC.abstract_invoke(
+        analyzer::LSAnalyzer, arginfo::CC.ArgInfo, si::CC.StmtInfo,
+        vtypes::Union{Vector{CC.VarState},Nothing}, sv::CC.InferenceState
+    )
+    ret = @invoke CC.abstract_invoke(
+        analyzer::ToplevelAbstractAnalyzer, arginfo::CC.ArgInfo, si::CC.StmtInfo,
+        vtypes::Union{Vector{CC.VarState},Nothing}, sv::CC.AbsIntState)
+    after_abstract_invoke(analyzer, ret, arginfo, sv)
+    return ret
+end
+else
+function CC.abstract_invoke(
+        analyzer::LSAnalyzer, arginfo::CC.ArgInfo, si::CC.StmtInfo, sv::CC.InferenceState
+    )
+    ret = @invoke CC.abstract_invoke(
+        analyzer::ToplevelAbstractAnalyzer, arginfo::CC.ArgInfo, si::CC.StmtInfo,
+        sv::CC.AbsIntState)
+    after_abstract_invoke(analyzer, ret, arginfo, sv)
     return ret
 end
 end
@@ -611,7 +660,7 @@ function infer_constructed_closure!(
     matches = @something CC.findall(Tuple{closuretype,Vararg{Any}}, CC.method_table(analyzer)) return nothing
     si = CC.StmtInfo(#=used=#true, sstate.saw_latestworld)
     for match in matches
-        argtypes = @something declared_argtypes((match::Core.MethodMatch).method.sig) continue
+        argtypes = @something declared_argtypes(match.method.sig) continue
         # Call the closure value rather than its type, so that constant propagation can use
         # the constant values of the captured variables.
         arginfo = CC.ArgInfo(nothing, Any[rt, argtypes...])
@@ -894,6 +943,7 @@ Subtypes:
   * `NonBooleanCondErrorReport`: Non-boolean value in a boolean context
   * `KeywordTypeErrorReport`: Keyword argument value type mismatch
 - `FailingTestReport`: Top-level `@test`s that always fail
+- `DeprecatedCallReport`: Calls to methods deprecated with `@deprecate`
 """
 abstract type JETLSErrorReport <: InferenceErrorReport end
 abstract type MethodErrorReport <: JETLSErrorReport end
@@ -1320,6 +1370,12 @@ function print_callable_method_candidates(
     return nothing
 end
 
+# Ranking the closest candidates needs all of them, which is expensive and pointless for
+# broad callable types like `Type` with thousands of methods, while callable objects usually
+# have only a few. With this limit, the lookup bails out as soon as it is exceeded, and
+# ranking up to this many candidates takes under a millisecond, once per report message.
+const CALLABLE_CANDIDATE_MAX_METHODS = 100
+
 # Returns `nothing` when the applicable methods cannot be enumerated (too broad a
 # callable type or too many matches), and an empty vector when `ftype` has no methods
 # at all, i.e. its instances are not callable.
@@ -1329,8 +1385,8 @@ function find_callable_candidate_methods(@nospecialize(ftype))
     ftype′ === Any && return nothing
     ftype′ === Function && return nothing
     callsig = Tuple{ftype,Vararg{Any}}
-    matches = Base._methods_by_ftype(callsig, nothing, 100, Base.get_world_counter())
-    matches isa Vector || return nothing
+    matches = @something Base._methods_by_ftype(callsig, nothing,
+        CALLABLE_CANDIDATE_MAX_METHODS, Base.get_world_counter()) return nothing
     methods = Method[]
     for match in matches
         match = match::Core.MethodMatch
@@ -1563,7 +1619,6 @@ function find_ambiguous_methods(
     coverage = Union{}
     methods = Method[]
     for match in matches
-        match = match::Core.MethodMatch
         coverage = Union{coverage,match.spec_types}
         match.method ∈ methods || push!(methods, match.method)
     end
@@ -1571,6 +1626,39 @@ function find_ambiguous_methods(
     # Require the applicable match regions to cover the complete query signature.
     t <: coverage || return nothing
     return methods
+end
+
+# `abstract_invoke` gives up without any call info when no method is found for the
+# signature requested by `invoke`, so look up the method again here to report it
+function report_invoke_method_error!(
+        analyzer::LSAnalyzer, sv::CC.InferenceState, call::CC.CallMeta, arginfo::CC.ArgInfo
+    )
+    call.info isa CC.NoCallInfo || return false
+    sig = @something invoke_signature(arginfo.argtypes) return false
+    mt = CC.method_table(analyzer)
+    first(CC.findsup(sig, mt)) === nothing || return false
+    methods = find_ambiguous_methods(sig, mt)
+    if methods !== nothing
+        report = AmbiguousMethodReport(sv, sig, 0, methods)
+    else
+        report = NoMethodMatchReport(sv, sig, 0, CC.get_inference_world(analyzer))
+    end
+    add_new_report!(analyzer, sv.result, report)
+    return true
+end
+
+# Returns `nothing` unless the signature is known statically and `invoke` gets to look it
+# up, i.e. it does not throw a `TypeError` for the arguments first
+function invoke_signature(argtypes::Vector{Any})
+    ft = CC.widenconst(CC.argtype_by_index(argtypes, 2))
+    ft isa DataType && CC.isdispatchelem(ft) || return nothing
+    types, isexact, _, _ = CC.instanceof_tfunc(CC.argtype_by_index(argtypes, 3), false)
+    isexact || return nothing
+    unwrapped = Base.unwrap_unionall(types)
+    unwrapped isa DataType && unwrapped.name === Tuple.name || return nothing
+    argtype = CC.argtypes_to_type(CC.argtype_tail(argtypes, 4))
+    typeintersect(types, argtype) === Union{} && return nothing
+    return Base.rewrap_unionall(Tuple{ft, unwrapped.parameters...}, types)
 end
 
 # UnsupportedKeywordArgReport
@@ -1887,18 +1975,24 @@ end
 
 # Top-level analysis replaces `@test ex` with code that passes the value of `ex` to
 # `JET.check_test_value`, so a call to it whose argument is inferred to be `false` or of a
-# non-boolean type is a test that always fails.
+# non-boolean type is a test that always fails. Likewise, it replaces
+# `@test_throws extype ex` with code that passes the exception caught from `ex` to
+# `JET.check_test_exception`, so a call to it whose argument is inferred to be only of
+# exception types that do not match `extype` is a test that always fails.
 @jetreport struct FailingTestReport <: JETLSErrorReport
     @nospecialize t # `Bool` for an expression that always evaluates to `false`
+    @nospecialize expected # the expected exception of `@test_throws`, `nothing` for `@test`
 end
 inference_error_report_stack_impl(r::FailingTestReport) = length(r.vst):-1:1
 inference_error_report_severity_impl(::FailingTestReport) = DiagnosticSeverity.Warning
-function JETInterface.print_report_message(io::IO, (; t)::FailingTestReport)
-    print(io, "this test always fails since its expression evaluates to ")
-    if t === Bool
-        print(io, "`false`")
+function JETInterface.print_report_message(io::IO, (; t, expected)::FailingTestReport)
+    print(io, "this test always fails since its expression ")
+    if expected !== nothing
+        print(io, "throws `", t, "`, not `", expected, "`")
+    elseif t === Bool
+        print(io, "evaluates to `false`")
     else
-        print(io, "non-boolean `", t, "`")
+        print(io, "evaluates to non-boolean `", t, "`")
     end
 end
 
@@ -1910,13 +2004,138 @@ function report_failing_test!(analyzer::LSAnalyzer, sv::CC.InferenceState, argty
     length(argtypes) == 2 || return false
     value = CC.widenconditional(argtypes[2])
     if value isa Const && value.val === false
-        add_new_report!(analyzer, sv.result, FailingTestReport(sv, Bool))
+        add_new_report!(analyzer, sv.result, FailingTestReport(sv, Bool, nothing))
         return true
     end
     t = CC.widenconst(value)
     t === Union{} && return false
     CC.hasintersect(t, Bool) && return false
-    add_new_report!(analyzer, sv.result, FailingTestReport(sv, t))
+    add_new_report!(analyzer, sv.result, FailingTestReport(sv, t, nothing))
+    return true
+end
+
+function report_failing_test_exception!(
+        analyzer::LSAnalyzer, sv::CC.InferenceState, argtypes::Vector{Any}
+    )
+    sv.linfo.def isa Module || return false # see `report_failing_test!`
+    length(argtypes) ≥ 3 || return false
+    expected = JET.matching_test_exception_type(argtypes[3])
+    expected === nothing && return false
+    # The caught exception is inferred from the exceptions that the test expression may
+    # throw. An expression inferred not to throw is not reported for now, as inference may
+    # miss the exceptions thrown by it.
+    exct = CC.typesubtract(CC.widenconst(argtypes[2]), JET.NoTestException,
+        CC.InferenceParams(analyzer).max_union_splitting)
+    (exct === Union{} || CC.hasintersect(exct, expected)) && return false
+    add_new_report!(analyzer, sv.result,
+        FailingTestReport(sv, exct, (argtypes[3]::Const).val))
+    return true
+end
+
+# DeprecatedCallReport
+# --------------------
+
+# Unlike `lowering/deprecated-*`, the diagnostic of this report is not tagged with
+# `DiagnosticTag.Deprecated`, since inference diagnostics span the whole line of the call,
+# which clients would render struck through.
+@jetreport struct DeprecatedCallReport <: JETLSErrorReport
+    message::String
+end
+inference_error_report_stack_impl(r::DeprecatedCallReport) = length(r.vst):-1:1
+inference_error_report_severity_impl(::DeprecatedCallReport) = DiagnosticSeverity.Information
+JETInterface.print_report_message(io::IO, r::DeprecatedCallReport) = print(io, r.message)
+
+function report_deprecated_call!(
+        analyzer::LSAnalyzer, sv::CC.InferenceState, @nospecialize(func), call::CC.CallMeta,
+        arginfo::CC.ArgInfo
+    )
+    info = call.info
+    if isa(info, CC.ConstCallInfo)
+        info = info.call
+    end
+    world = CC.get_inference_world(analyzer)
+    messages = String[]
+    if isa(info, CC.MethodMatchInfo)
+        deprecated_call_messages!(messages, info, world) || return false
+    elseif isa(info, CC.UnionSplitInfo)
+        # The call reaches the deprecated methods whenever its arguments have the types of the
+        # splits that match only those methods
+        for matchinfo in info.split
+            deprecated_call_messages!(messages, matchinfo, world)
+        end
+    elseif isa(info, CC.InvokeCallInfo)
+        push!(messages, @something deprecated_method_message(info.match.method, world) return false)
+    else
+        return false
+    end
+    isempty(messages) && return false
+    # e.g. the methods that `@deprecate` defines for default arguments call the deprecated
+    # method, and the calls in them are not the uses of deprecated methods
+    def = sv.linfo.def
+    def isa Method && deprecated_method_message(def, world) !== nothing && return false
+    # `lowering/deprecated-function` reports the uses of a function whose methods are all
+    # deprecated, but only where the function is written as a global name, not e.g. where a
+    # function returned by another call is called
+    if func === Core.kwcall && length(arginfo.argtypes) ≥ 3
+        func = CC.singleton_type(arginfo.argtypes[3])
+    end
+    if (func isa Function && deprecated_function_message(func, world) !== nothing &&
+        writes_global_name(sv, func, world))
+        return false
+    end
+    add_new_report!(analyzer, sv.result, DeprecatedCallReport(sv, join(messages, '\n')))
+    return true
+end
+
+# Whether the current statement of `sv` writes `func` as a global name, e.g. `f` or `Mod.f`,
+# whose uses `lowering/deprecated-function` reports, as the function to call or as an
+# argument of e.g. `Core.kwcall`
+function writes_global_name(sv::CC.InferenceState, @nospecialize(func), world::UInt)
+    stmt = sv.src.code[sv.currpc]
+    Meta.isexpr(stmt, :(=)) && (stmt = stmt.args[2])
+    Meta.isexpr(stmt, :call) || return false
+    return any(stmt.args) do @nospecialize arg
+        lowered_value(sv, arg, world) === func && is_global_name(sv, arg, world)
+    end
+end
+
+# Whether `x` in the code of `sv` is a global name, e.g. `f` or `Mod.f`, which is lowered to
+# `getproperty(Mod, :f)`
+function is_global_name(sv::CC.InferenceState, @nospecialize(x), world::UInt)
+    x isa GlobalRef && return true
+    x isa Core.SSAValue || return false
+    stmt = sv.src.code[x.id]
+    stmt isa GlobalRef && return true
+    Meta.isexpr(stmt, :call) && length(stmt.args) == 3 || return false
+    f, mod, name = stmt.args
+    f isa GlobalRef && f.name === :getproperty && name isa QuoteNode || return false
+    return lowered_value(sv, mod, world) isa Module && is_global_name(sv, mod, world)
+end
+
+function lowered_value(sv::CC.InferenceState, @nospecialize(x), world::UInt)
+    if x isa Core.SSAValue
+        t = sv.ssavaluetypes[x.id]
+        return t isa Core.Const ? t.val : nothing
+    elseif x isa GlobalRef
+        return global_const_value(convert(Core.Binding, x), world)
+    end
+    return nothing
+end
+
+# Only the calls whose matching methods are all deprecated are reported, since whether a call
+# reaches a deprecated method otherwise depends on the runtime types of its arguments
+function deprecated_call_messages!(
+        messages::Vector{String}, info::CC.MethodMatchInfo, world::UInt
+    )
+    n = length(messages)
+    for match in info.results
+        message = deprecated_method_message(match.method, world)
+        if message === nothing
+            resize!(messages, n)
+            return false
+        end
+        message in messages || push!(messages, message)
+    end
     return true
 end
 

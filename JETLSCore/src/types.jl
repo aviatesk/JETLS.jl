@@ -648,6 +648,8 @@ const LOWERING_UNREACHABLE_CODE = "lowering/unreachable-code"
 const LOWERING_INACTIVE_CODE = "lowering/inactive-code"
 const LOWERING_AMBIGUOUS_SOFT_SCOPE_CODE = "lowering/ambiguous-soft-scope"
 const LOWERING_ORPHANED_DOCSTRING_CODE = "lowering/orphaned-docstring"
+const LOWERING_DEPRECATED_BINDING_CODE = "lowering/deprecated-binding"
+const LOWERING_DEPRECATED_FUNCTION_CODE = "lowering/deprecated-function"
 const TOPLEVEL_ERROR_CODE = "toplevel/error"
 const TOPLEVEL_MISSING_CONCRETIZATION_CODE = "toplevel/missing-concretization"
 const TOPLEVEL_CONCRETIZATION_TIMEOUT_CODE = "toplevel/concretization-timeout"
@@ -666,6 +668,7 @@ const INFERENCE_TYPE_ERROR_NON_BOOL_COND_CODE = "inference/type-error/non-bool-c
 const INFERENCE_TYPE_ERROR_TYPE_ASSERT_CODE = "inference/type-error/type-assert"
 const INFERENCE_TYPE_ERROR_KEYWORD_CODE = "inference/type-error/keyword"
 const INFERENCE_FAILING_TEST_CODE = "inference/failing-test"
+const INFERENCE_DEPRECATED_CALL_CODE = "inference/deprecated-call"
 const DEPRECATED_INFERENCE_NON_BOOLEAN_COND_CODE = "inference/non-boolean-cond"
 const TESTRUNNER_TEST_FAILURE_CODE = "testrunner/test-failure"
 const CONFIG_DEPRECATED_KEY_CODE = "config/deprecated-key"
@@ -690,6 +693,8 @@ const ALL_DIAGNOSTIC_CODES = Set{String}(String[
     LOWERING_INACTIVE_CODE,
     LOWERING_AMBIGUOUS_SOFT_SCOPE_CODE,
     LOWERING_ORPHANED_DOCSTRING_CODE,
+    LOWERING_DEPRECATED_BINDING_CODE,
+    LOWERING_DEPRECATED_FUNCTION_CODE,
     TOPLEVEL_ERROR_CODE,
     TOPLEVEL_MISSING_CONCRETIZATION_CODE,
     TOPLEVEL_CONCRETIZATION_TIMEOUT_CODE,
@@ -708,6 +713,7 @@ const ALL_DIAGNOSTIC_CODES = Set{String}(String[
     INFERENCE_TYPE_ERROR_TYPE_ASSERT_CODE,
     INFERENCE_TYPE_ERROR_KEYWORD_CODE,
     INFERENCE_FAILING_TEST_CODE,
+    INFERENCE_DEPRECATED_CALL_CODE,
     TESTRUNNER_TEST_FAILURE_CODE,
     CONFIG_DEPRECATED_KEY_CODE,
     CONFIG_DEPRECATED_VALUE_CODE,
@@ -718,6 +724,9 @@ const DIAGNOSTIC_CODE_ALIASES = Dict{String,Vector{String}}(
         DEPRECATED_INFERENCE_NON_BOOLEAN_COND_CODE,
     ],
 )
+
+const DEPRECATED_DIAGNOSTIC_CODES = Dict{String,String}(
+    alias => code for (code, aliases) in DIAGNOSTIC_CODE_ALIASES for alias in aliases)
 
 struct DiagnosticPattern <: ConfigSection
     pattern::Union{Regex,String}
@@ -959,7 +968,8 @@ end
 const AnyBindingOccurrence = Union{BindingOccurrence,CachedBindingOccurrence}
 
 is_definition_occurrence(occ::AnyBindingOccurrence) = is_definition_occurrence_kind(occ.kind)
-is_definition_occurrence_kind(kind::Symbol) = kind === :def || kind === :method_def
+is_definition_occurrence_kind(kind::Symbol) =
+    kind === :def || kind === :method_def || kind === :qualified_method_def
 
 abstract type AbstractCompletionResolverInfo end
 
@@ -1048,6 +1058,20 @@ struct PerFileDiagnosticsCacheEntry
 end
 const PerFileDiagnosticsCacheData = Base.PersistentDict{URI,PerFileDiagnosticsCacheEntry}
 const PerFileDiagnosticsCache = LWContainer{PerFileDiagnosticsCacheData, LWStats}
+# Deprecations of global names, per world; see `find_deprecated_global!` and
+# `find_deprecated_function!`
+struct DeprecatedBindingWorldCache
+    bindings::Dict{Tuple{Module,Symbol},Union{Nothing,Core.Binding}}
+    functions::Dict{Tuple{Module,Symbol},Union{Nothing,String}}
+    DeprecatedBindingWorldCache() = new(
+        Dict{Tuple{Module,Symbol},Union{Nothing,Core.Binding}}(),
+        Dict{Tuple{Module,Symbol},Union{Nothing,String}}())
+end
+struct DeprecatedBindingCache
+    lock::ReentrantLock
+    worlds::Dict{UInt,DeprecatedBindingWorldCache}
+    DeprecatedBindingCache() = new(ReentrantLock(), Dict{UInt,DeprecatedBindingWorldCache}())
+end
 const ConfigManager = LWContainer{ConfigManagerData, LWStats}
 const UnsyncedFileCacheData = Base.PersistentDict{URI,FileInfo}
 const UnsyncedFileCache = LWContainer{UnsyncedFileCacheData, LWStats}
@@ -1126,6 +1150,8 @@ mutable struct ServerState
     const document_symbol_cache::DocumentSymbolCache
     const binding_occurrences_cache::BindingOccurrencesCache
     const per_file_diagnostics_cache::PerFileDiagnosticsCache
+    # Cleared by `update_analysis_cache!`, since the entries hold the analyzed modules.
+    const deprecated_binding_cache::DeprecatedBindingCache
     const text_document_content_cache::TextDocumentContentCache
     const analysis_manager::AnalysisManager
     const extra_diagnostics::ExtraDiagnostics
@@ -1161,6 +1187,7 @@ mutable struct ServerState
             #=document_symbol_cache=# DocumentSymbolCache(),
             #=binding_occurrences_cache=# BindingOccurrencesCache(),
             #=per_file_diagnostics_cache=# PerFileDiagnosticsCache(),
+            #=deprecated_binding_cache=# DeprecatedBindingCache(),
             #=text_document_content_cache=# TextDocumentContentCache(),
             #=analysis_manager=# AnalysisManager(),
             #=extra_diagnostics=# ExtraDiagnostics(),
