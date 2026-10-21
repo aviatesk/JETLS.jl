@@ -17,6 +17,12 @@ macro eval(args...)
 end
 end
 
+module qualified_context
+module Sub
+module Deep end
+end
+end
+
 with_binding_occurrences(callback, code::AbstractString; kwargs...) =
     with_binding_occurrences(callback, lowering_module, code; kwargs...)
 function with_binding_occurrences(
@@ -706,6 +712,26 @@ end
             @test any(boccs) do (binfo, occs)
                 binfo.name == "@nospecialize" && binfo.mod === Base && length(occs) == 1
             end
+        end
+    end
+
+    @testset "qualified accesses" begin
+        (; Sub) = qualified_context
+        (; Deep) = Sub
+        for (code, mod, kinds) in (
+                ("Sub.│x│", Sub, (:use,)),
+                ("Sub.│x│ .= 1", Sub, (:use,)),
+                ("Sub.Deep.│x│", Deep, (:use,)),
+                ("Sub.Deep.│x│ += 1", Deep, (:use,)),
+                ("Sub.Deep.│x│ .= 1", Deep, (:use,)))
+            clean_code, positions = JETLSCore.get_text_and_positions(code)
+            fi = JETLSCore.FileInfo(#=version=#0, clean_code, "testfile.jl")
+            range = Range(; start=positions[1], var"end"=positions[2])
+            boccs = get_full_binding_occurrences(clean_code;
+                context_module=qualified_context)
+            occurrences = Set((binfo.mod, occ.kind, JETLSCore.jsobj_to_range(occ.tree, fi))
+                for (binfo, occs) in boccs if binfo.name == "x" for occ in occs)
+            @test occurrences == Set((mod, kind, range) for kind in kinds)
         end
     end
 

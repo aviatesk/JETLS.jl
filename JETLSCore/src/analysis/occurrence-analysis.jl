@@ -551,7 +551,15 @@ function collect_qualified_global_occurrences!(
         ctx3::JL.VariableAnalysisContext, st3::SyntaxTree, world::UInt
     )
     method_def_ranges = Set{UnitRange{Int}}()
+    # `Mod.Sub.name = v` and `Mod.Sub.name += v` assign `Mod.Sub` to an SSA value first
+    ssa_values = Dict{JL.IdTag,SyntaxTree}()
     traverse(st3) do st3′::SyntaxTree
+        if (JS.head(st3′) === :(=) && JS.numchildren(st3′) == 2 &&
+            JS.head(st3′[1]) === :bindingid)
+            binfo = JL.get_binding(ctx3, st3′[1])
+            binfo.is_ssa && (ssa_values[binfo.id] = st3′[2])
+            return nothing
+        end
         JS.head(st3′) === :function_type && JS.numchildren(st3′) ≥ 1 || return nothing
         callee = st3′[1]
         # `Mod.T{S}(x) = x` defines a method of `Mod.T`, not of `S` in its type arguments
@@ -563,8 +571,12 @@ function collect_qualified_global_occurrences!(
         return nothing
     end
     traverse(st3) do st3′::SyntaxTree
-        is_getproperty_call3(st3′) || return nothing
-        mod = @something resolve_lowered_module(ctx3, st3′[2], world) return nothing
+        kind = @something qualified_access_kind(st3′) return nothing
+        receiver = st3′[2]
+        if JS.head(receiver) === :bindingid
+            receiver = get(ssa_values, JL.get_binding(ctx3, receiver).id, receiver)
+        end
+        mod = @something resolve_lowered_module(ctx3, receiver, world) return nothing
         name = name_val(st3′[3])
         provs = JS.flattened_provenance(st3′[3])
         is_from_user_ast(provs) || return nothing
@@ -573,11 +585,26 @@ function collect_qualified_global_occurrences!(
         binding_source_name_matches(name, name_val(id_node)) || return nothing
         binfo = surface_global_binfo(name, name_node, mod)
         target_set = get!(Set{BindingOccurrence}, occurrences, binfo)
-        kind = JS.byte_range(st3′) in method_def_ranges ? :qualified_method_def : :use
+        if kind === :use && JS.byte_range(st3′) in method_def_ranges
+            kind = :qualified_method_def
+        end
         push!(target_set, BindingOccurrence(name_node, kind))
         return nothing
     end
     return occurrences
+end
+
+# `Mod.name` is lowered to `getproperty(Mod, :name)`, or `dotgetproperty(Mod, :name)` in
+# `Mod.name .= v`
+function qualified_access_kind(st3::SyntaxTree)
+    JS.head(st3) === :call || return nothing
+    nargs = JS.numchildren(st3) - 1
+    nargs ≥ 2 && JS.head(st3[1]) === :top && JS.head(st3[3]) === :symbol || return nothing
+    f = name_val(st3[1])
+    if nargs == 2 && (f == "getproperty" || f == "dotgetproperty")
+        return :use
+    end
+    return nothing
 end
 
 # The identifier of the name `node`, inside the `macro_name` of `@m` and the `var` of
