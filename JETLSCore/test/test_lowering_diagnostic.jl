@@ -2973,6 +2973,40 @@ end
         @test isempty(diagnostics)
     end
 
+    # Quoted imports take effect in the module that evaluates them (aviatesk/JETLS.jl#999)
+    let diagnostics = get_unused_import_diagnostics("""
+        function sandbox_eval(ex)
+            m = Module()
+            Core.eval(m, :(using Base: cos, sin))
+            return Core.eval(m, ex)
+        end
+        """)
+        @test isempty(diagnostics)
+    end
+    let diagnostics = get_unused_import_diagnostics("""
+        macro import_cos()
+            quote
+                using Base: cos
+            end
+        end
+        """)
+        @test isempty(diagnostics)
+    end
+
+    # Two-argument `@eval` imports into the given module, while one-argument `@eval`
+    # imports into the current module
+    let diagnostics = get_unused_import_diagnostics("""
+        @eval Main using Base: cos
+        """)
+        @test isempty(diagnostics)
+    end
+    let diagnostics = get_unused_import_diagnostics("""
+        @eval using Base: cos
+        """)
+        @test length(diagnostics) == 1
+        @test only(diagnostics).message == "Unused import `cos`"
+    end
+
     # Import used in nested module should not suppress warning for top-level import
     @testset "module context tracking" begin
         script = """

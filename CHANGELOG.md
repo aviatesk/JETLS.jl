@@ -176,6 +176,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Fixed [`lowering/macro-expansion-error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/macro-expansion-error) messages, e.g. for `@static` conditions that fail to evaluate, showing JETLS's internal module names such as `Main.var"##JETVirtualModule#142"` instead of the analyzed module.
 
+- Fixed false [`lowering/unused-import`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/unused-import) reports on `import`/`using` statements in quoted expressions or in two-argument `@eval`, which import names into the module that evaluates them:
+  ```julia
+  function sandbox_eval(ex)
+      m = Module()
+      Core.eval(m, :(using Base: cos, sin)) # `cos` and `sin` were reported as unused
+      return Core.eval(m, ex)
+  end
+
+  @eval Main using Base: cos # `cos` was reported as unused
+  ```
+  (Closed https://github.com/aviatesk/JETLS.jl/issues/999)
+
 ## 2026-10-18
 
 - Commit: [`8888185`](https://github.com/aviatesk/JETLS.jl/commit/8888185)

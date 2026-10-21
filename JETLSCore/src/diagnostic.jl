@@ -2815,14 +2815,25 @@ function collect_explicit_imports_by_module(
     )
     mod_imported_names = Dict{Module,Dict{String,Vector{ImportInfo}}}()
     traverse(st0_top) do st0::SyntaxTree
-        JS.head(st0) ∈ (:import, :using) || return nothing
+        kind = JS.head(st0)
+        # Quoted imports and two-argument `@eval` input take effect in a module chosen
+        # at runtime, not in the module containing the source text.
+        if kind === :quote
+            return traversal_no_recurse
+        elseif kind === :macrocall && JS.numchildren(st0) ≥ 4
+            (; context_module, world) =
+                get_context_info(state, uri, offset_to_xy(fi, JS.first_byte(st0)))
+            is_ateval0(context_module, world, st0) && return traversal_no_recurse
+            return nothing
+        end
+        kind ∈ (:import, :using) || return nothing
         context_module = get_context_module(state, uri, offset_to_xy(fi, JS.first_byte(st0)))
         for (name, name_range, delete_range) in collect_explicit_import_names(st0, fi)
             imported_names =
                 get!(Dict{String,Vector{ImportInfo}}, mod_imported_names, context_module)
             push!(get!(Vector{ImportInfo}, imported_names, name),
                 ImportInfo(uri, name_range, delete_range,
-                    JS.head(st0) === :import ? :import : :using))
+                    kind === :import ? :import : :using))
         end
         return TraversalNoRecurse()
     end
