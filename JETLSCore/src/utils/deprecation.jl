@@ -32,7 +32,7 @@ function deprecated_function_message(f::Function, world::UInt)
     end
     length(messages) == 1 && return only(messages)
     summary = "All methods of `$(parentmodule(f)).$(nameof(f))` are deprecated:"
-    return join((summary, messages...), '\n')::String
+    return join((summary, messages...), '\n')
 end
 
 # The message of the deprecation warning that `m` prints first thing, as the methods defined
