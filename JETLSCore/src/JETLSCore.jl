@@ -109,6 +109,7 @@ const SyntaxTree = JS.SyntaxTree
 const SyntaxList = JS.SyntaxList
 
 include("utils/rendering.jl")
+include("utils/deprecation.jl")
 
 include("analysis/Analyzer.jl")
 using .Analyzer

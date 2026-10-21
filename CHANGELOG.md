@@ -84,8 +84,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
   nearest(p, points) = argmin(q -> distance(p, q), points) # `distance(p, q)` is deprecated, use `euclidean(p, q)` instead.
   ```
-  Unlike deprecated bindings, such functions are reported at their uses even when imported explicitly, since Julia warns when they are called. Functions with only some of their methods deprecated are not reported.
+  Unlike deprecated bindings, such functions are reported at their uses even when imported explicitly, since Julia warns when they are called. Functions with only some of their methods deprecated are reported by `inference/deprecated-call` instead.
   Global completion also lists such functions after the other candidates and marks them as deprecated.
+
+- Added the [`inference/deprecated-call`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/inference/deprecated-call) diagnostic that reports calls to methods deprecated with `Base.@deprecate`, with the warning Julia prints when they are called. It covers functions with only some of their methods deprecated, using the inferred types of the arguments:
+  ```julia
+  unit(i::CartesianIndex) = one(i) # `one(i::CartesianIndex)` is deprecated, use `oneunit(i)` instead.
+  ```
+  A call is reported when the methods that it matches are all deprecated, or, for a call split over a union of argument types, when the methods that it matches for some of the types are.
 
 - Added the [`config/deprecated-value`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/config/deprecated-value) warning on [diagnostic patterns](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/diagnostic/patterns) that match the deprecated `inference/non-boolean-cond` code literally (`match_by = "code"` and `match_type = "literal"`), with a quick fix that replaces it with `inference/type-error/non-bool-cond`.
   Like other deprecated settings, such patterns are also listed in the message shown when JETLS loads the configuration, with a "Fix all" action.

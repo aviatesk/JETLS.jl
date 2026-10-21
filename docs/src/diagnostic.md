@@ -263,6 +263,7 @@ Here is a summary table of the diagnostics explained in this section:
 | [`inference/type-error/type-assert`](@ref diagnostic/reference/inference/type-error/type-assert)               | `Warning`             | `JETLS/save`  | Type assertion failures                                |
 | [`inference/type-error/non-bool-cond`](@ref diagnostic/reference/inference/type-error/non-bool-cond)           | `Warning`             | `JETLS/save`  | Non-boolean value used in boolean context              |
 | [`inference/failing-test`](@ref diagnostic/reference/inference/failing-test)                                   | `Warning`             | `JETLS/save`  | `@test` that always fails                              |
+| [`inference/deprecated-call`](@ref diagnostic/reference/inference/deprecated-call)                             | `Information`         | `JETLS/save`  | Calls to methods deprecated with `@deprecate`          |
 | [`testrunner/test-failure`](@ref diagnostic/reference/testrunner/test-failure)                                 | `Error`               | `JETLS/extra` | Test failures from TestRunner integration              |
 | [`config/deprecated-key`](@ref diagnostic/reference/config/deprecated-key)                                     | `Warning`             | `JETLS/extra` | Deprecated keys in `.JETLSConfig.toml`                 |
 | [`config/deprecated-value`](@ref diagnostic/reference/config/deprecated-value)                                 | `Warning`             | `JETLS/extra` | Deprecated values in `.JETLSConfig.toml`               |
@@ -692,8 +693,10 @@ Unlike deprecated bindings, a deprecated function imported explicitly, as with
 since Julia warns when a deprecated method is called.
 
 Functions with only some of their methods deprecated, such as `one`, of which
-Base deprecates `one(::CartesianIndex)`, are not reported, since whether a call
-reaches a deprecated method depends on the types of its arguments.
+Base deprecates `one(::CartesianIndex)`, are reported by
+[`inference/deprecated-call`](@ref diagnostic/reference/inference/deprecated-call)
+instead, since whether a call reaches a deprecated method depends on the types
+of its arguments.
 
 #### [Captured boxed variable (`lowering/captured-boxed-variable`)](@id diagnostic/reference/lowering/captured-boxed-variable)
 
@@ -2008,6 +2011,52 @@ end
 
 Test sets that specify `failfast=false` and test sets of a custom type, e.g.
 `@testset MyTestSet "example" begin ... end`, are analyzed as declared.
+
+#### [Deprecated call (`inference/deprecated-call`)](@id diagnostic/reference/inference/deprecated-call)
+
+**Default severity:** `Information`
+
+Calls to methods deprecated with `Base.@deprecate`. The message is the
+deprecation warning that Julia prints when the method is called, which includes
+the suggested replacement. This covers functions with only some of their
+methods deprecated, since the inferred types of the arguments tell which
+methods a call reaches:
+
+```@diagnostics; codes = ["inference/deprecated-call"]
+unit(i::CartesianIndex) = one(i)
+```
+
+When an argument has a `Union` of a few types, JETLS considers each of the types
+separately, and reports the call if it matches only deprecated methods for any
+of them. For example, the following call is reported because it calls the
+deprecated `one(::CartesianIndex)` when `x` is a `CartesianIndex`, even though
+it calls a method that is not deprecated when `x` is an `Int`:
+
+```@diagnostics; codes = ["inference/deprecated-call"]
+unit(x::Union{CartesianIndex,Int}) = one(x)
+```
+
+On the other hand, a call whose abstract argument types also match methods that
+are not deprecated is not reported, since which of them the call reaches depends
+on the runtime types of its arguments:
+
+```@diagnostics; absent_codes = ["inference/deprecated-call"]
+abstract type Shape end
+struct Circle <: Shape end
+struct Square <: Shape end
+area(::Circle) = 1.0
+area_of_square(::Square) = 1.0
+Base.@deprecate area(s::Square) area_of_square(s)
+
+total_area(s::Shape) = area(s)
+```
+
+Such a call is still reported where JETLS analyzes the code with the arguments
+of the deprecated types, e.g. when `total_area` is called with a `Square`.
+
+Most uses of functions whose methods are all deprecated are reported by
+[`lowering/deprecated-function`](@ref diagnostic/reference/lowering/deprecated-function)
+instead.
 
 ### [Configuration diagnostic (`config/*`)](@id diagnostic/reference/config)
 

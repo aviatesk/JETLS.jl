@@ -771,6 +771,21 @@ end
     end
 end
 
+@testset "deprecated call diagnostic" begin
+    let code = """
+        unit(i::CartesianIndex) = one(i)
+        permute(a, p) = Base.permute!!(a, p)
+        """
+        withscript(code) do script_path
+            diagnostics = get_open_diagnostics(dirname(script_path), script_path, code)
+            diag = only(filter(diag -> diag.code == JETLSCore.INFERENCE_DEPRECATED_CALL_CODE, diagnostics))
+            @test diag.range.start.line == 0
+            @test diag.severity == DiagnosticSeverity.Information
+            @test diag.message == "`one(i::CartesianIndex)` is deprecated, use `oneunit(i)` instead."
+        end
+    end
+end
+
 @testset "closures are analyzed where they are called or constructed" begin
     let code = """
         struct HasX
