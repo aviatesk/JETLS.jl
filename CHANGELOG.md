@@ -126,6 +126,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   invoke_double(x::Int) = @invoke double(x::Integer) # MethodError: no matching method found `double(::Integer)`
   ```
 
+- [`inference/failing-test`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/inference/failing-test) now also reports a `@test_throws` that always fails, i.e. whose expression is inferred to throw only exceptions that do not match the expected one:
+  ```julia
+  @testset "foo" begin
+      @test_throws ArgumentError parse(Int, 42) # this test always fails since its expression throws `MethodError`, not `ArgumentError`
+  end
+  ```
+  The check is conservative: the exceptions inferred across function calls are often `Any`, which matches any expected exception, and message patterns are not checked.
+
+- Full analysis no longer analyzes the code after `@test_warn`, `@test_nowarn`, `@inferred`, or `@testset let ... end` that always throws, since Test.jl does not catch exceptions in them.
+  It also infers the values of `@test_warn`, `@test_nowarn`, and `@inferred` as those of their test expressions, e.g. `y` of `y = @inferred parse(Int, "1")` as `Int` instead of `Any`.
+
 - Find references, document highlight, and rename on a global binding now also cover its uses qualified with a module, such as `Module.name` and `Module.@macro`.
   Invoking these features on such a qualified name itself is not supported yet (https://github.com/aviatesk/JETLS.jl/issues/1009).
 
@@ -217,12 +228,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Fixed the logs of the [TestRunner integration](https://aviatesk.github.io/JETLS.jl/release/testrunner/) missing the output that tests write to `stderr`, such as log messages of `@info` and `@warn` and deprecation warnings enabled by `--depwarn=yes`, which went to the server log instead.
   When a test run fails unexpectedly, e.g. by a segfault, the server log now shows the end of its output, including the report of the crash.
 
-- Fixed rename producing invalid code for names written with `var"..."`: macro calls written as `@var"..."` lost their quotes, and renaming to a name that needs `var"..."`, such as a name with a space or an operator replacing a variable, left the occurrences written without `var"..."` unquoted:
+- Fixed false [`lowering/unreachable-code`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/unreachable-code) reports on the code after Test.jl macros that catch the exception thrown by the tested expression, such as `@test_throws`, `@test_broken`, `@test_logs`, and nested `@testset`s, when the expression always throws.
+  Hover, inlay hints, and other features that show inferred types also treated such code as unreachable:
   ```julia
-  macro var"old macro"() end
-  @var"old macro"() # was renamed to `@new macro()`, now to `@var"new macro"()`
+  @testset "foo" begin
+      @test_throws ErrorException error("boom")
+      @test true # was reported as unreachable code
+  end
   ```
-  The ` as ...` alias that rename inserts into an import statement is also quoted in such a case.
+  The expressions of `@test_throws`, `@test_warn`, `@inferred`, and similar Test.jl macros are now also analyzed in their own scope as in Test.jl, so assignments in them no longer define variables in the enclosing scope.
+  (Closed https://github.com/aviatesk/JETLS.jl/issues/997)
+
+- Fixed false reports on the expressions of `@test_throws`, which are expected to throw, e.g. by [`inference/method-error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/inference/method-error) and [`lowering/undef-global-var`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/undef-global-var):
+  ```julia
+  @testset "foo" begin
+      @test_throws MethodError sin("x")      # was reported as `inference/method-error`
+      @test_throws UndefVarError undefined_x # was reported as `lowering/undef-global-var`
+  end
+  ```
+  `inference/failing-test` reports such a test instead if it always fails.
+
+- Fixed false [`lowering/macro-expansion-error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/macro-expansion-error) reports on `@test_throws extype pattern ex`, which Test.jl accepts in Julia 1.13 to also check the message of the thrown exception.
 
 - Fixed false [`lowering/unused-import`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/unused-import) reports on imports that are used only from other modules, which import the name in turn or access it as `Module.name`:
   ```julia
@@ -240,6 +266,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   ```
   Accesses like `Parent.x` within `Parent` itself also count as uses now.
   (Closed https://github.com/aviatesk/JETLS.jl/issues/971)
+
+- Fixed rename producing invalid code for names written with `var"..."`: macro calls written as `@var"..."` lost their quotes, and renaming to a name that needs `var"..."`, such as a name with a space or an operator replacing a variable, left the occurrences written without `var"..."` unquoted:
+  ```julia
+  macro var"old macro"() end
+  @var"old macro"() # was renamed to `@new macro()`, now to `@var"new macro"()`
+  ```
+  The ` as ...` alias that rename inserts into an import statement is also quoted in such a case.
 
 ## 2026-10-18
 

@@ -262,7 +262,7 @@ Here is a summary table of the diagnostics explained in this section:
 | [`inference/type-error/keyword`](@ref diagnostic/reference/inference/type-error/keyword)                       | `Warning`             | `JETLS/save`  | Keyword argument value type mismatch                   |
 | [`inference/type-error/type-assert`](@ref diagnostic/reference/inference/type-error/type-assert)               | `Warning`             | `JETLS/save`  | Type assertion failures                                |
 | [`inference/type-error/non-bool-cond`](@ref diagnostic/reference/inference/type-error/non-bool-cond)           | `Warning`             | `JETLS/save`  | Non-boolean value used in boolean context              |
-| [`inference/failing-test`](@ref diagnostic/reference/inference/failing-test)                                   | `Warning`             | `JETLS/save`  | `@test` that always fails                              |
+| [`inference/failing-test`](@ref diagnostic/reference/inference/failing-test)                                   | `Warning`             | `JETLS/save`  | `@test` or `@test_throws` that always fails            |
 | [`inference/deprecated-call`](@ref diagnostic/reference/inference/deprecated-call)                             | `Information`         | `JETLS/save`  | Calls to methods deprecated with `@deprecate`          |
 | [`testrunner/test-failure`](@ref diagnostic/reference/testrunner/test-failure)                                 | `Error`               | `JETLS/extra` | Test failures from TestRunner integration              |
 | [`config/deprecated-key`](@ref diagnostic/reference/config/deprecated-key)                                     | `Warning`             | `JETLS/extra` | Deprecated keys in `.JETLSConfig.toml`                 |
@@ -1723,7 +1723,7 @@ before the code runs:
 - [`inference/type-error/*`](@ref diagnostic/reference/inference/type-error) → `TypeError` (failing type assertion, non-boolean condition, or keyword-value type mismatch)
 
 In addition, [`inference/failing-test`](@ref diagnostic/reference/inference/failing-test)
-reports a `@test` that always fails.
+reports a `@test` or `@test_throws` that always fails.
 
 #### [Undefined global variable (`inference/undef-global-var`)](@id diagnostic/reference/inference/undef-global-var)
 
@@ -1995,6 +1995,22 @@ end
     @test length(v)
 end
 ```
+
+`@test_throws`s whose expression is inferred to throw only exceptions that do
+not match the expected exception are reported as well:
+
+```@diagnostics; codes = ["inference/failing-test"], absent_codes = ["inference/method-error"]
+using Test
+
+@testset "example" begin
+    @test_throws ArgumentError parse(Int, 42)
+end
+```
+
+Since the expression of `@test_throws` is expected to throw, the errors in it,
+e.g. the `MethodError` of `parse(Int, 42)` above, are not reported by the
+other inference diagnostics, nor are the undefined names in it by
+[`lowering/undef-global-var`](@ref diagnostic/reference/lowering/undef-global-var).
 
 Only the tests in top-level code, including the code in `@testset`s, are
 reported, not those in function bodies. Tests expected to fail, i.e.

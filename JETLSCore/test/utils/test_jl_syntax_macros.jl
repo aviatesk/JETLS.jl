@@ -1620,18 +1620,19 @@ end
 
 @testset "Test.@test_throws" begin
     @testset "macro expansion" begin
-        # Both args are evaluated in a `try`, so that the code after the test stays
-        # reachable even when `ex` always throws.
+        # The test expression is evaluated in a `try` marked by `JET.enter_test_exception`,
+        # so that the code after the test stays reachable even when it always throws, and
+        # the expected exception is evaluated after it.
         let st1 = test_macro_expand("@test_throws BoundsError xxx[4]")
-            @test JS.head(st1) === :block
+            @test children_heads(st1) == [:try, :identifier, :call]
             tryex = st1[1]
-            @test JS.head(tryex) === :try
-            @test children_heads(tryex[1]) == [:identifier, :ref]
+            @test children_heads(tryex[1]) == [:call, :ref]
+            @test JETLSCore.is_enter_test_exception(tryex[1][1])
             @test strip(JS.sourcetext(tryex[1][2])) == "xxx[4]"
         end
         if JETLSCore._TEST_THROWS_ACCEPTS_PATTERN
             let st1 = test_macro_expand("@test_throws BoundsError \"msg\" xxx[4]")
-                @test children_heads(st1[1][1]) == [:identifier, :value, :ref]
+                @test children_heads(st1) == [:try, :identifier, :value, :call]
             end
         end
     end

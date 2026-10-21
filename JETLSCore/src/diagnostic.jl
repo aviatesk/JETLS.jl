@@ -1319,11 +1319,12 @@ const DefUsedNamesCache = LWContainer{DefUsedNamesCacheData, LWStats}
 # the lowering context. The cross-file phase consumes these via
 # `emit_undef_global_diagnostics!` with a unit-wide def-name set.
 function collect_undef_global_candidates!(
-        candidates::Vector{UndefGlobalCandidate}, fi::FileInfo,
+        candidates::Vector{UndefGlobalCandidate}, fi::FileInfo, st3::SyntaxTree,
         binding_occurrences::Dict{JL.BindingInfo,Set{BindingOccurrence}},
         world::UInt, analyzer::Union{Nothing,LSAnalyzer}, postprocessor::LSPostProcessor,
         reported::Set{LoweringDiagnosticKey}
     )
+    excluded_ranges = nothing
     for (binfo, occurrences) in binding_occurrences
         bk = binfo.kind
         bk === :global || continue
@@ -1347,6 +1348,9 @@ function collect_undef_global_candidates!(
             occ.kind === :use || continue
             provs = JS.flattened_provenance(occ.tree)
             is_from_user_ast(provs) || continue
+            byte_range = JS.byte_range(last(provs))
+            excluded_ranges = @something excluded_ranges test_exception_ranges(st3)
+            any(r -> byte_range ⊆ r, excluded_ranges) && continue
             range = jsobj_to_range(last(provs), fi)
             key = LoweringDiagnosticKey(range, bk, bn)
             key in reported ? continue : push!(reported, key)
@@ -1354,6 +1358,27 @@ function collect_undef_global_candidates!(
         end
     end
 end
+
+# Byte ranges of the test expressions of `@test_throws`, which the stub evaluates in a `try`
+# block starting with a call to `JET.enter_test_exception`. As in full analysis, errors are
+# not reported in them, since they are expected to throw, e.g.
+# `@test_throws UndefVarError x`.
+function test_exception_ranges(st3::SyntaxTree)
+    ranges = UnitRange{Int}[]
+    traverse(st3) do node::SyntaxTree
+        JS.head(node) === :block && JS.numchildren(node) ≥ 1 || return nothing
+        is_enter_test_exception(node[1]) || return nothing
+        for i in 2:JS.numchildren(node)
+            push!(ranges, JS.byte_range(last(JS.flattened_provenance(node[i]))))
+        end
+        return nothing
+    end
+    return ranges
+end
+
+is_enter_test_exception(st::SyntaxTree) =
+    JS.head(st) === :call && JS.numchildren(st) == 1 && JS.head(st[1]) === :value &&
+    st[1].value === JET.enter_test_exception
 
 # Cross-file phase: emit a `Diagnostic` for each candidate whose name isn't defined
 # elsewhere in the analysis unit. Pure Set lookup — no re-lowering.
@@ -2530,7 +2555,7 @@ function analyze_lowered_code!(
     analyze_unresolved_gotos!(diagnostics, fi, st3)
 
     if !skip_analysis_requiring_context
-        collect_undef_global_candidates!(candidates, fi, binding_occurrences,
+        collect_undef_global_candidates!(candidates, fi, st3, binding_occurrences,
             world, analyzer, postprocessor, reported)
         analyze_deprecated_bindings!(diagnostics, fi, ctx3, st3, binding_occurrences,
             world, postprocessor, deprecated_binding_cache)

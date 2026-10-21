@@ -1373,7 +1373,7 @@ end
 # and setup parts so that each user-written sub-expression flows through with its provenance
 # intact, but keep the exception catching and the scopes of the real macros, as the
 # replacements of JET do. For example, `@test_throws extype ex` expands to
-# `try extype; ex catch end; Base.inferencebarrier(nothing)`, so that the code after the
+# `try ex catch end; extype; Base.inferencebarrier(nothing)`, so that the code after the
 # test stays reachable even when `ex` always throws, e.g. `error(...)`, while
 # `@inferred ex`, which does not catch exceptions, expands to `let ex end`.
 # `Base.inferencebarrier` keeps the synthetic values of the expansions from affecting the
@@ -1465,7 +1465,7 @@ end
 function Test.var"@test_throws"(
         __context__::JL.MacroContext, extype::SyntaxTree, ex::SyntaxTree
     )
-    return _discard_test_expression_value(__context__, extype, ex)
+    return _check_test_exception(__context__, ex, extype)
 end
 
 const _TEST_THROWS_ACCEPTS_PATTERN =
@@ -1476,8 +1476,20 @@ function Test.var"@test_throws"(
         __context__::JL.MacroContext,
         extype::SyntaxTree, pattern::SyntaxTree, ex::SyntaxTree
     )
-    return _discard_test_expression_value(__context__, extype, pattern, ex)
+    return _check_test_exception(__context__, ex, extype, pattern)
 end
+end
+
+# As in Test.jl and the replacement of JET, the expected exception and the message pattern
+# are evaluated after the test expression. The `try` block evaluating the test expression
+# starts with a call to `JET.enter_test_exception`, which marks the expression as expected
+# to throw (see `test_exception_ranges`).
+function _check_test_exception(ctx::JL.MacroContext, ex::SyntaxTree, args::SyntaxTree...)
+    src = _macro_generated_source(ctx)
+    return JL.@ast(ctx, src, [:block
+        [:try [:block [:call JET.enter_test_exception::value] ex] false::value [:block]]
+        args...
+        [:call [:top "inferencebarrier"::identifier] nothing::value]])
 end
 
 function Test.var"@test_throws"(__context__::JL.MacroContext, args::SyntaxTree...)

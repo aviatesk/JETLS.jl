@@ -1596,6 +1596,18 @@ end
             length("lazy\"interpolated: \$(") + length("undef_lazy_interp")
     end
 
+    # The test expression of `@test_throws` is expected to throw, e.g. to test that a name
+    # is not defined, unlike the expected exception.
+    let diagnostics = get_lowering_diagnostics("""
+        @testset "undefined" begin
+            @test_throws UndefVarError undef_in_test_throws
+            @test_throws UndefTestThrowsError sin(1)
+        end
+        """; context_module=@__MODULE__, code=JETLSCore.LOWERING_UNDEF_GLOBAL_VAR_CODE)
+        diagnostic = only(diagnostics)
+        @test diagnostic.message == "`$(@__MODULE__).UndefTestThrowsError` is not defined"
+    end
+
     let code = join((
             "let",
             "    lazy\"\"\"",
