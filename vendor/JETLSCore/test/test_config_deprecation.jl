@@ -15,6 +15,9 @@ const DEPRECATIONS = JETLSCore.DeprecatedConfigurations([
 const VALUE_DEPRECATIONS = JETLSCore.DeprecatedConfigurationValues([
     ["full_analysis", "auto_instantiate"] => (true => "always"),
 ])
+const OLD_CODE = JETLSCore.DEPRECATED_INFERENCE_NON_BOOLEAN_COND_CODE
+const NEW_CODE = JETLSCore.INFERENCE_TYPE_ERROR_NON_BOOL_COND_CODE
+const CODE_DEPRECATIONS = Dict{String,String}(OLD_CODE => NEW_CODE)
 
 function fix_deprecated(text::String, path::Vector{String})
     doc = TS.parse(text)
@@ -30,40 +33,25 @@ end
     rename = ["inlay_hint", "block_end_min_lines"]
     value = ["full_analysis", "auto_instantiate"]
     cases = [
-        ("[testrunner]\nexecutable = \"x\" # unused\njulia_args = []\n", removal) =>
-            "[testrunner]\njulia_args = []\n",
-        ("formatter = \"Runic\"\n\n[testrunner]\nexecutable = \"x\"\n", removal) =>
-            "formatter = \"Runic\"\n",
+        ("[testrunner]\nexecutable = \"x\" # unused\njulia_args = []\n", removal) => "[testrunner]\njulia_args = []\n",
+        ("formatter = \"Runic\"\n\n[testrunner]\nexecutable = \"x\"\n", removal) => "formatter = \"Runic\"\n",
         ("testrunner.executable = \"x\"\n", removal) => "",
-        ("testrunner = { executable = \"x\", julia_args = [] }\n", removal) =>
-            "testrunner = { julia_args = [] }\n",
-        ("[inlay_hint]\nblock_end_min_lines = 7 # lines\n", rename) =>
-            "[inlay_hint]\nblock_end.min_lines = 7 # lines\n",
-        ("inlay_hint.block_end_min_lines = 7\n", rename) =>
-            "inlay_hint.block_end.min_lines = 7\n",
-        ("[inlay_hint]\nblock_end_min_lines = 7\nblock_end.min_lines = 9\n", rename) =>
-            "[inlay_hint]\nblock_end.min_lines = 9\n",
-        ("[inlay_hint]\nblock_end_min_lines = 7\n\n[inlay_hint.block_end]\nenabled = false\n",
-            rename) =>
-            "[inlay_hint]\n\n[inlay_hint.block_end]\nenabled = false\nmin_lines = 7\n",
-        ("[full_analysis]\nauto_instantiate = true # old\n", value) =>
-            "[full_analysis]\nauto_instantiate = \"always\" # old\n",
-        ("full_analysis = { auto_instantiate = true }\n", value) =>
-            "full_analysis = { auto_instantiate = \"always\" }\n",
+        ("testrunner = { executable = \"x\", julia_args = [] }\n", removal) => "testrunner = { julia_args = [] }\n",
+        ("[inlay_hint]\nblock_end_min_lines = 7 # lines\n", rename) => "[inlay_hint]\nblock_end.min_lines = 7 # lines\n",
+        ("inlay_hint.block_end_min_lines = 7\n", rename) => "inlay_hint.block_end.min_lines = 7\n",
+        ("[inlay_hint]\nblock_end_min_lines = 7\nblock_end.min_lines = 9\n", rename) => "[inlay_hint]\nblock_end.min_lines = 9\n",
+        ("[inlay_hint]\nblock_end_min_lines = 7\n\n[inlay_hint.block_end]\nenabled = false\n", rename) => "[inlay_hint]\n\n[inlay_hint.block_end]\nenabled = false\nmin_lines = 7\n",
+        ("[full_analysis]\nauto_instantiate = true # old\n", value) => "[full_analysis]\nauto_instantiate = \"always\" # old\n",
+        ("full_analysis = { auto_instantiate = true }\n", value) => "full_analysis = { auto_instantiate = \"always\" }\n",
     ]
     for ((text, path), expected) in cases
         fixed, _ = fix_deprecated(text, path)
         @test fixed == expected
     end
-    @test last(fix_deprecated("testrunner.executable = \"x\"\n", removal)) ==
-        "Remove deprecated `testrunner.executable`"
-    @test last(fix_deprecated("inlay_hint.block_end_min_lines = 7\n", rename)) ==
-        "Replace `inlay_hint.block_end_min_lines` with `inlay_hint.block_end.min_lines`"
-    @test last(fix_deprecated(
-        "[inlay_hint]\nblock_end_min_lines = 7\nblock_end.min_lines = 9\n", rename)) ==
-        "Remove deprecated `inlay_hint.block_end_min_lines`"
-    @test last(fix_deprecated("full_analysis.auto_instantiate = true\n", value)) ==
-        "Replace `true` with `\"always\"`"
+    @test last(fix_deprecated("testrunner.executable = \"x\"\n", removal)) == "Remove deprecated `testrunner.executable`"
+    @test last(fix_deprecated("inlay_hint.block_end_min_lines = 7\n", rename)) == "Replace `inlay_hint.block_end_min_lines` with `inlay_hint.block_end.min_lines`"
+    @test last(fix_deprecated( "[inlay_hint]\nblock_end_min_lines = 7\nblock_end.min_lines = 9\n", rename)) == "Remove deprecated `inlay_hint.block_end_min_lines`"
+    @test last(fix_deprecated("full_analysis.auto_instantiate = true\n", value)) == "Replace `true` with `\"always\"`"
     let doc = TS.parse("full_analysis.auto_instantiate = 1\n")
         @test isempty(JETLSCore.find_deprecated_configs(doc, DEPRECATIONS, VALUE_DEPRECATIONS))
     end
@@ -90,15 +78,12 @@ end
             block_end.min_lines = 7
             """
     end
-    @test JETLSCore.fix_deprecated_configs(
-        "[testrunner]\njulia_args = []\n", DEPRECATIONS, VALUE_DEPRECATIONS) === nothing
-    @test JETLSCore.fix_deprecated_configs(
-        "[testrunner\nexecutable = 1\n", DEPRECATIONS, VALUE_DEPRECATIONS) === nothing
+    @test JETLSCore.fix_deprecated_configs("[testrunner]\njulia_args = []\n", DEPRECATIONS, VALUE_DEPRECATIONS) === nothing
+    @test JETLSCore.fix_deprecated_configs("[testrunner\nexecutable = 1\n", DEPRECATIONS, VALUE_DEPRECATIONS) === nothing
 end
 
 @testset "deprecated setting diagnostics" begin
-    let diagnostic = only(JETLSCore.deprecated_config_diagnostics(
-            "testrunner.executable = \"x\"\n", PositionEncodingKind.UTF16))
+    let diagnostic = only(JETLSCore.deprecated_config_diagnostics("testrunner.executable = \"x\"\n", PositionEncodingKind.UTF16))
         @test diagnostic.range == Range(;
             start = Position(; line = 0, character = 0),
             var"end" = Position(; line = 0, character = 21))
@@ -106,31 +91,81 @@ end
         @test diagnostic.severity == DiagnosticSeverity.Warning
         @test diagnostic.source == JETLSCore.DIAGNOSTIC_SOURCE_EXTRA
         @test diagnostic.tags == [DiagnosticTag.Deprecated]
-        @test diagnostic.message ==
-            JETLSCore.deprecated_config_key_message(["testrunner", "executable"], nothing)
+        @test diagnostic.message == JETLSCore.deprecated_config_key_message(["testrunner", "executable"], nothing)
     end
-    let diagnostic = only(JETLSCore.deprecated_config_diagnostics(
-            "[full_analysis]\nauto_instantiate = false\n", PositionEncodingKind.UTF16))
+    let diagnostic = only(JETLSCore.deprecated_config_diagnostics("[full_analysis]\nauto_instantiate = false\n", PositionEncodingKind.UTF16))
         @test diagnostic.range == Range(;
             start = Position(; line = 1, character = 19),
             var"end" = Position(; line = 1, character = 24))
         @test diagnostic.code == JETLSCore.CONFIG_DEPRECATED_VALUE_CODE
         @test diagnostic.tags == [DiagnosticTag.Deprecated]
-        @test diagnostic.message == JETLSCore.deprecated_config_value_message(
-            ["full_analysis", "auto_instantiate"], false, "never")
+        @test diagnostic.message == JETLSCore.deprecated_config_value_message(["full_analysis", "auto_instantiate"], false, "never")
     end
     let prefix = "testrunner = { env = { \"😀\" = \"1\" }, "
-        diagnostic = only(JETLSCore.deprecated_config_diagnostics(
-            "# 雪\n" * prefix * "executable = \"x\" }\n", PositionEncodingKind.UTF16))
+        diagnostic = only(JETLSCore.deprecated_config_diagnostics("# 雪\n" * prefix * "executable = \"x\" }\n", PositionEncodingKind.UTF16))
         character = length(transcode(UInt16, prefix))
         @test diagnostic.range == Range(;
             start = Position(; line = 1, character),
             var"end" = Position(; line = 1, character = character + 10))
     end
-    @test isempty(JETLSCore.deprecated_config_diagnostics(
-        "[full_analysis]\nauto_instantiate = \"always\"\n", PositionEncodingKind.UTF16))
-    @test isempty(JETLSCore.deprecated_config_diagnostics(
-        "[testrunner\n", PositionEncodingKind.UTF16))
+    @test isempty(JETLSCore.deprecated_config_diagnostics("[full_analysis]\nauto_instantiate = \"always\"\n", PositionEncodingKind.UTF16))
+    @test isempty(JETLSCore.deprecated_config_diagnostics("[testrunner\n", PositionEncodingKind.UTF16))
+end
+
+diagnostic_pattern(code::String, match_by::String, match_type::String) = """
+    [[diagnostic.patterns]]
+    pattern = "$code"
+    match_by = "$match_by"
+    match_type = "$match_type"
+    severity = "off"
+    """
+
+@testset "deprecated diagnostic codes in `diagnostic.patterns`" begin
+    text = diagnostic_pattern(OLD_CODE, "code", "literal") * "\n" *
+        diagnostic_pattern(OLD_CODE, "code", "regex") * "\n" *
+        diagnostic_pattern(OLD_CODE, "message", "literal") * "\n" *
+        diagnostic_pattern(OLD_CODE, "code", "literal")
+    let doc = TS.parse(text)
+        found = JETLSCore.find_deprecated_configs(
+            doc, DEPRECATIONS, VALUE_DEPRECATIONS, CODE_DEPRECATIONS)
+        @test [deprecated.index for deprecated in found] == [1, 4]
+        # Each pattern is fixed on its own, even if another one has the same code
+        for deprecated in found
+            edit = JETLSCore.deprecated_config_fix(doc, deprecated)::TS.SourceEdit
+            @test TS.parse(TS.apply(text, edit)).data["diagnostic"]["patterns"][deprecated.index]["pattern"] == NEW_CODE
+            @test JETLSCore.deprecated_config_fix_title(doc, deprecated) == "Replace `\"$OLD_CODE\"` with `\"$NEW_CODE\"`"
+        end
+    end
+    @test JETLSCore.fix_deprecated_configs(
+            text, DEPRECATIONS, VALUE_DEPRECATIONS, CODE_DEPRECATIONS) ==
+        diagnostic_pattern(NEW_CODE, "code", "literal") * "\n" *
+        diagnostic_pattern(OLD_CODE, "code", "regex") * "\n" *
+        diagnostic_pattern(OLD_CODE, "message", "literal") * "\n" *
+        diagnostic_pattern(NEW_CODE, "code", "literal")
+    let text = """
+            diagnostic.patterns = [
+                { pattern = "$OLD_CODE", match_by = "code", match_type = "literal" },
+            ]
+            """
+        fixed = JETLSCore.fix_deprecated_configs(text, DEPRECATIONS, VALUE_DEPRECATIONS, CODE_DEPRECATIONS)
+        @test fixed == replace(text, OLD_CODE => NEW_CODE)
+    end
+
+    let d = JETLSCore.tryparse_config_data(text)::Dict{String,Any}
+        @test JETLSCore.migrate_deprecated_config!(d) == [JETLSCore.deprecated_diagnostic_code_message(OLD_CODE, NEW_CODE)]
+        @test [pattern["pattern"] for pattern in d["diagnostic"]["patterns"]] == [NEW_CODE, OLD_CODE, OLD_CODE, NEW_CODE]
+        @test JETLSCore.parse_config_dict(d) isa JETLSCore.JETLSConfig
+    end
+
+    let diagnostic = only(JETLSCore.deprecated_config_diagnostics(
+            diagnostic_pattern(OLD_CODE, "code", "literal"), PositionEncodingKind.UTF16))
+        @test diagnostic.range == Range(;
+            start = Position(; line = 1, character = 10),
+            var"end" = Position(; line = 1, character = 12 + length(OLD_CODE)))
+        @test diagnostic.code == JETLSCore.CONFIG_DEPRECATED_VALUE_CODE
+        @test diagnostic.tags == [DiagnosticTag.Deprecated]
+        @test diagnostic.message == JETLSCore.deprecated_diagnostic_code_message(OLD_CODE, NEW_CODE)
+    end
 end
 
 function nested_config(path::Vector{String}, @nospecialize(value))
@@ -165,6 +200,10 @@ end
         @test err isa ErrorException &&
             occursin("Invalid value at `$(join(path, "."))`", err.msg)
         @test config_parse_error(nested_config(path, new_value)) === nothing
+    end
+    for (old_code, new_code) in JETLSCore.DEPRECATED_DIAGNOSTIC_CODES
+        @test old_code ∉ JETLSCore.ALL_DIAGNOSTIC_CODES
+        @test new_code ∈ JETLSCore.ALL_DIAGNOSTIC_CODES
     end
 end
 

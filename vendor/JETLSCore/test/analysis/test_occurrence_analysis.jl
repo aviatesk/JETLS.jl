@@ -17,6 +17,12 @@ macro eval(args...)
 end
 end
 
+module qualified_context
+module Sub
+module Deep end
+end
+end
+
 with_binding_occurrences(callback, code::AbstractString; kwargs...) =
     with_binding_occurrences(callback, lowering_module, code; kwargs...)
 function with_binding_occurrences(
@@ -370,6 +376,54 @@ end
         end
     end
 
+    # aviatesk/JETLS.jl#1002
+    @testset "bindings used directly as default values" begin
+        with_binding_occurrences("""
+            function g(J)
+                sens = J .+ 1
+                Pf(s, sn = sens) = s * sn[1]
+                return Pf(1.0)
+            end
+            """) do binding_occurrences
+            binfos = collect(keys(binding_occurrences))
+            idx = only(findall(binfo->binfo.name=="sens", binfos))
+            occurrences = binding_occurrences[binfos[idx]]
+            @test count(occurrences) do occurrence
+                occurrence.kind === :use &&
+                JS.sourcetext(occurrence.tree) == "sens" &&
+                JS.source_location(occurrence.tree) == (3, 16)
+            end == 1
+        end
+        with_binding_occurrences("""
+            function g(J)
+                sens = J .+ 1
+                Pf(s; sn = sens) = s * sn[1]
+                return Pf(1.0)
+            end
+            """) do binding_occurrences
+            binfos = collect(keys(binding_occurrences))
+            idx = only(findall(binfo->binfo.name=="sens", binfos))
+            occurrences = binding_occurrences[binfos[idx]]
+            @test any(occurrences) do occurrence
+                occurrence.kind === :use &&
+                JS.sourcetext(occurrence.tree) == "sens" &&
+                JS.source_location(occurrence.tree) == (3, 16)
+            end
+        end
+        with_binding_occurrences("f(x, y = x) = y") do binding_occurrences
+            @test any(binding_occurrences) do (binding, occurrences)
+                binding.name == "x" && any(occurrences) do occurrence
+                    occurrence.kind === :use && JS.source_location(occurrence.tree) == (1, 10)
+                end
+            end
+            @test !any(binding_occurrences) do (binding, occurrences)
+                binding.name == "x" && any(occurrences) do occurrence
+                    occurrence.kind === :use && JS.source_location(occurrence.tree) == (1, 3)
+                end
+            end
+        end
+    end
+
     @testset "remove_macrocalls" begin
         with_binding_occurrences("func(@nospecialize args) = typeof(args)"; remove_macrocalls=true) do binding_occurrences
             @test any(binding_occurrences) do (binding, occurrences)
@@ -649,11 +703,35 @@ end
             @test binfo.name == "@nospecialize"
             @test length(occs) == 1
         end
+        # both `Base` and `@nospecialize` of `Base`
         let boccs = get_full_binding_occurrences("Base.@nospecialize")
-            @test length(boccs) == 1
-            binfo, occs = only(boccs)
-            @test binfo.name == "Base"
-            @test length(occs) == 1
+            @test length(boccs) == 2
+            @test any(boccs) do (binfo, occs)
+                binfo.name == "Base" && length(occs) == 1
+            end
+            @test any(boccs) do (binfo, occs)
+                binfo.name == "@nospecialize" && binfo.mod === Base && length(occs) == 1
+            end
+        end
+    end
+
+    @testset "qualified accesses" begin
+        (; Sub) = qualified_context
+        (; Deep) = Sub
+        for (code, mod, kinds) in (
+                ("Sub.│x│", Sub, (:use,)),
+                ("Sub.│x│ .= 1", Sub, (:use,)),
+                ("Sub.Deep.│x│", Deep, (:use,)),
+                ("Sub.Deep.│x│ += 1", Deep, (:use,)),
+                ("Sub.Deep.│x│ .= 1", Deep, (:use,)))
+            clean_code, positions = JETLSCore.get_text_and_positions(code)
+            fi = JETLSCore.FileInfo(#=version=#0, clean_code, "testfile.jl")
+            range = Range(; start=positions[1], var"end"=positions[2])
+            boccs = get_full_binding_occurrences(clean_code;
+                context_module=qualified_context)
+            occurrences = Set((binfo.mod, occ.kind, JETLSCore.jsobj_to_range(occ.tree, fi))
+                for (binfo, occs) in boccs if binfo.name == "x" for occ in occs)
+            @test occurrences == Set((mod, kind, range) for kind in kinds)
         end
     end
 

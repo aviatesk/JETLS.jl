@@ -36,9 +36,11 @@ function with_failing_test_file(tester)
     end
 end
 
-function run_testrunner_process(args; stdin_input::Union{Nothing,AbstractString}=nothing)
+function run_testrunner_process(args; stdin_input::Union{Nothing,AbstractString}=nothing,
+                                dir::AbstractString=pwd())
     project = pkgdir(TestRunner)
     cmd = `$(Base.julia_cmd()) --startup-file=no --project=$project -e "using TestRunner; exit(TestRunner.main(ARGS))" -- $args`
+    cmd = Cmd(cmd; dir)
 
     mktemp() do out_path, _
         mktemp() do err_path, _
@@ -256,6 +258,8 @@ end
     with_test_file(content) do testfile
         result = run_testrunner_process(["--json", testfile, "error"])
         @test result.exitcode == 1
+        # no warning about accessing `f` in a world prior to its definition
+        @test isempty(result.stderr)
         json_result = JSON3.read(result.stdout, TestRunnerResult)
         relatedInformation = something(only(json_result.diagnostics).relatedInformation)
         # only the frames of the test code, not those of TestRunner itself
@@ -263,6 +267,37 @@ end
         @test relatedInformation[2].filename == testfile
         @test relatedInformation[2].line == 2
     end
+end
+
+@testset "summary and details" begin
+    content = """
+    using Test
+    f() = error("boom")
+    @testset "failures" begin
+        @test 1 + 1 == 3
+        @test f() == 1
+        @test_throws ArgumentError 1 + 1
+    end
+    """
+    with_test_file(content) do testfile
+        result = run_testrunner_process(["--json", testfile, "failures"])
+        @test result.exitcode == 1
+        json_result = JSON3.read(result.stdout, TestRunnerResult)
+        fail, error, throws_nothing = json_result.diagnostics
+        @test fail.summary == "Test failed: evaluated to `2 == 3`"
+        @test startswith(fail.message, "Test Failed at $testfile:4\n")
+        @test fail.details == "  Expression: 1 + 1 == 3\n   Evaluated: 2 == 3"
+        @test error.summary == "Test threw an exception: boom"
+        @test startswith(error.details, "  Test threw exception\n  Expression: f() == 1\n")
+        @test occursin("Stacktrace:", error.details)
+        @test throws_nothing.summary == "Test failed: no exception thrown"
+    end
+end
+
+@testset "code_span" begin
+    code_span = TestRunner.App.code_span
+    @test code_span("2 == 3") == "`2 == 3`"
+    @test code_span("`ls` == `ls -l`") == "`` `ls` == `ls -l` ``"
 end
 
 @testset "stack traces in logs" begin
@@ -287,6 +322,69 @@ end
         @test occursin("f()", logs)
         @test !occursin("JuliaInterpreter", logs)
         @test !occursin("TestRunner", logs)
+    end
+end
+
+@testset "large output" begin
+    # output larger than the pipe buffer should not block the test run
+    content = """
+    using Test
+    @testset "large output" begin
+        for _ in 1:2000
+            println("x"^100)
+        end
+        @test true
+    end
+    """
+    with_test_file(content) do testfile
+        result = run_testrunner_process(["--json", testfile, "large output"])
+        @test result.exitcode == 0
+        json_result = JSON3.read(result.stdout, TestRunnerResult)
+        @test json_result.stats.n_passed == 1
+        @test count("x"^100, json_result.logs) == 2000
+    end
+end
+
+@testset "--json-file" begin
+    content = """
+    using Test
+    @testset "json file" begin
+        println("stdout output")
+        println(stderr, "stderr output")
+        @test true
+    end
+    """
+    with_test_file(content) do testfile
+        mktempdir() do dir
+            json_file = joinpath(dir, "result.json")
+            result = run_testrunner_process(["--json-file=$json_file", testfile, "json file"])
+            @test result.exitcode == 0
+            @test occursin("stdout output", result.stdout)
+            @test occursin("stderr output", result.stderr)
+            json_result = JSON3.read(read(json_file, String), TestRunnerResult)
+            @test json_result.patterns == ["json file"]
+            @test json_result.stats.n_passed == 1
+            @test isempty(json_result.logs)
+        end
+    end
+
+    # a relative path is resolved against the working directory where TestRunner starts,
+    # even if the tests change it
+    content = """
+    using Test
+    @testset "cd" begin
+        cd(mktempdir())
+        @test true
+    end
+    """
+    with_test_file(content) do testfile
+        mktempdir() do dir
+            mkdir(joinpath(dir, "results"))
+            result = run_testrunner_process(["--json-file=results/result.json", testfile, "cd"]; dir)
+            @test result.exitcode == 0
+            json_result = JSON3.read(read(joinpath(dir, "results", "result.json"), String), TestRunnerResult)
+            @test json_result.stats.n_passed == 1
+        end
     end
 end
 

@@ -11,7 +11,7 @@ HierarchicalTestSets = "de7161c7-0535-45f7-a846-78c8a451aff9"
 
 [sources.JETLSCore]
 subdir = "vendor/JETLSCore"
-rev = "28f9ade325674d450eced8588572ce570218705c"
+rev = "b4c857b5e537f784b0900398297668e9a93ca90d"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.JETLS]

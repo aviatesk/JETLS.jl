@@ -43,7 +43,6 @@ function info_print(msg::AbstractString, highlight::AbstractString)
 end
 
 function header_print(msg::AbstractString)
-    println()
     printstyled("═══ $msg ═══", bold=true, color=:cyan)
     println()
 end
@@ -77,7 +76,7 @@ function (@main)(args::Vector{String})
     end
 
     patterns = String[]
-    filename = filter_lines = project = root_path = nothing
+    filename = filter_lines = project = root_path = json_file = nothing
     verbose = json_output = read_stdin = false
 
     i = 1
@@ -109,6 +108,8 @@ function (@main)(args::Vector{String})
             verbose = true
         elseif arg == "--json"
             json_output = true
+        elseif startswith(arg, "--json-file=")
+            json_file = arg[13:end]
         elseif arg == "--read-stdin"
             read_stdin = true
         elseif startswith(arg, "-") && arg != "-"
@@ -152,7 +153,7 @@ function (@main)(args::Vector{String})
     end
 
     # Run tests
-    return runtest_app(filename, parsed_patterns, filter_lines, verbose, project, json_output, read_stdin, root_path)
+    return runtest_app(filename, parsed_patterns, filter_lines, verbose, project, json_output, read_stdin, root_path, json_file)
 end
 
 function print_usage()
@@ -180,6 +181,8 @@ function print_usage()
       -f=1,5,10:20              Short form of --filter-lines
       --verbose, -v             Show verbose output
       --json                    Output results in JSON format
+      --json-file=<path>        Write results in JSON format to <path>, leaving the
+                                output of the tests on stdout and stderr
       --read-stdin              Read source for <path> from stdin instead of disk
                                 (<path> is still used for `@__FILE__`, error
                                 messages, and resolving `include`d files)
@@ -394,9 +397,14 @@ function testrunner_diagnostic(result::Union{Test.Fail,Test.Error})
                     if linfo isa Core.CodeInstance
                         linfo = linfo.def
                     end
-                    local message = linfo isa Core.MethodInstance ?
-                        sprint(Base.show_tuple_as_call, Symbol(""), linfo.specTypes) :
+                    local message = if linfo isa Core.MethodInstance
+                        # The test code defines its functions in worlds newer than this code
+                        # runs in, and showing their types looks up their bindings
+                        sig = linfo.specTypes
+                        @invokelatest sprint(Base.show_tuple_as_call, Symbol(""), sig)
+                    else
                         string(sf.func)
+                    end
                     push!(relatedInformation, TestRunnerDiagnosticRelatedInformation(
                         string(sf.file), sf.line, message))
                 end
@@ -404,7 +412,54 @@ function testrunner_diagnostic(result::Union{Test.Fail,Test.Error})
         end
     end
     message = sprint(show, result)
-    return TestRunnerDiagnostic(filename, line, message, relatedInformation)
+    i = findfirst('\n', message)
+    details = i === nothing ? "" : rstrip(message[nextind(message, i):end])
+    return TestRunnerDiagnostic(
+        filename, line, message, testrunner_summary(result), details, relatedInformation)
+end
+
+# The diagnostics are reported at the location of the failure, which the first line of the
+# `show` output starts with, so the summary describes the failure instead
+function testrunner_summary(result::Test.Fail)
+    (; test_type, data) = result
+    if test_type === :test
+        if data !== nothing && data != result.orig_expr && !occursin('\n', data)
+            return "Test failed: evaluated to $(code_span(data))"
+        end
+    elseif test_type === :test_throws_nothing
+        return "Test failed: no exception thrown"
+    elseif test_type === :test_throws_wrong
+        return "Test failed: wrong exception thrown"
+    end
+    return "Test failed"
+end
+
+function testrunner_summary(result::Test.Error)
+    test_type = result.test_type
+    if test_type === :test_error || test_type === :nontest_error
+        context = test_type === :test_error ?
+            "Test threw an exception" : "Got an exception outside of a `@test`"
+        # the first line of the error message
+        message = first(eachsplit(result.backtrace, '\n'))
+        return isempty(message) ? context : "$context: $message"
+    elseif test_type === :test_nonbool
+        value = result.value
+        occursin('\n', value) && return "Test expression evaluated to a non-Boolean"
+        return "Test expression evaluated to a non-Boolean: $(code_span(value))"
+    elseif test_type === :test_unbroken
+        return "Unexpected pass: change `@test_broken` to `@test` if no longer broken"
+    elseif test_type === :test_interrupted
+        return "Test interrupted"
+    end
+    return "Error during test"
+end
+
+# The delimiters are longer than any backtick run in `code`, which would otherwise end the
+# code span
+function code_span(code::AbstractString)
+    n = maximum(m -> length(m.match), eachmatch(r"`+", code); init = 0)
+    delimiter = '`'^(n + 1)
+    return iszero(n) ? "$delimiter$code$delimiter" : "$delimiter $code $delimiter"
 end
 
 function runtest_internal(filename::String, patterns::Vector{Any}, filter_lines, verbose::Bool, project,
@@ -436,6 +491,7 @@ function runtest_internal(filename::String, patterns::Vector{Any}, filter_lines,
     bname = basename(filename)
 
     if verbose
+        println()
         header_print("Test Configuration")
         info_print("File:", filename)
 
@@ -466,6 +522,7 @@ function runtest_internal(filename::String, patterns::Vector{Any}, filter_lines,
             info_print("No patterns specified, running all tests with `include`")
         end
 
+        println()
         header_print("Running Tests")
     end
 
@@ -513,7 +570,37 @@ function runtest_json(
     # Redirect stdout to capture ALL output (including info_print, header_print, etc.)
     original_stdout = stdout
     (rd, wr) = redirect_stdout()
+    # Drain the pipe while the tests run, since writes block once its buffer fills up
+    logs_task = @async read(rd, String)
+    return runtest_result(filename, patterns, filter_lines, verbose, project, source, root_path) do fields
+        redirect_stdout(original_stdout)
+        close(wr)
+        logs = fetch(logs_task)
+        close(rd)
+        JSON3.write(stdout, TestRunnerResult(; fields..., logs))
+    end
+end
 
+# Unlike `runtest_json`, leave the output on stdout and stderr, so that the caller can capture
+# all of it, including what Julia writes directly to the file descriptors, e.g. the reports of
+# fatal errors that crash this process
+function runtest_json_file(
+        json_file::String, filename::String, patterns::Vector{Any}, filter_lines, verbose::Bool,
+        project, source::Union{Nothing,String}=nothing, root_path::Union{Nothing,String}=nothing
+    )
+    # resolve the path before the tests can change the working directory
+    json_file = abspath(json_file)
+    return runtest_result(filename, patterns, filter_lines, verbose, project, source, root_path) do fields
+        open(json_file, "w") do io
+            JSON3.write(io, TestRunnerResult(; fields...))
+        end
+    end
+end
+
+function runtest_result(
+        write_result::Function, filename::String, patterns::Vector{Any}, filter_lines,
+        verbose::Bool, project, source::Union{Nothing,String}, root_path::Union{Nothing,String}
+    )
     local stats::TestRunnerStats = TestRunnerStats()
     local diagnostics::Vector{TestRunnerDiagnostic} = TestRunnerDiagnostic[]
     last_toplevel_testset[] = nothing
@@ -529,33 +616,28 @@ function runtest_json(
         diagnostics = extract_diagnostics_from_exception(e)
         return 1
     finally
-        redirect_stdout(original_stdout)
-        close(wr)
-        logs = read(rd, String)
-        close(rd)
-        patterns = isempty(patterns) ? nothing : patterns
-        testsets = testset_results(filename, source)
-        result = TestRunnerResult(;
+        write_result((;
             filename,
-            patterns,
+            patterns = isempty(patterns) ? nothing : patterns,
             stats,
-            logs,
             diagnostics,
-            testsets)
-        JSON3.write(stdout, result)
+            testsets = testset_results(filename, source)))
     end
 end
 
 function runtest_app(
         filename::String, patterns::Vector{Any}, filter_lines, verbose::Bool, project, json_output::Bool,
-        read_stdin::Bool=false, root_path::Union{Nothing,String}=nothing
+        read_stdin::Bool=false, root_path::Union{Nothing,String}=nothing,
+        json_file::Union{Nothing,String}=nothing
     )
     source = read_stdin ? read(stdin, String) : nothing
     if source === nothing && !isfile(filename)
         error_print("File not found:", filename)
         return 1
     end
-    if json_output
+    if json_file !== nothing
+        return runtest_json_file(json_file, filename, patterns, filter_lines, verbose, project, source, root_path)
+    elseif json_output
         return runtest_json(filename, patterns, filter_lines, verbose, project, source, root_path)
     else
         runtest_internal(filename, patterns, filter_lines, verbose, project, source, root_path)

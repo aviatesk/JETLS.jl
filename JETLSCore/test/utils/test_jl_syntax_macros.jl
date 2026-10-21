@@ -1346,6 +1346,16 @@ test_macro_lower(code::AbstractString) = jlresolve(test_lowering_module, code)
                 @test all(c -> JS.head(c) !== :(=), JS.children(st1))
             end
         end
+
+        # With `broken` or `skip`: `ex` is evaluated in a `try` without narrowing types, as
+        # the real macro catches the exception thrown by it.
+        for kw in ("broken=true", "skip=cond")
+            let st1 = test_macro_expand("@test x == 1 $kw")
+                discarded = st1[2]
+                @test children_heads(discarded) == [:try, :call]
+                @test strip(JS.sourcetext(discarded[1][1][1])) == "x == 1"
+            end
+        end
     end
 
     @testset "validation" begin
@@ -1403,7 +1413,8 @@ end
 @testset "Test.@testset" begin
     @testset "macro expansion" begin
         # Body is wrapped in a `let` block so that bindings introduced inside
-        # the testset don't leak into the enclosing scope.
+        # the testset don't leak into the enclosing scope, and in a `try` as the real
+        # macro catches the exception thrown by the body.
         let st1 = test_macro_expand("""
                 @testset "x" begin
                     a = 1
@@ -1411,8 +1422,9 @@ end
                 end
                 """)
             @test JS.head(st1) === :block
-            @test children_heads(st1) == [:value, :let]
-            let_st = st1[2]
+            @test children_heads(st1) == [:value, :try, :call]
+            let_st = st1[2][1][1]
+            @test JS.head(let_st) === :let
             @test JS.numchildren(let_st) == 2
             @test JS.head(let_st[1]) === :block # bindings (empty)
             @test JS.head(let_st[2]) === :block # body
@@ -1420,7 +1432,7 @@ end
 
         # No description form.
         let st1 = test_macro_expand("@testset begin a = 1 end")
-            @test children_heads(st1) == [:let]
+            @test children_heads(st1) == [:try, :call]
         end
 
         # The testset type, description, and option values are evaluated ahead of the body.
@@ -1429,20 +1441,31 @@ end
                     @test true
                 end
                 """)
-            @test children_heads(st1) == [:identifier, :value, :value, :let]
+            @test children_heads(st1) == [:identifier, :value, :value, :try, :call]
         end
 
         # `for` loop form: the for sits inside the let body block, and the description
-        # is evaluated per iteration ahead of the body, which gets its own scope.
+        # is evaluated per iteration ahead of the body, which gets its own scope and
+        # catches the exception thrown by it per iteration.
         let st1 = test_macro_expand("""
                 @testset "x\$(i)" for i = 1:10
                     @test i > 0
                 end
                 """)
-            @test children_heads(st1) == [:let]
+            @test children_heads(st1) == [:let, :call]
             for_st = st1[1][2][1]
             @test JS.head(for_st) === :for
-            @test children_heads(for_st[2]) == [:string, :let]
+            @test children_heads(for_st[2]) == [:string, :try]
+            @test JS.head(for_st[2][2][1][1]) === :let
+        end
+
+        # `let` form: the real macro propagates the exception thrown by the body.
+        let st1 = test_macro_expand("""
+                @testset let v = 1
+                    @test v == 1
+                end
+                """)
+            @test children_heads(st1) == [:let]
         end
     end
 
@@ -1597,26 +1620,42 @@ end
 
 @testset "Test.@test_throws" begin
     @testset "macro expansion" begin
-        # Both args flow through a `block` so identifiers in either get scope analysis.
+        # The test expression is evaluated in a `try` marked by `JET.enter_test_exception`,
+        # so that the code after the test stays reachable even when it always throws, and
+        # the expected exception is evaluated after it.
         let st1 = test_macro_expand("@test_throws BoundsError xxx[4]")
-            @test JS.head(st1) === :block
-            @test JS.numchildren(st1) == 2
+            @test children_heads(st1) == [:try, :identifier, :call]
+            tryex = st1[1]
+            @test children_heads(tryex[1]) == [:call, :ref]
+            @test JETLSCore.is_enter_test_exception(tryex[1][1])
+            @test strip(JS.sourcetext(tryex[1][2])) == "xxx[4]"
+        end
+        if JETLSCore._TEST_THROWS_ACCEPTS_PATTERN
+            let st1 = test_macro_expand("@test_throws BoundsError \"msg\" xxx[4]")
+                @test children_heads(st1) == [:try, :identifier, :value, :call]
+            end
         end
     end
 
     @testset "validation" begin
-        # `@test_throws` strictly requires two positional arguments; other shapes
-        # report via sink and wrap (or drop) the args.
+        # `@test_throws` requires two positional arguments, or three with a message pattern
+        # where Test.jl supports it; other shapes report via sink and wrap (or drop) the
+        # args.
         for code in ("@test_throws", "@test_throws BoundsError",
-                     "@test_throws BoundsError xxx yyy")
+                     "@test_throws BoundsError \"msg\" xxx yyy")
             let diags = collect_macro_diagnostics() do
                     test_macro_expand(code)
                 end
                 @test length(diags) == 1
                 d = only(diags)
                 @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
-                @test occursin("`@test_throws` expects exactly two arguments", d.msg)
+                @test occursin("`@test_throws` expects", d.msg)
             end
+        end
+        let diags = collect_macro_diagnostics() do
+                test_macro_expand("@test_throws BoundsError \"msg\" xxx")
+            end
+            @test isempty(diags) == JETLSCore._TEST_THROWS_ACCEPTS_PATTERN
         end
     end
 
@@ -1630,9 +1669,11 @@ end
 @testset "Test.@test_broken / Test.@test_skip" begin
     @testset "macro expansion" begin
         for name in ("@test_broken", "@test_skip")
+            # The test expression is evaluated in a `try`, as the real `@test_broken`
+            # catches the exception thrown by it.
             let st1 = test_macro_expand("$name xxx == 1")
-                @test JS.head(st1) === :call
-                @test strip(JS.sourcetext(st1)) == "xxx == 1"
+                @test children_heads(st1) == [:try, :call]
+                @test strip(JS.sourcetext(st1[1][1][1])) == "xxx == 1"
             end
             # Keyword arguments keep only the RHS in a block so identifiers
             # there still flow through to scope resolution.
@@ -1673,14 +1714,17 @@ end
 
 @testset "Test.@test_warn / Test.@test_nowarn" begin
     @testset "macro expansion" begin
+        # The real macros evaluate the test expression in a `let` scope without catching
+        # the exception thrown by it.
         let st1 = test_macro_expand("@test_warn \"oops\" foo(xxx)")
-            @test JS.head(st1) === :block
-            @test JS.numchildren(st1) == 2
+            @test JS.head(st1) === :let
+            @test children_heads(st1[2]) == [:value, :call]
         end
         let st1 = test_macro_expand("@test_nowarn foo(xxx)")
-            @test JS.head(st1) === :call
-            @test JS.sourcetext(st1[1]) == "foo"
-            @test JS.sourcetext(st1[2]) == "xxx"
+            @test JS.head(st1) === :let
+            ex = only(JS.children(st1[2]))
+            @test JS.sourcetext(ex[1]) == "foo"
+            @test JS.sourcetext(ex[2]) == "xxx"
         end
     end
 
@@ -1693,17 +1737,19 @@ end
 
 @testset "Test.@test_logs" begin
     @testset "macro expansion" begin
-        # Patterns + body all flow through a `block`.
+        # Patterns + body are evaluated in a `try`, whose value passes through
+        # `Base.inferencebarrier`.
         let st1 = test_macro_expand("@test_logs (:info, \"msg\") foo(xxx)")
-            @test JS.head(st1) === :block
-            @test JS.numchildren(st1) == 2
+            @test JS.head(st1) === :call
+            tryex = st1[2]
+            @test JS.head(tryex) === :try
+            @test children_heads(tryex[1]) == [:tuple, :call]
         end
 
         # Keyword arguments (e.g. `min_level=Logging.Warn`) keep only the RHS so
         # the `:(=)` node doesn't reach later lowering passes.
         let st1 = test_macro_expand("@test_logs min_level=yyy foo(xxx)")
-            @test JS.head(st1) === :block
-            @test all(c -> JS.head(c) !== :(=), JS.children(st1))
+            @test children_heads(st1[2][1]) == [:identifier, :call]
         end
     end
 
@@ -1730,12 +1776,14 @@ end
 
 @testset "Test.@test_deprecated" begin
     @testset "macro expansion" begin
+        # Evaluated in a `try` like `@test_logs`.
         let st1 = test_macro_expand("@test_deprecated foo(xxx)")
             @test JS.head(st1) === :call
+            @test children_heads(st1[2][1]) == [:call]
         end
         let st1 = test_macro_expand("@test_deprecated r\"warn\" foo(xxx)")
-            @test JS.head(st1) === :block
-            @test JS.numchildren(st1) == 2
+            @test JS.head(st1) === :call
+            @test JS.numchildren(st1[2][1]) == 2
         end
     end
 
@@ -1755,12 +1803,14 @@ end
 
 @testset "Test.@inferred" begin
     @testset "macro expansion" begin
+        # Evaluated in a `let` scope like `@test_warn`.
         let st1 = test_macro_expand("@inferred foo(xxx)")
-            @test JS.head(st1) === :call
+            @test JS.head(st1) === :let
+            @test children_heads(st1[2]) == [:call]
         end
         let st1 = test_macro_expand("@inferred Int foo(xxx)")
-            @test JS.head(st1) === :block
-            @test JS.numchildren(st1) == 2
+            @test JS.head(st1) === :let
+            @test children_heads(st1[2]) == [:identifier, :call]
         end
     end
 

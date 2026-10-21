@@ -10,7 +10,7 @@ PrecompileTools = "32931bc0-5014-5544-84d5-53636ff9f6c5"
 
 [sources.PrecompileTools]
 subdir = "vendor/PrecompileTools"
-rev = "28f9ade325674d450eced8588572ce570218705c"
+rev = "b4c857b5e537f784b0900398297668e9a93ca90d"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [compat]

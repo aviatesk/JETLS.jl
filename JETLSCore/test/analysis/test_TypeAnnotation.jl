@@ -919,6 +919,46 @@ end
         end
     end
 
+    @testset "code after test macros" begin
+        # test macros that catch the exception thrown by the tested expression
+        for test in ("@test_throws ErrorException error(\"boom\")",
+                     "@test_broken error(\"boom\")",
+                     "@test_logs (:warn, \"boom\") error(\"boom\")",
+                     "@testset \"inner\" begin error(\"boom\") end")
+            code = """
+                @testset "foo" begin
+                    x = rand((0, nothing))
+                    $test
+                    sin(x)
+                end
+                """
+            _, ctx = type_annotate(code, type_annotate_test_module)
+            @test widenconst(get_type_for_range(ctx, range_of(code, "sin(x)")[5:5])) === Union{Nothing,Int}
+        end
+
+        # test macros that don't catch exceptions return the value of the tested expression
+        for test in ("@inferred identity(42)", "@test_nowarn identity(42)")
+            code = """
+                @testset "value" begin
+                    res = $test
+                end
+                """
+            _, ctx = type_annotate(code, type_annotate_test_module)
+            @test widenconst(get_type_for_range(ctx, range_of(code, "res"))) === Int
+        end
+
+        # test macros that don't catch exceptions return the value of the tested expression
+        for test in ("@inferred identity(42)", "@test_nowarn identity(42)")
+            code = """
+                @testset "value" begin
+                    res = $test
+                end
+                """
+            _, ctx = type_annotate(code, type_annotate_test_module)
+            @test widenconst(get_type_for_range(ctx, range_of(code, "res"))) === Int
+        end
+    end
+
     # `(::Type{NamedTuple{names}})(::Tuple{Union{T1,T2}})` and similar constructor calls
     # have a method whose `spec_types` carries free type vars
     # (`(NT::Type{NamedTuple{names}})(args::Tuple) where names`); for thunk-MI inference,

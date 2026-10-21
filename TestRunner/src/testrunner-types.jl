@@ -14,11 +14,17 @@ needed for language server integration.
 - `filename::String`: Full path to the test file
 - `line::Int`: Line number where the test failed/errored (1-based)
 - `message::String`: Descriptive message including the original expression and error details
+- `summary::String`: One-line summary of the failure without its location, in which code is
+  enclosed in backticks
+- `details::String`: The rest of `message` after its first line, which shows the location,
+  e.g. the original expression and the stacktrace, formatted as preformatted text
 """
 struct TestRunnerDiagnostic
     filename::String
     line::Int
     message::String
+    summary::String
+    details::String
     relatedInformation::Union{Nothing,Vector{TestRunnerDiagnosticRelatedInformation}}
 end
 

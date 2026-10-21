@@ -1271,6 +1271,49 @@ end
     end
 end
 
+@testset "binding states of replaced partitions" begin
+    # `export` replaces the partition of the binding with one that differs only in its flags
+    let res = @analyze_toplevel begin
+            global globalvar = rand(Bool)
+            export globalvar
+            println(globalvar)
+        end
+        @test isnothing(res.res.toplevel_error_report)
+        @test isempty(res.res.inference_error_reports)
+    end
+
+    let res = @analyze_toplevel begin
+            if rand(Bool)
+                global globalvar = 1
+            end
+            export globalvar
+            println(globalvar)
+        end
+        @test isnothing(res.res.toplevel_error_report)
+        isexpected = length(res.res.inference_error_reports) == 1
+        @test isexpected
+        if isexpected
+            report = only(res.res.inference_error_reports)
+            @test report isa UndefVarErrorReport
+            @test report.var.name === :globalvar
+            @test report.maybeundef
+        end
+    end
+
+    # an assignment after the replacement is merged with the state before it
+    let res = @analyze_toplevel begin
+            global globalvar = 1
+            export globalvar
+            if rand(Bool)
+                global globalvar = 2
+            end
+            println(globalvar)
+        end
+        @test isnothing(res.res.toplevel_error_report)
+        @test isempty(res.res.inference_error_reports)
+    end
+end
+
 @testset "toplevel throw" begin
     res = @analyze_toplevel begin
         throw("throw me")
@@ -2401,6 +2444,11 @@ function Base.unsafe_write(io::ConcretizationDelayLogger, p::Ptr{UInt8}, n::UInt
     return n
 end
 
+function deprecation_flags(mod::Module, name::Symbol)
+    kind = Base.lookup_binding_partition(Base.get_world_counter(), GlobalRef(mod, name)).kind
+    return (kind & Base.PARTITION_FLAG_DEPRECATED ≠ 0, kind & Base.PARTITION_FLAG_DEPWARN ≠ 0)
+end
+
 @testset "top-level statement selection" begin
     # simplest example
     let # global function
@@ -2987,6 +3035,60 @@ end
         end
     end
 
+    @testset "`Base.deprecate` calls" begin
+        let (vmod, res) = @analyze_toplevel2 begin
+                const new = 1
+                Base.@deprecate_binding old new
+                Base.@deprecate_moved moved SomePkg
+                const x = 1
+                Base.deprecate(@__MODULE__, :x)
+                using Base: deprecate
+                const y = 1
+                deprecate(@__MODULE__, :y, 2)
+            end
+            @test isnothing(res.res.toplevel_error_report)
+            @test deprecation_flags(vmod, :old) == (true, true)
+            @test (@invokelatest getglobal(vmod, :_dep_message_old)) == ", use new instead."
+            @test deprecation_flags(vmod, :moved) == (true, false)
+            @test deprecation_flags(vmod, :x) == (true, true)
+            @test deprecation_flags(vmod, :y) == (true, false)
+        end
+
+        # the binding is flagged, but its non-constant assignment is not concretized
+        let (vmod, res) = @analyze_toplevel2 begin
+                global gnew = 2
+                Base.@deprecate_binding gold gnew true nothing false
+            end
+            @test isnothing(res.res.toplevel_error_report)
+            @test deprecation_flags(vmod, :gold) == (true, true)
+            @test !(@invokelatest isdefinedglobal(vmod, :gold))
+        end
+        # and the binding is still known to be assigned
+        let res = @analyze_toplevel begin
+                global gnew = 2
+                Base.@deprecate_binding gold gnew true nothing false
+                println(gold)
+            end
+            @test isnothing(res.res.toplevel_error_report)
+            @test isempty(res.res.inference_error_reports)
+        end
+
+        # only `Base.deprecate` on the module being analyzed is selected
+        let mod = Module()
+            Core.eval(mod, :(deprecate(m::Module, s::Symbol) = nothing))
+            Core.eval(mod, :(module Fake
+                deprecate(m::Module, s::Symbol) = nothing
+            end))
+            src = only(Meta.lower(mod, :(Base.deprecate($mod, :x))).args)::CodeInfo
+            @test any(JET.select_statements(mod, src))
+            for ex in (:(deprecate($mod, :x)), :(Fake.deprecate($mod, :x)),
+                       :(Base.deprecate(Fake, :x)))
+                src = only(Meta.lower(mod, ex).args)::CodeInfo
+                @test !any(JET.select_statements(mod, src))
+            end
+        end
+    end
+
     @testset "toplevel definitions involved within a loop" begin
         let
             vmod, res = @analyze_toplevel2 begin
@@ -3210,6 +3312,38 @@ end
             @test eval_replaced_test_macro(mod, :(@test_nowarn 42)) == 42
             @test eval_replaced_test_macro(mod, :(@test_deprecated 42)) == 42
             @test eval_replaced_test_macro(mod, :(@inferred identity(42))) == 42
+            @test eval_replaced_test_macro(mod, :(@testset let v = 42; v end)) == 42
+            if JET.TEST_THROWS_ACCEPTS_PATTERN
+                @test eval_replaced_test_macro(mod,
+                    :(@test_throws ErrorException "x" error("x"))) === nothing
+                # the pattern is evaluated in the original scope as Test.jl does
+                eval_replaced_test_macro(mod,
+                    :(@test_throws ErrorException (pattern_binding = "x") error("x")))
+                @test @invokelatest isdefinedglobal(mod, :pattern_binding)
+            end
+            # the test expression of `@test_throws` is evaluated in a marked `try` block
+            for ex in (:(@test_throws ErrorException error("x")),
+                       :(@test_throws ErrorException x = error("x")))
+                replaced = JET.replace_test_macrocalls(ex, mod)
+                @test has_globalref(replaced, JET, :enter_test_exception)
+                @test has_globalref(replaced, JET, :check_test_exception)
+            end
+            # `@test_throws` with keyword arguments is kept for the expansion of Test.jl
+            for ex in (:(@test_throws MethodError sin("x") broken=true),
+                       :(@test_throws MethodError sin("x") skip=true),
+                       :(@test_throws MethodError sin("x") context="x"))
+                @test JET.replace_test_macrocalls(ex, mod).head === :macrocall
+            end
+
+            # the macros that do not catch exceptions propagate them as Test.jl does
+            for ex in (:(@test_warn "warning" error("x")), :(@test_nowarn error("x")),
+                       :(@inferred error("x")), :(@testset let v = 1; error("x") end))
+                @test_throws ErrorException eval_replaced_test_macro(mod, ex)
+            end
+            eval_replaced_test_macro(mod, :(@test_nowarn scoped_in_test = 1))
+            @test !isdefinedglobal(mod, :scoped_in_test)
+            @test JET.replace_test_macrocalls(:(@testset "x" let v = 1; end), mod).head ===
+                :macrocall
 
             testset = eval_replaced_test_macro(mod, quote
                 @testset "scope" begin
@@ -3582,6 +3716,162 @@ end
             @test isnothing(res.res.toplevel_error_report)
             report = only(res.res.inference_error_reports)
             @test report isa JET.FailingTestReport && report.t === Nothing
+        end
+    end
+
+    @testset "`@test_throws`" begin
+        # the reports from the test expressions are discarded, since they are expected to throw
+        let res = @analyze_toplevel context = vmod virtualize = false begin
+                @testset "expected exceptions" begin
+                    @test_throws MethodError sin("x")
+                    @test_throws UndefVarError undefined_in_test_throws
+                    @test_throws Exception sin("x")
+                    @test_throws "no method" sin("x")
+                    # inference does not model stack overflows
+                    @test_throws StackOverflowError error("x")
+                    @test_throws MethodError x = sin("x")
+                    @test_throws MethodError try
+                        sin("x")
+                    finally
+                    end
+                end
+                function test_throws_in_function()
+                    @test_throws MethodError sin("x")
+                end
+                test_throws_in_function()
+                @generated generated_in_test_throws(x) = error("generation")
+                @test_throws ErrorException generated_in_test_throws(1)
+            end
+            @test isnothing(res.res.toplevel_error_report)
+            @test isempty(res.res.inference_error_reports)
+        end
+
+        # but the tests whose expressions always throw unexpected exceptions are reported
+        let res = @analyze_toplevel context = vmod virtualize = false begin
+                @testset "unexpected exceptions" begin
+                    @test_throws ArgumentError sin("x")
+                    @test_throws ArgumentError("x") error("x")
+                end
+            end
+            @test isnothing(res.res.toplevel_error_report)
+            reports = res.res.inference_error_reports
+            @test length(reports) == 2
+            @test all(report -> report isa JET.FailingTestReport, reports)
+            @test any(reports) do report
+                report.t === MethodError && report.expected === ArgumentError
+            end
+            @test any(reports) do report
+                report.t === ErrorException && report.expected == ArgumentError("x")
+            end
+        end
+        if JET.TEST_THROWS_ACCEPTS_PATTERN
+            let res = @analyze_toplevel context = vmod virtualize = false begin
+                    @testset "unexpected exception with pattern" begin
+                        @test_throws ArgumentError "no method" sin("x")
+                    end
+                end
+                @test isnothing(res.res.toplevel_error_report)
+                report = only(res.res.inference_error_reports)
+                @test report isa JET.FailingTestReport && report.t === MethodError
+            end
+        end
+
+        # the code around the tests is analyzed as is, including the expected exceptions,
+        # and the local variables used in the test expressions keep their types
+        let res = @analyze_toplevel context = vmod virtualize = false begin
+                @testset "expected exception" begin
+                    @test_throws undefined_exception_type identity(1)
+                end
+                @testset "reassigned variable" begin
+                    x = 1
+                    @test_throws MethodError sin(string(x))
+                    x = "x"
+                    sin(x)
+                end
+            end
+            @test isnothing(res.res.toplevel_error_report)
+            reports = res.res.inference_error_reports
+            @test length(reports) == 2
+            @test any(report -> report isa JET.MethodErrorReport, reports)
+            @test any(report -> report isa JET.UndefVarErrorReport, reports)
+        end
+        # including a call on the same line, whose reports are not filtered out by the
+        # constant propagation of the call in the test expression
+        let res = @analyze_toplevel context = vmod virtualize = false begin
+                same_line_callee(x::Int) = x > 0 ? 1 : sin("x")
+                let x = rand(Int); same_line_callee(x); @test_throws MethodError same_line_callee(0); end
+            end
+            @test isnothing(res.res.toplevel_error_report)
+            @test only(res.res.inference_error_reports) isa JET.MethodErrorReport
+        end
+        if JET.TEST_THROWS_ACCEPTS_PATTERN
+            let res = @analyze_toplevel context = vmod virtualize = false begin
+                    @test_throws ErrorException (pattern_binding = "x") error("x")
+                    identity(pattern_binding)
+                end
+                @test isnothing(res.res.toplevel_error_report)
+                @test isempty(res.res.inference_error_reports)
+            end
+        end
+
+        # `throw` calls in the test expressions are not reported as uncaught, nor are the
+        # calls of `reduce_empty` and `mapreduce_empty`, which are reported in the same way
+        let res = @analyze_toplevel context = vmod virtualize = false begin
+                let
+                    @test_throws ErrorException throw(ErrorException("expected"))
+                    @test_throws MethodError Base.reduce_empty()
+                    @test_throws MethodError Base.mapreduce_empty()
+                    sin("x")
+                end
+            end
+            @test isnothing(res.res.toplevel_error_report)
+            @test only(res.res.inference_error_reports) isa JET.MethodErrorReport
+        end
+        let res = @analyze_toplevel context = vmod virtualize = false mode = :sound begin
+                let
+                    @test_throws ErrorException throw(ErrorException("expected"))
+                end
+            end
+            @test isnothing(res.res.toplevel_error_report)
+            @test isempty(res.res.inference_error_reports)
+        end
+    end
+
+    @testset "exceptions in tests" begin
+        # the code after the tests that catch exceptions is analyzed
+        let res = @analyze_toplevel context = vmod virtualize = false begin
+                @testset "catching" begin
+                    @test_throws ErrorException error("x")
+                    @test_logs (:warn, "x") error("x")
+                    @testset "inner" begin
+                        error("x")
+                    end
+                    sin("x")
+                end
+            end
+            @test isnothing(res.res.toplevel_error_report)
+            @test only(res.res.inference_error_reports) isa JET.MethodErrorReport
+        end
+
+        # but not the code after the ones that propagate them
+        let res = @analyze_toplevel context = vmod virtualize = false begin
+                @testset "test_warn" begin
+                    @test_warn "x" error("x")
+                    sin("x")
+                end
+                @testset "inferred" begin
+                    @inferred error("x")
+                    sin("x")
+                end
+                @testset "let" begin
+                    @testset let v = 1
+                        error("x")
+                    end
+                    sin("x")
+                end
+            end
+            @test isnothing(res.res.toplevel_error_report)
+            @test isempty(res.res.inference_error_reports)
         end
     end
 

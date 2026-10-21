@@ -337,15 +337,13 @@ end
         @test report.t === Tuple{typeof(+), Int, String}
     end
 
-    # FIXME Same-line callsites of the same callee can't be distinguished by the
-    # (file, line, linfo) key: const-prop filtering for `foo(1)` still discards
-    # the report from `foo(x)` written on the same line.
+    # Same-line callsites of the same callee are distinguished by their statements.
     let result = Core.eval(Module(), quote
             foo(a) = a < 0 ? a + string(a) : a
             bar(x) = (foo(x), foo(1))
             $report_call(bar, (Int,))
         end)
-        @test_broken length(get_reports_with_test(result)) === 1
+        @test length(get_reports_with_test(result)) === 1
     end
 
     let result = Core.eval(Module(), quote
@@ -471,6 +469,19 @@ end
         fetch(t)
     end |> test_sum_over_string
 
+    # the closure is inferred for the first time by the additional pass, since
+    # `Task(f, reserved_stack)` doesn't call another `Task` constructor
+    report_call() do
+        t = Task(() -> sum("julia"), 0)
+        schedule(t)
+        fetch(t)
+    end |> test_sum_over_string
+
+    # the closure to analyze is unknown
+    test_call((Function,)) do f
+        Task(f)
+    end
+
     # handle `Threads.@spawn` (https://github.com/aviatesk/JET.jl/issues/114)
     result = report_call() do
         fetch(Threads.@spawn 1 + "foo")
@@ -480,7 +491,8 @@ end
         @test r.t === Tuple{typeof(+), Int, String}
     end
 
-    # handle `Threads.@threads`
+    # handle `Threads.@threads`, whose tasks call the loop body through a dynamic dispatch
+    # since JuliaLang/julia#63184 (https://github.com/aviatesk/JET.jl/issues/890)
     result = report_call((Int,)) do n
         a = String[]
         Threads.@threads for i in 1:n

@@ -1,8 +1,9 @@
 # Deprecated configurations
 # =========================
 #
-# Keys of `.JETLSConfig.toml` listed in `deprecated_configurations` and values listed in
-# `deprecated_configuration_values` are reported as `config/deprecated-key` and
+# Keys of `.JETLSConfig.toml` listed in `deprecated_configurations`, and values listed in
+# `deprecated_configuration_values` or codes in `DEPRECATED_DIAGNOSTIC_CODES` matched
+# literally by `diagnostic.patterns`, are reported as `config/deprecated-key` and
 # `config/deprecated-value` diagnostics with quick fixes, and loading a file that contains
 # them shows a message offering to fix them all. A fix changes the parsed configuration
 # exactly as `migrate_deprecated_config!` does.
@@ -24,12 +25,22 @@ struct DeprecatedConfigValue
     span::TS.Span
 end
 
-const DeprecatedConfig = Union{DeprecatedConfigKey,DeprecatedConfigValue}
+struct DeprecatedDiagnosticCode
+    # The index of the pattern in `diagnostic.patterns`
+    index::Int
+    old_code::String
+    new_code::String
+    span::TS.Span
+end
+
+const DeprecatedConfig =
+    Union{DeprecatedConfigKey,DeprecatedConfigValue,DeprecatedDiagnosticCode}
 
 function find_deprecated_configs(
         doc::TS.Document,
         deprecated_configs::DeprecatedConfigurations = deprecated_configurations,
-        deprecated_values::DeprecatedConfigurationValues = deprecated_configuration_values
+        deprecated_values::DeprecatedConfigurationValues = deprecated_configuration_values,
+        deprecated_codes::Dict{String,String} = DEPRECATED_DIAGNOSTIC_CODES
     )
     found = DeprecatedConfig[]
     for (old_path, new_path) in deprecated_configs
@@ -37,8 +48,11 @@ function find_deprecated_configs(
         push!(found, deprecated)
     end
     for (path, (old_value, new_value)) in deprecated_values
-        deprecated = @something find_deprecated_config_value(
-            doc, path, old_value, new_value) continue
+        deprecated = @something find_deprecated_config_value(doc, path, old_value, new_value) continue
+        push!(found, deprecated)
+    end
+    for index in eachindex(diagnostic_patterns_data(doc.data))
+        deprecated = @something find_deprecated_diagnostic_code(doc, index, deprecated_codes) continue
         push!(found, deprecated)
     end
     return found
@@ -66,13 +80,29 @@ function find_deprecated_config_value(
     return DeprecatedConfigValue(path, old_value, new_value, span)
 end
 
+diagnostic_pattern_code_path(index::Int) =
+    Union{String,Int}["diagnostic", "patterns", index, "pattern"]
+
+function find_deprecated_diagnostic_code(
+        doc::TS.Document, index::Int, deprecated_codes::Dict{String,String}
+    )
+    patterns = diagnostic_patterns_data(doc.data)
+    checkbounds(Bool, patterns, index) || return nothing
+    old_code, new_code = @something deprecated_diagnostic_code(patterns[index], deprecated_codes) return nothing
+    span = @something TS.value_span(doc, diagnostic_pattern_code_path(index)) return nothing
+    return DeprecatedDiagnosticCode(index, old_code, new_code, span)
+end
+
 deprecated_config_code(::DeprecatedConfigKey) = CONFIG_DEPRECATED_KEY_CODE
 deprecated_config_code(::DeprecatedConfigValue) = CONFIG_DEPRECATED_VALUE_CODE
+deprecated_config_code(::DeprecatedDiagnosticCode) = CONFIG_DEPRECATED_VALUE_CODE
 
 deprecated_config_message(deprecated::DeprecatedConfigKey) =
     deprecated_config_key_message(deprecated.old_path, deprecated.new_path)
 deprecated_config_message(deprecated::DeprecatedConfigValue) =
     deprecated_config_value_message(deprecated.path, deprecated.old_value, deprecated.new_value)
+deprecated_config_message(deprecated::DeprecatedDiagnosticCode) =
+    deprecated_diagnostic_code_message(deprecated.old_code, deprecated.new_code)
 
 function deprecated_config_diagnostics(text::String, encoding::PositionEncodingKind.Ty)
     doc = TS.tryparse(text)
@@ -143,22 +173,37 @@ function deprecated_config_edit(doc::TS.Document, deprecated::DeprecatedConfigKe
 end
 deprecated_config_edit(doc::TS.Document, deprecated::DeprecatedConfigValue) =
     TS.replace_value(doc, deprecated.path, deprecated.new_value)
+deprecated_config_edit(doc::TS.Document, deprecated::DeprecatedDiagnosticCode) =
+    TS.replace_value(
+        doc, diagnostic_pattern_code_path(deprecated.index), deprecated.new_code)
 
 function deprecated_config_fix(doc::TS.Document, deprecated::DeprecatedConfig)
     edit = @something deprecated_config_edit(doc, deprecated) return nothing
     expected = @something tryparse_config_data(doc.source) return nothing
-    migrate_deprecated_config!(expected, migration_tables(deprecated)...)
+    migrate_deprecated!(expected, deprecated)
     fixed = tryparse_config_data(TS.apply(doc.source, edit))
     return isequal(fixed, expected) ? edit : nothing
 end
 
-migration_tables(deprecated::DeprecatedConfigKey) = (
-    DeprecatedConfigurations([deprecated.old_path => deprecated.new_path]),
-    DeprecatedConfigurationValues())
-migration_tables(deprecated::DeprecatedConfigValue) = (
-    DeprecatedConfigurations(),
-    DeprecatedConfigurationValues([
-        deprecated.path => (deprecated.old_value => deprecated.new_value)]))
+migrate_deprecated!(data::Dict{String,Any}, deprecated::DeprecatedConfigKey) =
+    migrate_deprecated_config!(data,
+        DeprecatedConfigurations([deprecated.old_path => deprecated.new_path]),
+        DeprecatedConfigurationValues(),
+        Dict{String,String}())
+migrate_deprecated!(data::Dict{String,Any}, deprecated::DeprecatedConfigValue) =
+    migrate_deprecated_config!(data,
+        DeprecatedConfigurations(),
+        DeprecatedConfigurationValues([deprecated.path => (deprecated.old_value => deprecated.new_value)]),
+        Dict{String,String}())
+# Only the pattern at `deprecated.index`, whereas `migrate_deprecated_config!` migrates
+# every pattern with the code
+function migrate_deprecated!(data::Dict{String,Any}, deprecated::DeprecatedDiagnosticCode)
+    patterns = diagnostic_patterns_data(data)
+    checkbounds(Bool, patterns, deprecated.index) || return nothing
+    migrate_deprecated_diagnostic_code!(patterns[deprecated.index],
+        Dict{String,String}(deprecated.old_code => deprecated.new_code))
+    return nothing
+end
 
 function deprecated_config_fix_title(
         doc::TS.Document, deprecated::DeprecatedConfigKey
@@ -168,15 +213,20 @@ function deprecated_config_fix_title(
     return "Replace `$old` with `$(join(deprecated.new_path::Vector{String}, "."))`"
 end
 deprecated_config_fix_title(::TS.Document, deprecated::DeprecatedConfigValue) =
-    "Replace `" * TS.format_value(deprecated.old_value) * "` with `" *
-        TS.format_value(deprecated.new_value) * "`"
+    replace_value_fix_title(deprecated.old_value, deprecated.new_value)
+deprecated_config_fix_title(::TS.Document, deprecated::DeprecatedDiagnosticCode) =
+    replace_value_fix_title(deprecated.old_code, deprecated.new_code)
 
-# `text` with the fixes of all deprecated keys and values applied, skipping those that
-# cannot be fixed, or `nothing` if nothing is fixed
+replace_value_fix_title(@nospecialize(old_value), @nospecialize(new_value)) =
+    "Replace `" * TS.format_value(old_value) * "` with `" * TS.format_value(new_value) * "`"
+
+# `text` with the fixes of all deprecated keys, values, and diagnostic codes applied,
+# skipping those that cannot be fixed, or `nothing` if nothing is fixed
 function fix_deprecated_configs(
         text::String,
         deprecated_configs::DeprecatedConfigurations = deprecated_configurations,
-        deprecated_values::DeprecatedConfigurationValues = deprecated_configuration_values
+        deprecated_values::DeprecatedConfigurationValues = deprecated_configuration_values,
+        deprecated_codes::Dict{String,String} = DEPRECATED_DIAGNOSTIC_CODES
     )
     doc = TS.tryparse(text)
     doc isa TS.Document || return nothing
@@ -188,8 +238,12 @@ function fix_deprecated_configs(
         any_fixed |= fixed
     end
     for (path, (old_value, new_value)) in deprecated_values
-        deprecated = @something find_deprecated_config_value(
-            doc, path, old_value, new_value) continue
+        deprecated = @something find_deprecated_config_value(doc, path, old_value, new_value) continue
+        doc, fixed = fixed_document(doc, deprecated)
+        any_fixed |= fixed
+    end
+    for index in eachindex(diagnostic_patterns_data(doc.data))
+        deprecated = @something find_deprecated_diagnostic_code(doc, index, deprecated_codes) continue
         doc, fixed = fixed_document(doc, deprecated)
         any_fixed |= fixed
     end
@@ -303,19 +357,16 @@ function handle_deprecated_config_prompt_response(
     )
     handle_response_error(server, msg, "fix deprecated settings") && return nothing
     result = get(msg, :result, nothing)
-    (result isa Dict && get(result, "title", nothing) == FIX_DEPRECATED_CONFIGS_TITLE) ||
-        return nothing
+    (result isa Dict && get(result, "title", nothing) == FIX_DEPRECATED_CONFIGS_TITLE) || return nothing
     uri = caller.uri
     # The file may have changed while the message was shown
     text, version = @something config_text_and_version(server, uri) return nothing
     fixed = @something fix_deprecated_configs(text) return nothing
-    text_edit = source_text_edit(
-        Vector{UInt8}(text), TS.minimal_edit(text, fixed), server.state.encoding)
+    text_edit = source_text_edit(Vector{UInt8}(text), TS.minimal_edit(text, fixed), server.state.encoding)
     edit = text_document_workspace_edit(server, uri, version, text_edit)
     id = unique_id("ApplyWorkspaceEditRequest")
     addrequest!(server, id => ApplyWorkspaceEditCaller())
     label = "Fix deprecated settings"
-    send(server, ApplyWorkspaceEditRequest(;
-        id, params = ApplyWorkspaceEditParams(; label, edit)))
+    send(server, ApplyWorkspaceEditRequest(; id, params = ApplyWorkspaceEditParams(; label, edit)))
     return nothing
 end

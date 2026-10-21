@@ -8,7 +8,7 @@ JSON = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
 
 [sources.JSON3]
 subdir = "vendor/JSON3"
-rev = "28f9ade325674d450eced8588572ce570218705c"
+rev = "b4c857b5e537f784b0900398297668e9a93ca90d"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.Struct2JSONSchema]
@@ -17,7 +17,7 @@ url = "https://github.com/aviatesk/Struct2JSONSchema.jl"
 
 [sources.JETLSCore]
 subdir = "vendor/JETLSCore"
-rev = "28f9ade325674d450eced8588572ce570218705c"
+rev = "b4c857b5e537f784b0900398297668e9a93ca90d"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [compat]

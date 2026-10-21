@@ -131,17 +131,39 @@ end
     relatedInformation = [
         RelatedInformation(joinpath(".", "Untitled-1"), 2, "f()"),
         RelatedInformation(joinpath(".", "none"), 1, "g()")]
-    diagnostic = JETLSCore.TestRunnerDiagnostic("Untitled-1", 4, "Error During Test", relatedInformation)
+    diagnostic = JETLSCore.TestRunnerDiagnostic(
+        "Untitled-1", 4, "Error During Test", "Test failed", "", relatedInformation)
     info = only(something(JETLSCore.testrunner_diagnostic_to_related_information(diagnostic)))
     @test info.location.uri == filename2uri("Untitled-1")
     @test info.message == "f()"
 end
 
+@testset "testrunner_diagnostic_message" begin
+    let diagnostic = JETLSCore.TestRunnerDiagnostic(
+            "runtests.jl", 2, "Test Failed at runtests.jl:2\n  Expression: 1 == 2",
+            "Test failed", "  Expression: 1 == 2", nothing)
+        @test JETLSCore.testrunner_diagnostic_message(diagnostic) ==
+            "Test failed\n\n  Expression: 1 == 2"
+        @test JETLSCore.testrunner_diagnostic_message(diagnostic; markdown_rendering = true) ==
+            "Test failed\n\n```\n  Expression: 1 == 2\n```\n"
+    end
+    let diagnostic = JETLSCore.TestRunnerDiagnostic(
+            "runtests.jl", 2, "Interrupted", "Test interrupted", "", nothing)
+        @test JETLSCore.testrunner_diagnostic_message(diagnostic; markdown_rendering = true) ==
+            "Test interrupted"
+    end
+end
+
+# Mimic TestRunner by writing stdin, i.e. the source passed to `read_testrunner_result`, to
+# `json_file` as the result, and then running `script`
+mock_testrunner_cmd(json_file::String, script::String = "") =
+    Cmd(["/bin/sh", "-c", "cat > \"\$1\"; $script", "sh", json_file])
+
 @testset "read_testrunner_result" begin
     @static if Sys.iswindows()
         @test_skip "process-backed TestRunner test is Unix-only"
     else
-        @testset "large stdin and stdout" begin
+        @testset "large stdin and output" begin
             server = JETLSCore.Server()
             stats = JETLSCore.TestRunner.App.TestRunnerStats(;
                 n_passed = 1, n_failed = 0, n_errored = 0, n_broken = 0,
@@ -149,19 +171,32 @@ end
             expected = JETLSCore.TestRunnerResult(;
                 filename = "test.jl", stats, logs = repeat("x", 1_200_000))
             source = String(LSP.JSON3.write(expected))
-            result = JETLSCore.read_testrunner_result(server, `/bin/cat`, source)
+            result = JETLSCore.read_testrunner_result(server, source) do json_file
+                mock_testrunner_cmd(json_file, "cat \"\$1\"")
+            end
             result = result::JETLSCore.TestRunnerResult
             @test result.filename == expected.filename
             @test result.stats.n_passed == expected.stats.n_passed
-            @test result.logs == expected.logs
+            @test result.logs == source
+        end
+
+        @testset "stdout and stderr in logs" begin
+            server = JETLSCore.Server()
+            source = String(LSP.JSON3.write(mock_testrunner_result()))
+            result = JETLSCore.read_testrunner_result(server, source) do json_file
+                mock_testrunner_cmd(json_file, "echo out1; echo err1 >&2; echo out2")
+            end
+            result = result::JETLSCore.TestRunnerResult
+            @test result.logs == "out1\nerr1\nout2\n"
         end
 
         @testset "test failure result with exit 1" begin
             server = JETLSCore.Server()
             expected = mock_testrunner_result(; n_passed = 1, n_failed = 1)
             source = String(LSP.JSON3.write(expected))
-            cmd = Cmd(["/bin/sh", "-c", "cat; exit 1"])
-            result = JETLSCore.read_testrunner_result(server, cmd, source)
+            result = JETLSCore.read_testrunner_result(server, source) do json_file
+                mock_testrunner_cmd(json_file, "exit 1")
+            end
             result = result::JETLSCore.TestRunnerResult
             @test result.stats.n_passed == expected.stats.n_passed
             @test result.stats.n_failed == expected.stats.n_failed
@@ -170,10 +205,11 @@ end
         @testset "non-test exit 1 remains a process failure" begin
             server = JETLSCore.Server()
             source = String(LSP.JSON3.write(mock_testrunner_result()))
-            cmd = Cmd(["/bin/sh", "-c", "cat; exit 1"])
             logger = Test.TestLogger()
             result = with_logger(logger) do
-                JETLSCore.read_testrunner_result(server, cmd, source)
+                JETLSCore.read_testrunner_result(server, source) do json_file
+                    mock_testrunner_cmd(json_file, "exit 1")
+                end
             end
             @test result == "Test execution failed"
             log = only(logger.logs)
@@ -181,17 +217,18 @@ end
             details = log.kwargs[:details]
             @test details.exitcode == 1
             @test details.termsignal == 0
-            @test details.stdout_bytes == ncodeunits(source)
+            @test details.output_bytes == 0
             @test details.reason === :process
             @test isnothing(details.parse_error)
         end
 
-        @testset "process failure logs metadata" begin
+        @testset "process failure logs metadata and output" begin
             server = JETLSCore.Server()
-            cmd = Cmd(["/bin/sh", "-c", "cat; printf 'testrunner failed\\n'; exit 1"])
             logger = Test.TestLogger()
             result = with_logger(logger) do
-                JETLSCore.read_testrunner_result(server, cmd, "")
+                JETLSCore.read_testrunner_result(server, "") do _
+                    Cmd(["/bin/sh", "-c", "printf 'testrunner failed\\n'; exit 1"])
+                end
             end
             @test result == "Test execution failed"
             log = only(logger.logs)
@@ -199,16 +236,17 @@ end
             details = log.kwargs[:details]
             @test details.exitcode == 1
             @test details.termsignal == 0
-            @test details.stdout_bytes == 18
+            @test details.output_bytes == 18
             @test details.reason === :process
             @test isnothing(details.parse_error)
+            @test string(log.kwargs[:output_tail]) == "testrunner failed\n"
         end
 
         @testset "invalid JSON logs parse error" begin
             server = JETLSCore.Server()
             logger = Test.TestLogger()
             result = with_logger(logger) do
-                JETLSCore.read_testrunner_result(server, `/bin/cat`, "not json\n")
+                JETLSCore.read_testrunner_result(mock_testrunner_cmd, server, "not json\n")
             end
             @test result == "Test execution failed"
             log = only(logger.logs)
@@ -216,7 +254,7 @@ end
             details = log.kwargs[:details]
             @test details.exitcode == 0
             @test details.termsignal == 0
-            @test details.stdout_bytes == 9
+            @test details.output_bytes == 0
             @test details.reason === :invalid_output
             @test details.parse_error isa String
         end
@@ -229,7 +267,9 @@ end
                 sleep(0.2)
                 JETLSCore.cancel!(cancel_flag)
             end
-            result = JETLSCore.read_testrunner_result(server, `/bin/sleep 30`, ""; cancellable_token)
+            result = JETLSCore.read_testrunner_result(server, ""; cancellable_token) do _
+                `/bin/sleep 30`
+            end
             wait(cancel_task)
             @test result == "Test execution cancelled by user"
         end
@@ -298,18 +338,20 @@ end
     launcher = JETLSCore.TestRunnerLauncher(`julia`, ["--threads=2"],
         Pair{String,Union{Nothing,String}}["JULIA_LOAD_PATH" => "/jetls", "JULIA_PROJECT" => nothing])
     let cmd = withenv("JULIA_PROJECT" => "/user") do
-            JETLSCore.testrunner_testset_cmd(launcher, "/test/runtests.jl", "\"foo\"", 3, "/test", nothing)
+            JETLSCore.testrunner_testset_cmd(launcher, "/test/runtests.jl", "\"foo\"", 3, "/test", nothing,
+                "/tmp/result.json")
         end
         @test cmd.exec == ["julia", "--startup-file=no", "--project=/test", "--threads=2",
-            "-m", "TestRunner", "--verbose", "--json", "--read-stdin", "/test/runtests.jl", "foo",
-            "--filter-lines=3"]
+            "-m", "TestRunner", "--verbose", "--json-file=/tmp/result.json", "--read-stdin",
+            "/test/runtests.jl", "foo", "--filter-lines=3"]
         @test "JULIA_LOAD_PATH=/jetls" in cmd.env
         @test !any(startswith("JULIA_PROJECT="), cmd.env)
     end
-    let cmd = JETLSCore.testrunner_testcase_cmd(launcher, "Untitled-1", 5, nothing, "/root")
+    let cmd = JETLSCore.testrunner_testcase_cmd(launcher, "Untitled-1", 5, nothing, "/root",
+            "/tmp/result.json")
         @test cmd.exec == ["julia", "--startup-file=no", "--threads=2",
-            "-m", "TestRunner", "--verbose", "--root-path=/root", "--json", "--read-stdin",
-            "Untitled-1", "L5"]
+            "-m", "TestRunner", "--verbose", "--root-path=/root", "--json-file=/tmp/result.json",
+            "--read-stdin", "Untitled-1", "L5"]
     end
 end
 
@@ -323,15 +365,24 @@ end
         @testset "foo" begin
             @test Base.active_project() == $(repr(project_file))
             @test 1 == 2
+            println(stderr, "stderr output")
+            @test_warn "warning" @warn "warning"
+            @ccall jl_safe_printf("%s\\n"::Cstring; "fatal error report"::Cstring)::Cvoid
         end
         """
         server = JETLSCore.Server()
         launcher = JETLSCore.testrunner_launcher(server)::JETLSCore.TestRunnerLauncher
-        cmd = JETLSCore.testrunner_testset_cmd(launcher, filepath, "\"foo\"", 2, project_file, nothing)
-        result = JETLSCore.read_testrunner_result(server, cmd, source)::JETLSCore.TestRunnerResult
-        @test result.stats.n_passed == 1
+        result = JETLSCore.read_testrunner_result(server, source) do json_file
+            JETLSCore.testrunner_testset_cmd(launcher, filepath, "\"foo\"", 2, project_file, nothing,
+                json_file)
+        end::JETLSCore.TestRunnerResult
+        @test result.stats.n_passed == 2
         @test result.stats.n_failed == 1
         @test only(result.diagnostics).line == 4
+        @test occursin("stderr output", result.logs)
+        # Julia reports fatal errors with `jl_safe_printf`, which writes directly to the file
+        # descriptor 2, also after `@test_warn` restores the redirected `stderr`
+        @test occursin("fatal error report", result.logs)
     end
 end
 

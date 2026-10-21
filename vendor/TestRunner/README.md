@@ -124,6 +124,10 @@ testrunner test/runtests.jl ':(@test foo(x_) == y_)'
 - `--json`: Output results in JSON format for machine-readable test results.
   When patterns are given, the results of the individual test sets are included
   as well, along with the lines of their `@testset`s
+- `--json-file=<path>`: Write the results in the format of `--json` to `<path>`,
+  leaving the output of the tests on stdout and stderr instead of including it
+  in the results. This lets the caller capture all of the output, including
+  the reports of fatal errors that crash the test process
 - `--read-stdin`: Read source for the given file path from stdin instead of disk.
   The path is still used for `@__FILE__`, error messages, and resolving `include`d files
 - `--root-path=<dir>`: Base directory for relative `include` paths when the

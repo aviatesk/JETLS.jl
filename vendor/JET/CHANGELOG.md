@@ -70,7 +70,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and `func_test` use to decide whether an analysis result fails a test.
 
 - Top-level analysis now reports a `@test` that always fails, i.e. whose
-  expression is inferred to evaluate to `false` or to a non-boolean value:
+  expression is inferred to evaluate to `false` or to a non-boolean value, and
+  a `@test_throws` that always fails, i.e. whose expression is inferred to
+  throw only exceptions that do not match the expected one. The errors in the
+  expression of `@test_throws`, which is expected to throw, are no longer
+  reported:
   ```julia
   @testset "foo" begin
       x = nothing
@@ -80,10 +84,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
       y = rand((0, nothing))
       @test y         # reported: non-boolean `Union{Nothing, Int64}`
   end
+  @testset "baz" begin
+      @test_throws MethodError sin("x")   # no longer reported
+      @test_throws ArgumentError sin("x") # reported: throws `MethodError`
+  end
   ```
   `@test_broken` and `@test ex broken=true` are not reported, nor are the
   tests in function bodies. `@test false` is also reported, so use e.g.
-  `error("unreachable")` to mark code that should not be reached.
+  `error("unreachable")` to mark code that should not be reached. The check of
+  `@test_throws` is conservative: the exceptions inferred across function calls
+  are often `Any`, which matches any expected exception, and message patterns
+  are not checked.
 
 ### Changed
 
@@ -159,7 +170,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ```
   Test sets that specify `failfast=false` and test sets of a custom type, e.g.
   `@testset MyTestSet ...`, are analyzed as declared. Note that the code after a
-  test that always fails is not analyzed.
+  test that always fails is not analyzed. Likewise, regardless of
+  `testset_failfast`, the code after `@test_warn`, `@test_nowarn`, `@inferred`,
+  and `@testset let ... end` is not analyzed if they always throw, since
+  Test.jl does not catch exceptions in them. The values of `@test_warn`,
+  `@test_nowarn`, and `@inferred` also keep their inferred types, e.g. `y` of
+  `y = @inferred parse(Int, "1")` is inferred as `Int` instead of `Any`.
+
+- `VirtualFrame` has the new `pc` field, the index of the statement that the
+  frame points to in the code analyzed for its `MethodInstance`, or `0` if the
+  frame does not point to a statement. Frames at different statements on the
+  same line are no longer equal:
+  ```julia
+  VirtualFrame(file, line, linfo, pc) # was `VirtualFrame(file, line, linfo)`
+  first(report.vst).pc                # the statement where `report` was found
+  ```
 
 ### Deprecated
 
@@ -221,6 +246,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `@testset` or a multi-line `@test` expression, pointing to the first line of
   the enclosing top-level statement since 0.12.1. They now point to the line
   of the reported code.
+
+- Fixed the loop bodies of `Threads.@threads` not being analyzed on Julia
+  1.13.2 and later, where its tasks call the loop body through a dynamic
+  dispatch (JuliaLang/julia#63184). The loop body is now analyzed where
+  `@threads` is used, and `report_opt` no longer reports that dynamic dispatch
+  in `Base.Threads._threads_call`:
+  ```julia
+  const g = Ref{Any}(1)
+  helper(i) = i + g[]
+  function f(n)
+      Threads.@threads for i in 1:n
+          helper(i) # `@report_opt f(10)` reports this runtime dispatch again
+      end
+  end
+  ```
+
+- Fixed `join` on a tuple of unknown length, such as one created by splatting
+  a vector, being inferred to return `Union{AnnotatedString{String},String}`
+  rather than `String`, which caused spurious reports for code that requires a
+  `String` (JuliaLang/julia#63999):
+  ```julia
+  report_call((Vector{String},)) do xs
+      pointer(join((xs...,), ", ")) # no longer reported
+  end
+  ```
+
+- Fixed errors in the function run by a `Task` not being reported when the
+  function had not been analyzed before, as when the task is created by
+  `Task(f, reserved_stack)`:
+  ```julia
+  report_call() do
+      t = Task(() -> sum("julia"), 0) # errors in `sum("julia")` now reported
+      schedule(t)
+      fetch(t)
+  end
+  ```
+
+- Fixed analysis crashing with `Could not find single target method` when a
+  `Task` is created from a function whose type is not known, such as
+  `f::Function`:
+  ```julia
+  g(f::Function) = Task(f)
+  report_call(g, (Function,)) # no longer throws
+  ```
+
+- Fixed top-level analysis (e.g. `report_file`) reporting a global variable as
+  not defined when the variable is exported after its assignment:
+  ```julia
+  x = rand(Bool)
+  export x
+  println(x) # was reported: `x` is not defined
+  ```
+
+- Fixed the reports from a call being discarded by the constant propagation of
+  another call to the same function on the same line:
+  ```julia
+  foo(a) = a < 0 ? a + string(a) : a
+  bar(x) = (foo(x), foo(1)) # the report from `foo(x)` was discarded
+  report_call(bar, (Int,))
+  ```
 
 ## [0.12.3]
 

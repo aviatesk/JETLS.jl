@@ -607,16 +607,17 @@ unmatched_key_msg(header_msg::AbstractString, path::Vector{String}) =
     string(header_msg, "\n`", join(path, "."), "`")
 
 # Rewrite raw user config dicts so deprecated key paths land at their new
-# location, and deprecated values are replaced, before `parse_config_from_dict`
-# sees them. Returns a list of user-facing warnings — one per deprecation
-# actually present.
+# location, and deprecated values and diagnostic codes matched literally by
+# `diagnostic.patterns` are replaced, before `parse_config_from_dict` sees them.
+# Returns a list of user-facing warnings — one per deprecation actually present.
 #
 # The struct schema only knows the current key paths and values, so callers must
 # invoke this *before* parsing. Already-migrated values win over the legacy alias.
 function migrate_deprecated_config!(
         config_dict::Dict{String,Any},
         deprecated_configs::Vector{Pair{Vector{String},Union{Nothing,Vector{String}}}} = deprecated_configurations,
-        deprecated_values::Vector{Pair{Vector{String},Pair{Any,Any}}} = deprecated_configuration_values
+        deprecated_values::Vector{Pair{Vector{String},Pair{Any,Any}}} = deprecated_configuration_values,
+        deprecated_codes::Dict{String,String} = DEPRECATED_DIAGNOSTIC_CODES
     )
     warnings = String[]
     for (old_path, new_path) in deprecated_configs
@@ -636,12 +637,49 @@ function migrate_deprecated_config!(
         parent[path[end]] = new_value
         push!(warnings, deprecated_config_value_message(path, old_value, new_value))
     end
+    for pattern in diagnostic_patterns_data(config_dict)
+        old_code, new_code = @something(
+            migrate_deprecated_diagnostic_code!(pattern, deprecated_codes), continue)
+        warning = deprecated_diagnostic_code_message(old_code, new_code)
+        warning in warnings || push!(warnings, warning)
+    end
     return warnings
 end
 
 # `isequal(1, true)` holds, but `1` is not the deprecated `true`.
 is_deprecated_value(@nospecialize(value), @nospecialize(old_value)) =
     typeof(value) === typeof(old_value) && isequal(value, old_value)
+
+function diagnostic_patterns_data(d::Dict{String,Any})
+    diagnostic = @something get_nested_dict(d, ("diagnostic",)) return Any[]
+    patterns = get(diagnostic, "patterns", nothing)
+    return patterns isa Vector ? patterns : Any[]
+end
+
+# Return `old_code => new_code` if `pattern`, an element of `diagnostic.patterns`, matches
+# the deprecated `old_code` literally. Regex patterns are left to the alias matching of
+# `diagnostic_code_match_specificity`.
+function deprecated_diagnostic_code(
+        @nospecialize(pattern), deprecated_codes::Dict{String,String}
+    )
+    pattern isa Dict{String,Any} || return nothing
+    get(pattern, "match_by", nothing) == "code" || return nothing
+    get(pattern, "match_type", nothing) == "literal" || return nothing
+    old_code = get(pattern, "pattern", nothing)
+    old_code isa String || return nothing
+    new_code = @something get(deprecated_codes, old_code, nothing) return nothing
+    return old_code => new_code
+end
+
+function migrate_deprecated_diagnostic_code!(
+        @nospecialize(pattern), deprecated_codes::Dict{String,String}
+    )
+    pattern isa Dict{String,Any} || return nothing
+    migrated = @something(
+        deprecated_diagnostic_code(pattern, deprecated_codes), return nothing)
+    pattern["pattern"] = migrated.second
+    return migrated
+end
 
 function get_nested_dict(d::Dict{String,Any}, path)
     for key in path
@@ -666,6 +704,10 @@ function deprecated_config_value_message(
     return "`" * TS.format_value(old_value) * "` for `" * join(path, ".") *
         "` is deprecated; use `" * TS.format_value(new_value) * "` instead."
 end
+
+deprecated_diagnostic_code_message(old_code::String, new_code::String) =
+    "Diagnostic code `" * old_code * "` in `diagnostic.patterns` is deprecated; use `" *
+        new_code * "` instead."
 
 # Pop `path[end]` from the nested location in `d`. Empty parent dicts along the
 # walk are pruned bottom-up so the schema doesn't reject leftover table headers

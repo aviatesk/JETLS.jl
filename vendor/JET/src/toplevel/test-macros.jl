@@ -26,8 +26,7 @@ function test_macro_name(mod::Module, @nospecialize(mac))
         name = name.value
         name isa Symbol || return nothing
         modname isa Symbol || return nothing
-        @invokelatest(isdefinedglobal(mod, modname)) || return nothing
-        @invokelatest(getglobal(mod, modname)) === Test || return nothing
+        resolve_latest_global(GlobalRef(mod, modname)) === Test || return nothing
         return name
     end
     return nothing
@@ -181,6 +180,17 @@ function preserve_test_expression_value(@nospecialize(exs...))
     end
 end
 
+function scope_test_expression(@nospecialize(exs...))
+    return @q begin
+        let
+            $(exs...)
+        end
+    end
+end
+
+const TEST_THROWS_ACCEPTS_PATTERN =
+    hasmethod(Test.var"@test_throws", Tuple{LineNumberNode,Module,Any,Any,Any})
+
 """
     check_test_value(value)
 
@@ -192,6 +202,102 @@ check_test_value(@nospecialize(_)) = nothing
 
 checked_test_value(@nospecialize(value)) =
     Expr(:call, GlobalRef(@__MODULE__, :check_test_value), value)
+
+"""
+    enter_test_exception()
+
+Do nothing when executed. The replacement of a `@test_throws` call evaluates its test
+expression in a `try` block that starts with a call to this function, which marks the
+statements in the block as expected to throw (see `is_test_exception_statement`).
+"""
+enter_test_exception() = nothing
+
+struct NoTestException end
+
+"""
+    NO_TEST_EXCEPTION
+
+The value that the replacement of a `@test_throws` call passes to `check_test_exception`
+when its test expression does not throw.
+"""
+const NO_TEST_EXCEPTION = NoTestException()
+
+"""
+    check_test_exception(exception, extype, [pattern])
+
+Do nothing when executed. The replacement of a `@test_throws` call passes `exception`, the
+exception caught from its test expression or `NO_TEST_EXCEPTION`, to this function, along
+with `extype` and `pattern`, the expected exception and the message pattern of the call.
+`JETAnalyzer` reports a call to this function in top-level code as a test that always fails
+if `exception` is inferred to be only of exception types that do not match `extype` (see
+`FailingTestReport`).
+"""
+check_test_exception(@nospecialize(exception), @nospecialize(extype),
+                     @nospecialize(pattern...)) = nothing
+
+"""
+    is_test_exception_statement(frame::InferenceState, pc::Int) -> Bool
+
+Return whether the statement at `pc` in `frame` evaluates the test expression of a
+`@test_throws` call, i.e. whether it is in a `try` block that starts with a call to
+`enter_test_exception`. Since the test expression is expected to throw, the reports of
+`frame` whose first `VirtualFrame` points to such a statement, i.e. the errors detected at
+the statement and the reports collected from its callees, are discarded when `frame` is
+finished.
+"""
+function is_test_exception_statement(frame::InferenceState, pc::Int)
+    handler_info = frame.handler_info
+    handler_info === nothing && return false
+    (; handlers, handler_at) = handler_info
+    checkbounds(Bool, handler_at, pc) || return false
+    code = frame.src.code
+    handler_idx = first(handler_at[pc])
+    while handler_idx != 0
+        enter_idx = handlers[handler_idx].enter_idx
+        is_enter_test_exception(code[enter_idx+1]) && return true
+        handler_idx = first(handler_at[enter_idx])
+    end
+    return false
+end
+
+# Lowering may load the callee in a separate statement before the call.
+function is_enter_test_exception(@nospecialize(stmt))
+    isexpr(stmt, :call) && (stmt = first(stmt.args))
+    return stmt isa GlobalRef && stmt.mod === (@__MODULE__) &&
+        stmt.name === :enter_test_exception
+end
+
+# The exceptions that inference does not model, e.g. the stack overflow of a deep recursion.
+const UNINFERRED_EXCEPTION_TYPE =
+    Union{StackOverflowError,OutOfMemoryError,InterruptException,ReadOnlyMemoryError}
+
+"""
+    matching_test_exception_type(extype) -> Union{Nothing,Type}
+
+Return the type of the exceptions that match the expected exception of a `@test_throws`
+call, given `extype`, the inferred type of the `extype` argument of `check_test_exception`.
+Return `nothing` if the type cannot be determined, e.g. for a message pattern, or if it
+includes exceptions that inference does not model.
+"""
+function matching_test_exception_type(@nospecialize(extype))
+    extype isa Const || return nothing
+    expected = extype.val
+    if expected isa Type
+        # Test.jl passes `@test_throws LoadError macroexpand(...)` for any exception, and
+        # `@test_throws ErrorException ex` for a `FieldError`, both of which are deprecated.
+        expected === LoadError && return nothing
+        T = expected === ErrorException ? Union{ErrorException,FieldError} : expected
+    elseif expected isa Exception
+        # Test.jl compares the thrown exception with the expected one, except for a
+        # deprecated `LoadError` wrapping the expected exception.
+        expected isa LoadError && return nothing
+        T = typeof(expected)
+    else
+        return nothing
+    end
+    hasintersect(T, UNINFERRED_EXCEPTION_TYPE) && return nothing
+    return T
+end
 
 # A failing or erroring test aborts a fail-fast test set, so the code after the test runs
 # only when the test expression evaluates to `true`. Expressing this as a branch lets
@@ -282,6 +388,29 @@ function replace_test(@nospecialize(ex), kws::Vector{Any}, failfast::Bool)
     return discard_test_expression_value(checked_test_value(ex))
 end
 
+# As in Test.jl, the test expression is evaluated inline rather than in a closure, which
+# would box the captured local variables reassigned in the surrounding code, and the other
+# arguments are evaluated after it in the original scope. The line of the macro call
+# `source` set in the `catch` block applies to the code after the `try` block, so that a
+# test that always fails is reported there.
+function replace_test_throws(@nospecialize(source), exs::Vector{Any})
+    exception = gensym(:test_exception)
+    caught = @q begin
+        try
+            $(GlobalRef(@__MODULE__, :enter_test_exception))()
+            $(maybe_wrap_test_expression_in_thunk(last(exs)))
+            $(GlobalRef(@__MODULE__, :NO_TEST_EXCEPTION))
+        catch $exception
+            $source
+            $exception
+        end
+    end
+    return @q begin
+        $(GlobalRef(@__MODULE__, :check_test_exception))($caught, $(exs[1:end-1]...))
+        $(hide_test_replacement_value(nothing))
+    end
+end
+
 """
     replace_test_macrocall(name::Symbol, args::Vector{Any}, failfast::Bool)
 
@@ -289,12 +418,14 @@ Return the replacement for the Test.jl macro call `name` with the macro call arg
 `args`, or `nothing` if the call is malformed. `failfast` tells whether the call is in a
 test set that a failing test aborts (see `testset_failfast`).
 
-The replacements evaluate the arguments of the macro call, catching exceptions as Test.jl
-does. Their values pass through `Base.inferencebarrier` so that the synthetic values do not
-affect the inference of the surrounding code: macros that return a test result return
-`nothing`, while macros that return the value of the test expression keep that value.
-The checks performed by Test.jl, such as the exception type matching of `@test_throws` and
-the return type check of `@inferred`, are omitted.
+The replacements evaluate the arguments of the macro call, catching exceptions where Test.jl
+does. The values of the replacements that catch exceptions pass through
+`Base.inferencebarrier` so that the synthetic values do not affect the inference of the
+surrounding code: macros that return a test result return `nothing`, while macros that
+return the value of the test expression keep that value. The checks performed by Test.jl,
+such as the message matching of `@test_throws` and the return type check of `@inferred`,
+are omitted, except that `JETAnalyzer` reports a `@test` or `@test_throws` call that always
+fails (see `FailingTestReport`).
 
 The replacements look like the following, where gensym'ed names are shortened, and the
 line numbers of the user code and blocks that wrap a single expression are omitted.
@@ -370,19 +501,28 @@ end
 Base.inferencebarrier(nothing)
 ```
 
-`@test_throws ArgumentError f(-1)` becomes:
+`@test_throws ArgumentError f(-1)` becomes the following, where the errors in the test
+expression are not reported since `JET.enter_test_exception` marks it as expected to throw
+(see `is_test_exception_statement`), and `JET.check_test_exception` lets `JETAnalyzer`
+report the test if the caught exception never matches the expected one (see
+`FailingTestReport`):
 ```julia
 begin
-    try
-        begin
-            ArgumentError
+    JET.check_test_exception(
+        try
+            JET.enter_test_exception()
             f(-1)
-        end
-    catch
-    end
+            JET.NO_TEST_EXCEPTION
+        catch exception
+            exception
+        end,
+        ArgumentError)
     Base.inferencebarrier(nothing)
 end
 ```
+As in Test.jl, the expected exception is evaluated after the test expression, and so is the
+message pattern of `@test_throws ArgumentError "msg" f(-1)`, which Test.jl accepts in
+Julia 1.13 and later and is passed as the third argument of `JET.check_test_exception`.
 
 `@test_logs (:warn, "msg") min_level=Logging.Warn f(x)` becomes the following, where the
 keyword arguments are reduced to their values:
@@ -397,16 +537,15 @@ let value = nothing
     Base.inferencebarrier(value)
 end
 ```
-`@test_warn`, `@test_nowarn`, `@test_deprecated`, and `@inferred` are replaced in the same
-way. For example, `@inferred Float64 f(x)` becomes:
+`@test_deprecated` is replaced in the same way, as Test.jl catches exceptions in it when
+deprecation warnings are enabled, e.g. by `Pkg.test`.
+
+`@test_warn`, `@test_nowarn`, and `@inferred` evaluate the arguments in a `let` scope
+without catching exceptions, as Test.jl does. For example, `@inferred Float64 f(x)` becomes:
 ```julia
-let value = nothing
-    try
-        Float64
-        value = f(x)
-    catch
-    end
-    Base.inferencebarrier(value)
+let
+    Float64
+    f(x)
 end
 ```
 
@@ -464,6 +603,8 @@ let
     Base.inferencebarrier(nothing)
 end
 ```
+A `@testset` with a `let` argument, e.g. `@testset let x = f() ... end`, is replaced with
+the `let` expression itself, since Test.jl does not catch exceptions in it.
 
 When the test expression defines an anonymous function that would be evaluated
 conditionally, including within the `if` introduced by `skip`, the test expression is
@@ -509,9 +650,20 @@ function replace_test_macrocall(name::Symbol, args::Vector{Any}, failfast::Bool)
         end
         return hide_test_replacement_value(nothing)
     elseif name === Symbol("@test_throws")
-        length(exs) == 2 || return nothing
-        ex = maybe_wrap_test_expression_in_thunk(Expr(:block, exs...))
-        return discard_test_expression_value(ex)
+        length(exs) == 2 || (TEST_THROWS_ACCEPTS_PATTERN && length(exs) == 3) ||
+            return nothing
+        # Keyword arguments are not supported here. Test.jl in Julia 1.14 and later takes
+        # the last argument as a keyword argument rather than the test expression if it
+        # follows two positional arguments and assigns `broken`, `skip`, or `context`.
+        if length(exs) == 3
+            kw = last(exs)
+            if isexpr(kw, :(=), 2)
+                kwname = first(kw.args)
+                (kwname === :broken || kwname === :skip || kwname === :context) &&
+                    return nothing
+            end
+        end
+        return replace_test_throws(args[2], exs)
     elseif name === Symbol("@test_logs")
         isempty(exs) && return nothing
         values = Any[macro_argument_value(ex) for ex in exs[1:end-1]]
@@ -521,11 +673,10 @@ function replace_test_macrocall(name::Symbol, args::Vector{Any}, failfast::Bool)
         length(exs) == 2 || return nothing
         exs = Any[exs...]
         exs[end] = maybe_wrap_test_expression_in_thunk(last(exs))
-        return preserve_test_expression_value(exs...)
+        return scope_test_expression(exs...)
     elseif name === Symbol("@test_nowarn")
         length(exs) == 1 || return nothing
-        return preserve_test_expression_value(
-            maybe_wrap_test_expression_in_thunk(only(exs)))
+        return scope_test_expression(maybe_wrap_test_expression_in_thunk(only(exs)))
     elseif name === Symbol("@test_deprecated")
         1 ≤ length(exs) ≤ 2 || return nothing
         exs = Any[exs...]
@@ -535,12 +686,19 @@ function replace_test_macrocall(name::Symbol, args::Vector{Any}, failfast::Bool)
         1 ≤ length(exs) ≤ 2 || return nothing
         exs = Any[exs...]
         exs[end] = maybe_wrap_test_expression_in_thunk(last(exs))
-        return preserve_test_expression_value(exs...)
+        return scope_test_expression(exs...)
     elseif name === Symbol("@testset")
         isempty(exs) && return nothing
         values = Any[macro_argument_value(ex) for ex in exs[1:end-1]]
         body = last(exs)
-        if isexpr(body, :for, 2)
+        if isexpr(body, :let)
+            isempty(values) || return nothing
+            bindings = first(body.args)
+            isexpr(bindings, :(=)) ||
+                isexpr(bindings, :block) && all(ex -> isexpr(ex, :(=)), bindings.args) ||
+                return nothing
+            return body
+        elseif isexpr(body, :for, 2)
             body = copy(body)
             body.args[2] = Expr(:block, values..., body.args[2])
             empty!(values)

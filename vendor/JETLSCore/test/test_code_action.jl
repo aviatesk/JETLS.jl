@@ -370,6 +370,65 @@ end
         @test edit.range.var"end" == positions[2]
     end
 
+    # Unreachable `else` clause: delete from `else` up to the closing keyword, keeping the
+    # comment before `else`
+    let (code_actions, uri, positions) = get_unreachable_code_actions("""
+        function foo()
+            try
+                return 1
+            catch
+                recover() # comment
+            │else
+                x = 2
+            │end
+        end
+        """)
+        @test length(code_actions) == 1
+        edit = only(code_actions[1].edit.changes[uri])
+        @test edit.newText == ""
+        @test edit.range.start == positions[1]
+        @test edit.range.var"end" == positions[2]
+    end
+
+    # Comments inside the unreachable `else` clause are deleted with it
+    let (code_actions, uri, positions) = get_unreachable_code_actions("""
+        function foo()
+            try
+                return 1
+            catch
+                recover()
+            │else
+                x = 2 # comment
+            │end
+        end
+        """)
+        @test length(code_actions) == 1
+        edit = only(code_actions[1].edit.changes[uri])
+        @test edit.newText == ""
+        @test edit.range.start == positions[1]
+        @test edit.range.var"end" == positions[2]
+    end
+    let (code_actions, uri, positions) = get_unreachable_code_actions("""
+        function foo()
+            try
+                return 1
+            catch
+                recover()
+            │else
+                x = 2
+                # comment
+            │finally
+                cleanup()
+            end
+        end
+        """)
+        @test length(code_actions) == 1
+        edit = only(code_actions[1].edit.changes[uri])
+        @test edit.newText == ""
+        @test edit.range.start == positions[1]
+        @test edit.range.var"end" == positions[2]
+    end
+
     # No code action when there's no unreachable code
     let (code_actions, _, _) = get_unreachable_code_actions("""
         function foo()

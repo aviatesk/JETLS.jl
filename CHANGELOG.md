@@ -19,7 +19,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## Unreleased
 
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
-- Diff: [`64dd358...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/64dd358...HEAD)
+- Diff: [`8888185...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/8888185...HEAD)
 
 ### Announcement
 
@@ -66,6 +66,222 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > Note that `analysis_overrides` is provided as a temporary workaround and may be removed or changed at any time. A proper fix is being worked on.
 >
 > Note: Path glob patterns use `/` as the separator on all platforms, including Windows; backslashes are not supported as separators.
+
+### Added
+
+- Added the [`lowering/deprecated-binding`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/deprecated-binding) diagnostic that reports accesses to global bindings deprecated with `Base.@deprecate_binding` or `Base.deprecate`, both by name and as `Module.name`:
+  ```julia
+  using Shapes # deprecates `Point` with `Base.@deprecate_binding Point Point2D`
+
+  origin() = Point(0, 0) # `Shapes.Point` is deprecated, use Point2D instead.
+  ```
+  As with the warning Julia prints, a deprecated binding imported explicitly, as with `using Shapes: Point`, is reported at the import rather than at its uses.
+  Global completion also lists such bindings after the other candidates and marks them as deprecated, which editors typically render with a strikethrough.
+
+- Added the [`lowering/deprecated-function`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/deprecated-function) diagnostic that reports uses of functions whose methods are all deprecated with `Base.@deprecate`, both by name and as `Module.name`, with the warning Julia prints when they are called:
+  ```julia
+  using Geometry # deprecates `distance` with `Base.@deprecate distance(p, q) euclidean(p, q)`
+
+  nearest(p, points) = argmin(q -> distance(p, q), points) # `distance(p, q)` is deprecated, use `euclidean(p, q)` instead.
+  ```
+  Unlike deprecated bindings, such functions are reported at their uses even when imported explicitly, since Julia warns when they are called. Functions with only some of their methods deprecated are reported by `inference/deprecated-call` instead.
+  Global completion also lists such functions after the other candidates and marks them as deprecated.
+
+- Added the [`inference/deprecated-call`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/inference/deprecated-call) diagnostic that reports calls to methods deprecated with `Base.@deprecate`, with the warning Julia prints when they are called. It covers functions with only some of their methods deprecated, using the inferred types of the arguments:
+  ```julia
+  unit(i::CartesianIndex) = one(i) # `one(i::CartesianIndex)` is deprecated, use `oneunit(i)` instead.
+  ```
+  A call is reported when the methods that it matches are all deprecated, or, for a call split over a union of argument types, when the methods that it matches for some of the types are.
+  Method signature completion also lists deprecated methods after the other candidates and marks them as deprecated.
+
+- Added the [`config/deprecated-value`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/config/deprecated-value) warning on [diagnostic patterns](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/diagnostic/patterns) that match the deprecated `inference/non-boolean-cond` code literally (`match_by = "code"` and `match_type = "literal"`), with a quick fix that replaces it with `inference/type-error/non-bool-cond`.
+  Like other deprecated settings, such patterns are also listed in the message shown when JETLS loads the configuration, with a "Fix all" action.
+
+### Changed
+
+- [`lowering/unreachable-code`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/unreachable-code) now also reports the code in the `else` block of a `try` whose body always exits, and its "Delete unreachable code" quick fix removes the whole `else` clause, including the `else` keyword:
+  ```julia
+  function f()
+      try
+          return compute()
+      catch
+          recover()
+      else
+          println("never runs") # now reported
+      end
+  end
+  ```
+
+- The messages of [`testrunner/test-failure`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/testrunner/test-failure) diagnostics now start with a summary of the failure instead of its location, e.g.:
+  ```
+  Test failed: evaluated to `(1, 12) == (1, 12, 0)`
+  Test threw an exception: ArgumentError: invalid base 10 digit 'v' in "v1"
+  ```
+  The rest of the message shows what `Test` prints for the failure, such as the expression and the stack trace.
+
+- [`inference/method-error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/inference/method-error) now also reports calls with `invoke` or `@invoke` when no unique method is found for the signature that they specify:
+  ```julia
+  double(x::Int) = 2x
+
+  invoke_double(x::Int) = @invoke double(x::Integer) # MethodError: no matching method found `double(::Integer)`
+  ```
+
+- [`inference/failing-test`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/inference/failing-test) now also reports a `@test_throws` that always fails, i.e. whose expression is inferred to throw only exceptions that do not match the expected one:
+  ```julia
+  @testset "foo" begin
+      @test_throws ArgumentError parse(Int, 42) # this test always fails since its expression throws `MethodError`, not `ArgumentError`
+  end
+  ```
+  The check is conservative: the exceptions inferred across function calls are often `Any`, which matches any expected exception, and message patterns are not checked.
+
+- Full analysis no longer analyzes the code after `@test_warn`, `@test_nowarn`, `@inferred`, or `@testset let ... end` that always throws, since Test.jl does not catch exceptions in them.
+  It also infers the values of `@test_warn`, `@test_nowarn`, and `@inferred` as those of their test expressions, e.g. `y` of `y = @inferred parse(Int, "1")` as `Int` instead of `Any`.
+
+- Find references, document highlight, and rename on a global binding now also cover its uses qualified with a module, such as `Module.name` and `Module.@macro`.
+  Invoking these features on such a qualified name itself is not supported yet (https://github.com/aviatesk/JETLS.jl/issues/1009).
+
+### Fixed
+
+- Fixed false [`lowering/undef-global-var`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/undef-global-var) reports on non-constant globals that a script imports from a module defined in the script.
+
+- Fixed false [`lowering/undef-local-var`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/undef-local-var) reports on variables that are assigned before every `break` in a `while true` loop and used after the loop:
+  ```julia
+  function first_positive(xs)
+      local i, x
+      k = 0
+      while true
+          k += 1
+          i = k
+          x = xs[k]
+          x > 0 && break
+      end
+      return i, x # `i` and `x` were reported as possibly undefined
+  end
+  ```
+  JETLS now treats `while true` loops as left only through `break`, `return`, `throw`, or `@goto`, so [`lowering/unreachable-code`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/unreachable-code) also reports code after a `while true` loop without `break`.
+  (Closed https://github.com/aviatesk/JETLS.jl/issues/998)
+
+- Fixed false [`lowering/unused-assignment`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/unused-assignment) reports on assignments in a `try` block whose value is read only in the `catch` block:
+  ```julia
+  function f(g)
+      launched = false
+      try
+          launched = true # was reported as never used
+          g()
+      catch
+          return launched
+      end
+      return false
+  end
+  ```
+  (Closed https://github.com/aviatesk/JETLS.jl/issues/995)
+
+- Fixed the diagnostics on `try`/`catch`/`else` blocks treating the `else` block as running after the `catch` block, instead of after the `try` block completes without throwing:
+  [`lowering/unused-assignment`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/unused-assignment) no longer reports assignments in the `try` block that are read in the `else` block,
+  [`lowering/undef-local-var`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/undef-local-var) now reports variables used in the `else` block that are assigned only in the `catch` block,
+  and [`lowering/unreachable-code`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/unreachable-code) now reports code after a `try` whose `catch` and `else` blocks both end with `return`.
+
+- Fixed false [`lowering/unused-local`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/unused-local) and [`lowering/unused-argument`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/unused-argument) reports on variables used directly as the default value of an optional argument:
+  ```julia
+  function g(J)
+      sens = J .+ 1 # `sens` was reported as unused
+      Pf(s, sn = sens) = s * sn[1]
+      return Pf(1.0)
+  end
+
+  f(x, y = x) = y # `x` was reported as unused
+  ```
+  Such uses are now also included in references, rename edits, and document highlights.
+  (Closed https://github.com/aviatesk/JETLS.jl/issues/1002)
+
+- Fixed false [`lowering/unused-assignment`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/unused-assignment) reports on required keyword arguments of methods where a later keyword's default value refers to an earlier keyword:
+  ```julia
+  function f(; a, b, c, d = "x", e = string(d)) # `a` and `b` were reported as never used
+      return (a, b, c, d, e)
+  end
+  ```
+  (Closed https://github.com/aviatesk/JETLS.jl/issues/996)
+
+- Fixed the messages of [`testrunner/test-failure`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/testrunner/test-failure) diagnostics losing their line breaks and formatting in clients that render diagnostic messages as Markdown, e.g. Sublime LSP: the expression and the stack trace are now shown in a code block.
+
+- Fixed test runs of the [TestRunner integration](https://aviatesk.github.io/JETLS.jl/release/testrunner/) never finishing when the tests write more than about 64 KB of output.
+
+- Fixed [`lowering/inactive-code`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/inactive-code) hints on `@static` blocks that go through the expansion of a macro being shown on unrelated lines, such as lines that don't exist in the file or the branch that is actually active.
+  Such blocks are no longer reported since their exact location is unknown.
+  Likewise, [`lowering/macro-expansion-error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/macro-expansion-error) diagnostics on code written in a macro defined in another file are now shown at the macro call instead of an unrelated line.
+  (Closed https://github.com/aviatesk/JETLS.jl/issues/1000)
+
+- Fixed [`lowering/macro-expansion-error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/macro-expansion-error) messages, e.g. for `@static` conditions that fail to evaluate, showing JETLS's internal module names such as `Main.var"##JETVirtualModule#142"` instead of the analyzed module.
+
+- Fixed false [`lowering/unused-import`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/unused-import) reports on `import`/`using` statements in quoted expressions or in two-argument `@eval`, which import names into the module that evaluates them:
+  ```julia
+  function sandbox_eval(ex)
+      m = Module()
+      Core.eval(m, :(using Base: cos, sin)) # `cos` and `sin` were reported as unused
+      return Core.eval(m, ex)
+  end
+
+  @eval Main using Base: cos # `cos` was reported as unused
+  ```
+  (Closed https://github.com/aviatesk/JETLS.jl/issues/999)
+
+- Fixed the logs of the [TestRunner integration](https://aviatesk.github.io/JETLS.jl/release/testrunner/) missing the output that tests write to `stderr`, such as log messages of `@info` and `@warn` and deprecation warnings enabled by `--depwarn=yes`, which went to the server log instead.
+  When a test run fails unexpectedly, e.g. by a segfault, the server log now shows the end of its output, including the report of the crash.
+
+- Fixed false [`lowering/unreachable-code`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/unreachable-code) reports on the code after Test.jl macros that catch the exception thrown by the tested expression, such as `@test_throws`, `@test_broken`, `@test_logs`, and nested `@testset`s, when the expression always throws.
+  Hover, inlay hints, and other features that show inferred types also treated such code as unreachable:
+  ```julia
+  @testset "foo" begin
+      @test_throws ErrorException error("boom")
+      @test true # was reported as unreachable code
+  end
+  ```
+  The expressions of `@test_throws`, `@test_warn`, `@inferred`, and similar Test.jl macros are now also analyzed in their own scope as in Test.jl, so assignments in them no longer define variables in the enclosing scope.
+  (Closed https://github.com/aviatesk/JETLS.jl/issues/997)
+
+- Fixed false reports on the expressions of `@test_throws`, which are expected to throw, e.g. by [`inference/method-error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/inference/method-error) and [`lowering/undef-global-var`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/undef-global-var):
+  ```julia
+  @testset "foo" begin
+      @test_throws MethodError sin("x")      # was reported as `inference/method-error`
+      @test_throws UndefVarError undefined_x # was reported as `lowering/undef-global-var`
+  end
+  ```
+  `inference/failing-test` reports such a test instead if it always fails.
+
+- Fixed false [`lowering/macro-expansion-error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/macro-expansion-error) reports on `@test_throws extype pattern ex`, which Test.jl accepts in Julia 1.13 to also check the message of the thrown exception.
+
+- Fixed false [`lowering/unused-import`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/unused-import) reports on imports that are used only from other modules, which import the name in turn or access it as `Module.name`:
+  ```julia
+  module Parent
+  module Impl
+  const x = 1
+  end
+  using .Impl: x # was reported as unused
+
+  module Child
+  using ..Parent: x # or `Parent.x`
+  f() = x
+  end
+  end # module Parent
+  ```
+  Accesses like `Parent.x` within `Parent` itself also count as uses now.
+  (Closed https://github.com/aviatesk/JETLS.jl/issues/971)
+
+- Fixed rename producing invalid code for names written with `var"..."`: macro calls written as `@var"..."` lost their quotes, and renaming to a name that needs `var"..."`, such as a name with a space or an operator replacing a variable, left the occurrences written without `var"..."` unquoted:
+  ```julia
+  macro var"old macro"() end
+  @var"old macro"() # was renamed to `@new macro()`, now to `@var"new macro"()`
+  ```
+  The ` as ...` alias that rename inserts into an import statement is also quoted in such a case.
+
+## 2026-10-18
+
+- Commit: [`8888185`](https://github.com/aviatesk/JETLS.jl/commit/8888185)
+- Diff: [`64dd358...8888185`](https://github.com/aviatesk/JETLS.jl/compare/64dd358...8888185)
+- Installation:
+  ```bash
+  julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="2026-10-18")'
+  ```
 
 ### Added
 
