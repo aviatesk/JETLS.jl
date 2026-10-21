@@ -1369,10 +1369,15 @@ function _namedtuple_type(ctx::JL.MacroContext, ex::SyntaxTree, macroname::Strin
 end
 
 # Stubs for `Test.jl` testing macros. The real macros wrap user-written bodies in
-# test-recording / exception-catching / setup scaffolding; for LSP scope analysis we only
-# need each user-written sub-expression to flow through with its provenance intact, so we
-# drop the scaffolding and either return the body alone or emit a `block` so identifiers
-# inside every argument are visible to the resolver.
+# test-recording / exception-catching / setup scaffolding. The stubs drop the test-recording
+# and setup parts so that each user-written sub-expression flows through with its provenance
+# intact, but keep the exception catching and the scopes of the real macros, as the
+# replacements of JET do. For example, `@test_throws extype ex` expands to
+# `try extype; ex catch end; Base.inferencebarrier(nothing)`, so that the code after the
+# test stays reachable even when `ex` always throws, e.g. `error(...)`, while
+# `@inferred ex`, which does not catch exceptions, expands to `let ex end`.
+# `Base.inferencebarrier` keeps the synthetic values of the expansions from affecting the
+# inference of the surrounding code.
 #
 # For macros with the `body kws...` shape (`@test`, `@test_broken`, `@test_skip`,
 # `@test_logs`) we keep only the kw RHS so any user-written identifier there still gets
@@ -1421,8 +1426,10 @@ function Test.var"@test"(__context__::JL.MacroContext, ex::SyntaxTree, kws::Synt
         ex = JL.@ast(__context__, src, [:if [:call [:core "==="::identifier] ex true::value]
             [:call [:top "inferencebarrier"::identifier] nothing::value]
             [:call [:core "throw"::identifier] [:call Test.FailFastError::value]]])
+    else
+        ex = _discard_test_expression_value(__context__, ex)
     end
-    isempty(rhss) && return JL.@ast(__context__, mc, ex)
+    isempty(rhss) && return ex
     return JL.@ast(__context__, mc, [:block rhss... ex])
 end
 
@@ -1435,10 +1442,12 @@ function Test.var"@test_broken"(
         _validate_test_kw(kw) === nothing && continue
         push!(rhss, kw[2])
     end
-    isempty(rhss) && return JL.@ast(__context__, mc, ex)
+    ex = _discard_test_expression_value(__context__, ex)
+    isempty(rhss) && return ex
     return JL.@ast(__context__, mc, [:block rhss... ex])
 end
 
+# The real macro does not evaluate `ex`, but the stub keeps it for scope analysis.
 function Test.var"@test_skip"(
         __context__::JL.MacroContext, ex::SyntaxTree, kws::SyntaxTree...
     )
@@ -1448,26 +1457,33 @@ function Test.var"@test_skip"(
         _validate_test_kw(kw) === nothing && continue
         push!(rhss, kw[2])
     end
-    isempty(rhss) && return JL.@ast(__context__, mc, ex)
+    ex = _discard_test_expression_value(__context__, ex)
+    isempty(rhss) && return ex
     return JL.@ast(__context__, mc, [:block rhss... ex])
 end
 
-# `@test_throws extype ex` expands to
-# `try extype; ex catch end; Base.inferencebarrier(nothing)` as JET's replacement does: the
-# real macro catches the expected exception, so the code after the test must stay reachable
-# even when `ex` always throws, e.g. `error(...)`.
 function Test.var"@test_throws"(
         __context__::JL.MacroContext, extype::SyntaxTree, ex::SyntaxTree
     )
-    src = _macro_generated_source(__context__)
-    return JL.@ast(__context__, src, [:block
-        [:try [:block extype ex] false::value [:block]]
-        [:call [:top "inferencebarrier"::identifier] nothing::value]])
+    return _discard_test_expression_value(__context__, extype, ex)
+end
+
+const _TEST_THROWS_ACCEPTS_PATTERN =
+    hasmethod(Test.var"@test_throws", Tuple{LineNumberNode,Module,Any,Any,Any})
+
+@static if _TEST_THROWS_ACCEPTS_PATTERN
+function Test.var"@test_throws"(
+        __context__::JL.MacroContext,
+        extype::SyntaxTree, pattern::SyntaxTree, ex::SyntaxTree
+    )
+    return _discard_test_expression_value(__context__, extype, pattern, ex)
+end
 end
 
 function Test.var"@test_throws"(__context__::JL.MacroContext, args::SyntaxTree...)
     mc = __context__.macrocall::SyntaxTree
-    push_macro_error!(mc,
+    push_macro_error!(mc, _TEST_THROWS_ACCEPTS_PATTERN ?
+        "`@test_throws` expects two or three arguments: `extype [pattern] ex`" :
         "`@test_throws` expects exactly two arguments: `extype` and `ex`")
     isempty(args) && return JL.@ast(__context__, mc, nothing::value)
     return JL.@ast(__context__, mc, [:block args...])
@@ -1476,12 +1492,11 @@ end
 function Test.var"@test_warn"(
         __context__::JL.MacroContext, msg::SyntaxTree, ex::SyntaxTree
     )
-    return JL.@ast(__context__, __context__.macrocall::SyntaxTree,
-        [:block msg ex])
+    return _scope_test_expression(__context__, msg, ex)
 end
 
 function Test.var"@test_nowarn"(__context__::JL.MacroContext, ex::SyntaxTree)
-    return JL.@ast(__context__, __context__.macrocall::SyntaxTree, ex)
+    return _scope_test_expression(__context__, ex)
 end
 
 function Test.var"@test_logs"(__context__::JL.MacroContext, args::SyntaxTree...)
@@ -1502,18 +1517,19 @@ function Test.var"@test_logs"(__context__::JL.MacroContext, args::SyntaxTree...)
         end
     end
     push!(block_children, body)
-    return JL.@ast(__context__, mc, [:block block_children...])
+    return _preserve_test_expression_value(__context__, block_children...)
 end
 
+# The real macro catches the exception thrown by `ex` when deprecation warnings are enabled,
+# as `Pkg.test` does.
 function Test.var"@test_deprecated"(__context__::JL.MacroContext, ex::SyntaxTree)
-    return JL.@ast(__context__, __context__.macrocall::SyntaxTree, ex)
+    return _preserve_test_expression_value(__context__, ex)
 end
 
 function Test.var"@test_deprecated"(
         __context__::JL.MacroContext, pattern::SyntaxTree, ex::SyntaxTree
     )
-    return JL.@ast(__context__, __context__.macrocall::SyntaxTree,
-        [:block pattern ex])
+    return _preserve_test_expression_value(__context__, pattern, ex)
 end
 
 function Test.var"@test_deprecated"(__context__::JL.MacroContext, args::SyntaxTree...)
@@ -1525,14 +1541,13 @@ function Test.var"@test_deprecated"(__context__::JL.MacroContext, args::SyntaxTr
 end
 
 function Test.var"@inferred"(__context__::JL.MacroContext, ex::SyntaxTree)
-    return JL.@ast(__context__, __context__.macrocall::SyntaxTree, ex)
+    return _scope_test_expression(__context__, ex)
 end
 
 function Test.var"@inferred"(
         __context__::JL.MacroContext, allow::SyntaxTree, ex::SyntaxTree
     )
-    return JL.@ast(__context__, __context__.macrocall::SyntaxTree,
-        [:block allow ex])
+    return _scope_test_expression(__context__, allow, ex)
 end
 
 function Test.var"@inferred"(__context__::JL.MacroContext, args::SyntaxTree...)
@@ -1540,6 +1555,29 @@ function Test.var"@inferred"(__context__::JL.MacroContext, args::SyntaxTree...)
     push_macro_error!(mc, "`@inferred` expects one or two arguments: `[allow] ex`")
     isempty(args) && return JL.@ast(__context__, mc, nothing::value)
     return JL.@ast(__context__, mc, [:block args...])
+end
+
+function _catch_test_exception(ctx::JL.MacroContext, exs::SyntaxTree...)
+    src = _macro_generated_source(ctx)
+    return JL.@ast(ctx, src, [:try [:block exs...] false::value [:block]])
+end
+
+function _discard_test_expression_value(ctx::JL.MacroContext, exs::SyntaxTree...)
+    src = _macro_generated_source(ctx)
+    return JL.@ast(ctx, src, [:block
+        _catch_test_exception(ctx, exs...)
+        [:call [:top "inferencebarrier"::identifier] nothing::value]])
+end
+
+function _preserve_test_expression_value(ctx::JL.MacroContext, exs::SyntaxTree...)
+    src = _macro_generated_source(ctx)
+    return JL.@ast(ctx, src, [:call [:top "inferencebarrier"::identifier]
+        _catch_test_exception(ctx, exs...)])
+end
+
+function _scope_test_expression(ctx::JL.MacroContext, exs::SyntaxTree...)
+    src = _macro_generated_source(ctx)
+    return JL.@ast(ctx, src, [:let [:block] [:block exs...]])
 end
 
 function _validate_test_kw(kw::SyntaxTree)
@@ -1623,24 +1661,34 @@ function Test.var"@testset"(__context__::JL.MacroContext, args::SyntaxTree...)
     if JS.head(body) === :for && JS.numchildren(body) == 2
         # The real macro evaluates them per iteration, where the loop variables are
         # visible. The user-written body runs in a nested `try` scope, so its
-        # assignments don't capture same-named identifiers in these values.
+        # assignments don't capture same-named identifiers in these values, and the
+        # exception thrown by it is caught per iteration.
+        iteration = _catch_test_exception(__context__,
+            JL.@ast(__context__, body[2], [:let [:block] body[2]]))
         body = JL.@ast(__context__, body,
             [:for body[1]
                 [:block
                     setup...
-                    [:let [:block] body[2]]]])
+                    iteration]])
         empty!(setup)
     end
 
     # Wrap the body in a `let` block to reproduce the local scope the real
     # macro creates via `try`/`catch` — without it, bindings would leak into
     # the enclosing scope and sibling testsets would share names.
-    return JL.@ast(__context__, mc,
+    scoped = JL.@ast(__context__, mc,
+        [:let
+            [:block]            # empty bindings list
+            [:block body]])
+    # The `let` form propagates the exception thrown by the body, and returns its value.
+    JS.head(body) === :let && return JL.@ast(__context__, mc, [:block setup... scoped])
+    JS.head(body) === :for || (scoped = _catch_test_exception(__context__, scoped))
+    src = _macro_generated_source(__context__)
+    return JL.@ast(__context__, src,
         [:block
             setup...
-            [:let
-                [:block]            # empty bindings list
-                [:block body]]])
+            scoped
+            [:call [:top "inferencebarrier"::identifier] nothing::value]])
 end
 
 function _validate_testset_option(arg::SyntaxTree)

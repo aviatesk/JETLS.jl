@@ -3752,15 +3752,30 @@ end
         @test isempty(unreachable)
     end
 
-    # `@test_throws` catches the exception thrown by the tested expression
-    let diagnostics = get_lowering_diagnostics("""
-        @testset "foo" begin
-            @test_throws ErrorException error("boom")
-            @test true
-        end
-        """; context_module=Test)
+    # Test.jl macros that catch the exception thrown by the tested expression keep the code
+    # after them reachable, unlike the ones that propagate it
+    for (test, reachable) in (
+            ("@test_throws ErrorException error(\"boom\")", true),
+            ("@test_broken error(\"boom\")", true),
+            ("@test error(\"boom\") broken=true", true),
+            ("@test error(\"boom\") skip=true", true),
+            ("@test_skip error(\"boom\")", true),
+            ("@test_logs (:warn, \"boom\") error(\"boom\")", true),
+            ("@test_deprecated error(\"boom\")", true),
+            ("@testset \"inner\" begin error(\"boom\") end", true),
+            ("@testset \"inner \$i\" for i in 1:2 error(\"boom\") end", true),
+            ("@test_warn \"boom\" error(\"boom\")", false),
+            ("@test_nowarn error(\"boom\")", false),
+            ("@inferred error(\"boom\")", false),
+            ("@testset let v = 1; error(\"boom\") end", false))
+        diagnostics = get_lowering_diagnostics("""
+            @testset "foo" begin
+                $test
+                @test true
+            end
+            """; context_module=Test)
         unreachable = filter(d -> d.code == JETLSCore.LOWERING_UNREACHABLE_CODE, diagnostics)
-        @test isempty(unreachable)
+        @test isempty(unreachable) == reachable
     end
 end
 
