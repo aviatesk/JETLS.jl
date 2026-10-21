@@ -1789,6 +1789,31 @@ module TestDeprecatedBindingAltOwner
 const old_value = 1 # the same value as `TestDeprecatedBindingImportOwner.old_value`
 end
 
+module TestDeprecatedFunctionOwner
+new_func(x) = x
+Base.@deprecate old_func(x) new_func(x)
+Base.@deprecate renamed_func new_func
+Base.@deprecate partial_func(x::Int) new_func(x)
+partial_func(x::String) = x
+Base.@deprecate multi_func(x::Int) new_func(x)
+Base.@deprecate multi_func(x::String) new_func(x)
+Base.@deprecate default_func(x, y = 1; z = 2) new_func(x)
+export conditional_func, noinline_func
+@noinline noinline_func(x) = x
+@noinline function conditional_func(x; old::Bool = false)
+    old && Base.depwarn("`old` is deprecated", :conditional_func)
+    return x
+end
+end
+
+module TestDeprecatedFunctionUser
+using ..TestDeprecatedFunctionOwner
+end
+
+module TestDeprecatedFunctionImporter
+using ..TestDeprecatedFunctionOwner: old_func
+end
+
 get_deprecated_binding_diagnostics(text::AbstractString, context_module::Module) =
     get_lowering_diagnostics(text;
         code = JETLSCore.LOWERING_DEPRECATED_BINDING_CODE, context_module)
@@ -1964,31 +1989,69 @@ get_deprecated_macro_diagnostics(text::AbstractString, context_module::Module) =
     @testset "before full-analysis" begin
         @test isempty(get_lowering_diagnostics("f() = old_value"; code = JETLSCore.LOWERING_DEPRECATED_BINDING_CODE, context_module = nothing))
     end
+end
 
-    @testset "cache" begin
-        cache = JETLSCore.DeprecatedBindingCache()
-        world = Base.get_world_counter()
-        deprecated = JETLSCore.find_deprecated_global!(cache, TestDeprecatedBindingUser, :old_value, world)
-        @test deprecated isa Core.Binding
-        @test deprecated.globalref == GlobalRef(TestDeprecatedBindingOwner, :old_value)
-        @test JETLSCore.find_deprecated_global!(cache, TestDeprecatedBindingUser, :new_value, world) === nothing
-        world_cache = cache.worlds[world]
-        @test world_cache[(TestDeprecatedBindingUser, :old_value)] === deprecated
-        @test world_cache[(TestDeprecatedBindingUser, :new_value)] === nothing
+get_deprecated_function_diagnostics(text::AbstractString, context_module::Module) =
+    get_lowering_diagnostics(text;
+        code = JETLSCore.LOWERING_DEPRECATED_FUNCTION_CODE, context_module)
 
-        # only the latest worlds are kept
-        max_worlds = JETLSCore.DEPRECATED_BINDING_CACHE_MAX_WORLDS
-        worlds = [world - i for i = max_worlds:-1:0]
-        for w in worlds
-            JETLSCore.find_deprecated_global!(cache, TestDeprecatedBindingUser, :new_value, w)
+@testset HierarchicalTestSet "deprecated function detection" begin
+    @testset "function whose methods are all deprecated" begin
+        let diagnostics = get_deprecated_function_diagnostics("f(x) = old_func(x)", TestDeprecatedFunctionUser)
+            @test length(diagnostics) == 1
+            diagnostic = only(diagnostics)
+            @test diagnostic.source == JETLSCore.DIAGNOSTIC_SOURCE_LIVE
+            @test diagnostic.severity == DiagnosticSeverity.Information
+            @test DiagnosticTag.Deprecated in diagnostic.tags
+            @test diagnostic.message == "`old_func(x)` is deprecated, use `new_func(x)` instead."
+            @test diagnostic.range.start.character == sizeof("f(x) = ")
+            @test diagnostic.range.var"end".character == sizeof("f(x) = old_func")
         end
-        @test sort!(collect(keys(cache.worlds))) == worlds[2:end]
+        # `@deprecate` without a signature
+        let diagnostics = get_deprecated_function_diagnostics("f(x) = renamed_func(x)", TestDeprecatedFunctionUser)
+            @test length(diagnostics) == 1
+            @test only(diagnostics).message == "`renamed_func` is deprecated, use `new_func` instead."
+        end
+        # the methods for default arguments call the deprecated one
+        let diagnostics = get_deprecated_function_diagnostics("f(x) = default_func(x)", TestDeprecatedFunctionUser)
+            @test length(diagnostics) == 1
+            @test only(diagnostics).message == "`default_func(x, y = 1; z = 2)` is deprecated, use `new_func(x)` instead."
+        end
+        let diagnostics = get_deprecated_function_diagnostics("f(x) = multi_func(x)", TestDeprecatedFunctionUser)
+            @test length(diagnostics) == 1
+            message = only(diagnostics).message
+            @test startswith(message, "All methods of `$(TestDeprecatedFunctionOwner).multi_func` are deprecated:\n")
+            @test occursin("`multi_func(x::Int)` is deprecated, use `new_func(x)` instead.", message)
+            @test occursin("`multi_func(x::String)` is deprecated, use `new_func(x)` instead.", message)
+        end
+        @test length(get_deprecated_function_diagnostics("f(xs) = map(old_func, xs)", TestDeprecatedFunctionUser)) == 1
+        @test length(get_deprecated_function_diagnostics("f(x) = TestDeprecatedFunctionOwner.old_func(x)", TestDeprecatedFunctionUser)) == 1
+        @test length(get_deprecated_function_diagnostics("f(a, p) = Base.permute!!(a, p)", TestDeprecatedFunctionUser)) == 1
+        @test isempty(get_deprecated_binding_diagnostics("f(x) = old_func(x)", TestDeprecatedFunctionUser))
+    end
 
-        state = JETLSCore.ServerState()
-        JETLSCore.find_deprecated_global!(state.deprecated_binding_cache, TestDeprecatedBindingUser, :old_value, world)
-        @test !isempty(state.deprecated_binding_cache.worlds)
-        JETLSCore.clear_deprecated_binding_cache!(state)
-        @test isempty(state.deprecated_binding_cache.worlds)
+    @testset "function with methods that are not deprecated" begin
+        @test isempty(get_deprecated_function_diagnostics("f(x) = partial_func(x)", TestDeprecatedFunctionUser))
+        @test isempty(get_deprecated_function_diagnostics("f(x) = conditional_func(x)", TestDeprecatedFunctionUser))
+        @test isempty(get_deprecated_function_diagnostics("f(x) = noinline_func(x)", TestDeprecatedFunctionUser))
+        @test isempty(get_deprecated_function_diagnostics("f(x) = TestDeprecatedFunctionOwner.new_func(x)", TestDeprecatedFunctionUser))
+    end
+
+    @testset "roots of the methods defined by `@deprecate`" begin
+        # The roots are checked so that the code of other `@noinline` methods is not decompressed
+        @test JETLSCore.has_depwarn_root(only(methods(TestDeprecatedFunctionOwner.old_func)))
+        @test !JETLSCore.has_depwarn_root(only(methods(TestDeprecatedFunctionOwner.noinline_func)))
+        let m = only(methods(TestDeprecatedFunctionOwner.renamed_func))
+            @test !JETLSCore.has_depwarn_root(m)
+            @test JETLSCore.kwbody_depwarn_message(m, Base.get_world_counter()) == "`renamed_func` is deprecated, use `new_func` instead."
+        end
+    end
+
+    @testset "explicitly imported function whose methods are all deprecated" begin
+        # reported at the uses, where Julia warns, rather than at the import
+        @test isempty(get_deprecated_function_diagnostics("using ..TestDeprecatedFunctionOwner: old_func", TestDeprecatedFunctionImporter))
+        @test isempty(get_deprecated_binding_diagnostics("using ..TestDeprecatedFunctionOwner: old_func", TestDeprecatedFunctionImporter))
+        @test length(get_deprecated_function_diagnostics("f(x) = old_func(x)", TestDeprecatedFunctionImporter)) == 1
     end
 end
 

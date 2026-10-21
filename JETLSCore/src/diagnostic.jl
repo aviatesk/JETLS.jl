@@ -1379,7 +1379,10 @@ end
 # This analysis reports `lowering/deprecated-binding` for accesses to bindings deprecated by
 # `Base.deprecate` (e.g. through `@deprecate_binding`), both by name and as `Mod.name`.
 # As with Julia's deprecation warning, a binding accessed through an explicit import is
-# reported at the import instead, by `analyze_deprecated_bindings0!`.
+# reported at the import instead, by `analyze_deprecated_bindings0!`. The analysis also
+# reports `lowering/deprecated-function` for uses of functions whose methods are all
+# deprecated by `@deprecate`, at the uses even through an explicit import, since Julia warns
+# when they are called.
 function analyze_deprecated_bindings!(
         diagnostics::Vector{Diagnostic}, fi::FileInfo, ctx3::JL.VariableAnalysisContext,
         st3::SyntaxTree, binding_occurrences::Dict{JL.BindingInfo,Set{BindingOccurrence}},
@@ -1390,21 +1393,40 @@ function analyze_deprecated_bindings!(
         binfo.kind === :global || continue
         bmod = @something binfo.mod continue
         all(o -> o.kind === :use, occurrences) || continue
-        deprecated = @something find_deprecated_global!(cache, bmod, Symbol(binfo.name), world) continue
-        message = deprecated_binding_message(deprecated, world, postprocessor)
+        (code, message) = @something deprecated_use(cache, bmod, Symbol(binfo.name), world, postprocessor) continue
         for occ in occurrences
-            report_deprecated_binding!(diagnostics, reported, fi, occ.tree, message)
+            report_deprecated_use!(diagnostics, reported, fi, occ.tree, code, message)
         end
     end
     traverse(st3) do st
         is_getproperty_call3(st) || return nothing
         mod = @something resolve_lowered_module(ctx3, st[2], world) return nothing
-        deprecated = @something find_deprecated_global!(cache, mod, Symbol(name_val(st[3])), world) return nothing
-        message = deprecated_binding_message(deprecated, world, postprocessor)
-        report_deprecated_binding!(diagnostics, reported, fi, st[3], message)
+        (code, message) = @something deprecated_use(cache, mod, Symbol(name_val(st[3])), world, postprocessor) return nothing
+        report_deprecated_use!(diagnostics, reported, fi, st[3], code, message)
         return nothing
     end
     return diagnostics
+end
+
+# The code and message of the diagnostic for a use of the global `mod.name`, or `nothing`
+function deprecated_use(
+        cache::DeprecatedBindingCache, mod::Module, name::Symbol, world::UInt,
+        postprocessor::LSPostProcessor
+    )
+    deprecated = find_deprecated_global!(cache, mod, name, world)
+    if deprecated !== nothing
+        message = deprecated_binding_message(deprecated, world, postprocessor)
+        return LOWERING_DEPRECATED_BINDING_CODE, message
+    end
+    message = @something find_deprecated_function!(cache, mod, name, world) return nothing
+    return LOWERING_DEPRECATED_FUNCTION_CODE, postprocessor(message)
+end
+
+function is_deprecated_global!(
+        cache::DeprecatedBindingCache, mod::Module, name::Symbol, world::UInt
+    )
+    return find_deprecated_global!(cache, mod, name, world) !== nothing ||
+        find_deprecated_function!(cache, mod, name, world) !== nothing
 end
 
 # The worlds kept in a `DeprecatedBindingCache`. Contexts without an analysis use the latest
@@ -1414,13 +1436,29 @@ const DEPRECATED_BINDING_CACHE_MAX_WORLDS = 8
 function find_deprecated_global!(
         cache::DeprecatedBindingCache, mod::Module, name::Symbol, world::UInt
     )
-    key = (mod, name)
+    return cached_deprecation!(wc -> wc.bindings, cache, (mod, name), world) do
+        find_deprecated_global(mod, name, world)
+    end
+end
+
+function find_deprecated_function!(
+        cache::DeprecatedBindingCache, mod::Module, name::Symbol, world::UInt
+    )
+    return cached_deprecation!(wc -> wc.functions, cache, (mod, name), world) do
+        find_deprecated_function(mod, name, world)
+    end
+end
+
+function cached_deprecation!(
+        compute, entries, cache::DeprecatedBindingCache, key::Tuple{Module,Symbol},
+        world::UInt
+    )
     cached = @lock cache.lock begin
         world_cache = get(cache.worlds, world, nothing)
-        world_cache === nothing ? missing : get(world_cache, key, missing)
+        world_cache === nothing ? missing : get(entries(world_cache), key, missing)
     end
     cached === missing || return cached
-    deprecated = find_deprecated_global(mod, name, world)
+    deprecation = compute()
     @lock cache.lock begin
         world_cache = get(cache.worlds, world, nothing)
         if world_cache === nothing
@@ -1429,9 +1467,9 @@ function find_deprecated_global!(
             end
             world_cache = cache.worlds[world] = DeprecatedBindingWorldCache()
         end
-        world_cache[key] = deprecated
+        entries(world_cache)[key] = deprecation
     end
-    return deprecated
+    return deprecation
 end
 
 function clear_deprecated_binding_cache!(state::ServerState)
@@ -1450,8 +1488,7 @@ end
 # deprecation warning, the resolution is not followed through an explicit import, whose
 # deprecation is reported at the import instead.
 function find_deprecated_binding(b::Core.Binding, world::UInt)
-    deprecated = nothing
-    visited = nothing
+    deprecated = visited = nothing
     while true
         bpart = Base.lookup_binding_partition(world, b)
         if bpart.kind & Base.PARTITION_FLAG_DEPRECATED ≠ 0
@@ -1468,6 +1505,96 @@ function find_deprecated_binding(b::Core.Binding, world::UInt)
             return deprecated
         end
     end
+end
+
+# The functions with more methods are not checked, since enumerating all methods of e.g. `+`
+# is far more expensive than finding out that there are more of them
+const DEPRECATED_FUNCTION_MAX_METHODS = 8
+
+# The message of the deprecation of the function bound to the global `mod.name` in `world`
+# when all of its methods are defined by `@deprecate`, or `nothing`. The methods are checked
+# on their roots first, so that the code of other `@noinline` methods is not decompressed.
+function find_deprecated_function(mod::Module, name::Symbol, world::UInt)
+    Base.invoke_in_world(world, isdefinedglobal, mod, name)::Bool || return nothing
+    f = global_const_value(convert(Core.Binding, GlobalRef(mod, name)), world)
+    f isa Function || return nothing
+    matches = @something Base._methods_by_ftype(
+        Tuple{typeof(f),Vararg{Any}}, DEPRECATED_FUNCTION_MAX_METHODS, world) return nothing
+    messages = String[]
+    others = nothing
+    for match in matches
+        m = (match::Core.MethodMatch).method
+        # `@deprecate` marks its methods `@noinline`, which is checked without decompression
+        CC.is_declared_noinline(m) || return nothing
+        if has_depwarn_root(m)
+            message = @something depwarn_message(Base.uncompressed_ast(m)) return nothing
+            push!(messages, message)
+        else
+            message = kwbody_depwarn_message(m, world)
+            if message === nothing
+                others = push!(@something(others, Method[]), m)
+            else
+                push!(messages, message)
+            end
+        end
+    end
+    isempty(messages) && return nothing
+    if others !== nothing
+        for m in others
+            # `@deprecate` defines methods for default arguments that call the other ones
+            calls_self = any(Base.uncompressed_ast(m).code) do @nospecialize stmt
+                Meta.isexpr(stmt, :call) && stmt.args[1] === Core.SlotNumber(1)
+            end
+            calls_self || return nothing
+        end
+    end
+    unique!(messages)
+    length(messages) == 1 && return only(messages)
+    summary = "All methods of `$(parentmodule(f)).$(nameof(f))` are deprecated:"
+    return join((summary, messages...), '\n')::String
+end
+
+# The roots of a method hold the literals of its compressed code, such as the name `depwarn`
+# of `Base.depwarn` and the message passed to it
+has_depwarn_root(m::Method) =
+    isdefined(m, :roots) && any(@nospecialize(root) -> root === :depwarn, m.roots)
+
+# The method that `@deprecate` defines without a signature takes keyword arguments, and its
+# body function `#name#N`, whose name is in the roots of the method, prints the warning
+function kwbody_depwarn_message(m::Method, world::UInt)
+    isdefined(m, :roots) || return nothing
+    prefix = string('#', m.name, '#')
+    for root in m.roots
+        root isa Symbol && startswith(String(root), prefix) || continue
+        Base.invoke_in_world(world, isdefinedglobal, m.module, root)::Bool || continue
+        bodyf = global_const_value(convert(Core.Binding, GlobalRef(m.module, root)), world)
+        bodyf isa Function || continue
+        matches = @something Base._methods_by_ftype(
+            Tuple{typeof(bodyf),Vararg{Any}}, 1, world) return nothing
+        length(matches) == 1 || return nothing
+        body = (only(matches)::Core.MethodMatch).method
+        CC.is_declared_noinline(body) && has_depwarn_root(body) || return nothing
+        return depwarn_message(Base.uncompressed_ast(body))
+    end
+    return nothing
+end
+
+# The message of the deprecation warning that `src` prints first thing, as the methods
+# defined by `@deprecate` do, or `nothing`
+function depwarn_message(src::Core.CodeInfo)
+    for stmt in src.code
+        if stmt isa Core.GotoNode || stmt isa Core.GotoIfNot || stmt isa Core.ReturnNode ||
+           stmt isa Core.EnterNode
+            return nothing
+        elseif Meta.isexpr(stmt, :call) && length(stmt.args) ≥ 2
+            callee = stmt.args[1]
+            callee isa Core.SSAValue && (callee = src.code[callee.id])
+            callee isa GlobalRef && callee.mod === Base && callee.name === :depwarn || continue
+            message = stmt.args[2]
+            return message isa String ? message : nothing
+        end
+    end
+    return nothing
 end
 
 # Reports the deprecated bindings that `st0` refers to through syntax that lowering does not
@@ -1646,7 +1773,9 @@ function report_deprecated_global!(
     deprecated = @something find_deprecated_global!(cache, mod, Symbol(name_val(name_st)),
         world) return diagnostics
     message = deprecated_binding_message(deprecated, world, postprocessor)
-    return push!(diagnostics, deprecated_binding_diagnostic(jsobj_to_range(name_st, fi), message))
+    range = jsobj_to_range(name_st, fi)
+    return push!(diagnostics,
+        deprecation_diagnostic(range, LOWERING_DEPRECATED_BINDING_CODE, message))
 end
 
 # `Mod.name`, which is lowered to `getproperty(Mod, :name)`
@@ -1735,25 +1864,25 @@ function deprecated_binding_message(
     return postprocessor(message)
 end
 
-function report_deprecated_binding!(
+function report_deprecated_use!(
         diagnostics::Vector{Diagnostic}, reported::Set{Range}, fi::FileInfo,
-        st::SyntaxTree, message::String
+        st::SyntaxTree, code::String, message::String
     )
     provs = JS.flattened_provenance(st)
     is_from_user_ast(provs) || return diagnostics
     range = jsobj_to_range(last(provs), fi)
     range in reported && return diagnostics
     push!(reported, range)
-    return push!(diagnostics, deprecated_binding_diagnostic(range, message))
+    return push!(diagnostics, deprecation_diagnostic(range, code, message))
 end
 
-deprecated_binding_diagnostic(range::Range, message::String) = Diagnostic(;
+deprecation_diagnostic(range::Range, code::String, message::String) = Diagnostic(;
     range,
     severity = DiagnosticSeverity.Information,
     message,
     source = DIAGNOSTIC_SOURCE_LIVE,
-    code = LOWERING_DEPRECATED_BINDING_CODE,
-    codeDescription = diagnostic_code_description(LOWERING_DEPRECATED_BINDING_CODE),
+    code,
+    codeDescription = diagnostic_code_description(code),
     tags = DiagnosticTag.Ty[DiagnosticTag.Deprecated])
 
 # This analysis reports `lowering/undef-local-var` on a change basis, based on

@@ -431,8 +431,8 @@ function global_completions!(
             kind = CompletionItemKind.Function
         end
         is_live_only = name in live_only_names
-        is_deprecated = !is_live_only && find_deprecated_global!(
-            state.deprecated_binding_cache, context_module, name, world) !== nothing
+        is_deprecated = !is_live_only && is_deprecated_global!(
+            state.deprecated_binding_cache, context_module, name, world)
         if is_deprecated
             sortText = max_sort_text4
         elseif name in prioritized_names

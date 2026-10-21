@@ -78,6 +78,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   As with the warning Julia prints, a deprecated binding imported explicitly, as with `using Shapes: Point`, is reported at the import rather than at its uses.
   Global completion also lists such bindings after the other candidates and marks them as deprecated, which editors typically render with a strikethrough.
 
+- Added the [`lowering/deprecated-function`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/deprecated-function) diagnostic that reports uses of functions whose methods are all deprecated with `Base.@deprecate`, both by name and as `Module.name`, with the warning Julia prints when they are called:
+  ```julia
+  using Geometry # deprecates `distance` with `Base.@deprecate distance(p, q) euclidean(p, q)`
+
+  nearest(p, points) = argmin(q -> distance(p, q), points) # `distance(p, q)` is deprecated, use `euclidean(p, q)` instead.
+  ```
+  Unlike deprecated bindings, such functions are reported at their uses even when imported explicitly, since Julia warns when they are called. Functions with only some of their methods deprecated are not reported.
+  Global completion also lists such functions after the other candidates and marks them as deprecated.
+
 - Added the [`config/deprecated-value`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/config/deprecated-value) warning on [diagnostic patterns](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/diagnostic/patterns) that match the deprecated `inference/non-boolean-cond` code literally (`match_by = "code"` and `match_type = "literal"`), with a quick fix that replaces it with `inference/type-error/non-bool-cond`.
   Like other deprecated settings, such patterns are also listed in the message shown when JETLS loads the configuration, with a "Fix all" action.
 
