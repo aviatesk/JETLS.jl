@@ -789,6 +789,50 @@ end
         end
     end
 
+    @testset "qualified access rename" begin
+        let code = """
+            │foo│() = 42
+            macro │mymacro│() end
+            bar() = (test_rename.│foo│(), test_rename.│@│mymacro│())
+            """
+            (; positions, furi, rename_binding) = global_rename_testcase(
+                server, code, 9, @__MODULE__; register_file=true)
+            let (; result, error) = rename_binding(positions[1], "qux")
+                @test result isa WorkspaceEdit && isnothing(error)
+                @test Set(edit.range for edit in result.changes[furi]) == Set((
+                    Range(; start=positions[1], var"end"=positions[2]),
+                    Range(; start=positions[5], var"end"=positions[6])))
+            end
+            # `@` at the qualified call site is preserved
+            let (; result, error) = rename_binding(positions[3], "newmacro")
+                @test result isa WorkspaceEdit && isnothing(error)
+                @test Set(edit.range for edit in result.changes[furi]) == Set((
+                    Range(; start=positions[3], var"end"=positions[4]),
+                    Range(; start=positions[8], var"end"=positions[9])))
+            end
+        end
+
+        # qualified macro names spelled with MICRO SIGN (normalized to GREEK SMALL LETTER MU)
+        # or `var"..."`
+        let code = """
+            macro │\u03bcmacro() end
+            test_rename.@\u03bcmacro()
+            test_rename.@\u00b5macro()
+            test_rename.@var"\u03bcmacro"()
+            """
+            (; fi, positions, furi, rename_binding) = global_rename_testcase(
+                server, code, 1, @__MODULE__; register_file=true)
+            (; result, error) = rename_binding(only(positions), "newmacro")
+            @test result isa WorkspaceEdit && isnothing(error)
+            @test apply_edits(fi, result.changes[furi]) == """
+                macro newmacro() end
+                test_rename.@newmacro()
+                test_rename.@newmacro()
+                test_rename.@var"newmacro"()
+                """
+        end
+    end
+
     @testset "import/using rename" begin
         # Renaming a bare imported name inserts ` as newname` at the import
         # site (preserving the source name) and replaces local uses.

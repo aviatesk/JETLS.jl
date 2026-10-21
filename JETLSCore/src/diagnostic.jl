@@ -1699,37 +1699,6 @@ function report_deprecated_global!(
         deprecation_diagnostic(range, LOWERING_DEPRECATED_BINDING_CODE, message))
 end
 
-# `Mod.name`, which is lowered to `getproperty(Mod, :name)`
-is_getproperty_call3(st3::SyntaxTree) =
-    JS.head(st3) === :call && JS.numchildren(st3) == 3 &&
-    JS.head(st3[1]) === :top && name_val(st3[1]) == "getproperty" &&
-    JS.head(st3[3]) === :symbol
-
-# The module that `st3` refers to when it is a global binding or a `Mod.name` chain of them
-function resolve_lowered_module(
-        ctx3::JL.VariableAnalysisContext, st3::SyntaxTree, world::UInt
-    )
-    if JS.head(st3) === :bindingid
-        binfo = JL.get_binding(ctx3, st3)
-        binfo.kind === :global || return nothing
-        mod = @something binfo.mod return nothing
-        name = Symbol(binfo.name)
-    elseif is_getproperty_call3(st3)
-        mod = @something resolve_lowered_module(ctx3, st3[2], world) return nothing
-        name = Symbol(name_val(st3[3]))
-    else
-        return nothing
-    end
-    return global_module(mod, name, world)
-end
-
-# The module bound to the global `mod.name` in `world`, or `nothing`
-function global_module(mod::Module, name::Symbol, world::UInt)
-    Base.invoke_in_world(world, isdefinedglobal, mod, name)::Bool || return nothing
-    val = global_const_value(convert(Core.Binding, GlobalRef(mod, name)), world)
-    return val isa Module ? val : nothing
-end
-
 # The partition of a constant implicitly imported through `using` holds only the constant,
 # and up to Julia 1.13 not its deprecation either, so find the binding it was imported from
 # among the exports of the used modules. `Base.binding_module` is not used for this, since
@@ -2730,8 +2699,7 @@ function compute_unit_def_used_names(
             is_cancelled(cancel_flag) && return traversal_terminator
             binding_occurrences = @something get_binding_occurrences!(
                 state, search_uri, search_fi, st0) return
-            context_module = get_context_module(state, search_uri, offset_to_xy(search_fi, JS.first_byte(st0)))
-            update_def_used_names!(mod_def_used_names, context_module, binding_occurrences)
+            update_def_used_names!(mod_def_used_names, binding_occurrences)
         end
     end
     return mod_def_used_names
@@ -2750,18 +2718,19 @@ function merge_def_used_names!(
 end
 
 function update_def_used_names!(
-        mod_def_used_names::Dict{Module,DefUsedNames}, context_module::Module,
+        mod_def_used_names::Dict{Module,DefUsedNames},
         binding_occurrences::BindingOccurrencesResult
     )
     for (binfo_key, occurrences) in binding_occurrences
         binfo_key.kind === :global || continue
+        mod = @something binfo_key.mod continue
         has_method_def = any(o -> o.kind === :method_def, occurrences)
-        if any(o -> o.kind === :use, occurrences)
-            def_used_names = get!(DefUsedNames, mod_def_used_names, context_module)
+        if any(o -> o.kind === :use || o.kind === :qualified_method_def, occurrences)
+            def_used_names = get!(DefUsedNames, mod_def_used_names, mod)
             push!(def_used_names.used, binfo_key.name)
             has_method_def && push!(def_used_names.method_def, binfo_key.name)
         elseif any(is_definition_occurrence, occurrences)
-            def_used_names = get!(DefUsedNames, mod_def_used_names, context_module)
+            def_used_names = get!(DefUsedNames, mod_def_used_names, mod)
             push!(def_used_names.def, binfo_key.name)
             has_method_def && push!(def_used_names.method_def, binfo_key.name)
         end
@@ -2977,7 +2946,7 @@ function compute_per_file_diagnostics(
                 get_binding_occurrences!(server.state, uri, file_info, st0; lookup_func)
             end
             binding_occurrences !== nothing &&
-                update_def_used_names!(def_used_names, context_module, binding_occurrences)
+                update_def_used_names!(def_used_names, binding_occurrences)
         end
     end
     return PerFileDiagnosticsResult(diagnostics, candidates, def_used_names, explicit_imports)

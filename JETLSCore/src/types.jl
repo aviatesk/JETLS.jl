@@ -968,7 +968,8 @@ end
 const AnyBindingOccurrence = Union{BindingOccurrence,CachedBindingOccurrence}
 
 is_definition_occurrence(occ::AnyBindingOccurrence) = is_definition_occurrence_kind(occ.kind)
-is_definition_occurrence_kind(kind::Symbol) = kind === :def || kind === :method_def
+is_definition_occurrence_kind(kind::Symbol) =
+    kind === :def || kind === :method_def || kind === :qualified_method_def
 
 abstract type AbstractCompletionResolverInfo end
 

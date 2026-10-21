@@ -126,6 +126,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   invoke_double(x::Int) = @invoke double(x::Integer) # MethodError: no matching method found `double(::Integer)`
   ```
 
+- Find references, document highlight, and rename on a global binding now also cover its uses qualified with a module, such as `Module.name` and `Module.@macro`.
+  Invoking these features on such a qualified name itself is not supported yet (https://github.com/aviatesk/JETLS.jl/issues/1009).
+
 ### Fixed
 
 - Fixed false [`lowering/undef-global-var`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/undef-global-var) reports on non-constant globals that a script imports from a module defined in the script.

@@ -513,6 +513,7 @@ function compute_full_binding_occurrences(
         generated_resolutions = collect_generated_inert_resolutions(ctx3, st3, world)
         occs = compute_binding_occurrences(ctx3, st3, world;
             include_global_bindings=true, generated_resolutions)
+        collect_qualified_global_occurrences!(occs, ctx3, st3, world)
         collect_struct_inner_constructor_occurrences!(occs, ctx3, st0)
         collect_macrocall_occurrences!(
             occs, context_module, world, st0; soft_scope)
@@ -538,6 +539,58 @@ function collect_struct_inner_constructor_occurrences!(
         return true
     end
     return occurrences
+end
+
+# `name` in `Mod.name` refers to the global `name` of `Mod`, but lowering leaves it as the
+# symbol argument of a `getproperty` call, so record it when `Mod` resolves to a module.
+# The name of a qualified method definition like `Mod.name(x) = x`, which lowering passes
+# to `function_type`, is recorded as a `:qualified_method_def`: unlike an unqualified method
+# definition, it also looks up the binding in `Mod`, as a use does.
+function collect_qualified_global_occurrences!(
+        occurrences::Dict{JL.BindingInfo,Set{BindingOccurrence}},
+        ctx3::JL.VariableAnalysisContext, st3::SyntaxTree, world::UInt
+    )
+    method_def_ranges = Set{UnitRange{Int}}()
+    traverse(st3) do st3′::SyntaxTree
+        JS.head(st3′) === :function_type && JS.numchildren(st3′) ≥ 1 || return nothing
+        callee = st3′[1]
+        # `Mod.T{S}(x) = x` defines a method of `Mod.T`, not of `S` in its type arguments
+        while (JS.head(callee) === :call && JS.numchildren(callee) ≥ 2 &&
+               JS.head(callee[1]) === :core && get_name_val(callee[1]) == "apply_type")
+            callee = callee[2]
+        end
+        is_getproperty_call3(callee) && push!(method_def_ranges, JS.byte_range(callee))
+        return nothing
+    end
+    traverse(st3) do st3′::SyntaxTree
+        is_getproperty_call3(st3′) || return nothing
+        mod = @something resolve_lowered_module(ctx3, st3′[2], world) return nothing
+        name = name_val(st3′[3])
+        provs = JS.flattened_provenance(st3′[3])
+        is_from_user_ast(provs) || return nothing
+        name_node = last(provs)
+        id_node = @something name_identifier(name_node) return nothing
+        binding_source_name_matches(name, name_val(id_node)) || return nothing
+        binfo = surface_global_binfo(name, name_node, mod)
+        target_set = get!(Set{BindingOccurrence}, occurrences, binfo)
+        kind = JS.byte_range(st3′) in method_def_ranges ? :qualified_method_def : :use
+        push!(target_set, BindingOccurrence(name_node, kind))
+        return nothing
+    end
+    return occurrences
+end
+
+# The identifier of the name `node`, inside the `macro_name` of `@m` and the `var` of
+# `var"x"`, which keep the `@` and the quoting tokens as their children
+function name_identifier(node::SyntaxTree)
+    if JS.head(node) === :macro_name && JS.numchildren(node) ≥ 1
+        node = node[JS.numchildren(node)]
+    end
+    JS.head(node) === :var || return JS.head(node) === :identifier ? node : nothing
+    for i = 1:JS.numchildren(node)
+        JS.head(node[i]) === :identifier && return node[i]
+    end
+    return nothing
 end
 
 # Standalone `BindingInfo` key (id 0, never registered with a `Bindings`) for
@@ -618,7 +671,7 @@ function collect_macrocall_occurrences!(
         should_resolve_macrocall(
             context_module, world, st0, JS.byte_range(st)) || return traversal_no_recurse
         macrocall_name = st[1]
-        (; ctx3) = try
+        (; ctx3, st3) = try
             jl_lower_for_scope_resolution(
                 context_module, world, macrocall_name; soft_scope)
         catch err
@@ -631,6 +684,7 @@ function collect_macrocall_occurrences!(
                 push!(target_set, BindingOccurrence(JL.binding_ex(ctx3, binfo), :use))
             end
         end
+        collect_qualified_global_occurrences!(occurrences, ctx3, st3, world)
         return nothing # Don't TraversalNoRecurse since macro calls can be nested
     end
     return occurrences
@@ -642,6 +696,8 @@ function collect_resolved_inert_globals!(
     )
     resolved_occurrences = compute_binding_occurrences(
         resolution.ctx3, resolution.st3, world; include_global_bindings=true)
+    collect_qualified_global_occurrences!(
+        resolved_occurrences, resolution.ctx3, resolution.st3, world)
     for (binfo, boccs) in resolved_occurrences
         binfo.kind === :global || continue
         binfo.is_internal && continue
