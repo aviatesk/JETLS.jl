@@ -92,6 +92,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   unit(i::CartesianIndex) = one(i) # `one(i::CartesianIndex)` is deprecated, use `oneunit(i)` instead.
   ```
   A call is reported when the methods that it matches are all deprecated, or, for a call split over a union of argument types, when the methods that it matches for some of the types are.
+  Method signature completion also lists deprecated methods after the other candidates and marks them as deprecated.
 
 - Added the [`config/deprecated-value`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/config/deprecated-value) warning on [diagnostic patterns](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/diagnostic/patterns) that match the deprecated `inference/non-boolean-cond` code literally (`match_by = "code"` and `match_type = "literal"`), with a quick fix that replaces it with `inference/type-error/non-bool-cond`.
   Like other deprecated settings, such patterns are also listed in the message shown when JETLS loads the configuration, with a "Fix all" action.

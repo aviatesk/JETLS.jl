@@ -64,6 +64,11 @@ function get_sort_text(offset::Int)
     return get(sort_texts, offset, max_sort_text)
 end
 
+function supports_deprecated_tag(state::ServerState)
+    tag_values = getcapability(state, :textDocument, :completion, :completionItem, :tagSupport, :valueSet)
+    return tag_values !== nothing && CompletionItemTag.Deprecated in tag_values
+end
+
 # Per-request shared context
 # ==========================
 
@@ -390,8 +395,7 @@ function global_completions!(
     live_only_names = setdiff!(live_names, all_names)
     append!(all_names, live_only_names)
 
-    tag_values = getcapability(state, :textDocument, :completion, :completionItem, :tagSupport, :valueSet)
-    tag_deprecated = tag_values !== nothing && CompletionItemTag.Deprecated in tag_values
+    tag_deprecated = supports_deprecated_tag(state)
 
     is_cancelled(comp_ctx.cancel_flag) && return false
     for name in all_names
@@ -920,7 +924,8 @@ function call_completions!(
         end
         method_sig_comp_info = (;
             resolver_id,
-            use_snippet = supports(state, :textDocument, :completion, :completionItem, :snippetSupport))
+            use_snippet = supports(state, :textDocument, :completion, :completionItem, :snippetSupport),
+            tag_deprecated = supports_deprecated_tag(state))
     else
         @assert should_complete_kwargs
         kwarg_comp_info = (;
@@ -940,7 +945,7 @@ function call_completions!(
         msig = @something get_sig_str(m, ca, world) continue
 
         if @isdefined(method_sig_comp_info) # i.e. should_complete_method_sigs
-            local (; resolver_id, use_snippet) = method_sig_comp_info
+            local (; resolver_id, use_snippet, tag_deprecated) = method_sig_comp_info
             msig_label = postprocessor(msig)
             base_text = make_insert_text(msig_label, num_existing_args, use_snippet)
             newText = if isnothing(base_text)
@@ -951,13 +956,19 @@ function call_completions!(
                 prefix * base_text
             end
             label = String(msig_label)
+            is_deprecated = deprecated_method_message(m, world) !== nothing
+            # deprecated methods follow the others, in the same order among themselves
+            sortText = get_sort_text(method_sig_sort_idx)
+            is_deprecated && (sortText = max_sort_text1 * sortText)
             items[label] = CompletionItem(;
                 label,
                 labelDetails = CompletionItemLabelDetails(; description = "method"),
                 kind = CompletionItemKind.Method,
+                tags = is_deprecated && tag_deprecated ?
+                    CompletionItemTag.Ty[CompletionItemTag.Deprecated] : nothing,
                 textEdit = TextEdit(; range=Range(pos, pos), newText),
                 insertTextFormat = use_snippet ? InsertTextFormat.Snippet : InsertTextFormat.PlainText,
-                sortText = get_sort_text(method_sig_sort_idx),
+                sortText,
                 data = MethodSignatureCompletionData(resolver_id, i),
             )
             method_sig_sort_idx += 1

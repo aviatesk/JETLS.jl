@@ -949,6 +949,10 @@ const new_value = 1
 Base.@deprecate_binding old_value new_value
 new_func(x) = x
 Base.@deprecate old_func(x) new_func(x)
+partial_func(x::String) = x
+Base.@deprecate partial_func(x::Int) new_func(x)
+default_func(x::String) = x
+Base.@deprecate default_func(x::Int, y = 1) new_func(x)
 end
 
 module completion_deprecated_user
@@ -1860,6 +1864,39 @@ get_newText(item::CompletionItem) =
             cnt[] = 1
         end
         @test cnt[] == 1
+    end
+
+    @testset "deprecated methods" begin
+        context = CompletionContext(;
+            triggerKind = CompletionTriggerKind.TriggerCharacter,
+            triggerCharacter = "(")
+        is_deprecated(item::CompletionItem) =
+            item.tags !== nothing && CompletionItemTag.Deprecated in item.tags
+        for tag_support in (true, false)
+            local cnt = Ref(0)
+            with_completion_items("partial_func(│";
+                    context, context_module = completion_deprecated_user, tag_support) do (; result)
+                deprecated_item = only(filter(item -> occursin("::Int", item.label), result.items))
+                other_item = only(filter(item -> occursin("::String", item.label), result.items))
+                @test is_deprecated(deprecated_item) == tag_support
+                @test !is_deprecated(other_item)
+                @test deprecated_item.sortText > other_item.sortText
+                cnt[] += 1
+            end
+            @test cnt[] == 1
+        end
+        # the method for the default argument as well
+        let cnt = Ref(0)
+            with_completion_items("default_func(│";
+                    context, context_module = completion_deprecated_user) do (; result)
+                deprecated_items = filter(item -> occursin("::Int", item.label), result.items)
+                @test length(deprecated_items) == 2
+                @test all(is_deprecated, deprecated_items)
+                @test !is_deprecated(only(filter(item -> occursin("::String", item.label), result.items)))
+                cnt[] += 1
+            end
+            @test cnt[] == 1
+        end
     end
 
     @testset "Tolerate invalid calls with `Union{}`-inferred call argument types" begin
