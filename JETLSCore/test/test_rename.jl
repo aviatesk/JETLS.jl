@@ -90,7 +90,7 @@ function local_rename_testcase(
         JETLSCore.check_syntax_tree0(fi)
         return result
     end
-    return (; positions, furi, rename_binding)
+    return (; fi, positions, furi, rename_binding)
 end
 
 function global_rename_testcase(
@@ -109,7 +109,18 @@ function global_rename_testcase(
         JETLSCore.check_syntax_tree0(fi)
         return result
     end
-    return (; positions, furi, rename_binding)
+    return (; fi, positions, furi, rename_binding)
+end
+
+# The text of `fi` with the `edits` applied
+function apply_edits(fi::JETLSCore.FileInfo, edits::Vector{TextEdit})
+    text = codeunits(JETLSCore.document_text(fi))
+    for edit in sort(edits; by = edit -> JETLSCore.xy_to_offset(fi, edit.range.start), rev = true)
+        first = JETLSCore.xy_to_offset(fi, edit.range.start)
+        last = JETLSCore.xy_to_offset(fi, edit.range.var"end")
+        text = [text[1:first-1]; codeunits(edit.newText); text[last:end]]
+    end
+    return String(text)
 end
 
 @testset "local_binding_rename_preparation" begin
@@ -247,6 +258,60 @@ end
                 end == 1
             end
         end
+    end
+
+    # names written without `var"..."` get it when the new name needs it
+    let code = """
+        function func()
+            var"│x" = 1
+            return x + 1
+        end
+        """
+        (; fi, positions, furi, rename_binding) = local_rename_testcase(server, code, 1, @__MODULE__)
+        (; result, error) = rename_binding(only(positions), "new x")
+        @test result isa WorkspaceEdit && isnothing(error)
+        @test apply_edits(fi, result.changes[furi]) == """
+            function func()
+                var"new x" = 1
+                return var"new x" + 1
+            end
+            """
+    end
+
+    # but operators don't, so that infix calls keep working
+    let code = """
+        let
+            var"│⊗"(a, b) = a
+            1 ⊗ 2
+        end
+        """
+        (; fi, positions, furi, rename_binding) = local_rename_testcase(server, code, 1, @__MODULE__)
+        (; result, error) = rename_binding(only(positions), "⊕")
+        @test result isa WorkspaceEdit && isnothing(error)
+        @test apply_edits(fi, result.changes[furi]) == """
+            let
+                var"⊕"(a, b) = a
+                1 ⊕ 2
+            end
+            """
+    end
+
+    # an operator replacing an identifier gets `var"..."` to be usable as an operand
+    let code = """
+        let
+            var"│x" = 2
+            x + 1
+        end
+        """
+        (; fi, positions, furi, rename_binding) = local_rename_testcase(server, code, 1, @__MODULE__)
+        (; result, error) = rename_binding(only(positions), "⊕")
+        @test result isa WorkspaceEdit && isnothing(error)
+        @test apply_edits(fi, result.changes[furi]) == """
+            let
+                var"⊕" = 2
+                var"⊕" + 1
+            end
+            """
     end
 
     @testset "static parameter rename" begin
@@ -553,6 +618,20 @@ end
                 @test rename_prep.placeholder == "mymacro"
             end
         end
+
+        # From `@var"..."` macrocall site, whose name is within the quotes
+        let code = """
+            macro var"my macro"(ex)
+                esc(ex)
+            end
+            @var"│my macro│" println("hello")
+            """
+            (; positions, prepare) = global_rename_preparation_testcase(state, code, 2, @__MODULE__)
+            rename_prep = prepare(positions[1])
+            @test !isnothing(rename_prep)
+            @test rename_prep.placeholder == "my macro"
+            @test rename_prep.range == Range(; start=positions[1], var"end"=positions[2])
+        end
     end
 end
 
@@ -628,6 +707,85 @@ end
                     @test all(edit -> edit.newText == "newmacro", edits)
                 end
             end
+        end
+    end
+
+    @testset "var\"...\" rename" begin
+        # `@var"..."` of a macro call is renamed within its quotes
+        let code = """
+            macro var"│old macro"() end
+            @var"old macro"()
+            """
+            (; fi, positions, furi, rename_binding) = global_rename_testcase(
+                server, code, 1, @__MODULE__; register_file=true)
+            (; result, error) = rename_binding(only(positions), "new macro")
+            @test result isa WorkspaceEdit && isnothing(error)
+            @test apply_edits(fi, result.changes[furi]) == """
+                macro var"new macro"() end
+                @var"new macro"()
+                """
+        end
+
+        # `var"@..."` referring to the function of a macro is renamed after its `@`
+        let code = """
+            macro var"│old macro"() end
+            impl = var"@old macro"
+            """
+            (; fi, positions, furi, rename_binding) = global_rename_testcase(
+                server, code, 1, @__MODULE__; register_file=true)
+            (; result, error) = rename_binding(only(positions), "new macro")
+            @test result isa WorkspaceEdit && isnothing(error)
+            @test apply_edits(fi, result.changes[furi]) == """
+                macro var"new macro"() end
+                impl = var"@new macro"
+                """
+        end
+
+        # names written without `var"..."` get it when the new name needs it
+        let code = """
+            macro var"│x"() end
+            @x()
+            var"y" = 1
+            f() = y
+            """
+            (; fi, positions, furi, rename_binding) = global_rename_testcase(
+                server, code, 1, @__MODULE__; register_file=true)
+            (; result, error) = rename_binding(only(positions), "new x")
+            @test result isa WorkspaceEdit && isnothing(error)
+            @test apply_edits(fi, result.changes[furi]) == """
+                macro var"new x"() end
+                @var"new x"()
+                var"y" = 1
+                f() = y
+                """
+        end
+        let code = """
+            var"│y" = 1
+            f() = y
+            """
+            (; fi, positions, furi, rename_binding) = global_rename_testcase(
+                server, code, 1, @__MODULE__; register_file=true)
+            (; result, error) = rename_binding(only(positions), "new y")
+            @test result isa WorkspaceEdit && isnothing(error)
+            @test apply_edits(fi, result.changes[furi]) == """
+                var"new y" = 1
+                f() = var"new y"
+                """
+        end
+
+        # so does the alias inserted at an import
+        let code = """
+            using Base: sin
+            var"│sin"(1)
+            """
+            (; fi, positions, furi, rename_binding) = global_rename_testcase(
+                server, code, 1, @__MODULE__; register_file=true)
+            (; result, error) = rename_binding(only(positions), "new sin")
+            @test result isa WorkspaceEdit && isnothing(error)
+            @test apply_edits(fi, result.changes[furi]) == """
+                using Base: sin as var"new sin"
+                var"new sin"(1)
+                """
         end
     end
 
