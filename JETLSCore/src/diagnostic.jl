@@ -2263,6 +2263,10 @@ function analyze_unreachable_code!(
     )
     isempty(unreachable_statements) && return
     traverse(st3) do st3′::SyntaxTree
+        if JS.head(st3′) === :trycatchelse
+            analyze_unreachable_else!(diagnostics, fi, st3′, unreachable_statements)
+            return nothing
+        end
         JS.head(st3′) === :block || return nothing
         nchildren = JS.numchildren(st3′)
         first_unreach_idx = 0
@@ -2310,19 +2314,61 @@ function analyze_unreachable_code!(
             delete_range = Range(;
                 start = terminator_lsp_range.var"end",
                 var"end" = last_range.var"end")
-            push!(diagnostics, Diagnostic(;
-                range = merged_range,
-                severity = DiagnosticSeverity.Information,
-                message = "Unreachable code",
-                source = DIAGNOSTIC_SOURCE_LIVE,
-                code = LOWERING_UNREACHABLE_CODE,
-                codeDescription = diagnostic_code_description(LOWERING_UNREACHABLE_CODE),
-                tags = DiagnosticTag.Ty[DiagnosticTag.Unnecessary],
-                data = DeleteRangeData(:unreachable_code, delete_range)))
+            push!(diagnostics, unreachable_code_diagnostic(merged_range, delete_range))
         end
         return nothing
     end
 end
+
+# An `else` block is unreachable as a whole when the try body always terminates, and the
+# per-block walk above never reports it since its parent is not a `:block`. Report the
+# statements of the `else` block in that case, with a delete range covering the whole
+# `else` clause up to the `finally` or `end` keyword that closes it, unless the `try`
+# itself is unreachable (its `catch` block is reachable whenever the `try` is) and thus
+# reported by an enclosing block.
+function analyze_unreachable_else!(
+        diagnostics::Vector{Diagnostic}, fi::FileInfo, st3::SyntaxTree,
+        unreachable_statements::Set{SyntaxTree}
+    )
+    JS.numchildren(st3) >= 3 || return nothing
+    is_unreachable_block(st3[2], unreachable_statements) && return nothing
+    is_unreachable_block(st3[3], unreachable_statements) || return nothing
+    provs = JL.flattened_provenance(st3[3])
+    is_from_user_ast(provs) || return nothing
+    else_block = last(provs)
+    ps = fi.parsed_stream
+    else_tc = @something prev_nontrivia(ps, JS.first_byte(else_block) - 1;
+        pass_newlines=true) return nothing
+    JS.kind(else_tc) === JS.K"else" || return nothing
+    last_tc = @something prev_nontrivia(ps, JS.last_byte(else_block);
+        pass_newlines=true) return nothing
+    # Nothing to report for an empty `else` block.
+    JS.first_byte(last_tc) > JS.last_byte(else_tc) || return nothing
+    first_tc = @something next_nontrivia(ps, JS.first_byte(else_block);
+        pass_newlines=true) return nothing
+    close_tc = @something next_nontrivia(ps, JS.last_byte(else_block) + 1;
+        pass_newlines=true) return nothing
+    JS.kind(close_tc) in (JS.K"finally", JS.K"end") || return nothing
+    range = byte_range_to_range(JS.first_byte(first_tc):JS.last_byte(last_tc), fi)
+    delete_range = byte_range_to_range(
+        JS.first_byte(else_tc):JS.first_byte(close_tc)-1, fi)
+    push!(diagnostics, unreachable_code_diagnostic(range, delete_range))
+    return nothing
+end
+
+is_unreachable_block(st3::SyntaxTree, unreachable_statements::Set{SyntaxTree}) =
+    JS.head(st3) === :block && JS.numchildren(st3) >= 1 &&
+    all(in(unreachable_statements), JS.children(st3))
+
+unreachable_code_diagnostic(range::Range, delete_range::Range) = Diagnostic(;
+    range,
+    severity = DiagnosticSeverity.Information,
+    message = "Unreachable code",
+    source = DIAGNOSTIC_SOURCE_LIVE,
+    code = LOWERING_UNREACHABLE_CODE,
+    codeDescription = diagnostic_code_description(LOWERING_UNREACHABLE_CODE),
+    tags = DiagnosticTag.Ty[DiagnosticTag.Unnecessary],
+    data = DeleteRangeData(:unreachable_code, delete_range))
 
 # `@goto`/`@label` resolution is normally validated by JuliaLowering's
 # `compile_body` (linear IR pass), which JETLS doesn't run. Mirror that

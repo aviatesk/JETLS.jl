@@ -3241,6 +3241,65 @@ end
         @test unreachable[1].range.start.line == 8
     end
 
+    # try/catch/else: try body returns → the `else` block is unreachable, and the quick fix
+    # deletes the whole `else` clause
+    let diagnostics = get_lowering_diagnostics("""
+        function foo()
+            try
+                return 1
+            catch
+                println("recover")
+            else
+                println("unreachable")
+                println("unreachable")
+            finally
+                println("cleanup")
+            end
+        end
+        """)
+        unreachable = filter(d -> d.code == JETLSCore.LOWERING_UNREACHABLE_CODE, diagnostics)
+        @test length(unreachable) == 1
+        r = unreachable[1].range
+        @test r.start.line == 6 && r.start.character == 8
+        @test r.var"end".line == 7 && r.var"end".character == 30
+        dr = unreachable[1].data.delete_range
+        @test dr.start.line == 5 && dr.start.character == 4
+        @test dr.var"end".line == 8 && dr.var"end".character == 4
+    end
+
+    # try/catch/else: an empty `else` block has no code to report
+    let diagnostics = get_lowering_diagnostics("""
+        function foo()
+            try
+                return 1
+            catch
+                println("recover")
+            else
+            end
+        end
+        """)
+        unreachable = filter(d -> d.code == JETLSCore.LOWERING_UNREACHABLE_CODE, diagnostics)
+        @test isempty(unreachable)
+    end
+
+    # try/catch/else: an unreachable `try` is reported once, as a whole
+    let diagnostics = get_lowering_diagnostics("""
+        function foo()
+            return 0
+            try
+                return 1
+            catch
+                println("recover")
+            else
+                println("unreachable")
+            end
+        end
+        """)
+        unreachable = filter(d -> d.code == JETLSCore.LOWERING_UNREACHABLE_CODE, diagnostics)
+        @test length(unreachable) == 1
+        @test unreachable[1].range.start.line == 2
+    end
+
     # try/finally: try body returns → unreachable
     let diagnostics = get_lowering_diagnostics("""
         function foo()

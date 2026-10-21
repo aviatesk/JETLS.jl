@@ -90,6 +90,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   ```
   The rest of the message shows what `Test` prints for the failure, such as the expression and the stack trace.
 
+- [`lowering/unreachable-code`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/unreachable-code) now also reports the code in the `else` block of a `try` whose body always exits, and its "Delete unreachable code" quick fix removes the whole `else` clause, including the `else` keyword:
+  ```julia
+  function f()
+      try
+          return compute()
+      catch
+          recover()
+      else
+          println("never runs") # now reported
+      end
+  end
+  ```
+
 ### Fixed
 
 - Fixed the messages of [`testrunner/test-failure`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/testrunner/test-failure) diagnostics losing their line breaks and formatting in clients that render diagnostic messages as Markdown, e.g. Sublime LSP: the expression and the stack trace are now shown in a code block.

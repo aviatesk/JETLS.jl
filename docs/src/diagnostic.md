@@ -1073,8 +1073,9 @@ end
 **Default severity**: `Information`
 
 Reported when code appears after a statement that always exits the
-current block, making subsequent code unreachable. The unreachable
-code is marked with the `Unnecessary` tag.[^unnecessary_tag]
+current block, making subsequent code unreachable. The code in the
+`else` block of a `try` whose body always exits is also reported. The
+unreachable code is marked with the `Unnecessary` tag.[^unnecessary_tag]
 
 Example:
 
@@ -1119,12 +1120,24 @@ function after_rethrow()
         println("unreachable")
     end
 end
+
+function unreachable_else()
+    try
+        return do_something()
+    catch
+        recover()
+    else
+        println("unreachable")
+    end
+end
 ```
 
 !!! tip "Code action available"
     A "Delete unreachable code" quick fix is available that removes
     the unreachable region along with surrounding whitespace, from
     the end of the terminating statement to the end of the dead code.
+    For an unreachable `else` block, it removes the whole `else` clause,
+    including the `else` keyword.
 
 !!! note "Caveat on noreturn functions"
     The analysis assumes that `error`, `rethrow`, and `exit` never return.
