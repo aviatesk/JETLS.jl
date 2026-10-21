@@ -148,6 +148,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   Such uses are now also included in references, rename edits, and document highlights.
   (Closed https://github.com/aviatesk/JETLS.jl/issues/1002)
 
+- Fixed false [`lowering/unused-assignment`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/unused-assignment) reports on required keyword arguments of methods where a later keyword's default value refers to an earlier keyword:
+  ```julia
+  function f(; a, b, c, d = "x", e = string(d)) # `a` and `b` were reported as never used
+      return (a, b, c, d, e)
+  end
+  ```
+  (Closed https://github.com/aviatesk/JETLS.jl/issues/996)
+
 ## 2026-10-18
 
 - Commit: [`8888185`](https://github.com/aviatesk/JETLS.jl/commit/8888185)

@@ -1757,6 +1757,32 @@ end
     end
 end
 
+@testset "unreachable assignments are not dead stores" begin
+    noreturn_syms = Symbol[:throw, :error, :rethrow, :exit]
+
+    let ds = get_dead_stores("""
+        function f()
+            error("x")
+            y = 1
+            error("z")
+            return y
+        end
+        """; allow_noreturn_optimization=noreturn_syms)
+        @test !haskey(ds, "y")
+    end
+
+    # The method called without keywords throws `UndefKeywordError(:a)` first, so the
+    # `let` locals created for the keywords after it are all unreachable.
+    let ds = get_dead_stores("""
+        function f(; a, b, c, d = "x", e = string(d))
+            return (a, b, c, d, e)
+        end
+        """; allow_noreturn_optimization=noreturn_syms)
+        @test !haskey(ds, "a")
+        @test !haskey(ds, "b")
+    end
+end
+
 end # @testset "dead store analysis" begin
 
 # --- Unreachable-statement analysis ---

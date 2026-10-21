@@ -2358,6 +2358,28 @@ end
             @test all(d -> d.code != JETLSCore.LOWERING_UNUSED_ASSIGNMENT_CODE, diagnostics)
         end
     end
+
+    @testset "assignment in unreachable code" begin
+        let diagnostics = get_lowering_diagnostics("""
+            function f()
+                error("x")
+                y = 1
+                error("z")
+                return y
+            end
+            """)
+            @test length(diagnostics) == 1
+            @test only(diagnostics).code == JETLSCore.LOWERING_UNREACHABLE_CODE
+        end
+    end
+
+    @testset "required keywords followed by a dependent default" begin
+        @test isempty(get_lowering_diagnostics("""
+            function f(; a, b, c, d = "x", e = string(d))
+                return (a, b, c, d, e)
+            end
+            """))
+    end
 end
 
 @testset HierarchicalTestSet "captured boxed variable detection" begin

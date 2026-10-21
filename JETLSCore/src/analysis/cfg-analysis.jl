@@ -874,6 +874,7 @@ Fields:
   `var_id`, avoiding O(blocks × candidates) scans during analysis
 - `exit_blocks::BitSet`: CFG blocks with no successors, used for
   must-execute queries during undef analysis
+- `reachable::BitSet`: CFG blocks reachable from the lambda entry
 """
 struct LambdaCFG
     lin::EventLinearizer
@@ -881,6 +882,7 @@ struct LambdaCFG
     closure_captured::Set{JL.IdTag}
     var_events::Dict{JL.IdTag, Vector{VarEvent}}
     exit_blocks::BitSet
+    reachable::BitSet
 end
 
 # Construct the `LambdaCFG` for `lambda_st3`.
@@ -931,7 +933,9 @@ function build_lambda_cfg(
         isempty(b.succs) && push!(exit_blocks, b.id)
     end
 
-    return LambdaCFG(lin, candidates, closure_captured, var_events, exit_blocks)
+    reachable = compute_reachable_blocks(lin.blocks)
+
+    return LambdaCFG(lin, candidates, closure_captured, var_events, exit_blocks, reachable)
 end
 
 # Reachability-based unreachable-statement detection on a built CFG. Adds to
@@ -940,9 +944,8 @@ end
 function analyze_unreachable!(
         unreachable_statements::Set{SyntaxTree}, cfg::LambdaCFG
     )
-    reachable = compute_reachable_blocks(cfg.lin.blocks)
     for rec in cfg.lin.statement_blocks
-        (rec.before_block in reachable || rec.after_block in reachable) && continue
+        (rec.before_block in cfg.reachable || rec.after_block in cfg.reachable) && continue
         push!(unreachable_statements, rec.st)
     end
     return unreachable_statements
@@ -1047,6 +1050,7 @@ function analyze_local_def_use!(
         dead_defs = SyntaxTree[]
         other_assigns = BitSet()
         for def_block_id in real_assign_blocks
+            def_block_id in cfg.reachable || continue
             empty!(other_assigns)
             for ab in real_assign_blocks
                 ab != def_block_id && push!(other_assigns, ab)
