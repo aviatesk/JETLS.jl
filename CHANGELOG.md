@@ -83,13 +83,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
-- The messages of [`testrunner/test-failure`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/testrunner/test-failure) diagnostics now start with a summary of the failure instead of its location, e.g.:
-  ```
-  Test failed: evaluated to `(1, 12) == (1, 12, 0)`
-  Test threw an exception: ArgumentError: invalid base 10 digit 'v' in "v1"
-  ```
-  The rest of the message shows what `Test` prints for the failure, such as the expression and the stack trace.
-
 - [`lowering/unreachable-code`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/unreachable-code) now also reports the code in the `else` block of a `try` whose body always exits, and its "Delete unreachable code" quick fix removes the whole `else` clause, including the `else` keyword:
   ```julia
   function f()
@@ -103,13 +96,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   end
   ```
 
+- The messages of [`testrunner/test-failure`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/testrunner/test-failure) diagnostics now start with a summary of the failure instead of its location, e.g.:
+  ```
+  Test failed: evaluated to `(1, 12) == (1, 12, 0)`
+  Test threw an exception: ArgumentError: invalid base 10 digit 'v' in "v1"
+  ```
+  The rest of the message shows what `Test` prints for the failure, such as the expression and the stack trace.
+
 ### Fixed
 
-- Fixed the messages of [`testrunner/test-failure`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/testrunner/test-failure) diagnostics losing their line breaks and formatting in clients that render diagnostic messages as Markdown, e.g. Sublime LSP: the expression and the stack trace are now shown in a code block.
-
 - Fixed false [`lowering/undef-global-var`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/undef-global-var) reports on non-constant globals that a script imports from a module defined in the script.
-
-- Fixed test runs of the [TestRunner integration](https://aviatesk.github.io/JETLS.jl/release/testrunner/) never finishing when the tests write more than about 64 KB of output.
 
 - Fixed false [`lowering/undef-local-var`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/undef-local-var) reports on variables that are assigned before every `break` in a `while true` loop and used after the loop:
   ```julia
@@ -168,6 +164,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   end
   ```
   (Closed https://github.com/aviatesk/JETLS.jl/issues/996)
+
+- Fixed the messages of [`testrunner/test-failure`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/testrunner/test-failure) diagnostics losing their line breaks and formatting in clients that render diagnostic messages as Markdown, e.g. Sublime LSP: the expression and the stack trace are now shown in a code block.
+
+- Fixed test runs of the [TestRunner integration](https://aviatesk.github.io/JETLS.jl/release/testrunner/) never finishing when the tests write more than about 64 KB of output.
 
 ## 2026-10-18
 
