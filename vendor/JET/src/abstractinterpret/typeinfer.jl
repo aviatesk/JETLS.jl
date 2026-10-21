@@ -68,10 +68,9 @@ function CC.const_prop_call(analyzer::AbstractAnalyzer,
         mi::MethodInstance, result::MethodCallResult, arginfo::ArgInfo, sv::InferenceState,
         concrete_eval_result::Union{Nothing,ConstCallResult})
     @assert get_cache_target(analyzer) === nothing "invalid JET analysis state"
-    if const_result !== nothing
-        # successful constant prop', we need to update reports
-        collect_callee_reports!(analyzer, sv)
-    end
+    # Collect the reports at this call site even if the constant propagation fails, e.g.
+    # when the generator of a generated function throws, rather than at a later call site.
+    collect_callee_reports!(analyzer, sv)
     return const_result
 end
 
@@ -143,6 +142,8 @@ function postprocess_abstract_call_known!(analyzer::AbstractAnalyzer, ret::Futur
     if isready(ret)
         if f === Task
             analyze_task_parallel_code!(analyzer, arginfo, sv)
+        elseif is_threading_run(f)
+            analyze_threads_loop_body!(analyzer, arginfo, sv)
         end
         # `setfield!` is handled synchronously by the builtin path in `abstract_call_known`,
         # so its `ret` is always ready and requires no delayed processing in the branch below.
@@ -160,6 +161,12 @@ function postprocess_abstract_call_known!(analyzer::AbstractAnalyzer, ret::Futur
                 return true
             end
             push!(sv.tasks, after_call_known)
+        elseif is_threading_run(f)
+            function after_threading_run(analyzer′::AbstractAnalyzer, sv′::InferenceState)
+                analyze_threads_loop_body!(analyzer′, arginfo, sv′)
+                return true
+            end
+            push!(sv.tasks, after_threading_run)
         end
     end
     return ret
@@ -190,6 +197,11 @@ function analyze_task_parallel_code!(
     # and so we may not be able to access to the closure at that point.
     # As a compromise, here we invoke the additional analysis on `Task` construction,
     # regardless of whether it's really `schedule`d or not.
+    # The closure passed to a `Task` constructor has been analyzed at the call site of
+    # the constructor, and the tasks created by `threading_run` are analyzed at the call
+    # sites of `threading_run` (see `analyze_threads_loop_body!`).
+    is_task_constructor_frame(sv) && return nothing
+    is_threading_run_frame(sv) && return nothing
     argtypes = arginfo.argtypes
     length(argtypes) ≥ 2 || return nothing
     v = argtypes[2]
@@ -211,18 +223,50 @@ function analyze_task_parallel_code!(
     analyze_additional_pass_by_type!(analyzer, Tuple{ft}, sv)
 end
 
-# run additional interpretation with a new analyzer
-function analyze_additional_pass_by_type!(analyzer::AbstractAnalyzer, @nospecialize(tt), sv::InferenceState)
-    newanalyzer = AbstractAnalyzer(analyzer)
+function is_task_constructor_frame(sv::InferenceState)
+    def = sv.linfo.def
+    return def isa Method && def.module === Base && def.name === :Task
+end
 
+# Since JuliaLang/julia#63184, `Threads.threading_run` is not specialized on the
+# `@threads` loop body, and its tasks call the body through a dynamic dispatch in
+# `Threads._threads_call`. So analyze the body call at each call site of the runner, where
+# its type is known, as `Compiler.threads_deferred_call_type` does for `--trim`, and skip
+# the tasks created inside the runner.
+@static if isdefinedglobal(Base.Threads, :_threads_call)
+is_threading_run(@nospecialize f) = f === Base.Threads.threading_run
+function is_threading_run_frame(sv::InferenceState)
+    def = sv.linfo.def
+    return def isa Method && def.module === Base.Threads && def.name === :threading_run
+end
+else
+is_threading_run(@nospecialize f) = false
+is_threading_run_frame(::InferenceState) = false
+end
+
+function analyze_threads_loop_body!(
+        analyzer::AbstractAnalyzer, arginfo::ArgInfo, sv::InferenceState
+    )
+    argtypes = arginfo.argtypes
+    length(argtypes) == 3 || return nothing
+    ft = widenconst(argtypes[2])
+    analyze_additional_pass_by_type!(analyzer, Tuple{ft,Int}, sv)
+end
+
+# Run additional interpretation with the analyzer driving `sv`, not with a new one:
+# callee frames are driven by the analyzer they are created with and stash their reports
+# into it, while the continuation collecting them into `sv` uses the analyzer driving `sv`.
+function analyze_additional_pass_by_type!(analyzer::AbstractAnalyzer, @nospecialize(tt), sv::InferenceState)
     # in order to preserve the inference termination, we keep to use the current frame
     # and borrow the `AbstractInterpreter`'s cycle detection logic
     # XXX the additional analysis pass by `abstract_call_method` may involve various site-effects,
     # but what we're doing here is essentially equivalent to modifying the user code and inlining
     # the threaded code block as a usual code block, and thus the side-effects won't (hopefully)
     # confuse the abstract interpretation, which is supposed to terminate on any kind of code
-    match = find_single_match(tt, newanalyzer)
-    CC.abstract_call_method(newanalyzer, match.method, match.spec_types, match.sparams,
+    match = Base._which(tt; method_table=CC.method_table(analyzer),
+        world=CC.get_inference_world(analyzer), raise=false)
+    match === nothing && return nothing # e.g. `Task(f::Function)`
+    CC.abstract_call_method(analyzer, match.method, match.spec_types, match.sparams,
         #=hardlimit=#false, #=si=#StmtInfo(false, false), sv)
 
     return nothing
@@ -454,6 +498,16 @@ function finish_frame!(analyzer::AbstractAnalyzer, frame::InferenceState)
 
     reports = get_reports(analyzer, caller)
 
+    if analyzer isa ToplevelAbstractAnalyzer
+        # Discard the reports from the test expressions of `@test_throws`. The first frame of
+        # a report of `frame` points to the statement of `frame` where the error is detected
+        # or the report is collected from a callee (see `is_test_exception_statement`).
+        filter!(reports) do @nospecialize(report::InferenceErrorReport)
+            vf = first(report.vst)
+            return !(vf.linfo === frame.linfo && is_test_exception_statement(frame, vf.pc))
+        end
+    end
+
     # XXX this is a dirty fix for performance problem, we need more "proper" fix
     # https://github.com/aviatesk/JET.jl/issues/75
     unique!(aggregation_policy(analyzer), reports)
@@ -535,8 +589,8 @@ function CC.global_assignment_rt_exct(analyzer::ToplevelAbstractAnalyzer, sv::In
         binding_states = get_binding_states(analyzer)
         @lock binding_states.lock begin
             bindings = binding_states.bindings
-            new_state = if haskey(bindings, partition)
-                old_state = bindings[partition]
+            old_state = find_binding_state(bindings, partition)
+            new_state = if old_state !== nothing
                 if old_state.isconst
                     # Ordinary assignments to constants throw; `const` redefinitions use
                     # `const_assignment_rt_exct` instead.
@@ -669,10 +723,10 @@ function const_assignment_rt_exct(analyzer::ToplevelAbstractAnalyzer, sv::Infere
             binding_states = get_binding_states(analyzer)
             binding_state = @lock binding_states.lock begin
                 bindings = binding_states.bindings
+                old_binding_state = find_binding_state(bindings, partition)
                 if !isconditional
                     new_state = AbstractBindingState(true, false, new_binding_typ; assignment)
-                elseif haskey(bindings, partition)
-                    old_binding_state = bindings[partition]
+                elseif old_binding_state !== nothing
                     @assert old_binding_state.isconst && isdefined(old_binding_state, :typ)
                     newmaybeundef = old_binding_state.maybeundef & isconditional
                     newtyp = old_binding_state.typ ⊔ new_binding_typ

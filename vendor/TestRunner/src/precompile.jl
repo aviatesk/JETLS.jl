@@ -34,7 +34,9 @@ module PrecompileModule10 end
         app_runner_module[] = PrecompileModule8
         main(String[demo_file, "r\".*tests\""]);
         app_runner_module[] = PrecompileModule9
-        main(String[demo_file, "--json", "inner tests 1"]);
+        mktempdir() do dir
+            main(String[demo_file, "--json-file=$(joinpath(dir, "result.json"))", "inner tests 1"]);
+        end
         app_runner_module[] = PrecompileModule10
         main(String[demo_file, ":(@test startswith(s_, prefix_))", "--filter-lines=43"]);
     end

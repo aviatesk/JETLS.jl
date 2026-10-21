@@ -6,12 +6,20 @@ using JETLSCore.LSP
 
 include("setup.jl")
 
-function find_references(code::AbstractString, pos::Position; include_declaration::Bool=true)
+function find_references(
+        code::AbstractString, pos::Position;
+        include_declaration::Bool = true,
+        context_module::Union{Nothing,Module} = nothing
+    )
     server = JETLSCore.Server()
     uri = URI("file:///test.jl")
     fi = JETLSCore.FileInfo(#=version=#0, code, "test.jl"; cache_tree0 = true)
     JETLSCore.store!(server.state.file_cache) do cache
         Base.PersistentDict(cache, uri => fi), nothing
+    end
+    if context_module !== nothing
+        JETLSCore.cache_out_of_scope!(
+            server.state.analysis_manager, uri, JETLSCore.OutOfScope(context_module))
     end
     locations = JETLSCore.find_references(server, uri, fi, pos; include_declaration)
     JETLSCore.check_syntax_tree0(fi)
@@ -243,6 +251,95 @@ end
                 refs = find_references(clean_code, positions[1]; include_declaration=false)
                 expected = Range(; start=positions[3], var"end"=positions[4])
                 @test length(refs) == 1 && only(refs).range == expected
+            end
+        end
+
+        @testset "qualified access" begin
+            let code = """
+                │myfunc│(x) = x
+                macro │mymacro│() end
+                test_references.│myfunc│(1)
+                test_references.│@mymacro│()
+                g(test_references) = test_references.myfunc
+                """
+                clean_code, positions = JETLSCore.get_text_and_positions(code)
+                @test length(positions) == 8
+                ranges = [Range(; start=positions[i], var"end"=positions[i+1])
+                    for i in 1:2:length(positions)]
+                let refs = find_references(clean_code, positions[1];
+                        include_declaration=false, context_module=@__MODULE__)
+                    @test length(refs) == 1 && only(refs).range == ranges[3]
+                end
+                let refs = find_references(clean_code, positions[3];
+                        include_declaration=false, context_module=@__MODULE__)
+                    @test length(refs) == 1 && only(refs).range == ranges[4]
+                end
+            end
+
+            # qualified method definitions are declarations
+            let code = """
+                │qualified_foo│() = 42
+                function test_references.│qualified_foo│(x::Int)
+                    x
+                end
+                test_references.│qualified_foo│()
+                """
+                clean_code, positions = JETLSCore.get_text_and_positions(code)
+                @test length(positions) == 6
+                ranges = [Range(; start=positions[i], var"end"=positions[i+1])
+                    for i in 1:2:length(positions)]
+                let refs = find_references(clean_code, positions[1];
+                        include_declaration=false, context_module=@__MODULE__)
+                    @test length(refs) == 1 && only(refs).range == ranges[3]
+                end
+                let refs = find_references(clean_code, positions[1];
+                        include_declaration=true, context_module=@__MODULE__)
+                    @test Set(ref.range for ref in refs) == Set(ranges)
+                end
+            end
+
+            # a qualified constructor definition of a parametric type defines the type, but
+            # not its type arguments
+            let code = """
+                struct │ParamC│{T}
+                    x::T
+                end
+                struct │ParamS│ end
+                function test_references.│ParamC│{T}(x::AbstractString) where T
+                    test_references.│ParamC│{T}(parse(T, x))
+                end
+                test_references.│ParamC│{test_references.│ParamS│}(x::Int) = x
+                """
+                clean_code, positions = JETLSCore.get_text_and_positions(code)
+                @test length(positions) == 12
+                ranges = [Range(; start=positions[i], var"end"=positions[i+1])
+                    for i in 1:2:length(positions)]
+                let refs = find_references(clean_code, positions[1];
+                        include_declaration=false, context_module=@__MODULE__)
+                    @test length(refs) == 1 && only(refs).range == ranges[4]
+                end
+                let refs = find_references(clean_code, positions[3];
+                        include_declaration=false, context_module=@__MODULE__)
+                    @test length(refs) == 1 && only(refs).range == ranges[6]
+                end
+            end
+
+            # qualified macro names spelled with MICRO SIGN (normalized to GREEK SMALL LETTER
+            # MU) or `var"..."`
+            let code = """
+                macro │\u03bcmacro│() end
+                test_references.│@\u03bcmacro│()
+                test_references.│@\u00b5macro│()
+                test_references.│@var"\u03bcmacro"│()
+                """
+                clean_code, positions = JETLSCore.get_text_and_positions(code)
+                @test length(positions) == 8
+                ranges = [Range(; start=positions[i], var"end"=positions[i+1])
+                    for i in 1:2:length(positions)]
+                let refs = find_references(clean_code, positions[1];
+                        include_declaration=false, context_module=@__MODULE__)
+                    @test Set(ref.range for ref in refs) == Set(ranges[2:4])
+                end
             end
         end
     end

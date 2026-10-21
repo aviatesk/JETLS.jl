@@ -11,29 +11,19 @@ Parsers = "2bf889ff-109e-5fa9-9ba3-339ee07cbe67"
 PrecompileTools = "32931bc0-5014-5544-84d5-53636ff9f6c5"
 
 [sources.PrecompileTools]
-subdir = "vendor/PrecompileTools"
-rev = "28f9ade325674d450eced8588572ce570218705c"
-url = "https://github.com/aviatesk/JETLS.jl"
+path = "../vendor/PrecompileTools"
 
 [sources.JSON3]
-subdir = "vendor/JSON3"
-rev = "28f9ade325674d450eced8588572ce570218705c"
-url = "https://github.com/aviatesk/JETLS.jl"
+path = "../vendor/JSON3"
 
 [sources.StructTypes]
-subdir = "vendor/StructTypes"
-rev = "28f9ade325674d450eced8588572ce570218705c"
-url = "https://github.com/aviatesk/JETLS.jl"
+path = "../vendor/StructTypes"
 
 [sources.Parsers]
-subdir = "vendor/Parsers"
-rev = "28f9ade325674d450eced8588572ce570218705c"
-url = "https://github.com/aviatesk/JETLS.jl"
+path = "../vendor/Parsers"
 
 [sources.Preferences]
-subdir = "vendor/Preferences"
-rev = "28f9ade325674d450eced8588572ce570218705c"
-url = "https://github.com/aviatesk/JETLS.jl"
+path = "../vendor/Preferences"
 
 [compat]
 JSON3 = "1.14.3"

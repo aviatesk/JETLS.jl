@@ -229,6 +229,81 @@ end
         end
     end
 
+    # aviatesk/JETLS.jl#1002
+    @testset "Bindings used directly as default values" begin
+        @test isempty(get_lowering_diagnostics("f(x, y = x) = y"))
+        @test isempty(get_lowering_diagnostics("f(x, y = x, z = y) = z"))
+        @test isempty(get_lowering_diagnostics("""
+            function g(J)
+                sens = J .+ 1
+                Pf(s, sn = sens) = s * sn[1]
+                return Pf(1.0)
+            end
+            """))
+        @test isempty(get_lowering_diagnostics("""
+            function g(J)
+                Pf(s, sn = J) = s * sn[1]
+                return Pf(1.0)
+            end
+            """))
+        @test isempty(get_lowering_diagnostics("""
+            let sens = 1
+                Pf(s, sn = sens) = s * sn
+                Pf(1.0)
+            end
+            """))
+        @test isempty(get_lowering_diagnostics("""
+            function h(xs)
+                for x in xs
+                    Pf(s, sn = x) = s * sn
+                    Pf(1.0)
+                end
+            end
+            """))
+        @test isempty(get_lowering_diagnostics("""
+            function g(J)
+                sens = J .+ 1
+                Pf(s; sn = sens) = s * sn[1]
+                return Pf(1.0)
+            end
+            """))
+        @test isempty(get_lowering_diagnostics("""
+            function g(J)
+                Pf(s; sn = J) = s * sn[1]
+                return Pf(1.0)
+            end
+            """))
+        @test isempty(get_lowering_diagnostics("f(x, y = 1; k = y) = k + x"))
+        let diagnostics = get_lowering_diagnostics("f(x, y = 1, z = 2) = x + z")
+            @test length(diagnostics) == 1
+            @test only(diagnostics).message == "Unused argument `y`"
+        end
+        let diagnostics = get_lowering_diagnostics("f(; a = 1, d = a) = a")
+            @test length(diagnostics) == 1
+            @test only(diagnostics).message == "Unused argument `d`"
+        end
+        let diagnostics = get_lowering_diagnostics("""
+            function g(J)
+                sens = J .+ 1
+                Pf(s, sn = sens) = s
+                return Pf(1.0)
+            end
+            """)
+            @test length(diagnostics) == 1
+            @test only(diagnostics).message == "Unused argument `sn`"
+        end
+        let diagnostics = get_lowering_diagnostics("""
+            function g(J)
+                sens = J .+ 1
+                Pf(s; sn = sens) = s
+                return Pf(1.0)
+            end
+            """)
+            @test length(diagnostics) == 1
+            @test only(diagnostics).message == "Unused argument `sn`"
+        end
+    end
+
     @testset "tolerate bad syntax, broken macros" begin
         let diagnostics = get_lowering_diagnostics("""
             function foo(x)
@@ -1104,6 +1179,14 @@ macro m_outer_error(x)
     :(@m_inner_error( $x ), @m_inner_error( $nothing ))
 end
 
+macro m_static_error()
+    return esc(quote
+        @static if undefined_static_cond
+            nothing
+        end
+    end)
+end
+
 @static if isdefinedglobal(Core, :define_method)
     let code = """
         using JETLSCore: JL
@@ -1284,6 +1367,27 @@ end
         @test info.message == "error(::String)"
     end
 
+    @testset "macro expansion error diagnostics shown in the world of the expansion" begin
+        # the server runs in a world that predates the definitions of the analyzed code
+        server_world = Base.get_world_counter()
+        mod = Module()
+        include_string(mod, """
+            struct MacroCheckError <: Exception
+                msg::String
+            end
+            Base.showerror(io::IO, err::MacroCheckError) = print(io, "MacroCheckError: ", err.msg)
+            macro m_custom_error(_)
+                throw(MacroCheckError("custom message"))
+            end
+            """, "Untitled-1")
+        diagnostics = Base.invoke_in_world(server_world,
+            get_lowering_diagnostics, "@m_custom_error 42"; context_module=mod)
+        diagnostic = only(diagnostics)
+        @test diagnostic.message == "Error expanding macro\nMacroCheckError: custom message"
+        info = only(something(diagnostic.relatedInformation))
+        @test info.message == "var\"@m_custom_error\"(::LineNumberNode, ::Module, ::Any)"
+    end
+
     @testset "nested macro expansion error diagnostics" begin
         diagnostics = get_lowering_diagnostics("""let
             @m_outer_error missing
@@ -1367,6 +1471,46 @@ end
         @test any(m -> occursin("undef_a", m), undef_msgs)
         @test any(m -> occursin("undef_b", m), undef_msgs)
     end
+
+    # The sink-reported node only has a line in the file defining `@m_static_error`.
+    @testset "macro expansion error reported in an old-style macro from another file" begin
+        diagnostics = get_lowering_diagnostics("""
+            x = 1
+            @m_static_error
+            """; context_module = @__MODULE__,
+            code = JETLSCore.LOWERING_MACRO_EXPANSION_ERROR_CODE)
+        diagnostic = only(diagnostics)
+        @test occursin("failed to evaluate condition", diagnostic.message)
+        @test diagnostic.range.start.line == 1
+        @test diagnostic.range.start.character == 0
+        @test diagnostic.range.var"end".line == 1
+        @test diagnostic.range.var"end".character == sizeof("@m_static_error")
+        info = only(something(diagnostic.relatedInformation))
+        @test info.location.uri == filepath2uri(@__FILE__)
+    end
+
+    @testset "macro expansion error messages in the analyzed module" begin
+        script = """
+        x = @static if undefined_static_cond
+            1
+        end
+        """
+        withscript(script) do script_path
+            uri = filepath2uri(script_path)
+            withserver() do (; readmsg, server)
+                JETLSCore.cache_file_info!(server, uri, 1, script)
+                JETLSCore.cache_saved_file_info!(server.state, uri, script)
+                JETLSCore.request_analysis!(server, uri, #=invalidate=#false; wait=true, notify_diagnostics=false)
+
+                params = scan_live_diagnostics!(server, readmsg)[uri]
+                diagnostic = only(filter(params.diagnostics) do d
+                    d.code == JETLSCore.LOWERING_MACRO_EXPANSION_ERROR_CODE
+                end)
+                @test occursin("`undefined_static_cond` not defined in `Main`", diagnostic.message)
+                @test !occursin("JETVirtualModule", diagnostic.message)
+            end
+        end
+    end
 end
 
 module TestLoweringUndefGlobalBinding
@@ -1421,6 +1565,28 @@ end
         end
         """; context_module=@__MODULE__))
 
+    # Also when the definition uses the global itself
+    @test isempty(get_lowering_diagnostics("""
+        use_recursive() = recursive(1)
+        recursive(x) = x > 0 ? recursive(x - 1) : x
+        use_self_referential() = SelfReferential(nothing)
+        struct SelfReferential
+            next::Union{Nothing,SelfReferential}
+        end
+        """; context_module=@__MODULE__))
+
+    # `Mod.f(x) = x` doesn't define `Mod.f`, but throws an `UndefVarError` unless it exists
+    let diagnostics = get_lowering_diagnostics("""
+        use_qualified_def() = qualified_def()
+        TestLoweringUndefGlobalBinding.qualified_def() = nothing
+        """; context_module=TestLoweringUndefGlobalBinding)
+        diagnostic = only(diagnostics)
+        @test diagnostic.code == JETLSCore.LOWERING_UNDEF_GLOBAL_VAR_CODE
+        @test diagnostic.message ==
+            "`$(TestLoweringUndefGlobalBinding).qualified_def` is not defined"
+        @test diagnostic.range.start.line == 0
+    end
+
     # Undefined identifiers used as docstring interpolations should be reported
     let diagnostics = get_lowering_diagnostics("""
         \"\"\"
@@ -1452,6 +1618,18 @@ end
             length("lazy\"interpolated: \$(") + length("undef_lazy_interp")
     end
 
+    # The test expression of `@test_throws` is expected to throw, e.g. to test that a name
+    # is not defined, unlike the expected exception.
+    let diagnostics = get_lowering_diagnostics("""
+        @testset "undefined" begin
+            @test_throws UndefVarError undef_in_test_throws
+            @test_throws UndefTestThrowsError sin(1)
+        end
+        """; context_module=@__MODULE__, code=JETLSCore.LOWERING_UNDEF_GLOBAL_VAR_CODE)
+        diagnostic = only(diagnostics)
+        @test diagnostic.message == "`$(@__MODULE__).UndefTestThrowsError` is not defined"
+    end
+
     let code = join((
             "let",
             "    lazy\"\"\"",
@@ -1471,6 +1649,43 @@ end
         @test diagnostic.range.var"end".line == 3
         @test diagnostic.range.var"end".character ==
             length("        \$") + length("undef_lazy_triple_interp")
+    end
+
+    @testset "non-constant globals imported from a script module" begin
+        script = """
+        module Config
+        export settings
+        global settings = Dict{String,Int}()
+        end
+
+        module ExplicitConfig
+        global explicit_settings = Dict{String,Int}()
+        end
+
+        using .Config
+        using .ExplicitConfig: explicit_settings
+
+        f() = settings
+        g() = explicit_settings
+        h() = undefined_settings
+        """
+        withscript(script) do script_path
+            uri = filepath2uri(script_path)
+            withserver() do (; readmsg, server)
+                JETLSCore.cache_file_info!(server, uri, 1, script)
+                JETLSCore.cache_saved_file_info!(server.state, uri, script)
+                JETLSCore.request_analysis!(server, uri, #=invalidate=#false; wait=true, notify_diagnostics=false)
+
+                params = scan_live_diagnostics!(server, readmsg)[uri]
+                undef_global_diags = filter(params.diagnostics) do d
+                    d.code == JETLSCore.LOWERING_UNDEF_GLOBAL_VAR_CODE
+                end
+                @test length(undef_global_diags) == 1
+                diagnostic = only(undef_global_diags)
+                @test diagnostic.message == "`undefined_settings` is not defined"
+                @test diagnostic.range.start.line == 14
+            end
+        end
     end
 end
 
@@ -1509,6 +1724,368 @@ end
         @test length(diagnostics) == 2
         @test all(d -> d.code == JETLSCore.LOWERING_UNDEF_GLOBAL_VAR_CODE, diagnostics)
         @test [d.range.start.line for d in diagnostics] == [1, 2]
+    end
+end
+
+module TestDeprecatedBindingOwner
+export new_global, new_value
+const new_value = 1
+Base.@deprecate_binding old_value new_value
+global new_global = 2
+Base.@deprecate_binding old_global new_global true nothing false
+struct NewType end
+Base.@deprecate_binding OldType NewType true ", use `NewType` instead."
+module NewSub
+const x = 1
+macro submacro(x) esc(x) end
+end
+Base.@deprecate_binding OldSub NewSub
+macro newmacro(x) esc(x) end
+Base.@deprecate_binding var"@oldmacro" var"@newmacro"
+end
+
+module TestDeprecatedBindingUser
+using ..TestDeprecatedBindingOwner
+end
+
+module TestDeprecatedBindingImportOwner
+const new_value = 1
+const old_value = new_value
+const _dep_message_old_value = ", use new_value instead."
+struct NewType end
+const OldType = NewType
+end
+
+module TestDeprecatedBindingImporter
+import ..TestDeprecatedBindingImportOwner: old_value
+using ..TestDeprecatedBindingImportOwner: OldType as Renamed
+end
+
+module TestDeprecatedBindingReexporter
+import ..TestDeprecatedBindingImportOwner: old_value
+using ..TestDeprecatedBindingImportOwner: OldType as Renamed
+export old_value, Renamed
+end
+
+module TestDeprecatedBindingReexportUser
+using ..TestDeprecatedBindingReexporter
+end
+
+# Deprecated after the imports, which warn with `--depwarn=yes` otherwise
+Base.deprecate(TestDeprecatedBindingImportOwner, :old_value)
+Base.deprecate(TestDeprecatedBindingImportOwner, :OldType)
+
+module TestDeprecatedBindingCycleOwner
+export cycled
+const cycled = 1
+end
+
+module TestDeprecatedBindingCycleA
+using ..TestDeprecatedBindingCycleOwner
+export cycled
+end
+
+module TestDeprecatedBindingCycleB
+using ..TestDeprecatedBindingCycleA
+export cycled
+end
+
+# `TestDeprecatedBindingCycleA` and `TestDeprecatedBindingCycleB` re-export each other's `cycled`
+Core.eval(TestDeprecatedBindingCycleA, :(using ..TestDeprecatedBindingCycleB))
+
+module TestDeprecatedBindingCycleUser
+using ..TestDeprecatedBindingCycleA, ..TestDeprecatedBindingCycleB
+end
+
+module TestDeprecatedBindingDeprecatedCycleOwner
+export cycled
+const new_cycled = 1
+Base.@deprecate_binding cycled new_cycled
+end
+
+module TestDeprecatedBindingDeprecatedCycleA
+using ..TestDeprecatedBindingDeprecatedCycleOwner
+export cycled
+end
+
+module TestDeprecatedBindingDeprecatedCycleB
+using ..TestDeprecatedBindingDeprecatedCycleA
+export cycled
+end
+
+Core.eval(TestDeprecatedBindingDeprecatedCycleA, :(using ..TestDeprecatedBindingDeprecatedCycleB))
+
+module TestDeprecatedBindingDeprecatedCycleUser
+using ..TestDeprecatedBindingDeprecatedCycleA, ..TestDeprecatedBindingDeprecatedCycleB
+end
+
+module TestDeprecatedBindingAltOwner
+const old_value = 1 # the same value as `TestDeprecatedBindingImportOwner.old_value`
+end
+
+module TestDeprecatedFunctionOwner
+new_func(x) = x
+Base.@deprecate old_func(x) new_func(x)
+Base.@deprecate renamed_func new_func
+Base.@deprecate partial_func(x::Int) new_func(x)
+partial_func(x::String) = x
+Base.@deprecate multi_func(x::Int) new_func(x)
+Base.@deprecate multi_func(x::String) new_func(x)
+Base.@deprecate default_func(x, y = 1; z = 2) new_func(x)
+export conditional_func, noinline_func
+@noinline noinline_func(x) = x
+@noinline function conditional_func(x; old::Bool = false)
+    old && Base.depwarn("`old` is deprecated", :conditional_func)
+    return x
+end
+end
+
+module TestDeprecatedFunctionUser
+using ..TestDeprecatedFunctionOwner
+end
+
+module TestDeprecatedFunctionImporter
+using ..TestDeprecatedFunctionOwner: old_func
+end
+
+get_deprecated_binding_diagnostics(text::AbstractString, context_module::Module) =
+    get_lowering_diagnostics(text;
+        code = JETLSCore.LOWERING_DEPRECATED_BINDING_CODE, context_module)
+
+# Expanding a macro through a deprecated binding warns with `--depwarn=yes`
+get_deprecated_macro_diagnostics(text::AbstractString, context_module::Module) =
+    redirect_stderr(devnull) do
+        get_deprecated_binding_diagnostics(text, context_module)
+    end
+
+@testset HierarchicalTestSet "deprecated binding detection" begin
+    @testset "binding imported with `using`" begin
+        diagnostics = get_deprecated_binding_diagnostics("""
+            function f()
+                return old_value
+            end
+            """, TestDeprecatedBindingUser)
+        @test length(diagnostics) == 1
+        diagnostic = only(diagnostics)
+        @test diagnostic.source == JETLSCore.DIAGNOSTIC_SOURCE_LIVE
+        @test diagnostic.severity == DiagnosticSeverity.Information
+        @test DiagnosticTag.Deprecated in diagnostic.tags
+        @test diagnostic.message == "`$(TestDeprecatedBindingOwner).old_value` is deprecated, use new_value instead."
+        @test diagnostic.range.start.line == 1
+        @test diagnostic.range.start.character == sizeof("    return ")
+        @test diagnostic.range.var"end".line == 1
+        @test diagnostic.range.var"end".character == sizeof("    return old_value")
+    end
+
+    @testset "non-constant binding" begin
+        diagnostics = get_deprecated_binding_diagnostics("f() = old_global", TestDeprecatedBindingUser)
+        @test length(diagnostics) == 1
+        @test only(diagnostics).message == "`$(TestDeprecatedBindingOwner).old_global` is deprecated, use new_global instead."
+    end
+
+    @testset "custom message" begin
+        diagnostics = get_deprecated_binding_diagnostics("f() = OldType()", TestDeprecatedBindingUser)
+        @test length(diagnostics) == 1
+        @test only(diagnostics).message == "`$(TestDeprecatedBindingOwner).OldType` is deprecated, use `NewType` instead."
+    end
+
+    @testset "binding of the context module" begin
+        diagnostics = get_deprecated_binding_diagnostics("f() = old_value", TestDeprecatedBindingOwner)
+        @test length(diagnostics) == 1
+    end
+
+    @testset "qualified access" begin
+        diagnostics = get_deprecated_binding_diagnostics("f() = TestDeprecatedBindingOwner.old_value", TestDeprecatedBindingUser)
+        @test length(diagnostics) == 1
+        diagnostic = only(diagnostics)
+        @test diagnostic.message == "`$(TestDeprecatedBindingOwner).old_value` is deprecated, use new_value instead."
+        @test diagnostic.range.start.character == sizeof("f() = TestDeprecatedBindingOwner.")
+        @test diagnostic.range.var"end".character == sizeof("f() = TestDeprecatedBindingOwner.old_value")
+    end
+
+    @testset "deprecated module in a qualified access" begin
+        diagnostics = get_deprecated_binding_diagnostics("f() = TestDeprecatedBindingOwner.OldSub.x", TestDeprecatedBindingUser)
+        @test length(diagnostics) == 1
+        diagnostic = only(diagnostics)
+        @test diagnostic.message == "`$(TestDeprecatedBindingOwner).OldSub` is deprecated, use NewSub instead."
+        @test diagnostic.range.start.character == sizeof("f() = TestDeprecatedBindingOwner.")
+        @test diagnostic.range.var"end".character == sizeof("f() = TestDeprecatedBindingOwner.OldSub")
+    end
+
+    @testset "local binding named like the module" begin
+        @test isempty(get_deprecated_binding_diagnostics("""
+            let TestDeprecatedBindingOwner = (; old_value = 1)
+                TestDeprecatedBindingOwner.old_value
+            end
+            """, TestDeprecatedBindingUser))
+    end
+
+    @testset "not deprecated or not a use" begin
+        @test isempty(get_deprecated_binding_diagnostics("f() = new_value", TestDeprecatedBindingUser))
+        @test isempty(get_deprecated_binding_diagnostics("old_value = 1", TestDeprecatedBindingUser))
+    end
+
+    @testset "explicit import" begin
+        diagnostics = get_deprecated_binding_diagnostics("import ..TestDeprecatedBindingImportOwner: old_value", TestDeprecatedBindingImporter)
+        @test length(diagnostics) == 1
+        diagnostic = only(diagnostics)
+        @test diagnostic.message == "`$(TestDeprecatedBindingImportOwner).old_value` is deprecated, use new_value instead."
+        @test diagnostic.range.start.character == sizeof("import ..TestDeprecatedBindingImportOwner: ")
+        @test diagnostic.range.var"end".character == sizeof("import ..TestDeprecatedBindingImportOwner: old_value")
+
+        # reported at the import rather than at the uses
+        @test isempty(get_deprecated_binding_diagnostics("f() = old_value", TestDeprecatedBindingImporter))
+    end
+
+    @testset "explicit import with `as`" begin
+        diagnostics = get_deprecated_binding_diagnostics("using ..TestDeprecatedBindingImportOwner: OldType as Renamed", TestDeprecatedBindingImporter)
+        @test length(diagnostics) == 1
+        diagnostic = only(diagnostics)
+        @test diagnostic.message == "`$(TestDeprecatedBindingImportOwner).OldType` is deprecated"
+        @test diagnostic.range.start.character == sizeof("using ..TestDeprecatedBindingImportOwner: ")
+        @test diagnostic.range.var"end".character == sizeof("using ..TestDeprecatedBindingImportOwner: OldType")
+    end
+
+    @testset "quoted import" begin
+        @test isempty(get_deprecated_binding_diagnostics("ex = :(using ..TestDeprecatedBindingImportOwner: old_value)", TestDeprecatedBindingImporter))
+        @test isempty(get_deprecated_binding_diagnostics("""
+            ex = quote
+                using ..TestDeprecatedBindingImportOwner: old_value
+            end
+            """, TestDeprecatedBindingImporter))
+    end
+
+    @testset "same name imported from multiple modules" begin
+        # each statement is checked against the module it names, in either order
+        let diagnostics = get_deprecated_binding_diagnostics("""
+                using ..TestDeprecatedBindingImportOwner: old_value
+                using ..TestDeprecatedBindingAltOwner: old_value
+                """, TestDeprecatedBindingImporter)
+            @test length(diagnostics) == 1
+            @test only(diagnostics).range.start.line == 0
+        end
+        let diagnostics = get_deprecated_binding_diagnostics("""
+                using ..TestDeprecatedBindingAltOwner: old_value
+                using ..TestDeprecatedBindingImportOwner: old_value
+                """, TestDeprecatedBindingImporter)
+            @test length(diagnostics) == 1
+            @test only(diagnostics).range.start.line == 1
+        end
+    end
+
+    @testset "macro name" begin
+        for (text, name) in (("f() = @oldmacro 1", "@oldmacro"),
+                             ("f() = TestDeprecatedBindingOwner.@oldmacro 1", "@oldmacro"),
+                             ("f() = @TestDeprecatedBindingOwner.oldmacro 1", "oldmacro"))
+            diagnostics = get_deprecated_macro_diagnostics(text, TestDeprecatedBindingUser)
+            @test length(diagnostics) == 1
+            diagnostic = only(diagnostics)
+            @test diagnostic.message == "`$(TestDeprecatedBindingOwner).@oldmacro` is deprecated, use @newmacro instead."
+            @test diagnostic.range.start.character == findlast(name, text).start - 1
+            @test diagnostic.range.var"end".character == findlast(name, text).stop
+        end
+        let text = "f() = TestDeprecatedBindingOwner.OldSub.@submacro 1"
+            diagnostics = get_deprecated_macro_diagnostics(text, TestDeprecatedBindingUser)
+            @test length(diagnostics) == 1
+            @test only(diagnostics).message == "`$(TestDeprecatedBindingOwner).OldSub` is deprecated, use NewSub instead."
+        end
+        @test isempty(get_deprecated_binding_diagnostics("ex = :(@oldmacro 1)", TestDeprecatedBindingUser))
+        @test isempty(get_deprecated_binding_diagnostics("f() = TestDeprecatedBindingOwner.@newmacro 1", TestDeprecatedBindingUser))
+    end
+
+    @testset "deprecated module in an import path" begin
+        for text in ("using ..TestDeprecatedBindingOwner.OldSub",
+                     "using ..TestDeprecatedBindingOwner.OldSub: x",
+                     "import ..TestDeprecatedBindingOwner.OldSub.x")
+            diagnostics = get_deprecated_binding_diagnostics(text, TestDeprecatedBindingUser)
+            @test length(diagnostics) == 1
+            diagnostic = only(diagnostics)
+            @test diagnostic.message == "`$(TestDeprecatedBindingOwner).OldSub` is deprecated, use NewSub instead."
+            @test diagnostic.range.start.character == findfirst("OldSub", text).start - 1
+            @test diagnostic.range.var"end".character == findfirst("OldSub", text).stop
+        end
+    end
+
+    @testset "re-exported explicit import" begin
+        # reported at the import of the re-exporting module rather than at the uses
+        @test isempty(get_deprecated_binding_diagnostics("f() = old_value", TestDeprecatedBindingReexportUser))
+        @test isempty(get_deprecated_binding_diagnostics("f() = Renamed()", TestDeprecatedBindingReexportUser))
+    end
+
+    @testset "cyclic re-exports" begin
+        @test isempty(get_deprecated_binding_diagnostics("f() = cycled", TestDeprecatedBindingCycleUser))
+        diagnostics = get_deprecated_binding_diagnostics("f() = cycled", TestDeprecatedBindingDeprecatedCycleUser)
+        @test length(diagnostics) == 1
+        @test only(diagnostics).message ==
+            "`$(TestDeprecatedBindingDeprecatedCycleOwner).cycled` is deprecated, use new_cycled instead."
+    end
+
+    @testset "before full-analysis" begin
+        @test isempty(get_lowering_diagnostics("f() = old_value"; code = JETLSCore.LOWERING_DEPRECATED_BINDING_CODE, context_module = nothing))
+    end
+end
+
+get_deprecated_function_diagnostics(text::AbstractString, context_module::Module) =
+    get_lowering_diagnostics(text;
+        code = JETLSCore.LOWERING_DEPRECATED_FUNCTION_CODE, context_module)
+
+@testset HierarchicalTestSet "deprecated function detection" begin
+    @testset "function whose methods are all deprecated" begin
+        let diagnostics = get_deprecated_function_diagnostics("f(x) = old_func(x)", TestDeprecatedFunctionUser)
+            @test length(diagnostics) == 1
+            diagnostic = only(diagnostics)
+            @test diagnostic.source == JETLSCore.DIAGNOSTIC_SOURCE_LIVE
+            @test diagnostic.severity == DiagnosticSeverity.Information
+            @test DiagnosticTag.Deprecated in diagnostic.tags
+            @test diagnostic.message == "`old_func(x)` is deprecated, use `new_func(x)` instead."
+            @test diagnostic.range.start.character == sizeof("f(x) = ")
+            @test diagnostic.range.var"end".character == sizeof("f(x) = old_func")
+        end
+        # `@deprecate` without a signature
+        let diagnostics = get_deprecated_function_diagnostics("f(x) = renamed_func(x)", TestDeprecatedFunctionUser)
+            @test length(diagnostics) == 1
+            @test only(diagnostics).message == "`renamed_func` is deprecated, use `new_func` instead."
+        end
+        # the methods for default arguments call the deprecated one
+        let diagnostics = get_deprecated_function_diagnostics("f(x) = default_func(x)", TestDeprecatedFunctionUser)
+            @test length(diagnostics) == 1
+            @test only(diagnostics).message == "`default_func(x, y = 1; z = 2)` is deprecated, use `new_func(x)` instead."
+        end
+        let diagnostics = get_deprecated_function_diagnostics("f(x) = multi_func(x)", TestDeprecatedFunctionUser)
+            @test length(diagnostics) == 1
+            message = only(diagnostics).message
+            @test startswith(message, "All methods of `$(TestDeprecatedFunctionOwner).multi_func` are deprecated:\n")
+            @test occursin("`multi_func(x::Int)` is deprecated, use `new_func(x)` instead.", message)
+            @test occursin("`multi_func(x::String)` is deprecated, use `new_func(x)` instead.", message)
+        end
+        @test length(get_deprecated_function_diagnostics("f(xs) = map(old_func, xs)", TestDeprecatedFunctionUser)) == 1
+        @test length(get_deprecated_function_diagnostics("f(x) = TestDeprecatedFunctionOwner.old_func(x)", TestDeprecatedFunctionUser)) == 1
+        @test length(get_deprecated_function_diagnostics("f(a, p) = Base.permute!!(a, p)", TestDeprecatedFunctionUser)) == 1
+        @test isempty(get_deprecated_binding_diagnostics("f(x) = old_func(x)", TestDeprecatedFunctionUser))
+    end
+
+    @testset "function with methods that are not deprecated" begin
+        @test isempty(get_deprecated_function_diagnostics("f(x) = partial_func(x)", TestDeprecatedFunctionUser))
+        @test isempty(get_deprecated_function_diagnostics("f(x) = conditional_func(x)", TestDeprecatedFunctionUser))
+        @test isempty(get_deprecated_function_diagnostics("f(x) = noinline_func(x)", TestDeprecatedFunctionUser))
+        @test isempty(get_deprecated_function_diagnostics("f(x) = TestDeprecatedFunctionOwner.new_func(x)", TestDeprecatedFunctionUser))
+    end
+
+    @testset "roots of the methods defined by `@deprecate`" begin
+        # The roots are checked so that the code of other `@noinline` methods is not decompressed
+        @test JETLSCore.has_depwarn_root(only(methods(TestDeprecatedFunctionOwner.old_func)))
+        @test !JETLSCore.has_depwarn_root(only(methods(TestDeprecatedFunctionOwner.noinline_func)))
+        let m = only(methods(TestDeprecatedFunctionOwner.renamed_func))
+            @test !JETLSCore.has_depwarn_root(m)
+            @test JETLSCore.kwbody_depwarn_message(m, Base.get_world_counter()) == "`renamed_func` is deprecated, use `new_func` instead."
+        end
+    end
+
+    @testset "explicitly imported function whose methods are all deprecated" begin
+        # reported at the uses, where Julia warns, rather than at the import
+        @test isempty(get_deprecated_function_diagnostics("using ..TestDeprecatedFunctionOwner: old_func", TestDeprecatedFunctionImporter))
+        @test isempty(get_deprecated_binding_diagnostics("using ..TestDeprecatedFunctionOwner: old_func", TestDeprecatedFunctionImporter))
+        @test length(get_deprecated_function_diagnostics("f(x) = old_func(x)", TestDeprecatedFunctionImporter)) == 1
     end
 end
 
@@ -1925,6 +2502,28 @@ end
             # The only diagnostic should be the captured-boxed-variable one.
             @test all(d -> d.code != JETLSCore.LOWERING_UNUSED_ASSIGNMENT_CODE, diagnostics)
         end
+    end
+
+    @testset "assignment in unreachable code" begin
+        let diagnostics = get_lowering_diagnostics("""
+            function f()
+                error("x")
+                y = 1
+                error("z")
+                return y
+            end
+            """)
+            @test length(diagnostics) == 1
+            @test only(diagnostics).code == JETLSCore.LOWERING_UNREACHABLE_CODE
+        end
+    end
+
+    @testset "required keywords followed by a dependent default" begin
+        @test isempty(get_lowering_diagnostics("""
+            function f(; a, b, c, d = "x", e = string(d))
+                return (a, b, c, d, e)
+            end
+            """))
     end
 end
 
@@ -2471,6 +3070,40 @@ end
         @test isempty(diagnostics)
     end
 
+    # Quoted imports take effect in the module that evaluates them (aviatesk/JETLS.jl#999)
+    let diagnostics = get_unused_import_diagnostics("""
+        function sandbox_eval(ex)
+            m = Module()
+            Core.eval(m, :(using Base: cos, sin))
+            return Core.eval(m, ex)
+        end
+        """)
+        @test isempty(diagnostics)
+    end
+    let diagnostics = get_unused_import_diagnostics("""
+        macro import_cos()
+            quote
+                using Base: cos
+            end
+        end
+        """)
+        @test isempty(diagnostics)
+    end
+
+    # Two-argument `@eval` imports into the given module, while one-argument `@eval`
+    # imports into the current module
+    let diagnostics = get_unused_import_diagnostics("""
+        @eval Main using Base: cos
+        """)
+        @test isempty(diagnostics)
+    end
+    let diagnostics = get_unused_import_diagnostics("""
+        @eval using Base: cos
+        """)
+        @test length(diagnostics) == 1
+        @test only(diagnostics).message == "Unused import `cos`"
+    end
+
     # Import used in nested module should not suppress warning for top-level import
     @testset "module context tracking" begin
         script = """
@@ -2497,6 +3130,75 @@ end
                 diagnostic = only(unused_import_diags)
                 @test diagnostic.message == "Unused import `sin`"
                 @test diagnostic.range.start.line == 6
+            end
+        end
+    end
+
+    @testset "uses from other modules" begin
+        script = """
+        module Parent
+        module Impl
+        const a = 1
+        const b = 1
+        const c = 1
+        const d = 1
+        const e = 1
+        const f = 1
+        g(x) = x
+        h(x) = x
+        macro m() :(1) end
+        macro n() :(1) end
+        end
+        using .Impl: a
+        using .Impl: b
+        using .Impl: c
+        using .Impl: d
+        using .Impl: e
+        using .Impl: f
+        using .Impl: g
+        using .Impl: h
+        using .Impl: @m
+        using .Impl: @n
+        usec() = Parent.c
+        Parent.h(x::Int) = x
+        module Child
+        using ..Parent: Parent, a, @n
+        import ..Parent.d
+        usage() = (a, Parent.b, d, Parent.@m(), @n())
+        shadowed(Parent) = Parent.e
+        Parent.g(x::Int) = x
+        end
+        end # module Parent
+        """
+        withscript(script) do script_path
+            uri = filepath2uri(script_path)
+            withserver() do (; readmsg, server)
+                JETLSCore.cache_file_info!(server, uri, 1, script)
+                JETLSCore.cache_saved_file_info!(server.state, uri, script)
+                JETLSCore.request_analysis!(server, uri, #=invalidate=#false; wait=true, notify_diagnostics=false)
+                parent = JETLSCore.get_context_module(server.state, uri, Position(; line=13, character=0))
+
+                # without the per-file diagnostics cache, the unit aggregation collects the
+                # used names from the binding occurrences itself
+                @test !haskey(JETLSCore.load(server.state.per_file_diagnostics_cache), uri)
+                uncached = JETLSCore.compute_def_used_names!(
+                    JETLSCore.DefUsedNamesCache(), server, Set((uri,)), #=snapshot=#nothing)
+                @test issubset(("a", "b", "c", "d", "g", "h", "@m", "@n"), uncached[parent].used)
+                @test "e" ∉ uncached[parent].used
+                @test "f" ∉ uncached[parent].used
+
+                params = scan_live_diagnostics!(server, readmsg)[uri]
+                unused_import_diags = filter(params.diagnostics) do d
+                    d.code == JETLSCore.LOWERING_UNUSED_IMPORT_CODE
+                end
+                @test length(unused_import_diags) == 2
+                @test Set((d.range.start.line, d.message) for d in unused_import_diags) ==
+                    Set(((17, "Unused import `e`"), (18, "Unused import `f`")))
+
+                @test haskey(JETLSCore.load(server.state.per_file_diagnostics_cache), uri)
+                cached = JETLSCore.compute_def_used_names!(
+                    JETLSCore.DefUsedNamesCache(), server, Set((uri,)), #=snapshot=#nothing)
+                @test cached[parent].used == uncached[parent].used
             end
         end
     end
@@ -2769,6 +3471,83 @@ end
         @test isempty(unreachable)
     end
 
+    # try/catch/else: both catch and else return → unreachable
+    let diagnostics = get_lowering_diagnostics("""
+        function foo()
+            try
+                println("might throw")
+            catch
+                return 1
+            else
+                return 2
+            end
+            println("unreachable")
+        end
+        """)
+        unreachable = filter(d -> d.code == JETLSCore.LOWERING_UNREACHABLE_CODE, diagnostics)
+        @test length(unreachable) == 1
+        @test unreachable[1].range.start.line == 8
+    end
+
+    # try/catch/else: try body returns → the `else` block is unreachable, and the quick fix
+    # deletes the whole `else` clause
+    let diagnostics = get_lowering_diagnostics("""
+        function foo()
+            try
+                return 1
+            catch
+                println("recover")
+            else
+                println("unreachable")
+                println("unreachable")
+            finally
+                println("cleanup")
+            end
+        end
+        """)
+        unreachable = filter(d -> d.code == JETLSCore.LOWERING_UNREACHABLE_CODE, diagnostics)
+        @test length(unreachable) == 1
+        r = unreachable[1].range
+        @test r.start.line == 6 && r.start.character == 8
+        @test r.var"end".line == 7 && r.var"end".character == 30
+        dr = unreachable[1].data.delete_range
+        @test dr.start.line == 5 && dr.start.character == 4
+        @test dr.var"end".line == 8 && dr.var"end".character == 4
+    end
+
+    # try/catch/else: an empty `else` block has no code to report
+    let diagnostics = get_lowering_diagnostics("""
+        function foo()
+            try
+                return 1
+            catch
+                println("recover")
+            else
+            end
+        end
+        """)
+        unreachable = filter(d -> d.code == JETLSCore.LOWERING_UNREACHABLE_CODE, diagnostics)
+        @test isempty(unreachable)
+    end
+
+    # try/catch/else: an unreachable `try` is reported once, as a whole
+    let diagnostics = get_lowering_diagnostics("""
+        function foo()
+            return 0
+            try
+                return 1
+            catch
+                println("recover")
+            else
+                println("unreachable")
+            end
+        end
+        """)
+        unreachable = filter(d -> d.code == JETLSCore.LOWERING_UNREACHABLE_CODE, diagnostics)
+        @test length(unreachable) == 1
+        @test unreachable[1].range.start.line == 2
+    end
+
     # try/finally: try body returns → unreachable
     let diagnostics = get_lowering_diagnostics("""
         function foo()
@@ -2870,6 +3649,20 @@ end
         """)
         unreachable = filter(d -> d.code == JETLSCore.LOWERING_UNREACHABLE_CODE, diagnostics)
         @test length(unreachable) == 1
+    end
+
+    # code after a `while true` loop without `break` is unreachable
+    let diagnostics = get_lowering_diagnostics("""
+        function foo()
+            while true
+                yield()
+            end
+            println("unreachable")
+        end
+        """)
+        unreachable = filter(d -> d.code == JETLSCore.LOWERING_UNREACHABLE_CODE, diagnostics)
+        @test length(unreachable) == 1
+        @test unreachable[1].range.start.line == 4
     end
 
     # code after `continue` in a while loop is unreachable
@@ -2992,6 +3785,42 @@ end
         unreachable = filter(d -> d.code == JETLSCore.LOWERING_UNREACHABLE_CODE, diagnostics)
         @test isempty(unreachable)
     end
+
+    # Test.jl macros that catch the exception thrown by the tested expression keep the code
+    # after them reachable, unlike the ones that propagate it
+    for (test, reachable) in (
+            ("@test_throws ErrorException error(\"boom\")", true),
+            ("@test_broken error(\"boom\")", true),
+            ("@test error(\"boom\") broken=true", true),
+            ("@test error(\"boom\") skip=true", true),
+            ("@test_skip error(\"boom\")", true),
+            ("@test_logs (:warn, \"boom\") error(\"boom\")", true),
+            ("@test_deprecated error(\"boom\")", true),
+            ("@testset \"inner\" begin error(\"boom\") end", true),
+            ("@testset \"inner \$i\" for i in 1:2 error(\"boom\") end", true),
+            ("@test_warn \"boom\" error(\"boom\")", false),
+            ("@test_nowarn error(\"boom\")", false),
+            ("@inferred error(\"boom\")", false),
+            ("@testset let v = 1; error(\"boom\") end", false))
+        diagnostics = get_lowering_diagnostics("""
+            @testset "foo" begin
+                $test
+                @test true
+            end
+            """; context_module=Test)
+        unreachable = filter(d -> d.code == JETLSCore.LOWERING_UNREACHABLE_CODE, diagnostics)
+        @test isempty(unreachable) == reachable
+    end
+end
+
+macro m_static_branches()
+    return esc(quote
+        @static if true
+            active_call()
+        else
+            inactive_call()
+        end
+    end)
 end
 
 @testset HierarchicalTestSet "inactive code detection" begin
@@ -3011,6 +3840,34 @@ end
     @test d.tags == [DiagnosticTag.Unnecessary]
     @test d.range.start.line ≤ 2 ≤ d.range.var"end".line # covers `inactive_call()`
     @test d.range.var"end".line < 4                      # excludes `active_call()`
+
+    # Old-style macro expansions only carry line-granular provenance, which can't
+    # locate the dropped branch, whether it's written in the macro or by the caller.
+    for src in ("@m_static_branches", """
+            @just_return begin
+                @static if true
+                    active_call()
+                else
+                    inactive_call()
+                end
+            end
+            """)
+        @test isempty(get_lowering_diagnostics(src;
+            context_module = @__MODULE__, code = JETLSCore.LOWERING_INACTIVE_CODE))
+    end
+
+    # Such unreported dropped branches still suppress unused reports.
+    let diagnostics = get_lowering_diagnostics("""
+        function f(x)
+            @just_return begin
+                @static if false
+                    use(x)
+                end
+            end
+        end
+        """; context_module = @__MODULE__)
+        @test !any(d -> d.code == JETLSCore.LOWERING_UNUSED_ARGUMENT_CODE, diagnostics)
+    end
 end
 
 module soft_scope_module

@@ -774,6 +774,54 @@ struct KwCallable end
             @test occursin("For `only_int(::Symbol)`:", message)
             @test length(findall("Closest candidates are:", message)) == 2
         end
+
+        # `invoke` fails for the requested signature regardless of the argument types
+        let result = analyze_call((Int,)) do x
+                invoke(only_int, Tuple{Any}, x)
+            end
+            reports = get_reports(result)
+            @test length(reports) == 1
+            r = only(reports)
+            @test r isa NoMethodMatchReport && r.union_split == 0
+            message = sprint(JET.print_report_message, r)
+            @test startswith(message, "MethodError: no matching method found `only_int(::Any)`")
+            @test occursin("The function `only_int` exists", message)
+            @test occursin("\n- `only_int(::$Int)`", message)
+        end
+        let result = analyze_call((Int,)) do x
+                @invoke ambiguous_func(x::Int, x::Int)
+            end
+            reports = get_reports(result)
+            @test length(reports) == 1
+            r = only(reports)
+            @test r isa AmbiguousMethodReport && r.union_split == 0
+            @test length(r.methods) == 2
+            message = sprint(JET.print_report_message, r)
+            @test startswith(message, "MethodError: `ambiguous_func(::$Int, ::$Int)` is ambiguous.")
+            @test occursin("\n\nPossible fix, define: `ambiguous_func(::$Int, ::$Int)`", message)
+        end
+        let result = analyze_call((Int,)) do x
+                @invoke ambiguous_func(x::Any, x::Int)
+            end
+            @test isempty(get_reports(result))
+        end
+        # `invoke` throws a `TypeError` instead
+        let result = analyze_call((String,)) do x
+                invoke(only_int, Tuple{Float64}, x)
+            end
+            @test !any(r -> r isa MethodErrorReport, get_reports(result))
+        end
+        # the function or the signature may differ at runtime
+        let result = analyze_call((Function, Int)) do f, x
+                invoke(f, Tuple{Any}, x)
+            end
+            @test isempty(get_reports(result))
+        end
+        let result = analyze_call((Type{<:Tuple{Any}}, Int)) do T, x
+                invoke(only_int, T, x)
+            end
+            @test isempty(get_reports(result))
+        end
     end
 
     @testset "UnsupportedKeywordArgReport" begin
@@ -1758,6 +1806,32 @@ end
             "this test always fails since its expression evaluates to non-boolean `$Int`"
     end
 
+    # `@test_throws` whose expression always throws an unexpected exception
+    let reports = analyze_test_text("""
+            using Test
+            @testset "unexpected exception" begin
+                @test_throws ArgumentError parse(Int, 42)
+            end
+            """)
+        r = only(reports)
+        @test r isa FailingTestReport && r.t === MethodError && r.expected === ArgumentError
+        @test sprint(JET.print_report_message, r) ==
+            "this test always fails since its expression throws `MethodError`, not `ArgumentError`"
+    end
+
+    # the errors in the expressions of `@test_throws` are not reported, since they are
+    # expected to throw
+    let reports = analyze_test_text("""
+            using Test
+            @testset "expected exceptions" begin
+                @test_throws MethodError parse(Int, 42)
+                @test_throws UndefVarError undefined_in_test_throws
+                @test_throws "no method" parse(Int, 42)
+            end
+            """)
+        @test isempty(reports)
+    end
+
     # tests that may pass are not reported
     let reports = analyze_test_text("""
             using Test
@@ -1825,6 +1899,122 @@ end
         @test count(r -> r isa FailingTestReport, reports) == 1
         @test count(r -> r isa NoMethodMatchReport, reports) == 1
     end
+end
+
+module DeprecatedCallTarget
+new_func(x) = x
+partial_func(x::Int) = x
+Base.@deprecate partial_func(x::String) new_func(x)
+kw_func(x::String) = x
+Base.@deprecate kw_func(x::Int; k = 1) new_func(x)
+Base.@deprecate all_func(x) new_func(x)
+get_all_func() = all_func
+get_catch_stack() = Base.catch_stack
+default_func(x::String) = x
+Base.@deprecate default_func(x::Int, y = 1) new_func(x)
+abstract type Shape end
+struct Circle <: Shape end
+struct Square <: Shape end
+shape_func(::Circle) = 1
+Base.@deprecate shape_func(s::Square) new_func(s)
+end
+
+module DeprecatedCallExternal
+import ..DeprecatedCallTarget
+call_partial_func() = DeprecatedCallTarget.partial_func("x")
+end
+
+@testset "DeprecatedCallReport" begin
+    get_deprecated_call_reports(args...; kwargs...) =
+        filter(r -> r isa DeprecatedCallReport, get_reports(analyze_call(args...; kwargs...)))
+
+    let reports = get_deprecated_call_reports() do
+            DeprecatedCallTarget.partial_func("x")
+        end
+        r = only(reports)
+        @test inference_error_report_severity(r) == JETLSCore.DiagnosticSeverity.Information
+        @test sprint(JET.print_report_message, r) ==
+            "`partial_func(x::String)` is deprecated, use `new_func(x)` instead."
+    end
+    let reports = get_deprecated_call_reports() do
+            one(CartesianIndex(1, 2))
+        end
+        @test sprint(JET.print_report_message, only(reports)) ==
+            "`one(i::CartesianIndex)` is deprecated, use `oneunit(i)` instead."
+    end
+
+    # methods with keyword arguments, called with and without them
+    @test length(get_deprecated_call_reports(() -> DeprecatedCallTarget.kw_func(1))) == 1
+    @test length(get_deprecated_call_reports(() -> DeprecatedCallTarget.kw_func(1; k = 2))) == 1
+
+    # the method for the default argument calls the deprecated method, which is not reported
+    # in that method again
+    let reports = get_deprecated_call_reports(() -> DeprecatedCallTarget.default_func(1))
+        r = only(reports)
+        @test length(r.vst) == 1
+        @test sprint(JET.print_report_message, r) ==
+            "`default_func(x::Int, y = 1)` is deprecated, use `new_func(x)` instead."
+    end
+    @test length(get_deprecated_call_reports(() -> DeprecatedCallTarget.default_func(1, 2))) == 1
+
+    # a call split over a union of argument types reaches the deprecated method whenever the
+    # argument has the type that matches only that method
+    let reports = get_deprecated_call_reports() do
+            DeprecatedCallTarget.partial_func(rand((1, "x")))
+        end
+        @test sprint(JET.print_report_message, only(reports)) ==
+            "`partial_func(x::String)` is deprecated, use `new_func(x)` instead."
+    end
+    @test length(get_deprecated_call_reports(() -> one(rand((CartesianIndex(1, 2), 1))))) == 1
+
+    # calls that do not always reach deprecated methods
+    @test isempty(get_deprecated_call_reports(() -> DeprecatedCallTarget.partial_func(1)))
+    @test isempty(get_deprecated_call_reports(() -> DeprecatedCallTarget.kw_func("x")))
+    @test isempty(get_deprecated_call_reports(() -> DeprecatedCallTarget.default_func("x")))
+    @test isempty(get_deprecated_call_reports((DeprecatedCallTarget.Shape,)) do s
+        DeprecatedCallTarget.shape_func(s)
+    end)
+
+    # `lowering/deprecated-function` reports functions whose methods are all deprecated where
+    # they are written as global names
+    @test isempty(get_deprecated_call_reports(() -> DeprecatedCallTarget.all_func(1)))
+    @test isempty(get_deprecated_call_reports(() -> DeprecatedCallTarget.all_func((1,)...)))
+    @test isempty(get_deprecated_call_reports(() -> Base.catch_stack(; include_bt = false)))
+    @test isempty(get_deprecated_call_reports() do
+        invoke(DeprecatedCallTarget.all_func, Tuple{Any}, 1)
+    end)
+    # but not where they are called through variables
+    let reports = get_deprecated_call_reports() do
+            f = DeprecatedCallTarget.get_all_func()
+            f(1)
+        end
+        @test sprint(JET.print_report_message, only(reports)) ==
+            "`all_func(x)` is deprecated, use `new_func(x)` instead."
+    end
+    for f in (() -> DeprecatedCallTarget.get_all_func()((1,)...),
+              () -> invoke(DeprecatedCallTarget.get_all_func(), Tuple{Any}, 1),
+              () -> DeprecatedCallTarget.get_catch_stack()(; include_bt = false))
+        @test length(get_deprecated_call_reports(f)) == 1
+    end
+
+    # `invoke` calls
+    let reports = get_deprecated_call_reports() do
+            invoke(one, Tuple{CartesianIndex}, CartesianIndex(1, 2))
+        end
+        @test sprint(JET.print_report_message, only(reports)) ==
+            "`one(i::CartesianIndex)` is deprecated, use `oneunit(i)` instead."
+    end
+    @test length(get_deprecated_call_reports() do
+        Base.@invoke DeprecatedCallTarget.partial_func("x"::String)
+    end) == 1
+    @test isempty(get_deprecated_call_reports() do
+        Base.@invoke DeprecatedCallTarget.partial_func(1::Int)
+    end)
+
+    # calls in modules out of `report_target_modules`
+    @test length(get_deprecated_call_reports(DeprecatedCallExternal.call_partial_func)) == 1
+    @test isempty(get_deprecated_call_reports(DeprecatedCallExternal.call_partial_func;
+        report_target_modules = (@__MODULE__,)))
 end
 
 @testset "report_target_modules" begin
