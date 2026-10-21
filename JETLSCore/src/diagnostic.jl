@@ -1552,26 +1552,37 @@ function analyze_deprecated_import!(
         context_module::Module, world::UInt, postprocessor::LSPostProcessor,
         cache::DeprecatedBindingCache
     )
+    foreach_import_reference(st0, context_module, world) do name_st::SyntaxTree, mod::Module
+        report_deprecated_global!(diagnostics, fi, name_st, mod, world, postprocessor, cache)
+    end
+    return diagnostics
+end
+
+# Calls `callback(name_st, mod)` for each name `name_st` in the `import`/`using` statement
+# `st0` that refers to a binding in the module `mod`, i.e. the names it imports and the
+# modules on its paths, with the paths resolved in `world`
+function foreach_import_reference(
+        callback, st0::SyntaxTree, context_module::Module, world::UInt
+    )
     local_names = import_local_names(st0)
     if JS.numchildren(st0) == 1 && JS.head(st0[1]) === :(:)
         colon = st0[1]
-        mod = @something resolve_import_path!(diagnostics, fi, colon[1], context_module,
-            local_names, world, postprocessor, cache) return diagnostics
+        mod = @something resolve_import_path(callback, colon[1], context_module,
+            local_names, world) return nothing
         for i = 2:JS.numchildren(colon)
             item = colon[i]
             path = JS.head(item) === :as ? item[1] : item
             name_st = @something get_local_import_identifier(path) continue
-            report_deprecated_global!(diagnostics, fi, name_st, mod, world, postprocessor, cache)
+            callback(name_st, mod)
         end
     else
         for i = 1:JS.numchildren(st0)
             item = st0[i]
             path = JS.head(item) === :as ? item[1] : item
-            resolve_import_path!(diagnostics, fi, path, context_module, local_names, world,
-                postprocessor, cache)
+            resolve_import_path(callback, path, context_module, local_names, world)
         end
     end
-    return diagnostics
+    return nothing
 end
 
 # The names that the `import`/`using` statement `st0` binds in the importing module
@@ -1586,12 +1597,12 @@ function import_local_names(st0::SyntaxTree)
     return names
 end
 
-# Resolve the module path `path` of an `import`/`using` statement in `world`, reporting the
-# deprecated bindings it goes through, or return `nothing` if it cannot be resolved.
-function resolve_import_path!(
-        diagnostics::Vector{Diagnostic}, fi::FileInfo, path::SyntaxTree,
-        context_module::Module, local_names::Vector{Symbol}, world::UInt,
-        postprocessor::LSPostProcessor, cache::DeprecatedBindingCache
+# Resolve the module path `path` of an `import`/`using` statement in `world`, calling
+# `callback(id, mod)` for each name `id` it looks up in a module `mod`, or return `nothing`
+# if it cannot be resolved.
+function resolve_import_path(
+        @specialize(callback), path::SyntaxTree, context_module::Module,
+        local_names::Vector{Symbol}, world::UInt
     )
     JS.head(path) === :. || return nothing
     mod = nothing
@@ -1606,7 +1617,7 @@ function resolve_import_path!(
             mod = @something resolve_import_root(context_module, Symbol(name), local_names,
                 world) return nothing
         else
-            report_deprecated_global!(diagnostics, fi, id, mod, world, postprocessor, cache)
+            callback(id, mod)
             mod = @something global_module(mod, Symbol(name), world) return nothing
         end
     end
@@ -2701,6 +2712,8 @@ function compute_unit_def_used_names(
                 state, search_uri, search_fi, st0) return
             update_def_used_names!(mod_def_used_names, binding_occurrences)
         end
+        update_import_used_names!(
+            mod_def_used_names, state, search_uri, search_fi, search_st0_top)
     end
     return mod_def_used_names
 end
@@ -2817,6 +2830,39 @@ function collect_explicit_imports_by_module(
         state::ServerState, uri::URI, fi::FileInfo, st0_top::SyntaxTree
     )
     mod_imported_names = Dict{Module,Dict{String,Vector{ImportInfo}}}()
+    foreach_effective_import(state, uri, fi, st0_top) do st0, context_module, _
+        import_kind = JS.head(st0) === :import ? :import : :using
+        for (name, name_range, delete_range) in collect_explicit_import_names(st0, fi)
+            imported_names =
+                get!(Dict{String,Vector{ImportInfo}}, mod_imported_names, context_module)
+            push!(get!(Vector{ImportInfo}, imported_names, name),
+                ImportInfo(uri, name_range, delete_range, import_kind))
+        end
+    end
+    return mod_imported_names
+end
+
+# An import refers to the bindings it imports from, e.g. `using ..Parent: x` refers to
+# `Parent.x`, which may itself be imported by `Parent`. Count these as uses in the modules
+# the import paths resolve to.
+function update_import_used_names!(
+        mod_def_used_names::Dict{Module,DefUsedNames}, state::ServerState, uri::URI,
+        fi::FileInfo, st0_top::SyntaxTree
+    )
+    foreach_effective_import(state, uri, fi, st0_top) do st0, context_module, world
+        foreach_import_reference(st0, context_module, world) do name_st, mod
+            push!(get!(DefUsedNames, mod_def_used_names, mod).used, name_val(name_st))
+        end
+    end
+    return mod_def_used_names
+end
+
+# Calls `callback(st0, context_module, world)` for each `import`/`using` statement `st0` in
+# `st0_top` that takes effect in the module containing it
+function foreach_effective_import(
+        @specialize(callback), state::ServerState, uri::URI, fi::FileInfo,
+        st0_top::SyntaxTree
+    )
     traverse(st0_top) do st0::SyntaxTree
         kind = JS.head(st0)
         # Quoted imports and two-argument `@eval` input take effect in a module chosen
@@ -2830,17 +2876,12 @@ function collect_explicit_imports_by_module(
             return nothing
         end
         kind ∈ (:import, :using) || return nothing
-        context_module = get_context_module(state, uri, offset_to_xy(fi, JS.first_byte(st0)))
-        for (name, name_range, delete_range) in collect_explicit_import_names(st0, fi)
-            imported_names =
-                get!(Dict{String,Vector{ImportInfo}}, mod_imported_names, context_module)
-            push!(get!(Vector{ImportInfo}, imported_names, name),
-                ImportInfo(uri, name_range, delete_range,
-                    kind === :import ? :import : :using))
-        end
-        return TraversalNoRecurse()
+        (; context_module, world) =
+            get_context_info(state, uri, offset_to_xy(fi, JS.first_byte(st0)))
+        callback(st0, context_module, world)
+        return traversal_no_recurse
     end
-    return mod_imported_names
+    return nothing
 end
 
 # Returns tuples of (name, name_range, delete_range).
@@ -2949,6 +2990,8 @@ function compute_per_file_diagnostics(
                 update_def_used_names!(def_used_names, binding_occurrences)
         end
     end
+    skip_analysis_requiring_context ||
+        update_import_used_names!(def_used_names, server.state, uri, file_info, st0_top)
     return PerFileDiagnosticsResult(diagnostics, candidates, def_used_names, explicit_imports)
 end
 

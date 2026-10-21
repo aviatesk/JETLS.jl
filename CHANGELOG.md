@@ -224,6 +224,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   ```
   The ` as ...` alias that rename inserts into an import statement is also quoted in such a case.
 
+- Fixed false [`lowering/unused-import`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/unused-import) reports on imports that are used only from other modules, which import the name in turn or access it as `Module.name`:
+  ```julia
+  module Parent
+  module Impl
+  const x = 1
+  end
+  using .Impl: x # was reported as unused
+
+  module Child
+  using ..Parent: x # or `Parent.x`
+  f() = x
+  end
+  end # module Parent
+  ```
+  Accesses like `Parent.x` within `Parent` itself also count as uses now.
+  (Closed https://github.com/aviatesk/JETLS.jl/issues/971)
+
 ## 2026-10-18
 
 - Commit: [`8888185`](https://github.com/aviatesk/JETLS.jl/commit/8888185)
