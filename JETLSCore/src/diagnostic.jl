@@ -1311,8 +1311,7 @@ function collect_undef_global_candidates!(
         # Lowering may create global bindings without source-level uses, such as
         # struct names. Only actual reads can be undefined-global candidates.
         any(o -> o.kind === :use, occurrences) || continue
-        bmod = binfo.mod
-        isnothing(bmod) && continue
+        bmod = @something binfo.mod continue
         Base.invoke_in_world(world, isdefinedglobal, bmod, Symbol(binfo.name))::Bool && continue
         if !isnothing(analyzer)
             b = convert(Core.Binding, GlobalRef(bmod, Symbol(binfo.name)))
@@ -1369,8 +1368,7 @@ function analyze_deprecated_bindings!(
     reported = Set{Range}()
     for (binfo, occurrences) in binding_occurrences
         binfo.kind === :global || continue
-        bmod = binfo.mod
-        isnothing(bmod) && continue
+        bmod = @something binfo.mod continue
         all(o -> o.kind === :use, occurrences) || continue
         deprecated = @something find_deprecated_global!(cache, bmod, Symbol(binfo.name), world) continue
         message = deprecated_binding_message(deprecated, world, postprocessor)

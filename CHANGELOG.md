@@ -115,6 +115,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   JETLS now treats `while true` loops as left only through `break`, `return`, `throw`, or `@goto`, so [`lowering/unreachable-code`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/unreachable-code) also reports code after a `while true` loop without `break`.
   (Closed https://github.com/aviatesk/JETLS.jl/issues/998)
 
+- Fixed false [`lowering/unused-assignment`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/unused-assignment) reports on assignments in a `try` block whose value is read only in the `catch` block:
+  ```julia
+  function f(g)
+      launched = false
+      try
+          launched = true # was reported as never used
+          g()
+      catch
+          return launched
+      end
+      return false
+  end
+  ```
+  (Closed https://github.com/aviatesk/JETLS.jl/issues/995)
+
+- Fixed the diagnostics on `try`/`catch`/`else` blocks treating the `else` block as running after the `catch` block, instead of after the `try` block completes without throwing:
+  [`lowering/unused-assignment`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/unused-assignment) no longer reports assignments in the `try` block that are read in the `else` block,
+  [`lowering/undef-local-var`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/undef-local-var) now reports variables used in the `else` block that are assigned only in the `catch` block,
+  and [`lowering/unreachable-code`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/unreachable-code) now reports code after a `try` whose `catch` and `else` blocks both end with `return`.
+
 ## 2026-10-18
 
 - Commit: [`8888185`](https://github.com/aviatesk/JETLS.jl/commit/8888185)

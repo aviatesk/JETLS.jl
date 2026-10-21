@@ -196,6 +196,24 @@ end
     @test status["y"] === false
 end
 
+@testset "try-catch-else: catch assignment does not reach else" begin
+    # `else` runs only when the try body completes normally, so it never sees
+    # the assignment in `catch`
+    status = get_undef_status("""
+    function f(g)
+        local y
+        try
+            g()
+        catch
+            y = 2
+        else
+            println(y)
+        end
+    end
+    """)
+    @test status["y"] === nothing
+end
+
 @testset "multiple variables" begin
     # Test multiple variables in same function
     status = get_undef_status("""
@@ -1622,6 +1640,123 @@ end
     end
 end
 
+@testset "trycatch: mid-try exception keeps assignments live for catch" begin
+    # aviatesk/JETLS.jl#995: rollback flag read only in `catch`
+    let ds = get_dead_stores("""
+        function f(g)
+            launched = false
+            try
+                launched = true
+                g()
+            catch
+                return launched
+            end
+            return false
+        end
+        """)
+        @test !haskey(ds, "launched")
+    end
+
+    # aviatesk/JETLS.jl#995: resource opened in `try` and closed in `catch`
+    let ds = get_dead_stores("""
+        function f(open_resource)
+            res = nothing
+            try
+                res = open_resource()
+                error("boom")
+            catch
+                res === nothing || close(res)
+                rethrow()
+            end
+        end
+        """)
+        @test !haskey(ds, "res")
+    end
+
+    # Statements inside the catch body itself should NOT branch to the same catch label.
+    let ds = get_dead_stores("""
+        function f()
+            try
+                step()
+            catch
+                x = 1
+                x = 2
+                println(x)
+            end
+        end
+        """)
+        @test ds["x"] == 1
+    end
+
+    # An exception escaping an inner `finally` reaches the outer `catch`.
+    let ds = get_dead_stores("""
+        function f()
+            x = 0
+            try
+                try
+                    x = 1
+                    step()
+                finally
+                    cleanup()
+                end
+            catch
+                println(x)
+            end
+        end
+        """)
+        @test !haskey(ds, "x")
+    end
+end
+
+@testset "trycatchelse: else runs only after normal try completion" begin
+    let ds = get_dead_stores("""
+        function f(g)
+            local y
+            try
+                y = g()
+            catch
+                return nothing
+            else
+                println(y)
+            end
+        end
+        """)
+        @test !haskey(ds, "y")
+    end
+
+    # Only `x = 2` is dead: `else` reads the value assigned before `try`.
+    let ds = get_dead_stores("""
+        function f(g)
+            x = 1
+            try
+                g()
+            catch
+                x = 2
+                return nothing
+            else
+                println(x)
+            end
+        end
+        """)
+        @test ds["x"] == 1
+    end
+
+    let ds = get_dead_stores("""
+        function f(g)
+            local y
+            try
+                g()
+            catch
+                y = 2
+            else
+                println(y)
+            end
+        end
+        """)
+        @test ds["y"] == 1
+    end
+end
+
 end # @testset "dead store analysis" begin
 
 # --- Unreachable-statement analysis ---
@@ -1834,6 +1969,49 @@ end
             x = 2
         end
         """; allow_noreturn_optimization=Symbol[:throw, :error, :rethrow, :exit])
+        @test "x = 2" in urs
+    end
+end
+
+@testset "try-catch-else" begin
+    let urs = get_unreachable_statements("""
+        function f()
+            try
+                compute()
+            catch
+                return 0
+            else
+                x = 1
+            end
+        end
+        """)
+        @test isempty(urs)
+    end
+    let urs = get_unreachable_statements("""
+        function f()
+            try
+                return 1
+            catch
+                recover()
+            else
+                x = 2
+            end
+        end
+        """)
+        @test "x = 2" in urs
+    end
+    let urs = get_unreachable_statements("""
+        function f()
+            try
+                compute()
+            catch
+                return 0
+            else
+                return 1
+            end
+            x = 2
+        end
+        """)
         @test "x = 2" in urs
     end
 end

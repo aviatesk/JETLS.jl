@@ -111,12 +111,16 @@ mutable struct EventLinearizer
     # before the return takes effect" — and an assignment in the try body can correctly
     # reach a use in the finally body.
     const active_finally_labels::Vector{Int}
+    # Stack of label IDs of the exception handlers (catch or finally blocks) whose try body
+    # is being linearized. Each is pushed only around its try body, so the innermost entry
+    # is where an exception thrown at the current point is caught. Consulted by `:block`.
+    const active_handler_labels::Vector{Int}
     function EventLinearizer()
         blocks = EventBlock[EventBlock(1)]
         new(blocks, 1, Dict{Int,Int}(), Tuple{Int,Int}[], 0,
             Dict{String,Int}(), Dict{String,Int}(),
             Dict{Set{JL.IdTag},Set{JL.IdTag}}(), Set{JL.IdTag}[],
-            StatementRecord[], Int[])
+            StatementRecord[], Int[], Int[])
     end
 end
 
@@ -594,18 +598,25 @@ function linearize_cfg_events!(
 
         # Try block can throw at any point
         cfg_emit_gotoifnot!(lin, catch_label)
+        push!(lin.active_handler_labels, catch_label)
         let saved = undef_save_cond_implied(lin)
             linearize_cfg_events!(lin, ctx3, ex3[1], candidates, allow_noreturn_optimization)
             undef_restore_cond_implied!(lin, saved)
+        end
+        pop!(lin.active_handler_labels)
+        # The `else` block runs only when the try body completes normally, and exceptions
+        # thrown from it are not caught by this `catch`.
+        if JS.numchildren(ex3) >= 3
+            let saved = undef_save_cond_implied(lin)
+                linearize_cfg_events!(lin, ctx3, ex3[3], candidates, allow_noreturn_optimization)
+                undef_restore_cond_implied!(lin, saved)
+            end
         end
         cfg_emit_goto!(lin, end_label)
 
         cfg_emit_label!(lin, catch_label)
         let saved = undef_save_cond_implied(lin)
             linearize_cfg_events!(lin, ctx3, ex3[2], candidates, allow_noreturn_optimization)
-            if JS.numchildren(ex3) >= 3
-                linearize_cfg_events!(lin, ctx3, ex3[3], candidates, allow_noreturn_optimization)
-            end
             undef_restore_cond_implied!(lin, saved)
         end
 
@@ -620,10 +631,12 @@ function linearize_cfg_events!(
         # — `pop!` happens before linearizing the finally body so a `return` inside
         # `finally` is not redirected back to itself).
         push!(lin.active_finally_labels, finally_label)
+        push!(lin.active_handler_labels, finally_label)
         let saved = undef_save_cond_implied(lin)
             linearize_cfg_events!(lin, ctx3, ex3[1], candidates, allow_noreturn_optimization)
             undef_restore_cond_implied!(lin, saved)
         end
+        pop!(lin.active_handler_labels)
         pop!(lin.active_finally_labels)
 
         # If the try body terminated, post-try is unreachable; the finally body still
@@ -676,11 +689,12 @@ function linearize_cfg_events!(
             after_block = lin.current_block
             push!(lin.statement_blocks, StatementRecord(before_block, after_block, child))
             # Inside a `try` body, model "exception thrown between statements escapes
-            # to the enclosing finally" by branching to the innermost active finally
-            # at every statement boundary. Combined with `:tryfinally`'s entry-bypass
-            # `gotoifnot`, this covers exception escape at every point in the try body.
-            if !isempty(lin.active_finally_labels)
-                cfg_emit_gotoifnot!(lin, last(lin.active_finally_labels))
+            # to the enclosing handler" by branching to the innermost active catch or
+            # finally at every statement boundary. Combined with the entry-bypass
+            # `gotoifnot` of `:trycatchelse` and `:tryfinally`, this covers exception
+            # escape at every point in the try body.
+            if !isempty(lin.active_handler_labels)
+                cfg_emit_gotoifnot!(lin, last(lin.active_handler_labels))
             end
         end
 

@@ -3126,6 +3126,24 @@ end
         @test isempty(unreachable)
     end
 
+    # try/catch/else: both catch and else return → unreachable
+    let diagnostics = get_lowering_diagnostics("""
+        function foo()
+            try
+                println("might throw")
+            catch
+                return 1
+            else
+                return 2
+            end
+            println("unreachable")
+        end
+        """)
+        unreachable = filter(d -> d.code == JETLSCore.LOWERING_UNREACHABLE_CODE, diagnostics)
+        @test length(unreachable) == 1
+        @test unreachable[1].range.start.line == 8
+    end
+
     # try/finally: try body returns → unreachable
     let diagnostics = get_lowering_diagnostics("""
         function foo()
