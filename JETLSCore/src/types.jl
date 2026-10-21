@@ -649,6 +649,7 @@ const LOWERING_INACTIVE_CODE = "lowering/inactive-code"
 const LOWERING_AMBIGUOUS_SOFT_SCOPE_CODE = "lowering/ambiguous-soft-scope"
 const LOWERING_ORPHANED_DOCSTRING_CODE = "lowering/orphaned-docstring"
 const LOWERING_DEPRECATED_BINDING_CODE = "lowering/deprecated-binding"
+const LOWERING_DEPRECATED_FUNCTION_CODE = "lowering/deprecated-function"
 const TOPLEVEL_ERROR_CODE = "toplevel/error"
 const TOPLEVEL_MISSING_CONCRETIZATION_CODE = "toplevel/missing-concretization"
 const TOPLEVEL_CONCRETIZATION_TIMEOUT_CODE = "toplevel/concretization-timeout"
@@ -692,6 +693,7 @@ const ALL_DIAGNOSTIC_CODES = Set{String}(String[
     LOWERING_AMBIGUOUS_SOFT_SCOPE_CODE,
     LOWERING_ORPHANED_DOCSTRING_CODE,
     LOWERING_DEPRECATED_BINDING_CODE,
+    LOWERING_DEPRECATED_FUNCTION_CODE,
     TOPLEVEL_ERROR_CODE,
     TOPLEVEL_MISSING_CONCRETIZATION_CODE,
     TOPLEVEL_CONCRETIZATION_TIMEOUT_CODE,
@@ -1053,8 +1055,15 @@ struct PerFileDiagnosticsCacheEntry
 end
 const PerFileDiagnosticsCacheData = Base.PersistentDict{URI,PerFileDiagnosticsCacheEntry}
 const PerFileDiagnosticsCache = LWContainer{PerFileDiagnosticsCacheData, LWStats}
-# Deprecated bindings that global names resolve to, per world; see `find_deprecated_global!`
-const DeprecatedBindingWorldCache = Dict{Tuple{Module,Symbol},Union{Nothing,Core.Binding}}
+# Deprecations of global names, per world; see `find_deprecated_global!` and
+# `find_deprecated_function!`
+struct DeprecatedBindingWorldCache
+    bindings::Dict{Tuple{Module,Symbol},Union{Nothing,Core.Binding}}
+    functions::Dict{Tuple{Module,Symbol},Union{Nothing,String}}
+    DeprecatedBindingWorldCache() = new(
+        Dict{Tuple{Module,Symbol},Union{Nothing,Core.Binding}}(),
+        Dict{Tuple{Module,Symbol},Union{Nothing,String}}())
+end
 struct DeprecatedBindingCache
     lock::ReentrantLock
     worlds::Dict{UInt,DeprecatedBindingWorldCache}

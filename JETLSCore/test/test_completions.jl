@@ -944,9 +944,11 @@ Core.eval(completion_binding_state_fixture,
 end
 
 module completion_deprecated_owner
-export new_value
+export new_func, new_value
 const new_value = 1
 Base.@deprecate_binding old_value new_value
+new_func(x) = x
+Base.@deprecate old_func(x) new_func(x)
 end
 
 module completion_deprecated_user
@@ -966,6 +968,16 @@ end
         @test is_deprecated(old_item)
         @test !is_deprecated(new_item)
         @test old_item.sortText > new_item.sortText
+        cnt[] += 1
+    end
+    @test cnt[] == 1
+
+    cnt[] = 0
+    with_completion_items("_func│"; context_module = completion_deprecated_user) do (; result)
+        old_item = find_item(result.items, "old_func")
+        @test is_deprecated(old_item)
+        @test !is_deprecated(find_item(result.items, "new_func"))
+        @test old_item.sortText > find_item(result.items, "new_func").sortText
         cnt[] += 1
     end
     @test cnt[] == 1

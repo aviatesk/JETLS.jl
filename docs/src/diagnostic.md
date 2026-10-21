@@ -161,8 +161,9 @@ See [`lowering/*`](@ref diagnostic/reference/lowering) for the diagnostic codes.
 
 [^code_loading_dependency]:
     The [`lowering/macro-expansion-error`](@ref diagnostic/reference/lowering/macro-expansion-error),
-    [`lowering/undef-global-var`](@ref diagnostic/reference/lowering/undef-global-var), and
-    [`lowering/deprecated-binding`](@ref diagnostic/reference/lowering/deprecated-binding)
+    [`lowering/undef-global-var`](@ref diagnostic/reference/lowering/undef-global-var),
+    [`lowering/deprecated-binding`](@ref diagnostic/reference/lowering/deprecated-binding), and
+    [`lowering/deprecated-function`](@ref diagnostic/reference/lowering/deprecated-function)
     checks are reported only after a full analysis has established that context,
     which JETLS refreshes diagnostics to pick up. See [Live analysis](@ref analysis/live)
     for details, and [Files without full analysis](@ref analysis/live/fallback)
@@ -234,6 +235,7 @@ Here is a summary table of the diagnostics explained in this section:
 | [`lowering/undef-local-var`](@ref diagnostic/reference/lowering/undef-local-var)                               | `Warning/Information` | `JETLS/live`  | References to undefined local variables                |
 | [`lowering/ambiguous-soft-scope`](@ref diagnostic/reference/lowering/ambiguous-soft-scope)                     | `Warning`             | `JETLS/live`  | Assignment in soft scope shadows a global variable     |
 | [`lowering/deprecated-binding`](@ref diagnostic/reference/lowering/deprecated-binding)                         | `Information`         | `JETLS/live`  | Accesses to deprecated global bindings                 |
+| [`lowering/deprecated-function`](@ref diagnostic/reference/lowering/deprecated-function)                       | `Information`         | `JETLS/live`  | Uses of functions whose methods are all deprecated     |
 | [`lowering/captured-boxed-variable`](@ref diagnostic/reference/lowering/captured-boxed-variable)               | `Information`         | `JETLS/live`  | Variables captured by closures that require boxing     |
 | [`lowering/unconstrained-static-parameter`](@ref diagnostic/reference/lowering/unconstrained-static-parameter) | `Warning`             | `JETLS/live`  | Static parameters not used in function parameter types |
 | [`lowering/orphaned-docstring`](@ref diagnostic/reference/lowering/orphaned-docstring)                         | `Information`         | `JETLS/live`  | Docstrings not attached to any definition              |
@@ -635,8 +637,63 @@ compute(p::Point) = sin(p.x)^2+cos(p.x)^2, sin(p.y)^2+cos(p.y)^2
 @show compute(Point(rand(), rand()))
 ```
 
-Functions deprecated with `@deprecate` are not reported, since `@deprecate`
-deprecates their methods rather than their bindings.
+Functions deprecated with `@deprecate` are reported as
+[`lowering/deprecated-function`](@ref diagnostic/reference/lowering/deprecated-function)
+instead, since `@deprecate` deprecates their methods rather than their
+bindings.
+
+#### [Deprecated function (`lowering/deprecated-function`)](@id diagnostic/reference/lowering/deprecated-function)
+
+**Default severity**: `Information`
+
+Reported when code uses a function whose methods are all deprecated with
+`Base.@deprecate`, either by name or as `Module.name`. The message is the
+deprecation warning that Julia prints when the function is called, which
+includes the suggested replacement.
+
+Example, with a dependency `Geometry` that deprecates `distance` in favor of
+`euclidean`:
+
+> `Geometry/src/Geometry.jl`
+```@diagnostics-file; workspace = "deprecated-function", file = "Geometry/src/Geometry.jl"
+module Geometry
+
+export euclidean
+
+euclidean(p, q) = sqrt(sum(abs2, p .- q))
+
+Base.@deprecate distance(p, q) euclidean(p, q)
+
+end
+```
+
+```@diagnostics-setup; workspace = "deprecated-function", file = "Geometry/Project.toml"
+name = "Geometry"
+uuid = "917b6c12-8dd0-4f9d-99be-7ad30043c932"
+```
+
+```@diagnostics-setup; workspace = "deprecated-function", file = "Project.toml"
+[deps]
+Geometry = "917b6c12-8dd0-4f9d-99be-7ad30043c932"
+
+[sources]
+Geometry = {path = "Geometry"}
+```
+
+> `main.jl`
+```@diagnostics; workspace = "deprecated-function", file = "main.jl", codes = ["lowering/deprecated-function"]
+using Geometry
+
+nearest(p, points) = argmin(q -> distance(p, q), points)
+```
+
+Unlike deprecated bindings, a deprecated function imported explicitly, as with
+`using Geometry: distance`, is reported at its uses rather than at the import,
+since Julia warns when a deprecated method is called.
+
+Functions with only some of their methods deprecated, such as `one`, of which
+Base deprecates `one(::CartesianIndex)`, are not reported, since whether a call
+reaches a deprecated method depends on the types of its arguments.
 
 #### [Captured boxed variable (`lowering/captured-boxed-variable`)](@id diagnostic/reference/lowering/captured-boxed-variable)
 
