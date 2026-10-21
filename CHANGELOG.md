@@ -69,7 +69,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
-- Added [`lowering/deprecated-binding`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/deprecated-binding) diagnostic that reports accesses to global bindings deprecated with `Base.@deprecate_binding` or `Base.deprecate`, both by name and as `Module.name`:
+- Added the [`lowering/deprecated-binding`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/deprecated-binding) diagnostic that reports accesses to global bindings deprecated with `Base.@deprecate_binding` or `Base.deprecate`, both by name and as `Module.name`:
   ```julia
   using Shapes # deprecates `Point` with `Base.@deprecate_binding Point Point2D`
 
@@ -98,7 +98,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Fixed test runs of the [TestRunner integration](https://aviatesk.github.io/JETLS.jl/release/testrunner/) never finishing when the tests write more than about 64 KB of output.
 
-- Fixed false [`lowering/undef-local-var`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/undef-local-var) reports on variables used after a `while true` loop that are assigned before every `break` in it:
+- Fixed false [`lowering/undef-local-var`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/undef-local-var) reports on variables that are assigned before every `break` in a `while true` loop and used after the loop:
   ```julia
   function first_positive(xs)
       local i, x
