@@ -3229,6 +3229,20 @@ end
         @test length(unreachable) == 1
     end
 
+    # code after a `while true` loop without `break` is unreachable
+    let diagnostics = get_lowering_diagnostics("""
+        function foo()
+            while true
+                yield()
+            end
+            println("unreachable")
+        end
+        """)
+        unreachable = filter(d -> d.code == JETLSCore.LOWERING_UNREACHABLE_CODE, diagnostics)
+        @test length(unreachable) == 1
+        @test unreachable[1].range.start.line == 4
+    end
+
     # code after `continue` in a while loop is unreachable
     let diagnostics = get_lowering_diagnostics("""
         function foo()

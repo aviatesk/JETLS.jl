@@ -121,6 +121,51 @@ end
     @test status["y"] === nothing
 end
 
+@testset "while true loop" begin
+    # `while true` can only be left through `break` (or `return`/`throw`/`@goto`)
+    status = get_undef_status("""
+    function f(xs)
+        local i, x
+        k = 0
+        while true
+            k += 1
+            i = k
+            x = xs[k]
+            x > 0 && break
+        end
+        return i, x
+    end
+    """)
+    @test status["i"] === false
+    @test status["x"] === false
+
+    status = get_undef_status("""
+    function f(c)
+        local y
+        while true
+            c && break
+            y = 1
+            break
+        end
+        println(y)
+    end
+    """)
+    @test status["y"] === nothing
+
+    status = get_undef_status("""
+    function f(c)
+        local y
+        while true
+            y = 1
+            c && @goto done
+        end
+        @label done
+        println(y)
+    end
+    """)
+    @test status["y"] === false
+end
+
 @testset "for loop" begin
     # Loop may not execute (empty range) - may be undefined
     status = get_undef_status("""
@@ -1688,6 +1733,28 @@ end
         end
         """)
         @test urs == ["x = 1"]
+    end
+
+    let urs = get_unreachable_statements("""
+        function f()
+            while true
+                yield()
+            end
+            x = 1
+        end
+        """)
+        @test urs == ["x = 1"]
+    end
+
+    let urs = get_unreachable_statements("""
+        function f(c)
+            while true
+                c && break
+            end
+            x = 1
+        end
+        """)
+        @test isempty(urs)
     end
 
     # `for` lowers to a do-while whose body has an iterate-step assignment

@@ -562,8 +562,11 @@ function linearize_cfg_events!(
         end_label = cfg_make_label!(lin)
 
         cfg_emit_label!(lin, top_label)
-        linearize_cfg_events!(lin, ctx3, ex3[1], candidates, allow_noreturn_optimization)
-        cfg_emit_gotoifnot!(lin, end_label)
+        cond = ex3[1]
+        linearize_cfg_events!(lin, ctx3, cond, candidates, allow_noreturn_optimization)
+        if !(JS.head(cond) === :value && cond.value === true)
+            cfg_emit_gotoifnot!(lin, end_label)
+        end
         let saved = undef_save_cond_implied(lin)
             linearize_cfg_events!(lin, ctx3, ex3[2], candidates, allow_noreturn_optimization)
             undef_restore_cond_implied!(lin, saved)

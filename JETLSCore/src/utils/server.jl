@@ -250,7 +250,6 @@ function get_file_info(
         # shortened `timeout` above) so the timeout-exercising tests finish fast.
         sleep(@static JETLS_TEST_MODE ? 0.05 : 0.5)
     end
-    return nothing
 end
 get_file_info(s::ServerState, t::TextDocumentIdentifier, cancel_flag::AbstractCancelFlag; kwargs...) =
     get_file_info(s, t.uri, cancel_flag; kwargs...)
