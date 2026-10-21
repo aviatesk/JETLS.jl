@@ -169,6 +169,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Fixed test runs of the [TestRunner integration](https://aviatesk.github.io/JETLS.jl/release/testrunner/) never finishing when the tests write more than about 64 KB of output.
 
+- Fixed [`lowering/inactive-code`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/inactive-code) hints on `@static` blocks that go through the expansion of a macro being shown on unrelated lines, such as lines that don't exist in the file or the branch that is actually active.
+  Such blocks are no longer reported since their exact location is unknown.
+  Likewise, [`lowering/macro-expansion-error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/macro-expansion-error) diagnostics on code written in a macro defined in another file are now shown at the macro call instead of an unrelated line.
+  (Closed https://github.com/aviatesk/JETLS.jl/issues/1000)
+
+- Fixed [`lowering/macro-expansion-error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/macro-expansion-error) messages, e.g. for `@static` conditions that fail to evaluate, showing JETLS's internal module names such as `Main.var"##JETVirtualModule#142"` instead of the analyzed module.
+
 ## 2026-10-18
 
 - Commit: [`8888185`](https://github.com/aviatesk/JETLS.jl/commit/8888185)

@@ -866,19 +866,39 @@ function stacktrace_to_related_information(
 end
 
 function emit_macro_diagnostics!(
-        diagnostics::Vector{Diagnostic}, fi::FileInfo, macro_diags::Vector{MacroDiagnostic}
+        diagnostics::Vector{Diagnostic}, fi::FileInfo, macro_diags::Vector{MacroDiagnostic},
+        postprocessor::LSPostProcessor
     )
     isempty(macro_diags) && return diagnostics
     for d in macro_diags
+        message = postprocessor(d.msg)
+        provs = JS.flattened_provenance(d.node)
+        call_site = first(provs)
+        in_file = JS.filename(d.node) == JS.filename(call_site)
+        if d.code == LOWERING_INACTIVE_CODE
+            # Nodes from old-style macro expansions only carry the line of the preceding
+            # `LineNumberNode`, which may well be in the active branch, while anchoring
+            # at the macro call would gray out active code.
+            (in_file && JS.sourceref(d.node) isa JS.SourceRef) || continue
+        end
+        if in_file
+            range = jsobj_to_range(d.node, fi)
+            relatedInformation = nothing
+        else
+            range = jsobj_to_range(call_site, fi)
+            relatedInformation = provenances_to_related_information!(
+                DiagnosticRelatedInformation[], @view(provs[2:end]), message)
+        end
         push!(diagnostics, Diagnostic(;
-            range = jsobj_to_range(d.node, fi),
+            range,
             severity = d.severity,
-            message = d.msg,
+            message,
             source = DIAGNOSTIC_SOURCE_LIVE,
             code = d.code,
             codeDescription = diagnostic_code_description(d.code),
             tags = d.code == LOWERING_INACTIVE_CODE ?
-                DiagnosticTag.Ty[DiagnosticTag.Unnecessary] : nothing))
+                DiagnosticTag.Ty[DiagnosticTag.Unnecessary] : nothing,
+            relatedInformation))
     end
     return diagnostics
 end
@@ -2577,7 +2597,8 @@ function per_stmt_diagnostics!(
         end
         nothing # signal primary-attempt failure to the fallback path
     end
-    skip_analysis_requiring_context || emit_macro_diagnostics!(diagnostics, fi, macro_diags)
+    skip_analysis_requiring_context ||
+        emit_macro_diagnostics!(diagnostics, fi, macro_diags, postprocessor)
     inactive_branch_names = collect_inactive_branch_names(macro_diags)
 
     if res === nothing

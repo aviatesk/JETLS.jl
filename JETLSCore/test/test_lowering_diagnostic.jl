@@ -1179,6 +1179,14 @@ macro m_outer_error(x)
     :(@m_inner_error( $x ), @m_inner_error( $nothing ))
 end
 
+macro m_static_error()
+    return esc(quote
+        @static if undefined_static_cond
+            nothing
+        end
+    end)
+end
+
 @static if isdefinedglobal(Core, :define_method)
     let code = """
         using JETLSCore: JL
@@ -1462,6 +1470,46 @@ end
         @test length(undef_msgs) == 2
         @test any(m -> occursin("undef_a", m), undef_msgs)
         @test any(m -> occursin("undef_b", m), undef_msgs)
+    end
+
+    # The sink-reported node only has a line in the file defining `@m_static_error`.
+    @testset "macro expansion error reported in an old-style macro from another file" begin
+        diagnostics = get_lowering_diagnostics("""
+            x = 1
+            @m_static_error
+            """; context_module = @__MODULE__,
+            code = JETLSCore.LOWERING_MACRO_EXPANSION_ERROR_CODE)
+        diagnostic = only(diagnostics)
+        @test occursin("failed to evaluate condition", diagnostic.message)
+        @test diagnostic.range.start.line == 1
+        @test diagnostic.range.start.character == 0
+        @test diagnostic.range.var"end".line == 1
+        @test diagnostic.range.var"end".character == sizeof("@m_static_error")
+        info = only(something(diagnostic.relatedInformation))
+        @test info.location.uri == filepath2uri(@__FILE__)
+    end
+
+    @testset "macro expansion error messages in the analyzed module" begin
+        script = """
+        x = @static if undefined_static_cond
+            1
+        end
+        """
+        withscript(script) do script_path
+            uri = filepath2uri(script_path)
+            withserver() do (; readmsg, server)
+                JETLSCore.cache_file_info!(server, uri, 1, script)
+                JETLSCore.cache_saved_file_info!(server.state, uri, script)
+                JETLSCore.request_analysis!(server, uri, #=invalidate=#false; wait=true, notify_diagnostics=false)
+
+                params = scan_live_diagnostics!(server, readmsg)[uri]
+                diagnostic = only(filter(params.diagnostics) do d
+                    d.code == JETLSCore.LOWERING_MACRO_EXPANSION_ERROR_CODE
+                end)
+                @test occursin("`undefined_static_cond` not defined in `Main`", diagnostic.message)
+                @test !occursin("JETVirtualModule", diagnostic.message)
+            end
+        end
     end
 end
 
@@ -3539,6 +3587,16 @@ end
     end
 end
 
+macro m_static_branches()
+    return esc(quote
+        @static if true
+            active_call()
+        else
+            inactive_call()
+        end
+    end)
+end
+
 @testset HierarchicalTestSet "inactive code detection" begin
     # A dropped `@static` branch surfaces as `lowering/inactive-code` at Hint
     # severity with the `Unnecessary` tag so editors gray out the region.
@@ -3556,6 +3614,34 @@ end
     @test d.tags == [DiagnosticTag.Unnecessary]
     @test d.range.start.line ≤ 2 ≤ d.range.var"end".line # covers `inactive_call()`
     @test d.range.var"end".line < 4                      # excludes `active_call()`
+
+    # Old-style macro expansions only carry line-granular provenance, which can't
+    # locate the dropped branch, whether it's written in the macro or by the caller.
+    for src in ("@m_static_branches", """
+            @just_return begin
+                @static if true
+                    active_call()
+                else
+                    inactive_call()
+                end
+            end
+            """)
+        @test isempty(get_lowering_diagnostics(src;
+            context_module = @__MODULE__, code = JETLSCore.LOWERING_INACTIVE_CODE))
+    end
+
+    # Such unreported dropped branches still suppress unused reports.
+    let diagnostics = get_lowering_diagnostics("""
+        function f(x)
+            @just_return begin
+                @static if false
+                    use(x)
+                end
+            end
+        end
+        """; context_module = @__MODULE__)
+        @test !any(d -> d.code == JETLSCore.LOWERING_UNUSED_ARGUMENT_CODE, diagnostics)
+    end
 end
 
 module soft_scope_module
