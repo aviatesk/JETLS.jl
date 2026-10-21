@@ -214,6 +214,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Fixed the logs of the [TestRunner integration](https://aviatesk.github.io/JETLS.jl/release/testrunner/) missing the output that tests write to `stderr`, such as log messages of `@info` and `@warn` and deprecation warnings enabled by `--depwarn=yes`, which went to the server log instead.
   When a test run fails unexpectedly, e.g. by a segfault, the server log now shows the end of its output, including the report of the crash.
 
+- Fixed rename producing invalid code for names written with `var"..."`: macro calls written as `@var"..."` lost their quotes, and renaming to a name that needs `var"..."`, such as a name with a space or an operator replacing a variable, left the occurrences written without `var"..."` unquoted:
+  ```julia
+  macro var"old macro"() end
+  @var"old macro"() # was renamed to `@new macro()`, now to `@var"new macro"()`
+  ```
+  The ` as ...` alias that rename inserts into an import statement is also quoted in such a case.
+
 ## 2026-10-18
 
 - Commit: [`8888185`](https://github.com/aviatesk/JETLS.jl/commit/8888185)
