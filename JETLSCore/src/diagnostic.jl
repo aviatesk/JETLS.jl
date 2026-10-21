@@ -2762,16 +2762,14 @@ function update_def_used_names!(
     for (binfo_key, occurrences) in binding_occurrences
         binfo_key.kind === :global || continue
         mod = @something binfo_key.mod continue
+        is_used = any(o -> o.kind === :use || o.kind === :qualified_method_def, occurrences)
+        is_def = any(o -> o.kind === :def || o.kind === :method_def, occurrences)
         has_method_def = any(o -> o.kind === :method_def, occurrences)
-        if any(o -> o.kind === :use || o.kind === :qualified_method_def, occurrences)
-            def_used_names = get!(DefUsedNames, mod_def_used_names, mod)
-            push!(def_used_names.used, binfo_key.name)
-            has_method_def && push!(def_used_names.method_def, binfo_key.name)
-        elseif any(is_definition_occurrence, occurrences)
-            def_used_names = get!(DefUsedNames, mod_def_used_names, mod)
-            push!(def_used_names.def, binfo_key.name)
-            has_method_def && push!(def_used_names.method_def, binfo_key.name)
-        end
+        is_used || is_def || continue
+        def_used_names = get!(DefUsedNames, mod_def_used_names, mod)
+        is_used && push!(def_used_names.used, binfo_key.name)
+        is_def && push!(def_used_names.def, binfo_key.name)
+        has_method_def && push!(def_used_names.method_def, binfo_key.name)
     end
     return mod_def_used_names
 end

@@ -1565,6 +1565,28 @@ end
         end
         """; context_module=@__MODULE__))
 
+    # Also when the definition uses the global itself
+    @test isempty(get_lowering_diagnostics("""
+        use_recursive() = recursive(1)
+        recursive(x) = x > 0 ? recursive(x - 1) : x
+        use_self_referential() = SelfReferential(nothing)
+        struct SelfReferential
+            next::Union{Nothing,SelfReferential}
+        end
+        """; context_module=@__MODULE__))
+
+    # `Mod.f(x) = x` doesn't define `Mod.f`, but throws an `UndefVarError` unless it exists
+    let diagnostics = get_lowering_diagnostics("""
+        use_qualified_def() = qualified_def()
+        TestLoweringUndefGlobalBinding.qualified_def() = nothing
+        """; context_module=TestLoweringUndefGlobalBinding)
+        diagnostic = only(diagnostics)
+        @test diagnostic.code == JETLSCore.LOWERING_UNDEF_GLOBAL_VAR_CODE
+        @test diagnostic.message ==
+            "`$(TestLoweringUndefGlobalBinding).qualified_def` is not defined"
+        @test diagnostic.range.start.line == 0
+    end
+
     # Undefined identifiers used as docstring interpolations should be reported
     let diagnostics = get_lowering_diagnostics("""
         \"\"\"
