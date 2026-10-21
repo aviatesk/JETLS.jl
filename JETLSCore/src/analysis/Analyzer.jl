@@ -574,9 +574,11 @@ function after_abstract_invoke(
     )
     should_analyze(analyzer, sv) || return nothing
     function _after_abstract_invoke(analyzer′::LSAnalyzer, sv′::CC.InferenceState)
+        ret′ = ret[]
+        report_invoke_method_error!(analyzer′, sv′, ret′, arginfo)
         argtypes = arginfo.argtypes
         func = length(argtypes) ≥ 2 ? CC.singleton_type(argtypes[2]) : nothing
-        report_deprecated_call!(analyzer′, sv′, func, ret[], arginfo)
+        report_deprecated_call!(analyzer′, sv′, func, ret′, arginfo)
         return true
     end
     if isready(ret)
@@ -1622,6 +1624,39 @@ function find_ambiguous_methods(
     # Require the applicable match regions to cover the complete query signature.
     t <: coverage || return nothing
     return methods
+end
+
+# `abstract_invoke` gives up without any call info when no method is found for the
+# signature requested by `invoke`, so look up the method again here to report it
+function report_invoke_method_error!(
+        analyzer::LSAnalyzer, sv::CC.InferenceState, call::CC.CallMeta, arginfo::CC.ArgInfo
+    )
+    call.info isa CC.NoCallInfo || return false
+    sig = @something invoke_signature(arginfo.argtypes) return false
+    mt = CC.method_table(analyzer)
+    first(CC.findsup(sig, mt)) === nothing || return false
+    methods = find_ambiguous_methods(sig, mt)
+    if methods !== nothing
+        report = AmbiguousMethodReport(sv, sig, 0, methods)
+    else
+        report = NoMethodMatchReport(sv, sig, 0, CC.get_inference_world(analyzer))
+    end
+    add_new_report!(analyzer, sv.result, report)
+    return true
+end
+
+# Returns `nothing` unless the signature is known statically and `invoke` gets to look it
+# up, i.e. it does not throw a `TypeError` for the arguments first
+function invoke_signature(argtypes::Vector{Any})
+    ft = CC.widenconst(CC.argtype_by_index(argtypes, 2))
+    ft isa DataType && CC.isdispatchelem(ft) || return nothing
+    types, isexact, _, _ = CC.instanceof_tfunc(CC.argtype_by_index(argtypes, 3), false)
+    isexact || return nothing
+    unwrapped = Base.unwrap_unionall(types)
+    unwrapped isa DataType && unwrapped.name === Tuple.name || return nothing
+    argtype = CC.argtypes_to_type(CC.argtype_tail(argtypes, 4))
+    typeintersect(types, argtype) === Union{} && return nothing
+    return Base.rewrap_unionall(Tuple{ft, unwrapped.parameters...}, types)
 end
 
 # UnsupportedKeywordArgReport

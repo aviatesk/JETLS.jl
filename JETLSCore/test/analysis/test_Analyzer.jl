@@ -774,6 +774,54 @@ struct KwCallable end
             @test occursin("For `only_int(::Symbol)`:", message)
             @test length(findall("Closest candidates are:", message)) == 2
         end
+
+        # `invoke` fails for the requested signature regardless of the argument types
+        let result = analyze_call((Int,)) do x
+                invoke(only_int, Tuple{Any}, x)
+            end
+            reports = get_reports(result)
+            @test length(reports) == 1
+            r = only(reports)
+            @test r isa NoMethodMatchReport && r.union_split == 0
+            message = sprint(JET.print_report_message, r)
+            @test startswith(message, "MethodError: no matching method found `only_int(::Any)`")
+            @test occursin("The function `only_int` exists", message)
+            @test occursin("\n- `only_int(::$Int)`", message)
+        end
+        let result = analyze_call((Int,)) do x
+                @invoke ambiguous_func(x::Int, x::Int)
+            end
+            reports = get_reports(result)
+            @test length(reports) == 1
+            r = only(reports)
+            @test r isa AmbiguousMethodReport && r.union_split == 0
+            @test length(r.methods) == 2
+            message = sprint(JET.print_report_message, r)
+            @test startswith(message, "MethodError: `ambiguous_func(::$Int, ::$Int)` is ambiguous.")
+            @test occursin("\n\nPossible fix, define: `ambiguous_func(::$Int, ::$Int)`", message)
+        end
+        let result = analyze_call((Int,)) do x
+                @invoke ambiguous_func(x::Any, x::Int)
+            end
+            @test isempty(get_reports(result))
+        end
+        # `invoke` throws a `TypeError` instead
+        let result = analyze_call((String,)) do x
+                invoke(only_int, Tuple{Float64}, x)
+            end
+            @test !any(r -> r isa MethodErrorReport, get_reports(result))
+        end
+        # the function or the signature may differ at runtime
+        let result = analyze_call((Function, Int)) do f, x
+                invoke(f, Tuple{Any}, x)
+            end
+            @test isempty(get_reports(result))
+        end
+        let result = analyze_call((Type{<:Tuple{Any}}, Int)) do T, x
+                invoke(only_int, T, x)
+            end
+            @test isempty(get_reports(result))
+        end
     end
 
     @testset "UnsupportedKeywordArgReport" begin

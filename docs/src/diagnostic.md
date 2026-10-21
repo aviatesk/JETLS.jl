@@ -1834,6 +1834,16 @@ ambiguous(1, 2)
 Within a union-split call, ambiguous branches are reported separately from
 branches where no method matches.
 
+Calls with `invoke` are reported when no unique method is found for the
+signature that they specify, since `invoke` looks up the method for that
+signature instead of the argument types:
+
+```@diagnostics; codes = ["inference/method-error"]
+double(x::Int) = 2x
+
+invoke_double(x::Int) = @invoke double(x::Integer)
+```
+
 #### [Undefined keyword (`inference/undef-keyword`)](@id diagnostic/reference/inference/undef-keyword)
 
 **Default severity:** `Warning`
