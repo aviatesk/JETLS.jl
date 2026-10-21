@@ -1320,6 +1320,12 @@ function print_callable_method_candidates(
     return nothing
 end
 
+# Ranking the closest candidates needs all of them, which is expensive and pointless for
+# broad callable types like `Type` with thousands of methods, while callable objects usually
+# have only a few. With this limit, the lookup bails out as soon as it is exceeded, and
+# ranking up to this many candidates takes under a millisecond, once per report message.
+const CALLABLE_CANDIDATE_MAX_METHODS = 100
+
 # Returns `nothing` when the applicable methods cannot be enumerated (too broad a
 # callable type or too many matches), and an empty vector when `ftype` has no methods
 # at all, i.e. its instances are not callable.
@@ -1329,8 +1335,8 @@ function find_callable_candidate_methods(@nospecialize(ftype))
     ftype′ === Any && return nothing
     ftype′ === Function && return nothing
     callsig = Tuple{ftype,Vararg{Any}}
-    matches = Base._methods_by_ftype(callsig, nothing, 100, Base.get_world_counter())
-    matches isa Vector || return nothing
+    matches = @something Base._methods_by_ftype(callsig, nothing,
+        CALLABLE_CANDIDATE_MAX_METHODS, Base.get_world_counter()) return nothing
     methods = Method[]
     for match in matches
         match = match::Core.MethodMatch
