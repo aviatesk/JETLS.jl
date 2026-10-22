@@ -1613,6 +1613,9 @@ end
     let p = parse_param("x::Vector{Int}")
         @test JETLSCore.extract_param_text(p) == "x::Vector{Int}"
     end
+    let p = parse_param("var\"x\"")
+        @test JETLSCore.extract_param_text(p) == "x"
+    end
 end
 
 @testset "make_insert_text" begin

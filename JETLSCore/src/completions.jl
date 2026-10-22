@@ -789,11 +789,6 @@ function extract_param_text(p::SyntaxTree)
         else
             return nothing
         end
-    elseif k === :var && JS.numchildren(p) == 1
-        inner = p[1]
-        if JS.head(inner) === :identifier
-            return get_name_val(inner)
-        end
     end
     return nothing
 end
