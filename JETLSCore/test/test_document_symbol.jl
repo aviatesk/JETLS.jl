@@ -821,6 +821,19 @@ end
             args_sym = only(filter(c -> c.name == "arg", children))
             @test args_sym.detail == "@nospecialize arg"
         end
+        for macrocall in ("Base.@nospecialize", "@Base.nospecialize")
+            code = """
+            function foo($macrocall arg)
+                return typeof(arg)
+            end
+            """
+            symbols = get_document_symbols(code)
+            @test length(symbols) == 1
+            children = symbols[1].children
+            @test children !== nothing
+            args_sym = only(filter(c -> c.name == "arg", children))
+            @test args_sym.detail == "$macrocall arg"
+        end
     end
 
     @testset "local variable within `@M.macro` call" begin

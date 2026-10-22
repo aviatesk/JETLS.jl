@@ -73,6 +73,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Fixed [`lowering/orphaned-docstring`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/orphaned-docstring) not reporting the discarded field docstrings of an undocumented struct defined with `@Base.kwdef`, as it does for `Base.@kwdef`.
 
+- Fixed the document symbols of arguments wrapped in `Base.@nospecialize` or `@Base.nospecialize` (and their `@specialize` counterparts) missing the detail that `@nospecialize` arguments show, e.g. `@nospecialize arg`.
+
 ## 2026-10-21
 
 - Commit: [`2b04cd5`](https://github.com/aviatesk/JETLS.jl/commit/2b04cd5)

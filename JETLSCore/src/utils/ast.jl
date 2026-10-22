@@ -307,7 +307,7 @@ is_ateval0(context_module::Module, world::UInt, st0::SyntaxTree) =
     is_macrocall_binding0(context_module, world, st0, Base, Symbol("@eval"))
 
 is_nospecialize_or_specialize_macrocall0(st0::SyntaxTree) =
-    is_macrocall_st0(st0, "@nospecialize", "@specialize")
+    is_macrocall_st0(st0, "@nospecialize", "@specialize", "Base.@nospecialize", "Base.@specialize")
 
 is_macro0(st0::SyntaxTree) = JS.head(st0) === :macro
 
