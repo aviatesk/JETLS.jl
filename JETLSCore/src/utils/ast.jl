@@ -259,12 +259,19 @@ function is_macrocall_st0(st0::SyntaxTree, names::AbstractString...; from::Union
     JS.head(st0) === :macrocall || return false
     JS.numchildren(st0) >= 1 || return false
     macro_name = st0[1]
-    nv = if has_name_val(macro_name)
-        name_val(macro_name)
-    else
-        JS.sourcetext(macro_name)
+    return macro_name_text(macro_name) in names && (isnothing(from) || macro_name.mod === from)
+end
+
+# `M.@x` and `@M.x` both parse as `(. M (inert @x))`, so either is rendered as `"M.@x"`
+function macro_name_text(macro_name::SyntaxTree)
+    has_name_val(macro_name) && return name_val(macro_name)
+    if JS.head(macro_name) === :. && JS.numchildren(macro_name) == 2
+        rhs = macro_name[2]
+        if JS.head(rhs) === :inert && JS.numchildren(rhs) == 1 && has_name_val(rhs[1])
+            return string(macro_name_text(macro_name[1]), '.', name_val(rhs[1]))
+        end
     end
-    return nv in names && (isnothing(from) || macro_name.mod === from)
+    return JS.sourcetext(macro_name)
 end
 
 is_mainfunc0(st0::SyntaxTree) = is_macrocall_st0(st0, "@main")

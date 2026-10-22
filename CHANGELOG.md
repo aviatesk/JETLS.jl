@@ -71,6 +71,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Fixed the outline and other features based on document symbols, such as code lenses, failing for a whole file when a function assigns a local variable inside a macro call written as `@M.macro`, e.g. `@Base.time y = f(x)`.
 
+- Fixed [`lowering/orphaned-docstring`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/orphaned-docstring) not reporting the discarded field docstrings of an undocumented struct defined with `@Base.kwdef`, as it does for `Base.@kwdef`.
+
 ## 2026-10-21
 
 - Commit: [`2b04cd5`](https://github.com/aviatesk/JETLS.jl/commit/2b04cd5)

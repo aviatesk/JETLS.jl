@@ -4353,6 +4353,16 @@ orphaned_docstring_message(reason::AbstractString) =
         end
 
         let diagnostics = get_orphaned_docstring_diagnostics("""
+                @Base.kwdef struct Foo
+                    "doc"
+                    x::Int = 1
+                end
+                """)
+            @test length(diagnostics) == 1
+            @test startswith(only(diagnostics).message, "Field docstrings of ")
+        end
+
+        let diagnostics = get_orphaned_docstring_diagnostics("""
                 "Foo"
                 struct Foo
                     "doc"
