@@ -75,6 +75,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Fixed the document symbols of arguments wrapped in `Base.@nospecialize` or `@Base.nospecialize` (and their `@specialize` counterparts) missing the detail that `@nospecialize` arguments show, e.g. `@nospecialize arg`.
 
+- Fixed signature help showing up right after a qualified string macro such as `Base.r"foo"` or a command literal such as `` `ls` ``, as it already did not after `r"foo"`.
+
 ## 2026-10-21
 
 - Commit: [`2b04cd5`](https://github.com/aviatesk/JETLS.jl/commit/2b04cd5)

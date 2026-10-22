@@ -1260,11 +1260,10 @@ end
 # but this edge case might be acceptable given that `r"foo" anything|` shouldn't
 # show signature help
 is_special_macrocall(st0::SyntaxTree) =
-    JS.head(st0) === :macrocall && JS.numchildren(st0) >= 1 &&
-    let mname = JS.head(st0[1]) === :. && JS.numchildren(st0[1]) === 2 ? st0[1][2] : st0[1]
-        mname_s = get_name_val(mname, "")
+    JS.head(st0) === :macrocall && (is_cmd0(st0) ||
+    let mname_s = something(get_macrocall_name(st0), "")
         endswith(mname_s, "_str") || endswith(mname_s, "_cmd")
-    end
+    end)
 
 noparen_macrocall(st0::SyntaxTree) =
     JS.head(st0) === :macrocall &&
