@@ -484,7 +484,7 @@ function is_nospecialize_or_specialize_macrocall3(st3::SyntaxTree)
     JS.numchildren(st3) >= 1 || return false
     macro_name = st3[1]
     JS.head(macro_name) === :macro_name || return false
-    JS.numchildren(st3) >= 2 || return false
+    JS.numchildren(macro_name) >= 2 || return false
     macro_name = macro_name[2]
     JS.head(macro_name) === :identifier || return false
     return get_name_val(macro_name) in ("nospecialize", "specialize")

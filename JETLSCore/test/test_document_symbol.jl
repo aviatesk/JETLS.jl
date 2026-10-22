@@ -823,6 +823,21 @@ end
         end
     end
 
+    @testset "local variable within `@M.macro` call" begin
+        let code = """
+            function foo(x)
+                @Base.time y = x
+                return y
+            end
+            """
+            symbols = get_document_symbols(code)
+            @test length(symbols) == 1
+            children = symbols[1].children
+            @test children !== nothing
+            @test any(c -> c.name == "x", children)
+        end
+    end
+
     @testset "local variable with assignment" begin
         let code = """
             function foo()
