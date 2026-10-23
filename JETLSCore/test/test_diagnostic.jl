@@ -149,7 +149,9 @@ end
                 end
             end
             """
-        (; result) = analyze_concretization(code, filename; mode, timeout)
+        (; result) = suppress_overwrite_warnings() do
+            analyze_concretization(code, filename; mode, timeout)
+        end
         if timeout == "inf"
             @test isnothing(result.res.toplevel_error_report)
             continue
@@ -996,7 +998,9 @@ end
         end
         """
         withscript(code) do script_path
-            diagnostics = get_open_diagnostics(dirname(script_path), script_path, code)
+            diagnostics = suppress_overwrite_warnings() do
+                get_open_diagnostics(dirname(script_path), script_path, code)
+            end
             overwrites = filter(diag -> diag.code == JETLSCore.TOPLEVEL_METHOD_OVERWRITE_CODE, diagnostics)
             @test length(overwrites) == 2
             let diag = only(filter(diag -> occursin("duplicate(::$Int)", diag.message), overwrites))
@@ -1027,7 +1031,9 @@ end
         src_path = normpath(pkg_path, "src", "TestMethodOverwrite.jl")
         uri = filepath2uri(src_path)
         withserver(; rootUri) do (; writereadmsg)
-            (; raw_res) = writereadmsg(make_DidOpenTextDocumentNotification(uri, read(src_path, String)))
+            (; raw_res) = suppress_overwrite_warnings() do
+                writereadmsg(make_DidOpenTextDocumentNotification(uri, read(src_path, String)))
+            end
 
             @test raw_res isa PublishDiagnosticsNotification
             @test raw_res.params.uri == uri

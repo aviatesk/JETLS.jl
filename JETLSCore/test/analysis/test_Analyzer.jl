@@ -1767,7 +1767,9 @@ end
             result = JET.analyze_and_report_call!(analyzer, entry, (String,))
             @test isempty(get_reports(result))
 
-            Core.eval(mod, :(body(x) = sin(x)))
+            suppress_overwrite_warnings() do
+                Core.eval(mod, :(body(x) = sin(x)))
+            end
             @test ci.max_world < Base.get_world_counter()
             updated_analyzer = LSAnalyzer(; report_target_modules=nothing)
             @test CC.cache_owner(updated_analyzer) === CC.cache_owner(analyzer)
