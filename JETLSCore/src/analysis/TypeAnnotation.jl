@@ -353,10 +353,13 @@ end
 function concretize_abstract_binding_state_load(interp::ASTTypeAnnotator, res::CC.RTEffects)
     ⊑ = CC.partialorder(CC.typeinf_lattice(interp))
     if res.rt !== Union{} && res.rt ⊑ JET.AbstractBindingState
+        # Native execution would read the placeholder rather than the binding value,
+        # so prevent code loading it from being concretely evaluated.
+        effects = CC.Effects(res.effects; consistent = CC.ALWAYS_FALSE)
         rt = res.rt
         if rt isa Core.Const && (binding_state = rt.val) isa JET.AbstractBindingState
             if isdefined(binding_state, :typ)
-                (; exct, effects) = res
+                exct = res.exct
                 if binding_state.maybeundef
                     ⊔ = CC.join(CC.typeinf_lattice(interp))
                     exct = exct ⊔ UndefVarError
@@ -365,7 +368,7 @@ function concretize_abstract_binding_state_load(interp::ASTTypeAnnotator, res::C
                 return CC.RTEffects(binding_state.typ, exct, effects)
             end
         end
-        return CC.RTEffects(Any, res.exct, res.effects)
+        return CC.RTEffects(Any, res.exct, effects)
     end
     return res
 end
