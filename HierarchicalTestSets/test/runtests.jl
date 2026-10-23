@@ -71,4 +71,51 @@ end
         @test only(ts.results) isa Test.DefaultTestSet
         @test only(ts.results).description == "outer"
     end
+
+    @testset "progress output" begin
+        _, out = capture_stdout() do
+            @testset CaptureTestSet "capture" begin
+                @testset HierarchicalTestSet "outer" progress=true begin
+                    @testset "child" begin
+                        @testset "grandchild" begin
+                            @test true
+                        end
+                    end
+                    @testset "sibling" progress=true begin
+                        @testset "nested" begin
+                            @test true
+                        end
+                    end
+                end
+            end
+        end
+        root = string(CaptureTestSet)
+        @test replace(out, r"\(\d+\.\d+s\)" => "(<duration>)") == """
+            [$root > outer > child] passed (<duration>)
+            [$root > outer > sibling]
+            [$root > outer > sibling > nested] passed (<duration>)
+            [$root > outer > sibling] passed (<duration>)
+            """
+
+        _, out = capture_stdout() do
+            @testset CaptureTestSet "capture" begin
+                @testset HierarchicalTestSet "outer" progress=true begin
+                    @testset "failing" begin
+                        @test 1 == 2
+                    end
+                    @testset "erroring" begin
+                        error("boom")
+                    end
+                end
+            end
+        end
+        @test occursin("[$root > outer > failing]\n[Testset Path] $root > outer > failing\n", out)
+        progress = filter(startswith("[$root"), split(out, '\n'))
+        @test replace.(progress, r"\(\d+\.\d+s\)" => "(<duration>)") == [
+            "[$root > outer > failing]",
+            "[$root > outer > failing] failed (<duration>)",
+            "[$root > outer > erroring]",
+            "[$root > outer > erroring] failed (<duration>)",
+        ]
+    end
 end

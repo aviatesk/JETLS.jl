@@ -26,7 +26,7 @@ LSP.@interface OptionalInterface begin
 end
 end # module ExternalInterfaceTest
 
-@testset HierarchicalTestSet "LSP" begin
+@testset HierarchicalTestSet "LSP" verbose=true begin
     # De/serializing complex LSP objects
     uri = filename2uri(@__FILE__)
 
