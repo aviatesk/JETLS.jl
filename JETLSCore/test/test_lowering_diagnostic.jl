@@ -1852,7 +1852,8 @@ get_deprecated_binding_diagnostics(text::AbstractString, context_module::Module)
     get_lowering_diagnostics(text;
         code = JETLSCore.LOWERING_DEPRECATED_BINDING_CODE, context_module)
 
-# Expanding a macro through a deprecated binding warns with `--depwarn=yes`
+# Resolving a deprecated macro binding warns with `--depwarn=yes`, both when the macro is
+# expanded and when JETLS looks up the macro object, which it does in quoted code as well
 get_deprecated_macro_diagnostics(text::AbstractString, context_module::Module) =
     redirect_stderr(devnull) do
         get_deprecated_binding_diagnostics(text, context_module)
@@ -1989,7 +1990,7 @@ get_deprecated_macro_diagnostics(text::AbstractString, context_module::Module) =
             @test length(diagnostics) == 1
             @test only(diagnostics).message == "`$(TestDeprecatedBindingOwner).OldSub` is deprecated, use NewSub instead."
         end
-        @test isempty(get_deprecated_binding_diagnostics("ex = :(@oldmacro 1)", TestDeprecatedBindingUser))
+        @test isempty(get_deprecated_macro_diagnostics("ex = :(@oldmacro 1)", TestDeprecatedBindingUser))
         @test isempty(get_deprecated_binding_diagnostics("f() = TestDeprecatedBindingOwner.@newmacro 1", TestDeprecatedBindingUser))
     end
 

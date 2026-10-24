@@ -543,9 +543,10 @@ function _remove_macrocalls(
     end
     (st0, changed) = desugar_main_macrocall(st0)
     new_children = SyntaxList()
-    inner_context = if JS.head(st0) === :module && JS.numchildren(st0) >= 2
-        module_const = context_module === nothing ? nothing :
-            resolve_global_const(context_module, world, st0[2])
+    inner_context = if JS.head(st0) === :module
+        module_name = module_name_node(st0)
+        module_const = context_module === nothing || module_name === nothing ? nothing :
+            resolve_global_const(context_module, world, module_name)
         module_const isa Core.Const && module_const.val isa Module ?
             module_const.val : nothing
     else
@@ -864,6 +865,20 @@ function _traverse_postorder(@specialize(callback), stack::SyntaxList)
         ret === traversal_terminator && break
     end
     return retval
+end
+
+"""
+    module_name_node(st0::SyntaxTree) -> Union{Nothing,SyntaxTree}
+
+Return the name of the `:module` tree `st0`, which follows the leading `:value` children:
+the syntax version, if the parser records it, and the flag that is `false` for
+`baremodule`.
+"""
+function module_name_node(st0::SyntaxTree)
+    for c in JS.children(st0)
+        JS.head(c) === :value || return c
+    end
+    return nothing
 end
 
 # TODO use something like `JuliaInterpreter.ExprSplitter`
