@@ -572,24 +572,23 @@ end
 end
 
 function after_abstract_invoke(
-        analyzer::LSAnalyzer, ret::CC.Future, arginfo::CC.ArgInfo, sv::CC.InferenceState
+        analyzer::LSAnalyzer, ret::CC.Future{CC.CallMeta}, arginfo::CC.ArgInfo,
+        sv::CC.InferenceState
     )
-    should_analyze(analyzer, sv) || return nothing
-    function _after_abstract_invoke(analyzer′::LSAnalyzer, sv′::CC.InferenceState)
-        ret′ = ret[]
-        report_invoke_method_error!(analyzer′, sv′, ret′, arginfo)
-        report_invoke_type_error!(analyzer′, sv′, ret′, arginfo)
+    should_analyze(analyzer, sv) || return ret
+    function _after_abstract_invoke(
+            call::CC.CallMeta, analyzer′::LSAnalyzer, sv′::CC.InferenceState
+        )
+        sig = report_invoke_method_error!(analyzer′, sv′, call, arginfo)
+        report_invoke_type_error!(analyzer′, sv′, call, arginfo)
         argtypes = arginfo.argtypes
         func = length(argtypes) ≥ 2 ? CC.singleton_type(argtypes[2]) : nothing
-        report_deprecated_call!(analyzer′, sv′, func, ret′, arginfo)
-        return true
+        report_deprecated_call!(analyzer′, sv′, func, call, arginfo)
+        sig === nothing && return call
+        return CC.CallMeta(call.rt, call.exct, call.effects, InvokeMethodErrorInfo(sig),
+            call.refinements)
     end
-    if isready(ret)
-        _after_abstract_invoke(analyzer, sv)
-    else
-        push!(sv.tasks, _after_abstract_invoke)
-    end
-    return nothing
+    return CC.Future{CC.CallMeta}(_after_abstract_invoke, ret, analyzer, sv)
 end
 
 @static if hasmethod(CC.abstract_invoke,
@@ -602,8 +601,7 @@ function CC.abstract_invoke(
     ret = @invoke CC.abstract_invoke(
         analyzer::ToplevelAbstractAnalyzer, arginfo::CC.ArgInfo, si::CC.StmtInfo,
         vtypes::Union{Vector{CC.VarState},Nothing}, sv::CC.AbsIntState)
-    after_abstract_invoke(analyzer, ret, arginfo, sv)
-    return ret
+    return after_abstract_invoke(analyzer, ret, arginfo, sv)
 end
 else
 function CC.abstract_invoke(
@@ -612,8 +610,7 @@ function CC.abstract_invoke(
     ret = @invoke CC.abstract_invoke(
         analyzer::ToplevelAbstractAnalyzer, arginfo::CC.ArgInfo, si::CC.StmtInfo,
         sv::CC.AbsIntState)
-    after_abstract_invoke(analyzer, ret, arginfo, sv)
-    return ret
+    return after_abstract_invoke(analyzer, ret, arginfo, sv)
 end
 end
 
@@ -1631,14 +1628,21 @@ function find_ambiguous_methods(
 end
 
 # `abstract_invoke` gives up without any call info when no method is found for the
-# signature requested by `invoke`, so look up the method again here to report it
+# signature requested by `invoke`, so look up the method again here to report it.
+# Returns the signature if reported.
 function report_invoke_method_error!(
         analyzer::LSAnalyzer, sv::CC.InferenceState, call::CC.CallMeta, arginfo::CC.ArgInfo
     )
-    call.info isa CC.NoCallInfo || return false
-    sig = @something invoke_signature(arginfo.argtypes) return false
+    call.info isa CC.NoCallInfo || return nothing
+    sig = @something invoke_signature(arginfo.argtypes) return nothing
     mt = CC.method_table(analyzer)
-    first(CC.findsup(sig, mt)) === nothing || return false
+    match, valid_worlds = CC.findsup(sig, mt)
+    match === nothing || return nothing
+    @static if hasmethod(CC.update_valid_age!, Tuple{CC.AbsIntState,Any,CC.WorldRange})
+        CC.update_valid_age!(sv, CC.get_inference_world(analyzer), valid_worlds)
+    else
+        CC.update_valid_age!(sv, valid_worlds)
+    end
     methods = find_ambiguous_methods(sig, mt)
     if methods !== nothing
         report = AmbiguousMethodReport(sv, sig, 0, methods)
@@ -1646,8 +1650,18 @@ function report_invoke_method_error!(
         report = NoMethodMatchReport(sv, sig, 0, CC.get_inference_world(analyzer))
     end
     add_new_report!(analyzer, sv.result, report)
-    return true
+    return sig
 end
+
+# Replaces the call info of an `invoke` call reported by `report_invoke_method_error!`.
+# The failed lookup leaves no edge, so this adds a method table backedge for the signature
+# to invalidate the cached report once a method is defined for it.
+struct InvokeMethodErrorInfo <: CC.CallInfo
+    sig::Type
+    InvokeMethodErrorInfo(@nospecialize sig::Type) = new(sig)
+end
+CC.add_edges_impl(edges::Vector{Any}, info::InvokeMethodErrorInfo) =
+    push!(edges, info.sig, Core.methodtable)
 
 # Returns `nothing` unless the signature is known statically and `invoke` gets to look it
 # up, i.e. it does not throw a `TypeError` for the arguments first

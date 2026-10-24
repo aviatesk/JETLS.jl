@@ -85,6 +85,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Fixed signature help showing up right after a qualified string macro such as `Base.r"foo"` or a command literal such as `` `ls` ``, as it already did not after `r"foo"`.
 
+- Fixed [`inference/method-error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/inference/method-error) reports on `invoke` or `@invoke` calls without a unique method sometimes persisting after a method for the specified signature is defined.
+
 ## 2026-10-21
 
 - Commit: [`2b04cd5`](https://github.com/aviatesk/JETLS.jl/commit/2b04cd5)
