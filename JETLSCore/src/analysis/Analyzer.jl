@@ -6,8 +6,8 @@ export declared_argtypes, inference_error_report_related_frames,
     inference_error_report_stack, is_parametric_closure_type,
     reset_report_target_modules!
 export AmbiguousMethodReport, BoundsErrorReport, DeprecatedCallReport, FailingTestReport,
-    FieldErrorReport, KeywordTypeErrorReport, MethodErrorReport, NoMethodMatchReport,
-    NonBooleanCondErrorReport, TypeAssertErrorReport, TypeErrorReport,
+    FieldErrorReport, InvokeTypeErrorReport, KeywordTypeErrorReport, MethodErrorReport,
+    NoMethodMatchReport, NonBooleanCondErrorReport, TypeAssertErrorReport, TypeErrorReport,
     UndefKeywordErrorReport, UndefVarErrorReport, UnsupportedKeywordArgReport
 export RelatedEntryFrame, RelatedFrame, RelatedFrameKind, RelatedOriginFrame, RelatedViaFrame
 
@@ -578,6 +578,7 @@ function after_abstract_invoke(
     function _after_abstract_invoke(analyzer′::LSAnalyzer, sv′::CC.InferenceState)
         ret′ = ret[]
         report_invoke_method_error!(analyzer′, sv′, ret′, arginfo)
+        report_invoke_type_error!(analyzer′, sv′, ret′, arginfo)
         argtypes = arginfo.argtypes
         func = length(argtypes) ≥ 2 ? CC.singleton_type(argtypes[2]) : nothing
         report_deprecated_call!(analyzer′, sv′, func, ret′, arginfo)
@@ -942,6 +943,7 @@ Subtypes:
   * `TypeAssertErrorReport`: Statically failing type assertions
   * `NonBooleanCondErrorReport`: Non-boolean value in a boolean context
   * `KeywordTypeErrorReport`: Keyword argument value type mismatch
+  * `InvokeTypeErrorReport`: Invalid signature or argument types for `invoke`
 - `FailingTestReport`: Top-level `@test`s that always fail
 - `DeprecatedCallReport`: Calls to methods deprecated with `@deprecate`
 """
@@ -1909,6 +1911,49 @@ function report_keyword_typeerror!(
     end
     got = fieldtype(kwt, idx)
     add_new_report!(analyzer, sv.result, KeywordTypeErrorReport(sv, name, expected, got))
+    return true
+end
+
+# InvokeTypeErrorReport
+# ---------------------
+
+@jetreport struct InvokeTypeErrorReport <: TypeErrorReport
+    @nospecialize expected
+    @nospecialize got
+    argument_mismatch::Bool
+end
+function JETInterface.print_report_message(io::IO, r::InvokeTypeErrorReport)
+    print(io, "TypeError: in `invoke`")
+    r.argument_mismatch && print(io, ": argument type error")
+    print(io, ", expected `", r.expected, "`, got ")
+    print_type_error_got(io, r.got)
+end
+inference_error_report_stack_impl(r::InvokeTypeErrorReport) = length(r.vst):-1:1
+inference_error_report_severity_impl(::InvokeTypeErrorReport) = DiagnosticSeverity.Warning
+
+# `abstract_invoke` gives up without any call info when `invoke` throws a `TypeError` before
+# looking up the method, so check the signature and the arguments again here to report it
+function report_invoke_type_error!(
+        analyzer::LSAnalyzer, sv::CC.InferenceState, call::CC.CallMeta, arginfo::CC.ArgInfo
+    )
+    call.rt === Union{} && call.info isa CC.NoCallInfo || return false
+    argtypes = arginfo.argtypes
+    length(argtypes) ≥ 3 && !CC.isvarargtype(argtypes[3]) || return false
+    sigtype = argtypes[3]
+    got = CC.widenconst(sigtype)
+    # `invoke` also accepts a `Method` or a `CodeInstance` in place of the signature
+    CC.hasintersect(got, Union{Method,Core.CodeInstance}) && return false
+    types, isexact, _, _ = CC.instanceof_tfunc(sigtype, false)
+    isexact || return false
+    unwrapped = Base.unwrap_unionall(types)
+    if !(unwrapped isa DataType && unwrapped.name === Tuple.name)
+        report = InvokeTypeErrorReport(sv, Type{T} where T<:Tuple, got, false)
+    else
+        argtype = CC.argtypes_to_type(CC.argtype_tail(argtypes, 4))
+        CC.hasintersect(types, argtype) && return false
+        report = InvokeTypeErrorReport(sv, types, argtype, true)
+    end
+    add_new_report!(analyzer, sv.result, report)
     return true
 end
 

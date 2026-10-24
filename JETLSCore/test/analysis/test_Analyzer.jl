@@ -1394,6 +1394,8 @@ iszero_val(r::RowWithMissing) = r.val == 0
 const LOOKUP_TABLE = Dict{Symbol,Int}(:a => 1)
 lookup_or_missing(::Missing) = missing
 lookup_or_missing(k) = get(LOOKUP_TABLE, k, missing)
+const ONLY_INT_METHOD = only(methods(only_int))
+integer_as_string(x::Integer) = x::String
 
 @testset HierarchicalTestSet "TypeErrorReport" begin
     @testset "KeywordTypeErrorReport" begin
@@ -1560,6 +1562,67 @@ lookup_or_missing(k) = get(LOOKUP_TABLE, k, missing)
                 x::Int
             end
             @test isempty(get_reports(result))
+        end
+    end
+
+    @testset "InvokeTypeErrorReport" begin
+        # the signature is not a tuple type
+        let result = analyze_call() do
+                invoke(sin, :this_should_be_type, 1.0)
+            end
+            reports = get_reports(result)
+            @test length(reports) == 1
+            r = only(reports)
+            @test r isa InvokeTypeErrorReport && !r.argument_mismatch
+            @test sprint(JETLSCore.JET.print_report_message, r) == "TypeError: in `invoke`, expected `Type{T} where T<:Tuple`, got a value of type `Symbol`"
+        end
+        let result = analyze_call((Int,)) do x
+                invoke(only_int, Int, x)
+            end
+            reports = get_reports(result)
+            @test length(reports) == 1
+            r = only(reports)
+            @test r isa InvokeTypeErrorReport && !r.argument_mismatch
+            @test sprint(JETLSCore.JET.print_report_message, r) == "TypeError: in `invoke`, expected `Type{T} where T<:Tuple`, got Type{$Int}"
+        end
+
+        # the arguments do not match the signature
+        let result = analyze_call((Float64,)) do x
+                @invoke sin(x::Int)
+            end
+            reports = get_reports(result)
+            @test length(reports) == 1
+            r = only(reports)
+            @test r isa InvokeTypeErrorReport && r.argument_mismatch
+            @test sprint(JETLSCore.JET.print_report_message, r) == "TypeError: in `invoke`: argument type error, expected `Tuple{$Int}`, got a value of type `Tuple{Float64}`"
+        end
+
+        # the arguments or the signature may be valid at runtime
+        let result = analyze_call((Union{Int,Float64},)) do x
+                @invoke only_int(x::Int)
+            end
+            @test isempty(get_reports(result))
+        end
+        let result = analyze_call((Any, Float64)) do T, x
+                invoke(only_int, T, x)
+            end
+            @test isempty(get_reports(result))
+        end
+
+        # `invoke` with a `Method` is not reported
+        let result = analyze_call((Float64,)) do x
+                invoke(only_int, ONLY_INT_METHOD, x)
+            end
+            @test !any(r -> r isa InvokeTypeErrorReport, get_reports(result))
+        end
+
+        # errors in the invoked method are not reported as `InvokeTypeErrorReport`
+        let result = analyze_call((Int,)) do x
+                @invoke integer_as_string(x::Integer)
+            end
+            reports = get_reports(result)
+            @test length(reports) == 1
+            @test only(reports) isa TypeAssertErrorReport
         end
     end
 
