@@ -1366,7 +1366,7 @@ function revise_module_range_infos(state::ServerState, uri::URI, filemod::Module
     fi = @something get_saved_file_info(state, uri) get_unsynced_file_info!(state, uri) begin
         return Pair{UnitRange{Int},Module}[(1:typemax(Int)) => filemod]
     end
-    st0_top = JS.build_tree(JS.SyntaxTree, fi.parsed_stream; filename=uri2filename(uri))
+    st0_top = JS.build_tree(SyntaxTree, fi.parsed_stream; filename=uri2filename(uri))
     return collect_module_range_infos(st0_top, filemod, world)
 end
 

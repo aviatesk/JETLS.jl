@@ -3962,6 +3962,21 @@ end
         @test isempty(ds)
     end
 
+    # JuliaLowering matches gotos and labels by name and hygiene layer when a
+    # `try` has `finally`; a jump within the block must be accepted.
+    let diagnostics = get_lowering_diagnostics("""
+        function f(c)
+            try
+                c && @goto done
+                @label done
+            finally
+            end
+        end
+        """)
+        ds = filter(d -> d.code == JETLSCore.LOWERING_ERROR_CODE, diagnostics)
+        @test isempty(ds)
+    end
+
     let diagnostics = get_lowering_diagnostics("""
         begin
             @goto nonexist
