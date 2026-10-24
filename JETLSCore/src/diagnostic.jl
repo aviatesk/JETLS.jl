@@ -836,9 +836,24 @@ function macro_expansion_stacktrace(bt::Vector{<:Union{Base.InterpreterIP,Ptr{Cv
         frame.func === :_invoke_in_world && frame.file === JL_INVOKE_IN_WORLD_FILE && return stack
         # `JL.expand_macro` itself threw, e.g. for a macro name that is not found
         frame.func === :expand_macro && frame.file === JL_MACRO_FILE && return stack
-        frame.from_c || push!(stack, frame)
+        frame.from_c || push!(stack, with_codeinst_linfo(frame))
     end
     return stack
+end
+
+# Julia 1.14 compiles macros without inference, and `StackTraces.lookup` leaves `linfo`
+# unset for the frames of such code, so take it from the `CodeInstance` of the frame.
+function with_codeinst_linfo(frame::Base.StackTraces.StackFrame)
+    (frame.linfo === nothing && !frame.inlined && frame.pointer ≠ 0) || return frame
+    infos = @ccall jl_lookup_code_address(
+        Ptr{Cvoid}(frame.pointer)::Ptr{Cvoid}, false::Cint)::Core.SimpleVector
+    isempty(infos) && return frame
+    ci = (infos[end]::Core.SimpleVector)[4]
+    ci isa Core.CodeInstance || return frame
+    mi = ci.def
+    mi isa Core.MethodInstance && mi.def isa Method || return frame
+    return Base.StackTraces.StackFrame(frame.func, frame.file, frame.line, ci,
+        frame.from_c, frame.inlined, frame.pointer)
 end
 
 # The signatures are shown in `world`, where the macro was expanded, since the server world
@@ -1341,7 +1356,7 @@ function collect_undef_global_candidates!(
         if !isnothing(analyzer)
             b = convert(Core.Binding, GlobalRef(bmod, Symbol(binfo.name)))
             # JET records the state of an imported global on the partition of its owner
-            _, (_, bp) = CC.walk_binding_partition(b, Base.lookup_binding_partition(world, b), world)
+            bp = leaf_binding_partition(b, world)
             haskey(JET.AnalyzerState(analyzer).binding_states, bp) && continue
         end
         bn = binfo.name
@@ -1358,6 +1373,16 @@ function collect_undef_global_candidates!(
             key in reported ? continue : push!(reported, key)
             push!(candidates, UndefGlobalCandidate(bmod, bn, range, message))
         end
+    end
+end
+
+function leaf_binding_partition(b::Core.Binding, world::UInt)
+    partition = Base.lookup_binding_partition(world, b)
+    @static if isdefinedglobal(CC, :LeafAccess)
+        return CC.walk_binding_partition(b, partition, world, #=write=#false).second.partition
+    else
+        _, (_, bp) = CC.walk_binding_partition(b, partition, world)
+        return bp
     end
 end
 

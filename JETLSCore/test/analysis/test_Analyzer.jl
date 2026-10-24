@@ -256,6 +256,21 @@ helper_getproperty_error(o::HelperGetproperty) = o.missing
         @test r isa FieldErrorReport && r.field === :val
     end
 
+    # `getfield` on a type object accesses the fields of its kind
+    let result = analyze_call() do
+            getfield(Some{Int}, :value)
+        end
+        reports = get_reports(result)
+        @test length(reports) == 1
+        r = only(reports)
+        @test r isa FieldErrorReport && r.type === DataType && r.field === :value
+    end
+    let result = analyze_call((Type{Int},)) do T
+            T.name
+        end
+        @test isempty(get_reports(result))
+    end
+
     # the report must not depend on inference cache state:
     # re-analyzing the same call with a warm cache must reproduce it
     let kernel = function (x)
@@ -1584,7 +1599,7 @@ integer_as_string(x::Integer) = x::String
             @test length(reports) == 1
             r = only(reports)
             @test r isa TypeAssertErrorReport
-            @test r.expected === String && r.actual === Type{Int}
+            @test r.expected === String && r.actual === CC.widenconst(Core.Const(Int))
             @test sprint(JETLSCore.JET.print_report_message, r) == "TypeError: in `typeassert`, expected `String`, got Type{$Int}"
         end
 

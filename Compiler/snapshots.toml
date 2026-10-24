@@ -13,3 +13,9 @@ commit = "c4e249658fc8fbeef0c69fe94c542139c070522d"
 source-branch = "avi/JETLS-Compiler-head-v1.13-2026-10-23"
 runtime = { lower = "1.13-", upper = "1.14-" }
 destination = "snapshots/v1.13"
+
+[snapshots."1.14"]
+commit = "dc724403f6ee4d2734b5425178478e946a961996"
+source-branch = "avi/JETLS-Compiler-head-v1.14-2026-10-23"
+runtime = { lower = "1.14-", upper = "1.15-" }
+destination = "snapshots/v1.14"

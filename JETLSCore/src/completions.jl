@@ -711,6 +711,14 @@ function get_keyword_doc(kwname::Symbol)
             kind = MarkupKind.Markdown,
             value = string(@doc true))
     end
+    if !haskey(Base.Docs.keywords, kwname)
+        # `isa` and `in`, which `REPLCompletions` lists as keywords since
+        # JuliaLang/julia#60380, are documented as functions
+        isdefinedglobal(Base, kwname) || error(lazy"Documentation for keyword `$kwname` not found")
+        return MarkupContent(;
+            kind = MarkupKind.Markdown,
+            value = string(Base.Docs.doc(Base.Docs.Binding(Base, kwname))))
+    end
     kwdocstr = Base.Docs.keywords[kwname]
     kwdocobj = kwdocstr.object
     if kwdocobj isa Markdown.MD

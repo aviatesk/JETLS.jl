@@ -224,11 +224,17 @@ mutable struct OCBodyAnnotationState
 end
 OCBodyAnnotationState() = OCBodyAnnotationState(nothing)
 
+@static if isdefinedglobal(CC, :InferenceCache)
+const LocalInferenceCache = CC.InferenceCache
+else
+const LocalInferenceCache = Vector{CC.InferenceResult}
+end
+
 struct ASTTypeAnnotator <: CC.AbstractInterpreter
     world::UInt
     inf_params::CC.InferenceParams
     opt_params::CC.OptimizationParams
-    inf_cache::Vector{CC.InferenceResult}
+    inf_cache::LocalInferenceCache
 
     toptree::SyntaxTree
     topmi::MethodInstance
@@ -266,7 +272,7 @@ struct ASTTypeAnnotator <: CC.AbstractInterpreter
                 aggressive_constant_propagation = true
             ),
             opt_params::CC.OptimizationParams = CC.OptimizationParams(),
-            inf_cache::Vector{CC.InferenceResult} = CC.InferenceResult[],
+            inf_cache::LocalInferenceCache = LocalInferenceCache(),
             annotations::TreeAnnotations = TreeAnnotations(),
             oc_body_trees::IdDict{Method,SyntaxTree} = IdDict{Method,SyntaxTree}(),
             oc_body_annotation_states::IdDict{Method,OCBodyAnnotationState} = IdDict{Method,OCBodyAnnotationState}(),
@@ -346,6 +352,13 @@ function CC.abstract_eval_partition_load(
     res = @invoke CC.abstract_eval_partition_load(
         interp::CC.AbstractInterpreter, binding::Core.Binding, partition::Core.BindingPartition)
     return concretize_abstract_binding_state_load(interp, res)
+end
+@static if isdefinedglobal(CC, :LeafAccess)
+function CC.abstract_eval_partition_load(interp::ASTTypeAnnotator, leaf::CC.LeafAccess)
+    res = @invoke CC.abstract_eval_partition_load(
+        interp::CC.AbstractInterpreter, leaf::CC.LeafAccess)
+    return concretize_abstract_binding_state_load(interp, res)
+end
 end
 
 # Script-mode full analysis may hand us a context module populated by JET's virtualprocess,
@@ -671,14 +684,23 @@ end
 # - If the same basic block has a slot assignment that dominates `idx`,
 #   use the assigned RHS's type (`ssavaluetypes[pc_assign]`).
 # - Otherwise fall back to the bb's entry varstate
-#   (`bb_vartables[bb][id]`), which CC's dataflow has already populated
+#   (`bb_entry_vartable(frame, bb)[id]`), which CC's dataflow has already populated
 #   with cross-bb branch narrowing.
 function slot_type_at(slot::SlotNumber, idx::Int, frame::CC.InferenceState)
     pc_assign = CC.find_dominating_assignment(slot.id, idx, frame)
     pc_assign === nothing || return frame.ssavaluetypes[pc_assign]
     bb = CC.block_for_inst(frame.cfg, idx)
-    entry = @something frame.bb_vartables[bb] return frame.src.slottypes[slot.id]
+    entry = @something bb_entry_vartable(frame, bb) return frame.src.slottypes[slot.id]
     return entry[slot.id].typ
+end
+
+@static if hasfield(CC.InferenceState, :bb_states)
+function bb_entry_vartable(frame::CC.InferenceState, bb::Int)
+    state = frame.bb_states[bb]
+    return state === nothing ? nothing : state.vartable
+end
+else
+bb_entry_vartable(frame::CC.InferenceState, bb::Int) = frame.bb_vartables[bb]
 end
 
 # Extract the matched methods for a call site from CC's per-stmt `CallInfo`.
@@ -701,10 +723,13 @@ function collect_call_matches!(matches::Vector{Core.MethodMatch}, @nospecialize 
         for sub in info.split
             collect_call_matches!(matches, sub)
         end
-    elseif info isa CC.ConstCallInfo
-        # `ConstCallInfo` wraps the underlying dispatch info with a
-        # const-prop'd result; the same matching methods live one level down.
-        collect_call_matches!(matches, info.call)
+    end
+    @static if isdefinedglobal(CC, :ConstCallInfo)
+        if info isa CC.ConstCallInfo
+            # `ConstCallInfo` wraps the underlying dispatch info with a
+            # const-prop'd result; the same matching methods live one level down.
+            collect_call_matches!(matches, info.call)
+        end
     end
     return matches
 end
@@ -1042,7 +1067,7 @@ function _infer_toplevel_tree(
     )
     filter = SyntheticFilter(st0, ctx3.bindings)
     method_body_ranges = collect_method_body_ranges(st0)
-    inf_cache = CC.InferenceResult[]
+    inf_cache = LocalInferenceCache()
     interp = refinements = nothing
     for _ = 1:MAX_OC_REFINEMENT_PASSES
         observations = OCArgtypeTable()
@@ -1117,7 +1142,7 @@ function infer_lowered_tree(
         context_module::Module, world::UInt, filter::SyntheticFilter,
         method_body_ranges::MethodBodyRangeIndex,
         observations::OCArgtypeTable, refinements::Union{Nothing,OCArgtypeTable},
-        inf_cache::Vector{CC.InferenceResult}
+        inf_cache::LocalInferenceCache
     )
     inferrable_tree = try
         # Route single-method local closures through `OpaqueClosure` instead of
@@ -1153,7 +1178,7 @@ function infer_thunk!(
         argtypes::Union{Nothing,Vector{Any}}, world::UInt, filter::SyntheticFilter,
         annotations::TreeAnnotations,
         observations::OCArgtypeTable, refinements::Union{Nothing,OCArgtypeTable},
-        inf_cache::Vector{CC.InferenceResult}
+        inf_cache::LocalInferenceCache
     )
     strip_latestworld!(src)
     mi = construct_toplevel_mi(src, context_module)
@@ -1258,7 +1283,7 @@ function infer_method_defs!(
         filter::SyntheticFilter, annotations::TreeAnnotations,
         method_body_ranges::MethodBodyRangeIndex,
         observations::OCArgtypeTable, refinements::Union{Nothing,OCArgtypeTable},
-        inf_cache::Vector{CC.InferenceResult}
+        inf_cache::LocalInferenceCache
     )
     block = code_info_stmts(inferred)
     nstmts = JS.numchildren(block)
@@ -2077,13 +2102,14 @@ end
 
 # `:core` callee can't appear in user source — user-written
 # `Core.Typeof(x)` lowers to `:globalref` — so a `:core` "Typeof"
-# call reliably marks JL's argtype-svec scaffolding.
+# (or "TypeEqOf" where `Core` defines it) call reliably marks JL's argtype-svec
+# scaffolding.
 function is_synthetic_typeof_scaffolding(st::SyntaxTree)
     JS.head(st) === :call || return false
     JS.numchildren(st) >= 1 || return false
     c1 = st[1]
     JS.head(c1) === :core || return false
-    return get_name_val(c1) == "Typeof"
+    return get_name_val(c1) == JL.TypeEqOf
 end
 
 """

@@ -20,6 +20,13 @@ using ..JETLSCore: AnalysisEntry, JETLS_DEV_MODE, deprecated_function_message,
     deprecated_method_message, global_const_value, with_base_render_lock
 using ..LSP
 
+# `Type{T}` is no longer a `DataType` on Julia 1.14 and later
+@static if isdefinedglobal(Base, :type_parameter) # JuliaLang/julia#61915
+using Base: type_parameter
+else
+type_parameter(@nospecialize t) = (t::DataType).parameters[1]
+end
+
 # JETLS internal interface
 # ========================
 
@@ -429,29 +436,63 @@ function is_native_boundary(analyzer::LSAnalyzer, method::Method)
     return method.module ∉ report_target_modules
 end
 
+"""
+    native_boundary_codeinst(analyzer::LSAnalyzer, method::Method, atype, sparams)
+        -> Union{Nothing,Core.CodeInstance}
+
+Returns the `CodeInstance` of Julia's native inference cache that serves a call to `method`
+at the [`is_native_boundary`](@ref), or `nothing` if the call needs to be analyzed.
+"""
+function native_boundary_codeinst(
+        analyzer::LSAnalyzer, method::Method, @nospecialize(atype), sparams::Core.SimpleVector
+    )
+    is_native_boundary(analyzer, method) || return nothing
+    world = CC.get_inference_world(analyzer)
+    mi = CC.specialize_method(method, atype, sparams)
+    ci = @static if isdefinedglobal(CC, :WorldView)
+        CC.get(CC.WorldView(CC.InternalCodeCache(nothing), world), mi, nothing)
+    else
+        CC.get(CC.InternalCodeCache(nothing, world), mi, nothing)
+    end
+    ci isa Core.CodeInstance || return nothing
+    # `rt === Union{}` means this callee definitely errors. Let the analyzer infer it so that
+    # reports created on the callee frame (builtin errors, which surface at their in-scope
+    # call site via `collect_callee_reports!`) are not silenced.
+    CC.cached_return_type(ci) === Union{} && return nothing
+    return ci
+end
+
+@static if hasmethod(CC.typeinf_edge,
+        Tuple{CC.AbstractInterpreter, Method, Any, Core.SimpleVector, CC.AbsIntState,
+              Bool, Bool, Bool})
+function CC.typeinf_edge(analyzer::LSAnalyzer,
+        method::Method, @nospecialize(atype), sparams::Core.SimpleVector,
+        caller::CC.InferenceState, edgecycle::Bool, edgelimited::Bool, edgerecursed::Bool
+    )
+    ci = native_boundary_codeinst(analyzer, method, atype, sparams)
+    if ci !== nothing
+        return CC.return_cached_result(analyzer, method, ci, nothing, caller,
+            edgecycle, edgelimited, edgerecursed)
+    end
+    return @invoke CC.typeinf_edge(analyzer::ToplevelAbstractAnalyzer,
+        method::Method, atype::Any, sparams::Core.SimpleVector,
+        caller::CC.InferenceState, edgecycle::Bool, edgelimited::Bool, edgerecursed::Bool)
+end
+else
 function CC.typeinf_edge(analyzer::LSAnalyzer,
         method::Method, @nospecialize(atype), sparams::Core.SimpleVector,
         caller::CC.InferenceState, edgecycle::Bool, edgelimited::Bool
     )
-    if is_native_boundary(analyzer, method)
-        world = CC.get_inference_world(analyzer)
-        mi = CC.specialize_method(method, atype, sparams)
-        ci = CC.get(CC.WorldView(CC.InternalCodeCache(nothing), world), mi, nothing)
-        if ci isa Core.CodeInstance
-            rt = CC.cached_return_type(ci)
-            # `rt === Union{}` means this callee definitely errors. Let the analyzer infer
-            # it so that reports created on the callee frame (builtin errors, which surface
-            # at their in-scope call site via `collect_callee_reports!`) are not silenced.
-            if rt !== Union{}
-                effects = CC.decode_effects(ci.ipo_purity_bits)
-                return CC.Future(CC.MethodCallResult(
-                    rt, ci.exctype, effects, ci, edgecycle, edgelimited))
-            end
-        end
+    ci = native_boundary_codeinst(analyzer, method, atype, sparams)
+    if ci !== nothing
+        effects = CC.decode_effects(ci.ipo_purity_bits)
+        return CC.Future(CC.MethodCallResult(
+            CC.cached_return_type(ci), ci.exctype, effects, ci, edgecycle, edgelimited))
     end
     return @invoke CC.typeinf_edge(analyzer::ToplevelAbstractAnalyzer,
         method::Method, atype::Any, sparams::Core.SimpleVector,
         caller::CC.InferenceState, edgecycle::Bool, edgelimited::Bool)
+end
 end
 
 # JuliaLang/julia#62359 replaced `codeinst_as_edge` with local inference proofs (v1.14)
@@ -662,7 +703,13 @@ function infer_constructed_closure!(
         # Call the closure value rather than its type, so that constant propagation can use
         # the constant values of the captured variables.
         arginfo = CC.ArgInfo(nothing, Any[rt, argtypes...])
-        call = CC.abstract_call(analyzer, arginfo, si, sv)
+        call = @static if hasmethod(CC.abstract_call,
+                Tuple{CC.AbstractInterpreter, CC.ArgInfo, CC.StmtInfo,
+                      Union{Vector{CC.VarState}, Nothing}, CC.AbsIntState})
+            CC.abstract_call(analyzer, arginfo, si, #=vtypes=#nothing, sv)
+        else
+            CC.abstract_call(analyzer, arginfo, si, sv)
+        end
         CC.Future{Any}(call, analyzer, sv) do call, _, sv
             # The construction's statement info is not a call, so retain these edges separately.
             CC.add_edges!(sv.edges, call.info)
@@ -737,6 +784,8 @@ function mentions_missing(@nospecialize(t), depth::Int = 0)
         for p in t.parameters
             mentions_missing(p, depth + 1) && return true
         end
+    elseif CC.isType(t)
+        return mentions_missing(type_parameter(t), depth + 1)
     end
     return false
 end
@@ -786,6 +835,27 @@ function has_missing_member(@nospecialize t)
 end
 
 # TODO Better to factor out and share it with `JET.JETAnalyzer`
+@static if isdefinedglobal(CC, :LeafAccess)
+function CC.abstract_eval_globalref(
+        analyzer::LSAnalyzer, g::GlobalRef, saw_latestworld::Bool, sv::CC.InferenceState;
+        allowed_offset::Int = 1
+    )
+    if !saw_latestworld
+        offset = report_offset(analyzer, sv)
+        if offset ≤ allowed_offset
+            # `binding_access_range` may return a partition from another world with the same
+            # access behavior, but binding states are tracked per partition of this world.
+            world = CC.get_inference_world(analyzer)
+            binding = convert(Core.Binding, g)
+            leaf = CC.walk_binding_partition(binding,
+                Base.lookup_binding_partition(world, binding), world, #=write=#false).second
+            report_undef_global_var!(analyzer, sv, leaf.binding, leaf.partition, offset)
+        end
+    end
+    return @invoke CC.abstract_eval_globalref(analyzer::ToplevelAbstractAnalyzer, g::GlobalRef,
+        saw_latestworld::Bool, sv::CC.InferenceState)
+end
+else
 function CC.abstract_eval_globalref(
         analyzer::LSAnalyzer, g::GlobalRef, saw_latestworld::Bool, sv::CC.InferenceState;
         allowed_offset::Int = 1
@@ -804,6 +874,7 @@ function CC.abstract_eval_globalref(
     end
     CC.update_valid_age!(sv, valid_worlds)
     return ret
+end
 end
 
 function CC.builtin_tfunction(analyzer::LSAnalyzer,
@@ -980,13 +1051,13 @@ function report_undef_global_var!(
     )
     gr = binding.globalref
     # Read constants from `partition` itself: JET defines constants in a world newer than
-    # `sv.world`, and `getglobal` warns about such backdated constants.
+    # the inference world, and `getglobal` warns about such backdated constants.
     if CC.is_defined_const_binding(CC.binding_kind(partition))
         # HACK/FIXME Concretize `AbstractBindingState`
         x = CC.partition_restriction(partition)
         x isa JET.AbstractBindingState || return false
         binding_state = x
-    elseif Base.invoke_in_world(sv.world.this, isdefinedglobal, gr.mod, gr.name)
+    elseif Base.invoke_in_world(CC.get_inference_world(analyzer), isdefinedglobal, gr.mod, gr.name)
         return false
     else
         binding_states = JET.get_binding_states(analyzer)
@@ -1051,16 +1122,13 @@ scope_offset_impl(r::TypeAssertErrorReport) = r.vst_offset
 function JETInterface.print_report_message(io::IO, r::TypeAssertErrorReport)
     (; expected, actual) = r
     print(io, "TypeError: in `typeassert`, expected `", expected, "`, got ")
-    if CC.isType(actual)
-        print(io, actual)
-    else
-        print(io, "a value of type `", actual, '`')
-    end
+    print_type_error_got(io, actual)
 end
 
 function print_type_error_got(io::IO, @nospecialize(actual))
     if CC.isType(actual)
-        print(io, actual)
+        # show `Core.TypeEgal{T}` of Julia 1.14 and later as `Type{T}`
+        print(io, Type{type_parameter(actual)})
     else
         print(io, "a value of type `", actual, '`')
     end
@@ -1130,9 +1198,10 @@ function report_fieldaccess!(
     if CC.isType(s)
         if f === fieldtype
             # XXX this is a hack to share more code between `getfield`/`setfield!`/`fieldtype`
-            s = s.parameters[1]
+            s = type_parameter(s)
         elseif CC.isconstType(s)
-            s = (s00::DataType).parameters[1]
+            # `getfield`/`setfield!` on a type object access the fields of its kind, e.g. `DataType`
+            s = typeof(type_parameter(s))
         else
             return false
         end
@@ -1283,12 +1352,9 @@ function print_no_method_hint_impl(
     Base.isvarargtype(params[1]) && return
     ftype = Base.rewrap_unionall(params[1], t)
     f = CC.singleton_type(ftype)
-    if f === nothing
-        ftype′ = Base.unwrap_unionall(ftype)
-        if ftype′ isa DataType && CC.isType(ftype)
-            typ = ftype′.parameters[1]
-            typ isa Type && (f = typ)
-        end
+    if f === nothing && CC.isType(ftype)
+        typ = type_parameter(ftype)
+        typ isa Type && (f = typ)
     end
     argparams = params[2:end]
     # `Base.show_method_candidates` and `method_candidate_score` cannot handle `Vararg`
@@ -1526,8 +1592,10 @@ function report_method_error!(
         kwarg_reported::Bool, max_methods::Int
     )
     info = call.info
-    if isa(info, CC.ConstCallInfo)
-        info = info.call
+    @static if isdefinedglobal(CC, :ConstCallInfo)
+        if isa(info, CC.ConstCallInfo)
+            info = info.call
+        end
     end
     if isa(info, CC.MethodMatchInfo)
         report_method_error!(analyzer, sv, info, kwarg_reported)
@@ -1667,7 +1735,7 @@ CC.add_edges_impl(edges::Vector{Any}, info::InvokeMethodErrorInfo) =
 # up, i.e. it does not throw a `TypeError` for the arguments first
 function invoke_signature(argtypes::Vector{Any})
     ft = CC.widenconst(CC.argtype_by_index(argtypes, 2))
-    ft isa DataType && CC.isdispatchelem(ft) || return nothing
+    (ft isa DataType || CC.isType(ft)) && CC.isdispatchelem(ft) || return nothing
     types, isexact, _, _ = CC.instanceof_tfunc(CC.argtype_by_index(argtypes, 3), false)
     isexact || return nothing
     unwrapped = Base.unwrap_unionall(types)
@@ -2109,8 +2177,10 @@ function report_deprecated_call!(
         arginfo::CC.ArgInfo
     )
     info = call.info
-    if isa(info, CC.ConstCallInfo)
-        info = info.call
+    @static if isdefinedglobal(CC, :ConstCallInfo)
+        if isa(info, CC.ConstCallInfo)
+            info = info.call
+        end
     end
     world = CC.get_inference_world(analyzer)
     messages = String[]
