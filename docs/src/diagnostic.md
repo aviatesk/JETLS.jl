@@ -260,6 +260,7 @@ Here is a summary table of the diagnostics explained in this section:
 | [`inference/method-error`](@ref diagnostic/reference/inference/method-error)                                   | `Warning`             | `JETLS/save`  | No matching method found for function calls            |
 | [`inference/undef-keyword`](@ref diagnostic/reference/inference/undef-keyword)                                 | `Warning`             | `JETLS/save`  | Missing required keyword argument                      |
 | [`inference/type-error/keyword`](@ref diagnostic/reference/inference/type-error/keyword)                       | `Warning`             | `JETLS/save`  | Keyword argument value type mismatch                   |
+| [`inference/type-error/invoke`](@ref diagnostic/reference/inference/type-error/invoke)                         | `Warning`             | `JETLS/save`  | Invalid signature or argument types for `invoke`       |
 | [`inference/type-error/type-assert`](@ref diagnostic/reference/inference/type-error/type-assert)               | `Warning`             | `JETLS/save`  | Type assertion failures                                |
 | [`inference/type-error/non-bool-cond`](@ref diagnostic/reference/inference/type-error/non-bool-cond)           | `Warning`             | `JETLS/save`  | Non-boolean value used in boolean context              |
 | [`inference/failing-test`](@ref diagnostic/reference/inference/failing-test)                                   | `Warning`             | `JETLS/save`  | `@test` or `@test_throws` that always fails            |
@@ -1720,7 +1721,7 @@ before the code runs:
 - [`inference/bounds-error`](@ref diagnostic/reference/inference/bounds-error) → `BoundsError`
 - [`inference/method-error`](@ref diagnostic/reference/inference/method-error) → `MethodError` (no matching method, or an unsupported keyword argument)
 - [`inference/undef-keyword`](@ref diagnostic/reference/inference/undef-keyword) → `UndefKeywordError`
-- [`inference/type-error/*`](@ref diagnostic/reference/inference/type-error) → `TypeError` (failing type assertion, non-boolean condition, or keyword-value type mismatch)
+- [`inference/type-error/*`](@ref diagnostic/reference/inference/type-error) → `TypeError` (failing type assertion, non-boolean condition, keyword-value type mismatch, or invalid `invoke` call)
 
 In addition, [`inference/failing-test`](@ref diagnostic/reference/inference/failing-test)
 reports a `@test` or `@test_throws` that always fails.
@@ -1888,6 +1889,32 @@ typed_keyword(; key=1.0)
 To avoid false positives, this is only reported when the value type can never
 match the declared type; calls where the value may match for some runtime
 values are not flagged.
+
+##### [`invoke` type error (`inference/type-error/invoke`)](@id diagnostic/reference/inference/type-error/invoke)
+
+**Default severity:** `Warning`
+
+Calls with `invoke` whose signature argument is not a tuple type, or whose
+arguments do not match that signature. Julia checks these before looking up
+the method and raises a `TypeError` at runtime.
+
+Examples:
+
+```@diagnostics; codes = ["inference/type-error/invoke"]
+invoke_sin(x::Float64) = invoke(sin, Float64, x)
+```
+
+```@diagnostics; codes = ["inference/type-error/invoke"]
+double(x::Int) = 2x
+
+invoke_double(x::Float64) = @invoke double(x::Int)
+```
+
+This is only reported when inference can prove that the call fails, e.g. not
+when an argument may match the signature for some runtime values. When the
+signature is valid but no unique method is found for it, the call is reported
+as [`inference/method-error`](@ref diagnostic/reference/inference/method-error)
+instead.
 
 ##### [Type assertion error (`inference/type-error/type-assert`)](@id diagnostic/reference/inference/type-error/type-assert)
 

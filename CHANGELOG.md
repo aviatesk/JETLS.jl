@@ -67,6 +67,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 >
 > Note: Path glob patterns use `/` as the separator on all platforms, including Windows; backslashes are not supported as separators.
 
+### Added
+
+- Added the [`inference/type-error/invoke`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/inference/type-error/invoke) diagnostic: an `invoke` call whose signature argument is not a tuple type, or whose arguments do not match that signature, which raises `TypeError` at runtime, is now reported:
+  ```julia
+  invoke(sin, Float64, 1.0)  # TypeError: expected `Type{T} where T<:Tuple`, got Type{Float64} (JETLS inference/type-error/invoke)
+  @invoke sin(1.0::Int)      # TypeError: argument type error, expected `Tuple{Int64}`, got a value of type `Tuple{Float64}` (JETLS inference/type-error/invoke)
+  ```
+
 ### Fixed
 
 - Fixed the outline and other features based on document symbols, such as code lenses, failing for a whole file when a function assigns a local variable inside a macro call written as `@M.macro`, e.g. `@Base.time y = f(x)`.
