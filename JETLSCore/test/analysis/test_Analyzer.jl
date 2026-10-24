@@ -396,6 +396,16 @@ changing_vararg_ambiguous_func(x::Int, y::Number) = 3
 function call_changing_vararg_ambiguous(xs::Tuple{Int,Int,Vararg{Int}})
     return changing_vararg_ambiguous_func(xs...)
 end
+invoke_cached_only_int(x::Int) = x
+invoke_cached_string(x) = invoke(invoke_cached_only_int, Tuple{String}, x)
+call_invoke_cached_string(x) = invoke_cached_string(x)
+invoke_cached_ambiguous(x, y::Int) = 1
+invoke_cached_ambiguous(x::Int, y) = 2
+invoke_cached_ambiguous_int(x) = @invoke invoke_cached_ambiguous(x::Int, x::Int)
+call_invoke_cached_ambiguous_int(x) = invoke_cached_ambiguous_int(x)
+invoke_old_world_only_int(x::Int) = x
+invoke_old_world_string(x) = invoke(invoke_old_world_only_int, Tuple{String}, x)
+call_invoke_old_world_string(x) = invoke_old_world_string(x)
 
 multi_ambiguous_func(x::Number, y::Int) = x + y
 multi_ambiguous_func(x::Int, y::Number) = x - y
@@ -821,6 +831,26 @@ struct KwCallable end
                 invoke(only_int, T, x)
             end
             @test isempty(get_reports(result))
+        end
+        # a method defined for the signature invalidates the cached report; analyze via a
+        # caller since the entry frame is always re-inferred
+        let result = analyze_call(call_invoke_cached_string, (String,))
+            @test only(get_reports(result)) isa NoMethodMatchReport
+            @eval invoke_cached_only_int(x::String) = x
+            @test isempty(get_reports(analyze_call(call_invoke_cached_string, (String,))))
+        end
+        let result = analyze_call(call_invoke_cached_ambiguous_int, (Int,))
+            @test only(get_reports(result)) isa AmbiguousMethodReport
+            @eval invoke_cached_ambiguous(x::Int, y::Int) = 3
+            @test isempty(get_reports(analyze_call(call_invoke_cached_ambiguous_int, (Int,))))
+        end
+        # the report from an analysis in a world before the method definition is not reused
+        let world = Base.get_world_counter()
+            @eval invoke_old_world_only_int(x::String) = x
+            analyzer = JETLSCore.LSAnalyzer(world; report_target_modules = nothing)
+            result = JET.analyze_and_report_call!(analyzer, call_invoke_old_world_string, (String,))
+            @test only(get_reports(result)) isa NoMethodMatchReport
+            @test isempty(get_reports(analyze_call(call_invoke_old_world_string, (String,))))
         end
     end
 
