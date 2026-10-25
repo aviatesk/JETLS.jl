@@ -1421,6 +1421,34 @@ struct RowWithMissing
     val::Union{Missing,Int}
 end
 iszero_val(r::RowWithMissing) = r.val == 0
+struct Inventory
+    name::Symbol
+    items::Vector{Any}
+    schema::Type{Union{Missing,Bool}}
+end
+struct FlagRow
+    flag::Union{Missing,Bool}
+    count::Int
+end
+struct ParametricFlagRow{T<:Integer}
+    payload::T
+    flag::Union{Missing,Bool}
+end
+getrowfield(r::FlagRow, name::Symbol) = getfield(r, name)
+getrowfield_wrapped(r::FlagRow, name::Symbol) = getrowfield(r, name)
+lookup_flag(s::String, i::Int) = get(() -> parse_flag_or_missing(s), (0,), i)
+struct IntOrMissingLookup end
+Base.getindex(::IntOrMissingLookup, i::Int) = i == 0 ? missing : 1
+struct PositivePredicate
+    metadata::Union{Missing,Bool}
+end
+(::PositivePredicate)(x::Int) = Base.inferencebarrier(x > 0)
+const WIDE_METADATA = foldl((T, _) -> Vector{NTuple{128,T}}, 1:4; init=Int)
+struct WideRow
+    metadata::WIDE_METADATA
+    flag::Union{Missing,Bool}
+end
+alternating_with_missing(n::Int) = Tuple{repeat(Any[Int, Nothing], n)..., Missing}
 const LOOKUP_TABLE = Dict{Symbol,Int}(:a => 1)
 lookup_or_missing(::Missing) = missing
 lookup_or_missing(k) = get(LOOKUP_TABLE, k, missing)
@@ -1721,6 +1749,8 @@ integer_as_string(x::Integer) = x::String
                     # `Union{Bool,Missing}` from the three-valued logic of Base
                     ((xs, ys) -> xs == ys ? 1 : 2, (Vector{Any}, Vector{Any})),
                     (t -> all(x -> x == 1, t) ? 1 : 2, (Tuple,)),
+                    # `Inventory.schema` holds a type, which is never `missing`
+                    (inv -> any(x -> x == inv.name, inv.items) ? 1 : 2, (Inventory,)),
                     # `&(::Missing, ::Integer)` would refine `x::Any` to `Union{Missing,Integer}`
                     (x -> (iszero(x & 0x0f); Int(x)), (Any,)),
                     # also when the result of the speculative call is unused
@@ -1738,6 +1768,12 @@ integer_as_string(x::Integer) = x::String
                     # `Missing` only in the upper bound of a type variable
                     ((xs, i) -> get_flag(xs, i) ? 1 : 2,
                      (AbstractVector{<:Union{Missing,Bool}}, Int)),
+                    # `Missing` in the field types of the arguments or of their elements
+                    (r -> r.flag ? 1 : 2, (FlagRow,)),
+                    (rows -> all(r -> r.flag, rows) ? 1 : 2, (Vector{FlagRow},)),
+                    ((r, xs) -> any(x -> x == r.flag, xs) ? 1 : 2, (FlagRow, Vector{Bool})),
+                    # a field typed by a type variable
+                    (r -> r.flag ? 1 : 2, (ParametricFlagRow,)),
                 )
                 r = only(get_reports(analyze_call(f, argtypes)))
                 @test r isa NonBooleanCondErrorReport && r.union_split == 2 && r.t == Any[Missing]
@@ -1746,23 +1782,60 @@ integer_as_string(x::Integer) = x::String
                 @test only(get_reports(result)) isa NoMethodMatchReport
             end
 
-            # so is `missing` created in the callee body
-            let result = analyze_call(s -> takes_int(parse_int_or_missing(s)), (String,))
-                @test only(get_reports(result)) isa NoMethodMatchReport
+            # so is `missing` returned by non-Base functions, even for loose argument types
+            for (f, argtypes) in (
+                    (s -> parse_flag_or_missing(s) ? 1 : 2, (String,)),
+                    (s -> parse_flag_or_missing(s) ? 1 : 2, (Any,)),
+                    (r -> iszero_val(r) ? 1 : 2, (RowWithMissing,)),
+                )
+                r = only(get_reports(analyze_call(f, argtypes)))
+                @test r isa NonBooleanCondErrorReport && r.union_split == 2 && r.t == Any[Missing]
             end
+            for (f, argtypes) in (
+                    (s -> takes_int(parse_int_or_missing(s)), (String,)),
+                    (s -> takes_bool(parse_flag_or_missing(s)), (String,)),
+                )
+                @test only(get_reports(analyze_call(f, argtypes))) isa NoMethodMatchReport
+            end
+
+            # Widening the result of a constant-propagated call would make the caller use
+            # the less precise result inferred without the constants, including `Int` here
+            for (f, argtypes) in (
+                    (r -> coalesce(getrowfield_wrapped(r, :flag), false) ? 1 : 2, (FlagRow,)),
+                    # also through `get` of Base, which forwards the result of the callback
+                    (s -> coalesce(lookup_flag(s, 0), false) ? 1 : 2, (String,)),
+                )
+                @test isempty(get_reports(analyze_call(f, argtypes)))
+            end
+
+            # the traversal of types is bounded by the number of visited types, beyond which
+            # types are assumed not to involve `Missing`
+            let n = Analyzer.MAX_VISITED_TYPES ÷ 2
+                @test Analyzer.mentions_missing(alternating_with_missing(n ÷ 2))
+                @test !Analyzer.mentions_missing(alternating_with_missing(n))
+            end
+            # but adjacent repeated type parameters, e.g. of `NTuple{128,T}`, are visited
+            # only once, so that the traversal of `WideRow.metadata` does not exhaust it
+            @test Analyzer.mentions_missing(WideRow; fields=true)
 
             # known limitations: genuine errors that are not reported
             for (f, argtypes) in (
-                    # `Union{Bool,Missing}` created in the callee body
-                    (s -> parse_flag_or_missing(s) ? 1 : 2, (String,)),
-                    (r -> iszero_val(r) ? 1 : 2, (RowWithMissing,)),
                     # other uses of widened results
-                    (s -> takes_bool(parse_flag_or_missing(s)), (String,)),
                     (x -> takes_int(x == :flag), (Any,)),
                     # `missing` created in the callee body along with a speculative match
                     (k -> takes_int(lookup_or_missing(k)), (Any,)),
+                    # `missing` returned by a callback of the three-valued logic of Base
+                    (strs -> all(parse_flag_or_missing, strs) ? 1 : 2, (Vector{String},)),
+                    # a Base match widens non-Base results too, including `Int`
+                    ((x, i) -> x[i] ? 1 : 2, (Union{IntOrMissingLookup,Vector{Bool}}, Int)),
                 )
                 @test_broken !isempty(get_reports(analyze_call(f, argtypes)))
+            end
+            # known limitation: `Missing` in the field types of an argument prevents
+            # widening even if the fields are not used
+            let result = analyze_call((p, xs) -> all(p, xs) ? 1 : 2,
+                    (PositivePredicate, Vector{Int}))
+                @test_broken isempty(get_reports(result))
             end
         end
     end
@@ -2199,10 +2272,47 @@ module NativeBoundaryModule
     # what makes the regression test below exercise the boundary's cache-hit path
     precompile(typeassert_error, (Int,))
     precompile(getfield_error, (Pair{Int,Int},))
+    # returns `Union{Bool,Missing}` from the three-valued logic of `all`, since the result
+    # of `positive` is inferred as `Any`
+    positive(x::Int) = Base.inferencebarrier(x > 0)
+    all_positive(xs::Vector{Int}) = all(positive, xs)
+    precompile(all_positive, (Vector{Int},))
+    # its cached result involves `Missing` only nested in a tuple
+    cached_boxed_all_positive(xs::Vector{Int}) = (all_positive(xs),)
+    precompile(cached_boxed_all_positive, (Vector{Int},))
+    struct PositiveBox
+        value::Any
+        # Compute the value before `new` to retain its union as a PartialStruct field,
+        # rather than merging separately inferred constructors for Bool and Missing.
+        PositiveBox(xs::Vector{Int}) = new(all_positive(xs))
+    end
+    make_positive_box(xs::Vector{Int}) = PositiveBox(xs)
+    precompile(make_positive_box, (Vector{Int},))
+    # `getproperty` of Base would widen the field value regardless of the cached result,
+    # since the declared field type does not involve `Missing`
+    unbox_all_positive(xs::Vector{Int}) = getfield(make_positive_box(xs), :value)
+    # `flag(s, true)` is always `Bool`, which constant propagation infers only if the
+    # `Union{Bool,Int,Missing}` result of `flag_value` is kept precise
+    flag_value(s::String) = s == "yes" ? true : s == "missing" ? missing : 0
+    Base.@constprop :aggressive function flag(s::String, enabled::Bool)
+        enabled || return 0
+        x = flag_value(s)
+        x isa Int && return false
+        return coalesce(x, false)
+    end
+    precompile(flag, (String, Bool))
+    precompile(flag_value, (String,))
 end
 
 call_boundary_typeassert(x::Int) = NativeBoundaryModule.typeassert_error(x)
 call_boundary_getfield(pair::Pair{Int,Int}) = NativeBoundaryModule.getfield_error(pair)
+call_boundary_all_positive(xs::Vector{Int}) = NativeBoundaryModule.all_positive(xs) ? 1 : 2
+call_boundary_cached_boxed_all_positive(xs::Vector{Int}) =
+    first(NativeBoundaryModule.cached_boxed_all_positive(xs)) ? 1 : 2
+call_boundary_partialstruct_all_positive(xs::Vector{Int}) =
+    NativeBoundaryModule.unbox_all_positive(xs) ? 1 : 2
+call_boundary_flag(s::String) = NativeBoundaryModule.flag(s, true) ? 1 : 2
+call_boundary_flag_value(s::String) = NativeBoundaryModule.flag_value(s) ? 1 : 2
 
 @testset HierarchicalTestSet "reuse_native_inference" begin
     @testset "analysis cache separation" begin
@@ -2230,6 +2340,28 @@ call_boundary_getfield(pair::Pair{Int,Int}) = NativeBoundaryModule.getfield_erro
                     report_target_modules=(@__MODULE__,), reuse_native_inference)
                 r = only(get_reports(result))
                 @test r isa FieldErrorReport && r.field === :nonexistent
+            end
+        end
+    end
+
+    @testset "possibly `missing` results of out-of-target callees" begin
+        # Cached results involving `Missing` are reanalyzed, so that `missing` from the
+        # three-valued logic of Base is widened before it is wrapped, e.g. in a tuple.
+        for reuse_native_inference in (false, true)
+            for f in (call_boundary_all_positive, call_boundary_cached_boxed_all_positive,
+                      call_boundary_partialstruct_all_positive)
+                result = analyze_call(f, (Vector{Int},);
+                    report_target_modules=(@__MODULE__,), reuse_native_inference)
+                @test isempty(get_reports(result))
+            end
+            let result = analyze_call(call_boundary_flag, (String,);
+                    report_target_modules=(@__MODULE__,), reuse_native_inference)
+                @test isempty(get_reports(result))
+            end
+            let result = analyze_call(call_boundary_flag_value, (String,);
+                    report_target_modules=(@__MODULE__,), reuse_native_inference)
+                r = only(get_reports(result))
+                @test r isa NonBooleanCondErrorReport && Missing in r.t
             end
         end
     end
