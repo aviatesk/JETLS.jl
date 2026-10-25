@@ -797,7 +797,7 @@ escape_snippet_text(s::AbstractString) =
     replace(s, '\\' => "\\\\", '$' => "\\\$", '}' => "\\}")
 
 function make_insert_text(msig::AbstractString, num_existing_args::Int, use_snippet::Bool)
-    mnode = JS.parsestmt(JS.SyntaxTree, msig; ignore_errors=true)
+    mnode = JS.parsestmt(SyntaxTree, msig; ignore_errors=true)
     mnode = unwrap_funcdef_sig(mnode)
     JS.head(mnode) in CALL_HEADS || return nothing
     params, kwp_i, _ = flatten_args(mnode)
@@ -969,7 +969,7 @@ function call_completions!(
             method_sig_sort_idx += 1
         elseif @isdefined(kwarg_comp_info) # i.e. should_complete_kwargs
             (; existing_kws, seen_kwarg_names, insert_spaces, local_bindings) = kwarg_comp_info
-            mnode = JS.parsestmt(JS.SyntaxTree, msig; ignore_errors=true)
+            mnode = JS.parsestmt(SyntaxTree, msig; ignore_errors=true)
             mnode = unwrap_funcdef_sig(mnode)
             JS.head(mnode) in CALL_HEADS || continue
             params, kwp_i, has_semicolon = flatten_args(mnode)

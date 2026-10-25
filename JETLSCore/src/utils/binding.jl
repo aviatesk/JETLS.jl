@@ -24,7 +24,7 @@ function binding_source_name_matches(binding_name::String, source_name::String)
 end
 
 function node_has_source_name(st3::SyntaxTree, binding_name::String)
-    return any(JS.flattened_provenance(st3)) do prov
+    return any(BS.flattened_provenance(st3)) do prov
         source_name = get_name_val(prov)
         source_name isa String && binding_source_name_matches(binding_name, source_name)
     end
@@ -199,7 +199,7 @@ function is_macro_stub_frame(frame::Base.StackTraces.StackFrame)
     spec_types = Base.unwrap_unionall(linfo.specTypes)
     spec_types isa DataType || return false
     params = spec_types.parameters
-    return length(params) ≥ 2 && params[2] <: JL.MacroContext
+    return length(params) ≥ 2 && params[2] <: BS.MacroContext
 end
 
 """
@@ -426,12 +426,14 @@ function select_target_binding(
     return nothing
 end
 
-# The normal method's `meta :generated` payload carries the exact binding of its
-# code-generator method. Use that semantic link rather than its mangled name.
+# The normal method's `meta :generated` payload names its code-generator method.
+# Scope resolution leaves that name unresolved inside `meta`, but lowering
+# reserves it uniquely in the module, so it identifies the generator's binding.
 function generated_method_ids(
         ctx3::JL.VariableAnalysisContext, st3::SyntaxTree
     )
     ids = Set{JL.IdTag}()
+    generator_names = Set{String}()
     generator_index = Base.fieldindex(JL.GeneratedFunctionStub, :gen) + 1
     traverse(st3) do st3′::SyntaxTree
         JS.head(st3′) in (:inert, :syntaxinert) && return traversal_no_recurse
@@ -445,11 +447,15 @@ function generated_method_ids(
         JS.head(stub_type) === :value || return nothing
         stub_type.value === JL.GeneratedFunctionStub || return nothing
         generator = stub[generator_index]
-        JS.head(generator) === :bindingid || return nothing
-        binfo = JL.get_binding(ctx3, generator)
-        binfo.kind === :global && binfo.is_internal || return nothing
-        push!(ids, var_id(generator))
+        JS.head(generator) === :identifier || return nothing
+        push!(generator_names, name_val(generator))
         return traversal_no_recurse
+    end
+    isempty(generator_names) && return ids
+    for binfo in ctx3.bindings.info
+        binfo.kind === :global && binfo.is_internal || continue
+        binfo.name in generator_names || continue
+        push!(ids, binfo.id)
     end
     return ids
 end
@@ -511,7 +517,7 @@ function synthetic_parameter_remap(
 end
 
 function _make_inert_placeholder(st3::SyntaxTree, placeholder_name::String)
-    return JS.newleaf(st3, :identifier, placeholder_name)
+    return newleaf(st3, :identifier, placeholder_name)
 end
 
 function _mask_inert_interpolations(
@@ -536,7 +542,7 @@ function _mask_inert_interpolations(
     child_quote_depth = quote_depth + (kind === :quote)
     child_syntax_quote_depth =
         syntax_quote_depth + (kind in (:syntaxquote, :syntaxinert))
-    new_children = JS.SyntaxList()
+    new_children = SyntaxList()
     changed = false
     for child in JS.children(st3)
         new_child, child_changed = _mask_inert_interpolations(
@@ -545,7 +551,7 @@ function _mask_inert_interpolations(
         changed |= child_changed
         push!(new_children, new_child)
     end
-    return (changed ? JS.mknode(st3, new_children) : st3, changed)
+    return (changed ? BS.@mknode(st3; children=new_children) : st3, changed)
 end
 mask_inert_interpolations(
     st3::SyntaxTree, placeholder_name::String; preserve_nested_interpolations::Bool = false
@@ -585,9 +591,9 @@ function resolve_inert_tree(
     template, placeholder_name = prepare_inert_template(
         inert_tree[1]; parameters, preserve_nested_interpolations)
     input = if hard_scope || !isempty(parameters)
-        parameter_nodes = JS.SyntaxList()
+        parameter_nodes = SyntaxList()
         for (name, source) in parameters
-            parameter = JS.newleaf(source, :identifier, name)
+            parameter = newleaf(source, :identifier, name)
             push!(parameter_nodes, parameter)
         end
         parameter_list = JL.@ast(_, inert_tree, [:tuple parameter_nodes...])
@@ -608,7 +614,7 @@ function resolve_inert_tree(
 end
 
 function contains_syntaxunquote(st::SyntaxTree)
-    stack = JS.SyntaxList(st)
+    stack = SyntaxTree[st]
     while !isempty(stack)
         node = pop!(stack)
         JS.head(node) === :syntaxunquote && return true
@@ -1046,9 +1052,9 @@ the argument or type parameter declaration itself.
 """
 function lookup_binding_definitions(st3::SyntaxTree, binfo::JL.BindingInfo)
     if binfo.kind in (:argument, :typevar, :static_parameter)
-        sl = JS.SyntaxList(binfo.node_id)
+        sl = SyntaxTree[binfo.node_id]
     else
-        sl = JS.SyntaxList()
+        sl = SyntaxList()
     end
     return _lookup_binding_definitions!(sl, st3, binfo.id)
 end
