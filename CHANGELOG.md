@@ -78,17 +78,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Fixed signature help showing up right after a qualified string macro such as `Base.r"foo"` or a command literal such as `` `ls` ``, as it already did not after `r"foo"`.
 
-- Fixed [`inference/type-error/non-bool-cond`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/inference/type-error/non-bool-cond) and [`inference/method-error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/inference/method-error) not reporting call results that may be `missing` in common cases, e.g.:
-  ```julia
-  struct Row
-      flag::Union{Missing,Bool}
-  end
-  check(r::Row) = r.flag ? 1 : 2  # now reported, as `r.flag` may be `missing`
-
-  parse_flag(s::String) = s == "yes" ? true : s == "no" ? false : missing
-  use_flag(s) = parse_flag(s) ? 1 : 2  # now reported, even for the untyped `s`
-  ```
-
 ## 2026-10-21
 
 - Commit: [`2b04cd5`](https://github.com/aviatesk/JETLS.jl/commit/2b04cd5)

@@ -321,7 +321,7 @@ function declared_argtypes(@nospecialize sig)
     return argtypes
 end
 
-function should_analyze(analyzer::LSAnalyzer, sv::CC.AbsIntState)
+function should_analyze(analyzer::LSAnalyzer, sv::CC.InferenceState)
     report_target_modules = analyzer.report_target_modules
     return isnothing(report_target_modules) || CC.frame_module(sv) ∈ report_target_modules
 end
@@ -684,27 +684,16 @@ even though `x` is rarely `missing` in practice. Results are widened when the ca
 does not involve `Missing` and either:
 - a method specialized on `Missing` matched only because an argument is `Any`
   (see [`is_speculative_missing_match`](@ref)), e.g. `x == :sym` or `max(x, :sym)`, or
-- the result may be both `Bool` and `missing` and comes from a method of Base, whose
-  three-valued logic returns `missing` when an operation on loosely typed values is inferred
-  as `Any`, e.g. `==` for `Vector{Any}` or `Vector{Number}` arguments. Methods whose results
-  are served from the native inference cache (see [`is_native_boundary`](@ref)) are treated
-  likewise when called from the analyzed code, since the three-valued logic of Base inside
-  them is not widened. Such results are kept when the declared field types of the arguments
-  involve `Missing` (see [`mentions_missing`](@ref)), e.g. `r.flag` for
-  `flag::Union{Missing,Bool}`.
+- the result is exactly `Union{Bool,Missing}`, which mostly comes from the three-valued
+  logic of Base applied to loosely typed values, e.g. `==` for `Vector{Any}` arguments.
 
 A speculative match also refines its argument slots, e.g. `x & 0x0f` refines `x::Any` to
 `Union{Missing,Integer}`. Refinements that include `Missing` are dropped whenever such a
 match exists, even if the result itself is not widened or is unused, so that `x` is not
 reported as possibly `missing` afterwards.
 
-Other `missing` results, e.g. of a parser returning `missing` for invalid input, are kept
-even for loosely typed arguments.
-
-Whether a result is widened must not depend on how precisely it is inferred, since a widened
-result of constant propagation is discarded in favor of the result inferred without the
-constants when the latter is not widened. Hence results that also include other types, e.g.
-`Union{Bool,Int,Missing}`, are widened as well.
+Other `missing` results created in the callee body, e.g. by a parser returning `missing` for
+invalid input, are kept, as are results of calls whose argument types involve `Missing`.
 """
 function CC.widen_call_result(
         analyzer::LSAnalyzer, si::CC.StmtInfo, state::CC.CallInferenceState,
@@ -723,76 +712,33 @@ function CC.widen_call_result(
         state::CC.CallInferenceState, sv::CC.AbsIntState)) && return true
     mentions && return false
     has_missing_member(state.rettype) || return false
-    speculative && return true
-    return Bool <: CC.widenconst(state.rettype) &&
-        has_base_or_native_method_match(analyzer, matches, sv) &&
-        !call_signature_mentions_missing(matches; fields=true)
+    return speculative || CC.widenconst(state.rettype) === Union{Bool,Missing}
 end
 
-call_signature_mentions_missing(matches::CC.MethodMatches; fields::Bool = false) =
-    mentions_missing(matches.info.atype; fields)
-call_signature_mentions_missing(matches::CC.UnionSplitMethodMatches; fields::Bool = false) =
-    any(info::CC.MethodMatchInfo -> mentions_missing(info.atype; fields), matches.info.split)
+call_signature_mentions_missing(matches::CC.MethodMatches) =
+    mentions_missing(matches.info.atype)
+call_signature_mentions_missing(matches::CC.UnionSplitMethodMatches) =
+    any(info::CC.MethodMatchInfo -> mentions_missing(info.atype), matches.info.split)
 
-# bound the traversal of types by its depth and by the number of visited types, which
-# would otherwise be exponential in the depth for repeated parameters, e.g. of
-# `Tuple{T,Nothing,T,Nothing}`
-const MAX_TYPE_PARAMETER_DEPTH = 8
-const MAX_VISITED_TYPES = 1024
-
-"""
-    mentions_missing(t; fields::Bool = false) -> Bool
-
-Returns whether `Missing` appears in `t`, including union components, type parameters and
-the upper bounds of type variables, e.g. `AbstractVector{<:Union{Missing,Int}}`.
-
-With `fields = true`, the declared field types of `t` and of its type parameters are also
-checked, e.g. those of `Row` in `Vector{Row}` for
-`struct Row; flag::Union{Missing,Bool}; end`, which covers fields read by Base functions,
-e.g. `getproperty`, or by callbacks passed to them, e.g. `all(r -> r.flag, rows)`,
-including those captured by closures. Fields of fields are not checked, since large objects
-often involve `Missing` somewhere deep.
-
-Types beyond the bounds of the traversal are assumed not to involve `Missing`.
-"""
-mentions_missing(@nospecialize(t); fields::Bool = false) =
-    first(_mentions_missing(t, fields, 0, MAX_VISITED_TYPES))
-
-# Returns the result along with the remaining number of types to visit.
-function _mentions_missing(@nospecialize(t), fields::Bool, depth::Int, budget::Int)
-    (depth > MAX_TYPE_PARAMETER_DEPTH || budget ≤ 0) && return false, budget
-    budget -= 1
-    t === Missing && return true, budget
+# Whether `Missing` appears in `t`, including union components, type parameters and the
+# upper bounds of type variables, e.g. `AbstractVector{<:Union{Missing,Int}}`.
+function mentions_missing(@nospecialize(t), depth::Int = 0)
+    depth > 8 && return false # bound the recursion into deeply nested type parameters
+    t === Missing && return true
     if t isa Union
-        found, budget = _mentions_missing(t.a, fields, depth, budget)
-        found && return true, budget
-        return _mentions_missing(t.b, fields, depth, budget)
+        return mentions_missing(t.a, depth) || mentions_missing(t.b, depth)
     elseif t isa UnionAll
-        return _mentions_missing(Base.unwrap_unionall(t), fields, depth, budget)
+        return mentions_missing(Base.unwrap_unionall(t), depth)
     elseif t isa TypeVar
-        return _mentions_missing(t.ub, fields, depth, budget)
+        return mentions_missing(t.ub, depth)
     elseif t isa Core.TypeofVararg
-        isdefined(t, :T) || return false, budget
-        return _mentions_missing(t.T, fields, depth + 1, budget)
+        return isdefined(t, :T) && mentions_missing(t.T, depth + 1)
     elseif t isa DataType
-        params = t.parameters
-        for i = 1:length(params)
-            # skip repeated parameters, e.g. of `NTuple{128,T}`, without using up the budget
-            i > 1 && params[i] === params[i-1] && continue
-            found, budget = _mentions_missing(params[i], fields, depth + 1, budget)
-            found && return true, budget
-        end
-        # the fields of `Tuple` and `NamedTuple` are their type parameters
-        if fields && isstructtype(t) && !(t <: Union{Tuple,NamedTuple})
-            for ft in Base.datatype_fieldtypes(t)
-                # a field holding a type is never `missing`
-                ft isa Type && ft <: Type && continue
-                found, budget = _mentions_missing(ft, false, 0, budget)
-                found && return true, budget
-            end
+        for p in t.parameters
+            mentions_missing(p, depth + 1) && return true
         end
     end
-    return false, budget
+    return false
 end
 
 has_speculative_missing_match(matches::CC.MethodMatches) =
@@ -837,32 +783,6 @@ end
 function has_missing_member(@nospecialize t)
     t = CC.widenconst(t)
     return t isa Union && any(@nospecialize(u)->u===Missing, Base.uniontypes(t))
-end
-
-function has_base_or_native_method_match(
-        analyzer::LSAnalyzer, matches::CC.MethodMatches, sv::CC.AbsIntState
-    )
-    return has_base_or_native_method_match(analyzer, matches.info, sv)
-end
-function has_base_or_native_method_match(
-        analyzer::LSAnalyzer, matches::CC.UnionSplitMethodMatches, sv::CC.AbsIntState
-    )
-    return any(matches.info.split) do info::CC.MethodMatchInfo
-        has_base_or_native_method_match(analyzer, info, sv)
-    end
-end
-function has_base_or_native_method_match(
-        analyzer::LSAnalyzer, info::CC.MethodMatchInfo, sv::CC.AbsIntState
-    )
-    # Results served from the native inference cache are widened only where they flow into
-    # the analyzed code: in other frames, e.g. of constant propagation into the methods
-    # beyond the boundary, widening them would only lose precision.
-    analyzed = should_analyze(analyzer, sv)
-    return any(info.results) do match
-        method = match.method
-        return Base.moduleroot(method.module) === Base ||
-            (analyzed && is_native_boundary(analyzer, method))
-    end
 end
 
 # TODO Better to factor out and share it with `JET.JETAnalyzer`

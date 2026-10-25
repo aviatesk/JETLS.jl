@@ -1970,35 +1970,18 @@ end
     Calls with loosely typed arguments can be inferred to return `missing` even
     though the code rarely sees it: with `x` inferred as `Any`, `x == :flag`
     also matches `==(::Missing, ::Any)` and is inferred as `Union{Bool,Missing}`.
-    Likewise, `xs == ys` for `xs::Vector{Any}` is inferred as
-    `Union{Bool,Missing}` by the three-valued logic of Base, since comparing the
-    elements may return `missing`.
     JETLS does not report errors caused only by such results. It still reports
-    them when the types involved in the call include `Missing`, e.g. branching
-    on `xs[i] == 0` for `xs::Vector{Union{Missing,Int}}` or on `r.flag` for a
-    field `flag::Union{Missing,Bool}`, as well as `missing` returned by
-    functions defined outside Base, even for untyped arguments:
-
-    ```@diagnostics; codes = ["inference/type-error/non-bool-cond"]
-    parse_flag(s::String) = s == "yes" ? true : s == "no" ? false : missing
-
-    function use_flag(s)
-        if parse_flag(s)  # reported, since `parse_flag("maybe")` is `missing`
-            return 1
-        end
-        return 2
-    end
-    ```
-
-    As a limitation, `missing` that reaches a result through the three-valued
-    logic of Base is not reported when the types involved in the call do not
-    include `Missing`, e.g. `missing` returned by a callback of `all`:
+    them when the argument types of the call involve `Missing`, e.g. branching
+    on `xs[i] == 0` for `xs::Vector{Union{Missing,Int}}`.
+    As a limitation, branching on a call inferred as `Union{Bool,Missing}` is
+    not reported when its argument types do not involve `Missing`, even if the
+    callee itself returns `missing`:
 
     ```@diagnostics; absent_codes = ["inference/type-error/non-bool-cond"]
     parse_flag(s::String) = s == "yes" ? true : s == "no" ? false : missing
 
-    function use_flags(strs::Vector{String})
-        if all(parse_flag, strs)  # not reported
+    function use_flag(s::String)
+        if parse_flag(s)  # not reported, although `parse_flag("maybe")` is `missing`
             return 1
         end
         return 2
