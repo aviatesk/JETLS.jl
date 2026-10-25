@@ -1974,10 +1974,11 @@ end
     `Union{Bool,Missing}` by the three-valued logic of Base, since comparing the
     elements may return `missing`.
     JETLS does not report errors caused only by such results. It still reports
-    them when the types involved in the call include `Missing`, e.g. branching
-    on `xs[i] == 0` for `xs::Vector{Union{Missing,Int}}` or on `r.flag` for a
-    field `flag::Union{Missing,Bool}`, as well as `missing` returned by
-    functions defined outside Base, even for untyped arguments:
+    them when the argument types of the call involve `Missing`, e.g. branching
+    on `xs[i] == 0` for `xs::Vector{Union{Missing,Int}}`, as well as fields
+    that may be `missing`, e.g. `r.flag` for `flag::Union{Missing,Bool}`, and
+    `missing` returned by functions defined outside Base, even for untyped
+    arguments:
 
     ```@diagnostics; codes = ["inference/type-error/non-bool-cond"]
     parse_flag(s::String) = s == "yes" ? true : s == "no" ? false : missing
@@ -1990,9 +1991,9 @@ end
     end
     ```
 
-    As a limitation, `missing` that reaches a result through the three-valued
-    logic of Base is not reported when the types involved in the call do not
-    include `Missing`, e.g. `missing` returned by a callback of `all`:
+    As a limitation, `missing` returned by a callback passed to a function of
+    Base is not reported when the argument types of the call do not involve
+    `Missing`, e.g. `all(parse_flag, strs)` or `all(r -> r.flag, rows)`:
 
     ```@diagnostics; absent_codes = ["inference/type-error/non-bool-cond"]
     parse_flag(s::String) = s == "yes" ? true : s == "no" ? false : missing

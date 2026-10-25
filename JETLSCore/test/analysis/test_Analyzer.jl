@@ -1424,15 +1424,15 @@ iszero_val(r::RowWithMissing) = r.val == 0
 struct Inventory
     name::Symbol
     items::Vector{Any}
-    schema::Type{Union{Missing,Bool}}
+    note::Union{Missing,String}
 end
 struct FlagRow
     flag::Union{Missing,Bool}
     count::Int
 end
-struct ParametricFlagRow{T<:Integer}
-    payload::T
-    flag::Union{Missing,Bool}
+struct BoxedFlag
+    value
+    BoxedFlag(s::String) = new(parse_flag_or_missing(s))
 end
 getrowfield(r::FlagRow, name::Symbol) = getfield(r, name)
 getrowfield_wrapped(r::FlagRow, name::Symbol) = getrowfield(r, name)
@@ -1444,10 +1444,6 @@ struct PositivePredicate
 end
 (::PositivePredicate)(x::Int) = Base.inferencebarrier(x > 0)
 const WIDE_METADATA = foldl((T, _) -> Vector{NTuple{128,T}}, 1:4; init=Int)
-struct WideRow
-    metadata::WIDE_METADATA
-    flag::Union{Missing,Bool}
-end
 alternating_with_missing(n::Int) = Tuple{repeat(Any[Int, Nothing], n)..., Missing}
 const LOOKUP_TABLE = Dict{Symbol,Int}(:a => 1)
 lookup_or_missing(::Missing) = missing
@@ -1749,8 +1745,9 @@ integer_as_string(x::Integer) = x::String
                     # `Union{Bool,Missing}` from the three-valued logic of Base
                     ((xs, ys) -> xs == ys ? 1 : 2, (Vector{Any}, Vector{Any})),
                     (t -> all(x -> x == 1, t) ? 1 : 2, (Tuple,)),
-                    # `Inventory.schema` holds a type, which is never `missing`
+                    # `Missing` in unused fields of the arguments or of captured objects
                     (inv -> any(x -> x == inv.name, inv.items) ? 1 : 2, (Inventory,)),
+                    ((p, xs) -> all(p, xs) ? 1 : 2, (PositivePredicate, Vector{Int})),
                     # `&(::Missing, ::Integer)` would refine `x::Any` to `Union{Missing,Integer}`
                     (x -> (iszero(x & 0x0f); Int(x)), (Any,)),
                     # also when the result of the speculative call is unused
@@ -1768,12 +1765,9 @@ integer_as_string(x::Integer) = x::String
                     # `Missing` only in the upper bound of a type variable
                     ((xs, i) -> get_flag(xs, i) ? 1 : 2,
                      (AbstractVector{<:Union{Missing,Bool}}, Int)),
-                    # `Missing` in the field types of the arguments or of their elements
+                    # fields read by `getproperty`, including refined ones of untyped fields
                     (r -> r.flag ? 1 : 2, (FlagRow,)),
-                    (rows -> all(r -> r.flag, rows) ? 1 : 2, (Vector{FlagRow},)),
-                    ((r, xs) -> any(x -> x == r.flag, xs) ? 1 : 2, (FlagRow, Vector{Bool})),
-                    # a field typed by a type variable
-                    (r -> r.flag ? 1 : 2, (ParametricFlagRow,)),
+                    (s -> BoxedFlag(s).value ? 1 : 2, (String,)),
                 )
                 r = only(get_reports(analyze_call(f, argtypes)))
                 @test r isa NonBooleanCondErrorReport && r.union_split == 2 && r.t == Any[Missing]
@@ -1815,8 +1809,8 @@ integer_as_string(x::Integer) = x::String
                 @test !Analyzer.mentions_missing(alternating_with_missing(n))
             end
             # but adjacent repeated type parameters, e.g. of `NTuple{128,T}`, are visited
-            # only once, so that the traversal of `WideRow.metadata` does not exhaust it
-            @test Analyzer.mentions_missing(WideRow; fields=true)
+            # only once, so that the traversal of `WIDE_METADATA` does not exhaust it
+            @test Analyzer.mentions_missing(Tuple{WIDE_METADATA,Missing})
 
             # known limitations: genuine errors that are not reported
             for (f, argtypes) in (
@@ -1826,16 +1820,12 @@ integer_as_string(x::Integer) = x::String
                     (k -> takes_int(lookup_or_missing(k)), (Any,)),
                     # `missing` returned by a callback of the three-valued logic of Base
                     (strs -> all(parse_flag_or_missing, strs) ? 1 : 2, (Vector{String},)),
+                    (rows -> all(r -> r.flag, rows) ? 1 : 2, (Vector{FlagRow},)),
+                    ((r, xs) -> any(x -> x == r.flag, xs) ? 1 : 2, (FlagRow, Vector{Bool})),
                     # a Base match widens non-Base results too, including `Int`
                     ((x, i) -> x[i] ? 1 : 2, (Union{IntOrMissingLookup,Vector{Bool}}, Int)),
                 )
                 @test_broken !isempty(get_reports(analyze_call(f, argtypes)))
-            end
-            # known limitation: `Missing` in the field types of an argument prevents
-            # widening even if the fields are not used
-            let result = analyze_call((p, xs) -> all(p, xs) ? 1 : 2,
-                    (PositivePredicate, Vector{Int}))
-                @test_broken isempty(get_reports(result))
             end
         end
     end
@@ -2288,8 +2278,6 @@ module NativeBoundaryModule
     end
     make_positive_box(xs::Vector{Int}) = PositiveBox(xs)
     precompile(make_positive_box, (Vector{Int},))
-    # `getproperty` of Base would widen the field value regardless of the cached result,
-    # since the declared field type does not involve `Missing`
     unbox_all_positive(xs::Vector{Int}) = getfield(make_positive_box(xs), :value)
     # `flag(s, true)` is always `Bool`, which constant propagation infers only if the
     # `Union{Bool,Int,Missing}` result of `flag_value` is kept precise

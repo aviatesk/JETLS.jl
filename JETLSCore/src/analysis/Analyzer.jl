@@ -439,7 +439,7 @@ function _cached_return_mentions_missing(@nospecialize(rt), depth::Int, budget::
     (depth > MAX_TYPE_PARAMETER_DEPTH || budget ≤ 0) && return false, budget
     # `Vararg` may be the last field of a tuple `PartialStruct`
     typ = rt isa Union{TypeVar,Core.TypeofVararg} ? rt : CC.widenconst(rt)
-    found, budget = _mentions_missing(typ, false, depth, budget)
+    found, budget = _mentions_missing(typ, depth, budget)
     found && return true, budget
     if rt isa CC.PartialStruct
         for ft in rt.fields
@@ -709,9 +709,9 @@ does not involve `Missing` and either:
   (see [`is_speculative_missing_match`](@ref)), e.g. `x == :sym` or `max(x, :sym)`, or
 - the result may be both `Bool` and `missing` and comes from a method of Base, whose
   three-valued logic returns `missing` when an operation on loosely typed values is inferred
-  as `Any`, e.g. `==` for `Vector{Any}` or `Vector{Number}` arguments. Such results are kept
-  when the declared field types of the arguments involve `Missing`
-  (see [`mentions_missing`](@ref)), e.g. `r.flag` for `flag::Union{Missing,Bool}`.
+  as `Any`, e.g. `==` for `Vector{Any}` or `Vector{Number}` arguments. Results of
+  `getproperty` are kept, since they come from the fields of the analyzed objects, e.g.
+  `r.flag` for `flag::Union{Missing,Bool}`.
 
 A speculative match also refines its argument slots, e.g. `x & 0x0f` refines `x::Any` to
 `Union{Missing,Integer}`. Refinements that include `Missing` are dropped whenever such a
@@ -744,15 +744,12 @@ function CC.widen_call_result(
     mentions && return false
     has_missing_member(state.rettype) || return false
     speculative && return true
-    return Bool <: CC.widenconst(state.rettype) &&
-        has_base_method_match(matches) &&
-        !call_signature_mentions_missing(matches; fields=true)
+    state.func === getproperty && return false
+    return Bool <: CC.widenconst(state.rettype) && has_base_method_match(matches)
 end
 
-call_signature_mentions_missing(matches::CC.MethodMatches; fields::Bool = false) =
-    mentions_missing(matches.info.atype; fields)
-call_signature_mentions_missing(matches::CC.UnionSplitMethodMatches; fields::Bool = false) =
-    any(info::CC.MethodMatchInfo -> mentions_missing(info.atype; fields), matches.info.split)
+call_signature_mentions_missing(matches::CC.MethodMatches) = mentions_missing(matches.info.atype)
+call_signature_mentions_missing(matches::CC.UnionSplitMethodMatches) = any(info -> mentions_missing(info.atype), matches.info.split)
 
 # bound the traversal of types by its depth and by the number of visited types, which
 # would otherwise be exponential in the depth for repeated parameters, e.g. of
@@ -761,55 +758,37 @@ const MAX_TYPE_PARAMETER_DEPTH = 8
 const MAX_VISITED_TYPES = 1024
 
 """
-    mentions_missing(t; fields::Bool = false) -> Bool
+    mentions_missing(t) -> Bool
 
 Returns whether `Missing` appears in `t`, including union components, type parameters and
 the upper bounds of type variables, e.g. `AbstractVector{<:Union{Missing,Int}}`.
-
-With `fields = true`, the declared field types of `t` and of its type parameters are also
-checked, e.g. those of `Row` in `Vector{Row}` for
-`struct Row; flag::Union{Missing,Bool}; end`, which covers fields read by Base functions,
-e.g. `getproperty`, or by callbacks passed to them, e.g. `all(r -> r.flag, rows)`,
-including those captured by closures. Fields of fields are not checked, since large objects
-often involve `Missing` somewhere deep.
-
 Types beyond the bounds of the traversal are assumed not to involve `Missing`.
 """
-mentions_missing(@nospecialize(t); fields::Bool = false) =
-    first(_mentions_missing(t, fields, 0, MAX_VISITED_TYPES))
+mentions_missing(@nospecialize t) = first(_mentions_missing(t, 0, MAX_VISITED_TYPES))
 
 # Returns the result along with the remaining number of types to visit.
-function _mentions_missing(@nospecialize(t), fields::Bool, depth::Int, budget::Int)
+function _mentions_missing(@nospecialize(t), depth::Int, budget::Int)
     (depth > MAX_TYPE_PARAMETER_DEPTH || budget ≤ 0) && return false, budget
     budget -= 1
     t === Missing && return true, budget
     if t isa Union
-        found, budget = _mentions_missing(t.a, fields, depth, budget)
+        found, budget = _mentions_missing(t.a, depth, budget)
         found && return true, budget
-        return _mentions_missing(t.b, fields, depth, budget)
+        return _mentions_missing(t.b, depth, budget)
     elseif t isa UnionAll
-        return _mentions_missing(Base.unwrap_unionall(t), fields, depth, budget)
+        return _mentions_missing(Base.unwrap_unionall(t), depth, budget)
     elseif t isa TypeVar
-        return _mentions_missing(t.ub, fields, depth, budget)
+        return _mentions_missing(t.ub, depth, budget)
     elseif t isa Core.TypeofVararg
         isdefined(t, :T) || return false, budget
-        return _mentions_missing(t.T, fields, depth + 1, budget)
+        return _mentions_missing(t.T, depth + 1, budget)
     elseif t isa DataType
         params = t.parameters
         for i = 1:length(params)
             # skip repeated parameters, e.g. of `NTuple{128,T}`, without using up the budget
             i > 1 && params[i] === params[i-1] && continue
-            found, budget = _mentions_missing(params[i], fields, depth + 1, budget)
+            found, budget = _mentions_missing(params[i], depth + 1, budget)
             found && return true, budget
-        end
-        # the fields of `Tuple` and `NamedTuple` are their type parameters
-        if fields && isstructtype(t) && !(t <: Union{Tuple,NamedTuple})
-            for ft in Base.datatype_fieldtypes(t)
-                # a field holding a type is never `missing`
-                ft isa Type && ft <: Type && continue
-                found, budget = _mentions_missing(ft, false, 0, budget)
-                found && return true, budget
-            end
         end
     end
     return false, budget
