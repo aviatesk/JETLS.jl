@@ -246,6 +246,7 @@ function materialize_snapshots(config::SnapshotConfig, compiler_root::String; ch
         repository_path = joinpath(temporary_root, "repository.git")
         generated_root = joinpath(temporary_root, "generated")
         run(`git init --bare --quiet $repository_path`)
+        run(`git -C $repository_path config maintenance.auto false`)
         run(`git -C $repository_path remote add origin $(config.upstream.repository)`)
 
         generated = Dict{String,String}()
