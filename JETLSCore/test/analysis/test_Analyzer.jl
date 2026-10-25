@@ -1435,6 +1435,10 @@ struct FlagRow
     flag::Union{Missing,Bool}
     count::Int
 end
+struct ParametricFlagRow{T<:Integer}
+    payload::T
+    flag::Union{Missing,Bool}
+end
 getrowfield(r::FlagRow, name::Symbol) = getfield(r, name)
 getrowfield_wrapped(r::FlagRow, name::Symbol) = getrowfield(r, name)
 flag_or_count(name::Symbol, _) = name === :flag ? (rand(Bool) ? true : missing) : 0
@@ -1447,7 +1451,9 @@ end
 const WIDE_METADATA = foldl((T, _) -> Vector{NTuple{128,T}}, 1:4; init=Int)
 struct WideRow
     metadata::WIDE_METADATA
+    flag::Union{Missing,Bool}
 end
+alternating_with_missing(n::Int) = Tuple{repeat(Any[Int, Nothing], n)..., Missing}
 const LOOKUP_TABLE = Dict{Symbol,Int}(:a => 1)
 lookup_or_missing(::Missing) = missing
 lookup_or_missing(k) = get(LOOKUP_TABLE, k, missing)
@@ -1777,6 +1783,8 @@ integer_as_string(x::Integer) = x::String
                     (r -> r.flag ? 1 : 2, (FlagRow,)),
                     (rows -> all(r -> r.flag, rows) ? 1 : 2, (Vector{FlagRow},)),
                     ((r, xs) -> any(x -> x == r.flag, xs) ? 1 : 2, (FlagRow, Vector{Bool})),
+                    # a field typed by a type variable
+                    (r -> r.flag ? 1 : 2, (ParametricFlagRow,)),
                 )
                 r = only(get_reports(analyze_call(f, argtypes)))
                 @test r isa NonBooleanCondErrorReport && r.union_split == 2 && r.t == Any[Missing]
@@ -1812,9 +1820,15 @@ integer_as_string(x::Integer) = x::String
                 @test isempty(get_reports(analyze_call(f, argtypes)))
             end
 
-            # repeated type parameters, e.g. of `NTuple{128,T}`, are traversed only once,
-            # whereas traversing all of them would visit the innermost `Int` `128^4` times
-            @test !Analyzer.fields_mention_missing(WideRow)
+            # the traversal of types is bounded by the number of visited types, beyond which
+            # types are assumed not to involve `Missing`
+            let n = Analyzer.MAX_VISITED_TYPES ÷ 2
+                @test Analyzer.mentions_missing(alternating_with_missing(n ÷ 2))
+                @test !Analyzer.mentions_missing(alternating_with_missing(n))
+            end
+            # but adjacent repeated type parameters, e.g. of `NTuple{128,T}`, are visited
+            # only once, so that the traversal of `WideRow.metadata` does not exhaust it
+            @test Analyzer.mentions_missing(WideRow; fields=true)
 
             # known limitations: genuine errors that are not reported
             for (f, argtypes) in (
@@ -2273,11 +2287,22 @@ module NativeBoundaryModule
     positive(x::Int) = Base.inferencebarrier(x > 0)
     all_positive(xs::Vector{Int}) = all(positive, xs)
     precompile(all_positive, (Vector{Int},))
+    # `flag(s, true)` is always `Bool`, which constant propagation infers only if the
+    # `Union{Bool,Int,Missing}` result of `flag_value` is kept precise
+    flag_value(s::String) = s == "yes" ? true : s == "missing" ? missing : 0
+    Base.@constprop :aggressive function flag(s::String, enabled::Bool)
+        enabled || return 0
+        x = flag_value(s)
+        x isa Int && return false
+        return coalesce(x, false)
+    end
+    precompile(flag, (String, Bool))
 end
 
 call_boundary_typeassert(x::Int) = NativeBoundaryModule.typeassert_error(x)
 call_boundary_getfield(pair::Pair{Int,Int}) = NativeBoundaryModule.getfield_error(pair)
 call_boundary_all_positive(xs::Vector{Int}) = NativeBoundaryModule.all_positive(xs) ? 1 : 2
+call_boundary_flag(s::String) = NativeBoundaryModule.flag(s, true) ? 1 : 2
 
 @testset HierarchicalTestSet "reuse_native_inference" begin
     @testset "analysis cache separation" begin
@@ -2314,6 +2339,12 @@ call_boundary_all_positive(xs::Vector{Int}) = NativeBoundaryModule.all_positive(
         # logic of Base inside `all_positive`, which is not widened as it is not analyzed.
         for reuse_native_inference in (false, true)
             let result = analyze_call(call_boundary_all_positive, (Vector{Int},);
+                    report_target_modules=(@__MODULE__,), reuse_native_inference)
+                @test isempty(get_reports(result))
+            end
+            # Results served from the cache are kept within the constant propagation of
+            # out-of-target callees, so that it is not less precise than the cached result.
+            let result = analyze_call(call_boundary_flag, (String,);
                     report_target_modules=(@__MODULE__,), reuse_native_inference)
                 @test isempty(get_reports(result))
             end
