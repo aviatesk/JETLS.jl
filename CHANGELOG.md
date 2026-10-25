@@ -27,15 +27,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > JETLS supports Julia 1.12.2 through 1.13.
 > It does not support Julia 1.12.1 or earlier, nor Julia 1.14+/nightly.
 
-<!-- Added: 2026-09-25 / Remove after: 2026-10-25 -->
-> [!note]
-> The official Zed extension for Julia, [JuliaEditorSupport/zed-julia](https://github.com/JuliaEditorSupport/zed-julia), now uses JETLS as its default language server since v0.2.0.
-> Install the `Julia` extension from Zed's extensions view: like `jetls-client`, it installs and updates the pinned JETLS release automatically, so Zed users no longer need to [install `jetls`](https://aviatesk.github.io/JETLS.jl/release/#index/server-installation) or keep it up to date manually (still needed if you also use the `jetls` CLI, e.g. `jetls check`).
-> This is a breaking migration from LanguageServer.jl for existing users of the extension; see [Migrating to version 0.2](https://github.com/JuliaEditorSupport/zed-julia#migrating-to-version-02).
-> If you have been using the [aviatesk/zed-julia](https://github.com/aviatesk/zed-julia) fork, switch to the official extension, and move your settings from `lsp.JETLS` to `lsp.jetls`, since the language server ID is now `jetls`.
-> Please report extension-specific problems (installation, startup, extension UI) to [JuliaEditorSupport/zed-julia issues](https://github.com/JuliaEditorSupport/zed-julia/issues);
-> language-feature issues belong here as before.
-
 <!-- Added: 2026-10-11 / Remove after: 2026-11-11 -->
 > [!note]
 > TestRunner.jl is now developed in this repository as a [subpackage](https://github.com/aviatesk/JETLS.jl/tree/master/TestRunner) and released together with JETLS, and [aviatesk/TestRunner.jl](https://github.com/aviatesk/TestRunner.jl) is no longer updated.
