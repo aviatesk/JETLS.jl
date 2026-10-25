@@ -343,8 +343,9 @@ Markdown.parse('`'^3 * '\n' * JETLS.test_help_message * '\n' * '`'^3)
 Runs the tests with the Julia executable at `<path>`, which can also be a
 command name found on the `PATH`. This takes precedence over
 `JULIA_APPS_JULIA_CMD` and `JULIAUP_CHANNEL` in the
-[`[testrunner] env`](@ref config/testrunner/env) configuration. Julia versions
-that JETLS itself does not support, such as nightly, can be selected as well.
+[`[testrunner] env`](@ref config/testrunner/env) configuration. TestRunner.jl
+requires Julia 1.12 or later, and any Julia version from 1.12 on can be
+selected.
 
 ```bash
 jetls test --julia=/path/to/julia-nightly test/runtests.jl

@@ -656,9 +656,8 @@ nearest `Project.toml` of the test file, which can be overridden with
 !!! note
     The first test run with a Julia other than the one running JETLS
     precompiles TestRunner.jl and its dependencies for that Julia, which may
-    take a while. TestRunner.jl requires Julia 1.12 or later. Julia versions
-    not supported by JETLS itself, such as nightly, can be selected as well,
-    but running tests with them may break.
+    take a while. TestRunner.jl requires Julia 1.12 or later, and any Julia
+    version from 1.12 on can be selected.
 
 !!! note "Overriding with `jetls test --julia`"
     The [`--julia`](@ref testrunner/cli/options/julia) option of

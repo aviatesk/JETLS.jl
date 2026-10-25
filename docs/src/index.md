@@ -48,7 +48,8 @@ The [`jetls` executable app](@ref cli) is the main entry point for running JETLS
 ### [Prerequisites](@id index/server-installation/prerequisites)
 
 JETLS supports [Julia](https://julialang.org/downloads) v1.12.2 through 1.14.x.
-It does not support Julia 1.12.1 or earlier, nor 1.15+/nightly.
+It also runs on Julia 1.15 nightly builds, but may break at any time as Julia
+changes. It does not support Julia 1.12.1 or earlier.
 
 !!! tip "Optimized Julia builds"
     For Julia 1.14 and later, juliaup provides optimized builds of Julia as

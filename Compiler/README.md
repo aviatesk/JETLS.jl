@@ -42,7 +42,8 @@ versions. When the running Julia version does not match any snapshot, the
 generated entrypoint falls back to `Base.Compiler` with
 [`src/fallback.jl`](./src/fallback.jl), in the same way as the registered
 Compiler.jl does. JETLS does not support these versions, but this lets
-TestRunner.jl, which JETLS runs tests with, work on them (e.g. nightly).
+TestRunner.jl, which JETLS runs tests with, work on them (e.g. nightly
+builds of a Julia version that has no snapshot yet).
 
 [`update-snapshots.jl`](./update-snapshots.jl) materializes the configured
 sources under [`snapshots/`](./snapshots/) and regenerates

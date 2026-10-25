@@ -1557,6 +1557,13 @@ end
         end
     """; context_module=@__MODULE__))
 
+    # Macro definitions have the implicit `__source__` and `__module__` arguments.
+    @test isempty(get_lowering_diagnostics("""
+        macro implicit_macro_args(ex)
+            return Expr(:block, __source__, __module__, esc(ex))
+        end
+        """; context_module=@__MODULE__, code=JETLSCore.LOWERING_UNDEF_GLOBAL_VAR_CODE))
+
     # Globals defined by another top-level statement count as defined.
     @test isempty(get_lowering_diagnostics("""
         defined_in_other_statement() = "Hello, world"

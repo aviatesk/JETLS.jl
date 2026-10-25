@@ -1,7 +1,7 @@
-using JETLSCore: JS, JL, SyntaxTree
+using JETLSCore: JETLSCore, JL, JS, SyntaxTree
 
 function parsedstream(s::AbstractString; rule::Symbol=:all)
-    stream = JS.ParseStream(s)
+    stream = JS.ParseStream(s; version=JETLSCore.PARSE_VERSION)
     JS.parse!(stream; rule)
     return stream
 end
