@@ -83,7 +83,7 @@ function read_lsp_message(io)
         if !isempty(other)
             @warn "Found unexpected output from the server process" other
         end
-        parse(Int, only(m.captures))
+        parse(Int, something(only(m.captures)))
     end
     return String(read(io, var"Content-Length"))
 end
