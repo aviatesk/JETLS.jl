@@ -15,28 +15,44 @@ BaseSyntax = "bfd32023-066c-5f76-8dc3-939c60a69aeb"
 PrecompileTools = "32931bc0-5014-5544-84d5-53636ff9f6c5"
 
 [sources.Compiler]
-path = "../Compiler"
+subdir = "vendor/Compiler"
+rev = "c7630c60e95c55b2b29a69200e6295d3988909ae"
+url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.JSON3]
-path = "../JSON3"
+subdir = "vendor/JSON3"
+rev = "c7630c60e95c55b2b29a69200e6295d3988909ae"
+url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.JuliaInterpreter]
-path = "../JuliaInterpreter"
+subdir = "vendor/JuliaInterpreter"
+rev = "c7630c60e95c55b2b29a69200e6295d3988909ae"
+url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.JuliaSyntax]
-path = "../JuliaSyntax"
+subdir = "vendor/JuliaSyntax"
+rev = "c7630c60e95c55b2b29a69200e6295d3988909ae"
+url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.MacroTools]
-path = "../MacroTools"
+subdir = "vendor/MacroTools"
+rev = "c7630c60e95c55b2b29a69200e6295d3988909ae"
+url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.LoweredCodeUtils]
-path = "../LoweredCodeUtils"
+subdir = "vendor/LoweredCodeUtils"
+rev = "c7630c60e95c55b2b29a69200e6295d3988909ae"
+url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.BaseSyntax]
-path = "../BaseSyntax"
+subdir = "vendor/BaseSyntax"
+rev = "c7630c60e95c55b2b29a69200e6295d3988909ae"
+url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.PrecompileTools]
-path = "../PrecompileTools"
+subdir = "vendor/PrecompileTools"
+rev = "c7630c60e95c55b2b29a69200e6295d3988909ae"
+url = "https://github.com/aviatesk/JETLS.jl"
 
 [compat]
 Compiler = "0.1"

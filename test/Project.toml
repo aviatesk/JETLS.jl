@@ -10,7 +10,9 @@ Sockets = "6462fe0b-24de-5631-8697-dd941f90decc"
 HierarchicalTestSets = "de7161c7-0535-45f7-a846-78c8a451aff9"
 
 [sources.JETLSCore]
-path = "../vendor/JETLSCore"
+subdir = "vendor/JETLSCore"
+rev = "c7630c60e95c55b2b29a69200e6295d3988909ae"
+url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.JETLS]
 path = ".."
