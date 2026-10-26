@@ -6,8 +6,8 @@ export declared_argtypes, inference_error_report_related_frames,
     inference_error_report_stack, is_parametric_closure_type,
     reset_report_target_modules!
 export AmbiguousMethodReport, BoundsErrorReport, DeprecatedCallReport, FailingTestReport,
-    FieldErrorReport, KeywordTypeErrorReport, MethodErrorReport, NoMethodMatchReport,
-    NonBooleanCondErrorReport, TypeAssertErrorReport, TypeErrorReport,
+    FieldErrorReport, InvokeTypeErrorReport, KeywordTypeErrorReport, MethodErrorReport,
+    NoMethodMatchReport, NonBooleanCondErrorReport, TypeAssertErrorReport, TypeErrorReport,
     UndefKeywordErrorReport, UndefVarErrorReport, UnsupportedKeywordArgReport
 export RelatedEntryFrame, RelatedFrame, RelatedFrameKind, RelatedOriginFrame, RelatedViaFrame
 
@@ -19,6 +19,13 @@ using JET: JET
 using ..JETLSCore: AnalysisEntry, JETLS_DEV_MODE, deprecated_function_message,
     deprecated_method_message, global_const_value, with_base_render_lock
 using ..LSP
+
+# `Type{T}` is no longer a `DataType` on Julia 1.14 and later
+@static if isdefinedglobal(Base, :type_parameter) # JuliaLang/julia#61915
+using Base: type_parameter
+else
+type_parameter(@nospecialize t) = (t::DataType).parameters[1]
+end
 
 # JETLS internal interface
 # ========================
@@ -203,10 +210,14 @@ end
 CC.maybe_compress_codeinfo(::LSAnalyzer, ::MethodInstance, ::CodeInfo) = nothing
 CC.may_optimize(::LSAnalyzer) = false
 CC.method_table(analyzer::LSAnalyzer) = analyzer.method_table
+# The base lattices include `MustAliasesLattice` since JuliaLang/julia#47574 (v1.14), where
+# wrapping them again would only slow down inference
+@static if !(CC.BaseInferenceLattice.instance isa CC.MustAliasesLattice)
 CC.typeinf_lattice(::LSAnalyzer) =
     CC.InferenceLattice(CC.MustAliasesLattice(CC.BaseInferenceLattice.instance))
 CC.ipo_lattice(::LSAnalyzer) =
     CC.InferenceLattice(CC.InterMustAliasesLattice(CC.IPOResultLattice.instance))
+end
 
 let base_ntuple_int_method = which(Base.ntuple, Tuple{Any,Int})
     ntuple_with_unknown_length(f::F, n::Int) where F = Base._ntuple(f, n)
@@ -420,7 +431,9 @@ Whether inference of a call to `method` may be served from Julia's native infere
 instead of being analyzed, i.e. whether `analyzer.reuse_native_inference` is enabled and
 `method` sits outside `analyzer.report_target_modules`. Reports are never collected beyond
 that boundary, so it only applies to methods whose reports would be filtered out by
-`report_target_modules` anyway.
+`report_target_modules` anyway. Cached results involving `Missing` are reanalyzed, so that
+[`CC.widen_call_result`](@ref) can widen `missing` results inside them before callers wrap
+or refine them.
 """
 function is_native_boundary(analyzer::LSAnalyzer, method::Method)
     analyzer.reuse_native_inference || return false
@@ -429,29 +442,86 @@ function is_native_boundary(analyzer::LSAnalyzer, method::Method)
     return method.module ∉ report_target_modules
 end
 
+# A cached `PartialStruct` may refine its fields with types involving `Missing` even when
+# the declared field types are `Any`, which `widenconst` drops.
+cached_return_mentions_missing(@nospecialize(rt)) =
+    first(_cached_return_mentions_missing(rt, 0, MAX_VISITED_TYPES))
+function _cached_return_mentions_missing(@nospecialize(rt), depth::Int, budget::Int)
+    (depth > MAX_TYPE_PARAMETER_DEPTH || budget ≤ 0) && return false, budget
+    # `Vararg` may be the last field of a tuple `PartialStruct`
+    typ = rt isa Union{TypeVar,Core.TypeofVararg} ? rt : CC.widenconst(rt)
+    found, budget = _mentions_missing(typ, depth, budget)
+    found && return true, budget
+    if rt isa CC.PartialStruct
+        for ft in rt.fields
+            found, budget = _cached_return_mentions_missing(ft, depth + 1, budget)
+            found && return true, budget
+        end
+    end
+    return false, budget
+end
+
+"""
+    native_boundary_codeinst(analyzer::LSAnalyzer, method::Method, atype, sparams)
+        -> Union{Nothing,Core.CodeInstance}
+
+Returns the `CodeInstance` of Julia's native inference cache that serves a call to `method`
+at the [`is_native_boundary`](@ref), or `nothing` if the call needs to be analyzed.
+"""
+function native_boundary_codeinst(
+        analyzer::LSAnalyzer, method::Method, @nospecialize(atype), sparams::Core.SimpleVector
+    )
+    is_native_boundary(analyzer, method) || return nothing
+    world = CC.get_inference_world(analyzer)
+    mi = CC.specialize_method(method, atype, sparams)
+    ci = @static if isdefinedglobal(CC, :WorldView)
+        CC.get(CC.WorldView(CC.InternalCodeCache(nothing), world), mi, nothing)
+    else
+        CC.get(CC.InternalCodeCache(nothing, world), mi, nothing)
+    end
+    ci isa Core.CodeInstance || return nothing
+    rt = CC.cached_return_type(ci)
+    # `rt === Union{}` means this callee definitely errors. Let the analyzer infer it so that
+    # reports created on the callee frame (builtin errors, which surface at their in-scope
+    # call site via `collect_callee_reports!`) are not silenced.
+    rt === Union{} && return nothing
+    # Reanalyze nullable results too: native inference does not apply our widening, and
+    # widening later at the boundary misses `Missing` nested in other values.
+    cached_return_mentions_missing(rt) && return nothing
+    return ci
+end
+
+@static if hasmethod(CC.typeinf_edge,
+        Tuple{CC.AbstractInterpreter, Method, Any, Core.SimpleVector, CC.AbsIntState,
+              Bool, Bool, Bool})
+function CC.typeinf_edge(analyzer::LSAnalyzer,
+        method::Method, @nospecialize(atype), sparams::Core.SimpleVector,
+        caller::CC.InferenceState, edgecycle::Bool, edgelimited::Bool, edgerecursed::Bool
+    )
+    ci = native_boundary_codeinst(analyzer, method, atype, sparams)
+    if ci !== nothing
+        return CC.return_cached_result(analyzer, method, ci, nothing, caller,
+            edgecycle, edgelimited, edgerecursed)
+    end
+    return @invoke CC.typeinf_edge(analyzer::ToplevelAbstractAnalyzer,
+        method::Method, atype::Any, sparams::Core.SimpleVector,
+        caller::CC.InferenceState, edgecycle::Bool, edgelimited::Bool, edgerecursed::Bool)
+end
+else
 function CC.typeinf_edge(analyzer::LSAnalyzer,
         method::Method, @nospecialize(atype), sparams::Core.SimpleVector,
         caller::CC.InferenceState, edgecycle::Bool, edgelimited::Bool
     )
-    if is_native_boundary(analyzer, method)
-        world = CC.get_inference_world(analyzer)
-        mi = CC.specialize_method(method, atype, sparams)
-        ci = CC.get(CC.WorldView(CC.InternalCodeCache(nothing), world), mi, nothing)
-        if ci isa Core.CodeInstance
-            rt = CC.cached_return_type(ci)
-            # `rt === Union{}` means this callee definitely errors. Let the analyzer infer
-            # it so that reports created on the callee frame (builtin errors, which surface
-            # at their in-scope call site via `collect_callee_reports!`) are not silenced.
-            if rt !== Union{}
-                effects = CC.decode_effects(ci.ipo_purity_bits)
-                return CC.Future(CC.MethodCallResult(
-                    rt, ci.exctype, effects, ci, edgecycle, edgelimited))
-            end
-        end
+    ci = native_boundary_codeinst(analyzer, method, atype, sparams)
+    if ci !== nothing
+        effects = CC.decode_effects(ci.ipo_purity_bits)
+        return CC.Future(CC.MethodCallResult(
+            CC.cached_return_type(ci), ci.exctype, effects, ci, edgecycle, edgelimited))
     end
     return @invoke CC.typeinf_edge(analyzer::ToplevelAbstractAnalyzer,
         method::Method, atype::Any, sparams::Core.SimpleVector,
         caller::CC.InferenceState, edgecycle::Bool, edgelimited::Bool)
+end
 end
 
 # JuliaLang/julia#62359 replaced `codeinst_as_edge` with local inference proofs (v1.14)
@@ -572,23 +642,23 @@ end
 end
 
 function after_abstract_invoke(
-        analyzer::LSAnalyzer, ret::CC.Future, arginfo::CC.ArgInfo, sv::CC.InferenceState
+        analyzer::LSAnalyzer, ret::CC.Future{CC.CallMeta}, arginfo::CC.ArgInfo,
+        sv::CC.InferenceState
     )
-    should_analyze(analyzer, sv) || return nothing
-    function _after_abstract_invoke(analyzer′::LSAnalyzer, sv′::CC.InferenceState)
-        ret′ = ret[]
-        report_invoke_method_error!(analyzer′, sv′, ret′, arginfo)
+    should_analyze(analyzer, sv) || return ret
+    function _after_abstract_invoke(
+            call::CC.CallMeta, analyzer′::LSAnalyzer, sv′::CC.InferenceState
+        )
+        sig = report_invoke_method_error!(analyzer′, sv′, call, arginfo)
+        report_invoke_type_error!(analyzer′, sv′, call, arginfo)
         argtypes = arginfo.argtypes
         func = length(argtypes) ≥ 2 ? CC.singleton_type(argtypes[2]) : nothing
-        report_deprecated_call!(analyzer′, sv′, func, ret′, arginfo)
-        return true
+        report_deprecated_call!(analyzer′, sv′, func, call, arginfo)
+        sig === nothing && return call
+        return CC.CallMeta(call.rt, call.exct, call.effects, InvokeMethodErrorInfo(sig),
+            call.refinements)
     end
-    if isready(ret)
-        _after_abstract_invoke(analyzer, sv)
-    else
-        push!(sv.tasks, _after_abstract_invoke)
-    end
-    return nothing
+    return CC.Future{CC.CallMeta}(_after_abstract_invoke, ret, analyzer, sv)
 end
 
 @static if hasmethod(CC.abstract_invoke,
@@ -601,8 +671,7 @@ function CC.abstract_invoke(
     ret = @invoke CC.abstract_invoke(
         analyzer::ToplevelAbstractAnalyzer, arginfo::CC.ArgInfo, si::CC.StmtInfo,
         vtypes::Union{Vector{CC.VarState},Nothing}, sv::CC.AbsIntState)
-    after_abstract_invoke(analyzer, ret, arginfo, sv)
-    return ret
+    return after_abstract_invoke(analyzer, ret, arginfo, sv)
 end
 else
 function CC.abstract_invoke(
@@ -611,8 +680,7 @@ function CC.abstract_invoke(
     ret = @invoke CC.abstract_invoke(
         analyzer::ToplevelAbstractAnalyzer, arginfo::CC.ArgInfo, si::CC.StmtInfo,
         sv::CC.AbsIntState)
-    after_abstract_invoke(analyzer, ret, arginfo, sv)
-    return ret
+    return after_abstract_invoke(analyzer, ret, arginfo, sv)
 end
 end
 
@@ -664,7 +732,13 @@ function infer_constructed_closure!(
         # Call the closure value rather than its type, so that constant propagation can use
         # the constant values of the captured variables.
         arginfo = CC.ArgInfo(nothing, Any[rt, argtypes...])
-        call = CC.abstract_call(analyzer, arginfo, si, sv)
+        call = @static if hasmethod(CC.abstract_call,
+                Tuple{CC.AbstractInterpreter, CC.ArgInfo, CC.StmtInfo,
+                      Union{Vector{CC.VarState}, Nothing}, CC.AbsIntState})
+            CC.abstract_call(analyzer, arginfo, si, #=vtypes=#nothing, sv)
+        else
+            CC.abstract_call(analyzer, arginfo, si, sv)
+        end
         CC.Future{Any}(call, analyzer, sv) do call, _, sv
             # The construction's statement info is not a call, so retain these edges separately.
             CC.add_edges!(sv.edges, call.info)
@@ -686,16 +760,24 @@ even though `x` is rarely `missing` in practice. Results are widened when the ca
 does not involve `Missing` and either:
 - a method specialized on `Missing` matched only because an argument is `Any`
   (see [`is_speculative_missing_match`](@ref)), e.g. `x == :sym` or `max(x, :sym)`, or
-- the result is exactly `Union{Bool,Missing}`, which mostly comes from the three-valued
-  logic of Base applied to loosely typed values, e.g. `==` for `Vector{Any}` arguments.
+- the result may be both `Bool` and `missing` and comes from a method of Base, whose
+  three-valued logic returns `missing` when an operation on loosely typed values is inferred
+  as `Any`, e.g. `==` for `Vector{Any}` or `Vector{Number}` arguments. Results of
+  `getproperty` are kept, since they come from the fields of the analyzed objects, e.g.
+  `r.flag` for `flag::Union{Missing,Bool}`.
 
 A speculative match also refines its argument slots, e.g. `x & 0x0f` refines `x::Any` to
 `Union{Missing,Integer}`. Refinements that include `Missing` are dropped whenever such a
 match exists, even if the result itself is not widened or is unused, so that `x` is not
 reported as possibly `missing` afterwards.
 
-Other `missing` results created in the callee body, e.g. by a parser returning `missing` for
-invalid input, are kept, as are results of calls whose argument types involve `Missing`.
+Other `missing` results, e.g. of a parser returning `missing` for invalid input, are kept
+even for loosely typed arguments.
+
+Whether a result is widened must not depend on how precisely it is inferred, since a widened
+result of constant propagation is discarded in favor of the result inferred without the
+constants when the latter is not widened. Hence results that also include other types, e.g.
+`Union{Bool,Int,Missing}`, are widened as well.
 """
 function CC.widen_call_result(
         analyzer::LSAnalyzer, si::CC.StmtInfo, state::CC.CallInferenceState,
@@ -714,41 +796,62 @@ function CC.widen_call_result(
         state::CC.CallInferenceState, sv::CC.AbsIntState)) && return true
     mentions && return false
     has_missing_member(state.rettype) || return false
-    return speculative || CC.widenconst(state.rettype) === Union{Bool,Missing}
+    speculative && return true
+    state.func === getproperty && return false
+    return Bool <: CC.widenconst(state.rettype) && has_base_method_match(matches)
 end
 
-call_signature_mentions_missing(matches::CC.MethodMatches) =
-    mentions_missing(matches.info.atype)
-call_signature_mentions_missing(matches::CC.UnionSplitMethodMatches) =
-    any(info::CC.MethodMatchInfo -> mentions_missing(info.atype), matches.info.split)
+call_signature_mentions_missing(matches::CC.MethodMatches) = mentions_missing(matches.info.atype)
+call_signature_mentions_missing(matches::CC.UnionSplitMethodMatches) = any(info -> mentions_missing(info.atype), matches.info.split)
 
-# Whether `Missing` appears in `t`, including union components, type parameters and the
-# upper bounds of type variables, e.g. `AbstractVector{<:Union{Missing,Int}}`.
-function mentions_missing(@nospecialize(t), depth::Int = 0)
-    depth > 8 && return false # bound the recursion into deeply nested type parameters
-    t === Missing && return true
+# bound the traversal of types by its depth and by the number of visited types, which
+# would otherwise be exponential in the depth for repeated parameters, e.g. of
+# `Tuple{T,Nothing,T,Nothing}`
+const MAX_TYPE_PARAMETER_DEPTH = 8
+const MAX_VISITED_TYPES = 1024
+
+"""
+    mentions_missing(t) -> Bool
+
+Returns whether `Missing` appears in `t`, including union components, type parameters and
+the upper bounds of type variables, e.g. `AbstractVector{<:Union{Missing,Int}}`.
+Types beyond the bounds of the traversal are assumed not to involve `Missing`.
+"""
+mentions_missing(@nospecialize t) = first(_mentions_missing(t, 0, MAX_VISITED_TYPES))
+
+# Returns the result along with the remaining number of types to visit.
+function _mentions_missing(@nospecialize(t), depth::Int, budget::Int)
+    (depth > MAX_TYPE_PARAMETER_DEPTH || budget ≤ 0) && return false, budget
+    budget -= 1
+    t === Missing && return true, budget
     if t isa Union
-        return mentions_missing(t.a, depth) || mentions_missing(t.b, depth)
+        found, budget = _mentions_missing(t.a, depth, budget)
+        found && return true, budget
+        return _mentions_missing(t.b, depth, budget)
     elseif t isa UnionAll
-        return mentions_missing(Base.unwrap_unionall(t), depth)
+        return _mentions_missing(Base.unwrap_unionall(t), depth, budget)
     elseif t isa TypeVar
-        return mentions_missing(t.ub, depth)
+        return _mentions_missing(t.ub, depth, budget)
     elseif t isa Core.TypeofVararg
-        return isdefined(t, :T) && mentions_missing(t.T, depth + 1)
+        isdefined(t, :T) || return false, budget
+        return _mentions_missing(t.T, depth + 1, budget)
     elseif t isa DataType
-        for p in t.parameters
-            mentions_missing(p, depth + 1) && return true
+        params = t.parameters
+        for i = 1:length(params)
+            # skip repeated parameters, e.g. of `NTuple{128,T}`, without using up the budget
+            i > 1 && params[i] === params[i-1] && continue
+            found, budget = _mentions_missing(params[i], depth + 1, budget)
+            found && return true, budget
         end
+    elseif CC.isType(t)
+        return _mentions_missing(type_parameter(t), depth + 1, budget)
     end
-    return false
+    return false, budget
 end
 
-has_speculative_missing_match(matches::CC.MethodMatches) =
-    has_speculative_missing_match(matches.info)
-has_speculative_missing_match(matches::CC.UnionSplitMethodMatches) =
-    any(has_speculative_missing_match, matches.info.split)
-has_speculative_missing_match(info::CC.MethodMatchInfo) =
-    any(match::Core.MethodMatch -> is_speculative_missing_match(info.atype, match), info.results)
+has_speculative_missing_match(matches::CC.MethodMatches) = has_speculative_missing_match(matches.info)
+has_speculative_missing_match(matches::CC.UnionSplitMethodMatches) = any(has_speculative_missing_match, matches.info.split)
+has_speculative_missing_match(info::CC.MethodMatchInfo) = any(match -> is_speculative_missing_match(info.atype, match), info.results)
 
 """
     is_speculative_missing_match(atype, match::Core.MethodMatch) -> Bool
@@ -787,7 +890,32 @@ function has_missing_member(@nospecialize t)
     return t isa Union && any(@nospecialize(u)->u===Missing, Base.uniontypes(t))
 end
 
+has_base_method_match(matches::CC.MethodMatches) = has_base_method_match(matches.info)
+has_base_method_match(matches::CC.UnionSplitMethodMatches) = any(has_base_method_match, matches.info.split)
+has_base_method_match(info::CC.MethodMatchInfo) = any(match -> Base.moduleroot(match.method.module) === Base, info.results)
+
 # TODO Better to factor out and share it with `JET.JETAnalyzer`
+@static if isdefinedglobal(CC, :LeafAccess)
+function CC.abstract_eval_globalref(
+        analyzer::LSAnalyzer, g::GlobalRef, saw_latestworld::Bool, sv::CC.InferenceState;
+        allowed_offset::Int = 1
+    )
+    if !saw_latestworld
+        offset = report_offset(analyzer, sv)
+        if offset ≤ allowed_offset
+            # `binding_access_range` may return a partition from another world with the same
+            # access behavior, but binding states are tracked per partition of this world.
+            world = CC.get_inference_world(analyzer)
+            binding = convert(Core.Binding, g)
+            leaf = CC.walk_binding_partition(binding,
+                Base.lookup_binding_partition(world, binding), world, #=write=#false).second
+            report_undef_global_var!(analyzer, sv, leaf.binding, leaf.partition, offset)
+        end
+    end
+    return @invoke CC.abstract_eval_globalref(analyzer::ToplevelAbstractAnalyzer, g::GlobalRef,
+        saw_latestworld::Bool, sv::CC.InferenceState)
+end
+else
 function CC.abstract_eval_globalref(
         analyzer::LSAnalyzer, g::GlobalRef, saw_latestworld::Bool, sv::CC.InferenceState;
         allowed_offset::Int = 1
@@ -806,6 +934,7 @@ function CC.abstract_eval_globalref(
     end
     CC.update_valid_age!(sv, valid_worlds)
     return ret
+end
 end
 
 function CC.builtin_tfunction(analyzer::LSAnalyzer,
@@ -942,6 +1071,7 @@ Subtypes:
   * `TypeAssertErrorReport`: Statically failing type assertions
   * `NonBooleanCondErrorReport`: Non-boolean value in a boolean context
   * `KeywordTypeErrorReport`: Keyword argument value type mismatch
+  * `InvokeTypeErrorReport`: Invalid signature or argument types for `invoke`
 - `FailingTestReport`: Top-level `@test`s that always fail
 - `DeprecatedCallReport`: Calls to methods deprecated with `@deprecate`
 """
@@ -981,13 +1111,13 @@ function report_undef_global_var!(
     )
     gr = binding.globalref
     # Read constants from `partition` itself: JET defines constants in a world newer than
-    # `sv.world`, and `getglobal` warns about such backdated constants.
+    # the inference world, and `getglobal` warns about such backdated constants.
     if CC.is_defined_const_binding(CC.binding_kind(partition))
         # HACK/FIXME Concretize `AbstractBindingState`
         x = CC.partition_restriction(partition)
         x isa JET.AbstractBindingState || return false
         binding_state = x
-    elseif Base.invoke_in_world(sv.world.this, isdefinedglobal, gr.mod, gr.name)
+    elseif Base.invoke_in_world(CC.get_inference_world(analyzer), isdefinedglobal, gr.mod, gr.name)
         return false
     else
         binding_states = JET.get_binding_states(analyzer)
@@ -1052,16 +1182,13 @@ scope_offset_impl(r::TypeAssertErrorReport) = r.vst_offset
 function JETInterface.print_report_message(io::IO, r::TypeAssertErrorReport)
     (; expected, actual) = r
     print(io, "TypeError: in `typeassert`, expected `", expected, "`, got ")
-    if CC.isType(actual)
-        print(io, actual)
-    else
-        print(io, "a value of type `", actual, '`')
-    end
+    print_type_error_got(io, actual)
 end
 
 function print_type_error_got(io::IO, @nospecialize(actual))
     if CC.isType(actual)
-        print(io, actual)
+        # show `Core.TypeEgal{T}` of Julia 1.14 and later as `Type{T}`
+        print(io, Type{type_parameter(actual)})
     else
         print(io, "a value of type `", actual, '`')
     end
@@ -1131,9 +1258,10 @@ function report_fieldaccess!(
     if CC.isType(s)
         if f === fieldtype
             # XXX this is a hack to share more code between `getfield`/`setfield!`/`fieldtype`
-            s = s.parameters[1]
+            s = type_parameter(s)
         elseif CC.isconstType(s)
-            s = (s00::DataType).parameters[1]
+            # `getfield`/`setfield!` on a type object access the fields of its kind, e.g. `DataType`
+            s = typeof(type_parameter(s))
         else
             return false
         end
@@ -1284,12 +1412,9 @@ function print_no_method_hint_impl(
     Base.isvarargtype(params[1]) && return
     ftype = Base.rewrap_unionall(params[1], t)
     f = CC.singleton_type(ftype)
-    if f === nothing
-        ftype′ = Base.unwrap_unionall(ftype)
-        if ftype′ isa DataType && CC.isType(ftype)
-            typ = ftype′.parameters[1]
-            typ isa Type && (f = typ)
-        end
+    if f === nothing && CC.isType(ftype)
+        typ = type_parameter(ftype)
+        typ isa Type && (f = typ)
     end
     argparams = params[2:end]
     # `Base.show_method_candidates` and `method_candidate_score` cannot handle `Vararg`
@@ -1527,8 +1652,10 @@ function report_method_error!(
         kwarg_reported::Bool, max_methods::Int
     )
     info = call.info
-    if isa(info, CC.ConstCallInfo)
-        info = info.call
+    @static if isdefinedglobal(CC, :ConstCallInfo)
+        if isa(info, CC.ConstCallInfo)
+            info = info.call
+        end
     end
     if isa(info, CC.MethodMatchInfo)
         report_method_error!(analyzer, sv, info, kwarg_reported)
@@ -1629,14 +1756,21 @@ function find_ambiguous_methods(
 end
 
 # `abstract_invoke` gives up without any call info when no method is found for the
-# signature requested by `invoke`, so look up the method again here to report it
+# signature requested by `invoke`, so look up the method again here to report it.
+# Returns the signature if reported.
 function report_invoke_method_error!(
         analyzer::LSAnalyzer, sv::CC.InferenceState, call::CC.CallMeta, arginfo::CC.ArgInfo
     )
-    call.info isa CC.NoCallInfo || return false
-    sig = @something invoke_signature(arginfo.argtypes) return false
+    call.info isa CC.NoCallInfo || return nothing
+    sig = @something invoke_signature(arginfo.argtypes) return nothing
     mt = CC.method_table(analyzer)
-    first(CC.findsup(sig, mt)) === nothing || return false
+    match, valid_worlds = CC.findsup(sig, mt)
+    match === nothing || return nothing
+    @static if hasmethod(CC.update_valid_age!, Tuple{CC.AbsIntState,Any,CC.WorldRange})
+        CC.update_valid_age!(sv, CC.get_inference_world(analyzer), valid_worlds)
+    else
+        CC.update_valid_age!(sv, valid_worlds)
+    end
     methods = find_ambiguous_methods(sig, mt)
     if methods !== nothing
         report = AmbiguousMethodReport(sv, sig, 0, methods)
@@ -1644,14 +1778,24 @@ function report_invoke_method_error!(
         report = NoMethodMatchReport(sv, sig, 0, CC.get_inference_world(analyzer))
     end
     add_new_report!(analyzer, sv.result, report)
-    return true
+    return sig
 end
+
+# Replaces the call info of an `invoke` call reported by `report_invoke_method_error!`.
+# The failed lookup leaves no edge, so this adds a method table backedge for the signature
+# to invalidate the cached report once a method is defined for it.
+struct InvokeMethodErrorInfo <: CC.CallInfo
+    sig::Type
+    InvokeMethodErrorInfo(@nospecialize sig::Type) = new(sig)
+end
+CC.add_edges_impl(edges::Vector{Any}, info::InvokeMethodErrorInfo) =
+    push!(edges, info.sig, Core.methodtable)
 
 # Returns `nothing` unless the signature is known statically and `invoke` gets to look it
 # up, i.e. it does not throw a `TypeError` for the arguments first
 function invoke_signature(argtypes::Vector{Any})
     ft = CC.widenconst(CC.argtype_by_index(argtypes, 2))
-    ft isa DataType && CC.isdispatchelem(ft) || return nothing
+    (ft isa DataType || CC.isType(ft)) && CC.isdispatchelem(ft) || return nothing
     types, isexact, _, _ = CC.instanceof_tfunc(CC.argtype_by_index(argtypes, 3), false)
     isexact || return nothing
     unwrapped = Base.unwrap_unionall(types)
@@ -1912,6 +2056,49 @@ function report_keyword_typeerror!(
     return true
 end
 
+# InvokeTypeErrorReport
+# ---------------------
+
+@jetreport struct InvokeTypeErrorReport <: TypeErrorReport
+    @nospecialize expected
+    @nospecialize got
+    argument_mismatch::Bool
+end
+function JETInterface.print_report_message(io::IO, r::InvokeTypeErrorReport)
+    print(io, "TypeError: in `invoke`")
+    r.argument_mismatch && print(io, ": argument type error")
+    print(io, ", expected `", r.expected, "`, got ")
+    print_type_error_got(io, r.got)
+end
+inference_error_report_stack_impl(r::InvokeTypeErrorReport) = length(r.vst):-1:1
+inference_error_report_severity_impl(::InvokeTypeErrorReport) = DiagnosticSeverity.Warning
+
+# `abstract_invoke` gives up without any call info when `invoke` throws a `TypeError` before
+# looking up the method, so check the signature and the arguments again here to report it
+function report_invoke_type_error!(
+        analyzer::LSAnalyzer, sv::CC.InferenceState, call::CC.CallMeta, arginfo::CC.ArgInfo
+    )
+    call.rt === Union{} && call.info isa CC.NoCallInfo || return false
+    argtypes = arginfo.argtypes
+    length(argtypes) ≥ 3 && !CC.isvarargtype(argtypes[3]) || return false
+    sigtype = argtypes[3]
+    got = CC.widenconst(sigtype)
+    # `invoke` also accepts a `Method` or a `CodeInstance` in place of the signature
+    CC.hasintersect(got, Union{Method,Core.CodeInstance}) && return false
+    types, isexact, _, _ = CC.instanceof_tfunc(sigtype, false)
+    isexact || return false
+    unwrapped = Base.unwrap_unionall(types)
+    if !(unwrapped isa DataType && unwrapped.name === Tuple.name)
+        report = InvokeTypeErrorReport(sv, Type{T} where T<:Tuple, got, false)
+    else
+        argtype = CC.argtypes_to_type(CC.argtype_tail(argtypes, 4))
+        CC.hasintersect(types, argtype) && return false
+        report = InvokeTypeErrorReport(sv, types, argtype, true)
+    end
+    add_new_report!(analyzer, sv.result, report)
+    return true
+end
+
 # NonBooleanCondErrorReport
 # -------------------------
 
@@ -2050,8 +2237,10 @@ function report_deprecated_call!(
         arginfo::CC.ArgInfo
     )
     info = call.info
-    if isa(info, CC.ConstCallInfo)
-        info = info.call
+    @static if isdefinedglobal(CC, :ConstCallInfo)
+        if isa(info, CC.ConstCallInfo)
+            info = info.call
+        end
     end
     world = CC.get_inference_world(analyzer)
     messages = String[]

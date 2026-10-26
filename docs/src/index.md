@@ -47,12 +47,13 @@ The [`jetls` executable app](@ref cli) is the main entry point for running JETLS
 
 ### [Prerequisites](@id index/server-installation/prerequisites)
 
-JETLS supports [Julia](https://julialang.org/downloads) v1.12.2 through 1.13.x.
-It does not support Julia 1.12.1 or earlier, nor 1.14+/nightly.
+JETLS supports [Julia](https://julialang.org/downloads) v1.12.2 through 1.14.x.
+It also runs on Julia 1.15 nightly builds, but may break at any time as Julia
+changes. It does not support Julia 1.12.1 or earlier.
 
 ### [Installing the `jetls` executable](@id index/server-installation/install)
 
-Install it with (make sure your `julia` command runs v1.12.2 through v1.13.x):
+Install it with (make sure your `julia` command runs v1.12.2 through v1.14.x):
 ```bash
 julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="release")'
 ```
@@ -60,13 +61,10 @@ julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", 
 This will install the `jetls` executable to `~/.julia/bin/`.
 Make sure `~/.julia/bin` is available on the `PATH` environment so the executable is accessible.
 
-!!! note
+!!! note "Installation time"
     `Pkg.Apps.add` precompiles JETLS and its dependencies during installation,
     which can take several minutes even on reasonably capable machines. This is
-    a one-time cost per installation; subsequent server startups are fast. Doing
-    it now also avoids precompilation being triggered on the first editor launch,
-    which could otherwise stall the server long enough to trip client
-    `initialize` timeouts.
+    a one-time cost per installation; subsequent server startups are fast.
 
 You can verify the installation by running:
 ```bash
@@ -90,6 +88,16 @@ is properly added to your `PATH`.
     The `jetls` app is pinned to the Julia version used to install it, so after
     upgrading Julia you must re-run the installation command above to make
     `jetls` available again (this re-runs precompilation for the new Julia).
+
+!!! tip "Optimized Julia builds"
+    For Julia 1.14 and later, juliaup provides optimized builds of Julia as
+    the experimental [`+opt` channels](https://github.com/JuliaLang/juliaup#using-juliaup),
+    e.g. `1.14+opt`, on which JETLS runs faster. Since the `jetls`
+    executable is pinned to the Julia used to install it, install it with
+    such a channel to run it on an optimized build:
+    ```bash
+    julia +1.14+opt -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="release")'
+    ```
 
 ## [Editor setup](@id index/editor-setup)
 

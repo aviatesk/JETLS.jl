@@ -6388,6 +6388,13 @@ let
     @test f(1, 2, 3) == (0, (0, (0, 1)))
 end
 
+# JuliaLang/julia#63351: merging vararg-tuple `PartialStruct`s must keep the trailing `Vararg`
+issue63351(c, xs) = c ? (1, :a, xs...) : (2, :a, xs...)
+@testset "tmerge of vararg-tuple `PartialStruct`s" begin
+    @test Base.infer_return_type(issue63351, (Bool, Vector{Any})) == Tuple{Int, Symbol, Vararg{Any}}
+    @test issue63351(true, Any[3]) === (1, :a, 3)
+end
+
 # `return_type_tfunc` must not fold a provisional `Bottom` bestguess from a frame in
 # the currently-active cycle into `Const(Union{})`: the reified bottom cannot be
 # retracted by the join-based fixed-point state once the callee converges to a

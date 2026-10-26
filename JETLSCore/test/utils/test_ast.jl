@@ -2,7 +2,7 @@ module test_ast
 
 using Test
 using JETLSCore
-using JETLSCore: JL, JS
+using JETLSCore: JL, JS, SyntaxTree
 
 include("../jsjl-utils.jl")
 
@@ -498,7 +498,7 @@ end
     end
     @testset "copied EST" begin
         # `mktree` adds a provenance layer, so flags must come from the end of the chain.
-        let st = JS.mktree(jlparse("a + b"; rule=:statement))
+        let st = JL.mktree(jlparse("a + b"; rule=:statement))
             @test JETLSCore.is_source_infix_op_call(st)
         end
     end
@@ -538,7 +538,7 @@ end
             """; rule=:statement)
         transformed = JETLSCore.remove_macrocalls(new_style_macro_context, world, st0; strip_static=true)
         macrocalls = String[]
-        JETLSCore.traverse(transformed) do node::JS.SyntaxTree
+        JETLSCore.traverse(transformed) do node::SyntaxTree
             JS.head(node) === :macrocall || return nothing
             push!(macrocalls, JS.sourcetext(node[1]))
             return nothing
@@ -558,7 +558,7 @@ end
             """; rule=:statement)
         transformed = JETLSCore.remove_macrocalls(context_module, world, st0)
         macrocalls = String[]
-        JETLSCore.traverse(transformed) do node::JS.SyntaxTree
+        JETLSCore.traverse(transformed) do node::SyntaxTree
             JS.head(node) === :macrocall || return nothing
             push!(macrocalls, JS.sourcetext(node[1]))
             return nothing
@@ -993,8 +993,8 @@ end
     # as separate lowerable trees, with interpolated identifiers inside the
     # docstring reachable for downstream analyses (e.g. `analyze_unused_imports!`).
     let cnt = Ref(0), func1 = Ref(false), struct1 = Ref(false),
-        outer_doc = Ref{Union{Nothing,JS.SyntaxTree}}(nothing),
-        inner_doc = Ref{Union{Nothing,JS.SyntaxTree}}(nothing)
+        outer_doc = Ref{Union{Nothing,SyntaxTree}}(nothing),
+        inner_doc = Ref{Union{Nothing,SyntaxTree}}(nothing)
         JETLSCore.iterate_toplevel_tree(jlparse("""
             \"\"\"
             Docstring for `module Module1`
@@ -1033,7 +1033,7 @@ end
 
     # A documented signature can't be lowered standalone, so the whole doc-wrapped form is
     # yielded for the `@doc` stub to handle.
-    let sts = JS.SyntaxTree[]
+    let sts = SyntaxTree[]
         JETLSCore.iterate_toplevel_tree(jlparse("""
             \"\"\"
             Docstring for `func1(::Int)`
@@ -1048,7 +1048,7 @@ end
 end
 
 # Find the first descendant (or `st` itself) whose head matches `h`.
-function find_first_head(st::JS.SyntaxTree, h::Symbol)
+function find_first_head(st::SyntaxTree, h::Symbol)
     JS.head(st) === h && return st
     JS.is_leaf(st) && return nothing
     for c in JS.children(st)
@@ -1132,13 +1132,12 @@ end
 
 @testset "check_syntax_tree0 detects mutation" begin
     for mutate! in (
-            st::JS.SyntaxTree -> JS.setmeta!(st[1], :mutated, true),
-            st::JS.SyntaxTree -> push!(JS.children(st[1]), st[1][1]),
-            st::JS.SyntaxTree -> setfield!(st[1][1], :value, :mutated))
+            st::SyntaxTree -> JL.setmeta!(st[1], :mutated, true),
+            st::SyntaxTree -> push!(JS.children(st[1]), st[1][1]))
         fi = JETLSCore.FileInfo(#=version=#1, "f(x) = x + 1", "test.jl"; cache_tree0=true)
         @test JETLSCore.build_syntax_tree(fi) === fi.syntax_tree0
         @test JETLSCore.check_syntax_tree0(fi) === nothing
-        mutate!(fi.syntax_tree0::JS.SyntaxTree)
+        mutate!(fi.syntax_tree0::SyntaxTree)
         @test_throws ErrorException JETLSCore.check_syntax_tree0(fi)
         @test_throws ErrorException JETLSCore.build_syntax_tree(fi)
     end

@@ -4,6 +4,14 @@ authors = ["Shuhei Kadowaki <aviatesk@gmail.com>"]
 uuid = "4efbe77e-ddf3-4ce7-be91-16409ca9e85f"
 
 [deps]
+BaseSyntax = "a901ca6a-331f-4dff-b5f6-9ec4ddfd738c"
+Compiler = "807dbc54-b67e-4c79-8afb-eafe4df6f2e1"
+JSON3 = "0f8b85d8-7281-11e9-16c2-39a750bddbf1"
+JuliaInterpreter = "aa1ae85d-cabe-5617-a682-6adf51b2e16a"
+JuliaSyntax = "70703baa-626e-46a2-a12c-08ffd08c73b4"
+LoweredCodeUtils = "6f1432cf-f94c-5a45-995e-cdbf5db27b0b"
+MacroTools = "1914dd2f-81c6-5fcd-8719-6d5c9610ff09"
+PrecompileTools = "aea7be01-6a6a-4083-8856-8a6e6704d82a"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 JuliaSyntax = "02a177f8-2b16-5240-a0b4-02ed40703cda"
 Compiler = "8499cccf-07fb-5365-ac3a-39ae87615c05"
@@ -17,62 +25,12 @@ StructTypes = "66bcceda-d870-5865-93dd-65803322e79e"
 Parsers = "2bf889ff-109e-5fa9-9ba3-339ee07cbe67"
 JSON3 = "00ac8d46-747e-5902-8e12-fdfc767369c7"
 
-[sources.JuliaSyntax]
-subdir = "vendor/JuliaSyntax"
-rev = "b4c857b5e537f784b0900398297668e9a93ca90d"
-url = "https://github.com/aviatesk/JETLS.jl"
-
-[sources.Compiler]
-subdir = "vendor/Compiler"
-rev = "b4c857b5e537f784b0900398297668e9a93ca90d"
-url = "https://github.com/aviatesk/JETLS.jl"
-
-[sources.CodeTracking]
-subdir = "vendor/CodeTracking"
-rev = "b4c857b5e537f784b0900398297668e9a93ca90d"
-url = "https://github.com/aviatesk/JETLS.jl"
-
-[sources.MacroTools]
-subdir = "vendor/MacroTools"
-rev = "b4c857b5e537f784b0900398297668e9a93ca90d"
-url = "https://github.com/aviatesk/JETLS.jl"
-
-[sources.LoweredCodeUtils]
-subdir = "vendor/LoweredCodeUtils"
-rev = "b4c857b5e537f784b0900398297668e9a93ca90d"
-url = "https://github.com/aviatesk/JETLS.jl"
-
-[sources.PrecompileTools]
-subdir = "vendor/PrecompileTools"
-rev = "b4c857b5e537f784b0900398297668e9a93ca90d"
-url = "https://github.com/aviatesk/JETLS.jl"
-
-[sources.Preferences]
-subdir = "vendor/Preferences"
-rev = "b4c857b5e537f784b0900398297668e9a93ca90d"
-url = "https://github.com/aviatesk/JETLS.jl"
-
-[sources.JuliaInterpreter]
-subdir = "vendor/JuliaInterpreter"
-rev = "b4c857b5e537f784b0900398297668e9a93ca90d"
-url = "https://github.com/aviatesk/JETLS.jl"
-
-[sources.StructTypes]
-subdir = "vendor/StructTypes"
-rev = "b4c857b5e537f784b0900398297668e9a93ca90d"
-url = "https://github.com/aviatesk/JETLS.jl"
-
-[sources.Parsers]
-subdir = "vendor/Parsers"
-rev = "b4c857b5e537f784b0900398297668e9a93ca90d"
-url = "https://github.com/aviatesk/JETLS.jl"
-
-[sources.JSON3]
-subdir = "vendor/JSON3"
-rev = "b4c857b5e537f784b0900398297668e9a93ca90d"
-url = "https://github.com/aviatesk/JETLS.jl"
+[sources]
+BaseSyntax = {rev = "359d36a220", subdir = "BaseSyntax", url = "https://github.com/JuliaLang/julia"}
+JuliaSyntax = {rev = "359d36a220", subdir = "JuliaSyntax", url = "https://github.com/JuliaLang/julia"}
 
 [compat]
+BaseSyntax = "0.1"
 Compiler = "0.1"
 JSON3 = "1.14.3"
 julia = "1.12"

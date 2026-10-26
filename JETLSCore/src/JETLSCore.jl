@@ -82,6 +82,7 @@ const MessageId = Union{String, Int}
 using Pkg
 using Compiler: Compiler as CC
 using JET: JET
+using BaseSyntax: BaseSyntax as BS
 using JuliaSyntax: JuliaSyntax as JS
 using JuliaLowering: JuliaLowering as JL
 using REPL: REPL # loading REPL is necessary to make `Base.Docs.doc(::Base.Docs.Binding)` work
@@ -105,8 +106,8 @@ const SWStats  = Nothing
 const LWStats  = Nothing
 const CASStats = Nothing
 
-const SyntaxTree = JS.SyntaxTree
-const SyntaxList = JS.SyntaxList
+const SyntaxTree = BS.Syntax
+const SyntaxList = Vector{SyntaxTree}
 
 include("utils/rendering.jl")
 include("utils/deprecation.jl")

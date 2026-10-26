@@ -413,7 +413,7 @@ function get_lazy_type_inlay_hints(code::AbstractString, mod::Module=Main)
     range = Range(;
         start = Position(; line=0, character=0),
         var"end" = Position(; line=10000, character=0))
-    JETLSCore.iterate_toplevel_tree(st0_top) do st0::JS.SyntaxTree
+    JETLSCore.iterate_toplevel_tree(st0_top) do st0::SyntaxTree
         ctx = @something JETLSCore.build_inferred_context_for_range(
             st0_top, mod, JS.byte_range(st0);
             cache=inferred_context_cache) return nothing
@@ -439,7 +439,7 @@ function get_type_inlay_hints(
         Range(;
             start = Position(; line=0, character=0),
             var"end" = Position(; line=10000, character=0))
-    JETLSCore.iterate_toplevel_tree(st0_top) do st0::JS.SyntaxTree
+    JETLSCore.iterate_toplevel_tree(st0_top) do st0::SyntaxTree
         ctx = @something JETLSCore.build_inferred_context_for_range(
             st0_top, mod, JS.byte_range(st0)) return nothing
         # Disable production truncation here — these tests exercise the full
