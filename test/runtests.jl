@@ -1,7 +1,7 @@
 using Test
 using HierarchicalTestSets
 
-@testset HierarchicalTestSet "jetls app" verbose=true begin
+@testset HierarchicalTestSet "jetls app" verbose=true progress=true begin
     @testset "check" include("test_jetls_check.jl")
     @testset "schema" include("test_jetls_schema.jl")
     @testset "serve" include("test_jetls_serve.jl")

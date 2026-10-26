@@ -21,6 +21,13 @@ match_by = "code"
 match_type = "literal" # Outrank code-regex catch-all diagnostic rules
 severity = "hint"
 
+[[diagnostic.patterns]]
+pattern = "toplevel/analysis-skipped"
+match_by = "code"
+match_type = "literal" # Outrank code-regex catch-all diagnostic rules
+severity = "info"
+path = "Compiler/src/**/*.jl"
+
 # TODO [JETLS]
 # `JETLSTestModule` is a pseudo lowering context only used as `analysis_overrides.module_name` for our test files; it is never reachable from JETLS itself, so diagnositcs against it are noise.
 [[diagnostic.patterns]]
@@ -118,6 +125,7 @@ full_analysis = false
 [[initialization_options.analysis_overrides]]
 path = "MarkdownSource/test/test_upstream.jl"
 on_include = "skip"
+full_analysis = false
 [[initialization_options.analysis_overrides]]
 path = "MarkdownSource/upstream/**/*.jl"
 full_analysis = false
@@ -125,6 +133,7 @@ full_analysis = false
 [[initialization_options.analysis_overrides]]
 path = "TOMLSource/test/test_upstream.jl"
 on_include = "skip"
+full_analysis = false
 [[initialization_options.analysis_overrides]]
 path = "TOMLSource/upstream/**/*.jl"
 full_analysis = false

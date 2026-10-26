@@ -1,7 +1,7 @@
 using Test
 using HierarchicalTestSets
 
-@testset HierarchicalTestSet "TestRunner.jl" begin
+@testset HierarchicalTestSet "TestRunner.jl" verbose=true progress=true begin
     @testset "pattern matching" include("test_pattern_matching.jl")
     @testset "runtest" include("test_runtest.jl")
     # disable test failure printing from `TestRunnerTestSet`. On Julia 1.14+

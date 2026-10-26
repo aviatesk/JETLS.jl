@@ -1557,6 +1557,13 @@ end
         end
     """; context_module=@__MODULE__))
 
+    # Macro definitions have the implicit `__source__` and `__module__` arguments.
+    @test isempty(get_lowering_diagnostics("""
+        macro implicit_macro_args(ex)
+            return Expr(:block, __source__, __module__, esc(ex))
+        end
+        """; context_module=@__MODULE__, code=JETLSCore.LOWERING_UNDEF_GLOBAL_VAR_CODE))
+
     # Globals defined by another top-level statement count as defined.
     @test isempty(get_lowering_diagnostics("""
         defined_in_other_statement() = "Hello, world"
@@ -1852,7 +1859,8 @@ get_deprecated_binding_diagnostics(text::AbstractString, context_module::Module)
     get_lowering_diagnostics(text;
         code = JETLSCore.LOWERING_DEPRECATED_BINDING_CODE, context_module)
 
-# Expanding a macro through a deprecated binding warns with `--depwarn=yes`
+# Resolving a deprecated macro binding warns with `--depwarn=yes`, both when the macro is
+# expanded and when JETLS looks up the macro object, which it does in quoted code as well
 get_deprecated_macro_diagnostics(text::AbstractString, context_module::Module) =
     redirect_stderr(devnull) do
         get_deprecated_binding_diagnostics(text, context_module)
@@ -1989,7 +1997,7 @@ get_deprecated_macro_diagnostics(text::AbstractString, context_module::Module) =
             @test length(diagnostics) == 1
             @test only(diagnostics).message == "`$(TestDeprecatedBindingOwner).OldSub` is deprecated, use NewSub instead."
         end
-        @test isempty(get_deprecated_binding_diagnostics("ex = :(@oldmacro 1)", TestDeprecatedBindingUser))
+        @test isempty(get_deprecated_macro_diagnostics("ex = :(@oldmacro 1)", TestDeprecatedBindingUser))
         @test isempty(get_deprecated_binding_diagnostics("f() = TestDeprecatedBindingOwner.@newmacro 1", TestDeprecatedBindingUser))
     end
 
@@ -3962,6 +3970,21 @@ end
         @test isempty(ds)
     end
 
+    # JuliaLowering matches gotos and labels by name and hygiene layer when a
+    # `try` has `finally`; a jump within the block must be accepted.
+    let diagnostics = get_lowering_diagnostics("""
+        function f(c)
+            try
+                c && @goto done
+                @label done
+            finally
+            end
+        end
+        """)
+        ds = filter(d -> d.code == JETLSCore.LOWERING_ERROR_CODE, diagnostics)
+        @test isempty(ds)
+    end
+
     let diagnostics = get_lowering_diagnostics("""
         begin
             @goto nonexist
@@ -4350,6 +4373,16 @@ orphaned_docstring_message(reason::AbstractString) =
                 """)
             @test length(diagnostics) == 2
             @test all(d -> startswith(d.message, "Field docstrings of "), diagnostics)
+        end
+
+        let diagnostics = get_orphaned_docstring_diagnostics("""
+                @Base.kwdef struct Foo
+                    "doc"
+                    x::Int = 1
+                end
+                """)
+            @test length(diagnostics) == 1
+            @test startswith(only(diagnostics).message, "Field docstrings of ")
         end
 
         let diagnostics = get_orphaned_docstring_diagnostics("""

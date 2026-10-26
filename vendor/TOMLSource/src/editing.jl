@@ -87,9 +87,9 @@ Format `value` as a single-line TOML value, writing tables inline.
 function format_value(@nospecialize(value))
     if value isa AbstractDict
         entries = (format_key(key) * " = " * format_value(val) for (key, val) in value)
-        return "{" * join(entries, ", ")::String * "}"
+        return "{" * sprint(join, entries, ", ") * "}"
     elseif value isa AbstractVector
-        return "[" * join((format_value(val) for val in value), ", ")::String * "]"
+        return "[" * sprint(join, (format_value(val) for val in value), ", ") * "]"
     end
     return String(chop(sprint(TOML.print, Dict("value" => value)); head=8, tail=1))
 end
@@ -100,7 +100,7 @@ function format_key(@nospecialize(key))
 end
 
 format_dotted_key(keys::AbstractVector) =
-    join((format_key(key) for key in keys), ".")::String
+    sprint(join, (format_key(key) for key in keys), ".")
 
 function lookup(data::Dict{String,Any}, path::AbstractVector)
     value = data

@@ -21,6 +21,14 @@ jobs:
       coverage: false # coverage tracking is a master CI concern
       include-nightly: false # an unreleased Julia must not block a release
 
+  # Not required: shows how the release tree fares on unreleased Julia without blocking it.
+  test_nightly:
+    if: github.event_name == 'pull_request' && github.event.action != 'closed'
+    uses: ./.github/workflows/test-matrix.yml
+    with:
+      coverage: false
+      include-stable: false
+
   test_app:
     if: github.event_name == 'pull_request' && github.event.action != 'closed'
     uses: ./.github/workflows/test-app.yml

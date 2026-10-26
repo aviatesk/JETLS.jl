@@ -2104,8 +2104,7 @@ function select_direct_requirement!(
 
         if (LoweredCodeUtils.ismethod(stmt) ||    # don't abstract away method definitions
             LoweredCodeUtils.istypedef(stmt) ||   # don't abstract away type definitions
-            (isexpr(stmt, :call) && length(stmt.args) ≥ 1 &&
-             stmt.args[1] == GlobalRef(Core, :_defaultctors)) ||
+            LoweredCodeUtils.is_defaultctors_call(stmt) ||
             (ismoduleusage(stmt) || is_lowered_module_usage(stmt)))
             selected[idx] = true
             continue
@@ -2554,11 +2553,16 @@ function JuliaInterpreter.evaluate_methoddef(interp::ConcreteInterpreter, frame:
 end
 
 function collect_toplevel_signature!(interp::ConcreteInterpreter, frame::Frame, @nospecialize(node))
-    isexpr(node, :method, 3) || return nothing
+    LoweredCodeUtils.ismethod3(node) || return nothing
+    node = node::Expr
+    if isexpr(node, :method)
+        methname, sig, body = node.args
+    else # `Core.define_method(mod, name, sig, body)` on Julia 1.14 and later
+        _, _, methname, sig, body = node.args
+    end
     state = InterpretationState(interp)
     entrypoint = state.config.analyze_from_definitions
     if entrypoint isa Symbol
-        methname = node.args[1]
         if methname isa GlobalRef
             methname = methname.name
         end
@@ -2567,13 +2571,13 @@ function collect_toplevel_signature!(interp::ConcreteInterpreter, frame::Frame, 
         end
     end
     atype_params, sparams, linenode =
-        JuliaInterpreter.lookup(frame, node.args[2])::SimpleVector
+        JuliaInterpreter.lookup(frame, sig)::SimpleVector
     tt = form_method_signature(atype_params::SimpleVector, sparams::SimpleVector)
     tt isa Type || throw(ToplevelInternalError("Expected a method signature type, got $(typeof(tt))"))
     CC.has_free_typevars(tt) &&
         throw(ToplevelInternalError("Free type variable left in signature_infos"))
     mod = JuliaInterpreter.moduleof(frame)
-    src = JuliaInterpreter.lookup(frame, node.args[3])
+    src = JuliaInterpreter.lookup(frame, body)
     push!(state.res.signature_infos,
         SignatureInfo(state.filename, mod, tt, src, linenode::LineNumberNode))
 end
@@ -2663,6 +2667,11 @@ end
 # - Ignore C-side function definitions created via `Base._ccallable`. These definitions
 #   are not namespaced in the module and can cause false-positive name conflict errors
 #   when running analysis multiple times (see aviatesk/JET.jl#597).
+# - Skip the native compilation requested by `precompile` calls, which packages often
+#   make at top level. It doesn't contribute to the analysis but can take long.
+# - Run the functions that type definitions are lowered to call on Julia 1.14 and later
+#   natively. Interpreting them fails during precompilation, since their `ccall`s are then
+#   evaluated in the closed `Core` and `Base` modules.
 function JuliaInterpreter.evaluate_call!(
         interp::ConcreteInterpreter, frame::Frame, fargs::Vector{Any}, enter_generated::Bool
     )
@@ -2685,11 +2694,14 @@ function JuliaInterpreter.evaluate_call!(
         if length(fargs) == 3 && fargs[2] isa Type && fargs[3] isa Type
             return nothing
         end
+    elseif f === Base.precompile
+        ret = precompile_without_compiling(fargs[2:end]...)
+        ret === nothing || return ret
     end
     if f === Base.rethrow
         # Even native calls must rethrow the interpreted frame's active exception.
         restore_callee_error!(state, frame, fargs)
-    elseif state.native_calls
+    elseif state.native_calls || is_typedef_function(f)
         popfirst!(fargs)
         return Base.invoke_in_world(frame.world, f, fargs...)
     end
@@ -2698,6 +2710,33 @@ function JuliaInterpreter.evaluate_call!(
 end
 
 isinclude(@nospecialize f) = f isa Base.IncludeInto || f === Base.include || f === Core.include
+
+@static if isdefinedglobal(Core, :resolve_typegroup)
+is_typedef_function(@nospecialize f) = f === Core.resolve_typegroup || f === Base._defaultctors
+else
+is_typedef_function(@nospecialize f) = false
+end
+
+# the return value of `precompile(args...)`, or `nothing` when no `Base.precompile` method
+# accepts `args`, so that the call goes through and raises the `MethodError`
+precompile_without_compiling(@nospecialize(f), @nospecialize(argtypes::Tuple)) =
+    precompile_without_compiling(Tuple{Core.Typeof(f), argtypes...})
+@static if isdefinedglobal(Base, :isprecompilable)
+precompile_without_compiling(@nospecialize(argt::Type)) = Base.isprecompilable(argt)
+else
+precompile_without_compiling(@nospecialize(argt::Type)) = true
+end
+precompile_without_compiling(::MethodInstance) = true
+precompile_without_compiling(::MethodInstance, ::UInt) = true
+precompile_without_compiling(@nospecialize(f), @nospecialize(argtypes::Tuple), m::Method) =
+    precompile_without_compiling(Tuple{Core.Typeof(f), argtypes...}, m)
+function precompile_without_compiling(@nospecialize(argt::Type), m::Method)
+    atype, sparams = (@ccall jl_type_intersection_with_env(argt::Any, m.sig::Any)::Any)::SimpleVector
+    # Keep Base's specialization checks, but do not compile the MethodInstance.
+    specialize_method(m, atype, sparams)
+    return true
+end
+precompile_without_compiling(@nospecialize _args...) = nothing
 
 # the line of the innermost frame in `filename`, i.e. where the current call is written in
 # the file being analyzed when it happens in a callee defined elsewhere
@@ -2994,7 +3033,9 @@ function analyze_toplevel!(analyzer::ToplevelAbstractAnalyzer, src::CodeInfo, co
 end
 
 function construct_toplevel_mi(src::Core.CodeInfo, context_module::Module)
-    resolve_toplevel_symbols!(src, context_module)
+    # Resolution evaluates e.g. `ccall` types, which must see the bindings of the latest
+    # world where top-level code runs.
+    @invokelatest resolve_toplevel_symbols!(src, context_module)
     return @ccall jl_method_instance_for_thunk(src::Any, context_module::Any)::Ref{Core.MethodInstance}
 end
 

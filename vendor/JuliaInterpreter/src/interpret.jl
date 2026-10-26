@@ -406,7 +406,7 @@ function evaluate_call!(interp::Interpreter, frame::Frame, fargs::Vector{Any}, e
     if fargs[1] === Core.invoke # invoke needs special handling
         argtypes = fargs[3]
         fargs_pruned = [fargs[2]; fargs[4:end]]
-        sig = Tuple{mapany(_Typeof, fargs_pruned)...}
+        sig = Tuple{mapany(Core.Typeof, fargs_pruned)...}
         if isa(argtypes, Method)
             # `invoke(f, method::Method, args...)` (Julia 1.12+)
             f_invoked = argtypes
@@ -444,7 +444,7 @@ function evaluate_call!(interp::Interpreter, frame::Frame, fargs::Vector{Any}, e
         # The generator runs on argument *types*. `prepare_call` performs this conversion
         # but `get_call_frameinstance` discards the converted arguments, so redo it here
         # (issue #161).
-        fargs = Any[_Typeof(a) for a in fargs]
+        fargs = Any[Core.Typeof(a) for a in fargs]
     end
     newframe = prepare_frame_caller(frame, framecode, fargs, lenv)
     npc = newframe.pc

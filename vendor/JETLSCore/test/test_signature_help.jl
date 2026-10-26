@@ -333,6 +333,8 @@ end
     @test 0 == n_si(M_invalid, "@m \n │")
     # no-paren macro signature support should not be triggered after closed string macrocall
     @test 0 == n_si(M_invalid, "r\"xxx\"│")
+    @test 0 == n_si(M_invalid, "Base.r\"xxx\"│")
+    @test 0 == n_si(M_invalid, "`xxx`│")
     # no-paren macro signature support should not be triggered when the scope surrounding the cursor is a block
     @test 0 == n_si(M_invalid, """@m begin
         │

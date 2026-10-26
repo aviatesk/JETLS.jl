@@ -480,7 +480,9 @@ struct ParametricConstructor{T}
 end
 
 @testset "constructors" begin
-    breakpoint(Constructor, Tuple{String, Int})
+    bp = breakpoint(Constructor, Tuple{String, Int})
+    @test bp.sig === Tuple{Type{Constructor}, String, Int}
+    @test endswith(sprint(show, bp), "(::Type{$Constructor}, ::String, ::$Int)")
     frame, bp = @interpret Constructor("foo", 3)
     @test bp isa BreakpointRef
     @test @interpret Constructor(3) isa Constructor

@@ -15,8 +15,8 @@ instabilities.
 > functionality remain available.
 
 > [!NOTE]
-> **The latest release series, v0.12, supports full JET functionality
-> on Julia v1.12 and v1.13 only.**
+> **The latest release series, v0.13, supports full JET functionality
+> on Julia v1.12, v1.13 and v1.14 only.**
 >
 > The JET version that works with Julia v1.11 is the
 > [v0.9 series](https://github.com/aviatesk/JET.jl/tree/release-0.9),
@@ -66,8 +66,13 @@ end
 
 <!-- @doc JET.JET_AVAILABLE -->
 
-Setting the `JET_DEV_MODE` preference to `true` forces JET to try loading
-full functionality on an unsupported Julia version.
+Setting the `allow_unsupported_julia` preference to `true` forces JET to try
+loading full functionality on an unsupported Julia version.
+
+<!-- @doc JET.ALLOW_UNSUPPORTED_JULIA -->
+
+The `JET_DEV_MODE` preference enables it by default, along with other features
+intended for developing JET itself.
 
 <!-- @doc JET.JET_DEV_MODE -->
 

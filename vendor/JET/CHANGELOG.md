@@ -6,7 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 <!-- links start -->
-[Unreleased]: https://github.com/aviatesk/JET.jl/compare/v0.12.3...HEAD
+[Unreleased]: https://github.com/aviatesk/JET.jl/compare/v0.13.1...HEAD
+[0.13.1]: https://github.com/aviatesk/JET.jl/compare/v0.13.0...v0.13.1
+[0.13.0]: https://github.com/aviatesk/JET.jl/compare/v0.12.3...v0.13.0
 [0.12.3]: https://github.com/aviatesk/JET.jl/compare/v0.12.2...v0.12.3
 [0.12.2]: https://github.com/aviatesk/JET.jl/compare/v0.12.1...v0.12.2
 [0.12.1]: https://github.com/aviatesk/JET.jl/compare/v0.12.0...v0.12.1
@@ -64,10 +66,70 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.1]
+
+### Changed
+
+- Improved the performance of the error analysis of `JETAnalyzer`, e.g.
+  `report_call` and `report_package`, on Julia 1.14.
+
+### Fixed
+
+- Fixed false positive reports on Julia 1.14 and later with code coverage
+  enabled, e.g. under `Pkg.test(; coverage=true)`, where JET could reuse the
+  analysis results cached during its precompilation and fail to constant-fold
+  calls:
+  ```julia
+  const SV = Core.svec(1, 2, 3)
+  f() = sin(length(SV) == 3 ? 1.0 : "1")
+  @test_call f() # failed, reporting no method for `sin(::String)`
+  ```
+
+## [0.13.0]
+
 ### Added
+
+- Added support for Julia v1.14. JET now loads full functionality on Julia
+  1.14 instead of empty stubs.
+
+- Added the `allow_unsupported_julia` preference, which loads full JET
+  functionality on unsupported Julia versions, e.g. nightly builds, without
+  the development features that `JET_DEV_MODE` also enables:
+  > LocalPreferences.toml
+  ```toml
+  [JET]
+  allow_unsupported_julia = true # previously `JET_DEV_MODE = true` was needed
+  ```
+  JET emits a warning when it is loaded on an unsupported Julia version this
+  way, since it may not work correctly there.
 
 - `JETInterface` now exports `has_problems`, the predicate that `call_test_ex`
   and `func_test` use to decide whether an analysis result fails a test.
+
+- Calls whose matching methods are ambiguous are now reported as
+  `AmbiguousMethodErrorReport` instead of `MethodErrorReport` saying that no
+  matching method is found. For a union-split call, the ambiguous signatures
+  are reported separately from those without any matching method:
+  ```julia
+  k(::Int, ::Any) = 1
+  k(::Any, ::Int) = 2
+  m(x::Int) = k(x, x)               # reported: ambiguous `k(::Int, ::Int)`
+  n(x::Union{Int,String}) = k(x, x) # reported: ambiguous `k(::Int, ::Int)`
+                                    # and no method for `k(::String, ::String)`
+  ```
+
+- `invoke` calls that throw `MethodError` because no method matches the
+  specified signature are now reported as `MethodErrorReport` in the `:basic`
+  and `:sound` modes, and those whose matching methods are ambiguous are
+  reported as `AmbiguousMethodErrorReport`:
+  ```julia
+  f(::Int) = 1
+  g(x) = invoke(f, Tuple{String}, x) # reported: no method for `f(::String)`
+  h(x) = @invoke f(x::Integer)       # reported: no method for `f(::Integer)`
+  k(::Int, ::Any) = 1
+  k(::Any, ::Int) = 2
+  l(x) = @invoke k(x::Int, x::Int)   # reported: ambiguous `k(::Int, ::Int)`
+  ```
 
 - Top-level analysis now reports a `@test` that always fails, i.e. whose
   expression is inferred to evaluate to `false` or to a non-boolean value, and
@@ -147,6 +209,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the unsupported feature, and `RecursiveIncludeErrorReport`s list the include
   chain. The VS Code integration keeps the summary on the first line of its
   diagnostics.
+
+- Report boxes are now closed with lines as wide as the widest message line in
+  them. Each inference report used to close only the box of its error frame
+  with a fixed-width line, leaving the boxes of its caller frames open. Now one
+  line closes every box that the next report does not share:
+  ```julia
+  g(x) = sin(x)
+  h(x) = cos(x)
+  f(x) = rand(Bool) ? g(x) : h(x)
+  report_call(f, (String,))
+  ```
+  ```
+  ═════ 2 possible errors found ═════
+  ┌ f(x::String) @ Main REPL[3]:1
+  │┌ g(x::String) @ Main REPL[1]:1
+  ││ no matching method found `sin(::String)`: sin(x::String)
+  │└─────────────────────────────────────────────────────────
+  │┌ h(x::String) @ Main REPL[2]:1
+  ││ no matching method found `cos(::String)`: cos(x::String)
+  └┴─────────────────────────────────────────────────────────
+  ```
+  Previously, both reports ended with `│└────────────────────`, leaving the
+  box of `f` open. Top-level report boxes, which ended at the right edge of
+  their section header, are sized the same way.
 
 - Top-level analysis now analyzes test sets as if they were declared with
   `failfast=true`, where a failing test aborts the test set, so it analyzes the
@@ -247,6 +333,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the enclosing top-level statement since 0.12.1. They now point to the line
   of the reported code.
 
+- Fixed package analysis (e.g. `report_package`) of a package that looks
+  itself up with `pathof`, `pkgdir`, or `pkgversion`, which returned `nothing`
+  for the analyzed package module and could stop the analysis:
+  ```julia
+  module MyPkg
+  const SRCDIR = dirname(pathof(@__MODULE__)) # was a `MethodError`
+  end
+  ```
+  `Base.PkgId(@__MODULE__)` of the analyzed package module now differs from
+  that of the actual package, so lookups such as
+  `Base.identify_package(Base.PkgId(@__MODULE__), name)` fail.
+
 - Fixed the loop bodies of `Threads.@threads` not being analyzed on Julia
   1.13.2 and later, where its tasks call the loop body through a dynamic
   dispatch (JuliaLang/julia#63184). The loop body is now analyzed where
@@ -306,6 +404,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bar(x) = (foo(x), foo(1)) # the report from `foo(x)` was discarded
   report_call(bar, (Int,))
   ```
+
+- Fixed conversion intrinsics such as `bitcast` being reported as called with
+  a non-primitive target type when the target type is a `Union` of primitive
+  types:
+  ```julia
+  # was reported: bitcast: target type not a leaf primitive type
+  report_call(signed, (Base.BitUnsigned,))
+  ```
+
+- Fixed reports about `getfield` or `setfield!` on a type object listing the
+  fields of that type instead of the fields of the type object itself, and
+  the analysis of field accesses throwing on a field name that is neither a
+  `Symbol` nor an `Int`, or on a tuple of unknown length:
+  ```julia
+  struct Foo; x::Int; end
+  # now reported: type DataType has no field `y`
+  report_call(() -> getfield(Foo, :y))
+  report_call(() -> getfield(Foo, "y")) # no longer throws
+  ```
+
+- Fixed `Core.invoke` calls with a `CodeInstance` being misclassified as invalid
+  `invoke` calls when the invoked code always throws. Callee diagnostics for
+  direct `CodeInstance` calls are not yet collected.
 
 ## [0.12.3]
 

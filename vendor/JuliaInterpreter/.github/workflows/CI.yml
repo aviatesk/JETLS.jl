@@ -4,7 +4,7 @@ on:
   push:
     branches:
       - master
-    tags: '*'
+    tags: ["*"]
 jobs:
   test:
     name: Julia ${{ matrix.version }} - ${{ matrix.os }} - ${{ matrix.arch }} - ${{ github.event_name }}
@@ -14,28 +14,28 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - version: '1' # current stable
+          - version: "1" # current stable
             os: ubuntu-latest
             arch: x64
-          - version: 'min' # lowest version supported
+          - version: "min" # lowest version supported
             os: ubuntu-latest
             arch: x64
-          - version: 'pre' # upcoming release, or duplicate of '1'
+          - version: "pre" # upcoming release, or duplicate of '1'
             os: ubuntu-latest
             arch: x64
-          - version: 'nightly' # dev
+          - version: "nightly" # dev
             os: ubuntu-latest
             arch: x64
           #- version: '1' # x86 ubuntu -- disabled since PyCall/conda is broken on this platform
           #  os: ubuntu-latest
           #  arch: x86
-          - version: '1' # x86 windows
+          - version: "1" # x86 windows
             os: windows-latest
             arch: x86
-          - version: '1' # x64 windows
+          - version: "1" # x64 windows
             os: windows-latest
             arch: x64
-          - version: '1' # aarch64 macOS (Apple Silicon)
+          - version: "1" # aarch64 macOS (Apple Silicon)
             os: macos-latest
             arch: aarch64
     env:

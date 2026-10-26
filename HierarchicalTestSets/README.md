@@ -44,10 +44,39 @@ whereas `Test.DefaultTestSet` would only print
 Test results are recorded by a wrapped `Test.DefaultTestSet`, so the test
 summary is the same as with the default `@testset`.
 
+## Progress output
+
+With the `progress=true` option, the path of each direct child testset is
+printed when it starts, and its result and duration are appended when it
+finishes:
+
+```julia
+@testset HierarchicalTestSet "outer" progress=true begin
+    @testset "a" include("test_a.jl")
+    @testset "b" include("test_b.jl")
+end
+```
+
+```
+[outer > a] passed (1.2s)
+[outer > b] failed (3.4s)
+```
+
+The testset path is dimmed, and the result is shown as `passed` in green, or
+as `failed` in red when the child testset has failures or errors. When a
+failure or the progress of a nested testset is printed in between, the result
+is printed on a new line together with the path again.
+
+Nested `@testset`s accept the option as well, which reports their own
+children.
+
 ## Caveats
 
 - When a `HierarchicalTestSet` is nested in another kind of testset, the path
   starts from the description of that testset (for `Test.DefaultTestSet`) or
   from its type name.
+- Output that the tests print by themselves, e.g. with `println` or logging,
+  is not coordinated with the progress output, so it may continue the line of
+  a testset path, and the result then follows that output.
 - This package relies on internals of the `Test` standard library, so it may
   need updates for new Julia versions.

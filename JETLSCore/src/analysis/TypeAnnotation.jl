@@ -154,7 +154,7 @@ using Compiler: Compiler as CC
 using JET: JET
 using ..JETLSCore: InferredContextCache, InferredContextCacheData, SyntaxTree,
     TraversalReturn, TreeAnnotations
-using ..JETLSCore: Analyzer, JL, JS
+using ..JETLSCore: Analyzer, BS, JL, JS
 using ..JETLSCore: is_user_lowering_error, report_lowering_bug
 using ..JETLSCore: get_name_val, is_string_literal, iterate_toplevel_tree,
     jl_lower_for_scope_resolution, load, rewrite_local_closures_to_opaque, store!, traverse,
@@ -224,11 +224,17 @@ mutable struct OCBodyAnnotationState
 end
 OCBodyAnnotationState() = OCBodyAnnotationState(nothing)
 
+@static if isdefinedglobal(CC, :InferenceCache)
+const LocalInferenceCache = CC.InferenceCache
+else
+const LocalInferenceCache = Vector{CC.InferenceResult}
+end
+
 struct ASTTypeAnnotator <: CC.AbstractInterpreter
     world::UInt
     inf_params::CC.InferenceParams
     opt_params::CC.OptimizationParams
-    inf_cache::Vector{CC.InferenceResult}
+    inf_cache::LocalInferenceCache
 
     toptree::SyntaxTree
     topmi::MethodInstance
@@ -266,7 +272,7 @@ struct ASTTypeAnnotator <: CC.AbstractInterpreter
                 aggressive_constant_propagation = true
             ),
             opt_params::CC.OptimizationParams = CC.OptimizationParams(),
-            inf_cache::Vector{CC.InferenceResult} = CC.InferenceResult[],
+            inf_cache::LocalInferenceCache = LocalInferenceCache(),
             annotations::TreeAnnotations = TreeAnnotations(),
             oc_body_trees::IdDict{Method,SyntaxTree} = IdDict{Method,SyntaxTree}(),
             oc_body_annotation_states::IdDict{Method,OCBodyAnnotationState} = IdDict{Method,OCBodyAnnotationState}(),
@@ -285,10 +291,13 @@ CC.get_inference_world(interp::ASTTypeAnnotator) = interp.world
 CC.get_inference_cache(interp::ASTTypeAnnotator) = interp.inf_cache
 CC.cache_owner(::ASTTypeAnnotator) = ASTTypeAnnotatorToken()
 
+# The base lattices include `MustAliasesLattice` since JuliaLang/julia#47574 (v1.14)
+@static if !(CC.BaseInferenceLattice.instance isa CC.MustAliasesLattice)
 CC.typeinf_lattice(::ASTTypeAnnotator) =
     CC.InferenceLattice(CC.MustAliasesLattice(CC.BaseInferenceLattice.instance))
 CC.ipo_lattice(::ASTTypeAnnotator) =
     CC.InferenceLattice(CC.InterMustAliasesLattice(CC.IPOResultLattice.instance))
+end
 
 # ASTTypeAnnotator is only used for type analysis, so it should disable optimization entirely
 CC.may_optimize(::ASTTypeAnnotator) = false
@@ -347,16 +356,26 @@ function CC.abstract_eval_partition_load(
         interp::CC.AbstractInterpreter, binding::Core.Binding, partition::Core.BindingPartition)
     return concretize_abstract_binding_state_load(interp, res)
 end
+@static if isdefinedglobal(CC, :LeafAccess)
+function CC.abstract_eval_partition_load(interp::ASTTypeAnnotator, leaf::CC.LeafAccess)
+    res = @invoke CC.abstract_eval_partition_load(
+        interp::CC.AbstractInterpreter, leaf::CC.LeafAccess)
+    return concretize_abstract_binding_state_load(interp, res)
+end
+end
 
 # Script-mode full analysis may hand us a context module populated by JET's virtualprocess,
 # where inferred const globals are materialized as `AbstractBindingState`.
 function concretize_abstract_binding_state_load(interp::ASTTypeAnnotator, res::CC.RTEffects)
     ⊑ = CC.partialorder(CC.typeinf_lattice(interp))
     if res.rt !== Union{} && res.rt ⊑ JET.AbstractBindingState
+        # Native execution would read the placeholder rather than the binding value,
+        # so prevent code loading it from being concretely evaluated.
+        effects = CC.Effects(res.effects; consistent = CC.ALWAYS_FALSE)
         rt = res.rt
         if rt isa Core.Const && (binding_state = rt.val) isa JET.AbstractBindingState
             if isdefined(binding_state, :typ)
-                (; exct, effects) = res
+                exct = res.exct
                 if binding_state.maybeundef
                     ⊔ = CC.join(CC.typeinf_lattice(interp))
                     exct = exct ⊔ UndefVarError
@@ -365,7 +384,7 @@ function concretize_abstract_binding_state_load(interp::ASTTypeAnnotator, res::C
                 return CC.RTEffects(binding_state.typ, exct, effects)
             end
         end
-        return CC.RTEffects(Any, res.exct, res.effects)
+        return CC.RTEffects(Any, res.exct, effects)
     end
     return res
 end
@@ -668,14 +687,23 @@ end
 # - If the same basic block has a slot assignment that dominates `idx`,
 #   use the assigned RHS's type (`ssavaluetypes[pc_assign]`).
 # - Otherwise fall back to the bb's entry varstate
-#   (`bb_vartables[bb][id]`), which CC's dataflow has already populated
+#   (`bb_entry_vartable(frame, bb)[id]`), which CC's dataflow has already populated
 #   with cross-bb branch narrowing.
 function slot_type_at(slot::SlotNumber, idx::Int, frame::CC.InferenceState)
     pc_assign = CC.find_dominating_assignment(slot.id, idx, frame)
     pc_assign === nothing || return frame.ssavaluetypes[pc_assign]
     bb = CC.block_for_inst(frame.cfg, idx)
-    entry = @something frame.bb_vartables[bb] return frame.src.slottypes[slot.id]
+    entry = @something bb_entry_vartable(frame, bb) return frame.src.slottypes[slot.id]
     return entry[slot.id].typ
+end
+
+@static if hasfield(CC.InferenceState, :bb_states)
+function bb_entry_vartable(frame::CC.InferenceState, bb::Int)
+    state = frame.bb_states[bb]
+    return state === nothing ? nothing : state.vartable
+end
+else
+bb_entry_vartable(frame::CC.InferenceState, bb::Int) = frame.bb_vartables[bb]
 end
 
 # Extract the matched methods for a call site from CC's per-stmt `CallInfo`.
@@ -698,10 +726,13 @@ function collect_call_matches!(matches::Vector{Core.MethodMatch}, @nospecialize 
         for sub in info.split
             collect_call_matches!(matches, sub)
         end
-    elseif info isa CC.ConstCallInfo
-        # `ConstCallInfo` wraps the underlying dispatch info with a
-        # const-prop'd result; the same matching methods live one level down.
-        collect_call_matches!(matches, info.call)
+    end
+    @static if isdefinedglobal(CC, :ConstCallInfo)
+        if info isa CC.ConstCallInfo
+            # `ConstCallInfo` wraps the underlying dispatch info with a
+            # const-prop'd result; the same matching methods live one level down.
+            collect_call_matches!(matches, info.call)
+        end
     end
     return matches
 end
@@ -917,16 +948,23 @@ function register_oc_body_trees!(
     for i = 1:length(src.code)
         stmt = src.code[i]
         node = block_citree[i]
-        stmt isa Method || continue
-        ocmeth = stmt
-        if ocmeth.is_for_opaque_closure
-            JS.head(node) === :opaque_closure_method || continue
-            body_citree = @something find_code_info_child(node) continue
-            haskey(oc_body_trees, ocmeth) && continue # avoid re-recursing on cycles
-            oc_body_trees[ocmeth] = body_citree
-            inner_src = Base.uncompressed_ir(ocmeth)
-            register_oc_body_trees!(oc_body_trees, body_citree, inner_src)
+        # `:opaque_closure_method` is the 5th argument of `:new_opaque_closure`,
+        # which may be the RHS of an assignment
+        if Meta.isexpr(stmt, :(=), 2) && JS.head(node) === :(=) && JS.numchildren(node) == 2
+            stmt = stmt.args[2]
+            node = node[2]
         end
+        Meta.isexpr(stmt, :new_opaque_closure) && length(stmt.args) >= 5 || continue
+        JS.head(node) === :new_opaque_closure && JS.numchildren(node) >= 5 || continue
+        ocmeth = stmt.args[5]
+        ocmeth isa Method && ocmeth.is_for_opaque_closure || continue
+        oc_node = node[5]
+        JS.head(oc_node) === :opaque_closure_method || continue
+        body_citree = @something find_code_info_child(oc_node) continue
+        haskey(oc_body_trees, ocmeth) && continue # avoid re-recursing on cycles
+        oc_body_trees[ocmeth] = body_citree
+        inner_src = Base.uncompressed_ir(ocmeth)
+        register_oc_body_trees!(oc_body_trees, body_citree, inner_src)
     end
     return oc_body_trees
 end
@@ -1032,7 +1070,7 @@ function _infer_toplevel_tree(
     )
     filter = SyntheticFilter(st0, ctx3.bindings)
     method_body_ranges = collect_method_body_ranges(st0)
-    inf_cache = CC.InferenceResult[]
+    inf_cache = LocalInferenceCache()
     interp = refinements = nothing
     for _ = 1:MAX_OC_REFINEMENT_PASSES
         observations = OCArgtypeTable()
@@ -1107,7 +1145,7 @@ function infer_lowered_tree(
         context_module::Module, world::UInt, filter::SyntheticFilter,
         method_body_ranges::MethodBodyRangeIndex,
         observations::OCArgtypeTable, refinements::Union{Nothing,OCArgtypeTable},
-        inf_cache::Vector{CC.InferenceResult}
+        inf_cache::LocalInferenceCache
     )
     inferrable_tree = try
         # Route single-method local closures through `OpaqueClosure` instead of
@@ -1143,7 +1181,7 @@ function infer_thunk!(
         argtypes::Union{Nothing,Vector{Any}}, world::UInt, filter::SyntheticFilter,
         annotations::TreeAnnotations,
         observations::OCArgtypeTable, refinements::Union{Nothing,OCArgtypeTable},
-        inf_cache::Vector{CC.InferenceResult}
+        inf_cache::LocalInferenceCache
     )
     strip_latestworld!(src)
     mi = construct_toplevel_mi(src, context_module)
@@ -1248,7 +1286,7 @@ function infer_method_defs!(
         filter::SyntheticFilter, annotations::TreeAnnotations,
         method_body_ranges::MethodBodyRangeIndex,
         observations::OCArgtypeTable, refinements::Union{Nothing,OCArgtypeTable},
-        inf_cache::Vector{CC.InferenceResult}
+        inf_cache::LocalInferenceCache
     )
     block = code_info_stmts(inferred)
     nstmts = JS.numchildren(block)
@@ -1547,7 +1585,7 @@ function collect_provenance_indexes(inferred_tree::SyntaxTree, annotations::Tree
     surface_kind_index = Dict{UnitRange{Int},Symbol}()
     macrocall_types = Dict{UnitRange{Int},Vector{Any}}()
     traverse(inferred_tree) do st::SyntaxTree
-        provs = JS.flattened_provenance(st)
+        provs = BS.flattened_provenance(st)
         if !isempty(provs)
             prov = first(provs)
             prov_rng = JS.byte_range(prov)
@@ -2067,13 +2105,14 @@ end
 
 # `:core` callee can't appear in user source — user-written
 # `Core.Typeof(x)` lowers to `:globalref` — so a `:core` "Typeof"
-# call reliably marks JL's argtype-svec scaffolding.
+# (or "TypeEqOf" where `Core` defines it) call reliably marks JL's argtype-svec
+# scaffolding.
 function is_synthetic_typeof_scaffolding(st::SyntaxTree)
     JS.head(st) === :call || return false
     JS.numchildren(st) >= 1 || return false
     c1 = st[1]
     JS.head(c1) === :core || return false
-    return get_name_val(c1) == "Typeof"
+    return get_name_val(c1) == JL.TypeEqOf
 end
 
 """

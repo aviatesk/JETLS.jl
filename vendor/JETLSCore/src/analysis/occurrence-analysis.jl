@@ -234,7 +234,7 @@ function compute_binding_occurrences!(
         include_global_bindings::Bool = false,
         skip_recording_uses::Union{Nothing,SkipRecording} = nothing
     )
-    stack = JS.SyntaxList(st3)
+    stack = SyntaxTree[st3]
     while !isempty(stack)
         st = pop!(stack)
         k = JS.head(st)
@@ -578,7 +578,7 @@ function collect_qualified_global_occurrences!(
         end
         mod = @something resolve_lowered_module(ctx3, receiver, world) return nothing
         name = name_val(st3′[3])
-        provs = JS.flattened_provenance(st3′[3])
+        provs = BS.flattened_provenance(st3′[3])
         is_from_user_ast(provs) || return nothing
         name_node = last(provs)
         id_node = @something name_identifier(name_node) return nothing
@@ -625,7 +625,7 @@ end
 surface_global_binfo(name::String, node::SyntaxTree, mod::Module) =
     JL.BindingInfo(JL.IdTag(0), name, :global, node, mod, nothing, 0,
         false, false, false, false, false, false, false, false, false, false,
-        false, false, false)
+        false, false, false, false)
 
 function collect_export_public_occurrences!(
         occurrences::Dict{JL.BindingInfo,Set{BindingOccurrence}},

@@ -496,7 +496,7 @@ function prepare_call(@nospecialize(f), allargs;
     elseif any(is_vararg_type, allargs)
         return nothing  # https://github.com/JuliaLang/julia/issues/30995
     end
-    argtypesv = Any[_Typeof(a) for a in allargs]
+    argtypesv = Any[Core.Typeof(a) for a in allargs]
     argtypes = Tuple{argtypesv...}
     if f isa Core.OpaqueClosure
         method = f.source
@@ -529,7 +529,7 @@ function prepare_call(@nospecialize(f), allargs;
     # Typical return
     framecode, lenv = ret
     if is_generated(method) && enter_generated
-        allargs = Any[_Typeof(a) for a in allargs]
+        allargs = Any[Core.Typeof(a) for a in allargs]
     end
     return framecode, allargs, lenv, argtypes
 end

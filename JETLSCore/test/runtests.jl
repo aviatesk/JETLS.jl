@@ -9,11 +9,11 @@ include("setup.jl")
     @test withserver(Returns(true))
 end
 
-@testset "AtomicContainers" include("AtomicContainers/test_AtomicContainers.jl")
-@testset "FixedSizeQueues" include("FixedSizeQueues/test_FixedSizeQueues.jl")
+@testset HierarchicalTestSet "AtomicContainers" include("AtomicContainers/test_AtomicContainers.jl")
+@testset HierarchicalTestSet "FixedSizeQueues" include("FixedSizeQueues/test_FixedSizeQueues.jl")
 
-@testset HierarchicalTestSet "JETLS" verbose=true begin
-    @testset "utils" verbose=true begin
+@testset HierarchicalTestSet "JETLS" verbose=true progress=true begin
+    @testset "utils" verbose=true progress=true begin
         @testset "general" include("utils/test_general.jl")
         @testset "ast" include("utils/test_ast.jl")
         @testset "binding" include("utils/test_binding.jl")

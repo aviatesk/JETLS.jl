@@ -38,23 +38,59 @@ end
     # renew a definition and re-analyze it
     @eval M foo(a, b) = (sum(a), b)
     @test isempty(get_reports_with_test(@report_call M.foo([1,2,3], "julia")))
-    @eval M foo(a, b) = (a, sum(b))
+    suppress_stderr() do
+        @eval M foo(a, b) = (a, sum(b))
+    end
     test_sum_over_string(@report_call M.foo([1,2,3], "julia"))
 
     # backedge invalidation
     @eval M callf(f, args...) = f(args...)
     @eval M bar(a, b) = (sum(a), b)
     @test isempty(get_reports_with_test(@report_call M.callf(M.bar, [1,2,3], "julia")))
-    @eval M bar(a, b) = (a, sum(b))
+    suppress_stderr() do
+        @eval M bar(a, b) = (a, sum(b))
+    end
     test_sum_over_string(@report_call M.callf(M.foo, [1,2,3], "julia"))
 
     # `invoke`-backedge invalidation
     @eval M baz(a, b) = sum(a), b
     @eval M qux(a, b) = invoke(baz, Tuple{Any,Any}, a, b)
     @test isempty(get_reports_with_test(@report_call M.qux([1,2,3], "julia")))
-    @eval M baz(a, b) = sum(b), a
+    suppress_stderr() do
+        @eval M baz(a, b) = sum(b), a
+    end
     test_sum_over_string(@report_call M.qux([1,2,3], "julia"))
+
+    # the report on `invoke` without matching method is invalidated by a matching method;
+    # analyze it via a caller since the entry frame is always re-analyzed
+    @eval M onlyint(::Int) = :int
+    @eval M invoke_onlyint(a) = invoke(onlyint, Tuple{String}, a)
+    @eval M call_invoke_onlyint(a) = invoke_onlyint(a)
+    @test only(get_reports_with_test(@report_call M.call_invoke_onlyint("julia"))) isa MethodErrorReport
+    @eval M onlyint(::String) = :string
+    @test isempty(get_reports_with_test(@report_call M.call_invoke_onlyint("julia")))
+    @eval M ambiguous(::Int, ::Any) = :int_any
+    @eval M ambiguous(::Any, ::Int) = :any_int
+    @eval M invoke_ambiguous(a) = invoke(ambiguous, Tuple{Int,Int}, a, a)
+    @eval M call_invoke_ambiguous(a) = invoke_ambiguous(a)
+    @test only(get_reports_with_test(@report_call M.call_invoke_ambiguous(1))) isa AmbiguousMethodErrorReport
+    @eval M ambiguous(::Int, ::Int) = :int_int
+    @test isempty(get_reports_with_test(@report_call M.call_invoke_ambiguous(1)))
 end; end
+
+@testset "invoke lookup world validity" begin
+    M = Module()
+    @eval M onlyint(::Int) = :int
+    @eval M invoke_onlyint(a) = invoke(onlyint, Tuple{String}, a)
+    @eval M call_invoke_onlyint(a) = invoke_onlyint(a)
+    world = Base.get_world_counter()
+    # Newly registered backedges cannot detect a method addition that already happened.
+    @eval M onlyint(::String) = :string
+    # Use a caller to reuse the cached invoke frame rather than re-analyzing it as an entry.
+    old = JET.analyze_and_report_call!(JETAnalyzer(world), M.call_invoke_onlyint, (String,))
+    @test only(get_reports_with_test(old)) isa MethodErrorReport
+    @test isempty(get_reports_with_test(report_call(M.call_invoke_onlyint, (String,))))
+end
 
 # COMBAK this test is very fragile, think about the alternate tests
 # @testset "end to end invalidation" begin
@@ -174,6 +210,11 @@ end; end
     end
 end
 
+cached_argtypes(entry::CC.InferenceResult) = entry.argtypes
+@static if isdefined(CC, :LocalInferenceResult)
+    cached_argtypes(entry::CC.LocalInferenceResult) = entry.result.argtypes
+end
+
 @testset "integration with local code cache" begin
     let m = Module()
         result = Core.eval(m, quote
@@ -188,7 +229,7 @@ end
         @test !isempty(get_reports_with_test(result))
         @test !isempty(JET.get_inf_cache(result.analyzer))
         @test any(JET.get_inf_cache(result.analyzer)) do analysis_result
-            analysis_result.argtypes==Any[Const(getproperty),m.Foo{Int},Const(:baz)]
+            cached_argtypes(analysis_result)==Any[Const(getproperty),m.Foo{Int},Const(:baz)]
         end
     end
 
@@ -207,10 +248,10 @@ end
         # there should be local cache for each erroneous constant analysis
         @test !isempty(get_reports_with_test(result))
         @test any(JET.get_inf_cache(result.analyzer)) do analysis_result
-            analysis_result.argtypes==Any[Const(m.getter),m.Foo{Int},Const(:baz)]
+            cached_argtypes(analysis_result)==Any[Const(m.getter),m.Foo{Int},Const(:baz)]
         end
         @test any(JET.get_inf_cache(result.analyzer)) do analysis_result
-            analysis_result.argtypes==Any[Const(m.getter),m.Foo{Int},Const(:qux)]
+            cached_argtypes(analysis_result)==Any[Const(m.getter),m.Foo{Int},Const(:qux)]
         end
     end
 end
@@ -278,7 +319,7 @@ end
         @test length(get_reports_with_test(result)) === 1
         er = first(get_reports_with_test(result))
         @test er isa MethodErrorReport
-        @test er.t === Tuple{typeof(convert), Type{String}, Int}
+        @test er.t === Tuple{typeof(convert), Core.Typeof(String), Int}
     end
 
     # constant prop should narrow down union-split no method error to single no method matching error
@@ -301,7 +342,7 @@ end
         @test !isempty(get_reports_with_test(result))
         @test any(get_reports_with_test(result)) do report
             report isa MethodErrorReport &&
-            report.t === Tuple{typeof(convert), Type{Int}, String}
+            report.t === Tuple{typeof(convert), Core.Typeof(Int), String}
         end
         # NOTE:
         # report for `convert(Base.fieldtype(Base.typeof(x::P)::Type{P}, f::Symbol)::Type{String}, v::Int)`
@@ -459,7 +500,14 @@ end
     end
 end
 
-@testset "additional analysis pass for task parallelism code" begin
+@static if isdefinedglobal(Core, :task_result_type)
+function assert_task_result_type()
+    t = Task(() -> error("not run"))
+    return 1::Core.task_result_type(t)
+end
+end
+
+@testset "task parallelism code" begin
     # general case with `schedule(::Task)` pattern
     report_call() do
         t = Task() do
@@ -503,7 +551,7 @@ end
     @test !isempty(get_reports_with_test(result))
     @test any(get_reports_with_test(result)) do r
         isa(r, MethodErrorReport) &&
-        r.t === Tuple{typeof(convert), Type{String}, Int}
+        r.t === Tuple{typeof(convert), Core.Typeof(String), Int}
     end
 
     # multiple tasks in the same frame
@@ -553,12 +601,32 @@ end
     end
 
     # report uncaught exception happened in a task
-    # TODO currently uncaught exceptions are erased by return type check at caller `Task(::Function)`
+    # TODO currently uncaught exceptions in a task are not reported (without native task body
+    # inference, they are erased by return type check at caller `Task(::Function)`)
     result = report_call() do
         fetch(Threads.@spawn throw("foo"))
     end
     @test_broken length(get_reports_with_test(result)) == 1
     @test_broken isa(first(get_reports_with_test(result)), UncaughtExceptionReport)
+    @static if JET.HAS_TASK_BODY_ANALYSIS
+        # A failed task throws from `wait(t)`, so `fetch`'s result assertion is unreachable.
+        @test !any(r -> r isa BuiltinErrorReport, get_reports(result))
+    end
+
+    # Only ignore the internal result assertion in `fetch(::Task)`.
+    assert_bottom(x) = x::Union{}
+    result = report_call(assert_bottom, (Any,))
+    @test only(get_reports_with_test(result)) isa BuiltinErrorReport
+
+    @static if isdefinedglobal(Core, :task_result_type)
+    @testset "user task result assertions" begin
+        @test_throws TypeError assert_task_result_type()
+        result = report_call(assert_task_result_type)
+        report = only(get_reports_with_test(result))
+        @test report isa BuiltinErrorReport
+        @test report.f === typeassert
+    end
+    end
 
     # don't fail into infinite loop (rather, don't spoil inference termination)
     m = @fixturedef begin
@@ -639,6 +707,43 @@ let res = report_opt() do
         filter_unopt_call(true, sin, 42)
     end
     @test isempty(get_reports_with_test(res))
+end
+
+# constant propagation can make a call concretely evaluable (JuliaLang/julia#61677)
+# (`:effect_free` is assumed so that code coverage does not prevent the concrete evaluation)
+Base.@assume_effects :effect_free :terminates_locally function concretized_after_constprop(flag)
+    flag && rand() # not `:consistent` unless `flag` is known to be `false`
+    n = 0
+    for i in 1:3
+        n += i
+    end
+    n == 7 && sin("unreachable")
+    return n
+end
+concretized_after_constprop_entry() = concretized_after_constprop(false)
+const CONCRETIZED_AFTER_CONSTPROP_LINE = (@__LINE__) + 3
+function concretized_after_constprop_entry2(flag)
+    a = concretized_after_constprop(false)
+    b = concretized_after_constprop(flag)
+    return a, b
+end
+@static if isdefinedglobal(CC, :use_concrete_eval_result)
+@testset "filter_lineages! for concrete evaluation after constant propagation" begin
+    let result = report_call(concretized_after_constprop_entry)
+        @test result.result.result === Core.Const(6)
+        @test isempty(get_reports(result))
+    end
+    # the reports from the call with an unknown argument are kept
+    let result = report_call(concretized_after_constprop_entry2, (Bool,))
+        report = only(get_reports_with_test(result))
+        @test report isa MethodErrorReport
+        @test report.vst[1].line == CONCRETIZED_AFTER_CONSTPROP_LINE
+    end
+    # the cached reports of the callee are kept
+    let result = report_call(concretized_after_constprop, (Bool,))
+        @test only(get_reports_with_test(result)) isa MethodErrorReport
+    end
+end
 end
 
 module BasicFiltering

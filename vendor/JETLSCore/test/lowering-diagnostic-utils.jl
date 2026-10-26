@@ -1,4 +1,4 @@
-using JETLSCore: JETLSCore, JS
+using JETLSCore: JETLSCore
 using JETLSCore.LSP
 using JETLSCore.LSP.URIs2
 

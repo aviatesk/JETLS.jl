@@ -19,22 +19,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## Unreleased
 
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
-- Diff: [`8888185...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/8888185...HEAD)
+- Diff: [`2b04cd5...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/2b04cd5...HEAD)
 
 ### Announcement
 
 > [!important]
-> JETLS supports Julia 1.12.2 through 1.13.
-> It does not support Julia 1.12.1 or earlier, nor Julia 1.14+/nightly.
+> JETLS supports Julia 1.12.2 through 1.14.
+> It also runs on Julia 1.15 nightly builds, but may break at any time as Julia changes.
+> It does not support Julia 1.12.1 or earlier.
 
-<!-- Added: 2026-09-25 / Remove after: 2026-10-25 -->
-> [!note]
-> The official Zed extension for Julia, [JuliaEditorSupport/zed-julia](https://github.com/JuliaEditorSupport/zed-julia), now uses JETLS as its default language server since v0.2.0.
-> Install the `Julia` extension from Zed's extensions view: like `jetls-client`, it installs and updates the pinned JETLS release automatically, so Zed users no longer need to [install `jetls`](https://aviatesk.github.io/JETLS.jl/release/#index/server-installation) or keep it up to date manually (still needed if you also use the `jetls` CLI, e.g. `jetls check`).
-> This is a breaking migration from LanguageServer.jl for existing users of the extension; see [Migrating to version 0.2](https://github.com/JuliaEditorSupport/zed-julia#migrating-to-version-02).
-> If you have been using the [aviatesk/zed-julia](https://github.com/aviatesk/zed-julia) fork, switch to the official extension, and move your settings from `lsp.JETLS` to `lsp.jetls`, since the language server ID is now `jetls`.
-> Please report extension-specific problems (installation, startup, extension UI) to [JuliaEditorSupport/zed-julia issues](https://github.com/JuliaEditorSupport/zed-julia/issues);
-> language-feature issues belong here as before.
+<!-- Added: 2026-10-26 / Remove after: 2026-11-26 -->
+> [!tip]
+> JETLS runs noticeably faster on Julia 1.14 than on Julia 1.13, and even faster on the [optimized builds of Julia 1.14](https://discourse.julialang.org/t/julia-v1-14-0-alpha1-is-now-available/140136#p-648514-new-optimized-and-assertion-builds-experimental-1), which juliaup provides as the `+opt` channels:
+> for example, on an optimized build, `jetls check` takes about _14%_ less time on the JETLS repository ([scripts/selfcheck.sh](https://github.com/aviatesk/JETLS.jl/blob/master/scripts/selfcheck.sh)), and _35–50%_ less on mid-sized packages such as [JSON3.jl](https://github.com/quinnj/JSON3.jl), [DataStructures.jl](https://github.com/JuliaCollections/DataStructures.jl) and [Graphs.jl](https://github.com/JuliaGraphs/Graphs.jl).
+> See [Prerequisites](https://aviatesk.github.io/JETLS.jl/release/#index/server-installation/prerequisites) for how to run `jetls` on one.
 
 <!-- Added: 2026-10-11 / Remove after: 2026-11-11 -->
 > [!note]
@@ -66,6 +64,50 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > Note that `analysis_overrides` is provided as a temporary workaround and may be removed or changed at any time. A proper fix is being worked on.
 >
 > Note: Path glob patterns use `/` as the separator on all platforms, including Windows; backslashes are not supported as separators.
+
+### Added
+
+- Added Julia 1.14 compatibility, allowing JETLS to run on Julia 1.14 runtimes.
+
+- Added best-effort compatibility with Julia 1.15 nightly builds, allowing JETLS to run on them.
+
+- Added the [`inference/type-error/invoke`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/inference/type-error/invoke) diagnostic: an `invoke` call whose signature argument is not a tuple type, or whose arguments do not match that signature, which raises `TypeError` at runtime, is now reported:
+  ```julia
+  invoke(sin, Float64, 1.0)  # TypeError: expected `Type{T} where T<:Tuple`, got Type{Float64} (JETLS inference/type-error/invoke)
+  @invoke sin(1.0::Int)      # TypeError: argument type error, expected `Tuple{Int64}`, got a value of type `Tuple{Float64}` (JETLS inference/type-error/invoke)
+  ```
+
+### Fixed
+
+- Fixed [`lowering/orphaned-docstring`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/orphaned-docstring) not reporting the discarded field docstrings of an undocumented struct defined with `@Base.kwdef`, as it does for `Base.@kwdef`.
+
+- Fixed [`inference/method-error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/inference/method-error) reports on `invoke` or `@invoke` calls without a unique method sometimes persisting after a method for the specified signature is defined.
+
+- Fixed the outline and other features based on document symbols, such as code lenses, failing for a whole file when a function assigns a local variable inside a macro call written as `@M.macro`, e.g. `@Base.time y = f(x)`.
+
+- Fixed the document symbols of arguments wrapped in `Base.@nospecialize` or `@Base.nospecialize` (and their `@specialize` counterparts) missing the detail that `@nospecialize` arguments show, e.g. `@nospecialize arg`.
+
+- Fixed signature help showing up right after a qualified string macro such as `Base.r"foo"` or a command literal such as `` `ls` ``, as it already did not after `r"foo"`.
+
+- Fixed [`inference/type-error/non-bool-cond`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/inference/type-error/non-bool-cond) and [`inference/method-error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/inference/method-error) not reporting call results that may be `missing` in common cases, e.g.:
+  ```julia
+  struct Row
+      flag::Union{Missing,Bool}
+  end
+  check(r::Row) = r.flag ? 1 : 2  # now reported, as `r.flag` may be `missing`
+
+  parse_flag(s::String) = s == "yes" ? true : s == "no" ? false : missing
+  use_flag(s) = parse_flag(s) ? 1 : 2  # now reported, even for the untyped `s`
+  ```
+
+## 2026-10-21
+
+- Commit: [`2b04cd5`](https://github.com/aviatesk/JETLS.jl/commit/2b04cd5)
+- Diff: [`8888185...2b04cd5`](https://github.com/aviatesk/JETLS.jl/compare/8888185...2b04cd5)
+- Installation:
+  ```bash
+  julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="2026-10-21")'
+  ```
 
 ### Added
 

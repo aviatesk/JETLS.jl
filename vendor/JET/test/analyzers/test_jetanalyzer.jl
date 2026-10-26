@@ -52,6 +52,14 @@ func_method_error2(a::AbstractString) = "AbstractString"
 func_onlyint(::Int) = :ok
 func_integer_or_nothing(::Integer) = :ok1
 func_integer_or_nothing(::Nothing) = :ok2
+func_ambiguous(::Int, ::Any) = :int_any
+func_ambiguous(::Any, ::Int) = :any_int
+func_ambiguous_abstract(::Integer, ::Any) = :integer_any
+func_ambiguous_abstract(::Any, ::Integer) = :any_integer
+func_ambiguous_vararg(::Int, ::Any) = :int_any
+func_ambiguous_vararg(::Any, ::Int) = :any_int
+func_ambiguous_vararg(::Int, ::Any, ::Any, ::Vararg{Any}) = :int_any_vararg
+func_ambiguous_vararg(::Any, ::Int, ::Any, ::Vararg{Any}) = :any_int_vararg
 
 @testset "MethodErrorReport" begin
     # report no match case
@@ -78,6 +86,55 @@ func_integer_or_nothing(::Nothing) = :ok2
         report = only(get_reports_with_test(result))
         @test report isa MethodErrorReport
         @test report.t == Any[Tuple{typeof(func_method_error2), Nothing}]
+    end
+
+    # ambiguous matches should be reported separately from the no match case
+    let result = report_call((Int,)) do a
+            func_ambiguous(a, a)
+        end
+        report = only(get_reports_with_test(result))
+        @test report isa AmbiguousMethodErrorReport
+        @test report.t === Tuple{typeof(func_ambiguous), Int, Int}
+    end
+    let result = report_call((Union{Int,String},)) do a
+            func_ambiguous(a, a)
+        end
+        reports = get_reports_with_test(result)
+        # JuliaLang/julia#61041 splits identical arguments together
+        nsplits = VERSION ≥ v"1.14.0-DEV.1799" ? 2 : 4
+        @test length(reports) == 2
+        @test any(reports) do report
+            report isa AmbiguousMethodErrorReport &&
+            report.t == Any[Tuple{typeof(func_ambiguous), Int, Int}] &&
+            report.union_split == nsplits
+        end
+        @test any(reports) do report
+            report isa MethodErrorReport &&
+            report.t == Any[Tuple{typeof(func_ambiguous), String, String}] &&
+            report.union_split == nsplits
+        end
+    end
+    let result = report_call((Integer,)) do a
+            func_ambiguous_abstract(a, a)
+        end
+        report = only(get_reports_with_test(result))
+        @test report isa AmbiguousMethodErrorReport
+        @test report.t === Tuple{typeof(func_ambiguous_abstract), Integer, Integer}
+    end
+    # the ambiguous matches may cover a `Vararg` signature only when split by length
+    let result = report_call(Tuple{Vararg{Any}}) do args...
+            func_ambiguous_vararg(1, 1, args...)
+        end
+        report = only(get_reports_with_test(result))
+        @test report isa AmbiguousMethodErrorReport
+        @test report.t === Tuple{typeof(func_ambiguous_vararg), Int, Int, Vararg{Any}}
+    end
+    let result = report_call(Tuple{Vararg{Any}}) do args...
+            func_ambiguous(1, 1, args...)
+        end
+        report = only(get_reports_with_test(result))
+        @test report isa MethodErrorReport
+        @test report.t === Tuple{typeof(func_ambiguous), Int, Int, Vararg{Any}}
     end
 
     # report uncovered match
@@ -333,9 +390,14 @@ func_undefvar(a) = _func_undefvar(a)
             end
         end
         @test_call issue586(Int, Int)
-        let result = @report_call issue586(Int, String)
-            r = only(get_reports_with_test(result))
-            @test r isa UndefVarErrorReport && r.var isa TypeVar && r.var.name == :T
+        # Julia 1.14 determines `T` as `Union{Int,String}` for this call
+        if (try; issue586(Int, String); true; catch; false; end)
+            @test_call issue586(Int, String)
+        else
+            let result = @report_call issue586(Int, String)
+                r = only(get_reports_with_test(result))
+                @test r isa UndefVarErrorReport && r.var isa TypeVar && r.var.name == :T
+            end
         end
         test_call((Vector{Type},)) do ts
             issue586(ts...)
@@ -560,6 +622,10 @@ end
 end
 
 abstract_invoke1(i::Integer) = throw(string(i))
+abstract_invoke_onlyint(::Int) = :int
+const ABSTRACT_INVOKE_VECTOR_SIG = Tuple{Vector{T}} where T
+abstract_invoke_ambiguous(::Int, ::Any) = :int_any
+abstract_invoke_ambiguous(::Any, ::Int) = :any_int
 #== LINE SENSITIVITY START ===#
 const _ABSTRACT_INVOKE2_LINE = (@__LINE__) + 2
 const ABSTRACT_INVOKE2_LINE = (@__LINE__) + 4
@@ -569,6 +635,14 @@ function abstract_invoke2(a)
     return @invoke _abstract_invoke2(a::Int) # `invoke` is valid, but error should happen within `bar`
 end
 #== LINE SENSITIVITY END ===#
+abstract_invoke_ci_target() = error("x")
+const ABSTRACT_INVOKE_CI = let
+    method = only(methods(abstract_invoke_ci_target))
+    mi = CC.specialize_method(method, Tuple{typeof(abstract_invoke_ci_target)}, Core.svec())
+    CC.typeinf_ext(
+        CC.NativeInterpreter(), mi, CC.SOURCE_MODE_NOT_REQUIRED)::Core.CodeInstance
+end
+abstract_invoke_ci() = Core.invoke(abstract_invoke_ci_target, ABSTRACT_INVOKE_CI)
 @testset "abstract_invoke" begin
     # non-`Type` `argtypes`
     result = report_call() do
@@ -585,6 +659,49 @@ end
     @test length(get_reports_with_test(result)) == 1
     r = first(get_reports_with_test(result))
     @test isa(r, InvalidInvokeErrorReport)
+
+    # no method matches the specified signature
+    let result = report_call((String,)) do a
+            invoke(abstract_invoke_onlyint, Tuple{String}, a)
+        end
+        r = only(get_reports_with_test(result))
+        @test r isa MethodErrorReport
+        @test r.t === Tuple{typeof(abstract_invoke_onlyint), String}
+    end
+    # the method is looked up with the specified signature, not with the argument types
+    let result = report_call((Int,)) do a
+            @invoke abstract_invoke_onlyint(a::Integer)
+        end
+        r = only(get_reports_with_test(result))
+        @test r isa MethodErrorReport
+        @test r.t === Tuple{typeof(abstract_invoke_onlyint), Integer}
+    end
+    # the intersection with the argument type is a `UnionAll` for `a::Vector`
+    for argtype in (Vector{Int}, Vector)
+        result = report_call((argtype,)) do a
+            invoke(abstract_invoke_onlyint, ABSTRACT_INVOKE_VECTOR_SIG, a)
+        end
+        r = only(get_reports_with_test(result))
+        @test r isa MethodErrorReport
+        @test r.t == (Tuple{typeof(abstract_invoke_onlyint), Vector{T}} where T)
+    end
+    test_call((Int,)) do a
+        @invoke abstract_invoke_onlyint(a::Int)
+    end
+    # ambiguous methods match the specified signature
+    let result = report_call((Int,)) do a
+            @invoke abstract_invoke_ambiguous(a::Int, a::Int)
+        end
+        r = only(get_reports_with_test(result))
+        @test r isa AmbiguousMethodErrorReport
+        @test r.t === Tuple{typeof(abstract_invoke_ambiguous), Int, Int}
+    end
+    test_call((Int,)) do a
+        @invoke abstract_invoke_ambiguous(a::Int, a::Any)
+    end
+    test_call((String,); mode=:typo) do a
+        invoke(abstract_invoke_onlyint, Tuple{String}, a)
+    end
 
     # don't report errors collected in `invoke`d functions
     result = report_call((Int,)) do a
@@ -612,6 +729,15 @@ end
             vf.linfo.def.name === :abstract_invoke2
         end || return false
         return true
+    end
+
+    let result = report_call(abstract_invoke_ci)
+        reports = get_reports_with_test(result)
+        @test !any(r -> r isa InvalidInvokeErrorReport, reports)
+        @test_broken any(r -> r isa UncaughtExceptionReport, reports)
+    end
+    let result = report_call(() -> Core.invoke(abstract_invoke_ci_target, ABSTRACT_INVOKE_CI, 1))
+        @test only(get_reports_with_test(result)) isa InvalidInvokeErrorReport
     end
 end
 
@@ -752,6 +878,37 @@ end
         end
     end
 
+    # field access on type objects
+    let result = report_call() do
+            getfield(SingleField, :y)
+        end
+        @test only(get_reports_with_test(result)) isa BuiltinErrorReport
+        test_builtinerror_compatibility(result) do
+            getfield(SingleField, :y)
+        end
+    end
+    let result = report_call((Type{SingleField},)) do T
+            getfield(T, :y)
+        end
+        report = only(get_reports_with_test(result))
+        @test report isa BuiltinErrorReport
+        if CC.isconstType(Type{SingleField})
+            test_builtinerror_compatibility(result) do
+                getfield(SingleField, :y)
+            end
+        else # on Julia 1.14+, `T` may be a representation of `SingleField` other than the `DataType`
+            @test report.msg == JET.GENERAL_BUILTIN_ERROR_MSG
+        end
+    end
+    let result = report_call() do
+            setfield!(SingleField, :y, "bar")
+        end
+        @test only(get_reports_with_test(result)) isa BuiltinErrorReport
+        test_builtinerror_compatibility(result) do
+            setfield!(SingleField, :y, "bar")
+        end
+    end
+
     let result = report_call() do
             x = SingleField("foo")
             x.y
@@ -832,6 +989,169 @@ end
         end
         report = only(get_reports_with_test(result))
         @test report isa BuiltinErrorReport && report.f === setfield!
+    end
+end
+
+ordered_field_read(::Val{order}) where order =
+    getfield(SingleField(1), :missing, order)
+ordered_checked_field_read(::Val{order}) where order =
+    getfield(SingleField(1), :missing, order, true)
+ordered_field_write(::Val{order}) where order =
+    setfield!(SingleField(1), :missing, 2, order)
+
+@testset "field access diagnostics" begin
+    @testset "invalid selectors and receivers" begin
+        for (f, probe) in (
+                (getfield, () -> getfield(Real, "name")),
+                (getfield, () -> getfield(SingleField(1), "x")),
+                (getfield, () -> getfield(Any, nothing)),
+                (getfield, () -> getfield(Real, Int8(1))), # `Int32` is `Int` on 32-bit platforms
+                (getfield, () -> getfield((1,), true)),
+                (setfield!, () -> setfield!(SingleField(1), "x", 2)),
+                (setfield!, () -> setfield!(Ref(1), :x, "wrong type")),
+                (fieldtype, () -> fieldtype(SingleField, "x")),
+                (fieldtype, () -> fieldtype(SingleField(1), :missing)),
+            )
+            @test_throws TypeError probe()
+            result = report_call(probe)
+            report = only(get_reports_with_test(result))
+            @test report isa BuiltinErrorReport && report.f === f
+            @test report.msg == JET.GENERAL_BUILTIN_ERROR_MSG
+        end
+    end
+
+    @testset "type objects and fieldtype targets" begin
+        for (f, probe) in (
+                (getfield, () -> getfield(Vector, :missing)),
+                (fieldtype, () -> fieldtype(Vector, :missing)),
+                (fieldtype, () -> fieldtype(Module, :missing)),
+                (setfield!, () -> setfield!(Vector, :missing, 1)),
+            )
+            result = report_call(probe)
+            report = only(get_reports_with_test(result))
+            @test report isa BuiltinErrorReport && report.f === f
+            test_builtinerror_compatibility(probe, result)
+        end
+        for probe in (
+                () -> getfield(SingleField, :name),
+                () -> fieldtype(SingleField, :x),
+                () -> getfield(Vector, :body),
+            )
+            @test isempty(get_reports_with_test(report_call(probe)))
+        end
+        let result = report_call((Union{Type{SingleField},Int},)) do T
+                fieldtype(T, :missing)
+            end
+            report = only(get_reports_with_test(result))
+            @test report isa BuiltinErrorReport && report.f === fieldtype
+            @test report.msg == JET.GENERAL_BUILTIN_ERROR_MSG
+        end
+    end
+
+    @testset "optional arguments and arity" begin
+        for (f, probe) in (
+                (getfield, () -> getfield(SingleField(1), :missing, true)),
+                (getfield, () -> getfield(SingleField(1), :missing, :not_atomic, true)),
+                (setfield!, () -> setfield!(SingleField(1), :missing, 2, :not_atomic)),
+                (fieldtype, () -> fieldtype(SingleField, :missing, false)),
+                # `getindex(::Tuple, ::Int)` passes a non-constant `boundscheck`
+                (getfield, () -> (1, 2)[3]),
+            )
+            result = report_call(probe)
+            report = only(get_reports_with_test(result))
+            @test report isa BuiltinErrorReport && report.f === f
+            test_builtinerror_compatibility(probe, result)
+        end
+        for (f, probe) in (
+                (getfield, () -> getfield(SingleField(1), :missing, 42)),
+                (getfield, () -> getfield(SingleField(1), :missing, :invalid)),
+                (getfield, () -> getfield(SingleField(1), :missing, :not_atomic, 42)),
+                (setfield!, () -> setfield!(Some(1), :value)),
+                (setfield!, () -> setfield!(Some(1), :missing, 2, :invalid)),
+                (setfield!, () -> setfield!(SingleField(1), :missing, 2, :acquire)),
+                (fieldtype, () -> fieldtype(SingleField, :missing, 42)),
+            )
+            @test_throws Exception probe()
+            result = report_call(probe)
+            report = only(get_reports_with_test(result))
+            @test report isa BuiltinErrorReport && report.f === f
+            @test report.msg == JET.GENERAL_BUILTIN_ERROR_MSG
+        end
+    end
+
+    @testset "atomic ordering" begin
+        read_orders = (:not_atomic, :unordered, :monotonic, :acquire, :sequentially_consistent)
+        write_orders = (:not_atomic, :unordered, :monotonic, :release, :sequentially_consistent)
+        for (f, probe, valid_orders, invalid_orders) in (
+                (getfield, ordered_field_read, read_orders, (:release, :acquire_release, :invalid)),
+                (getfield, ordered_checked_field_read, read_orders, (:release, :acquire_release, :invalid)),
+                (setfield!, ordered_field_write, write_orders, (:acquire, :acquire_release, :invalid)),
+            )
+            for order in valid_orders
+                arg = Val(order)
+                @test_throws FieldError probe(arg)
+                for mode in (:basic, :typo)
+                    result = report_call(probe, (typeof(arg),); mode)
+                    report = only(get_reports_with_test(result))
+                    @test report isa BuiltinErrorReport && report.f === f
+                    test_builtinerror_compatibility(() -> probe(arg), result)
+                end
+            end
+            for order in invalid_orders
+                arg = Val(order)
+                @test_throws ConcurrencyViolationError probe(arg)
+                let result = report_call(probe, (typeof(arg),))
+                    report = only(get_reports_with_test(result))
+                    @test report isa BuiltinErrorReport && report.f === f
+                    @test report.msg == JET.GENERAL_BUILTIN_ERROR_MSG
+                end
+                let result = report_call(probe, (typeof(arg),); mode=:typo)
+                    @test isempty(get_reports_with_test(result))
+                end
+            end
+        end
+        for (f, probe) in (
+                (getfield, order -> getfield(SingleField(1), :missing, order)),
+                (setfield!, order -> setfield!(SingleField(1), :missing, 2, order)),
+            )
+            let result = report_call(probe, (Symbol,))
+                report = only(get_reports_with_test(result))
+                @test report isa BuiltinErrorReport && report.f === f
+                @test report.msg == JET.GENERAL_BUILTIN_ERROR_MSG
+            end
+            let result = report_call(probe, (Symbol,); mode=:typo)
+                @test isempty(get_reports_with_test(result))
+            end
+        end
+    end
+
+    @testset "indefinite field layouts" begin
+        let result = report_call((Tuple{Vararg{Int}},)) do x
+                getfield(x, :missing)
+            end
+            report = only(get_reports_with_test(result))
+            @test report isa BuiltinErrorReport && report.f === getfield
+            @test report.msg == JET.GENERAL_BUILTIN_ERROR_MSG
+        end
+        let result = report_call((NamedTuple{(:x,)},)) do x
+                getfield(x, :missing)
+            end
+            report = only(get_reports_with_test(result))
+            @test report isa BuiltinErrorReport && report.f === getfield
+            test_builtinerror_compatibility(result) do
+                getfield((x=1,), :missing)
+            end
+        end
+        let result = report_call((NamedTuple{names,Tuple{Int}} where names,)) do x
+                getfield(x, :missing)
+            end
+            @test isempty(get_reports_with_test(result))
+        end
+        let result = report_call() do
+                fieldtype(Tuple{Int,Vararg{String}}, 10)
+            end
+            @test isempty(get_reports_with_test(result))
+        end
     end
 end
 
@@ -1075,10 +1395,11 @@ complex_divide(a, b) = complex(a, b) / 2
                 (real, ComplexF64, Float64),
                 (float, Int, Float64),
             )
+            # `Type{T}` no longer implies a constant type since JuliaLang/julia#62263
             for (argtype, expected) in (
-                    (Type{T}, R),
-                    (Type{Missing}, Missing),
-                    (Type{Union{T,Missing}}, f(Union{T,Missing})),
+                    (Core.Typeof(T), R),
+                    (Core.Typeof(Missing), Missing),
+                    (Core.Typeof(Union{T,Missing}), f(Union{T,Missing})),
                     (Missing, missing),
                 )
                 result = report_call(f, (argtype,))
@@ -1143,6 +1464,15 @@ end
             err
         end)::ErrorException
         @test err.msg == r.msg
+    end
+
+    # a `Union` target type may be any of its members
+    test_call(signed, (Base.BitUnsigned,))
+    test_call((Union{Type{Int8},Type{Int16}}, UInt8)) do T, x
+        Core.Intrinsics.bitcast(T, x)
+    end
+    test_call((Union{Type{UInt16},Type{UInt32}}, UInt8)) do T, x
+        Core.Intrinsics.zext_int(T, x)
     end
 end
 

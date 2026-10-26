@@ -49,8 +49,8 @@ function flatten_args(call::SyntaxTree)
         orig = filter(usable, JS.children(call)[2:end])
     end
 
-    args = JS.SyntaxList()
-    kw_children = JS.SyntaxList()
+    args = SyntaxList()
+    kw_children = SyntaxList()
     has_semicolon = false
     for i in eachindex(orig)
         if JS.head(orig[i]) === :parameters
@@ -196,7 +196,7 @@ the splat (`1,2,3`), making it beneficial in some cases.
 """
 function compatible_method(m::Method, ca::CallArgs, world::UInt)
     msig = @something get_sig_str(m, ca, world) return false
-    mnode = JS.parsestmt(JS.SyntaxTree, msig; ignore_errors=true)
+    mnode = JS.parsestmt(SyntaxTree, msig; ignore_errors=true)
 
     params, kwp_i, _ = @something flatten_args(mnode) return false
     has_var_params = kwp_i > 1 && JS.head(params[kwp_i - 1]) === :...
@@ -293,7 +293,7 @@ function make_siginfo(
     )
     msig = @something get_sig_str(m, ca, world)
     msig = postprocessor(msig)
-    mnode = JS.parsestmt(JS.SyntaxTree, msig; ignore_errors=true)
+    mnode = JS.parsestmt(SyntaxTree, msig; ignore_errors=true)
     label = String(msig)
     documentation = let
         mdl = postprocessor(string(Base.parentmodule(m)))

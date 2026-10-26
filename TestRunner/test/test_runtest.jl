@@ -275,6 +275,9 @@ let testfile = joinpath(@__DIR__, "testfile_include_mapexpr.jl")
     @test all(ts -> ts.n_passed == 1, included)
 end
 
+# `Pkg.test` runs with `--warn-overwrite=yes`; note that this hides all of `stderr`
+suppress_overwrite_warnings(f::Function) = redirect_stderr(f, devnull)
+
 module IncludeSelectionModule1 end
 module IncludeSelectionModule2 end
 module IncludeSelectionModule3 end
@@ -292,19 +295,25 @@ module IncludeSelectionModule6 end
     let result = @testset "no patterns" runtest(testfile, []; topmodule=IncludeSelectionModule2)
         @test isempty(result.results)
     end
-    let result = @testset "include in matched testset" runtest(testfile, ["include in testset"]; topmodule=IncludeSelectionModule3)
+    let result = suppress_overwrite_warnings() do
+            @testset "include in matched testset" runtest(testfile, ["include in testset"]; topmodule=IncludeSelectionModule3)
+        end
         @test descriptions(only(result.results)) == ["included tests 1", "included tests 2"]
     end
     let result = @testset "matched bare include" runtest(testfile, [:(include("_testfile_include_selection1.jl"))]; filter_lines=[3], topmodule=IncludeSelectionModule4)
         @test descriptions(result) == ["included tests 1"]
     end
     # `include` calls in the enclosing testsets are executed, but not those in the other ones
-    let result = @testset "include in enclosing testset" runtest(testfile, ["inner"]; topmodule=IncludeSelectionModule5)
+    let result = suppress_overwrite_warnings() do
+            @testset "include in enclosing testset" runtest(testfile, ["inner"]; topmodule=IncludeSelectionModule5)
+        end
         outer = only(result.results)
         @test descriptions(outer) == ["inner"]
         @test only(outer.results).n_passed == 1
     end
-    let result = @testset "include as dependency" runtest(testfile, ["uses value"]; topmodule=IncludeSelectionModule6)
+    let result = suppress_overwrite_warnings() do
+            @testset "include as dependency" runtest(testfile, ["uses value"]; topmodule=IncludeSelectionModule6)
+        end
         dependency = only(result.results)
         @test descriptions(dependency) == ["uses value"]
         @test only(dependency.results).n_passed == 1

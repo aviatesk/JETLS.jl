@@ -260,6 +260,7 @@ Here is a summary table of the diagnostics explained in this section:
 | [`inference/method-error`](@ref diagnostic/reference/inference/method-error)                                   | `Warning`             | `JETLS/save`  | No matching method found for function calls            |
 | [`inference/undef-keyword`](@ref diagnostic/reference/inference/undef-keyword)                                 | `Warning`             | `JETLS/save`  | Missing required keyword argument                      |
 | [`inference/type-error/keyword`](@ref diagnostic/reference/inference/type-error/keyword)                       | `Warning`             | `JETLS/save`  | Keyword argument value type mismatch                   |
+| [`inference/type-error/invoke`](@ref diagnostic/reference/inference/type-error/invoke)                         | `Warning`             | `JETLS/save`  | Invalid signature or argument types for `invoke`       |
 | [`inference/type-error/type-assert`](@ref diagnostic/reference/inference/type-error/type-assert)               | `Warning`             | `JETLS/save`  | Type assertion failures                                |
 | [`inference/type-error/non-bool-cond`](@ref diagnostic/reference/inference/type-error/non-bool-cond)           | `Warning`             | `JETLS/save`  | Non-boolean value used in boolean context              |
 | [`inference/failing-test`](@ref diagnostic/reference/inference/failing-test)                                   | `Warning`             | `JETLS/save`  | `@test` or `@test_throws` that always fails            |
@@ -1720,7 +1721,7 @@ before the code runs:
 - [`inference/bounds-error`](@ref diagnostic/reference/inference/bounds-error) → `BoundsError`
 - [`inference/method-error`](@ref diagnostic/reference/inference/method-error) → `MethodError` (no matching method, or an unsupported keyword argument)
 - [`inference/undef-keyword`](@ref diagnostic/reference/inference/undef-keyword) → `UndefKeywordError`
-- [`inference/type-error/*`](@ref diagnostic/reference/inference/type-error) → `TypeError` (failing type assertion, non-boolean condition, or keyword-value type mismatch)
+- [`inference/type-error/*`](@ref diagnostic/reference/inference/type-error) → `TypeError` (failing type assertion, non-boolean condition, keyword-value type mismatch, or invalid `invoke` call)
 
 In addition, [`inference/failing-test`](@ref diagnostic/reference/inference/failing-test)
 reports a `@test` or `@test_throws` that always fails.
@@ -1889,6 +1890,32 @@ To avoid false positives, this is only reported when the value type can never
 match the declared type; calls where the value may match for some runtime
 values are not flagged.
 
+##### [`invoke` type error (`inference/type-error/invoke`)](@id diagnostic/reference/inference/type-error/invoke)
+
+**Default severity:** `Warning`
+
+Calls with `invoke` whose signature argument is not a tuple type, or whose
+arguments do not match that signature. Julia checks these before looking up
+the method and raises a `TypeError` at runtime.
+
+Examples:
+
+```@diagnostics; codes = ["inference/type-error/invoke"]
+invoke_sin(x::Float64) = invoke(sin, Float64, x)
+```
+
+```@diagnostics; codes = ["inference/type-error/invoke"]
+double(x::Int) = 2x
+
+invoke_double(x::Float64) = @invoke double(x::Int)
+```
+
+This is only reported when inference can prove that the call fails, e.g. not
+when an argument may match the signature for some runtime values. When the
+signature is valid but no unique method is found for it, the call is reported
+as [`inference/method-error`](@ref diagnostic/reference/inference/method-error)
+instead.
+
 ##### [Type assertion error (`inference/type-error/type-assert`)](@id diagnostic/reference/inference/type-error/type-assert)
 
 **Default severity:** `Warning`
@@ -1943,18 +1970,36 @@ end
     Calls with loosely typed arguments can be inferred to return `missing` even
     though the code rarely sees it: with `x` inferred as `Any`, `x == :flag`
     also matches `==(::Missing, ::Any)` and is inferred as `Union{Bool,Missing}`.
+    Likewise, `xs == ys` for `xs::Vector{Any}` is inferred as
+    `Union{Bool,Missing}` by the three-valued logic of Base, since comparing the
+    elements may return `missing`.
     JETLS does not report errors caused only by such results. It still reports
     them when the argument types of the call involve `Missing`, e.g. branching
-    on `xs[i] == 0` for `xs::Vector{Union{Missing,Int}}`.
-    As a limitation, branching on a call inferred as `Union{Bool,Missing}` is
-    not reported when its argument types do not involve `Missing`, even if the
-    callee itself returns `missing`:
+    on `xs[i] == 0` for `xs::Vector{Union{Missing,Int}}`, as well as fields
+    that may be `missing`, e.g. `r.flag` for `flag::Union{Missing,Bool}`, and
+    `missing` returned by functions defined outside Base, even for untyped
+    arguments:
+
+    ```@diagnostics; codes = ["inference/type-error/non-bool-cond"]
+    parse_flag(s::String) = s == "yes" ? true : s == "no" ? false : missing
+
+    function use_flag(s)
+        if parse_flag(s)  # reported, since `parse_flag("maybe")` is `missing`
+            return 1
+        end
+        return 2
+    end
+    ```
+
+    As a limitation, `missing` returned by a callback passed to a function of
+    Base is not reported when the argument types of the call do not involve
+    `Missing`, e.g. `all(parse_flag, strs)` or `all(r -> r.flag, rows)`:
 
     ```@diagnostics; absent_codes = ["inference/type-error/non-bool-cond"]
     parse_flag(s::String) = s == "yes" ? true : s == "no" ? false : missing
 
-    function use_flag(s::String)
-        if parse_flag(s)  # not reported, although `parse_flag("maybe")` is `missing`
+    function use_flags(strs::Vector{String})
+        if all(parse_flag, strs)  # not reported
             return 1
         end
         return 2

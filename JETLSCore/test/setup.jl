@@ -422,6 +422,9 @@ function withscript(
     end
 end
 
+# `Pkg.test` runs with `--warn-overwrite=yes`; note that this hides all of `stderr`
+suppress_overwrite_warnings(f::Function) = redirect_stderr(f, devnull)
+
 function make_DidOpenTextDocumentNotification(
         uri::URI, text::AbstractString;
         languageId::AbstractString = "julia",

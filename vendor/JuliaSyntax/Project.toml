@@ -8,9 +8,18 @@ Logging = "56ddb016-857b-54e1-b83d-db4d58db5568"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 Serialization = "9e88b42a-f829-5b0c-bbe9-9e923198166b"
 
+[deps]
+BaseSyntax = "bfd32023-066c-5f76-8dc3-939c60a69aeb"
+
+[sources.BaseSyntax]
+subdir = "vendor/BaseSyntax"
+rev = "c7630c60e95c55b2b29a69200e6295d3988909ae"
+url = "https://github.com/aviatesk/JETLS.jl"
+
 [targets]
 test = ["Test", "Serialization", "Logging"]
 
 [compat]
 julia = "1.0"
 Serialization = "1.0"
+BaseSyntax = "0.1"

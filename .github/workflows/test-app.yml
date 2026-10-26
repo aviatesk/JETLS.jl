@@ -11,16 +11,25 @@ on:
 
 jobs:
   test_release_installation:
-    name: Test release installation
+    name: Test release installation - Julia ${{ matrix.version }}
     if: inputs.release-installation
     runs-on: ubuntu-latest
+    # Failures against nightly Julia should not block a release, but stay visible.
+    continue-on-error: ${{ matrix.version == 'nightly' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        version:
+          - "1"
+          - "~1.14.0-0"
+          - "nightly"
     env:
       JULIA_DEPOT_PATH: /tmp/jetls-depot
     steps:
       - uses: actions/checkout@v7
       - uses: julia-actions/setup-julia@v3
         with:
-          version: "1"
+          version: ${{ matrix.version }}
           arch: x64
       - name: Install current checkout
         shell: julia --color=yes --startup-file=no {0}
@@ -54,13 +63,22 @@ jobs:
           test "$(jetls --version)" = "jetls version $(cat JETLS_VERSION), julia version $julia_version"
 
   test_app_commands:
-    name: Test jetls app commands
+    name: Test jetls app commands - Julia ${{ matrix.version }}
     runs-on: ubuntu-latest
+    # Failures against nightly Julia should not block merging or a release, but stay visible.
+    continue-on-error: ${{ matrix.version == 'nightly' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        version:
+          - "1" # most stable version
+          - "~1.14.0-0"
+          - "nightly"
     steps:
       - uses: actions/checkout@v7
       - uses: julia-actions/setup-julia@v3
         with:
-          version: "1" # most stable version
+          version: ${{ matrix.version }}
           arch: x64
       - uses: julia-actions/cache@v3
       - uses: julia-actions/julia-buildpkg@latest

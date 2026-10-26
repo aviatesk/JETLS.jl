@@ -162,6 +162,9 @@ end
 # Switch to Core.eval for sanity-checking
 expr_eval(mod, ex) = JuliaLowering.eval(mod, ex)
 
+softscope_ambiguous_local_warning(name) =
+    (:warn, Regex("^Assignment to `$name` in soft scope is ambiguous"))
+
 enable_softscope(e...) = Expr(:block, Expr(:softscope, true), e...)
 wrap_none(e...) = Expr(:block, e...)
 wrap_neutral(e...) = Expr(:try, # use try so that a value is returned
@@ -215,8 +218,8 @@ distraction_scope_end === "resolve me!"
         decls_s in (decls_func, decls_hard, decls_neutral, decls_none),
         local_s in (wrap_func, wrap_hard, wrap_neutral),
         lhs in lhs_names,
-        assign_ex in (:(local $lhs = "resolve me"; $lhs *= '!'; $lhs),
-                      :(global $lhs = "resolve me"; $lhs *= '!'; $lhs))
+        assign_ex in (Base.remove_linenums!(:(local $lhs = "resolve me"; $lhs *= '!'; $lhs)),
+                      Base.remove_linenums!(:(global $lhs = "resolve me"; $lhs *= '!'; $lhs)))
 
         ex = decls_s(local_s(assign_ex))
         soft_mode && (ex = enable_softscope(ex))
@@ -227,15 +230,21 @@ distraction_scope_end === "resolve me!"
         elseif lhs in (:spname, :argname) && decls_s != decls_func
             continue
         else
-            reference_ok = fl_eval(fl_mod, ex) === "resolve me!"
+            reference_ok = @test_logs(fl_eval(fl_mod, ex)) === "resolve me!"
             !reference_ok &&
                 @error("shadow test failed: flisp produced unexpected result; fix that or JL scope tests:\n", ex)
             @test reference_ok
         end
 
-        ok = expr_eval(jl_mod, ex) === "resolve me!"
+        ok = @test_logs(expr_eval(jl_mod, ex)) === "resolve me!"
         !ok && @error("shadow test failed:\n", ex)
         @test ok
+
+        Core.@latestworld
+        for mod in (jl_mod, fl_mod), n in (:gname, :name)
+            isdefined(mod, n) && Base.delete_binding(mod, n)
+        end
+        Core.@latestworld
     end
 
 end
@@ -346,11 +355,16 @@ f_g_shadow_sp_bound(1)
         else
             @assert !isdefined(jl_mod, lhs) && !isdefined(fl_mod, lhs)
             expected = results[lhs_i]
-            reference_ok = fl_eval(fl_mod, ex) === expected
+            # see the `@test_broken`s in "is_ambiguous_local"
+            ambiguous = !soft_mode && decls_s === decls_none && middle_s !== wrap_hard &&
+                assign_s === wrap_neutral
+            warnings = ambiguous && lhs === :name ? (softscope_ambiguous_local_warning(:name),) : ()
+            reference_ok = @test_logs(warnings..., fl_eval(fl_mod, ex)) === expected
             !reference_ok && @error("flisp produced unexpected result; fix that or JL scope tests:\n",
                                    "expected $(expected_s(expected)), got $(expected_s(!expected))\n", ex)
             @test reference_ok
-            ok = expr_eval(jl_mod, ex) === expected
+            ok = @test_logs(warnings..., broken=(ambiguous && lhs === :gname),
+                            expr_eval(jl_mod, ex)) === expected
             !ok && @error("expected $(expected_s(expected)), got $(expected_s(!expected))\n", ex)
             @test ok
         end
@@ -404,12 +418,14 @@ end
 
             if soft_mode
                 ex = enable_softscope(ex)
-                ok = expr_eval(test_mod, ex) === false
+                ok = @test_logs(expr_eval(test_mod, ex)) === false
                 !ok && error("expected assignment to global\n", ex)
                 @test ok
             else
-                # some of these produce warning in flisp
-                ok = expr_eval(test_mod, ex) === true
+                # see the `@test_broken`s in "is_ambiguous_local"
+                explicit = Meta.isexpr(g_assign, :global)
+                warnings = explicit ? () : (softscope_ambiguous_local_warning(:assigned_global),)
+                ok = @test_logs(warnings..., broken=explicit, expr_eval(test_mod, ex)) === true
                 !ok && error("expected assignment to local\n", ex)
                 @test ok
             end
@@ -429,7 +445,7 @@ function resolve_and_get_bindings(
         edition = JL_NEW_EDITION,
     )
     est = JuliaLowering.expr_to_est(ex, LineNumberNode(1),
-                                    JuliaSyntax.SyntaxContext(mod, edition))
+                                    SyntaxContext(mod, edition))
     ex0 = JuliaLowering.rebase_layers(est, mod)
     ex1 = JuliaLowering.expand_forms_1(ex0, world, true)
     ctx2, ex2 = JuliaLowering.expand_forms_2(ex1, world)
@@ -600,10 +616,10 @@ end
 end
 
 @testset "unescaped macro expansions introduce a hygienic scope" begin
-    @eval test_mod module macro_mod
+    fl_eval(test_mod, :(module macro_mod
         macro m(x); x; end
         macro mesc(x); esc(x); end
-    end
+    end))
 
     # A function not wrapped in anything is made a macro-module global (#32026)
     JuliaLowering.include_string(test_mod, "macro_mod.@m function f_bug_1(); 1; end")
@@ -1192,4 +1208,31 @@ end
     @test JuliaLowering.include_string(m, "@isdefined sin") === true
     @test JuliaLowering.include_string(m, "@isdefined not_a_thing_anywhere") === false
     @test JuliaLowering.include_string(m, "f() = @isdefined(Core); f()") === true
+end
+
+@testset "@locals" begin
+    # Inner declarations shadow outer ones, even when undefined
+    @test JuliaLowering.include_string(test_mod, """
+    let x = 1
+        let
+            local x
+            Base.@locals
+        end
+    end
+    """) == Dict{Symbol,Any}()
+
+    # Hygienic locals of a macro expansion are not visible
+    fl_eval(test_mod, raw"""
+    macro with_hidden_local(ex)
+        quote
+            local hidden = 1
+            $(esc(ex))
+        end
+    end
+    """)
+    @test jl_eval(test_mod, """
+    let x = 2
+        @with_hidden_local Base.@locals
+    end
+    """; edition=JL_OLD_EDITION) == Dict{Symbol,Any}(:x => 2)
 end

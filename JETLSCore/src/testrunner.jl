@@ -117,7 +117,7 @@ function compute_testsetinfos!(
 end
 
 function find_executable_testsets(st0_top::SyntaxTree)
-    testsets = JS.SyntaxList()
+    testsets = SyntaxList()
     traverse(st0_top) do st0::SyntaxTree
         if JS.head(st0) in (:function, :macro)
             # avoid visit inside function scope
