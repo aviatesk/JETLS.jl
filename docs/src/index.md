@@ -50,6 +50,16 @@ The [`jetls` executable app](@ref cli) is the main entry point for running JETLS
 JETLS supports [Julia](https://julialang.org/downloads) v1.12.2 through 1.14.x.
 It does not support Julia 1.12.1 or earlier, nor 1.15+/nightly.
 
+!!! tip "Optimized Julia builds"
+    For Julia 1.14 and later, juliaup provides optimized builds of Julia as
+    the experimental [`+opt` channels](https://github.com/JuliaLang/juliaup#using-juliaup),
+    e.g. `1.14+opt`, on which JETLS runs faster. Since the `jetls`
+    executable is pinned to the Julia used to install it, install it with
+    such a channel to run it on an optimized build:
+    ```bash
+    julia +1.14+opt -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="release")'
+    ```
+
 ### [Installing the `jetls` executable](@id index/server-installation/install)
 
 Install it with (make sure your `julia` command runs v1.12.2 through v1.14.x):

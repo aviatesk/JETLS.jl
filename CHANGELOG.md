@@ -27,6 +27,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > JETLS supports Julia 1.12.2 through 1.14.
 > It does not support Julia 1.12.1 or earlier, nor Julia 1.15+/nightly.
 
+<!-- Added: 2026-10-26 / Remove after: 2026-11-26 -->
+> [!tip]
+> JETLS runs noticeably faster on Julia 1.14 than on Julia 1.13, and even faster on the [optimized builds of Julia 1.14](https://discourse.julialang.org/t/julia-v1-14-0-alpha1-is-now-available/140136#p-648514-new-optimized-and-assertion-builds-experimental-1), which juliaup provides as the `+opt` channels:
+> for example, on an optimized build, `jetls check` takes about _14%_ less time on the JETLS repository ([scripts/selfcheck.sh](https://github.com/aviatesk/JETLS.jl/blob/master/scripts/selfcheck.sh)), and _35–50%_ less on mid-sized packages such as [JSON3.jl](https://github.com/quinnj/JSON3.jl), [DataStructures.jl](https://github.com/JuliaCollections/DataStructures.jl) and [Graphs.jl](https://github.com/JuliaGraphs/Graphs.jl).
+> See [Prerequisites](https://aviatesk.github.io/JETLS.jl/release/#index/server-installation/prerequisites) for how to run `jetls` on one.
+
 <!-- Added: 2026-10-11 / Remove after: 2026-11-11 -->
 > [!note]
 > TestRunner.jl is now developed in this repository as a [subpackage](https://github.com/aviatesk/JETLS.jl/tree/master/TestRunner) and released together with JETLS, and [aviatesk/TestRunner.jl](https://github.com/aviatesk/TestRunner.jl) is no longer updated.
