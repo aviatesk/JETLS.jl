@@ -75,6 +75,9 @@ jobs:
           - "~1.14.0-0"
           - "nightly"
     steps:
+      - name: Fail on purpose to check allowed failures
+        if: matrix.version == 'nightly'
+        run: exit 1
       - uses: actions/checkout@v7
       - uses: julia-actions/setup-julia@v3
         with:
