@@ -2,7 +2,7 @@ module test_cfg_analysis
 
 using Test
 using JETLSCore
-using JETLSCore: JL, JS
+using JETLSCore: JL, JS, BS
 
 include("../setup.jl")
 include("../jsjl-utils.jl")
@@ -1804,7 +1804,7 @@ function get_unreachable_statements(
         trim_error_nodes=false, recover_from_macro_errors=false)
     (; unreachable_statements) = JETLSCore.analyze_all_lambdas(ctx3, st3;
         allow_noreturn_optimization)
-    provs = [last(JL.flattened_provenance(s)) for s in unreachable_statements]
+    provs = [last(BS.flattened_provenance(s)) for s in unreachable_statements]
     sort!(provs; by=p -> first(JS.byte_range(p)))
     return [JS.sourcetext(p) for p in provs]
 end

@@ -41,7 +41,8 @@ end
     abstract_call_const(f, argtypes::Vector{Any}, world::UInt) -> result | nothing
 
 Abstract-call `f(argtypes...)` through `CC.NativeInterpreter` at `world` and return the
-inferred extended lattice element. `argtypes` may contain `Core.Const` entries;
+inferred extended lattice element, with any wrapper of the callee's argument slots, like
+`Core.InterMustAlias`, widened. `argtypes` may contain `Core.Const` entries;
 method dispatch uses the widened types while inference sees the lattice values,
 so const-prop fires through them.
 
@@ -64,5 +65,5 @@ function abstract_call_const(@nospecialize(f), argtypes::Vector{Any}, world::UIn
     frame = CC.InferenceState(result, #=cache_mode=#:no, interp)
     frame === nothing && return result.result
     CC.typeinf(interp, frame)
-    return result.result
+    return CC.widenslotwrapper(result.result)
 end

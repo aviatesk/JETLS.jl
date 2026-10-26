@@ -168,8 +168,16 @@ end
     @test evalbuiltin(Core.replaceglobal_partition, bpart, 7, 8) == (old = 7, success = true)
     @test evalbuiltin(Core.replaceglobal_partition, bpart, 7, 9, :monotonic) == (old = 8, success = false)
     @test evalbuiltin(Core.replaceglobal_partition, bpart, 8, 9, :monotonic, :monotonic) == (old = 8, success = true)
-    @test evalbuiltin(Core.depwarn_partition, bpart) === nothing
     @test Partitions.x === 9
+
+    # `depwarn_binding` warns whenever `--depwarn` is enabled: the caller decides whether
+    # the access is deprecated
+    b = convert(Core.Binding, GlobalRef(Partitions, :x))
+    if Base.JLOptions().depwarn == 0
+        @test (@test_nowarn evalbuiltin(Core.depwarn_binding, b)) === nothing
+    else
+        @test (@test_warn "Partitions.x is deprecated" evalbuiltin(Core.depwarn_binding, b)) === nothing
+    end
 
     bpart = partition(:once)
     @test evalbuiltin(Core.isdefinedglobal_partition, bpart, :monotonic) === false

@@ -503,14 +503,16 @@ end
             @test only(res.res.inference_error_reports) isa UndefVarErrorReport
         end
 
-        let res = @analyze_toplevel begin
-                usefunc(a) = sin(func_impl(a))
+        let res = suppress_stderr() do
+                @analyze_toplevel begin
+                    usefunc(a) = sin(func_impl(a))
 
-                func_impl(a) = length(a)
-                usefunc("julia") # should not error
+                    func_impl(a) = length(a)
+                    usefunc("julia") # should not error
 
-                func_impl(a) = a
-                usefunc(42)  # should not error too
+                    func_impl(a) = a
+                    usefunc(42)  # should not error too
+                end
             end
             @test isempty(res.res.inference_error_reports)
         end
@@ -776,6 +778,20 @@ end
         @test report isa ActualErrorWrapped
         @test report.err isa MethodError
         @test isempty(res.res.toplevel_warning_reports)
+    end
+
+    # the error holds the virtual module's `include`, which Julia 1.14 and later declares in
+    # a world newer than this code
+    let stderr_output = mktemp() do path, io
+            redirect_stderr(io) do
+                res = report_text("include(identity, @__MODULE__, \"somefile.jl\")")
+                report = res.res.toplevel_error_report
+                @test occursin("no method matching", sprint(JET.print_report, report))
+            end
+            close(io)
+            read(path, String)
+        end
+        @test !occursin("prior to its definition world", stderr_output)
     end
 
     # unsupported features
@@ -1383,6 +1399,9 @@ end
     end
 
     @testset "stacktrace scrubbing" begin
+        # JuliaLang/julia#61699 names macro method frames "macro expansion"
+        badmacro_func = VERSION ≥ v"1.14.0-DEV.2272" ? Symbol("macro expansion") : Symbol("@badmacro")
+
         # scrub internal frames until (errored) user macro
         mktemp() do filename, io
             res = report_text("""
@@ -1395,7 +1414,7 @@ end
             @test length(er.st) == 1
             sf = only(er.st)
             @test sf.file === Symbol(filename) && sf.line == 1
-            @test sf.func === Symbol("@badmacro")
+            @test sf.func === badmacro_func
         end
 
         @testset "documented macro expansion errors" begin
@@ -1417,7 +1436,7 @@ end
                     @test length(er.st) == 1
                     sf = only(er.st)
                     @test sf.file === Symbol(filename) && sf.line == 1
-                    @test sf.func === Symbol("@badmacro")
+                    @test sf.func === badmacro_func
                 end
             end
         end
@@ -1916,6 +1935,28 @@ end
         test_sum_over_string(res)
     end
 
+    let res = report_text("""
+            module LatestWorldGetproperty
+
+            const bar = sum
+
+            module Inner
+
+            using ..LatestWorldGetproperty
+
+            let
+                Core.@latestworld
+                LatestWorldGetproperty.bar("julia")
+            end
+
+            end # module Inner
+
+            end # module LatestWorldGetproperty
+        """)
+        @test isnothing(res.res.toplevel_error_report)
+        @test isempty(res.res.inference_error_reports)
+    end
+
     # this should work even if the accessed variable is not constant
     let res = @analyze_toplevel begin
             module foo
@@ -1935,6 +1976,21 @@ end
 
         @test isnothing(res.res.toplevel_error_report)
         test_sum_over_string(res; broken=true)
+    end
+
+    let context = gen_virtual_module(@__MODULE__)
+        Core.eval(context, :(module ExternalMutation
+            bar = sum
+            change() = (global bar = identity)
+        end))
+        Core.@latestworld
+
+        res = report_text("""
+            ExternalMutation.change()
+            ExternalMutation.bar("julia")
+        """; context=context, virtualize=false)
+        @test isnothing(res.res.toplevel_error_report)
+        @test isempty(res.res.inference_error_reports)
     end
 end
 
@@ -2203,6 +2259,61 @@ const CONCRETIZATION_PATTERNS_FILE =
     end
 end
 
+# whether the native code cache, i.e. the cache owned by `nothing`, has a `CodeInstance`
+# for `mi`
+function has_native_cache(mi::Core.MethodInstance)
+    isdefined(mi, :cache) || return false
+    ci = mi.cache
+    while true
+        ci.owner === nothing && return true
+        isdefined(ci, :next) || return false
+        ci = ci.next
+    end
+end
+
+@testset "`precompile` calls are not compiled" begin
+    vmod, res = @analyze_toplevel2 begin
+        f(x::Int) = x
+        precompile(f, (Int,))
+    end concretization_patterns = [:x_]
+    @test isnothing(res.res.toplevel_error_report)
+    f = @invokelatest vmod.f
+    @test !has_native_cache(Base.method_instance(f, (Int,)))
+end
+
+@testset "`precompile` with an explicit method" begin
+    let (vmod, res) = @analyze_toplevel2 begin
+            f(x::Number) = x
+            f(x::Int) = x + 1
+            m = which(f, (Number,))
+            @assert precompile(f, (Int,), m)
+            @assert precompile(Tuple{typeof(f), Int}, m)
+        end concretization_patterns = [:x_]
+        @test isnothing(res.res.toplevel_error_report)
+        f = @invokelatest vmod.f
+        m = @invokelatest vmod.m
+        mi = CC.specialize_method(m, Tuple{typeof(f),Int}, Core.svec())
+        @test !has_native_cache(mi)
+    end
+
+    @testset "$call" for call in (
+            "precompile(f, (String,), m)",
+            "precompile(Tuple{typeof(f), String}, m)",
+            "precompile(Int, m)",
+            "precompile(f, (Int[],), m)")
+        res = report_text("""
+            f(x::Int) = x
+            m = which(f, (Int,))
+            $call
+            """; concretization_patterns=[:x_], toplevel_logger=nothing)
+        report = res.res.toplevel_error_report
+        @test report isa ActualErrorWrapped
+        if report isa ActualErrorWrapped
+            @test report.err isa TypeError
+        end
+    end
+end
+
 @testset "`collect_toplevel_signature!`" begin
     res = @analyze_toplevel analyze_from_definitions=false begin
         foo() = return
@@ -2258,16 +2369,18 @@ end
 end
 
 @testset "signature locations" begin
-    res = report_text("""
-        f() = 1
+    res = suppress_stderr() do
+        report_text("""
+            f() = 1
 
-        function g(x)
-            x
-        end
-        for i in 1:2
-            @eval h() = \$i
-        end
-        """, "signature-locations.jl"; analyze_from_definitions=true)
+            function g(x)
+                x
+            end
+            for i in 1:2
+                @eval h() = \$i
+            end
+            """, "signature-locations.jl"; analyze_from_definitions=true)
+    end
     @test [linenode.line for (; linenode) in res.res.signature_infos] == [1, 3, 7, 7]
     @test all(res.res.signature_infos) do (; linenode)
         linenode.file === Symbol("signature-locations.jl")
@@ -2357,7 +2470,10 @@ end
     let res = @analyze_toplevel analyze_from_definitions=true ignore_missing_comparison=true begin
             f(a::Vector{T}, b::Vector{T}) where T<:Integer = a == b ? true : false
         end
-        @test isempty(res.res.inference_error_reports)
+        # Since JuliaLang/julia#62263, `typeof(::Memory{T})` is inferred as a
+        # `Type{Memory{T}}` that is not a `DataType`, so `supertype(::UnionAll)` is also
+        # analyzed
+        @test isempty(res.res.inference_error_reports) broken=VERSION≥v"1.14.0-DEV.2603"
     end
     # make sure we get the error report from the interactive entry
     let res = report_call((Any, Nothing)) do x, y
@@ -4114,7 +4230,8 @@ function test_package_file(test_func::Function, module_ex::Expr;
                            ignore_throws::Bool=true,
                            jetconfigs...)
     Meta.isexpr(module_ex, :module) || throw(ArgumentError("Expected :module expression"))
-    pkgname = String(module_ex.args[2]::Symbol)
+    nameidx = findfirst(arg -> arg isa Symbol, module_ex.args)::Int
+    pkgname = String(module_ex.args[nameidx]::Symbol)
     old = Pkg.project().path
     pkgcode = Base.remove_linenums!(module_ex)
     mktempdir() do tempdir

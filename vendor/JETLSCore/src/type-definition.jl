@@ -79,7 +79,7 @@ end
 function extract_target_type(@nospecialize typ)
     widened = CC.widenconst(typ)
     if CC.isType(widened)
-        return widened.parameters[1]
+        return Analyzer.type_parameter(widened)
     elseif widened === Union{}
         return nothing
     else

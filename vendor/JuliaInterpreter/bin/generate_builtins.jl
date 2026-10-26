@@ -34,7 +34,7 @@ const RECENTLY_ADDED = Core.Builtin[
     Core.cancellation_point!,
     Core.task_result_type,
     Core.const_memoryrefget,
-    Core.depwarn_partition,
+    Core.depwarn_binding,
     Core.getglobal_partition,
     Core.isdefinedglobal_partition,
     Core.modifyglobal_partition,
@@ -76,7 +76,8 @@ const REQUIRES_WORLD = Core.Builtin[
     Core.modifyglobal_partition,
     Core.replaceglobal_partition,
     Core.setglobalonce_partition,
-    Core.depwarn_partition,
+    # its message reads the value of the deprecated binding
+    Core.depwarn_binding,
     # their `op` callback dispatches in the calling world
     modifyfield!,
     Core.memoryrefmodify!,

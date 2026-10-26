@@ -665,6 +665,8 @@ function inference_error_report_code(@nospecialize report::JET.InferenceErrorRep
         return INFERENCE_TYPE_ERROR_TYPE_ASSERT_CODE
     elseif report isa KeywordTypeErrorReport
         return INFERENCE_TYPE_ERROR_KEYWORD_CODE
+    elseif report isa InvokeTypeErrorReport
+        return INFERENCE_TYPE_ERROR_INVOKE_CODE
     elseif report isa NonBooleanCondErrorReport
         return INFERENCE_TYPE_ERROR_NON_BOOL_COND_CODE
     elseif report isa FailingTestReport
@@ -834,9 +836,24 @@ function macro_expansion_stacktrace(bt::Vector{<:Union{Base.InterpreterIP,Ptr{Cv
         frame.func === :_invoke_in_world && frame.file === JL_INVOKE_IN_WORLD_FILE && return stack
         # `JL.expand_macro` itself threw, e.g. for a macro name that is not found
         frame.func === :expand_macro && frame.file === JL_MACRO_FILE && return stack
-        frame.from_c || push!(stack, frame)
+        frame.from_c || push!(stack, with_codeinst_linfo(frame))
     end
     return stack
+end
+
+# Julia 1.14 compiles macros without inference, and `StackTraces.lookup` leaves `linfo`
+# unset for the frames of such code, so take it from the `CodeInstance` of the frame.
+function with_codeinst_linfo(frame::Base.StackTraces.StackFrame)
+    (frame.linfo === nothing && !frame.inlined && frame.pointer ≠ 0) || return frame
+    infos = @ccall jl_lookup_code_address(
+        Ptr{Cvoid}(frame.pointer)::Ptr{Cvoid}, false::Cint)::Core.SimpleVector
+    isempty(infos) && return frame
+    ci = (infos[end]::Core.SimpleVector)[4]
+    ci isa Core.CodeInstance || return frame
+    mi = ci.def
+    mi isa Core.MethodInstance && mi.def isa Method || return frame
+    return Base.StackTraces.StackFrame(frame.func, frame.file, frame.line, ci,
+        frame.from_c, frame.inlined, frame.pointer)
 end
 
 # The signatures are shown in `world`, where the macro was expanded, since the server world
@@ -874,14 +891,14 @@ function emit_macro_diagnostics!(
     isempty(macro_diags) && return diagnostics
     for d in macro_diags
         message = postprocessor(d.msg)
-        provs = JS.flattened_provenance(d.node)
+        provs = BS.flattened_provenance(d.node)
         call_site = first(provs)
         in_file = JS.filename(d.node) == JS.filename(call_site)
         if d.code == LOWERING_INACTIVE_CODE
             # Nodes from old-style macro expansions only carry the line of the preceding
             # `LineNumberNode`, which may well be in the active branch, while anchoring
             # at the macro call would gray out active code.
-            (in_file && JS.sourceref(d.node) isa JS.SourceRef) || continue
+            (in_file && BS.sourceref(d.node) isa BS.SourceRef) || continue
         end
         if in_file
             range = jsobj_to_range(d.node, fi)
@@ -910,8 +927,8 @@ function provenances_to_related_information!(relatedInformation::Vector{Diagnost
     for prov in provs
         filename = JS.filename(prov)
         uri = to_valid_uri(filename)
-        sr = JS.sourceref(prov)
-        if sr isa JS.SourceRef
+        sr = BS.sourceref(prov)
+        if sr isa BS.SourceRef
             # use precise location information if available
             sf = JS.sourcefile(sr)
             code = JS.sourcetext(sf)
@@ -992,7 +1009,7 @@ function has_matching_argument_binding(
     for (binfo2, _) in binding_occurrences
         binfo2.kind === :argument || continue
         binfo2.name == name || continue
-        provs2 = JS.flattened_provenance(JL.binding_ex(ctx3, binfo2.id))
+        provs2 = BS.flattened_provenance(JL.binding_ex(ctx3, binfo2.id))
         is_from_user_ast(provs2) || continue
         jsobj_to_range(last(provs2), fi) == range && return true
     end
@@ -1167,7 +1184,7 @@ function analyze_unconstrained_static_parameters!(
             binfo.is_internal && continue
             bn = binfo.name
             startswith(bn, "#") && continue
-            provs = JS.flattened_provenance(JL.binding_ex(ctx3, binfo.id))
+            provs = BS.flattened_provenance(JL.binding_ex(ctx3, binfo.id))
             is_from_user_ast(provs) || continue
             source = last(provs)
             JS.sourcetext(source) == "_" && continue
@@ -1213,7 +1230,7 @@ function analyze_unused_bindings!(
         if allow_unused_underscore && startswith(bn, '_')
             continue
         end
-        provs = JS.flattened_provenance(JL.binding_ex(ctx3, binfo.id))
+        provs = BS.flattened_provenance(JL.binding_ex(ctx3, binfo.id))
         is_from_user_ast(provs) || continue
         prov = last(provs)
         is_argument = bk === :argument
@@ -1275,7 +1292,7 @@ function analyze_unused_assignments!(
             continue
         end
         for dead_def_tree in dsinfo.dead_defs
-            provs = JL.flattened_provenance(dead_def_tree)
+            provs = BS.flattened_provenance(dead_def_tree)
             is_from_user_ast(provs) || continue
             prov = last(provs)
             assignment = assignment_expression_for_prov(st0, prov)
@@ -1339,14 +1356,14 @@ function collect_undef_global_candidates!(
         if !isnothing(analyzer)
             b = convert(Core.Binding, GlobalRef(bmod, Symbol(binfo.name)))
             # JET records the state of an imported global on the partition of its owner
-            _, (_, bp) = CC.walk_binding_partition(b, Base.lookup_binding_partition(world, b), world)
+            bp = leaf_binding_partition(b, world)
             haskey(JET.AnalyzerState(analyzer).binding_states, bp) && continue
         end
         bn = binfo.name
         message = postprocessor("`$(bmod).$(bn)` is not defined")
         for occ in sort!(collect(occurrences); by = o -> JS.first_byte(o.tree))
             occ.kind === :use || continue
-            provs = JS.flattened_provenance(occ.tree)
+            provs = BS.flattened_provenance(occ.tree)
             is_from_user_ast(provs) || continue
             byte_range = JS.byte_range(last(provs))
             excluded_ranges = @something excluded_ranges test_exception_ranges(st3)
@@ -1356,6 +1373,16 @@ function collect_undef_global_candidates!(
             key in reported ? continue : push!(reported, key)
             push!(candidates, UndefGlobalCandidate(bmod, bn, range, message))
         end
+    end
+end
+
+function leaf_binding_partition(b::Core.Binding, world::UInt)
+    partition = Base.lookup_binding_partition(world, b)
+    @static if isdefinedglobal(CC, :LeafAccess)
+        return CC.walk_binding_partition(b, partition, world, #=write=#false).second.partition
+    else
+        _, (_, bp) = CC.walk_binding_partition(b, partition, world)
+        return bp
     end
 end
 
@@ -1369,7 +1396,7 @@ function test_exception_ranges(st3::SyntaxTree)
         JS.head(node) === :block && JS.numchildren(node) ≥ 1 || return nothing
         is_enter_test_exception(node[1]) || return nothing
         for i in 2:JS.numchildren(node)
-            push!(ranges, JS.byte_range(last(JS.flattened_provenance(node[i]))))
+            push!(ranges, JS.byte_range(last(BS.flattened_provenance(node[i]))))
         end
         return nothing
     end
@@ -1525,6 +1552,11 @@ function find_deprecated_binding(b::Core.Binding, world::UInt)
         if kind == Base.PARTITION_KIND_IMPLICIT_GLOBAL
             b = Base.partition_restriction(bpart)::Core.Binding
         elseif kind == Base.PARTITION_KIND_IMPLICIT_CONST
+            # Since Julia 1.14 `bpart` carries the deprecation of its source as well, so the
+            # source only needs to be found for the message of a deprecated binding
+            @static if isdefinedglobal(Base, :PARTITION_FLAG_IMPLICITLY_DEPRECATED)
+                bpart.kind & Base.PARTITION_FLAG_DEPRECATED == 0 && return deprecated
+            end
             visited = @something visited Core.Binding[]
             push!(visited, b)
             b = @something implicit_const_source(b, bpart, world, visited) return deprecated
@@ -1778,7 +1810,7 @@ function report_deprecated_use!(
         diagnostics::Vector{Diagnostic}, reported::Set{Range}, fi::FileInfo,
         st::SyntaxTree, code::String, message::String
     )
-    provs = JS.flattened_provenance(st)
+    provs = BS.flattened_provenance(st)
     is_from_user_ast(provs) || return diagnostics
     range = jsobj_to_range(last(provs), fi)
     range in reported && return diagnostics
@@ -1815,7 +1847,7 @@ function analyze_undefined_local_bindings!(
         # Compute relatedInformation once per variable (shared across all undef uses)
         relatedInformation = DiagnosticRelatedInformation[]
         for def_tree in uinfo.defs
-            def_provs = JL.flattened_provenance(def_tree)
+            def_provs = BS.flattened_provenance(def_tree)
             isempty(def_provs) && continue
             innermost = last(def_provs)
             uri2filename(uri) == JS.filename(innermost) || continue
@@ -1826,7 +1858,7 @@ function analyze_undefined_local_bindings!(
         end
         related = @somereal relatedInformation Some(nothing)
         for (is_strict_undef, undef_use_tree) in uinfo.undef_uses
-            provs = JL.flattened_provenance(undef_use_tree)
+            provs = BS.flattened_provenance(undef_use_tree)
             is_from_user_ast(provs) || continue
             range = jsobj_to_range(last(provs), fi)
             key = LoweringDiagnosticKey(range, binfo.kind, binfo.name)
@@ -1898,7 +1930,7 @@ function analyze_captured_boxes!(
         startswith(binfo.name, '#') && continue
         is_captured_binding(binfo, ctx4) || continue
         bn = binfo.name
-        provs = JL.flattened_provenance(JL.binding_ex(ctx4, binfo.id))
+        provs = BS.flattened_provenance(JL.binding_ex(ctx4, binfo.id))
         is_from_user_ast(provs) || continue
         range = jsobj_to_range(last(provs), fi)
         key = LoweringDiagnosticKey(range, :boxed, bn)
@@ -1940,7 +1972,7 @@ function captured_box_related_information(
     assignment_ranges = Set{Range}()
     for occurrence in get(binding_occurrences, binfo, ())
         occurrence.kind === :def || continue
-        provs = JL.flattened_provenance(occurrence.tree)
+        provs = BS.flattened_provenance(occurrence.tree)
         is_from_user_ast(provs) || continue
         push!(assignment_ranges, jsobj_to_range(last(provs), fi))
     end
@@ -1980,7 +2012,7 @@ function find_capture_sites(
                 # Find references to binfo.id inside this lambda
                 traverse(node3) do inner::SyntaxTree
                     if JS.head(inner) === :bindingid && JL.syntax_id(inner) == binfo.id
-                        varprov = last(JL.flattened_provenance(inner))
+                        varprov = last(BS.flattened_provenance(inner))
                         push!(capture_ranges, jsobj_to_range(varprov, fi))
                     end
                 end
@@ -2000,7 +2032,7 @@ function analyze_ambiguous_soft_scope!(
         binfo.is_internal && continue
         bn = binfo.name
         startswith(bn, '#') && continue
-        provs = JS.flattened_provenance(JL.binding_ex(ctx3, binfo.id))
+        provs = BS.flattened_provenance(JL.binding_ex(ctx3, binfo.id))
         is_from_user_ast(provs) || continue
         prov = last(provs)
         range = jsobj_to_range(prov, fi)
@@ -2357,7 +2389,7 @@ function analyze_unreachable_code!(
             # terminator-bearing argument), but keep iterating — genuine user-visible
             # unreachable code may still follow the artifact.
             first(JS.byte_range(child)) > terminator_end || continue
-            provs = JL.flattened_provenance(child)
+            provs = BS.flattened_provenance(child)
             is_from_user_ast(provs) || continue
             range = jsobj_to_range(last(provs), fi)
             if isnothing(first_range)
@@ -2392,7 +2424,7 @@ function analyze_unreachable_else!(
     JS.numchildren(st3) >= 3 || return nothing
     is_unreachable_block(st3[2], unreachable_statements) && return nothing
     is_unreachable_block(st3[3], unreachable_statements) || return nothing
-    provs = JL.flattened_provenance(st3[3])
+    provs = BS.flattened_provenance(st3[3])
     is_from_user_ast(provs) || return nothing
     else_block = last(provs)
     ps = fi.parsed_stream
@@ -2433,18 +2465,18 @@ unreachable_code_diagnostic(range::Range, delete_range::Range) = Diagnostic(;
 # `compile_body` (linear IR pass), which JETLS doesn't run. Mirror that
 # check against `st3` so unresolved gotos still surface as diagnostics.
 function analyze_unresolved_gotos!(
-        diagnostics::Vector{Diagnostic}, fi::FileInfo, st3::SyntaxTree
+        diagnostics::Vector{Diagnostic}, fi::FileInfo, st0::SyntaxTree, st3::SyntaxTree
     )
     traverse(st3) do st3′::SyntaxTree
         JS.head(st3′) in (:lambda, :toplevel_lambda) || return nothing
         JS.numchildren(st3′) >= 4 || return nothing
-        check_lambda_gotos!(diagnostics, fi, st3′[4])
+        check_lambda_gotos!(diagnostics, fi, st0, st3′[4])
         return nothing
     end
 end
 
 function check_lambda_gotos!(
-        diagnostics::Vector{Diagnostic}, fi::FileInfo, body3::SyntaxTree
+        diagnostics::Vector{Diagnostic}, fi::FileInfo, st0::SyntaxTree, body3::SyntaxTree
     )
     gotos, labels = collect_gotos_labels(body3)
     label_names = Set{String}(name for (name, _) in labels)
@@ -2465,10 +2497,13 @@ function check_lambda_gotos!(
     for (name, st) in labels
         name in referenced && continue
         # Skip macro-generated labels — only report user-written ones.
-        provs = JL.flattened_provenance(st)
+        provs = BS.flattened_provenance(st)
         is_from_user_ast(provs) || continue
-        label_call = @something provenance_ancestor(st, :macrocall) continue
-        get_macrocall_name(label_call) == "@label" || continue
+        label_calls = byte_ancestors(st0, JS.byte_range(st)) do st0′::SyntaxTree
+            JS.head(st0′) === :macrocall && get_macrocall_name(st0′) == "@label"
+        end
+        isempty(label_calls) && continue
+        label_call = first(label_calls)
         JS.numchildren(label_call) >= 2 || continue
         delete_range = line_absorbing_delete_range(label_call, fi)
         push!(diagnostics, Diagnostic(;
@@ -2552,7 +2587,7 @@ function analyze_lowered_code!(
 
     analyze_captured_boxes!(diagnostics, uri, fi, ctx4, st3, binding_occurrences, reported)
     analyze_unreachable_code!(diagnostics, fi, st3, unreachable_statements)
-    analyze_unresolved_gotos!(diagnostics, fi, st3)
+    analyze_unresolved_gotos!(diagnostics, fi, st0, st3)
 
     if !skip_analysis_requiring_context
         collect_undef_global_candidates!(candidates, fi, st3, binding_occurrences,
@@ -2616,7 +2651,7 @@ function per_stmt_diagnostics!(
                     msg *= "\n" * postprocessor(errmsg)
                     relatedInformation = stacktrace_to_related_information(st, world, postprocessor)
                 end
-                provs = JS.flattened_provenance(err.ex)
+                provs = BS.flattened_provenance(err.ex)
                 provs′ = @view provs[2:end]
                 if !isempty(provs′)
                     relatedInformation = @something relatedInformation DiagnosticRelatedInformation[]

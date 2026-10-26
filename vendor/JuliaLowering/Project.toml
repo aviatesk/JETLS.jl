@@ -11,14 +11,17 @@ FileWatching = "7b1f6079-737a-58dc-b8bc-7a2ca5c1b5ee"
 
 [deps]
 JuliaSyntax = "02a177f8-2b16-5240-a0b4-02ed40703cda"
+BaseSyntax = "bfd32023-066c-5f76-8dc3-939c60a69aeb"
 
 [sources.JuliaSyntax]
-subdir = "vendor/JuliaSyntax"
-rev = "b4c857b5e537f784b0900398297668e9a93ca90d"
-url = "https://github.com/aviatesk/JETLS.jl"
+path = "../JuliaSyntax"
+
+[sources.BaseSyntax]
+path = "../BaseSyntax"
 
 [targets]
 test = ["Test", "FileWatching", "Markdown", "REPL"]
 
 [compat]
 julia = "1"
+BaseSyntax = "0.1"

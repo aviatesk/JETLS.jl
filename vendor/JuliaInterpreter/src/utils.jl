@@ -27,8 +27,6 @@ function Base.nameof(frame::Frame)
     isa(s, Method) ? s.name : nameof(s)
 end
 
-_Typeof(x) = isa(x, Type) ? Type{x} : typeof(x)
-
 function to_function(@nospecialize(x), world::UInt)
     isa(x, GlobalRef) ? invoke_in_world(world, getglobal, x.mod, x.name) : x
 end
@@ -895,7 +893,7 @@ function Base.StackTraces.StackFrame(frame::Frame)
     if scope isa Method
         method = scope
         method_args = Any[something(frame.framedata.locals[i]) for i in 1:method.nargs]
-        argt = Tuple{mapany(_Typeof, method_args)...}
+        argt = Tuple{mapany(Core.Typeof, method_args)...}
         sig = method.sig
         atype, sparams = ccall(:jl_type_intersection_with_env, Any, (Any, Any), argt, sig)::SimpleVector
         if atype === Union{}

@@ -75,7 +75,7 @@ struct InferredTreeContext
     inferred_tree::SyntaxTree
     annotations::TreeAnnotations
     # `byte_range => kind` for the surface node each lowered node was lowered
-    # from (first element of `JS.flattened_provenance`). First-write-wins,
+    # from (first element of `BS.flattened_provenance`). First-write-wins,
     # mirroring a `traverse`-then-pick-first lookup.
     surface_kind_index::Dict{UnitRange{Int}, Symbol}
     # Every lowered node keyed by its own `byte_range`, in preorder. The
@@ -152,7 +152,7 @@ struct FileInfo
             inferred_context_cache::Union{Nothing,InferredContextCache} = nothing
         )
         syntax_tree0 = cache_tree0 ?
-            JS.build_tree(JS.SyntaxTree, parsed_stream; filename) : nothing
+            JS.build_tree(SyntaxTree, parsed_stream; filename) : nothing
         @static if JETLS_TEST_MODE
             syntax_tree0 === nothing || register_syntax_tree0!(syntax_tree0)
         end
@@ -667,6 +667,7 @@ const INFERENCE_UNDEF_KEYWORD_CODE = "inference/undef-keyword"
 const INFERENCE_TYPE_ERROR_NON_BOOL_COND_CODE = "inference/type-error/non-bool-cond"
 const INFERENCE_TYPE_ERROR_TYPE_ASSERT_CODE = "inference/type-error/type-assert"
 const INFERENCE_TYPE_ERROR_KEYWORD_CODE = "inference/type-error/keyword"
+const INFERENCE_TYPE_ERROR_INVOKE_CODE = "inference/type-error/invoke"
 const INFERENCE_FAILING_TEST_CODE = "inference/failing-test"
 const INFERENCE_DEPRECATED_CALL_CODE = "inference/deprecated-call"
 const DEPRECATED_INFERENCE_NON_BOOLEAN_COND_CODE = "inference/non-boolean-cond"
@@ -712,6 +713,7 @@ const ALL_DIAGNOSTIC_CODES = Set{String}(String[
     INFERENCE_TYPE_ERROR_NON_BOOL_COND_CODE,
     INFERENCE_TYPE_ERROR_TYPE_ASSERT_CODE,
     INFERENCE_TYPE_ERROR_KEYWORD_CODE,
+    INFERENCE_TYPE_ERROR_INVOKE_CODE,
     INFERENCE_FAILING_TEST_CODE,
     INFERENCE_DEPRECATED_CALL_CODE,
     TESTRUNNER_TEST_FAILURE_CODE,

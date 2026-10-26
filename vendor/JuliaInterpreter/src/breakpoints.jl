@@ -145,7 +145,9 @@ breakpoint(radius2, Tuple{Int,Int}, :(y > x))
 function breakpoint(f::Union{Method, Callable}, sig=nothing, line::Integer=0, condition::Condition=nothing)
     if sig !== nothing && f isa Callable
         sig = Base.to_tuple_type(sig)
-        sig = Tuple{_Typeof(f), sig.parameters...}
+        # `Type{f}` rather than `Core.Typeof(f)`, which is `Core.TypeEgal{f}` on Julia 1.14+:
+        # the signature only needs to match methods, and is shown to the user
+        sig = Tuple{isa(f, Type) ? Type{f} : typeof(f), sig.parameters...}
     end
     bp = BreakpointSignature(f, sig, line, condition, Ref(true), BreakpointRef[])
     add_to_existing_framecodes(bp)

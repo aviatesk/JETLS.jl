@@ -195,11 +195,11 @@ function maybe_evaluate_builtin(interp::Interpreter, frame::Frame, call_expr::Ex
         return Some{Any}(Core.declare_const(getargs(interp, args, frame)...))
     elseif @static isdefinedglobal(Core, :declare_global) && f === Core.declare_global
         return Some{Any}(Core.declare_global(getargs(interp, args, frame)...))
-    elseif @static isdefinedglobal(Core, :depwarn_partition) && f === Core.depwarn_partition
+    elseif @static isdefinedglobal(Core, :depwarn_binding) && f === Core.depwarn_binding
         if nargs == 1
-            return Some{Any}(Base.invoke_in_world(frame.world, Core.depwarn_partition, lookup(interp, frame, args[2])))
+            return Some{Any}(Base.invoke_in_world(frame.world, Core.depwarn_binding, lookup(interp, frame, args[2])))
         else
-            return Some{Any}(Base.invoke_in_world(frame.world, Core.depwarn_partition, getargs(interp, args, frame)...))
+            return Some{Any}(Base.invoke_in_world(frame.world, Core.depwarn_binding, getargs(interp, args, frame)...))
         end
     elseif f === Core.donotdelete
         return Some{Any}(Core.donotdelete(getargs(interp, args, frame)...))

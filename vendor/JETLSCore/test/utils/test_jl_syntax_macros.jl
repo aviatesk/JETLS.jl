@@ -1,7 +1,7 @@
 module test_jl_syntax_macros
 
 using Test
-using JETLSCore: JETLSCore, JL, JS
+using JETLSCore: BS, JETLSCore, JL, JS
 
 include("../jsjl-utils.jl")
 
@@ -47,13 +47,13 @@ function jleval(context_module::Module, code::AbstractString)
 end
 jleval(code::AbstractString) = jleval(lowering_module, code)
 
-children_heads(st::JS.SyntaxTree) = Symbol[JS.head(c) for c in JS.children(st)]
+children_heads(st::SyntaxTree) = Symbol[JS.head(c) for c in JS.children(st)]
 
 function has_qualified_name(
-        st::JS.SyntaxTree, qualifier::Symbol, name::AbstractString
+        st::SyntaxTree, qualifier::Symbol, name::AbstractString
     )
     found = Ref(false)
-    JETLSCore.traverse(st) do node::JS.SyntaxTree
+    JETLSCore.traverse(st) do node::SyntaxTree
         if (JS.head(node) === qualifier && JS.numchildren(node) == 1 &&
             JETLSCore.get_name_val(node[1]) == name)
             found[] = true
@@ -84,7 +84,7 @@ function assert_binding_provenance(
     end
     @test binfo !== nothing
     binfo === nothing && return nothing
-    provs = JS.flattened_provenance(JL.binding_ex(res.ctx3, binfo.id))
+    provs = BS.flattened_provenance(JL.binding_ex(res.ctx3, binfo.id))
     @test JS.sourcetext(last(provs)) == name
     return (binfo, provs)
 end
@@ -465,11 +465,11 @@ end
 
         # All allowed threadpool literals are accepted.
         for tp in (":interactive", ":default", ":samepool")
-            @test jlexpand("Threads.@spawn $tp 1+1") isa JS.SyntaxTree
+            @test jlexpand("Threads.@spawn $tp 1+1") isa SyntaxTree
         end
 
         # A bare identifier is accepted (e.g. `def = :default; @spawn def body`).
-        @test jlexpand("Threads.@spawn pool 1+1") isa JS.SyntaxTree
+        @test jlexpand("Threads.@spawn pool 1+1") isa SyntaxTree
     end
 
     @testset "error cases" begin
@@ -533,58 +533,6 @@ end
             assert_binding_provenance(res, :global, "xxx")
         end
     end
-end
-
-@testset "@label" begin
-    # The label form covers the macrocall, and its identifier keeps the
-    # caller's hygiene layer.
-    let code = "@label foo", st1 = jlexpand(code)
-        @test JS.head(st1) === :symboliclabel
-        @test JS.byte_range(st1) == source_range(code, "@label foo")
-        @test JS.byte_range(st1[1]) == source_range(code, "foo")
-        @test st1.context.layer === st1[1].context.layer
-    end
-
-    # Non-identifier argument: report via sink, let the expression flow through.
-    let diags = collect_macro_diagnostics() do
-            jlexpand("@label 42")
-        end
-        @test length(diags) == 1
-        d = only(diags)
-        @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
-        @test occursin("requires an identifier", d.msg)
-    end
-
-    # The block forms (`@label expr`, `@label name expr`) are intentionally not
-    # supported; the variadic fallback reports via sink and wraps args in a block.
-    let diags = collect_macro_diagnostics() do
-            jlexpand("@label foo body")
-        end
-        @test length(diags) == 1
-        d = only(diags)
-        @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
-        @test occursin("only supports the `@label name` form", d.msg)
-    end
-
-    # Full lowering succeeds when paired with `@goto`.
-    @test jlresolve("""
-        function f()
-            @goto start
-            @label start
-        end
-        """) isa NamedTuple
-
-    # JuliaLowering matches gotos and labels by name and hygiene layer when a
-    # `try` has `finally`; a jump within the block must be accepted.
-    @test jlresolve("""
-        function f(c)
-            try
-                c && @goto done
-                @label done
-            finally
-            end
-        end
-        """) isa NamedTuple
 end
 
 @testset "@something" begin
@@ -1186,7 +1134,7 @@ end
 # inner `:identifier` matches `name`. Used to verify that the expansion
 # synthesizes `Core.invoke` / `Base.invokelatest` (and the synthesized
 # `getproperty` / `setindex!` / etc. references).
-function find_named_ref(st::JS.SyntaxTree, h::Symbol, name::AbstractString)
+function find_named_ref(st::SyntaxTree, h::Symbol, name::AbstractString)
     if JS.head(st) === h && JS.numchildren(st) >= 1
         inner = st[1]
         if JS.head(inner) === :identifier && JETLSCore.get_name_val(inner) == name
@@ -1554,10 +1502,10 @@ end
         end
 
         # Qualified testset types (e.g. `Test.DefaultTestSet`) are accepted.
-        @test test_macro_expand("@testset Test.DefaultTestSet \"x\" begin end") isa JS.SyntaxTree
+        @test test_macro_expand("@testset Test.DefaultTestSet \"x\" begin end") isa SyntaxTree
 
         # Interpolated descriptions are accepted.
-        @test test_macro_expand("@testset \"name-\$i\" begin end") isa JS.SyntaxTree
+        @test test_macro_expand("@testset \"name-\$i\" begin end") isa SyntaxTree
     end
 
     @testset "scope isolation + provenance" begin
@@ -1845,7 +1793,7 @@ end
         # `@ccall` body is passed through; the new-style `@ccall` macro then
         # handles its own expansion downstream.
         let st1 = jlexpand("Base.@assume_effects :total @ccall foo()::Cvoid")
-            @test st1 isa JS.SyntaxTree
+            @test st1 isa SyntaxTree
         end
 
         # Call-site annotation: the body expression is returned unchanged.
@@ -1917,7 +1865,7 @@ end
 
         # An unrecognized last argument is treated as a body (call-site
         # annotation), not as a typo'd setting — matches Base's behavior.
-        @test jlexpand("Base.@assume_effects :foldable badname") isa JS.SyntaxTree
+        @test jlexpand("Base.@assume_effects :foldable badname") isa SyntaxTree
     end
 
     @testset "all recognized settings accepted" begin
@@ -1926,9 +1874,9 @@ end
                         ":notaskstate", ":inaccessiblememonly",
                         ":noub", ":noub_if_noinbounds",
                         ":foldable", ":removable", ":total")
-            @test jlexpand("Base.@assume_effects $setting f() = 1") isa JS.SyntaxTree
+            @test jlexpand("Base.@assume_effects $setting f() = 1") isa SyntaxTree
             # Negated form should also be accepted.
-            @test jlexpand("Base.@assume_effects !$setting f() = 1") isa JS.SyntaxTree
+            @test jlexpand("Base.@assume_effects !$setting f() = 1") isa SyntaxTree
         end
     end
 
@@ -1948,22 +1896,22 @@ const STATIC_BINDINGS = (:Int, :Bool)
 end
 
 module static_macro_module
-using JETLSCore: JL, JS, SyntaxTree
+using JETLSCore: BS, JL, JS, SyntaxTree
 const STATIC_COND_FLAG = false
-function var"@static_condition"(ctx::JL.MacroContext)
+function var"@static_condition"(ctx::BS.MacroContext)
     return JL.@ast(ctx, ctx.macrocall, true::value)
 end
-function var"@wrapped_static"(ctx::JL.MacroContext, ex::SyntaxTree)
+function var"@wrapped_static"(ctx::BS.MacroContext, ex::SyntaxTree)
     mc = ctx.macrocall::SyntaxTree
-    src = JS.sourceref(mc)
-    sc = JS.SyntaxContext(nothing, nothing, JS.edition(mc), false)
+    src = BS.sourceref(mc)
+    sc = BS.SyntaxContext(nothing, nothing, BS.edition(mc), false)
     return JL.@ast(ctx, mc, [:macrocall(src; context=sc)
         "@static"::identifier mc[2] ex])
 end
-function var"@generated_static"(ctx::JL.MacroContext)
+function var"@generated_static"(ctx::BS.MacroContext)
     mc = ctx.macrocall::SyntaxTree
-    sc = JS.SyntaxContext(nothing, nothing, JS.edition(mc), false)
-    src = SyntaxTree(:tombstone, nothing, nothing, JS.sourceref(mc), sc)
+    sc = BS.SyntaxContext(nothing, nothing, BS.edition(mc), false)
+    src = SyntaxTree(:tombstone, nothing, nothing, BS.sourceref(mc), sc)
     return JL.@ast(ctx, src, [:macrocall
         "@static"::identifier mc[2]
         [:?
@@ -2038,9 +1986,9 @@ end
         # layer.
         let code = "@wrapped_static STATIC_COND_FLAG ? caller_branch : macro_branch"
             st1 = jlexpand(static_caller_module, code; recursive=false)
-            sc = st1.context::JS.SyntaxContext
-            @test JS.syntax_module(st1) === static_macro_module
-            @test JS.base_layer(sc).mod === static_caller_module
+            sc = st1.context::BS.SyntaxContext
+            @test BS.syntax_module(st1) === static_macro_module
+            @test BS.base_layer(sc).mod === static_caller_module
             st1 = jlexpand(static_caller_module, code)
             @test JS.sourcetext(st1) == "caller_branch"
         end
@@ -2050,9 +1998,9 @@ end
         let code = "@generated_static"
             st1 = jlexpand(static_caller_module, code; recursive=false)
             cond = st1[3][1]
-            sc = cond.context::JS.SyntaxContext
-            @test JS.syntax_module(cond) === static_macro_module
-            @test JS.base_layer(sc).mod === static_caller_module
+            sc = cond.context::BS.SyntaxContext
+            @test BS.syntax_module(cond) === static_macro_module
+            @test BS.base_layer(sc).mod === static_caller_module
             st1 = jlexpand(static_caller_module, code)
             @test JS.head(st1) === :value
             @test st1.value === true

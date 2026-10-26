@@ -503,18 +503,24 @@ function from_interconditional(𝕃ᵢ::AbstractLattice, @nospecialize(rt), sv::
         if alias === nothing
             arg = ssa_def_slot(fargs[i], sv)
             if isa(arg, SlotNumber) && widenslotwrapper(argtyp) isa Type
+                # refine the slot itself
                 old = argtyp
                 id = slot_id(arg)
-            elseif argtyp isa MustAlias
+                argalias = nothing
+            elseif argtyp isa MustAlias && slot == 0
+                # refine the field of slot `argtyp.slot` that this argument aliases:
+                # the field is a different object from that slot, so it can't be
+                # intersected with a refinement target on the slot itself
                 old = argtyp.fldtyp
                 id = argtyp.slot
+                argalias = argtyp
             else
                 continue # unlikely to refine
             end
         elseif argtyp isa MustAlias && issubalias(argtyp, alias)
-            arg = nothing
             old = alias.fldtyp
             id = alias.slot
+            argalias = argtyp
         else
             continue
         end
@@ -545,14 +551,10 @@ function from_interconditional(𝕃ᵢ::AbstractLattice, @nospecialize(rt), sv::
             end
             if (slot > 0 || condval !== false) && thentype ⋤ old
                 slot = id
-                if !(arg isa SlotNumber) && argtyp isa MustAlias
-                    alias = argtyp
-                end
+                alias = argalias
             elseif (slot > 0 || condval !== true) && elsetype ⋤ old
                 slot = id
-                if !(arg isa SlotNumber) && argtyp isa MustAlias
-                    alias = argtyp
-                end
+                alias = argalias
             else # reset: no new useful information for this slot
                 slot = 0
                 alias = nothing
@@ -885,6 +887,23 @@ struct ConstCallResult
         const_edge::Union{Nothing,CodeInstance})
         return new(rt, exct, const_result, effects, const_edge)
     end
+    function ConstCallResult(
+            result::ConstCallResult;
+            effects::Effects = result.effects,
+            const_edge::Union{Nothing,CodeInstance} = result.const_edge
+        )
+        return new(result.rt, result.exct, result.const_result, effects, const_edge)
+    end
+end
+
+function use_concrete_eval_result(
+        interp::AbstractInterpreter, concrete_eval_result::ConstCallResult
+    )
+    # if we don't inline the result of this concrete evaluation,
+    # give const-prop' a chance to inline a better method body
+    return !may_optimize(interp) ||
+        may_inline_concrete_result(concrete_eval_result.const_result::ConcreteResult) ||
+        concrete_eval_result.rt === Bottom # unless this call deterministically throws and thus is non-inlineable
 end
 
 function abstract_call_method_with_const_args(interp::AbstractInterpreter,
@@ -895,15 +914,16 @@ function abstract_call_method_with_const_args(interp::AbstractInterpreter,
     end
     eligibility = concrete_eval_eligible(interp, f, result, arginfo, sv)
     concrete_eval_result = nothing
+    always_nothrow = false
     if eligibility === :concrete_eval
         concrete_eval_result = concrete_eval_call(interp, f, result, arginfo, sv, invokecall)
-        if (concrete_eval_result !== nothing &&  # allow external abstract interpreters to disable concrete evaluation ad-hoc
-            # if we don't inline the result of this concrete evaluation,
-            # give const-prop' a chance to inline a better method body
-            (!may_optimize(interp) ||
-             may_inline_concrete_result(concrete_eval_result.const_result::ConcreteResult) ||
-             concrete_eval_result.rt === Bottom)) # unless this call deterministically throws and thus is non-inlineable
-            return concrete_eval_result
+        # allow external abstract interpreters to disable concrete evaluation ad-hoc
+        if concrete_eval_result !== nothing
+            if use_concrete_eval_result(interp, concrete_eval_result)
+                return concrete_eval_result
+            elseif concrete_eval_result.rt !== Bottom
+                always_nothrow = true
+            end
         end
         # TODO allow semi-concrete interp for this call?
     end
@@ -921,7 +941,31 @@ function abstract_call_method_with_const_args(interp::AbstractInterpreter,
         end
     end
     # try constant prop'
-    return const_prop_call(interp, mi, result, arginfo, sv, concrete_eval_result)
+    new_result = const_prop_call(interp, mi, result, arginfo, sv, concrete_eval_result)
+    new_result === nothing && return nothing
+    if eligibility === :none
+        # const-prop' may have refined effects to be foldable when the original
+        # call was not; in that case, prefer concrete eval over the const-prop' result
+        new_eligibility = _concrete_eval_eligible(
+            interp, f, new_result.effects, new_result.const_edge, arginfo, sv)
+        if new_eligibility === :concrete_eval
+            new_concrete_eval_result = _concrete_eval_call(
+                interp, f, new_result.const_edge::CodeInstance, new_result.effects, arginfo, sv, invokecall)
+            if new_concrete_eval_result !== nothing
+                if use_concrete_eval_result(interp, new_concrete_eval_result)
+                    return ConstCallResult(new_concrete_eval_result; const_edge = new_result.const_edge)
+                elseif new_concrete_eval_result.rt !== Bottom
+                    always_nothrow = true
+                end
+            end
+        end
+    end
+    if always_nothrow
+        return ConstCallResult(new_result;
+            effects = Effects(new_result.effects; nothrow = true))
+    else
+        return new_result
+    end
 end
 
 function bail_out_const_call(interp::AbstractInterpreter, result::MethodCallResult,
@@ -957,9 +1001,17 @@ function bail_out_const_call(interp::AbstractInterpreter, result::MethodCallResu
     return false
 end
 
-function concrete_eval_eligible(interp::AbstractInterpreter,
-    @nospecialize(f), result::MethodCallResult, arginfo::ArgInfo, sv::AbsIntState)
-    (;effects) = result
+function concrete_eval_eligible(
+        interp::AbstractInterpreter, @nospecialize(f), result::MethodCallResult,
+        arginfo::ArgInfo, sv::AbsIntState
+    )
+    return _concrete_eval_eligible(interp, f, result.effects, result.edge, arginfo, sv)
+end
+
+function _concrete_eval_eligible(
+        interp::AbstractInterpreter, @nospecialize(f), effects::Effects,
+        edge::Union{Nothing,CodeInstance}, arginfo::ArgInfo, sv::AbsIntState
+    )
     if inbounds_option() === :off
         if !is_nothrow(effects)
             # Disable concrete evaluation in `--check-bounds=no` mode,
@@ -967,7 +1019,7 @@ function concrete_eval_eligible(interp::AbstractInterpreter,
             return :none
         end
     end
-    if result.edge !== nothing && is_foldable(effects, #=check_rtcall=#true)
+    if edge !== nothing && is_foldable(effects, #=check_rtcall=#true)
         if f !== nothing && is_all_const_arg(arginfo, #=start=#2)
             if (is_nonoverlayed(interp) || is_nonoverlayed(effects) ||
                 # Even if overlay methods are involved, when `:consistent_overlay` is
@@ -1019,9 +1071,18 @@ function collect_const_args(argtypes::Vector{Any}, start::Int)
                 end for i = start:length(argtypes) ]
 end
 
-function concrete_eval_call(interp::AbstractInterpreter,
-    @nospecialize(f), result::MethodCallResult, arginfo::ArgInfo, ::AbsIntState,
-    invokecall::Union{InvokeCall,Nothing}=nothing)
+function concrete_eval_call(
+        interp::AbstractInterpreter, @nospecialize(f), result::MethodCallResult,
+        arginfo::ArgInfo, sv::AbsIntState, invokecall::Union{InvokeCall,Nothing} = nothing
+    )
+    return _concrete_eval_call(
+        interp, f, result.edge::CodeInstance, result.effects, arginfo, sv, invokecall)
+end
+
+function _concrete_eval_call(
+        interp::AbstractInterpreter, @nospecialize(f), edge::CodeInstance, effects::Effects,
+        arginfo::ArgInfo, ::AbsIntState, invokecall::Union{InvokeCall,Nothing} = nothing
+    )
     args = collect_const_args(arginfo, #=start=#2)
     if invokecall !== nothing
         # this call should be `invoke`d, rewrite `args` back now
@@ -1029,14 +1090,13 @@ function concrete_eval_call(interp::AbstractInterpreter,
         f = invoke
     end
     world = get_inference_world(interp)
-    edge = result.edge::CodeInstance
     value = try
         Core._call_in_world_total(world, f, args...)
     catch
         # The evaluation threw. By :consistent-cy, we're guaranteed this would have happened at runtime.
         # Howevever, at present, :consistency does not mandate the type of the exception
-        concrete_result = ConcreteResult(edge, result.effects)
-        return ConstCallResult(Bottom, Any, concrete_result, result.effects, #=const_edge=#nothing)
+        concrete_result = ConcreteResult(edge, effects)
+        return ConstCallResult(Bottom, Any, concrete_result, effects, #=const_edge=#nothing)
     end
     concrete_result = ConcreteResult(edge, EFFECTS_TOTAL, value)
     return ConstCallResult(Const(value), Bottom, concrete_result, EFFECTS_TOTAL, #=const_edge=#nothing)
@@ -1798,7 +1858,7 @@ end
 
 # do apply(af, fargs...), where af is a function value
 function abstract_apply(interp::AbstractInterpreter, argtypes::Vector{Any}, si::StmtInfo,
-                        sv::AbsIntState, max_methods::Int=get_max_methods(interp, sv))
+                        sv::AbsIntState)
     itft = Core.Box(argtype_by_index(argtypes, 2))
     aft = argtype_by_index(argtypes, 3)
     (itft.contents === Bottom || aft === Bottom) && return Future(CallMeta(Bottom, Any, EFFECTS_THROWS, NoCallInfo()))
@@ -1936,7 +1996,7 @@ function abstract_apply(interp::AbstractInterpreter, argtypes::Vector{Any}, si::
                     break
                 end
             end
-            callfuture = abstract_call(interp, ArgInfo(nothing, ct), si, sv, max_methods)::Future
+            callfuture = abstract_call(interp, ArgInfo(nothing, ct), si, sv)::Future
             if !isready(callfuture)
                 nextstate = 0x3
                 return false
@@ -2732,7 +2792,7 @@ function abstract_call_known(interp::AbstractInterpreter, @nospecialize(f),
     𝕃ᵢ = typeinf_lattice(interp)
     if isa(f, Builtin)
         if f === _apply_iterate
-            return abstract_apply(interp, argtypes, si, sv, max_methods)
+            return abstract_apply(interp, argtypes, si, sv)
         elseif f === invoke
             return abstract_invoke(interp, arginfo, si, sv)
         elseif f === modifyfield! || f === Core.modifyglobal! ||
@@ -2741,7 +2801,7 @@ function abstract_call_known(interp::AbstractInterpreter, @nospecialize(f),
         elseif f === Core.finalizer
             return abstract_finalizer(interp, argtypes, sv)
         elseif f === applicable
-            return abstract_applicable(interp, argtypes, sv, max_methods)
+            return abstract_applicable(interp, argtypes, sv)
         elseif f === throw
             return abstract_throw(interp, argtypes, sv)
         elseif f === Core.throw_methoderror
@@ -2985,7 +3045,7 @@ function abstract_call(interp::AbstractInterpreter, arginfo::ArgInfo, si::StmtIn
         max_methods = max_methods == typemin(Int) ? get_max_methods(interp, sv) : max_methods
         return abstract_call_unknown(interp, ft, arginfo, si, sv, max_methods)
     end
-    max_methods = max_methods == typemin(Int) ? get_max_methods(interp, f, sv) : max_methods
+    max_methods = max_methods == typemin(Int) ? get_max_methods(interp, max_methods_callee(f, arginfo.argtypes), sv) : max_methods
     return abstract_call_known(interp, f, arginfo, si, sv, max_methods)
 end
 

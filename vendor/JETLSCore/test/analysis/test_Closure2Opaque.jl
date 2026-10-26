@@ -17,7 +17,7 @@ function rewrite_lower_eval(code::AbstractString)
     last_value = Ref{Any}(nothing)
     last_st3_oc = Ref{Union{JETLSCore.SyntaxTree,Nothing}}(nothing)
     world = Base.get_world_counter()
-    JETLSCore.iterate_toplevel_tree(st0_top) do st0::JS.SyntaxTree
+    JETLSCore.iterate_toplevel_tree(st0_top) do st0::JETLSCore.SyntaxTree
         result = JETLSCore.TypeAnnotation.get_inferrable_tree(st0, context_module, world)
         result === nothing && error("get_inferrable_tree failed for: $code")
         (; ctx3, st3) = result
@@ -44,7 +44,7 @@ function rewrite_only(code::AbstractString)
     st0_top = JETLSCore.build_syntax_tree(fi)
     last_st3_oc = Ref{Union{JETLSCore.SyntaxTree,Nothing}}(nothing)
     world = Base.get_world_counter()
-    JETLSCore.iterate_toplevel_tree(st0_top) do st0::JS.SyntaxTree
+    JETLSCore.iterate_toplevel_tree(st0_top) do st0::JETLSCore.SyntaxTree
         result = JETLSCore.TypeAnnotation.get_inferrable_tree(st0, context_module, world)
         result === nothing && error("get_inferrable_tree failed for: $code")
         (; ctx3, st3) = result

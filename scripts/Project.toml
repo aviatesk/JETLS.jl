@@ -7,18 +7,14 @@ TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
 JSON = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
 
 [sources.JSON3]
-subdir = "vendor/JSON3"
-rev = "b4c857b5e537f784b0900398297668e9a93ca90d"
-url = "https://github.com/aviatesk/JETLS.jl"
+path = "../vendor/JSON3"
 
 [sources.Struct2JSONSchema]
 rev = "avi/JS-compatibility"
 url = "https://github.com/aviatesk/Struct2JSONSchema.jl"
 
 [sources.JETLSCore]
-subdir = "vendor/JETLSCore"
-rev = "b4c857b5e537f784b0900398297668e9a93ca90d"
-url = "https://github.com/aviatesk/JETLS.jl"
+path = "../vendor/JETLSCore"
 
 [compat]
 Struct2JSONSchema = "0.6"

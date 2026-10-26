@@ -1597,7 +1597,7 @@ end
 
 @testset "extract_param_text" begin
     function parse_param(s::AbstractString)
-        call = JS.parsestmt(JS.SyntaxTree, "f($s)")
+        call = JS.parsestmt(SyntaxTree, "f($s)")
         return JS.children(call)[2]
     end
 
@@ -1612,6 +1612,9 @@ end
     end
     let p = parse_param("x::Vector{Int}")
         @test JETLSCore.extract_param_text(p) == "x::Vector{Int}"
+    end
+    let p = parse_param("var\"x\"")
+        @test JETLSCore.extract_param_text(p) == "x"
     end
 end
 

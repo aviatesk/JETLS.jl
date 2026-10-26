@@ -347,32 +347,55 @@ function JuliaInterpreter.step_expr!(
         interp::LSInterpreter, frame::JuliaInterpreter.Frame, @nospecialize(node),
         istoplevel::Bool
     )
-    if istoplevel && Meta.isexpr(node, :call) && length(node.args) ≥ 4
-        func = JuliaInterpreter.lookup(frame, node.args[1])
-        if func === Core._typebody!
-            structtyp = JuliaInterpreter.lookup(frame, node.args[3])
-            # Field types of closure types are determined by lowering and can't be annotated
-            # by users, e.g. capturing a `@nospecialize`d argument results in an `Any` field
-            if structtyp isa Type && structtyp !== Union{} && !JETLSCore.is_closure_type(structtyp)
-                ftypes = JuliaInterpreter.lookup(frame, node.args[4])::Core.SimpleVector
-                fnames = fieldnames(structtyp)
-                if fnames isa Tuple{Vararg{Symbol}} && length(ftypes) == length(fnames)
-                    for i = 1:length(ftypes)
-                        ft, fname = ftypes[i], fnames[i]
-                        if JETLSCore.is_abstract_fieldtype(ft)
-                            filename = JET.InterpretationState(interp).filename
-                            fieldline = @something extract_field_line(
-                                interp, frame, nameof(structtyp), fname) continue
-                            push!(interp.warning_reports, JETLSCore.AbstractFieldReport(filename, fieldline, structtyp, fname, ft))
-                        end
-                    end
-                end
-            end
-        end
+    func = istoplevel && Meta.isexpr(node, :call) && length(node.args) ≥ 4 ?
+        JuliaInterpreter.lookup(frame, node.args[1]) : nothing
+    if func === Core._typebody!
+        structtyp = JuliaInterpreter.lookup(frame, node.args[3])
+        ftypes = JuliaInterpreter.lookup(frame, node.args[4])::Core.SimpleVector
+        report_abstract_fields!(interp, frame, structtyp, ftypes)
     end
-    @invoke JuliaInterpreter.step_expr!(
+    pc = frame.pc
+    ret = @invoke JuliaInterpreter.step_expr!(
         interp::JET.ConcreteInterpreter, frame::JuliaInterpreter.Frame, node::Any,
         istoplevel::Bool)
+    # Julia 1.14 and later lowers type definitions to `Core.resolve_typegroup`, which
+    # returns the defined types
+    if is_resolve_typegroup(func) && ret isa Int && JuliaInterpreter.isassign(frame, pc)
+        for structtyp in frame.framedata.ssavalues[pc]
+            structtyp isa Type || continue
+            ftypes = (Base.unwrap_unionall(structtyp)::DataType).types
+            report_abstract_fields!(interp, frame, structtyp, ftypes)
+        end
+    end
+    return ret
+end
+
+@static if isdefinedglobal(Core, :resolve_typegroup)
+is_resolve_typegroup(@nospecialize func) = func === Core.resolve_typegroup
+else
+is_resolve_typegroup(@nospecialize func) = false
+end
+
+function report_abstract_fields!(
+        interp::LSInterpreter, frame::JuliaInterpreter.Frame, @nospecialize(structtyp),
+        ftypes::Core.SimpleVector
+    )
+    # Field types of closure types are determined by lowering and can't be annotated
+    # by users, e.g. capturing a `@nospecialize`d argument results in an `Any` field
+    structtyp isa Type && structtyp !== Union{} && !JETLSCore.is_closure_type(structtyp) ||
+        return nothing
+    fnames = fieldnames(structtyp)
+    fnames isa Tuple{Vararg{Symbol}} && length(ftypes) == length(fnames) || return nothing
+    for i = 1:length(ftypes)
+        ft, fname = ftypes[i], fnames[i]
+        if JETLSCore.is_abstract_fieldtype(ft)
+            filename = JET.InterpretationState(interp).filename
+            fieldline = @something extract_field_line(
+                interp, frame, nameof(structtyp), fname) continue
+            push!(interp.warning_reports, JETLSCore.AbstractFieldReport(filename, fieldline, structtyp, fname, ft))
+        end
+    end
+    return nothing
 end
 
 # TODO Use lowered `SyntaxTree` for finding field line for macro-generated structs

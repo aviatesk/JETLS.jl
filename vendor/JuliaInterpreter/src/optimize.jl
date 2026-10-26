@@ -330,6 +330,8 @@ function free_typevars!(tvs::Vector{TypeVar}, @nospecialize(t), bound::Vector{Ty
     elseif t isa Core.TypeofVararg
         isdefined(t, :T) && free_typevars!(tvs, t.T, bound)
         isdefined(t, :N) && free_typevars!(tvs, t.N, bound)
+    elseif _isType(t) # `Type{T}` is not a `DataType` on Julia 1.14+
+        free_typevars!(tvs, _Type_parameter(t), bound)
     elseif t isa DataType
         for p in t.parameters
             free_typevars!(tvs, p, bound)
