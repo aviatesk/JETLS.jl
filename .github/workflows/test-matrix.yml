@@ -37,6 +37,9 @@ jobs:
           - version: "1.12.2" # the minimum version supported
             os: ubuntu-latest
             arch: x64
+          - version: "~1.14.0-0" # 1.14 including its prereleases, recommended by the docs
+            os: ubuntu-latest
+            arch: x64
           - version: "1" # x86 ubuntu
             os: ubuntu-latest
             arch: x86
