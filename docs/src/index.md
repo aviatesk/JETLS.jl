@@ -47,12 +47,12 @@ The [`jetls` executable app](@ref cli) is the main entry point for running JETLS
 
 ### [Prerequisites](@id index/server-installation/prerequisites)
 
-JETLS supports [Julia](https://julialang.org/downloads) v1.12.2 through 1.13.x.
-It does not support Julia 1.12.1 or earlier, nor 1.14+/nightly.
+JETLS supports [Julia](https://julialang.org/downloads) v1.12.2 through 1.14.x.
+It does not support Julia 1.12.1 or earlier, nor 1.15+/nightly.
 
 ### [Installing the `jetls` executable](@id index/server-installation/install)
 
-Install it with (make sure your `julia` command runs v1.12.2 through v1.13.x):
+Install it with (make sure your `julia` command runs v1.12.2 through v1.14.x):
 ```bash
 julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="release")'
 ```

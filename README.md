@@ -21,8 +21,8 @@ diagnostics, macro-aware go-to definition and such.
 > Stability and performance are limited. Expect bugs and rough edges.
 
 > [!warning]
-> JETLS supports Julia 1.12.2 through 1.13.
-> It does not support Julia 1.12.1 or earlier, nor Julia 1.14+/nightly.
+> JETLS supports Julia 1.12.2 through 1.14.
+> It does not support Julia 1.12.1 or earlier, nor Julia 1.15+/nightly.
 
 ## Documentation
 

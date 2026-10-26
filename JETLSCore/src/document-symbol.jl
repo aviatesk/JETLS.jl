@@ -153,8 +153,8 @@ function extract_module_symbol!(
         symbols::Vector{DocumentSymbol}, st0::SyntaxTree, fi::FileInfo,
         parent_context_module::Module, world::UInt
     )
-    JS.numchildren(st0) ≥ 3 || return nothing
-    name_node = st0[2]
+    name_node = @something module_name_node(st0) return nothing
+    name_node === st0[end] && return nothing
     name = @something get_name_val(name_node) return nothing
     context_module = parent_context_module
     if invokelatest(isdefinedglobal, parent_context_module, Symbol(name))

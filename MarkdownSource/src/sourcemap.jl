@@ -318,7 +318,7 @@ cell_text(line::String, cell::UnitRange{Int}) = String(codeunits(line)[cell .+ 1
 # A stream reading `cell`, the `column`-th cell of the table row of `stream` starting at
 # `line_start`, as stripped and unescaped by `parserow`
 function cellstream(cell::AbstractString, stream::IO, line_start::Int, column::Int)
-    text = String(cell)
+    text = String(cell)::String
     new = IOBuffer(text)
     found = recording(stream)
     found === nothing && return new

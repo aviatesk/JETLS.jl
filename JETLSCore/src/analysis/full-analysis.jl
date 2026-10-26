@@ -1390,8 +1390,10 @@ function collect_module_range_infos!(
         for i = 3:JS.numchildren(st0)
             collect_module_range_infos!(module_range_infos, st0[i], context_module, world)
         end
-    elseif JS.head(st0) === :module && JS.numchildren(st0) ≥ 3
-        modconst = resolve_global_const(context_module, world, st0[2])
+    elseif JS.head(st0) === :module
+        module_name = @something module_name_node(st0) return nothing
+        module_name === st0[end] && return nothing
+        modconst = resolve_global_const(context_module, world, module_name)
         modconst isa Core.Const || return nothing
         mod = modconst.val
         mod isa Module || return nothing

@@ -2,7 +2,9 @@
     Base.include(Base.__toplevel__, "../snapshots/v1.12/src/Compiler.jl")
 elseif v"1.13.0-" ≤ VERSION < v"1.14.0-"
     Base.include(Base.__toplevel__, "../snapshots/v1.13/src/Compiler.jl")
+elseif v"1.14.0-" ≤ VERSION < v"1.15.0-"
+    Base.include(Base.__toplevel__, "../snapshots/v1.14/src/Compiler.jl")
 else
-    # outside the snapshot ranges: [1.12.2, 1.13.0-), [1.13.0-, 1.14.0-)
+    # outside the snapshot ranges: [1.12.2, 1.13.0-), [1.13.0-, 1.14.0-), [1.14.0-, 1.15.0-)
     Base.include(Base.__toplevel__, "fallback.jl")
 end

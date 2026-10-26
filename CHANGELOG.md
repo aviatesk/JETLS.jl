@@ -24,8 +24,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Announcement
 
 > [!important]
-> JETLS supports Julia 1.12.2 through 1.13.
-> It does not support Julia 1.12.1 or earlier, nor Julia 1.14+/nightly.
+> JETLS supports Julia 1.12.2 through 1.14.
+> It does not support Julia 1.12.1 or earlier, nor Julia 1.15+/nightly.
 
 <!-- Added: 2026-10-11 / Remove after: 2026-11-11 -->
 > [!note]
@@ -59,6 +59,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > Note: Path glob patterns use `/` as the separator on all platforms, including Windows; backslashes are not supported as separators.
 
 ### Added
+
+- Added Julia 1.14 compatibility, allowing JETLS to run on Julia 1.14 runtimes.
 
 - Added the [`inference/type-error/invoke`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/inference/type-error/invoke) diagnostic: an `invoke` call whose signature argument is not a tuple type, or whose arguments do not match that signature, which raises `TypeError` at runtime, is now reported:
   ```julia
